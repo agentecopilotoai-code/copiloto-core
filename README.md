@@ -1694,6 +1694,11 @@ La arquitectura y el modelo aquí propuestos priorizan **rapidez de lanzamiento*
 
 ## Implementación Docker del core de referencia
 
+
+### Guía de instalación
+
+Para instalar y levantar el core localmente paso a paso, consulta [`INSTALL.md`](INSTALL.md). Esa guía cubre requisitos, generación de secretos, Docker Compose, verificación, base de datos inicial, tenants demo, configuración de WhatsApp real y troubleshooting.
+
 Este repositorio ahora incluye un core ejecutable en Docker que materializa la arquitectura descrita en esta especificación. La guía operativa está en [`ARCHITECTURE.md`](ARCHITECTURE.md) e incluye los servicios, responsabilidades, conexión a base de datos, política de secretos y endpoints principales.
 
 ### Arranque local seguro
