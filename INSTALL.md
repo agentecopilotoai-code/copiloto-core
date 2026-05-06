@@ -345,14 +345,50 @@ Apagar y borrar volúmenes:
 docker compose down -v
 ```
 
-Regenerar todo desde cero:
+Regenerar todo desde cero con el script seguro de desarrollo:
 
 ```bash
-docker compose down -v
+./scripts/reset-local-dev.sh --yes
+```
+
+Equivalente manual:
+
+```bash
+docker compose down -v --remove-orphans
 ./scripts/bootstrap.sh
 ```
 
 ## 12. Troubleshooting
+
+### `InvalidPasswordError: password authentication failed for user "copiloto_app"`
+
+Esto indica que tu volumen local de PostgreSQL fue creado con una contraseña anterior, pero tu `.env` actual tiene otra. PostgreSQL solo usa `POSTGRES_PASSWORD` y `APP_DB_PASSWORD` durante la primera inicialización del volumen; si luego regeneras `.env`, la base queda con la contraseña vieja.
+
+En desarrollo local, la solución más simple es borrar el volumen y recrear la base con el `.env` actual:
+
+```bash
+./scripts/reset-local-dev.sh --yes
+```
+
+Luego valida:
+
+```bash
+docker compose ps
+curl -fsS http://localhost:8000/v1/health
+./scripts/smoke-test.sh
+```
+
+Si necesitas conservar datos, no uses `down -v`; cambia manualmente la contraseña del rol `copiloto_app` dentro de PostgreSQL o restaura un backup.
+
+### `curl: (56) Recv failure: Connection reset by peer`
+
+Normalmente significa que la API arrancó y se cayó durante startup. Revisa primero los logs de API y workers:
+
+```bash
+docker compose logs --tail=200 api event-worker scheduler
+```
+
+Si ves `InvalidPasswordError` para `copiloto_app`, aplica el reset local anterior.
 
 ### `python: command not found`
 
