@@ -55,7 +55,7 @@ Cada entrada debe incluir:
 ### TASK-0002 — Crear el esqueleto del Admin Panel MVP
 
 - **Fecha:** 2026-05-06
-- **Resumen:** se creó un Admin Panel MVP con frontend React JS + Vite, estructurado por componentes, hooks, contexto, servicios y datos de módulos. El backend `app/admin` conserva el flujo OIDC/Auth0 Authorization Code para usar la configuración local ya generada y leer `.secrets/auth0-admin-client-secret` sin exponer secretos al navegador. Se agregó sesión HTTP-only de servidor, layout base con selector de tenant, navegación de placeholders para Tenant Setup, WhatsApp, Knowledge Studio, Operations Desk y Audit, Dockerfile dedicado del panel, servicio Docker `admin-panel` en el puerto 3000 y bootstrap propio `scripts/bootstrap-admin-panel.sh`.
+- **Resumen:** se creó un Admin Panel MVP con frontend React JS + Vite, estructurado por componentes, hooks, contexto, servicios y datos de módulos. El backend `app/admin` conserva el flujo OIDC/Auth0 Authorization Code para usar la configuración local ya generada y leer `.secrets/auth0-admin-client-secret` sin exponer secretos al navegador. Se agregó sesión HTTP-only de servidor, layout base con selector de tenant, navegación de placeholders para Tenant Setup, WhatsApp, Knowledge Studio, Operations Desk y Audit, Dockerfile dedicado del panel, servicio Docker `admin-panel` en el puerto 3000 y bootstrap propio `scripts/bootstrap-admin-panel.sh`, que ahora construye y levanta el contenedor por defecto.
 - **Archivos modificados:**
   - `admin-panel/Dockerfile`
   - `admin-panel/index.html`
@@ -80,5 +80,6 @@ Cada entrada debe incluir:
   - `npm --prefix admin-panel install` (bloqueado por HTTP 403 contra npm registry en el entorno)
   - `npm --prefix admin-panel run build` (bloqueado porque `vite` no puede instalarse mientras npm registry devuelve HTTP 403)
   - `./scripts/bootstrap-admin-panel.sh --skip-docker` (bloqueado por el mismo HTTP 403 de npm registry)
+  - `bash -n scripts/bootstrap-admin-panel.sh`
   - `docker compose build admin-panel` (bloqueado porque Docker no está instalado en el entorno)
 - **Notas:** el panel queda listo para validar login real contra Auth0 cuando `.env.auth0.local` y `.secrets/auth0-admin-client-secret` existen localmente; las sesiones son en memoria para el MVP y deben externalizarse antes de producción.

@@ -1,19 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Compila el Admin Panel React y prepara la imagen Docker del servicio admin-panel.
+# Compila el Admin Panel React, construye la imagen Docker y levanta el servicio admin-panel.
 # Uso:
-#   ./scripts/bootstrap-admin-panel.sh          # npm install + build + docker compose build admin-panel
-#   ./scripts/bootstrap-admin-panel.sh --up     # además levanta el servicio
-#   ./scripts/bootstrap-admin-panel.sh --skip-docker  # solo build local del frontend
+#   ./scripts/bootstrap-admin-panel.sh               # npm install + build + docker build + docker compose up -d admin-panel
+#   ./scripts/bootstrap-admin-panel.sh --build-only  # construye imagen Docker pero no levanta contenedor
+#   ./scripts/bootstrap-admin-panel.sh --skip-docker # solo build local del frontend
 
-UP=false
+START_SERVICE=true
 SKIP_DOCKER=false
 
 for arg in "$@"; do
   case "$arg" in
-    --up) UP=true ;;
-    --skip-docker) SKIP_DOCKER=true ;;
+    --up)
+      # Compatibilidad con versiones anteriores: ahora levantar el servicio es el comportamiento default.
+      START_SERVICE=true
+      ;;
+    --build-only)
+      START_SERVICE=false
+      ;;
+    --skip-docker)
+      SKIP_DOCKER=true
+      START_SERVICE=false
+      ;;
     *)
       echo "Argumento no soportado: $arg" >&2
       exit 2
@@ -50,12 +59,18 @@ need_cmd docker
 echo "▶ Construyendo imagen Docker admin-panel"
 docker compose build admin-panel
 
-if [ "$UP" = "true" ]; then
+if [ "$START_SERVICE" = "true" ]; then
   echo "▶ Levantando servicio admin-panel"
   docker compose up -d admin-panel
+  echo "▶ Estado del servicio admin-panel"
+  docker compose ps admin-panel
 fi
 
 cat <<'SUMMARY'
 ✅ Admin Panel listo
 URL: http://localhost:3000/admin/
+
+Si no abre de inmediato, revisa el estado con:
+  docker compose ps admin-panel
+  docker compose logs -f admin-panel
 SUMMARY

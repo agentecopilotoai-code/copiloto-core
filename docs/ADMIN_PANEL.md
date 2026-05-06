@@ -54,18 +54,23 @@ El panel tiene bootstrap dedicado:
 ./scripts/bootstrap-admin-panel.sh
 ```
 
-Qué hace:
+Qué hace por defecto:
 
 1. Instala dependencias npm en `admin-panel/`.
 2. Compila el bundle React con `npm --prefix admin-panel run build`.
 3. Construye la imagen Docker del servicio `admin-panel` usando `admin-panel/Dockerfile`.
+4. Levanta el contenedor con `docker compose up -d admin-panel`.
+5. Muestra `docker compose ps admin-panel` para confirmar que aparece en Docker.
 
 Opciones útiles:
 
 ```bash
-./scripts/bootstrap-admin-panel.sh --up          # construye y levanta admin-panel
+./scripts/bootstrap-admin-panel.sh              # compila, construye y levanta admin-panel
+./scripts/bootstrap-admin-panel.sh --build-only # compila y construye imagen, pero no levanta contenedor
 ./scripts/bootstrap-admin-panel.sh --skip-docker # solo instala dependencias y compila React localmente
 ```
+
+Si ejecutas solo `docker compose build admin-panel`, Docker construye la imagen pero no crea ni arranca el contenedor. Para verlo en Docker necesitas `./scripts/bootstrap-admin-panel.sh` o `docker compose up -d admin-panel`.
 
 ## Comandos de desarrollo
 

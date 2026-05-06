@@ -197,16 +197,16 @@ Puedes cambiar la salida con `AUTH0_ENV_FILE`, `AUTH0_SECRETS_DIR` o desactivarl
 
 El Admin Panel MVP vive en `admin-panel/` y se compila con React JS + Vite. El backend OIDC/Auth0 vive en `app/admin` para mantener el Authorization Code Flow y leer el secreto desde `.secrets/auth0-admin-client-secret` sin exponerlo en el navegador. Consume la configuración generada por `scripts/configure-auth0.sh` desde `.env.auth0.local`; no requiere variables duplicadas en `.env`.
 
-Para instalar dependencias, compilar React y construir la imagen Docker dedicada:
+Para instalar dependencias, compilar React, construir la imagen Docker dedicada y levantar el contenedor:
 
 ```bash
 ./scripts/bootstrap-admin-panel.sh
 ```
 
-Para levantarlo junto con la API:
+El script termina mostrando `docker compose ps admin-panel`; ahí debe aparecer el servicio. Si prefieres hacerlo manualmente:
 
 ```bash
-docker compose up --build admin-panel
+docker compose up -d --build admin-panel
 ```
 
 Luego abre `http://localhost:3000/admin/` e inicia sesión con Auth0. Más detalles y comandos de desarrollo están en `docs/ADMIN_PANEL.md`.
