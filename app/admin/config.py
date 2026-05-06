@@ -23,7 +23,7 @@ class AdminSettings(BaseSettings):
     auth0_admin_client_secret: str | None = None
     auth0_admin_client_secret_file: str | None = None
     auth0_callback_urls: str = 'http://localhost:3000/callback'
-    auth0_logout_urls: str = 'http://localhost:3000'
+    auth0_logout_urls: str = 'http://localhost:3000/admin/,http://localhost:3000'
     auth0_web_origins: str = 'http://localhost:3000'
     auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
 

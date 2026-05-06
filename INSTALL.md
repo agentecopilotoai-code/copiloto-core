@@ -209,7 +209,7 @@ El script termina mostrando `docker compose ps admin-panel`; ahí debe aparecer 
 docker compose up -d --build admin-panel
 ```
 
-Luego abre `http://localhost:3000/admin/` e inicia sesión con Auth0. Más detalles y comandos de desarrollo están en `docs/ADMIN_PANEL.md`.
+Luego abre `http://localhost:3000/admin/` e inicia sesión con Auth0. Si tu aplicación Auth0 fue configurada antes de esta versión, vuelve a ejecutar `scripts/configure-auth0.sh` para agregar `http://localhost:3000/admin/` a Allowed Logout URLs. Más detalles y comandos de desarrollo están en `docs/ADMIN_PANEL.md`.
 
 ### WhatsApp / Meta Graph API
 

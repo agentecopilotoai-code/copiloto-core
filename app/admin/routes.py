@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, RedirectResponse
 
 from app.admin.config import get_admin_settings
@@ -80,6 +80,18 @@ def _callback_url(request: Request) -> str:
     return str(request.url_for('admin_auth0_callback'))
 
 
+def _logout_return_to(request: Request) -> str:
+    settings = get_admin_settings()
+    urls = [url.strip() for url in settings.auth0_logout_urls.split(',') if url.strip()]
+    for url in urls:
+        normalized_url = url.rstrip('/')
+        if normalized_url.endswith('/admin'):
+            return f'{normalized_url}/'
+    if urls:
+        return urls[0]
+    return str(request.url_for('admin_index'))
+
+
 def _active_session(request: Request) -> dict[str, Any] | None:
     session_id = request.cookies.get(SESSION_COOKIE)
     if not session_id:
@@ -108,6 +120,11 @@ def _dist_file(path: str = 'index.html') -> FileResponse:
             ),
         )
     return FileResponse(file_path)
+
+
+@router.get('/', include_in_schema=False)
+async def admin_root() -> RedirectResponse:
+    return RedirectResponse('/admin/', status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 @router.get('/admin', include_in_schema=False)
@@ -256,14 +273,14 @@ async def admin_logout(request: Request) -> RedirectResponse:
     session_id = request.cookies.get(SESSION_COOKIE)
     if session_id:
         _sessions.pop(session_id, None)
-    return_to = str(request.url_for('admin_index'))
+    return_to = _logout_return_to(request)
     logout_params = {'client_id': settings.auth0_admin_client_id or '', 'returnTo': return_to}
     logout_url = (
         f'{_auth0_base_url()}/v2/logout?{urlencode(logout_params)}'
         if settings.auth0_domain and settings.auth0_admin_client_id
         else '/admin/'
     )
-    response = RedirectResponse(logout_url)
+    response = RedirectResponse(logout_url, status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(SESSION_COOKIE)
     return response
 

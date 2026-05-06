@@ -44,7 +44,7 @@ No crea variables paralelas: consume directamente los valores guardados en `.env
 - `AUTH0_LOGOUT_URLS`
 - `AUTH0_ADMIN_CLIENT_SECRET_FILE`
 
-El secreto del cliente se lee desde `.secrets/auth0-admin-client-secret` mediante la ruta declarada en `AUTH0_ADMIN_CLIENT_SECRET_FILE`; nunca se incluye en el bundle React. Para firmar el `state` OAuth el backend usa `JWT_SECRET` cuando está disponible y, si el contenedor se arranca sin `.env`, usa un secreto efímero de proceso para no impedir que el panel cargue.
+El secreto del cliente se lee desde `.secrets/auth0-admin-client-secret` mediante la ruta declarada en `AUTH0_ADMIN_CLIENT_SECRET_FILE`; nunca se incluye en el bundle React. Para firmar el `state` OAuth el backend usa `JWT_SECRET` cuando está disponible y, si el contenedor se arranca sin `.env`, usa un secreto efímero de proceso para no impedir que el panel cargue. El logout del panel responde al `POST /admin/logout` con redirect `303 See Other` hacia Auth0 para que el navegador llame `GET /v2/logout`; Auth0 no acepta `POST /v2/logout`.
 
 ## Bootstrap propio
 
@@ -70,7 +70,7 @@ Opciones útiles:
 ./scripts/bootstrap-admin-panel.sh --skip-docker # solo instala dependencias y compila React localmente
 ```
 
-Si ejecutas solo `docker compose build admin-panel`, Docker construye la imagen pero no crea ni arranca el contenedor. Para verlo en Docker necesitas `./scripts/bootstrap-admin-panel.sh` o `docker compose up -d admin-panel`. El servicio `admin-panel` no depende de la salud de la API ni exige `.env`; esto permite abrir `/admin/` y diagnosticar Auth0 aunque el core todavía no esté configurado. El build Vite usa `base: '/admin/'`, por lo que los assets se publican bajo `/admin/assets/*`; el backend conserva una ruta compatible `/assets/*` para builds antiguos cacheados por el navegador.
+Si ejecutas solo `docker compose build admin-panel`, Docker construye la imagen pero no crea ni arranca el contenedor. Para verlo en Docker necesitas `./scripts/bootstrap-admin-panel.sh` o `docker compose up -d admin-panel`. El servicio `admin-panel` no depende de la salud de la API ni exige `.env`; esto permite abrir `/admin/` y diagnosticar Auth0 aunque el core todavía no esté configurado. El build Vite usa `base: '/admin/'`, por lo que los assets se publican bajo `/admin/assets/*`; el backend conserva una ruta compatible `/assets/*` para builds antiguos cacheados por el navegador. Si tu `.env.auth0.local` fue generado antes de esta corrección, puedes volver a ejecutar `scripts/configure-auth0.sh` para agregar `http://localhost:3000/admin/` a Allowed Logout URLs; mientras tanto el backend usa el primer `AUTH0_LOGOUT_URLS` existente y redirige `/` hacia `/admin/`.
 
 ## Comandos de desarrollo
 
