@@ -55,14 +55,17 @@ Cada entrada debe incluir:
 ### TASK-0002 — Crear el esqueleto del Admin Panel MVP
 
 - **Fecha:** 2026-05-06
-- **Resumen:** se creó un Admin Panel MVP con frontend React JS + Vite, estructurado por componentes, hooks, contexto, servicios y datos de módulos. El backend `app/admin` conserva el flujo OIDC/Auth0 Authorization Code para usar la configuración local ya generada y leer `.secrets/auth0-admin-client-secret` sin exponer secretos al navegador. Se agregó sesión HTTP-only de servidor, layout base con selector de tenant, navegación de placeholders para Tenant Setup, WhatsApp, Knowledge Studio, Operations Desk y Audit, Dockerfile dedicado del panel, servicio Docker `admin-panel` en el puerto 3000 y bootstrap propio `scripts/bootstrap-admin-panel.sh`, que ahora construye y levanta el contenedor por defecto.
+- **Resumen:** se creó un Admin Panel MVP con frontend React JS + Vite, estructurado por componentes, hooks, contexto, servicios y datos de módulos. El backend `app/admin` conserva el flujo OIDC/Auth0 Authorization Code para usar la configuración local ya generada y leer `.secrets/auth0-admin-client-secret` sin exponer secretos al navegador. Se agregó sesión HTTP-only de servidor, layout base con selector de tenant, navegación de placeholders para Tenant Setup, WhatsApp, Knowledge Studio, Operations Desk y Audit, Dockerfile dedicado del panel, servicio Docker `admin-panel` en el puerto 3000 y bootstrap propio `scripts/bootstrap-admin-panel.sh`, que ahora construye y levanta el contenedor por defecto. El backend admin usa configuración propia opcional para no fallar cuando el contenedor no recibe variables obligatorias del core como `DATABASE_URL`, `SERVICE_TOKEN`, WhatsApp o S3.
 - **Archivos modificados:**
+  - `.dockerignore`
+  - `.gitignore`
   - `admin-panel/Dockerfile`
   - `admin-panel/index.html`
   - `admin-panel/package.json`
   - `admin-panel/vite.config.js`
   - `admin-panel/src/*`
   - `app/admin/__init__.py`
+  - `app/admin/config.py`
   - `app/admin/main.py`
   - `app/admin/routes.py`
   - `app/admin/static/.gitkeep`

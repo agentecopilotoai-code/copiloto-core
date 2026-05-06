@@ -1,6 +1,6 @@
 # Admin Panel MVP
 
-El Admin Panel MVP está implementado como una aplicación **React JS + Vite** bajo `admin-panel/`, con componentes, hooks, contexto de autenticación y servicios separados por responsabilidad. El backend mínimo de Auth0/OIDC permanece en `app/admin` para poder usar Authorization Code Flow con el client secret local sin exponer secretos en el navegador.
+El Admin Panel MVP está implementado como una aplicación **React JS + Vite** bajo `admin-panel/`, con componentes, hooks, contexto de autenticación y servicios separados por responsabilidad. El backend mínimo de Auth0/OIDC permanece en `app/admin` para poder usar Authorization Code Flow con el client secret local sin exponer secretos en el navegador. Este backend usa configuración propia y opcional para arrancar aunque no existan las variables obligatorias del core (`DATABASE_URL`, `SERVICE_TOKEN`, WhatsApp o S3); si falta Auth0, la pantalla carga y el login devuelve un error explícito de configuración.
 
 ## Estructura React
 
@@ -44,7 +44,7 @@ No crea variables paralelas: consume directamente los valores guardados en `.env
 - `AUTH0_LOGOUT_URLS`
 - `AUTH0_ADMIN_CLIENT_SECRET_FILE`
 
-El secreto del cliente se lee desde `.secrets/auth0-admin-client-secret` mediante la ruta declarada en `AUTH0_ADMIN_CLIENT_SECRET_FILE`; nunca se incluye en el bundle React.
+El secreto del cliente se lee desde `.secrets/auth0-admin-client-secret` mediante la ruta declarada en `AUTH0_ADMIN_CLIENT_SECRET_FILE`; nunca se incluye en el bundle React. Para firmar el `state` OAuth el backend usa `JWT_SECRET` cuando está disponible y, si el contenedor se arranca sin `.env`, usa un secreto efímero de proceso para no impedir que el panel cargue.
 
 ## Bootstrap propio
 
@@ -70,7 +70,7 @@ Opciones útiles:
 ./scripts/bootstrap-admin-panel.sh --skip-docker # solo instala dependencias y compila React localmente
 ```
 
-Si ejecutas solo `docker compose build admin-panel`, Docker construye la imagen pero no crea ni arranca el contenedor. Para verlo en Docker necesitas `./scripts/bootstrap-admin-panel.sh` o `docker compose up -d admin-panel`.
+Si ejecutas solo `docker compose build admin-panel`, Docker construye la imagen pero no crea ni arranca el contenedor. Para verlo en Docker necesitas `./scripts/bootstrap-admin-panel.sh` o `docker compose up -d admin-panel`. El servicio `admin-panel` no depende de la salud de la API ni exige `.env`; esto permite abrir `/admin/` y diagnosticar Auth0 aunque el core todavía no esté configurado.
 
 ## Comandos de desarrollo
 

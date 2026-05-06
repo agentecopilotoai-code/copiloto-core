@@ -32,11 +32,12 @@ services:
     build:
       context: .
       dockerfile: admin-panel/Dockerfile
-    env_file: *app-env-files
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.auth0.local
+        required: false
     restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
     ports:
       - "3000:3000"
     command: python3 -m uvicorn app.admin.main:app --host 0.0.0.0 --port 3000

@@ -14,7 +14,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
 
-from app.core.config import get_settings
+from app.admin.config import get_admin_settings
 
 STATIC_DIR = Path(__file__).parent / 'static'
 DIST_DIR = STATIC_DIR / 'dist'
@@ -31,9 +31,9 @@ def _b64url(data: bytes) -> str:
 
 
 def _sign(value: str) -> str:
-    settings = get_settings()
+    settings = get_admin_settings()
     digest = hmac.new(
-        settings.jwt_secret.encode('utf-8'),
+        settings.state_secret.encode('utf-8'),
         value.encode('utf-8'),
         hashlib.sha256,
     ).digest()
@@ -54,14 +54,14 @@ def _unpack_state(value: str) -> dict[str, Any] | None:
 
 
 def _auth0_base_url() -> str:
-    settings = get_settings()
+    settings = get_admin_settings()
     if not settings.auth0_domain:
         raise HTTPException(status_code=503, detail='Auth0/OIDC is not configured')
     return f"https://{settings.auth0_domain.rstrip('/')}"
 
 
 def _admin_client_secret() -> str:
-    settings = get_settings()
+    settings = get_admin_settings()
     if settings.auth0_admin_client_secret:
         return settings.auth0_admin_client_secret
     if settings.auth0_admin_client_secret_file:
@@ -72,7 +72,7 @@ def _admin_client_secret() -> str:
 
 
 def _callback_url(request: Request) -> str:
-    settings = get_settings()
+    settings = get_admin_settings()
     urls = [url.strip() for url in settings.auth0_callback_urls.split(',') if url.strip()]
     for url in urls:
         if url.startswith('http://localhost:3000/') or url.startswith('https://'):
@@ -92,7 +92,7 @@ def _active_session(request: Request) -> dict[str, Any] | None:
 
 
 def _namespaced_claim(claims: dict[str, Any], name: str, default: Any = None) -> Any:
-    namespace = get_settings().auth0_claims_namespace.rstrip('/')
+    namespace = get_admin_settings().auth0_claims_namespace.rstrip('/')
     return claims.get(f'{namespace}/{name}', default)
 
 
@@ -123,7 +123,7 @@ async def admin_assets(asset_path: str) -> FileResponse:
 
 @router.get('/admin/login', include_in_schema=False)
 async def admin_login(request: Request) -> RedirectResponse:
-    settings = get_settings()
+    settings = get_admin_settings()
     if not settings.auth0_admin_client_id or not settings.auth0_audience:
         raise HTTPException(
             status_code=503,
@@ -174,7 +174,7 @@ async def admin_callback(
     ):
         raise HTTPException(status_code=400, detail='Invalid or expired OAuth state')
 
-    settings = get_settings()
+    settings = get_admin_settings()
     callback_url = _callback_url(request)
     async with httpx.AsyncClient(timeout=10) as client:
         token_response = await client.post(
@@ -242,7 +242,7 @@ async def admin_callback(
 
 @router.post('/admin/logout', include_in_schema=False)
 async def admin_logout(request: Request) -> RedirectResponse:
-    settings = get_settings()
+    settings = get_admin_settings()
     session_id = request.cookies.get(SESSION_COOKIE)
     if session_id:
         _sessions.pop(session_id, None)
@@ -268,7 +268,7 @@ async def admin_session(request: Request) -> Response:
             {
                 'authenticated': True,
                 'profile': session['profile'],
-                'api': {'baseUrl': '/v1', 'audience': get_settings().auth0_audience},
+                'api': {'baseUrl': '/v1', 'audience': get_admin_settings().auth0_audience},
                 'accessToken': session['access_token'],
                 'modules': [
                     {'id': 'tenant-setup', 'label': 'Tenant Setup'},

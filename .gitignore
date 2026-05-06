@@ -1,3 +1,8 @@
+# JavaScript
+node_modules/
+admin-panel/node_modules/
+admin-panel/dist/
+
 # Python
 __pycache__/
 *.py[cod]
