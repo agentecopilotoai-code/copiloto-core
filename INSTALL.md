@@ -13,8 +13,9 @@ Instala estas herramientas antes de empezar:
 | Git | 2.40+ | Clonar y versionar el proyecto |
 | Bash | 5+ | Ejecutar scripts de instalación |
 | curl | cualquiera reciente | Smoke tests locales |
+| OpenSSL | cualquiera reciente | Generar secretos locales |
 
-> No necesitas instalar PostgreSQL, Redis, MinIO ni Python en tu máquina para correr el stack local, porque todo corre dentro de Docker. Python solo es necesario si quieres desarrollar o ejecutar tests fuera de contenedores.
+> No necesitas instalar PostgreSQL, Redis, MinIO ni Python en tu máquina para correr el stack local, porque todo corre dentro de Docker. Python solo es necesario si quieres desarrollar o ejecutar tests fuera de contenedores. El script de secretos usa `openssl`, que normalmente ya viene instalado en Linux/macOS; si no lo tienes, instálalo o crea `.env` manualmente desde `.env.example`.
 
 ## 2. Clonar o entrar al repositorio
 
@@ -207,6 +208,17 @@ docker compose down -v
 ```
 
 ## 10. Troubleshooting
+
+
+### `python: command not found` al generar secretos
+
+El generador de secretos ya no depende de Python. Actualiza el repositorio y vuelve a ejecutar:
+
+```bash
+./scripts/generate-local-secrets.sh
+```
+
+Si el intento anterior dejó un `.env` incompleto con placeholders `change-me-*`, el script lo moverá automáticamente a `.env.incomplete.<timestamp>.bak` y generará uno nuevo.
 
 ### `docker: command not found`
 
