@@ -176,6 +176,16 @@ export COPILOTOIA_DOMAIN=copilotoia.tu-dominio.com
 
 También puedes usar `MGMT_ACCESS_TOKEN` si ya tienes un token de Management API válido. La aplicación M2M de Management API debe tener permisos suficientes para gestionar resource servers, clients, client grants, roles y actions.
 
+Al terminar, el script guarda automáticamente la configuración necesaria en archivos locales ignorados por git:
+
+| Archivo | Contenido | Se versiona |
+|---|---|---:|
+| `.env.auth0.local` | issuer, audience, namespace de claims, client IDs, URLs permitidas y rutas de secretos | No |
+| `.secrets/auth0-admin-client-secret` | client secret de la app web admin si Auth0 lo entrega | No |
+| `.secrets/auth0-service-client-secret` | client secret de la app M2M interna | No |
+
+Puedes cambiar la salida con `AUTH0_ENV_FILE`, `AUTH0_SECRETS_DIR` o desactivarla con `SAVE_AUTH0_CONFIG=false`. Estos archivos son locales y sensibles; no los subas al repositorio ni los compartas por chat.
+
 > Nota: este script prepara Auth0, pero la API actual aún valida JWT local HS256. La integración OIDC/Auth0 RS256 está registrada como `TASK-0001` en `docs/BACKLOG.md`.
 
 ### WhatsApp / Meta Graph API

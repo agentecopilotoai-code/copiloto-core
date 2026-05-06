@@ -22,6 +22,9 @@ set -euo pipefail
 #   CONFIGURE_LOGIN_ACTION    true/false. Default: true
 #   BIND_LOGIN_ACTION         true/false. Default: true
 #   OUTPUT_SECRETS            true/false. Default: false
+#   SAVE_AUTH0_CONFIG         true/false. Default: true
+#   AUTH0_ENV_FILE            Archivo local de salida. Default: .env.auth0.local
+#   AUTH0_SECRETS_DIR         Directorio local de secretos. Default: .secrets
 
 AUTH0_DOMAIN="${AUTH0_DOMAIN:-}"
 MGMT_CLIENT_ID="${MGMT_CLIENT_ID:-}"
@@ -38,6 +41,9 @@ CLAIMS_NAMESPACE="${CLAIMS_NAMESPACE:-https://$COPILOTOIA_DOMAIN/claims}"
 CONFIGURE_LOGIN_ACTION="${CONFIGURE_LOGIN_ACTION:-true}"
 BIND_LOGIN_ACTION="${BIND_LOGIN_ACTION:-true}"
 OUTPUT_SECRETS="${OUTPUT_SECRETS:-false}"
+SAVE_AUTH0_CONFIG="${SAVE_AUTH0_CONFIG:-true}"
+AUTH0_ENV_FILE="${AUTH0_ENV_FILE:-.env.auth0.local}"
+AUTH0_SECRETS_DIR="${AUTH0_SECRETS_DIR:-.secrets}"
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -99,6 +105,21 @@ api_request() {
 api_get() { api_request GET "$1"; }
 api_post() { api_request POST "$1" "$2"; }
 api_patch() { api_request PATCH "$1" "$2"; }
+
+write_secret_file() {
+  local path="$1"
+  local value="$2"
+
+  [ -n "$value" ] || return 0
+  mkdir -p "$(dirname "$path")"
+  umask 077
+  printf '%s\n' "$value" >"$path"
+  chmod 600 "$path" 2>/dev/null || true
+}
+
+json_string_array_to_csv() {
+  jq -r 'if type == "array" then join(",") else "" end' <<<"$1"
+}
 
 CALLBACKS_JSON="$(json_array_from_csv "$ADMIN_CALLBACKS")"
 LOGOUTS_JSON="$(json_array_from_csv "$ADMIN_LOGOUTS")"
@@ -172,20 +193,24 @@ service_permissions="tenants:read,channels:read,contacts:read,contacts:write,con
 echo "▶ Upsert API CopilotoIA Core"
 resource_servers="$(api_get '/resource-servers?per_page=100')"
 api_id="$(jq -r --arg identifier "$AUTH0_API_IDENTIFIER" '.[] | select(.identifier == $identifier) | .id' <<<"$resource_servers" | head -n1)"
-api_payload="$(jq -n \
+api_create_payload="$(jq -n \
   --arg identifier "$AUTH0_API_IDENTIFIER" \
   --argjson scopes "$permissions_json" \
   '{name:"copilotoia-core-api",identifier:$identifier,signing_alg:"RS256",allow_offline_access:true,enforce_policies:true,token_dialect:"access_token_authz",token_lifetime:86400,token_lifetime_for_web:7200,scopes:$scopes}')"
+api_patch_payload="$(jq -n \
+  --argjson scopes "$permissions_json" \
+  '{name:"copilotoia-core-api",signing_alg:"RS256",allow_offline_access:true,enforce_policies:true,token_dialect:"access_token_authz",token_lifetime:86400,token_lifetime_for_web:7200,scopes:$scopes}')"
 
 if [ -z "$api_id" ]; then
-  api_id="$(api_post '/resource-servers' "$api_payload" | jq -r .id)"
+  api_id="$(api_post '/resource-servers' "$api_create_payload" | jq -r .id)"
 else
-  api_patch "/resource-servers/$api_id" "$api_payload" >/dev/null
+  api_patch "/resource-servers/$api_id" "$api_patch_payload" >/dev/null
 fi
 
 echo "▶ Upsert app $AUTH0_ADMIN_APP_NAME"
 clients="$(api_get '/clients?is_global=false&fields=client_id,name,app_type&include_fields=true&per_page=100')"
 admin_client_id="$(jq -r --arg name "$AUTH0_ADMIN_APP_NAME" '.[] | select(.name == $name) | .client_id' <<<"$clients" | head -n1)"
+admin_client_secret=""
 admin_payload="$(jq -n \
   --arg name "$AUTH0_ADMIN_APP_NAME" \
   --argjson callbacks "$CALLBACKS_JSON" \
@@ -212,6 +237,11 @@ if [ -z "$service_client_id" ]; then
 else
   api_patch "/clients/$service_client_id" "$service_payload" >/dev/null
 fi
+
+admin_client_detail="$(api_get "/clients/$admin_client_id?fields=client_id,client_secret&include_fields=true")"
+admin_client_secret="$(jq -r '.client_secret // empty' <<<"$admin_client_detail")"
+service_client_detail="$(api_get "/clients/$service_client_id?fields=client_id,client_secret&include_fields=true")"
+service_client_secret="$(jq -r '.client_secret // empty' <<<"$service_client_detail")"
 
 echo "▶ Upsert client grant M2M hacia API"
 client_grants="$(api_get '/client-grants?per_page=100')"
@@ -359,6 +389,32 @@ ACTION
   fi
 fi
 
+if [ "$SAVE_AUTH0_CONFIG" = "true" ]; then
+  echo "▶ Guardar configuración Auth0 local"
+  umask 077
+  cat >"$AUTH0_ENV_FILE" <<EOF_AUTH0_ENV
+# Generado por scripts/configure-auth0.sh. No versionar este archivo.
+AUTH0_DOMAIN=$AUTH0_DOMAIN
+AUTH0_ISSUER=https://$AUTH0_DOMAIN/
+AUTH0_AUDIENCE=$AUTH0_API_IDENTIFIER
+AUTH0_API_IDENTIFIER=$AUTH0_API_IDENTIFIER
+AUTH0_CLAIMS_NAMESPACE=$CLAIMS_NAMESPACE
+AUTH0_ADMIN_APP_NAME=$AUTH0_ADMIN_APP_NAME
+AUTH0_ADMIN_CLIENT_ID=$admin_client_id
+AUTH0_SERVICE_APP_NAME=$AUTH0_SERVICE_APP_NAME
+AUTH0_SERVICE_CLIENT_ID=$service_client_id
+AUTH0_SERVICE_AUDIENCE=$AUTH0_API_IDENTIFIER
+AUTH0_CALLBACK_URLS=$(json_string_array_to_csv "$CALLBACKS_JSON")
+AUTH0_LOGOUT_URLS=$(json_string_array_to_csv "$LOGOUTS_JSON")
+AUTH0_WEB_ORIGINS=$(json_string_array_to_csv "$ORIGINS_JSON")
+AUTH0_ADMIN_CLIENT_SECRET_FILE=$AUTH0_SECRETS_DIR/auth0-admin-client-secret
+AUTH0_SERVICE_CLIENT_SECRET_FILE=$AUTH0_SECRETS_DIR/auth0-service-client-secret
+EOF_AUTH0_ENV
+  chmod 600 "$AUTH0_ENV_FILE" 2>/dev/null || true
+  write_secret_file "$AUTH0_SECRETS_DIR/auth0-admin-client-secret" "$admin_client_secret"
+  write_secret_file "$AUTH0_SECRETS_DIR/auth0-service-client-secret" "$service_client_secret"
+fi
+
 cat <<SUMMARY
 
 ✅ Auth0 CopilotoIA configurado
@@ -369,6 +425,8 @@ AUTH0_ADMIN_APP_NAME=$AUTH0_ADMIN_APP_NAME
 AUTH0_ADMIN_CLIENT_ID=$admin_client_id
 AUTH0_SERVICE_APP_NAME=$AUTH0_SERVICE_APP_NAME
 AUTH0_SERVICE_CLIENT_ID=$service_client_id
+AUTH0_ENV_FILE=$AUTH0_ENV_FILE
+AUTH0_SECRETS_DIR=$AUTH0_SECRETS_DIR
 SUMMARY
 
 if [ "$OUTPUT_SECRETS" = "true" ] && [ -n "$service_client_secret" ]; then
