@@ -121,6 +121,16 @@ async def admin_assets(asset_path: str) -> FileResponse:
     return _dist_file(f'assets/{asset_path}')
 
 
+@router.get('/assets/{asset_path:path}', include_in_schema=False)
+async def legacy_admin_assets(asset_path: str) -> FileResponse:
+    return _dist_file(f'assets/{asset_path}')
+
+
+@router.get('/favicon.ico', include_in_schema=False)
+async def admin_favicon() -> Response:
+    return Response(status_code=204)
+
+
 @router.get('/admin/login', include_in_schema=False)
 async def admin_login(request: Request) -> RedirectResponse:
     settings = get_admin_settings()

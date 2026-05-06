@@ -70,7 +70,7 @@ Opciones útiles:
 ./scripts/bootstrap-admin-panel.sh --skip-docker # solo instala dependencias y compila React localmente
 ```
 
-Si ejecutas solo `docker compose build admin-panel`, Docker construye la imagen pero no crea ni arranca el contenedor. Para verlo en Docker necesitas `./scripts/bootstrap-admin-panel.sh` o `docker compose up -d admin-panel`. El servicio `admin-panel` no depende de la salud de la API ni exige `.env`; esto permite abrir `/admin/` y diagnosticar Auth0 aunque el core todavía no esté configurado.
+Si ejecutas solo `docker compose build admin-panel`, Docker construye la imagen pero no crea ni arranca el contenedor. Para verlo en Docker necesitas `./scripts/bootstrap-admin-panel.sh` o `docker compose up -d admin-panel`. El servicio `admin-panel` no depende de la salud de la API ni exige `.env`; esto permite abrir `/admin/` y diagnosticar Auth0 aunque el core todavía no esté configurado. El build Vite usa `base: '/admin/'`, por lo que los assets se publican bajo `/admin/assets/*`; el backend conserva una ruta compatible `/assets/*` para builds antiguos cacheados por el navegador.
 
 ## Comandos de desarrollo
 
