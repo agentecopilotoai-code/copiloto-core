@@ -8,14 +8,11 @@ Este comando borra los volúmenes locales de Docker Compose, incluyendo la base 
 
 Ejecuta:
   ./scripts/reset-local-dev.sh --yes
+
+Equivalente recomendado:
+  ./scripts/bootstrap.sh --reset --yes
 MSG
   exit 2
 fi
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "Error: docker no está instalado o no está en el PATH." >&2
-  exit 1
-fi
-
-docker compose down -v --remove-orphans
-./scripts/bootstrap.sh
+./scripts/bootstrap.sh --reset --yes

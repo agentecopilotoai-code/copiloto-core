@@ -137,7 +137,17 @@ Archivos generados:
 ./scripts/bootstrap.sh
 ```
 
-Ese comando valida Docker, genera secretos si faltan, construye la imagen y levanta:
+Ese comando ahora hace todo el flujo de desarrollo: valida Docker, genera secretos si faltan, construye imágenes, levanta contenedores, valida credenciales de PostgreSQL, valida extensiones/tablas/tenants demo, espera `/v1/health`, ejecuta `scripts/smoke-test.sh` y valida métricas en `/metrics`.
+
+Para empezar completamente desde cero y borrar volúmenes locales:
+
+```bash
+./scripts/bootstrap.sh --reset --yes
+```
+
+Ese reset solo debe usarse en desarrollo porque borra la base PostgreSQL local.
+
+Servicios levantados:
 
 - API: `http://localhost:8000`
 - Swagger/OpenAPI: `http://localhost:8000/docs`
@@ -146,7 +156,9 @@ Ese comando valida Docker, genera secretos si faltan, construye la imagen y leva
 - MinIO API: `http://localhost:9000`
 - MinIO consola: `http://localhost:9001`
 - OpenTelemetry OTLP HTTP: `http://localhost:4318`
-- Métricas Prometheus del collector: `http://localhost:8889`
+- Métricas Prometheus del collector: `http://localhost:8889/metrics`
+
+> `http://localhost:8889/` devuelve `404 page not found` porque el exporter Prometheus publica métricas en `/metrics`, no en la raíz.
 
 ## 6. Verificación local
 
@@ -168,6 +180,12 @@ Ejecuta smoke test:
 ./scripts/smoke-test.sh
 ```
 
+Valida métricas OpenTelemetry:
+
+```bash
+curl -fsS http://localhost:8889/metrics | head
+```
+
 Abre Swagger:
 
 ```text
@@ -176,7 +194,7 @@ http://localhost:8000/docs
 
 ## 7. Base de datos local
 
-La base se inicializa automáticamente la primera vez que se crea el volumen `postgres-data`.
+La base se inicializa automáticamente la primera vez que se crea el volumen `postgres-data`. `./scripts/bootstrap.sh` valida que la instalación quedó completa revisando credenciales, extensiones requeridas, tablas principales y tenants demo.
 
 Orden de scripts:
 
@@ -202,6 +220,7 @@ Probar tenant demo:
 
 ```bash
 curl -fsS \
+  -H "Authorization: Bearer $(grep '^SERVICE_TOKEN=' .env | cut -d= -f2-)" \
   -H 'X-Tenant-Id: 11111111-1111-1111-1111-111111111111' \
   http://localhost:8000/v1/conversations
 ```
@@ -345,17 +364,16 @@ Apagar y borrar volúmenes:
 docker compose down -v
 ```
 
-Regenerar todo desde cero con el script seguro de desarrollo:
+Regenerar todo desde cero con el bootstrap único:
+
+```bash
+./scripts/bootstrap.sh --reset --yes
+```
+
+Alias compatible:
 
 ```bash
 ./scripts/reset-local-dev.sh --yes
-```
-
-Equivalente manual:
-
-```bash
-docker compose down -v --remove-orphans
-./scripts/bootstrap.sh
 ```
 
 ## 12. Troubleshooting
@@ -367,7 +385,7 @@ Esto indica que tu volumen local de PostgreSQL fue creado con una contraseña an
 En desarrollo local, la solución más simple es borrar el volumen y recrear la base con el `.env` actual:
 
 ```bash
-./scripts/reset-local-dev.sh --yes
+./scripts/bootstrap.sh --reset --yes
 ```
 
 Luego valida:

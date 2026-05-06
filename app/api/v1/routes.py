@@ -195,7 +195,22 @@ async def get_conversation(conversation_id: UUID, tenant_id: UUID = Depends(requ
 
 @router.post('/conversations/{conversation_id}/messages', status_code=202)
 async def create_message(conversation_id: UUID, payload: MessageCreate, request: Request, conn: asyncpg.Connection = Depends(get_db), idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
+    request_tenant_id = getattr(request.state, 'tenant_id', None)
+    support_mode = getattr(request.state, 'support_mode', False)
+    if not request_tenant_id and not support_mode:
+        raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
+    if request_tenant_id and request_tenant_id != payload.tenant_id and not support_mode:
+        raise HTTPException(status_code=403, detail='Payload tenant_id does not match request tenant')
+
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    conversation = await conn.fetchrow(
+        'select id from app.conversations where tenant_id=$1 and id=$2',
+        payload.tenant_id,
+        conversation_id,
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail='Conversation not found for tenant')
+
     row = await conn.fetchrow(
         """
         insert into app.messages (tenant_id, conversation_id, direction, sender_actor_type, body_text, message_type, payload, status)

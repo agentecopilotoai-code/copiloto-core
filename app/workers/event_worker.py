@@ -17,10 +17,10 @@ async def process_once(conn: asyncpg.Connection) -> int:
         """
         select e.id, e.tenant_id, e.aggregate_id, m.body_text, c.phone_number_id, ct.phone_e164
         from app.domain_events e
-        join app.messages m on m.id = e.aggregate_id
-        join app.conversations cv on cv.id = m.conversation_id
-        join app.contacts ct on ct.id = cv.contact_id
-        join app.tenant_channels c on c.id = cv.channel_id
+        join app.messages m on m.id = e.aggregate_id and m.tenant_id = e.tenant_id
+        join app.conversations cv on cv.id = m.conversation_id and cv.tenant_id = e.tenant_id
+        join app.contacts ct on ct.id = cv.contact_id and ct.tenant_id = e.tenant_id
+        join app.tenant_channels c on c.id = cv.channel_id and c.tenant_id = e.tenant_id
         where e.published_at is null and e.event_name='message.queued'
         order by e.occurred_at
         limit 10
