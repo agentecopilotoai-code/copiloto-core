@@ -258,7 +258,7 @@ for role in "${role_names[@]}"; do
     --arg identifier "$AUTH0_API_IDENTIFIER" \
     --argjson current "$current_permissions" \
     '($csv | split(",") | map(select(length > 0))) as $desired |
-     ($current | map(.permission_name)) as $existing |
+     ($current | map(select(.resource_server_identifier == $identifier) | .permission_name)) as $existing |
      {permissions: ($desired - $existing | map({resource_server_identifier:$identifier,permission_name:.}))}')"
 
   if [ "$(jq '.permissions | length' <<<"$missing_permissions")" -gt 0 ]; then
@@ -318,7 +318,18 @@ ACTION
       --arg action_id "$action_id" \
       --argjson existing "$bindings_response" \
       '($existing.bindings // []) as $bindings |
-       {bindings: ((($bindings | map(select(.display_name != "copilotoia-post-login-claims"))) + [{ref:{type:"action_id",value:$action_id},display_name:"copilotoia-post-login-claims"}]) | map({ref,display_name}))}')"
+       ($bindings
+        | map(select(.display_name != "copilotoia-post-login-claims" and (.action.id? // .ref.value? // "") != $action_id))
+        | map(
+            if (.ref? and .ref.value?) then
+              {ref:.ref, display_name:(.display_name // .ref.value)}
+            elif (.action? and .action.id?) then
+              {ref:{type:"action_id",value:.action.id}, display_name:(.display_name // .action.name // .action.id)}
+            else
+              empty
+            end
+          )) as $preserved |
+       {bindings: ($preserved + [{ref:{type:"action_id",value:$action_id},display_name:"copilotoia-post-login-claims"}])}')"
     api_patch '/actions/triggers/post-login/bindings' "$bindings_payload" >/dev/null
   fi
 fi
