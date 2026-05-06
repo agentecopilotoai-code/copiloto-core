@@ -11,6 +11,14 @@ from app.core.logging import configure_logging
 log = structlog.get_logger()
 
 
+def jsonb_payload(value: object) -> str:
+    if value is None:
+        return '{}'
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
 async def main() -> None:
     configure_logging()
     settings = get_settings()
@@ -38,11 +46,12 @@ async def main() -> None:
                     insert into app.domain_events
                       (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload)
                     values ($1, 'reminder_job', $2, 'reminder.due', $3, $4::jsonb)
+                    on conflict (tenant_id, idempotency_key) do nothing
                     """,
                     row['tenant_id'],
                     row['id'],
                     f"reminder:{row['id']}",
-                    json.dumps(dict(row['payload']) if row['payload'] else {}),
+                    jsonb_payload(row['payload']),
                 )
                 await conn.execute("update app.reminder_jobs set status='sent' where id=$1", row['id'])
                 log.info('reminder_enqueued', reminder_id=str(row['id']))

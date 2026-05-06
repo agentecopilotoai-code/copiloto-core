@@ -2,6 +2,7 @@ services:
   api:
     build: .
     env_file: .env
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -11,28 +12,31 @@ services:
         condition: service_started
     ports:
       - "8000:8000"
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./app:/app/app:ro
 
   event-worker:
     build: .
     env_file: .env
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    command: python -m app.workers.event_worker
+    command: python3 -m app.workers.event_worker
 
   scheduler:
     build: .
     env_file: .env
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    command: python -m app.workers.scheduler
+    command: python3 -m app.workers.scheduler
 
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     env_file: .env
     environment:
       APP_DB_USER: ${APP_DB_USER:-copiloto_app}
@@ -50,6 +54,7 @@ services:
 
   redis:
     image: redis:7.4-alpine
+    restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
       - "6379:6379"
@@ -58,6 +63,7 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
     env_file: .env
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-copilotoia-minio}
@@ -71,6 +77,7 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.117.0
+    restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
       - ./infra/otel-collector.yaml:/etc/otelcol/config.yaml:ro

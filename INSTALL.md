@@ -1,118 +1,190 @@
-# Guía de instalación local - Copiloto IA Core
+# Guía de instalación - Copiloto IA Core
 
-Esta guía explica cómo levantar en tu máquina el core Docker de referencia del Copiloto IA: API REST, workers, PostgreSQL con `pgvector`, Redis, MinIO/S3 local y OpenTelemetry Collector.
+Esta guía explica cómo poner a funcionar el core Docker de Copiloto IA en **desarrollo local** y cómo preparar la información necesaria para **producción**.
 
-## 1. Requisitos
+## 0. Estado esperado de Docker Desktop
 
-Instala estas herramientas antes de empezar:
+Cuando el stack está sano, en Docker Desktop deberías ver estos servicios del proyecto `copilotoia`:
 
-| Herramienta | Versión recomendada | Uso |
+| Servicio | Debe estar corriendo | Comentario |
 |---|---:|---|
-| Docker Engine / Docker Desktop | 24+ | Ejecutar contenedores |
-| Docker Compose v2 | 2.20+ | Orquestar los servicios locales |
-| Git | 2.40+ | Clonar y versionar el proyecto |
-| Bash | 5+ | Ejecutar scripts de instalación |
-| curl | cualquiera reciente | Smoke tests locales |
-| OpenSSL | cualquiera reciente | Generar secretos locales |
+| `postgres-1` | Sí | Base de datos PostgreSQL + `pgvector`. |
+| `redis-1` | Sí | Cache/locks/sesiones efímeras. |
+| `minio-1` | Sí | S3 local para desarrollo. |
+| `api-1` | Sí | API REST en `http://localhost:8000/docs`. |
+| `event-worker-1` | Sí | Worker de eventos salientes. No expone puertos. |
+| `scheduler-1` | Sí | Worker de recordatorios. No expone puertos. |
+| `otel-collector-1` | Sí, recomendado | Observabilidad local. Si está apagado, la API puede responder, pero falta telemetría. |
 
-> No necesitas instalar PostgreSQL, Redis, MinIO ni Python en tu máquina para correr el stack local, porque todo corre dentro de Docker. Python solo es necesario si quieres desarrollar o ejecutar tests fuera de contenedores. El script de secretos usa `openssl`, que normalmente ya viene instalado en Linux/macOS; si no lo tienes, instálalo o crea `.env` manualmente desde `.env.example`.
+Si `api`, `postgres`, `redis` y `minio` están en verde, la API local probablemente ya está funcionando. Si `event-worker`, `scheduler` u `otel-collector` aparecen detenidos, revisa logs con:
 
-## 2. Clonar o entrar al repositorio
+```bash
+docker compose logs --tail=200 event-worker scheduler otel-collector
+```
 
-Si aún no tienes el repositorio:
+## 1. Requisitos por sistema operativo
+
+### macOS
+
+1. Instala Docker Desktop desde <https://www.docker.com/products/docker-desktop/>.
+2. Instala Git si no lo tienes:
+
+```bash
+git --version
+```
+
+3. Instala herramientas útiles con Homebrew si hacen falta:
+
+```bash
+brew install git curl openssl python@3.12
+```
+
+4. Verifica:
+
+```bash
+docker compose version
+python3 --version
+openssl version
+```
+
+### Windows 11 / Windows 10 con WSL2
+
+1. Instala Docker Desktop y activa WSL2 backend.
+2. Instala Ubuntu desde Microsoft Store si no lo tienes.
+3. Abre Ubuntu/WSL y ejecuta:
+
+```bash
+sudo apt update
+sudo apt install -y git curl openssl python3 python3-venv
+```
+
+4. Verifica dentro de WSL:
+
+```bash
+docker compose version
+python3 --version
+openssl version
+```
+
+> Recomendado: clona el repo dentro del filesystem de WSL, por ejemplo `~/projects/CopilotoIA`, no en `C:\`, para evitar problemas de performance/permisos.
+
+### Linux Ubuntu/Debian
+
+1. Instala dependencias base:
+
+```bash
+sudo apt update
+sudo apt install -y git curl openssl python3 python3-venv ca-certificates
+```
+
+2. Instala Docker Engine siguiendo la guía oficial de Docker para tu distro.
+3. Agrega tu usuario al grupo Docker si aplica:
+
+```bash
+sudo usermod -aG docker "$USER"
+newgrp docker
+```
+
+4. Verifica:
+
+```bash
+docker compose version
+python3 --version
+openssl version
+```
+
+## 2. Decisión de runtime Python
+
+El proyecto soporta **Python 3**. En contenedores usamos `python:3.12-slim`, y los comandos Docker ejecutan `python3` explícitamente.
+
+Para correr el stack local no necesitas instalar paquetes Python en tu máquina, porque Docker construye la imagen. Python3 local solo es necesario si quieres desarrollar o correr herramientas fuera de Docker.
+
+## 3. Clonar el repositorio
 
 ```bash
 git clone <URL_DEL_REPOSITORIO> CopilotoIA
 cd CopilotoIA
 ```
 
-Si ya estás en el proyecto:
+Si ya tienes el repo:
 
 ```bash
-cd /workspace/CopilotoIA
+cd /ruta/a/CopilotoIA
+git pull
 ```
 
-## 3. Generar secretos locales seguros
+## 4. Configuración local de secretos
 
-El repositorio incluye `.env.example` como plantilla. No edites secretos reales sobre ese archivo; genera un `.env` local ignorado por git:
+Genera `.env` local y archivos `.secrets/*`:
 
 ```bash
 ./scripts/generate-local-secrets.sh
 ```
 
-Este script crea:
+El script usa Bash + OpenSSL, no Python. Si un intento anterior dejó `.env` con placeholders `change-me-*`, el script lo respalda como `.env.incomplete.<timestamp>.bak` y genera uno nuevo.
 
-- `.env` con passwords/tokens locales generados automáticamente.
-- `.secrets/*` con copias de secretos sensibles y permisos `600`.
+Archivos generados:
 
-Ambos están ignorados por git. Puedes cambiar esos valores cuando quieras; en producción deberías reemplazarlos por un gestor de secretos como AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, Docker secrets o Kubernetes secrets.
+| Archivo | Se sube a git | Uso |
+|---|---:|---|
+| `.env` | No | Variables locales de Docker Compose. |
+| `.secrets/*` | No | Copia local de secretos sensibles con permisos `600`. |
+| `.env.example` | Sí | Plantilla sin secretos reales. |
 
-## 4. Levantar todo con Docker
-
-La forma recomendada es usar el bootstrap:
+## 5. Levantar desarrollo local
 
 ```bash
 ./scripts/bootstrap.sh
 ```
 
-Ese comando construye la imagen de la API y levanta:
+Ese comando valida Docker, genera secretos si faltan, construye la imagen y levanta:
 
-- `api`: FastAPI REST en `http://localhost:8000`.
-- `event-worker`: worker de eventos de dominio.
-- `scheduler`: worker de recordatorios.
-- `postgres`: PostgreSQL 16 con `pgvector`.
-- `redis`: cache/locks/sesiones efímeras.
-- `minio`: almacenamiento S3 local.
-- `otel-collector`: collector local de observabilidad.
+- API: `http://localhost:8000`
+- Swagger/OpenAPI: `http://localhost:8000/docs`
+- PostgreSQL: `localhost:5432`
+- Redis: `localhost:6379`
+- MinIO API: `http://localhost:9000`
+- MinIO consola: `http://localhost:9001`
+- OpenTelemetry OTLP HTTP: `http://localhost:4318`
+- Métricas Prometheus del collector: `http://localhost:8889`
 
-También puedes levantar manualmente:
+## 6. Verificación local
 
-```bash
-docker compose up -d --build
-```
-
-## 5. Verificar que quedó corriendo
-
-Revisa el estado de contenedores:
+Revisa contenedores:
 
 ```bash
 docker compose ps
 ```
 
-Ejecuta el health check:
+Prueba health:
 
 ```bash
 curl -fsS http://localhost:8000/v1/health
 ```
 
-Abre la documentación interactiva de la API:
+Ejecuta smoke test:
+
+```bash
+./scripts/smoke-test.sh
+```
+
+Abre Swagger:
 
 ```text
 http://localhost:8000/docs
 ```
 
-Abre la consola de MinIO:
+## 7. Base de datos local
 
-```text
-http://localhost:9001
-```
+La base se inicializa automáticamente la primera vez que se crea el volumen `postgres-data`.
 
-Las credenciales de MinIO están en tu `.env`:
+Orden de scripts:
 
-- Usuario: `S3_ACCESS_KEY_ID`
-- Password: `S3_SECRET_ACCESS_KEY`
+1. `infra/postgres/00-init-roles.sh`: crea el rol aplicativo.
+2. `infra/postgres/01-schema.sql`: crea extensiones, tablas, índices, triggers, RLS y grants.
+3. `infra/postgres/02-seed.sql`: crea tenants demo.
 
-## 6. Base de datos inicial
-
-PostgreSQL se inicializa automáticamente la primera vez que se crea el volumen `postgres-data`.
-
-Los scripts se ejecutan en este orden:
-
-1. `infra/postgres/00-init-roles.sh`: crea el usuario aplicativo definido por `APP_DB_USER` y `APP_DB_PASSWORD`.
-2. `infra/postgres/01-schema.sql`: crea extensiones, schema `app`, tablas, índices, triggers, RLS y grants.
-3. `infra/postgres/02-seed.sql`: crea tenants demo para los tres verticales.
-
-Tenants demo incluidos:
+Tenants demo:
 
 | Vertical | Tenant ID | Slug |
 |---|---|---|
@@ -120,23 +192,13 @@ Tenants demo incluidos:
 | Barbería/peluquería | `22222222-2222-2222-2222-222222222222` | `demo-barberia` |
 | Mascotas no clínico | `33333333-3333-3333-3333-333333333333` | `demo-mascotas` |
 
-Para entrar a PostgreSQL desde Docker:
-
-```bash
-docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
-```
-
-Si tu shell no tiene esas variables cargadas, usa los valores de `.env`, por ejemplo:
+Entrar a PostgreSQL:
 
 ```bash
 docker compose exec postgres psql -U copiloto_admin -d copilotoia
 ```
 
-## 7. Probar endpoints multitenant
-
-El core usa `X-Tenant-Id` para fijar el tenant de la transacción y activar Row-Level Security.
-
-Ejemplo para listar conversaciones del tenant demo de taller:
+Probar tenant demo:
 
 ```bash
 curl -fsS \
@@ -144,110 +206,204 @@ curl -fsS \
   http://localhost:8000/v1/conversations
 ```
 
-Ejemplo para consultar health del canal WhatsApp demo:
+## 8. Información que debes obtener de Meta / WhatsApp
 
-```bash
-curl -fsS \
-  http://localhost:8000/v1/tenants/11111111-1111-1111-1111-111111111111/channels/whatsapp/health
+Para desarrollo local puedes operar en modo mock sin token real. Para probar WhatsApp real o ir a producción necesitas obtener esta información en Meta for Developers / Meta Business:
+
+| Variable | Dónde se obtiene | Para qué sirve |
+|---|---|---|
+| `META_ACCESS_TOKEN` | Meta for Developers > App > WhatsApp > API Setup, o token permanente vía System User en Business Settings | Enviar mensajes por Graph API. |
+| `WHATSAPP_APP_SECRET` | Meta for Developers > App Settings > Basic > App Secret | Validar firma `X-Hub-Signature-256` de webhooks. |
+| `WHATSAPP_VERIFY_TOKEN` | Lo defines tú, por ejemplo un token aleatorio largo | Meta lo usa para verificar el webhook. Debe coincidir con tu `.env`. |
+| `META_GRAPH_VERSION` | Versión Graph API elegida, ejemplo `v23.0` | Versionar endpoints de Meta. |
+| `phone_number_id` | WhatsApp > API Setup > From phone number ID | Identifica el número que envía mensajes. |
+| `waba_id` | WhatsApp Manager / Business Settings | Identifica la cuenta WhatsApp Business. |
+| `business_id` | Business Settings > Business Info | Identifica tu Business Manager. |
+
+### Pasos en Meta para desarrollo real
+
+1. Crea o abre una app en <https://developers.facebook.com/>.
+2. Agrega el producto **WhatsApp**.
+3. Copia `Phone number ID` y `WhatsApp Business Account ID`.
+4. Copia el `Temporary access token` para pruebas o crea un System User token para uso más estable.
+5. Copia el `App Secret` desde App Settings > Basic.
+6. Define tu propio `WHATSAPP_VERIFY_TOKEN` y ponlo también al configurar el webhook en Meta.
+7. Configura el webhook apuntando a una URL pública que llegue a:
+
+```text
+https://<TU_DOMINIO_PUBLICO>/v1/webhooks/whatsapp
 ```
 
-## 8. Configurar WhatsApp real
+Para desarrollo local con webhook real necesitas un túnel HTTPS, por ejemplo ngrok o Cloudflare Tunnel, apuntando a `http://localhost:8000`.
 
-Por defecto el adaptador de WhatsApp puede operar en modo local/mock si no configuras un token real. Para usar Meta/WhatsApp Cloud API real, cambia en `.env`:
+## 9. Configurar WhatsApp real en `.env`
+
+Edita `.env`:
 
 ```env
-META_ACCESS_TOKEN=<TU_TOKEN_REAL>
-WHATSAPP_VERIFY_TOKEN=<TOKEN_QUE_CONFIGURAS_EN_META>
+META_ACCESS_TOKEN=<TOKEN_REAL_DE_META>
+WHATSAPP_VERIFY_TOKEN=<TOKEN_QUE_DEFINISTE>
 WHATSAPP_APP_SECRET=<APP_SECRET_DE_META>
 META_GRAPH_VERSION=v23.0
 ```
 
-Luego registra o actualiza el canal de un tenant con el `phone_number_id` real usando el endpoint:
-
-```text
-POST /v1/tenants/{tenant_id}/channels/whatsapp
-```
-
-Reinicia los servicios para tomar los cambios:
+Reinicia servicios:
 
 ```bash
 docker compose restart api event-worker scheduler
 ```
 
-## 9. Comandos útiles
-
-Ver logs de la API:
+Registra el canal en el tenant:
 
 ```bash
-docker compose logs -f api
+curl -fsS -X POST \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $(grep '^SERVICE_TOKEN=' .env | cut -d= -f2-)" \
+  http://localhost:8000/v1/tenants/11111111-1111-1111-1111-111111111111/channels/whatsapp \
+  -d '{
+    "business_id":"<BUSINESS_ID>",
+    "waba_id":"<WABA_ID>",
+    "phone_number_id":"<PHONE_NUMBER_ID>",
+    "token_ref":"secrets/meta_access_token",
+    "app_secret_ref":"secrets/whatsapp_app_secret"
+  }'
 ```
 
-Ver logs de workers:
+## 10. Producción: qué debes preparar
+
+Para producción no uses MinIO local ni `.env` con secretos en disco como fuente final. Prepara equivalentes gestionados:
+
+| Capa | Desarrollo local | Producción recomendada |
+|---|---|---|
+| Runtime | Docker Compose | ECS/Fargate, Kubernetes, Cloud Run, App Service o similar |
+| PostgreSQL | `pgvector/pgvector:pg16` | RDS PostgreSQL/Cloud SQL/Azure PostgreSQL con backups/PITR |
+| Redis | `redis:7.4-alpine` | Redis gestionado con TLS/auth |
+| Objetos | MinIO | S3/GCS/Azure Blob con cifrado |
+| Secretos | `.env` / `.secrets` | Secrets Manager/Secret Manager/Key Vault |
+| TLS | Local sin TLS | Load balancer/API gateway con HTTPS |
+| Observabilidad | OTel Collector local | OTel Collector + CloudWatch/Datadog/Grafana/etc. |
+
+### Checklist de variables para producción
+
+Define estas variables en el gestor de secretos o sistema de configuración de tu plataforma:
+
+```env
+APP_ENV=production
+DATABASE_URL=postgresql://<APP_USER>:<PASSWORD>@<HOST>:5432/<DB>
+REDIS_URL=redis://<HOST>:6379/0
+JWT_ISSUER=<ISSUER_REAL>
+JWT_AUDIENCE=<AUDIENCE_REAL>
+JWT_SECRET=<SECRETO_LARGO>
+SERVICE_TOKEN=<TOKEN_INTERNO_LARGO>
+WHATSAPP_VERIFY_TOKEN=<TOKEN_WEBHOOK>
+WHATSAPP_APP_SECRET=<APP_SECRET_META>
+META_GRAPH_VERSION=v23.0
+META_ACCESS_TOKEN=<TOKEN_META>
+S3_ENDPOINT_URL=<ENDPOINT_S3_SI_APLICA>
+S3_BUCKET=<BUCKET_PROD>
+S3_ACCESS_KEY_ID=<ACCESS_KEY_O_IAM_ROLE>
+S3_SECRET_ACCESS_KEY=<SECRET_KEY_O_IAM_ROLE>
+OTEL_EXPORTER_OTLP_ENDPOINT=<OTEL_ENDPOINT>
+```
+
+### Checklist de despliegue producción
+
+1. Crear base PostgreSQL y ejecutar `infra/postgres/01-schema.sql` como migración inicial.
+2. Crear usuario aplicativo con permisos mínimos equivalentes a `copiloto_app`.
+3. Crear bucket de objetos y política por prefijo de tenant.
+4. Crear secretos en el gestor cloud.
+5. Construir y publicar imagen Docker de la API/workers.
+6. Desplegar `api`, `event-worker` y `scheduler` como servicios separados.
+7. Exponer solo `api` por HTTPS.
+8. Configurar webhook público de Meta hacia `/v1/webhooks/whatsapp`.
+9. Activar backups/PITR de PostgreSQL.
+10. Configurar logs, métricas y alertas.
+
+## 11. Comandos útiles
+
+Ver logs:
 
 ```bash
-docker compose logs -f event-worker scheduler
+docker compose logs -f api event-worker scheduler otel-collector
 ```
 
-Apagar servicios sin borrar datos:
+Reiniciar servicios:
+
+```bash
+docker compose restart api event-worker scheduler otel-collector
+```
+
+Apagar sin borrar datos:
 
 ```bash
 docker compose down
 ```
 
-Apagar y borrar volúmenes locales, incluyendo la base de datos:
+Apagar y borrar volúmenes:
 
 ```bash
 docker compose down -v
 ```
 
-Regenerar la base desde cero:
+Regenerar todo desde cero:
 
 ```bash
 docker compose down -v
 ./scripts/bootstrap.sh
 ```
 
-## 10. Troubleshooting
+## 12. Troubleshooting
 
+### `python: command not found`
 
-### `python: command not found` al generar secretos
-
-El generador de secretos ya no depende de Python. Actualiza el repositorio y vuelve a ejecutar:
+El stack soporta Python3. Los scripts y contenedores deben usar `python3`. Actualiza el repo y vuelve a construir:
 
 ```bash
-./scripts/generate-local-secrets.sh
+git pull
+docker compose up -d --build
 ```
-
-Si el intento anterior dejó un `.env` incompleto con placeholders `change-me-*`, el script lo moverá automáticamente a `.env.incomplete.<timestamp>.bak` y generará uno nuevo.
 
 ### `docker: command not found`
 
-Docker no está instalado o no está en el `PATH`. Instala Docker Desktop o Docker Engine y vuelve a ejecutar `docker compose version`.
+Docker no está instalado o no está en el `PATH`. Instala Docker Desktop/Engine y verifica:
 
-### El puerto `8000`, `5432`, `6379`, `9000` o `9001` ya está ocupado
+```bash
+docker compose version
+```
 
-Cambia el mapeo de puertos en `docker-compose.yml` o detén el servicio local que usa ese puerto.
+### `otel-collector-1` aparece detenido
 
-### Cambié SQL pero no se refleja en PostgreSQL
+Revisa logs:
 
-Los scripts de `/docker-entrypoint-initdb.d` solo corren cuando el volumen de PostgreSQL se crea por primera vez. Para reinicializar:
+```bash
+docker compose logs --tail=200 otel-collector
+```
+
+La configuración actual usa el exporter `debug`, compatible con el collector actual.
+
+### `event-worker-1` o `scheduler-1` aparecen detenidos
+
+Revisa logs:
+
+```bash
+docker compose logs --tail=200 event-worker scheduler
+```
+
+Luego reconstruye y reinicia:
+
+```bash
+docker compose up -d --build event-worker scheduler
+```
+
+### Cambié SQL pero no se refleja
+
+Los scripts de inicialización solo corren cuando el volumen de PostgreSQL se crea por primera vez:
 
 ```bash
 docker compose down -v
 ./scripts/bootstrap.sh
 ```
 
-### Error de firma en webhook WhatsApp
+### Puerto ocupado
 
-Verifica que `WHATSAPP_APP_SECRET` en `.env` sea el mismo App Secret configurado en Meta y que el webhook envíe el header `X-Hub-Signature-256`.
-
-## 11. ¿Por qué se hizo en Python?
-
-Se eligió Python para este core inicial por razones pragmáticas:
-
-- FastAPI permite crear una API REST clara y rápida, con documentación OpenAPI automática.
-- El ecosistema Python es muy fuerte para IA/RAG, embeddings, procesamiento de texto, automatización y workers.
-- La imagen Docker mantiene el runtime aislado, así que no obliga a instalar Python localmente para usar el producto.
-- Para un MVP permite avanzar rápido y luego extraer servicios a otro lenguaje si alguna pieza lo requiere.
-
-No es una decisión irreversible. Si prefieres Node.js/TypeScript, Java/Kotlin, Go o .NET, la arquitectura se puede mantener igual: API REST, eventos, PostgreSQL con RLS, Redis, object storage y workers. Lo que cambiaría sería la implementación del runtime, no el modelo ni los contenedores base.
+Si `8000`, `5432`, `6379`, `9000` o `9001` están ocupados, cambia los puertos en `docker-compose.yml` o detén el servicio que los usa.
