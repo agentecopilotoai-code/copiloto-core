@@ -1,0 +1,332 @@
+import hashlib
+import json
+from uuid import UUID
+
+import asyncpg
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+
+from app.api.v1.schemas import (
+    AppointmentCreate,
+    ChannelCreate,
+    ContactUpsert,
+    ConversationCreate,
+    KnowledgeDocumentCreate,
+    MessageCreate,
+    PromptCreate,
+    ServiceRequestCreate,
+    TenantCreate,
+)
+from app.core.config import get_settings
+from app.db.pool import get_db, record_to_dict
+from app.services.audit import audit
+from app.services.whatsapp import verify_signature
+
+router = APIRouter(prefix='/v1')
+
+
+async def require_tenant(request: Request) -> UUID:
+    if not getattr(request.state, 'tenant_id', None):
+        raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
+    return request.state.tenant_id
+
+
+@router.get('/health')
+async def health(conn: asyncpg.Connection = Depends(get_db)) -> dict:
+    await conn.fetchval('select 1')
+    return {'status': 'ok'}
+
+
+@router.post('/tenants', status_code=status.HTTP_201_CREATED)
+async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    row = await conn.fetchrow(
+        """
+        insert into app.tenants (slug, legal_name, display_name, vertical_code, country_code, timezone)
+        values ($1, $2, $3, $4, $5, $6)
+        returning *
+        """,
+        payload.slug,
+        payload.legal_name,
+        payload.display_name,
+        payload.vertical_code,
+        payload.country_code,
+        payload.timezone,
+    )
+    tenant_id = row['id']
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    await conn.execute('insert into app.tenant_settings (tenant_id) values ($1)', tenant_id)
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.created', entity_type='tenant', entity_id=str(tenant_id))
+    return record_to_dict(row)
+
+
+@router.get('/tenants/{tenant_id}')
+async def get_tenant(tenant_id: UUID, conn: asyncpg.Connection = Depends(get_db)):
+    row = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    return record_to_dict(row)
+
+
+@router.patch('/tenants/{tenant_id}/settings')
+async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    allowed = {k: payload[k] for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train', 'max_bot_turns') if k in payload}
+    current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
+    if not current:
+        raise HTTPException(status_code=404, detail='Settings not found')
+    merged = dict(current)
+    merged.update(allowed)
+    row = await conn.fetchrow(
+        """
+        update app.tenant_settings
+        set locale=$2, business_hours=$3::jsonb, escalation_policy=$4::jsonb, pii_policy=$5::jsonb,
+            no_train=$6, max_bot_turns=$7
+        where tenant_id=$1 returning *
+        """,
+        tenant_id,
+        merged['locale'],
+        json.dumps(merged['business_hours']),
+        json.dumps(merged['escalation_policy']),
+        json.dumps(merged['pii_policy']),
+        merged['no_train'],
+        merged['max_bot_turns'],
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
+    return record_to_dict(row)
+
+
+@router.post('/tenants/{tenant_id}/channels/whatsapp', status_code=201)
+async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        insert into app.tenant_channels (tenant_id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref, status)
+        values ($1, 'whatsapp_cloud_api', $2, $3, $4, $5, $6, 'active')
+        on conflict (tenant_id, provider) do update set
+          business_id=excluded.business_id, waba_id=excluded.waba_id, phone_number_id=excluded.phone_number_id,
+          token_ref=excluded.token_ref, app_secret_ref=excluded.app_secret_ref, status='active'
+        returning *
+        """,
+        tenant_id,
+        payload.business_id,
+        payload.waba_id,
+        payload.phone_number_id,
+        payload.token_ref,
+        payload.app_secret_ref,
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='channel.upserted', entity_type='tenant_channel', entity_id=str(row['id']))
+    return record_to_dict(row)
+
+
+@router.get('/tenants/{tenant_id}/channels/whatsapp/health')
+async def channel_health(tenant_id: UUID, conn: asyncpg.Connection = Depends(get_db)):
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow("select id, provider, phone_number_id, quality_rating, messaging_limit_tier, status from app.tenant_channels where tenant_id=$1 and provider='whatsapp_cloud_api'", tenant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+    return {'channel': record_to_dict(row), 'upstream': 'not_checked_in_local_core'}
+
+
+@router.post('/contacts/upsert')
+async def upsert_contact(payload: ContactUpsert, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    phone_hash = hashlib.sha256(payload.phone_e164.encode()).digest()
+    row = await conn.fetchrow(
+        """
+        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, opt_in_status, metadata)
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        on conflict (tenant_id, wa_id) do update set
+          phone_e164=excluded.phone_e164, phone_hash=excluded.phone_hash, display_name=excluded.display_name,
+          opt_in_status=excluded.opt_in_status, metadata=app.contacts.metadata || excluded.metadata
+        returning *
+        """,
+        payload.tenant_id,
+        payload.wa_id,
+        payload.phone_e164,
+        phone_hash,
+        payload.display_name,
+        payload.opt_in_status,
+        json.dumps(payload.metadata),
+    )
+    await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='contact.upserted', entity_type='contact', entity_id=str(row['id']))
+    return record_to_dict(row)
+
+
+@router.get('/contacts/{contact_id}')
+async def get_contact(contact_id: UUID, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+    row = await conn.fetchrow('select * from app.contacts where tenant_id=$1 and id=$2', tenant_id, contact_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Contact not found')
+    return record_to_dict(row)
+
+
+@router.post('/conversations', status_code=201)
+async def create_conversation(payload: ConversationCreate, conn: asyncpg.Connection = Depends(get_db)):
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    row = await conn.fetchrow(
+        """
+        insert into app.conversations (tenant_id, contact_id, channel_id, opened_by, current_intent)
+        values ($1, $2, $3, $4, $5) returning *
+        """,
+        payload.tenant_id,
+        payload.contact_id,
+        payload.channel_id,
+        payload.opened_by,
+        payload.current_intent,
+    )
+    return record_to_dict(row)
+
+
+@router.get('/conversations')
+async def list_conversations(tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+    rows = await conn.fetch('select * from app.conversations where tenant_id=$1 order by updated_at desc limit 100', tenant_id)
+    return [dict(r) for r in rows]
+
+
+@router.get('/conversations/{conversation_id}')
+async def get_conversation(conversation_id: UUID, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+    row = await conn.fetchrow('select * from app.conversations where tenant_id=$1 and id=$2', tenant_id, conversation_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Conversation not found')
+    messages = await conn.fetch('select * from app.messages where tenant_id=$1 and conversation_id=$2 order by created_at', tenant_id, conversation_id)
+    data = dict(row)
+    data['messages'] = [dict(m) for m in messages]
+    return data
+
+
+@router.post('/conversations/{conversation_id}/messages', status_code=202)
+async def create_message(conversation_id: UUID, payload: MessageCreate, request: Request, conn: asyncpg.Connection = Depends(get_db), idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    row = await conn.fetchrow(
+        """
+        insert into app.messages (tenant_id, conversation_id, direction, sender_actor_type, body_text, message_type, payload, status)
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb, 'queued') returning *
+        """,
+        payload.tenant_id,
+        conversation_id,
+        payload.direction,
+        payload.sender_actor_type,
+        payload.body_text,
+        payload.message_type,
+        json.dumps(payload.payload),
+    )
+    key = idempotency_key or str(row['id'])
+    await conn.execute(
+        "insert into app.domain_events (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload) values ($1,'message',$2,'message.queued',$3,$4::jsonb) on conflict do nothing",
+        payload.tenant_id,
+        row['id'],
+        key,
+        json.dumps({'conversation_id': str(conversation_id)}),
+    )
+    await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(row['id']))
+    return record_to_dict(row)
+
+
+@router.post('/conversations/{conversation_id}/handoff', status_code=202)
+async def create_handoff(conversation_id: UUID, request: Request, payload: dict, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+    row = await conn.fetchrow(
+        """
+        insert into app.handoffs (tenant_id, conversation_id, reason, assigned_to)
+        values ($1, $2, $3, null) returning *
+        """,
+        tenant_id,
+        conversation_id,
+        payload.get('reason', 'manual_or_policy_handoff'),
+    )
+    await conn.execute("update app.conversations set status='human_required', handoff_required=true where tenant_id=$1 and id=$2", tenant_id, conversation_id)
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='handoff.created', entity_type='handoff', entity_id=str(row['id']))
+    return record_to_dict(row)
+
+
+@router.post('/conversations/{conversation_id}/release', status_code=202)
+async def release_conversation(conversation_id: UUID, request: Request, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+    row = await conn.fetchrow("update app.conversations set status='open', handoff_required=false where tenant_id=$1 and id=$2 returning *", tenant_id, conversation_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Conversation not found')
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='conversation.released', entity_type='conversation', entity_id=str(conversation_id))
+    return record_to_dict(row)
+
+
+@router.post('/service-requests', status_code=201)
+async def create_service_request(payload: ServiceRequestCreate, conn: asyncpg.Connection = Depends(get_db)):
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    row = await conn.fetchrow(
+        """
+        insert into app.service_requests (tenant_id, contact_id, conversation_id, vertical_code, service_type, problem_summary, urgency, intake)
+        values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) returning *
+        """,
+        payload.tenant_id, payload.contact_id, payload.conversation_id, payload.vertical_code, payload.service_type, payload.problem_summary, payload.urgency, json.dumps(payload.intake),
+    )
+    return record_to_dict(row)
+
+
+@router.patch('/service-requests/{request_id}')
+async def patch_service_request(request_id: UUID, payload: dict, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+    row = await conn.fetchrow("update app.service_requests set status=coalesce($3,status), intake=intake || $4::jsonb where tenant_id=$1 and id=$2 returning *", tenant_id, request_id, payload.get('status'), json.dumps(payload.get('intake', {})))
+    if not row:
+        raise HTTPException(status_code=404, detail='Service request not found')
+    return record_to_dict(row)
+
+
+@router.post('/appointments', status_code=201)
+async def create_appointment(payload: AppointmentCreate, conn: asyncpg.Connection = Depends(get_db)):
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    row = await conn.fetchrow(
+        """
+        insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, resource_id, service_code, starts_at, ends_at, notes)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *
+        """,
+        payload.tenant_id, payload.contact_id, payload.conversation_id, payload.service_request_id, payload.resource_id, payload.service_code, payload.starts_at, payload.ends_at, payload.notes,
+    )
+    return record_to_dict(row)
+
+
+@router.post('/knowledge/documents', status_code=201)
+async def create_knowledge_document(payload: KnowledgeDocumentCreate, conn: asyncpg.Connection = Depends(get_db)):
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    row = await conn.fetchrow("insert into app.knowledge_documents (tenant_id, source_type, title, source_uri, visibility) values ($1,$2,$3,$4,$5) returning *", payload.tenant_id, payload.source_type, payload.title, payload.source_uri, payload.visibility)
+    return record_to_dict(row)
+
+
+@router.post('/prompts', status_code=201)
+async def create_prompt(payload: PromptCreate, conn: asyncpg.Connection = Depends(get_db)):
+    row = await conn.fetchrow("insert into app.prompt_templates (tenant_id, vertical_code, prompt_type, name, version, content, variables, checksum) values ($1,$2,$3,$4,$5,$6,$7::jsonb, encode(sha256($6::bytea),'hex')) returning *", payload.tenant_id, payload.vertical_code, payload.prompt_type, payload.name, payload.version, payload.content, json.dumps(payload.variables))
+    return record_to_dict(row)
+
+
+@router.get('/audit-logs')
+async def list_audit_logs(tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+    rows = await conn.fetch('select * from app.audit_logs where tenant_id=$1 order by created_at desc limit 100', tenant_id)
+    return [dict(r) for r in rows]
+
+
+@router.get('/webhooks/whatsapp')
+async def verify_whatsapp_webhook(
+    hub_mode: str | None = Query(default=None, alias='hub.mode'),
+    hub_verify_token: str | None = Query(default=None, alias='hub.verify_token'),
+    hub_challenge: str | None = Query(default=None, alias='hub.challenge'),
+):
+    settings = get_settings()
+    if hub_mode == 'subscribe' and hub_verify_token == settings.whatsapp_verify_token:
+        return Response(content=hub_challenge or '', media_type='text/plain')
+    raise HTTPException(status_code=403, detail='Invalid verify token')
+
+
+@router.post('/webhooks/whatsapp', status_code=202)
+async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = Depends(get_db), x_hub_signature_256: str | None = Header(default=None, alias='X-Hub-Signature-256')):
+    body = await request.body()
+    if not verify_signature(body, x_hub_signature_256):
+        raise HTTPException(status_code=401, detail='Invalid webhook signature')
+    payload = json.loads(body or b'{}')
+    sha = hashlib.sha256(body).hexdigest()
+    await conn.fetchrow(
+        """
+        insert into app.webhook_events_raw (provider, event_type, headers, payload, payload_sha256)
+        values ('whatsapp_cloud_api', $1, $2::jsonb, $3::jsonb, $4)
+        on conflict (payload_sha256) do nothing returning *
+        """,
+        payload.get('object', 'unknown'),
+        json.dumps(dict(request.headers)),
+        json.dumps(payload),
+        sha,
+    )
+    return {'accepted': True, 'payload_sha256': sha}

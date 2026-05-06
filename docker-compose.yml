@@ -1,0 +1,84 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/app/app:ro
+
+  event-worker:
+    build: .
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python -m app.workers.event_worker
+
+  scheduler:
+    build: .
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python -m app.workers.scheduler
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    env_file: .env
+    environment:
+      APP_DB_USER: ${APP_DB_USER:-copiloto_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-change-me-app-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    env_file: .env
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-copilotoia-minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-change-me-minio-password}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.117.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./infra/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4318:4318"
+      - "8889:8889"
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

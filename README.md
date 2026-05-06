@@ -1691,3 +1691,23 @@ gantt
 | integraciones profundas externas | no especificado |
 
 La arquitectura y el modelo aquí propuestos priorizan **rapidez de lanzamiento**, **seguridad**, **replicabilidad por vertical** y **cumplimiento** con el marco actual de WhatsApp Business y de protección de datos en Colombia. Las decisiones más rígidas —núcleo común, RLS, RAG cerrado, no entrenamiento, handoff humano, PITR y secretos fuera de la BD— no son adorno arquitectónico, sino medidas directamente justificadas por la documentación oficial de Meta, PostgreSQL, AWS y la regulación colombiana vigente consultada para esta fecha. citeturn6view0turn4view5turn4view6turn4view4turn4view7turn8view0
+
+## Implementación Docker del core de referencia
+
+Este repositorio ahora incluye un core ejecutable en Docker que materializa la arquitectura descrita en esta especificación. La guía operativa está en [`ARCHITECTURE.md`](ARCHITECTURE.md) e incluye los servicios, responsabilidades, conexión a base de datos, política de secretos y endpoints principales.
+
+### Arranque local seguro
+
+```bash
+./scripts/bootstrap.sh
+```
+
+El script genera `.env` y `.secrets/*` con permisos locales seguros si no existen, levanta PostgreSQL con `pgvector`, Redis, MinIO, OpenTelemetry Collector, API, worker de eventos y scheduler. Los archivos con secretos reales están ignorados por git; usa `.env.example` como plantilla y cambia los valores antes de producción.
+
+### Validación rápida
+
+```bash
+curl -fsS http://localhost:8000/v1/health
+```
+
+La API queda disponible en `http://localhost:8000/docs` y usa `X-Tenant-Id` para activar Row-Level Security en PostgreSQL durante cada transacción.

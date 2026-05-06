@@ -1,0 +1,50 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+from uuid import UUID
+
+import asyncpg
+from fastapi import Request
+
+
+class Database:
+    def __init__(self) -> None:
+        self.pool: asyncpg.Pool | None = None
+
+    async def connect(self, dsn: str) -> None:
+        self.pool = await asyncpg.create_pool(dsn, min_size=1, max_size=10, command_timeout=30)
+
+    async def close(self) -> None:
+        if self.pool:
+            await self.pool.close()
+            self.pool = None
+
+    @asynccontextmanager
+    async def connection(
+        self, tenant_id: UUID | None = None, support_mode: bool = False
+    ) -> AsyncIterator[asyncpg.Connection]:
+        if not self.pool:
+            raise RuntimeError('Database pool is not initialized')
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                if tenant_id:
+                    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+                await conn.execute(
+                    "select set_config('app.support_mode', $1, true)",
+                    'true' if support_mode else 'false',
+                )
+                yield conn
+
+
+db = Database()
+
+
+async def get_db(request: Request) -> AsyncIterator[asyncpg.Connection]:
+    tenant_id = getattr(request.state, 'tenant_id', None)
+    support_mode = getattr(request.state, 'support_mode', False)
+    async with db.connection(tenant_id=tenant_id, support_mode=support_mode) as conn:
+        yield conn
+
+
+def record_to_dict(record: asyncpg.Record | None) -> dict[str, Any] | None:
+    return dict(record) if record else None
