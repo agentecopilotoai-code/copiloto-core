@@ -193,6 +193,24 @@ Puedes cambiar la salida con `AUTH0_ENV_FILE`, `AUTH0_SECRETS_DIR` o desactivarl
 
 > Nota: no dupliques estas variables en `.env`. La app carga `.env` y `.env.auth0.local` en ese orden, y `docker-compose.yml` inyecta ambos archivos en los servicios Python. Cuando `AUTH0_DOMAIN` y `AUTH0_AUDIENCE` existen en `.env.auth0.local`, los bearer tokens de usuario se validan como access tokens Auth0 RS256 usando JWKS. Si `AUTH0_DOMAIN` queda vacío, la API conserva la validación HS256 local para desarrollo.
 
+### Admin Panel local
+
+El Admin Panel MVP vive en `admin-panel/` y se compila con React JS + Vite. El backend OIDC/Auth0 vive en `app/admin` para mantener el Authorization Code Flow y leer el secreto desde `.secrets/auth0-admin-client-secret` sin exponerlo en el navegador. Consume la configuración generada por `scripts/configure-auth0.sh` desde `.env.auth0.local`; no requiere variables duplicadas en `.env` ni las variables obligatorias del core para arrancar la pantalla `/admin/`.
+
+Para instalar dependencias, compilar React, construir la imagen Docker dedicada y levantar el contenedor:
+
+```bash
+./scripts/bootstrap-admin-panel.sh
+```
+
+El script termina mostrando `docker compose ps admin-panel`; ahí debe aparecer el servicio. Si prefieres hacerlo manualmente:
+
+```bash
+docker compose up -d --build admin-panel
+```
+
+Luego abre `http://localhost:3000/admin/` e inicia sesión con Auth0. Si tu aplicación Auth0 fue configurada antes de esta versión, vuelve a ejecutar `scripts/configure-auth0.sh` para agregar `http://localhost:3000/admin/` a Allowed Logout URLs. Más detalles y comandos de desarrollo están en `docs/ADMIN_PANEL.md`.
+
 ### WhatsApp / Meta Graph API
 
 | Variable | Ejemplo local | Secreto | Significado | Dónde obtenerlo |

@@ -51,3 +51,38 @@ Cada entrada debe incluir:
   - `uv run pytest` (bloqueado por fallo de descarga desde PyPI en el entorno)
   - `uv run ruff check .` (bloqueado por fallo de descarga desde PyPI en el entorno)
 - **Notas:** la validación Auth0 se activa con las variables que `scripts/configure-auth0.sh` deja en `.env.auth0.local`; si `AUTH0_DOMAIN` queda vacío, los JWT HS256 locales siguen disponibles para desarrollo y smoke tests.
+
+### TASK-0002 — Crear el esqueleto del Admin Panel MVP
+
+- **Fecha:** 2026-05-06
+- **Resumen:** se creó un Admin Panel MVP con frontend React JS + Vite, estructurado por componentes, hooks, contexto, servicios y datos de módulos. El backend `app/admin` conserva el flujo OIDC/Auth0 Authorization Code para usar la configuración local ya generada y leer `.secrets/auth0-admin-client-secret` sin exponer secretos al navegador. Se agregó sesión HTTP-only de servidor, layout base con selector de tenant, navegación de placeholders para Tenant Setup, WhatsApp, Knowledge Studio, Operations Desk y Audit, Dockerfile dedicado del panel, servicio Docker `admin-panel` en el puerto 3000 y bootstrap propio `scripts/bootstrap-admin-panel.sh`, que ahora construye y levanta el contenedor por defecto. El backend admin usa configuración propia opcional para no fallar cuando el contenedor no recibe variables obligatorias del core como `DATABASE_URL`, `SERVICE_TOKEN`, WhatsApp o S3. El build React se configuró con base `/admin/` y el backend sirve `/admin/assets/*` más una ruta compatible `/assets/*` para evitar 404 de assets cacheados. El logout usa redirect `303 See Other` hacia Auth0 para convertir el `POST /admin/logout` del formulario en `GET /v2/logout`, y `scripts/configure-auth0.sh` ahora incluye `/admin/` en Allowed Logout URLs.
+- **Archivos modificados:**
+  - `.dockerignore`
+  - `.gitignore`
+  - `admin-panel/Dockerfile`
+  - `admin-panel/index.html`
+  - `admin-panel/package.json`
+  - `admin-panel/vite.config.js`
+  - `admin-panel/src/*`
+  - `app/admin/__init__.py`
+  - `app/admin/config.py`
+  - `app/admin/main.py`
+  - `app/admin/routes.py`
+  - `app/admin/static/.gitkeep`
+  - `app/core/config.py`
+  - `app/main.py`
+  - `docker-compose.yml`
+  - `docs/ADMIN_PANEL.md`
+  - `INSTALL.md`
+  - `scripts/bootstrap-admin-panel.sh`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m compileall app`
+  - `git diff --check`
+  - `npm --prefix admin-panel install` (bloqueado por HTTP 403 contra npm registry en el entorno)
+  - `npm --prefix admin-panel run build` (bloqueado porque `vite` no puede instalarse mientras npm registry devuelve HTTP 403)
+  - `./scripts/bootstrap-admin-panel.sh --skip-docker` (bloqueado por el mismo HTTP 403 de npm registry)
+  - `bash -n scripts/bootstrap-admin-panel.sh`
+  - `docker compose build admin-panel` (bloqueado porque Docker no está instalado en el entorno)
+- **Notas:** el panel queda listo para validar login real contra Auth0 cuando `.env.auth0.local` y `.secrets/auth0-admin-client-secret` existen localmente; las sesiones son en memoria para el MVP y deben externalizarse antes de producción.
