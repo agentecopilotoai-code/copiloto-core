@@ -15,22 +15,9 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
    - hacer commit de los cambios.
 6. Mantener consecutivos estables: no reutilizar números ya movidos a `DONE`.
 7. Agregar tareas nuevas al final, con el siguiente consecutivo disponible.
+8. No recrear ni duplicar configuración local ya generada: Auth0/OIDC vive en `.env.auth0.local` creado por `scripts/configure-auth0.sh` (`AUTH0_DOMAIN`, `AUTH0_ISSUER`, `AUTH0_AUDIENCE`, `AUTH0_API_IDENTIFIER`, `AUTH0_CLAIMS_NAMESPACE`, client IDs, URLs y rutas de secretos); los secretos viven en `.secrets/*` creados por `scripts/bootstrap.sh`, `scripts/generate-local-secrets.sh` o `scripts/configure-auth0.sh`. Las tareas futuras deben consumir esos nombres/archivos y no inventar variables paralelas ni hardcodear secretos.
 
 ## Stack de tareas pendientes
-
-### TASK-0001 — Implementar validación OIDC/Auth0 en la API
-
-- **Estado:** PENDING
-- **Objetivo:** reemplazar o complementar la validación JWT HS256 local con validación OIDC/Auth0 RS256 para tokens emitidos por Auth0.
-- **Contexto:** `scripts/configure-auth0.sh` crea un API audience y una aplicación admin web, pero `app/core/security.py` todavía valida tokens HS256 locales.
-- **Alcance mínimo:**
-  - Agregar variables de configuración para `AUTH0_DOMAIN`, `AUTH0_AUDIENCE` y namespace de claims.
-  - Validar JWT RS256 usando JWKS de Auth0 con cache razonable.
-  - Leer `tenant_id`, roles y `support_mode` desde claims namespaced.
-  - Mantener `SERVICE_TOKEN` para workloads internos.
-  - Actualizar `.env.example` e `INSTALL.md`.
-  - Agregar pruebas o smoke checks de configuración.
-- **Criterio de terminado:** la API acepta tokens Auth0 válidos, rechaza tokens inválidos y conserva aislamiento por tenant.
 
 ### TASK-0002 — Crear el esqueleto del Admin Panel MVP
 
@@ -38,7 +25,7 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 - **Objetivo:** crear una aplicación web mínima para administración y operación del tenant.
 - **Alcance mínimo:**
   - Definir tecnología del frontend dentro del repo.
-  - Login OIDC contra Auth0.
+  - Login OIDC contra Auth0 usando los valores ya generados en `.env.auth0.local` y `.secrets/auth0-admin-client-secret`; no crear variables duplicadas.
   - Layout base con selector de tenant.
   - Módulos placeholder: Tenant Setup, WhatsApp, Knowledge Studio, Operations Desk, Audit.
   - Documentar comandos de desarrollo.
