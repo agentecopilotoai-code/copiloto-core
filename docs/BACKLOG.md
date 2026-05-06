@@ -19,18 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0002 — Crear el esqueleto del Admin Panel MVP
-
-- **Estado:** PENDING
-- **Objetivo:** crear una aplicación web mínima para administración y operación del tenant.
-- **Alcance mínimo:**
-  - Definir tecnología del frontend dentro del repo.
-  - Login OIDC contra Auth0 usando los valores ya generados en `.env.auth0.local` y `.secrets/auth0-admin-client-secret`; no crear variables duplicadas.
-  - Layout base con selector de tenant.
-  - Módulos placeholder: Tenant Setup, WhatsApp, Knowledge Studio, Operations Desk, Audit.
-  - Documentar comandos de desarrollo.
-- **Criterio de terminado:** un usuario puede iniciar sesión, ver el layout base y navegar los módulos placeholder.
-
 ### TASK-0003 — Implementar Tenant Setup Wizard
 
 - **Estado:** PENDING

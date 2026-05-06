@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     auth0_domain: str | None = None
     auth0_issuer: str | None = None
     auth0_audience: str | None = None
+    auth0_api_identifier: str | None = None
+    auth0_admin_app_name: str | None = None
+    auth0_admin_client_id: str | None = None
+    auth0_admin_client_secret: str | None = None
+    auth0_admin_client_secret_file: str | None = None
+    auth0_callback_urls: str = 'http://localhost:3000/callback'
+    auth0_logout_urls: str = 'http://localhost:3000'
+    auth0_web_origins: str = 'http://localhost:3000'
     auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
     auth0_jwks_cache_ttl_seconds: int = 300
     service_token: str = Field(min_length=16)
