@@ -153,6 +153,31 @@ Para correr el stack con Docker **no necesitas instalar dependencias Python loca
 | `JWT_SECRET` | generado | Sí | Secreto HMAC para validar JWT HS256 en local. En producción usa un secreto robusto o un IdP/OIDC real. |
 | `SERVICE_TOKEN` | generado | Sí | Token interno para automatizaciones/servicios. Permite soporte interno y operaciones tenant-aware. Protégelo como secreto crítico. |
 
+
+### Auth0 para panel administrativo
+
+El repo incluye `scripts/configure-auth0.sh` para preparar Auth0 de forma idempotente para CopilotoIA. El script crea/actualiza:
+
+1. API `copilotoia-core-api` con audience `AUTH0_API_IDENTIFIER` y RBAC habilitado.
+2. App regular web `copilotoia-admin-web` para el futuro panel administrativo.
+3. App M2M `copilotoia-service-m2m` y client grant contra el API.
+4. Roles `owner`, `admin`, `manager`, `agent`, `viewer` y `support` con permisos por alcance.
+5. Action post-login `copilotoia-post-login-claims` para emitir claims namespaced de roles, permisos, `tenant_id`, `tenant_slug` y `support_mode`.
+
+Ejemplo:
+
+```bash
+export AUTH0_DOMAIN=tu-tenant.us.auth0.com
+export MGMT_CLIENT_ID=xxxx
+export MGMT_CLIENT_SECRET=xxxx
+export COPILOTOIA_DOMAIN=copilotoia.tu-dominio.com
+./scripts/configure-auth0.sh
+```
+
+También puedes usar `MGMT_ACCESS_TOKEN` si ya tienes un token de Management API válido. La aplicación M2M de Management API debe tener permisos suficientes para gestionar resource servers, clients, client grants, roles y actions.
+
+> Nota: este script prepara Auth0, pero la API actual aún valida JWT local HS256. La integración OIDC/Auth0 RS256 está registrada como `TASK-0001` en `docs/BACKLOG.md`.
+
 ### WhatsApp / Meta Graph API
 
 | Variable | Ejemplo local | Secreto | Significado | Dónde obtenerlo |
