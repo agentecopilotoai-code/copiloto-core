@@ -47,6 +47,14 @@ if [[ ! -f .env ]]; then
   ./scripts/generate-local-secrets.sh
 fi
 
+if [[ ! -f .env.auth0.local ]]; then
+  cat > .env.auth0.local <<'EOF_AUTH0_PLACEHOLDER'
+# Archivo local opcional para Auth0/OIDC.
+# scripts/configure-auth0.sh lo sobreescribe con AUTH0_DOMAIN, AUTH0_AUDIENCE y AUTH0_CLAIMS_NAMESPACE.
+EOF_AUTH0_PLACEHOLDER
+  chmod 600 .env.auth0.local
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "Error: docker no está instalado o no está en el PATH." >&2
   echo "Instala Docker Desktop/Engine y Docker Compose v2, luego vuelve a ejecutar ./scripts/bootstrap.sh." >&2

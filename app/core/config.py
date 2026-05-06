@@ -4,7 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
+    model_config = SettingsConfigDict(
+        env_file=('.env', '.env.auth0.local'), env_file_encoding='utf-8', extra='ignore'
+    )
 
     app_env: str = 'local'
     app_name: str = 'CopilotoIA Core'
@@ -15,6 +17,11 @@ class Settings(BaseSettings):
     jwt_issuer: str = 'copilotoia-local'
     jwt_audience: str = 'copilotoia-panel'
     jwt_secret: str = Field(min_length=16)
+    auth0_domain: str | None = None
+    auth0_issuer: str | None = None
+    auth0_audience: str | None = None
+    auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
+    auth0_jwks_cache_ttl_seconds: int = 300
     service_token: str = Field(min_length=16)
     whatsapp_verify_token: str
     whatsapp_app_secret: str

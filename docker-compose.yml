@@ -1,7 +1,13 @@
+x-app-env-files: &app-env-files
+  - path: .env
+    required: true
+  - path: .env.auth0.local
+    required: false
+
 services:
   api:
     build: .
-    env_file: .env
+    env_file: *app-env-files
     restart: unless-stopped
     depends_on:
       postgres:
@@ -24,7 +30,7 @@ services:
 
   event-worker:
     build: .
-    env_file: .env
+    env_file: *app-env-files
     restart: unless-stopped
     depends_on:
       postgres:
@@ -33,7 +39,7 @@ services:
 
   scheduler:
     build: .
-    env_file: .env
+    env_file: *app-env-files
     restart: unless-stopped
     depends_on:
       postgres:

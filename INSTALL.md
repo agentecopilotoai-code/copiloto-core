@@ -150,8 +150,13 @@ Para correr el stack con Docker **no necesitas instalar dependencias Python loca
 |---|---|---:|---|
 | `JWT_ISSUER` | `copilotoia-local` | No | Emisor esperado de tokens JWT. |
 | `JWT_AUDIENCE` | `copilotoia-panel` | No | Audiencia esperada de tokens JWT. |
-| `JWT_SECRET` | generado | Sí | Secreto HMAC para validar JWT HS256 en local. En producción usa un secreto robusto o un IdP/OIDC real. |
-| `SERVICE_TOKEN` | generado | Sí | Token interno para automatizaciones/servicios. Permite soporte interno y operaciones tenant-aware. Protégelo como secreto crítico. |
+| `JWT_SECRET` | generado | Sí en local | Secreto HMAC para validar JWT HS256 solo cuando `AUTH0_DOMAIN` no está configurado. Mantén un valor robusto para desarrollo/smoke local. |
+| `AUTH0_DOMAIN` | `tu-tenant.us.auth0.com` | No | Dominio del tenant Auth0. Lo genera `scripts/configure-auth0.sh` en `.env.auth0.local`; si está definido, la API valida tokens OIDC/Auth0 RS256 contra JWKS. |
+| `AUTH0_ISSUER` | `https://tu-tenant.us.auth0.com/` | No | Issuer esperado. También lo genera `scripts/configure-auth0.sh` en `.env.auth0.local`; la API lo usa si está presente y si no lo deriva de `AUTH0_DOMAIN`. |
+| `AUTH0_AUDIENCE` | `https://api.tu-dominio.com` | No | Audience esperado en los access tokens RS256 de Auth0. Debe coincidir con el API identifier creado por `scripts/configure-auth0.sh` y se carga desde `.env.auth0.local`. |
+| `AUTH0_CLAIMS_NAMESPACE` | `https://tu-dominio.com/claims` | No | Namespace desde el que la API lee `tenant_id`, `roles` y `support_mode`; debe coincidir con la Action post-login generada. No requiere slash final. |
+| `AUTH0_JWKS_CACHE_TTL_SECONDS` | `300` | No | TTL local de cache para las claves públicas JWKS de Auth0. Es opcional; si no aparece en `.env.auth0.local`, se usa el default de la app. |
+| `SERVICE_TOKEN` | generado | Sí | Token interno para automatizaciones/servicios. Sigue funcionando aunque Auth0 esté habilitado y permite soporte interno/operaciones tenant-aware. Protégelo como secreto crítico. |
 
 
 ### Auth0 para panel administrativo
@@ -180,13 +185,13 @@ Al terminar, el script guarda automáticamente la configuración necesaria en ar
 
 | Archivo | Contenido | Se versiona |
 |---|---|---:|
-| `.env.auth0.local` | issuer, audience, namespace de claims, client IDs, URLs permitidas y rutas de secretos | No |
+| `.env.auth0.local` | `AUTH0_DOMAIN`, `AUTH0_ISSUER`, `AUTH0_AUDIENCE`, namespace de claims, client IDs, URLs permitidas y rutas de secretos | No |
 | `.secrets/auth0-admin-client-secret` | client secret de la app web admin si Auth0 lo entrega | No |
 | `.secrets/auth0-service-client-secret` | client secret de la app M2M interna | No |
 
 Puedes cambiar la salida con `AUTH0_ENV_FILE`, `AUTH0_SECRETS_DIR` o desactivarla con `SAVE_AUTH0_CONFIG=false`. Estos archivos son locales y sensibles; no los subas al repositorio ni los compartas por chat.
 
-> Nota: este script prepara Auth0, pero la API actual aún valida JWT local HS256. La integración OIDC/Auth0 RS256 está registrada como `TASK-0001` en `docs/BACKLOG.md`.
+> Nota: no dupliques estas variables en `.env`. La app carga `.env` y `.env.auth0.local` en ese orden, y `docker-compose.yml` inyecta ambos archivos en los servicios Python. Cuando `AUTH0_DOMAIN` y `AUTH0_AUDIENCE` existen en `.env.auth0.local`, los bearer tokens de usuario se validan como access tokens Auth0 RS256 usando JWKS. Si `AUTH0_DOMAIN` queda vacío, la API conserva la validación HS256 local para desarrollo.
 
 ### WhatsApp / Meta Graph API
 
@@ -434,9 +439,15 @@ Variables mínimas de producción:
 APP_ENV=production
 DATABASE_URL=postgresql://<APP_USER>:<PASSWORD>@<HOST>:5432/<DB>
 REDIS_URL=redis://<HOST>:6379/0
-JWT_ISSUER=<ISSUER_REAL>
-JWT_AUDIENCE=<AUDIENCE_REAL>
-JWT_SECRET=<SECRETO_LARGO>
+# Auth0/OIDC: usar .env.auth0.local generado por scripts/configure-auth0.sh
+# AUTH0_DOMAIN=<TENANT>.us.auth0.com
+# AUTH0_ISSUER=https://<TENANT>.us.auth0.com/
+# AUTH0_AUDIENCE=<API_IDENTIFIER_AUTH0>
+# AUTH0_CLAIMS_NAMESPACE=https://<DOMINIO>/claims
+# AUTH0_JWKS_CACHE_TTL_SECONDS=300
+JWT_ISSUER=copilotoia-local
+JWT_AUDIENCE=copilotoia-panel
+JWT_SECRET=<SECRETO_LOCAL_FALLBACK>
 SERVICE_TOKEN=<TOKEN_INTERNO_LARGO>
 WHATSAPP_VERIFY_TOKEN=<TOKEN_WEBHOOK>
 WHATSAPP_APP_SECRET=<APP_SECRET_META>
