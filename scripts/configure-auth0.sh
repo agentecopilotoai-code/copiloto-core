@@ -226,35 +226,60 @@ fi
 
 echo "▶ Upsert roles y permisos"
 role_names=(owner admin manager agent viewer support)
-declare -A role_descriptions=(
-  [owner]='Owner del tenant: administración total, usuarios, exportes y privacidad'
-  [admin]='Administrador del tenant: canales, documentos, prompts y settings'
-  [manager]='Manager operacional: analítica, agenda y operación'
-  [agent]='Agente humano: conversaciones, handoffs, citas y solicitudes'
-  [viewer]='Lectura operacional limitada'
-  [support]='Soporte interno auditado con acceso excepcional'
-)
-declare -A role_permissions=(
-  [owner]="$all_permission_names"
-  [admin]='tenants:read,tenants:update,tenant_settings:update,channels:manage,channels:read,contacts:read,contacts:write,conversations:read,conversations:write,conversations:handoff,service_requests:read,service_requests:write,quotes:read,quotes:write,appointments:read,appointments:write,knowledge:read,knowledge:write,knowledge:index,prompts:read,prompts:write,prompts:activate,analytics:read,audit_logs:read,exports:create,privacy:manage,users:manage'
-  [manager]='tenants:read,channels:read,contacts:read,conversations:read,conversations:write,conversations:handoff,service_requests:read,service_requests:write,quotes:read,appointments:read,appointments:write,knowledge:read,prompts:read,analytics:read,audit_logs:read'
-  [agent]='contacts:read,contacts:write,conversations:read,conversations:write,conversations:handoff,service_requests:read,service_requests:write,quotes:read,quotes:write,appointments:read,appointments:write,knowledge:read,prompts:read'
-  [viewer]='tenants:read,channels:read,contacts:read,conversations:read,service_requests:read,quotes:read,appointments:read,knowledge:read,prompts:read,analytics:read,audit_logs:read'
-  [support]="$all_permission_names"
-)
+
+role_description() {
+  case "$1" in
+    owner) echo 'Owner del tenant: administración total, usuarios, exportes y privacidad' ;;
+    admin) echo 'Administrador del tenant: canales, documentos, prompts y settings' ;;
+    manager) echo 'Manager operacional: analítica, agenda y operación' ;;
+    agent) echo 'Agente humano: conversaciones, handoffs, citas y solicitudes' ;;
+    viewer) echo 'Lectura operacional limitada' ;;
+    support) echo 'Soporte interno auditado con acceso excepcional' ;;
+    *) echo "Rol $1 CopilotoIA" ;;
+  esac
+}
+
+role_permissions_for() {
+  case "$1" in
+    owner)
+      echo "$all_permission_names"
+      ;;
+    admin)
+      echo 'tenants:read,tenants:update,tenant_settings:update,channels:manage,channels:read,contacts:read,contacts:write,conversations:read,conversations:write,conversations:handoff,service_requests:read,service_requests:write,quotes:read,quotes:write,appointments:read,appointments:write,knowledge:read,knowledge:write,knowledge:index,prompts:read,prompts:write,prompts:activate,analytics:read,audit_logs:read,exports:create,privacy:manage,users:manage'
+      ;;
+    manager)
+      echo 'tenants:read,channels:read,contacts:read,conversations:read,conversations:write,conversations:handoff,service_requests:read,service_requests:write,quotes:read,appointments:read,appointments:write,knowledge:read,prompts:read,analytics:read,audit_logs:read'
+      ;;
+    agent)
+      echo 'contacts:read,contacts:write,conversations:read,conversations:write,conversations:handoff,service_requests:read,service_requests:write,quotes:read,quotes:write,appointments:read,appointments:write,knowledge:read,prompts:read'
+      ;;
+    viewer)
+      echo 'tenants:read,channels:read,contacts:read,conversations:read,service_requests:read,quotes:read,appointments:read,knowledge:read,prompts:read,analytics:read,audit_logs:read'
+      ;;
+    support)
+      echo "$all_permission_names"
+      ;;
+    *)
+      echo ''
+      ;;
+  esac
+}
 
 roles_json="$(api_get '/roles?per_page=100')"
 for role in "${role_names[@]}"; do
   role_id="$(jq -r --arg role "$role" '.[] | select(.name == $role) | .id' <<<"$roles_json" | head -n1)"
+  role_description_text="$(role_description "$role")"
+  role_permissions_csv="$(role_permissions_for "$role")"
+
   if [ -z "$role_id" ]; then
-    role_payload="$(jq -n --arg name "$role" --arg description "${role_descriptions[$role]}" '{name:$name,description:$description}')"
+    role_payload="$(jq -n --arg name "$role" --arg description "$role_description_text" '{name:$name,description:$description}')"
     role_id="$(api_post '/roles' "$role_payload" | jq -r .id)"
     roles_json="$(api_get '/roles?per_page=100')"
   fi
 
   current_permissions="$(api_get "/roles/$role_id/permissions?per_page=100")"
   missing_permissions="$(jq -n \
-    --arg csv "${role_permissions[$role]}" \
+    --arg csv "$role_permissions_csv" \
     --arg identifier "$AUTH0_API_IDENTIFIER" \
     --argjson current "$current_permissions" \
     '($csv | split(",") | map(select(length > 0))) as $desired |
