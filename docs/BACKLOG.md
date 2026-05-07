@@ -19,18 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0005 — Implementar Knowledge Studio MVP
-
-- **Estado:** PENDING
-- **Objetivo:** cargar información que alimente la base de conocimiento por tenant.
-- **Alcance mínimo:**
-  - CRUD/listado de documentos de conocimiento.
-  - Editor manual de FAQ/políticas.
-  - Carga de archivos hacia object storage o registro de fuente.
-  - Estados `draft`, `indexing`, `active`, `failed`.
-  - Visibilidad por documento.
-- **Criterio de terminado:** un admin puede crear documentos por tenant y verlos aislados por RLS.
-
 ### TASK-0006 — Implementar pipeline de indexación RAG
 
 - **Estado:** PENDING

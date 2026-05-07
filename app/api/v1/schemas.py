@@ -84,9 +84,28 @@ class AppointmentCreate(BaseModel):
 class KnowledgeDocumentCreate(BaseModel):
     tenant_id: UUID
     title: str
-    source_type: str = 'manual'
+    source_type: str = Field(default='manual', pattern='^(upload|url|manual|integration)$')
+    document_type: str = Field(default='reference', pattern='^(faq|policy|reference)$')
     source_uri: str | None = None
-    visibility: str = 'tenant'
+    checksum: str | None = None
+    mime_type: str | None = None
+    content: str | None = None
+    visibility: str = Field(default='tenant', pattern='^(tenant|agents_only|public)$')
+    status: str = Field(default='draft', pattern='^(draft|indexing|active|failed)$')
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeDocumentUpdate(BaseModel):
+    title: str | None = None
+    source_type: str | None = Field(default=None, pattern='^(upload|url|manual|integration)$')
+    document_type: str | None = Field(default=None, pattern='^(faq|policy|reference)$')
+    source_uri: str | None = None
+    checksum: str | None = None
+    mime_type: str | None = None
+    content: str | None = None
+    visibility: str | None = Field(default=None, pattern='^(tenant|agents_only|public)$')
+    status: str | None = Field(default=None, pattern='^(draft|indexing|active|failed)$')
+    metadata: dict[str, Any] | None = None
 
 
 class PromptCreate(BaseModel):

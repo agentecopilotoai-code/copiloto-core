@@ -91,6 +91,13 @@ psql_app() {
   docker compose exec -T postgres psql "$DATABASE_URL_VALUE" -v ON_ERROR_STOP=1 "$@"
 }
 
+POSTGRES_DB_VALUE="$(awk -F= '$1 == "POSTGRES_DB" {print substr($0, index($0, "=") + 1)}' .env)"
+POSTGRES_USER_VALUE="$(awk -F= '$1 == "POSTGRES_USER" {print substr($0, index($0, "=") + 1)}' .env)"
+
+psql_admin() {
+  docker compose exec -T postgres psql -U "${POSTGRES_USER_VALUE:-copiloto_admin}" -d "${POSTGRES_DB_VALUE:-copilotoia}" -v ON_ERROR_STOP=1 "$@"
+}
+
 if ! psql_app -c 'select 1' >/dev/null 2>&1; then
   cat >&2 <<'MSG'
 
@@ -126,6 +133,30 @@ if [[ -n "$missing_tables" ]]; then
   echo "Para recrear la DB local: ./scripts/bootstrap.sh --reset --yes" >&2
   exit 1
 fi
+
+psql_admin <<'SQL_MIGRATE_KNOWLEDGE'
+alter table app.knowledge_documents
+  add column if not exists document_type text not null default 'reference',
+  add column if not exists content text,
+  add column if not exists metadata jsonb not null default '{}'::jsonb;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where connamespace='app'::regnamespace
+      and conrelid='app.knowledge_documents'::regclass
+      and conname='knowledge_documents_document_type_check'
+  ) then
+    alter table app.knowledge_documents
+      add constraint knowledge_documents_document_type_check
+      check (document_type in ('faq','policy','reference'));
+  end if;
+end $$;
+
+create index if not exists ix_knowledge_documents_visibility
+  on app.knowledge_documents(tenant_id, visibility);
+SQL_MIGRATE_KNOWLEDGE
 
 missing_extensions="$(psql_app -Atc "
   with required(extname) as (values ('pgcrypto'), ('citext'), ('vector'), ('btree_gist'))

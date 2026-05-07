@@ -4,6 +4,7 @@ import { useActiveModule } from '../../hooks/useActiveModule.js';
 import { useTenantOptions } from '../../hooks/useTenantOptions.js';
 import { listMyTenants } from '../../services/coreApi.js';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
+import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
 import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
 import { Sidebar } from './Sidebar.jsx';
@@ -98,6 +99,8 @@ export function AdminLayout({ session }) {
     activeContent = <NoTenantOnboarding onCreateTenant={openTenantCreation} />;
   } else if (activeModuleId === 'whatsapp') {
     activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'knowledge-studio') {
+    activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
   } else {
     activeContent = <ModulePlaceholder module={activeModule} tenant={activeTenant} />;
   }
