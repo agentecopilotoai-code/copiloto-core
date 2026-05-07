@@ -424,7 +424,7 @@ Usa esta tabla para no confundir los identificadores:
 | `phone_number_id` | Meta for Developers | App > **WhatsApp > API Setup** | **Phone Number ID**, no el número en formato `+57...`. |
 | `WHATSAPP_APP_SECRET` | Meta for Developers | App > **App Settings > Basic** | **App Secret** de la app. |
 | `META_ACCESS_TOKEN` | Meta for Developers / Business Settings | API Setup para token temporal, o System Users para token estable | Token con permisos de WhatsApp Business Platform. |
-| `WHATSAPP_VERIFY_TOKEN` | Lo defines tú | Debe coincidir en CopilotoIA y Meta Webhooks | Una cadena larga aleatoria; no viene de Meta. |
+| `WHATSAPP_VERIFY_TOKEN` | Lo defines tú | Debe coincidir en CopilotoIA y Meta Webhooks | Una cadena larga aleatoria; no viene de Meta, no es `META_ACCESS_TOKEN` y no sirve para enviar mensajes. |
 
 ### 10.4 Token temporal vs token estable
 
@@ -443,7 +443,7 @@ Para que WhatsApp funcione de forma estable:
    - `whatsapp_business_management`
    - `business_management`
 6. Si el portal lo permite, usa expiración **Never** para producción controlada; si no, documenta fecha de expiración y rota el secreto antes de que venza.
-7. Guarda ese token como `META_ACCESS_TOKEN` en `.env` y, si usas los archivos locales de secretos, en `.secrets/meta_access_token`.
+7. Guarda ese token como `META_ACCESS_TOKEN` en `.env` y, si usas los archivos locales de secretos, en `.secrets/meta_access_token`. No lo pegues como `WHATSAPP_VERIFY_TOKEN` ni en el campo `token_ref` del Admin Panel.
 
 ### 10.5 Configurar variables locales de CopilotoIA
 
@@ -464,7 +464,7 @@ printf '%s' '<APP_SECRET_DE_META>' > .secrets/whatsapp_app_secret
 chmod 600 .secrets/meta_access_token .secrets/whatsapp_app_secret
 ```
 
-No inventes variables paralelas: el código lee `META_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` y `META_GRAPH_VERSION`; el Admin Panel solo guarda referencias como `secrets/meta_access_token` y `secrets/whatsapp_app_secret`.
+No inventes variables paralelas: el código lee `META_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` y `META_GRAPH_VERSION`; el Admin Panel solo guarda referencias como `secrets/meta_access_token` y `secrets/whatsapp_app_secret`. Si copiaste un `META_ACCESS_TOKEN` en chats, logs o formularios equivocados, revócalo/rotalo en Meta antes de volver a probar.
 
 Reinicia servicios después de cambiar `.env` o `.secrets`:
 

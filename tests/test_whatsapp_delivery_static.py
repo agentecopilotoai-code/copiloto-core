@@ -50,6 +50,8 @@ def test_whatsapp_onboarding_exposes_delivery_mode_toggle():
     assert 'META_ACCESS_TOKEN real' in source
     assert 'Falta o es mock' in source
     assert 'Modo real: el worker llama a Meta usando META_ACCESS_TOKEN' in source
+    assert 'No pegues aquí el token real de Meta' in source
+    assert 'WHATSAPP_VERIFY_TOKEN lo defines tú' in source
 
 
 def test_operations_desk_explains_queued_sent_failed_statuses():

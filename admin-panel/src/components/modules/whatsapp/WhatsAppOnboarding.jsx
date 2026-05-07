@@ -261,6 +261,7 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
               required
               value={form.token_ref}
             />
+            <small>No pegues aquí el token real de Meta; guarda solo una referencia como secrets/meta_access_token.</small>
           </label>
           <label>
             Modo de entrega
@@ -349,8 +350,9 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
 
       <div className="builder-preview">
         <strong>Variables y secretos requeridos</strong>
-        <pre>{`WHATSAPP_VERIFY_TOKEN debe estar configurado para validar el webhook /webhooks/whatsapp.
-${form.token_ref} debe resolver al token de acceso Meta Cloud API.
+        <pre>{`WHATSAPP_VERIFY_TOKEN lo defines tú y solo sirve para validar el webhook; no es el token de Meta y no envía mensajes.
+META_ACCESS_TOKEN es el token real de Meta Cloud API que usa el backend/worker para enviar mensajes en modo real.
+${form.token_ref} debe resolver al META_ACCESS_TOKEN en el runtime o vault.
 ${form.app_secret_ref} debe resolver al App Secret usado para validar X-Hub-Signature-256.
 Modo mock: el worker marca el mensaje como simulado y no llama a Meta.
 Modo real: el worker llama a Meta usando META_ACCESS_TOKEN del backend; si el token sigue como local-mock/change-me, el mensaje falla explícitamente.
