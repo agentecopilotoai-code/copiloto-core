@@ -1,6 +1,11 @@
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-import asyncpg
+if TYPE_CHECKING:
+    import asyncpg
 
 
 async def audit(
@@ -25,5 +30,5 @@ async def audit(
         action,
         entity_type,
         entity_id,
-        metadata or {},
+        json.dumps(metadata or {}),
     )
