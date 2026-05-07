@@ -115,8 +115,9 @@ def _core_api_url(path: str, query: str = '') -> str:
 def _core_api_headers(
     request: Request, session: dict[str, Any], has_body: bool
 ) -> dict[str, str]:
+    authorization = request.headers.get('authorization') or f"Bearer {session['access_token']}"
     headers = {
-        'authorization': f"Bearer {session['access_token']}",
+        'authorization': authorization,
         'accept': request.headers.get('accept', 'application/json'),
     }
     if has_body and request.headers.get('content-type'):
@@ -125,6 +126,11 @@ def _core_api_headers(
         headers['x-tenant-id'] = request.headers['x-tenant-id']
     if request.headers.get('idempotency-key'):
         headers['idempotency-key'] = request.headers['idempotency-key']
+    profile = session.get('profile') or {}
+    if profile.get('email'):
+        headers['x-admin-user-email'] = profile['email']
+    if profile.get('name'):
+        headers['x-admin-user-name'] = profile['name']
     return headers
 
 

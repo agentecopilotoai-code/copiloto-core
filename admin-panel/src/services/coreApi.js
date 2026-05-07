@@ -52,7 +52,7 @@ async function request(path, { body, method = 'GET', session, tenantId } = {}) {
 }
 
 export function createTenant(session, payload) {
-  return request('/tenants', { method: 'POST', session, body: payload });
+  return request('/tenant-signup', { method: 'POST', session, body: payload });
 }
 
 export function updateTenantSettings(session, tenantId, payload) {
@@ -66,4 +66,8 @@ export function updateTenantSettings(session, tenantId, payload) {
 
 export function listAuditLogs(session, tenantId) {
   return request('/audit-logs', { session, tenantId });
+}
+
+export function listMyTenants(session) {
+  return request('/me/tenants', { session });
 }

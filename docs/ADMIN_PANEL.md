@@ -122,6 +122,13 @@ El proxy reenvía la sesión del admin hacia la Core API configurada por `ADMIN_
 
 El endpoint `/admin/api/session` informa al frontend `api.baseUrl = /admin/api/core/v1`, y los servicios React construyen las llamadas desde ese valor en vez de asumir `/v1` en el mismo origen.
 
+
+## Onboarding self-service de tenant
+
+Cuando el usuario autenticado no trae `tenant_id` en sus claims, el panel no crea un tenant falso ni muestra selector de tenants. En su lugar muestra una tarjeta central **Crear tenant**. Ese flujo llama `POST /admin/api/core/v1/tenant-signup`, que crea el tenant, registra/actualiza el usuario autenticado en `app.users`, le asigna el rol `owner` en `app.user_tenant_roles` y deja auditoría `tenant.self_service_created`.
+
+Después de crear el tenant, el panel usa el UUID real devuelto por la API como tenant activo y envía `X-Tenant-Id` para guardar settings. La Core API valida ese acceso contra `app.user_tenant_roles`, por lo que no depende de un claim `tenant_id` recién emitido por Auth0 para completar el wizard inicial. En cargas posteriores, el panel consulta `GET /admin/api/core/v1/me/tenants` para reconstruir el tenant activo desde la membresía guardada en base de datos mientras Auth0 todavía no emite el claim.
+
 ## Funcionalidad incluida
 
 - Pantalla React de login con Auth0/OIDC.
