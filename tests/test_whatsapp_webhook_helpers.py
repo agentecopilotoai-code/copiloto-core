@@ -22,3 +22,12 @@ def test_webhook_signature_uses_supplied_app_secret_without_splitting_pairs():
     assert "hmac.new(\n        app_secret.encode(), body, hashlib.sha256\n    ).hexdigest()" in source
     assert "app_secret.split('|')" not in source
     assert "WHATSAPP_APP_SECRET" not in source
+
+
+def test_verify_webhook_reads_verify_token_from_tenant_secret_only():
+    source = API_ROUTES.read_text()
+
+    assert "tenant_secret_ref(row['tenant_id'], 'whatsapp_verify_token')" in source
+    assert 'hmac.compare_digest(verify_token, hub_verify_token)' in source
+    assert 'verify_token_hash(hub_verify_token)' not in source
+    assert 'WHATSAPP_VERIFY_TOKEN' not in source

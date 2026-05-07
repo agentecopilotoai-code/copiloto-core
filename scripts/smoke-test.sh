@@ -170,9 +170,7 @@ expect_json PATCH "${API_BASE_URL}/v1/tenants/${TENANT_ID}/settings" '{"locale":
 printf 'ok\n'
 
 printf 'POST /v1/tenants/{tenant_id}/channels/whatsapp -> '
-WHATSAPP_TOKEN_REF="secrets/tenants/${TENANT_ID}/meta_access_token"
-WHATSAPP_APP_SECRET_REF="secrets/tenants/${TENANT_ID}/whatsapp_app_secret"
-expect_json POST "${API_BASE_URL}/v1/tenants/${TENANT_ID}/channels/whatsapp" "{\"business_id\":\"demo-business-id\",\"waba_id\":\"demo-waba-id\",\"phone_number_id\":\"demo-phone-smoke\",\"token_ref\":\"${WHATSAPP_TOKEN_REF}\",\"app_secret_ref\":\"${WHATSAPP_APP_SECRET_REF}\",\"meta_access_token\":\"local-mock-smoke-token\",\"app_secret\":\"${WHATSAPP_APP_SECRET}\",\"verify_token\":\"${WHATSAPP_VERIFY_TOKEN}\"}" -H "${ADMIN_AUTH}"
+expect_json POST "${API_BASE_URL}/v1/tenants/${TENANT_ID}/channels/whatsapp" "{\"business_id\":\"demo-business-id\",\"waba_id\":\"demo-waba-id\",\"phone_number_id\":\"demo-phone-smoke\",\"meta_access_token\":\"local-mock-smoke-token\",\"app_secret\":\"${WHATSAPP_APP_SECRET}\",\"verify_token\":\"${WHATSAPP_VERIFY_TOKEN}\"}" -H "${ADMIN_AUTH}"
 printf 'ok\n'
 
 printf 'GET /v1/tenants/{tenant_id}/channels/whatsapp/health -> '

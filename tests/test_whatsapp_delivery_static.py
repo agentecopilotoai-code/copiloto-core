@@ -43,14 +43,19 @@ def test_whatsapp_delivery_mode_controls_mocking_per_tenant_channel():
     assert 'verify_signature(body' not in service_source
     assert 'token_ref did not resolve to a real Meta access token' in service_source
     assert "account_mode: str = Field(default='mock', pattern='^(mock|live)$')" in schema_source
+    assert 'token_ref: str' not in schema_source
+    assert 'app_secret_ref: str' not in schema_source
     assert 'account_mode=excluded.account_mode' in routes_source
     assert 'meta_access_token_configured' in routes_source
     assert 'app_secret_configured' in routes_source
     assert 'verify_token_configured' in routes_source
     assert 'delivery_ready' in routes_source
-    assert "token_ref_is_configured(channel.get('token_ref'))" in routes_source
-    assert 'generated_verify_token' in routes_source
-    assert 'verify_token_hash(hub_verify_token)' in routes_source
+    assert "token_ref = tenant_secret_ref(tenant_id, 'meta_access_token')" in routes_source
+    assert "app_secret_ref = tenant_secret_ref(tenant_id, 'whatsapp_app_secret')" in routes_source
+    assert "verify_token_ref = tenant_secret_ref(tenant_id, 'whatsapp_verify_token')" in routes_source
+    assert "write_tenant_secret(verify_token_ref, payload.verify_token)" in routes_source
+    assert "resolve_secret_ref(tenant_secret_ref(row['tenant_id'], 'whatsapp_verify_token'))" in routes_source
+    assert 'verify_token_hash(hub_verify_token)' not in routes_source
     assert 'verify_signature_with_secret' in routes_source
     assert 'whatsapp_phone_number_id_from_payload(payload)' in routes_source
     assert 'select id, tenant_id, app_secret_ref' in routes_source
@@ -64,19 +69,19 @@ def test_whatsapp_onboarding_exposes_delivery_mode_toggle():
     source = WHATSAPP_ONBOARDING.read_text()
 
     assert 'defaultFormForTenant' in source
-    assert 'secrets/tenants/${tenantId}' in source
+    assert 'token_ref' not in source
+    assert 'app_secret_ref' not in source
     assert 'Modo de entrega' in source
     assert 'Mock local (no envía a WhatsApp)' in source
     assert 'Real vía WhatsApp Cloud API' in source
     assert 'Meta access token del tenant' in source
     assert 'App secret del tenant' in source
-    assert 'generated_verify_token' in source
-    assert 'token_ref no resuelve' in source
+    assert 'Verify token del webhook' in source
+    assert 'whatsapp_verify_token' in source
     assert 'Falta o es mock' in source
-    assert 'Modo real: el worker llama a Meta usando el token_ref del tenant' in source
-    assert 'No pegues aquí el token real de Meta' in source
+    assert 'Modo real: el worker llama a Meta usando el secreto meta_access_token del tenant' in source
     assert 'secrets/tenants/<tenant_id>/meta_access_token' in source
-    assert 'CopilotoIA lo genera al registrar el canal' in source
+    assert 'El usuario solo pega los tres valores secretos' in source
 
 
 def test_operations_desk_explains_queued_sent_failed_statuses():

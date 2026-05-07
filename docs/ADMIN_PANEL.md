@@ -131,19 +131,17 @@ Después de crear el tenant, el panel usa el UUID real devuelto por la API como 
 
 ## Onboarding WhatsApp/WABA
 
-El módulo **WhatsApp** permite que un admin registre el canal `whatsapp_cloud_api` del tenant desde el panel. El formulario llama `POST /admin/api/core/v1/tenants/{tenant_id}/channels/whatsapp` con `business_id`, `waba_id`, `phone_number_id`, `token_ref` y `app_secret_ref`; el panel siempre envía `X-Tenant-Id` a través del proxy autenticado para conservar el aislamiento por tenant.
+El módulo **WhatsApp** permite que un admin registre el canal `whatsapp_cloud_api` del tenant desde el panel. El formulario llama `POST /admin/api/core/v1/tenants/{tenant_id}/channels/whatsapp` con `business_id`, `waba_id`, `phone_number_id`, `account_mode` y los tres valores secretos (`meta_access_token`, `app_secret`, `verify_token`); el panel siempre envía `X-Tenant-Id` a través del proxy autenticado para conservar el aislamiento por tenant. El usuario no configura `token_ref` ni `app_secret_ref`: la Core API deriva siempre las mismas referencias por tenant.
 
 El botón **Ver health** llama `GET /admin/api/core/v1/tenants/{tenant_id}/channels/whatsapp/health`. La respuesta incluye el canal, checks locales (`business_id`, `waba_id`, `phone_number_id`, `token_ref`, `app_secret_ref`, `meta_access_token_configured`, `app_secret_configured`, `verify_token_configured`, `delivery_ready`, `channel_active`) y `status` (`healthy` o `degraded`). El check es local en este MVP: valida que CopilotoIA tenga la configuración mínima por tenant y marca `upstream=not_checked_in_local_core`; la sincronización con Graph API/quality rating real queda para una iteración posterior.
 
 Secretos requeridos por tenant:
 
-- `token_ref`: referencia guardada en `app.tenant_channels.token_ref`; por defecto `secrets/tenants/<TENANT_ID>/meta_access_token`.
-- `app_secret_ref`: referencia guardada en `app.tenant_channels.app_secret_ref`; por defecto `secrets/tenants/<TENANT_ID>/whatsapp_app_secret`.
-- **Meta access token del tenant:** el panel lo escribe en el archivo apuntado por `token_ref`; no se guarda en DB.
-- **App secret del tenant:** el panel lo escribe en el archivo apuntado por `app_secret_ref`; no se guarda en DB. Debe ser solo el App Secret de Meta; no pegues `APP_ID|APP_SECRET`, el App ID ni un access token en `whatsapp_app_secret`.
-- **Verify token:** CopilotoIA lo genera al registrar el canal y guarda solo su hash en `app.tenant_channels.verify_token_hash`.
+- **Meta access token del tenant:** el panel lo escribe en `secrets/tenants/<TENANT_ID>/meta_access_token`; no se guarda en DB.
+- **App secret del tenant:** el panel lo escribe en `secrets/tenants/<TENANT_ID>/whatsapp_app_secret`; no se guarda en DB. Debe ser solo el App Secret de Meta; no pegues `APP_ID|APP_SECRET`, el App ID ni un access token en `whatsapp_app_secret`.
+- **Verify token:** el panel lo escribe en `secrets/tenants/<TENANT_ID>/whatsapp_verify_token`; el `GET /v1/webhooks/whatsapp` lee únicamente ese secreto por tenant para comparar el token que envía Meta.
 
-Los secretos locales viven en `.secrets/tenants/<TENANT_ID>/*`. No agregues variables globales por tenant ni pegues valores secretos en `token_ref`/`app_secret_ref`.
+Los secretos locales viven en `.secrets/tenants/<TENANT_ID>/*`. No agregues variables globales por tenant ni pegues valores secretos en las referencias internas.
 
 ## Knowledge Studio MVP
 

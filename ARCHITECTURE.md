@@ -38,7 +38,7 @@ La inicialización de PostgreSQL replica el modelo del README mediante scripts m
 - API/worker/scheduler usan `DATABASE_URL` con el usuario aplicativo `copiloto_app`.
 - El contenedor PostgreSQL usa `POSTGRES_USER`/`POSTGRES_PASSWORD` para bootstrap admin.
 - La API establece `app.tenant_id` y `app.support_mode` en cada transacción para que PostgreSQL aplique RLS.
-- Webhooks de WhatsApp separan tres secretos por canal: el verify token solo se usa en `GET /v1/webhooks/whatsapp` y se compara contra `app.tenant_channels.verify_token_hash`; el access token de Meta se resuelve desde `token_ref` solo para envíos outbound; y el App Secret se resuelve desde `app_secret_ref` del `tenant_channel` identificado por `phone_number_id` para validar `X-Hub-Signature-256` en `POST /v1/webhooks/whatsapp`.
+- Webhooks de WhatsApp separan tres secretos por canal bajo `secrets/tenants/<TENANT_ID>/`: el verify token solo se usa en `GET /v1/webhooks/whatsapp` y se compara leyendo `whatsapp_verify_token`; el access token de Meta se resuelve desde la referencia interna `token_ref` hacia `meta_access_token` solo para envíos outbound; y el App Secret se resuelve desde la referencia interna `app_secret_ref` hacia `whatsapp_app_secret` del `tenant_channel` identificado por `phone_number_id` para validar `X-Hub-Signature-256` en `POST /v1/webhooks/whatsapp`.
 
 ## Endpoints principales y niveles de seguridad
 

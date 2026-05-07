@@ -52,10 +52,7 @@ JWT_ISSUER=copilotoia-local
 JWT_AUDIENCE=copilotoia-panel
 JWT_SECRET=${jwt_secret}
 SERVICE_TOKEN=${service_token}
-WHATSAPP_VERIFY_TOKEN=${whatsapp_verify_token}
-WHATSAPP_APP_SECRET=${whatsapp_app_secret}
 META_GRAPH_VERSION=v23.0
-META_ACCESS_TOKEN=${meta_access_token}
 S3_ENDPOINT_URL=http://minio:9000
 S3_BUCKET=copilotoia-local
 S3_ACCESS_KEY_ID=copilotoia-minio
@@ -65,10 +62,22 @@ EOF_ENV
 
 chmod 600 .env
 mkdir -p .secrets
-for key in jwt_secret service_token whatsapp_verify_token whatsapp_app_secret meta_access_token s3_secret_access_key; do
+for key in jwt_secret service_token s3_secret_access_key; do
   value=$(awk -F= -v k="$(echo "$key" | tr '[:lower:]' '[:upper:]')" '$1==k {print substr($0, index($0,"=")+1)}' .env)
   printf '%s' "$value" > ".secrets/${key}"
   chmod 600 ".secrets/${key}"
 done
 
-echo "Secretos locales generados en .env y .secrets/ (ignorados por git)."
+for tenant_id in \
+  11111111-1111-1111-1111-111111111111 \
+  22222222-2222-2222-2222-222222222222 \
+  33333333-3333-3333-3333-333333333333; do
+  tenant_secret_dir=".secrets/tenants/${tenant_id}"
+  mkdir -p "${tenant_secret_dir}"
+  printf '%s' "${meta_access_token}" > "${tenant_secret_dir}/meta_access_token"
+  printf '%s' "${whatsapp_app_secret}" > "${tenant_secret_dir}/whatsapp_app_secret"
+  printf '%s' "${whatsapp_verify_token}" > "${tenant_secret_dir}/whatsapp_verify_token"
+  chmod 600 "${tenant_secret_dir}/meta_access_token" "${tenant_secret_dir}/whatsapp_app_secret" "${tenant_secret_dir}/whatsapp_verify_token"
+done
+
+echo "Secretos locales generados en .env y .secrets/tenants/<tenant_id>/ (ignorados por git)."

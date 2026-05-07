@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
+import hmac
 import json
-import secrets as secrets_lib
 from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
@@ -44,15 +44,6 @@ log = structlog.get_logger()
 
 def tenant_secret_ref(tenant_id: UUID, secret_name: str) -> str:
     return f'secrets/tenants/{tenant_id}/{secret_name}'
-
-
-def validate_tenant_secret_ref(tenant_id: UUID, secret_ref: str, secret_name: str) -> None:
-    expected = tenant_secret_ref(tenant_id, secret_name)
-    if secret_ref != expected:
-        raise HTTPException(
-            status_code=400,
-            detail=f'{secret_name} must use tenant-scoped ref {expected}',
-        )
 
 
 def write_tenant_secret(secret_ref: str, value: str) -> None:
@@ -539,39 +530,36 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
 async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    validate_tenant_secret_ref(tenant_id, payload.token_ref, 'meta_access_token')
-    validate_tenant_secret_ref(tenant_id, payload.app_secret_ref, 'whatsapp_app_secret')
 
-    current = await conn.fetchrow(
-        """
-        select verify_token_hash
-        from app.tenant_channels
-        where tenant_id=$1 and provider='whatsapp_cloud_api'
-        """,
-        tenant_id,
-    )
+    token_ref = tenant_secret_ref(tenant_id, 'meta_access_token')
+    app_secret_ref = tenant_secret_ref(tenant_id, 'whatsapp_app_secret')
+    verify_token_ref = tenant_secret_ref(tenant_id, 'whatsapp_verify_token')
 
     if payload.meta_access_token:
-        write_tenant_secret(payload.token_ref, payload.meta_access_token)
-    elif not token_ref_is_configured(payload.token_ref):
+        write_tenant_secret(token_ref, payload.meta_access_token)
+    elif not token_ref_is_configured(token_ref):
         raise HTTPException(
             status_code=400,
-            detail='Meta access token is required for this tenant token_ref',
+            detail='Meta access token is required for this tenant secret',
         )
 
     if payload.app_secret:
-        write_tenant_secret(payload.app_secret_ref, payload.app_secret)
-    elif not secret_ref_is_configured(payload.app_secret_ref):
+        write_tenant_secret(app_secret_ref, payload.app_secret)
+    elif not secret_ref_is_configured(app_secret_ref):
         raise HTTPException(
             status_code=400,
-            detail='WhatsApp app secret is required for this tenant app_secret_ref',
+            detail='WhatsApp app secret is required for this tenant secret',
         )
 
-    generated_verify_token = None
-    verify_token = payload.verify_token
-    if not verify_token and not current:
-        generated_verify_token = secrets_lib.token_urlsafe(32)
-        verify_token = generated_verify_token
+    if payload.verify_token:
+        write_tenant_secret(verify_token_ref, payload.verify_token)
+    elif not secret_ref_is_configured(verify_token_ref):
+        raise HTTPException(
+            status_code=400,
+            detail='WhatsApp verify token is required for this tenant secret',
+        )
+
+    verify_token = resolve_secret_ref(verify_token_ref)
 
     row = await conn.fetchrow(
         """
@@ -583,7 +571,7 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
         on conflict (tenant_id, provider) do update set
           business_id=excluded.business_id, waba_id=excluded.waba_id, phone_number_id=excluded.phone_number_id,
           token_ref=excluded.token_ref, app_secret_ref=excluded.app_secret_ref,
-          verify_token_hash=coalesce(excluded.verify_token_hash, app.tenant_channels.verify_token_hash),
+          verify_token_hash=excluded.verify_token_hash,
           account_mode=excluded.account_mode, status='active'
         returning *
         """,
@@ -591,16 +579,13 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
         payload.business_id,
         payload.waba_id,
         payload.phone_number_id,
-        payload.token_ref,
-        payload.app_secret_ref,
+        token_ref,
+        app_secret_ref,
         verify_token_hash(verify_token) if verify_token else None,
         payload.account_mode,
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='channel.upserted', entity_type='tenant_channel', entity_id=str(row['id']))
-    response = record_to_dict(row)
-    if generated_verify_token:
-        response['generated_verify_token'] = generated_verify_token
-    return response
+    return record_to_dict(row)
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/channels/whatsapp/health')
@@ -624,7 +609,7 @@ async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connec
     delivery_mode = channel.get('account_mode') or 'mock'
     token_ready = token_ref_is_configured(channel.get('token_ref'))
     app_secret_ready = secret_ref_is_configured(channel.get('app_secret_ref'))
-    verify_token_ready = bool(channel.get('verify_token_hash'))
+    verify_token_ready = secret_ref_is_configured(tenant_secret_ref(channel['tenant_id'], 'whatsapp_verify_token'))
     delivery_ready = delivery_mode != 'live' or token_ready
     checks = {
         'business_id': bool(channel.get('business_id')),
@@ -1601,18 +1586,18 @@ async def verify_whatsapp_webhook(
 ):
     if hub_mode != 'subscribe' or not hub_verify_token:
         raise HTTPException(status_code=403, detail='Invalid verify token')
-    row = await conn.fetchrow(
+    rows = await conn.fetch(
         """
-        select id
+        select tenant_id
         from app.tenant_channels
         where provider='whatsapp_cloud_api'
           and status='active'
-          and verify_token_hash=$1
         """,
-        verify_token_hash(hub_verify_token),
     )
-    if row:
-        return Response(content=hub_challenge or '', media_type='text/plain')
+    for row in rows:
+        verify_token = resolve_secret_ref(tenant_secret_ref(row['tenant_id'], 'whatsapp_verify_token'))
+        if verify_token and hmac.compare_digest(verify_token, hub_verify_token):
+            return Response(content=hub_challenge or '', media_type='text/plain')
     raise HTTPException(status_code=403, detail='Invalid verify token')
 
 
