@@ -34,6 +34,15 @@ function Notice({ notice }) {
   return <p className={`notice ${notice.type}`}>{notice.text}</p>;
 }
 
+function deliveryLabel(message) {
+  if (message.status === 'queued') return 'En cola: pendiente del worker';
+  if (message.status === 'failed') return `Falló WhatsApp: ${message.error_message || message.error_code || 'sin detalle'}`;
+  if (message.payload?.provider_result?.mocked) return 'Simulado local: no salió a WhatsApp';
+  if (message.external_message_id) return `Aceptado por WhatsApp: ${message.external_message_id}`;
+  if (message.status === 'sent') return 'Enviado al proveedor';
+  return message.status;
+}
+
 export function OperationsDesk({ module, session, tenant }) {
   const [conversations, setConversations] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState(null);
@@ -274,7 +283,7 @@ export function OperationsDesk({ module, session, tenant }) {
               <div className="message-thread" aria-live="polite">
                 {(conversationDetail?.messages || []).map((message) => (
                   <article className={`message-bubble ${message.direction}`} key={message.id}>
-                    <small>{message.sender_actor_type} · {formatDate(message.created_at)} · {message.status}</small>
+                    <small>{message.sender_actor_type} · {formatDate(message.created_at)} · {deliveryLabel(message)}</small>
                     <p>{message.body_text || JSON.stringify(message.payload)}</p>
                   </article>
                 ))}

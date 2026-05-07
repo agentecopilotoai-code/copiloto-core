@@ -104,13 +104,14 @@ async def process_once(conn: asyncpg.Connection) -> int:
                 json.dumps({'provider_result': result}),
             )
             await conn.execute('update app.domain_events set published_at=now() where id=$1', row['id'])
+        mocked = bool(result.get('mocked'))
         log.info(
-            'message_delivery_sent',
+            'message_delivery_mocked' if mocked else 'message_delivery_sent',
             event_id=str(row['id']),
             message_id=str(row['aggregate_id']),
             tenant_id=str(row['tenant_id']),
             provider_message_id=external_message_id,
-            mocked=bool(result.get('mocked')),
+            mocked=mocked,
         )
     return len(rows)
 
