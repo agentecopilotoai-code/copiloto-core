@@ -148,4 +148,4 @@ Cada entrada debe incluir:
   - `pytest tests/test_knowledge_documents.py` (bloqueado porque el Python global no tiene `pydantic`)
   - `uv run pytest tests/test_knowledge_documents.py` (bloqueado por fallo de descarga desde PyPI en el entorno)
   - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
-- **Notas:** la carga binaria real a object storage queda para una integración posterior; este MVP cumple el alcance registrando fuentes ya cargadas u object keys junto con checksum/MIME, sin crear variables nuevas de secretos.
+- **Notas:** la carga binaria real a object storage queda para una integración posterior; este MVP cumple el alcance registrando fuentes ya cargadas u object keys junto con checksum/MIME, sin crear variables nuevas de secretos. Posteriormente se agregó compatibilidad con volúmenes PostgreSQL existentes y una migración idempotente en `scripts/bootstrap.sh` para evitar `UndefinedColumnError` cuando la tabla `app.knowledge_documents` aún no tiene las columnas nuevas.

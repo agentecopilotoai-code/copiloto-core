@@ -49,6 +49,79 @@ system_router = APIRouter(
 )
 
 
+KNOWLEDGE_DOCUMENT_RESPONSE_COLUMNS = (
+    'id',
+    'tenant_id',
+    'source_type',
+    'document_type',
+    'title',
+    'source_uri',
+    'checksum',
+    'mime_type',
+    'content',
+    'visibility',
+    'status',
+    'uploaded_by_user_id',
+    'metadata',
+    'created_at',
+    'updated_at',
+)
+KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS = (
+    'source_type',
+    'document_type',
+    'title',
+    'source_uri',
+    'checksum',
+    'mime_type',
+    'content',
+    'visibility',
+    'status',
+    'metadata',
+)
+KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS = {
+    'document_type': 'reference',
+    'content': None,
+    'metadata': {},
+}
+
+
+async def knowledge_document_columns(conn: asyncpg.Connection) -> set[str]:
+    rows = await conn.fetch(
+        """
+        select column_name
+        from information_schema.columns
+        where table_schema='app' and table_name='knowledge_documents'
+        """
+    )
+    return {row['column_name'] for row in rows}
+
+
+def knowledge_document_projection(columns: set[str]) -> str:
+    projection = []
+    for column in KNOWLEDGE_DOCUMENT_RESPONSE_COLUMNS:
+        if column in columns:
+            projection.append(column)
+        elif column == 'metadata':
+            projection.append("'{}'::jsonb as metadata")
+        elif column in KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS:
+            projection.append(f"null::text as {column}")
+    return ', '.join(projection)
+
+
+def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
+    document = record_to_dict(row)
+    if not document:
+        return None
+    for column, default in KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS.items():
+        if document.get(column) is None:
+            document[column] = default
+    return document
+
+
+def normalize_knowledge_documents(rows: list[asyncpg.Record]) -> list[dict]:
+    return [normalize_knowledge_document(row) for row in rows]
+
+
 def is_service_or_support(request: Request) -> bool:
     return getattr(request.state, 'actor_type', None) == 'service' or getattr(
         request.state, 'support_mode', False
@@ -629,10 +702,10 @@ async def list_knowledge_documents(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    columns = await knowledge_document_columns(conn)
     rows = await conn.fetch(
-        """
-        select id, tenant_id, source_type, document_type, title, source_uri, checksum, mime_type,
-               content, visibility, status, uploaded_by_user_id, metadata, created_at, updated_at
+        f"""
+        select {knowledge_document_projection(columns)}
         from app.knowledge_documents
         where tenant_id=$1
           and ($2::text is null or status=$2)
@@ -646,7 +719,7 @@ async def list_knowledge_documents(
         visibility,
         source_type,
     )
-    return [record_to_dict(row) for row in rows]
+    return normalize_knowledge_documents(rows)
 
 
 @tenant_admin_router.post('/knowledge/documents', status_code=201)
@@ -657,25 +730,31 @@ async def create_knowledge_document(
 ):
     await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    columns = await knowledge_document_columns(conn)
+    payload_values = payload.model_dump()
+    insert_columns = ['tenant_id'] + [
+        column for column in KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS if column in columns
+    ]
+    values = []
+    for column in insert_columns:
+        if column == 'tenant_id':
+            values.append(payload.tenant_id)
+        elif column == 'metadata':
+            values.append(json.dumps(payload_values[column]))
+        else:
+            values.append(payload_values[column])
+
+    placeholders = [
+        f'${index}::jsonb' if column == 'metadata' else f'${index}'
+        for index, column in enumerate(insert_columns, start=1)
+    ]
     row = await conn.fetchrow(
-        """
-        insert into app.knowledge_documents (
-          tenant_id, source_type, document_type, title, source_uri, checksum, mime_type,
-          content, visibility, status, metadata
-        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
-        returning *
+        f"""
+        insert into app.knowledge_documents ({', '.join(insert_columns)})
+        values ({', '.join(placeholders)})
+        returning {knowledge_document_projection(columns)}
         """,
-        payload.tenant_id,
-        payload.source_type,
-        payload.document_type,
-        payload.title,
-        payload.source_uri,
-        payload.checksum,
-        payload.mime_type,
-        payload.content,
-        payload.visibility,
-        payload.status,
-        json.dumps(payload.metadata),
+        *values,
     )
     await audit(
         conn,
@@ -686,7 +765,7 @@ async def create_knowledge_document(
         entity_type='knowledge_document',
         entity_id=str(row['id']),
     )
-    return record_to_dict(row)
+    return normalize_knowledge_document(row)
 
 
 @tenant_admin_router.get('/knowledge/documents/{document_id}')
@@ -697,12 +776,19 @@ async def get_knowledge_document(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    columns = await knowledge_document_columns(conn)
     row = await conn.fetchrow(
-        'select * from app.knowledge_documents where tenant_id=$1 and id=$2', tenant_id, document_id
+        f"""
+        select {knowledge_document_projection(columns)}
+        from app.knowledge_documents
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        document_id,
     )
     if not row:
         raise HTTPException(status_code=404, detail='Knowledge document not found')
-    return record_to_dict(row)
+    return normalize_knowledge_document(row)
 
 
 @tenant_admin_router.patch('/knowledge/documents/{document_id}')
@@ -714,43 +800,42 @@ async def patch_knowledge_document(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    columns = await knowledge_document_columns(conn)
     current = await conn.fetchrow(
-        'select * from app.knowledge_documents where tenant_id=$1 and id=$2', tenant_id, document_id
+        f"""
+        select {knowledge_document_projection(columns)}
+        from app.knowledge_documents
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        document_id,
     )
     if not current:
         raise HTTPException(status_code=404, detail='Knowledge document not found')
 
-    allowed = payload.model_dump(exclude_unset=True)
-    merged = dict(current)
-    merged.update(allowed)
+    allowed = {
+        column: value
+        for column, value in payload.model_dump(exclude_unset=True).items()
+        if column in columns and column in KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS
+    }
+    if not allowed:
+        return normalize_knowledge_document(current)
+
+    assignments = []
+    values = [tenant_id, document_id]
+    for column, value in allowed.items():
+        values.append(json.dumps(value) if column == 'metadata' else value)
+        placeholder = f'${len(values)}::jsonb' if column == 'metadata' else f'${len(values)}'
+        assignments.append(f'{column}={placeholder}')
+
     row = await conn.fetchrow(
-        """
+        f"""
         update app.knowledge_documents
-        set source_type=$3,
-            document_type=$4,
-            title=$5,
-            source_uri=$6,
-            checksum=$7,
-            mime_type=$8,
-            content=$9,
-            visibility=$10,
-            status=$11,
-            metadata=$12::jsonb
+        set {', '.join(assignments)}
         where tenant_id=$1 and id=$2
-        returning *
+        returning {knowledge_document_projection(columns)}
         """,
-        tenant_id,
-        document_id,
-        merged['source_type'],
-        merged['document_type'],
-        merged['title'],
-        merged['source_uri'],
-        merged['checksum'],
-        merged['mime_type'],
-        merged['content'],
-        merged['visibility'],
-        merged['status'],
-        json.dumps(merged['metadata']),
+        *values,
     )
     await audit(
         conn,
@@ -761,7 +846,7 @@ async def patch_knowledge_document(
         entity_type='knowledge_document',
         entity_id=str(document_id),
     )
-    return record_to_dict(row)
+    return normalize_knowledge_document(row)
 
 
 @tenant_admin_router.delete('/knowledge/documents/{document_id}', status_code=204)

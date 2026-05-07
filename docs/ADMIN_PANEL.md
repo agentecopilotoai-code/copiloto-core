@@ -158,6 +158,8 @@ El frontend usa estos endpoints de la Core API a través del proxy autenticado y
 
 La API configura `app.tenant_id` antes de leer/escribir y las políticas RLS de `app.knowledge_documents`/`app.knowledge_chunks` mantienen el aislamiento por tenant. La carga binaria directa al object storage no se implementa en este MVP; el panel registra fuentes ya cargadas mediante URI/object key más checksum/MIME sin manejar secretos ni archivos reales.
 
+Si ya existía un volumen local de PostgreSQL creado antes de Knowledge Studio, ejecuta `./scripts/bootstrap.sh --skip-smoke` para aplicar la migración idempotente que agrega `document_type`, `content`, `metadata` y el índice de visibilidad sin borrar datos. La API también mantiene compatibilidad de lectura/escritura con tablas antiguas para evitar errores `UndefinedColumnError` mientras esa migración se aplica.
+
 ## Funcionalidad incluida
 
 - Pantalla React de login con Auth0/OIDC.

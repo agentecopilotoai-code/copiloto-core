@@ -54,3 +54,14 @@ def test_knowledge_document_update_allows_partial_status_change():
     payload = KnowledgeDocumentUpdate(status='active')
 
     assert payload.model_dump(exclude_unset=True) == {'status': 'active'}
+
+
+def test_knowledge_document_projection_is_compatible_with_legacy_table():
+    from app.api.v1.routes import knowledge_document_projection
+
+    projection = knowledge_document_projection({'id', 'tenant_id', 'title', 'status'})
+
+    assert 'document_type' in projection
+    assert 'content' in projection
+    assert 'metadata' in projection
+    assert 'select' not in projection.lower()
