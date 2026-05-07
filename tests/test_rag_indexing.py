@@ -2,6 +2,7 @@ import pytest
 
 from app.services.rag_indexing import (
     build_indexing_result,
+    chunk_document_text,
     deterministic_embedding,
     extract_document_text,
     sanitize_document_text,
@@ -56,3 +57,14 @@ def test_deterministic_embedding_and_vector_literal_are_stable():
     assert vector_literal(first).startswith('[')
     assert vector_literal(first).endswith(']')
     assert vector_literal(first).count(',') == 3
+
+
+def test_chunk_document_text_splits_oversized_single_line_content():
+    text = ' '.join(f'palabra{i}' for i in range(80))
+
+    chunks = chunk_document_text(text, max_tokens=20, overlap_tokens=0, embedding_dimensions=4)
+
+    assert len(chunks) > 1
+    assert all(chunk.token_count <= 20 for chunk in chunks)
+    assert 'palabra0' in chunks[0].chunk_text
+    assert 'palabra79' in chunks[-1].chunk_text

@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import UTC, datetime
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import asyncpg
@@ -122,6 +123,18 @@ def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
 
 def normalize_knowledge_documents(rows: list[asyncpg.Record]) -> list[dict]:
     return [normalize_knowledge_document(row) for row in rows]
+
+
+def metadata_extracted_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    extracted_text = value.get('extracted_text')
+    return extracted_text if isinstance(extracted_text, str) else None
 
 
 def is_service_or_support(request: Request) -> bool:
@@ -816,6 +829,7 @@ async def patch_knowledge_document(
     )
     if not current:
         raise HTTPException(status_code=404, detail='Knowledge document not found')
+    current_document = normalize_knowledge_document(current)
 
     allowed = {
         column: value
@@ -823,8 +837,18 @@ async def patch_knowledge_document(
         if column in columns and column in KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS
     }
     if not allowed:
-        return normalize_knowledge_document(current)
-    if allowed.get('status') == 'active':
+        return current_document
+
+    content_changed = 'content' in allowed and allowed.get('content') != current_document.get('content')
+    extracted_text_changed = (
+        'metadata' in allowed
+        and metadata_extracted_text(allowed.get('metadata'))
+        != metadata_extracted_text(current_document.get('metadata'))
+    )
+    invalidates_chunks = content_changed or extracted_text_changed
+    if invalidates_chunks:
+        allowed['status'] = 'draft'
+    elif allowed.get('status') == 'active':
         has_chunks = await conn.fetchval(
             'select exists(select 1 from app.knowledge_chunks where tenant_id=$1 and document_id=$2)',
             tenant_id,
@@ -840,15 +864,22 @@ async def patch_knowledge_document(
         placeholder = f'${len(values)}::jsonb' if column == 'metadata' else f'${len(values)}'
         assignments.append(f'{column}={placeholder}')
 
-    row = await conn.fetchrow(
-        f"""
-        update app.knowledge_documents
-        set {', '.join(assignments)}
-        where tenant_id=$1 and id=$2
-        returning {knowledge_document_projection(columns)}
-        """,
-        *values,
-    )
+    async with conn.transaction():
+        row = await conn.fetchrow(
+            f"""
+            update app.knowledge_documents
+            set {', '.join(assignments)}
+            where tenant_id=$1 and id=$2
+            returning {knowledge_document_projection(columns)}
+            """,
+            *values,
+        )
+        if invalidates_chunks:
+            await conn.execute(
+                'delete from app.knowledge_chunks where tenant_id=$1 and document_id=$2',
+                tenant_id,
+                document_id,
+            )
     await audit(
         conn,
         tenant_id=tenant_id,

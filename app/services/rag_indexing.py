@@ -99,6 +99,27 @@ def vector_literal(values: list[float]) -> str:
     return '[' + ','.join(f'{value:.8f}' for value in values) + ']'
 
 
+def split_line_by_token_budget(line: str, max_tokens: int) -> list[str]:
+    words = WORD_RE.findall(line)
+    if not words:
+        return []
+
+    segments: list[str] = []
+    current_words: list[str] = []
+    for word in words:
+        candidate_words = [*current_words, word]
+        candidate = ' '.join(candidate_words)
+        if current_words and estimate_token_count(candidate) > max_tokens:
+            segments.append(' '.join(current_words))
+            current_words = [word]
+        else:
+            current_words = candidate_words
+
+    if current_words:
+        segments.append(' '.join(current_words))
+    return segments
+
+
 def chunk_document_text(
     text: str,
     *,
@@ -140,6 +161,8 @@ def chunk_document_text(
             )
         )
         overlap_words = WORD_RE.findall(chunk_text)[-overlap_tokens:] if overlap_tokens else []
+        while overlap_words and estimate_token_count(' '.join(overlap_words)) > max_tokens:
+            overlap_words.pop(0)
         current_lines = [' '.join(overlap_words)] if overlap_words else []
         current_tokens = estimate_token_count(current_lines[0]) if current_lines else 0
 
@@ -153,11 +176,15 @@ def chunk_document_text(
             section_path = line.lstrip('#').strip().rstrip(':')
             continue
 
-        line_tokens = estimate_token_count(line)
-        if current_lines and current_tokens + line_tokens > max_tokens:
-            flush()
-        current_lines.append(line)
-        current_tokens += line_tokens
+        for line_segment in split_line_by_token_budget(line, max_tokens):
+            line_tokens = estimate_token_count(line_segment)
+            if current_lines and current_tokens + line_tokens > max_tokens:
+                flush()
+            if current_lines and current_tokens + line_tokens > max_tokens:
+                current_lines = []
+                current_tokens = 0
+            current_lines.append(line_segment)
+            current_tokens += line_tokens
 
     if current_lines:
         flush()
