@@ -20,8 +20,13 @@ function buildHeaders(session, tenantId, body) {
   return headers;
 }
 
+function coreApiPath(session, path) {
+  const baseUrl = session?.api?.baseUrl || '/admin/api/core/v1';
+  return adminPath(`${baseUrl}${path}`);
+}
+
 async function request(path, { body, method = 'GET', session, tenantId } = {}) {
-  const response = await fetch(adminPath(path), {
+  const response = await fetch(coreApiPath(session, path), {
     credentials: 'include',
     method,
     headers: buildHeaders(session, tenantId, body),
@@ -47,11 +52,11 @@ async function request(path, { body, method = 'GET', session, tenantId } = {}) {
 }
 
 export function createTenant(session, payload) {
-  return request('/v1/tenants', { method: 'POST', session, body: payload });
+  return request('/tenants', { method: 'POST', session, body: payload });
 }
 
 export function updateTenantSettings(session, tenantId, payload) {
-  return request(`/v1/tenants/${tenantId}/settings`, {
+  return request(`/tenants/${tenantId}/settings`, {
     method: 'PATCH',
     session,
     tenantId,
@@ -60,5 +65,5 @@ export function updateTenantSettings(session, tenantId, payload) {
 }
 
 export function listAuditLogs(session, tenantId) {
-  return request('/v1/audit-logs', { session, tenantId });
+  return request('/audit-logs', { session, tenantId });
 }

@@ -105,6 +105,23 @@ Abrir el panel:
 http://localhost:3000/admin/
 ```
 
+## Conexión con la Core API
+
+El puerto correcto de la **Core API** en esta arquitectura es `8000`; el puerto `3000` pertenece únicamente al backend del Admin Panel (`app/admin`) y sirve el bundle React, login/logout OIDC y endpoints propios bajo `/admin/api/*`. Por eso el frontend no debe llamar endpoints core como `/v1/tenants` contra `http://localhost:3000`.
+
+Para evitar CORS y diferencias entre Docker y ejecución local, el Admin Panel expone un proxy autenticado en:
+
+```text
+/admin/api/core/v1/*
+```
+
+El proxy reenvía la sesión del admin hacia la Core API configurada por `ADMIN_CORE_API_BASE_URL`:
+
+- En Docker Compose se usa `http://api:8000`, que es el nombre del servicio interno de la Core API.
+- En ejecución local directa el valor por defecto es `http://127.0.0.1:8000`.
+
+El endpoint `/admin/api/session` informa al frontend `api.baseUrl = /admin/api/core/v1`, y los servicios React construyen las llamadas desde ese valor en vez de asumir `/v1` en el mismo origen.
+
 ## Funcionalidad incluida
 
 - Pantalla React de login con Auth0/OIDC.

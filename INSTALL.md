@@ -209,7 +209,7 @@ El script termina mostrando `docker compose ps admin-panel`; ahí debe aparecer 
 docker compose up -d --build admin-panel
 ```
 
-Luego abre `http://localhost:3000/admin/` e inicia sesión con Auth0. Si tu aplicación Auth0 fue configurada antes de esta versión, vuelve a ejecutar `scripts/configure-auth0.sh` para agregar `http://localhost:3000/admin/` a Allowed Logout URLs. Más detalles y comandos de desarrollo están en `docs/ADMIN_PANEL.md`.
+Luego abre `http://localhost:3000/admin/` e inicia sesión con Auth0. El puerto `3000` es solo para el Admin Panel; los endpoints core `/v1/*` viven en la API del puerto `8000`. En Docker, el Admin Panel se comunica con esa API mediante `ADMIN_CORE_API_BASE_URL=http://api:8000` y expone al navegador el proxy `/admin/api/core/v1/*`, por lo que el frontend no debe intentar llamar `/v1/*` en `http://localhost:3000`. Si tu aplicación Auth0 fue configurada antes de esta versión, vuelve a ejecutar `scripts/configure-auth0.sh` para agregar `http://localhost:3000/admin/` a Allowed Logout URLs. Más detalles y comandos de desarrollo están en `docs/ADMIN_PANEL.md`.
 
 ### WhatsApp / Meta Graph API
 
