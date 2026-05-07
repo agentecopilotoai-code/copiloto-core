@@ -221,24 +221,29 @@ export function KnowledgeStudio({ module, session, tenant }) {
             {!isLoading && documents.length === 0 && <p className="notice info">No hay documentos con esos filtros.</p>}
             {documents.map((document) => (
               <article className="knowledge-document" key={document.id}>
-                <div>
+                <div className="knowledge-document-main">
                   <strong>{document.title}</strong>
                   <p>{documentSummary(document)}</p>
                 </div>
-                <dl className="mini-meta">
-                  <div><dt>Estado</dt><dd><span className={`status-pill ${document.status}`}>{statusLabels[document.status] || document.status}</span></dd></div>
-                  <div><dt>Visibilidad</dt><dd>{document.visibility}</dd></div>
-                  <div><dt>Fuente</dt><dd>{document.source_type}</dd></div>
-                </dl>
+                <div className="document-subtle-meta" aria-label="Metadatos del documento">
+                  <span className={`status-pill ${document.status}`}>{statusLabels[document.status] || document.status}</span>
+                  <span>{document.visibility}</span>
+                  <span>{document.source_type}</span>
+                </div>
                 <div className="document-actions">
-                  <button className="secondary-action" onClick={() => editDocument(document)} type="button">Editar</button>
-                  <select value={document.status} onChange={(event) => changeStatus(document, event.target.value)}>
+                  <select
+                    aria-label={`Cambiar estado de ${document.title}`}
+                    className="status-select"
+                    value={document.status}
+                    onChange={(event) => changeStatus(document, event.target.value)}
+                  >
                     <option value="draft">Draft</option>
                     <option value="indexing">Indexing</option>
                     <option value="active">Active</option>
                     <option value="failed">Failed</option>
                   </select>
-                  <button className="secondary-action danger" onClick={() => removeDocument(document)} type="button">Eliminar</button>
+                  <button className="icon-action" onClick={() => editDocument(document)} type="button">Editar</button>
+                  <button className="icon-action danger" onClick={() => removeDocument(document)} type="button">Eliminar</button>
                 </div>
               </article>
             ))}
