@@ -86,3 +86,21 @@ Cada entrada debe incluir:
   - `bash -n scripts/bootstrap-admin-panel.sh`
   - `docker compose build admin-panel` (bloqueado porque Docker no está instalado en el entorno)
 - **Notas:** el panel queda listo para validar login real contra Auth0 cuando `.env.auth0.local` y `.secrets/auth0-admin-client-secret` existen localmente; las sesiones son en memoria para el MVP y deben externalizarse antes de producción.
+
+### TASK-0003 — Implementar Tenant Setup Wizard
+
+- **Fecha:** 2026-05-07
+- **Resumen:** se implementó el wizard MVP de Tenant Setup en el Admin Panel con secciones por tabs para crear tenant, editar settings, configurar horarios, política de escalamiento, privacidad/PII y consultar auditoría. Los campos `pii_policy`, `no_train` y `max_bot_turns` se configuran mediante controles de formulario y builder visual, no mediante edición manual de JSON. El wizard consume los endpoints REST existentes para crear tenants, actualizar settings y leer audit logs, y agrega el tenant creado al selector activo del panel.
+- **Archivos modificados:**
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/styles/global.css`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `git diff --check`
+  - `python3 -m compileall app`
+  - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
+  - `npm --prefix admin-panel install` (bloqueado por HTTP 403 contra npm registry en el entorno)
+- **Notas:** la creación de tenants requiere un token con rol `owner` no acotado a tenant, y la actualización/consulta por tenant requiere un token tenant-scoped o `support_mode`, de acuerdo con la seguridad existente de la API.

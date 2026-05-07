@@ -19,17 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0003 — Implementar Tenant Setup Wizard
-
-- **Estado:** PENDING
-- **Objetivo:** permitir configurar tenants sin SQL manual.
-- **Alcance mínimo:**
-  - Crear tenant.
-  - Editar settings del tenant.
-  - Configurar horarios, política de escalamiento, PII policy, `no_train` y `max_bot_turns`.
-  - Mostrar auditoría básica de cambios.
-- **Criterio de terminado:** el wizard crea/configura un tenant usando endpoints REST existentes y deja evidencia en audit logs.
-
 ### TASK-0004 — Implementar onboarding WhatsApp/WABA en panel
 
 - **Estado:** PENDING
