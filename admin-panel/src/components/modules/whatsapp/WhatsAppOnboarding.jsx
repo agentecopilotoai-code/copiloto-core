@@ -280,7 +280,9 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
               required
               value={form.token_ref}
             />
-            <small>No pegues aquí el token real de Meta; guarda una referencia por tenant como secrets/tenants/<tenant_id>/meta_access_token.</small>
+            <small>
+              {"No pegues aquí el token real de Meta; guarda una referencia por tenant como secrets/tenants/<tenant_id>/meta_access_token."}
+            </small>
           </label>
           <label>
             Modo de entrega
