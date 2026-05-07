@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -763,8 +764,12 @@ async def start_conversation(
     )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(message['id']))
     response = record_to_dict(conversation)
+    response['contact_label'] = contact['display_name'] or contact['phone_e164'] or contact['wa_id']
+    response['contact_phone'] = contact['phone_e164']
     response['contact'] = record_to_dict(contact)
     response['initial_message'] = record_to_dict(message)
+    response['messages'] = [response['initial_message']]
+    response['handoffs'] = []
     response['reused_conversation'] = reused_conversation
     return response
 
@@ -774,18 +779,23 @@ async def get_conversation(
     conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
 ):
     tenant_id = await tenant_id_from_request(request, conn)
-    row = await conn.fetchrow(
-        """
-        select c.*,
-               coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
-               ct.phone_e164 as contact_phone
-        from app.conversations c
-        join app.contacts ct on ct.id = c.contact_id
-        where c.tenant_id=$1 and c.id=$2
-        """,
-        tenant_id,
-        conversation_id,
-    )
+    row = None
+    for attempt in range(5):
+        row = await conn.fetchrow(
+            """
+            select c.*,
+                   coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
+                   ct.phone_e164 as contact_phone
+            from app.conversations c
+            join app.contacts ct on ct.id = c.contact_id
+            where c.tenant_id=$1 and c.id=$2
+            """,
+            tenant_id,
+            conversation_id,
+        )
+        if row or attempt == 4:
+            break
+        await asyncio.sleep(0.1)
     if not row:
         raise HTTPException(status_code=404, detail='Conversation not found')
     messages = await conn.fetch(

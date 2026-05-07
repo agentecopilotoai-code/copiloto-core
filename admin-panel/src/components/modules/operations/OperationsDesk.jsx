@@ -45,8 +45,9 @@ export function OperationsDesk({ module, session, tenant }) {
   const [notice, setNotice] = useState(null);
 
   const selectedConversation = useMemo(
-    () => conversations.find((conversation) => conversation.id === selectedConversationId),
-    [conversations, selectedConversationId],
+    () => conversations.find((conversation) => conversation.id === selectedConversationId)
+      || (conversationDetail?.id === selectedConversationId ? conversationDetail : null),
+    [conversationDetail, conversations, selectedConversationId],
   );
 
   function refreshConversations(showNotice = false) {
@@ -112,8 +113,9 @@ export function OperationsDesk({ module, session, tenant }) {
         initial_message: initialMessage,
         phone_e164: phone,
       });
-      await refreshConversations();
+      setConversationDetail(conversation);
       setSelectedConversationId(conversation.id);
+      refreshConversations();
       setStartForm({ displayName: '', initialMessage: '', phone: '' });
       setNotice({ type: 'success', text: 'Conversación iniciada y mensaje inicial encolado.' });
     } catch (error) {
