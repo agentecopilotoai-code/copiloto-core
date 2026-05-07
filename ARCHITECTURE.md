@@ -47,7 +47,7 @@ La API se expone en el puerto `8000` por defecto (`API_PORT`) y queda disponible
 | Nivel | Autenticación | Endpoints | Uso |
 |---|---|---|---|
 | Público | Sin Auth0/JWT; validación específica si aplica | `GET /v1/health`, `GET /v1/webhooks/whatsapp`, `POST /v1/webhooks/whatsapp` | Health check y webhooks externos de Meta. El `POST` valida `X-Hub-Signature-256` con `WHATSAPP_APP_SECRET`. |
-| Admin de plataforma | JWT/Auth0 con rol `owner` | `POST /v1/tenants` | Crear tenants. No acepta `service-token` para separar administración humana de workloads internos. |
+| Admin de plataforma | JWT/Auth0 con rol `owner` sin `tenant_id`/`X-Tenant-Id` | `POST /v1/tenants` | Crear tenants. Rechaza tokens tenant-scoped y no acepta `service-token` para separar administración humana de workloads internos. |
 | Admin de tenant | JWT/Auth0 con rol `admin` o superior y tenant scope | `PATCH /v1/tenants/{tenant_id}/settings`, `POST /v1/tenants/{tenant_id}/channels/whatsapp`, `GET /v1/tenants/{tenant_id}/channels/whatsapp/health`, `POST /v1/knowledge/documents`, `POST /v1/prompts` | Configuración sensible del tenant, canal WhatsApp, conocimiento e IA. |
 | Operación de tenant | JWT/Auth0 con rol `agent` o superior; `service-token` permitido solo donde el worker necesita actuar | `GET /v1/tenants/{tenant_id}`, `GET /v1/conversations`, `POST /v1/conversations/{conversation_id}/messages`, `POST /v1/conversations/{conversation_id}/handoff`, `POST /v1/service-requests`, `POST /v1/appointments` | Operación diaria del panel y acciones que también pueden ejecutar workers internos. |
 | Sistema interno | `Authorization: Bearer <service-token>`; no requiere Auth0 | `POST /v1/contacts/upsert` | Ingesta/normalización interna de contactos desde webhooks o jobs. |

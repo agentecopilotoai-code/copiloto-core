@@ -17,7 +17,7 @@ from app.api.v1.schemas import (
     TenantCreate,
 )
 from app.core.config import get_settings
-from app.core.security import authenticate_request, require_min_role, require_service
+from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.whatsapp import verify_signature
@@ -27,7 +27,7 @@ public_router = APIRouter(tags=['public'])
 webhook_router = APIRouter(prefix='/webhooks', tags=['public-webhooks'])
 platform_admin_router = APIRouter(
     tags=['platform-admin'],
-    dependencies=[Depends(authenticate_request), Depends(require_min_role('owner'))],
+    dependencies=[Depends(authenticate_request), Depends(require_platform_owner)],
 )
 tenant_admin_router = APIRouter(
     tags=['tenant-admin'],

@@ -196,6 +196,21 @@ def _has_role(roles: list[str], minimum_role: str) -> bool:
     return any(_ROLE_LEVELS.get(role, 0) >= required for role in roles)
 
 
+async def require_platform_owner(request: Request) -> None:
+    actor_type = getattr(request.state, 'actor_type', 'anonymous')
+    if actor_type == 'anonymous':
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required')
+    if actor_type != 'user':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Platform user required')
+    if getattr(request.state, 'tenant_id', None):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Platform administration requires an unscoped token',
+        )
+    if 'owner' not in getattr(request.state, 'roles', []):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='owner role is required')
+
+
 async def require_service(request: Request) -> None:
     if getattr(request.state, 'actor_type', None) != 'service':
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Service token required')
