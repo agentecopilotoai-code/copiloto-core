@@ -52,6 +52,11 @@ def test_whatsapp_delivery_mode_controls_mocking_per_tenant_channel():
     assert 'generated_verify_token' in routes_source
     assert 'verify_token_hash(hub_verify_token)' in routes_source
     assert 'verify_signature_with_secret' in routes_source
+    assert 'whatsapp_phone_number_id_from_payload(payload)' in routes_source
+    assert 'select id, tenant_id, app_secret_ref' in routes_source
+    assert "resolve_secret_ref(channel['app_secret_ref'])" in routes_source
+    assert "raise HTTPException(status_code=404, detail='WhatsApp channel not found')" in routes_source
+    assert "settings.whatsapp_app_secret" not in routes_source
     assert "account_mode text not null default 'mock' check (account_mode in ('mock','live'))" in db_source
 
 

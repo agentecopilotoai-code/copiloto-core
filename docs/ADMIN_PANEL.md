@@ -140,7 +140,7 @@ Secretos requeridos por tenant:
 - `token_ref`: referencia guardada en `app.tenant_channels.token_ref`; por defecto `secrets/tenants/<TENANT_ID>/meta_access_token`.
 - `app_secret_ref`: referencia guardada en `app.tenant_channels.app_secret_ref`; por defecto `secrets/tenants/<TENANT_ID>/whatsapp_app_secret`.
 - **Meta access token del tenant:** el panel lo escribe en el archivo apuntado por `token_ref`; no se guarda en DB.
-- **App secret del tenant:** el panel lo escribe en el archivo apuntado por `app_secret_ref`; no se guarda en DB.
+- **App secret del tenant:** el panel lo escribe en el archivo apuntado por `app_secret_ref`; no se guarda en DB. Debe ser solo el App Secret de Meta; no pegues `APP_ID|APP_SECRET`, el App ID ni un access token en `whatsapp_app_secret`.
 - **Verify token:** CopilotoIA lo genera al registrar el canal y guarda solo su hash en `app.tenant_channels.verify_token_hash`.
 
 Los secretos locales viven en `.secrets/tenants/<TENANT_ID>/*`. No agregues variables globales por tenant ni pegues valores secretos en `token_ref`/`app_secret_ref`.

@@ -1619,11 +1619,18 @@ async def verify_whatsapp_webhook(
 @webhook_router.post('/whatsapp', status_code=202)
 async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = Depends(get_db), x_hub_signature_256: str | None = Header(default=None, alias='X-Hub-Signature-256')):
     body = await request.body()
-    payload = json.loads(body or b'{}')
+    try:
+        payload = json.loads(body or b'{}')
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail='Invalid webhook payload') from exc
+
     phone_number_id = whatsapp_phone_number_id_from_payload(payload)
+    if not phone_number_id:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+
     channel = await conn.fetchrow(
         """
-        select app_secret_ref
+        select id, tenant_id, app_secret_ref
         from app.tenant_channels
         where provider='whatsapp_cloud_api'
           and phone_number_id=$1
@@ -1631,7 +1638,10 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
         """,
         phone_number_id,
     )
-    app_secret = resolve_secret_ref(channel['app_secret_ref']) if channel else None
+    if not channel:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+
+    app_secret = resolve_secret_ref(channel['app_secret_ref'])
     if not verify_signature_with_secret(body, x_hub_signature_256, app_secret):
         raise HTTPException(status_code=401, detail='Invalid webhook signature')
     sha = hashlib.sha256(body).hexdigest()
