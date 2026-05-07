@@ -21,6 +21,7 @@ services:
     command: python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./app:/app/app:ro
+      - ./.secrets:/app/.secrets:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/v1/health >/dev/null || exit 1"]
       interval: 10s
@@ -60,6 +61,8 @@ services:
       postgres:
         condition: service_healthy
     command: python3 -m app.workers.event_worker
+    volumes:
+      - ./.secrets:/app/.secrets:ro
 
   scheduler:
     build: .

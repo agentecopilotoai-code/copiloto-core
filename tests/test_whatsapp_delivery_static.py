@@ -7,6 +7,7 @@ OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/Operations
 API_SCHEMAS = Path('app/api/v1/schemas.py')
 API_ROUTES = Path('app/api/v1/routes.py')
 DB_SCHEMA = Path('infra/postgres/01-schema.sql')
+DOCKER_COMPOSE = Path('docker-compose.yml')
 
 
 def test_worker_marks_delivery_failures_and_logs_provider_result():
@@ -29,28 +30,38 @@ def test_whatsapp_delivery_mode_controls_mocking_per_tenant_channel():
     db_source = DB_SCHEMA.read_text()
 
     assert 'c.account_mode' in worker_source
+    assert 'c.token_ref' in worker_source
     assert "row['account_mode'] or 'mock'" in worker_source
+    assert "row['token_ref']" in worker_source
     assert "delivery_mode: str = 'mock'" in service_source
     assert "if delivery_mode != 'live'" in service_source
-    assert 'META_ACCESS_TOKEN is missing or configured as a local mock token' in service_source
+    assert 'resolve_secret_ref' in service_source
+    assert "ref.startswith('secrets/')" in service_source
+    assert "'..' in Path(secret_name).parts" in service_source
+    assert "secret_name == 'meta_access_token'" in service_source
+    assert 'token_ref did not resolve to a real Meta access token' in service_source
     assert "account_mode: str = Field(default='mock', pattern='^(mock|live)$')" in schema_source
     assert 'account_mode=excluded.account_mode' in routes_source
     assert 'meta_access_token_configured' in routes_source
     assert 'delivery_ready' in routes_source
+    assert "token_ref_is_configured(channel.get('token_ref'))" in routes_source
     assert "account_mode text not null default 'mock' check (account_mode in ('mock','live'))" in db_source
 
 
 def test_whatsapp_onboarding_exposes_delivery_mode_toggle():
     source = WHATSAPP_ONBOARDING.read_text()
 
-    assert "account_mode: 'mock'" in source
+    assert 'defaultFormForTenant' in source
+    assert 'secrets/tenants/${tenantId}' in source
     assert 'Modo de entrega' in source
     assert 'Mock local (no envía a WhatsApp)' in source
     assert 'Real vía WhatsApp Cloud API' in source
     assert 'META_ACCESS_TOKEN real' in source
+    assert 'token_ref no resuelve' in source
     assert 'Falta o es mock' in source
     assert 'Modo real: el worker llama a Meta usando META_ACCESS_TOKEN' in source
     assert 'No pegues aquí el token real de Meta' in source
+    assert 'secrets/tenants/<tenant_id>/meta_access_token' in source
     assert 'WHATSAPP_VERIFY_TOKEN lo defines tú' in source
 
 
@@ -60,3 +71,10 @@ def test_operations_desk_explains_queued_sent_failed_statuses():
     assert 'queued/sent/failed' in source
     assert 'Simulado local: no salió a WhatsApp' in source
     assert 'Aceptado por WhatsApp' in source
+
+
+def test_compose_mounts_secrets_for_api_and_worker():
+    source = DOCKER_COMPOSE.read_text()
+
+    assert './.secrets:/app/.secrets:ro' in source
+    assert 'command: python3 -m app.workers.event_worker' in source

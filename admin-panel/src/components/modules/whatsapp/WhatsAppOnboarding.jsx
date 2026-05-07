@@ -30,14 +30,18 @@ const onboardingSteps = [
   },
 ];
 
-const defaultForm = {
-  business_id: '',
-  waba_id: '',
-  phone_number_id: '',
-  token_ref: 'secrets/meta_access_token',
-  app_secret_ref: 'secrets/whatsapp_app_secret',
-  account_mode: 'mock',
-};
+function defaultFormForTenant(tenantId) {
+  const secretPrefix = tenantId ? `secrets/tenants/${tenantId}` : 'secrets';
+
+  return {
+    business_id: '',
+    waba_id: '',
+    phone_number_id: '',
+    token_ref: `${secretPrefix}/meta_access_token`,
+    app_secret_ref: `${secretPrefix}/whatsapp_app_secret`,
+    account_mode: 'mock',
+  };
+}
 
 function hasValue(value) {
   return Boolean(String(value || '').trim());
@@ -48,7 +52,7 @@ function channelFromHealth(health) {
 }
 
 export function WhatsAppOnboarding({ module, session, tenant }) {
-  const [form, setForm] = useState(defaultForm);
+  const [form, setForm] = useState(() => defaultFormForTenant(tenant?.id));
   const [health, setHealth] = useState(null);
   const [notice, setNotice] = useState(null);
   const [isBusy, setIsBusy] = useState(false);
@@ -81,7 +85,7 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
     setNotice(null);
     setLoadError(null);
     setIsLoadingChannel(false);
-    setForm(defaultForm);
+    setForm(defaultFormForTenant(currentTenantId));
 
     if (!currentTenantId) return undefined;
 
@@ -97,9 +101,9 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
             business_id: loadedChannel.business_id || '',
             waba_id: loadedChannel.waba_id || '',
             phone_number_id: loadedChannel.phone_number_id || '',
-            token_ref: loadedChannel.token_ref || defaultForm.token_ref,
-            app_secret_ref: loadedChannel.app_secret_ref || defaultForm.app_secret_ref,
-            account_mode: loadedChannel.account_mode || defaultForm.account_mode,
+            token_ref: loadedChannel.token_ref || defaultFormForTenant(currentTenantId).token_ref,
+            app_secret_ref: loadedChannel.app_secret_ref || defaultFormForTenant(currentTenantId).app_secret_ref,
+            account_mode: loadedChannel.account_mode || defaultFormForTenant(currentTenantId).account_mode,
           });
         }
       })
@@ -215,8 +219,8 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
       {notice ? <p className={`notice ${notice.type}`}>{notice.text}</p> : null}
       {health?.checks?.delivery_ready === false ? (
         <p className="notice error">
-          El canal está en modo real, pero el Core API/worker no tiene un META_ACCESS_TOKEN real.
-          Configura esa variable en el backend y reinicia el worker antes de esperar mensajes en WhatsApp.
+          El canal está en modo real, pero token_ref no resuelve a un META_ACCESS_TOKEN real para este tenant.
+          Crea el archivo referenciado en .secrets, o usa una referencia env: por tenant, y reinicia el worker antes de esperar mensajes en WhatsApp.
         </p>
       ) : null}
       {isLoadingChannel ? <p className="notice info">Cargando canal WhatsApp existente…</p> : null}
@@ -261,7 +265,7 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
               required
               value={form.token_ref}
             />
-            <small>No pegues aquí el token real de Meta; guarda solo una referencia como secrets/meta_access_token.</small>
+            <small>No pegues aquí el token real de Meta; guarda una referencia por tenant como secrets/tenants/<tenant_id>/meta_access_token.</small>
           </label>
           <label>
             Modo de entrega
@@ -352,7 +356,7 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
         <strong>Variables y secretos requeridos</strong>
         <pre>{`WHATSAPP_VERIFY_TOKEN lo defines tú y solo sirve para validar el webhook; no es el token de Meta y no envía mensajes.
 META_ACCESS_TOKEN es el token real de Meta Cloud API que usa el backend/worker para enviar mensajes en modo real.
-${form.token_ref} debe resolver al META_ACCESS_TOKEN en el runtime o vault.
+${form.token_ref} debe resolver al META_ACCESS_TOKEN de este tenant en el runtime o vault.
 ${form.app_secret_ref} debe resolver al App Secret usado para validar X-Hub-Signature-256.
 Modo mock: el worker marca el mensaje como simulado y no llama a Meta.
 Modo real: el worker llama a Meta usando META_ACCESS_TOKEN del backend; si el token sigue como local-mock/change-me, el mensaje falla explícitamente.

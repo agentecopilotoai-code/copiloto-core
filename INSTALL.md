@@ -443,7 +443,7 @@ Para que WhatsApp funcione de forma estable:
    - `whatsapp_business_management`
    - `business_management`
 6. Si el portal lo permite, usa expiración **Never** para producción controlada; si no, documenta fecha de expiración y rota el secreto antes de que venza.
-7. Guarda ese token como `META_ACCESS_TOKEN` en `.env` y, si usas los archivos locales de secretos, en `.secrets/meta_access_token`. No lo pegues como `WHATSAPP_VERIFY_TOKEN` ni en el campo `token_ref` del Admin Panel.
+7. Para un solo tenant de prueba puedes guardar ese token como `META_ACCESS_TOKEN` en `.env` o en `.secrets/meta_access_token`. Para multi-tenant, guarda un archivo por tenant, por ejemplo `.secrets/tenants/<TENANT_ID>/meta_access_token`, y configura el canal de ese tenant con `token_ref=secrets/tenants/<TENANT_ID>/meta_access_token`. No pegues el valor secreto como `WHATSAPP_VERIFY_TOKEN` ni en el campo `token_ref` del Admin Panel.
 
 ### 10.5 Configurar variables locales de CopilotoIA
 
@@ -456,15 +456,19 @@ WHATSAPP_APP_SECRET=<APP_SECRET_DE_META>
 META_GRAPH_VERSION=v23.0
 ```
 
-Si usas `.secrets/*`, actualiza también estas rutas para que coincidan con las referencias guardadas en el canal:
+Si usas `.secrets/*`, actualiza rutas que coincidan con las referencias guardadas en el canal. Recomendado para multi-tenant:
 
 ```bash
-printf '%s' '<TOKEN_REAL_DE_META>' > .secrets/meta_access_token
-printf '%s' '<APP_SECRET_DE_META>' > .secrets/whatsapp_app_secret
-chmod 600 .secrets/meta_access_token .secrets/whatsapp_app_secret
+TENANT_ID=<TENANT_ID>
+mkdir -p ".secrets/tenants/${TENANT_ID}"
+printf '%s' '<TOKEN_REAL_DE_META_DEL_TENANT>' > ".secrets/tenants/${TENANT_ID}/meta_access_token"
+printf '%s' '<APP_SECRET_DE_META_DEL_TENANT>' > ".secrets/tenants/${TENANT_ID}/whatsapp_app_secret"
+chmod 600 ".secrets/tenants/${TENANT_ID}/meta_access_token" ".secrets/tenants/${TENANT_ID}/whatsapp_app_secret"
 ```
 
-No inventes variables paralelas: el código lee `META_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` y `META_GRAPH_VERSION`; el Admin Panel solo guarda referencias como `secrets/meta_access_token` y `secrets/whatsapp_app_secret`. Si copiaste un `META_ACCESS_TOKEN` en chats, logs o formularios equivocados, revócalo/rotalo en Meta antes de volver a probar.
+Luego en el Admin Panel, para ese tenant, usa `token_ref=secrets/tenants/<TENANT_ID>/meta_access_token` y `app_secret_ref=secrets/tenants/<TENANT_ID>/whatsapp_app_secret`.
+
+No inventes variables paralelas: el código lee `META_GRAPH_VERSION` globalmente, valida webhooks con `WHATSAPP_VERIFY_TOKEN`/`WHATSAPP_APP_SECRET`, y para outbound resuelve el token por `tenant_channels.token_ref`. El Admin Panel guarda referencias como `secrets/tenants/<TENANT_ID>/meta_access_token`, no valores secretos. Si copiaste un `META_ACCESS_TOKEN` en chats, logs o formularios equivocados, revócalo/rotalo en Meta antes de volver a probar.
 
 Reinicia servicios después de cambiar `.env` o `.secrets`:
 

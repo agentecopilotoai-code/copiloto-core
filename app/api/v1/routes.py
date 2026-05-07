@@ -30,7 +30,7 @@ from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
-from app.services.whatsapp import meta_token_is_configured, verify_signature
+from app.services.whatsapp import token_ref_is_configured, verify_signature
 
 log = structlog.get_logger()
 
@@ -530,9 +530,8 @@ async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connec
         raise HTTPException(status_code=404, detail='WhatsApp channel not found')
 
     channel = record_to_dict(row)
-    settings = get_settings()
     delivery_mode = channel.get('account_mode') or 'mock'
-    token_ready = meta_token_is_configured(settings.meta_access_token)
+    token_ready = token_ref_is_configured(channel.get('token_ref'))
     delivery_ready = delivery_mode != 'live' or token_ready
     checks = {
         'business_id': bool(channel.get('business_id')),
