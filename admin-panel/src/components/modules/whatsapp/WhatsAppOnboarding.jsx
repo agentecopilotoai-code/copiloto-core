@@ -40,6 +40,8 @@ function defaultFormForTenant(tenantId) {
     token_ref: `${secretPrefix}/meta_access_token`,
     app_secret_ref: `${secretPrefix}/whatsapp_app_secret`,
     account_mode: 'mock',
+    meta_access_token: '',
+    app_secret: '',
   };
 }
 
@@ -104,6 +106,8 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
             token_ref: loadedChannel.token_ref || defaultFormForTenant(currentTenantId).token_ref,
             app_secret_ref: loadedChannel.app_secret_ref || defaultFormForTenant(currentTenantId).app_secret_ref,
             account_mode: loadedChannel.account_mode || defaultFormForTenant(currentTenantId).account_mode,
+            meta_access_token: '',
+            app_secret: '',
           });
         }
       })
@@ -189,12 +193,23 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
       return;
     }
 
+    const payload = { ...form };
+    if (!payload.meta_access_token) delete payload.meta_access_token;
+    if (!payload.app_secret) delete payload.app_secret;
+
     const savedChannel = await runAction(
-      () => upsertWhatsAppChannel(session, currentTenantId, form),
+      () => upsertWhatsAppChannel(session, currentTenantId, payload),
       'Canal WhatsApp registrado. Ejecutando health check local…',
     );
     if (savedChannel) {
       await refreshHealth(false);
+      if (savedChannel.generated_verify_token) {
+        setNotice({
+          type: 'success',
+          text: `Canal registrado. Copia este Verify token en Meta Webhooks; solo se muestra una vez: ${savedChannel.generated_verify_token}`,
+        });
+      }
+      setForm((currentForm) => ({ ...currentForm, meta_access_token: '', app_secret: '' }));
     }
   }
 
@@ -219,8 +234,8 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
       {notice ? <p className={`notice ${notice.type}`}>{notice.text}</p> : null}
       {health?.checks?.delivery_ready === false ? (
         <p className="notice error">
-          El canal está en modo real, pero token_ref no resuelve a un META_ACCESS_TOKEN real para este tenant.
-          Crea el archivo referenciado en .secrets, o usa una referencia env: por tenant, y reinicia el worker antes de esperar mensajes en WhatsApp.
+          El canal está en modo real, pero token_ref no resuelve a un Meta access token real para este tenant.
+          Pega el Meta access token y el App secret del tenant en este formulario, guarda el canal y reinicia el worker antes de esperar mensajes en WhatsApp.
         </p>
       ) : null}
       {isLoadingChannel ? <p className="notice info">Cargando canal WhatsApp existente…</p> : null}
@@ -278,6 +293,17 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
             </select>
           </label>
           <label className="wide">
+            Meta access token del tenant
+            <input
+              autoComplete="off"
+              onChange={(event) => updateField('meta_access_token', event.target.value)}
+              placeholder="Pega aquí el token real solo para guardarlo en el secreto del tenant"
+              type="password"
+              value={form.meta_access_token}
+            />
+            <small>Requerido la primera vez o cuando quieras rotarlo; no se guarda en la base de datos.</small>
+          </label>
+          <label className="wide">
             App secret ref
             <input
               autoComplete="off"
@@ -285,6 +311,17 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
               required
               value={form.app_secret_ref}
             />
+          </label>
+          <label className="wide">
+            App secret del tenant
+            <input
+              autoComplete="off"
+              onChange={(event) => updateField('app_secret', event.target.value)}
+              placeholder="Pega aquí el App Secret solo para guardarlo en el secreto del tenant"
+              type="password"
+              value={form.app_secret}
+            />
+            <small>Requerido la primera vez o cuando quieras rotarlo; se usa para validar firmas de webhook de este tenant.</small>
           </label>
           <div className="form-actions split-actions">
             <button
@@ -339,6 +376,14 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
           <dd>{health?.checks?.meta_access_token_configured ? 'Configurado en backend' : 'Falta o es mock'}</dd>
         </div>
         <div>
+          <dt>App Secret</dt>
+          <dd>{health?.checks?.app_secret_configured ? 'Configurado por tenant' : 'Falta'}</dd>
+        </div>
+        <div>
+          <dt>Verify token</dt>
+          <dd>{health?.checks?.verify_token_configured ? 'Generado/configurado' : 'Falta'}</dd>
+        </div>
+        <div>
           <dt>Entrega real lista</dt>
           <dd>{health?.checks?.delivery_ready ? 'Sí' : 'No'}</dd>
         </div>
@@ -354,13 +399,12 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
 
       <div className="builder-preview">
         <strong>Variables y secretos requeridos</strong>
-        <pre>{`WHATSAPP_VERIFY_TOKEN lo defines tú y solo sirve para validar el webhook; no es el token de Meta y no envía mensajes.
-META_ACCESS_TOKEN es el token real de Meta Cloud API que usa el backend/worker para enviar mensajes en modo real.
-${form.token_ref} debe resolver al META_ACCESS_TOKEN de este tenant en el runtime o vault.
-${form.app_secret_ref} debe resolver al App Secret usado para validar X-Hub-Signature-256.
+        <pre>{`Verify token: CopilotoIA lo genera al registrar el canal; cópialo en Meta Webhooks cuando aparezca en el aviso.
+Meta access token: pégalo en el campo secreto del tenant; CopilotoIA lo escribe en ${form.token_ref}.
+App Secret: pégalo en el campo secreto del tenant; CopilotoIA lo escribe en ${form.app_secret_ref}.
 Modo mock: el worker marca el mensaje como simulado y no llama a Meta.
-Modo real: el worker llama a Meta usando META_ACCESS_TOKEN del backend; si el token sigue como local-mock/change-me, el mensaje falla explícitamente.
-El panel guarda referencias (token_ref/app_secret_ref), no valores secretos.`}</pre>
+Modo real: el worker llama a Meta usando el token_ref del tenant; si ese secreto falta o es local-mock/change-me, el mensaje falla explícitamente.
+El panel escribe los secretos por tenant y guarda referencias (token_ref/app_secret_ref), no valores secretos en la base de datos.`}</pre>
       </div>
     </section>
   );

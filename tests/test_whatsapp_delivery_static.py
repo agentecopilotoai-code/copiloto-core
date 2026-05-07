@@ -38,13 +38,20 @@ def test_whatsapp_delivery_mode_controls_mocking_per_tenant_channel():
     assert 'resolve_secret_ref' in service_source
     assert "ref.startswith('secrets/')" in service_source
     assert "'..' in Path(secret_name).parts" in service_source
-    assert "secret_name == 'meta_access_token'" in service_source
+    assert 'os.getenv' not in service_source
+    assert 'fallback_env' not in service_source
+    assert 'verify_signature(body' not in service_source
     assert 'token_ref did not resolve to a real Meta access token' in service_source
     assert "account_mode: str = Field(default='mock', pattern='^(mock|live)$')" in schema_source
     assert 'account_mode=excluded.account_mode' in routes_source
     assert 'meta_access_token_configured' in routes_source
+    assert 'app_secret_configured' in routes_source
+    assert 'verify_token_configured' in routes_source
     assert 'delivery_ready' in routes_source
     assert "token_ref_is_configured(channel.get('token_ref'))" in routes_source
+    assert 'generated_verify_token' in routes_source
+    assert 'verify_token_hash(hub_verify_token)' in routes_source
+    assert 'verify_signature_with_secret' in routes_source
     assert "account_mode text not null default 'mock' check (account_mode in ('mock','live'))" in db_source
 
 
@@ -56,13 +63,15 @@ def test_whatsapp_onboarding_exposes_delivery_mode_toggle():
     assert 'Modo de entrega' in source
     assert 'Mock local (no envía a WhatsApp)' in source
     assert 'Real vía WhatsApp Cloud API' in source
-    assert 'META_ACCESS_TOKEN real' in source
+    assert 'Meta access token del tenant' in source
+    assert 'App secret del tenant' in source
+    assert 'generated_verify_token' in source
     assert 'token_ref no resuelve' in source
     assert 'Falta o es mock' in source
-    assert 'Modo real: el worker llama a Meta usando META_ACCESS_TOKEN' in source
+    assert 'Modo real: el worker llama a Meta usando el token_ref del tenant' in source
     assert 'No pegues aquí el token real de Meta' in source
     assert 'secrets/tenants/<tenant_id>/meta_access_token' in source
-    assert 'WHATSAPP_VERIFY_TOKEN lo defines tú' in source
+    assert 'CopilotoIA lo genera al registrar el canal' in source
 
 
 def test_operations_desk_explains_queued_sent_failed_statuses():
@@ -76,5 +85,6 @@ def test_operations_desk_explains_queued_sent_failed_statuses():
 def test_compose_mounts_secrets_for_api_and_worker():
     source = DOCKER_COMPOSE.read_text()
 
+    assert './.secrets:/app/.secrets' in source
     assert './.secrets:/app/.secrets:ro' in source
     assert 'command: python3 -m app.workers.event_worker' in source

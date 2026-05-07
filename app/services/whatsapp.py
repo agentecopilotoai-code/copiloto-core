@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import os
 from pathlib import Path
 from typing import Any
 
@@ -9,14 +8,37 @@ import httpx
 from app.core.config import get_settings
 
 
-def verify_signature(body: bytes, signature: str | None) -> bool:
-    if not signature:
-        return False
-    settings = get_settings()
-    expected = 'sha256=' + hmac.new(
-        settings.whatsapp_app_secret.encode(), body, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+def _candidate_secret_paths(secret_name: str) -> list[Path]:
+    return [
+        Path('/app/.secrets') / secret_name,
+        Path.cwd() / '.secrets' / secret_name,
+    ]
+
+
+def _secret_name_from_ref(secret_ref: str | None) -> str | None:
+    if not secret_ref:
+        return None
+    ref = secret_ref.strip()
+    if not ref.startswith('secrets/'):
+        return None
+    secret_name = ref.removeprefix('secrets/').strip('/')
+    if not secret_name or '..' in Path(secret_name).parts:
+        return None
+    return secret_name
+
+
+def resolve_secret_ref(secret_ref: str | None) -> str | None:
+    secret_name = _secret_name_from_ref(secret_ref)
+    if not secret_name:
+        return None
+    for path in _candidate_secret_paths(secret_name):
+        if path.is_file():
+            return path.read_text(encoding='utf-8').strip()
+    return None
+
+
+def secret_ref_is_configured(secret_ref: str | None) -> bool:
+    return bool(resolve_secret_ref(secret_ref))
 
 
 def meta_token_is_configured(token: str | None) -> bool:
@@ -27,33 +49,18 @@ def meta_token_is_configured(token: str | None) -> bool:
     )
 
 
-def _candidate_secret_paths(secret_name: str) -> list[Path]:
-    return [
-        Path('/app/.secrets') / secret_name,
-        Path.cwd() / '.secrets' / secret_name,
-    ]
-
-
-def resolve_secret_ref(secret_ref: str | None, fallback_env: str | None = None) -> str | None:
-    if secret_ref:
-        ref = secret_ref.strip()
-        if ref.startswith('env:'):
-            return os.getenv(ref.removeprefix('env:').strip())
-        if ref.startswith('secrets/'):
-            secret_name = ref.removeprefix('secrets/').strip('/')
-            if not secret_name or '..' in Path(secret_name).parts:
-                return None
-            for path in _candidate_secret_paths(secret_name):
-                if path.is_file():
-                    return path.read_text(encoding='utf-8').strip()
-            if secret_name == 'meta_access_token' and fallback_env:
-                return os.getenv(fallback_env)
-            return None
-    return os.getenv(fallback_env) if fallback_env else None
-
-
 def token_ref_is_configured(token_ref: str | None) -> bool:
-    return meta_token_is_configured(resolve_secret_ref(token_ref, 'META_ACCESS_TOKEN'))
+    return meta_token_is_configured(resolve_secret_ref(token_ref))
+
+
+def verify_signature_with_secret(body: bytes, signature: str | None, app_secret: str | None) -> bool:
+    if not signature or not app_secret:
+        return False
+    expected = 'sha256=' + hmac.new(
+        app_secret.encode(), body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature)
+
 
 
 async def send_text_message(
@@ -72,7 +79,7 @@ async def send_text_message(
             'to': to,
             'text': text,
         }
-    access_token = resolve_secret_ref(token_ref, 'META_ACCESS_TOKEN')
+    access_token = resolve_secret_ref(token_ref)
     if not meta_token_is_configured(access_token):
         raise RuntimeError(
             'WhatsApp delivery mode is live, but token_ref did not resolve to a real Meta access token.'

@@ -27,8 +27,11 @@ class ChannelCreate(BaseModel):
     business_id: str | None = None
     waba_id: str | None = None
     phone_number_id: str
-    token_ref: str = 'secrets/meta_access_token'
-    app_secret_ref: str = 'secrets/whatsapp_app_secret'
+    token_ref: str
+    app_secret_ref: str
+    meta_access_token: str | None = Field(default=None, min_length=1)
+    app_secret: str | None = Field(default=None, min_length=1)
+    verify_token: str | None = Field(default=None, min_length=16)
     account_mode: str = Field(default='mock', pattern='^(mock|live)$')
 
 

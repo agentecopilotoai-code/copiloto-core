@@ -31,10 +31,7 @@ class Settings(BaseSettings):
     auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
     auth0_jwks_cache_ttl_seconds: int = 300
     service_token: str = Field(min_length=16)
-    whatsapp_verify_token: str
-    whatsapp_app_secret: str
     meta_graph_version: str = 'v23.0'
-    meta_access_token: str | None = None
     s3_endpoint_url: str = 'http://minio:9000'
     s3_bucket: str = 'copilotoia-local'
     s3_access_key_id: str = 'copilotoia-minio'
