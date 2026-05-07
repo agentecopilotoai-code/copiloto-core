@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { createTenant, getTenant, listAuditLogs, updateTenant, updateTenantSettings } from '../../../services/coreApi.js';
+import {
+  createTenant,
+  getTenant,
+  getTenantSettings,
+  listAuditLogs,
+  updateTenant,
+  updateTenantSettings,
+} from '../../../services/coreApi.js';
 
 const wizardTabs = [
   { id: 'tenant', label: 'Tenant' },
@@ -38,6 +45,89 @@ const verticalOptions = [
   { value: 'beauty', label: 'Beauty' },
   { value: 'pet_grooming', label: 'Pet grooming' },
 ];
+
+
+function cloneInitialHours() {
+  return Object.fromEntries(
+    weekdays.map(([day]) => [day, { ...initialHours[day] }]),
+  );
+}
+
+function jsonObject(value, fallback = {}) {
+  if (!value) return fallback;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return value;
+}
+
+function formFromBusinessHours(value) {
+  const businessHours = jsonObject(value);
+  const weeklySchedule = businessHours.weekly_schedule || {};
+
+  return Object.fromEntries(
+    weekdays.map(([day]) => {
+      const defaultDay = initialHours[day];
+      const slots = weeklySchedule[day] || [];
+      const firstSlot = slots[0];
+
+      return [
+        day,
+        {
+          enabled: Boolean(firstSlot),
+          start: firstSlot?.start || defaultDay.start,
+          end: firstSlot?.end || defaultDay.end,
+        },
+      ];
+    }),
+  );
+}
+
+function formFromEscalationPolicy(value) {
+  const escalationPolicy = jsonObject(value);
+  const triggers = escalationPolicy.triggers || {};
+
+  return {
+    enabled: escalationPolicy.enabled ?? true,
+    queue: escalationPolicy.queue || 'default-support',
+    priority: escalationPolicy.priority || 'normal',
+    afterBotTurns: triggers.after_bot_turns ?? 5,
+    confidenceBelow: triggers.confidence_below ?? 0.55,
+    keywords: Array.isArray(triggers.keywords)
+      ? triggers.keywords.join(', ')
+      : 'humano, asesor, agente, reclamo',
+    handoffMessage:
+      escalationPolicy.handoff_message ||
+      'Te conecto con una persona del equipo para ayudarte mejor.',
+  };
+}
+
+function formFromPiiPolicy(value, settings) {
+  const piiPolicy = jsonObject(value);
+
+  return {
+    mode: piiPolicy.mode || 'balanced',
+    retentionDays: piiPolicy.retention_days ?? 180,
+    redactBeforeModel: piiPolicy.redact_before_model ?? true,
+    logRedaction: piiPolicy.log_redaction ?? true,
+    noTrain: settings.no_train ?? true,
+    maxBotTurns: settings.max_bot_turns ?? 8,
+    rules: { ...defaultPiiRules, ...(piiPolicy.rules || {}) },
+  };
+}
+
+function hydrateSettings(settings) {
+  return {
+    settingsForm: { locale: settings.locale || 'es-CO' },
+    hoursForm: formFromBusinessHours(settings.business_hours),
+    escalationForm: formFromEscalationPolicy(settings.escalation_policy),
+    privacyForm: formFromPiiPolicy(settings.pii_policy, settings),
+  };
+}
 
 function toBusinessHours(hoursForm) {
   return {
@@ -92,7 +182,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
     timezone: 'America/Bogota',
   });
   const [settingsForm, setSettingsForm] = useState({ locale: 'es-CO' });
-  const [hoursForm, setHoursForm] = useState(initialHours);
+  const [hoursForm, setHoursForm] = useState(cloneInitialHours);
   const [escalationForm, setEscalationForm] = useState({
     enabled: true,
     queue: 'default-support',
@@ -135,8 +225,8 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
 
     if (!currentTenantId) return undefined;
 
-    getTenant(session, currentTenantId)
-      .then((tenantDetails) => {
+    Promise.all([getTenant(session, currentTenantId), getTenantSettings(session, currentTenantId)])
+      .then(([tenantDetails, loadedSettings]) => {
         if (!mounted) return;
         setTenantForm({
           slug: tenantDetails.slug || '',
@@ -146,9 +236,16 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
           country_code: tenantDetails.country_code || 'CO',
           timezone: tenantDetails.timezone || 'America/Bogota',
         });
+
+        const hydrated = hydrateSettings(loadedSettings);
+        setSettingsForm(hydrated.settingsForm);
+        setHoursForm(hydrated.hoursForm);
+        setEscalationForm(hydrated.escalationForm);
+        setPrivacyForm(hydrated.privacyForm);
+        setLastSettings(loadedSettings);
       })
       .catch(() => {
-        // Keep editable defaults if tenant details cannot be loaded.
+        // Keep editable defaults if tenant details or settings cannot be loaded.
       });
 
     return () => {

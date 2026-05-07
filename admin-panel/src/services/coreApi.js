@@ -68,6 +68,10 @@ export function updateTenant(session, tenantId, payload) {
   });
 }
 
+export function getTenantSettings(session, tenantId) {
+  return request(`/tenants/${tenantId}/settings`, { session, tenantId });
+}
+
 export function updateTenantSettings(session, tenantId, payload) {
   return request(`/tenants/${tenantId}/settings`, {
     method: 'PATCH',

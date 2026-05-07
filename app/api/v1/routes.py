@@ -328,6 +328,18 @@ async def patch_tenant(
     return record_to_dict(row)
 
 
+@tenant_admin_router.get('/tenants/{tenant_id}/settings')
+async def get_tenant_settings(
+    tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Settings not found')
+    return record_to_dict(row)
+
+
 @tenant_admin_router.patch('/tenants/{tenant_id}/settings')
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
