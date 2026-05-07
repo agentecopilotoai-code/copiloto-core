@@ -196,3 +196,23 @@ Cada entrada debe incluir:
   - `pytest -q tests/test_rag_retrieval.py tests/test_intent_evaluate_query_static.py tests/test_admin_proxy_security_static.py tests/test_rag_indexing.py tests/test_knowledge_documents.py` (bloqueado porque el Python global no tiene `pydantic`)
   - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
 - **Notas:** el retrieval usa scoring lexical local y determinístico para mantener el MVP sin nuevas dependencias externas ni secretos. El endpoint audita cada evaluación con estado, contexto suficiente, chunks devueltos y score superior. Correcciones posteriores: el proxy del Admin Panel dejó de reenviar headers `Authorization` del navegador y ya no expone el access token en `/admin/api/session`; las llamadas a `/admin/api/core/*` usan siempre el token guardado en la sesión HTTP-only para evitar `Invalid token` por tokens stale o de otra audiencia. El retrieval ya no limita a los 1000 chunks más recientes antes del ranking consciente de la pregunta y normaliza variantes singulares/plurales comunes en español para no perder evidencia ubicada en títulos o secciones activas.
+
+### TASK-0008 — Implementar Operations Desk mínimo
+
+- **Fecha:** 2026-05-07
+- **Resumen:** se implementó el Operations Desk MVP para que agentes operen conversaciones por tenant desde el Admin Panel. El backend ahora devuelve un inbox con contacto, último mensaje y handoff activo; el detalle incluye mensajes y handoffs; el envío outbound encola el mensaje, actualiza el estado conversacional y deja auditoría; el handoff puede crearse, aceptarse/tomarse por el agente actual y liberarse al bot cerrando handoffs activos. El panel reemplaza el placeholder del módulo con inbox, detalle, acciones de handoff y composer de respuesta.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/styles/global.css`
+  - `tests/test_operations_desk_static.py`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m compileall app tests`
+  - `pytest -q tests/test_operations_desk_static.py`
+  - `git diff --check`
+  - `npm --prefix admin-panel run build` (bloqueado porque las dependencias de Vite/React no están instaladas en este entorno)
+- **Notas:** no se agregaron secretos ni variables nuevas; el agente asignado reutiliza el usuario local vinculado al `auth_subject` de la sesión autenticada.

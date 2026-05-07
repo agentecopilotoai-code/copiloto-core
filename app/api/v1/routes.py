@@ -223,6 +223,28 @@ def user_display_name_from_request(request: Request) -> str:
     )
 
 
+async def current_user_id_from_request(request: Request, conn: asyncpg.Connection) -> UUID | None:
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id or getattr(request.state, 'actor_type', None) != 'user':
+        return None
+    row = await conn.fetchrow(
+        """
+        insert into app.users (auth_subject, email, display_name, last_login_at)
+        values ($1, $2, $3, now())
+        on conflict (auth_subject) do update set
+          email=excluded.email,
+          display_name=excluded.display_name,
+          last_login_at=now(),
+          updated_at=now()
+        returning id
+        """,
+        actor_id,
+        user_email_from_request(request),
+        user_display_name_from_request(request),
+    )
+    return row['id']
+
+
 @platform_admin_router.post('/tenants', status_code=status.HTTP_201_CREATED)
 async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     row = await conn.fetchrow(
@@ -577,8 +599,42 @@ async def create_conversation(payload: ConversationCreate, request: Request, con
 @tenant_ops_router.get('/conversations')
 async def list_conversations(request: Request, conn: asyncpg.Connection = Depends(get_db)):
     tenant_id = await tenant_id_from_request(request, conn)
-    rows = await conn.fetch('select * from app.conversations where tenant_id=$1 order by updated_at desc limit 100', tenant_id)
-    return [dict(r) for r in rows]
+    rows = await conn.fetch(
+        """
+        select c.*,
+               coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
+               ct.phone_e164 as contact_phone,
+               lm.body_text as latest_message_text,
+               lm.direction as latest_message_direction,
+               lm.created_at as latest_message_at,
+               h.id as active_handoff_id,
+               h.status as active_handoff_status,
+               h.assigned_to as active_handoff_assigned_to
+        from app.conversations c
+        join app.contacts ct on ct.id = c.contact_id
+        left join lateral (
+          select body_text, direction, created_at
+          from app.messages m
+          where m.tenant_id = c.tenant_id and m.conversation_id = c.id
+          order by m.created_at desc
+          limit 1
+        ) lm on true
+        left join lateral (
+          select id, status, assigned_to
+          from app.handoffs ho
+          where ho.tenant_id = c.tenant_id
+            and ho.conversation_id = c.id
+            and ho.status in ('open','accepted')
+          order by ho.updated_at desc
+          limit 1
+        ) h on true
+        where c.tenant_id=$1
+        order by c.updated_at desc
+        limit 100
+        """,
+        tenant_id,
+    )
+    return [record_to_dict(r) for r in rows]
 
 
 @tenant_ops_router.get('/conversations/{conversation_id}')
@@ -586,12 +642,33 @@ async def get_conversation(
     conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
 ):
     tenant_id = await tenant_id_from_request(request, conn)
-    row = await conn.fetchrow('select * from app.conversations where tenant_id=$1 and id=$2', tenant_id, conversation_id)
+    row = await conn.fetchrow(
+        """
+        select c.*,
+               coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
+               ct.phone_e164 as contact_phone
+        from app.conversations c
+        join app.contacts ct on ct.id = c.contact_id
+        where c.tenant_id=$1 and c.id=$2
+        """,
+        tenant_id,
+        conversation_id,
+    )
     if not row:
         raise HTTPException(status_code=404, detail='Conversation not found')
-    messages = await conn.fetch('select * from app.messages where tenant_id=$1 and conversation_id=$2 order by created_at', tenant_id, conversation_id)
-    data = dict(row)
-    data['messages'] = [dict(m) for m in messages]
+    messages = await conn.fetch(
+        'select * from app.messages where tenant_id=$1 and conversation_id=$2 order by created_at',
+        tenant_id,
+        conversation_id,
+    )
+    handoffs = await conn.fetch(
+        'select * from app.handoffs where tenant_id=$1 and conversation_id=$2 order by updated_at desc',
+        tenant_id,
+        conversation_id,
+    )
+    data = record_to_dict(row)
+    data['messages'] = [record_to_dict(m) for m in messages]
+    data['handoffs'] = [record_to_dict(h) for h in handoffs]
     return data
 
 
@@ -601,7 +678,7 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
 
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     conversation = await conn.fetchrow(
-        'select id from app.conversations where tenant_id=$1 and id=$2',
+        'select id, status from app.conversations where tenant_id=$1 and id=$2',
         payload.tenant_id,
         conversation_id,
     )
@@ -629,6 +706,11 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
         key,
         json.dumps({'conversation_id': str(conversation_id)}),
     )
+    await conn.execute(
+        "update app.conversations set status='waiting_user' where tenant_id=$1 and id=$2",
+        payload.tenant_id,
+        conversation_id,
+    )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(row['id']))
     return record_to_dict(row)
 
@@ -641,6 +723,11 @@ async def create_handoff(
     conn: asyncpg.Connection = Depends(get_db),
 ):
     tenant_id = await tenant_id_from_request(request, conn)
+    conversation = await conn.fetchrow(
+        'select id from app.conversations where tenant_id=$1 and id=$2', tenant_id, conversation_id
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail='Conversation not found')
     row = await conn.fetchrow(
         """
         insert into app.handoffs (tenant_id, conversation_id, reason, assigned_to)
@@ -655,14 +742,71 @@ async def create_handoff(
     return record_to_dict(row)
 
 
+@tenant_ops_router.post('/conversations/{conversation_id}/handoff/accept', status_code=202)
+async def accept_handoff(
+    conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    user_id = await current_user_id_from_request(request, conn)
+    handoff = await conn.fetchrow(
+        """
+        update app.handoffs
+        set status='accepted', assigned_to=$3, updated_at=now()
+        where id = (
+          select id
+          from app.handoffs
+          where tenant_id=$1 and conversation_id=$2 and status in ('open','accepted')
+          order by updated_at desc
+          limit 1
+        )
+        returning *
+        """,
+        tenant_id,
+        conversation_id,
+        user_id,
+    )
+    if not handoff:
+        raise HTTPException(status_code=404, detail='Open handoff not found')
+    await conn.execute(
+        """
+        update app.conversations
+        set status='human_active', handoff_required=false, current_owner_user_id=$3
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        conversation_id,
+        user_id,
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='handoff.accepted', entity_type='handoff', entity_id=str(handoff['id']))
+    return record_to_dict(handoff)
+
+
 @tenant_ops_router.post('/conversations/{conversation_id}/release', status_code=202)
 async def release_conversation(
     conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
 ):
     tenant_id = await tenant_id_from_request(request, conn)
-    row = await conn.fetchrow("update app.conversations set status='open', handoff_required=false where tenant_id=$1 and id=$2 returning *", tenant_id, conversation_id)
+    row = await conn.fetchrow(
+        """
+        update app.conversations
+        set status='open', handoff_required=false, current_owner_user_id=null
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        conversation_id,
+    )
     if not row:
         raise HTTPException(status_code=404, detail='Conversation not found')
+    await conn.execute(
+        """
+        update app.handoffs
+        set status='resolved', updated_at=now()
+        where tenant_id=$1 and conversation_id=$2 and status in ('open','accepted')
+        """,
+        tenant_id,
+        conversation_id,
+    )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='conversation.released', entity_type='conversation', entity_id=str(conversation_id))
     return record_to_dict(row)
 

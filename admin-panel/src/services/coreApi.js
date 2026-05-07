@@ -157,3 +157,52 @@ export function deleteKnowledgeDocument(session, tenantId, documentId) {
     tenantId,
   });
 }
+
+export function listConversations(session, tenantId) {
+  return request('/conversations', { session, tenantId });
+}
+
+export function getConversation(session, tenantId, conversationId) {
+  return request(`/conversations/${conversationId}`, { session, tenantId });
+}
+
+export function sendConversationMessage(session, tenantId, conversationId, payload) {
+  return request(`/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: {
+      tenant_id: tenantId,
+      conversation_id: conversationId,
+      direction: 'outbound',
+      sender_actor_type: 'agent',
+      message_type: 'text',
+      ...payload,
+    },
+  });
+}
+
+export function createConversationHandoff(session, tenantId, conversationId, reason) {
+  return request(`/conversations/${conversationId}/handoff`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { reason },
+  });
+}
+
+export function acceptConversationHandoff(session, tenantId, conversationId) {
+  return request(`/conversations/${conversationId}/handoff/accept`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}
+
+export function releaseConversation(session, tenantId, conversationId) {
+  return request(`/conversations/${conversationId}/release`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}

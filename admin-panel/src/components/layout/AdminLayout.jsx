@@ -5,6 +5,7 @@ import { useTenantOptions } from '../../hooks/useTenantOptions.js';
 import { listMyTenants } from '../../services/coreApi.js';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
 import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
+import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
 import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
 import { Sidebar } from './Sidebar.jsx';
@@ -101,6 +102,8 @@ export function AdminLayout({ session }) {
     activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'knowledge-studio') {
     activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'operations-desk') {
+    activeContent = <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />;
   } else {
     activeContent = <ModulePlaceholder module={activeModule} tenant={activeTenant} />;
   }
