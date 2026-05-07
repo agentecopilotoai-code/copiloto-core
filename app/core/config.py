@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     s3_bucket: str = 'copilotoia-local'
     s3_access_key_id: str = 'copilotoia-minio'
     s3_secret_access_key: str
+    rag_embedding_provider: str = 'local_hash'
+    rag_embedding_model: str = 'copilotoia-local-hash-v1'
+    rag_embedding_dimensions: int = 1536
+    rag_chunk_max_tokens: int = 500
+    rag_chunk_overlap_tokens: int = 80
 
 
 @lru_cache
