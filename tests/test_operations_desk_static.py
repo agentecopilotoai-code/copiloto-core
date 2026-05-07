@@ -16,6 +16,7 @@ def test_operations_routes_support_handoff_accept_release_and_audit():
     assert 'operations.conversation.detail_not_found' in source
     assert 'await asyncio.sleep(0.1)' in source
     assert "@tenant_ops_router.post('/conversations/{conversation_id}/handoff/accept'" in source
+    assert "where tenant_id=$1 and conversation_id=$2 and status='open'" in source
     assert "action='handoff.accepted'" in source
     assert "action='conversation.released'" in source
     assert "set status='human_active'" in source

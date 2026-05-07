@@ -959,7 +959,7 @@ async def accept_handoff(
         where id = (
           select id
           from app.handoffs
-          where tenant_id=$1 and conversation_id=$2 and status in ('open','accepted')
+          where tenant_id=$1 and conversation_id=$2 and status='open'
           order by updated_at desc
           limit 1
         )
