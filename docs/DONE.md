@@ -196,3 +196,23 @@ Cada entrada debe incluir:
   - `pytest -q tests/test_rag_retrieval.py tests/test_intent_evaluate_query_static.py tests/test_admin_proxy_security_static.py tests/test_rag_indexing.py tests/test_knowledge_documents.py` (bloqueado porque el Python global no tiene `pydantic`)
   - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
 - **Notas:** el retrieval usa scoring lexical local y determinístico para mantener el MVP sin nuevas dependencias externas ni secretos. El endpoint audita cada evaluación con estado, contexto suficiente, chunks devueltos y score superior. Correcciones posteriores: el proxy del Admin Panel dejó de reenviar headers `Authorization` del navegador y ya no expone el access token en `/admin/api/session`; las llamadas a `/admin/api/core/*` usan siempre el token guardado en la sesión HTTP-only para evitar `Invalid token` por tokens stale o de otra audiencia. El retrieval ya no limita a los 1000 chunks más recientes antes del ranking consciente de la pregunta y normaliza variantes singulares/plurales comunes en español para no perder evidencia ubicada en títulos o secciones activas.
+
+### TASK-0008 — Implementar Operations Desk mínimo
+
+- **Fecha:** 2026-05-07
+- **Resumen:** se implementó el Operations Desk MVP para que agentes operen conversaciones por tenant desde el Admin Panel. El backend ahora devuelve un inbox con contacto, último mensaje y handoff activo; el detalle incluye mensajes y handoffs; el envío outbound encola el mensaje, actualiza el estado conversacional y deja auditoría; el handoff puede crearse, aceptarse/tomarse por el agente actual y liberarse al bot cerrando handoffs activos. El panel reemplaza el placeholder del módulo con inbox, detalle, acciones de handoff y composer de respuesta.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/styles/global.css`
+  - `tests/test_operations_desk_static.py`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m compileall app tests`
+  - `pytest -q tests/test_operations_desk_static.py`
+  - `git diff --check`
+  - `npm --prefix admin-panel run build` (bloqueado porque las dependencias de Vite/React no están instaladas en este entorno)
+- **Notas:** no se agregaron secretos ni variables nuevas; el agente asignado reutiliza el usuario local vinculado al `auth_subject` de la sesión autenticada. Corrección posterior: se agregó inicio de conversación desde el Operations Desk, creando/reutilizando contacto y conversación con mensaje inicial outbound auditado; también se corrigió la serialización de `bytea`/`phone_hash` para evitar errores UTF-8 al devolver contactos. Ajustes posteriores: el inicio devuelve un detalle completo y el panel lo muestra inmediatamente para evitar un 404 transitorio al consultar el detalle justo después del `POST /conversations/start`; se agregaron logs estructurados de inbox, inicio, canal faltante y diagnóstico de detalle 404 para diferenciar tenant incorrecto, conversación inexistente o carrera de visibilidad. Corrección posterior: el worker de eventos registra intentos/éxitos/fallos de entrega WhatsApp, marca mensajes como `failed` cuando Meta Graph API rechaza el envío y trata tokens `local-mock*` como modo simulado para no confundir colas locales con entregas reales. Ajuste posterior: los envíos simulados ahora se loguean como `message_delivery_mocked` y el panel muestra “Simulado local: no salió a WhatsApp”. Corrección posterior: aceptar un handoff ahora solo reclama handoffs con estado `open`, evitando que un segundo agente con inbox desactualizado reasigne silenciosamente un handoff ya aceptado por otro agente. Ajuste posterior: el canal WhatsApp del tenant ahora tiene `account_mode` configurable (`mock`/`live`) desde el onboarding; el worker usa ese modo para decidir si simula localmente o llama a Meta, y en modo `live` falla explícitamente si `META_ACCESS_TOKEN` sigue como placeholder/mock. Ajuste posterior: el health del canal ahora indica `meta_access_token_configured` y `delivery_ready`, y el panel muestra una alerta cuando el canal está en modo real pero el worker/Core API sigue sin token real. Ajuste posterior: el envío real ya no depende de un `META_ACCESS_TOKEN` global ni de fallbacks; el worker resuelve el token por `tenant_channels.token_ref`, el onboarding requiere secretos por tenant (`token_ref` y `app_secret_ref`), CopilotoIA escribe esos secretos desde el panel, genera el verify token del canal y Docker monta `.secrets` en API/worker para soportar credenciales por tenant.

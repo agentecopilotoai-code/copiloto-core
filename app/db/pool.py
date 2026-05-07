@@ -46,5 +46,19 @@ async def get_db(request: Request) -> AsyncIterator[asyncpg.Connection]:
         yield conn
 
 
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return value.hex()
+    if isinstance(value, dict):
+        return {key: _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_json_safe_value(item) for item in value)
+    return value
+
+
 def record_to_dict(record: asyncpg.Record | None) -> dict[str, Any] | None:
-    return dict(record) if record else None
+    if not record:
+        return None
+    return {key: _json_safe_value(value) for key, value in dict(record).items()}

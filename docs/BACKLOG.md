@@ -19,18 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0008 — Implementar Operations Desk mínimo
-
-- **Estado:** PENDING
-- **Objetivo:** operar conversaciones y handoff humano desde el panel.
-- **Alcance mínimo:**
-  - Inbox de conversaciones.
-  - Detalle con mensajes.
-  - Envío de mensaje outbound.
-  - Crear/aceptar handoff.
-  - Liberar conversación al bot.
-- **Criterio de terminado:** un agente puede tomar una conversación, responder y dejar auditoría.
-
 ### TASK-0009 — Implementar gestión de recursos y agenda
 
 - **Estado:** PENDING

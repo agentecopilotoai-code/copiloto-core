@@ -27,8 +27,12 @@ class ChannelCreate(BaseModel):
     business_id: str | None = None
     waba_id: str | None = None
     phone_number_id: str
-    token_ref: str = 'secrets/meta_access_token'
-    app_secret_ref: str = 'secrets/whatsapp_app_secret'
+    token_ref: str
+    app_secret_ref: str
+    meta_access_token: str | None = Field(default=None, min_length=1)
+    app_secret: str | None = Field(default=None, min_length=1)
+    verify_token: str | None = Field(default=None, min_length=16)
+    account_mode: str = Field(default='mock', pattern='^(mock|live)$')
 
 
 class ContactUpsert(BaseModel):
@@ -46,6 +50,16 @@ class ConversationCreate(BaseModel):
     channel_id: UUID
     opened_by: str = 'user'
     current_intent: str | None = None
+
+
+class ConversationStart(BaseModel):
+    tenant_id: UUID
+    phone_e164: str = Field(min_length=6, max_length=32)
+    wa_id: str | None = None
+    display_name: str | None = None
+    initial_message: str = Field(min_length=1, max_length=4096)
+    current_intent: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class MessageCreate(BaseModel):

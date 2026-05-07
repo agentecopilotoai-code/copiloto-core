@@ -3,6 +3,7 @@ import json
 import os
 
 import asyncpg
+import httpx
 import structlog
 
 from app.core.config import get_settings
@@ -12,10 +13,28 @@ from app.services.whatsapp import send_text_message
 log = structlog.get_logger()
 
 
+def provider_message_id(result: dict) -> str | None:
+    messages = result.get('messages')
+    if not isinstance(messages, list) or not messages:
+        return None
+    first_message = messages[0]
+    if not isinstance(first_message, dict):
+        return None
+    message_id = first_message.get('id')
+    return message_id if isinstance(message_id, str) else None
+
+
+def delivery_error_message(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        response_text = exc.response.text[:1000]
+        return f'Meta Graph API HTTP {exc.response.status_code}: {response_text}'
+    return str(exc)[:1000]
+
+
 async def process_once(conn: asyncpg.Connection) -> int:
     rows = await conn.fetch(
         """
-        select e.id, e.tenant_id, e.aggregate_id, m.body_text, c.phone_number_id, ct.phone_e164
+        select e.id, e.tenant_id, e.aggregate_id, m.body_text, c.phone_number_id, c.account_mode, c.token_ref, ct.phone_e164
         from app.domain_events e
         join app.messages m on m.id = e.aggregate_id and m.tenant_id = e.tenant_id
         join app.conversations cv on cv.id = m.conversation_id and cv.tenant_id = e.tenant_id
@@ -27,21 +46,80 @@ async def process_once(conn: asyncpg.Connection) -> int:
         """
     )
     for row in rows:
-        async with conn.transaction():
+        log.info(
+            'message_delivery_attempt',
+            event_id=str(row['id']),
+            message_id=str(row['aggregate_id']),
+            tenant_id=str(row['tenant_id']),
+            phone_number_id=row['phone_number_id'],
+            delivery_mode=row['account_mode'] or 'mock',
+            token_ref=row['token_ref'],
+            to_last4=row['phone_e164'][-4:] if row['phone_e164'] else None,
+        )
+        try:
             result = await send_text_message(
-                row['phone_number_id'], row['phone_e164'], row['body_text'] or ''
+                row['phone_number_id'],
+                row['phone_e164'],
+                row['body_text'] or '',
+                row['account_mode'] or 'mock',
+                row['token_ref'],
             )
+        except Exception as exc:
+            error_message = delivery_error_message(exc)
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    update app.messages
+                    set status='failed', failed_at=now(), error_message=$2
+                    where id=$1
+                    """,
+                    row['aggregate_id'],
+                    error_message,
+                )
+                await conn.execute(
+                    """
+                    update app.domain_events
+                    set published_at=now(), payload=payload || $2::jsonb
+                    where id=$1
+                    """,
+                    row['id'],
+                    json.dumps({'delivery_failed': True, 'error_message': error_message}),
+                )
+            log.warning(
+                'message_delivery_failed',
+                event_id=str(row['id']),
+                message_id=str(row['aggregate_id']),
+                tenant_id=str(row['tenant_id']),
+                error=error_message,
+            )
+            continue
+
+        external_message_id = provider_message_id(result)
+        async with conn.transaction():
             await conn.execute(
                 """
                 update app.messages
-                set status='sent', sent_at=now(), payload=payload || $2::jsonb
+                set status='sent',
+                    sent_at=now(),
+                    external_message_id=coalesce($2, external_message_id),
+                    payload=payload || $3::jsonb
                 where id=$1
                 """,
                 row['aggregate_id'],
+                external_message_id,
                 json.dumps({'provider_result': result}),
             )
             await conn.execute('update app.domain_events set published_at=now() where id=$1', row['id'])
-            log.info('message_published', event_id=str(row['id']), tenant_id=str(row['tenant_id']))
+        mocked = bool(result.get('mocked'))
+        log.info(
+            'message_delivery_mocked' if mocked else 'message_delivery_sent',
+            event_id=str(row['id']),
+            message_id=str(row['aggregate_id']),
+            tenant_id=str(row['tenant_id']),
+            provider_message_id=external_message_id,
+            delivery_mode=row['account_mode'] or 'mock',
+            mocked=mocked,
+        )
     return len(rows)
 
 

@@ -1,10 +1,14 @@
+import asyncio
 import hashlib
 import json
+import secrets as secrets_lib
+from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import asyncpg
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 
 from app.api.v1.schemas import (
@@ -12,6 +16,7 @@ from app.api.v1.schemas import (
     ChannelCreate,
     ContactUpsert,
     ConversationCreate,
+    ConversationStart,
     IntentEvaluateRequest,
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
@@ -27,7 +32,55 @@ from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
-from app.services.whatsapp import verify_signature
+from app.services.whatsapp import (
+    resolve_secret_ref,
+    secret_ref_is_configured,
+    token_ref_is_configured,
+    verify_signature_with_secret,
+)
+
+log = structlog.get_logger()
+
+
+def tenant_secret_ref(tenant_id: UUID, secret_name: str) -> str:
+    return f'secrets/tenants/{tenant_id}/{secret_name}'
+
+
+def validate_tenant_secret_ref(tenant_id: UUID, secret_ref: str, secret_name: str) -> None:
+    expected = tenant_secret_ref(tenant_id, secret_name)
+    if secret_ref != expected:
+        raise HTTPException(
+            status_code=400,
+            detail=f'{secret_name} must use tenant-scoped ref {expected}',
+        )
+
+
+def write_tenant_secret(secret_ref: str, value: str) -> None:
+    relative_name = secret_ref.removeprefix('secrets/').strip('/')
+    if not relative_name or '..' in Path(relative_name).parts:
+        raise HTTPException(status_code=400, detail='Invalid tenant secret ref')
+    path = Path('/app/.secrets') / relative_name
+    if not path.parent.exists() and not Path('/app/.secrets').exists():
+        path = Path.cwd() / '.secrets' / relative_name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(value.strip(), encoding='utf-8')
+    path.chmod(0o600)
+
+
+def verify_token_hash(verify_token: str) -> bytes:
+    return hashlib.sha256(verify_token.encode('utf-8')).digest()
+
+
+def whatsapp_phone_number_id_from_payload(payload: dict[str, Any]) -> str | None:
+    for entry in payload.get('entry', []):
+        for change in entry.get('changes', []):
+            value = change.get('value', {})
+            metadata = value.get('metadata', {})
+            phone_number_id = metadata.get('phone_number_id')
+            if phone_number_id:
+                return str(phone_number_id)
+    return None
+
 
 router = APIRouter(prefix='/v1')
 public_router = APIRouter(tags=['public'])
@@ -221,6 +274,28 @@ def user_display_name_from_request(request: Request) -> str:
         or getattr(request.state, 'actor_id', None)
         or 'Tenant admin'
     )
+
+
+async def current_user_id_from_request(request: Request, conn: asyncpg.Connection) -> UUID | None:
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id or getattr(request.state, 'actor_type', None) != 'user':
+        return None
+    row = await conn.fetchrow(
+        """
+        insert into app.users (auth_subject, email, display_name, last_login_at)
+        values ($1, $2, $3, now())
+        on conflict (auth_subject) do update set
+          email=excluded.email,
+          display_name=excluded.display_name,
+          last_login_at=now(),
+          updated_at=now()
+        returning id
+        """,
+        actor_id,
+        user_email_from_request(request),
+        user_display_name_from_request(request),
+    )
+    return row['id']
 
 
 @platform_admin_router.post('/tenants', status_code=status.HTTP_201_CREATED)
@@ -464,13 +539,52 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
 async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    validate_tenant_secret_ref(tenant_id, payload.token_ref, 'meta_access_token')
+    validate_tenant_secret_ref(tenant_id, payload.app_secret_ref, 'whatsapp_app_secret')
+
+    current = await conn.fetchrow(
+        """
+        select verify_token_hash
+        from app.tenant_channels
+        where tenant_id=$1 and provider='whatsapp_cloud_api'
+        """,
+        tenant_id,
+    )
+
+    if payload.meta_access_token:
+        write_tenant_secret(payload.token_ref, payload.meta_access_token)
+    elif not token_ref_is_configured(payload.token_ref):
+        raise HTTPException(
+            status_code=400,
+            detail='Meta access token is required for this tenant token_ref',
+        )
+
+    if payload.app_secret:
+        write_tenant_secret(payload.app_secret_ref, payload.app_secret)
+    elif not secret_ref_is_configured(payload.app_secret_ref):
+        raise HTTPException(
+            status_code=400,
+            detail='WhatsApp app secret is required for this tenant app_secret_ref',
+        )
+
+    generated_verify_token = None
+    verify_token = payload.verify_token
+    if not verify_token and not current:
+        generated_verify_token = secrets_lib.token_urlsafe(32)
+        verify_token = generated_verify_token
+
     row = await conn.fetchrow(
         """
-        insert into app.tenant_channels (tenant_id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref, status)
-        values ($1, 'whatsapp_cloud_api', $2, $3, $4, $5, $6, 'active')
+        insert into app.tenant_channels (
+          tenant_id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref,
+          verify_token_hash, account_mode, status
+        )
+        values ($1, 'whatsapp_cloud_api', $2, $3, $4, $5, $6, $7, $8, 'active')
         on conflict (tenant_id, provider) do update set
           business_id=excluded.business_id, waba_id=excluded.waba_id, phone_number_id=excluded.phone_number_id,
-          token_ref=excluded.token_ref, app_secret_ref=excluded.app_secret_ref, status='active'
+          token_ref=excluded.token_ref, app_secret_ref=excluded.app_secret_ref,
+          verify_token_hash=coalesce(excluded.verify_token_hash, app.tenant_channels.verify_token_hash),
+          account_mode=excluded.account_mode, status='active'
         returning *
         """,
         tenant_id,
@@ -479,9 +593,14 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
         payload.phone_number_id,
         payload.token_ref,
         payload.app_secret_ref,
+        verify_token_hash(verify_token) if verify_token else None,
+        payload.account_mode,
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='channel.upserted', entity_type='tenant_channel', entity_id=str(row['id']))
-    return record_to_dict(row)
+    response = record_to_dict(row)
+    if generated_verify_token:
+        response['generated_verify_token'] = generated_verify_token
+    return response
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/channels/whatsapp/health')
@@ -491,7 +610,7 @@ async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connec
     row = await conn.fetchrow(
         """
         select id, tenant_id, provider, business_id, waba_id, phone_number_id, token_ref,
-               app_secret_ref, quality_rating, messaging_limit_tier, account_mode, status,
+               app_secret_ref, verify_token_hash, quality_rating, messaging_limit_tier, account_mode, status,
                created_at, updated_at
         from app.tenant_channels
         where tenant_id=$1 and provider='whatsapp_cloud_api'
@@ -502,15 +621,27 @@ async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connec
         raise HTTPException(status_code=404, detail='WhatsApp channel not found')
 
     channel = record_to_dict(row)
+    delivery_mode = channel.get('account_mode') or 'mock'
+    token_ready = token_ref_is_configured(channel.get('token_ref'))
+    app_secret_ready = secret_ref_is_configured(channel.get('app_secret_ref'))
+    verify_token_ready = bool(channel.get('verify_token_hash'))
+    delivery_ready = delivery_mode != 'live' or token_ready
     checks = {
         'business_id': bool(channel.get('business_id')),
         'waba_id': bool(channel.get('waba_id')),
         'phone_number_id': bool(channel.get('phone_number_id')),
         'token_ref': bool(channel.get('token_ref')),
         'app_secret_ref': bool(channel.get('app_secret_ref')),
+        'app_secret_configured': app_secret_ready,
+        'verify_token_configured': verify_token_ready,
         'channel_active': channel.get('status') == 'active',
+        'delivery_mode': delivery_mode,
+        'meta_access_token_configured': token_ready,
+        'delivery_ready': delivery_ready,
     }
-    health_status = 'healthy' if all(checks.values()) else 'degraded'
+    health_status = 'healthy' if all(
+        value for key, value in checks.items() if key != 'delivery_mode'
+    ) else 'degraded'
     return {
         'status': health_status,
         'channel': channel,
@@ -577,8 +708,207 @@ async def create_conversation(payload: ConversationCreate, request: Request, con
 @tenant_ops_router.get('/conversations')
 async def list_conversations(request: Request, conn: asyncpg.Connection = Depends(get_db)):
     tenant_id = await tenant_id_from_request(request, conn)
-    rows = await conn.fetch('select * from app.conversations where tenant_id=$1 order by updated_at desc limit 100', tenant_id)
-    return [dict(r) for r in rows]
+    rows = await conn.fetch(
+        """
+        select c.*,
+               coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
+               ct.phone_e164 as contact_phone,
+               lm.body_text as latest_message_text,
+               lm.direction as latest_message_direction,
+               lm.created_at as latest_message_at,
+               h.id as active_handoff_id,
+               h.status as active_handoff_status,
+               h.assigned_to as active_handoff_assigned_to
+        from app.conversations c
+        join app.contacts ct on ct.id = c.contact_id
+        left join lateral (
+          select body_text, direction, created_at
+          from app.messages m
+          where m.tenant_id = c.tenant_id and m.conversation_id = c.id
+          order by m.created_at desc
+          limit 1
+        ) lm on true
+        left join lateral (
+          select id, status, assigned_to
+          from app.handoffs ho
+          where ho.tenant_id = c.tenant_id
+            and ho.conversation_id = c.id
+            and ho.status in ('open','accepted')
+          order by ho.updated_at desc
+          limit 1
+        ) h on true
+        where c.tenant_id=$1
+        order by c.updated_at desc
+        limit 100
+        """,
+        tenant_id,
+    )
+    conversations = [record_to_dict(r) for r in rows]
+    log.info(
+        'operations.conversations.listed',
+        tenant_id=str(tenant_id),
+        count=len(conversations),
+        conversation_ids=[str(item.get('id')) for item in conversations[:20]],
+        actor_id=getattr(request.state, 'actor_id', None),
+    )
+    return conversations
+
+
+@tenant_ops_router.post('/conversations/start', status_code=status.HTTP_201_CREATED)
+async def start_conversation(
+    payload: ConversationStart,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias='Idempotency-Key'),
+):
+    await ensure_tenant_access(request, payload.tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    user_id = await current_user_id_from_request(request, conn)
+    channel = await conn.fetchrow(
+        """
+        select id
+        from app.tenant_channels
+        where tenant_id=$1 and provider='whatsapp_cloud_api' and status in ('active','provisioning')
+        order by case when status='active' then 0 else 1 end, updated_at desc
+        limit 1
+        """,
+        payload.tenant_id,
+    )
+    if not channel:
+        log.warning(
+            'operations.conversation.start_missing_channel',
+            tenant_id=str(payload.tenant_id),
+            actor_id=request.state.actor_id,
+        )
+        raise HTTPException(status_code=409, detail='Configured WhatsApp channel is required to start a conversation')
+    log.info(
+        'operations.conversation.start_requested',
+        tenant_id=str(payload.tenant_id),
+        channel_id=str(channel['id']),
+        phone_last4=payload.phone_e164[-4:] if payload.phone_e164 else None,
+        actor_id=request.state.actor_id,
+    )
+
+    phone_e164 = payload.phone_e164.strip()
+    wa_id = (payload.wa_id or phone_e164).strip()
+    phone_hash = hashlib.sha256(phone_e164.encode()).digest()
+    contact = await conn.fetchrow(
+        """
+        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, metadata)
+        values ($1, $2, $3, $4, $5, $6::jsonb)
+        on conflict (tenant_id, wa_id) do update set
+          phone_e164=excluded.phone_e164,
+          phone_hash=excluded.phone_hash,
+          display_name=coalesce(excluded.display_name, app.contacts.display_name),
+          metadata=app.contacts.metadata || excluded.metadata,
+          updated_at=now()
+        returning *
+        """,
+        payload.tenant_id,
+        wa_id,
+        phone_e164,
+        phone_hash,
+        payload.display_name,
+        json.dumps(payload.metadata),
+    )
+    conversation = await conn.fetchrow(
+        """
+        select *
+        from app.conversations
+        where tenant_id=$1
+          and contact_id=$2
+          and status not in ('resolved','closed','archived')
+        order by updated_at desc
+        limit 1
+        """,
+        payload.tenant_id,
+        contact['id'],
+    )
+    reused_conversation = bool(conversation)
+    if conversation:
+        conversation = await conn.fetchrow(
+            """
+            update app.conversations
+            set current_owner_user_id=$3,
+                status='waiting_user',
+                handoff_required=false,
+                current_intent=coalesce($4, current_intent)
+            where tenant_id=$1 and id=$2
+            returning *
+            """,
+            payload.tenant_id,
+            conversation['id'],
+            user_id,
+            payload.current_intent,
+        )
+    else:
+        conversation = await conn.fetchrow(
+            """
+            insert into app.conversations (
+              tenant_id, contact_id, channel_id, status, opened_by, current_owner_user_id, current_intent
+            )
+            values ($1, $2, $3, 'waiting_user', 'agent', $4, $5)
+            returning *
+            """,
+            payload.tenant_id,
+            contact['id'],
+            channel['id'],
+            user_id,
+            payload.current_intent,
+        )
+
+    message = await conn.fetchrow(
+        """
+        insert into app.messages (
+          tenant_id, conversation_id, direction, sender_actor_type, sender_actor_id,
+          body_text, message_type, payload, status
+        )
+        values ($1, $2, 'outbound', 'agent', $3, $4, 'text', '{}'::jsonb, 'queued')
+        returning *
+        """,
+        payload.tenant_id,
+        conversation['id'],
+        str(user_id) if user_id else request.state.actor_id,
+        payload.initial_message.strip(),
+    )
+    key = idempotency_key or str(message['id'])
+    await conn.execute(
+        "insert into app.domain_events (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload) values ($1,'message',$2,'message.queued',$3,$4::jsonb) on conflict do nothing",
+        payload.tenant_id,
+        message['id'],
+        key,
+        json.dumps({'conversation_id': str(conversation['id']), 'started_by_agent': True}),
+    )
+    await audit(
+        conn,
+        tenant_id=payload.tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='conversation.started_by_agent',
+        entity_type='conversation',
+        entity_id=str(conversation['id']),
+        metadata={'contact_id': str(contact['id']), 'message_id': str(message['id']), 'reused': reused_conversation},
+    )
+    await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(message['id']))
+    response = record_to_dict(conversation)
+    response['contact_label'] = contact['display_name'] or contact['phone_e164'] or contact['wa_id']
+    response['contact_phone'] = contact['phone_e164']
+    response['contact'] = record_to_dict(contact)
+    response['initial_message'] = record_to_dict(message)
+    response['messages'] = [response['initial_message']]
+    response['handoffs'] = []
+    response['reused_conversation'] = reused_conversation
+    log.info(
+        'operations.conversation.started',
+        tenant_id=str(payload.tenant_id),
+        conversation_id=str(conversation['id']),
+        contact_id=str(contact['id']),
+        channel_id=str(channel['id']),
+        message_id=str(message['id']),
+        reused=reused_conversation,
+        actor_id=request.state.actor_id,
+    )
+    return response
 
 
 @tenant_ops_router.get('/conversations/{conversation_id}')
@@ -586,12 +916,67 @@ async def get_conversation(
     conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
 ):
     tenant_id = await tenant_id_from_request(request, conn)
-    row = await conn.fetchrow('select * from app.conversations where tenant_id=$1 and id=$2', tenant_id, conversation_id)
+    row = None
+    for attempt in range(5):
+        row = await conn.fetchrow(
+            """
+            select c.*,
+                   coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
+                   ct.phone_e164 as contact_phone
+            from app.conversations c
+            join app.contacts ct on ct.id = c.contact_id
+            where c.tenant_id=$1 and c.id=$2
+            """,
+            tenant_id,
+            conversation_id,
+        )
+        if row or attempt == 4:
+            break
+        await asyncio.sleep(0.1)
     if not row:
+        diagnostic = await conn.fetchrow(
+            """
+            select
+              exists(select 1 from app.conversations where id=$1) as exists_any_tenant,
+              exists(select 1 from app.conversations where tenant_id=$2 and id=$1) as exists_for_tenant,
+              (select tenant_id::text from app.conversations where id=$1 limit 1) as actual_tenant_id,
+              (select status from app.conversations where id=$1 limit 1) as actual_status
+            """,
+            conversation_id,
+            tenant_id,
+        )
+        log.warning(
+            'operations.conversation.detail_not_found',
+            tenant_id=str(tenant_id),
+            conversation_id=str(conversation_id),
+            actor_id=getattr(request.state, 'actor_id', None),
+            exists_any_tenant=bool(diagnostic and diagnostic['exists_any_tenant']),
+            exists_for_tenant=bool(diagnostic and diagnostic['exists_for_tenant']),
+            actual_tenant_id=diagnostic['actual_tenant_id'] if diagnostic else None,
+            actual_status=diagnostic['actual_status'] if diagnostic else None,
+        )
         raise HTTPException(status_code=404, detail='Conversation not found')
-    messages = await conn.fetch('select * from app.messages where tenant_id=$1 and conversation_id=$2 order by created_at', tenant_id, conversation_id)
-    data = dict(row)
-    data['messages'] = [dict(m) for m in messages]
+    log.info(
+        'operations.conversation.detail_found',
+        tenant_id=str(tenant_id),
+        conversation_id=str(conversation_id),
+        status=row['status'],
+        contact_id=str(row['contact_id']),
+        actor_id=getattr(request.state, 'actor_id', None),
+    )
+    messages = await conn.fetch(
+        'select * from app.messages where tenant_id=$1 and conversation_id=$2 order by created_at',
+        tenant_id,
+        conversation_id,
+    )
+    handoffs = await conn.fetch(
+        'select * from app.handoffs where tenant_id=$1 and conversation_id=$2 order by updated_at desc',
+        tenant_id,
+        conversation_id,
+    )
+    data = record_to_dict(row)
+    data['messages'] = [record_to_dict(m) for m in messages]
+    data['handoffs'] = [record_to_dict(h) for h in handoffs]
     return data
 
 
@@ -601,7 +986,7 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
 
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     conversation = await conn.fetchrow(
-        'select id from app.conversations where tenant_id=$1 and id=$2',
+        'select id, status from app.conversations where tenant_id=$1 and id=$2',
         payload.tenant_id,
         conversation_id,
     )
@@ -629,6 +1014,11 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
         key,
         json.dumps({'conversation_id': str(conversation_id)}),
     )
+    await conn.execute(
+        "update app.conversations set status='waiting_user' where tenant_id=$1 and id=$2",
+        payload.tenant_id,
+        conversation_id,
+    )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(row['id']))
     return record_to_dict(row)
 
@@ -641,6 +1031,11 @@ async def create_handoff(
     conn: asyncpg.Connection = Depends(get_db),
 ):
     tenant_id = await tenant_id_from_request(request, conn)
+    conversation = await conn.fetchrow(
+        'select id from app.conversations where tenant_id=$1 and id=$2', tenant_id, conversation_id
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail='Conversation not found')
     row = await conn.fetchrow(
         """
         insert into app.handoffs (tenant_id, conversation_id, reason, assigned_to)
@@ -655,14 +1050,71 @@ async def create_handoff(
     return record_to_dict(row)
 
 
+@tenant_ops_router.post('/conversations/{conversation_id}/handoff/accept', status_code=202)
+async def accept_handoff(
+    conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    user_id = await current_user_id_from_request(request, conn)
+    handoff = await conn.fetchrow(
+        """
+        update app.handoffs
+        set status='accepted', assigned_to=$3, updated_at=now()
+        where id = (
+          select id
+          from app.handoffs
+          where tenant_id=$1 and conversation_id=$2 and status='open'
+          order by updated_at desc
+          limit 1
+        )
+        returning *
+        """,
+        tenant_id,
+        conversation_id,
+        user_id,
+    )
+    if not handoff:
+        raise HTTPException(status_code=404, detail='Open handoff not found')
+    await conn.execute(
+        """
+        update app.conversations
+        set status='human_active', handoff_required=false, current_owner_user_id=$3
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        conversation_id,
+        user_id,
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='handoff.accepted', entity_type='handoff', entity_id=str(handoff['id']))
+    return record_to_dict(handoff)
+
+
 @tenant_ops_router.post('/conversations/{conversation_id}/release', status_code=202)
 async def release_conversation(
     conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
 ):
     tenant_id = await tenant_id_from_request(request, conn)
-    row = await conn.fetchrow("update app.conversations set status='open', handoff_required=false where tenant_id=$1 and id=$2 returning *", tenant_id, conversation_id)
+    row = await conn.fetchrow(
+        """
+        update app.conversations
+        set status='open', handoff_required=false, current_owner_user_id=null
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        conversation_id,
+    )
     if not row:
         raise HTTPException(status_code=404, detail='Conversation not found')
+    await conn.execute(
+        """
+        update app.handoffs
+        set status='resolved', updated_at=now()
+        where tenant_id=$1 and conversation_id=$2 and status in ('open','accepted')
+        """,
+        tenant_id,
+        conversation_id,
+    )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='conversation.released', entity_type='conversation', entity_id=str(conversation_id))
     return record_to_dict(row)
 
@@ -1145,9 +1597,21 @@ async def verify_whatsapp_webhook(
     hub_mode: str | None = Query(default=None, alias='hub.mode'),
     hub_verify_token: str | None = Query(default=None, alias='hub.verify_token'),
     hub_challenge: str | None = Query(default=None, alias='hub.challenge'),
+    conn: asyncpg.Connection = Depends(get_db),
 ):
-    settings = get_settings()
-    if hub_mode == 'subscribe' and hub_verify_token == settings.whatsapp_verify_token:
+    if hub_mode != 'subscribe' or not hub_verify_token:
+        raise HTTPException(status_code=403, detail='Invalid verify token')
+    row = await conn.fetchrow(
+        """
+        select id
+        from app.tenant_channels
+        where provider='whatsapp_cloud_api'
+          and status='active'
+          and verify_token_hash=$1
+        """,
+        verify_token_hash(hub_verify_token),
+    )
+    if row:
         return Response(content=hub_challenge or '', media_type='text/plain')
     raise HTTPException(status_code=403, detail='Invalid verify token')
 
@@ -1155,9 +1619,21 @@ async def verify_whatsapp_webhook(
 @webhook_router.post('/whatsapp', status_code=202)
 async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = Depends(get_db), x_hub_signature_256: str | None = Header(default=None, alias='X-Hub-Signature-256')):
     body = await request.body()
-    if not verify_signature(body, x_hub_signature_256):
-        raise HTTPException(status_code=401, detail='Invalid webhook signature')
     payload = json.loads(body or b'{}')
+    phone_number_id = whatsapp_phone_number_id_from_payload(payload)
+    channel = await conn.fetchrow(
+        """
+        select app_secret_ref
+        from app.tenant_channels
+        where provider='whatsapp_cloud_api'
+          and phone_number_id=$1
+          and status='active'
+        """,
+        phone_number_id,
+    )
+    app_secret = resolve_secret_ref(channel['app_secret_ref']) if channel else None
+    if not verify_signature_with_secret(body, x_hub_signature_256, app_secret):
+        raise HTTPException(status_code=401, detail='Invalid webhook signature')
     sha = hashlib.sha256(body).hexdigest()
     await conn.fetchrow(
         """
