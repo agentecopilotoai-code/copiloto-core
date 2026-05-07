@@ -19,7 +19,11 @@ def verify_signature(body: bytes, signature: str | None) -> bool:
 
 async def send_text_message(phone_number_id: str, to: str, text: str) -> dict[str, Any]:
     settings = get_settings()
-    if not settings.meta_access_token or settings.meta_access_token.startswith('change-me'):
+    if (
+        not settings.meta_access_token
+        or settings.meta_access_token.startswith('change-me')
+        or settings.meta_access_token.startswith('local-mock')
+    ):
         return {'mocked': True, 'phone_number_id': phone_number_id, 'to': to, 'text': text}
     url = f'https://graph.facebook.com/{settings.meta_graph_version}/{phone_number_id}/messages'
     async with httpx.AsyncClient(timeout=15) as client:

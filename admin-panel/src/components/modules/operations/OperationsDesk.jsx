@@ -158,7 +158,7 @@ export function OperationsDesk({ module, session, tenant }) {
       <form className="start-conversation-panel" onSubmit={handleStartConversation}>
         <div>
           <strong>Iniciar conversación</strong>
-          <p className="hint">Crea o reutiliza una conversación abierta y encola el primer mensaje outbound.</p>
+          <p className="hint">Crea o reutiliza una conversación abierta y encola el primer mensaje outbound. El worker cambiará el estado queued/sent/failed según la respuesta de WhatsApp.</p>
         </div>
         <label>
           Teléfono WhatsApp E.164
