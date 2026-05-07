@@ -397,10 +397,35 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
 async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    row = await conn.fetchrow("select id, provider, phone_number_id, quality_rating, messaging_limit_tier, status from app.tenant_channels where tenant_id=$1 and provider='whatsapp_cloud_api'", tenant_id)
+    row = await conn.fetchrow(
+        """
+        select id, tenant_id, provider, business_id, waba_id, phone_number_id, token_ref,
+               app_secret_ref, quality_rating, messaging_limit_tier, account_mode, status,
+               created_at, updated_at
+        from app.tenant_channels
+        where tenant_id=$1 and provider='whatsapp_cloud_api'
+        """,
+        tenant_id,
+    )
     if not row:
         raise HTTPException(status_code=404, detail='WhatsApp channel not found')
-    return {'channel': record_to_dict(row), 'upstream': 'not_checked_in_local_core'}
+
+    channel = record_to_dict(row)
+    checks = {
+        'business_id': bool(channel.get('business_id')),
+        'waba_id': bool(channel.get('waba_id')),
+        'phone_number_id': bool(channel.get('phone_number_id')),
+        'token_ref': bool(channel.get('token_ref')),
+        'app_secret_ref': bool(channel.get('app_secret_ref')),
+        'channel_active': channel.get('status') == 'active',
+    }
+    health_status = 'healthy' if all(checks.values()) else 'degraded'
+    return {
+        'status': health_status,
+        'channel': channel,
+        'checks': checks,
+        'upstream': 'not_checked_in_local_core',
+    }
 
 
 @system_router.post('/contacts/upsert')

@@ -104,3 +104,24 @@ Cada entrada debe incluir:
   - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
   - `npm --prefix admin-panel install` (bloqueado por HTTP 403 contra npm registry en el entorno)
 - **Notas:** la creación de tenants requiere un token con rol `owner` no acotado a tenant, y la actualización/consulta por tenant requiere un token tenant-scoped o `support_mode`, de acuerdo con la seguridad existente de la API.
+
+### TASK-0004 — Implementar onboarding WhatsApp/WABA en panel
+
+- **Fecha:** 2026-05-07
+- **Resumen:** se implementó el onboarding WhatsApp/WABA en el Admin Panel. El módulo WhatsApp ahora muestra un formulario para registrar `business_id`, `waba_id`, `phone_number_id`, `token_ref` y `app_secret_ref`, consume el endpoint de upsert del canal por tenant, permite ejecutar un health check local y presenta un checklist visual de avance WABA. El health de la Core API ahora devuelve el canal completo con referencias no secretas, checks locales y estado `healthy/degraded` para que el panel pueda mostrar evidencia del canal activo. También se documentaron las variables y referencias de secretos requeridas sin duplicar la configuración local existente.
+- **Archivos modificados:**
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/styles/global.css`
+  - `app/api/v1/routes.py`
+  - `docs/ADMIN_PANEL.md`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m compileall app`
+  - `git diff --check`
+  - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
+  - `npm --prefix admin-panel install` (bloqueado por HTTP 403 contra npm registry en el entorno)
+  - `uv run pytest` (bloqueado por fallo de descarga desde PyPI en el entorno)
+- **Notas:** el health check es local en esta iteración (`upstream=not_checked_in_local_core`); valida que CopilotoIA tenga la configuración mínima y no consulta Graph API todavía.

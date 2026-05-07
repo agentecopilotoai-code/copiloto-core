@@ -372,46 +372,159 @@ curl -fsS \
   http://localhost:8000/v1/conversations
 ```
 
-## 10. Configurar WhatsApp real en desarrollo
+## 10. Configurar WhatsApp real para que funcione de punta a punta
 
-Para pruebas locales sin WhatsApp real, no cambies nada: el adaptador opera en modo mock si `META_ACCESS_TOKEN` no es real.
+Para pruebas locales sin WhatsApp real, no cambies nada: el adaptador opera en modo mock si `META_ACCESS_TOKEN` no es real. Para recibir mensajes reales y enviar respuestas por Cloud API, debes configurar **dos portales de Meta** y luego registrar el canal en CopilotoIA:
 
-Para WhatsApp real:
+- **Meta for Developers:** <https://developers.facebook.com/apps/>. Aquí creas/abres la app, agregas el producto WhatsApp, copias `Phone Number ID`, `WhatsApp Business Account ID`, configuras webhooks y obtienes el `App Secret`.
+- **Meta Business Settings / Business Manager:** <https://business.facebook.com/settings/>. Aquí verificas el negocio, encuentras el `Business ID`, administras el WABA, creas un System User y generas el token estable para producción.
 
-1. Crea/abre una app en <https://developers.facebook.com/>.
-2. Agrega el producto **WhatsApp**.
-3. Copia `Phone number ID` y `WhatsApp Business Account ID`.
-4. Copia un token temporal para pruebas o crea un System User token más estable.
-5. Copia el `App Secret` en App Settings > Basic.
-6. Define tu propio `WHATSAPP_VERIFY_TOKEN`.
-7. Para webhooks locales, crea un túnel HTTPS hacia `http://localhost:8000`, por ejemplo ngrok o Cloudflare Tunnel.
-8. En Meta, configura el webhook público hacia:
+Documentación oficial recomendada de Meta:
 
-```text
-https://<TU_DOMINIO_PUBLICO>/v1/webhooks/whatsapp
+- Cloud API: <https://developers.facebook.com/docs/whatsapp/cloud-api>
+- Get Started / API Setup: <https://developers.facebook.com/docs/whatsapp/cloud-api/get-started>
+- Webhooks: <https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks>
+- Access Tokens: <https://developers.facebook.com/docs/whatsapp/cloud-api/get-started#access-tokens>
+
+### 10.1 Prerrequisitos antes de tocar CopilotoIA
+
+1. Tener una cuenta personal de Meta con acceso administrativo al negocio.
+2. Tener o crear un **Business Portfolio / Business Manager** en <https://business.facebook.com/settings/>.
+3. Completar **Business Info** y, para producción, **Business Verification**. En modo prueba puedes usar el número de prueba que Meta crea en API Setup, pero para operar con clientes reales necesitas negocio verificado, número real registrado y cumplimiento de políticas de WhatsApp Business.
+4. Tener CopilotoIA accesible por HTTPS público. Meta no puede verificar `localhost`; para desarrollo usa un túnel como ngrok o Cloudflare Tunnel apuntando a `http://localhost:8000`.
+
+Ejemplo con ngrok:
+
+```bash
+ngrok http 8000
 ```
 
-Edita `.env`:
+Anota la URL HTTPS pública que te entregue, por ejemplo `https://abc123.ngrok-free.app`.
+
+### 10.2 Crear o abrir la app en Meta for Developers
+
+1. Entra a <https://developers.facebook.com/apps/>.
+2. Crea una app nueva de tipo **Business** o abre la app existente del negocio.
+3. En el menú de la app, selecciona **Add product** y agrega **WhatsApp**.
+4. En **WhatsApp > API Setup**:
+   - Selecciona o crea el Business Portfolio correcto.
+   - Copia el **Phone Number ID** del número de prueba o del número real.
+   - Copia el **WhatsApp Business Account ID**; ese valor será `waba_id` en CopilotoIA.
+   - Si estás en pruebas, agrega tu número personal como destinatario permitido para poder recibir mensajes del número de prueba.
+5. En **App Settings > Basic**, copia el **App ID** si necesitas identificar la app y copia el **App Secret**. Este valor va en `WHATSAPP_APP_SECRET`; no lo pegues en el Admin Panel, solo en `.env`/gestor de secretos.
+
+### 10.3 Obtener Business ID, WABA ID y Phone Number ID
+
+Usa esta tabla para no confundir los identificadores:
+
+| Dato en CopilotoIA | Portal Meta | Ruta típica | Qué copiar |
+|---|---|---|---|
+| `business_id` | Meta Business Settings | <https://business.facebook.com/settings/> > **Business Info** | **Business Manager ID** / **Business ID** del negocio dueño del WABA. |
+| `waba_id` | Meta for Developers o WhatsApp Manager | App > **WhatsApp > API Setup** o <https://business.facebook.com/wa/manage/home/> | **WhatsApp Business Account ID**. |
+| `phone_number_id` | Meta for Developers | App > **WhatsApp > API Setup** | **Phone Number ID**, no el número en formato `+57...`. |
+| `WHATSAPP_APP_SECRET` | Meta for Developers | App > **App Settings > Basic** | **App Secret** de la app. |
+| `META_ACCESS_TOKEN` | Meta for Developers / Business Settings | API Setup para token temporal, o System Users para token estable | Token con permisos de WhatsApp Business Platform. |
+| `WHATSAPP_VERIFY_TOKEN` | Lo defines tú | Debe coincidir en CopilotoIA y Meta Webhooks | Una cadena larga aleatoria; no viene de Meta. |
+
+### 10.4 Token temporal vs token estable
+
+Para una prueba rápida puedes usar el token temporal que aparece en **Meta for Developers > WhatsApp > API Setup**, pero expirará y no sirve para producción.
+
+Para que WhatsApp funcione de forma estable:
+
+1. Entra a <https://business.facebook.com/settings/>.
+2. Ve a **Users > System Users**.
+3. Crea un System User para CopilotoIA, por ejemplo `copilotoia-whatsapp`.
+4. Asígnale activos del negocio:
+   - La app de Meta usada para WhatsApp.
+   - El WhatsApp Business Account correspondiente.
+5. Genera un token para esa app con estos permisos mínimos:
+   - `whatsapp_business_messaging`
+   - `whatsapp_business_management`
+   - `business_management`
+6. Si el portal lo permite, usa expiración **Never** para producción controlada; si no, documenta fecha de expiración y rota el secreto antes de que venza.
+7. Guarda ese token como `META_ACCESS_TOKEN` en `.env` y, si usas los archivos locales de secretos, en `.secrets/meta_access_token`.
+
+### 10.5 Configurar variables locales de CopilotoIA
+
+Edita `.env` y reemplaza los valores mock por valores reales:
 
 ```env
 META_ACCESS_TOKEN=<TOKEN_REAL_DE_META>
-WHATSAPP_VERIFY_TOKEN=<TOKEN_QUE_DEFINISTE>
+WHATSAPP_VERIFY_TOKEN=<TOKEN_LARGO_DEFINIDO_POR_TI>
 WHATSAPP_APP_SECRET=<APP_SECRET_DE_META>
 META_GRAPH_VERSION=v23.0
 ```
 
-Reinicia servicios:
+Si usas `.secrets/*`, actualiza también estas rutas para que coincidan con las referencias guardadas en el canal:
+
+```bash
+printf '%s' '<TOKEN_REAL_DE_META>' > .secrets/meta_access_token
+printf '%s' '<APP_SECRET_DE_META>' > .secrets/whatsapp_app_secret
+chmod 600 .secrets/meta_access_token .secrets/whatsapp_app_secret
+```
+
+No inventes variables paralelas: el código lee `META_ACCESS_TOKEN`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` y `META_GRAPH_VERSION`; el Admin Panel solo guarda referencias como `secrets/meta_access_token` y `secrets/whatsapp_app_secret`.
+
+Reinicia servicios después de cambiar `.env` o `.secrets`:
 
 ```bash
 docker compose restart api event-worker scheduler
 ```
 
-Registra el canal del tenant demo:
+### 10.6 Configurar el webhook en Meta
+
+En **Meta for Developers > tu app > WhatsApp > Configuration** configura:
+
+| Campo de Meta | Valor para CopilotoIA |
+|---|---|
+| Callback URL | `https://<TU_DOMINIO_PUBLICO>/v1/webhooks/whatsapp` |
+| Verify token | Exactamente el mismo valor de `WHATSAPP_VERIFY_TOKEN` en `.env` |
+
+Notas importantes:
+
+- La URL debe ser HTTPS pública, sin autenticación, sin redirecciones y apuntar al puerto público que termina en la API de CopilotoIA.
+- Si usas ngrok/Cloudflare Tunnel, la ruta final sigue siendo `/v1/webhooks/whatsapp`.
+- Al guardar, Meta hará un `GET` de verificación. CopilotoIA responde el `hub.challenge` solo si `hub.verify_token` coincide con `WHATSAPP_VERIFY_TOKEN`.
+- Después de verificar, en **Webhook fields / Manage** suscribe al menos el campo **messages** del objeto **WhatsApp Business Account** para recibir mensajes entrantes y estados de mensajes.
+
+Puedes probar manualmente la verificación antes de guardar en Meta:
+
+```bash
+curl -fsS "https://<TU_DOMINIO_PUBLICO>/v1/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=<TOKEN_LARGO_DEFINIDO_POR_TI>&hub.challenge=ok"
+```
+
+Debe devolver:
+
+```text
+ok
+```
+
+### 10.7 Registrar el canal en CopilotoIA
+
+Opción recomendada desde el Admin Panel:
+
+1. Levanta el panel con `./scripts/bootstrap-admin-panel.sh` o `docker compose up -d --build admin-panel`.
+2. Abre `http://localhost:3000/admin/`.
+3. Inicia sesión con Auth0.
+4. Selecciona el tenant.
+5. Entra al módulo **WhatsApp**.
+6. Completa:
+   - **Business ID:** `business_id` de Business Settings.
+   - **WABA ID:** `waba_id` / WhatsApp Business Account ID.
+   - **Phone Number ID:** ID del número en API Setup.
+   - **Token ref:** normalmente `secrets/meta_access_token`.
+   - **App secret ref:** normalmente `secrets/whatsapp_app_secret`.
+7. Pulsa **Registrar canal**.
+8. Pulsa **Ver health**. El estado local debe quedar `healthy` cuando todos los campos y referencias estén presentes y el canal esté activo.
+
+Opción por API para el tenant demo:
 
 ```bash
 curl -fsS -X POST \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $(grep '^SERVICE_TOKEN=' .env | cut -d= -f2-)" \
+  -H 'X-Tenant-Id: 11111111-1111-1111-1111-111111111111' \
   http://localhost:8000/v1/tenants/11111111-1111-1111-1111-111111111111/channels/whatsapp \
   -d '{
     "business_id":"<BUSINESS_ID>",
@@ -421,6 +534,46 @@ curl -fsS -X POST \
     "app_secret_ref":"secrets/whatsapp_app_secret"
   }'
 ```
+
+Consultar health por API:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $(grep '^SERVICE_TOKEN=' .env | cut -d= -f2-)" \
+  -H 'X-Tenant-Id: 11111111-1111-1111-1111-111111111111' \
+  http://localhost:8000/v1/tenants/11111111-1111-1111-1111-111111111111/channels/whatsapp/health
+```
+
+### 10.8 Validar que WhatsApp ya funciona
+
+1. En Meta, usa **WhatsApp > API Setup > Send and receive messages** para enviar un mensaje de prueba desde el número de prueba hacia tu teléfono permitido.
+2. Responde desde tu WhatsApp personal al número de prueba o al número real conectado.
+3. Revisa que CopilotoIA recibió el webhook:
+
+```bash
+docker compose logs -f api
+```
+
+4. En base de datos debe aparecer un registro en `app.webhook_events_raw`. Puedes consultarlo con:
+
+```bash
+docker compose exec postgres psql -U copiloto_admin -d copilotoia \
+  -c "select provider, event_type, created_at from app.webhook_events_raw order by created_at desc limit 5;"
+```
+
+5. Para envío outbound real, asegúrate de que `event-worker` esté corriendo, que el contacto/conversación usen el `channel_id` registrado y que `META_ACCESS_TOKEN` no sea mock. El worker llama a Graph API con `POST /<PHONE_NUMBER_ID>/messages` usando `META_GRAPH_VERSION`.
+
+### 10.9 Checklist de errores comunes
+
+| Síntoma | Causa probable | Qué corregir |
+|---|---|---|
+| Meta dice que no puede validar el callback | URL no pública, redirección, TLS inválido o verify token distinto | Usa HTTPS público directo a `/v1/webhooks/whatsapp` y copia exactamente `WHATSAPP_VERIFY_TOKEN`. |
+| El GET manual devuelve 403 | `hub.verify_token` no coincide con `.env` | Revisa `.env`, reinicia `api` y vuelve a probar. |
+| Los webhooks no llegan aunque el callback verificó | No suscribiste el campo `messages` del WABA | En Meta > WhatsApp > Configuration > Webhook fields / Manage, activa `messages`. |
+| Envío outbound queda mock | `META_ACCESS_TOKEN` sigue vacío, `change-me...` o `local-mock-token...` | Guarda un token real y reinicia `event-worker`. |
+| Graph API responde permisos insuficientes | Token sin permisos o System User sin activos asignados | Regenera token con `whatsapp_business_messaging`, `whatsapp_business_management` y `business_management`; asigna app y WABA al System User. |
+| El número real no recibe mensajes | Número no registrado en Cloud API, negocio no verificado o app en modo/test limitado | Completa Business Verification, registra el número en WhatsApp Manager y revisa modo Live/App Review según aplique. |
+| La firma del webhook falla | `WHATSAPP_APP_SECRET` no corresponde a la app que envía webhooks | Copia el App Secret correcto de App Settings > Basic y reinicia `api`. |
 
 ## 11. Producción: pasos y equivalencias
 
