@@ -1,5 +1,7 @@
 import hashlib
 import json
+from datetime import UTC, datetime
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import asyncpg
@@ -22,6 +24,7 @@ from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
+from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.whatsapp import verify_signature
 
 router = APIRouter(prefix='/v1')
@@ -120,6 +123,18 @@ def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
 
 def normalize_knowledge_documents(rows: list[asyncpg.Record]) -> list[dict]:
     return [normalize_knowledge_document(row) for row in rows]
+
+
+def metadata_extracted_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    extracted_text = value.get('extracted_text')
+    return extracted_text if isinstance(extracted_text, str) else None
 
 
 def is_service_or_support(request: Request) -> bool:
@@ -730,6 +745,8 @@ async def create_knowledge_document(
 ):
     await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    if payload.status == 'active':
+        raise HTTPException(status_code=400, detail='Use the indexing endpoint to activate documents')
     columns = await knowledge_document_columns(conn)
     payload_values = payload.model_dump()
     insert_columns = ['tenant_id'] + [
@@ -812,6 +829,7 @@ async def patch_knowledge_document(
     )
     if not current:
         raise HTTPException(status_code=404, detail='Knowledge document not found')
+    current_document = normalize_knowledge_document(current)
 
     allowed = {
         column: value
@@ -819,7 +837,25 @@ async def patch_knowledge_document(
         if column in columns and column in KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS
     }
     if not allowed:
-        return normalize_knowledge_document(current)
+        return current_document
+
+    content_changed = 'content' in allowed and allowed.get('content') != current_document.get('content')
+    extracted_text_changed = (
+        'metadata' in allowed
+        and metadata_extracted_text(allowed.get('metadata'))
+        != metadata_extracted_text(current_document.get('metadata'))
+    )
+    invalidates_chunks = content_changed or extracted_text_changed
+    if invalidates_chunks:
+        allowed['status'] = 'draft'
+    elif allowed.get('status') == 'active':
+        has_chunks = await conn.fetchval(
+            'select exists(select 1 from app.knowledge_chunks where tenant_id=$1 and document_id=$2)',
+            tenant_id,
+            document_id,
+        )
+        if not has_chunks:
+            raise HTTPException(status_code=400, detail='Use the indexing endpoint to activate documents')
 
     assignments = []
     values = [tenant_id, document_id]
@@ -828,15 +864,22 @@ async def patch_knowledge_document(
         placeholder = f'${len(values)}::jsonb' if column == 'metadata' else f'${len(values)}'
         assignments.append(f'{column}={placeholder}')
 
-    row = await conn.fetchrow(
-        f"""
-        update app.knowledge_documents
-        set {', '.join(assignments)}
-        where tenant_id=$1 and id=$2
-        returning {knowledge_document_projection(columns)}
-        """,
-        *values,
-    )
+    async with conn.transaction():
+        row = await conn.fetchrow(
+            f"""
+            update app.knowledge_documents
+            set {', '.join(assignments)}
+            where tenant_id=$1 and id=$2
+            returning {knowledge_document_projection(columns)}
+            """,
+            *values,
+        )
+        if invalidates_chunks:
+            await conn.execute(
+                'delete from app.knowledge_chunks where tenant_id=$1 and document_id=$2',
+                tenant_id,
+                document_id,
+            )
     await audit(
         conn,
         tenant_id=tenant_id,
@@ -847,6 +890,147 @@ async def patch_knowledge_document(
         entity_id=str(document_id),
     )
     return normalize_knowledge_document(row)
+
+
+
+@tenant_admin_router.post('/knowledge/documents/{document_id}/index')
+async def index_knowledge_document(
+    document_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    columns = await knowledge_document_columns(conn)
+    document = await conn.fetchrow(
+        f"""
+        select {knowledge_document_projection(columns)}
+        from app.knowledge_documents
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        document_id,
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail='Knowledge document not found')
+
+    settings = get_settings()
+    try:
+        result = build_indexing_result(
+            normalize_knowledge_document(document),
+            max_tokens=settings.rag_chunk_max_tokens,
+            overlap_tokens=settings.rag_chunk_overlap_tokens,
+            embedding_dimensions=settings.rag_embedding_dimensions,
+            embedding_provider=settings.rag_embedding_provider,
+            embedding_model=settings.rag_embedding_model,
+        )
+    except ValueError as exc:
+        await conn.execute(
+            """
+            update app.knowledge_documents
+            set status='failed', metadata=metadata || $3::jsonb
+            where tenant_id=$1 and id=$2
+            """,
+            tenant_id,
+            document_id,
+            json.dumps({'indexing_error': str(exc)}),
+        )
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type=request.state.actor_type,
+            actor_id=request.state.actor_id,
+            action='knowledge_document.index_failed',
+            entity_type='knowledge_document',
+            entity_id=str(document_id),
+            metadata={'error': str(exc)},
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    indexing_started_at = datetime.now(UTC).isoformat()
+    async with conn.transaction():
+        await conn.execute(
+            """
+            update app.knowledge_documents
+            set status='indexing', metadata=metadata || $3::jsonb
+            where tenant_id=$1 and id=$2
+            """,
+            tenant_id,
+            document_id,
+            json.dumps(
+                {
+                    'last_indexing_started_at': indexing_started_at,
+                    'embedding_provider': result.embedding_provider,
+                    'embedding_model': result.embedding_model,
+                    'embedding_dimensions': result.embedding_dimensions,
+                }
+            ),
+        )
+        await conn.execute(
+            'delete from app.knowledge_chunks where tenant_id=$1 and document_id=$2',
+            tenant_id,
+            document_id,
+        )
+        for chunk in result.chunks:
+            await conn.execute(
+                """
+                insert into app.knowledge_chunks (
+                  tenant_id, document_id, chunk_index, section_path, chunk_text,
+                  token_count, embedding, metadata
+                )
+                values ($1,$2,$3,$4,$5,$6,$7::vector,$8::jsonb)
+                """,
+                tenant_id,
+                document_id,
+                chunk.chunk_index,
+                chunk.section_path,
+                chunk.chunk_text,
+                chunk.token_count,
+                vector_literal(chunk.embedding),
+                json.dumps(chunk.metadata),
+            )
+        indexing_completed_at = datetime.now(UTC).isoformat()
+        row = await conn.fetchrow(
+            f"""
+            update app.knowledge_documents
+            set status='active', metadata=metadata || $3::jsonb
+            where tenant_id=$1 and id=$2
+            returning {knowledge_document_projection(columns)}
+            """,
+            tenant_id,
+            document_id,
+            json.dumps(
+                {
+                    'chunk_count': len(result.chunks),
+                    'sanitized_warning_count': result.sanitized_warning_count,
+                    'last_indexing_completed_at': indexing_completed_at,
+                }
+            ),
+        )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='knowledge_document.indexed',
+        entity_type='knowledge_document',
+        entity_id=str(document_id),
+        metadata={
+            'chunk_count': len(result.chunks),
+            'sanitized_warning_count': result.sanitized_warning_count,
+            'embedding_provider': result.embedding_provider,
+            'embedding_model': result.embedding_model,
+        },
+    )
+    response = normalize_knowledge_document(row)
+    response['indexing'] = {
+        'chunk_count': len(result.chunks),
+        'sanitized_warning_count': result.sanitized_warning_count,
+        'embedding_provider': result.embedding_provider,
+        'embedding_model': result.embedding_model,
+        'embedding_dimensions': result.embedding_dimensions,
+    }
+    return response
 
 
 @tenant_admin_router.delete('/knowledge/documents/{document_id}', status_code=204)

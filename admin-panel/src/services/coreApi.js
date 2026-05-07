@@ -132,6 +132,14 @@ export function updateKnowledgeDocument(session, tenantId, documentId, payload) 
   });
 }
 
+export function indexKnowledgeDocument(session, tenantId, documentId) {
+  return request(`/knowledge/documents/${documentId}/index`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}
+
 export function deleteKnowledgeDocument(session, tenantId, documentId) {
   return request(`/knowledge/documents/${documentId}`, {
     method: 'DELETE',

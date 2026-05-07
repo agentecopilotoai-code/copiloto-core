@@ -149,3 +149,28 @@ Cada entrada debe incluir:
   - `uv run pytest tests/test_knowledge_documents.py` (bloqueado por fallo de descarga desde PyPI en el entorno)
   - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
 - **Notas:** la carga binaria real a object storage queda para una integración posterior; este MVP cumple el alcance registrando fuentes ya cargadas u object keys junto con checksum/MIME, sin crear variables nuevas de secretos. Posteriormente se agregó compatibilidad con volúmenes PostgreSQL existentes y una migración idempotente en `scripts/bootstrap.sh` para evitar `UndefinedColumnError` cuando la tabla `app.knowledge_documents` aún no tiene las columnas nuevas.
+
+### TASK-0006 — Implementar pipeline de indexación RAG
+
+- **Fecha:** 2026-05-07
+- **Resumen:** se implementó el pipeline de indexación RAG para documentos de conocimiento por tenant. La Core API agrega `POST /v1/knowledge/documents/{document_id}/index`, extrae texto desde `content` o `metadata.extracted_text`, aplica sanitización básica contra instrucciones maliciosas documentales, genera chunks con `chunk_index`, `section_path`, `token_count`, metadata de embeddings y embeddings determinísticos configurables, reemplaza de forma transaccional los chunks previos en `app.knowledge_chunks` y publica el documento como `active` solo al finalizar el indexado. La API rechaza activaciones manuales de documentos sin chunks para mantener la garantía de que un documento activo tiene chunks asociados y conserva aislamiento con `tenant_id`, `X-Tenant-Id` y RLS.
+- **Archivos modificados:**
+  - `app/services/rag_indexing.py`
+  - `app/api/v1/routes.py`
+  - `app/core/config.py`
+  - `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx`
+  - `admin-panel/src/services/coreApi.js`
+  - `.env.example`
+  - `tests/test_rag_indexing.py`
+  - `docs/ADMIN_PANEL.md`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `pytest tests/test_rag_indexing.py`
+  - `pytest tests/test_rag_indexing.py tests/test_knowledge_documents.py` (bloqueado porque el Python global no tiene `pydantic`)
+  - `python3 -m compileall app`
+  - `git diff --check`
+  - `ruff check app tests`
+  - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
+  - `npm --prefix admin-panel install` (bloqueado por HTTP 403 contra npm registry en el entorno)
+- **Notas:** el proveedor de embeddings por defecto es local y determinístico (`local_hash`) para mantener el MVP sin dependencias externas ni secretos nuevos. Los proveedores/modelos reales pueden conectarse reutilizando las variables `RAG_EMBEDDING_*` y preservando la dimensión compatible con `app.knowledge_chunks.embedding`.

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   createKnowledgeDocument,
   deleteKnowledgeDocument,
+  indexKnowledgeDocument,
   listKnowledgeDocuments,
   updateKnowledgeDocument,
 } from '../../../services/coreApi.js';
@@ -64,7 +65,6 @@ export function KnowledgeStudio({ module, session, tenant }) {
   function loadDocuments() {
     if (!tenant?.id) return;
     setIsLoading(true);
-    setNotice(null);
     listKnowledgeDocuments(session, tenant.id, { status: statusFilter, visibility: visibilityFilter })
       .then(setDocuments)
       .catch((error) => setNotice({ type: 'error', text: error.message }))
@@ -133,6 +133,22 @@ export function KnowledgeStudio({ module, session, tenant }) {
     }
   }
 
+  async function runIndexing(document) {
+    setNotice(null);
+    try {
+      const indexedDocument = await indexKnowledgeDocument(session, tenant.id, document.id);
+      const chunkCount = indexedDocument.indexing?.chunk_count || indexedDocument.metadata?.chunk_count || 0;
+      setNotice({
+        type: 'success',
+        text: `Documento indexado y activado con ${chunkCount} chunks.`,
+      });
+      loadDocuments();
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+      loadDocuments();
+    }
+  }
+
   async function removeDocument(document) {
     setNotice(null);
     try {
@@ -151,7 +167,7 @@ export function KnowledgeStudio({ module, session, tenant }) {
         <div>
           <p className="eyebrow">{module.label}</p>
           <h2>{module.summary}</h2>
-          <p className="hint">Crea FAQ, políticas y registros de fuente aislados por tenant mediante RLS.</p>
+          <p className="hint">Crea FAQ, políticas y registros de fuente aislados por tenant mediante RLS. Usa Indexar para generar chunks y activar documentos.</p>
         </div>
         <div className="wizard-selected-tenant">
           <span>Tenant activo</span>
@@ -183,7 +199,7 @@ export function KnowledgeStudio({ module, session, tenant }) {
             <label>Tipo<select value={form.document_type} onChange={(event) => setField('document_type', event.target.value)}><option value="faq">FAQ</option><option value="policy">Política</option><option value="reference">Referencia</option></select></label>
             <label>Fuente<select value={form.source_type} onChange={(event) => setField('source_type', event.target.value)}><option value="manual">Manual</option><option value="upload">Archivo / object storage</option><option value="url">URL</option><option value="integration">Integración</option></select></label>
             <label>Visibilidad<select value={form.visibility} onChange={(event) => setField('visibility', event.target.value)}><option value="tenant">Tenant</option><option value="agents_only">Solo agentes</option><option value="public">Público</option></select></label>
-            <label>Estado<select value={form.status} onChange={(event) => setField('status', event.target.value)}><option value="draft">Draft</option><option value="indexing">Indexing</option><option value="active">Active</option><option value="failed">Failed</option></select></label>
+            <label>Estado<select value={form.status} onChange={(event) => setField('status', event.target.value)}><option value="draft">Draft</option><option value="indexing">Indexing</option><option value="active" disabled>Active (solo por indexado)</option><option value="failed">Failed</option></select></label>
           </div>
 
           <label>
@@ -239,9 +255,10 @@ export function KnowledgeStudio({ module, session, tenant }) {
                   >
                     <option value="draft">Draft</option>
                     <option value="indexing">Indexing</option>
-                    <option value="active">Active</option>
+                    <option value="active" disabled>Active (solo por indexado)</option>
                     <option value="failed">Failed</option>
                   </select>
+                  <button className="icon-action" onClick={() => runIndexing(document)} type="button">Indexar</button>
                   <button className="icon-action" onClick={() => editDocument(document)} type="button">Editar</button>
                   <button className="icon-action danger" onClick={() => removeDocument(document)} type="button">Eliminar</button>
                 </div>

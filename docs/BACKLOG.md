@@ -19,19 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0006 — Implementar pipeline de indexación RAG
-
-- **Estado:** PENDING
-- **Objetivo:** convertir documentos del tenant en chunks vectorizados consultables.
-- **Alcance mínimo:**
-  - Extracción de texto.
-  - Sanitización básica contra prompt injection documental.
-  - Chunking con `chunk_index`, `section_path` y `token_count`.
-  - Embeddings configurables.
-  - Inserción en `knowledge_chunks`.
-  - Publicación del documento como `active` solo si el indexado termina.
-- **Criterio de terminado:** un documento activo tiene chunks asociados y nunca mezcla datos entre tenants.
-
 ### TASK-0007 — Implementar prueba de retrieval y respuesta RAG
 
 - **Estado:** PENDING
