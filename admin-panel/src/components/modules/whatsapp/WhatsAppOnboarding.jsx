@@ -213,6 +213,12 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
       </div>
 
       {notice ? <p className={`notice ${notice.type}`}>{notice.text}</p> : null}
+      {health?.checks?.delivery_ready === false ? (
+        <p className="notice error">
+          El canal está en modo real, pero el Core API/worker no tiene un META_ACCESS_TOKEN real.
+          Configura esa variable en el backend y reinicia el worker antes de esperar mensajes en WhatsApp.
+        </p>
+      ) : null}
       {isLoadingChannel ? <p className="notice info">Cargando canal WhatsApp existente…</p> : null}
 
       <div className="onboarding-layout">
@@ -322,6 +328,14 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
         <div>
           <dt>Modo de entrega</dt>
           <dd>{channel?.account_mode === 'live' ? 'Real vía WhatsApp' : 'Mock local'}</dd>
+        </div>
+        <div>
+          <dt>Token Meta</dt>
+          <dd>{health?.checks?.meta_access_token_configured ? 'Configurado en backend' : 'Falta o es mock'}</dd>
+        </div>
+        <div>
+          <dt>Entrega real lista</dt>
+          <dd>{health?.checks?.delivery_ready ? 'Sí' : 'No'}</dd>
         </div>
         <div>
           <dt>Calidad</dt>

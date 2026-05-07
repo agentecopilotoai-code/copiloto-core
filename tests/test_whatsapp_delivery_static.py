@@ -35,6 +35,8 @@ def test_whatsapp_delivery_mode_controls_mocking_per_tenant_channel():
     assert 'META_ACCESS_TOKEN is missing or configured as a local mock token' in service_source
     assert "account_mode: str = Field(default='mock', pattern='^(mock|live)$')" in schema_source
     assert 'account_mode=excluded.account_mode' in routes_source
+    assert 'meta_access_token_configured' in routes_source
+    assert 'delivery_ready' in routes_source
     assert "account_mode text not null default 'mock' check (account_mode in ('mock','live'))" in db_source
 
 
@@ -45,6 +47,8 @@ def test_whatsapp_onboarding_exposes_delivery_mode_toggle():
     assert 'Modo de entrega' in source
     assert 'Mock local (no envía a WhatsApp)' in source
     assert 'Real vía WhatsApp Cloud API' in source
+    assert 'META_ACCESS_TOKEN real' in source
+    assert 'Falta o es mock' in source
     assert 'Modo real: el worker llama a Meta usando META_ACCESS_TOKEN' in source
 
 
