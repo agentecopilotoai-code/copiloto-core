@@ -19,17 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0007 — Implementar prueba de retrieval y respuesta RAG
-
-- **Estado:** PENDING
-- **Objetivo:** permitir que un admin pruebe preguntas contra la base de conocimiento del tenant.
-- **Alcance mínimo:**
-  - Endpoint `/v1/intents/evaluate` o endpoint equivalente de retrieval test.
-  - Mostrar chunks recuperados, score, visibilidad y fuente.
-  - Responder solo si hay contexto suficiente.
-  - Escalar a humano si no hay evidencia.
-- **Criterio de terminado:** el panel muestra una respuesta trazable y los documentos usados.
-
 ### TASK-0008 — Implementar Operations Desk mínimo
 
 - **Estado:** PENDING
