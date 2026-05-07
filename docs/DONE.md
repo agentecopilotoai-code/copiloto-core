@@ -174,3 +174,25 @@ Cada entrada debe incluir:
   - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
   - `npm --prefix admin-panel install` (bloqueado por HTTP 403 contra npm registry en el entorno)
 - **Notas:** el proveedor de embeddings por defecto es local y determinístico (`local_hash`) para mantener el MVP sin dependencias externas ni secretos nuevos. Los proveedores/modelos reales pueden conectarse reutilizando las variables `RAG_EMBEDDING_*` y preservando la dimensión compatible con `app.knowledge_chunks.embedding`.
+
+### TASK-0007 — Implementar prueba de retrieval y respuesta RAG
+
+- **Fecha:** 2026-05-07
+- **Resumen:** se implementó la prueba de retrieval y respuesta RAG para admins por tenant. La Core API agrega `POST /v1/intents/evaluate`, recupera chunks activos de `app.knowledge_chunks` asociados a documentos `active`, calcula ranking lexical determinístico con score y términos coincidentes, devuelve fuente, visibilidad, tipo de fuente, sección y excerpt por chunk, y solo genera una respuesta sugerida si el mejor score supera el umbral de evidencia. Cuando no hay contexto suficiente, la respuesta queda en `escalate_to_human` con handoff requerido. El Admin Panel incorpora una sección de prueba RAG en Knowledge Studio para preguntar, ver respuesta trazable y revisar los chunks/documentos usados.
+- **Archivos modificados:**
+  - `app/services/rag_retrieval.py`
+  - `app/api/v1/schemas.py`
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/styles/global.css`
+  - `tests/test_rag_retrieval.py`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python -m compileall app`
+  - `ruff check app tests admin-panel/src`
+  - `pytest -q tests/test_rag_retrieval.py tests/test_rag_indexing.py`
+  - `pytest -q tests/test_rag_retrieval.py tests/test_rag_indexing.py tests/test_knowledge_documents.py` (bloqueado porque el Python global no tiene `pydantic`)
+  - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
+- **Notas:** el retrieval usa scoring lexical local y determinístico para mantener el MVP sin nuevas dependencias externas ni secretos. El endpoint audita cada evaluación con estado, contexto suficiente, chunks devueltos y score superior.

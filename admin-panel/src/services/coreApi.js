@@ -105,6 +105,16 @@ export function getWhatsAppChannelHealth(session, tenantId) {
   return request(`/tenants/${tenantId}/channels/whatsapp/health`, { session, tenantId });
 }
 
+
+export function evaluateIntent(session, tenantId, payload) {
+  return request('/intents/evaluate', {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
 export function listKnowledgeDocuments(session, tenantId, filters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {

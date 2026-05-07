@@ -777,3 +777,57 @@ fieldset {
     justify-content: flex-start;
   }
 }
+
+.rag-tester {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 1rem;
+}
+
+.rag-tester h3,
+.rag-tester p {
+  margin: 0;
+}
+
+.rag-tester label {
+  color: var(--muted);
+  display: grid;
+  font-size: 0.78rem;
+  font-weight: 900;
+  gap: 0.35rem;
+  text-transform: uppercase;
+}
+
+.rag-result,
+.rag-chunks {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.rag-answer,
+.rag-chunk {
+  background: #ffffff;
+  border: 1px solid rgba(219, 228, 240, 0.86);
+  border-radius: 18px;
+  display: grid;
+  gap: 0.45rem;
+  padding: 1rem;
+}
+
+.rag-answer p,
+.rag-chunk p {
+  line-height: 1.55;
+  margin: 0;
+}
+
+.rag-chunks h4 {
+  margin: 0;
+}
+
+.rag-chunk small {
+  word-break: break-word;
+}

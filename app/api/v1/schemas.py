@@ -108,6 +108,12 @@ class KnowledgeDocumentUpdate(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
+class IntentEvaluateRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+    max_chunks: int = Field(default=5, ge=1, le=10)
+    min_score: float = Field(default=0.12, ge=0, le=1)
+
+
 class PromptCreate(BaseModel):
     tenant_id: UUID | None = None
     vertical_code: str = 'common'

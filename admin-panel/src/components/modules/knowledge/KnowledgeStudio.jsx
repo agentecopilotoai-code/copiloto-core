@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import {
   createKnowledgeDocument,
+  evaluateIntent,
   deleteKnowledgeDocument,
   indexKnowledgeDocument,
   listKnowledgeDocuments,
@@ -47,6 +48,9 @@ export function KnowledgeStudio({ module, session, tenant }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [ragQuestion, setRagQuestion] = useState('');
+  const [ragResult, setRagResult] = useState(null);
+  const [isEvaluating, setIsEvaluating] = useState(false);
 
   const selectedDocument = useMemo(
     () => documents.find((document) => document.id === editingId),
@@ -149,6 +153,27 @@ export function KnowledgeStudio({ module, session, tenant }) {
     }
   }
 
+  async function evaluateRetrieval(event) {
+    event.preventDefault();
+    if (!tenant?.id || !ragQuestion.trim()) return;
+    setIsEvaluating(true);
+    setNotice(null);
+    try {
+      const result = await evaluateIntent(session, tenant.id, { question: ragQuestion.trim() });
+      setRagResult(result);
+      setNotice({
+        type: result.sufficient_context ? 'success' : 'info',
+        text: result.sufficient_context
+          ? 'Respuesta RAG generada con evidencia trazable.'
+          : 'Sin evidencia suficiente: escalar a humano.',
+      });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsEvaluating(false);
+    }
+  }
+
   async function removeDocument(document) {
     setNotice(null);
     try {
@@ -176,6 +201,53 @@ export function KnowledgeStudio({ module, session, tenant }) {
       </div>
 
       {notice && <div className={`notice ${notice.type}`}>{notice.text}</div>}
+
+      <form className="rag-tester" onSubmit={evaluateRetrieval}>
+        <div>
+          <h3>Prueba RAG</h3>
+          <p className="hint">Pregunta contra documentos activos. La respuesta solo se muestra si hay contexto suficiente; si no, se solicita handoff humano.</p>
+        </div>
+        <label>
+          Pregunta de prueba
+          <textarea
+            value={ragQuestion}
+            onChange={(event) => setRagQuestion(event.target.value)}
+            placeholder="Ej. ¿Cuánto dura la garantía del servicio?"
+          />
+        </label>
+        <div className="form-actions">
+          <button className="primary-action" disabled={isEvaluating || !ragQuestion.trim()} type="submit">
+            {isEvaluating ? 'Evaluando…' : 'Evaluar retrieval'}
+          </button>
+        </div>
+        {ragResult && (
+          <div className="rag-result">
+            <div className="rag-answer">
+              <span className={`status-pill ${ragResult.sufficient_context ? 'active' : 'failed'}`}>
+                {ragResult.status}
+              </span>
+              <p>{ragResult.answer || ragResult.reason}</p>
+              {ragResult.handoff?.required && <strong>Escalar a humano: {ragResult.handoff.reason}</strong>}
+            </div>
+            <div className="rag-chunks">
+              <h4>Chunks recuperados</h4>
+              {ragResult.chunks.length === 0 && <p className="hint">No se recuperaron chunks activos para esta pregunta.</p>}
+              {ragResult.chunks.map((chunk) => (
+                <article className="rag-chunk" key={chunk.id}>
+                  <div className="document-subtle-meta">
+                    <span>score {chunk.score}</span>
+                    <span>{chunk.visibility}</span>
+                    <span>{chunk.source_type}</span>
+                  </div>
+                  <strong>{chunk.document_title}</strong>
+                  <small>{chunk.section_path || 'Documento'} · {chunk.source_uri || 'fuente manual'} · chunk #{chunk.chunk_index}</small>
+                  <p>{chunk.excerpt}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        )}
+      </form>
 
       <div className="knowledge-layout">
         <form className="knowledge-editor" onSubmit={handleSubmit}>

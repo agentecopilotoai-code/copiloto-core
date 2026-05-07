@@ -12,6 +12,7 @@ from app.api.v1.schemas import (
     ChannelCreate,
     ContactUpsert,
     ConversationCreate,
+    IntentEvaluateRequest,
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
     MessageCreate,
@@ -25,6 +26,7 @@ from app.core.security import authenticate_request, require_min_role, require_pl
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.rag_indexing import build_indexing_result, vector_literal
+from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import verify_signature
 
 router = APIRouter(prefix='/v1')
@@ -735,6 +737,72 @@ async def list_knowledge_documents(
         source_type,
     )
     return normalize_knowledge_documents(rows)
+
+
+@tenant_admin_router.post('/intents/evaluate')
+async def evaluate_intent_retrieval(
+    payload: IntentEvaluateRequest,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        """
+        select kc.id,
+               kc.document_id,
+               kd.title as document_title,
+               kd.source_uri,
+               kd.source_type,
+               kd.document_type,
+               kd.visibility,
+               kc.chunk_index,
+               kc.section_path,
+               kc.chunk_text,
+               kc.token_count,
+               kc.metadata
+        from app.knowledge_chunks kc
+        join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
+        where kc.tenant_id=$1
+          and kd.status='active'
+        order by kd.updated_at desc, kc.chunk_index asc
+        limit 1000
+        """,
+        tenant_id,
+    )
+    matches = rank_chunks(
+        payload.question,
+        [record_to_dict(row) for row in rows],
+        max_chunks=payload.max_chunks,
+    )
+    answer = build_grounded_answer(payload.question, matches, min_score=payload.min_score)
+    response = {
+        'tenant_id': str(tenant_id),
+        'question': payload.question,
+        **answer,
+        'chunks': [retrieval_match_to_dict(match) for match in matches],
+        'retrieval': {
+            'candidate_chunk_count': len(rows),
+            'returned_chunk_count': len(matches),
+            'min_score': payload.min_score,
+        },
+    }
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='intent.evaluated',
+        entity_type='intent_evaluation',
+        entity_id=None,
+        metadata={
+            'status': response['status'],
+            'sufficient_context': response['sufficient_context'],
+            'returned_chunk_count': len(matches),
+            'top_score': matches[0].score if matches else None,
+        },
+    )
+    return response
 
 
 @tenant_admin_router.post('/knowledge/documents', status_code=201)
