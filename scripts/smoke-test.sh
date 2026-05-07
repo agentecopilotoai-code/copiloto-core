@@ -4,23 +4,24 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_value() {
   local key="$1"
-  if [[ -f "${ROOT_DIR}/.env" ]]; then
-    python3 - "${ROOT_DIR}/.env" "${key}" <<'PY'
+  python3 - "${ROOT_DIR}/.env" "${ROOT_DIR}/.env.auth0.local" "${key}" <<'PY'
 import sys
 from pathlib import Path
 
-path = Path(sys.argv[1])
-wanted_key = sys.argv[2]
-for raw_line in path.read_text().splitlines():
-    line = raw_line.strip()
-    if not line or line.startswith('#') or '=' not in line:
+wanted_key = sys.argv[-1]
+for file_name in sys.argv[1:-1]:
+    path = Path(file_name)
+    if not path.exists():
         continue
-    key, value = line.split('=', 1)
-    if key == wanted_key:
-        print(value.strip().strip('\"').strip("'"))
-        break
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        if key == wanted_key:
+            print(value.strip().strip('\"').strip("'"))
+            raise SystemExit
 PY
-  fi
 }
 
 API_PORT="${API_PORT:-$(env_value API_PORT)}"
@@ -46,9 +47,6 @@ AUTH0_CLAIMS_NAMESPACE="${AUTH0_CLAIMS_NAMESPACE:-https://copilotoia.com/claims/
 export JWT_SECRET JWT_ISSUER JWT_AUDIENCE AUTH0_CLAIMS_NAMESPACE WHATSAPP_APP_SECRET
 
 AUTH0_DOMAIN="${AUTH0_DOMAIN:-$(env_value AUTH0_DOMAIN)}"
-if [[ -n "${AUTH0_DOMAIN:-}" ]]; then
-  echo "WARNING: local smoke-test generates HS256 JWTs; unset AUTH0_DOMAIN or use service-token-only checks in Auth0 environments." >&2
-fi
 
 json_get() {
   python3 -c 'import json,sys; print(json.load(sys.stdin)'"$1"')'
@@ -103,8 +101,14 @@ PY
 curl_json() {
   local method="$1"
   local url="$2"
-  local data="${3:-}"
-  shift 3 || true
+  local data=""
+  shift 2
+
+  if (($# > 0)) && [[ "$1" != -* ]]; then
+    data="$1"
+    shift
+  fi
+
   if [[ -n "${data}" ]]; then
     curl -fsS -X "${method}" "${url}" -H 'Content-Type: application/json' "$@" --data "${data}"
   else
@@ -112,9 +116,34 @@ curl_json() {
   fi
 }
 
-OWNER_TOKEN="$(make_token owner '')"
-ADMIN_TOKEN="$(make_token admin "${TENANT_ID}")"
-AGENT_TOKEN="$(make_token agent "${TENANT_ID}")"
+expect_json() {
+  local response
+  response="$(curl_json "$@")"
+  printf '%s' "${response}" | python3 -m json.tool >/dev/null
+}
+
+if [[ -n "${AUTH0_DOMAIN:-}" ]]; then
+  if [[ -z "${SMOKE_OWNER_TOKEN:-}" || -z "${SMOKE_ADMIN_TOKEN:-}" || -z "${SMOKE_AGENT_TOKEN:-}" ]]; then
+    cat >&2 <<'EOF'
+ERROR: AUTH0_DOMAIN is configured, so the API validates Auth0 RS256 tokens.
+Provide real tokens with these environment variables before running this script:
+  SMOKE_OWNER_TOKEN=<platform owner token>
+  SMOKE_ADMIN_TOKEN=<tenant admin token>
+  SMOKE_AGENT_TOKEN=<tenant agent token>
+
+For local HS256 smoke tests, run the stack without AUTH0_DOMAIN/AUTH0_AUDIENCE.
+EOF
+    exit 2
+  fi
+  OWNER_TOKEN="${SMOKE_OWNER_TOKEN}"
+  ADMIN_TOKEN="${SMOKE_ADMIN_TOKEN}"
+  AGENT_TOKEN="${SMOKE_AGENT_TOKEN}"
+else
+  OWNER_TOKEN="${SMOKE_OWNER_TOKEN:-$(make_token owner '')}"
+  ADMIN_TOKEN="${SMOKE_ADMIN_TOKEN:-$(make_token admin "${TENANT_ID}")}"
+  AGENT_TOKEN="${SMOKE_AGENT_TOKEN:-$(make_token agent "${TENANT_ID}")}"
+fi
+
 SERVICE_AUTH="Authorization: Bearer ${SERVICE_TOKEN}"
 ADMIN_AUTH="Authorization: Bearer ${ADMIN_TOKEN}"
 AGENT_AUTH="Authorization: Bearer ${AGENT_TOKEN}"
@@ -125,23 +154,23 @@ RUN_ID="$(date +%s)"
 printf 'API base: %s\n' "${API_BASE_URL}"
 
 printf 'GET /v1/health -> '
-curl_json GET "${API_BASE_URL}/v1/health" | python3 -m json.tool >/dev/null
+expect_json GET "${API_BASE_URL}/v1/health"
 printf 'ok\n'
 
 printf 'POST /v1/tenants -> '
-curl_json POST "${API_BASE_URL}/v1/tenants" "{\"slug\":\"smoke-${RUN_ID}\",\"legal_name\":\"Smoke ${RUN_ID} SAS\",\"display_name\":\"Smoke ${RUN_ID}\",\"vertical_code\":\"field_service\"}" -H "${OWNER_AUTH}" | python3 -m json.tool >/dev/null
+expect_json POST "${API_BASE_URL}/v1/tenants" "{\"slug\":\"smoke-${RUN_ID}\",\"legal_name\":\"Smoke ${RUN_ID} SAS\",\"display_name\":\"Smoke ${RUN_ID}\",\"vertical_code\":\"field_service\"}" -H "${OWNER_AUTH}"
 printf 'ok\n'
 
 printf 'GET /v1/tenants/{tenant_id} -> '
-curl_json GET "${API_BASE_URL}/v1/tenants/${TENANT_ID}" '' -H "${AGENT_AUTH}" | python3 -m json.tool >/dev/null
+expect_json GET "${API_BASE_URL}/v1/tenants/${TENANT_ID}" '' -H "${AGENT_AUTH}"
 printf 'ok\n'
 
 printf 'PATCH /v1/tenants/{tenant_id}/settings -> '
-curl_json PATCH "${API_BASE_URL}/v1/tenants/${TENANT_ID}/settings" '{"locale":"es-CO","max_bot_turns":8}' -H "${ADMIN_AUTH}" | python3 -m json.tool >/dev/null
+expect_json PATCH "${API_BASE_URL}/v1/tenants/${TENANT_ID}/settings" '{"locale":"es-CO","max_bot_turns":8}' -H "${ADMIN_AUTH}"
 printf 'ok\n'
 
 printf 'POST /v1/tenants/{tenant_id}/channels/whatsapp -> '
-curl_json POST "${API_BASE_URL}/v1/tenants/${TENANT_ID}/channels/whatsapp" '{"business_id":"demo-business-id","waba_id":"demo-waba-id","phone_number_id":"demo-phone-smoke"}' -H "${ADMIN_AUTH}" | python3 -m json.tool >/dev/null
+expect_json POST "${API_BASE_URL}/v1/tenants/${TENANT_ID}/channels/whatsapp" '{"business_id":"demo-business-id","waba_id":"demo-waba-id","phone_number_id":"demo-phone-smoke"}' -H "${ADMIN_AUTH}"
 printf 'ok\n'
 
 printf 'GET /v1/tenants/{tenant_id}/channels/whatsapp/health -> '
@@ -158,15 +187,15 @@ CONVERSATION_JSON="$(curl_json POST "${API_BASE_URL}/v1/conversations" "{\"tenan
 CONVERSATION_ID="$(printf '%s' "${CONVERSATION_JSON}" | json_get "['id']")"
 
 printf 'GET /v1/conversations -> '
-curl_json GET "${API_BASE_URL}/v1/conversations" '' -H "${AGENT_AUTH}" | python3 -m json.tool >/dev/null
+expect_json GET "${API_BASE_URL}/v1/conversations" '' -H "${AGENT_AUTH}"
 printf 'ok\n'
 
 printf 'POST /v1/conversations/{conversation_id}/messages -> '
-curl_json POST "${API_BASE_URL}/v1/conversations/${CONVERSATION_ID}/messages" "{\"tenant_id\":\"${TENANT_ID}\",\"conversation_id\":\"${CONVERSATION_ID}\",\"direction\":\"outbound\",\"sender_actor_type\":\"agent\",\"body_text\":\"Smoke test\"}" -H "${AGENT_AUTH}" -H "Idempotency-Key: smoke-message-${RUN_ID}" | python3 -m json.tool >/dev/null
+expect_json POST "${API_BASE_URL}/v1/conversations/${CONVERSATION_ID}/messages" "{\"tenant_id\":\"${TENANT_ID}\",\"conversation_id\":\"${CONVERSATION_ID}\",\"direction\":\"outbound\",\"sender_actor_type\":\"agent\",\"body_text\":\"Smoke test\"}" -H "${AGENT_AUTH}" -H "Idempotency-Key: smoke-message-${RUN_ID}"
 printf 'ok\n'
 
 printf 'POST /v1/conversations/{conversation_id}/handoff -> '
-curl_json POST "${API_BASE_URL}/v1/conversations/${CONVERSATION_ID}/handoff" '{"reason":"smoke_test"}' -H "${AGENT_AUTH}" | python3 -m json.tool >/dev/null
+expect_json POST "${API_BASE_URL}/v1/conversations/${CONVERSATION_ID}/handoff" '{"reason":"smoke_test"}' -H "${AGENT_AUTH}"
 printf 'ok\n'
 
 printf 'POST /v1/service-requests -> '
@@ -184,15 +213,15 @@ if [[ -z "${RESOURCE_ID}" ]]; then
 fi
 
 printf 'POST /v1/appointments -> '
-curl_json POST "${API_BASE_URL}/v1/appointments" "{\"tenant_id\":\"${TENANT_ID}\",\"contact_id\":\"${CONTACT_ID}\",\"conversation_id\":\"${CONVERSATION_ID}\",\"service_request_id\":\"${SERVICE_REQUEST_ID}\",\"resource_id\":\"${RESOURCE_ID}\",\"service_code\":\"diagnostico\",\"starts_at\":\"2030-01-01T15:00:00Z\",\"ends_at\":\"2030-01-01T16:00:00Z\",\"notes\":\"Smoke test\"}" -H "${AGENT_AUTH}" | python3 -m json.tool >/dev/null
+expect_json POST "${API_BASE_URL}/v1/appointments" "{\"tenant_id\":\"${TENANT_ID}\",\"contact_id\":\"${CONTACT_ID}\",\"conversation_id\":\"${CONVERSATION_ID}\",\"service_request_id\":\"${SERVICE_REQUEST_ID}\",\"resource_id\":\"${RESOURCE_ID}\",\"service_code\":\"diagnostico\",\"starts_at\":\"2030-01-01T15:00:00Z\",\"ends_at\":\"2030-01-01T16:00:00Z\",\"notes\":\"Smoke test\"}" -H "${AGENT_AUTH}"
 printf 'ok\n'
 
 printf 'POST /v1/knowledge/documents -> '
-curl_json POST "${API_BASE_URL}/v1/knowledge/documents" "{\"tenant_id\":\"${TENANT_ID}\",\"title\":\"Smoke ${RUN_ID}\",\"source_type\":\"manual\",\"visibility\":\"tenant\"}" -H "${ADMIN_AUTH}" | python3 -m json.tool >/dev/null
+expect_json POST "${API_BASE_URL}/v1/knowledge/documents" "{\"tenant_id\":\"${TENANT_ID}\",\"title\":\"Smoke ${RUN_ID}\",\"source_type\":\"manual\",\"visibility\":\"tenant\"}" -H "${ADMIN_AUTH}"
 printf 'ok\n'
 
 printf 'POST /v1/prompts -> '
-curl_json POST "${API_BASE_URL}/v1/prompts" "{\"tenant_id\":\"${TENANT_ID}\",\"vertical_code\":\"field_service\",\"prompt_type\":\"system\",\"name\":\"smoke-${RUN_ID}\",\"version\":1,\"content\":\"Responde de forma segura.\",\"variables\":[\"tenant\"]}" -H "${ADMIN_AUTH}" | python3 -m json.tool >/dev/null
+expect_json POST "${API_BASE_URL}/v1/prompts" "{\"tenant_id\":\"${TENANT_ID}\",\"vertical_code\":\"field_service\",\"prompt_type\":\"system\",\"name\":\"smoke-${RUN_ID}\",\"version\":1,\"content\":\"Responde de forma segura.\",\"variables\":[\"tenant\"]}" -H "${ADMIN_AUTH}"
 printf 'ok\n'
 
 printf 'GET /v1/webhooks/whatsapp -> '
@@ -202,7 +231,7 @@ printf 'ok\n'
 printf 'POST /v1/webhooks/whatsapp -> '
 WEBHOOK_BODY='{"object":"whatsapp_business_account","entry":[]}'
 WEBHOOK_SIGNATURE="$(sign_whatsapp_body "${WEBHOOK_BODY}")"
-curl_json POST "${API_BASE_URL}/v1/webhooks/whatsapp" "${WEBHOOK_BODY}" -H "X-Hub-Signature-256: ${WEBHOOK_SIGNATURE}" | python3 -m json.tool >/dev/null
+expect_json POST "${API_BASE_URL}/v1/webhooks/whatsapp" "${WEBHOOK_BODY}" -H "X-Hub-Signature-256: ${WEBHOOK_SIGNATURE}"
 printf 'ok\n'
 
 printf 'All listed endpoints are reachable on %s.\n' "${API_BASE_URL}"
