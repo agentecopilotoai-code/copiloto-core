@@ -104,3 +104,38 @@ export function upsertWhatsAppChannel(session, tenantId, payload) {
 export function getWhatsAppChannelHealth(session, tenantId) {
   return request(`/tenants/${tenantId}/channels/whatsapp/health`, { session, tenantId });
 }
+
+export function listKnowledgeDocuments(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/knowledge/documents${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+export function createKnowledgeDocument(session, tenantId, payload) {
+  return request('/knowledge/documents', {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { ...payload, tenant_id: tenantId },
+  });
+}
+
+export function updateKnowledgeDocument(session, tenantId, documentId, payload) {
+  return request(`/knowledge/documents/${documentId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deleteKnowledgeDocument(session, tenantId, documentId) {
+  return request(`/knowledge/documents/${documentId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}

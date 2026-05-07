@@ -11,6 +11,7 @@ from app.api.v1.schemas import (
     ContactUpsert,
     ConversationCreate,
     KnowledgeDocumentCreate,
+    KnowledgeDocumentUpdate,
     MessageCreate,
     PromptCreate,
     ServiceRequestCreate,
@@ -618,12 +619,174 @@ async def create_appointment(payload: AppointmentCreate, request: Request, conn:
     return record_to_dict(row)
 
 
+@tenant_admin_router.get('/knowledge/documents')
+async def list_knowledge_documents(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    status_filter: str | None = Query(default=None, alias='status'),
+    visibility: str | None = Query(default=None),
+    source_type: str | None = Query(default=None),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        """
+        select id, tenant_id, source_type, document_type, title, source_uri, checksum, mime_type,
+               content, visibility, status, uploaded_by_user_id, metadata, created_at, updated_at
+        from app.knowledge_documents
+        where tenant_id=$1
+          and ($2::text is null or status=$2)
+          and ($3::text is null or visibility=$3)
+          and ($4::text is null or source_type=$4)
+        order by updated_at desc, created_at desc
+        limit 250
+        """,
+        tenant_id,
+        status_filter,
+        visibility,
+        source_type,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
 @tenant_admin_router.post('/knowledge/documents', status_code=201)
-async def create_knowledge_document(payload: KnowledgeDocumentCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+async def create_knowledge_document(
+    payload: KnowledgeDocumentCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
     await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
-    row = await conn.fetchrow("insert into app.knowledge_documents (tenant_id, source_type, title, source_uri, visibility) values ($1,$2,$3,$4,$5) returning *", payload.tenant_id, payload.source_type, payload.title, payload.source_uri, payload.visibility)
+    row = await conn.fetchrow(
+        """
+        insert into app.knowledge_documents (
+          tenant_id, source_type, document_type, title, source_uri, checksum, mime_type,
+          content, visibility, status, metadata
+        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
+        returning *
+        """,
+        payload.tenant_id,
+        payload.source_type,
+        payload.document_type,
+        payload.title,
+        payload.source_uri,
+        payload.checksum,
+        payload.mime_type,
+        payload.content,
+        payload.visibility,
+        payload.status,
+        json.dumps(payload.metadata),
+    )
+    await audit(
+        conn,
+        tenant_id=payload.tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='knowledge_document.created',
+        entity_type='knowledge_document',
+        entity_id=str(row['id']),
+    )
     return record_to_dict(row)
+
+
+@tenant_admin_router.get('/knowledge/documents/{document_id}')
+async def get_knowledge_document(
+    document_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        'select * from app.knowledge_documents where tenant_id=$1 and id=$2', tenant_id, document_id
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Knowledge document not found')
+    return record_to_dict(row)
+
+
+@tenant_admin_router.patch('/knowledge/documents/{document_id}')
+async def patch_knowledge_document(
+    document_id: UUID,
+    payload: KnowledgeDocumentUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    current = await conn.fetchrow(
+        'select * from app.knowledge_documents where tenant_id=$1 and id=$2', tenant_id, document_id
+    )
+    if not current:
+        raise HTTPException(status_code=404, detail='Knowledge document not found')
+
+    allowed = payload.model_dump(exclude_unset=True)
+    merged = dict(current)
+    merged.update(allowed)
+    row = await conn.fetchrow(
+        """
+        update app.knowledge_documents
+        set source_type=$3,
+            document_type=$4,
+            title=$5,
+            source_uri=$6,
+            checksum=$7,
+            mime_type=$8,
+            content=$9,
+            visibility=$10,
+            status=$11,
+            metadata=$12::jsonb
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        document_id,
+        merged['source_type'],
+        merged['document_type'],
+        merged['title'],
+        merged['source_uri'],
+        merged['checksum'],
+        merged['mime_type'],
+        merged['content'],
+        merged['visibility'],
+        merged['status'],
+        json.dumps(merged['metadata']),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='knowledge_document.updated',
+        entity_type='knowledge_document',
+        entity_id=str(document_id),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.delete('/knowledge/documents/{document_id}', status_code=204)
+async def delete_knowledge_document(
+    document_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    result = await conn.execute(
+        'delete from app.knowledge_documents where tenant_id=$1 and id=$2', tenant_id, document_id
+    )
+    if result == 'DELETE 0':
+        raise HTTPException(status_code=404, detail='Knowledge document not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='knowledge_document.deleted',
+        entity_type='knowledge_document',
+        entity_id=str(document_id),
+    )
+    return Response(status_code=204)
 
 
 @tenant_admin_router.post('/prompts', status_code=201)

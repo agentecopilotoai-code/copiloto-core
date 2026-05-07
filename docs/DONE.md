@@ -125,3 +125,27 @@ Cada entrada debe incluir:
   - `npm --prefix admin-panel install` (bloqueado por HTTP 403 contra npm registry en el entorno)
   - `uv run pytest` (bloqueado por fallo de descarga desde PyPI en el entorno)
 - **Notas:** el health check es local en esta iteración (`upstream=not_checked_in_local_core`); valida que CopilotoIA tenga la configuración mínima y no consulta Graph API todavía.
+
+### TASK-0005 — Implementar Knowledge Studio MVP
+
+- **Fecha:** 2026-05-07
+- **Resumen:** se implementó el Knowledge Studio MVP para que un admin gestione documentos por tenant desde el panel. La Core API ahora expone CRUD/listado de documentos con filtros por estado, visibilidad y fuente; soporta contenido manual para FAQ/políticas, registro de fuentes/archivos mediante URI/checksum/MIME, estados `draft`, `indexing`, `active` y `failed`, auditoría de creación/actualización/eliminación y aislamiento mediante `X-Tenant-Id` + RLS. El esquema de `knowledge_documents` incorpora `document_type`, `content` y `metadata`. El Admin Panel agrega un módulo funcional con editor, filtros, lista de documentos, cambios rápidos de estado y acciones de edición/eliminación.
+- **Archivos modificados:**
+  - `app/api/v1/schemas.py`
+  - `app/api/v1/routes.py`
+  - `infra/postgres/01-schema.sql`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/styles/global.css`
+  - `tests/test_knowledge_documents.py`
+  - `docs/ADMIN_PANEL.md`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m compileall app`
+  - `git diff --check`
+  - `pytest tests/test_knowledge_documents.py` (bloqueado porque el Python global no tiene `pydantic`)
+  - `uv run pytest tests/test_knowledge_documents.py` (bloqueado por fallo de descarga desde PyPI en el entorno)
+  - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
+- **Notas:** la carga binaria real a object storage queda para una integración posterior; este MVP cumple el alcance registrando fuentes ya cargadas u object keys junto con checksum/MIME, sin crear variables nuevas de secretos.

@@ -288,17 +288,21 @@ create table app.knowledge_documents (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
   source_type text not null check (source_type in ('upload','url','manual','integration')),
+  document_type text not null default 'reference' check (document_type in ('faq','policy','reference')),
   title text not null,
   source_uri text,
   checksum text,
   mime_type text,
+  content text,
   visibility text not null default 'tenant' check (visibility in ('tenant','agents_only','public')),
-  status text not null default 'draft' check (status in ('draft','indexing','active','archived','failed')),
+  status text not null default 'draft' check (status in ('draft','indexing','active','failed')),
   uploaded_by_user_id uuid references app.users(id) on delete set null,
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index ix_knowledge_documents_status on app.knowledge_documents(tenant_id, status);
+create index ix_knowledge_documents_visibility on app.knowledge_documents(tenant_id, visibility);
 
 create table app.knowledge_chunks (
   id uuid primary key default gen_random_uuid(),

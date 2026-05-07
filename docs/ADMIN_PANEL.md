@@ -145,6 +145,19 @@ Variables y secretos requeridos:
 
 Los secretos locales siguen viviendo en `.secrets/*`, generados por `scripts/generate-local-secrets.sh`, `scripts/bootstrap.sh` o `scripts/configure-auth0.sh`. No agregues variables paralelas ni pegues tokens reales en el formulario.
 
+## Knowledge Studio MVP
+
+El módulo **Knowledge Studio** permite gestionar documentos de conocimiento por tenant desde el panel. El editor soporta contenido manual para FAQ/políticas, registros de fuente `manual`, `upload`, `url` e `integration`, URI/object key, MIME type, checksum, visibilidad (`tenant`, `agents_only`, `public`) y estados operativos `draft`, `indexing`, `active` y `failed`.
+
+El frontend usa estos endpoints de la Core API a través del proxy autenticado y siempre envía `X-Tenant-Id`:
+
+- `GET /admin/api/core/v1/knowledge/documents` con filtros opcionales `status`, `visibility` y `source_type`.
+- `POST /admin/api/core/v1/knowledge/documents` para crear documentos en el tenant activo.
+- `PATCH /admin/api/core/v1/knowledge/documents/{document_id}` para editar contenido, fuente, visibilidad o estado.
+- `DELETE /admin/api/core/v1/knowledge/documents/{document_id}` para eliminar el documento y sus chunks futuros por cascada.
+
+La API configura `app.tenant_id` antes de leer/escribir y las políticas RLS de `app.knowledge_documents`/`app.knowledge_chunks` mantienen el aislamiento por tenant. La carga binaria directa al object storage no se implementa en este MVP; el panel registra fuentes ya cargadas mediante URI/object key más checksum/MIME sin manejar secretos ni archivos reales.
+
 ## Funcionalidad incluida
 
 - Pantalla React de login con Auth0/OIDC.
@@ -154,12 +167,12 @@ Los secretos locales siguen viviendo en `.secrets/*`, generados por `scripts/gen
 - Navegación entre módulos:
   - Tenant Setup Wizard funcional
   - WhatsApp/WABA onboarding funcional con health local
-  - Knowledge Studio placeholder
+  - Knowledge Studio funcional para CRUD/listado de documentos, FAQ/políticas y fuentes
   - Operations Desk placeholder
   - Audit placeholder
 
 ## Limitaciones intencionales del MVP
 
 - Las sesiones viven en memoria del proceso; en producción deben moverse a Redis o almacenamiento equivalente.
-- Knowledge Studio, Operations Desk y Audit siguen como placeholders navegables; Tenant Setup y WhatsApp ya conectan formularios y endpoints reales.
+- Operations Desk y Audit siguen como placeholders navegables; Tenant Setup, WhatsApp y Knowledge Studio ya conectan formularios y endpoints reales.
 - El selector de tenant usa el tenant emitido por Auth0 en claims; gestión multi-tenant avanzada queda para tareas posteriores.
