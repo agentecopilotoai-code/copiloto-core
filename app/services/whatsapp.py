@@ -17,14 +17,30 @@ def verify_signature(body: bytes, signature: str | None) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
-async def send_text_message(phone_number_id: str, to: str, text: str) -> dict[str, Any]:
+def meta_token_is_configured(token: str | None) -> bool:
+    return bool(
+        token
+        and not token.startswith('change-me')
+        and not token.startswith('local-mock')
+    )
+
+
+async def send_text_message(
+    phone_number_id: str, to: str, text: str, delivery_mode: str = 'mock'
+) -> dict[str, Any]:
     settings = get_settings()
-    if (
-        not settings.meta_access_token
-        or settings.meta_access_token.startswith('change-me')
-        or settings.meta_access_token.startswith('local-mock')
-    ):
-        return {'mocked': True, 'phone_number_id': phone_number_id, 'to': to, 'text': text}
+    if delivery_mode != 'live':
+        return {
+            'mocked': True,
+            'delivery_mode': 'mock',
+            'phone_number_id': phone_number_id,
+            'to': to,
+            'text': text,
+        }
+    if not meta_token_is_configured(settings.meta_access_token):
+        raise RuntimeError(
+            'WhatsApp delivery mode is live, but META_ACCESS_TOKEN is missing or configured as a local mock token.'
+        )
     url = f'https://graph.facebook.com/{settings.meta_graph_version}/{phone_number_id}/messages'
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.post(

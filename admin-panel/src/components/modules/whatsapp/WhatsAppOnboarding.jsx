@@ -36,6 +36,7 @@ const defaultForm = {
   phone_number_id: '',
   token_ref: 'secrets/meta_access_token',
   app_secret_ref: 'secrets/whatsapp_app_secret',
+  account_mode: 'mock',
 };
 
 function hasValue(value) {
@@ -98,6 +99,7 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
             phone_number_id: loadedChannel.phone_number_id || '',
             token_ref: loadedChannel.token_ref || defaultForm.token_ref,
             app_secret_ref: loadedChannel.app_secret_ref || defaultForm.app_secret_ref,
+            account_mode: loadedChannel.account_mode || defaultForm.account_mode,
           });
         }
       })
@@ -254,6 +256,16 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
               value={form.token_ref}
             />
           </label>
+          <label>
+            Modo de entrega
+            <select
+              onChange={(event) => updateField('account_mode', event.target.value)}
+              value={form.account_mode}
+            >
+              <option value="mock">Mock local (no envía a WhatsApp)</option>
+              <option value="live">Real vía WhatsApp Cloud API</option>
+            </select>
+          </label>
           <label className="wide">
             App secret ref
             <input
@@ -308,6 +320,10 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
           <dd>{channel?.provider || 'whatsapp_cloud_api'}</dd>
         </div>
         <div>
+          <dt>Modo de entrega</dt>
+          <dd>{channel?.account_mode === 'live' ? 'Real vía WhatsApp' : 'Mock local'}</dd>
+        </div>
+        <div>
           <dt>Calidad</dt>
           <dd>{channel?.quality_rating || 'Pendiente de sincronización Meta'}</dd>
         </div>
@@ -322,6 +338,8 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
         <pre>{`WHATSAPP_VERIFY_TOKEN debe estar configurado para validar el webhook /webhooks/whatsapp.
 ${form.token_ref} debe resolver al token de acceso Meta Cloud API.
 ${form.app_secret_ref} debe resolver al App Secret usado para validar X-Hub-Signature-256.
+Modo mock: el worker marca el mensaje como simulado y no llama a Meta.
+Modo real: el worker llama a Meta usando META_ACCESS_TOKEN del backend; si el token sigue como local-mock/change-me, el mensaje falla explícitamente.
 El panel guarda referencias (token_ref/app_secret_ref), no valores secretos.`}</pre>
       </div>
     </section>

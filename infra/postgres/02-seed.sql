@@ -12,8 +12,8 @@ select id,
 from app.tenants
 on conflict (tenant_id) do nothing;
 
-insert into app.tenant_channels (tenant_id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref, status)
-select id, 'whatsapp_cloud_api', 'demo-business-id', 'demo-waba-id', 'demo-phone-' || slug, 'secrets/meta_access_token', 'secrets/whatsapp_app_secret', 'active'
+insert into app.tenant_channels (tenant_id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref, account_mode, status)
+select id, 'whatsapp_cloud_api', 'demo-business-id', 'demo-waba-id', 'demo-phone-' || slug, 'secrets/meta_access_token', 'secrets/whatsapp_app_secret', 'mock', 'active'
 from app.tenants
 on conflict (tenant_id, provider) do nothing;
 

@@ -493,11 +493,11 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     row = await conn.fetchrow(
         """
-        insert into app.tenant_channels (tenant_id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref, status)
-        values ($1, 'whatsapp_cloud_api', $2, $3, $4, $5, $6, 'active')
+        insert into app.tenant_channels (tenant_id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref, account_mode, status)
+        values ($1, 'whatsapp_cloud_api', $2, $3, $4, $5, $6, $7, 'active')
         on conflict (tenant_id, provider) do update set
           business_id=excluded.business_id, waba_id=excluded.waba_id, phone_number_id=excluded.phone_number_id,
-          token_ref=excluded.token_ref, app_secret_ref=excluded.app_secret_ref, status='active'
+          token_ref=excluded.token_ref, app_secret_ref=excluded.app_secret_ref, account_mode=excluded.account_mode, status='active'
         returning *
         """,
         tenant_id,
@@ -506,6 +506,7 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
         payload.phone_number_id,
         payload.token_ref,
         payload.app_secret_ref,
+        payload.account_mode,
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='channel.upserted', entity_type='tenant_channel', entity_id=str(row['id']))
     return record_to_dict(row)

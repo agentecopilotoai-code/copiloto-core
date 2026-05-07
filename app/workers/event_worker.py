@@ -34,7 +34,7 @@ def delivery_error_message(exc: Exception) -> str:
 async def process_once(conn: asyncpg.Connection) -> int:
     rows = await conn.fetch(
         """
-        select e.id, e.tenant_id, e.aggregate_id, m.body_text, c.phone_number_id, ct.phone_e164
+        select e.id, e.tenant_id, e.aggregate_id, m.body_text, c.phone_number_id, c.account_mode, ct.phone_e164
         from app.domain_events e
         join app.messages m on m.id = e.aggregate_id and m.tenant_id = e.tenant_id
         join app.conversations cv on cv.id = m.conversation_id and cv.tenant_id = e.tenant_id
@@ -52,11 +52,15 @@ async def process_once(conn: asyncpg.Connection) -> int:
             message_id=str(row['aggregate_id']),
             tenant_id=str(row['tenant_id']),
             phone_number_id=row['phone_number_id'],
+            delivery_mode=row['account_mode'] or 'mock',
             to_last4=row['phone_e164'][-4:] if row['phone_e164'] else None,
         )
         try:
             result = await send_text_message(
-                row['phone_number_id'], row['phone_e164'], row['body_text'] or ''
+                row['phone_number_id'],
+                row['phone_e164'],
+                row['body_text'] or '',
+                row['account_mode'] or 'mock',
             )
         except Exception as exc:
             error_message = delivery_error_message(exc)
@@ -111,6 +115,7 @@ async def process_once(conn: asyncpg.Connection) -> int:
             message_id=str(row['aggregate_id']),
             tenant_id=str(row['tenant_id']),
             provider_message_id=external_message_id,
+            delivery_mode=row['account_mode'] or 'mock',
             mocked=mocked,
         )
     return len(rows)

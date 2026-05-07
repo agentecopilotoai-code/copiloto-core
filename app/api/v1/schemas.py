@@ -29,6 +29,7 @@ class ChannelCreate(BaseModel):
     phone_number_id: str
     token_ref: str = 'secrets/meta_access_token'
     app_secret_ref: str = 'secrets/whatsapp_app_secret'
+    account_mode: str = Field(default='mock', pattern='^(mock|live)$')
 
 
 class ContactUpsert(BaseModel):

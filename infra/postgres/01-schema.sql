@@ -64,7 +64,7 @@ create table app.tenant_channels (
   verify_token_hash bytea,
   quality_rating text,
   messaging_limit_tier text,
-  account_mode text,
+  account_mode text not null default 'mock' check (account_mode in ('mock','live')),
   status text not null default 'provisioning' check (status in ('provisioning','active','degraded','suspended','offboarded')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
