@@ -41,7 +41,9 @@ async function request(path, { body, method = 'GET', session, tenantId } = {}) {
     } catch {
       detail = response.statusText || detail;
     }
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
   }
 
   if (response.status === 204) {

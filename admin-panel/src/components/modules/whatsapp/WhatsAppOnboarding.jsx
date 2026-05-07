@@ -51,6 +51,8 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
   const [health, setHealth] = useState(null);
   const [notice, setNotice] = useState(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [isLoadingChannel, setIsLoadingChannel] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
   const currentTenantId = tenant?.id;
   const channel = channelFromHealth(health);
@@ -76,9 +78,13 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
 
     setHealth(null);
     setNotice(null);
+    setLoadError(null);
+    setIsLoadingChannel(false);
     setForm(defaultForm);
 
     if (!currentTenantId) return undefined;
+
+    setIsLoadingChannel(true);
 
     getWhatsAppChannelHealth(session, currentTenantId)
       .then((loadedHealth) => {
@@ -95,8 +101,16 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
           });
         }
       })
-      .catch(() => {
-        // A 404 means the tenant has not configured WhatsApp yet; keep defaults.
+      .catch((error) => {
+        if (!mounted || error.status === 404) return;
+        setLoadError(error);
+        setNotice({
+          type: 'error',
+          text: `No se pudo cargar el canal WhatsApp existente: ${error.message}. Refresca el health antes de guardar para evitar sobrescribir referencias existentes.`,
+        });
+      })
+      .finally(() => {
+        if (mounted) setIsLoadingChannel(false);
       });
 
     return () => {
@@ -121,18 +135,51 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
 
   async function refreshHealth(showNotice = true) {
     if (!currentTenantId) return null;
-    const loadedHealth = await runAction(
-      () => getWhatsAppChannelHealth(session, currentTenantId),
-      showNotice ? 'Health check de WhatsApp actualizado.' : 'Canal WhatsApp registrado.',
-    );
-    if (loadedHealth) setHealth(loadedHealth);
-    return loadedHealth;
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      const loadedHealth = await getWhatsAppChannelHealth(session, currentTenantId);
+      setHealth(loadedHealth);
+      setLoadError(null);
+      setNotice({
+        type: 'success',
+        text: showNotice ? 'Health check de WhatsApp actualizado.' : 'Canal WhatsApp registrado.',
+      });
+      return loadedHealth;
+    } catch (error) {
+      if (error.status === 404) {
+        setHealth(null);
+        setLoadError(null);
+        if (showNotice) {
+          setNotice({
+            type: 'success',
+            text: 'No hay canal WhatsApp registrado todavía; puedes completar el formulario.',
+          });
+        }
+        return null;
+      }
+      setNotice({ type: 'error', text: error.message });
+      return null;
+    } finally {
+      setIsBusy(false);
+    }
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
     if (!currentTenantId) {
       setNotice({ type: 'error', text: 'Selecciona o crea un tenant antes de registrar WhatsApp.' });
+      return;
+    }
+    if (isLoadingChannel) {
+      setNotice({ type: 'error', text: 'Espera a que termine la carga del canal antes de guardar.' });
+      return;
+    }
+    if (loadError) {
+      setNotice({
+        type: 'error',
+        text: 'No se puede guardar hasta recuperar el canal existente o cambiar de tenant. Usa Ver health para reintentar.',
+      });
       return;
     }
 
@@ -164,6 +211,7 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
       </div>
 
       {notice ? <p className={`notice ${notice.type}`}>{notice.text}</p> : null}
+      {isLoadingChannel ? <p className="notice info">Cargando canal WhatsApp existente…</p> : null}
 
       <div className="onboarding-layout">
         <form className="wizard-panel form-grid" onSubmit={handleSubmit}>
@@ -216,10 +264,19 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
             />
           </label>
           <div className="form-actions split-actions">
-            <button className="secondary-action" disabled={isBusy || !currentTenantId} onClick={() => refreshHealth()} type="button">
+            <button
+              className="secondary-action"
+              disabled={isBusy || isLoadingChannel || !currentTenantId}
+              onClick={() => refreshHealth()}
+              type="button"
+            >
               Ver health
             </button>
-            <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">
+            <button
+              className="primary-action"
+              disabled={isBusy || isLoadingChannel || Boolean(loadError) || !currentTenantId}
+              type="submit"
+            >
               Registrar canal
             </button>
           </div>

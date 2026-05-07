@@ -440,6 +440,11 @@ fieldset {
   color: #a32323;
 }
 
+.notice.info {
+  background: #e9efff;
+  color: var(--brand-dark);
+}
+
 .audit-actions {
   display: flex;
   justify-content: flex-end;
