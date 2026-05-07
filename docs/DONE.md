@@ -195,4 +195,4 @@ Cada entrada debe incluir:
   - `pytest -q tests/test_rag_retrieval.py tests/test_rag_indexing.py`
   - `pytest -q tests/test_rag_retrieval.py tests/test_rag_indexing.py tests/test_knowledge_documents.py` (bloqueado porque el Python global no tiene `pydantic`)
   - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en el entorno)
-- **Notas:** el retrieval usa scoring lexical local y determinístico para mantener el MVP sin nuevas dependencias externas ni secretos. El endpoint audita cada evaluación con estado, contexto suficiente, chunks devueltos y score superior.
+- **Notas:** el retrieval usa scoring lexical local y determinístico para mantener el MVP sin nuevas dependencias externas ni secretos. El endpoint audita cada evaluación con estado, contexto suficiente, chunks devueltos y score superior. Corrección posterior: el proxy del Admin Panel dejó de reenviar headers `Authorization` del navegador y ya no expone el access token en `/admin/api/session`; las llamadas a `/admin/api/core/*` usan siempre el token guardado en la sesión HTTP-only para evitar `Invalid token` por tokens stale o de otra audiencia.

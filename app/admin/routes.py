@@ -115,9 +115,12 @@ def _core_api_url(path: str, query: str = '') -> str:
 def _core_api_headers(
     request: Request, session: dict[str, Any], has_body: bool
 ) -> dict[str, str]:
-    authorization = request.headers.get('authorization') or f"Bearer {session['access_token']}"
+    # The admin proxy is a backend-for-frontend protected by the HttpOnly
+    # session cookie. Never trust or forward a browser-supplied Authorization
+    # header here: stale tokens from previous sessions or tokens minted for a
+    # different audience make the Core API reject otherwise valid panel calls.
     headers = {
-        'authorization': authorization,
+        'authorization': f"Bearer {session['access_token']}",
         'accept': request.headers.get('accept', 'application/json'),
     }
     if has_body and request.headers.get('content-type'):
@@ -333,7 +336,6 @@ async def admin_session(request: Request) -> Response:
                     'baseUrl': '/admin/api/core/v1',
                     'audience': get_admin_settings().auth0_audience,
                 },
-                'accessToken': session['access_token'],
                 'modules': [
                     {'id': 'tenant-setup', 'label': 'Tenant Setup'},
                     {'id': 'whatsapp', 'label': 'WhatsApp'},
