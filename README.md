@@ -1713,6 +1713,7 @@ El script genera `.env` y `.secrets/*` con permisos locales seguros si no existe
 
 ```bash
 curl -fsS http://localhost:8000/v1/health
+./scripts/smoke-test.sh
 ```
 
-La API queda disponible en `http://localhost:8000/docs` y usa `X-Tenant-Id` para activar Row-Level Security en PostgreSQL durante cada transacción.
+La API queda disponible en `http://localhost:8000/docs` y usa `X-Tenant-Id` para activar Row-Level Security en PostgreSQL durante cada transacción. El smoke test usa `curl` contra `http://localhost:${API_PORT:-8000}` para validar la disponibilidad de la lista principal de endpoints. En entornos sin Auth0 genera tokens locales HS256; si `AUTH0_DOMAIN` está configurado, exige `SMOKE_OWNER_TOKEN` real de plataforma sin `tenant_id`, más `SMOKE_ADMIN_TOKEN` y `SMOKE_AGENT_TOKEN` tenant-scoped, para evitar falsos negativos.

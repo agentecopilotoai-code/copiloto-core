@@ -10,7 +10,7 @@ from jose.utils import base64url_encode
 from starlette.requests import Request
 
 from app.core.config import get_settings
-from app.core.security import authenticate_request, clear_jwks_cache
+from app.core.security import authenticate_request, clear_jwks_cache, require_platform_owner
 
 
 def make_request() -> Request:
@@ -131,5 +131,65 @@ def test_service_token_still_authenticates_internal_workloads():
 
         assert request.state.actor_type == 'service'
         assert request.state.support_mode is True
+
+    asyncio.run(run_test())
+
+
+def test_platform_owner_rejects_tenant_scoped_owner_token():
+    async def run_test():
+        request = make_request()
+        request.state.actor_type = 'user'
+        request.state.tenant_id = uuid4()
+        request.state.roles = ['owner']
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_platform_owner(request)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == 'Platform administration requires an unscoped token'
+
+    asyncio.run(run_test())
+
+
+def test_platform_owner_accepts_unscoped_owner_token():
+    async def run_test():
+        request = make_request()
+        request.state.actor_type = 'user'
+        request.state.tenant_id = None
+        request.state.roles = ['owner']
+
+        await require_platform_owner(request)
+
+    asyncio.run(run_test())
+
+
+def test_platform_owner_rejects_service_token():
+    async def run_test():
+        request = make_request()
+        request.state.actor_type = 'service'
+        request.state.tenant_id = None
+        request.state.roles = []
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_platform_owner(request)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == 'Platform user required'
+
+    asyncio.run(run_test())
+
+
+def test_platform_owner_rejects_support_role_without_owner():
+    async def run_test():
+        request = make_request()
+        request.state.actor_type = 'user'
+        request.state.tenant_id = None
+        request.state.roles = ['support']
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_platform_owner(request)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == 'owner role is required'
 
     asyncio.run(run_test())

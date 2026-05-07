@@ -17,11 +17,48 @@ from app.api.v1.schemas import (
     TenantCreate,
 )
 from app.core.config import get_settings
+from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.whatsapp import verify_signature
 
 router = APIRouter(prefix='/v1')
+public_router = APIRouter(tags=['public'])
+webhook_router = APIRouter(prefix='/webhooks', tags=['public-webhooks'])
+platform_admin_router = APIRouter(
+    tags=['platform-admin'],
+    dependencies=[Depends(authenticate_request), Depends(require_platform_owner)],
+)
+tenant_admin_router = APIRouter(
+    tags=['tenant-admin'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+)
+tenant_ops_router = APIRouter(
+    tags=['tenant-operations'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('agent', allow_service=True))],
+)
+system_router = APIRouter(
+    tags=['system'],
+    dependencies=[Depends(authenticate_request), Depends(require_service)],
+)
+
+
+def is_service_or_support(request: Request) -> bool:
+    return getattr(request.state, 'actor_type', None) == 'service' or getattr(
+        request.state, 'support_mode', False
+    )
+
+
+async def ensure_tenant_access(request: Request, tenant_id: UUID) -> None:
+    if is_service_or_support(request):
+        return
+    request_tenant_id = getattr(request.state, 'tenant_id', None)
+    if not request_tenant_id:
+        raise HTTPException(
+            status_code=400, detail='X-Tenant-Id header or tenant_id claim is required'
+        )
+    if request_tenant_id != tenant_id:
+        raise HTTPException(status_code=403, detail='Tenant scope does not match request')
 
 
 async def require_tenant(request: Request) -> UUID:
@@ -30,13 +67,13 @@ async def require_tenant(request: Request) -> UUID:
     return request.state.tenant_id
 
 
-@router.get('/health')
+@public_router.get('/health')
 async def health(conn: asyncpg.Connection = Depends(get_db)) -> dict:
     await conn.fetchval('select 1')
     return {'status': 'ok'}
 
 
-@router.post('/tenants', status_code=status.HTTP_201_CREATED)
+@platform_admin_router.post('/tenants', status_code=status.HTTP_201_CREATED)
 async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     row = await conn.fetchrow(
         """
@@ -58,16 +95,18 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
     return record_to_dict(row)
 
 
-@router.get('/tenants/{tenant_id}')
-async def get_tenant(tenant_id: UUID, conn: asyncpg.Connection = Depends(get_db)):
+@tenant_ops_router.get('/tenants/{tenant_id}')
+async def get_tenant(tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, tenant_id)
     row = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
     if not row:
         raise HTTPException(status_code=404, detail='Tenant not found')
     return record_to_dict(row)
 
 
-@router.patch('/tenants/{tenant_id}/settings')
+@tenant_admin_router.patch('/tenants/{tenant_id}/settings')
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, tenant_id)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     allowed = {k: payload[k] for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train', 'max_bot_turns') if k in payload}
     current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
@@ -94,8 +133,9 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     return record_to_dict(row)
 
 
-@router.post('/tenants/{tenant_id}/channels/whatsapp', status_code=201)
+@tenant_admin_router.post('/tenants/{tenant_id}/channels/whatsapp', status_code=201)
 async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, tenant_id)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     row = await conn.fetchrow(
         """
@@ -117,8 +157,9 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
     return record_to_dict(row)
 
 
-@router.get('/tenants/{tenant_id}/channels/whatsapp/health')
-async def channel_health(tenant_id: UUID, conn: asyncpg.Connection = Depends(get_db)):
+@tenant_admin_router.get('/tenants/{tenant_id}/channels/whatsapp/health')
+async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, tenant_id)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     row = await conn.fetchrow("select id, provider, phone_number_id, quality_rating, messaging_limit_tier, status from app.tenant_channels where tenant_id=$1 and provider='whatsapp_cloud_api'", tenant_id)
     if not row:
@@ -126,8 +167,9 @@ async def channel_health(tenant_id: UUID, conn: asyncpg.Connection = Depends(get
     return {'channel': record_to_dict(row), 'upstream': 'not_checked_in_local_core'}
 
 
-@router.post('/contacts/upsert')
+@system_router.post('/contacts/upsert')
 async def upsert_contact(payload: ContactUpsert, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, payload.tenant_id)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     phone_hash = hashlib.sha256(payload.phone_e164.encode()).digest()
     row = await conn.fetchrow(
@@ -151,7 +193,7 @@ async def upsert_contact(payload: ContactUpsert, request: Request, conn: asyncpg
     return record_to_dict(row)
 
 
-@router.get('/contacts/{contact_id}')
+@tenant_ops_router.get('/contacts/{contact_id}')
 async def get_contact(contact_id: UUID, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
     row = await conn.fetchrow('select * from app.contacts where tenant_id=$1 and id=$2', tenant_id, contact_id)
     if not row:
@@ -159,8 +201,9 @@ async def get_contact(contact_id: UUID, tenant_id: UUID = Depends(require_tenant
     return record_to_dict(row)
 
 
-@router.post('/conversations', status_code=201)
-async def create_conversation(payload: ConversationCreate, conn: asyncpg.Connection = Depends(get_db)):
+@system_router.post('/conversations', status_code=201)
+async def create_conversation(payload: ConversationCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, payload.tenant_id)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     row = await conn.fetchrow(
         """
@@ -176,13 +219,13 @@ async def create_conversation(payload: ConversationCreate, conn: asyncpg.Connect
     return record_to_dict(row)
 
 
-@router.get('/conversations')
+@tenant_ops_router.get('/conversations')
 async def list_conversations(tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
     rows = await conn.fetch('select * from app.conversations where tenant_id=$1 order by updated_at desc limit 100', tenant_id)
     return [dict(r) for r in rows]
 
 
-@router.get('/conversations/{conversation_id}')
+@tenant_ops_router.get('/conversations/{conversation_id}')
 async def get_conversation(conversation_id: UUID, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
     row = await conn.fetchrow('select * from app.conversations where tenant_id=$1 and id=$2', tenant_id, conversation_id)
     if not row:
@@ -193,14 +236,9 @@ async def get_conversation(conversation_id: UUID, tenant_id: UUID = Depends(requ
     return data
 
 
-@router.post('/conversations/{conversation_id}/messages', status_code=202)
+@tenant_ops_router.post('/conversations/{conversation_id}/messages', status_code=202)
 async def create_message(conversation_id: UUID, payload: MessageCreate, request: Request, conn: asyncpg.Connection = Depends(get_db), idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
-    request_tenant_id = getattr(request.state, 'tenant_id', None)
-    support_mode = getattr(request.state, 'support_mode', False)
-    if not request_tenant_id and not support_mode:
-        raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
-    if request_tenant_id and request_tenant_id != payload.tenant_id and not support_mode:
-        raise HTTPException(status_code=403, detail='Payload tenant_id does not match request tenant')
+    await ensure_tenant_access(request, payload.tenant_id)
 
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     conversation = await conn.fetchrow(
@@ -236,7 +274,7 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
     return record_to_dict(row)
 
 
-@router.post('/conversations/{conversation_id}/handoff', status_code=202)
+@tenant_ops_router.post('/conversations/{conversation_id}/handoff', status_code=202)
 async def create_handoff(conversation_id: UUID, request: Request, payload: dict, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
     row = await conn.fetchrow(
         """
@@ -252,7 +290,7 @@ async def create_handoff(conversation_id: UUID, request: Request, payload: dict,
     return record_to_dict(row)
 
 
-@router.post('/conversations/{conversation_id}/release', status_code=202)
+@tenant_ops_router.post('/conversations/{conversation_id}/release', status_code=202)
 async def release_conversation(conversation_id: UUID, request: Request, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
     row = await conn.fetchrow("update app.conversations set status='open', handoff_required=false where tenant_id=$1 and id=$2 returning *", tenant_id, conversation_id)
     if not row:
@@ -261,8 +299,9 @@ async def release_conversation(conversation_id: UUID, request: Request, tenant_i
     return record_to_dict(row)
 
 
-@router.post('/service-requests', status_code=201)
-async def create_service_request(payload: ServiceRequestCreate, conn: asyncpg.Connection = Depends(get_db)):
+@tenant_ops_router.post('/service-requests', status_code=201)
+async def create_service_request(payload: ServiceRequestCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, payload.tenant_id)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     row = await conn.fetchrow(
         """
@@ -274,7 +313,7 @@ async def create_service_request(payload: ServiceRequestCreate, conn: asyncpg.Co
     return record_to_dict(row)
 
 
-@router.patch('/service-requests/{request_id}')
+@tenant_ops_router.patch('/service-requests/{request_id}')
 async def patch_service_request(request_id: UUID, payload: dict, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
     row = await conn.fetchrow("update app.service_requests set status=coalesce($3,status), intake=intake || $4::jsonb where tenant_id=$1 and id=$2 returning *", tenant_id, request_id, payload.get('status'), json.dumps(payload.get('intake', {})))
     if not row:
@@ -282,8 +321,9 @@ async def patch_service_request(request_id: UUID, payload: dict, tenant_id: UUID
     return record_to_dict(row)
 
 
-@router.post('/appointments', status_code=201)
-async def create_appointment(payload: AppointmentCreate, conn: asyncpg.Connection = Depends(get_db)):
+@tenant_ops_router.post('/appointments', status_code=201)
+async def create_appointment(payload: AppointmentCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, payload.tenant_id)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     row = await conn.fetchrow(
         """
@@ -295,26 +335,29 @@ async def create_appointment(payload: AppointmentCreate, conn: asyncpg.Connectio
     return record_to_dict(row)
 
 
-@router.post('/knowledge/documents', status_code=201)
-async def create_knowledge_document(payload: KnowledgeDocumentCreate, conn: asyncpg.Connection = Depends(get_db)):
+@tenant_admin_router.post('/knowledge/documents', status_code=201)
+async def create_knowledge_document(payload: KnowledgeDocumentCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, payload.tenant_id)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     row = await conn.fetchrow("insert into app.knowledge_documents (tenant_id, source_type, title, source_uri, visibility) values ($1,$2,$3,$4,$5) returning *", payload.tenant_id, payload.source_type, payload.title, payload.source_uri, payload.visibility)
     return record_to_dict(row)
 
 
-@router.post('/prompts', status_code=201)
-async def create_prompt(payload: PromptCreate, conn: asyncpg.Connection = Depends(get_db)):
+@tenant_admin_router.post('/prompts', status_code=201)
+async def create_prompt(payload: PromptCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    if payload.tenant_id:
+        await ensure_tenant_access(request, payload.tenant_id)
     row = await conn.fetchrow("insert into app.prompt_templates (tenant_id, vertical_code, prompt_type, name, version, content, variables, checksum) values ($1,$2,$3,$4,$5,$6,$7::jsonb, encode(sha256($6::bytea),'hex')) returning *", payload.tenant_id, payload.vertical_code, payload.prompt_type, payload.name, payload.version, payload.content, json.dumps(payload.variables))
     return record_to_dict(row)
 
 
-@router.get('/audit-logs')
+@tenant_admin_router.get('/audit-logs')
 async def list_audit_logs(tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
     rows = await conn.fetch('select * from app.audit_logs where tenant_id=$1 order by created_at desc limit 100', tenant_id)
     return [dict(r) for r in rows]
 
 
-@router.get('/webhooks/whatsapp')
+@webhook_router.get('/whatsapp')
 async def verify_whatsapp_webhook(
     hub_mode: str | None = Query(default=None, alias='hub.mode'),
     hub_verify_token: str | None = Query(default=None, alias='hub.verify_token'),
@@ -326,7 +369,7 @@ async def verify_whatsapp_webhook(
     raise HTTPException(status_code=403, detail='Invalid verify token')
 
 
-@router.post('/webhooks/whatsapp', status_code=202)
+@webhook_router.post('/whatsapp', status_code=202)
 async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = Depends(get_db), x_hub_signature_256: str | None = Header(default=None, alias='X-Hub-Signature-256')):
     body = await request.body()
     if not verify_signature(body, x_hub_signature_256):
@@ -345,3 +388,11 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
         sha,
     )
     return {'accepted': True, 'payload_sha256': sha}
+
+
+router.include_router(public_router)
+router.include_router(webhook_router)
+router.include_router(platform_admin_router)
+router.include_router(tenant_admin_router)
+router.include_router(tenant_ops_router)
+router.include_router(system_router)
