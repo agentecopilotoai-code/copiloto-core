@@ -19,17 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0004 — Implementar onboarding WhatsApp/WABA en panel
-
-- **Estado:** PENDING
-- **Objetivo:** registrar y validar el canal WhatsApp de un tenant.
-- **Alcance mínimo:**
-  - Formulario para `business_id`, `waba_id`, `phone_number_id`, `token_ref`, `app_secret_ref`.
-  - Health check del canal.
-  - Checklist visual de onboarding WABA.
-  - Documentar variables y secretos requeridos.
-- **Criterio de terminado:** un admin puede registrar el canal y ver su health desde el panel.
-
 ### TASK-0005 — Implementar Knowledge Studio MVP
 
 - **Estado:** PENDING

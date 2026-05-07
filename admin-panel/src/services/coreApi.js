@@ -88,3 +88,17 @@ export function listAuditLogs(session, tenantId) {
 export function listMyTenants(session) {
   return request('/me/tenants', { session });
 }
+
+
+export function upsertWhatsAppChannel(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/channels/whatsapp`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function getWhatsAppChannelHealth(session, tenantId) {
+  return request(`/tenants/${tenantId}/channels/whatsapp/health`, { session, tenantId });
+}

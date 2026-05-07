@@ -491,3 +491,101 @@ fieldset {
 .empty-tenant-card .hint {
   max-width: 36rem;
 }
+
+.secondary-action {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f7f9fc;
+  color: var(--brand-dark);
+  cursor: pointer;
+  display: inline-flex;
+  font-weight: 800;
+  padding: 0.85rem 1.2rem;
+}
+
+.secondary-action:hover {
+  background: #e9efff;
+}
+
+.secondary-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.split-actions {
+  gap: 0.75rem;
+}
+
+.onboarding-layout {
+  align-items: start;
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  margin-top: 1rem;
+}
+
+.onboarding-sidebar {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 1rem;
+}
+
+.onboarding-sidebar h3 {
+  margin-top: 0;
+}
+
+.checklist {
+  display: grid;
+  gap: 0.75rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.checklist li {
+  align-items: flex-start;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  display: flex;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.85rem;
+}
+
+.checklist li > span {
+  background: #e9efff;
+  border-radius: 999px;
+  color: var(--brand-dark);
+  display: grid;
+  flex: 0 0 1.5rem;
+  font-weight: 900;
+  height: 1.5rem;
+  place-items: center;
+  width: 1.5rem;
+}
+
+.checklist li.done {
+  border-color: #9ddbb8;
+}
+
+.checklist li.done > span {
+  background: #e7f8ee;
+  color: #116136;
+}
+
+.checklist strong,
+.checklist small {
+  display: block;
+}
+
+.health-grid {
+  margin: 1rem 0;
+}
+
+@media (max-width: 1000px) {
+  .onboarding-layout {
+    grid-template-columns: 1fr;
+  }
+}

@@ -27,7 +27,7 @@ Patrones aplicados:
 - `AuthProvider` centraliza la carga de sesión y expone estado autenticado/anónimo/loading.
 - `useActiveModule` encapsula navegación por hash y selección del módulo activo.
 - `useTenantOptions` deriva tenants visibles desde los claims namespaced del usuario.
-- Componentes de layout (`Sidebar`, `Topbar`, `AdminLayout`) están separados de placeholders funcionales.
+- Componentes de layout (`Sidebar`, `Topbar`, `AdminLayout`) están separados de módulos funcionales y placeholders.
 - `services/adminSession.js` concentra el acceso HTTP a `/admin/api/session` y las rutas de login/logout.
 
 ## Autenticación OIDC/Auth0
@@ -129,21 +129,37 @@ Cuando el usuario autenticado no trae `tenant_id` en sus claims, el panel no cre
 
 Después de crear el tenant, el panel usa el UUID real devuelto por la API como tenant activo y envía `X-Tenant-Id` para guardar settings. La Core API valida ese acceso contra `app.user_tenant_roles`, por lo que no depende de un claim `tenant_id` recién emitido por Auth0 para completar el wizard inicial. En cargas posteriores, el panel consulta `GET /admin/api/core/v1/me/tenants` para reconstruir el tenant activo desde la membresía guardada en base de datos mientras Auth0 todavía no emite el claim. Si el tenant ya existe, el tab **Tenant** cambia el guardado a `PATCH /admin/api/core/v1/tenants/{tenant_id}`; además, `POST /tenant-signup` actualiza el primer tenant del usuario en vez de devolver conflicto para mantener compatible el flujo self-service. Al abrir el wizard con un tenant activo, el panel carga `GET /admin/api/core/v1/tenants/{tenant_id}` y `GET /admin/api/core/v1/tenants/{tenant_id}/settings` para rehidratar locale, horarios, escalamiento, PII policy, `no_train` y `max_bot_turns` después de logout/login.
 
+## Onboarding WhatsApp/WABA
+
+El módulo **WhatsApp** permite que un admin registre el canal `whatsapp_cloud_api` del tenant desde el panel. El formulario llama `POST /admin/api/core/v1/tenants/{tenant_id}/channels/whatsapp` con `business_id`, `waba_id`, `phone_number_id`, `token_ref` y `app_secret_ref`; el panel siempre envía `X-Tenant-Id` a través del proxy autenticado para conservar el aislamiento por tenant.
+
+El botón **Ver health** llama `GET /admin/api/core/v1/tenants/{tenant_id}/channels/whatsapp/health`. La respuesta incluye el canal, checks locales (`business_id`, `waba_id`, `phone_number_id`, `token_ref`, `app_secret_ref`, `channel_active`) y `status` (`healthy` o `degraded`). El check es local en este MVP: valida que CopilotoIA tenga la configuración mínima y marca `upstream=not_checked_in_local_core`; la sincronización con Graph API/quality rating real queda para una iteración posterior.
+
+Variables y secretos requeridos:
+
+- `WHATSAPP_VERIFY_TOKEN`: valor de `.env` que Meta usa para verificar `GET /webhooks/whatsapp`.
+- `WHATSAPP_APP_SECRET`: app secret real de Meta en entornos conectados; el panel no guarda el valor, solo una referencia.
+- `META_ACCESS_TOKEN`: token de acceso Meta Cloud API en el runtime/gestor de secretos.
+- `token_ref`: referencia guardada en `app.tenant_channels.token_ref`; por defecto `secrets/meta_access_token`.
+- `app_secret_ref`: referencia guardada en `app.tenant_channels.app_secret_ref`; por defecto `secrets/whatsapp_app_secret`.
+
+Los secretos locales siguen viviendo en `.secrets/*`, generados por `scripts/generate-local-secrets.sh`, `scripts/bootstrap.sh` o `scripts/configure-auth0.sh`. No agregues variables paralelas ni pegues tokens reales en el formulario.
+
 ## Funcionalidad incluida
 
 - Pantalla React de login con Auth0/OIDC.
 - Callback OIDC en `/callback` y `/admin/callback` para compatibilidad con callbacks locales.
 - Sesión HTTP-only de servidor para el MVP.
 - Layout base React con selector de tenant a partir de claims namespaced (`tenant_id` y `tenant_slug`).
-- Navegación entre módulos placeholder:
-  - Tenant Setup
-  - WhatsApp
-  - Knowledge Studio
-  - Operations Desk
-  - Audit
+- Navegación entre módulos:
+  - Tenant Setup Wizard funcional
+  - WhatsApp/WABA onboarding funcional con health local
+  - Knowledge Studio placeholder
+  - Operations Desk placeholder
+  - Audit placeholder
 
 ## Limitaciones intencionales del MVP
 
 - Las sesiones viven en memoria del proceso; en producción deben moverse a Redis o almacenamiento equivalente.
-- Los módulos son placeholders navegables; las tareas siguientes del backlog conectan formularios y endpoints reales.
+- Knowledge Studio, Operations Desk y Audit siguen como placeholders navegables; Tenant Setup y WhatsApp ya conectan formularios y endpoints reales.
 - El selector de tenant usa el tenant emitido por Auth0 en claims; gestión multi-tenant avanzada queda para tareas posteriores.

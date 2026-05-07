@@ -5,6 +5,7 @@ import { useTenantOptions } from '../../hooks/useTenantOptions.js';
 import { listMyTenants } from '../../services/coreApi.js';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
+import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
 import { Sidebar } from './Sidebar.jsx';
 import { Topbar } from './Topbar.jsx';
 
@@ -83,18 +84,23 @@ export function AdminLayout({ session }) {
     selectModule('tenant-setup');
   }
 
-  const activeContent = activeModuleId === 'tenant-setup' ? (
-    <TenantSetupWizard
-      module={activeModule}
-      onTenantCreated={handleTenantCreated}
-      session={session}
-      tenant={activeTenant}
-    />
-  ) : hasTenant ? (
-    <ModulePlaceholder module={activeModule} tenant={activeTenant} />
-  ) : (
-    <NoTenantOnboarding onCreateTenant={openTenantCreation} />
-  );
+  let activeContent;
+  if (activeModuleId === 'tenant-setup') {
+    activeContent = (
+      <TenantSetupWizard
+        module={activeModule}
+        onTenantCreated={handleTenantCreated}
+        session={session}
+        tenant={activeTenant}
+      />
+    );
+  } else if (!hasTenant) {
+    activeContent = <NoTenantOnboarding onCreateTenant={openTenantCreation} />;
+  } else if (activeModuleId === 'whatsapp') {
+    activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
+  } else {
+    activeContent = <ModulePlaceholder module={activeModule} tenant={activeTenant} />;
+  }
 
   return (
     <main className="admin-shell">
