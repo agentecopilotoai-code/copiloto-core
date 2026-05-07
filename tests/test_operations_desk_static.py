@@ -11,6 +11,9 @@ def test_operations_routes_support_handoff_accept_release_and_audit():
 
     assert "@tenant_ops_router.post('/conversations/start'" in source
     assert "action='conversation.started_by_agent'" in source
+    assert 'operations.conversations.listed' in source
+    assert 'operations.conversation.start_requested' in source
+    assert 'operations.conversation.detail_not_found' in source
     assert 'await asyncio.sleep(0.1)' in source
     assert "@tenant_ops_router.post('/conversations/{conversation_id}/handoff/accept'" in source
     assert "action='handoff.accepted'" in source
@@ -28,6 +31,7 @@ def test_admin_panel_mounts_operations_desk_module():
     assert "activeModuleId === 'operations-desk'" in layout_source
     assert 'Iniciar conversación' in component_source
     assert 'setConversationDetail(conversation)' in component_source
+    assert 'conversationDetail?.id === selectedConversationId' in component_source
     assert 'Tomar conversación' in component_source
     assert 'Liberar al bot' in component_source
     assert 'startConversation' in api_source

@@ -6,6 +6,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import asyncpg
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 
 from app.api.v1.schemas import (
@@ -30,6 +31,8 @@ from app.services.audit import audit
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import verify_signature
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix='/v1')
 public_router = APIRouter(tags=['public'])
@@ -636,7 +639,15 @@ async def list_conversations(request: Request, conn: asyncpg.Connection = Depend
         """,
         tenant_id,
     )
-    return [record_to_dict(r) for r in rows]
+    conversations = [record_to_dict(r) for r in rows]
+    log.info(
+        'operations.conversations.listed',
+        tenant_id=str(tenant_id),
+        count=len(conversations),
+        conversation_ids=[str(item.get('id')) for item in conversations[:20]],
+        actor_id=getattr(request.state, 'actor_id', None),
+    )
+    return conversations
 
 
 @tenant_ops_router.post('/conversations/start', status_code=status.HTTP_201_CREATED)
@@ -660,7 +671,19 @@ async def start_conversation(
         payload.tenant_id,
     )
     if not channel:
+        log.warning(
+            'operations.conversation.start_missing_channel',
+            tenant_id=str(payload.tenant_id),
+            actor_id=request.state.actor_id,
+        )
         raise HTTPException(status_code=409, detail='Configured WhatsApp channel is required to start a conversation')
+    log.info(
+        'operations.conversation.start_requested',
+        tenant_id=str(payload.tenant_id),
+        channel_id=str(channel['id']),
+        phone_last4=payload.phone_e164[-4:] if payload.phone_e164 else None,
+        actor_id=request.state.actor_id,
+    )
 
     phone_e164 = payload.phone_e164.strip()
     wa_id = (payload.wa_id or phone_e164).strip()
@@ -771,6 +794,16 @@ async def start_conversation(
     response['messages'] = [response['initial_message']]
     response['handoffs'] = []
     response['reused_conversation'] = reused_conversation
+    log.info(
+        'operations.conversation.started',
+        tenant_id=str(payload.tenant_id),
+        conversation_id=str(conversation['id']),
+        contact_id=str(contact['id']),
+        channel_id=str(channel['id']),
+        message_id=str(message['id']),
+        reused=reused_conversation,
+        actor_id=request.state.actor_id,
+    )
     return response
 
 
@@ -797,7 +830,36 @@ async def get_conversation(
             break
         await asyncio.sleep(0.1)
     if not row:
+        diagnostic = await conn.fetchrow(
+            """
+            select
+              exists(select 1 from app.conversations where id=$1) as exists_any_tenant,
+              exists(select 1 from app.conversations where tenant_id=$2 and id=$1) as exists_for_tenant,
+              (select tenant_id::text from app.conversations where id=$1 limit 1) as actual_tenant_id,
+              (select status from app.conversations where id=$1 limit 1) as actual_status
+            """,
+            conversation_id,
+            tenant_id,
+        )
+        log.warning(
+            'operations.conversation.detail_not_found',
+            tenant_id=str(tenant_id),
+            conversation_id=str(conversation_id),
+            actor_id=getattr(request.state, 'actor_id', None),
+            exists_any_tenant=bool(diagnostic and diagnostic['exists_any_tenant']),
+            exists_for_tenant=bool(diagnostic and diagnostic['exists_for_tenant']),
+            actual_tenant_id=diagnostic['actual_tenant_id'] if diagnostic else None,
+            actual_status=diagnostic['actual_status'] if diagnostic else None,
+        )
         raise HTTPException(status_code=404, detail='Conversation not found')
+    log.info(
+        'operations.conversation.detail_found',
+        tenant_id=str(tenant_id),
+        conversation_id=str(conversation_id),
+        status=row['status'],
+        contact_id=str(row['contact_id']),
+        actor_id=getattr(request.state, 'actor_id', None),
+    )
     messages = await conn.fetch(
         'select * from app.messages where tenant_id=$1 and conversation_id=$2 order by created_at',
         tenant_id,

@@ -78,8 +78,9 @@ export function OperationsDesk({ module, session, tenant }) {
   }, [tenant?.id]);
 
   useEffect(() => {
+    if (conversationDetail?.id === selectedConversationId) return;
     refreshDetail();
-  }, [selectedConversationId]);
+  }, [conversationDetail?.id, selectedConversationId]);
 
   async function runAction(action, successText) {
     if (!selectedConversationId) return;
