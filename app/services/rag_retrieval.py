@@ -44,6 +44,26 @@ def strip_accents(value: str) -> str:
     )
 
 
+def term_variants(term: str) -> set[str]:
+    variants = {term}
+    if len(term) > 4 and term.endswith('ciones'):
+        variants.add(f'{term[:-6]}cion')
+    if len(term) > 4 and term.endswith('ces'):
+        variants.add(f'{term[:-3]}z')
+    if len(term) > 4 and term.endswith('es'):
+        variants.add(term[:-2])
+    if len(term) > 3 and term.endswith('s'):
+        variants.add(term[:-1])
+    return {variant for variant in variants if len(variant) >= 3}
+
+
+def expanded_term_set(terms: list[str]) -> set[str]:
+    expanded: set[str] = set()
+    for term in terms:
+        expanded.update(term_variants(term))
+    return expanded
+
+
 def normalize_query_terms(text: str) -> list[str]:
     terms: list[str] = []
     for raw_term in WORD_RE.findall(strip_accents(text.lower())):
@@ -73,14 +93,17 @@ def score_chunk(question_terms: list[str], chunk: dict[str, Any]) -> tuple[float
         return 0.0, []
 
     chunk_term_set = set(chunk_terms)
-    matched_terms = [term for term in question_terms if term in chunk_term_set]
+    chunk_variant_set = expanded_term_set(chunk_terms)
+    matched_terms = [term for term in question_terms if term_variants(term) & chunk_variant_set]
     if not matched_terms:
         return 0.0, []
 
     coverage = len(matched_terms) / len(question_terms)
     density = len(matched_terms) / max(len(chunk_term_set), 1)
-    section_boost = 0.05 if any(term in str(chunk.get('section_path') or '').lower() for term in matched_terms) else 0.0
-    title_boost = 0.05 if any(term in str(chunk.get('document_title') or '').lower() for term in matched_terms) else 0.0
+    section_terms = expanded_term_set(normalize_query_terms(str(chunk.get('section_path') or '')))
+    title_terms = expanded_term_set(normalize_query_terms(str(chunk.get('document_title') or '')))
+    section_boost = 0.05 if any(term_variants(term) & section_terms for term in matched_terms) else 0.0
+    title_boost = 0.05 if any(term_variants(term) & title_terms for term in matched_terms) else 0.0
     score = min(1.0, (coverage * 0.75) + (density * 0.15) + section_boost + title_boost)
     return round(score, 4), matched_terms
 

@@ -64,3 +64,36 @@ def test_build_grounded_answer_uses_best_chunk_when_context_is_sufficient():
     assert serialized_chunk['score'] == matches[0].score
     assert serialized_chunk['excerpt']
 
+
+
+def test_rank_chunks_matches_singular_query_against_plural_section_title():
+    matches = rank_chunks(
+        '¿Cuál es la garantía?',
+        [
+            chunk(
+                '30 días calendario.',
+                document_title='FAQ postventa',
+                section_path='Garantías',
+            )
+        ],
+    )
+
+    assert len(matches) == 1
+    assert matches[0].section_path == 'Garantías'
+    assert 'garantia' in matches[0].matched_terms
+
+
+def test_rank_chunks_matches_common_spanish_plural_variants():
+    matches = rank_chunks(
+        'Necesito información de instalación',
+        [
+            chunk(
+                'El técnico confirma requisitos eléctricos antes de iniciar.',
+                document_title='Servicios',
+                section_path='Instalaciones',
+            )
+        ],
+    )
+
+    assert len(matches) == 1
+    assert 'instalacion' in matches[0].matched_terms

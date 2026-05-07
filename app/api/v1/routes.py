@@ -766,7 +766,6 @@ async def evaluate_intent_retrieval(
         where kc.tenant_id=$1
           and kd.status='active'
         order by kd.updated_at desc, kc.chunk_index asc
-        limit 1000
         """,
         tenant_id,
     )
