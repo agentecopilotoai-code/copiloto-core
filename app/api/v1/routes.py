@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import asyncpg
@@ -915,6 +916,7 @@ async def index_knowledge_document(
         )
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    indexing_started_at = datetime.now(UTC).isoformat()
     async with conn.transaction():
         await conn.execute(
             """
@@ -926,7 +928,7 @@ async def index_knowledge_document(
             document_id,
             json.dumps(
                 {
-                    'last_indexing_started_at': 'now',
+                    'last_indexing_started_at': indexing_started_at,
                     'embedding_provider': result.embedding_provider,
                     'embedding_model': result.embedding_model,
                     'embedding_dimensions': result.embedding_dimensions,
@@ -956,6 +958,7 @@ async def index_knowledge_document(
                 vector_literal(chunk.embedding),
                 json.dumps(chunk.metadata),
             )
+        indexing_completed_at = datetime.now(UTC).isoformat()
         row = await conn.fetchrow(
             f"""
             update app.knowledge_documents
@@ -969,7 +972,7 @@ async def index_knowledge_document(
                 {
                     'chunk_count': len(result.chunks),
                     'sanitized_warning_count': result.sanitized_warning_count,
-                    'last_indexing_completed_at': 'now',
+                    'last_indexing_completed_at': indexing_completed_at,
                 }
             ),
         )

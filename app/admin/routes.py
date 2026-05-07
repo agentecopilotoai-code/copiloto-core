@@ -181,6 +181,9 @@ async def admin_favicon() -> Response:
 
 @router.get('/admin/login', include_in_schema=False)
 async def admin_login(request: Request) -> RedirectResponse:
+    if _active_session(request):
+        return RedirectResponse('/admin/', status_code=status.HTTP_303_SEE_OTHER)
+
     settings = get_admin_settings()
     if not settings.auth0_admin_client_id or not settings.auth0_audience:
         raise HTTPException(
