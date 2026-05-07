@@ -9,6 +9,7 @@ from jose import JWTError, jwt
 from app.core.config import get_settings
 
 _jwks_cache: dict[str, tuple[float, dict]] = {}
+_ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
 
 
 def clear_jwks_cache() -> None:
@@ -188,3 +189,34 @@ async def authenticate_request(
     request.state.roles = roles
     request.state.support_mode = support_mode
     request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
+
+
+def _has_role(roles: list[str], minimum_role: str) -> bool:
+    required = _ROLE_LEVELS[minimum_role]
+    return any(_ROLE_LEVELS.get(role, 0) >= required for role in roles)
+
+
+async def require_service(request: Request) -> None:
+    if getattr(request.state, 'actor_type', None) != 'service':
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Service token required')
+
+
+def require_min_role(minimum_role: str, *, allow_service: bool = False):
+    async def dependency(request: Request) -> None:
+        actor_type = getattr(request.state, 'actor_type', 'anonymous')
+        if actor_type == 'anonymous':
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required'
+            )
+        if actor_type == 'service':
+            if allow_service:
+                return
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User role required')
+        if _has_role(getattr(request.state, 'roles', []), minimum_role):
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f'{minimum_role} role or higher is required',
+        )
+
+    return dependency

@@ -40,23 +40,19 @@ La inicialización de PostgreSQL replica el modelo del README mediante scripts m
 - La API establece `app.tenant_id` y `app.support_mode` en cada transacción para que PostgreSQL aplique RLS.
 - Webhooks de WhatsApp requieren `WHATSAPP_VERIFY_TOKEN` para verificación GET y `WHATSAPP_APP_SECRET` para validar `X-Hub-Signature-256`.
 
-## Endpoints principales
+## Endpoints principales y niveles de seguridad
 
-- `GET /v1/health`
-- `POST /v1/tenants`
-- `GET /v1/tenants/{tenant_id}`
-- `PATCH /v1/tenants/{tenant_id}/settings`
-- `POST /v1/tenants/{tenant_id}/channels/whatsapp`
-- `GET /v1/tenants/{tenant_id}/channels/whatsapp/health`
-- `POST /v1/contacts/upsert`
-- `GET /v1/conversations`
-- `POST /v1/conversations/{conversation_id}/messages`
-- `POST /v1/conversations/{conversation_id}/handoff`
-- `POST /v1/service-requests`
-- `POST /v1/appointments`
-- `POST /v1/knowledge/documents`
-- `POST /v1/prompts`
-- `GET/POST /v1/webhooks/whatsapp`
+La API se expone en el puerto `8000` por defecto (`API_PORT`) y queda disponible en `http://localhost:8000`. La superficie `/v1` está agrupada por tags de OpenAPI y por dependencias de seguridad para evitar mezclar rutas públicas, rutas de usuarios administradores y rutas de sistema.
+
+| Nivel | Autenticación | Endpoints | Uso |
+|---|---|---|---|
+| Público | Sin Auth0/JWT; validación específica si aplica | `GET /v1/health`, `GET /v1/webhooks/whatsapp`, `POST /v1/webhooks/whatsapp` | Health check y webhooks externos de Meta. El `POST` valida `X-Hub-Signature-256` con `WHATSAPP_APP_SECRET`. |
+| Admin de plataforma | JWT/Auth0 con rol `owner` | `POST /v1/tenants` | Crear tenants. No acepta `service-token` para separar administración humana de workloads internos. |
+| Admin de tenant | JWT/Auth0 con rol `admin` o superior y tenant scope | `PATCH /v1/tenants/{tenant_id}/settings`, `POST /v1/tenants/{tenant_id}/channels/whatsapp`, `GET /v1/tenants/{tenant_id}/channels/whatsapp/health`, `POST /v1/knowledge/documents`, `POST /v1/prompts` | Configuración sensible del tenant, canal WhatsApp, conocimiento e IA. |
+| Operación de tenant | JWT/Auth0 con rol `agent` o superior; `service-token` permitido solo donde el worker necesita actuar | `GET /v1/tenants/{tenant_id}`, `GET /v1/conversations`, `POST /v1/conversations/{conversation_id}/messages`, `POST /v1/conversations/{conversation_id}/handoff`, `POST /v1/service-requests`, `POST /v1/appointments` | Operación diaria del panel y acciones que también pueden ejecutar workers internos. |
+| Sistema interno | `Authorization: Bearer <service-token>`; no requiere Auth0 | `POST /v1/contacts/upsert` | Ingesta/normalización interna de contactos desde webhooks o jobs. |
+
+Todas las rutas con tenant validan que el `tenant_id` del path o payload coincida con el tenant del JWT o con `X-Tenant-Id`. El `service-token` se reserva para workloads internos y activa soporte/RLS de servicio; no sustituye los roles humanos de administración de plataforma.
 
 ## Tenants demo
 
