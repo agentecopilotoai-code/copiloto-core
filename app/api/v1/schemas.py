@@ -48,6 +48,16 @@ class ConversationCreate(BaseModel):
     current_intent: str | None = None
 
 
+class ConversationStart(BaseModel):
+    tenant_id: UUID
+    phone_e164: str = Field(min_length=6, max_length=32)
+    wa_id: str | None = None
+    display_name: str | None = None
+    initial_message: str = Field(min_length=1, max_length=4096)
+    current_intent: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class MessageCreate(BaseModel):
     tenant_id: UUID
     conversation_id: UUID

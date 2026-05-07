@@ -9,6 +9,8 @@ CORE_API = Path('admin-panel/src/services/coreApi.js')
 def test_operations_routes_support_handoff_accept_release_and_audit():
     source = API_ROUTES.read_text()
 
+    assert "@tenant_ops_router.post('/conversations/start'" in source
+    assert "action='conversation.started_by_agent'" in source
     assert "@tenant_ops_router.post('/conversations/{conversation_id}/handoff/accept'" in source
     assert "action='handoff.accepted'" in source
     assert "action='conversation.released'" in source
@@ -23,7 +25,9 @@ def test_admin_panel_mounts_operations_desk_module():
 
     assert "import { OperationsDesk }" in layout_source
     assert "activeModuleId === 'operations-desk'" in layout_source
+    assert 'Iniciar conversación' in component_source
     assert 'Tomar conversación' in component_source
     assert 'Liberar al bot' in component_source
+    assert 'startConversation' in api_source
     assert 'sendConversationMessage' in api_source
     assert 'acceptConversationHandoff' in api_source

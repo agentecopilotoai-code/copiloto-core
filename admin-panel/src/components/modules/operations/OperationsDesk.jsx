@@ -7,6 +7,7 @@ import {
   listConversations,
   releaseConversation,
   sendConversationMessage,
+  startConversation,
 } from '../../../services/coreApi.js';
 
 function formatDate(value) {
@@ -38,6 +39,7 @@ export function OperationsDesk({ module, session, tenant }) {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [conversationDetail, setConversationDetail] = useState(null);
   const [messageText, setMessageText] = useState('');
+  const [startForm, setStartForm] = useState({ displayName: '', initialMessage: '', phone: '' });
   const [handoffReason, setHandoffReason] = useState('manual_or_policy_handoff');
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -94,6 +96,33 @@ export function OperationsDesk({ module, session, tenant }) {
     }
   }
 
+  async function handleStartConversation(event) {
+    event.preventDefault();
+    const phone = startForm.phone.trim();
+    const initialMessage = startForm.initialMessage.trim();
+    if (!phone || !initialMessage) {
+      setNotice({ type: 'error', text: 'Teléfono y mensaje inicial son obligatorios.' });
+      return;
+    }
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      const conversation = await startConversation(session, tenant.id, {
+        display_name: startForm.displayName.trim() || undefined,
+        initial_message: initialMessage,
+        phone_e164: phone,
+      });
+      await refreshConversations();
+      setSelectedConversationId(conversation.id);
+      setStartForm({ displayName: '', initialMessage: '', phone: '' });
+      setNotice({ type: 'success', text: 'Conversación iniciada y mensaje inicial encolado.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleSendMessage(event) {
     event.preventDefault();
     const bodyText = messageText.trim();
@@ -122,6 +151,40 @@ export function OperationsDesk({ module, session, tenant }) {
       </div>
 
       <Notice notice={notice} />
+
+      <form className="start-conversation-panel" onSubmit={handleStartConversation}>
+        <div>
+          <strong>Iniciar conversación</strong>
+          <p className="hint">Crea o reutiliza una conversación abierta y encola el primer mensaje outbound.</p>
+        </div>
+        <label>
+          Teléfono WhatsApp E.164
+          <input
+            onChange={(event) => setStartForm({ ...startForm, phone: event.target.value })}
+            placeholder="+573001112233"
+            value={startForm.phone}
+          />
+        </label>
+        <label>
+          Nombre del contacto
+          <input
+            onChange={(event) => setStartForm({ ...startForm, displayName: event.target.value })}
+            placeholder="Nombre visible (opcional)"
+            value={startForm.displayName}
+          />
+        </label>
+        <label className="wide">
+          Mensaje inicial
+          <textarea
+            onChange={(event) => setStartForm({ ...startForm, initialMessage: event.target.value })}
+            placeholder="Hola, te escribimos desde el equipo de atención..."
+            value={startForm.initialMessage}
+          />
+        </label>
+        <button className="primary-action" disabled={isBusy || !startForm.phone.trim() || !startForm.initialMessage.trim()} type="submit">
+          Iniciar conversación
+        </button>
+      </form>
 
       <div className="operations-layout">
         <aside className="conversation-list" aria-label="Conversaciones">

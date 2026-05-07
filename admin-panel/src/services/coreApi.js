@@ -158,6 +158,16 @@ export function deleteKnowledgeDocument(session, tenantId, documentId) {
   });
 }
 
+
+export function startConversation(session, tenantId, payload) {
+  return request('/conversations/start', {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { ...payload, tenant_id: tenantId },
+  });
+}
+
 export function listConversations(session, tenantId) {
   return request('/conversations', { session, tenantId });
 }

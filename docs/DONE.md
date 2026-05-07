@@ -215,4 +215,4 @@ Cada entrada debe incluir:
   - `pytest -q tests/test_operations_desk_static.py`
   - `git diff --check`
   - `npm --prefix admin-panel run build` (bloqueado porque las dependencias de Vite/React no están instaladas en este entorno)
-- **Notas:** no se agregaron secretos ni variables nuevas; el agente asignado reutiliza el usuario local vinculado al `auth_subject` de la sesión autenticada.
+- **Notas:** no se agregaron secretos ni variables nuevas; el agente asignado reutiliza el usuario local vinculado al `auth_subject` de la sesión autenticada. Corrección posterior: se agregó inicio de conversación desde el Operations Desk, creando/reutilizando contacto y conversación con mensaje inicial outbound auditado.

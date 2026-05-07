@@ -12,6 +12,7 @@ from app.api.v1.schemas import (
     ChannelCreate,
     ContactUpsert,
     ConversationCreate,
+    ConversationStart,
     IntentEvaluateRequest,
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
@@ -635,6 +636,137 @@ async def list_conversations(request: Request, conn: asyncpg.Connection = Depend
         tenant_id,
     )
     return [record_to_dict(r) for r in rows]
+
+
+@tenant_ops_router.post('/conversations/start', status_code=status.HTTP_201_CREATED)
+async def start_conversation(
+    payload: ConversationStart,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias='Idempotency-Key'),
+):
+    await ensure_tenant_access(request, payload.tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    user_id = await current_user_id_from_request(request, conn)
+    channel = await conn.fetchrow(
+        """
+        select id
+        from app.tenant_channels
+        where tenant_id=$1 and provider='whatsapp_cloud_api' and status in ('active','provisioning')
+        order by case when status='active' then 0 else 1 end, updated_at desc
+        limit 1
+        """,
+        payload.tenant_id,
+    )
+    if not channel:
+        raise HTTPException(status_code=409, detail='Configured WhatsApp channel is required to start a conversation')
+
+    phone_e164 = payload.phone_e164.strip()
+    wa_id = (payload.wa_id or phone_e164).strip()
+    phone_hash = hashlib.sha256(phone_e164.encode()).digest()
+    contact = await conn.fetchrow(
+        """
+        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, metadata)
+        values ($1, $2, $3, $4, $5, $6::jsonb)
+        on conflict (tenant_id, wa_id) do update set
+          phone_e164=excluded.phone_e164,
+          phone_hash=excluded.phone_hash,
+          display_name=coalesce(excluded.display_name, app.contacts.display_name),
+          metadata=app.contacts.metadata || excluded.metadata,
+          updated_at=now()
+        returning *
+        """,
+        payload.tenant_id,
+        wa_id,
+        phone_e164,
+        phone_hash,
+        payload.display_name,
+        json.dumps(payload.metadata),
+    )
+    conversation = await conn.fetchrow(
+        """
+        select *
+        from app.conversations
+        where tenant_id=$1
+          and contact_id=$2
+          and status not in ('resolved','closed','archived')
+        order by updated_at desc
+        limit 1
+        """,
+        payload.tenant_id,
+        contact['id'],
+    )
+    reused_conversation = bool(conversation)
+    if conversation:
+        conversation = await conn.fetchrow(
+            """
+            update app.conversations
+            set current_owner_user_id=$3,
+                status='waiting_user',
+                handoff_required=false,
+                current_intent=coalesce($4, current_intent)
+            where tenant_id=$1 and id=$2
+            returning *
+            """,
+            payload.tenant_id,
+            conversation['id'],
+            user_id,
+            payload.current_intent,
+        )
+    else:
+        conversation = await conn.fetchrow(
+            """
+            insert into app.conversations (
+              tenant_id, contact_id, channel_id, status, opened_by, current_owner_user_id, current_intent
+            )
+            values ($1, $2, $3, 'waiting_user', 'agent', $4, $5)
+            returning *
+            """,
+            payload.tenant_id,
+            contact['id'],
+            channel['id'],
+            user_id,
+            payload.current_intent,
+        )
+
+    message = await conn.fetchrow(
+        """
+        insert into app.messages (
+          tenant_id, conversation_id, direction, sender_actor_type, sender_actor_id,
+          body_text, message_type, payload, status
+        )
+        values ($1, $2, 'outbound', 'agent', $3, $4, 'text', '{}'::jsonb, 'queued')
+        returning *
+        """,
+        payload.tenant_id,
+        conversation['id'],
+        str(user_id) if user_id else request.state.actor_id,
+        payload.initial_message.strip(),
+    )
+    key = idempotency_key or str(message['id'])
+    await conn.execute(
+        "insert into app.domain_events (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload) values ($1,'message',$2,'message.queued',$3,$4::jsonb) on conflict do nothing",
+        payload.tenant_id,
+        message['id'],
+        key,
+        json.dumps({'conversation_id': str(conversation['id']), 'started_by_agent': True}),
+    )
+    await audit(
+        conn,
+        tenant_id=payload.tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='conversation.started_by_agent',
+        entity_type='conversation',
+        entity_id=str(conversation['id']),
+        metadata={'contact_id': str(contact['id']), 'message_id': str(message['id']), 'reused': reused_conversation},
+    )
+    await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(message['id']))
+    response = record_to_dict(conversation)
+    response['contact'] = record_to_dict(contact)
+    response['initial_message'] = record_to_dict(message)
+    response['reused_conversation'] = reused_conversation
+    return response
 
 
 @tenant_ops_router.get('/conversations/{conversation_id}')
