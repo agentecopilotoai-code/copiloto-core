@@ -14,6 +14,15 @@ class TenantCreate(BaseModel):
     timezone: str = 'America/Bogota'
 
 
+class TenantUpdate(BaseModel):
+    slug: str | None = None
+    legal_name: str | None = None
+    display_name: str | None = None
+    vertical_code: str | None = Field(default=None, pattern='^(field_service|beauty|pet_grooming)$')
+    country_code: str | None = None
+    timezone: str | None = None
+
+
 class ChannelCreate(BaseModel):
     business_id: str | None = None
     waba_id: str | None = None

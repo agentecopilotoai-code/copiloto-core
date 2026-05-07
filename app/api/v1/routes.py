@@ -1,6 +1,6 @@
 import hashlib
 import json
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -15,6 +15,7 @@ from app.api.v1.schemas import (
     PromptCreate,
     ServiceRequestCreate,
     TenantCreate,
+    TenantUpdate,
 )
 from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
@@ -37,6 +38,10 @@ tenant_ops_router = APIRouter(
     tags=['tenant-operations'],
     dependencies=[Depends(authenticate_request), Depends(require_min_role('agent', allow_service=True))],
 )
+tenant_signup_router = APIRouter(
+    tags=['tenant-signup'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+)
 system_router = APIRouter(
     tags=['system'],
     dependencies=[Depends(authenticate_request), Depends(require_service)],
@@ -49,16 +54,41 @@ def is_service_or_support(request: Request) -> bool:
     )
 
 
-async def ensure_tenant_access(request: Request, tenant_id: UUID) -> None:
+async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenant_id: UUID) -> bool:
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        return False
+    return bool(
+        await conn.fetchval(
+            """
+            select exists(
+              select 1
+              from app.users u
+              join app.user_tenant_roles utr on utr.user_id = u.id
+              where u.auth_subject=$1 and utr.tenant_id=$2
+            )
+            """,
+            actor_id,
+            tenant_id,
+        )
+    )
+
+
+async def ensure_tenant_access(
+    request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
+) -> None:
     if is_service_or_support(request):
         return
     request_tenant_id = getattr(request.state, 'tenant_id', None)
+    if request_tenant_id == tenant_id:
+        return
+    if conn and await has_user_tenant_role(conn, request, tenant_id):
+        return
     if not request_tenant_id:
         raise HTTPException(
             status_code=400, detail='X-Tenant-Id header or tenant_id claim is required'
         )
-    if request_tenant_id != tenant_id:
-        raise HTTPException(status_code=403, detail='Tenant scope does not match request')
+    raise HTTPException(status_code=403, detail='Tenant scope does not match request')
 
 
 async def require_tenant(request: Request) -> UUID:
@@ -67,10 +97,39 @@ async def require_tenant(request: Request) -> UUID:
     return request.state.tenant_id
 
 
+async def tenant_id_from_request(request: Request, conn: asyncpg.Connection) -> UUID:
+    tenant_id = getattr(request.state, 'tenant_id', None) or getattr(
+        request.state, 'requested_tenant_id', None
+    )
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
+    await ensure_tenant_access(request, tenant_id, conn)
+    return tenant_id
+
+
 @public_router.get('/health')
 async def health(conn: asyncpg.Connection = Depends(get_db)) -> dict:
     await conn.fetchval('select 1')
     return {'status': 'ok'}
+
+
+def user_email_from_request(request: Request) -> str:
+    email = getattr(request.state, 'email', None) or request.headers.get('X-Admin-User-Email')
+    if email:
+        return email
+    actor_id = getattr(request.state, 'actor_id', 'unknown-user')
+    stable_id = uuid5(NAMESPACE_URL, actor_id).hex
+    return f'{stable_id}@auth.local'
+
+
+def user_display_name_from_request(request: Request) -> str:
+    return (
+        getattr(request.state, 'name', None)
+        or request.headers.get('X-Admin-User-Name')
+        or request.headers.get('X-Admin-User-Email')
+        or getattr(request.state, 'actor_id', None)
+        or 'Tenant admin'
+    )
 
 
 @platform_admin_router.post('/tenants', status_code=status.HTTP_201_CREATED)
@@ -95,18 +154,195 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
     return record_to_dict(row)
 
 
+async def update_tenant_record(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    payload: TenantUpdate,
+) -> asyncpg.Record:
+    allowed = payload.model_dump(exclude_unset=True, exclude_none=True)
+    current = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
+    if not current:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    merged = dict(current)
+    merged.update(allowed)
+    row = await conn.fetchrow(
+        """
+        update app.tenants
+        set slug=$2,
+            legal_name=$3,
+            display_name=$4,
+            vertical_code=$5,
+            country_code=$6,
+            timezone=$7,
+            updated_at=now()
+        where id=$1 and deleted_at is null
+        returning *
+        """,
+        tenant_id,
+        merged['slug'],
+        merged['legal_name'],
+        merged['display_name'],
+        merged['vertical_code'],
+        merged['country_code'],
+        merged['timezone'],
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    return row
+
+
+@tenant_signup_router.get('/me/tenants')
+async def list_my_tenants(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        raise HTTPException(status_code=401, detail='Authentication required')
+    rows = await conn.fetch(
+        """
+        select t.id, t.slug, t.legal_name, t.display_name, t.vertical_code, t.country_code, t.timezone, t.status, utr.role, utr.is_default
+        from app.users u
+        join app.user_tenant_roles utr on utr.user_id = u.id
+        join app.tenants t on t.id = utr.tenant_id
+        where u.auth_subject=$1 and t.deleted_at is null
+        order by utr.is_default desc, utr.created_at asc
+        """,
+        actor_id,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_signup_router.post('/tenant-signup', status_code=status.HTTP_201_CREATED)
+async def create_own_tenant(
+    payload: TenantCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        raise HTTPException(status_code=401, detail='Authentication required')
+    existing_tenant_id = await conn.fetchval(
+        """
+        select utr.tenant_id
+        from app.users u
+        join app.user_tenant_roles utr on utr.user_id = u.id
+        where u.auth_subject=$1
+        order by utr.created_at asc
+        limit 1
+        """,
+        actor_id,
+    )
+    if existing_tenant_id:
+        row = await update_tenant_record(conn, existing_tenant_id, TenantUpdate(**payload.model_dump()))
+        await audit(
+            conn,
+            tenant_id=existing_tenant_id,
+            actor_type=request.state.actor_type,
+            actor_id=request.state.actor_id,
+            action='tenant.self_service_updated',
+            entity_type='tenant',
+            entity_id=str(existing_tenant_id),
+        )
+        response = record_to_dict(row)
+        response['user_role'] = 'owner'
+        return response
+
+    row = await conn.fetchrow(
+        """
+        insert into app.tenants (slug, legal_name, display_name, vertical_code, country_code, timezone)
+        values ($1, $2, $3, $4, $5, $6)
+        returning *
+        """,
+        payload.slug,
+        payload.legal_name,
+        payload.display_name,
+        payload.vertical_code,
+        payload.country_code,
+        payload.timezone,
+    )
+    tenant_id = row['id']
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    await conn.execute('insert into app.tenant_settings (tenant_id) values ($1)', tenant_id)
+    user_row = await conn.fetchrow(
+        """
+        insert into app.users (auth_subject, email, display_name, last_login_at)
+        values ($1, $2, $3, now())
+        on conflict (auth_subject) do update set
+          email=excluded.email,
+          display_name=excluded.display_name,
+          last_login_at=now(),
+          updated_at=now()
+        returning id
+        """,
+        actor_id,
+        user_email_from_request(request),
+        user_display_name_from_request(request),
+    )
+    await conn.execute(
+        """
+        insert into app.user_tenant_roles (user_id, tenant_id, role, is_default)
+        values ($1, $2, 'owner', true)
+        on conflict (user_id, tenant_id, role) do update set is_default=true
+        """,
+        user_row['id'],
+        tenant_id,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant.self_service_created',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+    )
+    response = record_to_dict(row)
+    response['user_role'] = 'owner'
+    return response
+
+
 @tenant_ops_router.get('/tenants/{tenant_id}')
 async def get_tenant(tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    await ensure_tenant_access(request, tenant_id)
+    await ensure_tenant_access(request, tenant_id, conn)
     row = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
     if not row:
         raise HTTPException(status_code=404, detail='Tenant not found')
     return record_to_dict(row)
 
 
+@tenant_admin_router.patch('/tenants/{tenant_id}')
+async def patch_tenant(
+    tenant_id: UUID,
+    payload: TenantUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await update_tenant_record(conn, tenant_id, payload)
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant.updated',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/settings')
+async def get_tenant_settings(
+    tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Settings not found')
+    return record_to_dict(row)
+
+
 @tenant_admin_router.patch('/tenants/{tenant_id}/settings')
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    await ensure_tenant_access(request, tenant_id)
+    await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     allowed = {k: payload[k] for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train', 'max_bot_turns') if k in payload}
     current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
@@ -135,7 +371,7 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
 
 @tenant_admin_router.post('/tenants/{tenant_id}/channels/whatsapp', status_code=201)
 async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    await ensure_tenant_access(request, tenant_id)
+    await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     row = await conn.fetchrow(
         """
@@ -159,7 +395,7 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
 
 @tenant_admin_router.get('/tenants/{tenant_id}/channels/whatsapp/health')
 async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    await ensure_tenant_access(request, tenant_id)
+    await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     row = await conn.fetchrow("select id, provider, phone_number_id, quality_rating, messaging_limit_tier, status from app.tenant_channels where tenant_id=$1 and provider='whatsapp_cloud_api'", tenant_id)
     if not row:
@@ -169,7 +405,7 @@ async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connec
 
 @system_router.post('/contacts/upsert')
 async def upsert_contact(payload: ContactUpsert, request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    await ensure_tenant_access(request, payload.tenant_id)
+    await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     phone_hash = hashlib.sha256(payload.phone_e164.encode()).digest()
     row = await conn.fetchrow(
@@ -194,7 +430,10 @@ async def upsert_contact(payload: ContactUpsert, request: Request, conn: asyncpg
 
 
 @tenant_ops_router.get('/contacts/{contact_id}')
-async def get_contact(contact_id: UUID, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+async def get_contact(
+    contact_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    tenant_id = await tenant_id_from_request(request, conn)
     row = await conn.fetchrow('select * from app.contacts where tenant_id=$1 and id=$2', tenant_id, contact_id)
     if not row:
         raise HTTPException(status_code=404, detail='Contact not found')
@@ -203,7 +442,7 @@ async def get_contact(contact_id: UUID, tenant_id: UUID = Depends(require_tenant
 
 @system_router.post('/conversations', status_code=201)
 async def create_conversation(payload: ConversationCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    await ensure_tenant_access(request, payload.tenant_id)
+    await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     row = await conn.fetchrow(
         """
@@ -220,13 +459,17 @@ async def create_conversation(payload: ConversationCreate, request: Request, con
 
 
 @tenant_ops_router.get('/conversations')
-async def list_conversations(tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+async def list_conversations(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
     rows = await conn.fetch('select * from app.conversations where tenant_id=$1 order by updated_at desc limit 100', tenant_id)
     return [dict(r) for r in rows]
 
 
 @tenant_ops_router.get('/conversations/{conversation_id}')
-async def get_conversation(conversation_id: UUID, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+async def get_conversation(
+    conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    tenant_id = await tenant_id_from_request(request, conn)
     row = await conn.fetchrow('select * from app.conversations where tenant_id=$1 and id=$2', tenant_id, conversation_id)
     if not row:
         raise HTTPException(status_code=404, detail='Conversation not found')
@@ -238,7 +481,7 @@ async def get_conversation(conversation_id: UUID, tenant_id: UUID = Depends(requ
 
 @tenant_ops_router.post('/conversations/{conversation_id}/messages', status_code=202)
 async def create_message(conversation_id: UUID, payload: MessageCreate, request: Request, conn: asyncpg.Connection = Depends(get_db), idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
-    await ensure_tenant_access(request, payload.tenant_id)
+    await ensure_tenant_access(request, payload.tenant_id, conn)
 
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     conversation = await conn.fetchrow(
@@ -275,7 +518,13 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
 
 
 @tenant_ops_router.post('/conversations/{conversation_id}/handoff', status_code=202)
-async def create_handoff(conversation_id: UUID, request: Request, payload: dict, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+async def create_handoff(
+    conversation_id: UUID,
+    request: Request,
+    payload: dict,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
     row = await conn.fetchrow(
         """
         insert into app.handoffs (tenant_id, conversation_id, reason, assigned_to)
@@ -291,7 +540,10 @@ async def create_handoff(conversation_id: UUID, request: Request, payload: dict,
 
 
 @tenant_ops_router.post('/conversations/{conversation_id}/release', status_code=202)
-async def release_conversation(conversation_id: UUID, request: Request, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+async def release_conversation(
+    conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    tenant_id = await tenant_id_from_request(request, conn)
     row = await conn.fetchrow("update app.conversations set status='open', handoff_required=false where tenant_id=$1 and id=$2 returning *", tenant_id, conversation_id)
     if not row:
         raise HTTPException(status_code=404, detail='Conversation not found')
@@ -301,7 +553,7 @@ async def release_conversation(conversation_id: UUID, request: Request, tenant_i
 
 @tenant_ops_router.post('/service-requests', status_code=201)
 async def create_service_request(payload: ServiceRequestCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    await ensure_tenant_access(request, payload.tenant_id)
+    await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     row = await conn.fetchrow(
         """
@@ -314,7 +566,13 @@ async def create_service_request(payload: ServiceRequestCreate, request: Request
 
 
 @tenant_ops_router.patch('/service-requests/{request_id}')
-async def patch_service_request(request_id: UUID, payload: dict, tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+async def patch_service_request(
+    request_id: UUID,
+    payload: dict,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
     row = await conn.fetchrow("update app.service_requests set status=coalesce($3,status), intake=intake || $4::jsonb where tenant_id=$1 and id=$2 returning *", tenant_id, request_id, payload.get('status'), json.dumps(payload.get('intake', {})))
     if not row:
         raise HTTPException(status_code=404, detail='Service request not found')
@@ -323,7 +581,7 @@ async def patch_service_request(request_id: UUID, payload: dict, tenant_id: UUID
 
 @tenant_ops_router.post('/appointments', status_code=201)
 async def create_appointment(payload: AppointmentCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    await ensure_tenant_access(request, payload.tenant_id)
+    await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     row = await conn.fetchrow(
         """
@@ -337,7 +595,7 @@ async def create_appointment(payload: AppointmentCreate, request: Request, conn:
 
 @tenant_admin_router.post('/knowledge/documents', status_code=201)
 async def create_knowledge_document(payload: KnowledgeDocumentCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    await ensure_tenant_access(request, payload.tenant_id)
+    await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     row = await conn.fetchrow("insert into app.knowledge_documents (tenant_id, source_type, title, source_uri, visibility) values ($1,$2,$3,$4,$5) returning *", payload.tenant_id, payload.source_type, payload.title, payload.source_uri, payload.visibility)
     return record_to_dict(row)
@@ -346,13 +604,14 @@ async def create_knowledge_document(payload: KnowledgeDocumentCreate, request: R
 @tenant_admin_router.post('/prompts', status_code=201)
 async def create_prompt(payload: PromptCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     if payload.tenant_id:
-        await ensure_tenant_access(request, payload.tenant_id)
+        await ensure_tenant_access(request, payload.tenant_id, conn)
     row = await conn.fetchrow("insert into app.prompt_templates (tenant_id, vertical_code, prompt_type, name, version, content, variables, checksum) values ($1,$2,$3,$4,$5,$6,$7::jsonb, encode(sha256($6::bytea),'hex')) returning *", payload.tenant_id, payload.vertical_code, payload.prompt_type, payload.name, payload.version, payload.content, json.dumps(payload.variables))
     return record_to_dict(row)
 
 
 @tenant_admin_router.get('/audit-logs')
-async def list_audit_logs(tenant_id: UUID = Depends(require_tenant), conn: asyncpg.Connection = Depends(get_db)):
+async def list_audit_logs(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
     rows = await conn.fetch('select * from app.audit_logs where tenant_id=$1 order by created_at desc limit 100', tenant_id)
     return [dict(r) for r in rows]
 
@@ -393,6 +652,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
 router.include_router(public_router)
 router.include_router(webhook_router)
 router.include_router(platform_admin_router)
+router.include_router(tenant_signup_router)
 router.include_router(tenant_admin_router)
 router.include_router(tenant_ops_router)
 router.include_router(system_router)

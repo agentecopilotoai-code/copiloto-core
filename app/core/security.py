@@ -130,11 +130,14 @@ async def authenticate_request(
     x_tenant_id: UUID | None = Header(default=None, alias='X-Tenant-Id'),
 ) -> None:
     settings = get_settings()
-    request.state.tenant_id = x_tenant_id
+    request.state.tenant_id = None
+    request.state.requested_tenant_id = x_tenant_id
     request.state.actor_type = 'anonymous'
     request.state.actor_id = None
     request.state.roles = []
     request.state.support_mode = False
+    request.state.email = None
+    request.state.name = None
 
     if not authorization:
         if x_tenant_id:
@@ -178,16 +181,12 @@ async def authenticate_request(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='X-Tenant-Id does not match token tenant_id',
         )
-    if x_tenant_id and not token_tenant_id and not support_mode:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='X-Tenant-Id requires a tenant-scoped token',
-        )
-
     request.state.actor_type = 'user'
     request.state.actor_id = payload.get('sub')
     request.state.roles = roles
     request.state.support_mode = support_mode
+    request.state.email = payload.get('email')
+    request.state.name = payload.get('name') or payload.get('nickname')
     request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
 
 

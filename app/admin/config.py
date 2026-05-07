@@ -26,6 +26,7 @@ class AdminSettings(BaseSettings):
     auth0_logout_urls: str = 'http://localhost:3000/admin/,http://localhost:3000'
     auth0_web_origins: str = 'http://localhost:3000'
     auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
+    admin_core_api_base_url: str = 'http://127.0.0.1:8000'
 
     @property
     def state_secret(self) -> str:

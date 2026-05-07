@@ -105,6 +105,30 @@ Abrir el panel:
 http://localhost:3000/admin/
 ```
 
+## Conexión con la Core API
+
+El puerto correcto de la **Core API** en esta arquitectura es `8000`; el puerto `3000` pertenece únicamente al backend del Admin Panel (`app/admin`) y sirve el bundle React, login/logout OIDC y endpoints propios bajo `/admin/api/*`. Por eso el frontend no debe llamar endpoints core como `/v1/tenants` contra `http://localhost:3000`.
+
+Para evitar CORS y diferencias entre Docker y ejecución local, el Admin Panel expone un proxy autenticado en:
+
+```text
+/admin/api/core/v1/*
+```
+
+El proxy reenvía la sesión del admin hacia la Core API configurada por `ADMIN_CORE_API_BASE_URL`:
+
+- En Docker Compose se usa `http://api:8000`, que es el nombre del servicio interno de la Core API.
+- En ejecución local directa el valor por defecto es `http://127.0.0.1:8000`.
+
+El endpoint `/admin/api/session` informa al frontend `api.baseUrl = /admin/api/core/v1`, y los servicios React construyen las llamadas desde ese valor en vez de asumir `/v1` en el mismo origen.
+
+
+## Onboarding self-service de tenant
+
+Cuando el usuario autenticado no trae `tenant_id` en sus claims, el panel no crea un tenant falso ni muestra selector de tenants. En su lugar muestra una tarjeta central **Crear tenant**. Ese flujo llama `POST /admin/api/core/v1/tenant-signup`, que crea el tenant, registra/actualiza el usuario autenticado en `app.users`, le asigna el rol `owner` en `app.user_tenant_roles` y deja auditoría `tenant.self_service_created`.
+
+Después de crear el tenant, el panel usa el UUID real devuelto por la API como tenant activo y envía `X-Tenant-Id` para guardar settings. La Core API valida ese acceso contra `app.user_tenant_roles`, por lo que no depende de un claim `tenant_id` recién emitido por Auth0 para completar el wizard inicial. En cargas posteriores, el panel consulta `GET /admin/api/core/v1/me/tenants` para reconstruir el tenant activo desde la membresía guardada en base de datos mientras Auth0 todavía no emite el claim. Si el tenant ya existe, el tab **Tenant** cambia el guardado a `PATCH /admin/api/core/v1/tenants/{tenant_id}`; además, `POST /tenant-signup` actualiza el primer tenant del usuario en vez de devolver conflicto para mantener compatible el flujo self-service. Al abrir el wizard con un tenant activo, el panel carga `GET /admin/api/core/v1/tenants/{tenant_id}` y `GET /admin/api/core/v1/tenants/{tenant_id}/settings` para rehidratar locale, horarios, escalamiento, PII policy, `no_train` y `max_bot_turns` después de logout/login.
+
 ## Funcionalidad incluida
 
 - Pantalla React de login con Auth0/OIDC.

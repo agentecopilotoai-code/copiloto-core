@@ -103,6 +103,37 @@ def _active_session(request: Request) -> dict[str, Any] | None:
     return session
 
 
+def _core_api_url(path: str, query: str = '') -> str:
+    base_url = get_admin_settings().admin_core_api_base_url.rstrip('/')
+    normalized_path = path.lstrip('/')
+    url = f'{base_url}/{normalized_path}'
+    if query:
+        return f'{url}?{query}'
+    return url
+
+
+def _core_api_headers(
+    request: Request, session: dict[str, Any], has_body: bool
+) -> dict[str, str]:
+    authorization = request.headers.get('authorization') or f"Bearer {session['access_token']}"
+    headers = {
+        'authorization': authorization,
+        'accept': request.headers.get('accept', 'application/json'),
+    }
+    if has_body and request.headers.get('content-type'):
+        headers['content-type'] = request.headers['content-type']
+    if request.headers.get('x-tenant-id'):
+        headers['x-tenant-id'] = request.headers['x-tenant-id']
+    if request.headers.get('idempotency-key'):
+        headers['idempotency-key'] = request.headers['idempotency-key']
+    profile = session.get('profile') or {}
+    if profile.get('email'):
+        headers['x-admin-user-email'] = profile['email']
+    if profile.get('name'):
+        headers['x-admin-user-name'] = profile['name']
+    return headers
+
+
 def _namespaced_claim(claims: dict[str, Any], name: str, default: Any = None) -> Any:
     namespace = get_admin_settings().auth0_claims_namespace.rstrip('/')
     return claims.get(f'{namespace}/{name}', default)
@@ -295,7 +326,10 @@ async def admin_session(request: Request) -> Response:
             {
                 'authenticated': True,
                 'profile': session['profile'],
-                'api': {'baseUrl': '/v1', 'audience': get_admin_settings().auth0_audience},
+                'api': {
+                    'baseUrl': '/admin/api/core/v1',
+                    'audience': get_admin_settings().auth0_audience,
+                },
                 'accessToken': session['access_token'],
                 'modules': [
                     {'id': 'tenant-setup', 'label': 'Tenant Setup'},
@@ -307,4 +341,43 @@ async def admin_session(request: Request) -> Response:
             }
         ),
         media_type='application/json',
+    )
+
+
+@router.api_route(
+    '/admin/api/core/{path:path}', methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+)
+async def admin_core_api_proxy(path: str, request: Request) -> Response:
+    session = _active_session(request)
+    if not session:
+        return Response(status_code=401)
+
+    body = await request.body()
+    target_url = _core_api_url(path, request.url.query)
+    headers = _core_api_headers(request, session, has_body=bool(body))
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            upstream_response = await client.request(
+                request.method,
+                target_url,
+                content=body or None,
+                headers=headers,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                'Admin proxy could not reach core API at '
+                f'{get_admin_settings().admin_core_api_base_url}'
+            ),
+        ) from exc
+
+    response_headers = {}
+    content_type = upstream_response.headers.get('content-type')
+    if content_type:
+        response_headers['content-type'] = content_type
+    return Response(
+        content=upstream_response.content,
+        status_code=upstream_response.status_code,
+        headers=response_headers,
     )

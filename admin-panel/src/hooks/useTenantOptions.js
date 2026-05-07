@@ -2,13 +2,16 @@ import { useMemo } from 'react';
 
 export function useTenantOptions(profile) {
   return useMemo(() => {
-    const tenantId = profile?.tenant_id || 'tenant-demo-local';
-    const tenantSlug = profile?.tenant_slug || 'default';
+    if (!profile?.tenant_id) {
+      return [];
+    }
+
+    const tenantSlug = profile?.tenant_slug || 'tenant';
 
     return [
       {
-        id: tenantId,
-        label: `${tenantSlug} · ${tenantId}`,
+        id: profile.tenant_id,
+        label: `${tenantSlug} · ${profile.tenant_id}`,
       },
     ];
   }, [profile?.tenant_id, profile?.tenant_slug]);
