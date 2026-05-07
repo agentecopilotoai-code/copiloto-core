@@ -15,6 +15,7 @@ from app.api.v1.schemas import (
     PromptCreate,
     ServiceRequestCreate,
     TenantCreate,
+    TenantUpdate,
 )
 from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
@@ -153,6 +154,43 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
     return record_to_dict(row)
 
 
+async def update_tenant_record(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    payload: TenantUpdate,
+) -> asyncpg.Record:
+    allowed = payload.model_dump(exclude_unset=True, exclude_none=True)
+    current = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
+    if not current:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    merged = dict(current)
+    merged.update(allowed)
+    row = await conn.fetchrow(
+        """
+        update app.tenants
+        set slug=$2,
+            legal_name=$3,
+            display_name=$4,
+            vertical_code=$5,
+            country_code=$6,
+            timezone=$7,
+            updated_at=now()
+        where id=$1 and deleted_at is null
+        returning *
+        """,
+        tenant_id,
+        merged['slug'],
+        merged['legal_name'],
+        merged['display_name'],
+        merged['vertical_code'],
+        merged['country_code'],
+        merged['timezone'],
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    return row
+
+
 @tenant_signup_router.get('/me/tenants')
 async def list_my_tenants(request: Request, conn: asyncpg.Connection = Depends(get_db)):
     actor_id = getattr(request.state, 'actor_id', None)
@@ -160,7 +198,7 @@ async def list_my_tenants(request: Request, conn: asyncpg.Connection = Depends(g
         raise HTTPException(status_code=401, detail='Authentication required')
     rows = await conn.fetch(
         """
-        select t.id, t.slug, t.display_name, t.status, utr.role, utr.is_default
+        select t.id, t.slug, t.legal_name, t.display_name, t.vertical_code, t.country_code, t.timezone, t.status, utr.role, utr.is_default
         from app.users u
         join app.user_tenant_roles utr on utr.user_id = u.id
         join app.tenants t on t.id = utr.tenant_id
@@ -191,7 +229,19 @@ async def create_own_tenant(
         actor_id,
     )
     if existing_tenant_id:
-        raise HTTPException(status_code=409, detail='User already owns or belongs to a tenant')
+        row = await update_tenant_record(conn, existing_tenant_id, TenantUpdate(**payload.model_dump()))
+        await audit(
+            conn,
+            tenant_id=existing_tenant_id,
+            actor_type=request.state.actor_type,
+            actor_id=request.state.actor_id,
+            action='tenant.self_service_updated',
+            entity_type='tenant',
+            entity_id=str(existing_tenant_id),
+        )
+        response = record_to_dict(row)
+        response['user_role'] = 'owner'
+        return response
 
     row = await conn.fetchrow(
         """
@@ -253,6 +303,28 @@ async def get_tenant(tenant_id: UUID, request: Request, conn: asyncpg.Connection
     row = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
     if not row:
         raise HTTPException(status_code=404, detail='Tenant not found')
+    return record_to_dict(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}')
+async def patch_tenant(
+    tenant_id: UUID,
+    payload: TenantUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await update_tenant_record(conn, tenant_id, payload)
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant.updated',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+    )
     return record_to_dict(row)
 
 

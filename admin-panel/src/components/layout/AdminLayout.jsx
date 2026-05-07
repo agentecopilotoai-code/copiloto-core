@@ -67,10 +67,14 @@ export function AdminLayout({ session }) {
 
   function handleTenantCreated(createdTenant) {
     setTenantOptions((currentOptions) => {
+      const nextTenant = {
+        ...createdTenant,
+        label: createdTenant.label || `${createdTenant.slug} · ${createdTenant.id}`,
+      };
       if (currentOptions.some((option) => option.id === createdTenant.id)) {
-        return currentOptions;
+        return currentOptions.map((option) => (option.id === createdTenant.id ? nextTenant : option));
       }
-      return [...currentOptions, createdTenant];
+      return [...currentOptions, nextTenant];
     });
     setActiveTenantId(createdTenant.id);
   }

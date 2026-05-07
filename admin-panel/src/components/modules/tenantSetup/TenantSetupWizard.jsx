@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { createTenant, listAuditLogs, updateTenantSettings } from '../../../services/coreApi.js';
+import { createTenant, getTenant, listAuditLogs, updateTenant, updateTenantSettings } from '../../../services/coreApi.js';
 
 const wizardTabs = [
   { id: 'tenant', label: 'Tenant' },
@@ -130,6 +130,32 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
 
   const currentTenantId = tenant?.id;
 
+  useEffect(() => {
+    let mounted = true;
+
+    if (!currentTenantId) return undefined;
+
+    getTenant(session, currentTenantId)
+      .then((tenantDetails) => {
+        if (!mounted) return;
+        setTenantForm({
+          slug: tenantDetails.slug || '',
+          legal_name: tenantDetails.legal_name || '',
+          display_name: tenantDetails.display_name || '',
+          vertical_code: tenantDetails.vertical_code || 'field_service',
+          country_code: tenantDetails.country_code || 'CO',
+          timezone: tenantDetails.timezone || 'America/Bogota',
+        });
+      })
+      .catch(() => {
+        // Keep editable defaults if tenant details cannot be loaded.
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentTenantId, session]);
+
   async function runAction(action, successMessage) {
     setIsBusy(true);
     setNotice(null);
@@ -145,11 +171,21 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
     }
   }
 
-  async function handleCreateTenant(event) {
+  async function handleSaveTenant(event) {
     event.preventDefault();
-    const created = await runAction(() => createTenant(session, tenantForm), 'Tenant creado y registrado en auditoría.');
-    if (created) {
-      onTenantCreated?.({ id: created.id, label: `${created.slug} · ${created.id}` });
+    const saveTenant = currentTenantId
+      ? () => updateTenant(session, currentTenantId, tenantForm)
+      : () => createTenant(session, tenantForm);
+    const saved = await runAction(
+      saveTenant,
+      currentTenantId ? 'Tenant actualizado y registrado en auditoría.' : 'Tenant creado y registrado en auditoría.',
+    );
+    if (saved) {
+      onTenantCreated?.({
+        ...saved,
+        id: saved.id,
+        label: `${saved.slug} · ${saved.id}`,
+      });
       setActiveTab('settings');
     }
   }
@@ -212,7 +248,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
       {notice ? <p className={`notice ${notice.type}`}>{notice.text}</p> : null}
 
       {activeTab === 'tenant' ? (
-        <form className="wizard-panel form-grid" onSubmit={handleCreateTenant}>
+        <form className="wizard-panel form-grid" onSubmit={handleSaveTenant}>
           <label>
             Slug
             <input value={tenantForm.slug} onChange={(event) => setTenantForm({ ...tenantForm, slug: event.target.value })} required />
@@ -242,7 +278,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
             <input value={tenantForm.timezone} onChange={(event) => setTenantForm({ ...tenantForm, timezone: event.target.value })} required />
           </label>
           <div className="form-actions">
-            <button className="primary-action" disabled={isBusy} type="submit">Crear tenant</button>
+            <button className="primary-action" disabled={isBusy} type="submit">{currentTenantId ? 'Actualizar tenant' : 'Crear tenant'}</button>
           </div>
         </form>
       ) : null}

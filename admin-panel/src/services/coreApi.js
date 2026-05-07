@@ -55,6 +55,19 @@ export function createTenant(session, payload) {
   return request('/tenant-signup', { method: 'POST', session, body: payload });
 }
 
+export function getTenant(session, tenantId) {
+  return request(`/tenants/${tenantId}`, { session, tenantId });
+}
+
+export function updateTenant(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
 export function updateTenantSettings(session, tenantId, payload) {
   return request(`/tenants/${tenantId}/settings`, {
     method: 'PATCH',
