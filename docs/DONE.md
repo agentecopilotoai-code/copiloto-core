@@ -333,19 +333,20 @@ Cada entrada debe incluir:
 ### TASK-0014 — Probar RLS end-to-end con dos tenants reales
 
 - **Fecha:** 2026-05-08
-- **Resumen:** se endureció el aislamiento multitenant operativo en PostgreSQL y se agregó una suite E2E reproducible para validar dos tenants reales con datos solapados. El esquema ahora aplica RLS también sobre `tenant_channels` y añade claves foráneas compuestas `(tenant_id, id)` para impedir escrituras que apunten a contactos, conversaciones, canales, recursos, service requests, quotes, appointments, documentos, chunks, mensajes o handoffs de otro tenant aunque el `tenant_id` escrito coincida con el contexto. Los webhooks públicos habilitan temporalmente `support_mode` solo para resolver el canal antes de fijar `app.tenant_id`, preservando el onboarding de WhatsApp bajo RLS. La autenticación también rechaza `X-Tenant-Id` cuando el JWT no trae `tenant_id` ni `support_mode`, cubriendo el caso negativo de token sin scope de tenant.
+- **Resumen:** se endureció el aislamiento multitenant operativo en PostgreSQL y se agregó una suite E2E reproducible para validar dos tenants reales con datos solapados. El esquema ahora aplica RLS también sobre `tenant_channels` y añade claves foráneas compuestas `(tenant_id, id)` para impedir escrituras que apunten a contactos, conversaciones, canales, recursos, service requests, quotes, appointments, documentos, chunks, mensajes o handoffs de otro tenant aunque el `tenant_id` escrito coincida con el contexto. Los webhooks públicos habilitan temporalmente `support_mode` solo para resolver el canal antes de fijar `app.tenant_id`, preservando el onboarding de WhatsApp bajo RLS. La autenticación conserva `X-Tenant-Id` como tenant solicitado aun cuando el JWT no trae `tenant_id`, y la autorización por ruta exige rol real en `user_tenant_roles` antes de fijar `app.tenant_id`; esto mantiene funcionando el Admin Panel con tokens unscoped y sigue bloqueando usuarios sin rol del tenant.
 - **Archivos modificados:**
   - `infra/postgres/01-schema.sql`
   - `app/core/security.py`
   - `app/api/v1/routes.py`
   - `tests/test_security.py`
+  - `tests/test_tenant_access.py`
   - `tests/test_whatsapp_webhook_helpers.py`
   - `tests/test_rls_multitenant_e2e.py`
   - `docs/BACKLOG.md`
   - `docs/DONE.md`
 - **Validaciones:**
-  - `ruff check app/core/security.py app/api/v1/routes.py tests/test_security.py tests/test_rls_multitenant_e2e.py tests/test_whatsapp_webhook_helpers.py`
-  - `pytest tests/test_security.py tests/test_rls_multitenant_e2e.py tests/test_whatsapp_webhook_helpers.py`
+  - `ruff check app/core/security.py app/api/v1/routes.py tests/test_security.py tests/test_tenant_access.py tests/test_rls_multitenant_e2e.py tests/test_whatsapp_webhook_helpers.py`
+  - `pytest tests/test_security.py tests/test_tenant_access.py tests/test_rls_multitenant_e2e.py tests/test_whatsapp_webhook_helpers.py`
   - `pytest -q`
   - `git diff --check`
 - **Notas:** la prueba RLS E2E queda marcada para ejecutarse explícitamente con `RUN_RLS_E2E=1` y `TEST_DATABASE_URL`/`DATABASE_URL` apuntando al rol aplicativo no propietario, por ejemplo `copiloto_app`; sin esas variables, la prueba se salta para no romper entornos unitarios sin PostgreSQL. El entorno actual no tenía `.env` ni una base PostgreSQL local activa, por lo que se validó la suite y su skip controlado, además de los tests de autenticación.

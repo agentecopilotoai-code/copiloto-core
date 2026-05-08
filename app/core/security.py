@@ -176,11 +176,6 @@ async def authenticate_request(
     if isinstance(roles, str):
         roles = [roles]
 
-    if x_tenant_id and not token_tenant_id and not support_mode:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='X-Tenant-Id requires a tenant-scoped token or support_mode',
-        )
     if token_tenant_id and x_tenant_id and x_tenant_id != token_tenant_id and not support_mode:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

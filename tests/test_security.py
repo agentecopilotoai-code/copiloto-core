@@ -128,8 +128,9 @@ def test_auth0_rejects_token_signed_with_unknown_key(monkeypatch):
     asyncio.run(run_test())
 
 
-def test_authenticate_rejects_x_tenant_id_when_jwt_has_no_tenant_claim():
+def test_authenticate_keeps_requested_tenant_for_unscoped_panel_token():
     async def run_test():
+        requested_tenant_id = uuid4()
         token = jwt.encode(
             {
                 'iss': 'copilotoia-local',
@@ -142,13 +143,14 @@ def test_authenticate_rejects_x_tenant_id_when_jwt_has_no_tenant_claim():
             algorithm='HS256',
         )
 
-        with pytest.raises(HTTPException) as exc_info:
-            await authenticate_request(
-                make_request(), authorization=f'Bearer {token}', x_tenant_id=uuid4()
-            )
+        request = make_request()
+        await authenticate_request(
+            request, authorization=f'Bearer {token}', x_tenant_id=requested_tenant_id
+        )
 
-        assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == 'X-Tenant-Id requires a tenant-scoped token or support_mode'
+        assert request.state.tenant_id is None
+        assert request.state.requested_tenant_id == requested_tenant_id
+        assert request.state.actor_id == 'auth0|platform-user'
 
     asyncio.run(run_test())
 
