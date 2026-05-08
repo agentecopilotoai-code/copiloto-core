@@ -98,6 +98,48 @@ export function listAuditLogs(session, tenantId) {
   return request('/audit-logs', { session, tenantId });
 }
 
+export function listAuditLogsFiltered(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/audit-logs${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+export function exportAuditLogs(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const baseUrl = session?.api?.baseUrl || '/admin/api/core/v1';
+  const url = new URL(adminPath(`${baseUrl}/audit-logs/export`), window.location.href);
+  params.forEach((value, key) => url.searchParams.set(key, value));
+  url.searchParams.set('tenant_id_hint', tenantId);
+  const link = document.createElement('a');
+  link.href = url.toString();
+  link.download = `audit-logs-${tenantId}.csv`;
+  link.click();
+}
+
+export function suppressContact(session, tenantId, contactId) {
+  return request(`/contacts/${contactId}/suppress`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}
+
+export function exportTenantData(session, tenantId) {
+  const baseUrl = session?.api?.baseUrl || '/admin/api/core/v1';
+  const url = new URL(adminPath(`${baseUrl}/tenants/${tenantId}/data-export`), window.location.href);
+  const link = document.createElement('a');
+  link.href = url.toString();
+  link.download = `tenant-data-${tenantId}.json`;
+  link.click();
+  return Promise.resolve();
+}
+
 export function listMyTenants(session) {
   return request('/me/tenants', { session });
 }

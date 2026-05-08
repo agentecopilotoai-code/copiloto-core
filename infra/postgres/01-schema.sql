@@ -105,7 +105,7 @@ create table app.contacts (
   display_name text,
   locale text default 'es-CO',
   source text,
-  opt_in_status text not null default 'unknown' check (opt_in_status in ('unknown','granted','revoked')),
+  opt_in_status text not null default 'unknown' check (opt_in_status in ('unknown','granted','revoked','suppressed')),
   opt_in_at timestamptz,
   opt_out_at timestamptz,
   tags text[] not null default '{}',

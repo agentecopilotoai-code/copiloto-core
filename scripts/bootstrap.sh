@@ -158,6 +158,24 @@ create index if not exists ix_knowledge_documents_visibility
   on app.knowledge_documents(tenant_id, visibility);
 SQL_MIGRATE_KNOWLEDGE
 
+psql_admin <<'SQL_MIGRATE_CONTACTS_SUPPRESS'
+do $$
+begin
+  -- Add 'suppressed' value to opt_in_status check constraint
+  if exists (
+    select 1 from pg_constraint
+    where connamespace='app'::regnamespace
+      and conrelid='app.contacts'::regclass
+      and conname='contacts_opt_in_status_check'
+  ) then
+    alter table app.contacts drop constraint contacts_opt_in_status_check;
+  end if;
+  alter table app.contacts
+    add constraint contacts_opt_in_status_check
+    check (opt_in_status in ('unknown','granted','revoked','suppressed'));
+end $$;
+SQL_MIGRATE_CONTACTS_SUPPRESS
+
 missing_extensions="$(psql_app -Atc "
   with required(extname) as (values ('pgcrypto'), ('citext'), ('vector'), ('btree_gist'))
   select string_agg(required.extname, ', ' order by required.extname)

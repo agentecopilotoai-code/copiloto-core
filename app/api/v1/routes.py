@@ -1,6 +1,8 @@
 import asyncio
+import csv
 import hashlib
 import hmac
+import io
 import json
 from pathlib import Path
 from datetime import UTC, datetime
@@ -2352,10 +2354,153 @@ async def create_prompt(payload: PromptCreate, request: Request, conn: asyncpg.C
 
 
 @tenant_admin_router.get('/audit-logs')
-async def list_audit_logs(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+async def list_audit_logs(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    action: str | None = Query(default=None),
+    actor_type: str | None = Query(default=None),
+    entity_type: str | None = Query(default=None),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
     tenant_id = await tenant_id_from_request(request, conn)
-    rows = await conn.fetch('select * from app.audit_logs where tenant_id=$1 order by created_at desc limit 100', tenant_id)
-    return [dict(r) for r in rows]
+    rows = await conn.fetch(
+        """
+        select * from app.audit_logs
+        where tenant_id=$1
+          and ($2::text is null or action=$2)
+          and ($3::text is null or actor_type=$3)
+          and ($4::text is null or entity_type=$4)
+          and ($5::timestamptz is null or created_at>=$5::timestamptz)
+          and ($6::timestamptz is null or created_at<=$6::timestamptz)
+        order by created_at desc
+        limit $7
+        """,
+        tenant_id, action, actor_type, entity_type, from_date, to_date, limit,
+    )
+    return [record_to_dict(r) for r in rows]
+
+
+@tenant_admin_router.get('/audit-logs/export')
+async def export_audit_logs(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    action: str | None = Query(default=None),
+    actor_type: str | None = Query(default=None),
+    entity_type: str | None = Query(default=None),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select id, created_at, actor_type, actor_id, action, entity_type, entity_id, metadata
+        from app.audit_logs
+        where tenant_id=$1
+          and ($2::text is null or action=$2)
+          and ($3::text is null or actor_type=$3)
+          and ($4::text is null or entity_type=$4)
+          and ($5::timestamptz is null or created_at>=$5::timestamptz)
+          and ($6::timestamptz is null or created_at<=$6::timestamptz)
+        order by created_at desc
+        limit 10000
+        """,
+        tenant_id, action, actor_type, entity_type, from_date, to_date,
+    )
+    fieldnames = ['id', 'created_at', 'actor_type', 'actor_id', 'action', 'entity_type', 'entity_id', 'metadata']
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction='ignore')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: str(v) if v is not None else '' for k, v in record_to_dict(row).items()})
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='audit_logs.exported', entity_type='tenant', entity_id=str(tenant_id))
+    return Response(
+        content=buf.getvalue(),
+        media_type='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="audit-logs-{tenant_id}.csv"'},
+    )
+
+
+@tenant_admin_router.post('/contacts/{contact_id}/suppress', status_code=200)
+async def suppress_contact(
+    contact_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await require_min_role('admin')(request)
+    tenant_id = await tenant_id_from_request(request, conn)
+    existing = await conn.fetchrow('select id from app.contacts where tenant_id=$1 and id=$2', tenant_id, contact_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail='Contact not found')
+    pseudo = f'suppressed+{contact_id}'
+    row = await conn.fetchrow(
+        """
+        update app.contacts set
+          display_name = null,
+          phone_e164 = $3,
+          wa_id = $3,
+          phone_hash = decode(encode(sha256($3::bytea), 'hex'), 'hex'),
+          opt_in_status = 'suppressed',
+          opt_out_at = now(),
+          tags = '{}',
+          metadata = '{}'::jsonb
+        where tenant_id=$1 and id=$2
+        returning id, tenant_id, opt_in_status, updated_at
+        """,
+        tenant_id, contact_id, pseudo,
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='contact.suppressed', entity_type='contact', entity_id=str(contact_id))
+    return record_to_dict(row)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/data-export')
+async def export_tenant_data(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await require_min_role('owner')(request)
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    tenant = await conn.fetchrow('select * from app.tenants where id=$1', tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    settings = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
+    channels = await conn.fetch("select id, provider, status, account_mode, created_at from app.tenant_channels where tenant_id=$1", tenant_id)
+    counts = await conn.fetchrow(
+        """
+        select
+          (select count(*) from app.contacts where tenant_id=$1) as contacts,
+          (select count(*) from app.conversations where tenant_id=$1) as conversations,
+          (select count(*) from app.messages where tenant_id=$1) as messages,
+          (select count(*) from app.service_requests where tenant_id=$1) as service_requests,
+          (select count(*) from app.quotes where tenant_id=$1) as quotes,
+          (select count(*) from app.knowledge_documents where tenant_id=$1) as knowledge_documents,
+          (select count(*) from app.audit_logs where tenant_id=$1) as audit_log_entries
+        """,
+        tenant_id,
+    )
+    bundle = {
+        'exported_at': datetime.now(UTC).isoformat(),
+        'tenant': record_to_dict(tenant),
+        'settings': record_to_dict(settings) if settings else {},
+        'channels': [record_to_dict(ch) for ch in channels],
+        'data_counts': dict(counts),
+        'privacy': {
+            'no_train': (settings or {}).get('no_train', True),
+            'pii_policy': record_to_dict(settings).get('pii_policy', {}) if settings else {},
+            'data_retention_days': 365,
+            'dpa_version': '1.0',
+        },
+    }
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.data_exported', entity_type='tenant', entity_id=str(tenant_id))
+    content = json.dumps(bundle, default=str, indent=2, ensure_ascii=False)
+    return Response(
+        content=content,
+        media_type='application/json',
+        headers={'Content-Disposition': f'attachment; filename="tenant-data-{tenant_id}.json"'},
+    )
 
 
 @webhook_router.get('/whatsapp')
