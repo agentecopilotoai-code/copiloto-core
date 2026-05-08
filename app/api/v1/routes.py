@@ -3031,6 +3031,7 @@ async def verify_whatsapp_webhook(
 ):
     if hub_mode != 'subscribe' or not hub_verify_token:
         raise HTTPException(status_code=403, detail='Invalid verify token')
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
     rows = await conn.fetch(
         """
         select tenant_id
@@ -3058,6 +3059,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
     if not phone_number_id:
         raise HTTPException(status_code=404, detail='WhatsApp channel not found')
 
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
     channel = await conn.fetchrow(
         """
         select id, tenant_id, app_secret_ref

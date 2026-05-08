@@ -329,3 +329,24 @@ Cada entrada debe incluir:
   - `npm --prefix admin-panel run build`
   - `git diff --check`
 - **Notas:** se agregó `python-multipart` como dependencia de runtime para parsing de uploads multipart en FastAPI. El endpoint evita anotaciones `Form/File` para que los tests estáticos puedan importar rutas aunque el entorno global no tenga todavía esa dependencia instalada; en runtime Docker/uv la dependencia queda instalada desde `pyproject.toml`. Para producción piloto se recomienda `KNOWLEDGE_STORAGE_BACKEND=s3` con bucket cifrado/gestionado; el backend `local` queda pensado para desarrollo y piloto local con volumen persistente. También se ajustó un test Auth0 para firmar tokens RS256 con PEM y evitar incompatibilidades de `python-jose` con objetos privados de `cryptography` en Python 3.14, y se preservó el render de media del Operations Desk manteniendo compatibilidad con el test estático existente. Corrección posterior: el indexador ahora tolera `metadata` recibido como JSON string desde `jsonb`/drivers sin codec personalizado, normaliza metadata a objeto antes de indexar y evita el `AttributeError: 'str' object has no attribute 'get'`; además el render de media usa realmente el mensaje decorado con sesión/tenant. Ajuste posterior: se agregó configuración S3 por tenant desde el Admin Panel mediante el módulo **Storage S3**, endpoints `GET/PATCH /tenants/{tenant_id}/knowledge/storage`, columna `tenant_settings.knowledge_storage`, secreto `.secrets/tenants/<TENANT_ID>/knowledge_s3_secret_access_key`, soporte de bucket/prefix único por tenant en uploads y documentación paso a paso para configurar S3/MinIO.
+
+### TASK-0014 — Probar RLS end-to-end con dos tenants reales
+
+- **Fecha:** 2026-05-08
+- **Resumen:** se endureció el aislamiento multitenant operativo en PostgreSQL y se agregó una suite E2E reproducible para validar dos tenants reales con datos solapados. El esquema ahora aplica RLS también sobre `tenant_channels` y añade claves foráneas compuestas `(tenant_id, id)` para impedir escrituras que apunten a contactos, conversaciones, canales, recursos, service requests, quotes, appointments, documentos, chunks, mensajes o handoffs de otro tenant aunque el `tenant_id` escrito coincida con el contexto. Los webhooks públicos habilitan temporalmente `support_mode` solo para resolver el canal antes de fijar `app.tenant_id`, preservando el onboarding de WhatsApp bajo RLS. La autenticación conserva `X-Tenant-Id` como tenant solicitado aun cuando el JWT no trae `tenant_id`, y la autorización por ruta exige rol real en `user_tenant_roles` antes de fijar `app.tenant_id`; esto mantiene funcionando el Admin Panel con tokens unscoped y sigue bloqueando usuarios sin rol del tenant.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/core/security.py`
+  - `app/api/v1/routes.py`
+  - `tests/test_security.py`
+  - `tests/test_tenant_access.py`
+  - `tests/test_whatsapp_webhook_helpers.py`
+  - `tests/test_rls_multitenant_e2e.py`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `ruff check app/core/security.py app/api/v1/routes.py tests/test_security.py tests/test_tenant_access.py tests/test_rls_multitenant_e2e.py tests/test_whatsapp_webhook_helpers.py`
+  - `pytest tests/test_security.py tests/test_tenant_access.py tests/test_rls_multitenant_e2e.py tests/test_whatsapp_webhook_helpers.py`
+  - `pytest -q`
+  - `git diff --check`
+- **Notas:** la prueba RLS E2E queda marcada para ejecutarse explícitamente con `RUN_RLS_E2E=1` y `TEST_DATABASE_URL`/`DATABASE_URL` apuntando al rol aplicativo no propietario, por ejemplo `copiloto_app`; sin esas variables, la prueba se salta para no romper entornos unitarios sin PostgreSQL. El entorno actual no tenía `.env` ni una base PostgreSQL local activa, por lo que se validó la suite y su skip controlado, además de los tests de autenticación.

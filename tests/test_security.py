@@ -128,6 +128,33 @@ def test_auth0_rejects_token_signed_with_unknown_key(monkeypatch):
     asyncio.run(run_test())
 
 
+def test_authenticate_keeps_requested_tenant_for_unscoped_panel_token():
+    async def run_test():
+        requested_tenant_id = uuid4()
+        token = jwt.encode(
+            {
+                'iss': 'copilotoia-local',
+                'aud': 'copilotoia-panel',
+                'sub': 'auth0|platform-user',
+                'exp': datetime.now(UTC) + timedelta(minutes=5),
+                'roles': ['admin'],
+            },
+            'local-secret-with-min-length',
+            algorithm='HS256',
+        )
+
+        request = make_request()
+        await authenticate_request(
+            request, authorization=f'Bearer {token}', x_tenant_id=requested_tenant_id
+        )
+
+        assert request.state.tenant_id is None
+        assert request.state.requested_tenant_id == requested_tenant_id
+        assert request.state.actor_id == 'auth0|platform-user'
+
+    asyncio.run(run_test())
+
+
 def test_service_token_still_authenticates_internal_workloads():
     async def run_test():
         request = make_request()

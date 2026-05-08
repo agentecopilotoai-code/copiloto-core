@@ -25,17 +25,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0014 — Probar RLS end-to-end con dos tenants reales
-
-- **Estado:** PENDING
-- **Objetivo:** validar en PostgreSQL real que ninguna lectura/escritura operativa cruza tenants, incluyendo conocimiento, conversaciones, contactos, audit logs, service requests, quotes, appointments y canales.
-- **Alcance mínimo:**
-  - Crear fixture o script que levante dos tenants con datos solapados.
-  - Ejecutar consultas vía API y, cuando aplique, SQL con `app.tenant_id`/`app.support_mode`.
-  - Probar casos negativos: `X-Tenant-Id` incorrecto, JWT sin tenant, soporte sin modo válido y escritura con `tenant_id` ajeno.
-  - Documentar evidencia en `docs/DONE.md` y dejar test automatizado.
-- **Criterio de aceptación:** suite reproducible en CI/local que falla ante cualquier fuga básica cross-tenant.
-
 ### TASK-0015 — Automatizar backup y restore de base de datos y objetos
 
 - **Estado:** PENDING
