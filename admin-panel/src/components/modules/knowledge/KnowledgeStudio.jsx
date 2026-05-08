@@ -7,6 +7,7 @@ import {
   indexKnowledgeDocument,
   listKnowledgeDocuments,
   updateKnowledgeDocument,
+  uploadKnowledgeDocument,
 } from '../../../services/coreApi.js';
 
 const emptyForm = {
@@ -51,6 +52,8 @@ export function KnowledgeStudio({ module, session, tenant }) {
   const [ragQuestion, setRagQuestion] = useState('');
   const [ragResult, setRagResult] = useState(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [uploadForm, setUploadForm] = useState({ title: '', document_type: 'reference', visibility: 'tenant', file: null });
+  const [isUploading, setIsUploading] = useState(false);
 
   const selectedDocument = useMemo(
     () => documents.find((document) => document.id === editingId),
@@ -174,6 +177,29 @@ export function KnowledgeStudio({ module, session, tenant }) {
     }
   }
 
+  async function handleUpload(event) {
+    event.preventDefault();
+    if (!tenant?.id || !uploadForm.file || !uploadForm.title.trim()) return;
+    setIsUploading(true);
+    setNotice(null);
+    try {
+      const uploaded = await uploadKnowledgeDocument(session, tenant.id, uploadForm);
+      setNotice({
+        type: 'success',
+        text: uploaded.content
+          ? 'Archivo guardado; texto extraído. Ya puedes indexarlo.'
+          : 'Archivo guardado; agrega texto extraído antes de indexar este formato.',
+      });
+      setUploadForm({ title: '', document_type: 'reference', visibility: 'tenant', file: null });
+      event.target.reset();
+      loadDocuments();
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
   async function removeDocument(document) {
     setNotice(null);
     try {
@@ -201,6 +227,24 @@ export function KnowledgeStudio({ module, session, tenant }) {
       </div>
 
       {notice && <div className={`notice ${notice.type}`}>{notice.text}</div>}
+
+      <form className="knowledge-upload" onSubmit={handleUpload}>
+        <div>
+          <h3>Carga de archivos</h3>
+          <p className="hint">Guarda archivos en el backend configurado para conocimiento. TXT, Markdown, CSV y JSON se extraen automáticamente para indexado; PDF queda almacenado y requiere texto extraído en edición.</p>
+        </div>
+        <div className="form-grid compact-grid">
+          <label>Título del archivo<input value={uploadForm.title} onChange={(event) => setUploadForm((current) => ({ ...current, title: event.target.value }))} required /></label>
+          <label>Tipo<select value={uploadForm.document_type} onChange={(event) => setUploadForm((current) => ({ ...current, document_type: event.target.value }))}><option value="faq">FAQ</option><option value="policy">Política</option><option value="reference">Referencia</option></select></label>
+          <label>Visibilidad<select value={uploadForm.visibility} onChange={(event) => setUploadForm((current) => ({ ...current, visibility: event.target.value }))}><option value="tenant">Tenant</option><option value="agents_only">Solo agentes</option><option value="public">Público</option></select></label>
+          <label className="wide">Archivo<input accept=".txt,.md,.markdown,.csv,.json,.pdf,text/plain,text/markdown,text/csv,application/json,application/pdf" onChange={(event) => setUploadForm((current) => ({ ...current, file: event.target.files?.[0] || null }))} required type="file" /></label>
+        </div>
+        <div className="form-actions">
+          <button className="primary-action" disabled={isUploading || !uploadForm.file || !uploadForm.title.trim()} type="submit">
+            {isUploading ? 'Subiendo…' : 'Guardar archivo'}
+          </button>
+        </div>
+      </form>
 
       <form className="rag-tester" onSubmit={evaluateRetrieval}>
         <div>

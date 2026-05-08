@@ -778,6 +778,7 @@ fieldset {
   }
 }
 
+.knowledge-upload,
 .rag-tester {
   background: #f7f9fc;
   border: 1px solid var(--line);
@@ -788,11 +789,14 @@ fieldset {
   padding: 1rem;
 }
 
+.knowledge-upload h3,
+.knowledge-upload p,
 .rag-tester h3,
 .rag-tester p {
   margin: 0;
 }
 
+.knowledge-upload label,
 .rag-tester label {
   color: var(--muted);
   display: grid;

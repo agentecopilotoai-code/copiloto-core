@@ -236,6 +236,11 @@ Además necesitarás estos IDs para registrar el canal por tenant:
 | `S3_BUCKET` | `copilotoia-local` | No | Bucket para media/documentos/exportaciones. |
 | `S3_ACCESS_KEY_ID` | `copilotoia-minio` | Sí | Usuario/access key local de MinIO. |
 | `S3_SECRET_ACCESS_KEY` | generado | Sí | Password/secret key local de MinIO. |
+| `KNOWLEDGE_STORAGE_BACKEND` | `local` | No | Backend usado para archivos subidos al Knowledge Studio. Valores: `local` o `s3`. Para piloto local usa volumen Docker; para producción usa `s3`. |
+| `KNOWLEDGE_STORAGE_LOCAL_PATH` | `/app/data/knowledge` | No | Ruta persistente del contenedor API cuando `KNOWLEDGE_STORAGE_BACKEND=local`; `docker-compose.yml` la monta en el volumen `knowledge-files`. |
+| `KNOWLEDGE_STORAGE_S3_BUCKET` | `copilotoia-local` | No | Bucket destino de archivos de conocimiento cuando `KNOWLEDGE_STORAGE_BACKEND=s3`; si no se define, usa `S3_BUCKET`. |
+| `KNOWLEDGE_FILE_MAX_BYTES` | `10485760` | No | Tamaño máximo por archivo de conocimiento. |
+| `KNOWLEDGE_ALLOWED_MIME_TYPES` | `text/plain,text/markdown,text/csv,application/json,application/pdf` | No | Lista permitida de MIME types para carga de conocimiento. |
 
 ### Observabilidad
 
@@ -618,6 +623,10 @@ S3_ENDPOINT_URL=<ENDPOINT_S3_SI_APLICA>
 S3_BUCKET=<BUCKET_PROD>
 S3_ACCESS_KEY_ID=<ACCESS_KEY_O_IAM_ROLE>
 S3_SECRET_ACCESS_KEY=<SECRET_KEY_O_IAM_ROLE>
+KNOWLEDGE_STORAGE_BACKEND=s3
+KNOWLEDGE_STORAGE_S3_BUCKET=<BUCKET_DOCUMENTOS_CONOCIMIENTO>
+KNOWLEDGE_FILE_MAX_BYTES=10485760
+KNOWLEDGE_ALLOWED_MIME_TYPES=text/plain,text/markdown,text/csv,application/json,application/pdf
 OTEL_EXPORTER_OTLP_ENDPOINT=<OTEL_ENDPOINT>
 ```
 

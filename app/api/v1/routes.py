@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
 import asyncpg
@@ -39,6 +39,7 @@ from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
+from app.services.knowledge_storage import store_knowledge_file
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
@@ -2068,6 +2069,131 @@ async def create_knowledge_document(
         action='knowledge_document.created',
         entity_type='knowledge_document',
         entity_id=str(row['id']),
+    )
+    return normalize_knowledge_document(row)
+
+
+@tenant_admin_router.post('/knowledge/documents/upload', status_code=201)
+async def upload_knowledge_document(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    try:
+        form = await request.form()
+    except AssertionError as exc:
+        raise HTTPException(
+            status_code=500, detail='python-multipart dependency is required for file uploads'
+        ) from exc
+
+    raw_tenant_id = form.get('tenant_id')
+    raw_title = form.get('title')
+    title = str(raw_title or '').strip()
+    document_type = str(form.get('document_type') or 'reference')
+    visibility = str(form.get('visibility') or 'tenant')
+    file = form.get('file')
+    if not raw_tenant_id or not title or not file or not hasattr(file, 'read'):
+        raise HTTPException(status_code=422, detail='tenant_id, title and file are required')
+    try:
+        tenant_id = UUID(str(raw_tenant_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail='Invalid tenant_id') from exc
+
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    if document_type not in {'faq', 'policy', 'reference'}:
+        raise HTTPException(status_code=422, detail='Unsupported document_type')
+    if visibility not in {'tenant', 'agents_only', 'public'}:
+        raise HTTPException(status_code=422, detail='Unsupported visibility')
+
+    data = await file.read()
+    filename = getattr(file, 'filename', None) or 'upload.bin'
+    mime_type = getattr(file, 'content_type', None)
+    document_id = uuid4()
+    settings = get_settings()
+    try:
+        stored = store_knowledge_file(
+            data=data,
+            tenant_id=str(tenant_id),
+            document_id=str(document_id),
+            filename=filename,
+            mime_type=mime_type,
+            settings=settings,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    metadata = {
+        'editor': 'admin-panel',
+        'registered_source': True,
+        'original_filename': filename,
+        'storage_backend': stored.storage_backend,
+        'storage_bucket': stored.bucket,
+        'storage_key': stored.object_key,
+        'size_bytes': stored.size_bytes,
+    }
+    if stored.extracted_text:
+        metadata['extracted_text'] = stored.extracted_text
+
+    columns = await knowledge_document_columns(conn)
+    insert_columns = [
+        'id',
+        'tenant_id',
+        'source_type',
+        'document_type',
+        'title',
+        'source_uri',
+        'checksum',
+        'mime_type',
+        'content',
+        'visibility',
+        'status',
+        'metadata',
+    ]
+    insert_columns = [column for column in insert_columns if column in columns or column in {'id', 'tenant_id'}]
+    values_by_column = {
+        'id': document_id,
+        'tenant_id': tenant_id,
+        'source_type': 'upload',
+        'document_type': document_type,
+        'title': title,
+        'source_uri': stored.source_uri,
+        'checksum': stored.checksum,
+        'mime_type': mime_type or 'application/octet-stream',
+        'content': stored.content,
+        'visibility': visibility,
+        'status': 'draft',
+        'metadata': metadata,
+    }
+    values = [
+        json.dumps(values_by_column[column]) if column == 'metadata' else values_by_column[column]
+        for column in insert_columns
+    ]
+    placeholders = [
+        f'${index}::jsonb' if column == 'metadata' else f'${index}'
+        for index, column in enumerate(insert_columns, start=1)
+    ]
+    row = await conn.fetchrow(
+        f"""
+        insert into app.knowledge_documents ({', '.join(insert_columns)})
+        values ({', '.join(placeholders)})
+        returning {knowledge_document_projection(columns)}
+        """,
+        *values,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='knowledge_document.uploaded',
+        entity_type='knowledge_document',
+        entity_id=str(document_id),
+        metadata={
+            'storage_backend': stored.storage_backend,
+            'storage_key': stored.object_key,
+            'checksum': stored.checksum,
+            'size_bytes': stored.size_bytes,
+        },
     )
     return normalize_knowledge_document(row)
 
