@@ -244,3 +244,65 @@ export function openConversationStream(session, tenantId) {
     coreWebSocketPath(session, '/conversations/stream', { tenant_id: tenantId }),
   );
 }
+
+export function listResources(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/resources${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+export function createResource(session, tenantId, payload) {
+  return request('/resources', {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { ...payload, tenant_id: tenantId },
+  });
+}
+
+export function updateResource(session, tenantId, resourceId, payload) {
+  return request(`/resources/${resourceId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function listAppointments(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/appointments${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+export function createAppointment(session, tenantId, payload) {
+  return request('/appointments', {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { ...payload, tenant_id: tenantId },
+  });
+}
+
+export function updateAppointment(session, tenantId, appointmentId, payload) {
+  return request(`/appointments/${appointmentId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function cancelAppointment(session, tenantId, appointmentId) {
+  return request(`/appointments/${appointmentId}/cancel`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}

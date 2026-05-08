@@ -2,13 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   acceptConversationHandoff,
+  cancelAppointment,
+  createAppointment,
+  createResource,
   conversationMessageMediaUrl,
   createConversationHandoff,
   getConversation,
+  listAppointments,
   listConversations,
+  listResources,
   openConversationStream,
   releaseConversation,
   sendConversationMessage,
+  updateAppointment,
   startConversation,
 } from '../../../services/coreApi.js';
 
@@ -116,6 +122,11 @@ export function OperationsDesk({ module, session, tenant }) {
   const [messageMedia, setMessageMedia] = useState({ mediaId: '', mediaUrl: '', mimeType: '', type: 'text' });
   const [startForm, setStartForm] = useState({ displayName: '', initialMessage: '', mediaId: '', mediaUrl: '', mimeType: '', phone: '', type: 'text' });
   const [handoffReason, setHandoffReason] = useState('manual_or_policy_handoff');
+  const [resources, setResources] = useState([]);
+  const [appointments, setAppointments] = useState([]);
+  const [resourceForm, setResourceForm] = useState({ code: '', name: '', resourceType: 'technician', verticalCode: tenant?.vertical_code || 'field_service' });
+  const [appointmentForm, setAppointmentForm] = useState({ endsAt: '', notes: '', resourceId: '', serviceCode: '', startsAt: '' });
+  const [rescheduleForm, setRescheduleForm] = useState({ appointmentId: '', endsAt: '', resourceId: '', startsAt: '' });
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState(null);
@@ -157,10 +168,27 @@ export function OperationsDesk({ module, session, tenant }) {
       });
   }
 
+  function refreshScheduleData(silent = false) {
+    if (!tenant?.id) return Promise.resolve();
+    return Promise.all([
+      listResources(session, tenant.id),
+      listAppointments(session, tenant.id),
+    ]).then(([resourceItems, appointmentItems]) => {
+      setResources(resourceItems);
+      setAppointments(appointmentItems);
+      setAppointmentForm((current) => ({ ...current, resourceId: current.resourceId || resourceItems[0]?.id || '' }));
+      setRescheduleForm((current) => ({ ...current, resourceId: current.resourceId || resourceItems[0]?.id || '' }));
+    }).catch((error) => {
+      if (!silent) setNotice({ type: 'error', text: error.message });
+    });
+  }
+
   useEffect(() => {
     setSelectedConversationId(null);
     setConversationDetail(null);
     refreshConversations();
+    refreshScheduleData(true);
+    setResourceForm((current) => ({ ...current, verticalCode: tenant?.vertical_code || 'field_service' }));
   }, [tenant?.id]);
 
   useEffect(() => {
@@ -308,6 +336,97 @@ export function OperationsDesk({ module, session, tenant }) {
       refreshConversations();
       setStartForm({ displayName: '', initialMessage: '', mediaId: '', mediaUrl: '', mimeType: '', phone: '', type: 'text' });
       setNotice({ type: 'success', text: 'Conversación iniciada y mensaje inicial encolado.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleCreateResource(event) {
+    event.preventDefault();
+    if (!resourceForm.code.trim() || !resourceForm.name.trim()) {
+      setNotice({ type: 'error', text: 'Código y nombre del recurso son obligatorios.' });
+      return;
+    }
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      await createResource(session, tenant.id, {
+        code: resourceForm.code.trim(),
+        name: resourceForm.name.trim(),
+        resource_type: resourceForm.resourceType,
+        vertical_code: resourceForm.verticalCode,
+      });
+      setResourceForm({ code: '', name: '', resourceType: 'technician', verticalCode: tenant?.vertical_code || 'field_service' });
+      await refreshScheduleData();
+      setNotice({ type: 'success', text: 'Recurso creado y disponible para agenda.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleCreateAppointment(event) {
+    event.preventDefault();
+    if (!conversationDetail?.contact_id || !appointmentForm.resourceId || !appointmentForm.serviceCode.trim() || !appointmentForm.startsAt || !appointmentForm.endsAt) {
+      setNotice({ type: 'error', text: 'Selecciona conversación, recurso, servicio e intervalo.' });
+      return;
+    }
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      await createAppointment(session, tenant.id, {
+        contact_id: conversationDetail.contact_id,
+        conversation_id: selectedConversationId,
+        ends_at: new Date(appointmentForm.endsAt).toISOString(),
+        notes: appointmentForm.notes.trim() || undefined,
+        resource_id: appointmentForm.resourceId,
+        service_code: appointmentForm.serviceCode.trim(),
+        starts_at: new Date(appointmentForm.startsAt).toISOString(),
+      });
+      setAppointmentForm({ endsAt: '', notes: '', resourceId: appointmentForm.resourceId, serviceCode: '', startsAt: '' });
+      await refreshScheduleData();
+      setNotice({ type: 'success', text: 'Cita agendada sin conflicto de recurso.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: typeof error.message === 'string' ? error.message : 'No fue posible agendar la cita.' });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleRescheduleAppointment(event) {
+    event.preventDefault();
+    if (!rescheduleForm.appointmentId || !rescheduleForm.resourceId || !rescheduleForm.startsAt || !rescheduleForm.endsAt) {
+      setNotice({ type: 'error', text: 'Selecciona cita, recurso y nuevo intervalo.' });
+      return;
+    }
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      await updateAppointment(session, tenant.id, rescheduleForm.appointmentId, {
+        ends_at: new Date(rescheduleForm.endsAt).toISOString(),
+        resource_id: rescheduleForm.resourceId,
+        starts_at: new Date(rescheduleForm.startsAt).toISOString(),
+      });
+      setRescheduleForm({ appointmentId: '', endsAt: '', resourceId: rescheduleForm.resourceId, startsAt: '' });
+      await refreshScheduleData();
+      setNotice({ type: 'success', text: 'Cita reprogramada sin violar agenda.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleCancelAppointment(appointmentId) {
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      await cancelAppointment(session, tenant.id, appointmentId);
+      await refreshScheduleData();
+      setNotice({ type: 'success', text: 'Cita cancelada; el recurso queda liberado.' });
     } catch (error) {
       setNotice({ type: 'error', text: error.message });
     } finally {
@@ -511,6 +630,151 @@ export function OperationsDesk({ module, session, tenant }) {
                   >
                     Liberar al bot
                   </button>
+                </div>
+              </div>
+
+              <div className="schedule-panel">
+                <div>
+                  <strong>Recursos y agenda</strong>
+                  <p className="hint">Configura recursos, agenda citas para el contacto seleccionado y reprograma/cancela sin solapar reservas activas.</p>
+                </div>
+
+                <form className="schedule-form" onSubmit={handleCreateResource}>
+                  <label>
+                    Código recurso
+                    <input
+                      onChange={(event) => setResourceForm({ ...resourceForm, code: event.target.value })}
+                      placeholder="TEC-01"
+                      value={resourceForm.code}
+                    />
+                  </label>
+                  <label>
+                    Nombre recurso
+                    <input
+                      onChange={(event) => setResourceForm({ ...resourceForm, name: event.target.value })}
+                      placeholder="Técnico / silla / sala"
+                      value={resourceForm.name}
+                    />
+                  </label>
+                  <label>
+                    Tipo
+                    <select
+                      onChange={(event) => setResourceForm({ ...resourceForm, resourceType: event.target.value })}
+                      value={resourceForm.resourceType}
+                    >
+                      <option value="technician">Técnico</option>
+                      <option value="chair">Silla</option>
+                      <option value="stylist">Estilista</option>
+                      <option value="groomer">Groomer</option>
+                      <option value="room">Sala</option>
+                      <option value="vehicle">Vehículo</option>
+                    </select>
+                  </label>
+                  <button className="secondary-action" disabled={isBusy} type="submit">Crear recurso</button>
+                </form>
+
+                <form className="schedule-form" onSubmit={handleCreateAppointment}>
+                  <label>
+                    Recurso
+                    <select
+                      onChange={(event) => setAppointmentForm({ ...appointmentForm, resourceId: event.target.value })}
+                      value={appointmentForm.resourceId}
+                    >
+                      <option value="">Selecciona recurso</option>
+                      {resources.filter((resource) => resource.is_active).map((resource) => (
+                        <option key={resource.id} value={resource.id}>{resource.name} ({resource.code})</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Servicio
+                    <input
+                      onChange={(event) => setAppointmentForm({ ...appointmentForm, serviceCode: event.target.value })}
+                      placeholder="diagnostico / corte / baño"
+                      value={appointmentForm.serviceCode}
+                    />
+                  </label>
+                  <label>
+                    Inicio
+                    <input
+                      onChange={(event) => setAppointmentForm({ ...appointmentForm, startsAt: event.target.value })}
+                      type="datetime-local"
+                      value={appointmentForm.startsAt}
+                    />
+                  </label>
+                  <label>
+                    Fin
+                    <input
+                      onChange={(event) => setAppointmentForm({ ...appointmentForm, endsAt: event.target.value })}
+                      type="datetime-local"
+                      value={appointmentForm.endsAt}
+                    />
+                  </label>
+                  <label>
+                    Notas
+                    <input
+                      onChange={(event) => setAppointmentForm({ ...appointmentForm, notes: event.target.value })}
+                      placeholder="Notas internas"
+                      value={appointmentForm.notes}
+                    />
+                  </label>
+                  <button className="primary-action" disabled={isBusy || !conversationDetail?.contact_id} type="submit">Crear cita</button>
+                </form>
+
+                <form className="schedule-form" onSubmit={handleRescheduleAppointment}>
+                  <label>
+                    Cita
+                    <select
+                      onChange={(event) => setRescheduleForm({ ...rescheduleForm, appointmentId: event.target.value })}
+                      value={rescheduleForm.appointmentId}
+                    >
+                      <option value="">Selecciona cita activa</option>
+                      {appointments.filter((appointment) => ['scheduled', 'confirmed'].includes(appointment.status)).map((appointment) => (
+                        <option key={appointment.id} value={appointment.id}>{formatDate(appointment.starts_at)} · {appointment.resource_name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Nuevo recurso
+                    <select
+                      onChange={(event) => setRescheduleForm({ ...rescheduleForm, resourceId: event.target.value })}
+                      value={rescheduleForm.resourceId}
+                    >
+                      <option value="">Selecciona recurso</option>
+                      {resources.filter((resource) => resource.is_active).map((resource) => (
+                        <option key={resource.id} value={resource.id}>{resource.name} ({resource.code})</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Nuevo inicio
+                    <input
+                      onChange={(event) => setRescheduleForm({ ...rescheduleForm, startsAt: event.target.value })}
+                      type="datetime-local"
+                      value={rescheduleForm.startsAt}
+                    />
+                  </label>
+                  <label>
+                    Nuevo fin
+                    <input
+                      onChange={(event) => setRescheduleForm({ ...rescheduleForm, endsAt: event.target.value })}
+                      type="datetime-local"
+                      value={rescheduleForm.endsAt}
+                    />
+                  </label>
+                  <button className="secondary-action" disabled={isBusy} type="submit">Reprogramar</button>
+                </form>
+
+                <div className="appointment-list">
+                  {appointments.slice(0, 8).map((appointment) => (
+                    <article key={appointment.id}>
+                      <strong>{formatDate(appointment.starts_at)} — {formatDate(appointment.ends_at)}</strong>
+                      <small>{appointment.resource_name} · {appointment.service_code} · {appointment.status}</small>
+                      {appointment.status !== 'cancelled' && (
+                        <button className="secondary-action" disabled={isBusy} onClick={() => handleCancelAppointment(appointment.id)} type="button">Cancelar</button>
+                      )}
+                    </article>
+                  ))}
                 </div>
               </div>
 

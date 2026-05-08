@@ -76,6 +76,27 @@ class MessageCreate(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+
+
+class ResourceCreate(BaseModel):
+    tenant_id: UUID
+    vertical_code: str = Field(pattern='^(field_service|beauty|pet_grooming)$')
+    resource_type: str = Field(pattern='^(technician|chair|stylist|groomer|room|vehicle)$')
+    code: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=160)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class ResourceUpdate(BaseModel):
+    vertical_code: str | None = Field(default=None, pattern='^(field_service|beauty|pet_grooming)$')
+    resource_type: str | None = Field(default=None, pattern='^(technician|chair|stylist|groomer|room|vehicle)$')
+    code: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    capabilities: dict[str, Any] | None = None
+    is_active: bool | None = None
+
+
 class ServiceRequestCreate(BaseModel):
     tenant_id: UUID
     contact_id: UUID
@@ -96,6 +117,18 @@ class AppointmentCreate(BaseModel):
     ends_at: datetime
     conversation_id: UUID | None = None
     service_request_id: UUID | None = None
+    notes: str | None = None
+
+
+
+
+class AppointmentUpdate(BaseModel):
+    resource_id: UUID | None = None
+    service_code: str | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    status: str | None = Field(default=None, pattern='^(scheduled|confirmed|completed|cancelled|no_show)$')
+    confirmation_status: str | None = Field(default=None, pattern='^(pending|confirmed|declined)$')
     notes: str | None = None
 
 

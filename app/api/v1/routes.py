@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 
 from app.api.v1.schemas import (
     AppointmentCreate,
+    AppointmentUpdate,
     ChannelCreate,
     ContactUpsert,
     ConversationCreate,
@@ -23,6 +24,8 @@ from app.api.v1.schemas import (
     KnowledgeDocumentUpdate,
     MessageCreate,
     PromptCreate,
+    ResourceCreate,
+    ResourceUpdate,
     ServiceRequestCreate,
     TenantCreate,
     TenantUpdate,
@@ -1334,6 +1337,185 @@ async def release_conversation(
     return record_to_dict(row)
 
 
+async def ensure_resource_available(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    resource_id: UUID,
+    starts_at: datetime,
+    ends_at: datetime,
+    appointment_id: UUID | None = None,
+) -> None:
+    if starts_at >= ends_at:
+        raise HTTPException(status_code=400, detail='Appointment starts_at must be before ends_at')
+
+    resource = await conn.fetchrow(
+        """
+        select id, is_active
+        from app.resources
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        resource_id,
+    )
+    if not resource:
+        raise HTTPException(status_code=404, detail='Resource not found')
+    if not resource['is_active']:
+        raise HTTPException(status_code=409, detail='Resource is inactive')
+
+    conflict = await conn.fetchrow(
+        """
+        select id, starts_at, ends_at, status
+        from app.appointments
+        where tenant_id=$1
+          and resource_id=$2
+          and status in ('scheduled','confirmed')
+          and ($5::uuid is null or id <> $5)
+          and tstzrange(starts_at, ends_at, '[)') && tstzrange($3, $4, '[)')
+        order by starts_at
+        limit 1
+        """,
+        tenant_id,
+        resource_id,
+        starts_at,
+        ends_at,
+        appointment_id,
+    )
+    if conflict:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'message': 'Resource has a conflicting appointment',
+                'conflicting_appointment_id': str(conflict['id']),
+                'starts_at': conflict['starts_at'].isoformat(),
+                'ends_at': conflict['ends_at'].isoformat(),
+                'status': conflict['status'],
+            },
+        )
+
+
+async def appointment_detail(conn: asyncpg.Connection, tenant_id: UUID, appointment_id: UUID):
+    return await conn.fetchrow(
+        """
+        select a.*, r.name as resource_name, r.code as resource_code, c.display_name as contact_label, c.phone_e164
+        from app.appointments a
+        join app.resources r on r.id=a.resource_id and r.tenant_id=a.tenant_id
+        join app.contacts c on c.id=a.contact_id and c.tenant_id=a.tenant_id
+        where a.tenant_id=$1 and a.id=$2
+        """,
+        tenant_id,
+        appointment_id,
+    )
+
+
+@tenant_ops_router.get('/resources')
+async def list_resources(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    resource_type: str | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select *
+        from app.resources
+        where tenant_id=$1
+          and ($2::text is null or resource_type=$2)
+          and ($3::boolean is null or is_active=$3)
+        order by is_active desc, resource_type, name
+        limit 250
+        """,
+        tenant_id,
+        resource_type,
+        is_active,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_ops_router.post('/resources', status_code=201)
+async def create_resource(payload: ResourceCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, payload.tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    try:
+        row = await conn.fetchrow(
+            """
+            insert into app.resources (tenant_id, vertical_code, resource_type, code, name, capabilities, is_active)
+            values ($1,$2,$3,$4,$5,$6::jsonb,$7)
+            returning *
+            """,
+            payload.tenant_id,
+            payload.vertical_code,
+            payload.resource_type,
+            payload.code,
+            payload.name,
+            json.dumps(payload.capabilities),
+            payload.is_active,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail='Resource code already exists for tenant') from exc
+    await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.created', entity_type='resource', entity_id=str(row['id']))
+    return record_to_dict(row)
+
+
+@tenant_ops_router.patch('/resources/{resource_id}')
+async def update_resource(resource_id: UUID, payload: ResourceUpdate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await conn.fetchrow('select * from app.resources where tenant_id=$1 and id=$2', tenant_id, resource_id)
+        if not row:
+            raise HTTPException(status_code=404, detail='Resource not found')
+        return record_to_dict(row)
+    try:
+        row = await conn.fetchrow(
+            """
+            update app.resources
+            set vertical_code=coalesce($3, vertical_code),
+                resource_type=coalesce($4, resource_type),
+                code=coalesce($5, code),
+                name=coalesce($6, name),
+                capabilities=coalesce($7::jsonb, capabilities),
+                is_active=coalesce($8, is_active)
+            where tenant_id=$1 and id=$2
+            returning *
+            """,
+            tenant_id,
+            resource_id,
+            update_data.get('vertical_code'),
+            update_data.get('resource_type'),
+            update_data.get('code'),
+            update_data.get('name'),
+            json.dumps(update_data['capabilities']) if 'capabilities' in update_data else None,
+            update_data.get('is_active'),
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail='Resource code already exists for tenant') from exc
+    if not row:
+        raise HTTPException(status_code=404, detail='Resource not found')
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.updated', entity_type='resource', entity_id=str(resource_id))
+    return record_to_dict(row)
+
+
+@tenant_ops_router.delete('/resources/{resource_id}', status_code=204)
+async def deactivate_resource(resource_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        update app.resources
+        set is_active=false
+        where tenant_id=$1 and id=$2
+        returning id
+        """,
+        tenant_id,
+        resource_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Resource not found')
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.deactivated', entity_type='resource', entity_id=str(resource_id))
+    return Response(status_code=204)
+
+
 @tenant_ops_router.post('/service-requests', status_code=201)
 async def create_service_request(payload: ServiceRequestCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, payload.tenant_id, conn)
@@ -1362,17 +1544,129 @@ async def patch_service_request(
     return record_to_dict(row)
 
 
+@tenant_ops_router.get('/appointments')
+async def list_appointments(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    resource_id: UUID | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias='status'),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select a.*, r.name as resource_name, r.code as resource_code, c.display_name as contact_label, c.phone_e164
+        from app.appointments a
+        join app.resources r on r.id=a.resource_id and r.tenant_id=a.tenant_id
+        join app.contacts c on c.id=a.contact_id and c.tenant_id=a.tenant_id
+        where a.tenant_id=$1
+          and ($2::uuid is null or a.resource_id=$2)
+          and ($3::text is null or a.status=$3)
+        order by a.starts_at desc
+        limit 250
+        """,
+        tenant_id,
+        resource_id,
+        status_filter,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
 @tenant_ops_router.post('/appointments', status_code=201)
 async def create_appointment(payload: AppointmentCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    await ensure_resource_available(conn, tenant_id=payload.tenant_id, resource_id=payload.resource_id, starts_at=payload.starts_at, ends_at=payload.ends_at)
+    try:
+        row = await conn.fetchrow(
+            """
+            insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, resource_id, service_code, starts_at, ends_at, notes)
+            values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *
+            """,
+            payload.tenant_id, payload.contact_id, payload.conversation_id, payload.service_request_id, payload.resource_id, payload.service_code, payload.starts_at, payload.ends_at, payload.notes,
+        )
+    except asyncpg.ExclusionViolationError as exc:
+        raise HTTPException(status_code=409, detail='Resource has a conflicting appointment') from exc
+    if payload.service_request_id:
+        await conn.execute(
+            """
+            update app.service_requests
+            set status='scheduled', assigned_resource_id=$3
+            where tenant_id=$1 and id=$2
+            """,
+            payload.tenant_id,
+            payload.service_request_id,
+            payload.resource_id,
+        )
+    await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='appointment.created', entity_type='appointment', entity_id=str(row['id']))
+    return record_to_dict(row)
+
+
+@tenant_ops_router.patch('/appointments/{appointment_id}')
+async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
+    existing = await conn.fetchrow('select * from app.appointments where tenant_id=$1 and id=$2', tenant_id, appointment_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail='Appointment not found')
+    update_data = payload.model_dump(exclude_unset=True)
+    next_resource_id = update_data.get('resource_id') or existing['resource_id']
+    next_starts_at = update_data.get('starts_at') or existing['starts_at']
+    next_ends_at = update_data.get('ends_at') or existing['ends_at']
+    next_status = update_data.get('status') or existing['status']
+    if next_status in ('scheduled', 'confirmed'):
+        await ensure_resource_available(conn, tenant_id=tenant_id, resource_id=next_resource_id, starts_at=next_starts_at, ends_at=next_ends_at, appointment_id=appointment_id)
+    elif next_starts_at >= next_ends_at:
+        raise HTTPException(status_code=400, detail='Appointment starts_at must be before ends_at')
+    try:
+        row = await conn.fetchrow(
+            """
+            update app.appointments
+            set resource_id=$3,
+                service_code=coalesce($4, service_code),
+                starts_at=$5,
+                ends_at=$6,
+                status=$7,
+                confirmation_status=coalesce($8, confirmation_status),
+                notes=coalesce($9, notes)
+            where tenant_id=$1 and id=$2
+            returning *
+            """,
+            tenant_id,
+            appointment_id,
+            next_resource_id,
+            update_data.get('service_code'),
+            next_starts_at,
+            next_ends_at,
+            next_status,
+            update_data.get('confirmation_status'),
+            update_data.get('notes'),
+        )
+    except asyncpg.ExclusionViolationError as exc:
+        raise HTTPException(status_code=409, detail='Resource has a conflicting appointment') from exc
+    action = 'appointment.cancelled' if next_status == 'cancelled' else 'appointment.updated'
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action=action, entity_type='appointment', entity_id=str(appointment_id))
+    return record_to_dict(row)
+
+
+@tenant_ops_router.post('/appointments/{appointment_id}/cancel', status_code=202)
+async def cancel_appointment(appointment_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
     row = await conn.fetchrow(
         """
-        insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, resource_id, service_code, starts_at, ends_at, notes)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *
+        update app.appointments
+        set status='cancelled'
+        where tenant_id=$1 and id=$2 and status <> 'cancelled'
+        returning *
         """,
-        payload.tenant_id, payload.contact_id, payload.conversation_id, payload.service_request_id, payload.resource_id, payload.service_code, payload.starts_at, payload.ends_at, payload.notes,
+        tenant_id,
+        appointment_id,
     )
+    if not row:
+        exists = await conn.fetchrow('select id from app.appointments where tenant_id=$1 and id=$2', tenant_id, appointment_id)
+        if not exists:
+            raise HTTPException(status_code=404, detail='Appointment not found')
+        row = await appointment_detail(conn, tenant_id, appointment_id)
+    else:
+        await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='appointment.cancelled', entity_type='appointment', entity_id=str(appointment_id))
     return record_to_dict(row)
 
 
