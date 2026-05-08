@@ -2353,6 +2353,231 @@ async def create_prompt(payload: PromptCreate, request: Request, conn: asyncpg.C
     return record_to_dict(row)
 
 
+def readiness_check(key: str, label: str, ready: bool, reason: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        'key': key,
+        'label': label,
+        'ready': ready,
+        'reason': reason,
+        'details': details or {},
+    }
+
+
+def readiness_response(tenant_id: UUID, checks: list[dict[str, Any]], smoke_question: str) -> dict[str, Any]:
+    reasons = [check['reason'] for check in checks if not check['ready']]
+    ready = not reasons
+    return {
+        'tenant_id': str(tenant_id),
+        'checked_at': datetime.now(UTC).isoformat(),
+        'status': 'ready' if ready else 'not_ready',
+        'ready': ready,
+        'reasons': reasons,
+        'smoke_question': smoke_question,
+        'checks': checks,
+    }
+
+
+async def build_tenant_readiness_report(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    *,
+    smoke_question: str = 'horarios políticas servicios garantías precios contacto',
+    retrieval_min_score: float = 0.12,
+) -> dict[str, Any]:
+    tenant = await conn.fetchrow(
+        'select id, slug, display_name, status, deleted_at from app.tenants where id=$1',
+        tenant_id,
+    )
+    checks: list[dict[str, Any]] = []
+
+    tenant_ready = bool(tenant and tenant['status'] == 'active' and tenant['deleted_at'] is None)
+    checks.append(
+        readiness_check(
+            'tenant_active',
+            'Tenant activo',
+            tenant_ready,
+            'Tenant activo y disponible.' if tenant_ready else 'El tenant no existe, no está activo o fue eliminado.',
+            record_to_dict(tenant) if tenant else {},
+        )
+    )
+
+    settings = await conn.fetchrow(
+        'select locale, business_hours, escalation_policy, pii_policy, no_train, max_bot_turns from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    settings_dict = record_to_dict(settings) if settings else {}
+    settings_ready = bool(
+        settings
+        and settings['locale']
+        and settings['business_hours']
+        and settings['pii_policy']
+        and settings['max_bot_turns'] > 0
+    )
+    checks.append(
+        readiness_check(
+            'tenant_settings',
+            'Settings operativos',
+            settings_ready,
+            'Settings mínimos configurados.' if settings_ready else 'Faltan settings mínimos: locale, horarios, PII policy o max_bot_turns.',
+            settings_dict,
+        )
+    )
+
+    channel = await conn.fetchrow(
+        """
+        select id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref,
+               verify_token_hash is not null as verify_token_hash_configured, account_mode, status
+        from app.tenant_channels
+        where tenant_id=$1 and provider='whatsapp_cloud_api'
+        """,
+        tenant_id,
+    )
+    channel_dict = record_to_dict(channel) if channel else {}
+    whatsapp_token_ready = token_ref_is_configured(channel['token_ref']) if channel else False
+    whatsapp_secret_ready = secret_ref_is_configured(channel['app_secret_ref']) if channel else False
+    whatsapp_verify_ready = secret_ref_is_configured(tenant_secret_ref(tenant_id, 'whatsapp_verify_token')) if channel else False
+    whatsapp_ready = bool(
+        channel
+        and channel['status'] == 'active'
+        and channel['business_id']
+        and channel['waba_id']
+        and channel['phone_number_id']
+        and whatsapp_token_ready
+        and whatsapp_secret_ready
+        and whatsapp_verify_ready
+    )
+    checks.append(
+        readiness_check(
+            'whatsapp_channel',
+            'Canal WhatsApp',
+            whatsapp_ready,
+            'Canal WhatsApp activo con secretos resueltos.' if whatsapp_ready else 'El canal WhatsApp no está activo o faltan IDs/secretos reales.',
+            {
+                **channel_dict,
+                'meta_access_token_configured': whatsapp_token_ready,
+                'app_secret_configured': whatsapp_secret_ready,
+                'verify_token_configured': whatsapp_verify_ready,
+            },
+        )
+    )
+
+    knowledge_counts = await conn.fetchrow(
+        """
+        select
+          count(distinct kd.id) as active_documents,
+          count(kc.id) as active_chunks
+        from app.knowledge_documents kd
+        left join app.knowledge_chunks kc on kc.tenant_id=kd.tenant_id and kc.document_id=kd.id
+        where kd.tenant_id=$1 and kd.status='active'
+        """,
+        tenant_id,
+    )
+    retrieval_rows = await conn.fetch(
+        """
+        select kc.id, kc.document_id, kd.title as document_title, kd.source_uri, kd.source_type,
+               kd.document_type, kd.visibility, kc.chunk_index, kc.section_path, kc.chunk_text,
+               kc.token_count, kc.metadata
+        from app.knowledge_chunks kc
+        join app.knowledge_documents kd on kd.id=kc.document_id and kd.tenant_id=kc.tenant_id
+        where kc.tenant_id=$1 and kd.status='active'
+        order by kd.updated_at desc, kc.chunk_index asc
+        limit 500
+        """,
+        tenant_id,
+    )
+    matches = rank_chunks(smoke_question, [record_to_dict(row) for row in retrieval_rows], max_chunks=3)
+    retrieval_answer = build_grounded_answer(smoke_question, matches, min_score=retrieval_min_score)
+    knowledge_ready = bool(
+        knowledge_counts
+        and knowledge_counts['active_documents'] > 0
+        and knowledge_counts['active_chunks'] > 0
+        and retrieval_answer['sufficient_context']
+    )
+    checks.append(
+        readiness_check(
+            'knowledge_retrieval',
+            'Documentos activos y retrieval smoke test',
+            knowledge_ready,
+            'Knowledge base activa y retrieval smoke test con contexto suficiente.' if knowledge_ready else 'No hay documentos/chunks activos o el retrieval smoke test no recuperó contexto suficiente.',
+            {
+                'active_documents': knowledge_counts['active_documents'] if knowledge_counts else 0,
+                'active_chunks': knowledge_counts['active_chunks'] if knowledge_counts else 0,
+                'returned_chunk_count': len(matches),
+                'top_score': matches[0].score if matches else None,
+                'sufficient_context': retrieval_answer['sufficient_context'],
+            },
+        )
+    )
+
+    escalation_policy = settings_dict.get('escalation_policy') or {}
+    handoff_ready = bool(
+        settings
+        and escalation_policy
+        and (
+            escalation_policy.get('handoff_required') is True
+            or escalation_policy.get('risk_keywords')
+            or escalation_policy.get('handoff_message')
+        )
+    )
+    checks.append(
+        readiness_check(
+            'handoff',
+            'Handoff humano',
+            handoff_ready,
+            'Política de handoff configurada.' if handoff_ready else 'Falta configurar una política de handoff/escalamiento humano.',
+            {'escalation_policy': escalation_policy},
+        )
+    )
+
+    audit_count = await conn.fetchval('select count(*) from app.audit_logs where tenant_id=$1', tenant_id)
+    audit_ready = audit_count > 0
+    checks.append(
+        readiness_check(
+            'audit',
+            'Auditoría',
+            audit_ready,
+            'Auditoría con eventos registrados.' if audit_ready else 'No hay eventos de auditoría para evidenciar cambios del tenant.',
+            {'audit_log_entries': audit_count},
+        )
+    )
+
+    return readiness_response(tenant_id, checks, smoke_question)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/readiness')
+async def get_tenant_readiness(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    smoke_question: str = Query(default='horarios políticas servicios garantías precios contacto', min_length=3, max_length=1000),
+    retrieval_min_score: float = Query(default=0.12, ge=0, le=1),
+):
+    await require_min_role('admin')(request)
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    report = await build_tenant_readiness_report(
+        conn,
+        tenant_id,
+        smoke_question=smoke_question,
+        retrieval_min_score=retrieval_min_score,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant.readiness_checked',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+        metadata={
+            'status': report['status'],
+            'not_ready_reasons': report['reasons'],
+            'smoke_question': smoke_question,
+        },
+    )
+    return report
+
+
 @tenant_admin_router.get('/audit-logs')
 async def list_audit_logs(
     request: Request,

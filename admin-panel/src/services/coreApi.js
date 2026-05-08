@@ -94,6 +94,17 @@ export function updateTenantSettings(session, tenantId, payload) {
   });
 }
 
+
+export function getTenantReadiness(session, tenantId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.smokeQuestion) params.set('smoke_question', options.smokeQuestion);
+  if (options.retrievalMinScore !== undefined && options.retrievalMinScore !== '') {
+    params.set('retrieval_min_score', options.retrievalMinScore);
+  }
+  const query = params.toString();
+  return request(`/tenants/${tenantId}/readiness${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
 export function listAuditLogs(session, tenantId) {
   return request('/audit-logs', { session, tenantId });
 }

@@ -24,6 +24,12 @@ export const adminModules = [
     scope: ['Conversaciones', 'Mensajes', 'Tomar/liberar handoff', 'Auditoría operacional'],
   },
   {
+    id: 'go-live-readiness',
+    label: 'Go-live Readiness',
+    summary: 'Checklist automatizado para validar si un tenant puede entrar a producción controlada.',
+    scope: ['Tenant activo', 'Settings y WhatsApp', 'Retrieval smoke test', 'Handoff y auditoría'],
+  },
+  {
     id: 'audit',
     label: 'Audit',
     summary: 'Trazabilidad de cambios y acciones administrativas.',
