@@ -75,14 +75,61 @@ def verify_signature_with_secret(body: bytes, signature: str | None, app_secret:
     return hmac.compare_digest(expected, signature)
 
 
+MEDIA_MESSAGE_TYPES = {'image', 'audio', 'video'}
+SUPPORTED_OUTBOUND_MESSAGE_TYPES = {'text', *MEDIA_MESSAGE_TYPES}
 
-async def send_text_message(
+
+def build_whatsapp_message_payload(
+    to: str,
+    message_type: str,
+    text: str | None = None,
+    media_id: str | None = None,
+    media_url: str | None = None,
+    caption: str | None = None,
+) -> dict[str, Any]:
+    normalized_type = message_type if message_type in SUPPORTED_OUTBOUND_MESSAGE_TYPES else 'text'
+    payload: dict[str, Any] = {
+        'messaging_product': 'whatsapp',
+        'to': to,
+        'type': normalized_type,
+    }
+    if normalized_type == 'text':
+        payload['text'] = {'body': (text or '').strip()}
+        return payload
+
+    media_object: dict[str, str] = {}
+    if media_id:
+        media_object['id'] = media_id.strip()
+    elif media_url:
+        media_object['link'] = media_url.strip()
+    else:
+        raise ValueError(f'Outbound WhatsApp {normalized_type} messages require media_id or media_url')
+
+    if normalized_type in {'image', 'video'} and (caption or text):
+        media_object['caption'] = (caption or text or '').strip()
+    payload[normalized_type] = media_object
+    return payload
+
+
+async def send_whatsapp_message(
     phone_number_id: str,
     to: str,
-    text: str,
+    message_type: str,
+    text: str | None = None,
     delivery_mode: str = 'mock',
     token_ref: str | None = None,
+    media_id: str | None = None,
+    media_url: str | None = None,
+    caption: str | None = None,
 ) -> dict[str, Any]:
+    message_payload = build_whatsapp_message_payload(
+        to=to,
+        message_type=message_type,
+        text=text,
+        media_id=media_id,
+        media_url=media_url,
+        caption=caption,
+    )
     settings = get_settings()
     if delivery_mode != 'live':
         return {
@@ -91,6 +138,8 @@ async def send_text_message(
             'phone_number_id': phone_number_id,
             'to': to,
             'text': text,
+            'message_type': message_payload['type'],
+            'message': message_payload,
         }
     access_token = resolve_secret_ref(token_ref)
     if not meta_token_is_configured(access_token):
@@ -102,12 +151,83 @@ async def send_text_message(
         response = await client.post(
             url,
             headers={'Authorization': f'Bearer {access_token}'},
-            json={
-                'messaging_product': 'whatsapp',
-                'to': to,
-                'type': 'text',
-                'text': {'body': text},
-            },
+            json=message_payload,
         )
         response.raise_for_status()
         return response.json()
+
+
+async def send_text_message(
+    phone_number_id: str,
+    to: str,
+    text: str,
+    delivery_mode: str = 'mock',
+    token_ref: str | None = None,
+) -> dict[str, Any]:
+    return await send_whatsapp_message(
+        phone_number_id=phone_number_id,
+        to=to,
+        message_type='text',
+        text=text,
+        delivery_mode=delivery_mode,
+        token_ref=token_ref,
+    )
+
+
+async def get_whatsapp_media_info(
+    media_id: str,
+    token_ref: str | None,
+) -> dict[str, Any]:
+    settings = get_settings()
+    access_token = resolve_secret_ref(token_ref)
+
+    if not meta_token_is_configured(access_token):
+        raise RuntimeError(
+            'WhatsApp media download requires a real Meta access token.'
+        )
+
+    url = f'https://graph.facebook.com/{settings.meta_graph_version}/{media_id}'
+
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        response = await client.get(
+            url,
+            headers={'Authorization': f'Bearer {access_token}'},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def download_whatsapp_media(
+    media_id: str,
+    token_ref: str | None,
+) -> tuple[bytes, str]:
+    media_info = await get_whatsapp_media_info(
+        media_id=media_id,
+        token_ref=token_ref,
+    )
+
+    media_url = media_info.get('url')
+    if not media_url:
+        raise RuntimeError('Meta did not return a media download URL.')
+
+    access_token = resolve_secret_ref(token_ref)
+
+    if not meta_token_is_configured(access_token):
+        raise RuntimeError(
+            'WhatsApp media download requires a real Meta access token.'
+        )
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        response = await client.get(
+            media_url,
+            headers={'Authorization': f'Bearer {access_token}'},
+        )
+        response.raise_for_status()
+
+        content_type = (
+            response.headers.get('content-type')
+            or media_info.get('mime_type')
+            or 'application/octet-stream'
+        )
+
+        return response.content, content_type

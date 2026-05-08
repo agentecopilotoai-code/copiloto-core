@@ -1040,3 +1040,29 @@ fieldset {
     grid-template-columns: 1fr;
   }
 }
+
+.message-media {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+
+.message-media img,
+.message-media video {
+  border-radius: 12px;
+  max-height: 18rem;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.message-media audio {
+  max-width: 100%;
+}
+
+.message-media span {
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 0.65rem;
+}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   acceptConversationHandoff,
+  conversationMessageMediaUrl,
   createConversationHandoff,
   getConversation,
   listConversations,
@@ -35,6 +36,69 @@ function Notice({ notice }) {
   return <p className={`notice ${notice.type}`}>{notice.text}</p>;
 }
 
+function messageLabel(message) {
+  const labels = {
+    audio: 'Audio',
+    image: 'Imagen',
+    text: 'Texto',
+    video: 'Video',
+  };
+  return labels[message.message_type] || message.message_type || 'Mensaje';
+}
+
+function mediaSource(message, session, tenantId) {
+  if (
+    tenantId &&
+    message.id &&
+    message.conversation_id &&
+    message.media_id &&
+    ['image', 'video', 'audio'].includes(message.message_type)
+  ) {
+    return conversationMessageMediaUrl(
+      session,
+      tenantId,
+      message.conversation_id,
+      message.id,
+    );
+  }
+
+  return null;
+}
+
+function renderMessageContent(message, session, tenantId) {
+  const source = mediaSource(message, session, tenantId);
+  const text = message.body_text;
+
+  if (message.message_type === 'image') {
+    return (
+      <div className="message-media">
+        {source ? <img alt={text || 'Imagen de WhatsApp'} src={source} /> : <span>Imagen · media_id: {message.media_id || 'pendiente'}</span>}
+        {text ? <p>{text}</p> : null}
+      </div>
+    );
+  }
+
+  if (message.message_type === 'video') {
+    return (
+      <div className="message-media">
+        {source ? <video controls src={source}>Tu navegador no soporta video embebido.</video> : <span>Video · media_id: {message.media_id || 'pendiente'}</span>}
+        {text ? <p>{text}</p> : null}
+      </div>
+    );
+  }
+
+  if (message.message_type === 'audio') {
+    return (
+      <div className="message-media">
+        {source ? <audio controls src={source}>Tu navegador no soporta audio embebido.</audio> : <span>Audio · media_id: {message.media_id || 'pendiente'}</span>}
+        {text ? <p>{text}</p> : null}
+      </div>
+    );
+  }
+
+  return <p>{text || JSON.stringify(message.payload)}</p>;
+}
+
 function deliveryLabel(message) {
   if (message.status === 'queued') return 'En cola: pendiente del worker';
   if (message.status === 'failed') return `Falló WhatsApp: ${message.error_message || message.error_code || 'sin detalle'}`;
@@ -49,7 +113,8 @@ export function OperationsDesk({ module, session, tenant }) {
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [conversationDetail, setConversationDetail] = useState(null);
   const [messageText, setMessageText] = useState('');
-  const [startForm, setStartForm] = useState({ displayName: '', initialMessage: '', phone: '' });
+  const [messageMedia, setMessageMedia] = useState({ mediaId: '', mediaUrl: '', mimeType: '', type: 'text' });
+  const [startForm, setStartForm] = useState({ displayName: '', initialMessage: '', mediaId: '', mediaUrl: '', mimeType: '', phone: '', type: 'text' });
   const [handoffReason, setHandoffReason] = useState('manual_or_policy_handoff');
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -217,8 +282,13 @@ export function OperationsDesk({ module, session, tenant }) {
     event.preventDefault();
     const phone = startForm.phone.trim();
     const initialMessage = startForm.initialMessage.trim();
-    if (!phone || !initialMessage) {
+    const isMediaMessage = startForm.type !== 'text';
+    if (!phone || (!initialMessage && !isMediaMessage)) {
       setNotice({ type: 'error', text: 'Teléfono y mensaje inicial son obligatorios.' });
+      return;
+    }
+    if (isMediaMessage && !startForm.mediaId.trim() && !startForm.mediaUrl.trim()) {
+      setNotice({ type: 'error', text: 'Para enviar imagen, video o audio agrega un media_id de Meta o una URL pública.' });
       return;
     }
     setIsBusy(true);
@@ -226,13 +296,17 @@ export function OperationsDesk({ module, session, tenant }) {
     try {
       const conversation = await startConversation(session, tenant.id, {
         display_name: startForm.displayName.trim() || undefined,
-        initial_message: initialMessage,
+        initial_media_id: startForm.mediaId.trim() || undefined,
+        initial_media_url: startForm.mediaUrl.trim() || undefined,
+        initial_message: initialMessage || undefined,
+        initial_message_type: startForm.type,
+        initial_mime_type: startForm.mimeType.trim() || undefined,
         phone_e164: phone,
       });
       setConversationDetail(conversation);
       setSelectedConversationId(conversation.id);
       refreshConversations();
-      setStartForm({ displayName: '', initialMessage: '', phone: '' });
+      setStartForm({ displayName: '', initialMessage: '', mediaId: '', mediaUrl: '', mimeType: '', phone: '', type: 'text' });
       setNotice({ type: 'success', text: 'Conversación iniciada y mensaje inicial encolado.' });
     } catch (error) {
       setNotice({ type: 'error', text: error.message });
@@ -244,15 +318,27 @@ export function OperationsDesk({ module, session, tenant }) {
   async function handleSendMessage(event) {
     event.preventDefault();
     const bodyText = messageText.trim();
-    if (!bodyText) {
+    const isMediaMessage = messageMedia.type !== 'text';
+    if (!bodyText && !isMediaMessage) {
       setNotice({ type: 'error', text: 'Escribe un mensaje antes de enviar.' });
       return;
     }
+    if (isMediaMessage && !messageMedia.mediaId.trim() && !messageMedia.mediaUrl.trim()) {
+      setNotice({ type: 'error', text: 'Para enviar imagen, video o audio agrega un media_id de Meta o una URL pública.' });
+      return;
+    }
     await runAction(
-      () => sendConversationMessage(session, tenant.id, selectedConversationId, { body_text: bodyText }),
+      () => sendConversationMessage(session, tenant.id, selectedConversationId, {
+        body_text: bodyText || undefined,
+        media_id: messageMedia.mediaId.trim() || undefined,
+        message_type: messageMedia.type,
+        mime_type: messageMedia.mimeType.trim() || undefined,
+        payload: messageMedia.mediaUrl.trim() ? { media_url: messageMedia.mediaUrl.trim() } : {},
+      }),
       'Mensaje outbound encolado y auditado.',
     );
     setMessageText('');
+    setMessageMedia({ mediaId: '', mediaUrl: '', mimeType: '', type: 'text' });
   }
 
   return (
@@ -297,15 +383,51 @@ export function OperationsDesk({ module, session, tenant }) {
             value={startForm.displayName}
           />
         </label>
+        <label>
+          Tipo de mensaje
+          <select
+            onChange={(event) => setStartForm({ ...startForm, type: event.target.value })}
+            value={startForm.type}
+          >
+            <option value="text">Texto</option>
+            <option value="image">Imagen</option>
+            <option value="video">Video</option>
+            <option value="audio">Audio</option>
+          </select>
+        </label>
+        <label>
+          MIME type
+          <input
+            onChange={(event) => setStartForm({ ...startForm, mimeType: event.target.value })}
+            placeholder="image/jpeg, video/mp4, audio/ogg"
+            value={startForm.mimeType}
+          />
+        </label>
+        <label>
+          Media ID Meta
+          <input
+            onChange={(event) => setStartForm({ ...startForm, mediaId: event.target.value })}
+            placeholder="ID del media subido a WhatsApp"
+            value={startForm.mediaId}
+          />
+        </label>
+        <label>
+          URL pública media
+          <input
+            onChange={(event) => setStartForm({ ...startForm, mediaUrl: event.target.value })}
+            placeholder="https://..."
+            value={startForm.mediaUrl}
+          />
+        </label>
         <label className="wide">
-          Mensaje inicial
+          Mensaje inicial / caption
           <textarea
             onChange={(event) => setStartForm({ ...startForm, initialMessage: event.target.value })}
-            placeholder="Hola, te escribimos desde el equipo de atención..."
+            placeholder="Texto para mensajes de texto o caption para imagen/video..."
             value={startForm.initialMessage}
           />
         </label>
-        <button className="primary-action" disabled={isBusy || !startForm.phone.trim() || !startForm.initialMessage.trim()} type="submit">
+        <button className="primary-action" disabled={isBusy || !startForm.phone.trim() || (startForm.type === 'text' && !startForm.initialMessage.trim())} type="submit">
           Iniciar conversación
         </button>
       </form>
@@ -395,22 +517,60 @@ export function OperationsDesk({ module, session, tenant }) {
               <div className="message-thread" aria-live="polite" ref={messageThreadRef}>
                 {(conversationDetail?.messages || []).map((message) => (
                   <article className={`message-bubble ${message.direction}`} key={message.id}>
-                    <small>{message.sender_actor_type} · {formatDate(message.created_at)} · {deliveryLabel(message)}</small>
-                    <p>{message.body_text || JSON.stringify(message.payload)}</p>
+                    <small>
+                      {message.sender_actor_type} · {messageLabel(message)} · {formatDate(message.created_at)} · {deliveryLabel(message)}
+                    </small>
+                    {renderMessageContent(message, session, tenant?.id)}
                   </article>
                 ))}
               </div>
 
               <form className="message-composer" onSubmit={handleSendMessage}>
                 <label>
-                  Respuesta outbound
+                  Tipo de respuesta
+                  <select
+                    onChange={(event) => setMessageMedia({ ...messageMedia, type: event.target.value })}
+                    value={messageMedia.type}
+                  >
+                    <option value="text">Texto</option>
+                    <option value="image">Imagen</option>
+                    <option value="video">Video</option>
+                    <option value="audio">Audio</option>
+                  </select>
+                </label>
+                <label>
+                  Media ID Meta
+                  <input
+                    onChange={(event) => setMessageMedia({ ...messageMedia, mediaId: event.target.value })}
+                    placeholder="ID del media subido a WhatsApp"
+                    value={messageMedia.mediaId}
+                  />
+                </label>
+                <label>
+                  URL pública media
+                  <input
+                    onChange={(event) => setMessageMedia({ ...messageMedia, mediaUrl: event.target.value })}
+                    placeholder="https://..."
+                    value={messageMedia.mediaUrl}
+                  />
+                </label>
+                <label>
+                  MIME type
+                  <input
+                    onChange={(event) => setMessageMedia({ ...messageMedia, mimeType: event.target.value })}
+                    placeholder="image/jpeg, video/mp4, audio/ogg"
+                    value={messageMedia.mimeType}
+                  />
+                </label>
+                <label>
+                  Respuesta outbound / caption
                   <textarea
                     onChange={(event) => setMessageText(event.target.value)}
-                    placeholder="Escribe la respuesta para el contacto..."
+                    placeholder="Escribe texto o caption para imagen/video..."
                     value={messageText}
                   />
                 </label>
-                <button className="primary-action" disabled={isBusy || !messageText.trim()} type="submit">
+                <button className="primary-action" disabled={isBusy || (messageMedia.type === 'text' && !messageText.trim())} type="submit">
                   Enviar respuesta
                 </button>
               </form>
