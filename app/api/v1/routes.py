@@ -320,6 +320,7 @@ async def tenant_id_from_request(request: Request, conn: asyncpg.Connection) -> 
     if not tenant_id:
         raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
     await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     return tenant_id
 
 

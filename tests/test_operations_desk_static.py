@@ -42,3 +42,12 @@ def test_admin_panel_mounts_operations_desk_module():
     assert 'new WebSocket' in api_source
     assert 'openConversationStream(session, tenant.id)' in component_source
     assert 'window.setInterval' not in component_source
+
+
+def test_tenant_ops_reads_set_rls_context_from_requested_tenant():
+    source = API_ROUTES.read_text()
+
+    assert 'async def tenant_id_from_request' in source
+    assert "request.state, 'requested_tenant_id', None" in source
+    assert 'await ensure_tenant_access(request, tenant_id, conn)' in source
+    assert "await conn.execute(\"select set_config('app.tenant_id', $1, true)\", str(tenant_id))" in source
