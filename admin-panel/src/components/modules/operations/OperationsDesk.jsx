@@ -4,16 +4,23 @@ import {
   acceptConversationHandoff,
   cancelAppointment,
   createAppointment,
+  createQuote,
   createResource,
+  createServiceRequest,
   conversationMessageMediaUrl,
   createConversationHandoff,
   getConversation,
+  getQuoteForSr,
   listAppointments,
   listConversations,
   listResources,
+  listServiceRequests,
   openConversationStream,
+  patchQuote,
+  patchServiceRequest,
   releaseConversation,
   sendConversationMessage,
+  sendQuote,
   updateAppointment,
   startConversation,
 } from '../../../services/coreApi.js';
@@ -127,6 +134,13 @@ export function OperationsDesk({ module, session, tenant }) {
   const [resourceForm, setResourceForm] = useState({ code: '', name: '', resourceType: 'technician', verticalCode: tenant?.vertical_code || 'field_service' });
   const [appointmentForm, setAppointmentForm] = useState({ endsAt: '', notes: '', resourceId: '', serviceCode: '', startsAt: '' });
   const [rescheduleForm, setRescheduleForm] = useState({ appointmentId: '', endsAt: '', resourceId: '', startsAt: '' });
+  const [serviceRequests, setServiceRequests] = useState([]);
+  const [selectedSrId, setSelectedSrId] = useState(null);
+  const [srQuote, setSrQuote] = useState(null);
+  const [srForm, setSrForm] = useState({ serviceType: '', problemSummary: '', urgency: 'normal' });
+  const [quoteItems, setQuoteItems] = useState([{ description: '', qty: 1, unit_price: 0 }]);
+  const [quoteDiscount, setQuoteDiscount] = useState(0);
+  const [quoteTax, setQuoteTax] = useState(0);
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState(null);
@@ -183,6 +197,39 @@ export function OperationsDesk({ module, session, tenant }) {
     });
   }
 
+  function refreshServiceRequests(contactId, silent = false) {
+    if (!tenant?.id || !contactId) {
+      setServiceRequests([]);
+      setSelectedSrId(null);
+      setSrQuote(null);
+      return Promise.resolve();
+    }
+    return listServiceRequests(session, tenant.id, { contact_id: contactId })
+      .then((items) => {
+        setServiceRequests(items);
+        setSelectedSrId((current) => current || items[0]?.id || null);
+      })
+      .catch((error) => {
+        if (!silent) setNotice({ type: 'error', text: error.message });
+      });
+  }
+
+  function refreshSrQuote(srId, silent = false) {
+    if (!tenant?.id || !srId) {
+      setSrQuote(null);
+      return Promise.resolve();
+    }
+    return getQuoteForSr(session, tenant.id, srId)
+      .then(setSrQuote)
+      .catch((error) => {
+        if (error.status === 404) {
+          setSrQuote(null);
+        } else if (!silent) {
+          setNotice({ type: 'error', text: error.message });
+        }
+      });
+  }
+
   useEffect(() => {
     setSelectedConversationId(null);
     setConversationDetail(null);
@@ -195,6 +242,19 @@ export function OperationsDesk({ module, session, tenant }) {
     if (conversationDetail?.id === selectedConversationId) return;
     refreshDetail();
   }, [conversationDetail?.id, selectedConversationId]);
+
+  useEffect(() => {
+    const contactId = conversationDetail?.contact_id;
+    setServiceRequests([]);
+    setSelectedSrId(null);
+    setSrQuote(null);
+    if (contactId) refreshServiceRequests(contactId, true);
+  }, [conversationDetail?.contact_id]);
+
+  useEffect(() => {
+    setSrQuote(null);
+    if (selectedSrId) refreshSrQuote(selectedSrId, true);
+  }, [selectedSrId]);
 
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
@@ -432,6 +492,124 @@ export function OperationsDesk({ module, session, tenant }) {
     } finally {
       setIsBusy(false);
     }
+  }
+
+  async function handleCreateServiceRequest(event) {
+    event.preventDefault();
+    if (!conversationDetail?.contact_id || !srForm.serviceType.trim()) {
+      setNotice({ type: 'error', text: 'Tipo de servicio es obligatorio.' });
+      return;
+    }
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      const sr = await createServiceRequest(session, tenant.id, {
+        contact_id: conversationDetail.contact_id,
+        conversation_id: selectedConversationId,
+        vertical_code: tenant.vertical_code || 'field_service',
+        service_type: srForm.serviceType.trim(),
+        problem_summary: srForm.problemSummary.trim() || undefined,
+        urgency: srForm.urgency,
+      });
+      setSrForm({ serviceType: '', problemSummary: '', urgency: 'normal' });
+      await refreshServiceRequests(conversationDetail.contact_id);
+      setSelectedSrId(sr.id);
+      setNotice({ type: 'success', text: 'Solicitud de servicio registrada.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handlePatchSrStatus(srId, newStatus) {
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      await patchServiceRequest(session, tenant.id, srId, { status: newStatus });
+      await refreshServiceRequests(conversationDetail?.contact_id);
+      setNotice({ type: 'success', text: `Solicitud actualizada a "${newStatus}".` });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function computeQuoteTotals() {
+    const subtotal = quoteItems.reduce((acc, item) => acc + (parseFloat(item.qty) || 0) * (parseFloat(item.unit_price) || 0), 0);
+    const grandTotal = subtotal - (parseFloat(quoteDiscount) || 0) + (parseFloat(quoteTax) || 0);
+    return { subtotal, grandTotal };
+  }
+
+  async function handleCreateQuote(event) {
+    event.preventDefault();
+    if (!selectedSrId) return;
+    const validItems = quoteItems.filter((item) => item.description.trim());
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      const { subtotal: _s, grandTotal: _g, ...rest } = computeQuoteTotals();
+      void _s; void _g; void rest;
+      await createQuote(session, tenant.id, selectedSrId, {
+        line_items: validItems.map((item) => ({
+          description: item.description.trim(),
+          qty: parseFloat(item.qty) || 1,
+          unit_price: parseFloat(item.unit_price) || 0,
+        })),
+        discount_total: parseFloat(quoteDiscount) || 0,
+        tax_total: parseFloat(quoteTax) || 0,
+      });
+      await refreshSrQuote(selectedSrId);
+      await refreshServiceRequests(conversationDetail?.contact_id, true);
+      setNotice({ type: 'success', text: 'Cotización creada.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleSendQuote() {
+    if (!srQuote?.id) return;
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      await sendQuote(session, tenant.id, srQuote.id);
+      await refreshSrQuote(selectedSrId);
+      setNotice({ type: 'success', text: 'Cotización enviada al contacto por WhatsApp.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleUpdateQuoteStatus(newStatus) {
+    if (!srQuote?.id) return;
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      await patchQuote(session, tenant.id, srQuote.id, { status: newStatus });
+      await refreshSrQuote(selectedSrId);
+      setNotice({ type: 'success', text: `Cotización actualizada a "${newStatus}".` });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function addQuoteItem() {
+    setQuoteItems((current) => [...current, { description: '', qty: 1, unit_price: 0 }]);
+  }
+
+  function removeQuoteItem(index) {
+    setQuoteItems((current) => current.filter((_, i) => i !== index));
+  }
+
+  function updateQuoteItem(index, field, value) {
+    setQuoteItems((current) => current.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
   }
 
   async function handleSendMessage(event) {
@@ -776,6 +954,195 @@ export function OperationsDesk({ module, session, tenant }) {
                     </article>
                   ))}
                 </div>
+              </div>
+
+              <div className="service-requests-panel">
+                <div>
+                  <strong>Solicitudes de servicio y cotizaciones</strong>
+                  <p className="hint">Registra solicitudes de servicio del contacto y genera cotizaciones orientativas enviables por WhatsApp.</p>
+                </div>
+
+                <form className="schedule-form" onSubmit={handleCreateServiceRequest}>
+                  <label>
+                    Tipo de servicio
+                    <input
+                      onChange={(event) => setSrForm({ ...srForm, serviceType: event.target.value })}
+                      placeholder="diagnostico / corte / baño / instalacion"
+                      value={srForm.serviceType}
+                    />
+                  </label>
+                  <label>
+                    Urgencia
+                    <select
+                      onChange={(event) => setSrForm({ ...srForm, urgency: event.target.value })}
+                      value={srForm.urgency}
+                    >
+                      <option value="low">Baja</option>
+                      <option value="normal">Normal</option>
+                      <option value="high">Alta</option>
+                      <option value="emergency">Emergencia</option>
+                    </select>
+                  </label>
+                  <label className="wide">
+                    Descripción del problema
+                    <textarea
+                      onChange={(event) => setSrForm({ ...srForm, problemSummary: event.target.value })}
+                      placeholder="Descripción breve de la solicitud..."
+                      value={srForm.problemSummary}
+                    />
+                  </label>
+                  <button className="secondary-action" disabled={isBusy || !conversationDetail?.contact_id || !srForm.serviceType.trim()} type="submit">
+                    Crear solicitud
+                  </button>
+                </form>
+
+                {serviceRequests.length > 0 && (
+                  <div className="sr-list">
+                    {serviceRequests.map((sr) => (
+                      <button
+                        className={`sr-card ${sr.id === selectedSrId ? 'active' : ''}`}
+                        key={sr.id}
+                        onClick={() => setSelectedSrId(sr.id)}
+                        type="button"
+                      >
+                        <span>{sr.service_type}</span>
+                        <small>{sr.vertical_code} · {sr.urgency} · <strong>{sr.status}</strong></small>
+                        {sr.problem_summary && <small>{sr.problem_summary}</small>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {selectedSrId && (
+                  <div className="sr-detail">
+                    <div className="action-row">
+                      {['open', 'qualified'].includes(serviceRequests.find((sr) => sr.id === selectedSrId)?.status) && (
+                        <button className="secondary-action" disabled={isBusy} onClick={() => handlePatchSrStatus(selectedSrId, 'cancelled')} type="button">
+                          Cancelar solicitud
+                        </button>
+                      )}
+                      {serviceRequests.find((sr) => sr.id === selectedSrId)?.status === 'open' && (
+                        <button className="secondary-action" disabled={isBusy} onClick={() => handlePatchSrStatus(selectedSrId, 'qualified')} type="button">
+                          Marcar calificada
+                        </button>
+                      )}
+                    </div>
+
+                    {!srQuote ? (
+                      <form className="quote-form" onSubmit={handleCreateQuote}>
+                        <strong>Nueva cotización</strong>
+                        {quoteItems.map((item, index) => (
+                          <div className="quote-item-row" key={index}>
+                            <input
+                              onChange={(event) => updateQuoteItem(index, 'description', event.target.value)}
+                              placeholder="Descripción del ítem"
+                              value={item.description}
+                            />
+                            <input
+                              min="0.01"
+                              onChange={(event) => updateQuoteItem(index, 'qty', event.target.value)}
+                              placeholder="Cant."
+                              step="0.01"
+                              type="number"
+                              value={item.qty}
+                            />
+                            <input
+                              min="0"
+                              onChange={(event) => updateQuoteItem(index, 'unit_price', event.target.value)}
+                              placeholder="Precio unit."
+                              step="0.01"
+                              type="number"
+                              value={item.unit_price}
+                            />
+                            <span className="item-total">
+                              {((parseFloat(item.qty) || 0) * (parseFloat(item.unit_price) || 0)).toLocaleString('es-CO')}
+                            </span>
+                            {quoteItems.length > 1 && (
+                              <button className="secondary-action" onClick={() => removeQuoteItem(index)} type="button">✕</button>
+                            )}
+                          </div>
+                        ))}
+                        <button className="secondary-action" onClick={addQuoteItem} type="button">+ Agregar ítem</button>
+                        <div className="quote-totals-row">
+                          <label>
+                            Descuento
+                            <input
+                              min="0"
+                              onChange={(event) => setQuoteDiscount(event.target.value)}
+                              step="0.01"
+                              type="number"
+                              value={quoteDiscount}
+                            />
+                          </label>
+                          <label>
+                            Impuestos
+                            <input
+                              min="0"
+                              onChange={(event) => setQuoteTax(event.target.value)}
+                              step="0.01"
+                              type="number"
+                              value={quoteTax}
+                            />
+                          </label>
+                          <div className="grand-total">
+                            Total: <strong>{computeQuoteTotals().grandTotal.toLocaleString('es-CO')} COP</strong>
+                          </div>
+                        </div>
+                        <button className="primary-action" disabled={isBusy || !quoteItems.some((item) => item.description.trim())} type="submit">
+                          Crear cotización
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="quote-detail">
+                        <div className="quote-header">
+                          <strong>Cotización</strong>
+                          <span className={`status-pill status-${srQuote.status}`}>{srQuote.status}</span>
+                        </div>
+                        <table className="quote-items-table">
+                          <thead>
+                            <tr><th>Descripción</th><th>Cant.</th><th>P. Unit.</th><th>Total</th></tr>
+                          </thead>
+                          <tbody>
+                            {(Array.isArray(srQuote.line_items) ? srQuote.line_items : JSON.parse(srQuote.line_items || '[]')).map((item, index) => (
+                              <tr key={index}>
+                                <td>{item.description}</td>
+                                <td>{item.qty}</td>
+                                <td>{Number(item.unit_price).toLocaleString('es-CO')}</td>
+                                <td>{(item.qty * item.unit_price).toLocaleString('es-CO')}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr><td colSpan="3">Subtotal</td><td>{Number(srQuote.subtotal).toLocaleString('es-CO')}</td></tr>
+                            <tr><td colSpan="3">Descuento</td><td>-{Number(srQuote.discount_total).toLocaleString('es-CO')}</td></tr>
+                            <tr><td colSpan="3">Impuestos</td><td>+{Number(srQuote.tax_total).toLocaleString('es-CO')}</td></tr>
+                            <tr className="total-row"><td colSpan="3"><strong>Total</strong></td><td><strong>{Number(srQuote.grand_total).toLocaleString('es-CO')} {srQuote.currency}</strong></td></tr>
+                          </tfoot>
+                        </table>
+                        {srQuote.valid_until && (
+                          <small>Válida hasta: {formatDate(srQuote.valid_until)}</small>
+                        )}
+                        <div className="action-row">
+                          {srQuote.status === 'draft' && (
+                            <button className="primary-action" disabled={isBusy} onClick={handleSendQuote} type="button">
+                              Enviar por WhatsApp
+                            </button>
+                          )}
+                          {srQuote.status === 'sent' && (
+                            <button className="secondary-action" disabled={isBusy} onClick={() => handleUpdateQuoteStatus('accepted')} type="button">
+                              Marcar aceptada
+                            </button>
+                          )}
+                          {['sent', 'draft'].includes(srQuote.status) && (
+                            <button className="secondary-action" disabled={isBusy} onClick={() => handleUpdateQuoteStatus('rejected')} type="button">
+                              Marcar rechazada
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="message-thread" aria-live="polite" ref={messageThreadRef}>

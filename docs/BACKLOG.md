@@ -19,17 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0010 — Implementar service requests y cotización orientativa
-
-- **Estado:** PENDING
-- **Objetivo:** capturar intake operativo y generar cotizaciones orientativas.
-- **Alcance mínimo:**
-  - Crear/editar service request.
-  - Campos por vertical.
-  - Crear quote.
-  - Enviar resumen de quote por canal.
-- **Criterio de terminado:** un agente puede registrar una solicitud y asociarle una cotización trazable.
-
 ### TASK-0011 — Endurecer auditoría, privacidad y exportes
 
 - **Estado:** PENDING

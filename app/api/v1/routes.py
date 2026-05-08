@@ -24,9 +24,12 @@ from app.api.v1.schemas import (
     KnowledgeDocumentUpdate,
     MessageCreate,
     PromptCreate,
+    QuoteCreate,
+    QuotePatch,
     ResourceCreate,
     ResourceUpdate,
     ServiceRequestCreate,
+    ServiceRequestPatch,
     TenantCreate,
     TenantUpdate,
 )
@@ -1530,18 +1533,263 @@ async def create_service_request(payload: ServiceRequestCreate, request: Request
     return record_to_dict(row)
 
 
+@tenant_ops_router.get('/service-requests')
+async def list_service_requests(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    contact_id: UUID | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias='status'),
+    vertical_code: str | None = Query(default=None),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select sr.*, c.display_name as contact_label, c.phone_e164
+        from app.service_requests sr
+        join app.contacts c on c.id = sr.contact_id and c.tenant_id = sr.tenant_id
+        where sr.tenant_id = $1
+          and ($2::uuid is null or sr.contact_id = $2)
+          and ($3::text is null or sr.status = $3)
+          and ($4::text is null or sr.vertical_code = $4)
+        order by sr.created_at desc
+        limit 250
+        """,
+        tenant_id,
+        contact_id,
+        status_filter,
+        vertical_code,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_ops_router.get('/service-requests/{request_id}')
+async def get_service_request(request_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        select sr.*, c.display_name as contact_label, c.phone_e164
+        from app.service_requests sr
+        join app.contacts c on c.id = sr.contact_id and c.tenant_id = sr.tenant_id
+        where sr.tenant_id = $1 and sr.id = $2
+        """,
+        tenant_id,
+        request_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Service request not found')
+    return record_to_dict(row)
+
+
 @tenant_ops_router.patch('/service-requests/{request_id}')
 async def patch_service_request(
     request_id: UUID,
-    payload: dict,
+    payload: ServiceRequestPatch,
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ):
     tenant_id = await tenant_id_from_request(request, conn)
-    row = await conn.fetchrow("update app.service_requests set status=coalesce($3,status), intake=intake || $4::jsonb where tenant_id=$1 and id=$2 returning *", tenant_id, request_id, payload.get('status'), json.dumps(payload.get('intake', {})))
+    update_data = payload.model_dump(exclude_unset=True)
+    intake_patch = update_data.pop('intake', None)
+    row = await conn.fetchrow(
+        """
+        update app.service_requests
+        set status = coalesce($3, status),
+            assigned_resource_id = coalesce($4, assigned_resource_id),
+            problem_summary = coalesce($5, problem_summary),
+            urgency = coalesce($6, urgency),
+            preferred_date = coalesce($7::date, preferred_date),
+            preferred_slot = coalesce($8, preferred_slot),
+            intake = case when $9::jsonb is not null then intake || $9::jsonb else intake end
+        where tenant_id = $1 and id = $2
+        returning *
+        """,
+        tenant_id,
+        request_id,
+        update_data.get('status'),
+        update_data.get('assigned_resource_id'),
+        update_data.get('problem_summary'),
+        update_data.get('urgency'),
+        update_data.get('preferred_date'),
+        update_data.get('preferred_slot'),
+        json.dumps(intake_patch) if intake_patch is not None else None,
+    )
     if not row:
         raise HTTPException(status_code=404, detail='Service request not found')
     return record_to_dict(row)
+
+
+def _compute_quote_subtotal(line_items: list) -> float:
+    return sum(item['qty'] * item['unit_price'] for item in line_items)
+
+
+def _build_quote_summary_text(sr: Any, quote: Any) -> str:
+    items = quote['line_items'] if isinstance(quote['line_items'], list) else json.loads(quote['line_items'])
+    lines = [f"- {it['description']}: {it['qty']} x {it['unit_price']:,.0f} = {it['qty'] * it['unit_price']:,.0f}" for it in items]
+    items_block = '\n'.join(lines) if lines else '(sin ítems)'
+    valid_str = ''
+    if quote['valid_until']:
+        valid_str = f"\nVálida hasta: {quote['valid_until'].strftime('%Y-%m-%d %H:%M')}"
+    return (
+        f"*Cotización orientativa*\n"
+        f"Servicio: {sr['service_type']}\n\n"
+        f"{items_block}\n\n"
+        f"Subtotal: {quote['subtotal']:,.0f} {quote['currency']}\n"
+        f"Descuento: {quote['discount_total']:,.0f}\n"
+        f"Impuestos: {quote['tax_total']:,.0f}\n"
+        f"*Total: {quote['grand_total']:,.0f} {quote['currency']}*"
+        f"{valid_str}"
+    )
+
+
+@tenant_ops_router.post('/service-requests/{request_id}/quotes', status_code=201)
+async def create_quote(
+    request_id: UUID,
+    payload: QuoteCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    sr = await conn.fetchrow('select id from app.service_requests where tenant_id=$1 and id=$2', tenant_id, request_id)
+    if not sr:
+        raise HTTPException(status_code=404, detail='Service request not found')
+    items = [item.model_dump() for item in payload.line_items]
+    subtotal = _compute_quote_subtotal(items)
+    grand_total = subtotal - payload.discount_total + payload.tax_total
+    try:
+        row = await conn.fetchrow(
+            """
+            insert into app.quotes
+              (tenant_id, service_request_id, currency, subtotal, discount_total, tax_total, grand_total, line_items, valid_until)
+            values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)
+            returning *
+            """,
+            tenant_id,
+            request_id,
+            payload.currency,
+            subtotal,
+            payload.discount_total,
+            payload.tax_total,
+            grand_total,
+            json.dumps(items),
+            payload.valid_until,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail='A quote already exists for this service request') from exc
+    await conn.execute(
+        "update app.service_requests set status='quoted' where tenant_id=$1 and id=$2 and status not in ('scheduled','resolved','cancelled')",
+        tenant_id, request_id,
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='quote.created', entity_type='quote', entity_id=str(row['id']))
+    return record_to_dict(row)
+
+
+@tenant_ops_router.get('/service-requests/{request_id}/quote')
+async def get_quote_for_service_request(request_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        'select * from app.quotes where tenant_id=$1 and service_request_id=$2',
+        tenant_id, request_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Quote not found')
+    return record_to_dict(row)
+
+
+@tenant_ops_router.patch('/quotes/{quote_id}')
+async def patch_quote(
+    quote_id: UUID,
+    payload: QuotePatch,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    existing = await conn.fetchrow('select * from app.quotes where tenant_id=$1 and id=$2', tenant_id, quote_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail='Quote not found')
+    update_data = payload.model_dump(exclude_unset=True)
+    items = [item.model_dump() for item in payload.line_items] if payload.line_items is not None else None
+    next_items = items if items is not None else (existing['line_items'] if isinstance(existing['line_items'], list) else json.loads(existing['line_items']))
+    next_discount = update_data.get('discount_total', existing['discount_total'])
+    next_tax = update_data.get('tax_total', existing['tax_total'])
+    subtotal = _compute_quote_subtotal(next_items)
+    grand_total = subtotal - next_discount + next_tax
+    row = await conn.fetchrow(
+        """
+        update app.quotes
+        set line_items     = coalesce($3::jsonb, line_items),
+            currency       = coalesce($4, currency),
+            discount_total = $5,
+            tax_total      = $6,
+            subtotal       = $7,
+            grand_total    = $8,
+            status         = coalesce($9, status),
+            valid_until    = coalesce($10, valid_until)
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        quote_id,
+        json.dumps(items) if items is not None else None,
+        update_data.get('currency'),
+        next_discount,
+        next_tax,
+        subtotal,
+        grand_total,
+        update_data.get('status'),
+        update_data.get('valid_until'),
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='quote.updated', entity_type='quote', entity_id=str(quote_id))
+    return record_to_dict(row)
+
+
+@tenant_ops_router.post('/quotes/{quote_id}/send', status_code=202)
+async def send_quote(
+    quote_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    quote = await conn.fetchrow('select * from app.quotes where tenant_id=$1 and id=$2', tenant_id, quote_id)
+    if not quote:
+        raise HTTPException(status_code=404, detail='Quote not found')
+    sr = await conn.fetchrow('select * from app.service_requests where tenant_id=$1 and id=$2', tenant_id, quote['service_request_id'])
+    if not sr['conversation_id']:
+        raise HTTPException(status_code=422, detail='Service request has no associated conversation')
+    conversation = await conn.fetchrow('select * from app.conversations where tenant_id=$1 and id=$2', tenant_id, sr['conversation_id'])
+    if not conversation:
+        raise HTTPException(status_code=422, detail='Conversation not found')
+    body_text = _build_quote_summary_text(sr, quote)
+    message = await conn.fetchrow(
+        """
+        insert into app.messages
+          (tenant_id, conversation_id, direction, sender_actor_type, sender_actor_id, body_text, message_type, payload, status)
+        values ($1,$2,'outbound','agent',$3,$4,'text','{}','queued')
+        returning *
+        """,
+        tenant_id,
+        conversation['id'],
+        request.state.actor_id,
+        body_text,
+    )
+    idempotency_key = f"quote-send-{quote_id}"
+    await conn.execute(
+        "insert into app.domain_events (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload) values ($1,'message',$2,'message.queued',$3,$4::jsonb) on conflict do nothing",
+        tenant_id,
+        message['id'],
+        idempotency_key,
+        json.dumps({'conversation_id': str(conversation['id']), 'quote_id': str(quote_id)}),
+    )
+    await conn.execute(
+        "update app.quotes set status='sent' where tenant_id=$1 and id=$2 and status='draft'",
+        tenant_id, quote_id,
+    )
+    await conn.execute(
+        "update app.service_requests set status='quoted' where tenant_id=$1 and id=$2 and status='open'",
+        tenant_id, sr['id'],
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='quote.sent', entity_type='quote', entity_id=str(quote_id))
+    await notify_operations_change(conn, tenant_id, 'conversation.changed', conversation_id=conversation['id'], message_id=message['id'])
+    return {'quote_id': str(quote_id), 'message_id': str(message['id'])}
 
 
 @tenant_ops_router.get('/appointments')
