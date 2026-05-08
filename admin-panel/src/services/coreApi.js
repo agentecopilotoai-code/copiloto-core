@@ -183,6 +183,17 @@ export function listConversations(session, tenantId) {
   return request('/conversations', { session, tenantId });
 }
 
+export function conversationMessageMediaUrl(session, tenantId, conversationId, messageId) {
+  const safeConversationId = encodeURIComponent(conversationId);
+  const safeMessageId = encodeURIComponent(messageId);
+  const safeTenantId = encodeURIComponent(tenantId);
+
+  return coreApiPath(
+    session,
+    `/conversations/${safeConversationId}/messages/${safeMessageId}/media?tenant_id=${safeTenantId}`,
+  );
+}
+
 export function getConversation(session, tenantId, conversationId) {
   return request(`/conversations/${conversationId}`, { session, tenantId });
 }

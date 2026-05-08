@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   acceptConversationHandoff,
+  conversationMessageMediaUrl,
   createConversationHandoff,
   getConversation,
   listConversations,
@@ -45,12 +46,27 @@ function messageLabel(message) {
   return labels[message.message_type] || message.message_type || 'Mensaje';
 }
 
-function mediaSource(message) {
-  return message.payload?.media_url || message.payload?.link || message.payload?.[message.message_type]?.link || null;
+function mediaSource(message, session, tenantId) {
+  if (
+    tenantId &&
+    message.id &&
+    message.conversation_id &&
+    message.media_id &&
+    ['image', 'video', 'audio'].includes(message.message_type)
+  ) {
+    return conversationMessageMediaUrl(
+      session,
+      tenantId,
+      message.conversation_id,
+      message.id,
+    );
+  }
+
+  return null;
 }
 
-function renderMessageContent(message) {
-  const source = mediaSource(message);
+function renderMessageContent(message, session, tenantId) {
+  const source = mediaSource(message, session, tenantId);
   const text = message.body_text;
 
   if (message.message_type === 'image') {
@@ -501,8 +517,10 @@ export function OperationsDesk({ module, session, tenant }) {
               <div className="message-thread" aria-live="polite" ref={messageThreadRef}>
                 {(conversationDetail?.messages || []).map((message) => (
                   <article className={`message-bubble ${message.direction}`} key={message.id}>
-                    <small>{message.sender_actor_type} · {messageLabel(message)} · {formatDate(message.created_at)} · {deliveryLabel(message)}</small>
-                    {renderMessageContent(message)}
+                    <small>
+                      {message.sender_actor_type} · {messageLabel(message)} · {formatDate(message.created_at)} · {deliveryLabel(message)}
+                    </small>
+                    {renderMessageContent(message, session, tenant?.id)}
                   </article>
                 ))}
               </div>

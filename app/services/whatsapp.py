@@ -172,3 +172,62 @@ async def send_text_message(
         delivery_mode=delivery_mode,
         token_ref=token_ref,
     )
+
+
+async def get_whatsapp_media_info(
+    media_id: str,
+    token_ref: str | None,
+) -> dict[str, Any]:
+    settings = get_settings()
+    access_token = resolve_secret_ref(token_ref)
+
+    if not meta_token_is_configured(access_token):
+        raise RuntimeError(
+            'WhatsApp media download requires a real Meta access token.'
+        )
+
+    url = f'https://graph.facebook.com/{settings.meta_graph_version}/{media_id}'
+
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        response = await client.get(
+            url,
+            headers={'Authorization': f'Bearer {access_token}'},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def download_whatsapp_media(
+    media_id: str,
+    token_ref: str | None,
+) -> tuple[bytes, str]:
+    media_info = await get_whatsapp_media_info(
+        media_id=media_id,
+        token_ref=token_ref,
+    )
+
+    media_url = media_info.get('url')
+    if not media_url:
+        raise RuntimeError('Meta did not return a media download URL.')
+
+    access_token = resolve_secret_ref(token_ref)
+
+    if not meta_token_is_configured(access_token):
+        raise RuntimeError(
+            'WhatsApp media download requires a real Meta access token.'
+        )
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        response = await client.get(
+            media_url,
+            headers={'Authorization': f'Bearer {access_token}'},
+        )
+        response.raise_for_status()
+
+        content_type = (
+            response.headers.get('content-type')
+            or media_info.get('mime_type')
+            or 'application/octet-stream'
+        )
+
+        return response.content, content_type

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+import httpx
 import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -33,6 +34,7 @@ from app.services.audit import audit
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
+    download_whatsapp_media,
     normalize_meta_app_secret,
     resolve_secret_ref,
     secret_ref_is_configured,
@@ -1086,6 +1088,90 @@ async def get_conversation(
     data['messages'] = [record_to_dict(m) for m in messages]
     data['handoffs'] = [record_to_dict(h) for h in handoffs]
     return data
+
+@tenant_ops_router.get('/conversations/{conversation_id}/messages/{message_id}/media')
+async def get_conversation_message_media(
+    conversation_id: UUID,
+    message_id: UUID,
+    request: Request,
+    tenant_id: UUID = Query(...),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    message = await conn.fetchrow(
+        """
+        select m.id,
+               m.tenant_id,
+               m.conversation_id,
+               m.message_type,
+               m.media_id,
+               m.mime_type,
+               c.channel_id
+        from app.messages m
+        join app.conversations c
+          on c.tenant_id = m.tenant_id
+         and c.id = m.conversation_id
+        where m.tenant_id = $1
+          and m.conversation_id = $2
+          and m.id = $3
+        """,
+        tenant_id,
+        conversation_id,
+        message_id,
+    )
+
+    if not message:
+        raise HTTPException(status_code=404, detail='Message media not found')
+
+    if message['message_type'] not in MEDIA_MESSAGE_TYPES:
+        raise HTTPException(status_code=400, detail='Message is not a media message')
+
+    if not message['media_id']:
+        raise HTTPException(status_code=404, detail='Message has no WhatsApp media_id')
+
+    channel = await conn.fetchrow(
+        """
+        select token_ref
+        from app.tenant_channels
+        where tenant_id = $1
+          and id = $2
+          and provider = 'whatsapp_cloud_api'
+          and status = 'active'
+        """,
+        tenant_id,
+        message['channel_id'],
+    )
+
+    if not channel:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+
+    try:
+        content, content_type = await download_whatsapp_media(
+            media_id=str(message['media_id']),
+            token_ref=channel['token_ref'],
+        )
+
+        return Response(
+            content=content,
+            media_type=content_type or message['mime_type'] or 'application/octet-stream',
+            headers={
+                'Cache-Control': 'private, max-age=300',
+            },
+        )
+
+    except httpx.HTTPStatusError as error:
+        raise HTTPException(
+            status_code=error.response.status_code,
+            detail=error.response.text,
+        ) from error
+
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=str(error),
+        ) from error
 
 
 @tenant_ops_router.post('/conversations/{conversation_id}/messages', status_code=202)
