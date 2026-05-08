@@ -65,3 +65,35 @@ def test_knowledge_document_projection_is_compatible_with_legacy_table():
     assert 'content' in projection
     assert 'metadata' in projection
     assert 'select' not in projection.lower()
+
+
+def test_normalize_knowledge_document_parses_jsonb_metadata_strings():
+    from app.api.v1.routes import normalize_knowledge_document
+
+    document = normalize_knowledge_document(
+        {
+            'id': uuid4(),
+            'tenant_id': uuid4(),
+            'title': 'FAQ',
+            'status': 'draft',
+            'metadata': '{"extracted_text": "Texto listo para indexar"}',
+        }
+    )
+
+    assert document['metadata'] == {'extracted_text': 'Texto listo para indexar'}
+
+
+def test_normalize_knowledge_document_recovers_invalid_metadata_as_empty_object():
+    from app.api.v1.routes import normalize_knowledge_document
+
+    document = normalize_knowledge_document(
+        {
+            'id': uuid4(),
+            'tenant_id': uuid4(),
+            'title': 'FAQ',
+            'status': 'draft',
+            'metadata': 'not-json',
+        }
+    )
+
+    assert document['metadata'] == {}

@@ -275,13 +275,25 @@ def knowledge_document_projection(columns: set[str]) -> str:
     return ', '.join(projection)
 
 
+def parse_json_object(value: Any, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return default or {}
+    if isinstance(value, dict):
+        return value
+    return default or {}
+
+
 def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
     document = record_to_dict(row)
     if not document:
         return None
     for column, default in KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS.items():
         if document.get(column) is None:
-            document[column] = default
+            document[column] = default.copy() if isinstance(default, dict) else default
+    document['metadata'] = parse_json_object(document.get('metadata'), default={})
     return document
 
 
@@ -290,14 +302,8 @@ def normalize_knowledge_documents(rows: list[asyncpg.Record]) -> list[dict]:
 
 
 def metadata_extracted_text(value: Any) -> str | None:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(value, dict):
-        return None
-    extracted_text = value.get('extracted_text')
+    metadata = parse_json_object(value, default={})
+    extracted_text = metadata.get('extracted_text')
     return extracted_text if isinstance(extracted_text, str) else None
 
 

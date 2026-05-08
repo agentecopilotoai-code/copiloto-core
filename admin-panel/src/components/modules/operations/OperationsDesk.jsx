@@ -1153,7 +1153,7 @@ export function OperationsDesk({ module, session, tenant }) {
                       <small>
                         {message.sender_actor_type} · {messageLabel(message)} · {formatDate(message.created_at)} · {deliveryLabel(message)}
                       </small>
-                      {renderMessageContent(message)}
+                      {renderMessageContent(renderableMessage)}
                     </article>
                   );
                 })}

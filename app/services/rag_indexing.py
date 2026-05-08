@@ -1,4 +1,5 @@
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -45,6 +46,13 @@ def extract_document_text(document: dict[str, Any]) -> str:
         return content
 
     metadata = document.get('metadata') or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
     extracted_text = metadata.get('extracted_text')
     if isinstance(extracted_text, str) and extracted_text.strip():
         return extracted_text
