@@ -6,6 +6,7 @@ import { listMyTenants } from '../../services/coreApi.js';
 import { AuditPanel } from '../modules/audit/AuditPanel.jsx';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
 import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
+import { GoLiveReadiness } from '../modules/readiness/GoLiveReadiness.jsx';
 import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
 import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
@@ -105,6 +106,8 @@ export function AdminLayout({ session }) {
     activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'operations-desk') {
     activeContent = <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'go-live-readiness') {
+    activeContent = <GoLiveReadiness module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'audit') {
     activeContent = <AuditPanel module={activeModule} session={session} tenant={activeTenant} />;
   } else {

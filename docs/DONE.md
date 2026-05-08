@@ -275,3 +275,26 @@ Cada entrada debe incluir:
   - `git diff --check`
   - `bash -n scripts/bootstrap.sh`
 - **Notas:** la supresión es irreversible y sincrónica; las conversaciones previas conservan el `contact_id` como referencia opaca sin datos personales legibles. El export de audit logs usa `document.createElement('a')` para forzar la descarga sin bloquear el token de sesión en la URL.
+
+### TASK-0012 — Crear checklist automatizado de go-live por tenant
+
+- **Fecha:** 2026-05-08
+- **Resumen:** se implementó un checklist automatizado de readiness por tenant. La Core API ahora expone `GET /v1/tenants/{tenant_id}/readiness`, que devuelve `ready` o `not_ready` con razones y evidencia por check: tenant activo, settings mínimos, canal WhatsApp con secretos resueltos, documentos activos con smoke test de retrieval RAG, política de handoff y auditoría con eventos. El endpoint audita cada evaluación como `tenant.readiness_checked`. El Admin Panel agregó el módulo **Go-live Readiness**, con pregunta configurable para el smoke test, botón para generar el reporte, resumen visual `Listo/No listo`, razones pendientes y detalle por cada check.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/data/modules.js`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/readiness/GoLiveReadiness.jsx`
+  - `admin-panel/src/styles/global.css`
+  - `tests/test_tenant_readiness_static.py`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python -m py_compile app/api/v1/routes.py`
+  - `pytest tests/test_tenant_readiness_static.py`
+  - `pytest tests/test_tenant_readiness_static.py tests/test_audit_privacy_static.py tests/test_operations_desk_static.py tests/test_whatsapp_delivery_static.py` (falló por una aserción preexistente en `tests/test_whatsapp_delivery_static.py` que espera la cadena literal `renderMessageContent(message)`, mientras el componente actual invoca `renderMessageContent(message, session, tenant?.id)`)
+  - `pytest tests/test_tenant_readiness_static.py tests/test_knowledge_documents.py tests/test_intent_evaluate_query_static.py` (bloqueado porque el Python global no tiene `pydantic`)
+  - `npm install` dentro de `admin-panel` (bloqueado por HTTP 403 contra npm registry al descargar `@vitejs/plugin-react`)
+  - `npm run build` dentro de `admin-panel` (bloqueado porque `vite` no está instalado tras el fallo de `npm install`)
+- **Notas:** no se agregaron variables ni secretos nuevos. El check de WhatsApp consume los `token_ref`, `app_secret_ref` y verify token existentes bajo `.secrets` por tenant. El smoke test RAG usa ranking local y no llama servicios externos.

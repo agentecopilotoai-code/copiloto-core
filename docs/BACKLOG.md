@@ -18,17 +18,3 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 8. No recrear ni duplicar configuración local ya generada: Auth0/OIDC vive en `.env.auth0.local` creado por `scripts/configure-auth0.sh` (`AUTH0_DOMAIN`, `AUTH0_ISSUER`, `AUTH0_AUDIENCE`, `AUTH0_API_IDENTIFIER`, `AUTH0_CLAIMS_NAMESPACE`, client IDs, URLs y rutas de secretos); los secretos viven en `.secrets/*` creados por `scripts/bootstrap.sh`, `scripts/generate-local-secrets.sh` o `scripts/configure-auth0.sh`. Las tareas futuras deben consumir esos nombres/archivos y no inventar variables paralelas ni hardcodear secretos.
 
 ## Stack de tareas pendientes
-
-### TASK-0012 — Crear checklist automatizado de go-live por tenant
-
-- **Estado:** PENDING
-- **Objetivo:** validar que un tenant está listo para producción controlada.
-- **Alcance mínimo:**
-  - Verificar tenant activo.
-  - Verificar settings.
-  - Verificar canal WhatsApp.
-  - Verificar documentos activos y retrieval smoke test.
-  - Verificar handoff.
-  - Verificar auditoría.
-  - Generar reporte de readiness.
-- **Criterio de terminado:** existe un comando o endpoint que devuelve `ready/not_ready` con razones.
