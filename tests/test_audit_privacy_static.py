@@ -181,3 +181,41 @@ def test_dpa_document_exists():
     assert '365' in source
     assert '730' in source
     assert 'contact.suppressed' in source
+
+
+# --- Feedback fixes ---
+
+def test_logging_uses_recursive_redact_value():
+    source = LOGGING.read_text()
+    assert '_redact_value' in source
+    assert 'isinstance(value, dict)' in source
+    assert 'isinstance(value, (list, tuple))' in source
+
+
+def test_logging_redact_pii_applies_redact_value_to_all_fields():
+    source = LOGGING.read_text()
+    # Should NOT just loop over _PII_KEYS - must apply _redact_value recursively
+    assert '_redact_value(v)' in source
+
+
+def test_core_api_export_uses_authenticated_fetch_not_anchor():
+    source = CORE_API.read_text()
+    assert 'downloadAuthenticated' in source
+    assert 'blob()' in source
+    assert 'URL.createObjectURL' in source
+    # Must NOT use tenant_id_hint workaround
+    assert 'tenant_id_hint' not in source
+
+
+def test_core_api_export_sends_x_tenant_id_header():
+    source = CORE_API.read_text()
+    # buildHeaders is called inside downloadAuthenticated
+    assert 'buildHeaders(session, tenantId)' in source
+
+
+def test_core_api_tenant_data_export_also_uses_authenticated_fetch():
+    source = CORE_API.read_text()
+    # exportTenantData must delegate to downloadAuthenticated, not build its own URL
+    assert 'exportTenantData' in source
+    count = source.count('downloadAuthenticated')
+    assert count >= 2  # used by both exportAuditLogs and exportTenantData

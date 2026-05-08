@@ -107,19 +107,39 @@ export function listAuditLogsFiltered(session, tenantId, filters = {}) {
   return request(`/audit-logs${query ? `?${query}` : ''}`, { session, tenantId });
 }
 
+async function downloadAuthenticated(session, tenantId, path, filename) {
+  const response = await fetch(coreApiPath(session, path), {
+    credentials: 'include',
+    headers: buildHeaders(session, tenantId),
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try { detail = (await response.json()).detail || detail; } catch { /* ignore */ }
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export function exportAuditLogs(session, tenantId, filters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== '') params.set(key, value);
   });
-  const baseUrl = session?.api?.baseUrl || '/admin/api/core/v1';
-  const url = new URL(adminPath(`${baseUrl}/audit-logs/export`), window.location.href);
-  params.forEach((value, key) => url.searchParams.set(key, value));
-  url.searchParams.set('tenant_id_hint', tenantId);
-  const link = document.createElement('a');
-  link.href = url.toString();
-  link.download = `audit-logs-${tenantId}.csv`;
-  link.click();
+  const query = params.toString();
+  return downloadAuthenticated(
+    session,
+    tenantId,
+    `/audit-logs/export${query ? `?${query}` : ''}`,
+    `audit-logs-${tenantId}.csv`,
+  );
 }
 
 export function suppressContact(session, tenantId, contactId) {
@@ -131,13 +151,12 @@ export function suppressContact(session, tenantId, contactId) {
 }
 
 export function exportTenantData(session, tenantId) {
-  const baseUrl = session?.api?.baseUrl || '/admin/api/core/v1';
-  const url = new URL(adminPath(`${baseUrl}/tenants/${tenantId}/data-export`), window.location.href);
-  const link = document.createElement('a');
-  link.href = url.toString();
-  link.download = `tenant-data-${tenantId}.json`;
-  link.click();
-  return Promise.resolve();
+  return downloadAuthenticated(
+    session,
+    tenantId,
+    `/tenants/${tenantId}/data-export`,
+    `tenant-data-${tenantId}.json`,
+  );
 }
 
 export function listMyTenants(session) {
