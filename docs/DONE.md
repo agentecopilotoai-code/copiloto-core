@@ -298,3 +298,34 @@ Cada entrada debe incluir:
   - `npm install` dentro de `admin-panel` (bloqueado por HTTP 403 contra npm registry al descargar `@vitejs/plugin-react`)
   - `npm run build` dentro de `admin-panel` (bloqueado porque `vite` no está instalado tras el fallo de `npm install`)
 - **Notas:** no se agregaron variables ni secretos nuevos. El check de WhatsApp consume los `token_ref`, `app_secret_ref` y verify token existentes bajo `.secrets` por tenant. El smoke test RAG usa ranking local y no llama servicios externos.
+
+### TASK-0013 — Configurar almacenamiento operativo para archivos de conocimiento
+
+- **Fecha:** 2026-05-08
+- **Origen:** revisión directa del usuario sobre `DONE.md` y faltante de configuración para guardar archivos indexables de la base de conocimiento.
+- **Resumen:** se cerró el hueco operativo de Knowledge Ingestion agregando configuración explícita de almacenamiento de archivos (`local` o `s3`), volumen Docker persistente para piloto local, servicio de almacenamiento con claves tenant-scoped, validación de MIME/tamaño/checksum, endpoint autenticado `POST /v1/knowledge/documents/upload`, registro automático de `source_uri`, `checksum`, metadata de almacenamiento y extracción automática de texto para TXT/Markdown/CSV/JSON. El Knowledge Studio ahora permite subir archivos reales desde el Admin Panel y luego indexarlos; PDF queda guardado con checksum y URI, pero requiere texto extraído antes del indexado hasta implementar extracción binaria asíncrona.
+- **Archivos modificados:**
+  - `app/core/config.py`
+  - `app/services/knowledge_storage.py`
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx`
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx`
+  - `admin-panel/src/styles/global.css`
+  - `.env.example`
+  - `docker-compose.yml`
+  - `pyproject.toml`
+  - `INSTALL.md`
+  - `docs/ADMIN_PANEL.md`
+  - `tests/test_knowledge_storage.py`
+  - `tests/test_security.py`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m compileall app tests`
+  - `pytest -q`
+  - `pytest -q tests/test_knowledge_storage.py tests/test_knowledge_documents.py`
+  - `node --check admin-panel/src/services/coreApi.js`
+  - `npm --prefix admin-panel run build`
+  - `git diff --check`
+- **Notas:** se agregó `python-multipart` como dependencia de runtime para parsing de uploads multipart en FastAPI. El endpoint evita anotaciones `Form/File` para que los tests estáticos puedan importar rutas aunque el entorno global no tenga todavía esa dependencia instalada; en runtime Docker/uv la dependencia queda instalada desde `pyproject.toml`. Para producción piloto se recomienda `KNOWLEDGE_STORAGE_BACKEND=s3` con bucket cifrado/gestionado; el backend `local` queda pensado para desarrollo y piloto local con volumen persistente. También se ajustó un test Auth0 para firmar tokens RS256 con PEM y evitar incompatibilidades de `python-jose` con objetos privados de `cryptography` en Python 3.14, y se preservó el render de media del Operations Desk manteniendo compatibilidad con el test estático existente. Corrección posterior: el indexador ahora tolera `metadata` recibido como JSON string desde `jsonb`/drivers sin codec personalizado, normaliza metadata a objeto antes de indexar y evita el `AttributeError: 'str' object has no attribute 'get'`; además el render de media usa realmente el mensaje decorado con sesión/tenant. Ajuste posterior: se agregó configuración S3 por tenant desde el Admin Panel mediante el módulo **Storage S3**, endpoints `GET/PATCH /tenants/{tenant_id}/knowledge/storage`, columna `tenant_settings.knowledge_storage`, secreto `.secrets/tenants/<TENANT_ID>/knowledge_s3_secret_access_key`, soporte de bucket/prefix único por tenant en uploads y documentación paso a paso para configurar S3/MinIO.

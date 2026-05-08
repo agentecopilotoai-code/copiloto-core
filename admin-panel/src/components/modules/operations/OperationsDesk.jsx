@@ -78,7 +78,7 @@ function mediaSource(message, session, tenantId) {
   return null;
 }
 
-function renderMessageContent(message, session, tenantId) {
+function renderMessageContent(message, session = message._session, tenantId = message._tenantId) {
   const source = mediaSource(message, session, tenantId);
   const text = message.body_text;
 
@@ -1146,14 +1146,17 @@ export function OperationsDesk({ module, session, tenant }) {
               </div>
 
               <div className="message-thread" aria-live="polite" ref={messageThreadRef}>
-                {(conversationDetail?.messages || []).map((message) => (
-                  <article className={`message-bubble ${message.direction}`} key={message.id}>
-                    <small>
-                      {message.sender_actor_type} · {messageLabel(message)} · {formatDate(message.created_at)} · {deliveryLabel(message)}
-                    </small>
-                    {renderMessageContent(message, session, tenant?.id)}
-                  </article>
-                ))}
+                {(conversationDetail?.messages || []).map((message) => {
+                  const renderableMessage = { ...message, _session: session, _tenantId: tenant?.id };
+                  return (
+                    <article className={`message-bubble ${message.direction}`} key={message.id}>
+                      <small>
+                        {message.sender_actor_type} · {messageLabel(message)} · {formatDate(message.created_at)} · {deliveryLabel(message)}
+                      </small>
+                      {renderMessageContent(renderableMessage)}
+                    </article>
+                  );
+                })}
               </div>
 
               <form className="message-composer" onSubmit={handleSendMessage}>

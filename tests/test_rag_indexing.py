@@ -13,6 +13,7 @@ from app.services.rag_indexing import (
 def test_extract_document_text_prefers_content_and_supports_metadata_fallback():
     assert extract_document_text({'content': 'Texto manual', 'metadata': {'extracted_text': 'Otro'}}) == 'Texto manual'
     assert extract_document_text({'content': '', 'metadata': {'extracted_text': 'Texto extraído'}}) == 'Texto extraído'
+    assert extract_document_text({'content': '', 'metadata': '{\"extracted_text\": \"Texto JSON\"}'}) == 'Texto JSON'
 
 
 @pytest.mark.parametrize('document', [{'content': ''}, {'metadata': {}}, {}])

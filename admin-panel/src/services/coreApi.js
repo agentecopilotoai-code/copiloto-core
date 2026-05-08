@@ -64,6 +64,30 @@ async function request(path, { body, method = 'GET', session, tenantId } = {}) {
   return response.json();
 }
 
+async function uploadMultipart(path, { formData, method = 'POST', session, tenantId } = {}) {
+  const response = await fetch(coreApiPath(session, path), {
+    credentials: 'include',
+    method,
+    headers: buildHeaders(session, tenantId),
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      detail = payload.detail || JSON.stringify(payload);
+    } catch {
+      detail = response.statusText || detail;
+    }
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
 export function createTenant(session, payload) {
   return request('/tenant-signup', { method: 'POST', session, body: payload });
 }
@@ -188,6 +212,19 @@ export function getWhatsAppChannelHealth(session, tenantId) {
   return request(`/tenants/${tenantId}/channels/whatsapp/health`, { session, tenantId });
 }
 
+export function getKnowledgeStorageSettings(session, tenantId) {
+  return request(`/tenants/${tenantId}/knowledge/storage`, { session, tenantId });
+}
+
+export function updateKnowledgeStorageSettings(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/knowledge/storage`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
 
 export function evaluateIntent(session, tenantId, payload) {
   return request('/intents/evaluate', {
@@ -205,6 +242,16 @@ export function listKnowledgeDocuments(session, tenantId, filters = {}) {
   });
   const query = params.toString();
   return request(`/knowledge/documents${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+export function uploadKnowledgeDocument(session, tenantId, payload) {
+  const formData = new FormData();
+  formData.set('tenant_id', tenantId);
+  formData.set('title', payload.title);
+  formData.set('document_type', payload.document_type || 'reference');
+  formData.set('visibility', payload.visibility || 'tenant');
+  formData.set('file', payload.file);
+  return uploadMultipart('/knowledge/documents/upload', { formData, session, tenantId });
 }
 
 export function createKnowledgeDocument(session, tenantId, payload) {

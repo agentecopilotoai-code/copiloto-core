@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from jose import jwt
@@ -44,6 +45,14 @@ def rsa_jwk(private_key, kid: str) -> dict:
     }
 
 
+def rsa_private_key_pem(private_key) -> bytes:
+    return private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+
 def test_auth0_rs256_token_sets_tenant_roles_and_support_mode(monkeypatch):
     async def run_test():
         tenant_id = uuid4()
@@ -70,13 +79,13 @@ def test_auth0_rs256_token_sets_tenant_roles_and_support_mode(monkeypatch):
                 f'{namespace}/roles': ['admin', 'agent'],
                 f'{namespace}/support_mode': False,
             },
-            private_key,
+            rsa_private_key_pem(private_key),
             algorithm='RS256',
             headers={'kid': 'kid-1'},
         )
 
         request = make_request()
-        await authenticate_request(request, authorization=f'Bearer {token}')
+        await authenticate_request(request, authorization=f'Bearer {token}', x_tenant_id=None)
 
         assert request.state.actor_type == 'user'
         assert request.state.actor_id == 'auth0|user-1'
@@ -105,13 +114,13 @@ def test_auth0_rejects_token_signed_with_unknown_key(monkeypatch):
                 'sub': 'auth0|user-1',
                 'exp': datetime.now(UTC) + timedelta(minutes=5),
             },
-            private_key,
+            rsa_private_key_pem(private_key),
             algorithm='RS256',
             headers={'kid': 'different-kid'},
         )
 
         with pytest.raises(HTTPException) as exc_info:
-            await authenticate_request(make_request(), authorization=f'Bearer {token}')
+            await authenticate_request(make_request(), authorization=f'Bearer {token}', x_tenant_id=None)
 
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == 'Unknown token key id'
@@ -124,7 +133,7 @@ def test_service_token_still_authenticates_internal_workloads():
         request = make_request()
 
         await authenticate_request(
-            request, authorization='Bearer service-token-with-min-length'
+            request, authorization='Bearer service-token-with-min-length', x_tenant_id=None
         )
 
         assert request.state.actor_type == 'service'

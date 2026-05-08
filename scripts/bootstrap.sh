@@ -134,6 +134,11 @@ if [[ -n "$missing_tables" ]]; then
   exit 1
 fi
 
+psql_admin <<'SQL_MIGRATE_TENANT_SETTINGS'
+alter table app.tenant_settings
+  add column if not exists knowledge_storage jsonb not null default '{}'::jsonb;
+SQL_MIGRATE_TENANT_SETTINGS
+
 psql_admin <<'SQL_MIGRATE_KNOWLEDGE'
 alter table app.knowledge_documents
   add column if not exists document_type text not null default 'reference',

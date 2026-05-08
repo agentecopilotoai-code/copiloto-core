@@ -45,6 +45,7 @@ create table app.tenant_settings (
   pii_policy jsonb not null default '{"no_train":true}'::jsonb,
   no_train boolean not null default true,
   max_bot_turns integer not null default 8 check (max_bot_turns > 0),
+  knowledge_storage jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

@@ -12,6 +12,12 @@ export const adminModules = [
     scope: ['Business ID', 'WABA ID', 'Phone Number ID', 'Referencias de token y app secret'],
   },
   {
+    id: 'knowledge-storage',
+    label: 'Storage S3',
+    summary: 'Configuración del bucket/prefix de conocimiento por tenant.',
+    scope: ['Backend local o S3', 'Bucket único por tenant', 'Credenciales fuera de DB', 'Prefix de documentos'],
+  },
+  {
     id: 'knowledge-studio',
     label: 'Knowledge Studio',
     summary: 'Gestión de documentos, FAQ y políticas por tenant.',
