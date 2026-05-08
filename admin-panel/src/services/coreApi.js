@@ -98,6 +98,67 @@ export function listAuditLogs(session, tenantId) {
   return request('/audit-logs', { session, tenantId });
 }
 
+export function listAuditLogsFiltered(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/audit-logs${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+async function downloadAuthenticated(session, tenantId, path, filename) {
+  const response = await fetch(coreApiPath(session, path), {
+    credentials: 'include',
+    headers: buildHeaders(session, tenantId),
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try { detail = (await response.json()).detail || detail; } catch { /* ignore */ }
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export function exportAuditLogs(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return downloadAuthenticated(
+    session,
+    tenantId,
+    `/audit-logs/export${query ? `?${query}` : ''}`,
+    `audit-logs-${tenantId}.csv`,
+  );
+}
+
+export function suppressContact(session, tenantId, contactId) {
+  return request(`/contacts/${contactId}/suppress`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}
+
+export function exportTenantData(session, tenantId) {
+  return downloadAuthenticated(
+    session,
+    tenantId,
+    `/tenants/${tenantId}/data-export`,
+    `tenant-data-${tenantId}.json`,
+  );
+}
+
 export function listMyTenants(session) {
   return request('/me/tenants', { session });
 }

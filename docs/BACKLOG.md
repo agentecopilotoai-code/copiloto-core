@@ -19,18 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0011 — Endurecer auditoría, privacidad y exportes
-
-- **Estado:** PENDING
-- **Objetivo:** cubrir mínimos de cumplimiento antes de producción piloto.
-- **Alcance mínimo:**
-  - Vista de audit logs.
-  - Export tenant controlado.
-  - Supresión de contacto.
-  - Redacción de PII en logs no controlados.
-  - Documentar DPA/no-training/retención.
-- **Criterio de terminado:** owner/admin puede consultar auditoría y ejecutar flujos básicos de privacidad.
-
 ### TASK-0012 — Crear checklist automatizado de go-live por tenant
 
 - **Estado:** PENDING

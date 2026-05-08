@@ -1274,3 +1274,99 @@ fieldset {
   color: var(--ink);
   border-top: 2px solid var(--line);
 }
+
+/* ── audit-panel ───────────────────────────────────────────────────── */
+.audit-panel .audit-section {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+}
+
+.audit-filter-form {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.audit-filter-actions {
+  align-items: flex-end;
+  display: flex;
+  gap: 0.5rem;
+  grid-column: 1 / -1;
+}
+
+.audit-table-wrap {
+  max-height: 420px;
+  overflow: auto;
+}
+
+.audit-table {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  width: 100%;
+}
+
+.audit-table th,
+.audit-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.audit-table th {
+  background: #f7f9fc;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+
+.actor-chip {
+  background: #e8f0fe;
+  border-radius: 6px;
+  color: #1a56db;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+}
+
+.privacy-section .danger-action,
+button.danger-action {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 10px;
+  color: #b91c1c;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+}
+
+button.danger-action:hover:not(:disabled) {
+  background: #fecaca;
+}
+
+button.danger-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.dpa-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  list-style: none;
+  padding: 0;
+}
+
+.dpa-list li {
+  background: #f7f9fc;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  padding: 0.5rem 0.75rem;
+}

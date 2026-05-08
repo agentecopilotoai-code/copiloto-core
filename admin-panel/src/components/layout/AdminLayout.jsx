@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useActiveModule } from '../../hooks/useActiveModule.js';
 import { useTenantOptions } from '../../hooks/useTenantOptions.js';
 import { listMyTenants } from '../../services/coreApi.js';
+import { AuditPanel } from '../modules/audit/AuditPanel.jsx';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
 import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
 import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
@@ -104,6 +105,8 @@ export function AdminLayout({ session }) {
     activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'operations-desk') {
     activeContent = <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'audit') {
+    activeContent = <AuditPanel module={activeModule} session={session} tenant={activeTenant} />;
   } else {
     activeContent = <ModulePlaceholder module={activeModule} tenant={activeTenant} />;
   }

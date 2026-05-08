@@ -251,3 +251,27 @@ Cada entrada debe incluir:
   - `python3 -m py_compile app/api/v1/routes.py` → OK
   - `git diff --check`
 - **Notas:** el envío requiere que el SR tenga `conversation_id`; sin él el endpoint retorna 422. La tabla `app.quotes` tiene constraint UNIQUE por `(tenant_id, service_request_id)`, por lo que solo existe una cotización vigente por solicitud; una segunda llamada al POST devuelve 409. El recálculo de totales en PATCH es determinístico: `grand_total = subtotal - discount_total + tax_total`.
+
+### TASK-0011 — Endurecer auditoría, privacidad y exportes
+
+- **Fecha:** 2026-05-08
+- **Resumen:** se implementaron los mínimos de cumplimiento para producción piloto. La Core API ahora expone `GET /audit-logs` con filtros (action, actor_type, entity_type, from_date, to_date, limit), `GET /audit-logs/export` que devuelve CSV con `Content-Disposition`, `POST /contacts/{id}/suppress` que anonimiza phone_e164/wa_id/display_name con seudónimos únicos por UUID y establece `opt_in_status='suppressed'`, y `GET /tenants/{id}/data-export` que devuelve JSON con configuración, canales, conteos y campos de privacidad. El structlog ahora redacta automáticamente teléfonos E.164 y emails en todos los eventos de log mediante el procesador `_redact_pii`. La tabla `contacts` acepta el nuevo valor `suppressed` en `opt_in_status` (schema + migración idempotente en bootstrap.sh). El módulo **Audit** del Admin Panel se implementó con: tabla de logs filtrable, exportación CSV, formulario de supresión con confirmación explícita, exportación de datos del tenant y resumen visual del DPA. Se documentó el `docs/DPA.md` con política de no-entrenamiento, retención por categoría, derechos del interesado (olvido, portabilidad, auditoría), medidas técnicas (RLS, RBAC, TLS, redacción de PII) y subencargados.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py`
+  - `app/core/logging.py`
+  - `infra/postgres/01-schema.sql`
+  - `scripts/bootstrap.sh`
+  - `admin-panel/src/components/modules/audit/AuditPanel.jsx` (nuevo)
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/styles/global.css`
+  - `docs/DPA.md` (nuevo)
+  - `tests/test_audit_privacy_static.py` (nuevo)
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m compileall app`
+  - `python3 tests/test_audit_privacy_static.py` — 30 tests OK
+  - `git diff --check`
+  - `bash -n scripts/bootstrap.sh`
+- **Notas:** la supresión es irreversible y sincrónica; las conversaciones previas conservan el `contact_id` como referencia opaca sin datos personales legibles. El export de audit logs usa `document.createElement('a')` para forzar la descarga sin bloquear el token de sesión en la URL.
