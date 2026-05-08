@@ -115,20 +115,43 @@ def _active_session_id(session_id: str | None) -> dict[str, Any] | None:
     return session
 
 
+def _role_at_least(role: str, minimum_role: str) -> bool:
+    return _ROLE_LEVELS.get(role, 0) >= _ROLE_LEVELS[minimum_role]
+
+
 def _has_admin_role(session: dict[str, Any], minimum_role: str) -> bool:
     roles = session.get('profile', {}).get('roles') or []
-    required = _ROLE_LEVELS[minimum_role]
-    return any(_ROLE_LEVELS.get(role, 0) >= required for role in roles)
+    return any(_role_at_least(role, minimum_role) for role in roles)
 
 
-def _session_can_access_tenant(session: dict[str, Any], tenant_id: UUID) -> bool:
+def _session_claim_matches_tenant(session: dict[str, Any], tenant_id: UUID) -> bool:
     profile = session.get('profile') or {}
-    if profile.get('support_mode'):
-        return True
     try:
         return UUID(str(profile.get('tenant_id'))) == tenant_id
     except (TypeError, ValueError):
         return False
+
+
+async def _session_can_stream_tenant(session: dict[str, Any], tenant_id: UUID) -> bool:
+    profile = session.get('profile') or {}
+    if profile.get('support_mode') and _has_admin_role(session, 'agent'):
+        return True
+    if _session_claim_matches_tenant(session, tenant_id) and _has_admin_role(session, 'agent'):
+        return True
+    if not db.pool or not profile.get('sub'):
+        return False
+    async with db.pool.acquire() as conn:
+        roles = await conn.fetch(
+            """
+            select utr.role
+            from app.users u
+            join app.user_tenant_roles utr on utr.user_id = u.id
+            where u.auth_subject=$1 and utr.tenant_id=$2
+            """,
+            profile['sub'],
+            tenant_id,
+        )
+    return any(_role_at_least(row['role'], 'agent') for row in roles)
 
 
 def _active_session(request: Request) -> dict[str, Any] | None:
@@ -384,20 +407,20 @@ async def admin_session(request: Request) -> Response:
 @router.websocket('/admin/api/core/v1/conversations/stream')
 async def admin_conversations_stream(websocket: WebSocket) -> None:
     session = _active_session_id(websocket.cookies.get(SESSION_COOKIE))
-    if not session or not _has_admin_role(session, 'agent'):
-        await websocket.close(code=1008)
+    if not session:
+        await websocket.close(code=1008, reason='admin_session_required')
         return
     tenant_id_param = websocket.query_params.get('tenant_id')
     try:
         tenant_id = UUID(str(tenant_id_param))
     except (TypeError, ValueError):
-        await websocket.close(code=1008)
-        return
-    if not _session_can_access_tenant(session, tenant_id):
-        await websocket.close(code=1008)
+        await websocket.close(code=1008, reason='invalid_tenant_id')
         return
     if not db.pool:
-        await websocket.close(code=1011)
+        await websocket.close(code=1011, reason='database_pool_unavailable')
+        return
+    if not await _session_can_stream_tenant(session, tenant_id):
+        await websocket.close(code=1008, reason='tenant_agent_role_required')
         return
 
     await websocket.accept()
@@ -425,7 +448,7 @@ async def admin_conversations_stream(websocket: WebSocket) -> None:
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=25)
                     await websocket.send_text(payload)
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     await websocket.send_json({'type': 'heartbeat', 'tenant_id': str(tenant_id)})
         except WebSocketDisconnect:
             return

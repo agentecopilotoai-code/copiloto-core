@@ -57,6 +57,9 @@ export function OperationsDesk({ module, session, tenant }) {
   const [streamStatus, setStreamStatus] = useState('disconnected');
   const messageThreadRef = useRef(null);
   const selectedConversationIdRef = useRef(null);
+  const streamSocketRef = useRef(null);
+  const streamReconnectTimerRef = useRef(null);
+  const streamReconnectAttemptRef = useRef(0);
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId)
@@ -109,15 +112,35 @@ export function OperationsDesk({ module, session, tenant }) {
       setStreamStatus('disconnected');
       return undefined;
     }
-    let reconnectTimer;
+
     let closedByEffect = false;
-    let socket;
+    const clearReconnectTimer = () => {
+      if (!streamReconnectTimerRef.current) return;
+      window.clearTimeout(streamReconnectTimerRef.current);
+      streamReconnectTimerRef.current = null;
+    };
+
+    const scheduleReconnect = () => {
+      clearReconnectTimer();
+      streamReconnectAttemptRef.current += 1;
+      const delayMs = Math.min(30000, 1000 * (2 ** (streamReconnectAttemptRef.current - 1)));
+      setStreamStatus(`reconnecting in ${Math.round(delayMs / 1000)}s`);
+      streamReconnectTimerRef.current = window.setTimeout(connect, delayMs);
+    };
 
     const connect = () => {
-      socket = openConversationStream(session, tenant.id);
+      if (closedByEffect) return;
+      const existingSocket = streamSocketRef.current;
+      if (existingSocket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(existingSocket.readyState)) {
+        return;
+      }
+
+      const socket = openConversationStream(session, tenant.id);
+      streamSocketRef.current = socket;
       setStreamStatus('connecting');
 
       socket.onopen = () => {
+        streamReconnectAttemptRef.current = 0;
         setStreamStatus('connected');
       };
 
@@ -140,13 +163,18 @@ export function OperationsDesk({ module, session, tenant }) {
       };
 
       socket.onerror = () => {
-        setStreamStatus('error');
+        if (socket === streamSocketRef.current) setStreamStatus('connection error');
       };
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
+        if (socket !== streamSocketRef.current) return;
+        streamSocketRef.current = null;
         if (closedByEffect) return;
-        setStreamStatus('reconnecting');
-        reconnectTimer = window.setTimeout(connect, 2000);
+        if (event.code === 1008) {
+          setStreamStatus(`closed: ${event.reason || 'unauthorized'}`);
+          return;
+        }
+        scheduleReconnect();
       };
     };
 
@@ -154,11 +182,15 @@ export function OperationsDesk({ module, session, tenant }) {
 
     return () => {
       closedByEffect = true;
-      if (reconnectTimer) window.clearTimeout(reconnectTimer);
-      if (socket) socket.close();
+      clearReconnectTimer();
+      const socket = streamSocketRef.current;
+      streamSocketRef.current = null;
+      if (socket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(socket.readyState)) {
+        socket.close(1000, 'operations_desk_unmounted');
+      }
       setStreamStatus('disconnected');
     };
-  }, [tenant?.id, session]);
+  }, [tenant?.id, session?.api?.baseUrl]);
 
   useEffect(() => {
     const thread = messageThreadRef.current;
