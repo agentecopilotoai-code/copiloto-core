@@ -837,6 +837,22 @@ fieldset {
   gap: 1rem;
 }
 
+
+.live-refresh-status {
+  align-items: flex-end;
+  color: var(--muted);
+  display: grid;
+  font-size: 0.78rem;
+  gap: 0.35rem;
+  justify-items: end;
+}
+
+.live-refresh-status span,
+.live-refresh-status small {
+  white-space: nowrap;
+}
+
+
 .operations-layout {
   align-items: start;
   display: grid;

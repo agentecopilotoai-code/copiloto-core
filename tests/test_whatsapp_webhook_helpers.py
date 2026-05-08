@@ -42,3 +42,14 @@ def test_webhook_raw_event_insert_is_tenant_scoped_for_rls():
     assert "select set_config('app.tenant_id', $1, true)" in source
     assert 'insert into app.webhook_events_raw (tenant_id, provider, event_type, headers, payload, payload_sha256)' in source
     assert "channel['tenant_id']" in source
+
+
+def test_whatsapp_webhook_persists_inbound_messages_for_live_inbox():
+    source = API_ROUTES.read_text()
+
+    assert "for message in value.get('messages', [])" in source
+    assert 'insert into app.contacts' in source
+    assert 'insert into app.conversations' in source
+    assert 'insert into app.messages (' in source
+    assert "status='human_active'" in source
+    assert "'waiting_agent'" in source

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   acceptConversationHandoff,
@@ -9,6 +9,8 @@ import {
   sendConversationMessage,
   startConversation,
 } from '../../../services/coreApi.js';
+
+const LIVE_REFRESH_MS = 3000;
 
 function formatDate(value) {
   if (!value) return 'Sin fecha';
@@ -52,6 +54,8 @@ export function OperationsDesk({ module, session, tenant }) {
   const [handoffReason, setHandoffReason] = useState('manual_or_policy_handoff');
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState(null);
+  const messageThreadRef = useRef(null);
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId)
@@ -59,7 +63,7 @@ export function OperationsDesk({ module, session, tenant }) {
     [conversationDetail, conversations, selectedConversationId],
   );
 
-  function refreshConversations(showNotice = false) {
+  function refreshConversations(showNotice = false, silent = false) {
     if (!tenant?.id) return Promise.resolve();
     return listConversations(session, tenant.id)
       .then((items) => {
@@ -67,17 +71,21 @@ export function OperationsDesk({ module, session, tenant }) {
         setSelectedConversationId((currentId) => currentId || items[0]?.id || null);
         if (showNotice) setNotice({ type: 'success', text: 'Inbox actualizado.' });
       })
-      .catch((error) => setNotice({ type: 'error', text: error.message }));
+      .catch((error) => {
+        if (!silent) setNotice({ type: 'error', text: error.message });
+      });
   }
 
-  function refreshDetail(conversationId = selectedConversationId) {
+  function refreshDetail(conversationId = selectedConversationId, silent = false) {
     if (!tenant?.id || !conversationId) {
       setConversationDetail(null);
       return Promise.resolve();
     }
     return getConversation(session, tenant.id, conversationId)
       .then(setConversationDetail)
-      .catch((error) => setNotice({ type: 'error', text: error.message }));
+      .catch((error) => {
+        if (!silent) setNotice({ type: 'error', text: error.message });
+      });
   }
 
   useEffect(() => {
@@ -90,6 +98,29 @@ export function OperationsDesk({ module, session, tenant }) {
     if (conversationDetail?.id === selectedConversationId) return;
     refreshDetail();
   }, [conversationDetail?.id, selectedConversationId]);
+
+  useEffect(() => {
+    if (!tenant?.id) return undefined;
+    let cancelled = false;
+    const refreshLiveInbox = async () => {
+      if (document.hidden || cancelled) return;
+      await refreshConversations(false, true);
+      if (selectedConversationId && !cancelled) {
+        await refreshDetail(selectedConversationId, true);
+      }
+      if (!cancelled) setLastLiveRefreshAt(new Date().toISOString());
+    };
+    const intervalId = window.setInterval(refreshLiveInbox, LIVE_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [tenant?.id, selectedConversationId, session]);
+
+  useEffect(() => {
+    const thread = messageThreadRef.current;
+    if (thread) thread.scrollTop = thread.scrollHeight;
+  }, [conversationDetail?.id, conversationDetail?.messages?.length]);
 
   async function runAction(action, successText) {
     if (!selectedConversationId) return;
@@ -157,9 +188,13 @@ export function OperationsDesk({ module, session, tenant }) {
           <h2>Inbox operativo</h2>
           <p className="hint">{module.summary}</p>
         </div>
-        <button className="secondary-action" disabled={isBusy} onClick={() => refreshConversations(true)} type="button">
-          Refrescar inbox
-        </button>
+        <div className="live-refresh-status">
+          <span>Actualización automática cada {LIVE_REFRESH_MS / 1000}s</span>
+          {lastLiveRefreshAt ? <small>Última: {formatDate(lastLiveRefreshAt)}</small> : null}
+          <button className="secondary-action" disabled={isBusy} onClick={() => refreshConversations(true)} type="button">
+            Refrescar inbox
+          </button>
+        </div>
       </div>
 
       <Notice notice={notice} />
@@ -280,7 +315,7 @@ export function OperationsDesk({ module, session, tenant }) {
                 </div>
               </div>
 
-              <div className="message-thread" aria-live="polite">
+              <div className="message-thread" aria-live="polite" ref={messageThreadRef}>
                 {(conversationDetail?.messages || []).map((message) => (
                   <article className={`message-bubble ${message.direction}`} key={message.id}>
                     <small>{message.sender_actor_type} · {formatDate(message.created_at)} · {deliveryLabel(message)}</small>

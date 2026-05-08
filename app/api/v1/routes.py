@@ -1645,6 +1645,114 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
         json.dumps(payload),
         sha,
     )
+
+    for entry in payload.get('entry', []):
+        for change in entry.get('changes', []):
+            value = change.get('value', {})
+            contacts_by_wa_id = {
+                str(contact.get('wa_id')): contact
+                for contact in value.get('contacts', [])
+                if contact.get('wa_id')
+            }
+            for message in value.get('messages', []):
+                wa_id = str(message.get('from') or '').strip()
+                external_message_id = str(message.get('id') or '').strip()
+                if not wa_id or not external_message_id:
+                    continue
+
+                contact_payload = contacts_by_wa_id.get(wa_id, {})
+                display_name = contact_payload.get('profile', {}).get('name')
+                phone_e164 = f'+{wa_id}' if not wa_id.startswith('+') else wa_id
+                phone_hash = hashlib.sha256(phone_e164.encode()).digest()
+                contact = await conn.fetchrow(
+                    """
+                    insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata)
+                    values ($1, $2, $3, $4, $5, 'whatsapp_cloud_api', $6::jsonb)
+                    on conflict (tenant_id, wa_id) do update set
+                      phone_e164=excluded.phone_e164,
+                      phone_hash=excluded.phone_hash,
+                      display_name=coalesce(excluded.display_name, app.contacts.display_name),
+                      metadata=app.contacts.metadata || excluded.metadata,
+                      updated_at=now()
+                    returning *
+                    """,
+                    channel['tenant_id'],
+                    wa_id,
+                    phone_e164,
+                    phone_hash,
+                    display_name,
+                    json.dumps({'whatsapp_contact': contact_payload}),
+                )
+
+                conversation = await conn.fetchrow(
+                    """
+                    select *
+                    from app.conversations
+                    where tenant_id=$1
+                      and contact_id=$2
+                      and channel_id=$3
+                      and status not in ('resolved','closed','archived')
+                    order by updated_at desc
+                    limit 1
+                    """,
+                    channel['tenant_id'],
+                    contact['id'],
+                    channel['id'],
+                )
+                if conversation:
+                    conversation = await conn.fetchrow(
+                        """
+                        update app.conversations
+                        set status=case when status='human_active' then status else 'waiting_agent' end,
+                            handoff_required=case when status='human_active' then handoff_required else true end
+                        where tenant_id=$1 and id=$2
+                        returning *
+                        """,
+                        channel['tenant_id'],
+                        conversation['id'],
+                    )
+                else:
+                    conversation = await conn.fetchrow(
+                        """
+                        insert into app.conversations (tenant_id, contact_id, channel_id, status, opened_by, handoff_required)
+                        values ($1, $2, $3, 'waiting_agent', 'user', true)
+                        returning *
+                        """,
+                        channel['tenant_id'],
+                        contact['id'],
+                        channel['id'],
+                    )
+
+                message_type = message.get('type') or 'text'
+                if message_type not in {'text', 'image', 'audio', 'video', 'document', 'interactive'}:
+                    message_type = 'text'
+                body_text = message.get('text', {}).get('body') if isinstance(message.get('text'), dict) else None
+                timestamp = message.get('timestamp')
+                received_at = None
+                if timestamp:
+                    try:
+                        received_at = datetime.fromtimestamp(int(timestamp), UTC)
+                    except (TypeError, ValueError, OSError):
+                        received_at = None
+                await conn.fetchrow(
+                    """
+                    insert into app.messages (
+                      tenant_id, conversation_id, external_message_id, direction, sender_actor_type, sender_actor_id,
+                      body_text, message_type, payload, status, received_at
+                    )
+                    values ($1, $2, $3, 'inbound', 'contact', $4, $5, $6, $7::jsonb, 'received', coalesce($8::timestamptz, now()))
+                    on conflict (tenant_id, external_message_id) do nothing
+                    returning *
+                    """,
+                    channel['tenant_id'],
+                    conversation['id'],
+                    external_message_id,
+                    wa_id,
+                    body_text,
+                    message_type,
+                    json.dumps(message),
+                    received_at,
+                )
     return {'accepted': True, 'payload_sha256': sha}
 
 

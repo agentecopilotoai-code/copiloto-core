@@ -95,6 +95,10 @@ def test_operations_desk_explains_queued_sent_failed_statuses():
     assert 'queued/sent/failed' in source
     assert 'Simulado local: no salió a WhatsApp' in source
     assert 'Aceptado por WhatsApp' in source
+    assert 'LIVE_REFRESH_MS = 3000' in source
+    assert 'window.setInterval(refreshLiveInbox, LIVE_REFRESH_MS)' in source
+    assert 'refreshDetail(selectedConversationId, true)' in source
+    assert 'messageThreadRef' in source
 
 
 def test_compose_mounts_secrets_for_api_and_worker():
