@@ -306,3 +306,60 @@ export function cancelAppointment(session, tenantId, appointmentId) {
     tenantId,
   });
 }
+
+export function listServiceRequests(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/service-requests${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+export function createServiceRequest(session, tenantId, payload) {
+  return request('/service-requests', {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { ...payload, tenant_id: tenantId },
+  });
+}
+
+export function patchServiceRequest(session, tenantId, requestId, payload) {
+  return request(`/service-requests/${requestId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function getQuoteForSr(session, tenantId, requestId) {
+  return request(`/service-requests/${requestId}/quote`, { session, tenantId });
+}
+
+export function createQuote(session, tenantId, requestId, payload) {
+  return request(`/service-requests/${requestId}/quotes`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function patchQuote(session, tenantId, quoteId, payload) {
+  return request(`/quotes/${quoteId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function sendQuote(session, tenantId, quoteId) {
+  return request(`/quotes/${quoteId}/send`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}
