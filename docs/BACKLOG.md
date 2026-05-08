@@ -19,17 +19,6 @@ Este archivo es la pila única de tareas pendientes para avanzar el producto hac
 
 ## Stack de tareas pendientes
 
-### TASK-0009 — Implementar gestión de recursos y agenda
-
-- **Estado:** PENDING
-- **Objetivo:** permitir configurar recursos y agendar citas.
-- **Alcance mínimo:**
-  - CRUD/listado de recursos por tenant.
-  - Crear cita.
-  - Detectar conflictos de recurso.
-  - Reprogramar y cancelar citas.
-- **Criterio de terminado:** un agente puede gestionar una cita sin violar constraints de agenda.
-
 ### TASK-0010 — Implementar service requests y cotización orientativa
 
 - **Estado:** PENDING

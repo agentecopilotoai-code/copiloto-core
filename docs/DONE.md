@@ -216,3 +216,23 @@ Cada entrada debe incluir:
   - `git diff --check`
   - `npm --prefix admin-panel run build` (bloqueado porque las dependencias de Vite/React no están instaladas en este entorno)
 - **Notas:** no se agregaron secretos ni variables nuevas; el agente asignado reutiliza el usuario local vinculado al `auth_subject` de la sesión autenticada. Corrección posterior: se agregó inicio de conversación desde el Operations Desk, creando/reutilizando contacto y conversación con mensaje inicial outbound auditado; también se corrigió la serialización de `bytea`/`phone_hash` para evitar errores UTF-8 al devolver contactos. Ajustes posteriores: el inicio devuelve un detalle completo y el panel lo muestra inmediatamente para evitar un 404 transitorio al consultar el detalle justo después del `POST /conversations/start`; se agregaron logs estructurados de inbox, inicio, canal faltante y diagnóstico de detalle 404 para diferenciar tenant incorrecto, conversación inexistente o carrera de visibilidad. Corrección posterior: el worker de eventos registra intentos/éxitos/fallos de entrega WhatsApp, marca mensajes como `failed` cuando Meta Graph API rechaza el envío y trata tokens `local-mock*` como modo simulado para no confundir colas locales con entregas reales. Ajuste posterior: los envíos simulados ahora se loguean como `message_delivery_mocked` y el panel muestra “Simulado local: no salió a WhatsApp”. Corrección posterior: aceptar un handoff ahora solo reclama handoffs con estado `open`, evitando que un segundo agente con inbox desactualizado reasigne silenciosamente un handoff ya aceptado por otro agente. Ajuste posterior: el canal WhatsApp del tenant ahora tiene `account_mode` configurable (`mock`/`live`) desde el onboarding; el worker usa ese modo para decidir si simula localmente o llama a Meta, y en modo `live` falla explícitamente si `META_ACCESS_TOKEN` sigue como placeholder/mock. Ajuste posterior: el health del canal ahora indica `meta_access_token_configured` y `delivery_ready`, y el panel muestra una alerta cuando el canal está en modo real pero el worker/Core API sigue sin token real. Ajuste posterior: el envío real ya no depende de un `META_ACCESS_TOKEN` global ni de fallbacks; el worker resuelve el token por `tenant_channels.token_ref`, el onboarding requiere secretos por tenant (`token_ref` y `app_secret_ref`), CopilotoIA escribe esos secretos desde el panel, genera el verify token del canal y Docker monta `.secrets` en API/worker para soportar credenciales por tenant.
+
+### TASK-0009 — Implementar gestión de recursos y agenda
+
+- **Fecha:** 2026-05-08
+- **Resumen:** se implementó la gestión operativa de recursos y agenda por tenant. La Core API ahora lista, crea, actualiza y desactiva recursos; lista citas; crea citas asociadas a contacto/conversación/service request; valida pertenencia/actividad del recurso; detecta conflictos por solapamiento antes de escribir y preserva la exclusión GiST ante carreras; permite reprogramar y cancelar citas auditando cada acción. El Operations Desk incorpora formularios para crear recursos, agendar citas del contacto seleccionado, reprogramar citas activas y cancelar reservas, mostrando el calendario operativo reciente.
+- **Archivos modificados:**
+  - `app/api/v1/schemas.py`
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx`
+  - `admin-panel/src/styles/global.css`
+  - `tests/test_scheduling_static.py`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m compileall app tests`
+  - `pytest -q tests/test_scheduling_static.py tests/test_operations_desk_static.py`
+  - `pytest -q` (bloqueado porque el Python global no tiene `pydantic` ni `cryptography`)
+  - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en este entorno)
+- **Notas:** no se agregaron secretos ni variables nuevas. La base ya tenía el constraint de exclusión sobre `app.appointments`; el endpoint agrega validación previa con respuesta 409 explicativa y mantiene el constraint como protección concurrente.
