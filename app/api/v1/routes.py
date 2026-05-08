@@ -2363,6 +2363,21 @@ def readiness_check(key: str, label: str, ready: bool, reason: str, details: dic
     }
 
 
+def readiness_truthy_object(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, dict | list | tuple | set):
+        return bool(value)
+    return bool(str(value).strip()) if isinstance(value, str) else bool(value)
+
+
+def readiness_positive_int(value: Any) -> bool:
+    try:
+        return int(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def readiness_response(tenant_id: UUID, checks: list[dict[str, Any]], smoke_question: str) -> dict[str, Any]:
     reasons = [check['reason'] for check in checks if not check['ready']]
     ready = not reasons
@@ -2408,10 +2423,10 @@ async def build_tenant_readiness_report(
     settings_dict = record_to_dict(settings) if settings else {}
     settings_ready = bool(
         settings
-        and settings['locale']
-        and settings['business_hours']
-        and settings['pii_policy']
-        and settings['max_bot_turns'] > 0
+        and readiness_truthy_object(settings['locale'])
+        and readiness_truthy_object(settings['business_hours'])
+        and readiness_truthy_object(settings['pii_policy'])
+        and readiness_positive_int(settings['max_bot_turns'])
     )
     checks.append(
         readiness_check(
@@ -2512,6 +2527,7 @@ async def build_tenant_readiness_report(
     escalation_policy = settings_dict.get('escalation_policy') or {}
     handoff_ready = bool(
         settings
+        and isinstance(escalation_policy, dict)
         and escalation_policy
         and (
             escalation_policy.get('handoff_required') is True
@@ -2530,6 +2546,7 @@ async def build_tenant_readiness_report(
     )
 
     audit_count = await conn.fetchval('select count(*) from app.audit_logs where tenant_id=$1', tenant_id)
+    audit_count = audit_count or 0
     audit_ready = audit_count > 0
     checks.append(
         readiness_check(
