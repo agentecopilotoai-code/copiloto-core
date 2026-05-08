@@ -41,6 +41,7 @@ def test_whatsapp_delivery_mode_controls_mocking_per_tenant_channel():
     assert 'os.getenv' not in service_source
     assert 'fallback_env' not in service_source
     assert 'verify_signature(body' not in service_source
+    assert 'normalize_meta_app_secret' in service_source
     assert 'token_ref did not resolve to a real Meta access token' in service_source
     assert "account_mode: str = Field(default='mock', pattern='^(mock|live)$')" in schema_source
     assert 'token_ref: str' not in schema_source
@@ -76,6 +77,7 @@ def test_whatsapp_onboarding_exposes_delivery_mode_toggle():
     assert 'Real vía WhatsApp Cloud API' in source
     assert 'Meta access token del tenant' in source
     assert 'App secret del tenant' in source
+    assert 'APP_ID|APP_SECRET' in source
     assert 'Verify token del webhook' in source
     assert 'whatsapp_verify_token' in source
     assert 'Falta o es mock' in source

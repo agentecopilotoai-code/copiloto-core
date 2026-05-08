@@ -37,6 +37,18 @@ def resolve_secret_ref(secret_ref: str | None) -> str | None:
     return None
 
 
+def normalize_meta_app_secret(app_secret: str | None) -> str | None:
+    if not app_secret:
+        return None
+    cleaned = app_secret.strip()
+    if '|' not in cleaned:
+        return cleaned
+    app_id, secret = cleaned.split('|', 1)
+    if app_id.strip() and secret.strip():
+        return secret.strip()
+    return cleaned
+
+
 def secret_ref_is_configured(secret_ref: str | None) -> bool:
     return bool(resolve_secret_ref(secret_ref))
 
@@ -54,10 +66,11 @@ def token_ref_is_configured(token_ref: str | None) -> bool:
 
 
 def verify_signature_with_secret(body: bytes, signature: str | None, app_secret: str | None) -> bool:
-    if not signature or not app_secret:
+    normalized_secret = normalize_meta_app_secret(app_secret)
+    if not signature or not normalized_secret:
         return False
     expected = 'sha256=' + hmac.new(
-        app_secret.encode(), body, hashlib.sha256
+        normalized_secret.encode(), body, hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature)
 

@@ -33,6 +33,7 @@ from app.services.audit import audit
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
+    normalize_meta_app_secret,
     resolve_secret_ref,
     secret_ref_is_configured,
     token_ref_is_configured,
@@ -544,7 +545,7 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
         )
 
     if payload.app_secret:
-        write_tenant_secret(app_secret_ref, payload.app_secret)
+        write_tenant_secret(app_secret_ref, normalize_meta_app_secret(payload.app_secret) or payload.app_secret)
     elif not secret_ref_is_configured(app_secret_ref):
         raise HTTPException(
             status_code=400,

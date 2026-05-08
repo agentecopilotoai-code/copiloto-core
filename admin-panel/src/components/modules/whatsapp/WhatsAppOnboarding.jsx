@@ -294,12 +294,12 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
             <input
               autoComplete="off"
               onChange={(event) => updateField('app_secret', event.target.value)}
-              placeholder="Pega aquí el App Secret solo para guardarlo en el secreto del tenant"
+              placeholder="App Secret o APP_ID|APP_SECRET; CopilotoIA guardará solo el secret"
               type="password"
               required={!health?.checks?.app_secret_configured}
               value={form.app_secret}
             />
-            <small>Requerido la primera vez o cuando quieras rotarlo; se guarda en secrets/tenants/&lt;tenant_id&gt;/whatsapp_app_secret.</small>
+            <small>Requerido la primera vez o cuando quieras rotarlo; se guarda en secrets/tenants/&lt;tenant_id&gt;/whatsapp_app_secret. Si pegas APP_ID|APP_SECRET, se almacena solo APP_SECRET.</small>
           </label>
           <label className="wide">
             Verify token del webhook
@@ -390,7 +390,7 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
       <div className="builder-preview">
         <strong>Variables y secretos requeridos</strong>
         <pre>{`Meta access token: CopilotoIA lo escribe en secrets/tenants/<tenant_id>/meta_access_token para envíos outbound.
-App Secret: CopilotoIA lo escribe en secrets/tenants/<tenant_id>/whatsapp_app_secret para validar X-Hub-Signature-256.
+App Secret: CopilotoIA lo escribe en secrets/tenants/<tenant_id>/whatsapp_app_secret para validar X-Hub-Signature-256; si pegas APP_ID|APP_SECRET, se usa solo la parte APP_SECRET.
 Verify token: CopilotoIA lo escribe en secrets/tenants/<tenant_id>/whatsapp_verify_token y el GET del webhook lo compara solo contra ese secreto.
 Modo mock: el worker marca el mensaje como simulado y no llama a Meta.
 Modo real: el worker llama a Meta usando el secreto meta_access_token del tenant; si ese secreto falta o es local-mock/change-me, el mensaje falla explícitamente.

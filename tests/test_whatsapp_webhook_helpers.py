@@ -15,12 +15,15 @@ def test_whatsapp_phone_number_id_extractor_uses_meta_metadata_path():
     assert 'return str(phone_number_id)' in source
 
 
-def test_webhook_signature_uses_supplied_app_secret_without_splitting_pairs():
+def test_webhook_signature_normalizes_app_id_secret_pairs():
     source = WHATSAPP.read_text()
+    routes_source = API_ROUTES.read_text()
 
-    assert 'def verify_signature_with_secret' in source
-    assert "hmac.new(\n        app_secret.encode(), body, hashlib.sha256\n    ).hexdigest()" in source
-    assert "app_secret.split('|')" not in source
+    assert 'def normalize_meta_app_secret' in source
+    assert "cleaned.split('|', 1)" in source
+    assert 'normalized_secret = normalize_meta_app_secret(app_secret)' in source
+    assert "hmac.new(\n        normalized_secret.encode(), body, hashlib.sha256\n    ).hexdigest()" in source
+    assert 'normalize_meta_app_secret(payload.app_secret)' in routes_source
     assert "WHATSAPP_APP_SECRET" not in source
 
 

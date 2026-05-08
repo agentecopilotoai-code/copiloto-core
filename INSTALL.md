@@ -218,7 +218,7 @@ Luego abre `http://localhost:3000/admin/` e inicia sesión con Auth0. El puerto 
 | `META_GRAPH_VERSION` | `v23.0` | No | Versión de Graph API usada por el adaptador. | Meta Developers docs / versión elegida. |
 | Meta access token por tenant | Guardado por el Admin Panel en `.secrets/tenants/<TENANT_ID>/meta_access_token` | Sí | Token para enviar mensajes por WhatsApp Cloud API desde el canal de ese tenant. | Meta for Developers > WhatsApp > API Setup, o System User token en Business Settings. |
 | Verify token por tenant | Guardado por el Admin Panel en `.secrets/tenants/<TENANT_ID>/whatsapp_verify_token` | Sí | Token que Meta usa para verificar el webhook. El `GET /v1/webhooks/whatsapp` lo lee únicamente desde ese secreto por tenant. | Admin Panel > WhatsApp del tenant. |
-| App Secret por tenant | Guardado por el Admin Panel en `.secrets/tenants/<TENANT_ID>/whatsapp_app_secret` | Sí | Secreto de la app Meta usado para validar `X-Hub-Signature-256` de ese número/canal. El archivo debe contener solo el App Secret, no `APP_ID|APP_SECRET`, App ID ni access token. | Meta for Developers > App Settings > Basic > App Secret. |
+| App Secret por tenant | Guardado por el Admin Panel en `.secrets/tenants/<TENANT_ID>/whatsapp_app_secret` | Sí | Secreto de la app Meta usado para validar `X-Hub-Signature-256` de ese número/canal. El archivo final debe contener solo el App Secret; si pegas `APP_ID|APP_SECRET` en el panel, CopilotoIA guarda solo `APP_SECRET`. No pegues App ID ni access token como secreto final. | Meta for Developers > App Settings > Basic > App Secret. |
 
 Además necesitarás estos IDs para registrar el canal por tenant:
 

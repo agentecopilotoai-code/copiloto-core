@@ -138,7 +138,7 @@ El botón **Ver health** llama `GET /admin/api/core/v1/tenants/{tenant_id}/chann
 Secretos requeridos por tenant:
 
 - **Meta access token del tenant:** el panel lo escribe en `secrets/tenants/<TENANT_ID>/meta_access_token`; no se guarda en DB.
-- **App secret del tenant:** el panel lo escribe en `secrets/tenants/<TENANT_ID>/whatsapp_app_secret`; no se guarda en DB. Debe ser solo el App Secret de Meta; no pegues `APP_ID|APP_SECRET`, el App ID ni un access token en `whatsapp_app_secret`.
+- **App secret del tenant:** el panel lo escribe en `secrets/tenants/<TENANT_ID>/whatsapp_app_secret`; no se guarda en DB. Debe quedar solo el App Secret de Meta en `whatsapp_app_secret`; si pegas `APP_ID|APP_SECRET` en el panel, CopilotoIA normaliza y guarda solo la parte `APP_SECRET`. No pegues un access token en este campo.
 - **Verify token:** el panel lo escribe en `secrets/tenants/<TENANT_ID>/whatsapp_verify_token`; el `GET /v1/webhooks/whatsapp` lee únicamente ese secreto por tenant para comparar el token que envía Meta.
 
 Los secretos locales viven en `.secrets/tenants/<TENANT_ID>/*`. No agregues variables globales por tenant ni pegues valores secretos en las referencias internas.
