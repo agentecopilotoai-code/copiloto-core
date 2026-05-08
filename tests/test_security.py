@@ -22,8 +22,6 @@ def settings_env(monkeypatch):
     monkeypatch.setenv('DATABASE_URL', 'postgresql://example')
     monkeypatch.setenv('JWT_SECRET', 'local-secret-with-min-length')
     monkeypatch.setenv('SERVICE_TOKEN', 'service-token-with-min-length')
-    monkeypatch.setenv('WHATSAPP_VERIFY_TOKEN', 'verify-token')
-    monkeypatch.setenv('WHATSAPP_APP_SECRET', 'whatsapp-secret')
     monkeypatch.setenv('S3_SECRET_ACCESS_KEY', 's3-secret')
     monkeypatch.delenv('AUTH0_DOMAIN', raising=False)
     monkeypatch.delenv('AUTH0_AUDIENCE', raising=False)

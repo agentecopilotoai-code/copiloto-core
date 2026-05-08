@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
+import hmac
 import json
-import secrets as secrets_lib
 from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
@@ -33,6 +33,7 @@ from app.services.audit import audit
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
+    normalize_meta_app_secret,
     resolve_secret_ref,
     secret_ref_is_configured,
     token_ref_is_configured,
@@ -44,15 +45,6 @@ log = structlog.get_logger()
 
 def tenant_secret_ref(tenant_id: UUID, secret_name: str) -> str:
     return f'secrets/tenants/{tenant_id}/{secret_name}'
-
-
-def validate_tenant_secret_ref(tenant_id: UUID, secret_ref: str, secret_name: str) -> None:
-    expected = tenant_secret_ref(tenant_id, secret_name)
-    if secret_ref != expected:
-        raise HTTPException(
-            status_code=400,
-            detail=f'{secret_name} must use tenant-scoped ref {expected}',
-        )
 
 
 def write_tenant_secret(secret_ref: str, value: str) -> None:
@@ -80,6 +72,86 @@ def whatsapp_phone_number_id_from_payload(payload: dict[str, Any]) -> str | None
             if phone_number_id:
                 return str(phone_number_id)
     return None
+
+
+async def notify_operations_change(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    event: str,
+    *,
+    conversation_id: UUID | str | None = None,
+    message_id: UUID | str | None = None,
+) -> None:
+    payload = {
+        'type': event,
+        'tenant_id': str(tenant_id),
+        'conversation_id': str(conversation_id) if conversation_id else None,
+        'message_id': str(message_id) if message_id else None,
+        'occurred_at': datetime.now(UTC).isoformat(),
+    }
+    await conn.execute("select pg_notify('tenant_operations_events', $1)", json.dumps(payload))
+
+
+async def upsert_whatsapp_contact(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    wa_id: str,
+    phone_e164: str,
+    phone_hash: bytes,
+    display_name: str | None,
+    metadata: dict[str, Any],
+    source: str | None = 'whatsapp_cloud_api',
+):
+    existing = await conn.fetchrow(
+        """
+        select *
+        from app.contacts
+        where tenant_id=$1 and (wa_id=$2 or phone_e164=$3)
+        order by case when wa_id=$2 then 0 else 1 end, updated_at desc
+        limit 1
+        """,
+        tenant_id,
+        wa_id,
+        phone_e164,
+    )
+    if existing:
+        return await conn.fetchrow(
+            """
+            update app.contacts
+            set wa_id=$2,
+                phone_e164=$3,
+                phone_hash=$4,
+                display_name=coalesce($5, display_name),
+                source=coalesce($6, source),
+                metadata=metadata || $7::jsonb,
+                updated_at=now()
+            where tenant_id=$1 and id=$8
+            returning *
+            """,
+            tenant_id,
+            wa_id,
+            phone_e164,
+            phone_hash,
+            display_name,
+            source,
+            json.dumps(metadata),
+            existing['id'],
+        )
+    return await conn.fetchrow(
+        """
+        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata)
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        returning *
+        """,
+        tenant_id,
+        wa_id,
+        phone_e164,
+        phone_hash,
+        display_name,
+        source,
+        json.dumps(metadata),
+    )
 
 
 router = APIRouter(prefix='/v1')
@@ -248,6 +320,7 @@ async def tenant_id_from_request(request: Request, conn: asyncpg.Connection) -> 
     if not tenant_id:
         raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
     await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     return tenant_id
 
 
@@ -539,39 +612,36 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
 async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    validate_tenant_secret_ref(tenant_id, payload.token_ref, 'meta_access_token')
-    validate_tenant_secret_ref(tenant_id, payload.app_secret_ref, 'whatsapp_app_secret')
 
-    current = await conn.fetchrow(
-        """
-        select verify_token_hash
-        from app.tenant_channels
-        where tenant_id=$1 and provider='whatsapp_cloud_api'
-        """,
-        tenant_id,
-    )
+    token_ref = tenant_secret_ref(tenant_id, 'meta_access_token')
+    app_secret_ref = tenant_secret_ref(tenant_id, 'whatsapp_app_secret')
+    verify_token_ref = tenant_secret_ref(tenant_id, 'whatsapp_verify_token')
 
     if payload.meta_access_token:
-        write_tenant_secret(payload.token_ref, payload.meta_access_token)
-    elif not token_ref_is_configured(payload.token_ref):
+        write_tenant_secret(token_ref, payload.meta_access_token)
+    elif not token_ref_is_configured(token_ref):
         raise HTTPException(
             status_code=400,
-            detail='Meta access token is required for this tenant token_ref',
+            detail='Meta access token is required for this tenant secret',
         )
 
     if payload.app_secret:
-        write_tenant_secret(payload.app_secret_ref, payload.app_secret)
-    elif not secret_ref_is_configured(payload.app_secret_ref):
+        write_tenant_secret(app_secret_ref, normalize_meta_app_secret(payload.app_secret) or payload.app_secret)
+    elif not secret_ref_is_configured(app_secret_ref):
         raise HTTPException(
             status_code=400,
-            detail='WhatsApp app secret is required for this tenant app_secret_ref',
+            detail='WhatsApp app secret is required for this tenant secret',
         )
 
-    generated_verify_token = None
-    verify_token = payload.verify_token
-    if not verify_token and not current:
-        generated_verify_token = secrets_lib.token_urlsafe(32)
-        verify_token = generated_verify_token
+    if payload.verify_token:
+        write_tenant_secret(verify_token_ref, payload.verify_token)
+    elif not secret_ref_is_configured(verify_token_ref):
+        raise HTTPException(
+            status_code=400,
+            detail='WhatsApp verify token is required for this tenant secret',
+        )
+
+    verify_token = resolve_secret_ref(verify_token_ref)
 
     row = await conn.fetchrow(
         """
@@ -583,7 +653,7 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
         on conflict (tenant_id, provider) do update set
           business_id=excluded.business_id, waba_id=excluded.waba_id, phone_number_id=excluded.phone_number_id,
           token_ref=excluded.token_ref, app_secret_ref=excluded.app_secret_ref,
-          verify_token_hash=coalesce(excluded.verify_token_hash, app.tenant_channels.verify_token_hash),
+          verify_token_hash=excluded.verify_token_hash,
           account_mode=excluded.account_mode, status='active'
         returning *
         """,
@@ -591,16 +661,13 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
         payload.business_id,
         payload.waba_id,
         payload.phone_number_id,
-        payload.token_ref,
-        payload.app_secret_ref,
+        token_ref,
+        app_secret_ref,
         verify_token_hash(verify_token) if verify_token else None,
         payload.account_mode,
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='channel.upserted', entity_type='tenant_channel', entity_id=str(row['id']))
-    response = record_to_dict(row)
-    if generated_verify_token:
-        response['generated_verify_token'] = generated_verify_token
-    return response
+    return record_to_dict(row)
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/channels/whatsapp/health')
@@ -624,7 +691,7 @@ async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connec
     delivery_mode = channel.get('account_mode') or 'mock'
     token_ready = token_ref_is_configured(channel.get('token_ref'))
     app_secret_ready = secret_ref_is_configured(channel.get('app_secret_ref'))
-    verify_token_ready = bool(channel.get('verify_token_hash'))
+    verify_token_ready = secret_ref_is_configured(tenant_secret_ref(channel['tenant_id'], 'whatsapp_verify_token'))
     delivery_ready = delivery_mode != 'live' or token_ready
     checks = {
         'business_id': bool(channel.get('business_id')),
@@ -790,26 +857,17 @@ async def start_conversation(
     )
 
     phone_e164 = payload.phone_e164.strip()
-    wa_id = (payload.wa_id or phone_e164).strip()
+    wa_id = (payload.wa_id or phone_e164).strip().lstrip('+')
     phone_hash = hashlib.sha256(phone_e164.encode()).digest()
-    contact = await conn.fetchrow(
-        """
-        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, metadata)
-        values ($1, $2, $3, $4, $5, $6::jsonb)
-        on conflict (tenant_id, wa_id) do update set
-          phone_e164=excluded.phone_e164,
-          phone_hash=excluded.phone_hash,
-          display_name=coalesce(excluded.display_name, app.contacts.display_name),
-          metadata=app.contacts.metadata || excluded.metadata,
-          updated_at=now()
-        returning *
-        """,
-        payload.tenant_id,
-        wa_id,
-        phone_e164,
-        phone_hash,
-        payload.display_name,
-        json.dumps(payload.metadata),
+    contact = await upsert_whatsapp_contact(
+        conn,
+        tenant_id=payload.tenant_id,
+        wa_id=wa_id,
+        phone_e164=phone_e164,
+        phone_hash=phone_hash,
+        display_name=payload.display_name,
+        metadata=payload.metadata,
+        source='operations_desk',
     )
     conversation = await conn.fetchrow(
         """
@@ -890,6 +948,13 @@ async def start_conversation(
         metadata={'contact_id': str(contact['id']), 'message_id': str(message['id']), 'reused': reused_conversation},
     )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(message['id']))
+    await notify_operations_change(
+        conn,
+        payload.tenant_id,
+        'conversation.changed',
+        conversation_id=conversation['id'],
+        message_id=message['id'],
+    )
     response = record_to_dict(conversation)
     response['contact_label'] = contact['display_name'] or contact['phone_e164'] or contact['wa_id']
     response['contact_phone'] = contact['phone_e164']
@@ -1020,6 +1085,13 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
         conversation_id,
     )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(row['id']))
+    await notify_operations_change(
+        conn,
+        payload.tenant_id,
+        'conversation.changed',
+        conversation_id=conversation_id,
+        message_id=row['id'],
+    )
     return record_to_dict(row)
 
 
@@ -1601,29 +1673,36 @@ async def verify_whatsapp_webhook(
 ):
     if hub_mode != 'subscribe' or not hub_verify_token:
         raise HTTPException(status_code=403, detail='Invalid verify token')
-    row = await conn.fetchrow(
+    rows = await conn.fetch(
         """
-        select id
+        select tenant_id
         from app.tenant_channels
         where provider='whatsapp_cloud_api'
           and status='active'
-          and verify_token_hash=$1
         """,
-        verify_token_hash(hub_verify_token),
     )
-    if row:
-        return Response(content=hub_challenge or '', media_type='text/plain')
+    for row in rows:
+        verify_token = resolve_secret_ref(tenant_secret_ref(row['tenant_id'], 'whatsapp_verify_token'))
+        if verify_token and hmac.compare_digest(verify_token, hub_verify_token):
+            return Response(content=hub_challenge or '', media_type='text/plain')
     raise HTTPException(status_code=403, detail='Invalid verify token')
 
 
 @webhook_router.post('/whatsapp', status_code=202)
 async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = Depends(get_db), x_hub_signature_256: str | None = Header(default=None, alias='X-Hub-Signature-256')):
     body = await request.body()
-    payload = json.loads(body or b'{}')
+    try:
+        payload = json.loads(body or b'{}')
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail='Invalid webhook payload') from exc
+
     phone_number_id = whatsapp_phone_number_id_from_payload(payload)
+    if not phone_number_id:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+
     channel = await conn.fetchrow(
         """
-        select app_secret_ref
+        select id, tenant_id, app_secret_ref
         from app.tenant_channels
         where provider='whatsapp_cloud_api'
           and phone_number_id=$1
@@ -1631,21 +1710,134 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
         """,
         phone_number_id,
     )
-    app_secret = resolve_secret_ref(channel['app_secret_ref']) if channel else None
+    if not channel:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+
+    app_secret = resolve_secret_ref(channel['app_secret_ref'])
     if not verify_signature_with_secret(body, x_hub_signature_256, app_secret):
         raise HTTPException(status_code=401, detail='Invalid webhook signature')
+
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(channel['tenant_id']))
     sha = hashlib.sha256(body).hexdigest()
     await conn.fetchrow(
         """
-        insert into app.webhook_events_raw (provider, event_type, headers, payload, payload_sha256)
-        values ('whatsapp_cloud_api', $1, $2::jsonb, $3::jsonb, $4)
+        insert into app.webhook_events_raw (tenant_id, provider, event_type, headers, payload, payload_sha256)
+        values ($1, 'whatsapp_cloud_api', $2, $3::jsonb, $4::jsonb, $5)
         on conflict (payload_sha256) do nothing returning *
         """,
+        channel['tenant_id'],
         payload.get('object', 'unknown'),
         json.dumps(dict(request.headers)),
         json.dumps(payload),
         sha,
     )
+
+    for entry in payload.get('entry', []):
+        for change in entry.get('changes', []):
+            value = change.get('value', {})
+            contacts_by_wa_id = {
+                str(contact.get('wa_id')): contact
+                for contact in value.get('contacts', [])
+                if contact.get('wa_id')
+            }
+            for message in value.get('messages', []):
+                wa_id = str(message.get('from') or '').strip()
+                external_message_id = str(message.get('id') or '').strip()
+                if not wa_id or not external_message_id:
+                    continue
+
+                contact_payload = contacts_by_wa_id.get(wa_id, {})
+                display_name = contact_payload.get('profile', {}).get('name')
+                phone_e164 = f'+{wa_id}' if not wa_id.startswith('+') else wa_id
+                phone_hash = hashlib.sha256(phone_e164.encode()).digest()
+                contact = await upsert_whatsapp_contact(
+                    conn,
+                    tenant_id=channel['tenant_id'],
+                    wa_id=wa_id,
+                    phone_e164=phone_e164,
+                    phone_hash=phone_hash,
+                    display_name=display_name,
+                    metadata={'whatsapp_contact': contact_payload},
+                    source='whatsapp_cloud_api',
+                )
+
+                conversation = await conn.fetchrow(
+                    """
+                    select *
+                    from app.conversations
+                    where tenant_id=$1
+                      and contact_id=$2
+                      and channel_id=$3
+                      and status not in ('resolved','closed','archived')
+                    order by updated_at desc
+                    limit 1
+                    """,
+                    channel['tenant_id'],
+                    contact['id'],
+                    channel['id'],
+                )
+                if conversation:
+                    conversation = await conn.fetchrow(
+                        """
+                        update app.conversations
+                        set status=case when status='human_active' then status else 'waiting_agent' end,
+                            handoff_required=case when status='human_active' then handoff_required else true end
+                        where tenant_id=$1 and id=$2
+                        returning *
+                        """,
+                        channel['tenant_id'],
+                        conversation['id'],
+                    )
+                else:
+                    conversation = await conn.fetchrow(
+                        """
+                        insert into app.conversations (tenant_id, contact_id, channel_id, status, opened_by, handoff_required)
+                        values ($1, $2, $3, 'waiting_agent', 'user', true)
+                        returning *
+                        """,
+                        channel['tenant_id'],
+                        contact['id'],
+                        channel['id'],
+                    )
+
+                message_type = message.get('type') or 'text'
+                if message_type not in {'text', 'image', 'audio', 'video', 'document', 'interactive'}:
+                    message_type = 'text'
+                body_text = message.get('text', {}).get('body') if isinstance(message.get('text'), dict) else None
+                timestamp = message.get('timestamp')
+                received_at = None
+                if timestamp:
+                    try:
+                        received_at = datetime.fromtimestamp(int(timestamp), UTC)
+                    except (TypeError, ValueError, OSError):
+                        received_at = None
+                inbound_message = await conn.fetchrow(
+                    """
+                    insert into app.messages (
+                      tenant_id, conversation_id, external_message_id, direction, sender_actor_type, sender_actor_id,
+                      body_text, message_type, payload, status, received_at
+                    )
+                    values ($1, $2, $3, 'inbound', 'contact', $4, $5, $6, $7::jsonb, 'received', coalesce($8::timestamptz, now()))
+                    on conflict (tenant_id, external_message_id) do nothing
+                    returning *
+                    """,
+                    channel['tenant_id'],
+                    conversation['id'],
+                    external_message_id,
+                    wa_id,
+                    body_text,
+                    message_type,
+                    json.dumps(message),
+                    received_at,
+                )
+                if inbound_message:
+                    await notify_operations_change(
+                        conn,
+                        channel['tenant_id'],
+                        'conversation.changed',
+                        conversation_id=conversation['id'],
+                        message_id=inbound_message['id'],
+                    )
     return {'accepted': True, 'payload_sha256': sha}
 
 

@@ -40,6 +40,9 @@ services:
         required: false
     environment:
       ADMIN_CORE_API_BASE_URL: http://api:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "3000:3000"

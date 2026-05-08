@@ -34,7 +34,7 @@ def delivery_error_message(exc: Exception) -> str:
 async def process_once(conn: asyncpg.Connection) -> int:
     rows = await conn.fetch(
         """
-        select e.id, e.tenant_id, e.aggregate_id, m.body_text, c.phone_number_id, c.account_mode, c.token_ref, ct.phone_e164
+        select e.id, e.tenant_id, e.aggregate_id, m.conversation_id, m.body_text, c.phone_number_id, c.account_mode, c.token_ref, ct.phone_e164
         from app.domain_events e
         join app.messages m on m.id = e.aggregate_id and m.tenant_id = e.tenant_id
         join app.conversations cv on cv.id = m.conversation_id and cv.tenant_id = e.tenant_id
@@ -85,6 +85,15 @@ async def process_once(conn: asyncpg.Connection) -> int:
                     row['id'],
                     json.dumps({'delivery_failed': True, 'error_message': error_message}),
                 )
+                await conn.execute(
+                    "select pg_notify('tenant_operations_events', $1)",
+                    json.dumps({
+                        'type': 'conversation.changed',
+                        'tenant_id': str(row['tenant_id']),
+                        'conversation_id': str(row['conversation_id']),
+                        'message_id': str(row['aggregate_id']),
+                    }),
+                )
             log.warning(
                 'message_delivery_failed',
                 event_id=str(row['id']),
@@ -110,6 +119,15 @@ async def process_once(conn: asyncpg.Connection) -> int:
                 json.dumps({'provider_result': result}),
             )
             await conn.execute('update app.domain_events set published_at=now() where id=$1', row['id'])
+            await conn.execute(
+                "select pg_notify('tenant_operations_events', $1)",
+                json.dumps({
+                    'type': 'conversation.changed',
+                    'tenant_id': str(row['tenant_id']),
+                    'conversation_id': str(row['conversation_id']),
+                    'message_id': str(row['aggregate_id']),
+                }),
+            )
         mocked = bool(result.get('mocked'))
         log.info(
             'message_delivery_mocked' if mocked else 'message_delivery_sent',

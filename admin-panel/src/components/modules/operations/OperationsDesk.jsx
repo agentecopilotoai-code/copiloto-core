@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   acceptConversationHandoff,
   createConversationHandoff,
   getConversation,
   listConversations,
+  openConversationStream,
   releaseConversation,
   sendConversationMessage,
   startConversation,
@@ -52,6 +53,13 @@ export function OperationsDesk({ module, session, tenant }) {
   const [handoffReason, setHandoffReason] = useState('manual_or_policy_handoff');
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState(null);
+  const [streamStatus, setStreamStatus] = useState('disconnected');
+  const messageThreadRef = useRef(null);
+  const selectedConversationIdRef = useRef(null);
+  const streamSocketRef = useRef(null);
+  const streamReconnectTimerRef = useRef(null);
+  const streamReconnectAttemptRef = useRef(0);
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId)
@@ -59,7 +67,7 @@ export function OperationsDesk({ module, session, tenant }) {
     [conversationDetail, conversations, selectedConversationId],
   );
 
-  function refreshConversations(showNotice = false) {
+  function refreshConversations(showNotice = false, silent = false) {
     if (!tenant?.id) return Promise.resolve();
     return listConversations(session, tenant.id)
       .then((items) => {
@@ -67,17 +75,21 @@ export function OperationsDesk({ module, session, tenant }) {
         setSelectedConversationId((currentId) => currentId || items[0]?.id || null);
         if (showNotice) setNotice({ type: 'success', text: 'Inbox actualizado.' });
       })
-      .catch((error) => setNotice({ type: 'error', text: error.message }));
+      .catch((error) => {
+        if (!silent) setNotice({ type: 'error', text: error.message });
+      });
   }
 
-  function refreshDetail(conversationId = selectedConversationId) {
+  function refreshDetail(conversationId = selectedConversationId, silent = false) {
     if (!tenant?.id || !conversationId) {
       setConversationDetail(null);
       return Promise.resolve();
     }
     return getConversation(session, tenant.id, conversationId)
       .then(setConversationDetail)
-      .catch((error) => setNotice({ type: 'error', text: error.message }));
+      .catch((error) => {
+        if (!silent) setNotice({ type: 'error', text: error.message });
+      });
   }
 
   useEffect(() => {
@@ -90,6 +102,100 @@ export function OperationsDesk({ module, session, tenant }) {
     if (conversationDetail?.id === selectedConversationId) return;
     refreshDetail();
   }, [conversationDetail?.id, selectedConversationId]);
+
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    if (!tenant?.id) {
+      setStreamStatus('disconnected');
+      return undefined;
+    }
+
+    let closedByEffect = false;
+    const clearReconnectTimer = () => {
+      if (!streamReconnectTimerRef.current) return;
+      window.clearTimeout(streamReconnectTimerRef.current);
+      streamReconnectTimerRef.current = null;
+    };
+
+    const scheduleReconnect = () => {
+      clearReconnectTimer();
+      streamReconnectAttemptRef.current += 1;
+      const delayMs = Math.min(30000, 1000 * (2 ** (streamReconnectAttemptRef.current - 1)));
+      setStreamStatus(`reconnecting in ${Math.round(delayMs / 1000)}s`);
+      streamReconnectTimerRef.current = window.setTimeout(connect, delayMs);
+    };
+
+    const connect = () => {
+      if (closedByEffect) return;
+      const existingSocket = streamSocketRef.current;
+      if (existingSocket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(existingSocket.readyState)) {
+        return;
+      }
+
+      const socket = openConversationStream(session, tenant.id);
+      streamSocketRef.current = socket;
+      setStreamStatus('connecting');
+
+      socket.onopen = () => {
+        streamReconnectAttemptRef.current = 0;
+        setStreamStatus('connected');
+      };
+
+      socket.onmessage = async (event) => {
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+        if (payload.type === 'heartbeat' || payload.type === 'connected') return;
+        if (payload.type !== 'conversation.changed') return;
+
+        await refreshConversations(false, true);
+        const currentConversationId = selectedConversationIdRef.current;
+        const shouldRefreshDetail = currentConversationId
+          && (!payload.conversation_id || payload.conversation_id === currentConversationId);
+        if (shouldRefreshDetail) await refreshDetail(currentConversationId, true);
+        setLastLiveRefreshAt(new Date().toISOString());
+      };
+
+      socket.onerror = () => {
+        if (socket === streamSocketRef.current) setStreamStatus('connection error');
+      };
+
+      socket.onclose = (event) => {
+        if (socket !== streamSocketRef.current) return;
+        streamSocketRef.current = null;
+        if (closedByEffect) return;
+        if (event.code === 1008) {
+          setStreamStatus(`closed: ${event.reason || 'unauthorized'}`);
+          return;
+        }
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+
+    return () => {
+      closedByEffect = true;
+      clearReconnectTimer();
+      const socket = streamSocketRef.current;
+      streamSocketRef.current = null;
+      if (socket && [WebSocket.CONNECTING, WebSocket.OPEN].includes(socket.readyState)) {
+        socket.close(1000, 'operations_desk_unmounted');
+      }
+      setStreamStatus('disconnected');
+    };
+  }, [tenant?.id, session?.api?.baseUrl]);
+
+  useEffect(() => {
+    const thread = messageThreadRef.current;
+    if (thread) thread.scrollTop = thread.scrollHeight;
+  }, [conversationDetail?.id, conversationDetail?.messages?.length]);
 
   async function runAction(action, successText) {
     if (!selectedConversationId) return;
@@ -157,9 +263,15 @@ export function OperationsDesk({ module, session, tenant }) {
           <h2>Inbox operativo</h2>
           <p className="hint">{module.summary}</p>
         </div>
-        <button className="secondary-action" disabled={isBusy} onClick={() => refreshConversations(true)} type="button">
-          Refrescar inbox
-        </button>
+        <div className="live-refresh-status">
+          <span>Tiempo real WebSocket: {streamStatus === 'connected' ? 'conectado' : streamStatus}</span>
+          {lastLiveRefreshAt
+            ? <small>Último evento: {formatDate(lastLiveRefreshAt)}</small>
+            : <small>Esperando cambios del servidor</small>}
+          <button className="secondary-action" disabled={isBusy} onClick={() => refreshConversations(true)} type="button">
+            Refrescar inbox
+          </button>
+        </div>
       </div>
 
       <Notice notice={notice} />
@@ -280,7 +392,7 @@ export function OperationsDesk({ module, session, tenant }) {
                 </div>
               </div>
 
-              <div className="message-thread" aria-live="polite">
+              <div className="message-thread" aria-live="polite" ref={messageThreadRef}>
                 {(conversationDetail?.messages || []).map((message) => (
                   <article className={`message-bubble ${message.direction}`} key={message.id}>
                     <small>{message.sender_actor_type} · {formatDate(message.created_at)} · {deliveryLabel(message)}</small>

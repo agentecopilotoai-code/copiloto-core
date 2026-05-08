@@ -1421,13 +1421,13 @@ La guía técnica debe asumir **seguridad por diseño**. Esto implica: secretos 
 
 ### Cifrado, claves y secretos
 
-AWS Secrets Manager documenta que cifra secretos mediante **envelope encryption** con AWS KMS y claves de datos AES-256, y que puede usarse para rotar, almacenar y recuperar secretos sin codificarlos en la aplicación. Por ello, en este diseño ningún token Meta, secreto de app, verify token o credencial de BD debe guardarse en claro en PostgreSQL; en la BD solo se almacenan referencias (`token_ref`, `kms_key_ref`, `app_secret_ref`). Para objetos, S3 con SSE-KMS es suficiente en MVP. citeturn4view4turn2search9turn2search13
+AWS Secrets Manager documenta que cifra secretos mediante **envelope encryption** con AWS KMS y claves de datos AES-256, y que puede usarse para rotar, almacenar y recuperar secretos sin codificarlos en la aplicación. Por ello, en este diseño ningún token Meta, secreto de app, verify token o credencial de BD debe guardarse en claro en PostgreSQL; en la BD solo se almacenan referencias internas (`token_ref`, `kms_key_ref`, `app_secret_ref`) y hashes no secretos cuando aplica. Para objetos, S3 con SSE-KMS es suficiente en MVP. citeturn4view4turn2search9turn2search13
 
 | Activo | Ubicación recomendada | Protección |
 |---|---|---|
 | Access tokens Meta | Secret Manager | KMS + rotación/versionado |
 | App secrets Meta | Secret Manager | KMS |
-| Verify tokens | Secret Manager o hash en DB | nunca texto plano |
+| Verify tokens | Secret Manager / `.secrets/tenants/<TENANT_ID>/whatsapp_verify_token` en local | nunca texto plano en DB; el webhook GET lee el secreto por tenant |
 | Credenciales de BD | Secret Manager o IAM auth | sin `.env` persistente |
 | Media/snapshots/exportes | S3/objetos | SSE-KMS |
 | Backups lógicos | bucket dedicado | cifrado + políticas de retención |

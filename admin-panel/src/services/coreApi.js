@@ -20,6 +20,17 @@ function buildHeaders(session, tenantId, body) {
   return headers;
 }
 
+
+function coreWebSocketPath(session, path, params = {}) {
+  const baseUrl = session?.api?.baseUrl || '/admin/api/core/v1';
+  const httpUrl = new URL(adminPath(`${baseUrl}${path}`), window.location.href);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) httpUrl.searchParams.set(key, value);
+  });
+  httpUrl.protocol = httpUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  return httpUrl.toString();
+}
+
 function coreApiPath(session, path) {
   const baseUrl = session?.api?.baseUrl || '/admin/api/core/v1';
   return adminPath(`${baseUrl}${path}`);
@@ -215,4 +226,10 @@ export function releaseConversation(session, tenantId, conversationId) {
     session,
     tenantId,
   });
+}
+
+export function openConversationStream(session, tenantId) {
+  return new WebSocket(
+    coreWebSocketPath(session, '/conversations/stream', { tenant_id: tenantId }),
+  );
 }

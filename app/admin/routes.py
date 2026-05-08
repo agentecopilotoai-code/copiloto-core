@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -8,13 +9,23 @@ import secrets
 import time
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import FileResponse, RedirectResponse
 
 from app.admin.config import get_admin_settings
+from app.db.pool import db
 
 STATIC_DIR = Path(__file__).parent / 'static'
 DIST_DIR = STATIC_DIR / 'dist'
@@ -24,6 +35,7 @@ SESSION_TTL_SECONDS = 8 * 60 * 60
 
 router = APIRouter()
 _sessions: dict[str, dict[str, Any]] = {}
+_ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
 
 
 def _b64url(data: bytes) -> str:
@@ -92,15 +104,58 @@ def _logout_return_to(request: Request) -> str:
     return str(request.url_for('admin_index'))
 
 
-def _active_session(request: Request) -> dict[str, Any] | None:
-    session_id = request.cookies.get(SESSION_COOKIE)
+def _active_session_id(session_id: str | None) -> dict[str, Any] | None:
     if not session_id:
         return None
     session = _sessions.get(session_id)
     if not session or session['expires_at'] < time.time():
-        _sessions.pop(session_id, None)
+        if session_id:
+            _sessions.pop(session_id, None)
         return None
     return session
+
+
+def _role_at_least(role: str, minimum_role: str) -> bool:
+    return _ROLE_LEVELS.get(role, 0) >= _ROLE_LEVELS[minimum_role]
+
+
+def _has_admin_role(session: dict[str, Any], minimum_role: str) -> bool:
+    roles = session.get('profile', {}).get('roles') or []
+    return any(_role_at_least(role, minimum_role) for role in roles)
+
+
+def _session_claim_matches_tenant(session: dict[str, Any], tenant_id: UUID) -> bool:
+    profile = session.get('profile') or {}
+    try:
+        return UUID(str(profile.get('tenant_id'))) == tenant_id
+    except (TypeError, ValueError):
+        return False
+
+
+async def _session_can_stream_tenant(session: dict[str, Any], tenant_id: UUID) -> bool:
+    profile = session.get('profile') or {}
+    if profile.get('support_mode') and _has_admin_role(session, 'agent'):
+        return True
+    if _session_claim_matches_tenant(session, tenant_id) and _has_admin_role(session, 'agent'):
+        return True
+    if not db.pool or not profile.get('sub'):
+        return False
+    async with db.pool.acquire() as conn:
+        roles = await conn.fetch(
+            """
+            select utr.role
+            from app.users u
+            join app.user_tenant_roles utr on utr.user_id = u.id
+            where u.auth_subject=$1 and utr.tenant_id=$2
+            """,
+            profile['sub'],
+            tenant_id,
+        )
+    return any(_role_at_least(row['role'], 'agent') for row in roles)
+
+
+def _active_session(request: Request) -> dict[str, Any] | None:
+    return _active_session_id(request.cookies.get(SESSION_COOKIE))
 
 
 def _core_api_url(path: str, query: str = '') -> str:
@@ -347,6 +402,59 @@ async def admin_session(request: Request) -> Response:
         ),
         media_type='application/json',
     )
+
+
+@router.websocket('/admin/api/core/v1/conversations/stream')
+async def admin_conversations_stream(websocket: WebSocket) -> None:
+    session = _active_session_id(websocket.cookies.get(SESSION_COOKIE))
+    if not session:
+        await websocket.close(code=1008, reason='admin_session_required')
+        return
+    tenant_id_param = websocket.query_params.get('tenant_id')
+    try:
+        tenant_id = UUID(str(tenant_id_param))
+    except (TypeError, ValueError):
+        await websocket.close(code=1008, reason='invalid_tenant_id')
+        return
+    if not db.pool:
+        await websocket.close(code=1011, reason='database_pool_unavailable')
+        return
+    if not await _session_can_stream_tenant(session, tenant_id):
+        await websocket.close(code=1008, reason='tenant_agent_role_required')
+        return
+
+    await websocket.accept()
+    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=100)
+
+    def listener(_connection, _pid, _channel, payload: str) -> None:
+        try:
+            event = json.loads(payload)
+        except json.JSONDecodeError:
+            return
+        if event.get('tenant_id') != str(tenant_id):
+            return
+        try:
+            queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            queue.get_nowait()
+            queue.put_nowait(payload)
+
+    async with db.pool.acquire() as conn:
+        await conn.add_listener('tenant_operations_events', listener)
+        await conn.execute('listen tenant_operations_events')
+        try:
+            await websocket.send_json({'type': 'connected', 'tenant_id': str(tenant_id)})
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=25)
+                    await websocket.send_text(payload)
+                except asyncio.TimeoutError:
+                    await websocket.send_json({'type': 'heartbeat', 'tenant_id': str(tenant_id)})
+        except WebSocketDisconnect:
+            return
+        finally:
+            await conn.remove_listener('tenant_operations_events', listener)
+            await conn.execute('unlisten tenant_operations_events')
 
 
 @router.api_route(
