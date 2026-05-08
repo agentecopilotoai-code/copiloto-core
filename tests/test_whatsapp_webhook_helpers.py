@@ -34,3 +34,11 @@ def test_verify_webhook_reads_verify_token_from_tenant_secret_only():
     assert 'hmac.compare_digest(verify_token, hub_verify_token)' in source
     assert 'verify_token_hash(hub_verify_token)' not in source
     assert 'WHATSAPP_VERIFY_TOKEN' not in source
+
+
+def test_webhook_raw_event_insert_is_tenant_scoped_for_rls():
+    source = API_ROUTES.read_text()
+
+    assert "select set_config('app.tenant_id', $1, true)" in source
+    assert 'insert into app.webhook_events_raw (tenant_id, provider, event_type, headers, payload, payload_sha256)' in source
+    assert "channel['tenant_id']" in source

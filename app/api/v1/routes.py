@@ -1630,13 +1630,16 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
     app_secret = resolve_secret_ref(channel['app_secret_ref'])
     if not verify_signature_with_secret(body, x_hub_signature_256, app_secret):
         raise HTTPException(status_code=401, detail='Invalid webhook signature')
+
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(channel['tenant_id']))
     sha = hashlib.sha256(body).hexdigest()
     await conn.fetchrow(
         """
-        insert into app.webhook_events_raw (provider, event_type, headers, payload, payload_sha256)
-        values ('whatsapp_cloud_api', $1, $2::jsonb, $3::jsonb, $4)
+        insert into app.webhook_events_raw (tenant_id, provider, event_type, headers, payload, payload_sha256)
+        values ($1, 'whatsapp_cloud_api', $2, $3::jsonb, $4::jsonb, $5)
         on conflict (payload_sha256) do nothing returning *
         """,
+        channel['tenant_id'],
         payload.get('object', 'unknown'),
         json.dumps(dict(request.headers)),
         json.dumps(payload),
