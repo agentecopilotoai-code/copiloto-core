@@ -92,6 +92,32 @@ async def notify_operations_change(
     await conn.execute("select pg_notify('tenant_operations_events', $1)", json.dumps(payload))
 
 
+
+
+MEDIA_MESSAGE_TYPES = {'image', 'audio', 'video'}
+SUPPORTED_AGENT_MESSAGE_TYPES = {'text', *MEDIA_MESSAGE_TYPES}
+
+
+def media_url_from_payload(payload: dict[str, Any] | None) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get('media_url') or payload.get('link')
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def validate_outbound_message_content(
+    message_type: str,
+    body_text: str | None,
+    media_id: str | None = None,
+    media_url: str | None = None,
+) -> None:
+    if message_type not in SUPPORTED_AGENT_MESSAGE_TYPES:
+        raise HTTPException(status_code=400, detail='Only text, image, audio, and video outbound WhatsApp messages are supported')
+    if message_type == 'text' and not (body_text or '').strip():
+        raise HTTPException(status_code=400, detail='Text messages require body_text')
+    if message_type in MEDIA_MESSAGE_TYPES and not ((media_id or '').strip() or (media_url or '').strip()):
+        raise HTTPException(status_code=400, detail=f'{message_type} messages require media_id or payload.media_url')
+
 async def upsert_whatsapp_contact(
     conn: asyncpg.Connection,
     *,
@@ -780,7 +806,8 @@ async def list_conversations(request: Request, conn: asyncpg.Connection = Depend
         select c.*,
                coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
                ct.phone_e164 as contact_phone,
-               lm.body_text as latest_message_text,
+               coalesce(lm.body_text, '[' || lm.message_type || ']') as latest_message_text,
+               lm.message_type as latest_message_type,
                lm.direction as latest_message_direction,
                lm.created_at as latest_message_at,
                h.id as active_handoff_id,
@@ -789,7 +816,7 @@ async def list_conversations(request: Request, conn: asyncpg.Connection = Depend
         from app.conversations c
         join app.contacts ct on ct.id = c.contact_id
         left join lateral (
-          select body_text, direction, created_at
+          select body_text, message_type, direction, created_at
           from app.messages m
           where m.tenant_id = c.tenant_id and m.conversation_id = c.id
           order by m.created_at desc
@@ -915,19 +942,35 @@ async def start_conversation(
             payload.current_intent,
         )
 
+    initial_body_text = (payload.initial_message or '').strip() or None
+    initial_message_payload: dict[str, Any] = {}
+    if payload.initial_media_url:
+        initial_message_payload['media_url'] = payload.initial_media_url.strip()
+    if payload.initial_message_type in {'image', 'video'} and initial_body_text:
+        initial_message_payload['caption'] = initial_body_text
+    validate_outbound_message_content(
+        payload.initial_message_type,
+        initial_body_text,
+        payload.initial_media_id,
+        media_url_from_payload(initial_message_payload),
+    )
     message = await conn.fetchrow(
         """
         insert into app.messages (
           tenant_id, conversation_id, direction, sender_actor_type, sender_actor_id,
-          body_text, message_type, payload, status
+          body_text, message_type, media_id, mime_type, payload, status
         )
-        values ($1, $2, 'outbound', 'agent', $3, $4, 'text', '{}'::jsonb, 'queued')
+        values ($1, $2, 'outbound', 'agent', $3, $4, $5, $6, $7, $8::jsonb, 'queued')
         returning *
         """,
         payload.tenant_id,
         conversation['id'],
         str(user_id) if user_id else request.state.actor_id,
-        payload.initial_message.strip(),
+        initial_body_text,
+        payload.initial_message_type,
+        payload.initial_media_id.strip() if payload.initial_media_id else None,
+        payload.initial_mime_type,
+        json.dumps(initial_message_payload),
     )
     key = idempotency_key or str(message['id'])
     await conn.execute(
@@ -1058,18 +1101,32 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
     if not conversation:
         raise HTTPException(status_code=404, detail='Conversation not found for tenant')
 
+    message_payload = dict(payload.payload)
+    if payload.message_type in {'image', 'video'} and payload.body_text and 'caption' not in message_payload:
+        message_payload['caption'] = payload.body_text.strip()
+    validate_outbound_message_content(
+        payload.message_type,
+        payload.body_text,
+        payload.media_id,
+        media_url_from_payload(message_payload),
+    )
     row = await conn.fetchrow(
         """
-        insert into app.messages (tenant_id, conversation_id, direction, sender_actor_type, body_text, message_type, payload, status)
-        values ($1, $2, $3, $4, $5, $6, $7::jsonb, 'queued') returning *
+        insert into app.messages (
+          tenant_id, conversation_id, direction, sender_actor_type, body_text,
+          message_type, media_id, mime_type, payload, status
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 'queued') returning *
         """,
         payload.tenant_id,
         conversation_id,
         payload.direction,
         payload.sender_actor_type,
-        payload.body_text,
+        payload.body_text.strip() if payload.body_text else None,
         payload.message_type,
-        json.dumps(payload.payload),
+        payload.media_id.strip() if payload.media_id else None,
+        payload.mime_type,
+        json.dumps(message_payload),
     )
     key = idempotency_key or str(row['id'])
     await conn.execute(
@@ -1803,7 +1860,15 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                 message_type = message.get('type') or 'text'
                 if message_type not in {'text', 'image', 'audio', 'video', 'document', 'interactive'}:
                     message_type = 'text'
+                media_payload = message.get(message_type) if message_type in {'image', 'audio', 'video', 'document'} else None
+                media_id = None
+                mime_type = None
+                if isinstance(media_payload, dict):
+                    media_id = media_payload.get('id')
+                    mime_type = media_payload.get('mime_type')
                 body_text = message.get('text', {}).get('body') if isinstance(message.get('text'), dict) else None
+                if body_text is None and isinstance(media_payload, dict):
+                    body_text = media_payload.get('caption')
                 timestamp = message.get('timestamp')
                 received_at = None
                 if timestamp:
@@ -1815,9 +1880,9 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     """
                     insert into app.messages (
                       tenant_id, conversation_id, external_message_id, direction, sender_actor_type, sender_actor_id,
-                      body_text, message_type, payload, status, received_at
+                      body_text, message_type, media_id, mime_type, payload, status, received_at
                     )
-                    values ($1, $2, $3, 'inbound', 'contact', $4, $5, $6, $7::jsonb, 'received', coalesce($8::timestamptz, now()))
+                    values ($1, $2, $3, 'inbound', 'contact', $4, $5, $6, $7, $8, $9::jsonb, 'received', coalesce($10::timestamptz, now()))
                     on conflict (tenant_id, external_message_id) do nothing
                     returning *
                     """,
@@ -1827,6 +1892,8 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     wa_id,
                     body_text,
                     message_type,
+                    str(media_id) if media_id else None,
+                    str(mime_type) if mime_type else None,
                     json.dumps(message),
                     received_at,
                 )

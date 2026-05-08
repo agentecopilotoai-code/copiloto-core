@@ -8,7 +8,7 @@ import structlog
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.services.whatsapp import send_text_message
+from app.services.whatsapp import send_whatsapp_message
 
 log = structlog.get_logger()
 
@@ -34,7 +34,7 @@ def delivery_error_message(exc: Exception) -> str:
 async def process_once(conn: asyncpg.Connection) -> int:
     rows = await conn.fetch(
         """
-        select e.id, e.tenant_id, e.aggregate_id, m.conversation_id, m.body_text, c.phone_number_id, c.account_mode, c.token_ref, ct.phone_e164
+        select e.id, e.tenant_id, e.aggregate_id, m.conversation_id, m.body_text, m.message_type, m.media_id, m.mime_type, m.payload, c.phone_number_id, c.account_mode, c.token_ref, ct.phone_e164
         from app.domain_events e
         join app.messages m on m.id = e.aggregate_id and m.tenant_id = e.tenant_id
         join app.conversations cv on cv.id = m.conversation_id and cv.tenant_id = e.tenant_id
@@ -57,12 +57,19 @@ async def process_once(conn: asyncpg.Connection) -> int:
             to_last4=row['phone_e164'][-4:] if row['phone_e164'] else None,
         )
         try:
-            result = await send_text_message(
+            message_payload = row['payload'] or {}
+            if isinstance(message_payload, str):
+                message_payload = json.loads(message_payload)
+            result = await send_whatsapp_message(
                 row['phone_number_id'],
                 row['phone_e164'],
+                row['message_type'] or 'text',
                 row['body_text'] or '',
                 row['account_mode'] or 'mock',
                 row['token_ref'],
+                row['media_id'],
+                message_payload.get('media_url'),
+                message_payload.get('caption'),
             )
         except Exception as exc:
             error_message = delivery_error_message(exc)

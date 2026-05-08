@@ -112,3 +112,44 @@ def test_compose_mounts_secrets_for_api_and_worker():
     assert './.secrets:/app/.secrets' in source
     assert './.secrets:/app/.secrets:ro' in source
     assert 'command: python3 -m app.workers.event_worker' in source
+
+
+def test_whatsapp_media_messages_supported_in_both_agent_flows_and_worker():
+    worker_source = EVENT_WORKER.read_text()
+    service_source = WHATSAPP.read_text()
+    schema_source = API_SCHEMAS.read_text()
+    routes_source = API_ROUTES.read_text()
+    operations_source = OPERATIONS_DESK.read_text()
+
+    assert 'send_whatsapp_message' in service_source
+    assert "MEDIA_MESSAGE_TYPES = {'image', 'audio', 'video'}" in service_source
+    assert "payload[normalized_type] = media_object" in service_source
+    assert "media_object['link'] = media_url.strip()" in service_source
+    assert "media_object['caption']" in service_source
+    assert 'm.message_type, m.media_id, m.mime_type, m.payload' in worker_source
+    assert "message_payload.get('media_url')" in worker_source
+    assert "message_payload.get('caption')" in worker_source
+    assert "initial_message_type: str = Field(default='text', pattern='^(text|image|audio|video)$')" in schema_source
+    assert 'initial_media_id: str | None = None' in schema_source
+    assert 'initial_media_url: str | None = None' in schema_source
+    assert "message_type: str = Field(default='text', pattern='^(text|image|audio|video|document|interactive|template|system)$')" in schema_source
+    assert 'media_id: str | None = None' in schema_source
+    assert 'validate_outbound_message_content' in routes_source
+    assert 'payload.initial_message_type' in routes_source
+    assert 'payload.initial_media_id' in routes_source
+    assert 'media_url_from_payload(message_payload)' in routes_source
+    assert 'messageMedia' in operations_source
+    assert '<option value="image">Imagen</option>' in operations_source
+    assert '<option value="video">Video</option>' in operations_source
+    assert '<option value="audio">Audio</option>' in operations_source
+    assert 'renderMessageContent(message)' in operations_source
+
+
+def test_whatsapp_webhook_persists_inbound_media_metadata():
+    routes_source = API_ROUTES.read_text()
+
+    assert "media_payload = message.get(message_type)" in routes_source
+    assert "media_id = media_payload.get('id')" in routes_source
+    assert "mime_type = media_payload.get('mime_type')" in routes_source
+    assert "body_text = media_payload.get('caption')" in routes_source
+    assert 'body_text, message_type, media_id, mime_type, payload, status, received_at' in routes_source

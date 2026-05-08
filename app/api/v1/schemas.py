@@ -55,7 +55,11 @@ class ConversationStart(BaseModel):
     phone_e164: str = Field(min_length=6, max_length=32)
     wa_id: str | None = None
     display_name: str | None = None
-    initial_message: str = Field(min_length=1, max_length=4096)
+    initial_message: str | None = Field(default=None, max_length=4096)
+    initial_message_type: str = Field(default='text', pattern='^(text|image|audio|video)$')
+    initial_media_id: str | None = None
+    initial_media_url: str | None = None
+    initial_mime_type: str | None = None
     current_intent: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -66,7 +70,9 @@ class MessageCreate(BaseModel):
     direction: str = 'outbound'
     sender_actor_type: str = 'agent'
     body_text: str | None = None
-    message_type: str = 'text'
+    message_type: str = Field(default='text', pattern='^(text|image|audio|video|document|interactive|template|system)$')
+    media_id: str | None = None
+    mime_type: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
