@@ -4,6 +4,7 @@ EVENT_WORKER = Path('app/workers/event_worker.py')
 WHATSAPP = Path('app/services/whatsapp.py')
 WHATSAPP_ONBOARDING = Path('admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx')
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+CORE_API = Path('admin-panel/src/services/coreApi.js')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
 API_ROUTES = Path('app/api/v1/routes.py')
 DB_SCHEMA = Path('infra/postgres/01-schema.sql')
@@ -17,6 +18,8 @@ def test_worker_marks_delivery_failures_and_logs_provider_result():
     assert "'message_delivery_sent'" in source
     assert "'message_delivery_mocked'" in source
     assert "'message_delivery_failed'" in source
+    assert "pg_notify('tenant_operations_events'" in source
+    assert 'm.conversation_id' in source
     assert "status='failed'" in source
     assert 'failed_at=now()' in source
     assert 'error_message=$2' in source
@@ -95,9 +98,11 @@ def test_operations_desk_explains_queued_sent_failed_statuses():
     assert 'queued/sent/failed' in source
     assert 'Simulado local: no salió a WhatsApp' in source
     assert 'Aceptado por WhatsApp' in source
-    assert 'LIVE_REFRESH_MS = 3000' in source
-    assert 'window.setInterval(refreshLiveInbox, LIVE_REFRESH_MS)' in source
-    assert 'refreshDetail(selectedConversationId, true)' in source
+    assert 'openConversationStream' in source
+    assert 'new WebSocket' in CORE_API.read_text()
+    assert 'window.setInterval' not in source
+    assert "payload.type !== 'conversation.changed'" in source
+    assert 'refreshDetail(currentConversationId, true)' in source
     assert 'messageThreadRef' in source
 
 

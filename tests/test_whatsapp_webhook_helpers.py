@@ -48,8 +48,11 @@ def test_whatsapp_webhook_persists_inbound_messages_for_live_inbox():
     source = API_ROUTES.read_text()
 
     assert "for message in value.get('messages', [])" in source
-    assert 'insert into app.contacts' in source
+    assert 'upsert_whatsapp_contact' in source
+    assert 'where tenant_id=$1 and (wa_id=$2 or phone_e164=$3)' in source
     assert 'insert into app.conversations' in source
     assert 'insert into app.messages (' in source
     assert "status='human_active'" in source
     assert "'waiting_agent'" in source
+    assert "pg_notify('tenant_operations_events'" in source
+    assert "'conversation.changed'" in source

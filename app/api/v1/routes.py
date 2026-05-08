@@ -74,6 +74,86 @@ def whatsapp_phone_number_id_from_payload(payload: dict[str, Any]) -> str | None
     return None
 
 
+async def notify_operations_change(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    event: str,
+    *,
+    conversation_id: UUID | str | None = None,
+    message_id: UUID | str | None = None,
+) -> None:
+    payload = {
+        'type': event,
+        'tenant_id': str(tenant_id),
+        'conversation_id': str(conversation_id) if conversation_id else None,
+        'message_id': str(message_id) if message_id else None,
+        'occurred_at': datetime.now(UTC).isoformat(),
+    }
+    await conn.execute("select pg_notify('tenant_operations_events', $1)", json.dumps(payload))
+
+
+async def upsert_whatsapp_contact(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    wa_id: str,
+    phone_e164: str,
+    phone_hash: bytes,
+    display_name: str | None,
+    metadata: dict[str, Any],
+    source: str | None = 'whatsapp_cloud_api',
+):
+    existing = await conn.fetchrow(
+        """
+        select *
+        from app.contacts
+        where tenant_id=$1 and (wa_id=$2 or phone_e164=$3)
+        order by case when wa_id=$2 then 0 else 1 end, updated_at desc
+        limit 1
+        """,
+        tenant_id,
+        wa_id,
+        phone_e164,
+    )
+    if existing:
+        return await conn.fetchrow(
+            """
+            update app.contacts
+            set wa_id=$2,
+                phone_e164=$3,
+                phone_hash=$4,
+                display_name=coalesce($5, display_name),
+                source=coalesce($6, source),
+                metadata=metadata || $7::jsonb,
+                updated_at=now()
+            where tenant_id=$1 and id=$8
+            returning *
+            """,
+            tenant_id,
+            wa_id,
+            phone_e164,
+            phone_hash,
+            display_name,
+            source,
+            json.dumps(metadata),
+            existing['id'],
+        )
+    return await conn.fetchrow(
+        """
+        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata)
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        returning *
+        """,
+        tenant_id,
+        wa_id,
+        phone_e164,
+        phone_hash,
+        display_name,
+        source,
+        json.dumps(metadata),
+    )
+
+
 router = APIRouter(prefix='/v1')
 public_router = APIRouter(tags=['public'])
 webhook_router = APIRouter(prefix='/webhooks', tags=['public-webhooks'])
@@ -776,26 +856,17 @@ async def start_conversation(
     )
 
     phone_e164 = payload.phone_e164.strip()
-    wa_id = (payload.wa_id or phone_e164).strip()
+    wa_id = (payload.wa_id or phone_e164).strip().lstrip('+')
     phone_hash = hashlib.sha256(phone_e164.encode()).digest()
-    contact = await conn.fetchrow(
-        """
-        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, metadata)
-        values ($1, $2, $3, $4, $5, $6::jsonb)
-        on conflict (tenant_id, wa_id) do update set
-          phone_e164=excluded.phone_e164,
-          phone_hash=excluded.phone_hash,
-          display_name=coalesce(excluded.display_name, app.contacts.display_name),
-          metadata=app.contacts.metadata || excluded.metadata,
-          updated_at=now()
-        returning *
-        """,
-        payload.tenant_id,
-        wa_id,
-        phone_e164,
-        phone_hash,
-        payload.display_name,
-        json.dumps(payload.metadata),
+    contact = await upsert_whatsapp_contact(
+        conn,
+        tenant_id=payload.tenant_id,
+        wa_id=wa_id,
+        phone_e164=phone_e164,
+        phone_hash=phone_hash,
+        display_name=payload.display_name,
+        metadata=payload.metadata,
+        source='operations_desk',
     )
     conversation = await conn.fetchrow(
         """
@@ -876,6 +947,13 @@ async def start_conversation(
         metadata={'contact_id': str(contact['id']), 'message_id': str(message['id']), 'reused': reused_conversation},
     )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(message['id']))
+    await notify_operations_change(
+        conn,
+        payload.tenant_id,
+        'conversation.changed',
+        conversation_id=conversation['id'],
+        message_id=message['id'],
+    )
     response = record_to_dict(conversation)
     response['contact_label'] = contact['display_name'] or contact['phone_e164'] or contact['wa_id']
     response['contact_phone'] = contact['phone_e164']
@@ -1006,6 +1084,13 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
         conversation_id,
     )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(row['id']))
+    await notify_operations_change(
+        conn,
+        payload.tenant_id,
+        'conversation.changed',
+        conversation_id=conversation_id,
+        message_id=row['id'],
+    )
     return record_to_dict(row)
 
 
@@ -1664,24 +1749,15 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                 display_name = contact_payload.get('profile', {}).get('name')
                 phone_e164 = f'+{wa_id}' if not wa_id.startswith('+') else wa_id
                 phone_hash = hashlib.sha256(phone_e164.encode()).digest()
-                contact = await conn.fetchrow(
-                    """
-                    insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata)
-                    values ($1, $2, $3, $4, $5, 'whatsapp_cloud_api', $6::jsonb)
-                    on conflict (tenant_id, wa_id) do update set
-                      phone_e164=excluded.phone_e164,
-                      phone_hash=excluded.phone_hash,
-                      display_name=coalesce(excluded.display_name, app.contacts.display_name),
-                      metadata=app.contacts.metadata || excluded.metadata,
-                      updated_at=now()
-                    returning *
-                    """,
-                    channel['tenant_id'],
-                    wa_id,
-                    phone_e164,
-                    phone_hash,
-                    display_name,
-                    json.dumps({'whatsapp_contact': contact_payload}),
+                contact = await upsert_whatsapp_contact(
+                    conn,
+                    tenant_id=channel['tenant_id'],
+                    wa_id=wa_id,
+                    phone_e164=phone_e164,
+                    phone_hash=phone_hash,
+                    display_name=display_name,
+                    metadata={'whatsapp_contact': contact_payload},
+                    source='whatsapp_cloud_api',
                 )
 
                 conversation = await conn.fetchrow(
@@ -1734,7 +1810,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                         received_at = datetime.fromtimestamp(int(timestamp), UTC)
                     except (TypeError, ValueError, OSError):
                         received_at = None
-                await conn.fetchrow(
+                inbound_message = await conn.fetchrow(
                     """
                     insert into app.messages (
                       tenant_id, conversation_id, external_message_id, direction, sender_actor_type, sender_actor_id,
@@ -1753,6 +1829,14 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     json.dumps(message),
                     received_at,
                 )
+                if inbound_message:
+                    await notify_operations_change(
+                        conn,
+                        channel['tenant_id'],
+                        'conversation.changed',
+                        conversation_id=conversation['id'],
+                        message_id=inbound_message['id'],
+                    )
     return {'accepted': True, 'payload_sha256': sha}
 
 

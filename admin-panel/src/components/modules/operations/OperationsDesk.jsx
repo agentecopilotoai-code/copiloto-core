@@ -5,12 +5,11 @@ import {
   createConversationHandoff,
   getConversation,
   listConversations,
+  openConversationStream,
   releaseConversation,
   sendConversationMessage,
   startConversation,
 } from '../../../services/coreApi.js';
-
-const LIVE_REFRESH_MS = 3000;
 
 function formatDate(value) {
   if (!value) return 'Sin fecha';
@@ -55,7 +54,9 @@ export function OperationsDesk({ module, session, tenant }) {
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState(null);
+  const [streamStatus, setStreamStatus] = useState('disconnected');
   const messageThreadRef = useRef(null);
+  const selectedConversationIdRef = useRef(null);
 
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId)
@@ -100,22 +101,64 @@ export function OperationsDesk({ module, session, tenant }) {
   }, [conversationDetail?.id, selectedConversationId]);
 
   useEffect(() => {
-    if (!tenant?.id) return undefined;
-    let cancelled = false;
-    const refreshLiveInbox = async () => {
-      if (document.hidden || cancelled) return;
-      await refreshConversations(false, true);
-      if (selectedConversationId && !cancelled) {
-        await refreshDetail(selectedConversationId, true);
-      }
-      if (!cancelled) setLastLiveRefreshAt(new Date().toISOString());
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    if (!tenant?.id) {
+      setStreamStatus('disconnected');
+      return undefined;
+    }
+    let reconnectTimer;
+    let closedByEffect = false;
+    let socket;
+
+    const connect = () => {
+      socket = openConversationStream(session, tenant.id);
+      setStreamStatus('connecting');
+
+      socket.onopen = () => {
+        setStreamStatus('connected');
+      };
+
+      socket.onmessage = async (event) => {
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+        if (payload.type === 'heartbeat' || payload.type === 'connected') return;
+        if (payload.type !== 'conversation.changed') return;
+
+        await refreshConversations(false, true);
+        const currentConversationId = selectedConversationIdRef.current;
+        const shouldRefreshDetail = currentConversationId
+          && (!payload.conversation_id || payload.conversation_id === currentConversationId);
+        if (shouldRefreshDetail) await refreshDetail(currentConversationId, true);
+        setLastLiveRefreshAt(new Date().toISOString());
+      };
+
+      socket.onerror = () => {
+        setStreamStatus('error');
+      };
+
+      socket.onclose = () => {
+        if (closedByEffect) return;
+        setStreamStatus('reconnecting');
+        reconnectTimer = window.setTimeout(connect, 2000);
+      };
     };
-    const intervalId = window.setInterval(refreshLiveInbox, LIVE_REFRESH_MS);
+
+    connect();
+
     return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
+      closedByEffect = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (socket) socket.close();
+      setStreamStatus('disconnected');
     };
-  }, [tenant?.id, selectedConversationId, session]);
+  }, [tenant?.id, session]);
 
   useEffect(() => {
     const thread = messageThreadRef.current;
@@ -189,8 +232,10 @@ export function OperationsDesk({ module, session, tenant }) {
           <p className="hint">{module.summary}</p>
         </div>
         <div className="live-refresh-status">
-          <span>Actualización automática cada {LIVE_REFRESH_MS / 1000}s</span>
-          {lastLiveRefreshAt ? <small>Última: {formatDate(lastLiveRefreshAt)}</small> : null}
+          <span>Tiempo real WebSocket: {streamStatus === 'connected' ? 'conectado' : streamStatus}</span>
+          {lastLiveRefreshAt
+            ? <small>Último evento: {formatDate(lastLiveRefreshAt)}</small>
+            : <small>Esperando cambios del servidor</small>}
           <button className="secondary-action" disabled={isBusy} onClick={() => refreshConversations(true)} type="button">
             Refrescar inbox
           </button>

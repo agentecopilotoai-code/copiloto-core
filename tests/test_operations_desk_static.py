@@ -38,3 +38,7 @@ def test_admin_panel_mounts_operations_desk_module():
     assert 'startConversation' in api_source
     assert 'sendConversationMessage' in api_source
     assert 'acceptConversationHandoff' in api_source
+    assert 'openConversationStream' in api_source
+    assert 'new WebSocket' in api_source
+    assert 'openConversationStream(session, tenant.id)' in component_source
+    assert 'window.setInterval' not in component_source
