@@ -24,6 +24,7 @@ from app.api.v1.schemas import (
     IntentEvaluateRequest,
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
+    KnowledgeStorageUpdate,
     MessageCreate,
     PromptCreate,
     QuoteCreate,
@@ -68,6 +69,56 @@ def write_tenant_secret(secret_ref: str, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(value.strip(), encoding='utf-8')
     path.chmod(0o600)
+
+
+def tenant_knowledge_s3_secret_ref(tenant_id: UUID) -> str:
+    return tenant_secret_ref(tenant_id, 'knowledge_s3_secret_access_key')
+
+
+def default_knowledge_storage_config(tenant_id: UUID) -> dict[str, Any]:
+    return {
+        'backend': 'local',
+        'bucket': None,
+        'region': None,
+        'endpoint_url': None,
+        'prefix': f'tenants/{tenant_id}/knowledge',
+        'access_key_id': None,
+        'secret_ref': None,
+    }
+
+
+def normalize_knowledge_storage_config(tenant_id: UUID, value: Any) -> dict[str, Any]:
+    config = default_knowledge_storage_config(tenant_id)
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = {}
+    if isinstance(value, dict):
+        for key in ('backend', 'bucket', 'region', 'endpoint_url', 'prefix', 'access_key_id', 'secret_ref'):
+            if key in value:
+                config[key] = value[key]
+    config['backend'] = config.get('backend') if config.get('backend') in {'local', 's3'} else 'local'
+    if not config.get('prefix'):
+        config['prefix'] = f'tenants/{tenant_id}/knowledge'
+    return config
+
+
+async def fetch_tenant_knowledge_storage_config(
+    conn: asyncpg.Connection, tenant_id: UUID
+) -> dict[str, Any]:
+    value = await conn.fetchval(
+        'select knowledge_storage from app.tenant_settings where tenant_id=$1', tenant_id
+    )
+    return normalize_knowledge_storage_config(tenant_id, value)
+
+
+def public_knowledge_storage_config(tenant_id: UUID, config: dict[str, Any]) -> dict[str, Any]:
+    response = normalize_knowledge_storage_config(tenant_id, config)
+    response['secret_configured'] = secret_ref_is_configured(response.get('secret_ref'))
+    response['effective_bucket'] = response.get('bucket') or get_settings().knowledge_storage_bucket
+    return response
+
 
 
 def verify_token_hash(verify_token: str) -> bytes:
@@ -649,6 +700,81 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
     return record_to_dict(row)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/knowledge/storage')
+async def get_knowledge_storage_settings(
+    tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    return public_knowledge_storage_config(tenant_id, config)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/knowledge/storage')
+async def patch_knowledge_storage_settings(
+    tenant_id: UUID,
+    payload: KnowledgeStorageUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    current = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    incoming = payload.model_dump(exclude_unset=True)
+    secret_access_key = incoming.pop('secret_access_key', None)
+    next_config = {**current, **incoming}
+    next_config = normalize_knowledge_storage_config(tenant_id, next_config)
+
+    if next_config['backend'] == 's3':
+        if not next_config.get('bucket'):
+            raise HTTPException(status_code=400, detail='S3 bucket is required for tenant knowledge storage')
+        if secret_access_key and not next_config.get('access_key_id'):
+            raise HTTPException(
+                status_code=400,
+                detail='S3 access_key_id is required when configuring a tenant secret access key',
+            )
+        if secret_access_key:
+            secret_ref = tenant_knowledge_s3_secret_ref(tenant_id)
+            write_tenant_secret(secret_ref, secret_access_key)
+            next_config['secret_ref'] = secret_ref
+        elif next_config.get('access_key_id') and not secret_ref_is_configured(next_config.get('secret_ref')):
+            raise HTTPException(
+                status_code=400,
+                detail='S3 secret access key is required the first time access_key_id is configured',
+            )
+    else:
+        next_config = default_knowledge_storage_config(tenant_id)
+
+    row = await conn.fetchrow(
+        """
+        update app.tenant_settings
+        set knowledge_storage=$2::jsonb
+        where tenant_id=$1
+        returning knowledge_storage
+        """,
+        tenant_id,
+        json.dumps(next_config),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Settings not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant_knowledge_storage.updated',
+        entity_type='tenant_settings',
+        entity_id=str(tenant_id),
+        metadata={
+            'backend': next_config.get('backend'),
+            'bucket': next_config.get('bucket'),
+            'prefix': next_config.get('prefix'),
+            'secret_configured': secret_ref_is_configured(next_config.get('secret_ref')),
+        },
+    )
+    return public_knowledge_storage_config(tenant_id, next_config)
 
 
 @tenant_admin_router.post('/tenants/{tenant_id}/channels/whatsapp', status_code=201)
@@ -2116,6 +2242,12 @@ async def upload_knowledge_document(
     mime_type = getattr(file, 'content_type', None)
     document_id = uuid4()
     settings = get_settings()
+    storage_config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    storage_secret = (
+        resolve_secret_ref(storage_config.get('secret_ref'))
+        if storage_config.get('backend') == 's3' and storage_config.get('secret_ref')
+        else None
+    )
     try:
         stored = store_knowledge_file(
             data=data,
@@ -2124,6 +2256,13 @@ async def upload_knowledge_document(
             filename=filename,
             mime_type=mime_type,
             settings=settings,
+            backend=storage_config.get('backend'),
+            bucket=storage_config.get('bucket'),
+            endpoint_url=storage_config.get('endpoint_url'),
+            access_key_id=storage_config.get('access_key_id'),
+            secret_access_key=storage_secret,
+            region_name=storage_config.get('region'),
+            prefix=storage_config.get('prefix'),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

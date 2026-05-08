@@ -143,6 +143,18 @@ Secretos requeridos por tenant:
 
 Los secretos locales viven en `.secrets/tenants/<TENANT_ID>/*`. No agregues variables globales por tenant ni pegues valores secretos en las referencias internas.
 
+
+## Storage S3 por tenant
+
+El módulo **Storage S3** permite definir dónde se guardan los archivos reales que luego se registran en Knowledge Studio. Para desarrollo se puede dejar backend `local`, que escribe en el volumen Docker `knowledge-files` montado en `/app/data/knowledge`. Para producción piloto se debe seleccionar backend `s3` y configurar bucket, región, endpoint opcional, prefix, access key y secret access key por tenant.
+
+La Core API expone estos endpoints a través del proxy autenticado:
+
+- `GET /admin/api/core/v1/tenants/{tenant_id}/knowledge/storage` para leer la configuración efectiva sin devolver secretos.
+- `PATCH /admin/api/core/v1/tenants/{tenant_id}/knowledge/storage` para guardar backend, bucket, región, endpoint, prefix y access key. El `secret_access_key` se escribe en `.secrets/tenants/<TENANT_ID>/knowledge_s3_secret_access_key` y en PostgreSQL solo queda la referencia `secret_ref`.
+
+Cuando el tenant tiene backend `s3`, `POST /knowledge/documents/upload` guarda el archivo en `s3://<bucket>/<prefix>/<document_id>/<checksum>-<filename>`. Cuando no hay configuración S3, usa el backend local/global configurado por `.env`.
+
 ## Knowledge Studio MVP
 
 El módulo **Knowledge Studio** permite gestionar documentos de conocimiento por tenant desde el panel. El editor soporta contenido manual para FAQ/políticas, registros de fuente `manual`, `upload`, `url` e `integration`, URI/object key, MIME type, checksum, visibilidad (`tenant`, `agents_only`, `public`) y estados operativos `draft`, `indexing`, `active` y `failed`.

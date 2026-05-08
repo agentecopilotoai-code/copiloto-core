@@ -630,7 +630,52 @@ KNOWLEDGE_ALLOWED_MIME_TYPES=text/plain,text/markdown,text/csv,application/json,
 OTEL_EXPORTER_OTLP_ENDPOINT=<OTEL_ENDPOINT>
 ```
 
-## 12. Comandos útiles
+
+## 12. Configurar S3 por tenant para documentos de conocimiento
+
+En desarrollo puedes dejar `KNOWLEDGE_STORAGE_BACKEND=local`; los archivos subidos desde **Knowledge Studio** se guardan en el volumen Docker `knowledge-files`, dentro de `/app/data/knowledge`, con keys como `tenants/<TENANT_ID>/knowledge/<DOCUMENT_ID>/<checksum>-<archivo>`.
+
+Para producción piloto usa el módulo **Storage S3** del Admin Panel y configura un destino por tenant. La recomendación más simple y auditable es **un bucket único por tenant**; si usas un bucket compartido, usa un `prefix` único por tenant y una política IAM que limite acceso a ese prefijo.
+
+### 12.1 Crear bucket y credenciales
+
+1. En AWS S3 crea un bucket por tenant, por ejemplo `copilotoia-tenant-acme-prod`.
+2. Activa cifrado del bucket, idealmente SSE-KMS.
+3. Bloquea acceso público del bucket.
+4. Crea un IAM User/Access Key o rol equivalente para CopilotoIA.
+5. Otorga permisos mínimos sobre ese bucket/prefix:
+   - `s3:PutObject`
+   - `s3:GetObject`
+   - `s3:DeleteObject` si vas a habilitar borrado físico de objetos
+   - `s3:ListBucket` limitado al prefix del tenant
+6. Si usas MinIO/S3-compatible, crea el bucket y el usuario en la consola de MinIO y usa el endpoint correspondiente.
+
+Ejemplo de prefix recomendado:
+
+```text
+tenants/<TENANT_ID>/knowledge
+```
+
+### 12.2 Configurar desde Admin Panel
+
+1. Abre `http://localhost:3000/admin/`.
+2. Selecciona el tenant.
+3. Entra al módulo **Storage S3**.
+4. Selecciona backend `S3 / MinIO por tenant`.
+5. Completa:
+   - **Bucket S3 del tenant**: bucket único del tenant.
+   - **Región**: por ejemplo `us-east-1`.
+   - **Endpoint S3 compatible**: deja vacío para AWS estándar si tu entorno usa AWS; usa `http://minio:9000` para MinIO local o el endpoint del proveedor compatible.
+   - **Prefix**: `tenants/<TENANT_ID>/knowledge` o un prefijo equivalente único.
+   - **Access Key ID**: access key del usuario/tenant.
+   - **Secret Access Key**: se guarda fuera de DB en `.secrets/tenants/<TENANT_ID>/knowledge_s3_secret_access_key`.
+6. Guarda. Las nuevas cargas de Knowledge Studio se guardarán en ese bucket/prefix y el documento registrará `source_uri=s3://<bucket>/<key>` más checksum y metadata.
+
+### 12.3 Variables globales vs configuración por tenant
+
+Las variables `.env` (`S3_ENDPOINT_URL`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`) quedan como fallback/global y para desarrollo. En producción piloto, el destino efectivo de documentos debe venir del módulo **Storage S3** por tenant; el secreto nunca se guarda en PostgreSQL, solo la referencia `secret_ref`.
+
+## 13. Comandos útiles
 
 Levantar/validar todo:
 
@@ -680,7 +725,7 @@ Apagar y borrar volúmenes:
 docker compose down -v
 ```
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 ### `InvalidPasswordError: password authentication failed for user "copiloto_app"`
 

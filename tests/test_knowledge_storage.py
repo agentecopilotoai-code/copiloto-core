@@ -6,6 +6,7 @@ import pytest
 from app.core.config import Settings
 from app.services.knowledge_storage import (
     extract_text_if_supported,
+    normalize_object_prefix,
     safe_storage_segment,
     store_knowledge_file,
 )
@@ -74,3 +75,26 @@ def test_pdf_is_stored_without_runtime_binary_parsing():
 def test_safe_storage_segment_removes_path_traversal_characters():
     assert '..' not in safe_storage_segment('../../secret file.md')
     assert '/' not in safe_storage_segment('../../secret file.md')
+
+
+def test_local_knowledge_storage_accepts_tenant_prefix(tmp_path):
+    tenant_id = uuid4()
+    stored = store_knowledge_file(
+        data=b'FAQ storage tenant',
+        tenant_id=str(tenant_id),
+        document_id=str(uuid4()),
+        filename='faq.txt',
+        mime_type='text/plain',
+        settings=make_settings(tmp_path),
+        prefix=f'knowledge/{tenant_id}',
+    )
+
+    assert stored.object_key.startswith(f'knowledge/{tenant_id}/')
+    assert Path(stored.source_uri.removeprefix('file://')).exists()
+
+
+def test_object_prefix_defaults_to_tenant_scoped_knowledge_path():
+    tenant_id = str(uuid4())
+
+    assert normalize_object_prefix(None, tenant_id) == f'tenants/{tenant_id}/knowledge'
+    assert normalize_object_prefix('/custom//tenant//knowledge/', tenant_id) == 'custom/tenant/knowledge'

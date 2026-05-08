@@ -6,6 +6,7 @@ import { listMyTenants } from '../../services/coreApi.js';
 import { AuditPanel } from '../modules/audit/AuditPanel.jsx';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
 import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
+import { KnowledgeStorageSettings } from '../modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
 import { GoLiveReadiness } from '../modules/readiness/GoLiveReadiness.jsx';
 import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
@@ -102,6 +103,8 @@ export function AdminLayout({ session }) {
     activeContent = <NoTenantOnboarding onCreateTenant={openTenantCreation} />;
   } else if (activeModuleId === 'whatsapp') {
     activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'knowledge-storage') {
+    activeContent = <KnowledgeStorageSettings module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'knowledge-studio') {
     activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'operations-desk') {

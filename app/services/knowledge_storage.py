@@ -38,9 +38,21 @@ def safe_storage_segment(value: str) -> str:
     return cleaned[:180] or 'file'
 
 
-def knowledge_object_key(*, tenant_id: str, document_id: str, filename: str, digest: str) -> str:
+def normalize_object_prefix(prefix: str | None, tenant_id: str) -> str:
+    if not prefix:
+        return f'tenants/{tenant_id}/knowledge'
+    parts = [safe_storage_segment(part) for part in prefix.strip('/').split('/') if part.strip('/')]
+    if not parts or any(part in {'.', '..'} for part in parts):
+        raise ValueError('Invalid knowledge storage prefix')
+    return '/'.join(parts)
+
+
+def knowledge_object_key(
+    *, tenant_id: str, document_id: str, filename: str, digest: str, prefix: str | None = None
+) -> str:
     safe_filename = safe_storage_segment(filename)
-    return f'tenants/{tenant_id}/knowledge/{document_id}/{digest[:16]}-{safe_filename}'
+    object_prefix = normalize_object_prefix(prefix, tenant_id)
+    return f'{object_prefix}/{document_id}/{digest[:16]}-{safe_filename}'
 
 
 def is_text_upload(filename: str, mime_type: str | None) -> bool:
@@ -70,13 +82,22 @@ def validate_knowledge_upload(
             raise ValueError(f'MIME type {normalized} is not allowed for knowledge uploads')
 
 
-def _s3_client(settings: Settings) -> BaseClient:
-    return boto3.client(
-        's3',
-        endpoint_url=settings.s3_endpoint_url or None,
-        aws_access_key_id=settings.s3_access_key_id,
-        aws_secret_access_key=settings.s3_secret_access_key,
-    )
+def _s3_client(
+    settings: Settings,
+    *,
+    endpoint_url: str | None = None,
+    access_key_id: str | None = None,
+    secret_access_key: str | None = None,
+    region_name: str | None = None,
+) -> BaseClient:
+    client_kwargs = {
+        'endpoint_url': endpoint_url or settings.s3_endpoint_url or None,
+        'aws_access_key_id': access_key_id or settings.s3_access_key_id,
+        'aws_secret_access_key': secret_access_key or settings.s3_secret_access_key,
+    }
+    if region_name:
+        client_kwargs['region_name'] = region_name
+    return boto3.client('s3', **client_kwargs)
 
 
 def store_knowledge_file(
@@ -87,13 +108,20 @@ def store_knowledge_file(
     filename: str,
     mime_type: str | None,
     settings: Settings,
+    backend: str | None = None,
+    bucket: str | None = None,
+    endpoint_url: str | None = None,
+    access_key_id: str | None = None,
+    secret_access_key: str | None = None,
+    region_name: str | None = None,
+    prefix: str | None = None,
 ) -> StoredKnowledgeFile:
     validate_knowledge_upload(data, filename=filename, mime_type=mime_type, settings=settings)
     digest = hashlib.sha256(data).hexdigest()
     object_key = knowledge_object_key(
-        tenant_id=tenant_id, document_id=document_id, filename=filename, digest=digest
+        tenant_id=tenant_id, document_id=document_id, filename=filename, digest=digest, prefix=prefix
     )
-    backend = settings.knowledge_storage_backend.lower()
+    backend = (backend or settings.knowledge_storage_backend).lower()
 
     if backend == 'local':
         root = Path(settings.knowledge_storage_local_path)
@@ -106,8 +134,14 @@ def store_knowledge_file(
         source_uri = f'file://{destination}'
         bucket = None
     elif backend == 's3':
-        bucket = settings.knowledge_storage_bucket
-        client = _s3_client(settings)
+        bucket = bucket or settings.knowledge_storage_bucket
+        client = _s3_client(
+            settings,
+            endpoint_url=endpoint_url,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            region_name=region_name,
+        )
         client.put_object(
             Bucket=bucket,
             Key=object_key,

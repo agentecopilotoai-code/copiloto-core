@@ -212,6 +212,19 @@ export function getWhatsAppChannelHealth(session, tenantId) {
   return request(`/tenants/${tenantId}/channels/whatsapp/health`, { session, tenantId });
 }
 
+export function getKnowledgeStorageSettings(session, tenantId) {
+  return request(`/tenants/${tenantId}/knowledge/storage`, { session, tenantId });
+}
+
+export function updateKnowledgeStorageSettings(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/knowledge/storage`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
 
 export function evaluateIntent(session, tenantId, payload) {
   return request('/intents/evaluate', {
