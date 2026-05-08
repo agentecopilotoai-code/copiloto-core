@@ -1614,8 +1614,17 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, r
     next_status = update_data.get('status') or existing['status']
     if next_status in ('scheduled', 'confirmed'):
         await ensure_resource_available(conn, tenant_id=tenant_id, resource_id=next_resource_id, starts_at=next_starts_at, ends_at=next_ends_at, appointment_id=appointment_id)
-    elif next_starts_at >= next_ends_at:
-        raise HTTPException(status_code=400, detail='Appointment starts_at must be before ends_at')
+    else:
+        if next_starts_at >= next_ends_at:
+            raise HTTPException(status_code=400, detail='Appointment starts_at must be before ends_at')
+        if 'resource_id' in update_data:
+            resource = await conn.fetchrow(
+                'select id from app.resources where tenant_id=$1 and id=$2',
+                tenant_id,
+                next_resource_id,
+            )
+            if not resource:
+                raise HTTPException(status_code=404, detail='Resource not found')
     try:
         row = await conn.fetchrow(
             """
