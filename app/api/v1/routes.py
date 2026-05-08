@@ -2457,6 +2457,7 @@ async def build_tenant_readiness_report(
         and channel['business_id']
         and channel['waba_id']
         and channel['phone_number_id']
+        and channel['account_mode'] == 'live'
         and whatsapp_token_ready
         and whatsapp_secret_ready
         and whatsapp_verify_ready
@@ -2466,12 +2467,17 @@ async def build_tenant_readiness_report(
             'whatsapp_channel',
             'Canal WhatsApp',
             whatsapp_ready,
-            'Canal WhatsApp activo con secretos resueltos.' if whatsapp_ready else 'El canal WhatsApp no está activo o faltan IDs/secretos reales.',
+            (
+                'Canal WhatsApp activo en modo live con secretos resueltos.'
+                if whatsapp_ready
+                else 'El canal WhatsApp no está activo, no está en modo live o faltan IDs/secretos reales.'
+            ),
             {
                 **channel_dict,
                 'meta_access_token_configured': whatsapp_token_ready,
                 'app_secret_configured': whatsapp_secret_ready,
                 'verify_token_configured': whatsapp_verify_ready,
+                'delivery_mode_live': channel['account_mode'] == 'live' if channel else False,
             },
         )
     )

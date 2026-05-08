@@ -29,6 +29,7 @@ def test_readiness_checks_cover_go_live_scope():
     assert 'build_grounded_answer(smoke_question' in source
     assert 'token_ref_is_configured' in source
     assert 'secret_ref_is_configured' in source
+    assert "channel['account_mode'] == 'live'" in source
 
 
 def test_admin_panel_exposes_go_live_readiness_module():
@@ -86,3 +87,66 @@ def test_readiness_report_handles_nullable_legacy_settings_without_500():
     assert report['status'] == 'not_ready'
     settings_check = next(check for check in report['checks'] if check['key'] == 'tenant_settings')
     assert settings_check['ready'] is False
+
+
+def test_readiness_requires_live_whatsapp_mode_even_when_secrets_are_configured(monkeypatch):
+    import asyncio
+    from uuid import uuid4
+
+    import app.api.v1.routes as routes
+
+    monkeypatch.setattr(routes, 'token_ref_is_configured', lambda token_ref: True)
+    monkeypatch.setattr(routes, 'secret_ref_is_configured', lambda secret_ref: True)
+
+    class FakeConnection:
+        async def fetchrow(self, query, *args):
+            if 'from app.tenants' in query:
+                return {
+                    'id': args[0],
+                    'slug': 'demo',
+                    'display_name': 'Demo',
+                    'status': 'active',
+                    'deleted_at': None,
+                }
+            if 'from app.tenant_settings' in query:
+                return {
+                    'locale': 'es-CO',
+                    'business_hours': {'monday': ['09:00-17:00']},
+                    'escalation_policy': {'handoff_required': True},
+                    'pii_policy': {'no_train': True},
+                    'no_train': True,
+                    'max_bot_turns': 8,
+                }
+            if 'from app.tenant_channels' in query:
+                return {
+                    'id': uuid4(),
+                    'provider': 'whatsapp_cloud_api',
+                    'business_id': 'business-123',
+                    'waba_id': 'waba-123',
+                    'phone_number_id': 'phone-123',
+                    'token_ref': 'secrets/token',
+                    'app_secret_ref': 'secrets/app-secret',
+                    'verify_token_hash_configured': True,
+                    'account_mode': 'mock',
+                    'status': 'active',
+                }
+            if 'count(distinct kd.id)' in query:
+                return {'active_documents': 0, 'active_chunks': 0}
+            raise AssertionError(f'unexpected fetchrow query: {query}')
+
+        async def fetch(self, query, *args):
+            if 'from app.knowledge_chunks' in query:
+                return []
+            raise AssertionError(f'unexpected fetch query: {query}')
+
+        async def fetchval(self, query, *args):
+            if 'from app.audit_logs' in query:
+                return 1
+            raise AssertionError(f'unexpected fetchval query: {query}')
+
+    report = asyncio.run(routes.build_tenant_readiness_report(FakeConnection(), uuid4()))
+
+    whatsapp_check = next(check for check in report['checks'] if check['key'] == 'whatsapp_channel')
+    assert whatsapp_check['ready'] is False
+    assert whatsapp_check['details']['delivery_mode_live'] is False
+    assert 'modo live' in whatsapp_check['reason']
