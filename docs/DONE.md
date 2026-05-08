@@ -236,3 +236,18 @@ Cada entrada debe incluir:
   - `pytest -q` (bloqueado porque el Python global no tiene `pydantic` ni `cryptography`)
   - `npm --prefix admin-panel run build` (bloqueado porque `vite` no está instalado en este entorno)
 - **Notas:** no se agregaron secretos ni variables nuevas. La base ya tenía el constraint de exclusión sobre `app.appointments`; el endpoint agrega validación previa con respuesta 409 explicativa y mantiene el constraint como protección concurrente.
+
+### TASK-0010 — Implementar service requests y cotización orientativa
+
+- **Fecha:** 2026-05-08
+- **Resumen:** se completaron los endpoints de service requests y se implementó el ciclo completo de cotización orientativa. La Core API ahora lista service requests con filtros por contacto, estado y vertical; obtiene un service request individual con datos del contacto; el PATCH pasó de `dict` sin tipar a `ServiceRequestPatch` con validación de campos (status, urgency, resource asignado, preferred_date/slot, intake merge). Para quotes se agregaron: `POST /service-requests/{id}/quotes` que calcula subtotal/grand_total desde los line items y avanza el SR a `quoted`; `GET /service-requests/{id}/quote` para obtener la cotización asociada; `PATCH /quotes/{id}` que recalcula totales al editar items/descuentos/impuestos; `POST /quotes/{id}/send` que encola un mensaje outbound de texto con el resumen formateado de la cotización hacia la conversación vinculada al SR, avanza el quote a `sent`, audita la acción y notifica por pg_notify. Se agregaron los schemas Pydantic `ServiceRequestPatch`, `QuoteLineItem`, `QuoteCreate` y `QuotePatch`.
+- **Archivos modificados:**
+  - `app/api/v1/schemas.py`
+  - `app/api/v1/routes.py`
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m py_compile app/api/v1/schemas.py` → OK
+  - `python3 -m py_compile app/api/v1/routes.py` → OK
+  - `git diff --check`
+- **Notas:** el envío requiere que el SR tenga `conversation_id`; sin él el endpoint retorna 422. La tabla `app.quotes` tiene constraint UNIQUE por `(tenant_id, service_request_id)`, por lo que solo existe una cotización vigente por solicitud; una segunda llamada al POST devuelve 409. El recálculo de totales en PATCH es determinístico: `grand_total = subtotal - discount_total + tax_total`.

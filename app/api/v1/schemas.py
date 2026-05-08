@@ -108,6 +108,39 @@ class ServiceRequestCreate(BaseModel):
     intake: dict[str, Any] = Field(default_factory=dict)
 
 
+class ServiceRequestPatch(BaseModel):
+    status: str | None = Field(default=None, pattern='^(open|qualified|quoted|scheduled|cancelled|resolved)$')
+    assigned_resource_id: UUID | None = None
+    problem_summary: str | None = None
+    urgency: str | None = Field(default=None, pattern='^(low|normal|high|emergency)$')
+    preferred_date: str | None = None
+    preferred_slot: str | None = None
+    intake: dict[str, Any] | None = None
+
+
+class QuoteLineItem(BaseModel):
+    description: str = Field(min_length=1, max_length=255)
+    qty: float = Field(default=1.0, gt=0)
+    unit_price: float = Field(ge=0)
+
+
+class QuoteCreate(BaseModel):
+    line_items: list[QuoteLineItem] = Field(default_factory=list)
+    currency: str = Field(default='COP', min_length=3, max_length=3)
+    discount_total: float = Field(default=0.0, ge=0)
+    tax_total: float = Field(default=0.0, ge=0)
+    valid_until: datetime | None = None
+
+
+class QuotePatch(BaseModel):
+    line_items: list[QuoteLineItem] | None = None
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    discount_total: float | None = Field(default=None, ge=0)
+    tax_total: float | None = Field(default=None, ge=0)
+    status: str | None = Field(default=None, pattern='^(draft|sent|accepted|rejected|expired)$')
+    valid_until: datetime | None = None
+
+
 class AppointmentCreate(BaseModel):
     tenant_id: UUID
     contact_id: UUID
