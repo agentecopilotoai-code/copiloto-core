@@ -1,16 +1,17 @@
 import js from '@eslint/js'
-import reactPlugin from 'eslint-plugin-react'
+import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 
 export default [
-  js.recommended,
+  js.configs.recommended,
   {
-    plugins: {
-      react: reactPlugin,
-      'react-hooks': reactHooks,
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+      },
     },
-    settings: {
-      react: { version: 'detect' },
+    plugins: {
+      'react-hooks': reactHooks,
     },
     rules: {
       ...reactHooks.configs.recommended.rules,

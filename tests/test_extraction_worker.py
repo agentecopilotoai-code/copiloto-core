@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import io
-import json
-import struct
 import zlib
 
 import pytest
@@ -38,14 +36,14 @@ def _build_minimal_pdf(text: str) -> bytes:
 
     catalog_id = add_obj('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n')
     pages_id = add_obj('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n')
-    page_id = add_obj(
+    add_obj(
         '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] '
         '/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n'
     )
-    stream_id = add_obj(
+    add_obj(
         f'4 0 obj\n<< /Length {stream_len} >>\nstream\n{content_stream}\nendstream\nendobj\n'
     )
-    font_id = add_obj(
+    add_obj(
         '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n'
     )
 
