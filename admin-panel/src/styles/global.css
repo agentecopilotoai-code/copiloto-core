@@ -1535,9 +1535,16 @@ button.danger-action:disabled {
   line-height: 1.4;
 }
 
+.mfa-required-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
 .mfa-required-action {
   display: inline-block;
-  background: var(--accent);
+  background: var(--brand);
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -1550,4 +1557,21 @@ button.danger-action:disabled {
 
 .mfa-required-action:hover {
   opacity: 0.85;
+}
+
+.mfa-required-skip {
+  display: inline-block;
+  background: transparent;
+  color: #6b7c93;
+  border: 1px solid #d0d8e4;
+  border-radius: 6px;
+  padding: 0.7rem 1.5rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mfa-required-skip:hover {
+  background: #f0f4f8;
 }
