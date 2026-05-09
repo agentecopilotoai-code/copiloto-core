@@ -43,6 +43,7 @@ from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.knowledge_storage import is_binary_extractable, store_knowledge_file
 from app.services.rag_indexing import build_indexing_result, vector_literal
+from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
     download_whatsapp_media,
@@ -3103,7 +3104,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
     await conn.execute("select set_config('app.support_mode', 'true', true)")
     channel = await conn.fetchrow(
         """
-        select id, tenant_id, app_secret_ref
+        select id, tenant_id, app_secret_ref, account_mode
         from app.tenant_channels
         where provider='whatsapp_cloud_api'
           and phone_number_id=$1
@@ -3249,6 +3250,22 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                         conversation_id=conversation['id'],
                         message_id=inbound_message['id'],
                     )
+                    try:
+                        await orchestrate_inbound_message(
+                            conn,
+                            tenant_id=channel['tenant_id'],
+                            channel_id=channel['id'],
+                            channel_account_mode=channel['account_mode'] or 'mock',
+                            conversation=conversation,
+                            contact=contact,
+                            inbound_message=inbound_message,
+                        )
+                    except Exception:
+                        log.exception(
+                            'rag_orchestrator.error',
+                            tenant_id=str(channel['tenant_id']),
+                            conversation_id=str(conversation['id']),
+                        )
     return {'accepted': True, 'payload_sha256': sha}
 
 

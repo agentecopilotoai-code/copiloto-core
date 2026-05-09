@@ -25,20 +25,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0021 — Orquestar respuestas automáticas WhatsApp con RAG y handoff seguro
-
-- **Estado:** PENDING
-- **Objetivo:** permitir que un cliente pregunte por WhatsApp, por ejemplo “¿qué precio tiene una manicure?”, y que CopilotoIA responda automáticamente con una respuesta clara basada solo en documentos activos/indexados; si no hay evidencia suficiente, debe escalar a un humano sin inventar información.
-- **Alcance mínimo:**
-  - Crear un orquestador inbound para mensajes WhatsApp de texto que, después de persistir el `inbound`, ejecute retrieval contra `knowledge_chunks` activos del tenant.
-  - Reutilizar la lógica de `rank_chunks`/`build_grounded_answer` o extraerla a un servicio compartido para evitar duplicar reglas entre `/intents/evaluate`, readiness y WhatsApp.
-  - Si `sufficient_context=true`, crear un mensaje `outbound` con `sender_actor_type='bot'`, encolar `domain_events.message.queued`, auditar la decisión y enviar por el worker existente.
-  - Si `sufficient_context=false`, dejar la conversación en `waiting_agent`/`handoff_required=true`, crear o actualizar un handoff abierto y, si existe `escalation_policy.handoff_message`, enviar un mensaje breve indicando que se conectará con una persona.
-  - Respetar límites operativos del tenant: `max_bot_turns`, conversación en `human_active`, keywords de humano/reclamo/agente, modo de canal `mock/live`, opt-in/contacto suprimido y deduplicación por `external_message_id`.
-  - Incluir trazabilidad en `messages.payload`/`audit_logs`: pregunta, chunks usados, top score, decisión `answered|handoff`, razón y documento fuente.
-  - Agregar pruebas integradas con payload Meta representativo: respuesta exitosa por precio de manicure desde CSV indexado, escalamiento por pregunta sin evidencia, duplicado sin doble respuesta y conversación en `human_active` sin intervención del bot.
-- **Criterio de aceptación:** al cargar e indexar un documento de precios, un mensaje real o simulado de WhatsApp “¿Qué precio tiene una manicure?” genera una respuesta outbound clara y trazable; si el conocimiento no contiene la respuesta, queda escalado a humano y visible en Operations Desk.
-
 ### TASK-0022 — Activación operativa de tenant para go-live desde Admin Panel
 
 - **Estado:** PENDING

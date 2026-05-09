@@ -32,6 +32,19 @@ Cada entrada debe incluir:
   - Pipeline bloquea merge si falla cualquiera de los pasos anteriores o el build Vite
 - **Notas:** `test_rls_multitenant_e2e.py` necesita una instancia PostgreSQL con datos de fixture; se ejecuta localmente con `docker-compose up` y `pytest -m requires_db`. Los demás 20 archivos de test corren en CI sin infraestructura adicional.
 
+### TASK-0021 — Orquestar respuestas automáticas WhatsApp con RAG y handoff seguro
+
+- **Fecha:** 2026-05-09
+- **Resumen:** se implementó un orquestador inbound que, tras persistir cada mensaje de texto de WhatsApp, ejecuta retrieval léxico contra `knowledge_chunks` activos del tenant y decide automáticamente entre responder con el bot o escalar a un humano. Si `sufficient_context=true` crea un mensaje `outbound` con `sender_actor_type='bot'`, encola `domain_events.message.queued` para que el worker lo envíe, actualiza la conversación a `waiting_user` y audita la decisión. Si `sufficient_context=false` marca `handoff_required=true`, crea un handoff `open` y, si la política de escalamiento define `handoff_message`, envía ese mensaje al contacto. Respeta: mensajes no-texto, conversación en `human_active`, contactos suprimidos/revocados, keywords de trigger (asesor/humano/reclamo/agente), límite `max_bot_turns`, y deduplicación por `idempotency_key`. Los errores del orquestador se capturan y loguean sin fallar el webhook 202. La trazabilidad completa (pregunta, chunks usados, top_score, documento fuente, decisión) se almacena en `messages.payload` y `audit_logs`.
+- **Archivos modificados/creados:**
+  - `app/services/rag_orchestrator.py` — nuevo servicio con `orchestrate_inbound_message`, `_send_bot_reply`, `_do_handoff`, `_parse_escalation_policy`, `_keyword_triggers`
+  - `app/api/v1/routes.py` — importa `orchestrate_inbound_message`; agrega `account_mode` al query del canal; llama el orquestador después de persistir `inbound_message`; captura errores con `log.exception`
+  - `tests/test_whatsapp_rag_orchestrator.py` — 24 tests: análisis estático del orquestador y el webhook, unit tests de helpers `_parse_escalation_policy`/`_keyword_triggers`, y tests de aceptación RAG (manicure price, sin evidencia, duplicado, conversación human_active)
+- **Comandos/validaciones:**
+  - `python3 -m pytest tests/test_whatsapp_rag_orchestrator.py -v` → 24 passed
+  - `python3 -m pytest tests/ --ignore=tests/test_rls_multitenant_e2e.py --ignore=tests/test_mfa_enforcement.py --ignore=tests/test_tenant_access.py --ignore=tests/test_knowledge_documents.py --ignore=tests/test_knowledge_storage.py --ignore=tests/test_audit.py --ignore=tests/test_extraction_worker.py --ignore=tests/test_security.py -v` → 160 passed, 2 failed pre-existentes (httpx no instalado en entorno local)
+- **Notas:** los 2 tests pre-existentes que fallan (`test_tenant_readiness_static.py`) necesitan `httpx` instalado en el entorno local; no son regresiones de esta tarea. El orquestador reutiliza `rank_chunks`/`build_grounded_answer` del servicio compartido `rag_retrieval.py` sin duplicar lógica.
+
 ### TASK-0019 — Extracción documental fuera del request para PDF/DOCX
 
 - **Fecha:** 2026-05-09
