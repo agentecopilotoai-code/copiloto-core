@@ -1,16 +1,11 @@
 import js from '@eslint/js'
-import reactPlugin from 'eslint-plugin-react'
 import reactHooks from 'eslint-plugin-react-hooks'
 
 export default [
-  js.recommended,
+  js.configs.recommended,
   {
     plugins: {
-      react: reactPlugin,
       'react-hooks': reactHooks,
-    },
-    settings: {
-      react: { version: 'detect' },
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
