@@ -401,7 +401,21 @@ export function KnowledgeStudio({ module, session, tenant }) {
                     <option value="active" disabled>Active (solo por indexado)</option>
                     <option value="failed">Failed</option>
                   </select>
-                  <button className="icon-action" onClick={() => runIndexing(document)} type="button">Indexar</button>
+                  {(() => {
+                    const meta = document.metadata || {};
+                    const awaitingExtraction = meta.extraction_pending && !meta.extracted_text;
+                    return (
+                      <button
+                        className="icon-action"
+                        disabled={awaitingExtraction}
+                        title={awaitingExtraction ? 'Espera a que el worker extraiga el texto del archivo antes de indexar.' : 'Indexar documento'}
+                        onClick={() => !awaitingExtraction && runIndexing(document)}
+                        type="button"
+                      >
+                        {awaitingExtraction ? 'Extrayendo…' : 'Indexar'}
+                      </button>
+                    );
+                  })()}
                   <button className="icon-action" onClick={() => editDocument(document)} type="button">Editar</button>
                   <button className="icon-action danger" onClick={() => removeDocument(document)} type="button">Eliminar</button>
                 </div>
