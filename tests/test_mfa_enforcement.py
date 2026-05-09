@@ -105,7 +105,7 @@ def test_authenticate_sets_mfa_verified_true():
         await authenticate_request(req, authorization=f'Bearer {token}', x_tenant_id=None)
         assert req.state.mfa_verified is True
 
-    asyncio.get_event_loop().run_until_complete(run())
+    asyncio.run(run())
 
 
 def test_authenticate_sets_mfa_verified_false_without_amr():
@@ -115,7 +115,7 @@ def test_authenticate_sets_mfa_verified_false_without_amr():
         await authenticate_request(req, authorization=f'Bearer {token}', x_tenant_id=None)
         assert req.state.mfa_verified is False
 
-    asyncio.get_event_loop().run_until_complete(run())
+    asyncio.run(run())
 
 
 def test_authenticate_anonymous_mfa_verified_false():
@@ -124,7 +124,7 @@ def test_authenticate_anonymous_mfa_verified_false():
         await authenticate_request(req, authorization=None, x_tenant_id=None)
         assert req.state.mfa_verified is False
 
-    asyncio.get_event_loop().run_until_complete(run())
+    asyncio.run(run())
 
 
 # ── require_mfa_for_privileged ─────────────────────────────────────────────
@@ -140,14 +140,14 @@ def _make_state(actor_type='user', roles=None, mfa_verified=False):
 def test_require_mfa_privileged_passes_with_mfa(monkeypatch):
     """admin role + mfa_verified=True: no exception (Auth0 not configured)."""
     req = _make_state(roles=['admin'], mfa_verified=True)
-    asyncio.get_event_loop().run_until_complete(require_mfa_for_privileged(req))
+    asyncio.run(require_mfa_for_privileged(req))
 
 
 def test_require_mfa_privileged_passes_without_auth0(monkeypatch):
     """Without AUTH0_DOMAIN the check is skipped even for privileged roles."""
     req = _make_state(roles=['owner'], mfa_verified=False)
     # AUTH0_DOMAIN is not set (local_auth_env fixture), so no error.
-    asyncio.get_event_loop().run_until_complete(require_mfa_for_privileged(req))
+    asyncio.run(require_mfa_for_privileged(req))
 
 
 def test_require_mfa_privileged_raises_with_auth0_no_mfa(monkeypatch):
@@ -157,7 +157,7 @@ def test_require_mfa_privileged_raises_with_auth0_no_mfa(monkeypatch):
     get_settings.cache_clear()
     req = _make_state(roles=['admin'], mfa_verified=False)
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.get_event_loop().run_until_complete(require_mfa_for_privileged(req))
+        asyncio.run(require_mfa_for_privileged(req))
     assert exc_info.value.status_code == 403
     assert 'MFA' in exc_info.value.detail
 
@@ -168,7 +168,7 @@ def test_require_mfa_privileged_passes_owner_with_mfa(monkeypatch):
     monkeypatch.setenv('AUTH0_AUDIENCE', 'https://test-api')
     get_settings.cache_clear()
     req = _make_state(roles=['owner'], mfa_verified=True)
-    asyncio.get_event_loop().run_until_complete(require_mfa_for_privileged(req))
+    asyncio.run(require_mfa_for_privileged(req))
 
 
 def test_require_mfa_unprivileged_no_check(monkeypatch):
@@ -177,7 +177,7 @@ def test_require_mfa_unprivileged_no_check(monkeypatch):
     monkeypatch.setenv('AUTH0_AUDIENCE', 'https://test-api')
     get_settings.cache_clear()
     req = _make_state(roles=['agent'], mfa_verified=False)
-    asyncio.get_event_loop().run_until_complete(require_mfa_for_privileged(req))
+    asyncio.run(require_mfa_for_privileged(req))
 
 
 def test_require_mfa_service_exempt(monkeypatch):
@@ -186,26 +186,32 @@ def test_require_mfa_service_exempt(monkeypatch):
     monkeypatch.setenv('AUTH0_AUDIENCE', 'https://test-api')
     get_settings.cache_clear()
     req = _make_state(actor_type='service', roles=['admin'], mfa_verified=False)
-    asyncio.get_event_loop().run_until_complete(require_mfa_for_privileged(req))
+    asyncio.run(require_mfa_for_privileged(req))
 
 
 def test_require_mfa_anonymous_raises_401(monkeypatch):
     req = _make_state(actor_type='anonymous', roles=[], mfa_verified=False)
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.get_event_loop().run_until_complete(require_mfa_for_privileged(req))
+        asyncio.run(require_mfa_for_privileged(req))
     assert exc_info.value.status_code == 401
 
 
 # ── admin routes: _session_mfa_required ────────────────────────────────────
 
-def test_session_mfa_required_privileged_no_mfa():
+def test_session_mfa_required_privileged_no_mfa(monkeypatch):
+    from app.admin.config import get_admin_settings
     from app.admin.routes import _session_mfa_required
 
-    session = {
-        'profile': {'roles': ['admin'], 'mfa_verified': False},
-        'expires_at': time.time() + 3600,
-    }
-    assert _session_mfa_required(session) is True
+    monkeypatch.setenv('AUTH0_DOMAIN', 'test.auth0.com')
+    get_admin_settings.cache_clear()
+    try:
+        session = {
+            'profile': {'roles': ['admin'], 'mfa_verified': False},
+            'expires_at': time.time() + 3600,
+        }
+        assert _session_mfa_required(session) is True
+    finally:
+        get_admin_settings.cache_clear()
 
 
 def test_session_mfa_required_privileged_with_mfa():
