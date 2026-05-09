@@ -7,7 +7,9 @@ from uuid import UUID
 
 import structlog
 
+from app.core.config import get_settings
 from app.services.audit import audit
+from app.services.llm_answer import build_llm_answer
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 
 if TYPE_CHECKING:
@@ -133,7 +135,18 @@ async def orchestrate_inbound_message(
     )
     chunks = [dict(row) for row in rows]
     matches = rank_chunks(body_text, chunks)
-    decision = build_grounded_answer(body_text, matches)
+
+    settings = get_settings()
+    if settings.answer_engine == 'local_llm' and matches:
+        decision = await build_llm_answer(
+            body_text,
+            matches,
+            base_url=settings.local_llm_base_url,
+            model=settings.local_llm_model,
+            timeout_seconds=settings.local_llm_timeout_seconds,
+        )
+    else:
+        decision = build_grounded_answer(body_text, matches)
 
     top_score = matches[0].score if matches else None
     top_document = matches[0].document_title if matches else None
@@ -151,6 +164,8 @@ async def orchestrate_inbound_message(
             idempotency_key=idempotency_key,
             top_score=top_score,
             top_document=top_document,
+            llm_used=decision.get('llm_used', False),
+            llm_model=decision.get('llm_model'),
         )
 
     return await _do_handoff(
@@ -178,9 +193,13 @@ async def _send_bot_reply(
     idempotency_key: str,
     top_score: float | None,
     top_document: str | None,
+    llm_used: bool = False,
+    llm_model: str | None = None,
 ) -> dict[str, Any]:
     trace_payload = {
         'rag_decision': 'answered',
+        'answer_engine': 'local_llm' if llm_used else 'template',
+        'llm_model': llm_model,
         'question': inbound_message['body_text'],
         'top_score': top_score,
         'top_document': top_document,

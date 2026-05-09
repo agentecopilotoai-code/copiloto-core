@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     rag_embedding_dimensions: int = 1536
     rag_chunk_max_tokens: int = 500
     rag_chunk_overlap_tokens: int = 80
+    # Answer engine: 'template' (rule-based) or 'local_llm' (Ollama)
+    answer_engine: str = Field(default='template', pattern='^(template|local_llm)$')
+    local_llm_base_url: str = 'http://localhost:11434'
+    local_llm_model: str = 'llama3.2:3b'
+    local_llm_timeout_seconds: int = 30
 
     @property
     def knowledge_storage_bucket(self) -> str:

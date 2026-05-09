@@ -222,7 +222,8 @@ def test_rag_retrieval_answers_manicure_price_from_indexed_csv_chunk():
     assert decision['sufficient_context'] is True
     assert decision['status'] == 'answered'
     assert decision['answer'] is not None
-    assert 'Precios Servicios Salón' in decision['answer']
+    assert 'Manicure' in decision['answer']
+    assert 'Fuente:' in decision['answer']
     assert decision['handoff']['required'] is False
 
 
