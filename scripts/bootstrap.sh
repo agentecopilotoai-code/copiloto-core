@@ -183,7 +183,7 @@ fi
 
 # ── Check Ollama availability (non-blocking) ──────────────────────────────────
 LOCAL_LLM_BASE_URL_VALUE="$(awk -F= '$1 == "LOCAL_LLM_BASE_URL" {print $2}' .env)"
-LOCAL_LLM_BASE_URL_VALUE="${LOCAL_LLM_BASE_URL_VALUE:-http://localhost:11434}"
+LOCAL_LLM_BASE_URL_VALUE="${LOCAL_LLM_BASE_URL_VALUE:-http://host.docker.internal:11434}"
 # Strip host.docker.internal for host-side check
 OLLAMA_CHECK_URL="${LOCAL_LLM_BASE_URL_VALUE//host.docker.internal/localhost}"
 if curl -fsS --max-time 3 "${OLLAMA_CHECK_URL}/api/tags" >/dev/null 2>&1; then

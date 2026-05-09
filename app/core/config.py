@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     # Answer engine: 'template' | 'local_llm' | 'cascade'
     # cascade: intenta template primero, si no alcanza umbral pasa a LLM local, sino handoff
     answer_engine: str = Field(default='template', pattern='^(template|local_llm|cascade)$')
-    local_llm_base_url: str = 'http://localhost:11434'
+    local_llm_base_url: str = 'http://host.docker.internal:11434'
     local_llm_model: str = 'llama3.2:3b'
     local_llm_timeout_seconds: int = 30
     # Umbrales para modo cascade
