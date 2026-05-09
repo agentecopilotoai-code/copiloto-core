@@ -11,7 +11,6 @@ import asyncio
 import json
 import time
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -24,7 +23,6 @@ from app.core.security import (
     authenticate_request,
     clear_jwks_cache,
     require_mfa_for_privileged,
-    require_min_role,
 )
 
 
@@ -242,8 +240,6 @@ def test_session_mfa_required_no_roles():
 def test_admin_callback_stores_mfa_verified_in_profile():
     """The session builder stores mfa_verified=True when id_token has amr=['mfa']."""
     import base64
-
-    from app.admin import routes as admin_routes
 
     def b64(data: dict) -> str:
         raw = json.dumps(data).encode()
