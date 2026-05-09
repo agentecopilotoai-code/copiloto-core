@@ -5,6 +5,8 @@ from uuid import UUID
 import asyncpg
 import pytest
 
+pytestmark = pytest.mark.requires_db
+
 
 TENANT_A = UUID('aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaa1')
 TENANT_B = UUID('bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbb2')

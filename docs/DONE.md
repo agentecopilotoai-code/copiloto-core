@@ -15,6 +15,23 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0020 — CI mínimo de calidad para API y Admin Panel
+
+- **Fecha:** 2026-05-09
+- **Resumen:** se creó el pipeline de integración continua con GitHub Actions. El job `API` ejecuta compile-check con `compileall`, lint con `ruff` y la suite de pytest excluyendo el único test que requiere PostgreSQL real (marcado con `pytest.mark.requires_db`). El job `Admin Panel` instala dependencias con cache de `node_modules`, ejecuta lint con ESLint 9 (flat config, plugins `react` y `react-hooks`) y compila la aplicación con Vite. Los artefactos de reporte pytest y el build de la SPA se publican en cada ejecución.
+- **Archivos creados/modificados:**
+  - `.github/workflows/ci.yml` — workflow nuevo con jobs `api` y `admin-panel`
+  - `pyproject.toml` — sección `markers` en `[tool.pytest.ini_options]`
+  - `tests/test_rls_multitenant_e2e.py` — `pytestmark = pytest.mark.requires_db`
+  - `admin-panel/package.json` — script `lint`; devDependencies `eslint`, `@eslint/js`, `eslint-plugin-react`, `eslint-plugin-react-hooks`
+  - `admin-panel/eslint.config.js` — configuración flat ESLint 9 con reglas `react-hooks`
+- **Comandos/validaciones:**
+  - `python -m compileall app -q` → OK
+  - `ruff check .` → sin errores de linting
+  - `pytest tests/ -m "not requires_db" -v --tb=short` → todos los tests estáticos/unitarios pasan; `test_rls_multitenant_e2e.py` excluido por marker
+  - Pipeline bloquea merge si falla cualquiera de los pasos anteriores o el build Vite
+- **Notas:** `test_rls_multitenant_e2e.py` necesita una instancia PostgreSQL con datos de fixture; se ejecuta localmente con `docker-compose up` y `pytest -m requires_db`. Los demás 20 archivos de test corren en CI sin infraestructura adicional.
+
 ### TASK-0019 — Extracción documental fuera del request para PDF/DOCX
 
 - **Fecha:** 2026-05-09

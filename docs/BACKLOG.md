@@ -25,16 +25,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0020 — CI mínimo de calidad para API y Admin Panel
-
-- **Estado:** PENDING
-- **Objetivo:** evitar regresiones antes de piloto con una línea base automatizada.
-- **Alcance mínimo:**
-  - Ejecutar compileall/pytest relevantes para API.
-  - Ejecutar install/build/lint del Admin Panel con cache de npm.
-  - Publicar artefactos de logs y reporte de tests.
-- **Criterio de aceptación:** pipeline documentado y reproducible que bloquee merges con fallos críticos.
-
 ### TASK-0021 — Orquestar respuestas automáticas WhatsApp con RAG y handoff seguro
 
 - **Estado:** PENDING
