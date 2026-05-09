@@ -675,7 +675,47 @@ tenants/<TENANT_ID>/knowledge
 
 Las variables `.env` (`S3_ENDPOINT_URL`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`) quedan como fallback/global y para desarrollo. En producción piloto, el destino efectivo de documentos debe venir del módulo **Storage S3** por tenant; el secreto nunca se guarda en PostgreSQL, solo la referencia `secret_ref`.
 
-## 13. Comandos útiles
+
+## 13. Backup/restore local y equivalentes de producción
+
+### 13.1 Respaldo local antes de pruebas piloto
+
+Con el stack local levantado, genera un respaldo lógico de PostgreSQL y un manifiesto/tar de objetos de Knowledge Storage:
+
+```bash
+./scripts/backup-local.sh
+```
+
+El script crea un directorio bajo `backups/local/<timestamp>/` con:
+
+- `postgres.dump`: dump lógico en formato custom de PostgreSQL.
+- `table-counts.tsv`: conteos de validación para tenants, documentos, chunks, mensajes, eventos y auditoría.
+- `knowledge-documents.tsv`: manifiesto de documentos y referencias `source_uri`/`object_key` registradas en DB.
+- `knowledge-files.tar` y `knowledge-files.sha256`: copia y checksums del volumen local `KNOWLEDGE_STORAGE_LOCAL_PATH`, si el backend local está activo.
+- `manifest.json`: resumen auditable del respaldo y comando sugerido de restore.
+
+### 13.2 Restore local en una base limpia
+
+Para ensayar un restore local, recrea volúmenes de desarrollo y restaura el directorio generado. La base recién inicializada puede contener los seeds demo del proyecto; el script la considera apta mientras no tenga datos operativos críticos como mensajes, documentos, chunks, eventos o auditoría:
+
+```bash
+./scripts/bootstrap.sh --reset --yes --skip-smoke
+./scripts/restore-local.sh backups/local/<timestamp>
+```
+
+`restore-local.sh` exige por defecto una base limpia o recién inicializada solo con seeds. Si se usa contra una base con datos operativos, falla con una advertencia para evitar sobrescrituras accidentales. El restore termina comparando `table-counts.tsv` contra la base restaurada; esto valida conteos de tenants, documentos, chunks, mensajes, eventos de estado, domain events y audit logs sin SQL manual.
+
+### 13.3 Equivalentes obligatorios en producción piloto
+
+Para producción no se debe depender de scripts locales ni de volúmenes Docker. La operación equivalente debe quedar habilitada en la plataforma gestionada antes de go-live:
+
+- **PostgreSQL:** activar PITR gestionado con retención acorde al piloto, snapshots programados, pruebas periódicas de restore a una instancia aislada y cifrado en reposo/KMS.
+- **Objetos de conocimiento/media:** usar bucket S3-compatible con versioning, replicación o backup cross-region/cross-account, lifecycle controlado, cifrado en reposo y bloqueo contra borrado accidental cuando aplique.
+- **Consistencia DB/objetos:** capturar manifiestos de `app.knowledge_documents.source_uri`, checksums y prefijos por tenant en la misma ventana operacional que el snapshot lógico/físico.
+- **Validación post-restore:** ejecutar los mismos conteos mínimos de `scripts/restore-local.sh` y probar lectura de objetos de conocimiento antes de declarar exitoso el simulacro.
+- **Auditoría:** registrar fecha, responsable, backup usado, destino de restore, conteos antes/después, errores y decisión final de aceptación.
+
+## 14. Comandos útiles
 
 Levantar/validar todo:
 
@@ -725,7 +765,7 @@ Apagar y borrar volúmenes:
 docker compose down -v
 ```
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 ### `InvalidPasswordError: password authentication failed for user "copiloto_app"`
 
