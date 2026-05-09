@@ -1,6 +1,5 @@
 """Static analysis and unit tests for the WhatsApp RAG inbound orchestrator (TASK-0021)."""
 from pathlib import Path
-from uuid import uuid4
 
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 API_ROUTES = Path('app/api/v1/routes.py')
