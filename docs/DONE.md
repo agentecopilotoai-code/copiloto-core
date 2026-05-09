@@ -351,6 +351,20 @@ Cada entrada debe incluir:
   - `git diff --check`
 - **Notas:** la prueba RLS E2E queda marcada para ejecutarse explícitamente con `RUN_RLS_E2E=1` y `TEST_DATABASE_URL`/`DATABASE_URL` apuntando al rol aplicativo no propietario, por ejemplo `copiloto_app`; sin esas variables, la prueba se salta para no romper entornos unitarios sin PostgreSQL. El entorno actual no tenía `.env` ni una base PostgreSQL local activa, por lo que se validó la suite y su skip controlado, además de los tests de autenticación.
 
+
+### TASK-0015 — Automatizar backup y restore de base de datos y objetos
+
+- **Estado:** PENDING
+- **Objetivo:** tener un procedimiento probado para respaldar y restaurar PostgreSQL y archivos de conocimiento/media antes de piloto.
+- **Alcance mínimo:**
+  - Script `scripts/backup-local.sh` para dump lógico y manifiesto de objetos. ✅ Implementado.
+  - Script `scripts/restore-local.sh` para restaurar en una base limpia o recién inicializada con seeds. ✅ Implementado.
+  - Validación post-restore de conteos, tenants, documentos, chunks y audit logs. ✅ Implementada en script; pendiente ejecutar restore real.
+  - Documentar equivalentes producción: PITR gestionado, snapshots y replicación/cifrado de bucket. ✅ Documentado en `INSTALL.md`.
+- **Bloqueo actual:** el entorno de ejecución del agente no tiene Docker/Compose disponible (`command -v docker` no devuelve binario), por lo que no fue posible levantar PostgreSQL/MinIO ni ejecutar un backup+restore real con datos demo. Se validaron sintaxis, compileall y tests estáticos; queda pendiente correr `./scripts/backup-local.sh`, `./scripts/bootstrap.sh --reset --yes --skip-smoke` y `./scripts/restore-local.sh <backup>` en un entorno con Docker.
+- **Criterio de aceptación:** restore local probado con datos demo y checklist actualizado.
+
+
 ### TASK-0016 — Enforzar MFA y roles privilegiados en Auth0/Admin Panel
 
 - **Fecha:** 2026-05-09

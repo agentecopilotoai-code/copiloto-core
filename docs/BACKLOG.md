@@ -25,19 +25,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0015 — Automatizar backup y restore de base de datos y objetos
-
-- **Estado:** PENDING
-- **Objetivo:** tener un procedimiento probado para respaldar y restaurar PostgreSQL y archivos de conocimiento/media antes de piloto.
-- **Alcance mínimo:**
-  - Script `scripts/backup-local.sh` para dump lógico y manifiesto de objetos. ✅ Implementado.
-  - Script `scripts/restore-local.sh` para restaurar en una base limpia o recién inicializada con seeds. ✅ Implementado.
-  - Validación post-restore de conteos, tenants, documentos, chunks y audit logs. ✅ Implementada en script; pendiente ejecutar restore real.
-  - Documentar equivalentes producción: PITR gestionado, snapshots y replicación/cifrado de bucket. ✅ Documentado en `INSTALL.md`.
-- **Bloqueo actual:** el entorno de ejecución del agente no tiene Docker/Compose disponible (`command -v docker` no devuelve binario), por lo que no fue posible levantar PostgreSQL/MinIO ni ejecutar un backup+restore real con datos demo. Se validaron sintaxis, compileall y tests estáticos; queda pendiente correr `./scripts/backup-local.sh`, `./scripts/bootstrap.sh --reset --yes --skip-smoke` y `./scripts/restore-local.sh <backup>` en un entorno con Docker.
-- **Criterio de aceptación:** restore local probado con datos demo y checklist actualizado.
-
-
 ### TASK-0018 — Runbook de go-live por tenant y smoke test E2E
 
 - **Estado:** PENDING
