@@ -61,14 +61,30 @@ async def orchestrate_inbound_message(
     """Decide whether to reply automatically via RAG/LLM or escalate to a human agent."""
 
     body_text: str = inbound_message['body_text'] or ''
+    conversation_id = str(conversation['id'])
+    message_id = str(inbound_message['id'])
+
+    log.info(
+        'orchestrator.received',
+        tenant_id=str(tenant_id),
+        conversation_id=conversation_id,
+        message_id=message_id,
+        message_type=inbound_message['message_type'],
+        body_preview=body_text[:80],
+        conversation_status=conversation['status'],
+    )
+
     if inbound_message['message_type'] != 'text' or not body_text.strip():
+        log.info('orchestrator.skip', reason='non_text_message', message_id=message_id)
         return {'action': 'skipped', 'reason': 'non_text_message'}
 
     if conversation['status'] == 'human_active':
+        log.info('orchestrator.skip', reason='human_active', conversation_id=conversation_id)
         return {'action': 'skipped', 'reason': 'human_active'}
 
     opt_in = contact.get('opt_in_status') or 'unknown'
     if opt_in in ('revoked', 'suppressed'):
+        log.info('orchestrator.skip', reason=f'contact_opt_in_{opt_in}', conversation_id=conversation_id)
         return {'action': 'skipped', 'reason': f'contact_opt_in_{opt_in}'}
 
     # Load tenant settings and tenant display name
@@ -82,16 +98,34 @@ async def orchestrate_inbound_message(
         """,
         tenant_id,
     )
+    if settings_row is None:
+        log.warning(
+            'orchestrator.no_tenant_settings',
+            tenant_id=str(tenant_id),
+            detail='fila en tenant_settings no encontrada — usando defaults (max_bot_turns=8)',
+        )
+
     max_bot_turns: int = (settings_row['max_bot_turns'] if settings_row else None) or 8
     raw_policy = (settings_row['escalation_policy'] if settings_row else None) or {}
     policy = _parse_escalation_policy(raw_policy)
     business_name: str = (settings_row['business_name'] if settings_row else None) or 'nuestro negocio'
     vertical_code: str = (settings_row['vertical_code'] if settings_row else None) or 'beauty'
 
+    log.info(
+        'orchestrator.settings_loaded',
+        tenant_id=str(tenant_id),
+        max_bot_turns=max_bot_turns,
+        business_name=business_name,
+        answer_engine=get_settings().answer_engine,
+        escalation_triggers=sorted(_keyword_triggers(policy)),
+        has_handoff_message=bool(policy.get('handoff_message')),
+    )
+
     # Keyword trigger check
     body_lower = body_text.lower()
     triggered_keyword = next((kw for kw in _keyword_triggers(policy) if kw in body_lower), None)
     if triggered_keyword:
+        log.info('orchestrator.keyword_trigger', keyword=triggered_keyword, conversation_id=conversation_id)
         return await _do_handoff(
             conn,
             tenant_id=tenant_id,
@@ -113,7 +147,24 @@ async def orchestrate_inbound_message(
         """,
         conversation['id'],
     ) or 0
+
+    log.info(
+        'orchestrator.bot_turn_check',
+        conversation_id=conversation_id,
+        bot_turn_count=bot_turn_count,
+        max_bot_turns=max_bot_turns,
+        will_exceed=bot_turn_count >= max_bot_turns,
+    )
+
     if bot_turn_count >= max_bot_turns:
+        log.warning(
+            'orchestrator.max_turns_exceeded',
+            conversation_id=conversation_id,
+            bot_turn_count=bot_turn_count,
+            limit=max_bot_turns,
+            tenant_id=str(tenant_id),
+            hint='Aumenta max_bot_turns en tenant_settings o via PATCH /v1/tenants/{id}/settings',
+        )
         return await _do_handoff(
             conn,
             tenant_id=tenant_id,
@@ -122,7 +173,7 @@ async def orchestrate_inbound_message(
             inbound_message=inbound_message,
             policy=policy,
             reason='max_bot_turns_exceeded',
-            reason_detail=f'limit={max_bot_turns}',
+            reason_detail=f'count={bot_turn_count},limit={max_bot_turns}',
         )
 
     # Idempotency check (deduplication)
@@ -131,6 +182,7 @@ async def orchestrate_inbound_message(
         'select id from app.domain_events where tenant_id=$1 and idempotency_key=$2',
         tenant_id, idempotency_key,
     ):
+        log.info('orchestrator.skip', reason='already_processed', idempotency_key=idempotency_key)
         return {'action': 'skipped', 'reason': 'already_processed'}
 
     # Retrieve active knowledge chunks and run RAG ranking
@@ -154,17 +206,33 @@ async def orchestrate_inbound_message(
     settings = get_settings()
     engine = settings.answer_engine
 
+    log.info(
+        'orchestrator.rag_ranked',
+        conversation_id=conversation_id,
+        total_chunks=len(chunks),
+        matches_above_llm_threshold=sum(1 for m in matches if m.score >= settings.cascade_llm_min_score),
+        top_score=round(matches[0].score, 4) if matches else None,
+        top_document=matches[0].document_title if matches else None,
+        answer_engine=engine,
+    )
+
     # ── Conversational booking flow ───────────────────────────────────────────
-    # Route to stateful LLM flow when the conversation is already in a booking
-    # stage or when the client expresses booking intent and the engine is capable
-    # of multi-turn responses (not pure template mode).
     ctx = get_context(conversation.get('metadata'))
-    # STAGE_START is included so that the first message (e.g. "hola") always
-    # goes through the LLM, which greets the customer and detects intent.
     use_conversational = engine != 'template' and (
         ctx.stage == STAGE_START
         or ctx.is_conversational
         or has_booking_intent(body_text)
+    )
+
+    log.info(
+        'orchestrator.routing',
+        conversation_id=conversation_id,
+        engine=engine,
+        conv_stage=ctx.stage,
+        is_conversational=ctx.is_conversational,
+        has_booking_intent=has_booking_intent(body_text),
+        use_conversational=use_conversational,
+        collected_keys=list(ctx.collected.keys()),
     )
 
     if use_conversational:
@@ -183,18 +251,37 @@ async def orchestrate_inbound_message(
         )
         history = format_history([dict(r) for r in history_rows])
 
+        log.info(
+            'orchestrator.conversational_call',
+            conversation_id=conversation_id,
+            conv_stage=ctx.stage,
+            history_turns=len(history_rows),
+            llm_model=settings.local_llm_model,
+            llm_url=settings.local_llm_base_url,
+        )
+
         decision = await _resolve_conversational(
             body_text, matches, ctx, history, settings, business_name=business_name,
         )
 
-        # Always persist stage and collected data after a conversational turn
         new_stage = decision.get('next_stage', ctx.stage)
         new_collected = decision.get('collected', ctx.collected)
+        action = decision.get('action')
+
+        log.info(
+            'orchestrator.conversational_result',
+            conversation_id=conversation_id,
+            prev_stage=ctx.stage,
+            next_stage=new_stage,
+            action=action,
+            sufficient_context=decision['sufficient_context'],
+            answer_preview=(decision.get('answer') or '')[:120],
+            collected_keys=list(new_collected.keys()),
+        )
+
         await _update_conversation_metadata(
             conn, tenant_id, conversation, new_stage, new_collected,
         )
-
-        action = decision.get('action')
 
         if action == 'create_appointment':
             await _handle_appointment_created(
@@ -208,6 +295,12 @@ async def orchestrate_inbound_message(
             )
 
         if action == 'request_human' or not decision['sufficient_context']:
+            log.info(
+                'orchestrator.conversational_handoff',
+                conversation_id=conversation_id,
+                trigger='request_human' if action == 'request_human' else 'insufficient_context',
+                decision_reason=decision.get('reason'),
+            )
             return await _do_handoff(
                 conn,
                 tenant_id=tenant_id,
@@ -237,10 +330,20 @@ async def orchestrate_inbound_message(
         )
 
     # ── Q&A cascade (template → LLM → handoff) ───────────────────────────────
+    log.info('orchestrator.qa_cascade', conversation_id=conversation_id, engine=engine)
     decision = await _resolve_answer(body_text, matches, settings)
 
     top_score = matches[0].score if matches else None
     top_document = matches[0].document_title if matches else None
+
+    log.info(
+        'orchestrator.qa_result',
+        conversation_id=conversation_id,
+        sufficient_context=decision['sufficient_context'],
+        status=decision.get('status'),
+        reason=decision.get('reason'),
+        llm_used=decision.get('llm_used', False),
+    )
 
     if decision['sufficient_context']:
         return await _send_bot_reply(
