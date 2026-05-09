@@ -413,3 +413,21 @@ Cada entrada debe incluir:
   - Regresión sobre suites existentes: 117 tests de otras suites → todos pasan (2 saltos preexistentes por `httpx` y `monkeypatch` del entorno, no por este cambio)
   - `git diff --check` → OK
 - **Notas:** los tests son puramente estáticos (lectura de código fuente) para ser ejecutables sin Docker, PostgreSQL ni dependencias de PyPI instaladas. En un entorno con `pytest` instalado se ejecutan normalmente con `pytest tests/test_webhook_idempotency_static.py`.
+
+### TASK-0018 — Runbook de go-live por tenant y smoke test E2E
+
+- **Fecha:** 2026-05-08
+- **Resumen:** se convirtió el checklist de readiness en un runbook ejecutable por operadores sin SQL manual. Se agregó endpoint PATCH para rollback operativo del canal WhatsApp (mock/live), script CLI completo con smoke tests de 5 pasos y plantilla de evidencia. La UI del panel muestra las acciones de rollback y permite exportar evidencia en Markdown.
+- **Archivos modificados:**
+  - `app/api/v1/schemas.py` — nuevo schema `ChannelModeUpdate`
+  - `app/api/v1/routes.py` — nuevo endpoint `PATCH /v1/tenants/{tenant_id}/channels/whatsapp/mode` con auditoría
+  - `scripts/go-live-runbook.sh` — script ejecutable que orquesta 5 pasos: health API, readiness, canal WhatsApp, RAG smoke test y audit logs; soporta `--rollback-to-mock` sin SQL
+  - `docs/runbook-go-live-evidence.md` — plantilla de evidencia con tabla de checks, procedimiento de rollback y diferencia entre tenant status vs canal account_mode
+  - `admin-panel/src/services/coreApi.js` — nueva función `patchWhatsAppChannelMode`
+  - `admin-panel/src/components/modules/readiness/GoLiveReadiness.jsx` — botones "Exportar evidencia" y "Ejecutar rollback a mock" con panel expandible y razón obligatoria
+  - `admin-panel/src/styles/global.css` — estilos `.readiness-rollback`, `.rollback-panel`, `.rollback-description`
+- **Validaciones:**
+  - `python3 -m compileall app/api/v1/routes.py app/api/v1/schemas.py` → OK
+  - `bash -n scripts/go-live-runbook.sh` → OK (sintaxis)
+  - `git diff --check` → OK
+- **Notas:** el script detecta automáticamente si `AUTH0_DOMAIN` está activo y exige tokens reales (`RUNBOOK_ADMIN_TOKEN`). El rollback desde la UI llama al endpoint PATCH y regenera el reporte de readiness automáticamente. La diferencia entre `tenant.status='active'` y `channel.account_mode='live'` queda documentada en `docs/runbook-go-live-evidence.md`.

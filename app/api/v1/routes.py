@@ -18,6 +18,7 @@ from app.api.v1.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
     ChannelCreate,
+    ChannelModeUpdate,
     ContactUpsert,
     ConversationCreate,
     ConversationStart,
@@ -884,6 +885,40 @@ async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connec
         'checks': checks,
         'upstream': 'not_checked_in_local_core',
     }
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/channels/whatsapp/mode')
+async def patch_channel_mode(
+    tenant_id: UUID,
+    payload: ChannelModeUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        update app.tenant_channels
+        set account_mode=$2, updated_at=now()
+        where tenant_id=$1 and provider='whatsapp_cloud_api'
+        returning id, tenant_id, provider, account_mode, status, updated_at
+        """,
+        tenant_id,
+        payload.account_mode,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='channel.mode_changed',
+        entity_type='tenant_channel',
+        entity_id=str(row['id']),
+        metadata={'account_mode': payload.account_mode, 'reason': payload.reason},
+    )
+    return record_to_dict(row)
 
 
 @system_router.post('/contacts/upsert')

@@ -212,6 +212,15 @@ export function getWhatsAppChannelHealth(session, tenantId) {
   return request(`/tenants/${tenantId}/channels/whatsapp/health`, { session, tenantId });
 }
 
+export function patchWhatsAppChannelMode(session, tenantId, accountMode, reason) {
+  return request(`/tenants/${tenantId}/channels/whatsapp/mode`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: { account_mode: accountMode, reason },
+  });
+}
+
 export function getKnowledgeStorageSettings(session, tenantId) {
   return request(`/tenants/${tenantId}/knowledge/storage`, { session, tenantId });
 }

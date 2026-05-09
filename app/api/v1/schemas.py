@@ -43,6 +43,11 @@ class ChannelCreate(BaseModel):
     account_mode: str = Field(default='mock', pattern='^(mock|live)$')
 
 
+class ChannelModeUpdate(BaseModel):
+    account_mode: str = Field(pattern='^(mock|live)$')
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class ContactUpsert(BaseModel):
     tenant_id: UUID
     wa_id: str
