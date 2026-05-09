@@ -19,6 +19,11 @@ TEXT_MIME_TYPES = {
     'application/x-ndjson',
 }
 TEXT_EXTENSIONS = {'.txt', '.md', '.markdown', '.csv', '.json', '.ndjson'}
+BINARY_EXTRACTABLE_MIME_TYPES = {
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+}
+BINARY_EXTRACTABLE_EXTENSIONS = {'.pdf', '.docx'}
 
 
 @dataclass(frozen=True)
@@ -59,6 +64,13 @@ def is_text_upload(filename: str, mime_type: str | None) -> bool:
     if mime_type and mime_type.split(';', 1)[0].lower() in TEXT_MIME_TYPES:
         return True
     return Path(filename).suffix.lower() in TEXT_EXTENSIONS
+
+
+def is_binary_extractable(filename: str, mime_type: str | None) -> bool:
+    """Return True for formats that require async extraction (PDF, DOCX)."""
+    if mime_type and mime_type.split(';', 1)[0].lower() in BINARY_EXTRACTABLE_MIME_TYPES:
+        return True
+    return Path(filename).suffix.lower() in BINARY_EXTRACTABLE_EXTENSIONS
 
 
 def extract_text_if_supported(data: bytes, *, filename: str, mime_type: str | None) -> str | None:
