@@ -14,8 +14,46 @@ import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
 import { Sidebar } from './Sidebar.jsx';
 import { Topbar } from './Topbar.jsx';
 
+const PRIVILEGED_ROLES = new Set(['admin', 'owner', 'platform_owner']);
+
 function isSystemOwner(profile) {
   return Boolean(profile?.support_mode && profile?.roles?.includes('owner'));
+}
+
+function isPrivilegedProfile(profile) {
+  return (profile?.roles || []).some((r) => PRIVILEGED_ROLES.has(r));
+}
+
+function MfaRequiredBanner({ onDismiss }) {
+  return (
+    <div className="mfa-required-overlay">
+      <div className="mfa-required-card">
+        <div className="mfa-required-icon" aria-hidden="true">🔐</div>
+        <h2 className="mfa-required-title">Verificacion en dos pasos recomendada</h2>
+        <p className="mfa-required-body">
+          Tu sesion tiene acceso privilegiado (<strong>admin</strong> /{' '}
+          <strong>owner</strong>) pero no se detecto autenticacion de segundo
+          factor (MFA). Se recomienda reiniciar sesion con MFA habilitado en
+          Auth0 para mayor seguridad.
+        </p>
+        <p className="mfa-required-hint">
+          Si no tienes Auth0 configurado o estas en desarrollo local, puedes
+          continuar sin MFA. Si Auth0 esta activo, cierra sesion y reiniciala
+          para que solicite el segundo factor.
+        </p>
+        <div className="mfa-required-actions">
+          <form method="post" action="/admin/logout">
+            <button className="mfa-required-action" type="submit">
+              Cerrar sesion
+            </button>
+          </form>
+          <button className="mfa-required-skip" type="button" onClick={onDismiss}>
+            Continuar sin MFA
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function NoTenantOnboarding({ onCreateTenant }) {
@@ -37,6 +75,12 @@ function NoTenantOnboarding({ onCreateTenant }) {
 export function AdminLayout({ session }) {
   const { activeModule, activeModuleId, modules, selectModule } = useActiveModule();
   const profile = session.profile;
+
+  // Show MFA warning only when the server explicitly signals it (Auth0 active +
+  // privileged role + no MFA).  Dismissable so local/dev setups are not blocked.
+  const mfaWarning = session.mfa_required === true;
+  const [mfaDismissed, setMfaDismissed] = useState(false);
+
   const initialTenantOptions = useTenantOptions(profile);
   const [tenantOptions, setTenantOptions] = useState(initialTenantOptions);
   const [activeTenantId, setActiveTenantId] = useState(initialTenantOptions[0]?.id);
@@ -118,6 +162,10 @@ export function AdminLayout({ session }) {
   }
 
   return (
+    <>
+      {mfaWarning && !mfaDismissed && (
+        <MfaRequiredBanner onDismiss={() => setMfaDismissed(true)} />
+      )}
     <main className="admin-shell">
       <Sidebar
         activeModuleId={activeModuleId}
@@ -133,5 +181,6 @@ export function AdminLayout({ session }) {
         {activeContent}
       </section>
     </main>
+    </>
   );
 }

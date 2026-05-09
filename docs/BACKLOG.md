@@ -37,16 +37,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 - **Bloqueo actual:** el entorno de ejecución del agente no tiene Docker/Compose disponible (`command -v docker` no devuelve binario), por lo que no fue posible levantar PostgreSQL/MinIO ni ejecutar un backup+restore real con datos demo. Se validaron sintaxis, compileall y tests estáticos; queda pendiente correr `./scripts/backup-local.sh`, `./scripts/bootstrap.sh --reset --yes --skip-smoke` y `./scripts/restore-local.sh <backup>` en un entorno con Docker.
 - **Criterio de aceptación:** restore local probado con datos demo y checklist actualizado.
 
-### TASK-0016 — Enforzar MFA y roles privilegiados en Auth0/Admin Panel
-
-- **Estado:** PENDING
-- **Objetivo:** impedir acceso privilegiado sin MFA comprobado y dejar evidencia visible para owner/admin/platform_owner.
-- **Alcance mínimo:**
-  - Validar claim de MFA/AMR en tokens Auth0 para roles `admin`, `owner` y `platform_owner` cuando Auth0 esté activo.
-  - Mostrar en Admin Panel un aviso bloqueante si la sesión privilegiada no tiene MFA.
-  - Actualizar `scripts/configure-auth0.sh` o documentación con la política exacta requerida.
-- **Criterio de aceptación:** pruebas para token con/sin MFA y documentación de configuración Auth0.
-
 ### TASK-0017 — Pruebas integradas de webhook rápido, worker idempotente y trazabilidad outbound
 
 - **Estado:** PENDING

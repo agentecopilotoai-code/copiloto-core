@@ -10,6 +10,7 @@ from app.core.config import get_settings
 
 _jwks_cache: dict[str, tuple[float, dict]] = {}
 _ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
+_PRIVILEGED_ROLES = {'admin', 'owner', 'platform_owner'}
 
 
 def clear_jwks_cache() -> None:
@@ -29,6 +30,18 @@ def _coerce_bool(value) -> bool:
     if isinstance(value, str):
         return value.lower() in {'1', 'true', 'yes', 'on'}
     return bool(value)
+
+
+def _extract_mfa_verified(payload: dict) -> bool:
+    """Return True if the token includes evidence of completed MFA.
+
+    Auth0 sets amr=['mfa'] in the id_token when MFA was used.  The access
+    token may also carry a custom claim forwarded by the post-login Action.
+    """
+    amr = payload.get('amr') or []
+    if isinstance(amr, str):
+        amr = [amr]
+    return 'mfa' in amr
 
 
 def _normalize_auth0_domain(domain: str) -> str:
@@ -136,6 +149,7 @@ async def authenticate_request(
     request.state.actor_id = None
     request.state.roles = []
     request.state.support_mode = False
+    request.state.mfa_verified = False
     request.state.email = None
     request.state.name = None
 
@@ -185,6 +199,7 @@ async def authenticate_request(
     request.state.actor_id = payload.get('sub')
     request.state.roles = roles
     request.state.support_mode = support_mode
+    request.state.mfa_verified = _extract_mfa_verified(payload)
     request.state.email = payload.get('email')
     request.state.name = payload.get('name') or payload.get('nickname')
     request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
@@ -234,3 +249,33 @@ def require_min_role(minimum_role: str, *, allow_service: bool = False):
         )
 
     return dependency
+
+
+def _session_has_privileged_role(roles: list[str]) -> bool:
+    return any(role in _PRIVILEGED_ROLES for role in roles)
+
+
+async def require_mfa_for_privileged(request: Request) -> None:
+    """Enforce MFA for requests authenticated with privileged roles.
+
+    Service tokens are exempt (they never go through MFA flows).
+    Unprivileged roles (agent, manager) are also exempt.
+    Privileged roles (admin, owner, platform_owner) must have mfa_verified=True
+    when Auth0 is active; in local-HS256 mode the check is skipped.
+    """
+    actor_type = getattr(request.state, 'actor_type', 'anonymous')
+    if actor_type == 'anonymous':
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required')
+    if actor_type == 'service':
+        return
+    roles = getattr(request.state, 'roles', [])
+    if not _session_has_privileged_role(roles):
+        return
+    settings = get_settings()
+    if not settings.auth0_domain:
+        return
+    if not getattr(request.state, 'mfa_verified', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='MFA is required for privileged roles (admin/owner/platform_owner)',
+        )
