@@ -37,16 +37,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 - **Bloqueo actual:** el entorno de ejecución del agente no tiene Docker/Compose disponible (`command -v docker` no devuelve binario), por lo que no fue posible levantar PostgreSQL/MinIO ni ejecutar un backup+restore real con datos demo. Se validaron sintaxis, compileall y tests estáticos; queda pendiente correr `./scripts/backup-local.sh`, `./scripts/bootstrap.sh --reset --yes --skip-smoke` y `./scripts/restore-local.sh <backup>` en un entorno con Docker.
 - **Criterio de aceptación:** restore local probado con datos demo y checklist actualizado.
 
-### TASK-0017 — Pruebas integradas de webhook rápido, worker idempotente y trazabilidad outbound
-
-- **Estado:** PENDING
-- **Objetivo:** probar el flujo completo webhook → inbox → handoff/outbound → worker con idempotencia y trazas de mensajes.
-- **Alcance mínimo:**
-  - Test integrado con payloads Meta representativos y duplicados.
-  - Verificar respuesta rápida del webhook y procesamiento asincrónico.
-  - Verificar que `messages`, `events`, estados de delivery y audit logs enlazan el mismo mensaje.
-  - Confirmar que duplicados no reenvían outbound ni duplican inbound.
-- **Criterio de aceptación:** suite automatizada que cubre reintentos y duplicados.
 
 ### TASK-0018 — Runbook de go-live por tenant y smoke test E2E
 

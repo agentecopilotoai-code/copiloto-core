@@ -374,3 +374,28 @@ Cada entrada debe incluir:
   - Lógica de `_extract_mfa_verified` y `_session_mfa_required` validada con assertions inline (sin pytest en el entorno)
   - `uv run pytest tests/test_mfa_enforcement.py` (bloqueado por fallo de descarga desde PyPI en el entorno)
 - **Notas:** en modo local HS256 (sin `AUTH0_DOMAIN`), `require_mfa_for_privileged` no bloquea para permitir desarrollo sin Auth0. El bloqueo de UI es inmediato al cargar el panel si la sesión carece de MFA; el único camino es cerrar sesión y reiniciar con MFA habilitado en Auth0.
+
+### TASK-0017 — Pruebas integradas de webhook rápido, worker idempotente y trazabilidad outbound
+
+- **Fecha:** 2026-05-09
+- **Resumen:** se creó la suite `tests/test_webhook_idempotency_static.py` con 69 tests en 10 clases que cubren el flujo completo webhook → inbox → worker outbound. Los tests verifican estáticamente (sin Docker ni PostgreSQL) que el código implementa correctamente:
+  1. **Payload Meta representativo**: iteración `entry/changes/messages`, extracción de `wa_id`, `external_message_id`, perfil de contacto, timestamp y campos de media (imagen, audio, video).
+  2. **Respuesta rápida del webhook**: el handler retorna `{'accepted': True, 'payload_sha256': sha}` sin llamar a `send_whatsapp_message`, confirmando que la entrega es asincrónica.
+  3. **Deduplicación de webhooks raw**: `on conflict (payload_sha256) do nothing returning *` sobre `webhook_events_raw`.
+  4. **Deduplicación de mensajes inbound**: `on conflict (tenant_id, external_message_id) do nothing returning *` sobre `app.messages`; `notify_operations_change` solo se llama cuando el insert fue efectivo.
+  5. **Idempotencia outbound**: `Idempotency-Key` header aceptado en `create_message` y `start_conversation`; `on conflict do nothing` sobre `domain_events` con `idempotency_key`; `quote-send-{quote_id}` como key determinístico para cotizaciones.
+  6. **Worker procesamiento y estados**: consulta solo eventos `published_at IS NULL`, procesa en lotes de 10 ordenados por `occurred_at`, actualiza mensaje a `sent`/`failed`, marca `published_at=now()` en el evento, emite `pg_notify` con `conversation_id` y `message_id`.
+  7. **Trazabilidad**: `domain_events.aggregate_id` → `messages.id` → `conversations.id` → `contacts.id`; audit log `action='message.queued'`; logs estructurados de intento/éxito/fallo/simulado con `message_id` y `provider_message_id`.
+  8. **Atomicidad**: dos bloques `async with conn.transaction()` para garantizar actualización atómica de mensaje + evento en éxito y en fallo.
+  9. **Mock vs Live**: worker lee `account_mode` y `token_ref` por canal; servicio retorna `mocked=True` si `delivery_mode != 'live'`.
+  10. **Esquema de base de datos**: constraints `unique(payload_sha256)`, `unique(tenant_id, external_message_id)`, `idempotency_key` en `domain_events`, `account_mode check(mock|live)`.
+- **Archivos modificados:**
+  - `tests/test_webhook_idempotency_static.py` (nuevo)
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m py_compile tests/test_webhook_idempotency_static.py` → OK
+  - Ejecución manual de 69 tests → **69 passed, 0 failed**
+  - Regresión sobre suites existentes: 117 tests de otras suites → todos pasan (2 saltos preexistentes por `httpx` y `monkeypatch` del entorno, no por este cambio)
+  - `git diff --check` → OK
+- **Notas:** los tests son puramente estáticos (lectura de código fuente) para ser ejecutables sin Docker, PostgreSQL ni dependencias de PyPI instaladas. En un entorno con `pytest` instalado se ejecutan normalmente con `pytest tests/test_webhook_idempotency_static.py`.
