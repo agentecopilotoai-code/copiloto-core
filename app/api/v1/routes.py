@@ -484,7 +484,23 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
     )
     tenant_id = row['id']
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    await conn.execute('insert into app.tenant_settings (tenant_id) values ($1)', tenant_id)
+    default_escalation_policy = {
+        'handoff_message': 'En este momento te conecto con un asesor. En breve te atienden 😊',
+        'triggers': {
+            'keywords': ['humano', 'asesor', 'agente', 'persona', 'queja', 'reclamo'],
+            'after_bot_turns': 10,
+            'confidence_below': 0.0,
+        },
+    }
+    await conn.execute(
+        """
+        insert into app.tenant_settings (tenant_id, max_bot_turns, escalation_policy)
+        values ($1, $2, $3::jsonb)
+        """,
+        tenant_id,
+        10,
+        json.dumps(default_escalation_policy),
+    )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.created', entity_type='tenant', entity_id=str(tenant_id))
     return record_to_dict(row)
 
@@ -509,6 +525,7 @@ async def update_tenant_record(
             vertical_code=$5,
             country_code=$6,
             timezone=$7,
+            status=$8,
             updated_at=now()
         where id=$1 and deleted_at is null
         returning *
@@ -520,6 +537,7 @@ async def update_tenant_record(
         merged['vertical_code'],
         merged['country_code'],
         merged['timezone'],
+        merged['status'],
     )
     if not row:
         raise HTTPException(status_code=404, detail='Tenant not found')
@@ -675,6 +693,16 @@ async def get_tenant_settings(
     return record_to_dict(row)
 
 
+def _coerce_jsonb(value: Any) -> Any:
+    """Ensure a value that may arrive as a JSON string is returned as a Python dict/list."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return value
+
+
 @tenant_admin_router.patch('/tenants/{tenant_id}/settings')
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
@@ -685,6 +713,18 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         raise HTTPException(status_code=404, detail='Settings not found')
     merged = dict(current)
     merged.update(allowed)
+
+    # Normalize jsonb fields: accept both raw dicts and JSON strings from clients
+    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy'):
+        merged[jsonb_key] = _coerce_jsonb(merged[jsonb_key]) or {}
+
+    # Keep max_bot_turns in sync with escalation_policy.triggers.after_bot_turns
+    # so that both the UI field and the DB column always agree.
+    ep_triggers = merged['escalation_policy'].get('triggers') or {}
+    after_bot_turns = ep_triggers.get('after_bot_turns')
+    if isinstance(after_bot_turns, int) and after_bot_turns > 0:
+        merged['max_bot_turns'] = after_bot_turns
+
     row = await conn.fetchrow(
         """
         update app.tenant_settings
@@ -2843,15 +2883,19 @@ async def build_tenant_readiness_report(
         )
     )
 
-    escalation_policy = settings_dict.get('escalation_policy') or {}
+    escalation_policy = _coerce_jsonb(settings_dict.get('escalation_policy') or {}) or {}
+    ep_triggers = escalation_policy.get('triggers') or {}
     handoff_ready = bool(
         settings
         and isinstance(escalation_policy, dict)
         and escalation_policy
         and (
-            escalation_policy.get('handoff_required') is True
+            escalation_policy.get('handoff_message')
+            or ep_triggers.get('keywords')
+            or ep_triggers.get('after_bot_turns')
+            # legacy fields kept for backwards compatibility
+            or escalation_policy.get('handoff_required') is True
             or escalation_policy.get('risk_keywords')
-            or escalation_policy.get('handoff_message')
         )
     )
     checks.append(

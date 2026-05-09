@@ -102,12 +102,17 @@ async def orchestrate_inbound_message(
         log.warning(
             'orchestrator.no_tenant_settings',
             tenant_id=str(tenant_id),
-            detail='fila en tenant_settings no encontrada — usando defaults (max_bot_turns=8)',
+            detail='fila en tenant_settings no encontrada — usando defaults (max_bot_turns=10)',
         )
 
-    max_bot_turns: int = (settings_row['max_bot_turns'] if settings_row else None) or 8
     raw_policy = (settings_row['escalation_policy'] if settings_row else None) or {}
     policy = _parse_escalation_policy(raw_policy)
+
+    # escalation_policy.triggers.after_bot_turns takes precedence over the column
+    # so that the UI and the orchestrator always agree on the limit.
+    col_max_turns: int = (settings_row['max_bot_turns'] if settings_row else None) or 10
+    policy_max_turns = (policy.get('triggers') or {}).get('after_bot_turns')
+    max_bot_turns: int = int(policy_max_turns) if isinstance(policy_max_turns, (int, float)) and policy_max_turns > 0 else col_max_turns
     business_name: str = (settings_row['business_name'] if settings_row else None) or 'nuestro negocio'
     vertical_code: str = (settings_row['vertical_code'] if settings_row else None) or 'beauty'
 
