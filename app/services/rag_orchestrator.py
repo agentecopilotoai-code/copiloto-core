@@ -82,6 +82,14 @@ async def orchestrate_inbound_message(
         log.info('orchestrator.skip', reason='human_active', conversation_id=conversation_id)
         return {'action': 'skipped', 'reason': 'human_active'}
 
+    # Don't re-run the bot when the conversation is already queued for a human.
+    # The next message after an agent picks up will have status='human_active',
+    # which is handled above. Skipping 'waiting_agent' prevents repeated handoff
+    # messages for every follow-up message while the client waits.
+    if conversation['status'] == 'waiting_agent' and conversation.get('handoff_required'):
+        log.info('orchestrator.skip', reason='waiting_agent_handoff_pending', conversation_id=conversation_id)
+        return {'action': 'skipped', 'reason': 'waiting_agent_handoff_pending'}
+
     opt_in = contact.get('opt_in_status') or 'unknown'
     if opt_in in ('revoked', 'suppressed'):
         log.info('orchestrator.skip', reason=f'contact_opt_in_{opt_in}', conversation_id=conversation_id)
@@ -300,6 +308,38 @@ async def orchestrate_inbound_message(
             )
 
         if action == 'request_human' or not decision['sufficient_context']:
+            # When the LLM is down and the conversation hasn't started yet,
+            # reply with a brief fallback greeting instead of immediately handing
+            # off — the client shouldn't notice the backend is degraded on the
+            # very first message.
+            if ctx.stage == STAGE_START and action != 'request_human':
+                fallback_greeting = (
+                    f'¡Hola! 👋 Soy el asistente de {business_name}. '
+                    'En este momento tengo dificultades técnicas para ayudarte completamente. '
+                    '¿Podrías contarme en qué te puedo ayudar? Haré mi mejor esfuerzo 😊'
+                )
+                log.warning(
+                    'orchestrator.start_stage_fallback_greeting',
+                    conversation_id=conversation_id,
+                    reason='llm_unavailable_at_start',
+                )
+                return await _send_bot_reply(
+                    conn,
+                    tenant_id=tenant_id,
+                    channel_id=channel_id,
+                    channel_account_mode=channel_account_mode,
+                    conversation=conversation,
+                    inbound_message=inbound_message,
+                    answer_text=fallback_greeting,
+                    matches=matches,
+                    idempotency_key=idempotency_key,
+                    top_score=None,
+                    top_document=None,
+                    llm_used=False,
+                    llm_model=None,
+                    conv_stage=STAGE_START,
+                )
+
             log.info(
                 'orchestrator.conversational_handoff',
                 conversation_id=conversation_id,
@@ -401,11 +441,17 @@ async def _resolve_conversational(
             min_score=settings.cascade_llm_min_score,
             business_name=business_name,
         )
-    except Exception:
+    except Exception as exc:
         log.warning(
             'cascade.conversational_llm_unavailable',
             base_url=settings.local_llm_base_url,
             model=settings.local_llm_model,
+            error=str(exc),
+            hint=(
+                'Verifica que Ollama esté corriendo en el HOST (no en Docker). '
+                'En Linux usa LOCAL_LLM_BASE_URL=http://172.17.0.1:11434 '
+                'En Mac/Windows usa http://host.docker.internal:11434'
+            ),
         )
     # Ollama unavailable — fall through to Q&A cascade
     return await _resolve_answer(question, matches, settings)
