@@ -142,7 +142,7 @@ def test_whatsapp_media_messages_supported_in_both_agent_flows_and_worker():
     assert '<option value="image">Imagen</option>' in operations_source
     assert '<option value="video">Video</option>' in operations_source
     assert '<option value="audio">Audio</option>' in operations_source
-    assert 'renderMessageContent(message)' in operations_source
+    assert 'renderMessageContent(renderableMessage)' in operations_source
 
 
 def test_whatsapp_webhook_persists_inbound_media_metadata():

@@ -23,6 +23,16 @@ class TenantUpdate(BaseModel):
     timezone: str | None = None
 
 
+class KnowledgeStorageUpdate(BaseModel):
+    backend: str = Field(default='local', pattern='^(local|s3)$')
+    bucket: str | None = Field(default=None, min_length=3, max_length=255)
+    region: str | None = Field(default=None, max_length=64)
+    endpoint_url: str | None = Field(default=None, max_length=512)
+    prefix: str | None = Field(default=None, max_length=512)
+    access_key_id: str | None = Field(default=None, min_length=1, max_length=255)
+    secret_access_key: str | None = Field(default=None, min_length=1)
+
+
 class ChannelCreate(BaseModel):
     business_id: str | None = None
     waba_id: str | None = None
@@ -31,6 +41,11 @@ class ChannelCreate(BaseModel):
     app_secret: str | None = Field(default=None, min_length=1)
     verify_token: str | None = Field(default=None, min_length=16)
     account_mode: str = Field(default='mock', pattern='^(mock|live)$')
+
+
+class ChannelModeUpdate(BaseModel):
+    account_mode: str = Field(pattern='^(mock|live)$')
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class ContactUpsert(BaseModel):

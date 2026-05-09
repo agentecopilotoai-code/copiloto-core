@@ -143,6 +143,18 @@ Secretos requeridos por tenant:
 
 Los secretos locales viven en `.secrets/tenants/<TENANT_ID>/*`. No agregues variables globales por tenant ni pegues valores secretos en las referencias internas.
 
+
+## Storage S3 por tenant
+
+El módulo **Storage S3** permite definir dónde se guardan los archivos reales que luego se registran en Knowledge Studio. Para desarrollo se puede dejar backend `local`, que escribe en el volumen Docker `knowledge-files` montado en `/app/data/knowledge`. Para producción piloto se debe seleccionar backend `s3` y configurar bucket, región, endpoint opcional, prefix, access key y secret access key por tenant.
+
+La Core API expone estos endpoints a través del proxy autenticado:
+
+- `GET /admin/api/core/v1/tenants/{tenant_id}/knowledge/storage` para leer la configuración efectiva sin devolver secretos.
+- `PATCH /admin/api/core/v1/tenants/{tenant_id}/knowledge/storage` para guardar backend, bucket, región, endpoint, prefix y access key. El `secret_access_key` se escribe en `.secrets/tenants/<TENANT_ID>/knowledge_s3_secret_access_key` y en PostgreSQL solo queda la referencia `secret_ref`.
+
+Cuando el tenant tiene backend `s3`, `POST /knowledge/documents/upload` guarda el archivo en `s3://<bucket>/<prefix>/<document_id>/<checksum>-<filename>`. Cuando no hay configuración S3, usa el backend local/global configurado por `.env`.
+
 ## Knowledge Studio MVP
 
 El módulo **Knowledge Studio** permite gestionar documentos de conocimiento por tenant desde el panel. El editor soporta contenido manual para FAQ/políticas, registros de fuente `manual`, `upload`, `url` e `integration`, URI/object key, MIME type, checksum, visibilidad (`tenant`, `agents_only`, `public`) y estados operativos `draft`, `indexing`, `active` y `failed`.
@@ -151,11 +163,12 @@ El frontend usa estos endpoints de la Core API a través del proxy autenticado y
 
 - `GET /admin/api/core/v1/knowledge/documents` con filtros opcionales `status`, `visibility` y `source_type`.
 - `POST /admin/api/core/v1/knowledge/documents` para crear documentos en el tenant activo.
+- `POST /admin/api/core/v1/knowledge/documents/upload` para subir archivos reales al backend configurado (`KNOWLEDGE_STORAGE_BACKEND=local|s3`), calcular checksum, registrar `source_uri` y extraer texto automáticamente de TXT/Markdown/CSV/JSON.
 - `PATCH /admin/api/core/v1/knowledge/documents/{document_id}` para editar contenido, fuente, visibilidad o estado; la API no permite marcar `active` un documento sin chunks.
 - `POST /admin/api/core/v1/knowledge/documents/{document_id}/index` para ejecutar el pipeline RAG: extracción desde `content` o `metadata.extracted_text`, sanitización anti prompt-injection documental, chunking con `chunk_index`/`section_path`/`token_count`, embeddings configurables e inserción transaccional en `knowledge_chunks`; solo al terminar cambia el documento a `active`.
 - `DELETE /admin/api/core/v1/knowledge/documents/{document_id}` para eliminar el documento y sus chunks futuros por cascada.
 
-La API configura `app.tenant_id` antes de leer/escribir y las políticas RLS de `app.knowledge_documents`/`app.knowledge_chunks` mantienen el aislamiento por tenant. La carga binaria directa al object storage no se implementa en este MVP; el panel registra fuentes ya cargadas mediante URI/object key más checksum/MIME sin manejar secretos ni archivos reales. Para fuentes `upload`, `url` o `integration`, el indexador espera texto ya extraído en `content` o `metadata.extracted_text` y no hace fetching remoto ni parsing binario en el runtime de la API.
+La API configura `app.tenant_id` antes de leer/escribir y las políticas RLS de `app.knowledge_documents`/`app.knowledge_chunks` mantienen el aislamiento por tenant. La carga binaria directa ya está operativa para `upload`: en local escribe bajo el volumen Docker `knowledge-files` montado en `KNOWLEDGE_STORAGE_LOCAL_PATH`; en producción piloto debe configurarse `KNOWLEDGE_STORAGE_BACKEND=s3` para guardar en S3/MinIO gestionado. Para TXT/Markdown/CSV/JSON se guarda además `content`/`metadata.extracted_text` y el documento queda listo para indexar. PDF y otros formatos permitidos quedan almacenados con checksum y `source_uri`, pero requieren agregar texto extraído antes del indexado porque el runtime no parsea binarios complejos.
 
 Si ya existía un volumen local de PostgreSQL creado antes de Knowledge Studio, ejecuta `./scripts/bootstrap.sh --skip-smoke` para aplicar la migración idempotente que agrega `document_type`, `content`, `metadata` y el índice de visibilidad sin borrar datos. La API también mantiene compatibilidad de lectura/escritura con tablas antiguas para evitar errores `UndefinedColumnError` mientras esa migración se aplica.
 

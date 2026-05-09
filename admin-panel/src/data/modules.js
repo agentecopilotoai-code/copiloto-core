@@ -12,6 +12,12 @@ export const adminModules = [
     scope: ['Business ID', 'WABA ID', 'Phone Number ID', 'Referencias de token y app secret'],
   },
   {
+    id: 'knowledge-storage',
+    label: 'Storage S3',
+    summary: 'Configuración del bucket/prefix de conocimiento por tenant.',
+    scope: ['Backend local o S3', 'Bucket único por tenant', 'Credenciales fuera de DB', 'Prefix de documentos'],
+  },
+  {
     id: 'knowledge-studio',
     label: 'Knowledge Studio',
     summary: 'Gestión de documentos, FAQ y políticas por tenant.',
@@ -22,6 +28,12 @@ export const adminModules = [
     label: 'Operations Desk',
     summary: 'Inbox operativo para conversaciones y handoff humano.',
     scope: ['Conversaciones', 'Mensajes', 'Tomar/liberar handoff', 'Auditoría operacional'],
+  },
+  {
+    id: 'go-live-readiness',
+    label: 'Go-live Readiness',
+    summary: 'Checklist automatizado para validar si un tenant puede entrar a producción controlada.',
+    scope: ['Tenant activo', 'Settings y WhatsApp', 'Retrieval smoke test', 'Handoff y auditoría'],
   },
   {
     id: 'audit',

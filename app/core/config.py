@@ -5,7 +5,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=('.env', '.env.auth0.local'), env_file_encoding='utf-8', extra='ignore'
+        env_file=('.env', '.env.auth0.local'),
+        env_file_encoding='utf-8',
+        extra='ignore',
+        populate_by_name=True,
     )
 
     app_env: str = 'local'
@@ -34,6 +37,18 @@ class Settings(BaseSettings):
     meta_graph_version: str = 'v23.0'
     s3_endpoint_url: str = 'http://minio:9000'
     s3_bucket: str = 'copilotoia-local'
+    knowledge_storage_backend: str = 'local'
+    knowledge_storage_local_path: str = '/app/data/knowledge'
+    knowledge_storage_s3_bucket_name: str | None = Field(
+        default=None, validation_alias='KNOWLEDGE_STORAGE_S3_BUCKET'
+    )
+    knowledge_file_max_bytes: int = 10 * 1024 * 1024
+    knowledge_allowed_mime_types: str = (
+        'text/plain,text/markdown,text/csv,application/json,application/pdf,'
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+    extraction_timeout_seconds: int = 60
+    extraction_max_attempts: int = 3
     s3_access_key_id: str = 'copilotoia-minio'
     s3_secret_access_key: str
     rag_embedding_provider: str = 'local_hash'
@@ -41,6 +56,18 @@ class Settings(BaseSettings):
     rag_embedding_dimensions: int = 1536
     rag_chunk_max_tokens: int = 500
     rag_chunk_overlap_tokens: int = 80
+
+    @property
+    def knowledge_storage_bucket(self) -> str:
+        return self.knowledge_storage_s3_bucket_name or self.s3_bucket
+
+    @property
+    def knowledge_allowed_mime_types_set(self) -> set[str]:
+        return {
+            item.strip().lower()
+            for item in self.knowledge_allowed_mime_types.split(',')
+            if item.strip()
+        }
 
 
 @lru_cache

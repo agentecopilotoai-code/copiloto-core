@@ -348,6 +348,19 @@ exports.onExecutePostLogin = async (event, api) => {
   if (appMetadata.support_mode === true) {
     api.accessToken.setCustomClaim(\`\${namespace}/support_mode\`, true);
   }
+
+  // Propagar AMR (Authentication Methods References) para que la API y el
+  // Admin Panel puedan verificar si el login incluyó MFA.
+  // Auth0 rellena event.authentication.methods con { name: 'mfa', ... }
+  // cuando el usuario completa un segundo factor.
+  const methods = (event.authentication && event.authentication.methods) || [];
+  const mfaCompleted = methods.some(function(m) { return m.name === 'mfa'; });
+  const amr = methods.map(function(m) { return m.name; }).filter(Boolean);
+  if (amr.length > 0) {
+    api.idToken.setCustomClaim('amr', amr);
+  }
+  api.idToken.setCustomClaim(\`\${namespace}/mfa_verified\`, mfaCompleted);
+  api.accessToken.setCustomClaim(\`\${namespace}/mfa_verified\`, mfaCompleted);
 };
 ACTION
 )"
@@ -386,6 +399,92 @@ ACTION
           )) as $preserved |
        {bindings: ($preserved + [{ref:{type:"action_id",value:$action_id},display_name:"copilotoia-post-login-claims"}])}')"
     api_patch '/actions/triggers/post-login/bindings' "$bindings_payload" >/dev/null
+  fi
+fi
+
+# ── MFA enforcement para roles privilegiados ──────────────────────────────
+# Para obligar MFA a usuarios con rol admin/owner/platform_owner, configura
+# en el Dashboard Auth0 → Security → Multi-factor Auth:
+#   1. Habilita al menos un factor (TOTP/OTP app, SMS, etc.).
+#   2. En "Policy" selecciona "Always" o usa una regla/Action que llame a
+#      api.authentication.challengeWith({ type: 'otp' }) cuando el usuario
+#      tenga un rol privilegiado:
+#
+#      exports.onExecutePostLogin = async (event, api) => {
+#        const privilegedRoles = new Set(['admin','owner','platform_owner']);
+#        const roles = (event.authorization && event.authorization.roles) || [];
+#        const isPrivileged = roles.some(r => privilegedRoles.has(r));
+#        if (isPrivileged) {
+#          const methods = (event.authentication && event.authentication.methods) || [];
+#          const hasMfa = methods.some(m => m.name === 'mfa');
+#          if (!hasMfa) {
+#            api.authentication.challengeWith({ type: 'otp' });
+#          }
+#        }
+#      };
+#
+# 3. Asegúrate de que el Action de MFA-challenge corre ANTES del Action de
+#    custom-claims en el flujo post-login para que event.authentication.methods
+#    ya incluya 'mfa' cuando se lean los claims.
+#
+# La variable ENFORCE_MFA_ACTION (true/false) controla si este script crea
+# automáticamente el Action de desafío. Default: false (solo documenta).
+ENFORCE_MFA_ACTION="${ENFORCE_MFA_ACTION:-false}"
+
+if [ "$ENFORCE_MFA_ACTION" = "true" ] && [ "$CONFIGURE_LOGIN_ACTION" = "true" ]; then
+  echo "▶ Upsert Action MFA-challenge para roles privilegiados"
+  mfa_action_code="$(cat <<MFA_ACTION
+exports.onExecutePostLogin = async (event, api) => {
+  const privilegedRoles = new Set(['admin','owner','platform_owner']);
+  const roles = (event.authorization && event.authorization.roles) || [];
+  const isPrivileged = roles.some(function(r) { return privilegedRoles.has(r); });
+  if (!isPrivileged) return;
+  const methods = (event.authentication && event.authentication.methods) || [];
+  const hasMfa = methods.some(function(m) { return m.name === 'mfa'; });
+  if (!hasMfa) {
+    api.authentication.challengeWith({ type: 'otp' });
+  }
+};
+MFA_ACTION
+)"
+  mfa_actions_response="$(api_get '/actions/actions?triggerId=post-login&per_page=100')"
+  mfa_action_id="$(jq -r '.actions // [] | .[] | select(.name == "copilotoia-mfa-challenge") | .id' <<<"$mfa_actions_response" | head -n1)"
+  mfa_action_payload="$(jq -n \
+    --arg code "$mfa_action_code" \
+    '{name:"copilotoia-mfa-challenge",supported_triggers:[{id:"post-login",version:"v3"}],runtime:"node18",code:$code,deploy:true}')"
+
+  if [ -z "$mfa_action_id" ]; then
+    mfa_action_id="$(api_post '/actions/actions' "$mfa_action_payload" | jq -r .id)"
+    echo "  Action MFA-challenge creado: $mfa_action_id"
+  else
+    update_mfa_payload="$(jq -n --arg code "$mfa_action_code" '{code:$code,runtime:"node18",supported_triggers:[{id:"post-login",version:"v3"}]}')"
+    api_patch "/actions/actions/$mfa_action_id" "$update_mfa_payload" >/dev/null
+    api_post "/actions/actions/$mfa_action_id/deploy" '{}' >/dev/null
+    echo "  Action MFA-challenge actualizado: $mfa_action_id"
+  fi
+
+  if [ "$BIND_LOGIN_ACTION" = "true" ]; then
+    echo "▶ Bind Action MFA-challenge al flujo post-login (debe ir antes de custom-claims)"
+    mfa_bindings_response="$(api_get '/actions/triggers/post-login/bindings?per_page=100')"
+    mfa_bindings_payload="$(jq -n \
+      --arg mfa_id "$mfa_action_id" \
+      --argjson existing "$mfa_bindings_response" \
+      '($existing.bindings // []) as $bindings |
+       ($bindings
+        | map(select(.display_name != "copilotoia-mfa-challenge" and (.action.id? // .ref.value? // "") != $mfa_id))
+        | map(
+            if (.ref? and .ref.value?) then
+              {ref:.ref, display_name:(.display_name // .ref.value)}
+            elif (.action? and .action.id?) then
+              {ref:{type:"action_id",value:.action.id}, display_name:(.display_name // .action.name // .action.id)}
+            else
+              empty
+            end
+          )) as $preserved |
+       # MFA challenge va primero, luego los demás bindings existentes
+       {bindings: ([{ref:{type:"action_id",value:$mfa_id},display_name:"copilotoia-mfa-challenge"}] + $preserved)}')"
+    api_patch '/actions/triggers/post-login/bindings' "$mfa_bindings_payload" >/dev/null
+    echo "  MFA-challenge enlazado al inicio del flujo post-login"
   fi
 fi
 

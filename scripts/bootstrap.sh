@@ -134,6 +134,11 @@ if [[ -n "$missing_tables" ]]; then
   exit 1
 fi
 
+psql_admin <<'SQL_MIGRATE_TENANT_SETTINGS'
+alter table app.tenant_settings
+  add column if not exists knowledge_storage jsonb not null default '{}'::jsonb;
+SQL_MIGRATE_TENANT_SETTINGS
+
 psql_admin <<'SQL_MIGRATE_KNOWLEDGE'
 alter table app.knowledge_documents
   add column if not exists document_type text not null default 'reference',
@@ -157,6 +162,24 @@ end $$;
 create index if not exists ix_knowledge_documents_visibility
   on app.knowledge_documents(tenant_id, visibility);
 SQL_MIGRATE_KNOWLEDGE
+
+psql_admin <<'SQL_MIGRATE_CONTACTS_SUPPRESS'
+do $$
+begin
+  -- Add 'suppressed' value to opt_in_status check constraint
+  if exists (
+    select 1 from pg_constraint
+    where connamespace='app'::regnamespace
+      and conrelid='app.contacts'::regclass
+      and conname='contacts_opt_in_status_check'
+  ) then
+    alter table app.contacts drop constraint contacts_opt_in_status_check;
+  end if;
+  alter table app.contacts
+    add constraint contacts_opt_in_status_check
+    check (opt_in_status in ('unknown','granted','revoked','suppressed'));
+end $$;
+SQL_MIGRATE_CONTACTS_SUPPRESS
 
 missing_extensions="$(psql_app -Atc "
   with required(extname) as (values ('pgcrypto'), ('citext'), ('vector'), ('btree_gist'))

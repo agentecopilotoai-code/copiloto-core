@@ -236,6 +236,11 @@ Además necesitarás estos IDs para registrar el canal por tenant:
 | `S3_BUCKET` | `copilotoia-local` | No | Bucket para media/documentos/exportaciones. |
 | `S3_ACCESS_KEY_ID` | `copilotoia-minio` | Sí | Usuario/access key local de MinIO. |
 | `S3_SECRET_ACCESS_KEY` | generado | Sí | Password/secret key local de MinIO. |
+| `KNOWLEDGE_STORAGE_BACKEND` | `local` | No | Backend usado para archivos subidos al Knowledge Studio. Valores: `local` o `s3`. Para piloto local usa volumen Docker; para producción usa `s3`. |
+| `KNOWLEDGE_STORAGE_LOCAL_PATH` | `/app/data/knowledge` | No | Ruta persistente del contenedor API cuando `KNOWLEDGE_STORAGE_BACKEND=local`; `docker-compose.yml` la monta en el volumen `knowledge-files`. |
+| `KNOWLEDGE_STORAGE_S3_BUCKET` | `copilotoia-local` | No | Bucket destino de archivos de conocimiento cuando `KNOWLEDGE_STORAGE_BACKEND=s3`; si no se define, usa `S3_BUCKET`. |
+| `KNOWLEDGE_FILE_MAX_BYTES` | `10485760` | No | Tamaño máximo por archivo de conocimiento. |
+| `KNOWLEDGE_ALLOWED_MIME_TYPES` | `text/plain,text/markdown,text/csv,application/json,application/pdf` | No | Lista permitida de MIME types para carga de conocimiento. |
 
 ### Observabilidad
 
@@ -618,10 +623,99 @@ S3_ENDPOINT_URL=<ENDPOINT_S3_SI_APLICA>
 S3_BUCKET=<BUCKET_PROD>
 S3_ACCESS_KEY_ID=<ACCESS_KEY_O_IAM_ROLE>
 S3_SECRET_ACCESS_KEY=<SECRET_KEY_O_IAM_ROLE>
+KNOWLEDGE_STORAGE_BACKEND=s3
+KNOWLEDGE_STORAGE_S3_BUCKET=<BUCKET_DOCUMENTOS_CONOCIMIENTO>
+KNOWLEDGE_FILE_MAX_BYTES=10485760
+KNOWLEDGE_ALLOWED_MIME_TYPES=text/plain,text/markdown,text/csv,application/json,application/pdf
 OTEL_EXPORTER_OTLP_ENDPOINT=<OTEL_ENDPOINT>
 ```
 
-## 12. Comandos útiles
+
+## 12. Configurar S3 por tenant para documentos de conocimiento
+
+En desarrollo puedes dejar `KNOWLEDGE_STORAGE_BACKEND=local`; los archivos subidos desde **Knowledge Studio** se guardan en el volumen Docker `knowledge-files`, dentro de `/app/data/knowledge`, con keys como `tenants/<TENANT_ID>/knowledge/<DOCUMENT_ID>/<checksum>-<archivo>`.
+
+Para producción piloto usa el módulo **Storage S3** del Admin Panel y configura un destino por tenant. La recomendación más simple y auditable es **un bucket único por tenant**; si usas un bucket compartido, usa un `prefix` único por tenant y una política IAM que limite acceso a ese prefijo.
+
+### 12.1 Crear bucket y credenciales
+
+1. En AWS S3 crea un bucket por tenant, por ejemplo `copilotoia-tenant-acme-prod`.
+2. Activa cifrado del bucket, idealmente SSE-KMS.
+3. Bloquea acceso público del bucket.
+4. Crea un IAM User/Access Key o rol equivalente para CopilotoIA.
+5. Otorga permisos mínimos sobre ese bucket/prefix:
+   - `s3:PutObject`
+   - `s3:GetObject`
+   - `s3:DeleteObject` si vas a habilitar borrado físico de objetos
+   - `s3:ListBucket` limitado al prefix del tenant
+6. Si usas MinIO/S3-compatible, crea el bucket y el usuario en la consola de MinIO y usa el endpoint correspondiente.
+
+Ejemplo de prefix recomendado:
+
+```text
+tenants/<TENANT_ID>/knowledge
+```
+
+### 12.2 Configurar desde Admin Panel
+
+1. Abre `http://localhost:3000/admin/`.
+2. Selecciona el tenant.
+3. Entra al módulo **Storage S3**.
+4. Selecciona backend `S3 / MinIO por tenant`.
+5. Completa:
+   - **Bucket S3 del tenant**: bucket único del tenant.
+   - **Región**: por ejemplo `us-east-1`.
+   - **Endpoint S3 compatible**: deja vacío para AWS estándar si tu entorno usa AWS; usa `http://minio:9000` para MinIO local o el endpoint del proveedor compatible.
+   - **Prefix**: `tenants/<TENANT_ID>/knowledge` o un prefijo equivalente único.
+   - **Access Key ID**: access key del usuario/tenant.
+   - **Secret Access Key**: se guarda fuera de DB en `.secrets/tenants/<TENANT_ID>/knowledge_s3_secret_access_key`.
+6. Guarda. Las nuevas cargas de Knowledge Studio se guardarán en ese bucket/prefix y el documento registrará `source_uri=s3://<bucket>/<key>` más checksum y metadata.
+
+### 12.3 Variables globales vs configuración por tenant
+
+Las variables `.env` (`S3_ENDPOINT_URL`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`) quedan como fallback/global y para desarrollo. En producción piloto, el destino efectivo de documentos debe venir del módulo **Storage S3** por tenant; el secreto nunca se guarda en PostgreSQL, solo la referencia `secret_ref`.
+
+
+## 13. Backup/restore local y equivalentes de producción
+
+### 13.1 Respaldo local antes de pruebas piloto
+
+Con el stack local levantado, genera un respaldo lógico de PostgreSQL y un manifiesto/tar de objetos de Knowledge Storage:
+
+```bash
+./scripts/backup-local.sh
+```
+
+El script crea un directorio bajo `backups/local/<timestamp>/` con:
+
+- `postgres.dump`: dump lógico en formato custom de PostgreSQL.
+- `table-counts.tsv`: conteos de validación para tenants, documentos, chunks, mensajes, eventos y auditoría.
+- `knowledge-documents.tsv`: manifiesto de documentos y referencias `source_uri`/`object_key` registradas en DB.
+- `knowledge-files.tar` y `knowledge-files.sha256`: copia y checksums del volumen local `KNOWLEDGE_STORAGE_LOCAL_PATH`, si el backend local está activo.
+- `manifest.json`: resumen auditable del respaldo y comando sugerido de restore.
+
+### 13.2 Restore local en una base limpia
+
+Para ensayar un restore local, recrea volúmenes de desarrollo y restaura el directorio generado. La base recién inicializada puede contener los seeds demo del proyecto; el script la considera apta mientras no tenga datos operativos críticos como mensajes, documentos, chunks, eventos o auditoría:
+
+```bash
+./scripts/bootstrap.sh --reset --yes --skip-smoke
+./scripts/restore-local.sh backups/local/<timestamp>
+```
+
+`restore-local.sh` exige por defecto una base limpia o recién inicializada solo con seeds. Si se usa contra una base con datos operativos, falla con una advertencia para evitar sobrescrituras accidentales. El restore termina comparando `table-counts.tsv` contra la base restaurada; esto valida conteos de tenants, documentos, chunks, mensajes, eventos de estado, domain events y audit logs sin SQL manual.
+
+### 13.3 Equivalentes obligatorios en producción piloto
+
+Para producción no se debe depender de scripts locales ni de volúmenes Docker. La operación equivalente debe quedar habilitada en la plataforma gestionada antes de go-live:
+
+- **PostgreSQL:** activar PITR gestionado con retención acorde al piloto, snapshots programados, pruebas periódicas de restore a una instancia aislada y cifrado en reposo/KMS.
+- **Objetos de conocimiento/media:** usar bucket S3-compatible con versioning, replicación o backup cross-region/cross-account, lifecycle controlado, cifrado en reposo y bloqueo contra borrado accidental cuando aplique.
+- **Consistencia DB/objetos:** capturar manifiestos de `app.knowledge_documents.source_uri`, checksums y prefijos por tenant en la misma ventana operacional que el snapshot lógico/físico.
+- **Validación post-restore:** ejecutar los mismos conteos mínimos de `scripts/restore-local.sh` y probar lectura de objetos de conocimiento antes de declarar exitoso el simulacro.
+- **Auditoría:** registrar fecha, responsable, backup usado, destino de restore, conteos antes/después, errores y decisión final de aceptación.
+
+## 14. Comandos útiles
 
 Levantar/validar todo:
 
@@ -671,7 +765,7 @@ Apagar y borrar volúmenes:
 docker compose down -v
 ```
 
-## 13. Troubleshooting
+## 15. Troubleshooting
 
 ### `InvalidPasswordError: password authentication failed for user "copiloto_app"`
 

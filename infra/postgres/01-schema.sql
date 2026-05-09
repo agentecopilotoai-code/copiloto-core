@@ -45,6 +45,7 @@ create table app.tenant_settings (
   pii_policy jsonb not null default '{"no_train":true}'::jsonb,
   no_train boolean not null default true,
   max_bot_turns integer not null default 8 check (max_bot_turns > 0),
+  knowledge_storage jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -105,7 +106,7 @@ create table app.contacts (
   display_name text,
   locale text default 'es-CO',
   source text,
-  opt_in_status text not null default 'unknown' check (opt_in_status in ('unknown','granted','revoked')),
+  opt_in_status text not null default 'unknown' check (opt_in_status in ('unknown','granted','revoked','suppressed')),
   opt_in_at timestamptz,
   opt_out_at timestamptz,
   tags text[] not null default '{}',
@@ -394,6 +395,47 @@ create table app.audit_logs (
 create index ix_audit_logs_tenant_time on app.audit_logs(tenant_id, created_at desc);
 create index ix_audit_logs_entity on app.audit_logs(entity_type, entity_id);
 
+
+-- Tenant consistency guards for operational rows. RLS limits each statement to the
+-- current tenant, while these composite foreign keys prevent same-tenant writes
+-- from linking to records that belong to another tenant.
+alter table app.tenant_channels add constraint uq_tenant_channels_tenant_id_id unique (tenant_id, id);
+alter table app.contacts add constraint uq_contacts_tenant_id_id unique (tenant_id, id);
+alter table app.conversations add constraint uq_conversations_tenant_id_id unique (tenant_id, id);
+alter table app.messages add constraint uq_messages_tenant_id_id unique (tenant_id, id);
+alter table app.resources add constraint uq_resources_tenant_id_id unique (tenant_id, id);
+alter table app.service_requests add constraint uq_service_requests_tenant_id_id unique (tenant_id, id);
+alter table app.quotes add constraint uq_quotes_tenant_id_id unique (tenant_id, id);
+alter table app.appointments add constraint uq_appointments_tenant_id_id unique (tenant_id, id);
+alter table app.knowledge_documents add constraint uq_knowledge_documents_tenant_id_id unique (tenant_id, id);
+alter table app.knowledge_chunks add constraint uq_knowledge_chunks_tenant_id_id unique (tenant_id, id);
+alter table app.handoffs add constraint uq_handoffs_tenant_id_id unique (tenant_id, id);
+
+alter table app.conversations
+  add constraint fk_conversations_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
+  add constraint fk_conversations_tenant_channel foreign key (tenant_id, channel_id) references app.tenant_channels(tenant_id, id);
+alter table app.messages
+  add constraint fk_messages_tenant_conversation foreign key (tenant_id, conversation_id) references app.conversations(tenant_id, id);
+alter table app.message_status_events
+  add constraint fk_message_status_events_tenant_message foreign key (tenant_id, message_id) references app.messages(tenant_id, id);
+alter table app.service_requests
+  add constraint fk_service_requests_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
+  add constraint fk_service_requests_tenant_conversation foreign key (tenant_id, conversation_id) references app.conversations(tenant_id, id),
+  add constraint fk_service_requests_tenant_resource foreign key (tenant_id, assigned_resource_id) references app.resources(tenant_id, id);
+alter table app.quotes
+  add constraint fk_quotes_tenant_service_request foreign key (tenant_id, service_request_id) references app.service_requests(tenant_id, id);
+alter table app.appointments
+  add constraint fk_appointments_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
+  add constraint fk_appointments_tenant_conversation foreign key (tenant_id, conversation_id) references app.conversations(tenant_id, id),
+  add constraint fk_appointments_tenant_service_request foreign key (tenant_id, service_request_id) references app.service_requests(tenant_id, id),
+  add constraint fk_appointments_tenant_resource foreign key (tenant_id, resource_id) references app.resources(tenant_id, id);
+alter table app.reminder_jobs
+  add constraint fk_reminder_jobs_tenant_channel foreign key (tenant_id, channel_id) references app.tenant_channels(tenant_id, id);
+alter table app.knowledge_chunks
+  add constraint fk_knowledge_chunks_tenant_document foreign key (tenant_id, document_id) references app.knowledge_documents(tenant_id, id);
+alter table app.handoffs
+  add constraint fk_handoffs_tenant_conversation foreign key (tenant_id, conversation_id) references app.conversations(tenant_id, id);
+
 create trigger trg_tenants_touch before update on app.tenants for each row execute function app.touch_updated_at();
 create trigger trg_tenant_settings_touch before update on app.tenant_settings for each row execute function app.touch_updated_at();
 create trigger trg_tenant_channels_touch before update on app.tenant_channels for each row execute function app.touch_updated_at();
@@ -408,6 +450,7 @@ create trigger trg_knowledge_documents_touch before update on app.knowledge_docu
 create trigger trg_prompt_templates_touch before update on app.prompt_templates for each row execute function app.touch_updated_at();
 create trigger trg_handoffs_touch before update on app.handoffs for each row execute function app.touch_updated_at();
 
+alter table app.tenant_channels enable row level security;
 alter table app.contacts enable row level security;
 alter table app.conversations enable row level security;
 alter table app.messages enable row level security;
@@ -429,7 +472,7 @@ do $$
 declare t text;
 begin
   foreach t in array array[
-    'contacts','conversations','messages','message_status_events','resources','service_requests','quotes',
+    'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_requests','quotes',
     'appointments','reminder_jobs','knowledge_documents','knowledge_chunks','prompt_templates','handoffs',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop

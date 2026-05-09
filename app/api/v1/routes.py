@@ -1,11 +1,13 @@
 import asyncio
+import csv
 import hashlib
 import hmac
+import io
 import json
 from pathlib import Path
 from datetime import UTC, datetime
 from typing import Any
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import httpx
 import asyncpg
@@ -16,12 +18,14 @@ from app.api.v1.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
     ChannelCreate,
+    ChannelModeUpdate,
     ContactUpsert,
     ConversationCreate,
     ConversationStart,
     IntentEvaluateRequest,
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
+    KnowledgeStorageUpdate,
     MessageCreate,
     PromptCreate,
     QuoteCreate,
@@ -37,6 +41,7 @@ from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
+from app.services.knowledge_storage import is_binary_extractable, store_knowledge_file
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
@@ -65,6 +70,56 @@ def write_tenant_secret(secret_ref: str, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(value.strip(), encoding='utf-8')
     path.chmod(0o600)
+
+
+def tenant_knowledge_s3_secret_ref(tenant_id: UUID) -> str:
+    return tenant_secret_ref(tenant_id, 'knowledge_s3_secret_access_key')
+
+
+def default_knowledge_storage_config(tenant_id: UUID) -> dict[str, Any]:
+    return {
+        'backend': 'local',
+        'bucket': None,
+        'region': None,
+        'endpoint_url': None,
+        'prefix': f'tenants/{tenant_id}/knowledge',
+        'access_key_id': None,
+        'secret_ref': None,
+    }
+
+
+def normalize_knowledge_storage_config(tenant_id: UUID, value: Any) -> dict[str, Any]:
+    config = default_knowledge_storage_config(tenant_id)
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = {}
+    if isinstance(value, dict):
+        for key in ('backend', 'bucket', 'region', 'endpoint_url', 'prefix', 'access_key_id', 'secret_ref'):
+            if key in value:
+                config[key] = value[key]
+    config['backend'] = config.get('backend') if config.get('backend') in {'local', 's3'} else 'local'
+    if not config.get('prefix'):
+        config['prefix'] = f'tenants/{tenant_id}/knowledge'
+    return config
+
+
+async def fetch_tenant_knowledge_storage_config(
+    conn: asyncpg.Connection, tenant_id: UUID
+) -> dict[str, Any]:
+    value = await conn.fetchval(
+        'select knowledge_storage from app.tenant_settings where tenant_id=$1', tenant_id
+    )
+    return normalize_knowledge_storage_config(tenant_id, value)
+
+
+def public_knowledge_storage_config(tenant_id: UUID, config: dict[str, Any]) -> dict[str, Any]:
+    response = normalize_knowledge_storage_config(tenant_id, config)
+    response['secret_configured'] = secret_ref_is_configured(response.get('secret_ref'))
+    response['effective_bucket'] = response.get('bucket') or get_settings().knowledge_storage_bucket
+    return response
+
 
 
 def verify_token_hash(verify_token: str) -> bytes:
@@ -272,13 +327,25 @@ def knowledge_document_projection(columns: set[str]) -> str:
     return ', '.join(projection)
 
 
+def parse_json_object(value: Any, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return default or {}
+    if isinstance(value, dict):
+        return value
+    return default or {}
+
+
 def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
     document = record_to_dict(row)
     if not document:
         return None
     for column, default in KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS.items():
         if document.get(column) is None:
-            document[column] = default
+            document[column] = default.copy() if isinstance(default, dict) else default
+    document['metadata'] = parse_json_object(document.get('metadata'), default={})
     return document
 
 
@@ -287,14 +354,8 @@ def normalize_knowledge_documents(rows: list[asyncpg.Record]) -> list[dict]:
 
 
 def metadata_extracted_text(value: Any) -> str | None:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(value, dict):
-        return None
-    extracted_text = value.get('extracted_text')
+    metadata = parse_json_object(value, default={})
+    extracted_text = metadata.get('extracted_text')
     return extracted_text if isinstance(extracted_text, str) else None
 
 
@@ -642,6 +703,81 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     return record_to_dict(row)
 
 
+@tenant_admin_router.get('/tenants/{tenant_id}/knowledge/storage')
+async def get_knowledge_storage_settings(
+    tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    return public_knowledge_storage_config(tenant_id, config)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/knowledge/storage')
+async def patch_knowledge_storage_settings(
+    tenant_id: UUID,
+    payload: KnowledgeStorageUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    current = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    incoming = payload.model_dump(exclude_unset=True)
+    secret_access_key = incoming.pop('secret_access_key', None)
+    next_config = {**current, **incoming}
+    next_config = normalize_knowledge_storage_config(tenant_id, next_config)
+
+    if next_config['backend'] == 's3':
+        if not next_config.get('bucket'):
+            raise HTTPException(status_code=400, detail='S3 bucket is required for tenant knowledge storage')
+        if secret_access_key and not next_config.get('access_key_id'):
+            raise HTTPException(
+                status_code=400,
+                detail='S3 access_key_id is required when configuring a tenant secret access key',
+            )
+        if secret_access_key:
+            secret_ref = tenant_knowledge_s3_secret_ref(tenant_id)
+            write_tenant_secret(secret_ref, secret_access_key)
+            next_config['secret_ref'] = secret_ref
+        elif next_config.get('access_key_id') and not secret_ref_is_configured(next_config.get('secret_ref')):
+            raise HTTPException(
+                status_code=400,
+                detail='S3 secret access key is required the first time access_key_id is configured',
+            )
+    else:
+        next_config = default_knowledge_storage_config(tenant_id)
+
+    row = await conn.fetchrow(
+        """
+        update app.tenant_settings
+        set knowledge_storage=$2::jsonb
+        where tenant_id=$1
+        returning knowledge_storage
+        """,
+        tenant_id,
+        json.dumps(next_config),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Settings not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant_knowledge_storage.updated',
+        entity_type='tenant_settings',
+        entity_id=str(tenant_id),
+        metadata={
+            'backend': next_config.get('backend'),
+            'bucket': next_config.get('bucket'),
+            'prefix': next_config.get('prefix'),
+            'secret_configured': secret_ref_is_configured(next_config.get('secret_ref')),
+        },
+    )
+    return public_knowledge_storage_config(tenant_id, next_config)
+
+
 @tenant_admin_router.post('/tenants/{tenant_id}/channels/whatsapp', status_code=201)
 async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
@@ -749,6 +885,40 @@ async def channel_health(tenant_id: UUID, request: Request, conn: asyncpg.Connec
         'checks': checks,
         'upstream': 'not_checked_in_local_core',
     }
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/channels/whatsapp/mode')
+async def patch_channel_mode(
+    tenant_id: UUID,
+    payload: ChannelModeUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        update app.tenant_channels
+        set account_mode=$2, updated_at=now()
+        where tenant_id=$1 and provider='whatsapp_cloud_api'
+        returning id, tenant_id, provider, account_mode, status, updated_at
+        """,
+        tenant_id,
+        payload.account_mode,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='channel.mode_changed',
+        entity_type='tenant_channel',
+        entity_id=str(row['id']),
+        metadata={'account_mode': payload.account_mode, 'reason': payload.reason},
+    )
+    return record_to_dict(row)
 
 
 @system_router.post('/contacts/upsert')
@@ -2070,6 +2240,150 @@ async def create_knowledge_document(
     return normalize_knowledge_document(row)
 
 
+@tenant_admin_router.post('/knowledge/documents/upload', status_code=201)
+async def upload_knowledge_document(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    try:
+        form = await request.form()
+    except AssertionError as exc:
+        raise HTTPException(
+            status_code=500, detail='python-multipart dependency is required for file uploads'
+        ) from exc
+
+    raw_tenant_id = form.get('tenant_id')
+    raw_title = form.get('title')
+    title = str(raw_title or '').strip()
+    document_type = str(form.get('document_type') or 'reference')
+    visibility = str(form.get('visibility') or 'tenant')
+    file = form.get('file')
+    if not raw_tenant_id or not title or not file or not hasattr(file, 'read'):
+        raise HTTPException(status_code=422, detail='tenant_id, title and file are required')
+    try:
+        tenant_id = UUID(str(raw_tenant_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail='Invalid tenant_id') from exc
+
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    if document_type not in {'faq', 'policy', 'reference'}:
+        raise HTTPException(status_code=422, detail='Unsupported document_type')
+    if visibility not in {'tenant', 'agents_only', 'public'}:
+        raise HTTPException(status_code=422, detail='Unsupported visibility')
+
+    data = await file.read()
+    filename = getattr(file, 'filename', None) or 'upload.bin'
+    mime_type = getattr(file, 'content_type', None)
+    document_id = uuid4()
+    settings = get_settings()
+    storage_config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    storage_secret = (
+        resolve_secret_ref(storage_config.get('secret_ref'))
+        if storage_config.get('backend') == 's3' and storage_config.get('secret_ref')
+        else None
+    )
+    try:
+        stored = store_knowledge_file(
+            data=data,
+            tenant_id=str(tenant_id),
+            document_id=str(document_id),
+            filename=filename,
+            mime_type=mime_type,
+            settings=settings,
+            backend=storage_config.get('backend'),
+            bucket=storage_config.get('bucket'),
+            endpoint_url=storage_config.get('endpoint_url'),
+            access_key_id=storage_config.get('access_key_id'),
+            secret_access_key=storage_secret,
+            region_name=storage_config.get('region'),
+            prefix=storage_config.get('prefix'),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    needs_async_extraction = is_binary_extractable(filename, mime_type) and not stored.extracted_text
+    metadata = {
+        'editor': 'admin-panel',
+        'registered_source': True,
+        'original_filename': filename,
+        'storage_backend': stored.storage_backend,
+        'storage_bucket': stored.bucket,
+        'storage_key': stored.object_key,
+        'size_bytes': stored.size_bytes,
+    }
+    if stored.extracted_text:
+        metadata['extracted_text'] = stored.extracted_text
+    if needs_async_extraction:
+        metadata['extraction_pending'] = True
+
+    columns = await knowledge_document_columns(conn)
+    insert_columns = [
+        'id',
+        'tenant_id',
+        'source_type',
+        'document_type',
+        'title',
+        'source_uri',
+        'checksum',
+        'mime_type',
+        'content',
+        'visibility',
+        'status',
+        'metadata',
+    ]
+    insert_columns = [column for column in insert_columns if column in columns or column in {'id', 'tenant_id'}]
+    values_by_column = {
+        'id': document_id,
+        'tenant_id': tenant_id,
+        'source_type': 'upload',
+        'document_type': document_type,
+        'title': title,
+        'source_uri': stored.source_uri,
+        'checksum': stored.checksum,
+        'mime_type': mime_type or 'application/octet-stream',
+        'content': stored.content,
+        'visibility': visibility,
+        'status': 'draft',
+        'metadata': metadata,
+    }
+    values = [
+        json.dumps(values_by_column[column]) if column == 'metadata' else values_by_column[column]
+        for column in insert_columns
+    ]
+    placeholders = [
+        f'${index}::jsonb' if column == 'metadata' else f'${index}'
+        for index, column in enumerate(insert_columns, start=1)
+    ]
+    row = await conn.fetchrow(
+        f"""
+        insert into app.knowledge_documents ({', '.join(insert_columns)})
+        values ({', '.join(placeholders)})
+        returning {knowledge_document_projection(columns)}
+        """,
+        *values,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='knowledge_document.uploaded',
+        entity_type='knowledge_document',
+        entity_id=str(document_id),
+        metadata={
+            'storage_backend': stored.storage_backend,
+            'storage_key': stored.object_key,
+            'checksum': stored.checksum,
+            'size_bytes': stored.size_bytes,
+            'extraction_pending': needs_async_extraction,
+        },
+    )
+    document = normalize_knowledge_document(row)
+    document['_extraction_pending'] = needs_async_extraction
+    return document
+
+
 @tenant_admin_router.get('/knowledge/documents/{document_id}')
 async def get_knowledge_document(
     document_id: UUID,
@@ -2351,11 +2665,402 @@ async def create_prompt(payload: PromptCreate, request: Request, conn: asyncpg.C
     return record_to_dict(row)
 
 
+def readiness_check(key: str, label: str, ready: bool, reason: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        'key': key,
+        'label': label,
+        'ready': ready,
+        'reason': reason,
+        'details': details or {},
+    }
+
+
+def readiness_truthy_object(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, dict | list | tuple | set):
+        return bool(value)
+    return bool(str(value).strip()) if isinstance(value, str) else bool(value)
+
+
+def readiness_positive_int(value: Any) -> bool:
+    try:
+        return int(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def readiness_response(tenant_id: UUID, checks: list[dict[str, Any]], smoke_question: str) -> dict[str, Any]:
+    reasons = [check['reason'] for check in checks if not check['ready']]
+    ready = not reasons
+    return {
+        'tenant_id': str(tenant_id),
+        'checked_at': datetime.now(UTC).isoformat(),
+        'status': 'ready' if ready else 'not_ready',
+        'ready': ready,
+        'reasons': reasons,
+        'smoke_question': smoke_question,
+        'checks': checks,
+    }
+
+
+async def build_tenant_readiness_report(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    *,
+    smoke_question: str = 'horarios políticas servicios garantías precios contacto',
+    retrieval_min_score: float = 0.12,
+) -> dict[str, Any]:
+    tenant = await conn.fetchrow(
+        'select id, slug, display_name, status, deleted_at from app.tenants where id=$1',
+        tenant_id,
+    )
+    checks: list[dict[str, Any]] = []
+
+    tenant_ready = bool(tenant and tenant['status'] == 'active' and tenant['deleted_at'] is None)
+    checks.append(
+        readiness_check(
+            'tenant_active',
+            'Tenant activo',
+            tenant_ready,
+            'Tenant activo y disponible.' if tenant_ready else 'El tenant no existe, no está activo o fue eliminado.',
+            record_to_dict(tenant) if tenant else {},
+        )
+    )
+
+    settings = await conn.fetchrow(
+        'select locale, business_hours, escalation_policy, pii_policy, no_train, max_bot_turns from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    settings_dict = record_to_dict(settings) if settings else {}
+    settings_ready = bool(
+        settings
+        and readiness_truthy_object(settings['locale'])
+        and readiness_truthy_object(settings['business_hours'])
+        and readiness_truthy_object(settings['pii_policy'])
+        and readiness_positive_int(settings['max_bot_turns'])
+    )
+    checks.append(
+        readiness_check(
+            'tenant_settings',
+            'Settings operativos',
+            settings_ready,
+            'Settings mínimos configurados.' if settings_ready else 'Faltan settings mínimos: locale, horarios, PII policy o max_bot_turns.',
+            settings_dict,
+        )
+    )
+
+    channel = await conn.fetchrow(
+        """
+        select id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref,
+               verify_token_hash is not null as verify_token_hash_configured, account_mode, status
+        from app.tenant_channels
+        where tenant_id=$1 and provider='whatsapp_cloud_api'
+        """,
+        tenant_id,
+    )
+    channel_dict = record_to_dict(channel) if channel else {}
+    whatsapp_token_ready = token_ref_is_configured(channel['token_ref']) if channel else False
+    whatsapp_secret_ready = secret_ref_is_configured(channel['app_secret_ref']) if channel else False
+    whatsapp_verify_ready = secret_ref_is_configured(tenant_secret_ref(tenant_id, 'whatsapp_verify_token')) if channel else False
+    whatsapp_ready = bool(
+        channel
+        and channel['status'] == 'active'
+        and channel['business_id']
+        and channel['waba_id']
+        and channel['phone_number_id']
+        and channel['account_mode'] == 'live'
+        and whatsapp_token_ready
+        and whatsapp_secret_ready
+        and whatsapp_verify_ready
+    )
+    checks.append(
+        readiness_check(
+            'whatsapp_channel',
+            'Canal WhatsApp',
+            whatsapp_ready,
+            (
+                'Canal WhatsApp activo en modo live con secretos resueltos.'
+                if whatsapp_ready
+                else 'El canal WhatsApp no está activo, no está en modo live o faltan IDs/secretos reales.'
+            ),
+            {
+                **channel_dict,
+                'meta_access_token_configured': whatsapp_token_ready,
+                'app_secret_configured': whatsapp_secret_ready,
+                'verify_token_configured': whatsapp_verify_ready,
+                'delivery_mode_live': channel['account_mode'] == 'live' if channel else False,
+            },
+        )
+    )
+
+    knowledge_counts = await conn.fetchrow(
+        """
+        select
+          count(distinct kd.id) as active_documents,
+          count(kc.id) as active_chunks
+        from app.knowledge_documents kd
+        left join app.knowledge_chunks kc on kc.tenant_id=kd.tenant_id and kc.document_id=kd.id
+        where kd.tenant_id=$1 and kd.status='active'
+        """,
+        tenant_id,
+    )
+    retrieval_rows = await conn.fetch(
+        """
+        select kc.id, kc.document_id, kd.title as document_title, kd.source_uri, kd.source_type,
+               kd.document_type, kd.visibility, kc.chunk_index, kc.section_path, kc.chunk_text,
+               kc.token_count, kc.metadata
+        from app.knowledge_chunks kc
+        join app.knowledge_documents kd on kd.id=kc.document_id and kd.tenant_id=kc.tenant_id
+        where kc.tenant_id=$1 and kd.status='active'
+        order by kd.updated_at desc, kc.chunk_index asc
+        limit 500
+        """,
+        tenant_id,
+    )
+    matches = rank_chunks(smoke_question, [record_to_dict(row) for row in retrieval_rows], max_chunks=3)
+    retrieval_answer = build_grounded_answer(smoke_question, matches, min_score=retrieval_min_score)
+    knowledge_ready = bool(
+        knowledge_counts
+        and knowledge_counts['active_documents'] > 0
+        and knowledge_counts['active_chunks'] > 0
+        and retrieval_answer['sufficient_context']
+    )
+    checks.append(
+        readiness_check(
+            'knowledge_retrieval',
+            'Documentos activos y retrieval smoke test',
+            knowledge_ready,
+            'Knowledge base activa y retrieval smoke test con contexto suficiente.' if knowledge_ready else 'No hay documentos/chunks activos o el retrieval smoke test no recuperó contexto suficiente.',
+            {
+                'active_documents': knowledge_counts['active_documents'] if knowledge_counts else 0,
+                'active_chunks': knowledge_counts['active_chunks'] if knowledge_counts else 0,
+                'returned_chunk_count': len(matches),
+                'top_score': matches[0].score if matches else None,
+                'sufficient_context': retrieval_answer['sufficient_context'],
+            },
+        )
+    )
+
+    escalation_policy = settings_dict.get('escalation_policy') or {}
+    handoff_ready = bool(
+        settings
+        and isinstance(escalation_policy, dict)
+        and escalation_policy
+        and (
+            escalation_policy.get('handoff_required') is True
+            or escalation_policy.get('risk_keywords')
+            or escalation_policy.get('handoff_message')
+        )
+    )
+    checks.append(
+        readiness_check(
+            'handoff',
+            'Handoff humano',
+            handoff_ready,
+            'Política de handoff configurada.' if handoff_ready else 'Falta configurar una política de handoff/escalamiento humano.',
+            {'escalation_policy': escalation_policy},
+        )
+    )
+
+    audit_count = await conn.fetchval('select count(*) from app.audit_logs where tenant_id=$1', tenant_id)
+    audit_count = audit_count or 0
+    audit_ready = audit_count > 0
+    checks.append(
+        readiness_check(
+            'audit',
+            'Auditoría',
+            audit_ready,
+            'Auditoría con eventos registrados.' if audit_ready else 'No hay eventos de auditoría para evidenciar cambios del tenant.',
+            {'audit_log_entries': audit_count},
+        )
+    )
+
+    return readiness_response(tenant_id, checks, smoke_question)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/readiness')
+async def get_tenant_readiness(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    smoke_question: str = Query(default='horarios políticas servicios garantías precios contacto', min_length=3, max_length=1000),
+    retrieval_min_score: float = Query(default=0.12, ge=0, le=1),
+):
+    await require_min_role('admin')(request)
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    report = await build_tenant_readiness_report(
+        conn,
+        tenant_id,
+        smoke_question=smoke_question,
+        retrieval_min_score=retrieval_min_score,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant.readiness_checked',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+        metadata={
+            'status': report['status'],
+            'not_ready_reasons': report['reasons'],
+            'smoke_question': smoke_question,
+        },
+    )
+    return report
+
+
 @tenant_admin_router.get('/audit-logs')
-async def list_audit_logs(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+async def list_audit_logs(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    action: str | None = Query(default=None),
+    actor_type: str | None = Query(default=None),
+    entity_type: str | None = Query(default=None),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
     tenant_id = await tenant_id_from_request(request, conn)
-    rows = await conn.fetch('select * from app.audit_logs where tenant_id=$1 order by created_at desc limit 100', tenant_id)
-    return [dict(r) for r in rows]
+    rows = await conn.fetch(
+        """
+        select * from app.audit_logs
+        where tenant_id=$1
+          and ($2::text is null or action=$2)
+          and ($3::text is null or actor_type=$3)
+          and ($4::text is null or entity_type=$4)
+          and ($5::timestamptz is null or created_at>=$5::timestamptz)
+          and ($6::timestamptz is null or created_at<=$6::timestamptz)
+        order by created_at desc
+        limit $7
+        """,
+        tenant_id, action, actor_type, entity_type, from_date, to_date, limit,
+    )
+    return [record_to_dict(r) for r in rows]
+
+
+@tenant_admin_router.get('/audit-logs/export')
+async def export_audit_logs(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    action: str | None = Query(default=None),
+    actor_type: str | None = Query(default=None),
+    entity_type: str | None = Query(default=None),
+    from_date: str | None = Query(default=None),
+    to_date: str | None = Query(default=None),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select id, created_at, actor_type, actor_id, action, entity_type, entity_id, metadata
+        from app.audit_logs
+        where tenant_id=$1
+          and ($2::text is null or action=$2)
+          and ($3::text is null or actor_type=$3)
+          and ($4::text is null or entity_type=$4)
+          and ($5::timestamptz is null or created_at>=$5::timestamptz)
+          and ($6::timestamptz is null or created_at<=$6::timestamptz)
+        order by created_at desc
+        limit 10000
+        """,
+        tenant_id, action, actor_type, entity_type, from_date, to_date,
+    )
+    fieldnames = ['id', 'created_at', 'actor_type', 'actor_id', 'action', 'entity_type', 'entity_id', 'metadata']
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction='ignore')
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: str(v) if v is not None else '' for k, v in record_to_dict(row).items()})
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='audit_logs.exported', entity_type='tenant', entity_id=str(tenant_id))
+    return Response(
+        content=buf.getvalue(),
+        media_type='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="audit-logs-{tenant_id}.csv"'},
+    )
+
+
+@tenant_admin_router.post('/contacts/{contact_id}/suppress', status_code=200)
+async def suppress_contact(
+    contact_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await require_min_role('admin')(request)
+    tenant_id = await tenant_id_from_request(request, conn)
+    existing = await conn.fetchrow('select id from app.contacts where tenant_id=$1 and id=$2', tenant_id, contact_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail='Contact not found')
+    pseudo = f'suppressed+{contact_id}'
+    row = await conn.fetchrow(
+        """
+        update app.contacts set
+          display_name = null,
+          phone_e164 = $3,
+          wa_id = $3,
+          phone_hash = decode(encode(sha256($3::bytea), 'hex'), 'hex'),
+          opt_in_status = 'suppressed',
+          opt_out_at = now(),
+          tags = '{}',
+          metadata = '{}'::jsonb
+        where tenant_id=$1 and id=$2
+        returning id, tenant_id, opt_in_status, updated_at
+        """,
+        tenant_id, contact_id, pseudo,
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='contact.suppressed', entity_type='contact', entity_id=str(contact_id))
+    return record_to_dict(row)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/data-export')
+async def export_tenant_data(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await require_min_role('owner')(request)
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    tenant = await conn.fetchrow('select * from app.tenants where id=$1', tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    settings = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
+    channels = await conn.fetch("select id, provider, status, account_mode, created_at from app.tenant_channels where tenant_id=$1", tenant_id)
+    counts = await conn.fetchrow(
+        """
+        select
+          (select count(*) from app.contacts where tenant_id=$1) as contacts,
+          (select count(*) from app.conversations where tenant_id=$1) as conversations,
+          (select count(*) from app.messages where tenant_id=$1) as messages,
+          (select count(*) from app.service_requests where tenant_id=$1) as service_requests,
+          (select count(*) from app.quotes where tenant_id=$1) as quotes,
+          (select count(*) from app.knowledge_documents where tenant_id=$1) as knowledge_documents,
+          (select count(*) from app.audit_logs where tenant_id=$1) as audit_log_entries
+        """,
+        tenant_id,
+    )
+    bundle = {
+        'exported_at': datetime.now(UTC).isoformat(),
+        'tenant': record_to_dict(tenant),
+        'settings': record_to_dict(settings) if settings else {},
+        'channels': [record_to_dict(ch) for ch in channels],
+        'data_counts': dict(counts),
+        'privacy': {
+            'no_train': (settings or {}).get('no_train', True),
+            'pii_policy': record_to_dict(settings).get('pii_policy', {}) if settings else {},
+            'data_retention_days': 365,
+            'dpa_version': '1.0',
+        },
+    }
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.data_exported', entity_type='tenant', entity_id=str(tenant_id))
+    content = json.dumps(bundle, default=str, indent=2, ensure_ascii=False)
+    return Response(
+        content=content,
+        media_type='application/json',
+        headers={'Content-Disposition': f'attachment; filename="tenant-data-{tenant_id}.json"'},
+    )
 
 
 @webhook_router.get('/whatsapp')
@@ -2367,6 +3072,7 @@ async def verify_whatsapp_webhook(
 ):
     if hub_mode != 'subscribe' or not hub_verify_token:
         raise HTTPException(status_code=403, detail='Invalid verify token')
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
     rows = await conn.fetch(
         """
         select tenant_id
@@ -2394,6 +3100,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
     if not phone_number_id:
         raise HTTPException(status_code=404, detail='WhatsApp channel not found')
 
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
     channel = await conn.fetchrow(
         """
         select id, tenant_id, app_secret_ref

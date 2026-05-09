@@ -7,6 +7,7 @@ import {
   indexKnowledgeDocument,
   listKnowledgeDocuments,
   updateKnowledgeDocument,
+  uploadKnowledgeDocument,
 } from '../../../services/coreApi.js';
 
 const emptyForm = {
@@ -27,6 +28,23 @@ const statusLabels = {
   active: 'Active',
   failed: 'Failed',
 };
+
+function extractionStatusBadge(document) {
+  const meta = document.metadata || {};
+  if (meta.extraction_pending && !meta.extracted_text && document.status !== 'failed') {
+    const attempts = meta.extraction_attempt_count || 0;
+    return attempts > 0
+      ? { label: `Extrayendo… (intento ${attempts})`, cls: 'indexing' }
+      : { label: 'En cola de extracción', cls: 'indexing' };
+  }
+  if (document.status === 'failed' && meta.extraction_error) {
+    return { label: 'Extracción fallida', cls: 'failed' };
+  }
+  if (meta.extracted_text && document.status === 'draft') {
+    return { label: 'Texto extraído · listo para indexar', cls: 'active' };
+  }
+  return null;
+}
 
 function formatDate(value) {
   if (!value) return '—';
@@ -51,6 +69,8 @@ export function KnowledgeStudio({ module, session, tenant }) {
   const [ragQuestion, setRagQuestion] = useState('');
   const [ragResult, setRagResult] = useState(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [uploadForm, setUploadForm] = useState({ title: '', document_type: 'reference', visibility: 'tenant', file: null });
+  const [isUploading, setIsUploading] = useState(false);
 
   const selectedDocument = useMemo(
     () => documents.find((document) => document.id === editingId),
@@ -174,6 +194,32 @@ export function KnowledgeStudio({ module, session, tenant }) {
     }
   }
 
+  async function handleUpload(event) {
+    event.preventDefault();
+    if (!tenant?.id || !uploadForm.file || !uploadForm.title.trim()) return;
+    setIsUploading(true);
+    setNotice(null);
+    try {
+      const uploaded = await uploadKnowledgeDocument(session, tenant.id, uploadForm);
+      let text;
+      if (uploaded.content || uploaded.metadata?.extracted_text) {
+        text = 'Archivo guardado; texto extraído. Ya puedes indexarlo.';
+      } else if (uploaded._extraction_pending || uploaded.metadata?.extraction_pending) {
+        text = 'Archivo guardado. El texto se extraerá en segundo plano (PDF/DOCX). Refresca en unos segundos y luego indexa.';
+      } else {
+        text = 'Archivo guardado. Agrega el texto manualmente antes de indexar.';
+      }
+      setNotice({ type: 'success', text });
+      setUploadForm({ title: '', document_type: 'reference', visibility: 'tenant', file: null });
+      event.target.reset();
+      loadDocuments();
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
   async function removeDocument(document) {
     setNotice(null);
     try {
@@ -201,6 +247,24 @@ export function KnowledgeStudio({ module, session, tenant }) {
       </div>
 
       {notice && <div className={`notice ${notice.type}`}>{notice.text}</div>}
+
+      <form className="knowledge-upload" onSubmit={handleUpload}>
+        <div>
+          <h3>Carga de archivos</h3>
+          <p className="hint">Guarda archivos en el backend configurado para conocimiento. TXT, Markdown, CSV y JSON se extraen al instante. PDF y DOCX se extraen automáticamente en segundo plano; cuando el estado muestre "Texto extraído · listo para indexar" puedes hacer clic en Indexar.</p>
+        </div>
+        <div className="form-grid compact-grid">
+          <label>Título del archivo<input value={uploadForm.title} onChange={(event) => setUploadForm((current) => ({ ...current, title: event.target.value }))} required /></label>
+          <label>Tipo<select value={uploadForm.document_type} onChange={(event) => setUploadForm((current) => ({ ...current, document_type: event.target.value }))}><option value="faq">FAQ</option><option value="policy">Política</option><option value="reference">Referencia</option></select></label>
+          <label>Visibilidad<select value={uploadForm.visibility} onChange={(event) => setUploadForm((current) => ({ ...current, visibility: event.target.value }))}><option value="tenant">Tenant</option><option value="agents_only">Solo agentes</option><option value="public">Público</option></select></label>
+          <label className="wide">Archivo<input accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => setUploadForm((current) => ({ ...current, file: event.target.files?.[0] || null }))} required type="file" /></label>
+        </div>
+        <div className="form-actions">
+          <button className="primary-action" disabled={isUploading || !uploadForm.file || !uploadForm.title.trim()} type="submit">
+            {isUploading ? 'Subiendo…' : 'Guardar archivo'}
+          </button>
+        </div>
+      </form>
 
       <form className="rag-tester" onSubmit={evaluateRetrieval}>
         <div>
@@ -307,14 +371,21 @@ export function KnowledgeStudio({ module, session, tenant }) {
           <div className="knowledge-documents">
             {isLoading && <p className="notice info">Cargando documentos…</p>}
             {!isLoading && documents.length === 0 && <p className="notice info">No hay documentos con esos filtros.</p>}
-            {documents.map((document) => (
+            {documents.map((document) => {
+              const exBadge = extractionStatusBadge(document);
+              const exError = document.metadata?.extraction_error;
+              return (
               <article className="knowledge-document" key={document.id}>
                 <div className="knowledge-document-main">
                   <strong>{document.title}</strong>
                   <p>{documentSummary(document)}</p>
+                  {exError && (
+                    <p className="hint extraction-error">Error de extracción: {exError}</p>
+                  )}
                 </div>
                 <div className="document-subtle-meta" aria-label="Metadatos del documento">
                   <span className={`status-pill ${document.status}`}>{statusLabels[document.status] || document.status}</span>
+                  {exBadge && <span className={`status-pill ${exBadge.cls}`}>{exBadge.label}</span>}
                   <span>{document.visibility}</span>
                   <span>{document.source_type}</span>
                 </div>
@@ -330,12 +401,27 @@ export function KnowledgeStudio({ module, session, tenant }) {
                     <option value="active" disabled>Active (solo por indexado)</option>
                     <option value="failed">Failed</option>
                   </select>
-                  <button className="icon-action" onClick={() => runIndexing(document)} type="button">Indexar</button>
+                  {(() => {
+                    const meta = document.metadata || {};
+                    const awaitingExtraction = meta.extraction_pending && !meta.extracted_text;
+                    return (
+                      <button
+                        className="icon-action"
+                        disabled={awaitingExtraction}
+                        title={awaitingExtraction ? 'Espera a que el worker extraiga el texto del archivo antes de indexar.' : 'Indexar documento'}
+                        onClick={() => !awaitingExtraction && runIndexing(document)}
+                        type="button"
+                      >
+                        {awaitingExtraction ? 'Extrayendo…' : 'Indexar'}
+                      </button>
+                    );
+                  })()}
                   <button className="icon-action" onClick={() => editDocument(document)} type="button">Editar</button>
                   <button className="icon-action danger" onClick={() => removeDocument(document)} type="button">Eliminar</button>
                 </div>
               </article>
-            ))}
+              );
+            })}
           </div>
         </aside>
       </div>
