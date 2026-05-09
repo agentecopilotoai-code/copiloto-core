@@ -25,16 +25,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0019 — Extracción documental fuera del request para PDF/DOCX
-
-- **Estado:** PENDING
-- **Objetivo:** procesar archivos binarios comunes sin bloquear la API ni requerir que el admin pegue texto manualmente.
-- **Alcance mínimo:**
-  - Job/worker de extracción para PDF y DOCX con límite de tamaño y timeout.
-  - Estados `draft/indexing/failed/active` coherentes y auditados.
-  - Registro de `metadata.extracted_text`, páginas procesadas, errores y checksums.
-- **Criterio de aceptación:** PDF/DOCX subidos desde Knowledge Studio quedan listos para indexar o fallan con error accionable.
-
 ### TASK-0020 — CI mínimo de calidad para API y Admin Panel
 
 - **Estado:** PENDING

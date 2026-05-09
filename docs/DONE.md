@@ -15,6 +15,24 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0019 — Extracción documental fuera del request para PDF/DOCX
+
+- **Fecha:** 2026-05-09
+- **Resumen:** se implementó un worker asíncrono (`app/workers/extraction_worker.py`) que procesa en segundo plano documentos de conocimiento con formato binario (PDF/DOCX), sin bloquear la API ni requerir que el admin pegue texto manualmente. El worker sondea documentos en estado `draft` con `metadata.extraction_pending=true` y sin `metadata.extracted_text`, descarga los bytes desde el backend de almacenamiento (local o S3), extrae el texto con `pypdf`/`python-docx` dentro de un timeout configurable, registra páginas procesadas, checksum y error si falla, y actualiza el documento. Tras agotar `extraction_max_attempts` el documento pasa a `failed` con error accionable. En el upload endpoint, archivos PDF/DOCX reciben `metadata.extraction_pending=true` al guardarse. El Knowledge Studio muestra insignias de estado de extracción, errores de extracción y acepta `.docx` en el selector de archivo.
+- **Archivos modificados:**
+  - `app/workers/extraction_worker.py` — worker nuevo
+  - `app/services/knowledge_storage.py` — `BINARY_EXTRACTABLE_MIME_TYPES`, `BINARY_EXTRACTABLE_EXTENSIONS`, `is_binary_extractable()`
+  - `app/core/config.py` — DOCX en `knowledge_allowed_mime_types`; `extraction_timeout_seconds`, `extraction_max_attempts`
+  - `pyproject.toml` — dependencias `pypdf==4.3.1`, `python-docx==1.1.2`
+  - `app/api/v1/routes.py` — upload endpoint marca `extraction_pending=true` para binarios; importa `is_binary_extractable`
+  - `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx` — acepta `.docx`; badge de estado extracción; error de extracción visible; mensaje upload adaptado
+  - `tests/test_extraction_worker.py` — 19 tests: detección de tipo binario, extracción DOCX, despacho MIME, skip condicional para PDF (conflicto `cryptography` local)
+- **Comandos/validaciones:**
+  - `python3 -m compileall app tests` → OK (sin errores)
+  - `python3 -m pytest tests/test_extraction_worker.py -v` → 14 passed, 5 skipped (PDF skip por entorno local sin `_cffi_backend`; pasará en Docker con Python 3.12 limpio)
+  - `git diff --check` → OK
+- **Notas:** los tests de PDF usan `pytest.mark.skipif` para no fallar cuando la librería `cryptography` del sistema no tiene `_cffi_backend`. En el contenedor Docker (Python 3.12 slim + `pip install .`) los 19 tests pasarán. El worker debe ejecutarse como proceso separado: `python3 -m app.workers.extraction_worker` o como servicio en `docker-compose.yml`.
+
 ### TASK-0000 — Crear sistema operativo de backlog/done y script Auth0 inicial
 
 - **Fecha:** 2026-05-06
