@@ -25,16 +25,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0018 — Runbook de go-live por tenant y smoke test E2E
-
-- **Estado:** PENDING
-- **Objetivo:** convertir el checklist de readiness en un runbook ejecutable por tenant antes de activar tráfico real.
-- **Alcance mínimo:**
-  - Script/CLI que invoque readiness, pruebe RAG, canal WhatsApp, audit logs y operaciones básicas.
-  - Plantilla de evidencia por tenant con fecha, responsable, resultado y bloqueos.
-  - Integrar instrucciones de rollback: desactivar canal live, pasar a mock, pausar bot o forzar handoff.
-- **Criterio de aceptación:** un operador puede ejecutar el runbook sin SQL manual.
-
 ### TASK-0019 — Extracción documental fuera del request para PDF/DOCX
 
 - **Estado:** PENDING

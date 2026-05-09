@@ -1481,6 +1481,29 @@ button.danger-action:disabled {
   word-break: break-word;
 }
 
+.readiness-rollback {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border, #2a3550);
+}
+
+.rollback-panel {
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  background: rgba(220, 53, 69, 0.06);
+  border: 1px solid rgba(220, 53, 69, 0.25);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.rollback-description {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted, #8899bb);
+}
+
 @media (max-width: 800px) {
   .readiness-controls {
     grid-template-columns: 1fr;
