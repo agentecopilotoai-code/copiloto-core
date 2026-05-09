@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import io
-import zlib
 
 import pytest
 
@@ -27,15 +26,14 @@ def _build_minimal_pdf(text: str) -> bytes:
     stream_len = len(stream_bytes)
 
     objects: list[bytes] = []
-    offsets: list[int] = []
 
     def add_obj(content: str) -> int:
         idx = len(objects) + 1
         objects.append(content.encode('latin-1'))
         return idx
 
-    catalog_id = add_obj('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n')
-    pages_id = add_obj('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n')
+    add_obj('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n')
+    add_obj('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n')
     add_obj(
         '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] '
         '/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n'
