@@ -10,6 +10,7 @@ import structlog
 from app.core.config import get_settings
 from app.services.audit import audit
 from app.services.conversation_flow import (
+    STAGE_START,
     ConversationContext,
     format_history,
     get_context,
@@ -158,8 +159,12 @@ async def orchestrate_inbound_message(
     # stage or when the client expresses booking intent and the engine is capable
     # of multi-turn responses (not pure template mode).
     ctx = get_context(conversation.get('metadata'))
+    # STAGE_START is included so that the first message (e.g. "hola") always
+    # goes through the LLM, which greets the customer and detects intent.
     use_conversational = engine != 'template' and (
-        ctx.is_conversational or has_booking_intent(body_text)
+        ctx.stage == STAGE_START
+        or ctx.is_conversational
+        or has_booking_intent(body_text)
     )
 
     if use_conversational:

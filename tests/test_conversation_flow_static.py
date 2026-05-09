@@ -273,6 +273,13 @@ def test_orchestrator_routes_to_conversational_when_booking_intent():
     assert 'ctx.is_conversational' in source
 
 
+def test_orchestrator_routes_to_conversational_on_stage_start():
+    # First message ("hola") must go to LLM even without booking keywords
+    source = ORCHESTRATOR.read_text()
+    assert 'STAGE_START' in source
+    assert 'ctx.stage == STAGE_START' in source
+
+
 def test_orchestrator_persists_stage_after_conversational_turn():
     source = ORCHESTRATOR.read_text()
     assert '_update_conversation_metadata' in source
