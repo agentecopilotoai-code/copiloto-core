@@ -41,7 +41,7 @@ from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
-from app.services.knowledge_storage import store_knowledge_file
+from app.services.knowledge_storage import is_binary_extractable, store_knowledge_file
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
@@ -2302,6 +2302,7 @@ async def upload_knowledge_document(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    needs_async_extraction = is_binary_extractable(filename, mime_type) and not stored.extracted_text
     metadata = {
         'editor': 'admin-panel',
         'registered_source': True,
@@ -2313,6 +2314,8 @@ async def upload_knowledge_document(
     }
     if stored.extracted_text:
         metadata['extracted_text'] = stored.extracted_text
+    if needs_async_extraction:
+        metadata['extraction_pending'] = True
 
     columns = await knowledge_document_columns(conn)
     insert_columns = [
@@ -2373,9 +2376,12 @@ async def upload_knowledge_document(
             'storage_key': stored.object_key,
             'checksum': stored.checksum,
             'size_bytes': stored.size_bytes,
+            'extraction_pending': needs_async_extraction,
         },
     )
-    return normalize_knowledge_document(row)
+    document = normalize_knowledge_document(row)
+    document['_extraction_pending'] = needs_async_extraction
+    return document
 
 
 @tenant_admin_router.get('/knowledge/documents/{document_id}')

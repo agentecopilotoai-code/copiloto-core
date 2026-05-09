@@ -43,7 +43,12 @@ class Settings(BaseSettings):
         default=None, validation_alias='KNOWLEDGE_STORAGE_S3_BUCKET'
     )
     knowledge_file_max_bytes: int = 10 * 1024 * 1024
-    knowledge_allowed_mime_types: str = 'text/plain,text/markdown,text/csv,application/json,application/pdf'
+    knowledge_allowed_mime_types: str = (
+        'text/plain,text/markdown,text/csv,application/json,application/pdf,'
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+    extraction_timeout_seconds: int = 60
+    extraction_max_attempts: int = 3
     s3_access_key_id: str = 'copilotoia-minio'
     s3_secret_access_key: str
     rag_embedding_provider: str = 'local_hash'
