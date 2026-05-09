@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     # Umbrales para modo cascade
     cascade_template_min_score: float = 0.55   # template responde solo si está muy seguro
     cascade_llm_min_score: float = 0.12        # LLM intenta si hay al menos un chunk relevante
+    # Tiempo en horas que puede estar un handoff abierto sin agente antes de
+    # que el bot retome la conversación automáticamente. 0 = desactivado.
+    bot_reopen_after_hours: float = 2.0
 
     @property
     def knowledge_storage_bucket(self) -> str:

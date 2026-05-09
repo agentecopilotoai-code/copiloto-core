@@ -83,12 +83,54 @@ async def orchestrate_inbound_message(
         return {'action': 'skipped', 'reason': 'human_active'}
 
     # Don't re-run the bot when the conversation is already queued for a human.
-    # The next message after an agent picks up will have status='human_active',
-    # which is handled above. Skipping 'waiting_agent' prevents repeated handoff
-    # messages for every follow-up message while the client waits.
+    # Exception: if the handoff has been open for longer than bot_reopen_after_hours
+    # with no agent picking it up, automatically re-engage the bot so the client
+    # isn't left waiting indefinitely. 0 = never re-engage.
     if conversation['status'] == 'waiting_agent' and conversation.get('handoff_required'):
-        log.info('orchestrator.skip', reason='waiting_agent_handoff_pending', conversation_id=conversation_id)
-        return {'action': 'skipped', 'reason': 'waiting_agent_handoff_pending'}
+        settings_early = get_settings()
+        reopen_hours = settings_early.bot_reopen_after_hours
+        should_skip = True
+        if reopen_hours > 0:
+            handoff_age_hours = await conn.fetchval(
+                """
+                select extract(epoch from (now() - created_at)) / 3600.0
+                from app.handoffs
+                where tenant_id=$1 and conversation_id=$2 and status='open'
+                order by created_at asc
+                limit 1
+                """,
+                tenant_id,
+                conversation['id'],
+            )
+            if handoff_age_hours is not None and handoff_age_hours >= reopen_hours:
+                log.warning(
+                    'orchestrator.handoff_timeout_reopen',
+                    conversation_id=str(conversation['id']),
+                    handoff_age_hours=round(float(handoff_age_hours), 2),
+                    reopen_after_hours=reopen_hours,
+                )
+                await conn.execute(
+                    """
+                    update app.conversations
+                    set status='waiting_user', handoff_required=false, updated_at=now()
+                    where tenant_id=$1 and id=$2
+                    """,
+                    tenant_id,
+                    conversation['id'],
+                )
+                await conn.execute(
+                    """
+                    update app.handoffs
+                    set status='resolved', updated_at=now()
+                    where tenant_id=$1 and conversation_id=$2 and status='open'
+                    """,
+                    tenant_id,
+                    conversation['id'],
+                )
+                should_skip = False
+        if should_skip:
+            log.info('orchestrator.skip', reason='waiting_agent_handoff_pending', conversation_id=conversation_id)
+            return {'action': 'skipped', 'reason': 'waiting_agent_handoff_pending'}
 
     opt_in = contact.get('opt_in_status') or 'unknown'
     if opt_in in ('revoked', 'suppressed'):
