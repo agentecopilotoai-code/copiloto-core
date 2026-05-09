@@ -1,10 +1,21 @@
-"""Local LLM answer generation via Ollama (answer_engine=local_llm)."""
+"""Local LLM answer generation via Ollama.
+
+Two modes:
+  build_llm_answer()              — Q&A simple (answer_engine=local_llm / cascade tier-2)
+  build_conversational_llm_answer() — Flujo de booking multi-turno con estado
+"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 import httpx
 import structlog
+
+from app.services.conversation_flow import (
+    ConversationContext,
+    build_system_prompt,
+    parse_llm_response,
+)
 
 if TYPE_CHECKING:
     from app.services.rag_retrieval import RetrievalMatch
@@ -110,6 +121,90 @@ async def build_llm_answer(
         'answer': full_answer,
         'reason': 'Respuesta generada por LLM local con chunks activos como contexto.',
         'handoff': {'required': False, 'reason': None},
+        'llm_used': True,
+        'llm_model': model,
+    }
+
+
+async def build_conversational_llm_answer(
+    question: str,
+    matches: list[RetrievalMatch],
+    *,
+    ctx: ConversationContext,
+    history: str,
+    base_url: str,
+    model: str,
+    timeout_seconds: int = 30,
+    min_score: float = 0.12,
+    business_name: str = 'nuestro negocio',
+) -> dict[str, Any]:
+    """Multi-turn booking flow response via Ollama.
+
+    Returns the standard orchestrator decision dict, extended with:
+      next_stage, action, collected — for the orchestrator to persist in DB.
+    """
+    services_context = _build_context(matches, min_score=min_score)
+    system = build_system_prompt(ctx, services_context, business_name=business_name)
+
+    messages_payload: list[dict[str, str]] = [
+        {'role': 'system', 'content': system},
+    ]
+    if history:
+        messages_payload.append({'role': 'user', 'content': f'== HISTORIAL ==\n{history}'})
+        messages_payload.append({'role': 'assistant', 'content': 'Entendido, continúo.'})
+    messages_payload.append({'role': 'user', 'content': question})
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(
+                f'{base_url.rstrip("/")}/api/chat',
+                json={
+                    'model': model,
+                    'stream': False,
+                    'options': {'temperature': 0.3, 'num_predict': 500},
+                    'messages': messages_payload,
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+            raw_text: str = data.get('message', {}).get('content', '').strip()
+    except httpx.TimeoutException:
+        log.warning('llm_conv.timeout', model=model, base_url=base_url)
+        raise
+    except httpx.HTTPStatusError as exc:
+        log.warning('llm_conv.http_error', status=exc.response.status_code, model=model)
+        raise
+    except Exception:
+        log.exception('llm_conv.error', model=model)
+        raise
+
+    parsed = parse_llm_response(raw_text, ctx)
+    action = parsed.get('action')
+    message_text = parsed.get('message', '')
+
+    if action == 'request_human' or not message_text:
+        return {
+            'status': 'escalate_to_human',
+            'sufficient_context': False,
+            'answer': message_text or None,
+            'reason': 'LLM solicitó transferencia a agente humano.',
+            'handoff': {'required': True, 'reason': 'user_requested_human'},
+            'next_stage': parsed.get('next_stage', ctx.stage),
+            'action': action,
+            'collected': parsed.get('collected', ctx.collected),
+            'llm_used': True,
+            'llm_model': model,
+        }
+
+    return {
+        'status': 'answered',
+        'sufficient_context': True,
+        'answer': message_text,
+        'reason': 'Respuesta conversacional generada por LLM local.',
+        'handoff': {'required': False, 'reason': None},
+        'next_stage': parsed.get('next_stage', ctx.stage),
+        'action': action,
+        'collected': parsed.get('collected', ctx.collected),
         'llm_used': True,
         'llm_model': model,
     }

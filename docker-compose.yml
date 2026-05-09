@@ -128,42 +128,28 @@ services:
       - "4318:4318"
       - "8889:8889"
 
-  # ── LLM local (opcional) ─────────────────────────────────────────────────
-  # Activar con: docker compose --profile llm up
-  # Modelos se descargan la primera vez: docker compose --profile llm exec ollama ollama pull llama3.2:3b
-  # Apunta la API a este servicio con: LOCAL_LLM_BASE_URL=http://ollama:11434
+  # ── LLM local (Ollama) ────────────────────────────────────────────────────
+  # Ollama corre FUERA de este compose, en la máquina host o servidor con GPU.
+  # El compose le envía requests via LOCAL_LLM_BASE_URL en .env.
   #
-  # Limitaciones de concurrencia:
-  #   - Sin GPU (CPU only): ~20-60s por respuesta. Solo para desarrollo/pruebas.
-  #   - Con GPU (nvidia): ~1-3s por respuesta, 1 request a la vez en cola.
-  #   - Para producción con alto volumen: usar ANSWER_ENGINE=cascade + cloud LLM (TASK-0024).
+  # Instalar Ollama en el host:   https://ollama.com/download
+  # Descargar modelo:             ollama pull llama3.2:3b
+  # Iniciar el servidor:          ollama serve          (queda en :11434)
   #
-  # Para habilitar GPU NVIDIA agregar bajo 'ollama':
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
-  ollama:
-    image: ollama/ollama:latest
-    profiles: [llm]
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-models:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:11434/api/tags >/dev/null || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 8
-      start_period: 30s
+  # Para exponer Ollama al compose en Linux/Mac:
+  #   LOCAL_LLM_BASE_URL=http://host.docker.internal:11434
+  # Para Linux sin host.docker.internal:
+  #   LOCAL_LLM_BASE_URL=http://172.17.0.1:11434   (IP del gateway docker0)
+  #
+  # Requisitos mínimos por modelo:
+  #   llama3.2:3b  →  4 GB RAM (CPU) / 4 GB VRAM (GPU)  ~1-5s por respuesta
+  #   mistral:7b   →  8 GB RAM (CPU) / 6 GB VRAM (GPU)  ~2-8s por respuesta
+  #   phi3:mini    →  3 GB RAM (CPU)                     buena opción CPU-only
+  #
+  # Para producción con alto volumen: usar ANSWER_ENGINE=cascade + cloud LLM (TASK-0024)
 
 volumes:
   postgres-data:
   redis-data:
   minio-data:
   knowledge-files:
-  ollama-models:

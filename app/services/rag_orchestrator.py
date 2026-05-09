@@ -9,7 +9,13 @@ import structlog
 
 from app.core.config import get_settings
 from app.services.audit import audit
-from app.services.llm_answer import build_llm_answer
+from app.services.conversation_flow import (
+    ConversationContext,
+    format_history,
+    get_context,
+    has_booking_intent,
+)
+from app.services.llm_answer import build_conversational_llm_answer, build_llm_answer
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 
 if TYPE_CHECKING:
@@ -51,7 +57,7 @@ async def orchestrate_inbound_message(
     contact: asyncpg.Record,
     inbound_message: asyncpg.Record,
 ) -> dict[str, Any]:
-    """Decide whether to reply automatically via RAG or escalate to a human agent."""
+    """Decide whether to reply automatically via RAG/LLM or escalate to a human agent."""
 
     body_text: str = inbound_message['body_text'] or ''
     if inbound_message['message_type'] != 'text' or not body_text.strip():
@@ -64,14 +70,22 @@ async def orchestrate_inbound_message(
     if opt_in in ('revoked', 'suppressed'):
         return {'action': 'skipped', 'reason': f'contact_opt_in_{opt_in}'}
 
-    # Load tenant settings
+    # Load tenant settings and tenant display name
     settings_row = await conn.fetchrow(
-        'select escalation_policy, max_bot_turns from app.tenant_settings where tenant_id=$1',
+        """
+        select ts.escalation_policy, ts.max_bot_turns,
+               t.display_name as business_name, t.vertical_code
+        from app.tenant_settings ts
+        join app.tenants t on t.id = ts.tenant_id
+        where ts.tenant_id=$1
+        """,
         tenant_id,
     )
     max_bot_turns: int = (settings_row['max_bot_turns'] if settings_row else None) or 8
     raw_policy = (settings_row['escalation_policy'] if settings_row else None) or {}
     policy = _parse_escalation_policy(raw_policy)
+    business_name: str = (settings_row['business_name'] if settings_row else None) or 'nuestro negocio'
+    vertical_code: str = (settings_row['vertical_code'] if settings_row else None) or 'beauty'
 
     # Keyword trigger check
     body_lower = body_text.lower()
@@ -118,7 +132,7 @@ async def orchestrate_inbound_message(
     ):
         return {'action': 'skipped', 'reason': 'already_processed'}
 
-    # Retrieve active knowledge chunks and run RAG
+    # Retrieve active knowledge chunks and run RAG ranking
     rows = await conn.fetch(
         """
         select kc.id, kc.document_id,
@@ -137,6 +151,87 @@ async def orchestrate_inbound_message(
     matches = rank_chunks(body_text, chunks)
 
     settings = get_settings()
+    engine = settings.answer_engine
+
+    # ── Conversational booking flow ───────────────────────────────────────────
+    # Route to stateful LLM flow when the conversation is already in a booking
+    # stage or when the client expresses booking intent and the engine is capable
+    # of multi-turn responses (not pure template mode).
+    ctx = get_context(conversation.get('metadata'))
+    use_conversational = engine != 'template' and (
+        ctx.is_conversational or has_booking_intent(body_text)
+    )
+
+    if use_conversational:
+        history_rows = await conn.fetch(
+            """
+            select direction, body_text from app.messages
+            where conversation_id=$1
+              and id != $2
+              and body_text is not null
+              and body_text != ''
+            order by created_at asc
+            limit 16
+            """,
+            conversation['id'],
+            inbound_message['id'],
+        )
+        history = format_history([dict(r) for r in history_rows])
+
+        decision = await _resolve_conversational(
+            body_text, matches, ctx, history, settings, business_name=business_name,
+        )
+
+        # Always persist stage and collected data after a conversational turn
+        new_stage = decision.get('next_stage', ctx.stage)
+        new_collected = decision.get('collected', ctx.collected)
+        await _update_conversation_metadata(
+            conn, tenant_id, conversation, new_stage, new_collected,
+        )
+
+        action = decision.get('action')
+
+        if action == 'create_appointment':
+            await _handle_appointment_created(
+                conn,
+                tenant_id=tenant_id,
+                contact_id=contact['id'],
+                conversation=conversation,
+                inbound_message=inbound_message,
+                collected=new_collected,
+                vertical_code=vertical_code,
+            )
+
+        if action == 'request_human' or not decision['sufficient_context']:
+            return await _do_handoff(
+                conn,
+                tenant_id=tenant_id,
+                channel_id=channel_id,
+                conversation=conversation,
+                inbound_message=inbound_message,
+                policy=policy,
+                reason='user_requested_human' if action == 'request_human' else 'knowledge_context_insufficient',
+                reason_detail=decision.get('reason', ''),
+            )
+
+        return await _send_bot_reply(
+            conn,
+            tenant_id=tenant_id,
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            conversation=conversation,
+            inbound_message=inbound_message,
+            answer_text=decision['answer'],
+            matches=matches,
+            idempotency_key=idempotency_key,
+            top_score=matches[0].score if matches else None,
+            top_document=matches[0].document_title if matches else None,
+            llm_used=decision.get('llm_used', True),
+            llm_model=decision.get('llm_model'),
+            conv_stage=new_stage,
+        )
+
+    # ── Q&A cascade (template → LLM → handoff) ───────────────────────────────
     decision = await _resolve_answer(body_text, matches, settings)
 
     top_score = matches[0].score if matches else None
@@ -169,6 +264,38 @@ async def orchestrate_inbound_message(
         reason='knowledge_context_insufficient',
         reason_detail='no_active_evidence',
     )
+
+
+async def _resolve_conversational(
+    question: str,
+    matches: list,
+    ctx: ConversationContext,
+    history: str,
+    settings: Any,
+    *,
+    business_name: str,
+) -> dict[str, Any]:
+    """Call the conversational LLM with booking state; fall back to Q&A cascade on failure."""
+    try:
+        return await build_conversational_llm_answer(
+            question,
+            matches,
+            ctx=ctx,
+            history=history,
+            base_url=settings.local_llm_base_url,
+            model=settings.local_llm_model,
+            timeout_seconds=settings.local_llm_timeout_seconds,
+            min_score=settings.cascade_llm_min_score,
+            business_name=business_name,
+        )
+    except Exception:
+        log.warning(
+            'cascade.conversational_llm_unavailable',
+            base_url=settings.local_llm_base_url,
+            model=settings.local_llm_model,
+        )
+    # Ollama unavailable — fall through to Q&A cascade
+    return await _resolve_answer(question, matches, settings)
 
 
 async def _resolve_answer(
@@ -236,6 +363,125 @@ async def _resolve_answer(
     }
 
 
+async def _update_conversation_metadata(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    conversation: asyncpg.Record,
+    new_stage: str,
+    new_collected: dict[str, Any],
+) -> None:
+    """Merge conv_stage and collected into conversations.metadata jsonb."""
+    raw_meta = conversation.get('metadata') or {}
+    if isinstance(raw_meta, str):
+        try:
+            raw_meta = json.loads(raw_meta)
+        except (json.JSONDecodeError, TypeError):
+            raw_meta = {}
+    meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+    meta['conv_stage'] = new_stage
+    meta['collected'] = new_collected
+    await conn.execute(
+        """
+        update app.conversations
+        set metadata=$1::jsonb, updated_at=now()
+        where tenant_id=$2 and id=$3
+        """,
+        json.dumps(meta),
+        tenant_id,
+        conversation['id'],
+    )
+
+
+async def _handle_appointment_created(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    contact_id: UUID,
+    conversation: asyncpg.Record,
+    inbound_message: asyncpg.Record,
+    collected: dict[str, Any],
+    vertical_code: str,
+) -> None:
+    """Create a service_request from the bot-collected booking data.
+
+    Full appointment scheduling (resource assignment, calendar blocking) requires
+    human confirmation — the service_request lands in 'open' status for an agent
+    to qualify and schedule via the admin panel.
+    """
+    idempotency_key = f'service_request:{inbound_message["id"]}'
+    already_created = await conn.fetchval(
+        'select id from app.domain_events where tenant_id=$1 and idempotency_key=$2',
+        tenant_id, idempotency_key,
+    )
+    if already_created:
+        return
+
+    service_type = (
+        collected.get('service_type')
+        or collected.get('service_name')
+        or 'consulta'
+    )
+    problem_summary = (
+        collected.get('notes')
+        or f"Solicitud de {collected.get('service_name', service_type)}"
+    )
+
+    sr = await conn.fetchrow(
+        """
+        insert into app.service_requests (
+          tenant_id, contact_id, conversation_id,
+          vertical_code, service_type, problem_summary,
+          preferred_slot, status, intake
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, 'open', $8::jsonb)
+        returning id
+        """,
+        tenant_id,
+        contact_id,
+        conversation['id'],
+        vertical_code,
+        service_type,
+        problem_summary,
+        f"{collected.get('preferred_day', '')} {collected.get('preferred_time', '')}".strip() or None,
+        json.dumps(collected),
+    )
+
+    await conn.execute(
+        """
+        insert into app.domain_events (
+          tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload
+        )
+        values ($1, 'service_request', $2, 'service_request.created', $3, $4::jsonb)
+        on conflict (tenant_id, idempotency_key) do nothing
+        """,
+        tenant_id,
+        sr['id'],
+        idempotency_key,
+        json.dumps({'service_request_id': str(sr['id']), 'collected': collected}),
+    )
+
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type='bot',
+        actor_id='rag_orchestrator',
+        action='bot.appointment_requested',
+        entity_type='service_request',
+        entity_id=str(sr['id']),
+        metadata={
+            'collected': collected,
+            'inbound_message_id': str(inbound_message['id']),
+        },
+    )
+
+    log.info(
+        'rag_orchestrator.appointment_requested',
+        tenant_id=str(tenant_id),
+        service_request_id=str(sr['id']),
+        service_type=service_type,
+    )
+
+
 async def _send_bot_reply(
     conn: asyncpg.Connection,
     *,
@@ -251,6 +497,7 @@ async def _send_bot_reply(
     top_document: str | None,
     llm_used: bool = False,
     llm_model: str | None = None,
+    conv_stage: str | None = None,
 ) -> dict[str, Any]:
     trace_payload = {
         'rag_decision': 'answered',
@@ -261,6 +508,7 @@ async def _send_bot_reply(
         'top_document': top_document,
         'chunks_used': [retrieval_match_to_dict(m) for m in matches],
         'inbound_message_id': str(inbound_message['id']),
+        'conv_stage': conv_stage,
     }
     outbound = await conn.fetchrow(
         """
@@ -322,6 +570,7 @@ async def _send_bot_reply(
             'top_score': top_score,
             'top_document': top_document,
             'inbound_message_id': str(inbound_message['id']),
+            'conv_stage': conv_stage,
         },
     )
 
@@ -330,12 +579,14 @@ async def _send_bot_reply(
         tenant_id=str(tenant_id),
         conversation_id=str(conversation['id']),
         top_score=top_score,
+        conv_stage=conv_stage,
     )
     return {
         'action': 'bot_replied',
         'outbound_message_id': str(outbound['id']),
         'top_score': top_score,
         'top_document': top_document,
+        'conv_stage': conv_stage,
     }
 
 

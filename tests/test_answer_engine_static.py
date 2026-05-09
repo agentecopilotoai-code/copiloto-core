@@ -30,7 +30,8 @@ def test_config_exposes_local_llm_settings():
 
 def test_orchestrator_imports_llm_answer_service():
     source = ORCHESTRATOR.read_text()
-    assert 'from app.services.llm_answer import build_llm_answer' in source
+    assert 'from app.services.llm_answer import' in source
+    assert 'build_llm_answer' in source
 
 
 def test_orchestrator_routes_to_llm_when_engine_is_local_llm():

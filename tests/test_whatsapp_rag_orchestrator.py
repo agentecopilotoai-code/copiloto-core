@@ -46,7 +46,8 @@ def test_orchestrator_skips_suppressed_and_revoked_contacts():
 def test_orchestrator_reads_max_bot_turns_and_escalation_policy_from_tenant_settings():
     source = ORCHESTRATOR.read_text()
 
-    assert 'escalation_policy, max_bot_turns from app.tenant_settings' in source
+    assert 'escalation_policy' in source
+    assert 'tenant_settings' in source
     assert 'max_bot_turns' in source
     assert '_parse_escalation_policy' in source
 
