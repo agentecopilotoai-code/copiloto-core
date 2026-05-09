@@ -1486,3 +1486,68 @@ button.danger-action:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── MFA required overlay ──────────────────────────────────────────────── */
+.mfa-required-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 20, 40, 0.82);
+  z-index: 9999;
+  padding: 1rem;
+}
+
+.mfa-required-card {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 2.5rem 2rem;
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+
+.mfa-required-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.mfa-required-title {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 1rem;
+}
+
+.mfa-required-body {
+  font-size: 0.95rem;
+  color: var(--ink);
+  line-height: 1.5;
+  margin-bottom: 0.75rem;
+}
+
+.mfa-required-hint {
+  font-size: 0.85rem;
+  color: #6b7c93;
+  margin-bottom: 1.5rem;
+  line-height: 1.4;
+}
+
+.mfa-required-action {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.7rem 1.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.mfa-required-action:hover {
+  opacity: 0.85;
+}

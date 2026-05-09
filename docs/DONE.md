@@ -350,3 +350,27 @@ Cada entrada debe incluir:
   - `pytest -q`
   - `git diff --check`
 - **Notas:** la prueba RLS E2E queda marcada para ejecutarse explícitamente con `RUN_RLS_E2E=1` y `TEST_DATABASE_URL`/`DATABASE_URL` apuntando al rol aplicativo no propietario, por ejemplo `copiloto_app`; sin esas variables, la prueba se salta para no romper entornos unitarios sin PostgreSQL. El entorno actual no tenía `.env` ni una base PostgreSQL local activa, por lo que se validó la suite y su skip controlado, además de los tests de autenticación.
+
+### TASK-0016 — Enforzar MFA y roles privilegiados en Auth0/Admin Panel
+
+- **Fecha:** 2026-05-09
+- **Resumen:** se implementó la verificación de MFA para roles privilegiados (`admin`, `owner`, `platform_owner`) en tres capas:
+  1. **Core API (`app/core/security.py`)**: nueva función `_extract_mfa_verified` que lee el claim `amr` del JWT; el campo `request.state.mfa_verified` se rellena en `authenticate_request`; la dependencia `require_mfa_for_privileged` devuelve 403 si el usuario tiene rol privilegiado, Auth0 está activo y el token no evidencia MFA.
+  2. **Admin BFF (`app/admin/routes.py`)**: durante el callback OAuth el campo `amr` del `id_token` se lee para almacenar `mfa_verified` en el perfil de sesión; `_session_mfa_required` identifica sesiones que requieren MFA; el endpoint `/admin/api/session` incluye `mfa_required` en la respuesta; nuevo endpoint `/admin/api/mfa-status` expone estado detallado de MFA para diagnóstico.
+  3. **Admin Panel (`AdminLayout.jsx`)**: cuando `session.mfa_required === true` o el perfil tiene rol privilegiado con `mfa_verified === false`, se muestra un overlay bloqueante (sin acceso a módulos) que solicita cerrar sesión e iniciar nuevamente con MFA.
+  4. **Auth0 (`scripts/configure-auth0.sh`)**: el Action post-login ahora propaga el array `amr` al `id_token` y el claim `mfa_verified` a `id_token` y `access_token`; se agrega la variable `ENFORCE_MFA_ACTION` que, si es `true`, crea y enlaza un Action adicional (`copilotoia-mfa-challenge`) que desafía al usuario con OTP si tiene rol privilegiado pero no completó MFA; se documenta el procedimiento manual para configurar la política en el Dashboard Auth0.
+- **Archivos modificados:**
+  - `app/core/security.py`
+  - `app/admin/routes.py`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/styles/global.css`
+  - `scripts/configure-auth0.sh`
+  - `tests/test_mfa_enforcement.py` (nuevo)
+  - `docs/BACKLOG.md`
+  - `docs/DONE.md`
+- **Validaciones:**
+  - `python3 -m compileall app/core/security.py app/admin/routes.py tests/test_mfa_enforcement.py` → OK
+  - `bash -n scripts/configure-auth0.sh` → OK
+  - Lógica de `_extract_mfa_verified` y `_session_mfa_required` validada con assertions inline (sin pytest en el entorno)
+  - `uv run pytest tests/test_mfa_enforcement.py` (bloqueado por fallo de descarga desde PyPI en el entorno)
+- **Notas:** en modo local HS256 (sin `AUTH0_DOMAIN`), `require_mfa_for_privileged` no bloquea para permitir desarrollo sin Auth0. El bloqueo de UI es inmediato al cargar el panel si la sesión carece de MFA; el único camino es cerrar sesión y reiniciar con MFA habilitado en Auth0.

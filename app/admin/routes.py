@@ -36,6 +36,7 @@ SESSION_TTL_SECONDS = 8 * 60 * 60
 router = APIRouter()
 _sessions: dict[str, dict[str, Any]] = {}
 _ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
+_PRIVILEGED_ROLES = {'admin', 'owner', 'platform_owner'}
 
 
 def _b64url(data: bytes) -> str:
@@ -330,6 +331,13 @@ async def admin_callback(
         id_token_claims = json.loads(base64.urlsafe_b64decode(payload_segment + padding))
 
     claims = {**id_token_claims, **userinfo}
+
+    # Auth0 sets amr=['mfa'] in the id_token when a second factor was used.
+    amr = id_token_claims.get('amr') or claims.get('amr') or []
+    if isinstance(amr, str):
+        amr = [amr]
+    mfa_verified = 'mfa' in amr
+
     session_id = secrets.token_urlsafe(32)
     _sessions[session_id] = {
         'expires_at': time.time() + SESSION_TTL_SECONDS,
@@ -345,6 +353,7 @@ async def admin_callback(
             'roles': _namespaced_claim(claims, 'roles', []),
             'permissions': _namespaced_claim(claims, 'permissions', []),
             'support_mode': _namespaced_claim(claims, 'support_mode', False),
+            'mfa_verified': mfa_verified,
         },
     }
     response = RedirectResponse('/admin/')
@@ -377,16 +386,27 @@ async def admin_logout(request: Request) -> RedirectResponse:
     return response
 
 
+def _session_mfa_required(session: dict[str, Any]) -> bool:
+    """Return True if the session has a privileged role but MFA was not completed."""
+    profile = session.get('profile') or {}
+    roles = set(profile.get('roles') or [])
+    if not roles.intersection(_PRIVILEGED_ROLES):
+        return False
+    return not profile.get('mfa_verified', False)
+
+
 @router.get('/admin/api/session')
 async def admin_session(request: Request) -> Response:
     session = _active_session(request)
     if not session:
         return Response(status_code=401)
+    profile = session['profile']
     return Response(
         json.dumps(
             {
                 'authenticated': True,
-                'profile': session['profile'],
+                'profile': profile,
+                'mfa_required': _session_mfa_required(session),
                 'api': {
                     'baseUrl': '/admin/api/core/v1',
                     'audience': get_admin_settings().auth0_audience,
@@ -399,6 +419,28 @@ async def admin_session(request: Request) -> Response:
                     {'id': 'operations-desk', 'label': 'Operations Desk'},
                     {'id': 'audit', 'label': 'Audit'},
                 ],
+            }
+        ),
+        media_type='application/json',
+    )
+
+
+@router.get('/admin/api/mfa-status')
+async def admin_mfa_status(request: Request) -> Response:
+    session = _active_session(request)
+    if not session:
+        return Response(status_code=401)
+    profile = session.get('profile') or {}
+    roles = set(profile.get('roles') or [])
+    is_privileged = bool(roles.intersection(_PRIVILEGED_ROLES))
+    mfa_verified = profile.get('mfa_verified', False)
+    return Response(
+        json.dumps(
+            {
+                'mfa_verified': mfa_verified,
+                'is_privileged': is_privileged,
+                'mfa_required': is_privileged and not mfa_verified,
+                'privileged_roles': sorted(roles.intersection(_PRIVILEGED_ROLES)),
             }
         ),
         media_type='application/json',

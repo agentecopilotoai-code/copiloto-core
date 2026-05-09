@@ -14,8 +14,40 @@ import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
 import { Sidebar } from './Sidebar.jsx';
 import { Topbar } from './Topbar.jsx';
 
+const PRIVILEGED_ROLES = new Set(['admin', 'owner', 'platform_owner']);
+
 function isSystemOwner(profile) {
   return Boolean(profile?.support_mode && profile?.roles?.includes('owner'));
+}
+
+function isPrivilegedProfile(profile) {
+  return (profile?.roles || []).some((r) => PRIVILEGED_ROLES.has(r));
+}
+
+function MfaRequiredBanner() {
+  return (
+    <div className="mfa-required-overlay">
+      <div className="mfa-required-card">
+        <div className="mfa-required-icon" aria-hidden="true">🔐</div>
+        <h2 className="mfa-required-title">Verificacion en dos pasos requerida</h2>
+        <p className="mfa-required-body">
+          Tu sesion tiene acceso privilegiado (<strong>admin</strong> /{' '}
+          <strong>owner</strong>) pero no se completo la autenticacion de segundo
+          factor (MFA). Por seguridad, debes iniciar sesion nuevamente con MFA
+          habilitado en Auth0.
+        </p>
+        <p className="mfa-required-hint">
+          Si ya tienes MFA configurado en tu cuenta, cierra sesion y vuelve a
+          iniciarla para que Auth0 solicite el segundo factor.
+        </p>
+        <form method="post" action="/admin/logout">
+          <button className="mfa-required-action" type="submit">
+            Cerrar sesion e iniciar con MFA
+          </button>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 function NoTenantOnboarding({ onCreateTenant }) {
@@ -37,6 +69,12 @@ function NoTenantOnboarding({ onCreateTenant }) {
 export function AdminLayout({ session }) {
   const { activeModule, activeModuleId, modules, selectModule } = useActiveModule();
   const profile = session.profile;
+
+  // Block privileged sessions that completed login without MFA.
+  const mfaRequired =
+    session.mfa_required === true ||
+    (isPrivilegedProfile(profile) && profile?.mfa_verified === false);
+
   const initialTenantOptions = useTenantOptions(profile);
   const [tenantOptions, setTenantOptions] = useState(initialTenantOptions);
   const [activeTenantId, setActiveTenantId] = useState(initialTenantOptions[0]?.id);
@@ -87,6 +125,10 @@ export function AdminLayout({ session }) {
 
   function openTenantCreation() {
     selectModule('tenant-setup');
+  }
+
+  if (mfaRequired) {
+    return <MfaRequiredBanner />;
   }
 
   let activeContent;
