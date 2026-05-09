@@ -56,11 +56,15 @@ class Settings(BaseSettings):
     rag_embedding_dimensions: int = 1536
     rag_chunk_max_tokens: int = 500
     rag_chunk_overlap_tokens: int = 80
-    # Answer engine: 'template' (rule-based) or 'local_llm' (Ollama)
-    answer_engine: str = Field(default='template', pattern='^(template|local_llm)$')
+    # Answer engine: 'template' | 'local_llm' | 'cascade'
+    # cascade: intenta template primero, si no alcanza umbral pasa a LLM local, sino handoff
+    answer_engine: str = Field(default='template', pattern='^(template|local_llm|cascade)$')
     local_llm_base_url: str = 'http://localhost:11434'
     local_llm_model: str = 'llama3.2:3b'
     local_llm_timeout_seconds: int = 30
+    # Umbrales para modo cascade
+    cascade_template_min_score: float = 0.55   # template responde solo si está muy seguro
+    cascade_llm_min_score: float = 0.12        # LLM intenta si hay al menos un chunk relevante
 
     @property
     def knowledge_storage_bucket(self) -> str:

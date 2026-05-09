@@ -137,16 +137,7 @@ async def orchestrate_inbound_message(
     matches = rank_chunks(body_text, chunks)
 
     settings = get_settings()
-    if settings.answer_engine == 'local_llm' and matches:
-        decision = await build_llm_answer(
-            body_text,
-            matches,
-            base_url=settings.local_llm_base_url,
-            model=settings.local_llm_model,
-            timeout_seconds=settings.local_llm_timeout_seconds,
-        )
-    else:
-        decision = build_grounded_answer(body_text, matches)
+    decision = await _resolve_answer(body_text, matches, settings)
 
     top_score = matches[0].score if matches else None
     top_document = matches[0].document_title if matches else None
@@ -178,6 +169,71 @@ async def orchestrate_inbound_message(
         reason='knowledge_context_insufficient',
         reason_detail='no_active_evidence',
     )
+
+
+async def _resolve_answer(
+    question: str,
+    matches: list,
+    settings: Any,
+) -> dict[str, Any]:
+    """
+    Cascade strategy:
+      1. Template con umbral alto → respuesta gratis e instantánea.
+      2. LLM local (Ollama) con umbral bajo → interpreta frases ambiguas.
+      3. Si Ollama no está disponible → devuelve insufficient para que el
+         caller haga handoff. Nunca lanza excepción.
+    """
+    engine = settings.answer_engine
+
+    if engine == 'template':
+        return build_grounded_answer(question, matches)
+
+    if engine == 'local_llm':
+        if not matches:
+            return build_grounded_answer(question, matches)
+        return await build_llm_answer(
+            question, matches,
+            base_url=settings.local_llm_base_url,
+            model=settings.local_llm_model,
+            timeout_seconds=settings.local_llm_timeout_seconds,
+        )
+
+    # cascade: template → llm → handoff
+    template_decision = build_grounded_answer(
+        question, matches, min_score=settings.cascade_template_min_score
+    )
+    if template_decision['sufficient_context']:
+        log.debug('cascade.template_answered', top_score=matches[0].score if matches else None)
+        return template_decision
+
+    llm_candidates = [m for m in matches if m.score >= settings.cascade_llm_min_score]
+    if llm_candidates:
+        try:
+            llm_decision = await build_llm_answer(
+                question, llm_candidates,
+                base_url=settings.local_llm_base_url,
+                model=settings.local_llm_model,
+                timeout_seconds=settings.local_llm_timeout_seconds,
+                min_score=settings.cascade_llm_min_score,
+            )
+            if llm_decision['sufficient_context']:
+                log.debug('cascade.llm_answered', model=settings.local_llm_model)
+                return llm_decision
+        except Exception:
+            log.warning(
+                'cascade.llm_unavailable',
+                base_url=settings.local_llm_base_url,
+                model=settings.local_llm_model,
+            )
+
+    log.debug('cascade.exhausted_to_handoff', question=question[:80])
+    return {
+        'status': 'escalate_to_human',
+        'sufficient_context': False,
+        'answer': None,
+        'reason': 'Cascade agotado: template sin confianza suficiente y LLM no disponible o sin contexto.',
+        'handoff': {'required': True, 'reason': 'cascade_exhausted'},
+    }
 
 
 async def _send_bot_reply(

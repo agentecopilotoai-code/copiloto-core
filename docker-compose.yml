@@ -128,8 +128,42 @@ services:
       - "4318:4318"
       - "8889:8889"
 
+  # ── LLM local (opcional) ─────────────────────────────────────────────────
+  # Activar con: docker compose --profile llm up
+  # Modelos se descargan la primera vez: docker compose --profile llm exec ollama ollama pull llama3.2:3b
+  # Apunta la API a este servicio con: LOCAL_LLM_BASE_URL=http://ollama:11434
+  #
+  # Limitaciones de concurrencia:
+  #   - Sin GPU (CPU only): ~20-60s por respuesta. Solo para desarrollo/pruebas.
+  #   - Con GPU (nvidia): ~1-3s por respuesta, 1 request a la vez en cola.
+  #   - Para producción con alto volumen: usar ANSWER_ENGINE=cascade + cloud LLM (TASK-0024).
+  #
+  # Para habilitar GPU NVIDIA agregar bajo 'ollama':
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [llm]
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:11434/api/tags >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
 volumes:
   postgres-data:
   redis-data:
   minio-data:
   knowledge-files:
+  ollama-models:

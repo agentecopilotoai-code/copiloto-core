@@ -13,7 +13,9 @@ def test_config_exposes_answer_engine_flag():
     source = CONFIG.read_text()
     assert "answer_engine: str" in source
     assert "'template'" in source
-    assert "'^(template|local_llm)$'" in source
+    assert "'^(template|local_llm|cascade)$'" in source
+    assert 'cascade_template_min_score' in source
+    assert 'cascade_llm_min_score' in source
 
 
 def test_config_exposes_local_llm_settings():
@@ -33,7 +35,7 @@ def test_orchestrator_imports_llm_answer_service():
 
 def test_orchestrator_routes_to_llm_when_engine_is_local_llm():
     source = ORCHESTRATOR.read_text()
-    assert "settings.answer_engine == 'local_llm'" in source
+    assert "engine == 'local_llm'" in source
     assert 'await build_llm_answer(' in source
     assert 'settings.local_llm_base_url' in source
     assert 'settings.local_llm_model' in source
@@ -42,7 +44,24 @@ def test_orchestrator_routes_to_llm_when_engine_is_local_llm():
 
 def test_orchestrator_falls_back_to_template_when_engine_is_template():
     source = ORCHESTRATOR.read_text()
-    assert 'build_grounded_answer(body_text, matches)' in source
+    assert "engine == 'template'" in source
+    assert 'build_grounded_answer(question, matches)' in source
+
+
+def test_orchestrator_cascade_tries_template_then_llm_then_handoff():
+    source = ORCHESTRATOR.read_text()
+    assert 'async def _resolve_answer' in source
+    assert 'cascade_template_min_score' in source
+    assert 'cascade_llm_min_score' in source
+    assert 'cascade.llm_unavailable' in source
+    assert 'cascade_exhausted' in source
+    assert 'cascade.exhausted_to_handoff' in source
+
+
+def test_orchestrator_cascade_llm_failure_does_not_raise():
+    source = ORCHESTRATOR.read_text()
+    assert 'except Exception:' in source
+    assert 'log.warning(' in source
 
 
 def test_orchestrator_traces_answer_engine_and_llm_model_in_payload():
