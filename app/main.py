@@ -11,8 +11,8 @@ from app.db.pool import db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    configure_logging()
     settings = get_settings()
+    configure_logging(settings.log_level)
     await db.connect(settings.database_url)
     yield
     await db.close()

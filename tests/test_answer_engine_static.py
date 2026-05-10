@@ -61,7 +61,7 @@ def test_orchestrator_cascade_tries_template_then_llm_then_handoff():
 
 def test_orchestrator_cascade_llm_failure_does_not_raise():
     source = ORCHESTRATOR.read_text()
-    assert 'except Exception:' in source
+    assert 'except Exception' in source
     assert 'log.warning(' in source
 
 

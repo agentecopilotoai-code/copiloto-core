@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     app_name: str = 'CopilotoIA Core'
     api_host: str = '0.0.0.0'
     api_port: int = 8000
+    log_level: str = Field(default='INFO', pattern='^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$')
     database_url: str
     redis_url: str = 'redis://redis:6379/0'
     jwt_issuer: str = 'copilotoia-local'

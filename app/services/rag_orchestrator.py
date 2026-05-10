@@ -102,6 +102,14 @@ async def orchestrate_inbound_message(
                 tenant_id,
                 conversation['id'],
             )
+            log.info(
+                'orchestrator.waiting_agent_check',
+                conversation_id=conversation_id,
+                handoff_age_hours=round(float(handoff_age_hours), 3) if handoff_age_hours is not None else None,
+                reopen_after_hours=reopen_hours,
+                will_reopen=handoff_age_hours is not None and handoff_age_hours >= reopen_hours,
+                no_open_handoff=handoff_age_hours is None,
+            )
             if handoff_age_hours is not None and handoff_age_hours >= reopen_hours:
                 log.warning(
                     'orchestrator.handoff_timeout_reopen',
@@ -129,7 +137,16 @@ async def orchestrate_inbound_message(
                 )
                 should_skip = False
         if should_skip:
-            log.info('orchestrator.skip', reason='waiting_agent_handoff_pending', conversation_id=conversation_id)
+            log.info(
+                'orchestrator.skip',
+                reason='waiting_agent_handoff_pending',
+                conversation_id=conversation_id,
+                reopen_after_hours=reopen_hours,
+                hint=(
+                    'Para liberar manualmente: POST /v1/conversations/{id}/release con X-Service-Token. '
+                    f'Re-engagement automático en {reopen_hours}h si reopen_hours>0.'
+                ) if reopen_hours > 0 else 'BOT_REOPEN_AFTER_HOURS=0: re-engagement desactivado.',
+            )
             return {'action': 'skipped', 'reason': 'waiting_agent_handoff_pending'}
 
     opt_in = contact.get('opt_in_status') or 'unknown'
@@ -530,11 +547,26 @@ async def _resolve_answer(
     template_decision = build_grounded_answer(
         question, matches, min_score=settings.cascade_template_min_score
     )
+    top_score = matches[0].score if matches else None
+    log.info(
+        'cascade.template_attempt',
+        top_score=round(top_score, 4) if top_score is not None else None,
+        threshold=settings.cascade_template_min_score,
+        answered=template_decision['sufficient_context'],
+        total_chunks=len(matches),
+    )
     if template_decision['sufficient_context']:
-        log.debug('cascade.template_answered', top_score=matches[0].score if matches else None)
+        log.info('cascade.template_answered', top_score=top_score)
         return template_decision
 
     llm_candidates = [m for m in matches if m.score >= settings.cascade_llm_min_score]
+    log.info(
+        'cascade.llm_attempt',
+        llm_candidates=len(llm_candidates),
+        llm_threshold=settings.cascade_llm_min_score,
+        base_url=settings.local_llm_base_url,
+        model=settings.local_llm_model,
+    )
     if llm_candidates:
         try:
             llm_decision = await build_llm_answer(
@@ -544,17 +576,36 @@ async def _resolve_answer(
                 timeout_seconds=settings.local_llm_timeout_seconds,
                 min_score=settings.cascade_llm_min_score,
             )
+            log.info(
+                'cascade.llm_result',
+                model=settings.local_llm_model,
+                answered=llm_decision['sufficient_context'],
+                status=llm_decision.get('status'),
+            )
             if llm_decision['sufficient_context']:
-                log.debug('cascade.llm_answered', model=settings.local_llm_model)
                 return llm_decision
-        except Exception:
+        except Exception as exc:
             log.warning(
                 'cascade.llm_unavailable',
                 base_url=settings.local_llm_base_url,
                 model=settings.local_llm_model,
+                error=str(exc),
+                hint=(
+                    'Verifica que Ollama esté corriendo en el HOST. '
+                    'Mac/Windows: http://host.docker.internal:11434 '
+                    'Linux: http://172.17.0.1:11434'
+                ),
             )
+    else:
+        log.info(
+            'cascade.llm_skipped',
+            reason='no_chunks_above_threshold',
+            llm_threshold=settings.cascade_llm_min_score,
+            total_chunks=len(matches),
+            top_score=round(top_score, 4) if top_score is not None else None,
+        )
 
-    log.debug('cascade.exhausted_to_handoff', question=question[:80])
+    log.info('cascade.exhausted_to_handoff', question=question[:80], top_score=top_score)
     return {
         'status': 'escalate_to_human',
         'sufficient_context': False,
@@ -802,6 +853,13 @@ async def _do_handoff(
     reason: str,
     reason_detail: str,
 ) -> dict[str, Any]:
+    log.info(
+        'orchestrator.handoff_triggered',
+        conversation_id=str(conversation['id']),
+        reason=reason,
+        reason_detail=reason_detail,
+        has_handoff_message=bool((policy.get('handoff_message') or '').strip()),
+    )
     await conn.execute(
         """
         update app.conversations
