@@ -41,7 +41,7 @@ from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
-from app.services.knowledge_storage import is_binary_extractable, store_knowledge_file
+from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
 from app.services.rag_indexing import build_indexing_result, vector_literal
 from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
@@ -2681,11 +2681,41 @@ async def delete_knowledge_document(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    result = await conn.execute(
+
+    # Fetch storage metadata before deleting so we can remove the physical file
+    doc = await conn.fetchrow(
+        'select source_uri, metadata from app.knowledge_documents where tenant_id=$1 and id=$2',
+        tenant_id, document_id,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail='Knowledge document not found')
+
+    # Delete from DB — knowledge_chunks cascade automatically via FK on delete cascade
+    await conn.execute(
         'delete from app.knowledge_documents where tenant_id=$1 and id=$2', tenant_id, document_id
     )
-    if result == 'DELETE 0':
-        raise HTTPException(status_code=404, detail='Knowledge document not found')
+
+    # Delete physical file from local disk or S3
+    storage_meta = _coerce_jsonb(doc['metadata']) or {}
+    settings = get_settings()
+    storage_config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    storage_secret = (
+        resolve_secret_ref(storage_config.get('secret_ref'))
+        if storage_config.get('backend') == 's3' and storage_config.get('secret_ref')
+        else None
+    )
+    delete_knowledge_file(
+        source_uri=doc['source_uri'] or '',
+        storage_backend=storage_meta.get('storage_backend') or storage_config.get('backend') or settings.knowledge_storage_backend,
+        object_key=storage_meta.get('storage_key'),
+        bucket=storage_meta.get('storage_bucket') or storage_config.get('bucket'),
+        settings=settings,
+        endpoint_url=storage_config.get('endpoint_url'),
+        access_key_id=storage_config.get('access_key_id'),
+        secret_access_key=storage_secret,
+        region_name=storage_config.get('region'),
+    )
+
     await audit(
         conn,
         tenant_id=tenant_id,
@@ -2694,6 +2724,10 @@ async def delete_knowledge_document(
         action='knowledge_document.deleted',
         entity_type='knowledge_document',
         entity_id=str(document_id),
+        metadata={
+            'storage_backend': storage_meta.get('storage_backend'),
+            'storage_key': storage_meta.get('storage_key'),
+        },
     )
     return Response(status_code=204)
 

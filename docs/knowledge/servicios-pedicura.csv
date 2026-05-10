@@ -1,0 +1,5 @@
+categoria,procedimiento,descripcion,precio_cop,duracion_minutos,requiere_diagnostico,notas
+Pedicura,Pedicure tradicional,"Limpieza, limado, cuidado básico de cutícula y esmaltado",38000,45,no,"No incluye procedimientos podológicos ni tratamientos médicos"
+Pedicura,Pedicure semipermanente,"Pedicure completo con esmaltado semipermanente UV",58000,60,no,"Incluye un color; diseños tienen costo adicional"
+Pedicura,Pedicure spa,"Pedicure con baño de pies, exfoliación, masaje y esmaltado",65000,70,no,"Incluye mascarilla y masaje relajante de pies y pantorrillas"
+Pedicure,Retiro de semipermanente en pies,"Retiro seguro de esmalte semipermanente en pies",18000,20,no,"Gratis si se realiza nuevo semipermanente el mismo día"
