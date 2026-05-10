@@ -2965,26 +2965,46 @@ async def build_tenant_readiness_report(
     )
 
     escalation_policy = _coerce_jsonb(settings_dict.get('escalation_policy') or {}) or {}
+    if not isinstance(escalation_policy, dict):
+        escalation_policy = {}
     ep_triggers = escalation_policy.get('triggers') or {}
-    handoff_ready = bool(
-        settings
-        and isinstance(escalation_policy, dict)
-        and escalation_policy
-        and (
-            escalation_policy.get('handoff_message')
-            or ep_triggers.get('keywords')
-            or ep_triggers.get('after_bot_turns')
-            # legacy fields kept for backwards compatibility
-            or escalation_policy.get('handoff_required') is True
-            or escalation_policy.get('risk_keywords')
-        )
+
+    _ep_is_legacy = bool(
+        escalation_policy.get('handoff_required') is True
+        or escalation_policy.get('risk_keywords')
     )
+    _ep_has_triggers = bool(
+        ep_triggers.get('keywords')
+        or ep_triggers.get('after_bot_turns')
+        or ep_triggers.get('confidence_below')
+    )
+    _ep_has_message = bool(escalation_policy.get('handoff_message'))
+
+    if not settings or not escalation_policy:
+        handoff_ready = False
+        handoff_reason = 'Política de escalamiento ausente. Configura la política en la pestaña Escalamiento del Tenant Setup.'
+    elif _ep_is_legacy:
+        handoff_ready = True
+        handoff_reason = 'Política de handoff configurada (formato legacy).'
+    elif escalation_policy.get('enabled') is False:
+        handoff_ready = False
+        handoff_reason = 'Política de escalamiento deshabilitada (enabled=false). Actívala en la pestaña Escalamiento del Tenant Setup.'
+    elif not escalation_policy.get('queue'):
+        handoff_ready = False
+        handoff_reason = 'Sin cola de escalamiento (queue vacía). Configura la cola en la pestaña Escalamiento del Tenant Setup.'
+    elif not _ep_has_triggers and not _ep_has_message:
+        handoff_ready = False
+        handoff_reason = 'Sin triggers ni mensaje de handoff. Configura keywords, after_bot_turns, confidence_below o handoff_message en la pestaña Escalamiento.'
+    else:
+        handoff_ready = True
+        handoff_reason = 'Política de handoff configurada.'
+
     checks.append(
         readiness_check(
             'handoff',
             'Handoff humano',
             handoff_ready,
-            'Política de handoff configurada.' if handoff_ready else 'Falta configurar una política de handoff/escalamiento humano.',
+            handoff_reason,
             {'escalation_policy': escalation_policy},
         )
     )

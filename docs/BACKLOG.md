@@ -25,18 +25,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0023 — Corregir readiness y UX de política de handoff/escalamiento humano
-
-- **Estado:** PENDING
-- **Objetivo:** asegurar que una política de escalamiento configurada desde el Tenant Setup sea reconocida por Go-live Readiness y que el usuario pueda corregirla desde la UI si falta algo.
-- **Alcance mínimo:**
-  - Normalizar `escalation_policy` en readiness aunque llegue como `jsonb`, string JSON o estructura parcial.
-  - Considerar válida una política con `enabled=true`, `queue`, `triggers.keywords`/`triggers.after_bot_turns`/`triggers.confidence_below` y `handoff_message`, además de formatos legacy como `handoff_required` o `risk_keywords`.
-  - Mostrar en Go-live Readiness el motivo exacto del fallo de handoff: política ausente, `enabled=false`, sin cola, sin triggers o sin mensaje de handoff.
-  - Agregar un acceso directo desde el check “Handoff humano” hacia la pestaña de escalamiento del Tenant Setup, o una acción rápida para guardar la política mínima recomendada.
-  - Cubrir con tests el payload reportado: `{"queue":"default-support","enabled":true,"priority":"normal","triggers":{"keywords":["humano","asesor","agente","reclamo"],"after_bot_turns":5,"confidence_below":0.55},"handoff_message":"Te conecto con una persona del equipo para ayudarte mejor."}` debe pasar readiness.
-- **Criterio de aceptación:** la política generada por el Tenant Setup actual pasa el check “Handoff humano”; si no pasa, el panel indica exactamente qué falta y permite corregirlo sin editar JSON ni tocar base de datos.
-
 ### TASK-0024 — Integrar LLM cloud (Claude API / OpenAI) como motor de respuesta
 
 - **Estado:** PENDING

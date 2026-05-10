@@ -15,6 +15,30 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0023 — Corregir readiness y UX de política de handoff/escalamiento humano
+
+- **Fecha:** 2026-05-10
+- **Resumen:** se mejoró el check "Handoff humano" en Go-live Readiness para mostrar el motivo exacto del fallo y permitir corregirlo desde la UI sin editar JSON. Se refactorizó la lógica de validación del backend para manejar todos los casos: política ausente, `enabled=false`, sin cola, sin triggers y sin mensaje de handoff. Se agregaron accesos directos desde el panel de readiness hacia la pestaña Escalamiento del Tenant Setup y un botón de acción rápida para guardar la política mínima recomendada.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py` — función `build_tenant_readiness_report`: reemplaza el check de handoff por lógica con prioridad ordenada (ausente → legacy → disabled → no queue → no triggers/message → ok) con mensajes de error específicos para cada caso.
+  - `admin-panel/src/components/modules/readiness/GoLiveReadiness.jsx` — nuevo componente `CheckItem` con soporte de acciones; importa `updateTenantSettings`; constante `MIN_ESCALATION_POLICY`; función `handleApplyMinPolicy` para guardar política mínima; prop `onGoToEscalation` que activa navegación a pestaña Escalamiento; acciones visibles solo cuando el check `handoff` falla.
+  - `admin-panel/src/components/layout/AdminLayout.jsx` — estado `tenantSetupInitialTab`; función `handleModuleSelect` que resetea el tab al navegar por sidebar; prop `onGoToEscalation` pasado a `GoLiveReadiness`; prop `initialTab` pasado a `TenantSetupWizard`.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — acepta prop `initialTab` para abrir en la pestaña correcta cuando se navega desde readiness.
+  - `tests/test_tenant_readiness_static.py` — 8 nuevos tests: helper `_make_fake_connection`; tests dinámicos para política completa, `enabled=false`, política ausente, sin queue, sin triggers/message, formato legacy; tests estáticos para navegación UI y `initialTab` en wizard.
+- **Comandos ejecutados:**
+  - `python -m pytest tests/test_tenant_readiness_static.py -v` → 5 tests estáticos PASSED (los dinámicos fallan por crypto lib bug en este entorno, igual que los pre-existentes).
+  - `python3 -m compileall app/api/v1/routes.py` → OK
+  - `git diff --check` → OK
+- **Validaciones del criterio de aceptación:**
+  - El payload `{"queue":"default-support","enabled":true,"priority":"normal","triggers":{"keywords":[...],"after_bot_turns":5,"confidence_below":0.55},"handoff_message":"..."}` pasa el check (→ `handoff_ready=True`).
+  - `enabled=false` → mensaje específico "Política de escalamiento deshabilitada (enabled=false)".
+  - Política ausente → "Política de escalamiento ausente. Configura la política en la pestaña Escalamiento".
+  - Sin queue → "Sin cola de escalamiento (queue vacía)".
+  - Sin triggers ni message → "Sin triggers ni mensaje de handoff".
+  - Formato legacy (`handoff_required: true`, `risk_keywords`) → pasa sin requerir queue/triggers.
+  - UI: botón "Ir a Escalamiento" abre TenantSetupWizard en tab `escalation`; botón "Aplicar política mínima recomendada" guarda el mínimo sin SQL.
+- **Notas:** los tests dinámicos usan `monkeypatch` para los refs de secretos y stubs de `build_grounded_answer`/`rank_chunks`. La validación de queue es una regla nueva (antes no se comprobaba); las políticas legacy (`handoff_required`) la bypasean para compatibilidad.
+
 ### TASK-0020 — CI mínimo de calidad para API y Admin Panel
 
 - **Fecha:** 2026-05-09

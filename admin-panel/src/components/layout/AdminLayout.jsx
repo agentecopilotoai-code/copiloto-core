@@ -74,6 +74,7 @@ function NoTenantOnboarding({ onCreateTenant }) {
 
 export function AdminLayout({ session }) {
   const { activeModule, activeModuleId, modules, selectModule } = useActiveModule();
+  const [tenantSetupInitialTab, setTenantSetupInitialTab] = useState(null);
   const profile = session.profile;
 
   // Show MFA warning only when the server explicitly signals it (Auth0 active +
@@ -129,7 +130,13 @@ export function AdminLayout({ session }) {
     setActiveTenantId(createdTenant.id);
   }
 
+  function handleModuleSelect(moduleId) {
+    if (moduleId === 'tenant-setup') setTenantSetupInitialTab(null);
+    selectModule(moduleId);
+  }
+
   function openTenantCreation() {
+    setTenantSetupInitialTab(null);
     selectModule('tenant-setup');
   }
 
@@ -137,6 +144,7 @@ export function AdminLayout({ session }) {
   if (activeModuleId === 'tenant-setup') {
     activeContent = (
       <TenantSetupWizard
+        initialTab={tenantSetupInitialTab}
         module={activeModule}
         onTenantCreated={handleTenantCreated}
         session={session}
@@ -154,7 +162,17 @@ export function AdminLayout({ session }) {
   } else if (activeModuleId === 'operations-desk') {
     activeContent = <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'go-live-readiness') {
-    activeContent = <GoLiveReadiness module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <GoLiveReadiness
+        module={activeModule}
+        onGoToEscalation={() => {
+          setTenantSetupInitialTab('escalation');
+          selectModule('tenant-setup');
+        }}
+        session={session}
+        tenant={activeTenant}
+      />
+    );
   } else if (activeModuleId === 'audit') {
     activeContent = <AuditPanel module={activeModule} session={session} tenant={activeTenant} />;
   } else {
@@ -172,7 +190,7 @@ export function AdminLayout({ session }) {
         activeTenantId={activeTenantId}
         canSwitchTenants={canSwitchTenants}
         modules={modules}
-        onModuleSelect={selectModule}
+        onModuleSelect={handleModuleSelect}
         onTenantChange={setActiveTenantId}
         tenantOptions={tenantOptions}
       />
