@@ -25,18 +25,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0022 — Activación operativa de tenant para go-live desde Admin Panel
-
-- **Estado:** PENDING
-- **Objetivo:** dar al owner/admin una forma explícita y auditada de pasar un tenant de `trial` a `active` cuando cumple los prerrequisitos, evitando que el readiness quede bloqueado con “Tenant activo” sin acción disponible.
-- **Alcance mínimo:**
-  - Exponer en la API una transición controlada de estado de tenant (`trial` → `active`, y rollback operativo `active` → `suspended` o equivalente seguro), validando roles privilegiados y tenant scope.
-  - Extender `TenantUpdate`/endpoint o crear endpoint dedicado para cambio de estado con razón obligatoria, auditoría y protección contra estados inválidos.
-  - Agregar controles en Tenant Setup o Go-live Readiness para mostrar el estado actual (`trial`, `active`, etc.) y permitir activar cuando el usuario tenga permisos.
-  - En Go-live Readiness, mostrar una acción accionable cuando falle `tenant_active`, en vez de solo mostrar “El tenant no existe, no está activo o fue eliminado.”
-  - Documentar diferencia entre tenant `status='active'` y canal WhatsApp `account_mode='live'`, porque ambos son necesarios pero no significan lo mismo.
-- **Criterio de aceptación:** un tenant como `tenant-odontologia` en `status='trial'` puede activarse desde el panel con auditoría; después de activar, el check “Tenant activo” pasa sin intervención SQL manual.
-
 ### TASK-0023 — Corregir readiness y UX de política de handoff/escalamiento humano
 
 - **Estado:** PENDING

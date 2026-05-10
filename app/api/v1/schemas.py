@@ -44,6 +44,11 @@ class ChannelCreate(BaseModel):
     account_mode: str = Field(default='mock', pattern='^(mock|live)$')
 
 
+class TenantStatusTransition(BaseModel):
+    status: str = Field(pattern='^(active|suspended|churned)$')
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class ChannelModeUpdate(BaseModel):
     account_mode: str = Field(pattern='^(mock|live)$')
     reason: str = Field(min_length=3, max_length=500)

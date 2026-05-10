@@ -32,6 +32,26 @@ Cada entrada debe incluir:
   - Pipeline bloquea merge si falla cualquiera de los pasos anteriores o el build Vite
 - **Notas:** `test_rls_multitenant_e2e.py` necesita una instancia PostgreSQL con datos de fixture; se ejecuta localmente con `docker-compose up` y `pytest -m requires_db`. Los demás 20 archivos de test corren en CI sin infraestructura adicional.
 
+### TASK-0022 — Activación operativa de tenant para go-live desde Admin Panel
+
+- **Fecha:** 2026-05-10
+- **Resumen:** se expuso en la API un endpoint dedicado de transición de estado de tenant y se actualizaron los dos componentes del Admin Panel que necesitaban acción concreta para el check `tenant_active`.
+- **Archivos modificados:**
+  - `app/api/v1/schemas.py` — nuevo schema `TenantStatusTransition` (campos `status` con patrón `active|suspended|churned` y `reason` obligatoria 3–500 chars)
+  - `app/api/v1/routes.py` — nuevo endpoint `PATCH /tenants/{tenant_id}/status` en `tenant_admin_router`; valida la transición contra `_VALID_STATUS_TRANSITIONS`, registra `tenant.status_changed` en `audit_logs` con `from_status`, `to_status` y `reason`
+  - `admin-panel/src/services/coreApi.js` — función `patchTenantStatus(session, tenantId, status, reason)`
+  - `admin-panel/src/components/modules/readiness/GoLiveReadiness.jsx` — panel "Activar tenant" condicional cuando el check `tenant_active` falla; muestra estado actual con badge, explica qué significa cada estado, solicita razón obligatoria antes de confirmar; llama `patchTenantStatus` y refresca el reporte
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — panel de estado en la pestaña Tenant cuando existe un tenant: badge del estado actual, texto explicativo y formulario de transición con select de estados permitidos y razón obligatoria; actualiza el badge en memoria tras guardar
+- **Transiciones permitidas:**
+  - `trial` → `active`, `suspended`, `churned`
+  - `active` → `suspended`, `churned`
+  - `suspended` → `active`, `churned`
+  - `churned` → ninguna
+- **Validaciones:**
+  - `pytest tests/test_tenant_readiness_static.py tests/test_tenant_access.py tests/test_audit.py` → 9/9 passed
+  - `pytest tests/ -m "not requires_db"` → 173 passed, 1 pre-existing failure en `test_security.py::test_auth0_rs256_token_sets_tenant_roles_and_support_mode` (no relacionada con esta tarea)
+- **Notas:** la diferencia entre `tenant.status='active'` y `channel.account_mode='live'` se documenta en el badge informativo del panel de readiness; ambos son requisitos independientes de go-live.
+
 ### TASK-0021 — Orquestar respuestas automáticas WhatsApp con RAG y handoff seguro
 
 - **Fecha:** 2026-05-09
