@@ -105,6 +105,15 @@ export function updateTenant(session, tenantId, payload) {
   });
 }
 
+export function patchTenantStatus(session, tenantId, status, reason) {
+  return request(`/tenants/${tenantId}/status`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: { status, reason },
+  });
+}
+
 export function getTenantSettings(session, tenantId) {
   return request(`/tenants/${tenantId}/settings`, { session, tenantId });
 }

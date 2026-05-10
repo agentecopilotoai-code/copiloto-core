@@ -35,6 +35,7 @@ from app.api.v1.schemas import (
     ServiceRequestCreate,
     ServiceRequestPatch,
     TenantCreate,
+    TenantStatusTransition,
     TenantUpdate,
 )
 from app.core.config import get_settings
@@ -679,6 +680,52 @@ async def patch_tenant(
         entity_id=str(tenant_id),
     )
     return record_to_dict(row)
+
+
+_VALID_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    'trial': {'active', 'suspended', 'churned'},
+    'active': {'suspended', 'churned'},
+    'suspended': {'active', 'churned'},
+    'churned': set(),
+}
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/status')
+async def patch_tenant_status(
+    tenant_id: UUID,
+    payload: TenantStatusTransition,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    current_status = row['status']
+    allowed = _VALID_STATUS_TRANSITIONS.get(current_status, set())
+    if payload.status not in allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Transición inválida: {current_status!r} → {payload.status!r}. "
+                   f"Transiciones permitidas desde '{current_status}': {sorted(allowed) or 'ninguna'}.",
+        )
+    updated = await conn.fetchrow(
+        'update app.tenants set status=$2, updated_at=now() where id=$1 and deleted_at is null returning *',
+        tenant_id,
+        payload.status,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant.status_changed',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+        metadata={'from_status': current_status, 'to_status': payload.status, 'reason': payload.reason},
+    )
+    return record_to_dict(updated)
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/settings')
