@@ -224,7 +224,7 @@ def test_rag_retrieval_answers_manicure_price_from_indexed_csv_chunk():
     assert decision['status'] == 'answered'
     assert decision['answer'] is not None
     assert 'Manicure' in decision['answer']
-    assert 'Fuente:' in decision['answer']
+    assert '_source_document' in decision
     assert decision['handoff']['required'] is False
 
 
