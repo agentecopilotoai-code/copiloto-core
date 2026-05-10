@@ -187,7 +187,22 @@ def _make_fake_connection(escalation_policy, account_mode='live', audit_count=1,
 
         async def fetch(self, query, *args):
             if 'from app.knowledge_chunks' in query:
-                return [type('R', (), {'score': 0.9, 'content': 'test'})()]
+                return [
+                    {
+                        'id': '00000000-0000-0000-0000-000000000001',
+                        'document_id': '00000000-0000-0000-0000-000000000002',
+                        'document_title': 'Test doc',
+                        'source_uri': None,
+                        'source_type': 'manual',
+                        'document_type': 'reference',
+                        'visibility': 'tenant',
+                        'chunk_index': 0,
+                        'section_path': None,
+                        'chunk_text': 'horarios de atención lunes a viernes',
+                        'token_count': 10,
+                        'metadata': {},
+                    }
+                ]
             raise AssertionError(f'unexpected fetch: {query}')
 
         async def fetchval(self, query, *args):
