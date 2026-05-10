@@ -156,15 +156,18 @@ def build_grounded_answer(question: str, matches: list[RetrievalMatch], *, min_s
         }
 
     best = matches[0]
-    source_label = best.source_uri or best.document_title
-    excerpts = [chunk_excerpt(m.chunk_text) for m in matches if m.score >= min_score]
-    combined = '\n'.join(excerpts)
-    answer = f"{combined}\n\n_(Fuente: {source_label})_"
+    # Use only the highest-scoring chunk. Multiple chunks concatenated produce
+    # walls of text that look like document dumps on WhatsApp.
+    text = re.sub(r'\s+', ' ', best.chunk_text).strip()
+    if len(text) > 480:
+        text = text[:477].rstrip() + '…'
+
     return {
         'status': 'answered',
         'sufficient_context': True,
-        'answer': answer,
-        'reason': 'Respuesta generada únicamente con chunks activos recuperados.',
+        'answer': text,
+        '_source_document': best.source_uri or best.document_title,
+        'reason': 'Respuesta generada con el chunk más relevante de la base de conocimiento.',
         'handoff': {'required': False, 'reason': None},
     }
 

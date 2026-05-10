@@ -96,10 +96,9 @@ def test_llm_answer_escalates_when_ollama_says_no_information():
     assert 'escalate_to_human' in source
 
 
-def test_llm_answer_appends_source_to_response():
+def test_llm_answer_tracks_source_document():
     source = LLM_ANSWER.read_text()
-    assert 'source_label' in source
-    assert '_(Fuente:' in source
+    assert '_source_document' in source
 
 
 def test_llm_answer_handles_timeout_and_http_errors():
