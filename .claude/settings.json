@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker ps *)",
+      "Bash(docker logs *)",
+      "Bash(ruff check *)",
+      "Bash(pytest --collect-only *)",
+      "Bash(pip show *)",
+      "Bash(pip list *)",
+      "Bash(uv pip list *)",
+      "Bash(uv pip show *)",
+      "Bash(curl -s *)"
+    ]
+  }
+}
