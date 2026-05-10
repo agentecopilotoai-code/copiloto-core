@@ -3226,8 +3226,17 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     conversation = await conn.fetchrow(
                         """
                         update app.conversations
-                        set status=case when status='human_active' then status else 'waiting_agent' end,
-                            handoff_required=case when status='human_active' then handoff_required else true end
+                        set status=case
+                                when status='human_active' then 'human_active'
+                                when status='waiting_agent' and handoff_required then 'waiting_agent'
+                                else 'waiting_user'
+                            end,
+                            handoff_required=case
+                                when status='human_active' then handoff_required
+                                when status='waiting_agent' and handoff_required then true
+                                else false
+                            end,
+                            updated_at=now()
                         where tenant_id=$1 and id=$2
                         returning *
                         """,
@@ -3238,7 +3247,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     conversation = await conn.fetchrow(
                         """
                         insert into app.conversations (tenant_id, contact_id, channel_id, status, opened_by, handoff_required)
-                        values ($1, $2, $3, 'waiting_agent', 'user', true)
+                        values ($1, $2, $3, 'open', 'user', false)
                         returning *
                         """,
                         channel['tenant_id'],

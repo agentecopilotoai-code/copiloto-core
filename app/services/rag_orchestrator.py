@@ -90,52 +90,68 @@ async def orchestrate_inbound_message(
         settings_early = get_settings()
         reopen_hours = settings_early.bot_reopen_after_hours
         should_skip = True
-        if reopen_hours > 0:
-            handoff_age_hours = await conn.fetchval(
+        handoff_age_hours = await conn.fetchval(
+            """
+            select extract(epoch from (now() - created_at)) / 3600.0
+            from app.handoffs
+            where tenant_id=$1 and conversation_id=$2 and status='open'
+            order by created_at asc
+            limit 1
+            """,
+            tenant_id,
+            conversation['id'],
+        )
+        log.info(
+            'orchestrator.waiting_agent_check',
+            conversation_id=conversation_id,
+            handoff_age_hours=round(float(handoff_age_hours), 3) if handoff_age_hours is not None else None,
+            reopen_after_hours=reopen_hours,
+            will_reopen=handoff_age_hours is not None and (reopen_hours > 0 and handoff_age_hours >= reopen_hours),
+            no_open_handoff=handoff_age_hours is None,
+        )
+
+        if handoff_age_hours is None:
+            # No open handoff row exists — the conversation got into waiting_agent
+            # without a real pending handoff (inconsistent state). Reset and let
+            # the bot process the message normally.
+            log.warning(
+                'orchestrator.no_real_handoff_reset',
+                conversation_id=conversation_id,
+                detail='waiting_agent+handoff_required=true but no open handoff row found; resetting to open',
+            )
+            await conn.execute(
+                "update app.conversations set status='open', handoff_required=false, updated_at=now() where tenant_id=$1 and id=$2",
+                tenant_id,
+                conversation['id'],
+            )
+            should_skip = False
+        elif reopen_hours > 0 and handoff_age_hours >= reopen_hours:
+            log.warning(
+                'orchestrator.handoff_timeout_reopen',
+                conversation_id=str(conversation['id']),
+                handoff_age_hours=round(float(handoff_age_hours), 2),
+                reopen_after_hours=reopen_hours,
+            )
+            await conn.execute(
                 """
-                select extract(epoch from (now() - created_at)) / 3600.0
-                from app.handoffs
-                where tenant_id=$1 and conversation_id=$2 and status='open'
-                order by created_at asc
-                limit 1
+                update app.conversations
+                set status='waiting_user', handoff_required=false, updated_at=now()
+                where tenant_id=$1 and id=$2
                 """,
                 tenant_id,
                 conversation['id'],
             )
-            log.info(
-                'orchestrator.waiting_agent_check',
-                conversation_id=conversation_id,
-                handoff_age_hours=round(float(handoff_age_hours), 3) if handoff_age_hours is not None else None,
-                reopen_after_hours=reopen_hours,
-                will_reopen=handoff_age_hours is not None and handoff_age_hours >= reopen_hours,
-                no_open_handoff=handoff_age_hours is None,
+            await conn.execute(
+                """
+                update app.handoffs
+                set status='resolved', updated_at=now()
+                where tenant_id=$1 and conversation_id=$2 and status='open'
+                """,
+                tenant_id,
+                conversation['id'],
             )
-            if handoff_age_hours is not None and handoff_age_hours >= reopen_hours:
-                log.warning(
-                    'orchestrator.handoff_timeout_reopen',
-                    conversation_id=str(conversation['id']),
-                    handoff_age_hours=round(float(handoff_age_hours), 2),
-                    reopen_after_hours=reopen_hours,
-                )
-                await conn.execute(
-                    """
-                    update app.conversations
-                    set status='waiting_user', handoff_required=false, updated_at=now()
-                    where tenant_id=$1 and id=$2
-                    """,
-                    tenant_id,
-                    conversation['id'],
-                )
-                await conn.execute(
-                    """
-                    update app.handoffs
-                    set status='resolved', updated_at=now()
-                    where tenant_id=$1 and conversation_id=$2 and status='open'
-                    """,
-                    tenant_id,
-                    conversation['id'],
-                )
-                should_skip = False
+            should_skip = False
+
         if should_skip:
             log.info(
                 'orchestrator.skip',
