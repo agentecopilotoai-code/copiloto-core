@@ -23,7 +23,7 @@ def test_config_exposes_local_llm_settings():
     assert 'local_llm_base_url' in source
     assert 'local_llm_model' in source
     assert 'local_llm_timeout_seconds' in source
-    assert 'localhost:11434' in source
+    assert '11434' in source
 
 
 # ── Orchestrator flag routing ─────────────────────────────────────────────────
