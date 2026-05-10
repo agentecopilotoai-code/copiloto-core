@@ -111,14 +111,11 @@ async def build_llm_answer(
             'llm_model': model,
         }
 
-    best = matches[0]
-    source_label = best.source_uri or best.document_title
-    full_answer = f'{answer_text}\n\n_(Fuente: {source_label})_'
-
     return {
         'status': 'answered',
         'sufficient_context': True,
-        'answer': full_answer,
+        'answer': answer_text,
+        '_source_document': matches[0].source_uri or matches[0].document_title,
         'reason': 'Respuesta generada por LLM local con chunks activos como contexto.',
         'handoff': {'required': False, 'reason': None},
         'llm_used': True,

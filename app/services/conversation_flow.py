@@ -39,11 +39,34 @@ _STAGE_LABELS = {
     STAGE_BOOKED: 'Cita agendada',
 }
 
+# Follow-up question per stage when Ollama is unavailable and template answers
+_STAGE_FOLLOWUP = {
+    STAGE_START: '¿Te gustaría agendar una cita o tienes alguna otra pregunta? 😊',
+    STAGE_SERVICE_SELECTION: '¿Cuál de nuestros servicios te interesa?',
+    STAGE_AVAILABILITY: '¿Qué día y hora te viene mejor?',
+    STAGE_PRICE_NEGOTIATION: '¿Te gustaría que te agendemos con ese precio? 😊',
+    STAGE_DATA_COLLECTION: '¿Me puedes dar tu nombre completo y teléfono de contacto?',
+    STAGE_CONFIRMATION: '¿Confirmas que deseas agendar la cita?',
+    STAGE_BOOKED: '¿Hay algo más en que te pueda ayudar?',
+}
+
 _BOOKING_KEYWORDS = {
     'agendar', 'cita', 'reservar', 'turno', 'disponibilidad', 'horario',
     'cuando', 'cuándo', 'quiero', 'necesito', 'solicitar', 'pedir',
     'para cuando', 'me pueden', 'tienen espacio',
 }
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _safe_price_int(value: Any) -> int | None:
+    """Parse price that may arrive as int, float, or string like '$35.000 COP'."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    digits = re.sub(r'[^\d]', '', str(value))
+    return int(digits) if digits else None
+
 
 # ── Dataclass ─────────────────────────────────────────────────────────────────
 
@@ -65,7 +88,8 @@ class ConversationContext:
         c = self.collected
         lines = []
         if c.get('service_name'):
-            price = f" — ${int(c['service_price']):,} COP" if c.get('service_price') else ''
+            price_val = _safe_price_int(c.get('service_price'))
+            price = f" — ${price_val:,} COP" if price_val is not None else ''
             lines.append(f"  Servicio: {c['service_name']}{price}")
         if c.get('preferred_day') or c.get('preferred_time'):
             lines.append(f"  Horario: {c.get('preferred_day', '?')} {c.get('preferred_time', '')}".strip())
@@ -97,6 +121,11 @@ def get_context(conv_metadata: Any) -> ConversationContext:
 def has_booking_intent(text: str) -> bool:
     text_lower = text.lower()
     return any(kw in text_lower for kw in _BOOKING_KEYWORDS)
+
+
+def stage_followup_prompt(stage: str) -> str:
+    """Return a short follow-up question to keep the conversation flowing after a template answer."""
+    return _STAGE_FOLLOWUP.get(stage, '')
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -253,3 +282,4 @@ def _extract_json_block(text: str) -> str | None:
 def _extract_json_object(text: str) -> str | None:
     m = _JSON_OBJ_RE.search(text)
     return m.group(0) if m else None
+

@@ -15,6 +15,7 @@ from app.services.conversation_flow import (
     format_history,
     get_context,
     has_booking_intent,
+    stage_followup_prompt,
 )
 from app.services.llm_answer import build_conversational_llm_answer, build_llm_answer
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
@@ -528,8 +529,15 @@ async def _resolve_conversational(
                 'En Mac/Windows usa http://host.docker.internal:11434'
             ),
         )
-    # Ollama unavailable — fall through to Q&A cascade
-    return await _resolve_answer(question, matches, settings)
+    # Ollama unavailable — use template Q&A but append a stage-aware follow-up
+    # so the conversation doesn't feel like an abrupt document dump.
+    result = await _resolve_answer(question, matches, settings)
+    if result['sufficient_context']:
+        followup = stage_followup_prompt(ctx.stage)
+        if followup:
+            result = dict(result)
+            result['answer'] = f"{result['answer']}\n\n{followup}"
+    return result
 
 
 async def _resolve_answer(

@@ -60,7 +60,7 @@ def test_build_grounded_answer_uses_best_chunk_when_context_is_sufficient():
     assert answer['status'] == 'answered'
     assert answer['sufficient_context'] is True
     assert '30 días' in answer['answer']
-    assert 'Fuente:' in answer['answer']
+    assert '_source_document' in answer
     assert serialized_chunk['score'] == matches[0].score
     assert serialized_chunk['excerpt']
 
