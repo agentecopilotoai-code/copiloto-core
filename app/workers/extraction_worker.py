@@ -271,7 +271,7 @@ async def _audit(
 # ---------------------------------------------------------------------------
 
 async def main() -> None:
-    configure_logging()
+    configure_logging(get_settings().log_level)
     settings = get_settings()
     log.info('extraction_worker_starting', poll_interval=POLL_INTERVAL_SECONDS)
     conn = await asyncpg.connect(settings.database_url)

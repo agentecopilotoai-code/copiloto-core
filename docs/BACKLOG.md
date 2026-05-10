@@ -25,20 +25,6 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0021 — Orquestar respuestas automáticas WhatsApp con RAG y handoff seguro
-
-- **Estado:** PENDING
-- **Objetivo:** permitir que un cliente pregunte por WhatsApp, por ejemplo “¿qué precio tiene una manicure?”, y que CopilotoIA responda automáticamente con una respuesta clara basada solo en documentos activos/indexados; si no hay evidencia suficiente, debe escalar a un humano sin inventar información.
-- **Alcance mínimo:**
-  - Crear un orquestador inbound para mensajes WhatsApp de texto que, después de persistir el `inbound`, ejecute retrieval contra `knowledge_chunks` activos del tenant.
-  - Reutilizar la lógica de `rank_chunks`/`build_grounded_answer` o extraerla a un servicio compartido para evitar duplicar reglas entre `/intents/evaluate`, readiness y WhatsApp.
-  - Si `sufficient_context=true`, crear un mensaje `outbound` con `sender_actor_type='bot'`, encolar `domain_events.message.queued`, auditar la decisión y enviar por el worker existente.
-  - Si `sufficient_context=false`, dejar la conversación en `waiting_agent`/`handoff_required=true`, crear o actualizar un handoff abierto y, si existe `escalation_policy.handoff_message`, enviar un mensaje breve indicando que se conectará con una persona.
-  - Respetar límites operativos del tenant: `max_bot_turns`, conversación en `human_active`, keywords de humano/reclamo/agente, modo de canal `mock/live`, opt-in/contacto suprimido y deduplicación por `external_message_id`.
-  - Incluir trazabilidad en `messages.payload`/`audit_logs`: pregunta, chunks usados, top score, decisión `answered|handoff`, razón y documento fuente.
-  - Agregar pruebas integradas con payload Meta representativo: respuesta exitosa por precio de manicure desde CSV indexado, escalamiento por pregunta sin evidencia, duplicado sin doble respuesta y conversación en `human_active` sin intervención del bot.
-- **Criterio de aceptación:** al cargar e indexar un documento de precios, un mensaje real o simulado de WhatsApp “¿Qué precio tiene una manicure?” genera una respuesta outbound clara y trazable; si el conocimiento no contiene la respuesta, queda escalado a humano y visible en Operations Desk.
-
 ### TASK-0022 — Activación operativa de tenant para go-live desde Admin Panel
 
 - **Estado:** PENDING
@@ -62,3 +48,16 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
   - Agregar un acceso directo desde el check “Handoff humano” hacia la pestaña de escalamiento del Tenant Setup, o una acción rápida para guardar la política mínima recomendada.
   - Cubrir con tests el payload reportado: `{"queue":"default-support","enabled":true,"priority":"normal","triggers":{"keywords":["humano","asesor","agente","reclamo"],"after_bot_turns":5,"confidence_below":0.55},"handoff_message":"Te conecto con una persona del equipo para ayudarte mejor."}` debe pasar readiness.
 - **Criterio de aceptación:** la política generada por el Tenant Setup actual pasa el check “Handoff humano”; si no pasa, el panel indica exactamente qué falta y permite corregirlo sin editar JSON ni tocar base de datos.
+
+### TASK-0024 — Integrar LLM cloud (Claude API / OpenAI) como motor de respuesta
+
+- **Estado:** PENDING
+- **Objetivo:** añadir una tercera opción al flag `ANSWER_ENGINE` (`cloud_llm`) que use la API de Claude (Anthropic) o la de OpenAI para generar respuestas conversacionales, con prompt caching para reducir costos y latencia.
+- **Alcance mínimo:**
+  - Agregar `answer_engine=cloud_llm` en `app/core/config.py` con variables `cloud_llm_provider` (`claude`|`openai`), `cloud_llm_model`, `cloud_llm_api_key_ref` (ruta a secreto del tenant o global).
+  - Crear `app/services/cloud_llm_answer.py` con soporte para Anthropic SDK (`claude-sonnet-4-6` por defecto) y OpenAI SDK, reutilizando el mismo contrato de retorno que `llm_answer.py`.
+  - Implementar prompt caching de Anthropic para el bloque de contexto RAG (marca `cache_control: {“type”: “ephemeral”}`) y registrar el ahorro en `audit_logs`.
+  - Exponer métricas de tokens (input/output/cache_hit) en `messages.payload` para trazabilidad de costo.
+  - Permitir configurar el proveedor y modelo por tenant en `tenant_settings` (override sobre el valor global).
+  - Agregar tests estáticos y unitarios equivalentes a los de `llm_answer.py`.
+- **Criterio de aceptación:** con `ANSWER_ENGINE=cloud_llm` y `CLOUD_LLM_PROVIDER=claude`, un mensaje WhatsApp recibe una respuesta generada por Claude con cache hit visible en audit; los costos por token quedan registrados por tenant.

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     app_name: str = 'CopilotoIA Core'
     api_host: str = '0.0.0.0'
     api_port: int = 8000
+    log_level: str = Field(default='INFO', pattern='^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$')
     database_url: str
     redis_url: str = 'redis://redis:6379/0'
     jwt_issuer: str = 'copilotoia-local'
@@ -56,6 +57,18 @@ class Settings(BaseSettings):
     rag_embedding_dimensions: int = 1536
     rag_chunk_max_tokens: int = 500
     rag_chunk_overlap_tokens: int = 80
+    # Answer engine: 'template' | 'local_llm' | 'cascade'
+    # cascade: intenta template primero, si no alcanza umbral pasa a LLM local, sino handoff
+    answer_engine: str = Field(default='template', pattern='^(template|local_llm|cascade)$')
+    local_llm_base_url: str = 'http://host.docker.internal:11434'
+    local_llm_model: str = 'llama3.2:3b'
+    local_llm_timeout_seconds: int = 30
+    # Umbrales para modo cascade
+    cascade_template_min_score: float = 0.55   # template responde solo si está muy seguro
+    cascade_llm_min_score: float = 0.12        # LLM intenta si hay al menos un chunk relevante
+    # Tiempo en horas que puede estar un handoff abierto sin agente antes de
+    # que el bot retome la conversación automáticamente. 0 = desactivado.
+    bot_reopen_after_hours: float = 2.0
 
     @property
     def knowledge_storage_bucket(self) -> str:

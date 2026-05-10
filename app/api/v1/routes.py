@@ -43,6 +43,7 @@ from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.knowledge_storage import is_binary_extractable, store_knowledge_file
 from app.services.rag_indexing import build_indexing_result, vector_literal
+from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
     download_whatsapp_media,
@@ -483,7 +484,23 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
     )
     tenant_id = row['id']
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    await conn.execute('insert into app.tenant_settings (tenant_id) values ($1)', tenant_id)
+    default_escalation_policy = {
+        'handoff_message': 'En este momento te conecto con un asesor. En breve te atienden 😊',
+        'triggers': {
+            'keywords': ['humano', 'asesor', 'agente', 'persona', 'queja', 'reclamo'],
+            'after_bot_turns': 10,
+            'confidence_below': 0.0,
+        },
+    }
+    await conn.execute(
+        """
+        insert into app.tenant_settings (tenant_id, max_bot_turns, escalation_policy)
+        values ($1, $2, $3::jsonb)
+        """,
+        tenant_id,
+        10,
+        json.dumps(default_escalation_policy),
+    )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.created', entity_type='tenant', entity_id=str(tenant_id))
     return record_to_dict(row)
 
@@ -508,6 +525,7 @@ async def update_tenant_record(
             vertical_code=$5,
             country_code=$6,
             timezone=$7,
+            status=$8,
             updated_at=now()
         where id=$1 and deleted_at is null
         returning *
@@ -519,6 +537,7 @@ async def update_tenant_record(
         merged['vertical_code'],
         merged['country_code'],
         merged['timezone'],
+        merged['status'],
     )
     if not row:
         raise HTTPException(status_code=404, detail='Tenant not found')
@@ -674,6 +693,16 @@ async def get_tenant_settings(
     return record_to_dict(row)
 
 
+def _coerce_jsonb(value: Any) -> Any:
+    """Ensure a value that may arrive as a JSON string is returned as a Python dict/list."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return value
+
+
 @tenant_admin_router.patch('/tenants/{tenant_id}/settings')
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
@@ -684,6 +713,18 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         raise HTTPException(status_code=404, detail='Settings not found')
     merged = dict(current)
     merged.update(allowed)
+
+    # Normalize jsonb fields: accept both raw dicts and JSON strings from clients
+    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy'):
+        merged[jsonb_key] = _coerce_jsonb(merged[jsonb_key]) or {}
+
+    # Keep max_bot_turns in sync with escalation_policy.triggers.after_bot_turns
+    # so that both the UI field and the DB column always agree.
+    ep_triggers = merged['escalation_policy'].get('triggers') or {}
+    after_bot_turns = ep_triggers.get('after_bot_turns')
+    if isinstance(after_bot_turns, int) and after_bot_turns > 0:
+        merged['max_bot_turns'] = after_bot_turns
+
     row = await conn.fetchrow(
         """
         update app.tenant_settings
@@ -2842,15 +2883,19 @@ async def build_tenant_readiness_report(
         )
     )
 
-    escalation_policy = settings_dict.get('escalation_policy') or {}
+    escalation_policy = _coerce_jsonb(settings_dict.get('escalation_policy') or {}) or {}
+    ep_triggers = escalation_policy.get('triggers') or {}
     handoff_ready = bool(
         settings
         and isinstance(escalation_policy, dict)
         and escalation_policy
         and (
-            escalation_policy.get('handoff_required') is True
+            escalation_policy.get('handoff_message')
+            or ep_triggers.get('keywords')
+            or ep_triggers.get('after_bot_turns')
+            # legacy fields kept for backwards compatibility
+            or escalation_policy.get('handoff_required') is True
             or escalation_policy.get('risk_keywords')
-            or escalation_policy.get('handoff_message')
         )
     )
     checks.append(
@@ -3103,7 +3148,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
     await conn.execute("select set_config('app.support_mode', 'true', true)")
     channel = await conn.fetchrow(
         """
-        select id, tenant_id, app_secret_ref
+        select id, tenant_id, app_secret_ref, account_mode
         from app.tenant_channels
         where provider='whatsapp_cloud_api'
           and phone_number_id=$1
@@ -3181,8 +3226,17 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     conversation = await conn.fetchrow(
                         """
                         update app.conversations
-                        set status=case when status='human_active' then status else 'waiting_agent' end,
-                            handoff_required=case when status='human_active' then handoff_required else true end
+                        set status=case
+                                when status='human_active' then 'human_active'
+                                when status='waiting_agent' and handoff_required then 'waiting_agent'
+                                else 'waiting_user'
+                            end,
+                            handoff_required=case
+                                when status='human_active' then handoff_required
+                                when status='waiting_agent' and handoff_required then true
+                                else false
+                            end,
+                            updated_at=now()
                         where tenant_id=$1 and id=$2
                         returning *
                         """,
@@ -3193,7 +3247,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     conversation = await conn.fetchrow(
                         """
                         insert into app.conversations (tenant_id, contact_id, channel_id, status, opened_by, handoff_required)
-                        values ($1, $2, $3, 'waiting_agent', 'user', true)
+                        values ($1, $2, $3, 'open', 'user', false)
                         returning *
                         """,
                         channel['tenant_id'],
@@ -3249,6 +3303,22 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                         conversation_id=conversation['id'],
                         message_id=inbound_message['id'],
                     )
+                    try:
+                        await orchestrate_inbound_message(
+                            conn,
+                            tenant_id=channel['tenant_id'],
+                            channel_id=channel['id'],
+                            channel_account_mode=channel['account_mode'] or 'mock',
+                            conversation=conversation,
+                            contact=contact,
+                            inbound_message=inbound_message,
+                        )
+                    except Exception:
+                        log.exception(
+                            'rag_orchestrator.error',
+                            tenant_id=str(channel['tenant_id']),
+                            conversation_id=str(conversation['id']),
+                        )
     return {'accepted': True, 'payload_sha256': sha}
 
 

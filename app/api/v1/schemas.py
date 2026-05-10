@@ -21,6 +21,7 @@ class TenantUpdate(BaseModel):
     vertical_code: str | None = Field(default=None, pattern='^(field_service|beauty|pet_grooming)$')
     country_code: str | None = None
     timezone: str | None = None
+    status: str | None = Field(default=None, pattern='^(trial|active|suspended|churned)$')
 
 
 class KnowledgeStorageUpdate(BaseModel):

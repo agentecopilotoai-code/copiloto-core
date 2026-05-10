@@ -157,10 +157,9 @@ def build_grounded_answer(question: str, matches: list[RetrievalMatch], *, min_s
 
     best = matches[0]
     source_label = best.source_uri or best.document_title
-    answer = (
-        f"Con la evidencia disponible en \"{best.document_title}\", la respuesta sugerida es: "
-        f"{chunk_excerpt(best.chunk_text)} Fuente: {source_label}."
-    )
+    excerpts = [chunk_excerpt(m.chunk_text) for m in matches if m.score >= min_score]
+    combined = '\n'.join(excerpts)
+    answer = f"{combined}\n\n_(Fuente: {source_label})_"
     return {
         'status': 'answered',
         'sufficient_context': True,
