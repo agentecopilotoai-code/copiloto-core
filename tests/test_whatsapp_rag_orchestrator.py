@@ -178,27 +178,25 @@ def test_parse_escalation_policy_handles_invalid_string():
     assert _parse_escalation_policy([]) == {}
 
 
-def test_keyword_triggers_returns_defaults_when_policy_has_no_triggers():
-    from app.services.rag_orchestrator import _keyword_triggers, _DEFAULT_HUMAN_KEYWORDS
+def test_risk_keywords_trigger_handoff_via_policy_engine():
+    from app.services.policy_engine import evaluate_policy
 
-    result = _keyword_triggers({})
-    assert result == _DEFAULT_HUMAN_KEYWORDS
+    settings = {'max_bot_turns': 8, 'escalation_policy': {'risk_keywords': ['humano', 'asesor', 'agente', 'reclamo']}}
+    conv = {'bot_turn_count': 0, 'consecutive_no_context': 0, 'service_window_expires_at': None}
+
+    for kw in ['humano', 'asesor', 'agente', 'reclamo']:
+        result = evaluate_policy(settings, conv, f'quiero un {kw}', 'faq')
+        assert result.action == 'require_handoff', f'keyword {kw!r} debería disparar handoff'
 
 
-def test_keyword_triggers_returns_policy_keywords_when_configured():
-    from app.services.rag_orchestrator import _keyword_triggers
+def test_no_risk_keywords_continues_bot():
+    from app.services.policy_engine import evaluate_policy
 
-    policy = {
-        'triggers': {
-            'keywords': ['humano', 'asesor', 'agente', 'reclamo'],
-        }
-    }
-    result = _keyword_triggers(policy)
+    settings = {'max_bot_turns': 8, 'escalation_policy': {'risk_keywords': ['demanda']}}
+    conv = {'bot_turn_count': 0, 'consecutive_no_context': 0, 'service_window_expires_at': None}
 
-    assert 'humano' in result
-    assert 'asesor' in result
-    assert 'agente' in result
-    assert 'reclamo' in result
+    result = evaluate_policy(settings, conv, 'tengo una pregunta sobre precios', 'faq')
+    assert result.action == 'continue_bot'
 
 
 def test_rag_retrieval_answers_manicure_price_from_indexed_csv_chunk():
