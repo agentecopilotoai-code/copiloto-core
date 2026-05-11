@@ -37,39 +37,6 @@ Las tareas están ordenadas por dependencia: cada una construye sobre la anterio
 
 ## Stack de tareas pendientes
 
-### TASK-0026 — Implementar clasificador de intenciones genérico orientado al journey de agendamiento
-
-- **Objetivo:** la plataforma es un reemplazo de call center genérico para cualquier negocio. El clasificador debe guiar a cualquier usuario desde el saludo hasta la cita confirmada, pasando por sus preguntas, sin conocer el tipo de negocio ni sus servicios — esa información vive en el RAG del tenant. El clasificador actual solo detecta booking intent con keywords y no diferencia si el usuario está preguntando algo, quiere agendar, quiere modificar una cita o está frustrado.
-- **Alcance mínimo — backend:**
-  - Crear `app/services/intent_classifier.py` con las siguientes intenciones genéricas (válidas para cualquier negocio):
-    - `greeting`: saludo inicial o reapertura; dispara mensaje de bienvenida.
-    - `faq`: pregunta informativa (precios, horarios, servicios, políticas); dispara búsqueda RAG.
-    - `book_appointment`: quiere agendar una cita nueva; activa el `conversation_flow`.
-    - `confirm_appointment`: consulta o confirma una cita existente.
-    - `reschedule_appointment`: quiere mover una cita a otro horario.
-    - `cancel_appointment`: quiere cancelar.
-    - `check_availability`: pregunta por disponibilidad sin comprometerse aún.
-    - `complaint_or_risk`: queja, reclamación, frustración explícita o tema fuera del scope; fuerza handoff.
-    - `out_of_scope`: mensaje sin relación con el negocio; el bot responde que solo puede ayudar con los servicios disponibles.
-    - `opt_out`: el usuario pide no recibir más mensajes; registra `opt_out` en el contacto.
-  - Capa 1 (`rule-router`): keywords configurables en español + regex para casos claros (saludos, "quiero agendar", "cancelar", "stop"). Devuelve intención + confianza. Las keywords base son globales pero cada tenant puede agregar las suyas.
-  - Capa 2 (`intent-llm`): cuando confianza < 0.78, llamar al LLM disponible (cascada cloud/local existente) con prompt corto que solo puede devolver una intención del catálogo. No incluye contexto del negocio (eso es tarea del RAG).
-  - Capa 3 (`fallback-human`): si tras el LLM la confianza sigue < 0.70, o si el texto contiene frustración/queja explícita → forzar `complaint_or_risk` → handoff.
-  - Integrar el clasificador en `rag_orchestrator.py`: la intención clasificada decide la siguiente acción antes de llamar al RAG o al LLM.
-  - Actualizar `conversations.current_intent` con la intención detectada en cada turno.
-  - Tests estáticos ≥ 25 casos cubriendo todas las intenciones y los umbrales.
-- **Alcance mínimo — Admin Panel:**
-  - En `TenantSetupWizard.jsx`, pestaña **"Intenciones"** (nueva):
-    - Lista de las 10 intenciones con toggle para habilitar/deshabilitar cada una por tenant (por ejemplo, un negocio sin citas puede deshabilitar `book_appointment`).
-    - Por cada intención habilitada: campo de texto para agregar keywords personalizadas del tenant (comma-separated), adicionales a las globales del sistema.
-    - Slider de umbral mínimo de confianza por tenant (default 0.70; rango 0.50–0.90).
-  - En `KnowledgeStudio.jsx`, sección **"Probar clasificador"**: input de texto libre, botón "Clasificar", muestra intención detectada + confianza + capa que la resolvió (regla / LLM / fallback). Consume `POST /v1/intents/evaluate` (ya existe; extender su response para incluir `intent`, `confidence`, `resolved_by`).
-  - En `OperationsDesk.jsx`: mostrar badge de la intención detectada (`current_intent`) en cada conversación del inbox y en el detalle de mensajes.
-- **Criterio de aceptación:** "buenos días" → `greeting`; "cuánto cuesta?" → `faq` (dispara RAG); "quiero una cita" → `book_appointment`; "quiero cancelar" → `cancel_appointment`; "esto es una estafa" → `complaint_or_risk` (handoff); el Admin Panel permite desactivar intenciones y agregar keywords; el badge de intención es visible en el Operations Desk; los tests pasan en CI.
-- **Dependencias:** TASK-0025 recomendada (mejora calidad del RAG en respuestas FAQ), pero no bloqueante.
-
----
-
 ### TASK-0028 — Implementar policy engine básico con configuración por tenant
 
 - **Objetivo:** cerrar la brecha entre la política básica actual (solo `max_bot_turns` + keywords de trigger dispersos en el orquestador) y un policy engine centralizado y configurable que evalúe riesgo, ventana de servicio WhatsApp y límites antes de cada respuesta del bot.

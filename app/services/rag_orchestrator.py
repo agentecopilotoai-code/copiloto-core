@@ -23,6 +23,13 @@ from app.services.cloud_llm_answer import (
 )
 from app.services.llm_answer import build_conversational_llm_answer, build_llm_answer
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
+from app.services.intent_classifier import (
+    INTENT_BOOK_APPOINTMENT,
+    INTENT_COMPLAINT_OR_RISK,
+    INTENT_GREETING,
+    INTENT_OPT_OUT,
+    classify_intent,
+)
 
 if TYPE_CHECKING:
     import asyncpg
@@ -219,7 +226,60 @@ async def orchestrate_inbound_message(
         has_handoff_message=bool(policy.get('handoff_message')),
     )
 
-    # Keyword trigger check
+    # ── Intent classification ─────────────────────────────────────────────────
+    # Build tenant_config from the intent_settings column (jsonb) if present.
+    intent_settings_raw = policy.get('intent_settings') or {}
+    if isinstance(intent_settings_raw, str):
+        try:
+            import json as _json
+            intent_settings_raw = _json.loads(intent_settings_raw)
+        except Exception:
+            intent_settings_raw = {}
+    intent_cfg = intent_settings_raw if isinstance(intent_settings_raw, dict) else {}
+
+    intent_result = await classify_intent(body_text, settings=get_settings(), tenant_config=intent_cfg)
+
+    log.info(
+        'orchestrator.intent_classified',
+        conversation_id=conversation_id,
+        intent=intent_result.intent,
+        confidence=round(intent_result.confidence, 3),
+        resolved_by=intent_result.resolved_by,
+    )
+
+    # Persist current_intent on the conversation
+    await conn.execute(
+        "update app.conversations set current_intent=$1, updated_at=now() where tenant_id=$2 and id=$3",
+        intent_result.intent,
+        tenant_id,
+        conversation['id'],
+    )
+
+    # opt_out — register and skip bot reply
+    if intent_result.intent == INTENT_OPT_OUT:
+        await conn.execute(
+            "update app.contacts set opt_in_status='revoked', updated_at=now() where tenant_id=$1 and id=$2",
+            tenant_id,
+            contact['id'],
+        )
+        log.info('orchestrator.opt_out_registered', conversation_id=conversation_id)
+        return {'action': 'skipped', 'reason': 'opt_out_registered'}
+
+    # complaint_or_risk — force handoff immediately
+    if intent_result.intent == INTENT_COMPLAINT_OR_RISK:
+        log.info('orchestrator.intent_handoff', intent=INTENT_COMPLAINT_OR_RISK, conversation_id=conversation_id)
+        return await _do_handoff(
+            conn,
+            tenant_id=tenant_id,
+            channel_id=channel_id,
+            conversation=conversation,
+            inbound_message=inbound_message,
+            policy=policy,
+            reason='intent_complaint_or_risk',
+            reason_detail=f'confidence={intent_result.confidence:.2f},resolved_by={intent_result.resolved_by}',
+        )
+
+    # Keyword trigger check (legacy — kept so existing tenant configs still work)
     body_lower = body_text.lower()
     triggered_keyword = next((kw for kw in _keyword_triggers(policy) if kw in body_lower), None)
     if triggered_keyword:
@@ -316,9 +376,18 @@ async def orchestrate_inbound_message(
 
     # ── Conversational booking flow ───────────────────────────────────────────
     ctx = get_context(conversation.get('metadata'))
+    is_booking_intent = intent_result.intent in (
+        INTENT_BOOK_APPOINTMENT,
+        INTENT_GREETING,
+        'reschedule_appointment',
+        'check_availability',
+        'confirm_appointment',
+        'cancel_appointment',
+    )
     use_conversational = engine != 'template' and (
         ctx.stage == STAGE_START
         or ctx.is_conversational
+        or is_booking_intent
         or has_booking_intent(body_text)
     )
 
@@ -328,6 +397,7 @@ async def orchestrate_inbound_message(
         engine=engine,
         conv_stage=ctx.stage,
         is_conversational=ctx.is_conversational,
+        classified_intent=intent_result.intent,
         has_booking_intent=has_booking_intent(body_text),
         use_conversational=use_conversational,
         collected_keys=list(ctx.collected.keys()),
