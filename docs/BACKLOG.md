@@ -25,15 +25,3 @@ Para **producción piloto real**, quedan tareas de hardening operacional y prueb
 
 ## Stack de tareas pendientes
 
-### TASK-0024 — Integrar LLM cloud (Claude API / OpenAI) como motor de respuesta
-
-- **Estado:** PENDING
-- **Objetivo:** añadir una tercera opción al flag `ANSWER_ENGINE` (`cloud_llm`) que use la API de Claude (Anthropic) o la de OpenAI para generar respuestas conversacionales, con prompt caching para reducir costos y latencia.
-- **Alcance mínimo:**
-  - Agregar `answer_engine=cloud_llm` en `app/core/config.py` con variables `cloud_llm_provider` (`claude`|`openai`), `cloud_llm_model`, `cloud_llm_api_key_ref` (ruta a secreto del tenant o global).
-  - Crear `app/services/cloud_llm_answer.py` con soporte para Anthropic SDK (`claude-sonnet-4-6` por defecto) y OpenAI SDK, reutilizando el mismo contrato de retorno que `llm_answer.py`.
-  - Implementar prompt caching de Anthropic para el bloque de contexto RAG (marca `cache_control: {“type”: “ephemeral”}`) y registrar el ahorro en `audit_logs`.
-  - Exponer métricas de tokens (input/output/cache_hit) en `messages.payload` para trazabilidad de costo.
-  - Permitir configurar el proveedor y modelo por tenant en `tenant_settings` (override sobre el valor global).
-  - Agregar tests estáticos y unitarios equivalentes a los de `llm_answer.py`.
-- **Criterio de aceptación:** con `ANSWER_ENGINE=cloud_llm` y `CLOUD_LLM_PROVIDER=claude`, un mensaje WhatsApp recibe una respuesta generada por Claude con cache hit visible en audit; los costos por token quedan registrados por tenant.

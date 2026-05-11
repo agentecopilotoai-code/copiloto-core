@@ -57,15 +57,21 @@ class Settings(BaseSettings):
     rag_embedding_dimensions: int = 1536
     rag_chunk_max_tokens: int = 500
     rag_chunk_overlap_tokens: int = 80
-    # Answer engine: 'template' | 'local_llm' | 'cascade'
-    # cascade: intenta template primero, si no alcanza umbral pasa a LLM local, sino handoff
-    answer_engine: str = Field(default='template', pattern='^(template|local_llm|cascade)$')
+    # Answer engine: 'template' | 'local_llm' | 'cascade' | 'cloud_llm'
+    # cascade: template → LLM local → cloud LLM (si configurado) → handoff
+    answer_engine: str = Field(default='template', pattern='^(template|local_llm|cascade|cloud_llm)$')
     local_llm_base_url: str = 'http://host.docker.internal:11434'
     local_llm_model: str = 'llama3.2:3b'
     local_llm_timeout_seconds: int = 30
     # Umbrales para modo cascade
     cascade_template_min_score: float = 0.55   # template responde solo si está muy seguro
     cascade_llm_min_score: float = 0.12        # LLM intenta si hay al menos un chunk relevante
+    # Cloud LLM (Claude API / OpenAI) — tier-3 del cascade cuando Ollama no está disponible,
+    # o motor primario cuando answer_engine=cloud_llm.
+    cloud_llm_provider: str | None = None      # 'claude' | 'openai'
+    cloud_llm_model: str = 'claude-sonnet-4-6'
+    cloud_llm_api_key: str | None = Field(default=None, validation_alias='CLOUD_LLM_API_KEY')
+    cloud_llm_timeout_seconds: int = 30
     # Tiempo en horas que puede estar un handoff abierto sin agente antes de
     # que el bot retome la conversación automáticamente. 0 = desactivado.
     bot_reopen_after_hours: float = 2.0
