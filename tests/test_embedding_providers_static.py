@@ -13,8 +13,6 @@ import asyncio
 
 import pytest
 
-_run = asyncio.get_event_loop().run_until_complete
-
 from app.services.rag_indexing import (
     SUPPORTED_REAL_PROVIDERS,
     _PROVIDER_DEFAULT_DIMS,
@@ -32,6 +30,8 @@ from app.services.rag_retrieval import (
     ann_rows_to_matches,
     get_chunk_retrieval_sql,
 )
+
+_run = asyncio.get_event_loop().run_until_complete
 
 
 # ── (a) local_hash works without API key ──────────────────────────────────────

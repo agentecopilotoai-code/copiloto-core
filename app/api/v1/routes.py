@@ -43,7 +43,7 @@ from app.core.security import authenticate_request, require_min_role, require_pl
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
-from app.services.rag_indexing import build_indexing_result, build_indexing_result_async, vector_literal
+from app.services.rag_indexing import build_indexing_result_async, vector_literal
 from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
