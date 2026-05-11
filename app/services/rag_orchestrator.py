@@ -25,7 +25,6 @@ from app.services.llm_answer import build_conversational_llm_answer, build_llm_a
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.intent_classifier import (
     INTENT_BOOK_APPOINTMENT,
-    INTENT_COMPLAINT_OR_RISK,
     INTENT_GREETING,
     INTENT_OPT_OUT,
     classify_intent,

@@ -5,8 +5,6 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.services.policy_engine import PolicyResult, evaluate_policy, _parse_json, _to_positive_int, _parse_datetime
