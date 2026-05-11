@@ -75,6 +75,8 @@ def test_readiness_report_handles_nullable_settings_without_500():
         async def fetch(self, query, *args):
             if 'from app.knowledge_chunks' in query:
                 return []
+            if 'from app.whatsapp_templates' in query:
+                return []
             raise AssertionError(f'unexpected fetch query: {query}')
 
         async def fetchval(self, query, *args):
@@ -143,6 +145,8 @@ def test_readiness_requires_live_whatsapp_mode_even_when_secrets_are_configured(
         async def fetch(self, query, *args):
             if 'from app.knowledge_chunks' in query:
                 return []
+            if 'from app.whatsapp_templates' in query:
+                return []
             raise AssertionError(f'unexpected fetch query: {query}')
 
         async def fetchval(self, query, *args):
@@ -208,6 +212,8 @@ def _make_fake_connection(escalation_policy, account_mode='live', audit_count=1)
                         'metadata': {},
                     }
                 ]
+            if 'from app.whatsapp_templates' in query:
+                return []
             raise AssertionError(f'unexpected fetch: {query}')
 
         async def fetchval(self, query, *args):
