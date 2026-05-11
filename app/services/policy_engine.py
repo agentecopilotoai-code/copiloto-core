@@ -24,9 +24,9 @@ def evaluate_policy(
 
     Rules evaluated (highest to lowest priority):
     1. Intent complaint_or_risk → require_handoff immediately (risk_level=high).
-    2. Risk keywords in escalation_policy.risk_keywords → require_handoff (risk_level=high).
+    2. Trigger keyword match in escalation_policy.triggers.keywords → require_handoff (risk_level=high).
     3. Service window expired (when enforce_service_window is true) → require_handoff (risk_level=medium).
-    4. Bot turns >= max_bot_turns → require_handoff (risk_level=medium).
+    4. Bot turns >= escalation_policy.triggers.after_bot_turns → require_handoff (risk_level=medium).
     5. Consecutive no-context responses >= limit → require_handoff (risk_level=medium).
 
     The ``conversation`` dict must contain:
@@ -35,14 +35,15 @@ def evaluate_policy(
     - ``service_window_expires_at`` (datetime | str | None): WhatsApp 24 h service window expiry.
 
     The ``tenant_settings`` dict must contain:
-    - ``max_bot_turns`` (int): maximum bot turns before escalation.
-    - ``escalation_policy`` (dict | str): jsonb escalation policy with optional fields:
-      - ``risk_keywords`` (list[str]): additional risk keywords triggering handoff.
-      - ``enforce_service_window`` (bool, default True): whether to enforce the 24 h window.
+    - ``escalation_policy`` (dict | str): jsonb escalation policy with required fields:
+      - ``triggers.keywords`` (list[str]): risk keywords triggering handoff.
+      - ``triggers.after_bot_turns`` (int): max bot turns before escalation.
       - ``consecutive_no_context_limit`` (int, default 2): consecutive no-context threshold.
+      - ``enforce_service_window`` (bool, default True): whether to enforce the 24 h window.
     """
     escalation_policy = _parse_json(tenant_settings.get('escalation_policy') or {})
-    max_bot_turns = _to_positive_int(tenant_settings.get('max_bot_turns'), default=8)
+    triggers = escalation_policy.get('triggers') or {}
+    max_bot_turns = _to_positive_int(triggers.get('after_bot_turns'), default=8)
     consecutive_no_context_limit = _to_positive_int(
         escalation_policy.get('consecutive_no_context_limit'), default=2
     )
@@ -55,13 +56,13 @@ def evaluate_policy(
             risk_level='high',
         )
 
-    # Rule 2: risk keywords from escalation_policy.risk_keywords.
-    risk_keywords: list = escalation_policy.get('risk_keywords') or []
+    # Rule 2: trigger keywords from escalation_policy.triggers.keywords.
+    trigger_keywords: list = triggers.get('keywords') or []
     message_lower = message_text.lower()
     triggered = next(
         (
             kw.strip().lower()
-            for kw in risk_keywords
+            for kw in trigger_keywords
             if isinstance(kw, str) and kw.strip() and kw.strip().lower() in message_lower
         ),
         None,
@@ -87,7 +88,7 @@ def evaluate_policy(
                     risk_level='medium',
                 )
 
-    # Rule 4: bot turns >= max_bot_turns.
+    # Rule 4: bot turns >= triggers.after_bot_turns.
     bot_turn_count = int(conversation.get('bot_turn_count') or 0)
     if bot_turn_count >= max_bot_turns:
         return PolicyResult(

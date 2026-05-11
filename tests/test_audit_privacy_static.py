@@ -19,10 +19,12 @@ def test_contacts_opt_in_status_includes_suppressed():
     assert "opt_in_status in ('unknown','granted','revoked','suppressed')" in source
 
 
-def test_bootstrap_migrates_suppressed_constraint():
-    source = BOOTSTRAP.read_text()
-    assert 'contacts_opt_in_status_check' in source
-    assert "'suppressed'" in source
+def test_schema_defines_suppressed_opt_in_status():
+    """The canonical schema includes 'suppressed' from the start — bootstrap no
+    longer carries an incremental constraint migration."""
+    source = SCHEMA_SQL.read_text()
+    assert "opt_in_status in ('unknown','granted','revoked','suppressed')" in source
+    assert 'contacts_opt_in_status_check' not in BOOTSTRAP.read_text()
 
 
 # --- Logging PII redaction ---

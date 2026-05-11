@@ -9,7 +9,8 @@ class TenantCreate(BaseModel):
     slug: str
     legal_name: str
     display_name: str
-    vertical_code: str = Field(pattern='^(field_service|beauty|pet_grooming)$')
+    vertical_code: str = Field(min_length=1, max_length=64)
+    business_type_label: str | None = Field(default=None, min_length=1, max_length=160)
     country_code: str = 'CO'
     timezone: str = 'America/Bogota'
 
@@ -18,7 +19,8 @@ class TenantUpdate(BaseModel):
     slug: str | None = None
     legal_name: str | None = None
     display_name: str | None = None
-    vertical_code: str | None = Field(default=None, pattern='^(field_service|beauty|pet_grooming)$')
+    vertical_code: str | None = Field(default=None, min_length=1, max_length=64)
+    business_type_label: str | None = Field(default=None, min_length=1, max_length=160)
     country_code: str | None = None
     timezone: str | None = None
     status: str | None = Field(default=None, pattern='^(trial|active|suspended|churned)$')
@@ -101,8 +103,8 @@ class MessageCreate(BaseModel):
 
 class ResourceCreate(BaseModel):
     tenant_id: UUID
-    vertical_code: str = Field(pattern='^(field_service|beauty|pet_grooming)$')
-    resource_type: str = Field(pattern='^(technician|chair|stylist|groomer|room|vehicle)$')
+    vertical_code: str = Field(min_length=1, max_length=64)
+    resource_type: str = Field(min_length=1, max_length=64)
     code: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=160)
     capabilities: dict[str, Any] = Field(default_factory=dict)
@@ -110,8 +112,8 @@ class ResourceCreate(BaseModel):
 
 
 class ResourceUpdate(BaseModel):
-    vertical_code: str | None = Field(default=None, pattern='^(field_service|beauty|pet_grooming)$')
-    resource_type: str | None = Field(default=None, pattern='^(technician|chair|stylist|groomer|room|vehicle)$')
+    vertical_code: str | None = Field(default=None, min_length=1, max_length=64)
+    resource_type: str | None = Field(default=None, min_length=1, max_length=64)
     code: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, min_length=1, max_length=160)
     capabilities: dict[str, Any] | None = None

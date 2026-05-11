@@ -134,42 +134,6 @@ if [[ -n "$missing_tables" ]]; then
   exit 1
 fi
 
-psql_admin <<'SQL_MIGRATE_TENANT_SETTINGS'
-alter table app.tenant_settings
-  add column if not exists knowledge_storage jsonb not null default '{}'::jsonb;
-SQL_MIGRATE_TENANT_SETTINGS
-
-# ── Ensure bot / LLM configuration is complete ────────────────────────────────
-# Fix escalation_policy structure for existing tenants that were seeded with
-# the old format (risk_keywords at top level instead of triggers.keywords).
-psql_admin <<'SQL_FIX_ESCALATION_POLICY'
-update app.tenant_settings
-set escalation_policy = jsonb_build_object(
-  'handoff_message',
-    coalesce(
-      escalation_policy->>'handoff_message',
-      'En este momento te voy a conectar con uno de nuestros asesores. En breve te atienden 😊'
-    ),
-  'triggers', jsonb_build_object(
-    'keywords',
-    case
-      -- Already has the correct triggers.keywords structure
-      when (escalation_policy->'triggers'->'keywords') is not null
-        then escalation_policy->'triggers'->'keywords'
-      -- Old risk_keywords top-level format
-      when (escalation_policy->'risk_keywords') is not null
-        then escalation_policy->'risk_keywords'
-      else '["humano","asesor","agente","persona","queja","reclamo","urgente"]'::jsonb
-    end
-  )
-)
-where
-  -- Skip rows that already have the correct structure
-  (escalation_policy->'triggers'->'keywords') is null;
-SQL_FIX_ESCALATION_POLICY
-
-echo "→ escalation_policy migrada a estructura correcta (triggers.keywords + handoff_message)."
-
 # ── Check ANSWER_ENGINE is configured for bot responses ───────────────────────
 ANSWER_ENGINE_VALUE="$(awk -F= '$1 == "ANSWER_ENGINE" {print $2}' .env)"
 if [[ -z "$ANSWER_ENGINE_VALUE" ]]; then
@@ -198,48 +162,6 @@ else
   echo "     ollama serve"
   echo ""
 fi
-
-psql_admin <<'SQL_MIGRATE_KNOWLEDGE'
-alter table app.knowledge_documents
-  add column if not exists document_type text not null default 'reference',
-  add column if not exists content text,
-  add column if not exists metadata jsonb not null default '{}'::jsonb;
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_constraint
-    where connamespace='app'::regnamespace
-      and conrelid='app.knowledge_documents'::regclass
-      and conname='knowledge_documents_document_type_check'
-  ) then
-    alter table app.knowledge_documents
-      add constraint knowledge_documents_document_type_check
-      check (document_type in ('faq','policy','reference'));
-  end if;
-end $$;
-
-create index if not exists ix_knowledge_documents_visibility
-  on app.knowledge_documents(tenant_id, visibility);
-SQL_MIGRATE_KNOWLEDGE
-
-psql_admin <<'SQL_MIGRATE_CONTACTS_SUPPRESS'
-do $$
-begin
-  -- Add 'suppressed' value to opt_in_status check constraint
-  if exists (
-    select 1 from pg_constraint
-    where connamespace='app'::regnamespace
-      and conrelid='app.contacts'::regclass
-      and conname='contacts_opt_in_status_check'
-  ) then
-    alter table app.contacts drop constraint contacts_opt_in_status_check;
-  end if;
-  alter table app.contacts
-    add constraint contacts_opt_in_status_check
-    check (opt_in_status in ('unknown','granted','revoked','suppressed'));
-end $$;
-SQL_MIGRATE_CONTACTS_SUPPRESS
 
 missing_extensions="$(psql_app -Atc "
   with required(extname) as (values ('pgcrypto'), ('citext'), ('vector'), ('btree_gist'))

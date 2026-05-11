@@ -300,34 +300,7 @@ KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS = (
     'status',
     'metadata',
 )
-KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS = {
-    'document_type': 'reference',
-    'content': None,
-    'metadata': {},
-}
-
-
-async def knowledge_document_columns(conn: asyncpg.Connection) -> set[str]:
-    rows = await conn.fetch(
-        """
-        select column_name
-        from information_schema.columns
-        where table_schema='app' and table_name='knowledge_documents'
-        """
-    )
-    return {row['column_name'] for row in rows}
-
-
-def knowledge_document_projection(columns: set[str]) -> str:
-    projection = []
-    for column in KNOWLEDGE_DOCUMENT_RESPONSE_COLUMNS:
-        if column in columns:
-            projection.append(column)
-        elif column == 'metadata':
-            projection.append("'{}'::jsonb as metadata")
-        elif column in KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS:
-            projection.append(f"null::text as {column}")
-    return ', '.join(projection)
+KNOWLEDGE_DOCUMENT_PROJECTION = ', '.join(KNOWLEDGE_DOCUMENT_RESPONSE_COLUMNS)
 
 
 def parse_json_object(value: Any, default: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -345,9 +318,6 @@ def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
     document = record_to_dict(row)
     if not document:
         return None
-    for column, default in KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS.items():
-        if document.get(column) is None:
-            document[column] = default.copy() if isinstance(default, dict) else default
     document['metadata'] = parse_json_object(document.get('metadata'), default={})
     return document
 
@@ -473,14 +443,15 @@ async def current_user_id_from_request(request: Request, conn: asyncpg.Connectio
 async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     row = await conn.fetchrow(
         """
-        insert into app.tenants (slug, legal_name, display_name, vertical_code, country_code, timezone)
-        values ($1, $2, $3, $4, $5, $6)
+        insert into app.tenants (slug, legal_name, display_name, vertical_code, business_type_label, country_code, timezone)
+        values ($1, $2, $3, $4, $5, $6, $7)
         returning *
         """,
         payload.slug,
         payload.legal_name,
         payload.display_name,
         payload.vertical_code,
+        payload.business_type_label,
         payload.country_code,
         payload.timezone,
     )
@@ -496,11 +467,10 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
     }
     await conn.execute(
         """
-        insert into app.tenant_settings (tenant_id, max_bot_turns, escalation_policy)
-        values ($1, $2, $3::jsonb)
+        insert into app.tenant_settings (tenant_id, escalation_policy)
+        values ($1, $2::jsonb)
         """,
         tenant_id,
-        10,
         json.dumps(default_escalation_policy),
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.created', entity_type='tenant', entity_id=str(tenant_id))
@@ -525,9 +495,10 @@ async def update_tenant_record(
             legal_name=$3,
             display_name=$4,
             vertical_code=$5,
-            country_code=$6,
-            timezone=$7,
-            status=$8,
+            business_type_label=$6,
+            country_code=$7,
+            timezone=$8,
+            status=$9,
             updated_at=now()
         where id=$1 and deleted_at is null
         returning *
@@ -537,6 +508,7 @@ async def update_tenant_record(
         merged['legal_name'],
         merged['display_name'],
         merged['vertical_code'],
+        merged.get('business_type_label'),
         merged['country_code'],
         merged['timezone'],
         merged['status'],
@@ -553,7 +525,7 @@ async def list_my_tenants(request: Request, conn: asyncpg.Connection = Depends(g
         raise HTTPException(status_code=401, detail='Authentication required')
     rows = await conn.fetch(
         """
-        select t.id, t.slug, t.legal_name, t.display_name, t.vertical_code, t.country_code, t.timezone, t.status, utr.role, utr.is_default
+        select t.id, t.slug, t.legal_name, t.display_name, t.vertical_code, t.business_type_label, t.country_code, t.timezone, t.status, utr.role, utr.is_default
         from app.users u
         join app.user_tenant_roles utr on utr.user_id = u.id
         join app.tenants t on t.id = utr.tenant_id
@@ -600,14 +572,15 @@ async def create_own_tenant(
 
     row = await conn.fetchrow(
         """
-        insert into app.tenants (slug, legal_name, display_name, vertical_code, country_code, timezone)
-        values ($1, $2, $3, $4, $5, $6)
+        insert into app.tenants (slug, legal_name, display_name, vertical_code, business_type_label, country_code, timezone)
+        values ($1, $2, $3, $4, $5, $6, $7)
         returning *
         """,
         payload.slug,
         payload.legal_name,
         payload.display_name,
         payload.vertical_code,
+        payload.business_type_label,
         payload.country_code,
         payload.timezone,
     )
@@ -755,7 +728,7 @@ def _coerce_jsonb(value: Any) -> Any:
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    allowed = {k: payload[k] for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train', 'max_bot_turns') if k in payload}
+    allowed = {k: payload[k] for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train') if k in payload}
     current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
     if not current:
         raise HTTPException(status_code=404, detail='Settings not found')
@@ -766,18 +739,11 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy'):
         merged[jsonb_key] = _coerce_jsonb(merged[jsonb_key]) or {}
 
-    # Keep max_bot_turns in sync with escalation_policy.triggers.after_bot_turns
-    # so that both the UI field and the DB column always agree.
-    ep_triggers = merged['escalation_policy'].get('triggers') or {}
-    after_bot_turns = ep_triggers.get('after_bot_turns')
-    if isinstance(after_bot_turns, int) and after_bot_turns > 0:
-        merged['max_bot_turns'] = after_bot_turns
-
     row = await conn.fetchrow(
         """
         update app.tenant_settings
         set locale=$2, business_hours=$3::jsonb, escalation_policy=$4::jsonb, pii_policy=$5::jsonb,
-            no_train=$6, max_bot_turns=$7
+            no_train=$6
         where tenant_id=$1 returning *
         """,
         tenant_id,
@@ -786,7 +752,6 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         json.dumps(merged['escalation_policy']),
         json.dumps(merged['pii_policy']),
         merged['no_train'],
-        merged['max_bot_turns'],
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
     return record_to_dict(row)
@@ -2196,10 +2161,9 @@ async def list_knowledge_documents(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    columns = await knowledge_document_columns(conn)
     rows = await conn.fetch(
         f"""
-        select {knowledge_document_projection(columns)}
+        select {KNOWLEDGE_DOCUMENT_PROJECTION}
         from app.knowledge_documents
         where tenant_id=$1
           and ($2::text is null or status=$2)
@@ -2301,11 +2265,8 @@ async def create_knowledge_document(
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     if payload.status == 'active':
         raise HTTPException(status_code=400, detail='Use the indexing endpoint to activate documents')
-    columns = await knowledge_document_columns(conn)
     payload_values = payload.model_dump()
-    insert_columns = ['tenant_id'] + [
-        column for column in KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS if column in columns
-    ]
+    insert_columns = ['tenant_id', *KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS]
     values = []
     for column in insert_columns:
         if column == 'tenant_id':
@@ -2323,7 +2284,7 @@ async def create_knowledge_document(
         f"""
         insert into app.knowledge_documents ({', '.join(insert_columns)})
         values ({', '.join(placeholders)})
-        returning {knowledge_document_projection(columns)}
+        returning {KNOWLEDGE_DOCUMENT_PROJECTION}
         """,
         *values,
     )
@@ -2416,7 +2377,6 @@ async def upload_knowledge_document(
     if needs_async_extraction:
         metadata['extraction_pending'] = True
 
-    columns = await knowledge_document_columns(conn)
     insert_columns = [
         'id',
         'tenant_id',
@@ -2431,7 +2391,6 @@ async def upload_knowledge_document(
         'status',
         'metadata',
     ]
-    insert_columns = [column for column in insert_columns if column in columns or column in {'id', 'tenant_id'}]
     values_by_column = {
         'id': document_id,
         'tenant_id': tenant_id,
@@ -2458,7 +2417,7 @@ async def upload_knowledge_document(
         f"""
         insert into app.knowledge_documents ({', '.join(insert_columns)})
         values ({', '.join(placeholders)})
-        returning {knowledge_document_projection(columns)}
+        returning {KNOWLEDGE_DOCUMENT_PROJECTION}
         """,
         *values,
     )
@@ -2491,10 +2450,9 @@ async def get_knowledge_document(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    columns = await knowledge_document_columns(conn)
     row = await conn.fetchrow(
         f"""
-        select {knowledge_document_projection(columns)}
+        select {KNOWLEDGE_DOCUMENT_PROJECTION}
         from app.knowledge_documents
         where tenant_id=$1 and id=$2
         """,
@@ -2515,10 +2473,9 @@ async def patch_knowledge_document(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    columns = await knowledge_document_columns(conn)
     current = await conn.fetchrow(
         f"""
-        select {knowledge_document_projection(columns)}
+        select {KNOWLEDGE_DOCUMENT_PROJECTION}
         from app.knowledge_documents
         where tenant_id=$1 and id=$2
         """,
@@ -2532,7 +2489,7 @@ async def patch_knowledge_document(
     allowed = {
         column: value
         for column, value in payload.model_dump(exclude_unset=True).items()
-        if column in columns and column in KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS
+        if column in KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS
     }
     if not allowed:
         return current_document
@@ -2568,7 +2525,7 @@ async def patch_knowledge_document(
             update app.knowledge_documents
             set {', '.join(assignments)}
             where tenant_id=$1 and id=$2
-            returning {knowledge_document_projection(columns)}
+            returning {KNOWLEDGE_DOCUMENT_PROJECTION}
             """,
             *values,
         )
@@ -2599,10 +2556,9 @@ async def index_knowledge_document(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    columns = await knowledge_document_columns(conn)
     document = await conn.fetchrow(
         f"""
-        select {knowledge_document_projection(columns)}
+        select {KNOWLEDGE_DOCUMENT_PROJECTION}
         from app.knowledge_documents
         where tenant_id=$1 and id=$2
         """,
@@ -2623,7 +2579,7 @@ async def index_knowledge_document(
             embedding_model=settings.rag_embedding_model,
             embedding_api_key=settings.rag_embedding_api_key,
         )
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         await conn.execute(
             """
             update app.knowledge_documents
@@ -2644,7 +2600,8 @@ async def index_knowledge_document(
             entity_id=str(document_id),
             metadata={'error': str(exc)},
         )
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        status_code = 422 if isinstance(exc, ValueError) else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
     indexing_started_at = datetime.now(UTC).isoformat()
     async with conn.transaction():
@@ -2694,7 +2651,7 @@ async def index_knowledge_document(
             update app.knowledge_documents
             set status='active', metadata=metadata || $3::jsonb
             where tenant_id=$1 and id=$2
-            returning {knowledge_document_projection(columns)}
+            returning {KNOWLEDGE_DOCUMENT_PROJECTION}
             """,
             tenant_id,
             document_id,
@@ -2740,10 +2697,9 @@ async def reindex_all_knowledge_documents(
     """Re-index all active knowledge documents for the tenant using the current embedding provider."""
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    columns = await knowledge_document_columns(conn)
     docs = await conn.fetch(
         f"""
-        select {knowledge_document_projection(columns)}
+        select {KNOWLEDGE_DOCUMENT_PROJECTION}
         from app.knowledge_documents
         where tenant_id=$1 and status in ('active', 'draft')
         order by updated_at asc
@@ -2766,7 +2722,7 @@ async def reindex_all_knowledge_documents(
                 embedding_model=settings.rag_embedding_model,
                 embedding_api_key=settings.rag_embedding_api_key,
             )
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
             failed += 1
             errors.append({'document_id': str(doc_id), 'error': str(exc)})
             continue
@@ -2970,7 +2926,7 @@ async def build_tenant_readiness_report(
     )
 
     settings = await conn.fetchrow(
-        'select locale, business_hours, escalation_policy, pii_policy, no_train, max_bot_turns from app.tenant_settings where tenant_id=$1',
+        'select locale, business_hours, escalation_policy, pii_policy, no_train from app.tenant_settings where tenant_id=$1',
         tenant_id,
     )
     settings_dict = record_to_dict(settings) if settings else {}
@@ -2979,14 +2935,13 @@ async def build_tenant_readiness_report(
         and readiness_truthy_object(settings['locale'])
         and readiness_truthy_object(settings['business_hours'])
         and readiness_truthy_object(settings['pii_policy'])
-        and readiness_positive_int(settings['max_bot_turns'])
     )
     checks.append(
         readiness_check(
             'tenant_settings',
             'Settings operativos',
             settings_ready,
-            'Settings mínimos configurados.' if settings_ready else 'Faltan settings mínimos: locale, horarios, PII policy o max_bot_turns.',
+            'Settings mínimos configurados.' if settings_ready else 'Faltan settings mínimos: locale, horarios o PII policy.',
             settings_dict,
         )
     )
@@ -3088,10 +3043,6 @@ async def build_tenant_readiness_report(
         escalation_policy = {}
     ep_triggers = escalation_policy.get('triggers') or {}
 
-    _ep_is_legacy = bool(
-        escalation_policy.get('handoff_required') is True
-        or escalation_policy.get('risk_keywords')
-    )
     _ep_has_triggers = bool(
         ep_triggers.get('keywords')
         or ep_triggers.get('after_bot_turns')
@@ -3102,9 +3053,6 @@ async def build_tenant_readiness_report(
     if not settings or not escalation_policy:
         handoff_ready = False
         handoff_reason = 'Política de escalamiento ausente. Configura la política en la pestaña Escalamiento del Tenant Setup.'
-    elif _ep_is_legacy:
-        handoff_ready = True
-        handoff_reason = 'Política de handoff configurada (formato legacy).'
     elif escalation_policy.get('enabled') is False:
         handoff_ready = False
         handoff_reason = 'Política de escalamiento deshabilitada (enabled=false). Actívala en la pestaña Escalamiento del Tenant Setup.'
@@ -3128,20 +3076,16 @@ async def build_tenant_readiness_report(
         )
     )
 
-    # Policy engine check: max_bot_turns > 0 and at least one trigger defined.
-    pe_max_bot_turns = readiness_positive_int(settings_dict.get('max_bot_turns') if settings else None)
-    pe_has_triggers = bool(
-        ep_triggers.get('keywords')
-        or ep_triggers.get('after_bot_turns')
-        or escalation_policy.get('risk_keywords')
-    )
-    policy_engine_ready = pe_max_bot_turns and pe_has_triggers
+    # Policy engine check: at least after_bot_turns > 0 and one trigger defined.
+    pe_after_bot_turns = readiness_positive_int(ep_triggers.get('after_bot_turns'))
+    pe_has_triggers = bool(ep_triggers.get('keywords') or ep_triggers.get('after_bot_turns'))
+    policy_engine_ready = bool(pe_after_bot_turns and pe_has_triggers)
     if not settings:
         policy_engine_reason = 'Sin configuración de tenant settings. Configura el policy engine en la pestaña Escalamiento.'
-    elif not pe_max_bot_turns:
-        policy_engine_reason = 'max_bot_turns debe ser mayor que cero. Configura el límite en la pestaña Escalamiento.'
+    elif not pe_after_bot_turns:
+        policy_engine_reason = 'triggers.after_bot_turns debe ser mayor que cero. Configura el límite en la pestaña Escalamiento.'
     elif not pe_has_triggers:
-        policy_engine_reason = 'Sin triggers de escalamiento. Configura keywords o max_bot_turns en la pestaña Escalamiento.'
+        policy_engine_reason = 'Sin triggers de escalamiento. Configura keywords o after_bot_turns en la pestaña Escalamiento.'
     else:
         policy_engine_reason = 'Policy engine configurado con triggers válidos.'
     checks.append(
@@ -3151,8 +3095,8 @@ async def build_tenant_readiness_report(
             policy_engine_ready,
             policy_engine_reason,
             {
-                'max_bot_turns': settings_dict.get('max_bot_turns') if settings else None,
-                'has_risk_keywords': bool(escalation_policy.get('risk_keywords')),
+                'after_bot_turns': ep_triggers.get('after_bot_turns'),
+                'has_trigger_keywords': bool(ep_triggers.get('keywords')),
                 'consecutive_no_context_limit': escalation_policy.get('consecutive_no_context_limit'),
             },
         )

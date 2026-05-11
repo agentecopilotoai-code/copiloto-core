@@ -131,7 +131,7 @@ export function OperationsDesk({ module, session, tenant }) {
   const [handoffReason, setHandoffReason] = useState('manual_or_policy_handoff');
   const [resources, setResources] = useState([]);
   const [appointments, setAppointments] = useState([]);
-  const [resourceForm, setResourceForm] = useState({ code: '', name: '', resourceType: 'technician', verticalCode: tenant?.vertical_code || 'field_service' });
+  const [resourceForm, setResourceForm] = useState({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '' });
   const [appointmentForm, setAppointmentForm] = useState({ endsAt: '', notes: '', resourceId: '', serviceCode: '', startsAt: '' });
   const [rescheduleForm, setRescheduleForm] = useState({ appointmentId: '', endsAt: '', resourceId: '', startsAt: '' });
   const [serviceRequests, setServiceRequests] = useState([]);
@@ -235,7 +235,7 @@ export function OperationsDesk({ module, session, tenant }) {
     setConversationDetail(null);
     refreshConversations();
     refreshScheduleData(true);
-    setResourceForm((current) => ({ ...current, verticalCode: tenant?.vertical_code || 'field_service' }));
+    setResourceForm((current) => ({ ...current, verticalCode: tenant?.vertical_code || '' }));
   }, [tenant?.id]);
 
   useEffect(() => {
@@ -418,7 +418,7 @@ export function OperationsDesk({ module, session, tenant }) {
         resource_type: resourceForm.resourceType,
         vertical_code: resourceForm.verticalCode,
       });
-      setResourceForm({ code: '', name: '', resourceType: 'technician', verticalCode: tenant?.vertical_code || 'field_service' });
+      setResourceForm({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '' });
       await refreshScheduleData();
       setNotice({ type: 'success', text: 'Recurso creado y disponible para agenda.' });
     } catch (error) {
@@ -506,7 +506,7 @@ export function OperationsDesk({ module, session, tenant }) {
       const sr = await createServiceRequest(session, tenant.id, {
         contact_id: conversationDetail.contact_id,
         conversation_id: selectedConversationId,
-        vertical_code: tenant.vertical_code || 'field_service',
+        vertical_code: tenant.vertical_code || '',
         service_type: srForm.serviceType.trim(),
         problem_summary: srForm.problemSummary.trim() || undefined,
         urgency: srForm.urgency,

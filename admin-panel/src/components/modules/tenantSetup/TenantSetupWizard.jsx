@@ -124,11 +124,15 @@ const defaultPiiRules = {
   government_id: 'redact',
 };
 
-const verticalOptions = [
-  { value: 'field_service', label: 'Field service' },
-  { value: 'beauty', label: 'Beauty' },
-  { value: 'pet_grooming', label: 'Pet grooming' },
-];
+function slugifyVertical(label) {
+  return (label || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '')
+    .slice(0, 64);
+}
 
 
 function cloneInitialHours() {
@@ -187,9 +191,6 @@ function formFromEscalationPolicy(value) {
     handoffMessage:
       escalationPolicy.handoff_message ||
       'Te conecto con una persona del equipo para ayudarte mejor.',
-    riskKeywords: Array.isArray(escalationPolicy.risk_keywords)
-      ? escalationPolicy.risk_keywords.join(', ')
-      : '',
     consecutiveNoContextLimit: escalationPolicy.consecutive_no_context_limit ?? 2,
     enforceServiceWindow: escalationPolicy.enforce_service_window ?? true,
   };
@@ -204,7 +205,6 @@ function formFromPiiPolicy(value, settings) {
     redactBeforeModel: piiPolicy.redact_before_model ?? true,
     logRedaction: piiPolicy.log_redaction ?? true,
     noTrain: settings.no_train ?? true,
-    maxBotTurns: settings.max_bot_turns ?? 8,
     rules: { ...defaultPiiRules, ...(piiPolicy.rules || {}) },
   };
 }
@@ -244,10 +244,6 @@ function toEscalationPolicy(escalationForm) {
         .filter(Boolean),
     },
     handoff_message: escalationForm.handoffMessage,
-    risk_keywords: escalationForm.riskKeywords
-      .split(',')
-      .map((kw) => kw.trim())
-      .filter(Boolean),
     consecutive_no_context_limit: Number(escalationForm.consecutiveNoContextLimit),
     enforce_service_window: escalationForm.enforceServiceWindow,
   };
@@ -273,7 +269,8 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     slug: 'tenant-demo',
     legal_name: 'Tenant Demo S.A.S.',
     display_name: 'Tenant Demo',
-    vertical_code: 'field_service',
+    business_type_label: '',
+    vertical_code: '',
     country_code: 'CO',
     timezone: 'America/Bogota',
   });
@@ -287,7 +284,6 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     confidenceBelow: 0.55,
     keywords: 'humano, asesor, agente, reclamo',
     handoffMessage: 'Te conecto con una persona del equipo para ayudarte mejor.',
-    riskKeywords: '',
     consecutiveNoContextLimit: 2,
     enforceServiceWindow: true,
   });
@@ -298,7 +294,6 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     redactBeforeModel: true,
     logRedaction: true,
     noTrain: true,
-    maxBotTurns: 8,
     rules: defaultPiiRules,
   });
   const [auditLogs, setAuditLogs] = useState([]);
@@ -326,7 +321,6 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
       },
       pii_policy: toPiiPolicy(privacyForm),
       no_train: privacyForm.noTrain,
-      max_bot_turns: Number(privacyForm.maxBotTurns),
     }),
     [escalationForm, hoursForm, intentSettings, privacyForm, settingsForm.locale],
   );
@@ -345,7 +339,8 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
           slug: tenantDetails.slug || '',
           legal_name: tenantDetails.legal_name || '',
           display_name: tenantDetails.display_name || '',
-          vertical_code: tenantDetails.vertical_code || 'field_service',
+          business_type_label: tenantDetails.business_type_label || '',
+          vertical_code: tenantDetails.vertical_code || '',
           country_code: tenantDetails.country_code || 'CO',
           timezone: tenantDetails.timezone || 'America/Bogota',
         });
@@ -522,12 +517,31 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
             <input value={tenantForm.display_name} onChange={(event) => setTenantForm({ ...tenantForm, display_name: event.target.value })} required />
           </label>
           <label>
-            Vertical
-            <select value={tenantForm.vertical_code} onChange={(event) => setTenantForm({ ...tenantForm, vertical_code: event.target.value })}>
-              {verticalOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+            Tipo de negocio
+            <input
+              placeholder="Ej. Clínica dental, Spa, Taller mecánico"
+              value={tenantForm.business_type_label}
+              onChange={(event) => {
+                const label = event.target.value;
+                setTenantForm({
+                  ...tenantForm,
+                  business_type_label: label,
+                  vertical_code: tenantForm.vertical_code || slugifyVertical(label),
+                });
+              }}
+              maxLength={160}
+              required
+            />
+          </label>
+          <label>
+            Clave técnica (vertical_code)
+            <input
+              placeholder="Ej. dental, spa, taller"
+              value={tenantForm.vertical_code}
+              onChange={(event) => setTenantForm({ ...tenantForm, vertical_code: event.target.value })}
+              maxLength={64}
+              required
+            />
           </label>
           <label>
             País
@@ -635,7 +649,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
           <label>Cola<input value={escalationForm.queue} onChange={(event) => setEscalationForm({ ...escalationForm, queue: event.target.value })} /></label>
           <label>Prioridad<select value={escalationForm.priority} onChange={(event) => setEscalationForm({ ...escalationForm, priority: event.target.value })}><option>low</option><option>normal</option><option>high</option></select></label>
           <label>
-            Máximo de turnos del bot (max_bot_turns)
+            Máximo de turnos del bot antes de escalar (triggers.after_bot_turns)
             <input min="1" max="50" value={escalationForm.afterBotTurns} onChange={(event) => setEscalationForm({ ...escalationForm, afterBotTurns: event.target.value })} type="number" />
           </label>
           <label>
@@ -644,15 +658,11 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
           </label>
           <label>Confianza menor a<input max="1" min="0" step="0.01" value={escalationForm.confidenceBelow} onChange={(event) => setEscalationForm({ ...escalationForm, confidenceBelow: event.target.value })} type="number" /></label>
           <label className="wide">
-            Keywords de escalamiento (separadas por coma)
-            <input value={escalationForm.keywords} onChange={(event) => setEscalationForm({ ...escalationForm, keywords: event.target.value })} />
-          </label>
-          <label className="wide">
-            Keywords de riesgo — fuerzan handoff inmediato (separadas por coma)
+            Keywords de escalamiento — fuerzan handoff inmediato (separadas por coma)
             <input
-              placeholder="demanda, fraude, amenaza, legal"
-              value={escalationForm.riskKeywords}
-              onChange={(event) => setEscalationForm({ ...escalationForm, riskKeywords: event.target.value })}
+              placeholder="humano, asesor, demanda, fraude"
+              value={escalationForm.keywords}
+              onChange={(event) => setEscalationForm({ ...escalationForm, keywords: event.target.value })}
             />
           </label>
           <label className="inline-check wide">
@@ -749,7 +759,6 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
         <form className="wizard-panel form-grid" onSubmit={handleSaveSettings}>
           <label>PII policy<select value={privacyForm.mode} onChange={(event) => setPrivacyForm({ ...privacyForm, mode: event.target.value })}><option value="strict">Strict</option><option value="balanced">Balanced</option><option value="minimal">Minimal</option></select></label>
           <label>Retención PII (días)<input min="1" value={privacyForm.retentionDays} onChange={(event) => setPrivacyForm({ ...privacyForm, retentionDays: event.target.value })} type="number" /></label>
-          <label>max_bot_turns<input min="1" max="50" value={privacyForm.maxBotTurns} onChange={(event) => setPrivacyForm({ ...privacyForm, maxBotTurns: event.target.value })} type="number" /></label>
           <label className="inline-check"><input checked={privacyForm.noTrain} onChange={(event) => setPrivacyForm({ ...privacyForm, noTrain: event.target.checked })} type="checkbox" /> no_train</label>
           <label className="inline-check"><input checked={privacyForm.redactBeforeModel} onChange={(event) => setPrivacyForm({ ...privacyForm, redactBeforeModel: event.target.checked })} type="checkbox" /> Redactar antes del modelo</label>
           <label className="inline-check"><input checked={privacyForm.logRedaction} onChange={(event) => setPrivacyForm({ ...privacyForm, logRedaction: event.target.checked })} type="checkbox" /> Redactar logs</label>
@@ -759,7 +768,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
               <label key={key}>{key}<select value={value} onChange={(event) => setPrivacyForm({ ...privacyForm, rules: { ...privacyForm.rules, [key]: event.target.value } })}><option value="allow">Allow</option><option value="mask">Mask</option><option value="redact">Redact</option></select></label>
             ))}
           </div>
-          <div className="builder-preview wide"><strong>Builder resultante</strong><pre>{formatJson({ pii_policy: settingsPayload.pii_policy, no_train: settingsPayload.no_train, max_bot_turns: settingsPayload.max_bot_turns })}</pre></div>
+          <div className="builder-preview wide"><strong>Builder resultante</strong><pre>{formatJson({ pii_policy: settingsPayload.pii_policy, no_train: settingsPayload.no_train })}</pre></div>
           <div className="form-actions"><button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">Guardar privacidad</button></div>
         </form>
       ) : null}

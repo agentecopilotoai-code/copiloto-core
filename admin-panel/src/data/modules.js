@@ -3,7 +3,7 @@ export const adminModules = [
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',
-    scope: ['Crear tenant', 'Editar settings', 'Horarios y escalamiento', 'PII policy, no_train y max_bot_turns'],
+    scope: ['Crear tenant', 'Editar settings', 'Horarios y escalamiento', 'PII policy y no_train'],
   },
   {
     id: 'whatsapp',

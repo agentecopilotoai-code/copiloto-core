@@ -57,7 +57,7 @@ Cualquier tarea futura que agregue código con frases como "mantener compatibili
 | CI/CD (GitHub Actions) | ✅ Completo |
 | Integración LLM cloud (Claude/OpenAI) | ✅ Completo |
 
-### Código legacy identificado que debe eliminarse (TASK-0032)
+### Código legacy identificado (eliminado en TASK-0032 — referencia histórica)
 
 Durante el desarrollo iterativo se acumularon patrones que deben eliminarse antes de construir encima. Ninguno está en producción, por lo que se eliminan sin migración gradual:
 
@@ -101,8 +101,6 @@ Durante el desarrollo iterativo se acumularon patrones que deben eliminarse ante
 ### Orden de ejecución (dependencias explícitas)
 
 ```
-TASK-0032 (limpieza legacy — base obligatoria para todo lo demás)
-    ↓
 TASK-0033 (vertical universal + catálogo de servicios)
     ↓
 TASK-0034 (mensajes interactivos WhatsApp)
@@ -134,54 +132,6 @@ TASK-0029 (drill de restore — cierre operacional)
 
 ---
 
-### TASK-0032 — Eliminar todo el código legacy del sistema
-
-- **Objetivo:** el desarrollo iterativo del sprint base dejó parches de compatibilidad, formatos dobles y verticales hardcodeados que contaminan el diseño final. Esta tarea los elimina completamente. No hay producción que proteger: se rompe y se reescribe limpio. Esta tarea es la fundación obligatoria antes de construir cualquier funcionalidad nueva.
-- **Alcance — esquema de base de datos (`infra/postgres/01-schema.sql`):**
-  - Eliminar los cuatro `CHECK (vertical_code IN ('field_service','beauty','pet_grooming'))` de las tablas `tenants`, `prompt_templates` y cualquier otra que los tenga. Reemplazar por `vertical_code text not null` sin restricción de enum — el valor es libre.
-  - La tabla `service_catalog` que se creará en TASK-0033 es la que define los servicios; `vertical_code` en `tenants` pasa a ser una etiqueta descriptiva libre.
-- **Alcance — seed de datos (`infra/postgres/02-seed.sql`):**
-  - Reescribir los datos de demo eliminando la dependencia de verticales fijos. Los 3 tenants demo pueden conservarse pero con `vertical_code` como texto libre descriptivo (ej. `'taller_mecanico'`, `'barberia'`, `'veterinaria'`) y sin el `CASE vertical_code WHEN 'field_service' THEN 'technician'...` hardcodeado en el seed.
-- **Alcance — schemas Pydantic (`app/api/v1/schemas.py`):**
-  - En `TenantCreate`, `TenantUpdate`, `ResourceCreate`, `ResourceUpdate`: cambiar `vertical_code: str = Field(pattern='^(field_service|beauty|pet_grooming)$')` por `vertical_code: str = Field(min_length=1, max_length=64)`. Sin regex de valores fijos.
-- **Alcance — orquestador RAG (`app/services/rag_orchestrator.py`):**
-  - Eliminar el fallback `or 'beauty'` en la línea donde se lee `vertical_code`. Si el tenant no tiene vertical_code configurado, usar `''` o `'general'` como valor neutro, nunca hardcodear un vertical específico.
-- **Alcance — policy engine (`app/services/policy_engine.py`):**
-  - Eliminar la lectura del campo `risk_keywords` (formato viejo). El único formato válido es el actual con `escalation_policy.triggers.keywords`. Borrar el código que lee `escalation_policy.get('risk_keywords')` y cualquier comentario que lo mencione.
-- **Alcance — rutas de la API (`app/api/v1/routes.py`):**
-  - Eliminar la detección de formato legacy de política de escalamiento: borrar el bloque `_ep_is_legacy`, la rama `elif _ep_is_legacy: handoff_ready = True` y cualquier lectura de `escalation_policy.get('handoff_required')` o `escalation_policy.get('risk_keywords')` en el reporte de readiness.
-  - Eliminar `KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS` y la función `knowledge_document_projection` que añade columnas nulas por compatibilidad. El esquema tiene las columnas definitivas; la proyección SQL usa las columnas reales sin defaults de compat.
-  - Eliminar la sincronización dual `max_bot_turns` ↔ `triggers.after_bot_turns`. El valor canónico vive en `escalation_policy.triggers.after_bot_turns`; `max_bot_turns` como columna separada se elimina del esquema (ver siguiente punto).
-  - Revisar si la columna `max_bot_turns` en `tenant_settings` es redundante con `escalation_policy.triggers.after_bot_turns` y, si lo es, eliminar la columna de la tabla y del schema Pydantic. Un único lugar para este valor.
-- **Alcance — bootstrap (`scripts/bootstrap.sh`):**
-  - Eliminar todos los bloques `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` que fueron agregados como parches incrementales. El schema `01-schema.sql` es la fuente de verdad; `bootstrap.sh` solo hace `DROP SCHEMA IF EXISTS app CASCADE` + `CREATE SCHEMA app` + ejecuta `01-schema.sql` + `02-seed.sql`. Sin migraciones incrementales en bootstrap.
-  - Eliminar el bloque de conversión SQL de `risk_keywords` → `triggers.keywords` (ya no hay formato viejo que convertir).
-  - Eliminar el bloque de `DROP CONSTRAINT / ADD CONSTRAINT` para `contacts_opt_in_status_check`; el constraint correcto está en `01-schema.sql` desde el principio.
-- **Alcance — servicio de embeddings (`app/services/rag_indexing.py`):**
-  - Eliminar el fallback silencioso a `deterministic_embedding` cuando falla el proveedor de embeddings en producción. Si `RAG_EMBEDDING_PROVIDER != 'local_hash'` y la llamada al proveedor falla, lanzar la excepción y dejar que el endpoint devuelva error 502 con mensaje claro. El fallback silencioso enmascaraba problemas de configuración.
-  - `local_hash` sigue siendo una opción de proveedor válida y explícita para desarrollo (cuando se configura conscientemente), pero no es un fallback automático ante errores de otro proveedor.
-  - Eliminar la función `deterministic_embedding` solo si `local_hash` se elimina completamente como proveedor. Si se conserva `local_hash` como opción explícita de desarrollo, la función puede quedarse pero solo usada cuando el proveedor configurado ES `local_hash`.
-- **Alcance — admin routes (`app/admin/routes.py`):**
-  - Eliminar la ruta `GET /assets/{asset_path:path}` duplicada marcada como "legacy". Solo debe existir `GET /admin/assets/{asset_path:path}`.
-- **Alcance — Admin Panel (`admin-panel/src/`):**
-  - `TenantSetupWizard.jsx`: eliminar el dropdown de verticales fijos con las 3 opciones hardcodeadas. Reemplazar por un campo de texto libre `"Tipo de negocio"` (ej. "Clínica dental", "Spa", "Taller mecánico", "Consultorio psicológico"). Eliminar los defaults `|| 'field_service'`.
-  - `OperationsDesk.jsx`: eliminar los tres `|| 'field_service'` fallbacks en líneas 134, 238, 509. Si `vertical_code` no está disponible, usar `''` o no enviar el campo.
-- **Alcance — tests:**
-  - Eliminar `test_readiness_report_handles_nullable_legacy_settings_without_500` y `test_handoff_readiness_passes_with_legacy_handoff_required` de `tests/test_tenant_readiness_static.py`. Reemplazar por tests que validen únicamente el formato actual.
-  - Eliminar de `tests/test_whatsapp_rag_orchestrator.py` los tests y comentarios que hacen referencia a `risk_keywords` como formato válido de política.
-  - Eliminar de `tests/test_embedding_providers_static.py` el test que valida el fallback silencioso a SHA256 como comportamiento correcto del proveedor real.
-  - Agregar tests que confirmen que el sistema falla explícitamente cuando se usa un formato de política incorrecto y cuando falla el proveedor de embeddings configurado.
-- **Criterio de aceptación:**
-  - `grep -rn "field_service\|beauty\|pet_grooming" app/ infra/ admin-panel/src/` no arroja resultados (excepto en comentarios históricos de DONE.md).
-  - `grep -rn "risk_keywords\|_ep_is_legacy\|handoff_required.*True\|COMPAT_DEFAULT\|ADD COLUMN IF NOT EXISTS\|formato legacy\|format legacy" app/ scripts/ tests/` no arroja resultados.
-  - `python -m compileall app` → OK.
-  - `ruff check app tests` → OK.
-  - `pytest tests/ -m "not requires_db"` → todos los tests pasan (los que se eliminaron se reemplazan por equivalentes del formato correcto).
-  - `bash -n scripts/bootstrap.sh` → OK.
-- **Dependencias:** ninguna. Esta tarea va primera.
-
----
-
 ### TASK-0033 — Vertical universal y catálogo de servicios configurable desde admin
 
 - **Objetivo:** el producto debe adaptarse a cualquier tipo de empresa sin configuración de código. Un consultorio dental, un spa, un taller mecánico, un psicólogo o una peluquería deben poder usar la plataforma configurando únicamente desde el admin su tipo de negocio, sus servicios, precios, duraciones e instrucciones. El catálogo de servicios es la entidad central alrededor de la cual gira el booking, los recordatorios y las campañas.
@@ -209,7 +159,7 @@ TASK-0029 (drill de restore — cierre operacional)
     - Vista previa de cómo el bot presentará el servicio al cliente en WhatsApp (texto de muestra).
   - Registrar el módulo en `admin-panel/src/data/modules.js` y en el sidebar, accesible para `admin` o superior.
 - **Criterio de aceptación:** admin crea tipo de negocio libre y agrega 3 servicios con precios, duraciones, instrucciones; los reordena; desactiva uno y el listado solo muestra los activos; el endpoint interno devuelve el catálogo; tests pasan en CI.
-- **Dependencias:** TASK-0032 (limpieza de verticales fijos).
+- **Dependencias:** ninguna (TASK-0032 ya eliminó los verticales fijos).
 
 ---
 
