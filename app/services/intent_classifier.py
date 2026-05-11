@@ -1,10 +1,11 @@
 """Clasificador de intenciones genérico orientado al journey de agendamiento.
 
 Tres capas en cascada:
-  1. rule-router   — keywords/regex configurables por tenant, O(1), confianza alta.
-  2. intent-llm    — LLM ligero cuando confianza < CONF_LLM_THRESHOLD (0.78).
-  3. fallback-human— si confianza sigue < CONF_FALLBACK_THRESHOLD (0.70)
-                     o la capa-1 ya detectó riesgo/queja → fuerza complaint_or_risk.
+  1. rule-router — keywords/regex configurables por tenant, O(1), confianza alta.
+  2. intent-llm  — LLM ligero cuando confianza < CONF_LLM_THRESHOLD (0.78).
+  3. fallback    — si confianza sigue < CONF_FALLBACK_THRESHOLD (0.70) devuelve
+                   faq como neutral seguro. Solo fuerza complaint_or_risk si el LLM
+                   detectó queja explícita o la capa-1 detectó riesgo con conf >= 0.85.
 """
 from __future__ import annotations
 
@@ -193,8 +194,8 @@ async def _llm_classify(text: str, enabled_intents: set[str], settings: Any) -> 
             return None
     else:
         # Intentar con Ollama local
-        ollama_url = getattr(settings, 'ollama_url', None) or 'http://localhost:11434'
-        ollama_model = getattr(settings, 'ollama_model', None) or 'mistral'
+        ollama_url = getattr(settings, 'local_llm_base_url', None) or 'http://host.docker.internal:11434'
+        ollama_model = getattr(settings, 'local_llm_model', None) or 'llama3.2:3b'
         try:
             import httpx
             payload = {
@@ -273,13 +274,9 @@ async def classify_intent(
             return llm_result
         return llm_result
 
-    # Capa 3 — fallback humano
-    # Si el LLM detectó queja/riesgo con baja confianza igual lo forzamos
-    forced_intent = INTENT_COMPLAINT_OR_RISK
-    if llm_result and llm_result.intent == INTENT_COMPLAINT_OR_RISK:
-        forced_intent = INTENT_COMPLAINT_OR_RISK
-    elif result and result.confidence >= min_conf:
-        # La regla sí alcanzó el umbral mínimo aunque no el umbral LLM
+    # Capa 3 — fallback
+    # Si la capa 1 ya tenía un resultado que supera el umbral mínimo, usarlo
+    if result and result.confidence >= min_conf:
         log.info('intent_classifier.resolved_rule_min', intent=result.intent, confidence=result.confidence)
         return IntentResult(
             intent=result.intent,
@@ -287,13 +284,22 @@ async def classify_intent(
             resolved_by='rule',
             layer_detail=result.layer_detail,
         )
-    else:
-        forced_intent = INTENT_COMPLAINT_OR_RISK
 
-    log.info('intent_classifier.fallback', forced_intent=forced_intent)
+    # Solo forzar handoff si el LLM explícitamente detectó queja/riesgo
+    if llm_result and llm_result.intent == INTENT_COMPLAINT_OR_RISK:
+        log.info('intent_classifier.fallback', forced_intent=INTENT_COMPLAINT_OR_RISK, reason='llm_complaint_low_conf')
+        return IntentResult(
+            intent=INTENT_COMPLAINT_OR_RISK,
+            confidence=llm_result.confidence,
+            resolved_by='fallback',
+            layer_detail='llm_complaint_below_threshold',
+        )
+
+    # Sin evidencia de queja: devolver faq como neutral seguro (no dispara handoff)
+    log.info('intent_classifier.fallback', forced_intent=INTENT_FAQ, reason='no_rule_no_llm')
     return IntentResult(
-        intent=forced_intent,
-        confidence=0.60,
+        intent=INTENT_FAQ,
+        confidence=0.50,
         resolved_by='fallback',
-        layer_detail='confidence_below_threshold',
+        layer_detail='no_rule_match_llm_unavailable',
     )
