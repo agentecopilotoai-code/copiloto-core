@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     rag_embedding_provider: str = 'local_hash'
     rag_embedding_model: str = 'copilotoia-local-hash-v1'
     rag_embedding_dimensions: int = 1536
+    # API key for real embedding providers (openai / anthropic / ollama).
+    # Leave unset to use local_hash in development.
+    rag_embedding_api_key: str | None = Field(default=None, validation_alias='RAG_EMBEDDING_API_KEY')
     rag_chunk_max_tokens: int = 500
     rag_chunk_overlap_tokens: int = 80
     # Answer engine: 'template' | 'local_llm' | 'cascade' | 'cloud_llm'

@@ -29,6 +29,13 @@ const statusLabels = {
   failed: 'Failed',
 };
 
+function embeddingProviderBadge(document) {
+  const provider = document.metadata?.embedding_provider;
+  if (!provider) return null;
+  if (provider === 'local_hash') return { label: 'Léxico (hash)', cls: 'draft' };
+  return { label: `Semántico (${provider})`, cls: 'active' };
+}
+
 function extractionStatusBadge(document) {
   const meta = document.metadata || {};
   if (meta.extraction_pending && !meta.extracted_text && document.status !== 'failed') {
@@ -232,6 +239,13 @@ export function KnowledgeStudio({ module, session, tenant }) {
     }
   }
 
+  const activeProviders = new Set(
+    documents
+      .filter((d) => d.status === 'active' && d.metadata?.embedding_provider)
+      .map((d) => d.metadata.embedding_provider),
+  );
+  const hasLocalHashActive = activeProviders.has('local_hash') || activeProviders.size === 0;
+
   return (
     <section className="module-card knowledge-studio">
       <div className="module-heading">
@@ -245,6 +259,15 @@ export function KnowledgeStudio({ module, session, tenant }) {
           <strong>{tenant?.label}</strong>
         </div>
       </div>
+
+      {hasLocalHashActive && documents.length > 0 && (
+        <div className="notice info">
+          <strong>Proveedor léxico activo:</strong> los documentos indexados usan embeddings SHA-256 (local_hash).
+          La búsqueda semántica no está disponible. Para habilitar embeddings reales configura
+          <code> RAG_EMBEDDING_PROVIDER</code> en el servidor y usa "Re-indexar todos" desde la pestaña
+          "IA y RAG" en el wizard del tenant.
+        </div>
+      )}
 
       {notice && <div className={`notice ${notice.type}`}>{notice.text}</div>}
 
@@ -373,6 +396,7 @@ export function KnowledgeStudio({ module, session, tenant }) {
             {!isLoading && documents.length === 0 && <p className="notice info">No hay documentos con esos filtros.</p>}
             {documents.map((document) => {
               const exBadge = extractionStatusBadge(document);
+              const embBadge = embeddingProviderBadge(document);
               const exError = document.metadata?.extraction_error;
               return (
               <article className="knowledge-document" key={document.id}>
@@ -386,6 +410,7 @@ export function KnowledgeStudio({ module, session, tenant }) {
                 <div className="document-subtle-meta" aria-label="Metadatos del documento">
                   <span className={`status-pill ${document.status}`}>{statusLabels[document.status] || document.status}</span>
                   {exBadge && <span className={`status-pill ${exBadge.cls}`}>{exBadge.label}</span>}
+                  {embBadge && <span className={`status-pill ${embBadge.cls}`}>{embBadge.label}</span>}
                   <span>{document.visibility}</span>
                   <span>{document.source_type}</span>
                 </div>

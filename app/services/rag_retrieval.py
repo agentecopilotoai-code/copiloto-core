@@ -4,6 +4,50 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+# SQL template for ANN (approximate nearest neighbor) search via pgvector.
+# Used when the active embedding provider is semantic (not local_hash).
+_ANN_CHUNK_SQL = """
+select kc.id,
+       kc.document_id,
+       kd.title as document_title,
+       kd.source_uri,
+       kd.source_type,
+       kd.document_type,
+       kd.visibility,
+       kc.chunk_index,
+       kc.section_path,
+       kc.chunk_text,
+       kc.token_count,
+       kc.metadata,
+       1 - (kc.embedding <=> $2::vector) as cosine_similarity
+from app.knowledge_chunks kc
+join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
+where kc.tenant_id=$1
+  and kd.status='active'
+order by kc.embedding <=> $2::vector
+limit $3
+"""
+
+_LEXICAL_CHUNK_SQL = """
+select kc.id,
+       kc.document_id,
+       kd.title as document_title,
+       kd.source_uri,
+       kd.source_type,
+       kd.document_type,
+       kd.visibility,
+       kc.chunk_index,
+       kc.section_path,
+       kc.chunk_text,
+       kc.token_count,
+       kc.metadata
+from app.knowledge_chunks kc
+join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
+where kc.tenant_id=$1
+  and kd.status='active'
+order by kd.updated_at desc, kc.chunk_index asc
+"""
+
 WORD_RE = re.compile(r"[\wÁÉÍÓÚÜÑáéíóúüñ]+", re.UNICODE)
 SPANISH_STOPWORDS = {
     'a', 'al', 'algo', 'ante', 'como', 'con', 'contra', 'cual', 'cuando', 'de', 'del',
@@ -190,3 +234,39 @@ def retrieval_match_to_dict(match: RetrievalMatch) -> dict[str, Any]:
         'matched_terms': match.matched_terms,
         'metadata': match.metadata,
     }
+
+
+def ann_rows_to_matches(rows: list[dict[str, Any]], *, max_chunks: int = DEFAULT_MAX_CHUNKS) -> list[RetrievalMatch]:
+    """Convert ANN DB rows (with cosine_similarity column) to RetrievalMatch list."""
+    matches: list[RetrievalMatch] = []
+    for row in rows[:max_chunks]:
+        score = float(row.get('cosine_similarity') or 0.0)
+        if score <= 0:
+            continue
+        matches.append(
+            RetrievalMatch(
+                id=row['id'],
+                document_id=row['document_id'],
+                document_title=row.get('document_title') or 'Documento sin título',
+                source_uri=row.get('source_uri'),
+                source_type=row.get('source_type') or 'manual',
+                document_type=row.get('document_type') or 'reference',
+                visibility=row.get('visibility') or 'tenant',
+                chunk_index=row.get('chunk_index') or 0,
+                section_path=row.get('section_path'),
+                chunk_text=row.get('chunk_text') or '',
+                token_count=row.get('token_count') or 0,
+                score=round(score, 4),
+                matched_terms=[],
+                metadata=row.get('metadata') or {},
+            )
+        )
+    return matches
+
+
+def get_chunk_retrieval_sql(provider: str) -> str:
+    """Return the appropriate SQL query for chunk retrieval based on embedding provider."""
+    from app.services.rag_indexing import is_semantic_provider  # noqa: PLC0415
+    if is_semantic_provider(provider):
+        return _ANN_CHUNK_SQL
+    return _LEXICAL_CHUNK_SQL
