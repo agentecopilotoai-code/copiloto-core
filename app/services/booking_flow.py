@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 import structlog
 
 from app.services.audit import audit
+from app.services.notifications import create_appointment_reminder_jobs
 from app.services.whatsapp import (
     build_interactive_button_payload,
     build_interactive_list_payload,
@@ -702,6 +703,15 @@ async def _create_appointment(
         body_text='\n'.join(summary_lines),
         booking_step=STEP_COMPLETED,
     )
+
+    try:
+        await create_appointment_reminder_jobs(conn, tenant_id, appointment['id'])
+    except Exception:
+        log.exception(
+            'booking_flow.notifications_failed',
+            tenant_id=str(tenant_id),
+            appointment_id=str(appointment['id']),
+        )
 
     await audit(
         conn,

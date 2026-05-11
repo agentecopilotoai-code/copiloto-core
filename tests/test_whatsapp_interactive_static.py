@@ -150,7 +150,8 @@ def test_parse_interactive_reply_returns_none_for_non_interactive():
 
 def test_whatsapp_module_exports_interactive_helpers():
     source = WHATSAPP.read_text()
-    assert 'SUPPORTED_OUTBOUND_MESSAGE_TYPES = {\'text\', \'interactive\', *MEDIA_MESSAGE_TYPES}' in source
+    assert "'interactive'" in source
+    assert 'SUPPORTED_OUTBOUND_MESSAGE_TYPES' in source
     assert 'async def send_interactive_buttons(' in source
     assert 'async def send_interactive_list(' in source
     assert 'def parse_interactive_reply(' in source

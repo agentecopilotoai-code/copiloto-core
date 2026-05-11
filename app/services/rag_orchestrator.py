@@ -10,6 +10,10 @@ import structlog
 from app.core.config import get_settings
 from app.services.audit import audit
 from app.services.booking_flow import maybe_run_booking_flow
+from app.services.feedback_flow import (
+    maybe_record_confirmation,
+    maybe_record_feedback,
+)
 from app.services.conversation_flow import (
     STAGE_START,
     ConversationContext,
@@ -324,6 +328,38 @@ async def orchestrate_inbound_message(
     ):
         log.info('orchestrator.skip', reason='already_processed', idempotency_key=idempotency_key)
         return {'action': 'skipped', 'reason': 'already_processed'}
+
+    # TASK-0036: capture explicit rating replies (1-5) and confirmation
+    # replies (sí/no) before falling into the booking flow or the RAG cascade.
+    # These run cheaply on every inbound and short-circuit only when they match.
+    feedback_result = await maybe_record_feedback(
+        conn,
+        tenant_id=tenant_id,
+        contact_id=contact['id'],
+        inbound_message=inbound_message,
+    )
+    if feedback_result is not None:
+        log.info(
+            'orchestrator.feedback_recorded',
+            conversation_id=conversation_id,
+            appointment_id=feedback_result.get('appointment_id'),
+            rating=feedback_result.get('rating'),
+        )
+        return feedback_result
+
+    confirmation_result = await maybe_record_confirmation(
+        conn,
+        tenant_id=tenant_id,
+        contact_id=contact['id'],
+        inbound_message=inbound_message,
+    )
+    if confirmation_result is not None:
+        log.info(
+            'orchestrator.confirmation_recorded',
+            conversation_id=conversation_id,
+            appointment_id=confirmation_result.get('appointment_id'),
+            decision=confirmation_result.get('confirmation_status'),
+        )
 
     # Guided booking flow over interactive messages (TASK-0030).
     # Runs when the tenant has services in the catalogue AND either:

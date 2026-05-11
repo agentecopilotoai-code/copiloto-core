@@ -390,6 +390,19 @@ export function openConversationStream(session, tenantId) {
   );
 }
 
+export function listAppointmentFeedback(session, tenantId, appointmentId) {
+  return request(`/appointments/${appointmentId}/feedback`, { session, tenantId });
+}
+
+export function createAppointmentFeedback(session, tenantId, appointmentId, payload) {
+  return request(`/appointments/${appointmentId}/feedback`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
 export function getResourceAvailability(session, tenantId, resourceId, { date, serviceId } = {}) {
   const params = new URLSearchParams();
   if (date) params.set('date', date);

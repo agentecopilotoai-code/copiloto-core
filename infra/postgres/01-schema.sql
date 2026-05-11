@@ -46,6 +46,7 @@ create table app.tenant_settings (
   pii_policy jsonb not null default '{"no_train":true}'::jsonb,
   no_train boolean not null default true,
   knowledge_storage jsonb not null default '{}'::jsonb,
+  notification_settings jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -310,6 +311,17 @@ create table app.whatsapp_templates (
 );
 create index ix_whatsapp_templates_tenant_purpose on app.whatsapp_templates(tenant_id, purpose, status);
 
+create table app.appointment_feedback (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  appointment_id uuid not null references app.appointments(id) on delete cascade,
+  contact_id uuid not null references app.contacts(id) on delete cascade,
+  rating int not null check (rating between 1 and 5),
+  comment text,
+  created_at timestamptz not null default now()
+);
+create index ix_appointment_feedback_tenant on app.appointment_feedback(tenant_id, created_at desc);
+
 create table app.reminder_jobs (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -449,6 +461,7 @@ alter table app.messages add constraint uq_messages_tenant_id_id unique (tenant_
 alter table app.resources add constraint uq_resources_tenant_id_id unique (tenant_id, id);
 alter table app.service_catalog add constraint uq_service_catalog_tenant_id_id unique (tenant_id, id);
 alter table app.whatsapp_templates add constraint uq_whatsapp_templates_tenant_id_id unique (tenant_id, id);
+alter table app.appointment_feedback add constraint uq_appointment_feedback_tenant_id_id unique (tenant_id, id);
 alter table app.service_requests add constraint uq_service_requests_tenant_id_id unique (tenant_id, id);
 alter table app.quotes add constraint uq_quotes_tenant_id_id unique (tenant_id, id);
 alter table app.appointments add constraint uq_appointments_tenant_id_id unique (tenant_id, id);
@@ -506,6 +519,7 @@ alter table app.message_status_events enable row level security;
 alter table app.resources enable row level security;
 alter table app.service_catalog enable row level security;
 alter table app.whatsapp_templates enable row level security;
+alter table app.appointment_feedback enable row level security;
 alter table app.service_requests enable row level security;
 alter table app.quotes enable row level security;
 alter table app.appointments enable row level security;
@@ -522,7 +536,7 @@ do $$
 declare t text;
 begin
   foreach t in array array[
-    'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','whatsapp_templates','service_requests','quotes',
+    'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','whatsapp_templates','appointment_feedback','service_requests','quotes',
     'appointments','reminder_jobs','knowledge_documents','knowledge_chunks','prompt_templates','handoffs',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop

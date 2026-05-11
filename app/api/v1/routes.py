@@ -48,6 +48,11 @@ from app.core.security import authenticate_request, require_min_role, require_pl
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
+from app.services.notifications import (
+    cancel_appointment_reminder_jobs,
+    create_appointment_reminder_jobs,
+    regenerate_appointment_reminder_jobs,
+)
 from app.services.rag_indexing import build_indexing_result_async, vector_literal
 from app.services.intent_classifier import classify_intent
 from app.services.rag_orchestrator import orchestrate_inbound_message
@@ -741,7 +746,11 @@ def _coerce_jsonb(value: Any) -> Any:
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    allowed = {k: payload[k] for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train') if k in payload}
+    allowed = {
+        k: payload[k]
+        for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train', 'notification_settings')
+        if k in payload
+    }
     current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
     if not current:
         raise HTTPException(status_code=404, detail='Settings not found')
@@ -749,14 +758,14 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     merged.update(allowed)
 
     # Normalize jsonb fields: accept both raw dicts and JSON strings from clients
-    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy'):
+    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy', 'notification_settings'):
         merged[jsonb_key] = _coerce_jsonb(merged[jsonb_key]) or {}
 
     row = await conn.fetchrow(
         """
         update app.tenant_settings
         set locale=$2, business_hours=$3::jsonb, escalation_policy=$4::jsonb, pii_policy=$5::jsonb,
-            no_train=$6
+            no_train=$6, notification_settings=$7::jsonb
         where tenant_id=$1 returning *
         """,
         tenant_id,
@@ -765,6 +774,7 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         json.dumps(merged['escalation_policy']),
         json.dumps(merged['pii_policy']),
         merged['no_train'],
+        json.dumps(merged['notification_settings']),
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
     return record_to_dict(row)
@@ -2936,6 +2946,14 @@ async def create_appointment(payload: AppointmentCreate, request: Request, conn:
             payload.service_request_id,
             payload.resource_id,
         )
+    try:
+        await create_appointment_reminder_jobs(conn, payload.tenant_id, row['id'])
+    except Exception:
+        log.exception(
+            'appointment.notifications_failed',
+            tenant_id=str(payload.tenant_id),
+            appointment_id=str(row['id']),
+        )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='appointment.created', entity_type='appointment', entity_id=str(row['id']))
     return record_to_dict(row)
 
@@ -2991,6 +3009,21 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, r
     except asyncpg.ExclusionViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource has a conflicting appointment') from exc
     action = 'appointment.cancelled' if next_status == 'cancelled' else 'appointment.updated'
+    try:
+        if next_status == 'cancelled':
+            await cancel_appointment_reminder_jobs(conn, tenant_id, appointment_id)
+        elif (
+            'starts_at' in update_data
+            or 'ends_at' in update_data
+            or 'resource_id' in update_data
+        ):
+            await regenerate_appointment_reminder_jobs(conn, tenant_id, appointment_id)
+    except Exception:
+        log.exception(
+            'appointment.notifications_failed',
+            tenant_id=str(tenant_id),
+            appointment_id=str(appointment_id),
+        )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action=action, entity_type='appointment', entity_id=str(appointment_id))
     return record_to_dict(row)
 
@@ -3014,7 +3047,85 @@ async def cancel_appointment(appointment_id: UUID, request: Request, conn: async
             raise HTTPException(status_code=404, detail='Appointment not found')
         row = await appointment_detail(conn, tenant_id, appointment_id)
     else:
+        try:
+            await cancel_appointment_reminder_jobs(conn, tenant_id, appointment_id)
+        except Exception:
+            log.exception(
+                'appointment.notifications_failed',
+                tenant_id=str(tenant_id),
+                appointment_id=str(appointment_id),
+            )
         await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='appointment.cancelled', entity_type='appointment', entity_id=str(appointment_id))
+    return record_to_dict(row)
+
+
+@tenant_ops_router.get('/appointments/{appointment_id}/feedback')
+async def list_appointment_feedback(
+    appointment_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    appointment = await conn.fetchrow(
+        'select id from app.appointments where tenant_id=$1 and id=$2',
+        tenant_id,
+        appointment_id,
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail='Appointment not found')
+    rows = await conn.fetch(
+        """
+        select id, tenant_id, appointment_id, contact_id, rating, comment, created_at
+        from app.appointment_feedback
+        where tenant_id=$1 and appointment_id=$2
+        order by created_at desc
+        """,
+        tenant_id,
+        appointment_id,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_ops_router.post('/appointments/{appointment_id}/feedback', status_code=201)
+async def create_appointment_feedback(
+    appointment_id: UUID,
+    payload: dict,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rating = payload.get('rating') if isinstance(payload, dict) else None
+    if not isinstance(rating, int) or rating < 1 or rating > 5:
+        raise HTTPException(status_code=400, detail='rating must be an integer 1-5')
+    appointment = await conn.fetchrow(
+        'select id, contact_id from app.appointments where tenant_id=$1 and id=$2',
+        tenant_id,
+        appointment_id,
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail='Appointment not found')
+    row = await conn.fetchrow(
+        """
+        insert into app.appointment_feedback (tenant_id, appointment_id, contact_id, rating, comment)
+        values ($1, $2, $3, $4, $5)
+        returning id, tenant_id, appointment_id, contact_id, rating, comment, created_at
+        """,
+        tenant_id,
+        appointment_id,
+        appointment['contact_id'],
+        rating,
+        (payload.get('comment') if isinstance(payload, dict) else None),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='appointment.feedback_recorded',
+        entity_type='appointment_feedback',
+        entity_id=str(row['id']),
+        metadata={'rating': rating, 'appointment_id': str(appointment_id)},
+    )
     return record_to_dict(row)
 
 

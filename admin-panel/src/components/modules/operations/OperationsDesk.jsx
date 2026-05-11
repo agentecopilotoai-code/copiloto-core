@@ -12,6 +12,7 @@ import {
   getConversation,
   getQuoteForSr,
   getTenantAvailability,
+  listAppointmentFeedback,
   listAppointments,
   listConversations,
   listResources,
@@ -273,6 +274,7 @@ export function OperationsDesk({ module, session, tenant }) {
   const [handoffReason, setHandoffReason] = useState('manual_or_policy_handoff');
   const [resources, setResources] = useState([]);
   const [appointments, setAppointments] = useState([]);
+  const [appointmentFeedback, setAppointmentFeedback] = useState({});
   const [resourceForm, setResourceForm] = useState({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '', workingHours: emptyWorkingHoursForm() });
   const [editingResourceId, setEditingResourceId] = useState(null);
   const [calendarDate, setCalendarDate] = useState(todayISO);
@@ -338,6 +340,23 @@ export function OperationsDesk({ module, session, tenant }) {
       setAppointments(appointmentItems);
       setAppointmentForm((current) => ({ ...current, resourceId: current.resourceId || resourceItems[0]?.id || '' }));
       setRescheduleForm((current) => ({ ...current, resourceId: current.resourceId || resourceItems[0]?.id || '' }));
+
+      // Fetch feedback for the visible slice so the agent can see the rating.
+      const visible = appointmentItems.slice(0, 8);
+      Promise.allSettled(
+        visible.map((appointment) =>
+          listAppointmentFeedback(session, tenant.id, appointment.id).then((items) => [appointment.id, items]),
+        ),
+      ).then((results) => {
+        const next = {};
+        results.forEach((entry) => {
+          if (entry.status === 'fulfilled') {
+            const [appointmentId, items] = entry.value;
+            if (Array.isArray(items) && items.length > 0) next[appointmentId] = items[0];
+          }
+        });
+        setAppointmentFeedback(next);
+      });
     }).catch((error) => {
       if (!silent) setNotice({ type: 'error', text: error.message });
     });
@@ -1270,15 +1289,29 @@ export function OperationsDesk({ module, session, tenant }) {
                 </form>
 
                 <div className="appointment-list">
-                  {appointments.slice(0, 8).map((appointment) => (
-                    <article key={appointment.id}>
-                      <strong>{formatDate(appointment.starts_at)} — {formatDate(appointment.ends_at)}</strong>
-                      <small>{appointment.resource_name} · {appointment.service_code} · {appointment.status}</small>
-                      {appointment.status !== 'cancelled' && (
-                        <button className="secondary-action" disabled={isBusy} onClick={() => handleCancelAppointment(appointment.id)} type="button">Cancelar</button>
-                      )}
-                    </article>
-                  ))}
+                  {appointments.slice(0, 8).map((appointment) => {
+                    const confirmation = appointment.confirmation_status || 'pending';
+                    const feedback = appointmentFeedback[appointment.id];
+                    return (
+                      <article key={appointment.id}>
+                        <strong>{formatDate(appointment.starts_at)} — {formatDate(appointment.ends_at)}</strong>
+                        <small>{appointment.resource_name} · {appointment.service_code} · {appointment.status}</small>
+                        <div className="appointment-badges">
+                          <span className={`status-badge confirmation-${confirmation}`}>
+                            {confirmation === 'confirmed' ? 'Confirmada' : confirmation === 'declined' ? 'Rechazada' : 'Pendiente'}
+                          </span>
+                          {feedback ? (
+                            <span className="status-badge feedback-rating" title={feedback.comment || ''}>
+                              {'⭐'.repeat(feedback.rating)} ({feedback.rating}/5)
+                            </span>
+                          ) : null}
+                        </div>
+                        {appointment.status !== 'cancelled' && (
+                          <button className="secondary-action" disabled={isBusy} onClick={() => handleCancelAppointment(appointment.id)} type="button">Cancelar</button>
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
               </div>
 
