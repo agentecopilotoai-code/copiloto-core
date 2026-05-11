@@ -9,6 +9,7 @@ import structlog
 
 from app.core.config import get_settings
 from app.services.audit import audit
+from app.services.booking_flow import maybe_run_booking_flow
 from app.services.conversation_flow import (
     STAGE_START,
     ConversationContext,
@@ -77,7 +78,7 @@ async def orchestrate_inbound_message(
         conversation_status=conversation['status'],
     )
 
-    if inbound_message['message_type'] != 'text' or not body_text.strip():
+    if inbound_message['message_type'] not in ('text', 'interactive') or not body_text.strip():
         log.info('orchestrator.skip', reason='non_text_message', message_id=message_id)
         return {'action': 'skipped', 'reason': 'non_text_message'}
 
@@ -323,6 +324,35 @@ async def orchestrate_inbound_message(
     ):
         log.info('orchestrator.skip', reason='already_processed', idempotency_key=idempotency_key)
         return {'action': 'skipped', 'reason': 'already_processed'}
+
+    # Guided booking flow over interactive messages (TASK-0030).
+    # Runs when the tenant has services in the catalogue AND either:
+    #  - the user has just expressed booking intent, or
+    #  - the conversation is mid-flow (state in conversations.metadata.booking_flow),
+    #  - the inbound message is an interactive reply with a booking prefix.
+    has_catalog = bool(await conn.fetchval(
+        'select 1 from app.service_catalog where tenant_id=$1 and is_active=true limit 1',
+        tenant_id,
+    ))
+    booking_result = await maybe_run_booking_flow(
+        conn,
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        conversation=conversation,
+        contact=contact,
+        inbound_message=inbound_message,
+        intent=intent_result.intent,
+        has_catalog=has_catalog,
+    )
+    if booking_result is not None:
+        log.info(
+            'orchestrator.booking_flow_handled',
+            conversation_id=conversation_id,
+            step=booking_result.get('step'),
+            action=booking_result.get('action'),
+        )
+        return booking_result
 
     # Retrieve active knowledge chunks and run RAG ranking
     rows = await conn.fetch(

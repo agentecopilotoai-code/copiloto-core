@@ -268,6 +268,7 @@ create table app.appointments (
   contact_id uuid not null references app.contacts(id) on delete restrict,
   conversation_id uuid references app.conversations(id) on delete set null,
   service_request_id uuid references app.service_requests(id) on delete set null,
+  service_id uuid references app.service_catalog(id) on delete set null,
   resource_id uuid not null references app.resources(id) on delete restrict,
   service_code text not null,
   starts_at timestamptz not null,
@@ -448,7 +449,8 @@ alter table app.appointments
   add constraint fk_appointments_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
   add constraint fk_appointments_tenant_conversation foreign key (tenant_id, conversation_id) references app.conversations(tenant_id, id),
   add constraint fk_appointments_tenant_service_request foreign key (tenant_id, service_request_id) references app.service_requests(tenant_id, id),
-  add constraint fk_appointments_tenant_resource foreign key (tenant_id, resource_id) references app.resources(tenant_id, id);
+  add constraint fk_appointments_tenant_resource foreign key (tenant_id, resource_id) references app.resources(tenant_id, id),
+  add constraint fk_appointments_tenant_service foreign key (tenant_id, service_id) references app.service_catalog(tenant_id, id);
 alter table app.reminder_jobs
   add constraint fk_reminder_jobs_tenant_channel foreign key (tenant_id, channel_id) references app.tenant_channels(tenant_id, id);
 alter table app.knowledge_chunks

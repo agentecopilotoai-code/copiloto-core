@@ -3,10 +3,24 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   createService,
   deactivateService,
+  getTenantSettings,
   listServices,
   reorderServices,
   updateService,
+  updateTenantSettings,
 } from '../../../services/coreApi.js';
+
+function parsePolicy(value) {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  return value;
+}
 
 const CURRENCIES = ['COP', 'USD', 'MXN', 'ARS', 'CLP', 'PEN', 'EUR'];
 
@@ -87,6 +101,8 @@ export function ServiceCatalog({ module, session, tenant }) {
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [defaultDuration, setDefaultDuration] = useState(60);
+  const [tenantSettings, setTenantSettings] = useState(null);
 
   const tenantId = tenant?.id;
   const previewText = useMemo(() => buildPreview(form, tenant), [form, tenant]);
@@ -114,6 +130,50 @@ export function ServiceCatalog({ module, session, tenant }) {
     loadServices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, includeInactive]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    getTenantSettings(session, tenantId)
+      .then((settings) => {
+        setTenantSettings(settings);
+        const policy = parsePolicy(settings?.escalation_policy);
+        const stored = policy?.service_durations?.default;
+        if (typeof stored === 'number' && stored > 0) setDefaultDuration(stored);
+      })
+      .catch(() => {});
+  }, [tenantId, session]);
+
+  async function handleSaveDefaultDuration(event) {
+    event.preventDefault();
+    if (!tenantId || !tenantSettings) return;
+    const minutes = Number(defaultDuration);
+    if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 1440) {
+      setNotice({ type: 'error', text: 'La duración por defecto debe ser un número entre 1 y 1440 minutos.' });
+      return;
+    }
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      const policy = parsePolicy(tenantSettings.escalation_policy);
+      const nextPolicy = {
+        ...policy,
+        service_durations: { ...(policy.service_durations || {}), default: minutes },
+      };
+      const updated = await updateTenantSettings(session, tenantId, {
+        locale: tenantSettings.locale,
+        business_hours: tenantSettings.business_hours,
+        escalation_policy: nextPolicy,
+        pii_policy: tenantSettings.pii_policy,
+        no_train: tenantSettings.no_train,
+      });
+      setTenantSettings(updated);
+      setNotice({ type: 'success', text: 'Duración por defecto guardada.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -220,6 +280,28 @@ export function ServiceCatalog({ module, session, tenant }) {
 
       {tenantId ? (
         <div className="wizard-panel">
+          <form className="form-grid" onSubmit={handleSaveDefaultDuration} style={{ marginBottom: '0.75rem' }}>
+            <label>
+              Duración por defecto (minutos)
+              <input
+                disabled={!tenantSettings}
+                min="1"
+                max="1440"
+                onChange={(event) => setDefaultDuration(event.target.value)}
+                type="number"
+                value={defaultDuration}
+              />
+            </label>
+            <div className="form-actions">
+              <button className="secondary-action" disabled={isBusy || !tenantSettings} type="submit">
+                Guardar fallback
+              </button>
+              <p className="hint" style={{ marginLeft: '0.5rem' }}>
+                Se usa cuando no hay catálogo o el servicio no tiene duración propia.
+              </p>
+            </div>
+          </form>
+
           <div className="audit-actions" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.75rem' }}>
             <button className="primary-action" disabled={isLoading} onClick={loadServices} type="button">
               {isLoading ? 'Cargando…' : 'Refrescar listado'}

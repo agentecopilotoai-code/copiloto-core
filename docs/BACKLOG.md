@@ -132,39 +132,6 @@ TASK-0029 (drill de restore — cierre operacional)
 
 ---
 
-### TASK-0030 — Booking flow completo con disponibilidad real y flow guiado por bot
-
-- **Objetivo:** el orquestador actual detecta la intención `book_appointment` pero solo recolecta preferencias en texto libre — nunca consulta disponibilidad real ni crea la cita. Para producción, el bot debe guiar al cliente paso a paso (servicio → profesional → fecha → slot disponible → confirmación → cita creada) usando los mensajes interactivos de TASK-0034 y el catálogo de TASK-0033.
-- **Alcance mínimo — backend:**
-  - Endpoint `GET /v1/tenants/{tenant_id}/resources/{resource_id}/availability`:
-    - Parámetros: `date` (YYYY-MM-DD) obligatorio, `service_id` opcional (para calcular la duración del slot correctamente).
-    - Lee `resources.capabilities.working_hours` (estructura: `{mon: [{start:'09:00', end:'18:00'}], ...}`).
-    - Calcula slots libres restando citas activas (`provisional`, `confirmed`, `rescheduled`) con solapamiento.
-    - La duración del slot viene de `service_catalog.duration_minutes` (si se pasa `service_id`) o del campo `service_durations` en `tenant_settings` como fallback.
-    - Devuelve: `{date, resource_id, service_duration_minutes, slots: [{start_time, end_time}]}`.
-  - Endpoint `GET /v1/tenants/{tenant_id}/availability`:
-    - Dado `service_id` y `date`, devuelve todos los recursos activos con slots libres para ese servicio ese día.
-    - Útil para que el bot ofrezca "María disponible a las 10:00, Carlos a las 14:00".
-  - Campo `service_id uuid` en `appointments` (FK a `service_catalog`, nullable para no romper el endpoint existente de creación).
-  - Actualizar el flow conversacional (`rag_orchestrator.py`) cuando `current_intent = book_appointment`:
-    - **Paso 1:** consultar catálogo del tenant; si hay servicios, enviar lista interactiva `send_interactive_list` con los servicios disponibles.
-    - **Paso 2:** si hay múltiples profesionales/recursos para ese servicio, enviar lista interactiva con opciones.
-    - **Paso 3:** preguntar fecha deseada (texto libre o botones de "Hoy", "Mañana", "Elegir fecha").
-    - **Paso 4:** consultar `GET /availability` con la fecha y servicio elegidos; si hay slots, enviar los primeros 3 como botones interactivos. Si no hay slots, informar y sugerir la próxima fecha disponible.
-    - **Paso 5:** al confirmar slot, crear `appointment` con `service_id`, `resource_id`, `starts_at`, `ends_at` calculados desde duración del servicio. Estado inicial `provisional`.
-    - **Paso 6:** confirmar al cliente con resumen de la cita (fecha, hora, servicio, profesional).
-    - Estado del flow se persiste en `conversations.metadata.booking_flow` entre turnos.
-  - Si el catálogo está vacío, el bot usa el flujo de texto libre anterior (sin lista interactiva) — el admin puede configurar sin catálogo en desarrollo.
-  - Tests estáticos: cálculo de slots libres con citas existentes, día sin disponibilidad sugiere próxima fecha, flow multi-paso estado a estado (mock de cada transición), creación de cita al final del flow, catálogo vacío no rompe el flow.
-- **Alcance mínimo — Admin Panel:**
-  - En `OperationsDesk.jsx`, sección de recursos: formulario de creación/edición incluye builder de **horario laboral** (toggle por día de semana, hora inicio y fin, opción de múltiples franjas por día). Se persiste en `resources.capabilities.working_hours`.
-  - Vista de **calendario semanal** en `OperationsDesk.jsx`: muestra appointments activos por recurso. Consume el endpoint de disponibilidad para resaltar slots libres en verde.
-  - En `TenantSetupWizard.jsx`, pestaña existente (o integrar en "Servicios"): configurar `service_durations` como fallback cuando no hay catálogo.
-- **Criterio de aceptación:** dado recurso con horario 9:00–18:00 y una cita 10:00–11:00, el endpoint devuelve los slots libres correctamente; el bot guía el booking completo en WhatsApp usando interactivos; al final crea la cita sin conflicto; el calendario muestra la agenda real; tests pasan en CI.
-- **Dependencias:** TASK-0033 (catálogo de servicios), TASK-0034 (mensajes interactivos).
-
----
-
 ### TASK-0031 — Gestión de plantillas WhatsApp y notificaciones automáticas de cita
 
 - **Objetivo:** las notificaciones de cita (confirmación, recordatorios, seguimiento) requieren templates aprobados por Meta para enviarse fuera de la ventana de 24h. Sin templates configurados el sistema no puede notificar al cliente — todo el trabajo de TASK-0035 y TASK-0036 no funciona en producción. Esta tarea crea el sistema completo de gestión de plantillas por tenant.

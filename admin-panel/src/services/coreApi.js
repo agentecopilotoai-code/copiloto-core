@@ -390,6 +390,28 @@ export function openConversationStream(session, tenantId) {
   );
 }
 
+export function getResourceAvailability(session, tenantId, resourceId, { date, serviceId } = {}) {
+  const params = new URLSearchParams();
+  if (date) params.set('date', date);
+  if (serviceId) params.set('service_id', serviceId);
+  const query = params.toString();
+  return request(
+    `/tenants/${tenantId}/resources/${resourceId}/availability${query ? `?${query}` : ''}`,
+    { session, tenantId },
+  );
+}
+
+export function getTenantAvailability(session, tenantId, { date, serviceId } = {}) {
+  const params = new URLSearchParams();
+  if (date) params.set('date', date);
+  if (serviceId) params.set('service_id', serviceId);
+  const query = params.toString();
+  return request(
+    `/tenants/${tenantId}/availability${query ? `?${query}` : ''}`,
+    { session, tenantId },
+  );
+}
+
 export function listServices(session, tenantId, { includeInactive = false } = {}) {
   const query = includeInactive ? '?include_inactive=true' : '';
   return request(`/tenants/${tenantId}/services${query}`, { session, tenantId });

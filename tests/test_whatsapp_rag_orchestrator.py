@@ -25,7 +25,10 @@ def test_webhook_channel_query_fetches_account_mode():
 def test_orchestrator_skips_non_text_and_empty_messages():
     source = ORCHESTRATOR.read_text()
 
-    assert "message_type'] != 'text'" in source
+    # Interactive replies (button_reply/list_reply) are treated as text after
+    # the webhook fills body_text with the interactive title; everything else
+    # is skipped as non_text_message.
+    assert "message_type'] not in ('text', 'interactive')" in source
     assert "'non_text_message'" in source
 
 

@@ -261,6 +261,10 @@ tenant_admin_router = APIRouter(
     tags=['tenant-admin'],
     dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
 )
+tenant_catalog_router = APIRouter(
+    tags=['tenant-catalog'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin', allow_service=True))],
+)
 tenant_ops_router = APIRouter(
     tags=['tenant-operations'],
     dependencies=[Depends(authenticate_request), Depends(require_min_role('agent', allow_service=True))],
@@ -1747,6 +1751,287 @@ async def deactivate_resource(resource_id: UUID, request: Request, conn: asyncpg
     return Response(status_code=204)
 
 
+WEEKDAY_KEYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+
+
+def parse_iso_date(value: str) -> datetime:
+    try:
+        return datetime.strptime(value, '%Y-%m-%d')
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='date must use YYYY-MM-DD format') from exc
+
+
+def working_hours_for_date(capabilities: Any, target_date: datetime) -> list[dict[str, str]]:
+    """Read resources.capabilities.working_hours and return franjas of the target weekday."""
+    config = parse_json_object(capabilities, default={})
+    working_hours = config.get('working_hours')
+    if not isinstance(working_hours, dict):
+        return []
+    weekday_key = WEEKDAY_KEYS[target_date.weekday()]
+    franjas = working_hours.get(weekday_key)
+    if not isinstance(franjas, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for franja in franjas:
+        if not isinstance(franja, dict):
+            continue
+        start = franja.get('start')
+        end = franja.get('end')
+        if isinstance(start, str) and isinstance(end, str) and start and end:
+            normalized.append({'start': start, 'end': end})
+    return normalized
+
+
+def slot_start_minutes(value: str) -> int:
+    hours, _, minutes = value.partition(':')
+    try:
+        return int(hours) * 60 + int(minutes or 0)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f'Invalid time format: {value}') from exc
+
+
+def minutes_to_hhmm(minutes: int) -> str:
+    return f'{minutes // 60:02d}:{minutes % 60:02d}'
+
+
+def compute_free_slots(
+    franjas: list[dict[str, str]],
+    busy_intervals: list[tuple[int, int]],
+    duration_minutes: int,
+    step_minutes: int | None = None,
+) -> list[dict[str, str]]:
+    """Yield free slots of `duration_minutes` skipping any overlap with busy_intervals.
+
+    Slots are aligned to the franja start and advance in `step_minutes`
+    (defaults to duration_minutes — back-to-back slots).
+    """
+    if duration_minutes <= 0:
+        return []
+    step = step_minutes or duration_minutes
+    slots: list[dict[str, str]] = []
+    for franja in franjas:
+        franja_start = slot_start_minutes(franja['start'])
+        franja_end = slot_start_minutes(franja['end'])
+        if franja_end <= franja_start:
+            continue
+        cursor = franja_start
+        while cursor + duration_minutes <= franja_end:
+            slot_start = cursor
+            slot_end = cursor + duration_minutes
+            overlaps = False
+            for busy_start, busy_end in busy_intervals:
+                if slot_start < busy_end and busy_start < slot_end:
+                    overlaps = True
+                    break
+            if not overlaps:
+                slots.append({
+                    'start_time': minutes_to_hhmm(slot_start),
+                    'end_time': minutes_to_hhmm(slot_end),
+                })
+            cursor += step
+    return slots
+
+
+async def fetch_service_duration(
+    conn: asyncpg.Connection, tenant_id: UUID, service_id: UUID | None
+) -> tuple[int | None, asyncpg.Record | None]:
+    """Return (duration_minutes, service_row) for the given service or (None, None)."""
+    if not service_id:
+        return None, None
+    row = await conn.fetchrow(
+        'select id, name, duration_minutes, is_active from app.service_catalog where tenant_id=$1 and id=$2',
+        tenant_id,
+        service_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Service not found')
+    return int(row['duration_minutes']), row
+
+
+async def fetch_fallback_duration(conn: asyncpg.Connection, tenant_id: UUID) -> int:
+    """Return tenant_settings.service_durations.default (in minutes), or 60."""
+    raw = await conn.fetchval(
+        "select escalation_policy->>'service_durations' from app.tenant_settings where tenant_id=$1",
+        tenant_id,
+    )
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                default_minutes = parsed.get('default')
+                if isinstance(default_minutes, int) and default_minutes > 0:
+                    return default_minutes
+        except (json.JSONDecodeError, TypeError):
+            pass
+    settings_row = await conn.fetchval(
+        'select escalation_policy from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    parsed = parse_json_object(settings_row, default={})
+    durations = parsed.get('service_durations') if isinstance(parsed, dict) else None
+    if isinstance(durations, dict):
+        default_minutes = durations.get('default')
+        if isinstance(default_minutes, int) and default_minutes > 0:
+            return default_minutes
+    return 60
+
+
+@tenant_catalog_router.get(
+    '/tenants/{tenant_id}/resources/{resource_id}/availability'
+)
+async def resource_availability(
+    tenant_id: UUID,
+    resource_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    date: str = Query(..., description='Target date in YYYY-MM-DD format'),
+    service_id: UUID | None = Query(default=None),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    target_date = parse_iso_date(date)
+    resource = await conn.fetchrow(
+        'select id, name, code, capabilities, is_active from app.resources where tenant_id=$1 and id=$2',
+        tenant_id,
+        resource_id,
+    )
+    if not resource:
+        raise HTTPException(status_code=404, detail='Resource not found')
+    if not resource['is_active']:
+        return {
+            'date': date,
+            'resource_id': str(resource_id),
+            'service_duration_minutes': 0,
+            'slots': [],
+        }
+    duration, service_row = await fetch_service_duration(conn, tenant_id, service_id)
+    if duration is None:
+        duration = await fetch_fallback_duration(conn, tenant_id)
+    franjas = working_hours_for_date(resource['capabilities'], target_date)
+    if not franjas:
+        return {
+            'date': date,
+            'resource_id': str(resource_id),
+            'service_duration_minutes': duration,
+            'slots': [],
+        }
+    day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC)
+    day_end = day_start.replace(hour=23, minute=59, second=59)
+    busy_rows = await conn.fetch(
+        """
+        select starts_at, ends_at
+        from app.appointments
+        where tenant_id=$1
+          and resource_id=$2
+          and status in ('scheduled','confirmed')
+          and starts_at < $4
+          and ends_at > $3
+        """,
+        tenant_id,
+        resource_id,
+        day_start,
+        day_end,
+    )
+    busy_intervals: list[tuple[int, int]] = []
+    for busy in busy_rows:
+        starts = busy['starts_at']
+        ends = busy['ends_at']
+        if not isinstance(starts, datetime) or not isinstance(ends, datetime):
+            continue
+        starts_local = starts.astimezone(UTC).replace(tzinfo=None)
+        ends_local = ends.astimezone(UTC).replace(tzinfo=None)
+        same_day_start = starts_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        if same_day_start.date() != target_date.date():
+            continue
+        busy_intervals.append((
+            starts_local.hour * 60 + starts_local.minute,
+            ends_local.hour * 60 + ends_local.minute,
+        ))
+    slots = compute_free_slots(franjas, busy_intervals, duration)
+    return {
+        'date': date,
+        'resource_id': str(resource_id),
+        'resource_name': resource['name'],
+        'service_id': str(service_id) if service_id else None,
+        'service_name': service_row['name'] if service_row else None,
+        'service_duration_minutes': duration,
+        'slots': slots,
+    }
+
+
+@tenant_catalog_router.get('/tenants/{tenant_id}/availability')
+async def tenant_availability(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    date: str = Query(..., description='Target date in YYYY-MM-DD format'),
+    service_id: UUID | None = Query(default=None),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    target_date = parse_iso_date(date)
+    duration, service_row = await fetch_service_duration(conn, tenant_id, service_id)
+    if duration is None:
+        duration = await fetch_fallback_duration(conn, tenant_id)
+    resources_rows = await conn.fetch(
+        """
+        select id, name, code, capabilities
+        from app.resources
+        where tenant_id=$1 and is_active=true
+        order by name asc
+        """,
+        tenant_id,
+    )
+    day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC)
+    day_end = day_start.replace(hour=23, minute=59, second=59)
+    busy_rows = await conn.fetch(
+        """
+        select resource_id, starts_at, ends_at
+        from app.appointments
+        where tenant_id=$1
+          and status in ('scheduled','confirmed')
+          and starts_at < $3
+          and ends_at > $2
+        """,
+        tenant_id,
+        day_start,
+        day_end,
+    )
+    busy_by_resource: dict[UUID, list[tuple[int, int]]] = {}
+    for busy in busy_rows:
+        starts = busy['starts_at']
+        ends = busy['ends_at']
+        if not isinstance(starts, datetime) or not isinstance(ends, datetime):
+            continue
+        starts_local = starts.astimezone(UTC).replace(tzinfo=None)
+        ends_local = ends.astimezone(UTC).replace(tzinfo=None)
+        if starts_local.date() != target_date.date():
+            continue
+        busy_by_resource.setdefault(busy['resource_id'], []).append((
+            starts_local.hour * 60 + starts_local.minute,
+            ends_local.hour * 60 + ends_local.minute,
+        ))
+    resources_result: list[dict[str, Any]] = []
+    for resource in resources_rows:
+        franjas = working_hours_for_date(resource['capabilities'], target_date)
+        slots = compute_free_slots(
+            franjas, busy_by_resource.get(resource['id'], []), duration
+        )
+        resources_result.append({
+            'resource_id': str(resource['id']),
+            'resource_name': resource['name'],
+            'resource_code': resource['code'],
+            'slots': slots,
+        })
+    return {
+        'date': date,
+        'service_id': str(service_id) if service_id else None,
+        'service_name': service_row['name'] if service_row else None,
+        'service_duration_minutes': duration,
+        'resources': resources_result,
+    }
+
+
 SERVICE_CATALOG_COLUMNS = (
     'id',
     'tenant_id',
@@ -1775,12 +2060,6 @@ def normalize_service_catalog_row(row: asyncpg.Record | None) -> dict | None:
     if service.get('price_amount') is not None:
         service['price_amount'] = float(service['price_amount'])
     return service
-
-
-tenant_catalog_router = APIRouter(
-    tags=['tenant-catalog'],
-    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin', allow_service=True))],
-)
 
 
 @tenant_catalog_router.get('/tenants/{tenant_id}/services')
@@ -2292,10 +2571,10 @@ async def create_appointment(payload: AppointmentCreate, request: Request, conn:
     try:
         row = await conn.fetchrow(
             """
-            insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, resource_id, service_code, starts_at, ends_at, notes)
-            values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *
+            insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, service_id, resource_id, service_code, starts_at, ends_at, notes)
+            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *
             """,
-            payload.tenant_id, payload.contact_id, payload.conversation_id, payload.service_request_id, payload.resource_id, payload.service_code, payload.starts_at, payload.ends_at, payload.notes,
+            payload.tenant_id, payload.contact_id, payload.conversation_id, payload.service_request_id, payload.service_id, payload.resource_id, payload.service_code, payload.starts_at, payload.ends_at, payload.notes,
         )
     except asyncpg.ExclusionViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource has a conflicting appointment') from exc

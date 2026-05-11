@@ -210,6 +210,7 @@ class AppointmentCreate(BaseModel):
     ends_at: datetime
     conversation_id: UUID | None = None
     service_request_id: UUID | None = None
+    service_id: UUID | None = None
     notes: str | None = None
 
 
