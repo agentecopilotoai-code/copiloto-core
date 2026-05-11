@@ -1,0 +1,10 @@
+categoria,procedimiento,descripcion,precio_cop,duracion_minutos,requiere_valoracion_medica,notas
+Paquetes,Paquete antiarrugas facial,"Toxina botulínica tres zonas + ácido hialurónico una jeringa",1850000,90,sí,"Ahorro frente a procedimientos individuales; en dos citas separadas para reflexión"
+Paquetes,Paquete rejuvenecimiento integral,"Toxina tres zonas + bioestimulador facial",2350000,120,sí,"Plan personalizado en valoración; en sesiones separadas"
+Paquetes,Paquete piel luminosa,"3 sesiones de hidrafacial + 3 sesiones de mesoterapia facial",1450000,300,sí,"Cronograma de 6 sesiones; vigencia 4 meses"
+Paquetes,Paquete depilación piernas completas - 6 sesiones,"Bono de 6 sesiones de piernas completas con 15% descuento",1275000,450,sí,"Vigencia 12 meses; ahorro frente a precio individual"
+Paquetes,Paquete bikini brasileño - 6 sesiones,"Bono de 6 sesiones de bikini brasileño con 15% descuento",663000,240,sí,"Vigencia 12 meses"
+Paquetes,Paquete axilas - 6 sesiones,"Bono de 6 sesiones de axilas con 15% descuento",408000,120,sí,"Vigencia 12 meses"
+Paquetes,Paquete corporal moldeador,"2 zonas de criolipólisis + 6 sesiones de radiofrecuencia + 4 drenajes",2300000,720,sí,"Protocolo integral de moldeamiento; cronograma personalizado"
+Paquetes,Paquete novia,"Hidrafacial + mesoterapia facial + 1 sesión de PRP","850000",180,sí,"Reservar con mínimo 30 días para optimizar resultado"
+Paquetes,Paquete reducción de medidas express,"4 sesiones de mesoterapia corporal + 8 sesiones de radiofrecuencia + 8 drenajes",2400000,840,sí,"Plan de 4 semanas; resultado dependiente de hábitos del paciente"

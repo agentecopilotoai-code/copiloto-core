@@ -1,0 +1,13 @@
+categoria,procedimiento,descripcion,precio_cop,duracion_minutos,requiere_valoracion,notas
+Endodoncia,Endodoncia unirradicular,"Tratamiento de conducto en diente anterior (1 conducto)",650000,90,sí,"Incluye radiografía periapical inicial y final; no incluye corona"
+Endodoncia,Endodoncia birradicular,"Tratamiento de conducto en premolar (2 conductos)",780000,90,sí,"Incluye anestesia y obturación tridimensional"
+Endodoncia,Endodoncia multirradicular,"Tratamiento de conducto en molar (3-4 conductos)",950000,120,sí,"Incluye anestesia; puede requerir 2 citas según complejidad"
+Endodoncia,Retratamiento endodóntico,"Retratamiento de conducto en diente previamente endodonciado",1200000,150,sí,"Mayor complejidad; requiere retiro de obturación previa"
+Endodoncia,Apexoformación o apexogénesis,"Tratamiento en diente con ápice abierto (común en niños)",950000,120,sí,"Generalmente requiere varias citas"
+Endodoncia,Cirugía periapical (apicectomía),"Cirugía endodóntica con resección del ápice radicular",1450000,90,sí,"Cuando endodoncia convencional no es viable"
+Periodoncia,Raspaje y alisado radicular (por cuadrante),"Limpieza subgingival profunda con anestesia",380000,75,sí,"Para periodontitis; cuadrante = 1/4 de la boca"
+Periodoncia,Raspaje completo boca (4 cuadrantes),"Tratamiento periodontal completo en varias citas",1300000,300,sí,"Generalmente en 2-4 citas separadas"
+Periodoncia,Mantenimiento periodontal,"Sesión de mantenimiento post-raspaje",250000,60,sí,"Recomendado cada 3-4 meses tras raspaje inicial"
+Periodoncia,Alargamiento de corona quirúrgico,"Cirugía periodontal para exponer estructura dental",680000,75,sí,"Para preparación de coronas o resinas extensas"
+Periodoncia,Injerto de encía,"Cirugía de tejido conectivo para recesión gingival",1450000,90,sí,"Por diente; precio referencial"
+Periodoncia,Gingivectomía estética,"Recontorneado de encía para diseño de sonrisa",450000,60,sí,"Por sextante; mejora estética de sonrisa gingival"
