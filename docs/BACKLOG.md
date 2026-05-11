@@ -50,26 +50,34 @@ El análisis del código contra la arquitectura (`README.md` + `ARCHITECTURE.md`
 
 ---
 
-### TASK-0026 — Implementar clasificador de intenciones híbrido con taxonomía completa
+### TASK-0026 — Implementar clasificador de intenciones genérico orientado al journey de agendamiento
 
-- **Objetivo:** ampliar el clasificador actual (que solo detecta booking intent con keywords) al esquema de 7 grupos de intenciones definido en la arquitectura, con capas reglas → LLM → handoff por baja confianza.
+- **Objetivo:** la plataforma es un reemplazo de call center genérico: no conoce el tipo de negocio ni sus servicios específicos — esos datos viven en la base de conocimiento que cada tenant sube. El clasificador debe guiar a cualquier usuario desde el saludo hasta la cita confirmada, pasando por sus preguntas, sin depender de verticales hardcodeados. El clasificador actual solo detecta booking intent con keywords y no diferencia si el usuario está preguntando algo (FAQ), quiere agendar, quiere modificar una cita existente o está frustrado.
 - **Alcance mínimo:**
-  - Crear o ampliar `app/services/intent_classifier.py` (o integrar en `rag_orchestrator.py`) con los 7 grupos de intenciones:
-    - `faq`: horario, ubicación, cobertura, medios_pago, precios_orientativos, políticas
-    - `agenda`: reservar, confirmar, reprogramar, cancelar, disponibilidad
-    - `field_service`: crear_solicitud, seguimiento_estado, enviar_fotos, cobertura_zona
-    - `beauty`: elegir_servicio, elegir_profesional, no_show_recovery
-    - `pet_grooming`: reservar_grooming, confirmar_ruta, cobertura_ruta
-    - `risk`: queja, garantía_excepción, descuento_excepción, tema_clínico, tema_legal
-    - `channel`: opt_in, opt_out, fuera_de_alcance, unsupported_message
-  - Capa 1 (`rule-router`): regex, keywords y catálogos por vertical; devuelve intención + confianza.
-  - Capa 2 (`intent-llm`): llamar al LLM cloud/local cuando confianza < 0.78, con prompt acotado que solo puede responder con una intención del catálogo.
-  - Capa 3 (`risk-detector`): evaluar texto con patterns de temas sensibles (veterinario/médico, legal, garantía excepcional, queja grave); si detecta → forzar `handoff_human` independientemente de confianza.
-  - Capa 4 (`fallback-human`): si confianza < 0.70 tras el LLM → handoff automático.
-  - El orquestador `rag_orchestrator.py` debe consumir la intención clasificada para decidir la siguiente acción: FAQ → RAG, agenda → `conversation_flow`, servicio → `create_service_request`, riesgo → handoff.
-  - Tests estáticos con ≥ 30 casos cubriendo los 7 grupos y los umbrales de confianza.
-- **Criterio de aceptación:** un mensaje de texto de WhatsApp que diga "cuánto cuesta el corte de cabello" se clasifica como `faq.precios_orientativos` y dispara búsqueda RAG; uno que diga "quiero agendar" se clasifica como `agenda.reservar` y activa el conversation flow; uno que mencione "demanda" o "problema médico" fuerza handoff; los tests estáticos pasan en CI.
-- **Dependencias:** TASK-0025 recomendada antes (mejora la calidad del RAG usado en la respuesta), pero no bloqueante.
+  - Crear o ampliar `app/services/intent_classifier.py` con las siguientes intenciones genéricas (válidas para cualquier negocio que use la plataforma):
+    - `greeting`: saludo inicial o reapertura de conversación; dispara mensaje de bienvenida y oferta de ayuda.
+    - `faq`: pregunta sobre precios, horarios, ubicación, servicios disponibles, políticas o cualquier duda informativa; dispara búsqueda RAG en la base de conocimiento del tenant.
+    - `book_appointment`: quiere agendar una cita nueva; activa el `conversation_flow` de agendamiento paso a paso.
+    - `confirm_appointment`: pregunta o confirma una cita existente.
+    - `reschedule_appointment`: quiere mover una cita a otro horario.
+    - `cancel_appointment`: quiere cancelar.
+    - `check_availability`: pregunta por disponibilidad sin comprometerse todavía; dispara consulta de slots libres.
+    - `complaint_or_risk`: queja, reclamación, frustración explícita, o cualquier tema que requiera criterio humano (garantías, disputas, temas fuera del scope del negocio); fuerza handoff.
+    - `out_of_scope`: mensaje sin relación con el negocio; el bot responde que solo puede ayudar con los servicios del negocio y ofrece pasar a un asesor.
+    - `opt_out`: el usuario pide no recibir más mensajes; registra `opt_out` en el contacto.
+  - Capa 1 (`rule-router`): keywords en español + regex para los casos más claros (saludos, "quiero agendar", "cancelar mi cita", "stop"). Devuelve intención + confianza.
+  - Capa 2 (`intent-llm`): cuando confianza < 0.78, llamar al LLM disponible (cascada cloud/local existente) con un prompt corto que solo puede devolver una de las intenciones del catálogo. El contexto del negocio NO se incluye en este prompt (eso es tarea del RAG, no del clasificador).
+  - Capa 3 (`fallback-human`): si tras el LLM la confianza sigue < 0.70, o si el clasificador detecta frustración/queja explícita, forzar `complaint_or_risk` → handoff.
+  - El orquestador `rag_orchestrator.py` consume la intención para decidir la siguiente acción:
+    - `greeting` → respuesta de bienvenida con prompt base del tenant (si existe) o mensaje genérico.
+    - `faq` → búsqueda RAG; si no hay contexto suficiente → ofrecer hablar con un asesor.
+    - `book_appointment` / `check_availability` → `conversation_flow` de agendamiento.
+    - `confirm_appointment` / `reschedule_appointment` / `cancel_appointment` → acción sobre la cita activa del contacto.
+    - `complaint_or_risk` / `out_of_scope` / `opt_out` → handoff o acción de canal.
+  - El campo `conversations.current_intent` se actualiza con la intención detectada en cada turno.
+  - Tests estáticos con ≥ 25 casos cubriendo todas las intenciones y los umbrales de confianza, sin depender de Docker ni API keys.
+- **Criterio de aceptación:** "buenos días" → `greeting`; "cuánto cuesta?" → `faq` (dispara RAG); "quiero una cita" → `book_appointment` (activa conversation flow); "quiero cancelar" → `cancel_appointment`; "esto es una estafa" → `complaint_or_risk` (fuerza handoff); los tests estáticos pasan en CI y el campo `current_intent` de la conversación se actualiza en cada turno.
+- **Dependencias:** TASK-0025 recomendada antes para mejorar la calidad del RAG que responde las FAQs, pero no bloqueante para implementar el clasificador.
 
 ---
 
@@ -104,15 +112,15 @@ El análisis del código contra la arquitectura (`README.md` + `ARCHITECTURE.md`
 - **Alcance mínimo:**
   - Crear `app/services/policy_engine.py` con función `evaluate_policy(tenant_settings, conversation, message_text, intent) -> PolicyResult`.
   - `PolicyResult` incluye: `action` (`continue_bot` | `require_handoff` | `block`), `reason` (string legible), `risk_level` (`low` | `medium` | `high`).
-  - Reglas a evaluar en orden de prioridad:
-    1. **Risk detector**: detectar temas clínicos/médicos, legales, garantía excepcional, queja grave con lista de patrones configurables (no editable por tenant en MVP, pero parametrizable en código).
-    2. **Ventana de servicio WhatsApp**: si `conversation.service_window_expires_at` ya pasó, solo se pueden enviar mensajes con templates aprobados; si no hay template cargado, escalar a humano.
-    3. **Límite de turnos de bot**: si `conversation.bot_turn_count >= tenant_settings.max_bot_turns`, requerir handoff.
-    4. **Intención de riesgo por vertical**: `field_service` → bloquear diagnósticos técnicos automáticos; `pet_grooming` → bloquear cualquier consejo clínico/veterinario.
-  - Integrar `evaluate_policy()` en `rag_orchestrator.py` antes de ejecutar acciones o generar respuesta bot.
-  - Tests estáticos con ≥ 20 casos cubriendo los 4 tipos de regla y la priorización.
-- **Criterio de aceptación:** un mensaje con "quiero demandar" dispara `require_handoff` con `risk_level=high`; una conversación con `service_window_expires_at` vencido activa la regla de ventana; llegar a `max_bot_turns` fuerza handoff; el análisis de diagnóstico técnico en `field_service` bloquea la respuesta bot; los tests estáticos pasan en CI.
-- **Dependencias:** TASK-0026 (clasificador de intenciones) recomendada antes para que el policy engine reciba la intención clasificada, pero el risk detector puede implementarse en paralelo.
+  - Reglas a evaluar en orden de prioridad (todas genéricas, sin verticales hardcodeados):
+    1. **Intención de riesgo**: si la intención clasificada es `complaint_or_risk` → `require_handoff` con `risk_level=high` inmediatamente, sin pasar por RAG.
+    2. **Ventana de servicio WhatsApp**: si `conversation.service_window_expires_at` ya pasó, solo se pueden enviar mensajes con templates aprobados; si no hay template configurado → escalar a humano.
+    3. **Límite de turnos de bot**: si el número de turnos del bot en la conversación actual alcanza `tenant_settings.max_bot_turns` → `require_handoff` (el tenant configura este umbral desde el Tenant Setup Wizard).
+    4. **Sin contexto RAG suficiente tras dos intentos consecutivos**: si el orquestador ya respondió dos veces con "no tengo información suficiente", forzar handoff en lugar de repetir el mismo mensaje.
+  - Integrar `evaluate_policy()` en `rag_orchestrator.py` antes de generar cualquier respuesta bot.
+  - Tests estáticos con ≥ 20 casos cubriendo las 4 reglas y su priorización.
+- **Criterio de aceptación:** intención `complaint_or_risk` → `require_handoff` inmediato; conversación con ventana vencida sin template → handoff; llegar a `max_bot_turns` fuerza handoff; dos respuestas consecutivas sin contexto RAG fuerzan handoff; los tests estáticos pasan en CI.
+- **Dependencias:** TASK-0026 recomendada antes para que el policy engine reciba la intención clasificada; el punto 2 y 3 pueden implementarse en paralelo.
 
 ---
 
