@@ -37,33 +37,6 @@ Las tareas están ordenadas por dependencia: cada una construye sobre la anterio
 
 ## Stack de tareas pendientes
 
-### TASK-0028 — Implementar policy engine básico con configuración por tenant
-
-- **Objetivo:** cerrar la brecha entre la política básica actual (solo `max_bot_turns` + keywords de trigger dispersos en el orquestador) y un policy engine centralizado y configurable que evalúe riesgo, ventana de servicio WhatsApp y límites antes de cada respuesta del bot.
-- **Alcance mínimo — backend:**
-  - Crear `app/services/policy_engine.py` con función `evaluate_policy(tenant_settings, conversation, message_text, intent) -> PolicyResult`.
-  - `PolicyResult`: `action` (`continue_bot` | `require_handoff` | `block`), `reason` (string legible para el log), `risk_level` (`low` | `medium` | `high`).
-  - Reglas evaluadas en orden de prioridad:
-    1. **Intención de riesgo**: si `intent == complaint_or_risk` → `require_handoff`, `risk_level=high` inmediatamente.
-    2. **Keywords de riesgo adicionales**: lista configurable por tenant en `tenant_settings.escalation_policy.risk_keywords`; si alguna aparece en el texto → `require_handoff`.
-    3. **Ventana de servicio WhatsApp**: si `conversation.service_window_expires_at` ya pasó → solo templates; si no hay template configurado → `require_handoff`.
-    4. **Límite de turnos de bot**: si turnos del bot ≥ `tenant_settings.max_bot_turns` → `require_handoff`.
-    5. **Sin contexto RAG repetido**: si el orquestador ya respondió N veces consecutivas con `sufficient_context=false`, N configurable (`consecutive_no_context_limit`, default 2) → `require_handoff`.
-  - Integrar `evaluate_policy()` en `rag_orchestrator.py` como primer paso antes de cualquier respuesta bot; si el resultado es `require_handoff`, crear handoff directamente sin llamar al LLM.
-  - Persistir `risk_level` en `messages.payload` para trazabilidad.
-  - Tests estáticos ≥ 20 casos cubriendo las 5 reglas y su priorización.
-- **Alcance mínimo — Admin Panel:**
-  - En `TenantSetupWizard.jsx`, pestaña **"Escalamiento"** (ya existe, extender):
-    - Campo numérico **"Máximo de turnos del bot"** (`max_bot_turns`, ya existe en settings — asegurarse de que se guarda y carga correctamente desde la UI).
-    - Campo numérico **"Respuestas sin contexto antes de escalar"** (`consecutive_no_context_limit`, nuevo).
-    - Lista editable de **keywords de riesgo** (agregar/eliminar tags desde la UI; se guarda en `escalation_policy.risk_keywords`).
-    - Toggle **"Forzar handoff si ventana WhatsApp expiró"** (habilita/deshabilita la regla 3).
-  - En `GoLiveReadiness.jsx`: agregar check **"Policy engine configurado"** que valide que `max_bot_turns > 0` y que hay al menos un trigger definido (keywords o `max_bot_turns`).
-- **Criterio de aceptación:** `complaint_or_risk` fuerza handoff inmediato; keyword de riesgo personalizada del tenant dispara handoff; ventana vencida sin template activa handoff; `max_bot_turns` alcanzado escala; dos respuestas sin contexto escalan; todo configurable desde el Admin Panel sin tocar código; tests pasan en CI.
-- **Dependencias:** TASK-0026 (el policy engine necesita recibir la intención clasificada del paso anterior).
-
----
-
 ### TASK-0030 — Booking flow con consulta de disponibilidad real
 
 - **Objetivo:** el `conversation_flow.py` actual recolecta preferencias del usuario (servicio, fecha, hora) pero no consulta `appointments` + `resources` para verificar ni ofrecer slots reales disponibles. En producción, el bot podría crear citas en horarios ocupados o sin recursos activos. Esta tarea conecta el flujo conversacional con la disponibilidad real del negocio.

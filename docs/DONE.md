@@ -595,3 +595,30 @@ Cada entrada debe incluir:
   - Admin Panel permite desactivar intenciones, agregar keywords y ajustar umbral
   - Badge de intención visible en Operations Desk inbox y detalle
   - 43 tests pasan en CI
+
+---
+
+### TASK-0028 — Implementar policy engine básico con configuración por tenant
+
+- **Fecha:** 2026-05-11
+- **Resumen:** Se creó un policy engine centralizado (`app/services/policy_engine.py`) que evalúa 5 reglas de prioridad decreciente antes de cada respuesta del bot. Se integró en el orquestador RAG reemplazando los checks dispersos de intent, keywords y max_bot_turns. Se agregaron campos de configuración en el Admin Panel y un check de readiness automático.
+- **Archivos modificados:**
+  - `app/services/policy_engine.py` — nuevo módulo con `PolicyResult` y `evaluate_policy()`
+  - `app/services/rag_orchestrator.py` — integración del policy engine, remoción de checks dispersos, `sufficient_context` y `risk_level` en payloads
+  - `app/api/v1/routes.py` — check `policy_engine` en `build_tenant_readiness_report()`
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — pestaña Escalamiento extendida con max_bot_turns, consecutive_no_context_limit, risk_keywords, enforce_service_window
+  - `admin-panel/src/components/modules/readiness/GoLiveReadiness.jsx` — acción "Ir a Escalamiento" para el check policy_engine
+  - `tests/test_policy_engine_static.py` — 37 tests nuevos cubriendo las 5 reglas y helpers
+  - `tests/test_whatsapp_rag_orchestrator.py` — actualización de 2 tests para reflejar la nueva arquitectura con policy engine
+- **Validaciones:**
+  - `pytest tests/test_policy_engine_static.py` → 37 passed
+  - `pytest tests/test_whatsapp_rag_orchestrator.py` → 20 passed (4 fallas pre-existentes por structlog no instalado en entorno de tests)
+  - Sin regresiones introducidas
+- **Criterios de aceptación verificados:**
+  - `complaint_or_risk` fuerza handoff inmediato con `risk_level=high`
+  - Keyword de riesgo personalizada del tenant dispara handoff
+  - Ventana vencida sin enforce=false activa handoff con `risk_level=medium`
+  - `max_bot_turns` alcanzado escala al agente
+  - Dos respuestas consecutivas sin contexto escalan (configurable)
+  - Todo configurable desde la pestaña Escalamiento del Admin Panel
+  - Check `policy_engine` visible en GoLiveReadiness con acceso directo a configuración

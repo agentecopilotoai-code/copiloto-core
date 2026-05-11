@@ -168,6 +168,11 @@ function formFromEscalationPolicy(value) {
     handoffMessage:
       escalationPolicy.handoff_message ||
       'Te conecto con una persona del equipo para ayudarte mejor.',
+    riskKeywords: Array.isArray(escalationPolicy.risk_keywords)
+      ? escalationPolicy.risk_keywords.join(', ')
+      : '',
+    consecutiveNoContextLimit: escalationPolicy.consecutive_no_context_limit ?? 2,
+    enforceServiceWindow: escalationPolicy.enforce_service_window ?? true,
   };
 }
 
@@ -220,6 +225,12 @@ function toEscalationPolicy(escalationForm) {
         .filter(Boolean),
     },
     handoff_message: escalationForm.handoffMessage,
+    risk_keywords: escalationForm.riskKeywords
+      .split(',')
+      .map((kw) => kw.trim())
+      .filter(Boolean),
+    consecutive_no_context_limit: Number(escalationForm.consecutiveNoContextLimit),
+    enforce_service_window: escalationForm.enforceServiceWindow,
   };
 }
 
@@ -257,6 +268,9 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     confidenceBelow: 0.55,
     keywords: 'humano, asesor, agente, reclamo',
     handoffMessage: 'Te conecto con una persona del equipo para ayudarte mejor.',
+    riskKeywords: '',
+    consecutiveNoContextLimit: 2,
+    enforceServiceWindow: true,
   });
   const [intentSettings, setIntentSettings] = useState(defaultIntentSettings);
   const [privacyForm, setPrivacyForm] = useState({
@@ -601,9 +615,35 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
           </label>
           <label>Cola<input value={escalationForm.queue} onChange={(event) => setEscalationForm({ ...escalationForm, queue: event.target.value })} /></label>
           <label>Prioridad<select value={escalationForm.priority} onChange={(event) => setEscalationForm({ ...escalationForm, priority: event.target.value })}><option>low</option><option>normal</option><option>high</option></select></label>
-          <label>Escalar después de turnos bot<input min="1" value={escalationForm.afterBotTurns} onChange={(event) => setEscalationForm({ ...escalationForm, afterBotTurns: event.target.value })} type="number" /></label>
+          <label>
+            Máximo de turnos del bot (max_bot_turns)
+            <input min="1" max="50" value={escalationForm.afterBotTurns} onChange={(event) => setEscalationForm({ ...escalationForm, afterBotTurns: event.target.value })} type="number" />
+          </label>
+          <label>
+            Respuestas sin contexto antes de escalar
+            <input min="1" max="20" value={escalationForm.consecutiveNoContextLimit} onChange={(event) => setEscalationForm({ ...escalationForm, consecutiveNoContextLimit: event.target.value })} type="number" />
+          </label>
           <label>Confianza menor a<input max="1" min="0" step="0.01" value={escalationForm.confidenceBelow} onChange={(event) => setEscalationForm({ ...escalationForm, confidenceBelow: event.target.value })} type="number" /></label>
-          <label className="wide">Keywords<input value={escalationForm.keywords} onChange={(event) => setEscalationForm({ ...escalationForm, keywords: event.target.value })} /></label>
+          <label className="wide">
+            Keywords de escalamiento (separadas por coma)
+            <input value={escalationForm.keywords} onChange={(event) => setEscalationForm({ ...escalationForm, keywords: event.target.value })} />
+          </label>
+          <label className="wide">
+            Keywords de riesgo — fuerzan handoff inmediato (separadas por coma)
+            <input
+              placeholder="demanda, fraude, amenaza, legal"
+              value={escalationForm.riskKeywords}
+              onChange={(event) => setEscalationForm({ ...escalationForm, riskKeywords: event.target.value })}
+            />
+          </label>
+          <label className="inline-check wide">
+            <input
+              type="checkbox"
+              checked={escalationForm.enforceServiceWindow}
+              onChange={(event) => setEscalationForm({ ...escalationForm, enforceServiceWindow: event.target.checked })}
+            />
+            Forzar handoff si la ventana de servicio WhatsApp (24 h) expiró
+          </label>
           <label className="wide">Mensaje de handoff<textarea value={escalationForm.handoffMessage} onChange={(event) => setEscalationForm({ ...escalationForm, handoffMessage: event.target.value })} /></label>
           <div className="form-actions"><button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">Guardar escalamiento</button></div>
         </form>

@@ -54,19 +54,26 @@ def test_orchestrator_reads_max_bot_turns_and_escalation_policy_from_tenant_sett
 
 def test_orchestrator_checks_keyword_triggers_from_escalation_policy():
     source = ORCHESTRATOR.read_text()
+    policy_source = (Path(__file__).parent.parent / 'app' / 'services' / 'policy_engine.py').read_text()
 
+    # _keyword_triggers is kept for legacy compatibility; the policy engine handles risk_keywords.
     assert '_keyword_triggers' in source
     assert '_DEFAULT_HUMAN_KEYWORDS' in source
-    assert "'keyword_trigger'" in source
-    assert 'triggered_keyword' in source
+    # Keyword escalation now handled by policy engine via evaluate_policy().
+    assert 'evaluate_policy' in source
+    assert 'risk_keyword' in policy_source
 
 
 def test_orchestrator_enforces_max_bot_turns_limit():
     source = ORCHESTRATOR.read_text()
+    policy_source = (Path(__file__).parent.parent / 'app' / 'services' / 'policy_engine.py').read_text()
 
-    assert 'bot_turn_count >= max_bot_turns' in source
-    assert "'max_bot_turns_exceeded'" in source
+    # Bot turn count is fetched in orchestrator and passed to evaluate_policy.
+    assert 'bot_turn_count' in source
     assert "sender_actor_type='bot'" in source
+    # Max turns enforcement now delegated to policy engine.
+    assert 'max_bot_turns_exceeded' in policy_source
+    assert 'evaluate_policy' in source
 
 
 def test_orchestrator_deduplicates_by_idempotency_key():

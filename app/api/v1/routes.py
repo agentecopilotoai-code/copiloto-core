@@ -3128,6 +3128,36 @@ async def build_tenant_readiness_report(
         )
     )
 
+    # Policy engine check: max_bot_turns > 0 and at least one trigger defined.
+    pe_max_bot_turns = readiness_positive_int(settings_dict.get('max_bot_turns') if settings else None)
+    pe_has_triggers = bool(
+        ep_triggers.get('keywords')
+        or ep_triggers.get('after_bot_turns')
+        or escalation_policy.get('risk_keywords')
+    )
+    policy_engine_ready = pe_max_bot_turns and pe_has_triggers
+    if not settings:
+        policy_engine_reason = 'Sin configuración de tenant settings. Configura el policy engine en la pestaña Escalamiento.'
+    elif not pe_max_bot_turns:
+        policy_engine_reason = 'max_bot_turns debe ser mayor que cero. Configura el límite en la pestaña Escalamiento.'
+    elif not pe_has_triggers:
+        policy_engine_reason = 'Sin triggers de escalamiento. Configura keywords o max_bot_turns en la pestaña Escalamiento.'
+    else:
+        policy_engine_reason = 'Policy engine configurado con triggers válidos.'
+    checks.append(
+        readiness_check(
+            'policy_engine',
+            'Policy engine configurado',
+            policy_engine_ready,
+            policy_engine_reason,
+            {
+                'max_bot_turns': settings_dict.get('max_bot_turns') if settings else None,
+                'has_risk_keywords': bool(escalation_policy.get('risk_keywords')),
+                'consecutive_no_context_limit': escalation_policy.get('consecutive_no_context_limit'),
+            },
+        )
+    )
+
     audit_count = await conn.fetchval('select count(*) from app.audit_logs where tenant_id=$1', tenant_id)
     audit_count = audit_count or 0
     audit_ready = audit_count > 0
