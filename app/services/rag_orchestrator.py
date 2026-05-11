@@ -254,15 +254,29 @@ async def orchestrate_inbound_message(
         return {'action': 'skipped', 'reason': 'opt_out_registered'}
 
     # ── Policy engine evaluation ──────────────────────────────────────────────
-    # Fetch bot_turn_count for policy evaluation.
+    # Reset window: only count bot turns produced AFTER the most recent agent
+    # release. When a human takes over and then releases the conversation back
+    # to the bot, the policy counters start fresh so a new conversation isn't
+    # immediately re-escalated just because previous turns existed.
+    last_release_at = await conn.fetchval(
+        """
+        select max(updated_at) from app.handoffs
+        where tenant_id=$1 and conversation_id=$2 and status='resolved'
+        """,
+        tenant_id,
+        conversation['id'],
+    )
+
     bot_turn_count: int = await conn.fetchval(
         """
         select count(*) from app.messages
         where conversation_id=$1
           and direction='outbound'
           and sender_actor_type='bot'
+          and ($2::timestamptz is null or created_at > $2)
         """,
         conversation['id'],
+        last_release_at,
     ) or 0
 
     # Count consecutive recent bot messages with sufficient_context=false.
@@ -273,10 +287,12 @@ async def orchestrate_inbound_message(
         where conversation_id=$1
           and direction='outbound'
           and sender_actor_type='bot'
+          and ($2::timestamptz is null or created_at > $2)
         order by created_at desc
         limit 10
         """,
         conversation['id'],
+        last_release_at,
     )
     consecutive_no_context = 0
     for _row in recent_sc_rows:
