@@ -53,6 +53,7 @@ from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retri
 from app.services.whatsapp import (
     download_whatsapp_media,
     normalize_meta_app_secret,
+    parse_interactive_reply,
     resolve_secret_ref,
     secret_ref_is_configured,
     token_ref_is_configured,
@@ -3701,6 +3702,11 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                 body_text = message.get('text', {}).get('body') if isinstance(message.get('text'), dict) else None
                 if body_text is None and isinstance(media_payload, dict):
                     body_text = media_payload.get('caption')
+                interactive_reply = parse_interactive_reply(message) if message_type == 'interactive' else None
+                if interactive_reply:
+                    message = {**message, **interactive_reply}
+                    if not body_text:
+                        body_text = interactive_reply['interactive_title']
                 timestamp = message.get('timestamp')
                 received_at = None
                 if timestamp:

@@ -1071,6 +1071,67 @@ fieldset {
   padding: 0.65rem;
 }
 
+.message-interactive {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+
+.message-interactive .interactive-header {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.message-interactive .interactive-footer {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.message-interactive .interactive-cta {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.message-interactive .interactive-section-title {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.interactive-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.interactive-chip {
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: 999px;
+  color: #1d4ed8;
+  display: inline-flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.7rem;
+}
+
+.interactive-chip small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  margin-top: 0.15rem;
+}
+
+.interactive-chip-selected {
+  background: rgba(34, 197, 94, 0.16);
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #15803d;
+  font-weight: 600;
+}
+
 .schedule-panel,
 .schedule-form,
 .appointment-list {

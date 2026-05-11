@@ -132,24 +132,6 @@ TASK-0029 (drill de restore — cierre operacional)
 
 ---
 
-### TASK-0034 — Mensajes interactivos WhatsApp (botones y listas)
-
-- **Objetivo:** el bot actualmente solo envía texto plano. Para reducir fricción en el agendamiento, la confirmación de citas y cualquier interacción de decisión, se necesita soporte nativo de mensajes interactivos de WhatsApp: botones de respuesta rápida y listas de opciones. Sin esto el booking guiado es solo texto y la experiencia es inferior a cualquier producto comparable.
-- **Alcance mínimo — backend:**
-  - En `app/services/whatsapp_sender.py` (o el servicio de envío equivalente), agregar soporte para el tipo `interactive` de la Graph API de Meta:
-    - Función `send_interactive_buttons(wa_phone, body_text, buttons: list[dict])` — construye payload `{type:'button', body:{text}, action:{buttons:[{type:'reply', reply:{id, title}}]}}`. Máximo 3 botones.
-    - Función `send_interactive_list(wa_phone, body_text, button_label: str, sections: list[dict])` — construye payload `{type:'list', body:{text}, action:{button, sections:[{title, rows:[{id,title,description}]}]}}`. Máximo 10 opciones en secciones.
-  - Ambas funciones van al worker de entrega existente (`domain_events` queue) con los mismos mecanismos de retry e idempotencia.
-  - Parsing de respuesta interactiva inbound: en el webhook, cuando Meta envía un mensaje de tipo `interactive` con `interactive.type = 'button_reply'` o `'list_reply'`, extraer `button_id` / `list_row_id` y `title`, almacenar en `messages.payload` como `{interactive_id, interactive_title, interactive_type}`, y exponer el texto elegido como `body_text` del mensaje para que el orquestador lo procese igual que un mensaje de texto.
-  - Estado del flow en `conversations.metadata jsonb`: campo `booking_flow` con subestados `{step, selected_service_id, selected_resource_id, proposed_date, pending_interactive_id}` para rastrear qué paso del booking se completó y qué botón/lista se envió esperando respuesta.
-  - Tests estáticos: construcción del payload de botón (≤ 3 opciones), construcción del payload de lista (hasta 10 opciones), parsing `button_reply`, parsing `list_reply`, almacenamiento en `messages.payload`, lectura del estado del flow desde `conversations.metadata`.
-- **Alcance mínimo — Admin Panel:**
-  - En `OperationsDesk.jsx`, en el historial de mensajes del detalle de conversación: renderizar visualmente los mensajes interactivos enviados (mostrar los botones/opciones como chips) y la selección del cliente (opción elegida destacada con fondo de color).
-- **Criterio de aceptación:** el sistema construye y envía mensajes de botón y lista vía el worker existente; el webhook parsea respuestas interactivas y las trata como mensajes de texto para el orquestador; el Operations Desk muestra la visualización correcta de interactivos; tests pasan en CI.
-- **Dependencias:** ninguna técnica (puede ejecutarse en paralelo con TASK-0033).
-
----
-
 ### TASK-0030 — Booking flow completo con disponibilidad real y flow guiado por bot
 
 - **Objetivo:** el orquestador actual detecta la intención `book_appointment` pero solo recolecta preferencias en texto libre — nunca consulta disponibilidad real ni crea la cita. Para producción, el bot debe guiar al cliente paso a paso (servicio → profesional → fecha → slot disponible → confirmación → cita creada) usando los mensajes interactivos de TASK-0034 y el catálogo de TASK-0033.

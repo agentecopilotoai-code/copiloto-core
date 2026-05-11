@@ -53,10 +53,93 @@ function messageLabel(message) {
   const labels = {
     audio: 'Audio',
     image: 'Imagen',
+    interactive: 'Interactivo',
     text: 'Texto',
     video: 'Video',
   };
   return labels[message.message_type] || message.message_type || 'Mensaje';
+}
+
+function interactivePayload(message) {
+  const payload = message?.payload;
+  if (!payload || typeof payload !== 'object') return null;
+  if (payload.interactive && typeof payload.interactive === 'object') {
+    return payload.interactive;
+  }
+  return null;
+}
+
+function interactiveSelection(message) {
+  const payload = message?.payload;
+  if (!payload || typeof payload !== 'object') return null;
+  const id = payload.interactive_id;
+  const title = payload.interactive_title;
+  if (typeof id !== 'string' || typeof title !== 'string') return null;
+  return { id, title, type: payload.interactive_type, description: payload.interactive_description };
+}
+
+function renderInteractiveOutbound(interactive, message) {
+  const body = interactive?.body?.text || message?.body_text || '';
+  const header = interactive?.header?.text;
+  const footer = interactive?.footer?.text;
+  if (interactive?.type === 'button') {
+    const buttons = interactive?.action?.buttons || [];
+    return (
+      <div className="message-interactive">
+        {header ? <p className="interactive-header"><strong>{header}</strong></p> : null}
+        {body ? <p>{body}</p> : null}
+        <div className="interactive-buttons">
+          {buttons.map((button, index) => (
+            <span className="interactive-chip" key={button?.reply?.id || index}>
+              {button?.reply?.title || 'Opción'}
+            </span>
+          ))}
+        </div>
+        {footer ? <p className="interactive-footer">{footer}</p> : null}
+      </div>
+    );
+  }
+  if (interactive?.type === 'list') {
+    const sections = interactive?.action?.sections || [];
+    const buttonLabel = interactive?.action?.button;
+    return (
+      <div className="message-interactive">
+        {header ? <p className="interactive-header"><strong>{header}</strong></p> : null}
+        {body ? <p>{body}</p> : null}
+        {sections.map((section, sectionIndex) => (
+          <div className="interactive-section" key={section?.title || sectionIndex}>
+            {section?.title ? <p className="interactive-section-title">{section.title}</p> : null}
+            <div className="interactive-buttons">
+              {(section.rows || []).map((row, rowIndex) => (
+                <span className="interactive-chip" key={row?.id || `${sectionIndex}-${rowIndex}`}>
+                  {row?.title || 'Opción'}
+                  {row?.description ? <small> · {row.description}</small> : null}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+        {buttonLabel ? <p className="interactive-cta"><em>Botón: {buttonLabel}</em></p> : null}
+        {footer ? <p className="interactive-footer">{footer}</p> : null}
+      </div>
+    );
+  }
+  return body ? <p>{body}</p> : <p><em>Mensaje interactivo</em></p>;
+}
+
+function renderInteractiveInbound(selection, message) {
+  return (
+    <div className="message-interactive">
+      <p>
+        <em>El cliente seleccionó: </em>
+        <span className="interactive-chip interactive-chip-selected">{selection.title}</span>
+      </p>
+      {selection.description ? <p><small>{selection.description}</small></p> : null}
+      {message?.body_text && message.body_text !== selection.title ? (
+        <p>{message.body_text}</p>
+      ) : null}
+    </div>
+  );
 }
 
 function mediaSource(message, session, tenantId) {
@@ -107,6 +190,17 @@ function renderMessageContent(message, session = message._session, tenantId = me
         {text ? <p>{text}</p> : null}
       </div>
     );
+  }
+
+  if (message.message_type === 'interactive') {
+    const inboundSelection = message.direction === 'inbound' ? interactiveSelection(message) : null;
+    if (inboundSelection) {
+      return renderInteractiveInbound(inboundSelection, message);
+    }
+    const interactive = interactivePayload(message);
+    if (interactive) {
+      return renderInteractiveOutbound(interactive, message);
+    }
   }
 
   return <p>{text || JSON.stringify(message.payload)}</p>;

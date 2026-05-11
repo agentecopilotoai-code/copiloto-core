@@ -76,7 +76,109 @@ def verify_signature_with_secret(body: bytes, signature: str | None, app_secret:
 
 
 MEDIA_MESSAGE_TYPES = {'image', 'audio', 'video'}
-SUPPORTED_OUTBOUND_MESSAGE_TYPES = {'text', *MEDIA_MESSAGE_TYPES}
+SUPPORTED_OUTBOUND_MESSAGE_TYPES = {'text', 'interactive', *MEDIA_MESSAGE_TYPES}
+
+MAX_INTERACTIVE_BUTTONS = 3
+MAX_INTERACTIVE_LIST_ROWS = 10
+
+
+def build_interactive_button_payload(
+    body_text: str,
+    buttons: list[dict[str, str]],
+    header_text: str | None = None,
+    footer_text: str | None = None,
+) -> dict[str, Any]:
+    if not body_text or not body_text.strip():
+        raise ValueError('Interactive button messages require body_text')
+    if not buttons:
+        raise ValueError('Interactive button messages require at least one button')
+    if len(buttons) > MAX_INTERACTIVE_BUTTONS:
+        raise ValueError(
+            f'WhatsApp interactive button messages allow up to {MAX_INTERACTIVE_BUTTONS} buttons'
+        )
+    reply_buttons: list[dict[str, Any]] = []
+    for index, button in enumerate(buttons):
+        button_id = (button.get('id') or '').strip()
+        title = (button.get('title') or '').strip()
+        if not button_id or not title:
+            raise ValueError('Each interactive button requires non-empty id and title')
+        if len(title) > 20:
+            raise ValueError('Interactive button titles must be 20 characters or fewer')
+        reply_buttons.append({
+            'type': 'reply',
+            'reply': {'id': button_id, 'title': title},
+        })
+        if index >= MAX_INTERACTIVE_BUTTONS - 1:
+            break
+    interactive: dict[str, Any] = {
+        'type': 'button',
+        'body': {'text': body_text.strip()},
+        'action': {'buttons': reply_buttons},
+    }
+    if header_text and header_text.strip():
+        interactive['header'] = {'type': 'text', 'text': header_text.strip()}
+    if footer_text and footer_text.strip():
+        interactive['footer'] = {'text': footer_text.strip()}
+    return interactive
+
+
+def build_interactive_list_payload(
+    body_text: str,
+    button_label: str,
+    sections: list[dict[str, Any]],
+    header_text: str | None = None,
+    footer_text: str | None = None,
+) -> dict[str, Any]:
+    if not body_text or not body_text.strip():
+        raise ValueError('Interactive list messages require body_text')
+    if not button_label or not button_label.strip():
+        raise ValueError('Interactive list messages require a button_label')
+    if not sections:
+        raise ValueError('Interactive list messages require at least one section')
+    normalized_sections: list[dict[str, Any]] = []
+    total_rows = 0
+    for section in sections:
+        rows = section.get('rows') or []
+        if not rows:
+            raise ValueError('Each interactive list section requires at least one row')
+        normalized_rows = []
+        for row in rows:
+            row_id = (row.get('id') or '').strip()
+            title = (row.get('title') or '').strip()
+            if not row_id or not title:
+                raise ValueError('Each interactive list row requires non-empty id and title')
+            normalized_row: dict[str, str] = {'id': row_id, 'title': title}
+            description = (row.get('description') or '').strip()
+            if description:
+                normalized_row['description'] = description
+            normalized_rows.append(normalized_row)
+            total_rows += 1
+            if total_rows >= MAX_INTERACTIVE_LIST_ROWS:
+                break
+        section_payload: dict[str, Any] = {'rows': normalized_rows}
+        section_title = (section.get('title') or '').strip()
+        if section_title:
+            section_payload['title'] = section_title
+        normalized_sections.append(section_payload)
+        if total_rows >= MAX_INTERACTIVE_LIST_ROWS:
+            break
+    if total_rows > MAX_INTERACTIVE_LIST_ROWS:
+        raise ValueError(
+            f'WhatsApp interactive list messages allow up to {MAX_INTERACTIVE_LIST_ROWS} rows'
+        )
+    interactive: dict[str, Any] = {
+        'type': 'list',
+        'body': {'text': body_text.strip()},
+        'action': {
+            'button': button_label.strip(),
+            'sections': normalized_sections,
+        },
+    }
+    if header_text and header_text.strip():
+        interactive['header'] = {'type': 'text', 'text': header_text.strip()}
+    if footer_text and footer_text.strip():
+        interactive['footer'] = {'text': footer_text.strip()}
+    return interactive
 
 
 def build_whatsapp_message_payload(
@@ -86,6 +188,7 @@ def build_whatsapp_message_payload(
     media_id: str | None = None,
     media_url: str | None = None,
     caption: str | None = None,
+    interactive_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_type = message_type if message_type in SUPPORTED_OUTBOUND_MESSAGE_TYPES else 'text'
     payload: dict[str, Any] = {
@@ -95,6 +198,14 @@ def build_whatsapp_message_payload(
     }
     if normalized_type == 'text':
         payload['text'] = {'body': (text or '').strip()}
+        return payload
+
+    if normalized_type == 'interactive':
+        if not isinstance(interactive_payload, dict) or not interactive_payload:
+            raise ValueError(
+                'Outbound WhatsApp interactive messages require an interactive_payload dict'
+            )
+        payload['interactive'] = interactive_payload
         return payload
 
     media_object: dict[str, str] = {}
@@ -111,6 +222,40 @@ def build_whatsapp_message_payload(
     return payload
 
 
+def parse_interactive_reply(message: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract id/title/type from an inbound interactive WhatsApp message.
+
+    Returns None if the message is not interactive or lacks the expected shape.
+    """
+    if not isinstance(message, dict):
+        return None
+    interactive = message.get('interactive')
+    if not isinstance(interactive, dict):
+        return None
+    reply_type = interactive.get('type')
+    if reply_type == 'button_reply':
+        reply = interactive.get('button_reply')
+    elif reply_type == 'list_reply':
+        reply = interactive.get('list_reply')
+    else:
+        return None
+    if not isinstance(reply, dict):
+        return None
+    reply_id = reply.get('id')
+    title = reply.get('title')
+    if not isinstance(reply_id, str) or not isinstance(title, str):
+        return None
+    parsed: dict[str, Any] = {
+        'interactive_type': reply_type,
+        'interactive_id': reply_id,
+        'interactive_title': title,
+    }
+    description = reply.get('description')
+    if isinstance(description, str) and description:
+        parsed['interactive_description'] = description
+    return parsed
+
+
 async def send_whatsapp_message(
     phone_number_id: str,
     to: str,
@@ -121,6 +266,7 @@ async def send_whatsapp_message(
     media_id: str | None = None,
     media_url: str | None = None,
     caption: str | None = None,
+    interactive_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     message_payload = build_whatsapp_message_payload(
         to=to,
@@ -129,6 +275,7 @@ async def send_whatsapp_message(
         media_id=media_id,
         media_url=media_url,
         caption=caption,
+        interactive_payload=interactive_payload,
     )
     settings = get_settings()
     if delivery_mode != 'live':
@@ -171,6 +318,64 @@ async def send_text_message(
         text=text,
         delivery_mode=delivery_mode,
         token_ref=token_ref,
+    )
+
+
+async def send_interactive_buttons(
+    phone_number_id: str,
+    to: str,
+    body_text: str,
+    buttons: list[dict[str, str]],
+    *,
+    header_text: str | None = None,
+    footer_text: str | None = None,
+    delivery_mode: str = 'mock',
+    token_ref: str | None = None,
+) -> dict[str, Any]:
+    interactive_payload = build_interactive_button_payload(
+        body_text=body_text,
+        buttons=buttons,
+        header_text=header_text,
+        footer_text=footer_text,
+    )
+    return await send_whatsapp_message(
+        phone_number_id=phone_number_id,
+        to=to,
+        message_type='interactive',
+        text=body_text,
+        delivery_mode=delivery_mode,
+        token_ref=token_ref,
+        interactive_payload=interactive_payload,
+    )
+
+
+async def send_interactive_list(
+    phone_number_id: str,
+    to: str,
+    body_text: str,
+    button_label: str,
+    sections: list[dict[str, Any]],
+    *,
+    header_text: str | None = None,
+    footer_text: str | None = None,
+    delivery_mode: str = 'mock',
+    token_ref: str | None = None,
+) -> dict[str, Any]:
+    interactive_payload = build_interactive_list_payload(
+        body_text=body_text,
+        button_label=button_label,
+        sections=sections,
+        header_text=header_text,
+        footer_text=footer_text,
+    )
+    return await send_whatsapp_message(
+        phone_number_id=phone_number_id,
+        to=to,
+        message_type='interactive',
+        text=body_text,
+        delivery_mode=delivery_mode,
+        token_ref=token_ref,
+        interactive_payload=interactive_payload,
     )
 
 
