@@ -13,7 +13,7 @@ def test_config_exposes_answer_engine_flag():
     source = CONFIG.read_text()
     assert "answer_engine: str" in source
     assert "'template'" in source
-    assert "'^(template|local_llm|cascade)$'" in source
+    assert "'^(template|local_llm|cascade|cloud_llm)$'" in source
     assert 'cascade_template_min_score' in source
     assert 'cascade_llm_min_score' in source
 
@@ -49,12 +49,13 @@ def test_orchestrator_falls_back_to_template_when_engine_is_template():
     assert 'build_grounded_answer(question, matches)' in source
 
 
-def test_orchestrator_cascade_tries_template_then_llm_then_handoff():
+def test_orchestrator_cascade_tries_template_then_llm_then_cloud_then_handoff():
     source = ORCHESTRATOR.read_text()
     assert 'async def _resolve_answer' in source
     assert 'cascade_template_min_score' in source
     assert 'cascade_llm_min_score' in source
     assert 'cascade.llm_unavailable' in source
+    assert 'cascade.cloud_llm_attempt' in source
     assert 'cascade_exhausted' in source
     assert 'cascade.exhausted_to_handoff' in source
 

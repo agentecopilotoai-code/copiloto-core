@@ -17,6 +17,10 @@ from app.services.conversation_flow import (
     has_booking_intent,
     stage_followup_prompt,
 )
+from app.services.cloud_llm_answer import (
+    build_cloud_llm_answer,
+    build_conversational_cloud_llm_answer,
+)
 from app.services.llm_answer import build_conversational_llm_answer, build_llm_answer
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 
@@ -26,6 +30,11 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 _DEFAULT_HUMAN_KEYWORDS = {'humano', 'asesor', 'agente', 'reclamo', 'persona'}
+
+
+def _is_cloud_llm_configured(settings: Any) -> bool:
+    """Devuelve True si el cloud LLM tiene proveedor y API key configurados."""
+    return bool(settings.cloud_llm_provider and settings.cloud_llm_api_key)
 
 
 def _parse_escalation_policy(raw: Any) -> dict[str, Any]:
@@ -448,6 +457,8 @@ async def orchestrate_inbound_message(
             llm_used=decision.get('llm_used', True),
             llm_model=decision.get('llm_model'),
             conv_stage=new_stage,
+            cloud_llm_used=decision.get('cloud_llm_used', False),
+            token_usage=decision.get('token_usage'),
         )
 
     # ── Q&A cascade (template → LLM → handoff) ───────────────────────────────
@@ -481,6 +492,8 @@ async def orchestrate_inbound_message(
             top_document=top_document,
             llm_used=decision.get('llm_used', False),
             llm_model=decision.get('llm_model'),
+            cloud_llm_used=decision.get('cloud_llm_used', False),
+            token_usage=decision.get('token_usage'),
         )
 
     return await _do_handoff(
@@ -529,8 +542,36 @@ async def _resolve_conversational(
                 'En Mac/Windows usa http://host.docker.internal:11434'
             ),
         )
-    # Ollama unavailable — use template Q&A but append a stage-aware follow-up
-    # so the conversation doesn't feel like an abrupt document dump.
+
+    # Ollama no disponible → intentar cloud LLM como tier-3 conversacional.
+    if _is_cloud_llm_configured(settings):
+        try:
+            log.info(
+                'cascade.cloud_llm_conv_attempt',
+                provider=settings.cloud_llm_provider,
+                model=settings.cloud_llm_model,
+            )
+            return await build_conversational_cloud_llm_answer(
+                question,
+                matches,
+                ctx=ctx,
+                history=history,
+                provider=settings.cloud_llm_provider,
+                model=settings.cloud_llm_model,
+                api_key=settings.cloud_llm_api_key,
+                timeout_seconds=settings.cloud_llm_timeout_seconds,
+                min_score=settings.cascade_llm_min_score,
+                business_name=business_name,
+            )
+        except Exception as exc:
+            log.warning(
+                'cascade.cloud_llm_conv_unavailable',
+                provider=settings.cloud_llm_provider,
+                model=settings.cloud_llm_model,
+                error=str(exc),
+            )
+
+    # Todos los LLMs no disponibles — Q&A template + seguimiento de etapa.
     result = await _resolve_answer(question, matches, settings)
     if result['sufficient_context']:
         followup = stage_followup_prompt(ctx.stage)
@@ -567,7 +608,21 @@ async def _resolve_answer(
             timeout_seconds=settings.local_llm_timeout_seconds,
         )
 
-    # cascade: template → llm → handoff
+    if engine == 'cloud_llm':
+        if not matches:
+            return build_grounded_answer(question, matches)
+        if not _is_cloud_llm_configured(settings):
+            log.warning('cloud_llm.not_configured', hint='Define CLOUD_LLM_PROVIDER y CLOUD_LLM_API_KEY.')
+            return build_grounded_answer(question, matches)
+        return await build_cloud_llm_answer(
+            question, matches,
+            provider=settings.cloud_llm_provider,
+            model=settings.cloud_llm_model,
+            api_key=settings.cloud_llm_api_key,
+            timeout_seconds=settings.cloud_llm_timeout_seconds,
+        )
+
+    # cascade: template → llm local → cloud llm → handoff
     template_decision = build_grounded_answer(
         question, matches, min_score=settings.cascade_template_min_score
     )
@@ -620,6 +675,39 @@ async def _resolve_answer(
                     'Linux: http://172.17.0.1:11434'
                 ),
             )
+            # Ollama no disponible → intentar cloud LLM como tier-3.
+            if _is_cloud_llm_configured(settings):
+                try:
+                    log.info(
+                        'cascade.cloud_llm_attempt',
+                        provider=settings.cloud_llm_provider,
+                        model=settings.cloud_llm_model,
+                        llm_candidates=len(llm_candidates),
+                    )
+                    cloud_decision = await build_cloud_llm_answer(
+                        question, llm_candidates,
+                        provider=settings.cloud_llm_provider,
+                        model=settings.cloud_llm_model,
+                        api_key=settings.cloud_llm_api_key,
+                        timeout_seconds=settings.cloud_llm_timeout_seconds,
+                        min_score=settings.cascade_llm_min_score,
+                    )
+                    log.info(
+                        'cascade.cloud_llm_result',
+                        provider=settings.cloud_llm_provider,
+                        model=settings.cloud_llm_model,
+                        answered=cloud_decision['sufficient_context'],
+                        cache_read_tokens=cloud_decision.get('token_usage', {}).get('cache_read_tokens', 0) if cloud_decision.get('token_usage') else 0,
+                    )
+                    if cloud_decision['sufficient_context']:
+                        return cloud_decision
+                except Exception as cloud_exc:
+                    log.warning(
+                        'cascade.cloud_llm_unavailable',
+                        provider=settings.cloud_llm_provider,
+                        model=settings.cloud_llm_model,
+                        error=str(cloud_exc),
+                    )
     else:
         log.info(
             'cascade.llm_skipped',
@@ -634,7 +722,7 @@ async def _resolve_answer(
         'status': 'escalate_to_human',
         'sufficient_context': False,
         'answer': None,
-        'reason': 'Cascade agotado: template sin confianza suficiente y LLM no disponible o sin contexto.',
+        'reason': 'Cascade agotado: template sin confianza suficiente y LLMs no disponibles o sin contexto.',
         'handoff': {'required': True, 'reason': 'cascade_exhausted'},
     }
 
@@ -774,10 +862,18 @@ async def _send_bot_reply(
     llm_used: bool = False,
     llm_model: str | None = None,
     conv_stage: str | None = None,
+    cloud_llm_used: bool = False,
+    token_usage: dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    if cloud_llm_used:
+        engine_label = 'cloud_llm'
+    elif llm_used:
+        engine_label = 'local_llm'
+    else:
+        engine_label = 'template'
     trace_payload = {
         'rag_decision': 'answered',
-        'answer_engine': 'local_llm' if llm_used else 'template',
+        'answer_engine': engine_label,
         'llm_model': llm_model,
         'question': inbound_message['body_text'],
         'top_score': top_score,
@@ -785,6 +881,7 @@ async def _send_bot_reply(
         'chunks_used': [retrieval_match_to_dict(m) for m in matches],
         'inbound_message_id': str(inbound_message['id']),
         'conv_stage': conv_stage,
+        'token_usage': token_usage,
     }
     outbound = await conn.fetchrow(
         """

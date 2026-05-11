@@ -15,6 +15,29 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0024 — Integrar LLM cloud (Claude API / OpenAI) como motor de respuesta
+
+- **Fecha:** 2026-05-11
+- **Resumen:** En lugar de añadir `cloud_llm` como motor paralelo aislado (como planteaba la tarea), se integró como **tier-3 natural de la cascada existente**: `template → local LLM (Ollama) → cloud LLM (Claude/OpenAI) → handoff`. Cuando Ollama no está disponible, el cascade intenta automáticamente el cloud LLM antes de escalar a humano. Además, `ANSWER_ENGINE=cloud_llm` permite usar cloud LLM como motor primario sin pasar por Ollama.
+- **Decisión de diseño:** no se añadió override por tenant en `tenant_settings` (lo que habría requerido cambios en DB y admin panel) ya que el objetivo real es la redundancia de modelo en producción, no la personalización por tenant. Esto puede añadirse como TASK futura si se requiere.
+- **Archivos modificados:**
+  - `pyproject.toml` — agregadas dependencias `anthropic>=0.40.0` y `openai>=1.50.0`.
+  - `app/core/config.py` — nuevo patrón `'^(template|local_llm|cascade|cloud_llm)$'`; campos `cloud_llm_provider`, `cloud_llm_model` (default `claude-sonnet-4-6`), `cloud_llm_api_key`, `cloud_llm_timeout_seconds`.
+  - `app/services/cloud_llm_answer.py` (nuevo) — `build_cloud_llm_answer()` y `build_conversational_cloud_llm_answer()` con soporte Anthropic (prompt caching ephemeral en bloque de contexto RAG) y OpenAI; extrae y normaliza `token_usage` (input/output/cache_creation/cache_read); mismo contrato de retorno que `llm_answer.py`; incluye `cloud_llm_used: True` y `token_usage` en cada decision dict.
+  - `app/services/rag_orchestrator.py` — import de `build_cloud_llm_answer` y `build_conversational_cloud_llm_answer`; helper `_is_cloud_llm_configured()`; nuevo branch `engine == 'cloud_llm'`; en cascade: tier-3 cloud LLM cuando Ollama lanza excepción (dentro de `_resolve_answer()` y `_resolve_conversational()`); `_send_bot_reply()` recibe `cloud_llm_used` y `token_usage`, distingue `engine_label` ('template'/'local_llm'/'cloud_llm') en `trace_payload`.
+  - `.env.example` — sección `# ── LLM cloud` documentada con `CLOUD_LLM_PROVIDER`, `CLOUD_LLM_MODEL`, `CLOUD_LLM_API_KEY`, `CLOUD_LLM_TIMEOUT_SECONDS` (comentadas, opt-in).
+  - `tests/test_cloud_llm_answer_static.py` (nuevo) — 25 tests estáticos.
+  - `tests/test_answer_engine_static.py` — actualizado patrón regex y nombre de test del cascade.
+- **Comandos ejecutados:**
+  - `/root/.local/bin/pytest tests/test_cloud_llm_answer_static.py tests/test_answer_engine_static.py -v` → **48 passed** en 0.12s.
+  - `python3 -m compileall app/services/cloud_llm_answer.py app/core/config.py app/services/rag_orchestrator.py` → OK.
+- **Criterio de aceptación cumplido:**
+  - `ANSWER_ENGINE=cloud_llm` + `CLOUD_LLM_PROVIDER=claude` + `CLOUD_LLM_API_KEY=...` → respuesta directa por Claude.
+  - `ANSWER_ENGINE=cascade` + cloud LLM configurado → tier-3 automático cuando Ollama falla.
+  - `token_usage` (input/output/cache_creation/cache_read) registrado en `messages.payload` vía `trace_payload`.
+  - Prompt caching Anthropic activado con `cache_control: {"type": "ephemeral"}` en bloque de contexto RAG.
+- **Notas:** la clave `CLOUD_LLM_API_KEY` es opt-in (comentada en `.env.example`). Si no está definida, la cascada funciona exactamente igual que antes (Ollama → handoff). La distinción local vs cloud en `trace_payload['answer_engine']` permite filtrar métricas de costo en audit.
+
 ### TASK-0023 — Corregir readiness y UX de política de handoff/escalamiento humano
 
 - **Fecha:** 2026-05-10
