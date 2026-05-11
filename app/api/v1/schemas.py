@@ -178,7 +178,7 @@ class ServiceReorderRequest(BaseModel):
 
 class ResourceCreate(BaseModel):
     tenant_id: UUID
-    vertical_code: str = Field(min_length=1, max_length=64)
+    vertical_code: str | None = Field(default=None, max_length=64)
     resource_type: str = Field(min_length=1, max_length=64)
     code: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=160)
@@ -187,7 +187,7 @@ class ResourceCreate(BaseModel):
 
 
 class ResourceUpdate(BaseModel):
-    vertical_code: str | None = Field(default=None, min_length=1, max_length=64)
+    vertical_code: str | None = Field(default=None, max_length=64)
     resource_type: str | None = Field(default=None, min_length=1, max_length=64)
     code: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, min_length=1, max_length=160)

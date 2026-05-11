@@ -2029,6 +2029,12 @@ async def list_resources(
 async def create_resource(payload: ResourceCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    vertical_code = (payload.vertical_code or '').strip()
+    if not vertical_code:
+        vertical_code = (
+            await conn.fetchval('select vertical_code from app.tenants where id=$1', payload.tenant_id)
+            or 'general'
+        )
     try:
         row = await conn.fetchrow(
             """
@@ -2037,7 +2043,7 @@ async def create_resource(payload: ResourceCreate, request: Request, conn: async
             returning *
             """,
             payload.tenant_id,
-            payload.vertical_code,
+            vertical_code,
             payload.resource_type,
             payload.code,
             payload.name,
