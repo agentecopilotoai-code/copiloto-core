@@ -412,6 +412,56 @@ export function getTenantAvailability(session, tenantId, { date, serviceId } = {
   );
 }
 
+export function listWhatsappTemplates(session, tenantId, { purpose, status } = {}) {
+  const params = new URLSearchParams();
+  if (purpose) params.set('purpose', purpose);
+  if (status) params.set('status', status);
+  const query = params.toString();
+  return request(
+    `/tenants/${tenantId}/whatsapp/templates${query ? `?${query}` : ''}`,
+    { session, tenantId },
+  );
+}
+
+export function getWhatsappTemplate(session, tenantId, templateId) {
+  return request(`/tenants/${tenantId}/whatsapp/templates/${templateId}`, { session, tenantId });
+}
+
+export function createWhatsappTemplate(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/whatsapp/templates`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateWhatsappTemplate(session, tenantId, templateId, payload) {
+  return request(`/tenants/${tenantId}/whatsapp/templates/${templateId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deleteWhatsappTemplate(session, tenantId, templateId) {
+  return request(`/tenants/${tenantId}/whatsapp/templates/${templateId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function syncWhatsappTemplates(session, tenantId) {
+  return request(`/tenants/${tenantId}/whatsapp/templates/sync`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: {},
+  });
+}
+
 export function listServices(session, tenantId, { includeInactive = false } = {}) {
   const query = includeInactive ? '?include_inactive=true' : '';
   return request(`/tenants/${tenantId}/services${query}`, { session, tenantId });

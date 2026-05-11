@@ -76,7 +76,7 @@ def verify_signature_with_secret(body: bytes, signature: str | None, app_secret:
 
 
 MEDIA_MESSAGE_TYPES = {'image', 'audio', 'video'}
-SUPPORTED_OUTBOUND_MESSAGE_TYPES = {'text', 'interactive', *MEDIA_MESSAGE_TYPES}
+SUPPORTED_OUTBOUND_MESSAGE_TYPES = {'text', 'interactive', 'template', *MEDIA_MESSAGE_TYPES}
 
 MAX_INTERACTIVE_BUTTONS = 3
 MAX_INTERACTIVE_LIST_ROWS = 10
@@ -181,6 +181,36 @@ def build_interactive_list_payload(
     return interactive
 
 
+def build_template_message_payload(
+    template_name: str,
+    locale: str,
+    variables: dict[str, Any] | None = None,
+    components: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Construye el bloque ``template`` que va dentro de un mensaje WhatsApp.
+
+    ``variables`` mapea ``"1"`` → ``"valor"`` para el body por simplicidad y se
+    convierte en un único component ``body`` con parámetros ordenados. Si se
+    quieren componentes más complejos (header con imagen, botones, etc.), se
+    puede pasar ``components`` directamente respetando el shape de Meta.
+    """
+    if not template_name:
+        raise ValueError('template_name is required')
+    template_block: dict[str, Any] = {
+        'name': template_name,
+        'language': {'code': locale or 'es'},
+    }
+    if components:
+        template_block['components'] = components
+    elif variables:
+        ordered_keys = sorted(variables.keys(), key=lambda k: int(k) if str(k).isdigit() else 0)
+        parameters = [
+            {'type': 'text', 'text': str(variables[key])} for key in ordered_keys
+        ]
+        template_block['components'] = [{'type': 'body', 'parameters': parameters}]
+    return template_block
+
+
 def build_whatsapp_message_payload(
     to: str,
     message_type: str,
@@ -189,6 +219,7 @@ def build_whatsapp_message_payload(
     media_url: str | None = None,
     caption: str | None = None,
     interactive_payload: dict[str, Any] | None = None,
+    template_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_type = message_type if message_type in SUPPORTED_OUTBOUND_MESSAGE_TYPES else 'text'
     payload: dict[str, Any] = {
@@ -206,6 +237,14 @@ def build_whatsapp_message_payload(
                 'Outbound WhatsApp interactive messages require an interactive_payload dict'
             )
         payload['interactive'] = interactive_payload
+        return payload
+
+    if normalized_type == 'template':
+        if not isinstance(template_payload, dict) or not template_payload:
+            raise ValueError(
+                'Outbound WhatsApp template messages require a template_payload dict'
+            )
+        payload['template'] = template_payload
         return payload
 
     media_object: dict[str, str] = {}
@@ -267,6 +306,7 @@ async def send_whatsapp_message(
     media_url: str | None = None,
     caption: str | None = None,
     interactive_payload: dict[str, Any] | None = None,
+    template_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     message_payload = build_whatsapp_message_payload(
         to=to,
@@ -276,6 +316,7 @@ async def send_whatsapp_message(
         media_url=media_url,
         caption=caption,
         interactive_payload=interactive_payload,
+        template_payload=template_payload,
     )
     settings = get_settings()
     if delivery_mode != 'live':
@@ -349,6 +390,33 @@ async def send_interactive_buttons(
     )
 
 
+async def send_whatsapp_template(
+    phone_number_id: str,
+    to: str,
+    template_name: str,
+    *,
+    locale: str = 'es',
+    variables: dict[str, Any] | None = None,
+    components: list[dict[str, Any]] | None = None,
+    delivery_mode: str = 'mock',
+    token_ref: str | None = None,
+) -> dict[str, Any]:
+    template_payload = build_template_message_payload(
+        template_name=template_name,
+        locale=locale,
+        variables=variables,
+        components=components,
+    )
+    return await send_whatsapp_message(
+        phone_number_id=phone_number_id,
+        to=to,
+        message_type='template',
+        delivery_mode=delivery_mode,
+        token_ref=token_ref,
+        template_payload=template_payload,
+    )
+
+
 async def send_interactive_list(
     phone_number_id: str,
     to: str,
@@ -377,6 +445,124 @@ async def send_interactive_list(
         token_ref=token_ref,
         interactive_payload=interactive_payload,
     )
+
+
+def template_components_for_meta(components: dict[str, Any] | list | None) -> list[dict[str, Any]]:
+    """Normalize a tenant-side ``components`` jsonb into Meta's array shape.
+
+    Supports two input shapes:
+    - ``{"header": {"type": "text", "text": "Hola"}, "body": {"text": "..."}, "footer": ..., "buttons": [...]}``
+    - A list already in Meta's shape — returned unchanged after sanitization.
+    """
+    if isinstance(components, list):
+        return [item for item in components if isinstance(item, dict)]
+    if not isinstance(components, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    header = components.get('header')
+    if isinstance(header, dict) and header.get('text'):
+        out.append({
+            'type': 'HEADER',
+            'format': (header.get('format') or 'TEXT').upper(),
+            'text': str(header['text']),
+        })
+    body = components.get('body')
+    if isinstance(body, dict) and body.get('text'):
+        out.append({'type': 'BODY', 'text': str(body['text'])})
+    footer = components.get('footer')
+    if isinstance(footer, dict) and footer.get('text'):
+        out.append({'type': 'FOOTER', 'text': str(footer['text'])})
+    buttons = components.get('buttons')
+    if isinstance(buttons, list) and buttons:
+        normalized_buttons = [
+            {
+                'type': (button.get('type') or 'QUICK_REPLY').upper(),
+                'text': str(button.get('text') or '').strip(),
+            }
+            for button in buttons
+            if isinstance(button, dict) and button.get('text')
+        ]
+        if normalized_buttons:
+            out.append({'type': 'BUTTONS', 'buttons': normalized_buttons})
+    return out
+
+
+async def submit_template_to_meta(
+    waba_id: str,
+    token_ref: str | None,
+    *,
+    name: str,
+    locale: str,
+    category: str,
+    components: dict[str, Any] | list,
+) -> dict[str, Any]:
+    """POST a template to the Meta Graph API for review."""
+    access_token = resolve_secret_ref(token_ref)
+    if not meta_token_is_configured(access_token):
+        raise RuntimeError(
+            'WhatsApp template submission requires a real Meta access token.'
+        )
+    settings = get_settings()
+    url = f'https://graph.facebook.com/{settings.meta_graph_version}/{waba_id}/message_templates'
+    payload = {
+        'name': name,
+        'language': locale or 'es',
+        'category': (category or 'utility').upper(),
+        'components': template_components_for_meta(components),
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.post(
+            url,
+            headers={'Authorization': f'Bearer {access_token}'},
+            json=payload,
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+async def fetch_templates_from_meta(
+    waba_id: str,
+    token_ref: str | None,
+) -> list[dict[str, Any]]:
+    access_token = resolve_secret_ref(token_ref)
+    if not meta_token_is_configured(access_token):
+        raise RuntimeError(
+            'WhatsApp template sync requires a real Meta access token.'
+        )
+    settings = get_settings()
+    url = f'https://graph.facebook.com/{settings.meta_graph_version}/{waba_id}/message_templates'
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            url,
+            headers={'Authorization': f'Bearer {access_token}'},
+            params={'limit': 200},
+        )
+        response.raise_for_status()
+        data = response.json()
+    items = data.get('data') if isinstance(data, dict) else None
+    return items if isinstance(items, list) else []
+
+
+async def delete_template_from_meta(
+    waba_id: str,
+    token_ref: str | None,
+    *,
+    template_name: str,
+) -> None:
+    access_token = resolve_secret_ref(token_ref)
+    if not meta_token_is_configured(access_token):
+        raise RuntimeError(
+            'WhatsApp template deletion requires a real Meta access token.'
+        )
+    settings = get_settings()
+    url = f'https://graph.facebook.com/{settings.meta_graph_version}/{waba_id}/message_templates'
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.delete(
+            url,
+            headers={'Authorization': f'Bearer {access_token}'},
+            params={'name': template_name},
+        )
+        response.raise_for_status()
 
 
 async def get_whatsapp_media_info(

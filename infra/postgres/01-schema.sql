@@ -287,6 +287,29 @@ create table app.appointments (
 create index ix_appointments_tenant_starts on app.appointments(tenant_id, starts_at);
 create index ix_appointments_contact_status on app.appointments(contact_id, status);
 
+create table app.whatsapp_templates (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  channel_id uuid references app.tenant_channels(id) on delete set null,
+  name text not null,
+  locale char(5) not null default 'es',
+  category text not null check (category in ('utility','marketing','authentication')),
+  status text not null default 'draft' check (status in ('draft','pending','approved','rejected','paused')),
+  purpose text not null check (purpose in (
+    'appointment_confirmation','appointment_reminder_24h','appointment_reminder_1h',
+    'appointment_reminder_custom','no_show_confirmation_request','no_show_followup',
+    'post_appointment_instructions','post_appointment_feedback','post_appointment_rebooking',
+    'reschedule_offer','campaign_promo','payment_request','custom'
+  )),
+  components jsonb not null default '{}'::jsonb,
+  meta_template_id text,
+  rejection_reason text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, name, locale)
+);
+create index ix_whatsapp_templates_tenant_purpose on app.whatsapp_templates(tenant_id, purpose, status);
+
 create table app.reminder_jobs (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -425,6 +448,7 @@ alter table app.conversations add constraint uq_conversations_tenant_id_id uniqu
 alter table app.messages add constraint uq_messages_tenant_id_id unique (tenant_id, id);
 alter table app.resources add constraint uq_resources_tenant_id_id unique (tenant_id, id);
 alter table app.service_catalog add constraint uq_service_catalog_tenant_id_id unique (tenant_id, id);
+alter table app.whatsapp_templates add constraint uq_whatsapp_templates_tenant_id_id unique (tenant_id, id);
 alter table app.service_requests add constraint uq_service_requests_tenant_id_id unique (tenant_id, id);
 alter table app.quotes add constraint uq_quotes_tenant_id_id unique (tenant_id, id);
 alter table app.appointments add constraint uq_appointments_tenant_id_id unique (tenant_id, id);
@@ -465,6 +489,7 @@ create trigger trg_contacts_touch before update on app.contacts for each row exe
 create trigger trg_conversations_touch before update on app.conversations for each row execute function app.touch_updated_at();
 create trigger trg_resources_touch before update on app.resources for each row execute function app.touch_updated_at();
 create trigger trg_service_catalog_touch before update on app.service_catalog for each row execute function app.touch_updated_at();
+create trigger trg_whatsapp_templates_touch before update on app.whatsapp_templates for each row execute function app.touch_updated_at();
 create trigger trg_service_requests_touch before update on app.service_requests for each row execute function app.touch_updated_at();
 create trigger trg_quotes_touch before update on app.quotes for each row execute function app.touch_updated_at();
 create trigger trg_appointments_touch before update on app.appointments for each row execute function app.touch_updated_at();
@@ -480,6 +505,7 @@ alter table app.messages enable row level security;
 alter table app.message_status_events enable row level security;
 alter table app.resources enable row level security;
 alter table app.service_catalog enable row level security;
+alter table app.whatsapp_templates enable row level security;
 alter table app.service_requests enable row level security;
 alter table app.quotes enable row level security;
 alter table app.appointments enable row level security;
@@ -496,7 +522,7 @@ do $$
 declare t text;
 begin
   foreach t in array array[
-    'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','service_requests','quotes',
+    'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','whatsapp_templates','service_requests','quotes',
     'appointments','reminder_jobs','knowledge_documents','knowledge_chunks','prompt_templates','handoffs',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop

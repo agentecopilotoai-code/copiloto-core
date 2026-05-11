@@ -101,6 +101,44 @@ class MessageCreate(BaseModel):
 
 
 
+WHATSAPP_TEMPLATE_PURPOSES = (
+    'appointment_confirmation',
+    'appointment_reminder_24h',
+    'appointment_reminder_1h',
+    'appointment_reminder_custom',
+    'no_show_confirmation_request',
+    'no_show_followup',
+    'post_appointment_instructions',
+    'post_appointment_feedback',
+    'post_appointment_rebooking',
+    'reschedule_offer',
+    'campaign_promo',
+    'payment_request',
+    'custom',
+)
+WHATSAPP_TEMPLATE_PURPOSE_PATTERN = '^(' + '|'.join(WHATSAPP_TEMPLATE_PURPOSES) + ')$'
+
+
+class WhatsAppTemplateCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=512, pattern=r'^[a-z0-9_]+$')
+    locale: str = Field(default='es', min_length=2, max_length=5)
+    category: str = Field(pattern='^(utility|marketing|authentication)$')
+    purpose: str = Field(pattern=WHATSAPP_TEMPLATE_PURPOSE_PATTERN)
+    components: dict[str, Any] = Field(default_factory=dict)
+    channel_id: UUID | None = None
+
+
+class WhatsAppTemplateUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=512, pattern=r'^[a-z0-9_]+$')
+    locale: str | None = Field(default=None, min_length=2, max_length=5)
+    category: str | None = Field(default=None, pattern='^(utility|marketing|authentication)$')
+    purpose: str | None = Field(default=None, pattern=WHATSAPP_TEMPLATE_PURPOSE_PATTERN)
+    components: dict[str, Any] | None = None
+    status: str | None = Field(default=None, pattern='^(draft|pending|approved|rejected|paused)$')
+    meta_template_id: str | None = None
+    rejection_reason: str | None = None
+
+
 class ServiceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     category: str | None = Field(default=None, max_length=120)

@@ -1,6 +1,72 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { getWhatsAppChannelHealth, upsertWhatsAppChannel } from '../../../services/coreApi.js';
+import {
+  createWhatsappTemplate,
+  deleteWhatsappTemplate,
+  getWhatsAppChannelHealth,
+  listWhatsappTemplates,
+  syncWhatsappTemplates,
+  upsertWhatsAppChannel,
+} from '../../../services/coreApi.js';
+
+const TEMPLATE_PURPOSES = [
+  { id: 'appointment_confirmation', label: 'Confirmación de cita', required: true },
+  { id: 'appointment_reminder_24h', label: 'Recordatorio 24 h', required: true },
+  { id: 'appointment_reminder_1h', label: 'Recordatorio 1 h' },
+  { id: 'appointment_reminder_custom', label: 'Recordatorio personalizado' },
+  { id: 'no_show_confirmation_request', label: 'Pedido de confirmación (no-show)' },
+  { id: 'no_show_followup', label: 'Seguimiento no-show' },
+  { id: 'post_appointment_instructions', label: 'Instrucciones post-cita' },
+  { id: 'post_appointment_feedback', label: 'Feedback post-cita' },
+  { id: 'post_appointment_rebooking', label: 'Invitación a nueva cita' },
+  { id: 'reschedule_offer', label: 'Oferta de reagendamiento' },
+  { id: 'campaign_promo', label: 'Campaña / promoción' },
+  { id: 'payment_request', label: 'Solicitud de pago' },
+  { id: 'custom', label: 'Personalizado' },
+];
+
+const TEMPLATE_STATUS_LABEL = {
+  draft: 'Borrador',
+  pending: 'Pendiente',
+  approved: 'Aprobado',
+  rejected: 'Rechazado',
+  paused: 'Pausado',
+};
+
+function emptyTemplateForm() {
+  return {
+    name: '',
+    locale: 'es',
+    category: 'utility',
+    purpose: 'appointment_confirmation',
+    header: '',
+    body: '',
+    footer: '',
+    buttons: '',
+  };
+}
+
+function templateComponentsFromForm(form) {
+  const components = {};
+  if (form.header.trim()) {
+    components.header = { type: 'text', text: form.header.trim() };
+  }
+  if (form.body.trim()) {
+    components.body = { text: form.body.trim() };
+  }
+  if (form.footer.trim()) {
+    components.footer = { text: form.footer.trim() };
+  }
+  const buttons = form.buttons
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((text) => ({ type: 'QUICK_REPLY', text }));
+  if (buttons.length) {
+    components.buttons = buttons;
+  }
+  return components;
+}
 
 const onboardingSteps = [
   {
@@ -57,8 +123,102 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
   const [isBusy, setIsBusy] = useState(false);
   const [isLoadingChannel, setIsLoadingChannel] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [templates, setTemplates] = useState([]);
+  const [templateForm, setTemplateForm] = useState(emptyTemplateForm);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
 
   const currentTenantId = tenant?.id;
+
+  function loadTemplates() {
+    if (!currentTenantId) return;
+    setIsLoadingTemplates(true);
+    listWhatsappTemplates(session, currentTenantId)
+      .then((items) => setTemplates(Array.isArray(items) ? items : []))
+      .catch(() => {})
+      .finally(() => setIsLoadingTemplates(false));
+  }
+
+  useEffect(() => {
+    setTemplates([]);
+    setTemplateForm(emptyTemplateForm());
+    loadTemplates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTenantId]);
+
+  async function handleCreateTemplate(event) {
+    event.preventDefault();
+    if (!currentTenantId) return;
+    if (!templateForm.name.trim() || !templateForm.body.trim()) {
+      setNotice({ type: 'error', text: 'Nombre y body son obligatorios.' });
+      return;
+    }
+    if (!/^[a-z0-9_]+$/.test(templateForm.name.trim())) {
+      setNotice({ type: 'error', text: 'El nombre debe ser snake_case (a-z, 0-9, _).' });
+      return;
+    }
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      await createWhatsappTemplate(session, currentTenantId, {
+        name: templateForm.name.trim(),
+        locale: templateForm.locale.trim() || 'es',
+        category: templateForm.category,
+        purpose: templateForm.purpose,
+        components: templateComponentsFromForm(templateForm),
+      });
+      setTemplateForm(emptyTemplateForm());
+      loadTemplates();
+      setNotice({ type: 'success', text: 'Plantilla registrada.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleSyncTemplates() {
+    if (!currentTenantId) return;
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      const result = await syncWhatsappTemplates(session, currentTenantId);
+      loadTemplates();
+      setNotice({
+        type: 'success',
+        text: `Sincronizadas ${result.updated} de ${result.meta_total} plantillas desde Meta.`,
+      });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleDeleteTemplate(template) {
+    if (!currentTenantId) return;
+    if (!window.confirm(`¿Eliminar la plantilla "${template.name}" (${template.locale})?`)) return;
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      await deleteWhatsappTemplate(session, currentTenantId, template.id);
+      loadTemplates();
+      setNotice({ type: 'success', text: 'Plantilla eliminada.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  const templatesByPurpose = useMemo(() => {
+    const map = {};
+    templates.forEach((template) => {
+      const list = map[template.purpose] || [];
+      list.push(template);
+      map[template.purpose] = list;
+    });
+    return map;
+  }, [templates]);
   const channel = channelFromHealth(health);
 
   const checklist = useMemo(() => {
@@ -384,6 +544,164 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
         <div>
           <dt>Límite de mensajería</dt>
           <dd>{channel?.messaging_limit_tier || 'Pendiente de sincronización Meta'}</dd>
+        </div>
+      </div>
+
+      <div className="wizard-panel templates-panel">
+        <div className="templates-header">
+          <h3>Plantillas de mensajes</h3>
+          <p className="hint">
+            Las plantillas aprobadas por Meta son obligatorias para enviar mensajes fuera
+            de la ventana de 24 h. Configura al menos confirmación de cita y recordatorio 24 h
+            antes de salir a producción.
+          </p>
+          <button
+            className="secondary-action"
+            disabled={isBusy || !currentTenantId}
+            onClick={handleSyncTemplates}
+            type="button"
+          >
+            Sincronizar estado con Meta
+          </button>
+        </div>
+
+        <div className="templates-semaphore">
+          {TEMPLATE_PURPOSES.filter((p) => p.required).map((purpose) => {
+            const items = templatesByPurpose[purpose.id] || [];
+            const approved = items.find((t) => t.status === 'approved');
+            const pending = items.find((t) => t.status === 'pending');
+            let semaphore = 'red';
+            let label = 'Faltante';
+            if (approved) {
+              semaphore = 'green';
+              label = 'Aprobada';
+            } else if (pending) {
+              semaphore = 'yellow';
+              label = 'Pendiente';
+            }
+            return (
+              <div className={`semaphore-card semaphore-${semaphore}`} key={purpose.id}>
+                <strong>{purpose.label}</strong>
+                <span>{label}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <form className="form-grid" onSubmit={handleCreateTemplate}>
+          <label>
+            Nombre (snake_case)
+            <input
+              maxLength={512}
+              onChange={(event) => setTemplateForm({ ...templateForm, name: event.target.value })}
+              placeholder="appointment_confirmation_es"
+              value={templateForm.name}
+            />
+          </label>
+          <label>
+            Idioma
+            <input
+              maxLength={5}
+              onChange={(event) => setTemplateForm({ ...templateForm, locale: event.target.value })}
+              placeholder="es"
+              value={templateForm.locale}
+            />
+          </label>
+          <label>
+            Categoría
+            <select
+              onChange={(event) => setTemplateForm({ ...templateForm, category: event.target.value })}
+              value={templateForm.category}
+            >
+              <option value="utility">utility</option>
+              <option value="marketing">marketing</option>
+              <option value="authentication">authentication</option>
+            </select>
+          </label>
+          <label>
+            Propósito
+            <select
+              onChange={(event) => setTemplateForm({ ...templateForm, purpose: event.target.value })}
+              value={templateForm.purpose}
+            >
+              {TEMPLATE_PURPOSES.map((purpose) => (
+                <option key={purpose.id} value={purpose.id}>{purpose.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="wide">
+            Header (texto opcional)
+            <input
+              onChange={(event) => setTemplateForm({ ...templateForm, header: event.target.value })}
+              placeholder="Recordatorio de cita"
+              value={templateForm.header}
+            />
+          </label>
+          <label className="wide">
+            Body (usa variables {`{{1}}, {{2}}…`})
+            <textarea
+              onChange={(event) => setTemplateForm({ ...templateForm, body: event.target.value })}
+              placeholder="Hola {{1}}, te recordamos tu cita el {{2}} a las {{3}}."
+              rows={3}
+              value={templateForm.body}
+            />
+          </label>
+          <label className="wide">
+            Footer (opcional)
+            <input
+              onChange={(event) => setTemplateForm({ ...templateForm, footer: event.target.value })}
+              placeholder="Equipo de soporte"
+              value={templateForm.footer}
+            />
+          </label>
+          <label className="wide">
+            Botones (uno por línea, opcional)
+            <textarea
+              onChange={(event) => setTemplateForm({ ...templateForm, buttons: event.target.value })}
+              placeholder="Confirmar&#10;Reagendar"
+              rows={2}
+              value={templateForm.buttons}
+            />
+          </label>
+          <div className="form-actions">
+            <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">
+              Registrar plantilla
+            </button>
+          </div>
+        </form>
+
+        <div className="templates-list">
+          {isLoadingTemplates ? <p className="hint">Cargando plantillas…</p> : null}
+          {templates.length === 0 && !isLoadingTemplates ? (
+            <p className="hint">Aún no hay plantillas registradas.</p>
+          ) : null}
+          {templates.map((template) => (
+            <article className="template-row" key={template.id}>
+              <div>
+                <strong>{template.name}</strong> · <code>{template.locale}</code>
+                <div className="hint">
+                  {TEMPLATE_PURPOSES.find((p) => p.id === template.purpose)?.label || template.purpose}
+                  {' · '}categoría {template.category}
+                </div>
+                {template.rejection_reason ? (
+                  <p className="notice error">{template.rejection_reason}</p>
+                ) : null}
+              </div>
+              <div className="template-actions">
+                <span className={`status-badge template-status-${template.status}`}>
+                  {TEMPLATE_STATUS_LABEL[template.status] || template.status}
+                </span>
+                <button
+                  className="secondary-action"
+                  disabled={isBusy}
+                  onClick={() => handleDeleteTemplate(template)}
+                  type="button"
+                >
+                  Eliminar
+                </button>
+              </div>
+            </article>
+          ))}
         </div>
       </div>
 

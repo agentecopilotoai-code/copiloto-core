@@ -132,33 +132,6 @@ TASK-0029 (drill de restore — cierre operacional)
 
 ---
 
-### TASK-0031 — Gestión de plantillas WhatsApp y notificaciones automáticas de cita
-
-- **Objetivo:** las notificaciones de cita (confirmación, recordatorios, seguimiento) requieren templates aprobados por Meta para enviarse fuera de la ventana de 24h. Sin templates configurados el sistema no puede notificar al cliente — todo el trabajo de TASK-0035 y TASK-0036 no funciona en producción. Esta tarea crea el sistema completo de gestión de plantillas por tenant.
-- **Alcance mínimo — backend:**
-  - Nueva tabla `app.whatsapp_templates`:
-    - `id uuid PK`, `tenant_id`, `channel_id FK`, `name text NOT NULL`, `locale char(5) DEFAULT 'es'`, `category text CHECK(category IN ('utility','marketing','authentication'))`, `status text NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','pending','approved','rejected','paused'))`, `purpose text NOT NULL CHECK(purpose IN ('appointment_confirmation','appointment_reminder_24h','appointment_reminder_1h','appointment_reminder_custom','no_show_confirmation_request','no_show_followup','post_appointment_instructions','post_appointment_feedback','post_appointment_rebooking','reschedule_offer','campaign_promo','payment_request','custom'))`, `components jsonb NOT NULL` (header/body/footer/buttons según spec Meta), `meta_template_id text`, `rejection_reason text`, `created_at timestamptz DEFAULT now()`, `updated_at timestamptz DEFAULT now()`. RLS por `tenant_id`.
-  - Función `send_whatsapp_template(conn, tenant_id, wa_phone, template_name, variables: dict)` que construye el payload de template Meta y lo encola al worker existente.
-  - En `scheduler.py`: antes de ejecutar un `reminder_job`, verificar que existe un template aprobado para el `purpose` del job. Si no → job `failed` con error `template_not_approved:{purpose}`.
-  - Endpoints:
-    - `POST /v1/tenants/{tenant_id}/whatsapp/templates` — registrar template y enviarlo a revisión a Meta Graph API.
-    - `GET /v1/tenants/{tenant_id}/whatsapp/templates` — listar.
-    - `GET /v1/tenants/{tenant_id}/whatsapp/templates/{template_id}` — detalle.
-    - `POST /v1/tenants/{tenant_id}/whatsapp/templates/sync` — actualizar status de todos desde Meta.
-    - `DELETE /v1/tenants/{tenant_id}/whatsapp/templates/{template_id}` — eliminar en DB y en Meta.
-  - Tests estáticos: creación de template, validación de `purpose` y `category`, scheduler rechaza job sin template aprobado, envío con variables.
-- **Alcance mínimo — Admin Panel:**
-  - En `WhatsAppOnboarding.jsx`, nueva sección **"Plantillas de mensajes"**:
-    - Lista con badge de estado (Aprobado/Pendiente/Rechazado) y motivo de rechazo.
-    - Formulario: nombre, idioma, categoría, propósito (selector del enum), editor de componentes (header texto, body con variables `{{1}}`, footer, botones).
-    - Botón **"Sincronizar estado con Meta"**.
-    - Semáforo por propósito: verde = aprobado, amarillo = pendiente, rojo = faltante.
-  - En `GoLiveReadiness.jsx`: check **"Plantillas mínimas aprobadas"** que exija templates aprobados para `appointment_confirmation` y `appointment_reminder_24h`.
-- **Criterio de aceptación:** admin crea y sincroniza template; scheduler rechaza job con error descriptivo si template no está aprobado; readiness check detecta templates faltantes; tests pasan en CI.
-- **Dependencias:** TASK-0030 (para que el booking use templates de confirmación).
-
----
-
 ### TASK-0035 — Confirmaciones automáticas y recordatorios configurables
 
 - **Objetivo:** cuando se crea una cita (por el bot o desde Operations Desk), el sistema envía automáticamente: confirmación inmediata con detalles y ubicación, recordatorio configurable 24h antes, recordatorio configurable 1h antes. Todo configurable desde el admin por tenant, sin código. Este flujo es la diferencia entre un sistema de agendamiento básico y uno que reduce no-shows.

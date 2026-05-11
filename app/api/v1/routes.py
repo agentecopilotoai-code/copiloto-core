@@ -40,6 +40,8 @@ from app.api.v1.schemas import (
     TenantCreate,
     TenantStatusTransition,
     TenantUpdate,
+    WhatsAppTemplateCreate,
+    WhatsAppTemplateUpdate,
 )
 from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
@@ -51,11 +53,14 @@ from app.services.intent_classifier import classify_intent
 from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
+    delete_template_from_meta,
     download_whatsapp_media,
+    fetch_templates_from_meta,
     normalize_meta_app_secret,
     parse_interactive_reply,
     resolve_secret_ref,
     secret_ref_is_configured,
+    submit_template_to_meta,
     token_ref_is_configured,
     verify_signature_with_secret,
 )
@@ -981,6 +986,348 @@ async def patch_channel_mode(
         metadata={'account_mode': payload.account_mode, 'reason': payload.reason},
     )
     return record_to_dict(row)
+
+
+WHATSAPP_TEMPLATE_COLUMNS = (
+    'id',
+    'tenant_id',
+    'channel_id',
+    'name',
+    'locale',
+    'category',
+    'status',
+    'purpose',
+    'components',
+    'meta_template_id',
+    'rejection_reason',
+    'created_at',
+    'updated_at',
+)
+WHATSAPP_TEMPLATE_PROJECTION = ', '.join(WHATSAPP_TEMPLATE_COLUMNS)
+
+WHATSAPP_TEMPLATE_REQUIRED_PURPOSES = (
+    'appointment_confirmation',
+    'appointment_reminder_24h',
+)
+
+
+def normalize_whatsapp_template(row: asyncpg.Record | None) -> dict | None:
+    template = record_to_dict(row)
+    if not template:
+        return None
+    template['components'] = parse_json_object(template.get('components'), default={})
+    return template
+
+
+async def _fetch_template_or_404(
+    conn: asyncpg.Connection, tenant_id: UUID, template_id: UUID
+) -> asyncpg.Record:
+    row = await conn.fetchrow(
+        f'select {WHATSAPP_TEMPLATE_PROJECTION} from app.whatsapp_templates where tenant_id=$1 and id=$2',
+        tenant_id,
+        template_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Template not found')
+    return row
+
+
+async def _resolve_channel_for_template(
+    conn: asyncpg.Connection, tenant_id: UUID, channel_id: UUID | None
+) -> asyncpg.Record:
+    if channel_id:
+        row = await conn.fetchrow(
+            "select id, waba_id, token_ref, account_mode from app.tenant_channels where tenant_id=$1 and id=$2 and provider='whatsapp_cloud_api'",
+            tenant_id,
+            channel_id,
+        )
+    else:
+        row = await conn.fetchrow(
+            "select id, waba_id, token_ref, account_mode from app.tenant_channels where tenant_id=$1 and provider='whatsapp_cloud_api'",
+            tenant_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+    return row
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/whatsapp/templates', status_code=201)
+async def create_whatsapp_template(
+    tenant_id: UUID,
+    payload: WhatsAppTemplateCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    channel = await _resolve_channel_for_template(conn, tenant_id, payload.channel_id)
+    initial_status = 'draft'
+    meta_template_id: str | None = None
+    rejection_reason: str | None = None
+    if (channel['account_mode'] or 'mock') == 'live' and channel['waba_id']:
+        try:
+            meta_response = await submit_template_to_meta(
+                channel['waba_id'],
+                channel['token_ref'],
+                name=payload.name,
+                locale=payload.locale,
+                category=payload.category,
+                components=payload.components,
+            )
+        except Exception as exc:
+            rejection_reason = str(exc)[:500]
+        else:
+            meta_template_id = (
+                meta_response.get('id') if isinstance(meta_response, dict) else None
+            )
+            initial_status = 'pending'
+    try:
+        row = await conn.fetchrow(
+            f"""
+            insert into app.whatsapp_templates (
+              tenant_id, channel_id, name, locale, category, status,
+              purpose, components, meta_template_id, rejection_reason
+            )
+            values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
+            returning {WHATSAPP_TEMPLATE_PROJECTION}
+            """,
+            tenant_id,
+            channel['id'],
+            payload.name,
+            payload.locale,
+            payload.category,
+            initial_status,
+            payload.purpose,
+            json.dumps(payload.components),
+            meta_template_id,
+            rejection_reason,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail='A template with this name and locale already exists for the tenant',
+        ) from exc
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='whatsapp_template.created',
+        entity_type='whatsapp_template',
+        entity_id=str(row['id']),
+        metadata={
+            'purpose': payload.purpose,
+            'status': initial_status,
+            'meta_template_id': meta_template_id,
+        },
+    )
+    return normalize_whatsapp_template(row)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/whatsapp/templates')
+async def list_whatsapp_templates(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    purpose: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias='status'),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {WHATSAPP_TEMPLATE_PROJECTION}
+        from app.whatsapp_templates
+        where tenant_id=$1
+          and ($2::text is null or purpose=$2)
+          and ($3::text is null or status=$3)
+        order by purpose asc, created_at desc
+        """,
+        tenant_id,
+        purpose,
+        status_filter,
+    )
+    return [normalize_whatsapp_template(row) for row in rows]
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/whatsapp/templates/{template_id}')
+async def get_whatsapp_template(
+    tenant_id: UUID,
+    template_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_template_or_404(conn, tenant_id, template_id)
+    return normalize_whatsapp_template(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/whatsapp/templates/{template_id}')
+async def update_whatsapp_template(
+    tenant_id: UUID,
+    template_id: UUID,
+    payload: WhatsAppTemplateUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    await _fetch_template_or_404(conn, tenant_id, template_id)
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await _fetch_template_or_404(conn, tenant_id, template_id)
+        return normalize_whatsapp_template(row)
+    row = await conn.fetchrow(
+        f"""
+        update app.whatsapp_templates
+        set name=coalesce($3, name),
+            locale=coalesce($4, locale),
+            category=coalesce($5, category),
+            purpose=coalesce($6, purpose),
+            components=coalesce($7::jsonb, components),
+            status=coalesce($8, status),
+            meta_template_id=coalesce($9, meta_template_id),
+            rejection_reason=coalesce($10, rejection_reason)
+        where tenant_id=$1 and id=$2
+        returning {WHATSAPP_TEMPLATE_PROJECTION}
+        """,
+        tenant_id,
+        template_id,
+        update_data.get('name'),
+        update_data.get('locale'),
+        update_data.get('category'),
+        update_data.get('purpose'),
+        json.dumps(update_data['components']) if 'components' in update_data else None,
+        update_data.get('status'),
+        update_data.get('meta_template_id'),
+        update_data.get('rejection_reason'),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='whatsapp_template.updated',
+        entity_type='whatsapp_template',
+        entity_id=str(template_id),
+        metadata={'status': update_data.get('status')},
+    )
+    return normalize_whatsapp_template(row)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/whatsapp/templates/sync')
+async def sync_whatsapp_templates(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    channel = await _resolve_channel_for_template(conn, tenant_id, None)
+    if (channel['account_mode'] or 'mock') != 'live' or not channel['waba_id']:
+        raise HTTPException(
+            status_code=400,
+            detail='Template sync requires the WhatsApp channel in live mode with a configured waba_id',
+        )
+    try:
+        meta_templates = await fetch_templates_from_meta(channel['waba_id'], channel['token_ref'])
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f'Meta sync failed: {exc}') from exc
+    by_key = {
+        (item.get('name'), (item.get('language') or '').lower()): item
+        for item in meta_templates
+        if isinstance(item, dict) and item.get('name')
+    }
+    rows = await conn.fetch(
+        'select id, name, locale from app.whatsapp_templates where tenant_id=$1',
+        tenant_id,
+    )
+    updated = 0
+    for row in rows:
+        key = (row['name'], (row['locale'] or '').lower())
+        meta_entry = by_key.get(key)
+        if not meta_entry:
+            continue
+        meta_status = (meta_entry.get('status') or '').upper()
+        next_status_map = {
+            'APPROVED': 'approved',
+            'PENDING': 'pending',
+            'REJECTED': 'rejected',
+            'PAUSED': 'paused',
+        }
+        next_status = next_status_map.get(meta_status)
+        if not next_status:
+            continue
+        rejection_reason = meta_entry.get('rejected_reason') or meta_entry.get('reason')
+        await conn.execute(
+            """
+            update app.whatsapp_templates
+            set status=$3,
+                meta_template_id=coalesce($4, meta_template_id),
+                rejection_reason=$5
+            where tenant_id=$1 and id=$2
+            """,
+            tenant_id,
+            row['id'],
+            next_status,
+            str(meta_entry.get('id')) if meta_entry.get('id') is not None else None,
+            str(rejection_reason)[:500] if rejection_reason else None,
+        )
+        updated += 1
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='whatsapp_template.synced',
+        entity_type='whatsapp_template',
+        entity_id=str(tenant_id),
+        metadata={'updated': updated, 'meta_total': len(meta_templates)},
+    )
+    return {'updated': updated, 'meta_total': len(meta_templates)}
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/whatsapp/templates/{template_id}', status_code=204)
+async def delete_whatsapp_template(
+    tenant_id: UUID,
+    template_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    template = await _fetch_template_or_404(conn, tenant_id, template_id)
+    channel = await _resolve_channel_for_template(conn, tenant_id, template['channel_id'])
+    if (channel['account_mode'] or 'mock') == 'live' and channel['waba_id']:
+        try:
+            await delete_template_from_meta(
+                channel['waba_id'],
+                channel['token_ref'],
+                template_name=template['name'],
+            )
+        except Exception as exc:
+            log.warning(
+                'whatsapp_template.delete_meta_failed',
+                tenant_id=str(tenant_id),
+                template_id=str(template_id),
+                error=str(exc)[:200],
+            )
+    await conn.execute(
+        'delete from app.whatsapp_templates where tenant_id=$1 and id=$2',
+        tenant_id,
+        template_id,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='whatsapp_template.deleted',
+        entity_type='whatsapp_template',
+        entity_id=str(template_id),
+    )
+    return Response(status_code=204)
 
 
 @system_router.post('/contacts/upsert')
@@ -3618,6 +3965,43 @@ async def build_tenant_readiness_report(
                 'after_bot_turns': ep_triggers.get('after_bot_turns'),
                 'has_trigger_keywords': bool(ep_triggers.get('keywords')),
                 'consecutive_no_context_limit': escalation_policy.get('consecutive_no_context_limit'),
+            },
+        )
+    )
+
+    template_rows = await conn.fetch(
+        """
+        select purpose, status
+        from app.whatsapp_templates
+        where tenant_id=$1 and purpose = any($2::text[])
+        """,
+        tenant_id,
+        list(WHATSAPP_TEMPLATE_REQUIRED_PURPOSES),
+    )
+    approved_purposes = {
+        row['purpose'] for row in template_rows if row['status'] == 'approved'
+    }
+    missing_purposes = [
+        purpose for purpose in WHATSAPP_TEMPLATE_REQUIRED_PURPOSES
+        if purpose not in approved_purposes
+    ]
+    templates_ready = not missing_purposes
+    template_reason = (
+        'Plantillas mínimas aprobadas para confirmación y recordatorio 24 h.'
+        if templates_ready
+        else f'Faltan plantillas aprobadas: {", ".join(missing_purposes)}. '
+             'Crea y sincroniza con Meta desde la pestaña Plantillas de WhatsApp.'
+    )
+    checks.append(
+        readiness_check(
+            'whatsapp_templates',
+            'Plantillas mínimas aprobadas',
+            templates_ready,
+            template_reason,
+            {
+                'required_purposes': list(WHATSAPP_TEMPLATE_REQUIRED_PURPOSES),
+                'approved_purposes': sorted(approved_purposes),
+                'missing_purposes': missing_purposes,
             },
         )
     )
