@@ -56,12 +56,12 @@ def test_orchestrator_checks_keyword_triggers_from_escalation_policy():
     source = ORCHESTRATOR.read_text()
     policy_source = (Path(__file__).parent.parent / 'app' / 'services' / 'policy_engine.py').read_text()
 
-    # _keyword_triggers is kept for legacy compatibility; the policy engine handles risk_keywords.
-    assert '_keyword_triggers' in source
-    assert '_DEFAULT_HUMAN_KEYWORDS' in source
-    # Keyword escalation now handled by policy engine via evaluate_policy().
+    # Keyword escalation handled exclusively by policy engine via risk_keywords.
     assert 'evaluate_policy' in source
     assert 'risk_keyword' in policy_source
+    # Legacy helpers removed — no more _keyword_triggers or _DEFAULT_HUMAN_KEYWORDS.
+    assert '_keyword_triggers' not in source
+    assert '_DEFAULT_HUMAN_KEYWORDS' not in source
 
 
 def test_orchestrator_enforces_max_bot_turns_limit():

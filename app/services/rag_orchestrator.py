@@ -36,9 +36,6 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
-_DEFAULT_HUMAN_KEYWORDS = {'humano', 'asesor', 'agente', 'reclamo', 'persona'}
-
-
 def _is_cloud_llm_configured(settings: Any) -> bool:
     """Devuelve True si el cloud LLM tiene proveedor y API key configurados."""
     return bool(settings.cloud_llm_provider and settings.cloud_llm_api_key)
@@ -52,17 +49,6 @@ def _parse_escalation_policy(raw: Any) -> dict[str, Any]:
             raw = {}
     return raw if isinstance(raw, dict) else {}
 
-
-def _keyword_triggers(policy: dict[str, Any]) -> set[str]:
-    triggers = policy.get('triggers') or {}
-    if isinstance(triggers, str):
-        try:
-            triggers = json.loads(triggers)
-        except (json.JSONDecodeError, TypeError):
-            triggers = {}
-    keywords = triggers.get('keywords') or []
-    result = {kw.strip().lower() for kw in keywords if isinstance(kw, str) and kw.strip()}
-    return result or _DEFAULT_HUMAN_KEYWORDS
 
 
 async def orchestrate_inbound_message(
@@ -222,7 +208,7 @@ async def orchestrate_inbound_message(
         max_bot_turns=max_bot_turns,
         business_name=business_name,
         answer_engine=get_settings().answer_engine,
-        escalation_triggers=sorted(_keyword_triggers(policy)),
+        risk_keywords=policy.get('risk_keywords') or [],
         has_handoff_message=bool(policy.get('handoff_message')),
     )
 

@@ -114,24 +114,6 @@ def test_rule2_risk_keywords_json_string():
     assert result.action == 'require_handoff'
 
 
-def test_rule2_legacy_trigger_keywords_still_work():
-    settings = base_settings(escalation_policy={'triggers': {'keywords': ['humano', 'asesor']}})
-    result = evaluate_policy(settings, base_conversation(), 'quiero hablar con un humano', 'faq')
-    assert result.action == 'require_handoff'
-    assert result.reason == 'keyword_trigger:humano'
-    assert result.risk_level == 'medium'
-
-
-def test_rule2_risk_keyword_high_priority_over_legacy():
-    settings = base_settings(escalation_policy={
-        'risk_keywords': ['fraude'],
-        'triggers': {'keywords': ['humano']},
-    })
-    result = evaluate_policy(settings, base_conversation(), 'esto es un fraude humano', 'faq')
-    assert result.risk_level == 'high'
-    assert 'fraude' in result.reason
-
-
 # ── Rule 3: service window expired ───────────────────────────────────────────
 
 def test_rule3_expired_window_triggers_handoff():
