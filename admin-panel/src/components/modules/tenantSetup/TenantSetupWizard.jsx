@@ -35,19 +35,38 @@ const ALL_INTENTS_META = [
   { id: 'opt_out', label: 'Opt-out', description: 'El usuario pide no recibir más mensajes.' },
 ];
 
+const DEFAULT_INTENT_KEYWORDS = {
+  greeting: ['hola', 'buenos días', 'buenas tardes', 'buenas noches', 'hey', 'saludos', 'buen día'],
+  faq: ['información', 'cuánto cuesta', 'precio', 'horario', 'cómo funciona', 'qué ofrecen', 'dónde están'],
+  book_appointment: ['quiero una cita', 'agendar', 'reservar', 'turno', 'appointment', 'necesito cita', 'pedir hora'],
+  confirm_appointment: ['confirmar', 'confirmación', 'tengo cita', 'mi cita', 'está agendado', 'queda confirmada'],
+  reschedule_appointment: ['reagendar', 'cambiar cita', 'mover cita', 'otro horario', 'reprogramar', 'otra fecha'],
+  cancel_appointment: ['cancelar', 'cancela mi cita', 'no puedo ir', 'ya no quiero', 'quiero cancelar'],
+  check_availability: ['disponibilidad', 'tienen lugar', 'hay espacio', 'qué días tienen', 'qué horarios tienen'],
+  complaint_or_risk: ['queja', 'reclamo', 'estafa', 'fraude', 'mal servicio', 'indignado', 'insatisfecho', 'terrible', 'pésimo'],
+  out_of_scope: [],
+  opt_out: ['stop', 'baja', 'no me escribas', 'no quiero mensajes', 'cancelar suscripción', 'darme de baja'],
+};
+
 function defaultIntentSettings() {
   return {
     enabled_intents: ALL_INTENTS_META.map((i) => i.id),
-    custom_keywords: {},
+    custom_keywords: DEFAULT_INTENT_KEYWORDS,
     min_confidence: 0.70,
   };
 }
 
 function hydrateIntentSettings(raw) {
   const data = (typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch { return {}; } })() : raw) || {};
+  // Merge saved keywords with defaults: saved values take precedence, defaults fill gaps.
+  const saved = data.custom_keywords || {};
+  const merged = { ...DEFAULT_INTENT_KEYWORDS };
+  for (const [intent, kws] of Object.entries(saved)) {
+    if (Array.isArray(kws) && kws.length > 0) merged[intent] = kws;
+  }
   return {
     enabled_intents: data.enabled_intents || ALL_INTENTS_META.map((i) => i.id),
-    custom_keywords: data.custom_keywords || {},
+    custom_keywords: merged,
     min_confidence: data.min_confidence ?? 0.70,
   };
 }

@@ -55,10 +55,15 @@ def evaluate_policy(
             risk_level='high',
         )
 
-    # Rule 2: risk keywords from escalation_policy.risk_keywords.
+    # Rule 2: risk keywords.
+    # Checks both escalation_policy.risk_keywords (new, high risk) and
+    # escalation_policy.triggers.keywords (legacy escalation keywords, medium risk)
+    # so that existing tenant configurations continue to work after the refactor.
     risk_keywords: list = escalation_policy.get('risk_keywords') or []
+    legacy_triggers: list = (escalation_policy.get('triggers') or {}).get('keywords') or []
     message_lower = message_text.lower()
-    triggered = next(
+
+    triggered_high = next(
         (
             kw.strip().lower()
             for kw in risk_keywords
@@ -66,11 +71,26 @@ def evaluate_policy(
         ),
         None,
     )
-    if triggered:
+    if triggered_high:
         return PolicyResult(
             action='require_handoff',
-            reason=f'risk_keyword:{triggered}',
+            reason=f'risk_keyword:{triggered_high}',
             risk_level='high',
+        )
+
+    triggered_legacy = next(
+        (
+            kw.strip().lower()
+            for kw in legacy_triggers
+            if isinstance(kw, str) and kw.strip() and kw.strip().lower() in message_lower
+        ),
+        None,
+    )
+    if triggered_legacy:
+        return PolicyResult(
+            action='require_handoff',
+            reason=f'keyword_trigger:{triggered_legacy}',
+            risk_level='medium',
         )
 
     # Rule 3: WhatsApp service window expired (only when enforcement is enabled).
