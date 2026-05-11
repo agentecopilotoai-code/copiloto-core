@@ -54,19 +54,26 @@ def test_orchestrator_reads_max_bot_turns_and_escalation_policy_from_tenant_sett
 
 def test_orchestrator_checks_keyword_triggers_from_escalation_policy():
     source = ORCHESTRATOR.read_text()
+    policy_source = (Path(__file__).parent.parent / 'app' / 'services' / 'policy_engine.py').read_text()
 
-    assert '_keyword_triggers' in source
-    assert '_DEFAULT_HUMAN_KEYWORDS' in source
-    assert "'keyword_trigger'" in source
-    assert 'triggered_keyword' in source
+    # Keyword escalation handled exclusively by policy engine via risk_keywords.
+    assert 'evaluate_policy' in source
+    assert 'risk_keyword' in policy_source
+    # Legacy helpers removed — no more _keyword_triggers or _DEFAULT_HUMAN_KEYWORDS.
+    assert '_keyword_triggers' not in source
+    assert '_DEFAULT_HUMAN_KEYWORDS' not in source
 
 
 def test_orchestrator_enforces_max_bot_turns_limit():
     source = ORCHESTRATOR.read_text()
+    policy_source = (Path(__file__).parent.parent / 'app' / 'services' / 'policy_engine.py').read_text()
 
-    assert 'bot_turn_count >= max_bot_turns' in source
-    assert "'max_bot_turns_exceeded'" in source
+    # Bot turn count is fetched in orchestrator and passed to evaluate_policy.
+    assert 'bot_turn_count' in source
     assert "sender_actor_type='bot'" in source
+    # Max turns enforcement now delegated to policy engine.
+    assert 'max_bot_turns_exceeded' in policy_source
+    assert 'evaluate_policy' in source
 
 
 def test_orchestrator_deduplicates_by_idempotency_key():
@@ -171,27 +178,25 @@ def test_parse_escalation_policy_handles_invalid_string():
     assert _parse_escalation_policy([]) == {}
 
 
-def test_keyword_triggers_returns_defaults_when_policy_has_no_triggers():
-    from app.services.rag_orchestrator import _keyword_triggers, _DEFAULT_HUMAN_KEYWORDS
+def test_risk_keywords_trigger_handoff_via_policy_engine():
+    from app.services.policy_engine import evaluate_policy
 
-    result = _keyword_triggers({})
-    assert result == _DEFAULT_HUMAN_KEYWORDS
+    settings = {'max_bot_turns': 8, 'escalation_policy': {'risk_keywords': ['humano', 'asesor', 'agente', 'reclamo']}}
+    conv = {'bot_turn_count': 0, 'consecutive_no_context': 0, 'service_window_expires_at': None}
+
+    for kw in ['humano', 'asesor', 'agente', 'reclamo']:
+        result = evaluate_policy(settings, conv, f'quiero un {kw}', 'faq')
+        assert result.action == 'require_handoff', f'keyword {kw!r} debería disparar handoff'
 
 
-def test_keyword_triggers_returns_policy_keywords_when_configured():
-    from app.services.rag_orchestrator import _keyword_triggers
+def test_no_risk_keywords_continues_bot():
+    from app.services.policy_engine import evaluate_policy
 
-    policy = {
-        'triggers': {
-            'keywords': ['humano', 'asesor', 'agente', 'reclamo'],
-        }
-    }
-    result = _keyword_triggers(policy)
+    settings = {'max_bot_turns': 8, 'escalation_policy': {'risk_keywords': ['demanda']}}
+    conv = {'bot_turn_count': 0, 'consecutive_no_context': 0, 'service_window_expires_at': None}
 
-    assert 'humano' in result
-    assert 'asesor' in result
-    assert 'agente' in result
-    assert 'reclamo' in result
+    result = evaluate_policy(settings, conv, 'tengo una pregunta sobre precios', 'faq')
+    assert result.action == 'continue_bot'
 
 
 def test_rag_retrieval_answers_manicure_price_from_indexed_csv_chunk():

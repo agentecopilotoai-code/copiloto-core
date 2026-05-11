@@ -25,19 +25,16 @@ from app.services.llm_answer import build_conversational_llm_answer, build_llm_a
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.intent_classifier import (
     INTENT_BOOK_APPOINTMENT,
-    INTENT_COMPLAINT_OR_RISK,
     INTENT_GREETING,
     INTENT_OPT_OUT,
     classify_intent,
 )
+from app.services.policy_engine import evaluate_policy
 
 if TYPE_CHECKING:
     import asyncpg
 
 log = structlog.get_logger()
-
-_DEFAULT_HUMAN_KEYWORDS = {'humano', 'asesor', 'agente', 'reclamo', 'persona'}
-
 
 def _is_cloud_llm_configured(settings: Any) -> bool:
     """Devuelve True si el cloud LLM tiene proveedor y API key configurados."""
@@ -52,17 +49,6 @@ def _parse_escalation_policy(raw: Any) -> dict[str, Any]:
             raw = {}
     return raw if isinstance(raw, dict) else {}
 
-
-def _keyword_triggers(policy: dict[str, Any]) -> set[str]:
-    triggers = policy.get('triggers') or {}
-    if isinstance(triggers, str):
-        try:
-            triggers = json.loads(triggers)
-        except (json.JSONDecodeError, TypeError):
-            triggers = {}
-    keywords = triggers.get('keywords') or []
-    result = {kw.strip().lower() for kw in keywords if isinstance(kw, str) and kw.strip()}
-    return result or _DEFAULT_HUMAN_KEYWORDS
 
 
 async def orchestrate_inbound_message(
@@ -222,7 +208,7 @@ async def orchestrate_inbound_message(
         max_bot_turns=max_bot_turns,
         business_name=business_name,
         answer_engine=get_settings().answer_engine,
-        escalation_triggers=sorted(_keyword_triggers(policy)),
+        risk_keywords=policy.get('risk_keywords') or [],
         has_handoff_message=bool(policy.get('handoff_message')),
     )
 
@@ -265,37 +251,8 @@ async def orchestrate_inbound_message(
         log.info('orchestrator.opt_out_registered', conversation_id=conversation_id)
         return {'action': 'skipped', 'reason': 'opt_out_registered'}
 
-    # complaint_or_risk — force handoff immediately
-    if intent_result.intent == INTENT_COMPLAINT_OR_RISK:
-        log.info('orchestrator.intent_handoff', intent=INTENT_COMPLAINT_OR_RISK, conversation_id=conversation_id)
-        return await _do_handoff(
-            conn,
-            tenant_id=tenant_id,
-            channel_id=channel_id,
-            conversation=conversation,
-            inbound_message=inbound_message,
-            policy=policy,
-            reason='intent_complaint_or_risk',
-            reason_detail=f'confidence={intent_result.confidence:.2f},resolved_by={intent_result.resolved_by}',
-        )
-
-    # Keyword trigger check (legacy — kept so existing tenant configs still work)
-    body_lower = body_text.lower()
-    triggered_keyword = next((kw for kw in _keyword_triggers(policy) if kw in body_lower), None)
-    if triggered_keyword:
-        log.info('orchestrator.keyword_trigger', keyword=triggered_keyword, conversation_id=conversation_id)
-        return await _do_handoff(
-            conn,
-            tenant_id=tenant_id,
-            channel_id=channel_id,
-            conversation=conversation,
-            inbound_message=inbound_message,
-            policy=policy,
-            reason='keyword_trigger',
-            reason_detail=f'keyword={triggered_keyword}',
-        )
-
-    # Max bot turns check
+    # ── Policy engine evaluation ──────────────────────────────────────────────
+    # Fetch bot_turn_count for policy evaluation.
     bot_turn_count: int = await conn.fetchval(
         """
         select count(*) from app.messages
@@ -306,23 +263,52 @@ async def orchestrate_inbound_message(
         conversation['id'],
     ) or 0
 
-    log.info(
-        'orchestrator.bot_turn_check',
-        conversation_id=conversation_id,
-        bot_turn_count=bot_turn_count,
-        max_bot_turns=max_bot_turns,
-        will_exceed=bot_turn_count >= max_bot_turns,
+    # Count consecutive recent bot messages with sufficient_context=false.
+    recent_sc_rows = await conn.fetch(
+        """
+        select (payload->>'sufficient_context')::boolean as sc
+        from app.messages
+        where conversation_id=$1
+          and direction='outbound'
+          and sender_actor_type='bot'
+        order by created_at desc
+        limit 10
+        """,
+        conversation['id'],
+    )
+    consecutive_no_context = 0
+    for _row in recent_sc_rows:
+        if _row['sc'] is False:
+            consecutive_no_context += 1
+        else:
+            break
+
+    policy_result = evaluate_policy(
+        tenant_settings={
+            'max_bot_turns': max_bot_turns,
+            'escalation_policy': policy,
+        },
+        conversation={
+            'bot_turn_count': bot_turn_count,
+            'consecutive_no_context': consecutive_no_context,
+            'service_window_expires_at': conversation.get('service_window_expires_at'),
+        },
+        message_text=body_text,
+        intent=intent_result.intent,
     )
 
-    if bot_turn_count >= max_bot_turns:
-        log.warning(
-            'orchestrator.max_turns_exceeded',
-            conversation_id=conversation_id,
-            bot_turn_count=bot_turn_count,
-            limit=max_bot_turns,
-            tenant_id=str(tenant_id),
-            hint='Aumenta max_bot_turns en tenant_settings o via PATCH /v1/tenants/{id}/settings',
-        )
+    log.info(
+        'orchestrator.policy_evaluated',
+        conversation_id=conversation_id,
+        action=policy_result.action,
+        reason=policy_result.reason,
+        risk_level=policy_result.risk_level,
+        bot_turn_count=bot_turn_count,
+        max_bot_turns=max_bot_turns,
+        consecutive_no_context=consecutive_no_context,
+    )
+
+    if policy_result.action == 'require_handoff':
         return await _do_handoff(
             conn,
             tenant_id=tenant_id,
@@ -330,8 +316,9 @@ async def orchestrate_inbound_message(
             conversation=conversation,
             inbound_message=inbound_message,
             policy=policy,
-            reason='max_bot_turns_exceeded',
-            reason_detail=f'count={bot_turn_count},limit={max_bot_turns}',
+            reason=policy_result.reason,
+            reason_detail=f'risk_level={policy_result.risk_level},intent={intent_result.intent}',
+            risk_level=policy_result.risk_level,
         )
 
     # Idempotency check (deduplication)
@@ -493,6 +480,7 @@ async def orchestrate_inbound_message(
                     llm_used=False,
                     llm_model=None,
                     conv_stage=STAGE_START,
+                    sufficient_context=False,
                 )
 
             log.info(
@@ -529,6 +517,7 @@ async def orchestrate_inbound_message(
             conv_stage=new_stage,
             cloud_llm_used=decision.get('cloud_llm_used', False),
             token_usage=decision.get('token_usage'),
+            sufficient_context=decision.get('sufficient_context', True),
         )
 
     # ── Q&A cascade (template → LLM → handoff) ───────────────────────────────
@@ -564,6 +553,7 @@ async def orchestrate_inbound_message(
             llm_model=decision.get('llm_model'),
             cloud_llm_used=decision.get('cloud_llm_used', False),
             token_usage=decision.get('token_usage'),
+            sufficient_context=True,
         )
 
     return await _do_handoff(
@@ -934,6 +924,7 @@ async def _send_bot_reply(
     conv_stage: str | None = None,
     cloud_llm_used: bool = False,
     token_usage: dict[str, int] | None = None,
+    sufficient_context: bool = True,
 ) -> dict[str, Any]:
     if cloud_llm_used:
         engine_label = 'cloud_llm'
@@ -952,6 +943,7 @@ async def _send_bot_reply(
         'inbound_message_id': str(inbound_message['id']),
         'conv_stage': conv_stage,
         'token_usage': token_usage,
+        'sufficient_context': sufficient_context,
     }
     outbound = await conn.fetchrow(
         """
@@ -1043,6 +1035,7 @@ async def _do_handoff(
     policy: dict[str, Any],
     reason: str,
     reason_detail: str,
+    risk_level: str = 'medium',
 ) -> dict[str, Any]:
     log.info(
         'orchestrator.handoff_triggered',
@@ -1099,6 +1092,7 @@ async def _do_handoff(
                 'rag_decision': 'handoff',
                 'reason': reason,
                 'reason_detail': reason_detail,
+                'risk_level': risk_level,
                 'inbound_message_id': str(inbound_message['id']),
             }
             outbound_msg = await conn.fetchrow(

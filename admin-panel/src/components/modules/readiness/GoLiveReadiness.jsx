@@ -184,16 +184,19 @@ export function GoLiveReadiness({ module, session, tenant, onGoToEscalation }) {
   const channelCheck = report?.checks?.find((c) => c.key === 'whatsapp_channel');
   const tenantActiveCheck = report?.checks?.find((c) => c.key === 'tenant_active');
   const handoffCheck = report?.checks?.find((c) => c.key === 'handoff');
+  const policyEngineCheck = report?.checks?.find((c) => c.key === 'policy_engine');
   const isLive = channelCheck?.details?.delivery_mode_live;
   const tenantStatus = tenantActiveCheck?.details?.status;
 
+  const escalationActions = onGoToEscalation ? (
+    <button className="secondary-action" onClick={onGoToEscalation} type="button">
+      Ir a Escalamiento
+    </button>
+  ) : null;
+
   const handoffActions = handoffCheck && !handoffCheck.ready ? (
     <>
-      {onGoToEscalation ? (
-        <button className="secondary-action" onClick={onGoToEscalation} type="button">
-          Ir a Escalamiento
-        </button>
-      ) : null}
+      {escalationActions}
       <button
         className="secondary-action"
         disabled={minPolicyBusy || !tenant?.id}
@@ -204,6 +207,8 @@ export function GoLiveReadiness({ module, session, tenant, onGoToEscalation }) {
       </button>
     </>
   ) : null;
+
+  const policyEngineActions = policyEngineCheck && !policyEngineCheck.ready ? escalationActions : null;
 
   return (
     <section className="module-card readiness-module">
@@ -266,7 +271,11 @@ export function GoLiveReadiness({ module, session, tenant, onGoToEscalation }) {
           <div className="readiness-checks">
             {report.checks.map((check) => (
               <CheckItem
-                actions={check.key === 'handoff' ? handoffActions : null}
+                actions={
+                  check.key === 'handoff' ? handoffActions
+                  : check.key === 'policy_engine' ? policyEngineActions
+                  : null
+                }
                 check={check}
                 key={check.key}
               />
