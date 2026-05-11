@@ -44,6 +44,7 @@ from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
 from app.services.rag_indexing import build_indexing_result_async, vector_literal
+from app.services.intent_classifier import classify_intent
 from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
@@ -2251,9 +2252,16 @@ async def evaluate_intent_retrieval(
         max_chunks=payload.max_chunks,
     )
     answer = build_grounded_answer(payload.question, matches, min_score=payload.min_score)
+
+    # Intent classification
+    intent_result = await classify_intent(payload.question, settings=get_settings())
+
     response = {
         'tenant_id': str(tenant_id),
         'question': payload.question,
+        'intent': intent_result.intent,
+        'confidence': round(intent_result.confidence, 4),
+        'resolved_by': intent_result.resolved_by,
         **answer,
         'chunks': [retrieval_match_to_dict(match) for match in matches],
         'retrieval': {
@@ -2271,6 +2279,9 @@ async def evaluate_intent_retrieval(
         entity_type='intent_evaluation',
         entity_id=None,
         metadata={
+            'intent': intent_result.intent,
+            'confidence': round(intent_result.confidence, 4),
+            'resolved_by': intent_result.resolved_by,
             'status': response['status'],
             'sufficient_context': response['sufficient_context'],
             'returned_chunk_count': len(matches),

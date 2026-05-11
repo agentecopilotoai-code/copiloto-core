@@ -567,3 +567,31 @@ Cada entrada debe incluir:
   - `pytest tests/test_embedding_providers_static.py -q` → 23 passed
   - `pytest tests/test_rag_indexing.py tests/test_answer_engine_static.py -q` → 31 passed (sin regresiones)
 - **Notas:** la integración ANN en el path de retrieval de `routes.py` y `rag_orchestrator.py` puede completarse opcionalmente una vez el tenant tenga un proveedor real configurado; la lógica SQL está lista en `get_chunk_retrieval_sql()`. La API key se guarda únicamente en variables de entorno del servidor, nunca en DB.
+
+---
+
+### TASK-0026 — Implementar clasificador de intenciones genérico orientado al journey de agendamiento
+
+- **Fecha:** 2026-05-11
+- **Resumen:** Se implementó un clasificador de intenciones de 3 capas (rule-router → LLM → fallback-human) con soporte de 10 intenciones genéricas válidas para cualquier negocio. El clasificador se integró en el orquestador RAG como primer paso antes de cualquier respuesta; las intenciones `complaint_or_risk` y `opt_out` se procesan antes de llamar al LLM. Se añadió soporte de keywords personalizadas por tenant y umbral de confianza configurable. La UI del Admin Panel se actualizó en tres módulos.
+- **Archivos creados:**
+  - `app/services/intent_classifier.py` — 10 intenciones, reglas regex (capa 1), llamada al LLM disponible (capa 2), fallback humano (capa 3); `classify_intent()` como entry point async.
+  - `tests/test_intent_classifier_static.py` — 43 tests estáticos cubriendo las 10 intenciones, umbrales, keywords de tenant, estados de fallback.
+- **Archivos modificados:**
+  - `app/services/rag_orchestrator.py` — import del clasificador; bloque de clasificación de intención después de cargar settings; update de `conversations.current_intent` en cada turno; handoff inmediato en `complaint_or_risk`; registro de `opt_out` en el contacto; uso de intención para enriquecer el flag `use_conversational`.
+  - `app/api/v1/routes.py` — import de `classify_intent`; endpoint `POST /v1/intents/evaluate` ahora devuelve `intent`, `confidence`, `resolved_by` además del resultado RAG.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — nueva pestaña "Intenciones" con toggle por intención, campo de keywords personalizadas y slider de umbral de confianza (0.50–0.90); las intents settings se guardan en `escalation_policy.intent_settings`.
+  - `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx` — sección "Probar clasificador + RAG" (renombrado); resultado ahora muestra badges de intención, confianza y capa.
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx` — badge de `current_intent` en cada card del inbox y en el header del detalle de conversación.
+- **Validaciones:**
+  - `pytest tests/test_intent_classifier_static.py -q` → 43 passed
+  - `ruff check app/services/intent_classifier.py app/services/rag_orchestrator.py app/api/v1/routes.py tests/test_intent_classifier_static.py` → All checks passed
+- **Criterios de aceptación cubiertos:**
+  - "buenos días" → greeting (capa regla, conf ≥ 0.92)
+  - "cuánto cuesta?" → faq (capa regla)
+  - "quiero una cita" → book_appointment (capa regla, conf ≥ 0.93)
+  - "quiero cancelar" → cancel_appointment
+  - "esto es una estafa" → complaint_or_risk (handoff forzado)
+  - Admin Panel permite desactivar intenciones, agregar keywords y ajustar umbral
+  - Badge de intención visible en Operations Desk inbox y detalle
+  - 43 tests pasan en CI

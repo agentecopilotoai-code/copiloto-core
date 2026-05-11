@@ -740,7 +740,14 @@ export function OperationsDesk({ module, session, tenant }) {
               type="button"
             >
               <span>{conversation.contact_label || conversation.contact_id}</span>
-              <strong>{statusLabel(conversation.status)}</strong>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <strong>{statusLabel(conversation.status)}</strong>
+                {conversation.current_intent && (
+                  <span className="status-pill" style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem' }} title="Intención detectada">
+                    {conversation.current_intent}
+                  </span>
+                )}
+              </div>
               <small>{conversation.latest_message_text || 'Sin mensajes aún'}</small>
               <time>{formatDate(conversation.latest_message_at || conversation.updated_at)}</time>
             </button>
@@ -761,7 +768,14 @@ export function OperationsDesk({ module, session, tenant }) {
                   <h3>{conversationDetail?.contact_label || selectedConversation.contact_label}</h3>
                   <p className="hint">{selectedConversation.id}</p>
                 </div>
-                <span className={`status-pill status-${selectedConversation.status}`}>{statusLabel(selectedConversation.status)}</span>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span className={`status-pill status-${selectedConversation.status}`}>{statusLabel(selectedConversation.status)}</span>
+                  {(conversationDetail?.current_intent || selectedConversation.current_intent) && (
+                    <span className="status-pill" style={{ background: 'var(--accent, #4f6ef7)', color: '#fff', fontSize: '0.75rem' }} title="Intención detectada por el clasificador">
+                      {conversationDetail?.current_intent || selectedConversation.current_intent}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="handoff-panel">

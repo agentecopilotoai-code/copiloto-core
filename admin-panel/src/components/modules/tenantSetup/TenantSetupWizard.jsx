@@ -16,10 +16,41 @@ const wizardTabs = [
   { id: 'settings', label: 'Settings' },
   { id: 'hours', label: 'Horarios' },
   { id: 'escalation', label: 'Escalamiento' },
+  { id: 'intenciones', label: 'Intenciones' },
   { id: 'privacy', label: 'Privacidad' },
   { id: 'ia_rag', label: 'IA y RAG' },
   { id: 'audit', label: 'Auditoría' },
 ];
+
+const ALL_INTENTS_META = [
+  { id: 'greeting', label: 'Saludo', description: 'Apertura o reapertura de conversación.' },
+  { id: 'faq', label: 'FAQ', description: 'Pregunta informativa (precios, horarios, servicios).' },
+  { id: 'book_appointment', label: 'Agendar cita', description: 'Quiere agendar una cita nueva.' },
+  { id: 'confirm_appointment', label: 'Confirmar cita', description: 'Consulta o confirma una cita existente.' },
+  { id: 'reschedule_appointment', label: 'Reagendar cita', description: 'Quiere mover una cita a otro horario.' },
+  { id: 'cancel_appointment', label: 'Cancelar cita', description: 'Quiere cancelar una cita.' },
+  { id: 'check_availability', label: 'Consultar disponibilidad', description: 'Pregunta por disponibilidad sin comprometerse.' },
+  { id: 'complaint_or_risk', label: 'Queja / Riesgo', description: 'Queja, reclamación o frustración — fuerza handoff.' },
+  { id: 'out_of_scope', label: 'Fuera de scope', description: 'Mensaje sin relación con el negocio.' },
+  { id: 'opt_out', label: 'Opt-out', description: 'El usuario pide no recibir más mensajes.' },
+];
+
+function defaultIntentSettings() {
+  return {
+    enabled_intents: ALL_INTENTS_META.map((i) => i.id),
+    custom_keywords: {},
+    min_confidence: 0.70,
+  };
+}
+
+function hydrateIntentSettings(raw) {
+  const data = (typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch { return {}; } })() : raw) || {};
+  return {
+    enabled_intents: data.enabled_intents || ALL_INTENTS_META.map((i) => i.id),
+    custom_keywords: data.custom_keywords || {},
+    min_confidence: data.min_confidence ?? 0.70,
+  };
+}
 
 const embeddingProviderOptions = [
   {
@@ -160,6 +191,7 @@ function hydrateSettings(settings) {
     hoursForm: formFromBusinessHours(settings.business_hours),
     escalationForm: formFromEscalationPolicy(settings.escalation_policy),
     privacyForm: formFromPiiPolicy(settings.pii_policy, settings),
+    intentSettings: hydrateIntentSettings((settings.escalation_policy || {}).intent_settings),
   };
 }
 
@@ -226,6 +258,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     keywords: 'humano, asesor, agente, reclamo',
     handoffMessage: 'Te conecto con una persona del equipo para ayudarte mejor.',
   });
+  const [intentSettings, setIntentSettings] = useState(defaultIntentSettings);
   const [privacyForm, setPrivacyForm] = useState({
     mode: 'balanced',
     retentionDays: 180,
@@ -254,12 +287,15 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     () => ({
       locale: settingsForm.locale,
       business_hours: toBusinessHours(hoursForm),
-      escalation_policy: toEscalationPolicy(escalationForm),
+      escalation_policy: {
+        ...toEscalationPolicy(escalationForm),
+        intent_settings: intentSettings,
+      },
       pii_policy: toPiiPolicy(privacyForm),
       no_train: privacyForm.noTrain,
       max_bot_turns: Number(privacyForm.maxBotTurns),
     }),
-    [escalationForm, hoursForm, privacyForm, settingsForm.locale],
+    [escalationForm, hoursForm, intentSettings, privacyForm, settingsForm.locale],
   );
 
   const currentTenantId = tenant?.id;
@@ -287,6 +323,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
         setHoursForm(hydrated.hoursForm);
         setEscalationForm(hydrated.escalationForm);
         setPrivacyForm(hydrated.privacyForm);
+        setIntentSettings(hydrated.intentSettings);
         setLastSettings(loadedSettings);
       })
       .catch(() => {
@@ -569,6 +606,83 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
           <label className="wide">Keywords<input value={escalationForm.keywords} onChange={(event) => setEscalationForm({ ...escalationForm, keywords: event.target.value })} /></label>
           <label className="wide">Mensaje de handoff<textarea value={escalationForm.handoffMessage} onChange={(event) => setEscalationForm({ ...escalationForm, handoffMessage: event.target.value })} /></label>
           <div className="form-actions"><button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">Guardar escalamiento</button></div>
+        </form>
+      ) : null}
+
+      {activeTab === 'intenciones' ? (
+        <form className="wizard-panel" onSubmit={handleSaveSettings}>
+          <p className="hint" style={{ marginBottom: '1rem' }}>
+            Habilita o deshabilita intenciones por tenant y agrega keywords personalizadas adicionales
+            a las globales del sistema. El umbral de confianza mínima controla cuándo el bot escala
+            al agente humano por incertidumbre.
+          </p>
+
+          <div style={{ marginBottom: '1.25rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <strong>Umbral de confianza mínima</strong>
+              <input
+                type="range"
+                min="0.50"
+                max="0.90"
+                step="0.01"
+                value={intentSettings.min_confidence}
+                onChange={(e) => setIntentSettings({ ...intentSettings, min_confidence: Number(e.target.value) })}
+                style={{ flex: 1 }}
+              />
+              <span className="status-badge active">{intentSettings.min_confidence.toFixed(2)}</span>
+            </label>
+            <p className="hint">Rango 0.50–0.90 · default 0.70. Por debajo de este valor el bot escala al agente.</p>
+          </div>
+
+          <div className="intent-list">
+            {ALL_INTENTS_META.map((meta) => {
+              const enabled = intentSettings.enabled_intents.includes(meta.id);
+              const kws = (intentSettings.custom_keywords[meta.id] || []).join(', ');
+              return (
+                <fieldset key={meta.id} className="intent-card" style={{ border: '1px solid var(--border)', borderRadius: '6px', padding: '0.75rem 1rem', marginBottom: '0.5rem' }}>
+                  <legend style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                          ? [...intentSettings.enabled_intents, meta.id]
+                          : intentSettings.enabled_intents.filter((i) => i !== meta.id);
+                        setIntentSettings({ ...intentSettings, enabled_intents: next });
+                      }}
+                    />
+                    <strong>{meta.label}</strong>
+                    <code style={{ fontSize: '0.75rem', opacity: 0.7 }}>{meta.id}</code>
+                  </legend>
+                  <p className="hint" style={{ margin: '0.25rem 0 0.5rem' }}>{meta.description}</p>
+                  {enabled && (
+                    <label style={{ display: 'block' }}>
+                      <span style={{ fontSize: '0.8rem' }}>Keywords personalizadas (comma-separated)</span>
+                      <input
+                        type="text"
+                        placeholder="ej: reservar, quiero hora"
+                        value={kws}
+                        onChange={(e) => {
+                          const list = e.target.value.split(',').map((k) => k.trim()).filter(Boolean);
+                          setIntentSettings({
+                            ...intentSettings,
+                            custom_keywords: { ...intentSettings.custom_keywords, [meta.id]: list },
+                          });
+                        }}
+                        style={{ width: '100%', marginTop: '0.25rem' }}
+                      />
+                    </label>
+                  )}
+                </fieldset>
+              );
+            })}
+          </div>
+
+          <div className="form-actions">
+            <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">
+              Guardar intenciones
+            </button>
+          </div>
         </form>
       ) : null}
 

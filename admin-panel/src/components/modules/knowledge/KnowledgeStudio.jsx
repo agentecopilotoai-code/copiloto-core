@@ -291,8 +291,12 @@ export function KnowledgeStudio({ module, session, tenant }) {
 
       <form className="rag-tester" onSubmit={evaluateRetrieval}>
         <div>
-          <h3>Prueba RAG</h3>
-          <p className="hint">Pregunta contra documentos activos. La respuesta solo se muestra si hay contexto suficiente; si no, se solicita handoff humano.</p>
+          <h3>Probar clasificador + RAG</h3>
+          <p className="hint">
+            Escribe un mensaje del usuario para ver la intención detectada (intent, confianza, capa que la resolvió)
+            y la respuesta RAG generada a partir de los documentos activos.
+            Consume <code>POST /v1/intents/evaluate</code>.
+          </p>
         </div>
         <label>
           Pregunta de prueba
@@ -304,11 +308,24 @@ export function KnowledgeStudio({ module, session, tenant }) {
         </label>
         <div className="form-actions">
           <button className="primary-action" disabled={isEvaluating || !ragQuestion.trim()} type="submit">
-            {isEvaluating ? 'Evaluando…' : 'Evaluar retrieval'}
+            {isEvaluating ? 'Clasificando…' : 'Clasificar'}
           </button>
         </div>
         {ragResult && (
           <div className="rag-result">
+            {ragResult.intent && (
+              <div className="rag-intent-badge" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                <span className="status-pill active" style={{ background: 'var(--accent, #4f6ef7)' }}>
+                  Intención: {ragResult.intent}
+                </span>
+                <span className="status-pill">
+                  Confianza: {ragResult.confidence?.toFixed ? ragResult.confidence.toFixed(2) : ragResult.confidence}
+                </span>
+                <span className="status-pill">
+                  Capa: {ragResult.resolved_by}
+                </span>
+              </div>
+            )}
             <div className="rag-answer">
               <span className={`status-pill ${ragResult.sufficient_context ? 'active' : 'failed'}`}>
                 {ragResult.status}
