@@ -101,6 +101,43 @@ class MessageCreate(BaseModel):
 
 
 
+class ServiceCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    category: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    price_amount: float | None = Field(default=None, ge=0)
+    price_currency: str = Field(default='COP', min_length=3, max_length=3)
+    duration_minutes: int = Field(default=60, gt=0, le=1440)
+    preparation_notes: str | None = Field(default=None, max_length=2000)
+    post_service_notes: str | None = Field(default=None, max_length=2000)
+    is_active: bool = True
+    sort_order: int = Field(default=0, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ServiceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    category: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    price_amount: float | None = Field(default=None, ge=0)
+    price_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    duration_minutes: int | None = Field(default=None, gt=0, le=1440)
+    preparation_notes: str | None = Field(default=None, max_length=2000)
+    post_service_notes: str | None = Field(default=None, max_length=2000)
+    is_active: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0)
+    metadata: dict[str, Any] | None = None
+
+
+class ServiceReorderItem(BaseModel):
+    id: UUID
+    sort_order: int = Field(ge=0)
+
+
+class ServiceReorderRequest(BaseModel):
+    order: list[ServiceReorderItem] = Field(default_factory=list)
+
+
 class ResourceCreate(BaseModel):
     tenant_id: UUID
     vertical_code: str = Field(min_length=1, max_length=64)

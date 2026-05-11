@@ -132,37 +132,6 @@ TASK-0029 (drill de restore — cierre operacional)
 
 ---
 
-### TASK-0033 — Vertical universal y catálogo de servicios configurable desde admin
-
-- **Objetivo:** el producto debe adaptarse a cualquier tipo de empresa sin configuración de código. Un consultorio dental, un spa, un taller mecánico, un psicólogo o una peluquería deben poder usar la plataforma configurando únicamente desde el admin su tipo de negocio, sus servicios, precios, duraciones e instrucciones. El catálogo de servicios es la entidad central alrededor de la cual gira el booking, los recordatorios y las campañas.
-- **Alcance mínimo — backend:**
-  - Nueva tabla `app.service_catalog`:
-    - `id uuid PK DEFAULT gen_random_uuid()`, `tenant_id uuid NOT NULL REFERENCES app.tenants(id)`, `category text`, `name text NOT NULL`, `description text`, `price_amount numeric(10,2)`, `price_currency char(3) DEFAULT 'COP'`, `duration_minutes int NOT NULL DEFAULT 60`, `preparation_notes text` (instrucciones al cliente antes de la cita), `post_service_notes text` (instrucciones al cliente después), `is_active bool NOT NULL DEFAULT true`, `sort_order int NOT NULL DEFAULT 0`, `metadata jsonb NOT NULL DEFAULT '{}'`, `created_at timestamptz NOT NULL DEFAULT now()`, `updated_at timestamptz NOT NULL DEFAULT now()`. RLS habilitado con política `tenant_id = current_setting('app.tenant_id')::uuid`.
-  - Campo `business_type_label text` en tabla `tenants` (ej. "Consultorio dental", "Spa", "Taller mecánico"). Sin restricción de valores. Agregar al schema `01-schema.sql` directamente.
-  - Endpoints bajo `tenant_admin_router` (requieren rol `admin` o superior):
-    - `GET /v1/tenants/{tenant_id}/services` — lista servicios activos ordenados por `sort_order`.
-    - `POST /v1/tenants/{tenant_id}/services` — crear servicio.
-    - `PATCH /v1/tenants/{tenant_id}/services/{service_id}` — actualizar.
-    - `DELETE /v1/tenants/{tenant_id}/services/{service_id}` — desactivar (`is_active = false`).
-    - `POST /v1/tenants/{tenant_id}/services/reorder` — body `{order: [{id, sort_order}]}` para reordenar la lista.
-  - `GET /v1/tenants/{tenant_id}/services` también accesible con el token de servicio interno (para que el bot pueda consultar el catálogo durante una conversación).
-  - Schemas Pydantic: `ServiceCreate`, `ServiceUpdate`, `ServiceResponse`, `ServiceReorderRequest`.
-  - Tests estáticos: CRUD de servicios, validación de campos obligatorios, desactivación lógica, reordenamiento, catálogo vacío devuelve lista vacía.
-- **Alcance mínimo — Admin Panel:**
-  - En `TenantSetupWizard.jsx`, renombrar la pestaña "Tenant" a **"Negocio"** y agregar:
-    - Campo de texto libre `"Tipo de negocio"` → escribe en `tenants.business_type_label` (ej. "Clínica dental", "Spa").
-    - `vertical_code` pasa a ser solo una clave técnica interna corta (ej. `dental`, `spa`, `mecanico`) — se puede autogenerar desde `business_type_label` o dejar que el admin la ingrese libremente. Sin dropdown de valores fijos.
-  - Nuevo módulo **"Servicios"** (`admin-panel/src/components/modules/services/ServiceCatalog.jsx`):
-    - Lista de servicios con nombre, categoría, precio formateado (COP/USD), duración en minutos, estado activo/inactivo, botones de subir/bajar orden.
-    - Formulario de creación/edición: nombre (requerido), descripción, categoría (texto libre), precio, moneda, duración en minutos (requerido), instrucciones de preparación, instrucciones post-servicio, activo/inactivo.
-    - Botón de desactivar con confirmación.
-    - Vista previa de cómo el bot presentará el servicio al cliente en WhatsApp (texto de muestra).
-  - Registrar el módulo en `admin-panel/src/data/modules.js` y en el sidebar, accesible para `admin` o superior.
-- **Criterio de aceptación:** admin crea tipo de negocio libre y agrega 3 servicios con precios, duraciones, instrucciones; los reordena; desactiva uno y el listado solo muestra los activos; el endpoint interno devuelve el catálogo; tests pasan en CI.
-- **Dependencias:** ninguna (TASK-0032 ya eliminó los verticales fijos).
-
----
-
 ### TASK-0034 — Mensajes interactivos WhatsApp (botones y listas)
 
 - **Objetivo:** el bot actualmente solo envía texto plano. Para reducir fricción en el agendamiento, la confirmación de citas y cualquier interacción de decisión, se necesita soporte nativo de mensajes interactivos de WhatsApp: botones de respuesta rápida y listas de opciones. Sin esto el booking guiado es solo texto y la experiencia es inferior a cualquier producto comparable.

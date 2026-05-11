@@ -32,8 +32,11 @@ from app.api.v1.schemas import (
     QuotePatch,
     ResourceCreate,
     ResourceUpdate,
+    ServiceCreate,
+    ServiceReorderRequest,
     ServiceRequestCreate,
     ServiceRequestPatch,
+    ServiceUpdate,
     TenantCreate,
     TenantStatusTransition,
     TenantUpdate,
@@ -1741,6 +1744,243 @@ async def deactivate_resource(resource_id: UUID, request: Request, conn: asyncpg
         raise HTTPException(status_code=404, detail='Resource not found')
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.deactivated', entity_type='resource', entity_id=str(resource_id))
     return Response(status_code=204)
+
+
+SERVICE_CATALOG_COLUMNS = (
+    'id',
+    'tenant_id',
+    'name',
+    'category',
+    'description',
+    'price_amount',
+    'price_currency',
+    'duration_minutes',
+    'preparation_notes',
+    'post_service_notes',
+    'is_active',
+    'sort_order',
+    'metadata',
+    'created_at',
+    'updated_at',
+)
+SERVICE_CATALOG_PROJECTION = ', '.join(SERVICE_CATALOG_COLUMNS)
+
+
+def normalize_service_catalog_row(row: asyncpg.Record | None) -> dict | None:
+    service = record_to_dict(row)
+    if not service:
+        return None
+    service['metadata'] = parse_json_object(service.get('metadata'), default={})
+    if service.get('price_amount') is not None:
+        service['price_amount'] = float(service['price_amount'])
+    return service
+
+
+tenant_catalog_router = APIRouter(
+    tags=['tenant-catalog'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin', allow_service=True))],
+)
+
+
+@tenant_catalog_router.get('/tenants/{tenant_id}/services')
+async def list_services(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    include_inactive: bool = Query(default=False),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {SERVICE_CATALOG_PROJECTION}
+        from app.service_catalog
+        where tenant_id=$1
+          and ($2::boolean is true or is_active is true)
+        order by sort_order asc, name asc
+        """,
+        tenant_id,
+        include_inactive,
+    )
+    return [normalize_service_catalog_row(row) for row in rows]
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/services', status_code=201)
+async def create_service(
+    tenant_id: UUID,
+    payload: ServiceCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        f"""
+        insert into app.service_catalog (
+          tenant_id, name, category, description, price_amount, price_currency,
+          duration_minutes, preparation_notes, post_service_notes, is_active, sort_order, metadata
+        )
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+        returning {SERVICE_CATALOG_PROJECTION}
+        """,
+        tenant_id,
+        payload.name,
+        payload.category,
+        payload.description,
+        payload.price_amount,
+        payload.price_currency.upper(),
+        payload.duration_minutes,
+        payload.preparation_notes,
+        payload.post_service_notes,
+        payload.is_active,
+        payload.sort_order,
+        json.dumps(payload.metadata),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.created',
+        entity_type='service_catalog',
+        entity_id=str(row['id']),
+    )
+    return normalize_service_catalog_row(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/services/{service_id}')
+async def update_service(
+    tenant_id: UUID,
+    service_id: UUID,
+    payload: ServiceUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await conn.fetchrow(
+            f'select {SERVICE_CATALOG_PROJECTION} from app.service_catalog where tenant_id=$1 and id=$2',
+            tenant_id,
+            service_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Service not found')
+        return normalize_service_catalog_row(row)
+    if 'price_currency' in update_data and update_data['price_currency']:
+        update_data['price_currency'] = update_data['price_currency'].upper()
+    row = await conn.fetchrow(
+        f"""
+        update app.service_catalog
+        set name=coalesce($3, name),
+            category=coalesce($4, category),
+            description=coalesce($5, description),
+            price_amount=coalesce($6, price_amount),
+            price_currency=coalesce($7, price_currency),
+            duration_minutes=coalesce($8, duration_minutes),
+            preparation_notes=coalesce($9, preparation_notes),
+            post_service_notes=coalesce($10, post_service_notes),
+            is_active=coalesce($11, is_active),
+            sort_order=coalesce($12, sort_order),
+            metadata=coalesce($13::jsonb, metadata)
+        where tenant_id=$1 and id=$2
+        returning {SERVICE_CATALOG_PROJECTION}
+        """,
+        tenant_id,
+        service_id,
+        update_data.get('name'),
+        update_data.get('category'),
+        update_data.get('description'),
+        update_data.get('price_amount'),
+        update_data.get('price_currency'),
+        update_data.get('duration_minutes'),
+        update_data.get('preparation_notes'),
+        update_data.get('post_service_notes'),
+        update_data.get('is_active'),
+        update_data.get('sort_order'),
+        json.dumps(update_data['metadata']) if 'metadata' in update_data else None,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Service not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.updated',
+        entity_type='service_catalog',
+        entity_id=str(service_id),
+    )
+    return normalize_service_catalog_row(row)
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/services/{service_id}', status_code=204)
+async def deactivate_service(
+    tenant_id: UUID,
+    service_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        update app.service_catalog
+        set is_active=false
+        where tenant_id=$1 and id=$2
+        returning id
+        """,
+        tenant_id,
+        service_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Service not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.deactivated',
+        entity_type='service_catalog',
+        entity_id=str(service_id),
+    )
+    return Response(status_code=204)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/services/reorder')
+async def reorder_services(
+    tenant_id: UUID,
+    payload: ServiceReorderRequest,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    if not payload.order:
+        return {'updated': 0}
+    async with conn.transaction():
+        for item in payload.order:
+            await conn.execute(
+                """
+                update app.service_catalog
+                set sort_order=$3
+                where tenant_id=$1 and id=$2
+                """,
+                tenant_id,
+                item.id,
+                item.sort_order,
+            )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.reordered',
+        entity_type='service_catalog',
+        entity_id=str(tenant_id),
+    )
+    return {'updated': len(payload.order)}
 
 
 @tenant_ops_router.post('/service-requests', status_code=201)
@@ -3521,5 +3761,6 @@ router.include_router(webhook_router)
 router.include_router(platform_admin_router)
 router.include_router(tenant_signup_router)
 router.include_router(tenant_admin_router)
+router.include_router(tenant_catalog_router)
 router.include_router(tenant_ops_router)
 router.include_router(system_router)

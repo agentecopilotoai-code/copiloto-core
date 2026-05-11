@@ -390,6 +390,46 @@ export function openConversationStream(session, tenantId) {
   );
 }
 
+export function listServices(session, tenantId, { includeInactive = false } = {}) {
+  const query = includeInactive ? '?include_inactive=true' : '';
+  return request(`/tenants/${tenantId}/services${query}`, { session, tenantId });
+}
+
+export function createService(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/services`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateService(session, tenantId, serviceId, payload) {
+  return request(`/tenants/${tenantId}/services/${serviceId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deactivateService(session, tenantId, serviceId) {
+  return request(`/tenants/${tenantId}/services/${serviceId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function reorderServices(session, tenantId, order) {
+  return request(`/tenants/${tenantId}/services/reorder`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { order },
+  });
+}
+
 export function listResources(session, tenantId, filters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {

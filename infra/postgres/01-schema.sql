@@ -199,6 +199,25 @@ create table app.resources (
 );
 create index ix_resources_type on app.resources(tenant_id, resource_type);
 
+create table app.service_catalog (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  category text,
+  name text not null,
+  description text,
+  price_amount numeric(10,2),
+  price_currency char(3) not null default 'COP',
+  duration_minutes int not null default 60 check (duration_minutes > 0),
+  preparation_notes text,
+  post_service_notes text,
+  is_active boolean not null default true,
+  sort_order int not null default 0,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_service_catalog_tenant_active on app.service_catalog(tenant_id, is_active, sort_order);
+
 create table app.service_requests (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -404,6 +423,7 @@ alter table app.contacts add constraint uq_contacts_tenant_id_id unique (tenant_
 alter table app.conversations add constraint uq_conversations_tenant_id_id unique (tenant_id, id);
 alter table app.messages add constraint uq_messages_tenant_id_id unique (tenant_id, id);
 alter table app.resources add constraint uq_resources_tenant_id_id unique (tenant_id, id);
+alter table app.service_catalog add constraint uq_service_catalog_tenant_id_id unique (tenant_id, id);
 alter table app.service_requests add constraint uq_service_requests_tenant_id_id unique (tenant_id, id);
 alter table app.quotes add constraint uq_quotes_tenant_id_id unique (tenant_id, id);
 alter table app.appointments add constraint uq_appointments_tenant_id_id unique (tenant_id, id);
@@ -442,6 +462,7 @@ create trigger trg_tenant_channels_touch before update on app.tenant_channels fo
 create trigger trg_contacts_touch before update on app.contacts for each row execute function app.touch_updated_at();
 create trigger trg_conversations_touch before update on app.conversations for each row execute function app.touch_updated_at();
 create trigger trg_resources_touch before update on app.resources for each row execute function app.touch_updated_at();
+create trigger trg_service_catalog_touch before update on app.service_catalog for each row execute function app.touch_updated_at();
 create trigger trg_service_requests_touch before update on app.service_requests for each row execute function app.touch_updated_at();
 create trigger trg_quotes_touch before update on app.quotes for each row execute function app.touch_updated_at();
 create trigger trg_appointments_touch before update on app.appointments for each row execute function app.touch_updated_at();
@@ -456,6 +477,7 @@ alter table app.conversations enable row level security;
 alter table app.messages enable row level security;
 alter table app.message_status_events enable row level security;
 alter table app.resources enable row level security;
+alter table app.service_catalog enable row level security;
 alter table app.service_requests enable row level security;
 alter table app.quotes enable row level security;
 alter table app.appointments enable row level security;
@@ -472,7 +494,7 @@ do $$
 declare t text;
 begin
   foreach t in array array[
-    'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_requests','quotes',
+    'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','service_requests','quotes',
     'appointments','reminder_jobs','knowledge_documents','knowledge_chunks','prompt_templates','handoffs',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop

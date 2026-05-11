@@ -15,6 +15,26 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0033 — Vertical universal y catálogo de servicios configurable desde admin
+
+- **Fecha:** 2026-05-11
+- **Resumen:** se implementó el catálogo de servicios por tenant como entidad de primer nivel. Cualquier negocio (consultorio dental, spa, taller mecánico, peluquería, psicólogo) puede ahora configurar sus servicios, precios, duraciones e instrucciones desde el admin panel sin tocar código. Se creó la tabla `app.service_catalog` con RLS por tenant, endpoints CRUD bajo `tenant_admin_router` + un endpoint GET adicional accesible también con service token para que el bot pueda consultar el catálogo durante una conversación, y un nuevo módulo "Servicios" en el admin panel con listado, reordenamiento, creación/edición, desactivación lógica y vista previa de cómo se presentará el servicio en WhatsApp. La pestaña "Tenant" del wizard se renombró a "Negocio".
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql` — nueva tabla `app.service_catalog` con columnas `id, tenant_id, category, name, description, price_amount, price_currency, duration_minutes, preparation_notes, post_service_notes, is_active, sort_order, metadata, created_at, updated_at`. Índice `ix_service_catalog_tenant_active`, UNIQUE compuesto `uq_service_catalog_tenant_id_id`, trigger `trg_service_catalog_touch`, RLS habilitada y políticas tenant_select/insert/update/delete agregadas al do-block.
+  - `app/api/v1/schemas.py` — nuevos schemas Pydantic `ServiceCreate`, `ServiceUpdate`, `ServiceReorderItem`, `ServiceReorderRequest`.
+  - `app/api/v1/routes.py` — nuevo `tenant_catalog_router` con `require_min_role('admin', allow_service=True)`. Endpoints `GET /v1/tenants/{tenant_id}/services` (catálogo activo, opcional `include_inactive`), `POST /v1/tenants/{tenant_id}/services`, `PATCH /v1/tenants/{tenant_id}/services/{service_id}`, `DELETE /v1/tenants/{tenant_id}/services/{service_id}` (desactivación lógica), `POST /v1/tenants/{tenant_id}/services/reorder`. Helper `normalize_service_catalog_row` y constante `SERVICE_CATALOG_PROJECTION`. Auditoría completa (`service_catalog.{created,updated,deactivated,reordered}`).
+  - `admin-panel/src/services/coreApi.js` — nuevos helpers `listServices`, `createService`, `updateService`, `deactivateService`, `reorderServices`.
+  - `admin-panel/src/components/modules/services/ServiceCatalog.jsx` — nuevo módulo. Lista con orden, nombre, categoría, precio formateado por moneda, duración, estado activo/inactivo y botones de subir/bajar orden. Formulario de creación/edición con campos: nombre (requerido), categoría, descripción, precio, moneda (COP/USD/MXN/ARS/CLP/PEN/EUR), duración en minutos (requerida, 1–1440), instrucciones de preparación, instrucciones post-servicio, estado. Vista previa en tiempo real de cómo se mostrará el servicio en WhatsApp. Botón de desactivar con confirmación.
+  - `admin-panel/src/data/modules.js` — nuevo módulo `services` registrado con scope `['Crear/editar servicios', 'Reordenar', 'Activar/desactivar', 'Instrucciones pre y post servicio']`.
+  - `admin-panel/src/components/layout/AdminLayout.jsx` — importa `ServiceCatalog` y enruta `activeModuleId === 'services'` a la nueva pantalla.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — pestaña "Tenant" renombrada a "Negocio" (el campo de texto libre `business_type_label` ya existía desde TASK-0032).
+  - `tests/test_service_catalog_static.py` (nuevo) — 5 tests estáticos: tabla con RLS y columnas correctas, endpoints registrados con auditoría, schemas Pydantic + cliente admin cableado, módulo admin existe y registrado, wizard renombrado y sin verticales hardcodeados.
+- **Comandos ejecutados / criterios cumplidos:**
+  - `python -m pytest tests/test_service_catalog_static.py -v` → **5 passed**.
+  - `python -m ruff check app/api/v1/routes.py app/api/v1/schemas.py tests/test_service_catalog_static.py` → "All checks passed!".
+  - `python -c "import ast; ast.parse(...)` para `routes.py` y `schemas.py` → OK.
+- **Notas:** se respetó el mandato cero-legacy: no hay defaults hardcodeados de verticales, ni dropdowns con valores fijos, ni fallbacks de compatibilidad. El catálogo es la única fuente de verdad para servicios del tenant. La desactivación es lógica (`is_active=false`) para no perder historial de citas que referencien al servicio en el futuro (TASK-0030 agregará la FK desde `appointments`). El GET requiere `admin` para usuarios humanos o un service token (para el bot), exactamente lo que pide el alcance.
+
 ### TASK-0032 — Eliminar todo el código legacy del sistema
 
 - **Fecha:** 2026-05-11

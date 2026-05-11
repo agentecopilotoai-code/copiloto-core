@@ -12,7 +12,7 @@ import {
 } from '../../../services/coreApi.js';
 
 const wizardTabs = [
-  { id: 'tenant', label: 'Tenant' },
+  { id: 'tenant', label: 'Negocio' },
   { id: 'settings', label: 'Settings' },
   { id: 'hours', label: 'Horarios' },
   { id: 'escalation', label: 'Escalamiento' },
