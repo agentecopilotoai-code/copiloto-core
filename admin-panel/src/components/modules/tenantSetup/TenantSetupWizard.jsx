@@ -172,8 +172,8 @@ function formatJson(value) {
   return JSON.stringify(value, null, 2);
 }
 
-export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) {
-  const [activeTab, setActiveTab] = useState('tenant');
+export function TenantSetupWizard({ module, onTenantCreated, session, tenant, initialTab }) {
+  const [activeTab, setActiveTab] = useState(initialTab || 'tenant');
   const [tenantForm, setTenantForm] = useState({
     slug: 'tenant-demo',
     legal_name: 'Tenant Demo S.A.S.',
