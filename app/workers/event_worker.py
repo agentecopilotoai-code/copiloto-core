@@ -149,7 +149,7 @@ async def process_once(conn: asyncpg.Connection) -> int:
 
 
 async def main() -> None:
-    configure_logging()
+    configure_logging(get_settings().log_level)
     settings = get_settings()
     conn = await asyncpg.connect(settings.database_url)
     await conn.execute("select set_config('app.support_mode', 'true', false)")

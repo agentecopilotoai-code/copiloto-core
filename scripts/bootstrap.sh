@@ -139,6 +139,66 @@ alter table app.tenant_settings
   add column if not exists knowledge_storage jsonb not null default '{}'::jsonb;
 SQL_MIGRATE_TENANT_SETTINGS
 
+# ── Ensure bot / LLM configuration is complete ────────────────────────────────
+# Fix escalation_policy structure for existing tenants that were seeded with
+# the old format (risk_keywords at top level instead of triggers.keywords).
+psql_admin <<'SQL_FIX_ESCALATION_POLICY'
+update app.tenant_settings
+set escalation_policy = jsonb_build_object(
+  'handoff_message',
+    coalesce(
+      escalation_policy->>'handoff_message',
+      'En este momento te voy a conectar con uno de nuestros asesores. En breve te atienden 😊'
+    ),
+  'triggers', jsonb_build_object(
+    'keywords',
+    case
+      -- Already has the correct triggers.keywords structure
+      when (escalation_policy->'triggers'->'keywords') is not null
+        then escalation_policy->'triggers'->'keywords'
+      -- Old risk_keywords top-level format
+      when (escalation_policy->'risk_keywords') is not null
+        then escalation_policy->'risk_keywords'
+      else '["humano","asesor","agente","persona","queja","reclamo","urgente"]'::jsonb
+    end
+  )
+)
+where
+  -- Skip rows that already have the correct structure
+  (escalation_policy->'triggers'->'keywords') is null;
+SQL_FIX_ESCALATION_POLICY
+
+echo "→ escalation_policy migrada a estructura correcta (triggers.keywords + handoff_message)."
+
+# ── Check ANSWER_ENGINE is configured for bot responses ───────────────────────
+ANSWER_ENGINE_VALUE="$(awk -F= '$1 == "ANSWER_ENGINE" {print $2}' .env)"
+if [[ -z "$ANSWER_ENGINE_VALUE" ]]; then
+  echo ""
+  echo "⚠  ANSWER_ENGINE no está definido en .env."
+  echo "   El bot caerá siempre a handoff humano si no tiene motor configurado."
+  echo "   Agrega al .env:  ANSWER_ENGINE=cascade"
+  echo "   Y reinicia:      docker compose restart api"
+  echo ""
+fi
+
+# ── Check Ollama availability (non-blocking) ──────────────────────────────────
+LOCAL_LLM_BASE_URL_VALUE="$(awk -F= '$1 == "LOCAL_LLM_BASE_URL" {print $2}' .env)"
+LOCAL_LLM_BASE_URL_VALUE="${LOCAL_LLM_BASE_URL_VALUE:-http://host.docker.internal:11434}"
+# Strip host.docker.internal for host-side check
+OLLAMA_CHECK_URL="${LOCAL_LLM_BASE_URL_VALUE//host.docker.internal/localhost}"
+if curl -fsS --max-time 3 "${OLLAMA_CHECK_URL}/api/tags" >/dev/null 2>&1; then
+  echo "→ Ollama accesible en ${LOCAL_LLM_BASE_URL_VALUE} ✓"
+else
+  echo ""
+  echo "⚠  Ollama NO está corriendo en ${LOCAL_LLM_BASE_URL_VALUE}."
+  echo "   El bot en modo cascade/local_llm caerá a handoff sin él."
+  echo "   Para instalarlo:"
+  echo "     curl -fsSL https://ollama.com/install.sh | sh"
+  echo "     ollama pull llama3.2:3b"
+  echo "     ollama serve"
+  echo ""
+fi
+
 psql_admin <<'SQL_MIGRATE_KNOWLEDGE'
 alter table app.knowledge_documents
   add column if not exists document_type text not null default 'reference',
@@ -226,8 +286,27 @@ fi
 
 docker compose ps
 
-echo "API: http://localhost:8000/docs"
-echo "Health: http://localhost:8000/v1/health"
-echo "MinIO console: http://localhost:9001"
-echo "OpenTelemetry metrics: http://localhost:8889/metrics"
+echo ""
+echo "API:            http://localhost:8000/docs"
+echo "Health:         http://localhost:8000/v1/health"
+echo "MinIO console:  http://localhost:9001"
+echo "OTel metrics:   http://localhost:8889/metrics"
+echo ""
+echo "── Pasos siguientes para habilitar el bot WhatsApp ─────────────────────"
+echo " 1. Sube el CSV de servicios:"
+echo "    curl -X POST http://localhost:8000/v1/knowledge/documents \\"
+echo "         -H 'X-Tenant-Id: 22222222-2222-2222-2222-222222222222' \\"
+echo "         -H 'X-Service-Token: \$SERVICE_TOKEN' \\"
+echo "         -F 'file=@servicios.csv' -F 'title=Servicios' -F 'document_type=reference'"
+echo ""
+echo " 2. Verifica que Ollama corre en el host: ollama serve"
+echo "    Descarga el modelo: ollama pull llama3.2:3b"
+echo ""
+echo " 3. En .env asegúrate de tener:"
+echo "    ANSWER_ENGINE=cascade"
+echo "    LOCAL_LLM_BASE_URL=http://host.docker.internal:11434  # Linux Docker Desktop"
+echo "    # ó  http://172.17.0.1:11434                          # Linux nativo"
+echo ""
+echo " 4. Si cambiaste .env: docker compose restart api"
+echo "────────────────────────────────────────────────────────────────────────"
 echo "Bootstrap completo: DB, tablas, extensiones, tenants demo, API y métricas OK."

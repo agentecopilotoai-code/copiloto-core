@@ -21,6 +21,7 @@ class TenantUpdate(BaseModel):
     vertical_code: str | None = Field(default=None, pattern='^(field_service|beauty|pet_grooming)$')
     country_code: str | None = None
     timezone: str | None = None
+    status: str | None = Field(default=None, pattern='^(trial|active|suspended|churned)$')
 
 
 class KnowledgeStorageUpdate(BaseModel):
@@ -41,6 +42,11 @@ class ChannelCreate(BaseModel):
     app_secret: str | None = Field(default=None, min_length=1)
     verify_token: str | None = Field(default=None, min_length=16)
     account_mode: str = Field(default='mock', pattern='^(mock|live)$')
+
+
+class TenantStatusTransition(BaseModel):
+    status: str = Field(pattern='^(active|suspended|churned)$')
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class ChannelModeUpdate(BaseModel):

@@ -150,3 +150,197 @@ def test_readiness_requires_live_whatsapp_mode_even_when_secrets_are_configured(
     assert whatsapp_check['ready'] is False
     assert whatsapp_check['details']['delivery_mode_live'] is False
     assert 'modo live' in whatsapp_check['reason']
+
+
+def _make_fake_connection(escalation_policy, account_mode='live', audit_count=1, max_bot_turns=8):
+    from uuid import uuid4
+
+    class FakeConn:
+        async def fetchrow(self, query, *args):
+            if 'from app.tenants' in query:
+                return {'id': args[0], 'slug': 'demo', 'display_name': 'Demo', 'status': 'active', 'deleted_at': None}
+            if 'from app.tenant_settings' in query:
+                return {
+                    'locale': 'es-CO',
+                    'business_hours': {'monday': ['09:00-17:00']},
+                    'escalation_policy': escalation_policy,
+                    'pii_policy': {'no_train': True},
+                    'no_train': True,
+                    'max_bot_turns': max_bot_turns,
+                }
+            if 'from app.tenant_channels' in query:
+                return {
+                    'id': uuid4(),
+                    'provider': 'whatsapp_cloud_api',
+                    'business_id': 'biz-1',
+                    'waba_id': 'waba-1',
+                    'phone_number_id': 'phone-1',
+                    'token_ref': 'secrets/token',
+                    'app_secret_ref': 'secrets/app-secret',
+                    'verify_token_hash_configured': True,
+                    'account_mode': account_mode,
+                    'status': 'active',
+                }
+            if 'count(distinct kd.id)' in query:
+                return {'active_documents': 1, 'active_chunks': 5}
+            raise AssertionError(f'unexpected fetchrow: {query}')
+
+        async def fetch(self, query, *args):
+            if 'from app.knowledge_chunks' in query:
+                return [
+                    {
+                        'id': '00000000-0000-0000-0000-000000000001',
+                        'document_id': '00000000-0000-0000-0000-000000000002',
+                        'document_title': 'Test doc',
+                        'source_uri': None,
+                        'source_type': 'manual',
+                        'document_type': 'reference',
+                        'visibility': 'tenant',
+                        'chunk_index': 0,
+                        'section_path': None,
+                        'chunk_text': 'horarios de atención lunes a viernes',
+                        'token_count': 10,
+                        'metadata': {},
+                    }
+                ]
+            raise AssertionError(f'unexpected fetch: {query}')
+
+        async def fetchval(self, query, *args):
+            if 'from app.audit_logs' in query:
+                return audit_count
+            raise AssertionError(f'unexpected fetchval: {query}')
+
+    return FakeConn()
+
+
+def test_handoff_readiness_passes_with_full_modern_policy(monkeypatch):
+    import asyncio
+    from uuid import uuid4
+    import app.api.v1.routes as routes
+
+    monkeypatch.setattr(routes, 'token_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'secret_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'build_grounded_answer', lambda *a, **kw: {'answer': 'ok', 'sufficient_context': True})
+    monkeypatch.setattr(routes, 'rank_chunks', lambda *a, **kw: [])
+
+    policy = {
+        'queue': 'default-support',
+        'enabled': True,
+        'priority': 'normal',
+        'triggers': {
+            'keywords': ['humano', 'asesor', 'agente', 'reclamo'],
+            'after_bot_turns': 5,
+            'confidence_below': 0.55,
+        },
+        'handoff_message': 'Te conecto con una persona del equipo para ayudarte mejor.',
+    }
+    report = asyncio.run(routes.build_tenant_readiness_report(_make_fake_connection(policy), uuid4()))
+    handoff_check = next(c for c in report['checks'] if c['key'] == 'handoff')
+    assert handoff_check['ready'] is True, f'Expected ready but got: {handoff_check["reason"]}'
+    assert handoff_check['reason'] == 'Política de handoff configurada.'
+
+
+def test_handoff_readiness_fails_when_enabled_false(monkeypatch):
+    import asyncio
+    from uuid import uuid4
+    import app.api.v1.routes as routes
+
+    monkeypatch.setattr(routes, 'token_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'secret_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'build_grounded_answer', lambda *a, **kw: {'answer': 'ok', 'sufficient_context': True})
+    monkeypatch.setattr(routes, 'rank_chunks', lambda *a, **kw: [])
+
+    policy = {
+        'queue': 'default-support',
+        'enabled': False,
+        'triggers': {'keywords': ['humano'], 'after_bot_turns': 5},
+        'handoff_message': 'Te conecto con alguien.',
+    }
+    report = asyncio.run(routes.build_tenant_readiness_report(_make_fake_connection(policy), uuid4()))
+    handoff_check = next(c for c in report['checks'] if c['key'] == 'handoff')
+    assert handoff_check['ready'] is False
+    assert 'enabled=false' in handoff_check['reason']
+
+
+def test_handoff_readiness_fails_when_policy_absent(monkeypatch):
+    import asyncio
+    from uuid import uuid4
+    import app.api.v1.routes as routes
+
+    monkeypatch.setattr(routes, 'token_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'secret_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'build_grounded_answer', lambda *a, **kw: {'answer': 'ok', 'sufficient_context': True})
+    monkeypatch.setattr(routes, 'rank_chunks', lambda *a, **kw: [])
+
+    report = asyncio.run(routes.build_tenant_readiness_report(_make_fake_connection(None), uuid4()))
+    handoff_check = next(c for c in report['checks'] if c['key'] == 'handoff')
+    assert handoff_check['ready'] is False
+    assert 'ausente' in handoff_check['reason']
+
+
+def test_handoff_readiness_fails_when_no_queue(monkeypatch):
+    import asyncio
+    from uuid import uuid4
+    import app.api.v1.routes as routes
+
+    monkeypatch.setattr(routes, 'token_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'secret_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'build_grounded_answer', lambda *a, **kw: {'answer': 'ok', 'sufficient_context': True})
+    monkeypatch.setattr(routes, 'rank_chunks', lambda *a, **kw: [])
+
+    policy = {
+        'enabled': True,
+        'triggers': {'keywords': ['humano'], 'after_bot_turns': 5},
+        'handoff_message': 'Te conecto.',
+    }
+    report = asyncio.run(routes.build_tenant_readiness_report(_make_fake_connection(policy), uuid4()))
+    handoff_check = next(c for c in report['checks'] if c['key'] == 'handoff')
+    assert handoff_check['ready'] is False
+    assert 'queue' in handoff_check['reason']
+
+
+def test_handoff_readiness_fails_when_no_triggers_and_no_message(monkeypatch):
+    import asyncio
+    from uuid import uuid4
+    import app.api.v1.routes as routes
+
+    monkeypatch.setattr(routes, 'token_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'secret_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'build_grounded_answer', lambda *a, **kw: {'answer': 'ok', 'sufficient_context': True})
+    monkeypatch.setattr(routes, 'rank_chunks', lambda *a, **kw: [])
+
+    policy = {'enabled': True, 'queue': 'default-support'}
+    report = asyncio.run(routes.build_tenant_readiness_report(_make_fake_connection(policy), uuid4()))
+    handoff_check = next(c for c in report['checks'] if c['key'] == 'handoff')
+    assert handoff_check['ready'] is False
+    assert 'triggers' in handoff_check['reason']
+
+
+def test_handoff_readiness_passes_with_legacy_handoff_required(monkeypatch):
+    import asyncio
+    from uuid import uuid4
+    import app.api.v1.routes as routes
+
+    monkeypatch.setattr(routes, 'token_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'secret_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'build_grounded_answer', lambda *a, **kw: {'answer': 'ok', 'sufficient_context': True})
+    monkeypatch.setattr(routes, 'rank_chunks', lambda *a, **kw: [])
+
+    policy = {'handoff_required': True}
+    report = asyncio.run(routes.build_tenant_readiness_report(_make_fake_connection(policy), uuid4()))
+    handoff_check = next(c for c in report['checks'] if c['key'] == 'handoff')
+    assert handoff_check['ready'] is True
+    assert 'legacy' in handoff_check['reason']
+
+
+def test_readiness_ui_has_escalation_navigation():
+    ui = READINESS_UI.read_text()
+    assert 'onGoToEscalation' in ui
+    assert 'Ir a Escalamiento' in ui
+    assert 'Aplicar política mínima recomendada' in ui
+    assert 'updateTenantSettings' in ui
+
+
+def test_tenant_setup_wizard_accepts_initial_tab():
+    source = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx').read_text()
+    assert 'initialTab' in source

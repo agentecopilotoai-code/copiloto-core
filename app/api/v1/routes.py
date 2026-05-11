@@ -35,14 +35,16 @@ from app.api.v1.schemas import (
     ServiceRequestCreate,
     ServiceRequestPatch,
     TenantCreate,
+    TenantStatusTransition,
     TenantUpdate,
 )
 from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
-from app.services.knowledge_storage import is_binary_extractable, store_knowledge_file
+from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
 from app.services.rag_indexing import build_indexing_result, vector_literal
+from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
     download_whatsapp_media,
@@ -483,7 +485,23 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
     )
     tenant_id = row['id']
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    await conn.execute('insert into app.tenant_settings (tenant_id) values ($1)', tenant_id)
+    default_escalation_policy = {
+        'handoff_message': 'En este momento te conecto con un asesor. En breve te atienden 😊',
+        'triggers': {
+            'keywords': ['humano', 'asesor', 'agente', 'persona', 'queja', 'reclamo'],
+            'after_bot_turns': 10,
+            'confidence_below': 0.0,
+        },
+    }
+    await conn.execute(
+        """
+        insert into app.tenant_settings (tenant_id, max_bot_turns, escalation_policy)
+        values ($1, $2, $3::jsonb)
+        """,
+        tenant_id,
+        10,
+        json.dumps(default_escalation_policy),
+    )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.created', entity_type='tenant', entity_id=str(tenant_id))
     return record_to_dict(row)
 
@@ -508,6 +526,7 @@ async def update_tenant_record(
             vertical_code=$5,
             country_code=$6,
             timezone=$7,
+            status=$8,
             updated_at=now()
         where id=$1 and deleted_at is null
         returning *
@@ -519,6 +538,7 @@ async def update_tenant_record(
         merged['vertical_code'],
         merged['country_code'],
         merged['timezone'],
+        merged['status'],
     )
     if not row:
         raise HTTPException(status_code=404, detail='Tenant not found')
@@ -662,6 +682,52 @@ async def patch_tenant(
     return record_to_dict(row)
 
 
+_VALID_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    'trial': {'active', 'suspended', 'churned'},
+    'active': {'suspended', 'churned'},
+    'suspended': {'active', 'churned'},
+    'churned': set(),
+}
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/status')
+async def patch_tenant_status(
+    tenant_id: UUID,
+    payload: TenantStatusTransition,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    current_status = row['status']
+    allowed = _VALID_STATUS_TRANSITIONS.get(current_status, set())
+    if payload.status not in allowed:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Transición inválida: {current_status!r} → {payload.status!r}. "
+                   f"Transiciones permitidas desde '{current_status}': {sorted(allowed) or 'ninguna'}.",
+        )
+    updated = await conn.fetchrow(
+        'update app.tenants set status=$2, updated_at=now() where id=$1 and deleted_at is null returning *',
+        tenant_id,
+        payload.status,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant.status_changed',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+        metadata={'from_status': current_status, 'to_status': payload.status, 'reason': payload.reason},
+    )
+    return record_to_dict(updated)
+
+
 @tenant_admin_router.get('/tenants/{tenant_id}/settings')
 async def get_tenant_settings(
     tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
@@ -674,6 +740,16 @@ async def get_tenant_settings(
     return record_to_dict(row)
 
 
+def _coerce_jsonb(value: Any) -> Any:
+    """Ensure a value that may arrive as a JSON string is returned as a Python dict/list."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return value
+
+
 @tenant_admin_router.patch('/tenants/{tenant_id}/settings')
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
@@ -684,6 +760,18 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         raise HTTPException(status_code=404, detail='Settings not found')
     merged = dict(current)
     merged.update(allowed)
+
+    # Normalize jsonb fields: accept both raw dicts and JSON strings from clients
+    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy'):
+        merged[jsonb_key] = _coerce_jsonb(merged[jsonb_key]) or {}
+
+    # Keep max_bot_turns in sync with escalation_policy.triggers.after_bot_turns
+    # so that both the UI field and the DB column always agree.
+    ep_triggers = merged['escalation_policy'].get('triggers') or {}
+    after_bot_turns = ep_triggers.get('after_bot_turns')
+    if isinstance(after_bot_turns, int) and after_bot_turns > 0:
+        merged['max_bot_turns'] = after_bot_turns
+
     row = await conn.fetchrow(
         """
         update app.tenant_settings
@@ -2640,11 +2728,41 @@ async def delete_knowledge_document(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    result = await conn.execute(
+
+    # Fetch storage metadata before deleting so we can remove the physical file
+    doc = await conn.fetchrow(
+        'select source_uri, metadata from app.knowledge_documents where tenant_id=$1 and id=$2',
+        tenant_id, document_id,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail='Knowledge document not found')
+
+    # Delete from DB — knowledge_chunks cascade automatically via FK on delete cascade
+    await conn.execute(
         'delete from app.knowledge_documents where tenant_id=$1 and id=$2', tenant_id, document_id
     )
-    if result == 'DELETE 0':
-        raise HTTPException(status_code=404, detail='Knowledge document not found')
+
+    # Delete physical file from local disk or S3
+    storage_meta = _coerce_jsonb(doc['metadata']) or {}
+    settings = get_settings()
+    storage_config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    storage_secret = (
+        resolve_secret_ref(storage_config.get('secret_ref'))
+        if storage_config.get('backend') == 's3' and storage_config.get('secret_ref')
+        else None
+    )
+    delete_knowledge_file(
+        source_uri=doc['source_uri'] or '',
+        storage_backend=storage_meta.get('storage_backend') or storage_config.get('backend') or settings.knowledge_storage_backend,
+        object_key=storage_meta.get('storage_key'),
+        bucket=storage_meta.get('storage_bucket') or storage_config.get('bucket'),
+        settings=settings,
+        endpoint_url=storage_config.get('endpoint_url'),
+        access_key_id=storage_config.get('access_key_id'),
+        secret_access_key=storage_secret,
+        region_name=storage_config.get('region'),
+    )
+
     await audit(
         conn,
         tenant_id=tenant_id,
@@ -2653,6 +2771,10 @@ async def delete_knowledge_document(
         action='knowledge_document.deleted',
         entity_type='knowledge_document',
         entity_id=str(document_id),
+        metadata={
+            'storage_backend': storage_meta.get('storage_backend'),
+            'storage_key': storage_meta.get('storage_key'),
+        },
     )
     return Response(status_code=204)
 
@@ -2842,23 +2964,47 @@ async def build_tenant_readiness_report(
         )
     )
 
-    escalation_policy = settings_dict.get('escalation_policy') or {}
-    handoff_ready = bool(
-        settings
-        and isinstance(escalation_policy, dict)
-        and escalation_policy
-        and (
-            escalation_policy.get('handoff_required') is True
-            or escalation_policy.get('risk_keywords')
-            or escalation_policy.get('handoff_message')
-        )
+    escalation_policy = _coerce_jsonb(settings_dict.get('escalation_policy') or {}) or {}
+    if not isinstance(escalation_policy, dict):
+        escalation_policy = {}
+    ep_triggers = escalation_policy.get('triggers') or {}
+
+    _ep_is_legacy = bool(
+        escalation_policy.get('handoff_required') is True
+        or escalation_policy.get('risk_keywords')
     )
+    _ep_has_triggers = bool(
+        ep_triggers.get('keywords')
+        or ep_triggers.get('after_bot_turns')
+        or ep_triggers.get('confidence_below')
+    )
+    _ep_has_message = bool(escalation_policy.get('handoff_message'))
+
+    if not settings or not escalation_policy:
+        handoff_ready = False
+        handoff_reason = 'Política de escalamiento ausente. Configura la política en la pestaña Escalamiento del Tenant Setup.'
+    elif _ep_is_legacy:
+        handoff_ready = True
+        handoff_reason = 'Política de handoff configurada (formato legacy).'
+    elif escalation_policy.get('enabled') is False:
+        handoff_ready = False
+        handoff_reason = 'Política de escalamiento deshabilitada (enabled=false). Actívala en la pestaña Escalamiento del Tenant Setup.'
+    elif not escalation_policy.get('queue'):
+        handoff_ready = False
+        handoff_reason = 'Sin cola de escalamiento (queue vacía). Configura la cola en la pestaña Escalamiento del Tenant Setup.'
+    elif not _ep_has_triggers and not _ep_has_message:
+        handoff_ready = False
+        handoff_reason = 'Sin triggers ni mensaje de handoff. Configura keywords, after_bot_turns, confidence_below o handoff_message en la pestaña Escalamiento.'
+    else:
+        handoff_ready = True
+        handoff_reason = 'Política de handoff configurada.'
+
     checks.append(
         readiness_check(
             'handoff',
             'Handoff humano',
             handoff_ready,
-            'Política de handoff configurada.' if handoff_ready else 'Falta configurar una política de handoff/escalamiento humano.',
+            handoff_reason,
             {'escalation_policy': escalation_policy},
         )
     )
@@ -3103,7 +3249,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
     await conn.execute("select set_config('app.support_mode', 'true', true)")
     channel = await conn.fetchrow(
         """
-        select id, tenant_id, app_secret_ref
+        select id, tenant_id, app_secret_ref, account_mode
         from app.tenant_channels
         where provider='whatsapp_cloud_api'
           and phone_number_id=$1
@@ -3181,8 +3327,17 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     conversation = await conn.fetchrow(
                         """
                         update app.conversations
-                        set status=case when status='human_active' then status else 'waiting_agent' end,
-                            handoff_required=case when status='human_active' then handoff_required else true end
+                        set status=case
+                                when status='human_active' then 'human_active'
+                                when status='waiting_agent' and handoff_required then 'waiting_agent'
+                                else 'waiting_user'
+                            end,
+                            handoff_required=case
+                                when status='human_active' then handoff_required
+                                when status='waiting_agent' and handoff_required then true
+                                else false
+                            end,
+                            updated_at=now()
                         where tenant_id=$1 and id=$2
                         returning *
                         """,
@@ -3193,7 +3348,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     conversation = await conn.fetchrow(
                         """
                         insert into app.conversations (tenant_id, contact_id, channel_id, status, opened_by, handoff_required)
-                        values ($1, $2, $3, 'waiting_agent', 'user', true)
+                        values ($1, $2, $3, 'open', 'user', false)
                         returning *
                         """,
                         channel['tenant_id'],
@@ -3249,6 +3404,22 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                         conversation_id=conversation['id'],
                         message_id=inbound_message['id'],
                     )
+                    try:
+                        await orchestrate_inbound_message(
+                            conn,
+                            tenant_id=channel['tenant_id'],
+                            channel_id=channel['id'],
+                            channel_account_mode=channel['account_mode'] or 'mock',
+                            conversation=conversation,
+                            contact=contact,
+                            inbound_message=inbound_message,
+                        )
+                    except Exception:
+                        log.exception(
+                            'rag_orchestrator.error',
+                            tenant_id=str(channel['tenant_id']),
+                            conversation_id=str(conversation['id']),
+                        )
     return {'accepted': True, 'payload_sha256': sha}
 
 

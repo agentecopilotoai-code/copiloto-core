@@ -23,8 +23,9 @@ def _redact_pii(logger: object, method: str, event_dict: dict) -> dict:
     return {k: '[REDACTED]' if k in _PII_KEYS else _redact_value(v) for k, v in event_dict.items()}
 
 
-def configure_logging() -> None:
-    logging.basicConfig(format='%(message)s', level=logging.INFO)
+def configure_logging(log_level: str = 'INFO') -> None:
+    level = getattr(logging, log_level.upper(), logging.INFO)
+    logging.basicConfig(format='%(message)s', level=level)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -33,6 +34,6 @@ def configure_logging() -> None:
             _redact_pii,
             structlog.processors.JSONRenderer(),
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+        wrapper_class=structlog.make_filtering_bound_logger(level),
         cache_logger_on_first_use=True,
     )

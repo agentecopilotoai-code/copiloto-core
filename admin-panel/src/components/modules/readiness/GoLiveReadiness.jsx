@@ -1,14 +1,26 @@
 import { useEffect, useState } from 'react';
 
-import { getTenantReadiness, patchWhatsAppChannelMode } from '../../../services/coreApi.js';
+import { getTenantReadiness, patchTenantStatus, patchWhatsAppChannelMode, updateTenantSettings } from '../../../services/coreApi.js';
 
 const DEFAULT_SMOKE_QUESTION = 'horarios políticas servicios garantías precios contacto';
+
+const MIN_ESCALATION_POLICY = {
+  enabled: true,
+  queue: 'default-support',
+  priority: 'normal',
+  triggers: {
+    keywords: ['humano', 'asesor', 'agente', 'reclamo'],
+    after_bot_turns: 5,
+    confidence_below: 0.55,
+  },
+  handoff_message: 'Te conecto con una persona del equipo para ayudarte mejor.',
+};
 
 function readinessBadge(status) {
   return status === 'ready' ? 'Listo' : 'No listo';
 }
 
-function CheckItem({ check }) {
+function CheckItem({ check, actions }) {
   return (
     <article className={`readiness-check ${check.ready ? 'ready' : 'not-ready'}`}>
       <div className="readiness-check-icon" aria-hidden="true">{check.ready ? '✓' : '!'}</div>
@@ -18,6 +30,7 @@ function CheckItem({ check }) {
         {check.details ? (
           <small>{Object.entries(check.details).filter(([, value]) => value !== null && value !== undefined && value !== '').slice(0, 4).map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`).join(' · ')}</small>
         ) : null}
+        {actions ? <div className="readiness-check-actions">{actions}</div> : null}
       </div>
     </article>
   );
@@ -65,7 +78,7 @@ ${report.reasons.length ? report.reasons.map((r) => `- ${r}`).join('\n') : 'Ning
 `;
 }
 
-export function GoLiveReadiness({ module, session, tenant }) {
+export function GoLiveReadiness({ module, session, tenant, onGoToEscalation }) {
   const [report, setReport] = useState(null);
   const [smokeQuestion, setSmokeQuestion] = useState(DEFAULT_SMOKE_QUESTION);
   const [isBusy, setIsBusy] = useState(false);
@@ -73,6 +86,10 @@ export function GoLiveReadiness({ module, session, tenant }) {
   const [rollbackReason, setRollbackReason] = useState('');
   const [showRollback, setShowRollback] = useState(false);
   const [rollbackBusy, setRollbackBusy] = useState(false);
+  const [activationReason, setActivationReason] = useState('');
+  const [showActivation, setShowActivation] = useState(false);
+  const [activationBusy, setActivationBusy] = useState(false);
+  const [minPolicyBusy, setMinPolicyBusy] = useState(false);
 
   async function refreshReadiness(showNotice = true) {
     if (!tenant?.id) return;
@@ -127,8 +144,66 @@ export function GoLiveReadiness({ module, session, tenant }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenant?.id]);
 
+  async function handleActivateTenant() {
+    if (!tenant?.id) return;
+    const reason = activationReason.trim();
+    if (!reason) {
+      setNotice({ type: 'error', message: 'Ingresa una razón para activar el tenant.' });
+      return;
+    }
+    setActivationBusy(true);
+    setNotice(null);
+    try {
+      await patchTenantStatus(session, tenant.id, 'active', reason);
+      setNotice({ type: 'success', message: 'Tenant activado correctamente. Regenera el reporte para confirmar.' });
+      setShowActivation(false);
+      setActivationReason('');
+      await refreshReadiness(false);
+    } catch (error) {
+      setNotice({ type: 'error', message: error.message || 'Error al activar el tenant.' });
+    } finally {
+      setActivationBusy(false);
+    }
+  }
+
+  async function handleApplyMinPolicy() {
+    if (!tenant?.id) return;
+    setMinPolicyBusy(true);
+    setNotice(null);
+    try {
+      await updateTenantSettings(session, tenant.id, { escalation_policy: MIN_ESCALATION_POLICY });
+      setNotice({ type: 'success', message: 'Política mínima de escalamiento aplicada. Regenera el reporte para confirmar.' });
+      await refreshReadiness(false);
+    } catch (error) {
+      setNotice({ type: 'error', message: error.message || 'Error al guardar la política mínima.' });
+    } finally {
+      setMinPolicyBusy(false);
+    }
+  }
+
   const channelCheck = report?.checks?.find((c) => c.key === 'whatsapp_channel');
+  const tenantActiveCheck = report?.checks?.find((c) => c.key === 'tenant_active');
+  const handoffCheck = report?.checks?.find((c) => c.key === 'handoff');
   const isLive = channelCheck?.details?.delivery_mode_live;
+  const tenantStatus = tenantActiveCheck?.details?.status;
+
+  const handoffActions = handoffCheck && !handoffCheck.ready ? (
+    <>
+      {onGoToEscalation ? (
+        <button className="secondary-action" onClick={onGoToEscalation} type="button">
+          Ir a Escalamiento
+        </button>
+      ) : null}
+      <button
+        className="secondary-action"
+        disabled={minPolicyBusy || !tenant?.id}
+        onClick={handleApplyMinPolicy}
+        type="button"
+      >
+        {minPolicyBusy ? 'Aplicando…' : 'Aplicar política mínima recomendada'}
+      </button>
+    </>
+  ) : null;
 
   return (
     <section className="module-card readiness-module">
@@ -189,8 +264,64 @@ export function GoLiveReadiness({ module, session, tenant }) {
           ) : null}
 
           <div className="readiness-checks">
-            {report.checks.map((check) => <CheckItem check={check} key={check.key} />)}
+            {report.checks.map((check) => (
+              <CheckItem
+                actions={check.key === 'handoff' ? handoffActions : null}
+                check={check}
+                key={check.key}
+              />
+            ))}
           </div>
+
+          {/* Activación de tenant */}
+          {tenantActiveCheck && !tenantActiveCheck.ready && tenantStatus !== 'churned' ? (
+            <div className="readiness-activation">
+              <div className="activation-status">
+                <strong>Estado actual del tenant:</strong>
+                <span className={`status-badge status-${tenantStatus || 'unknown'}`}>{tenantStatus || 'desconocido'}</span>
+                {tenantStatus === 'trial' ? (
+                  <span className="hint">El tenant está en período trial. Actívalo cuando esté listo para producción.</span>
+                ) : tenantStatus === 'suspended' ? (
+                  <span className="hint">El tenant está suspendido. Puedes reactivarlo si fue un error.</span>
+                ) : null}
+              </div>
+              {tenantStatus === 'trial' || tenantStatus === 'suspended' ? (
+                <>
+                  <button
+                    className="primary-action"
+                    onClick={() => setShowActivation((v) => !v)}
+                    type="button"
+                  >
+                    {showActivation ? 'Cancelar activación' : 'Activar tenant'}
+                  </button>
+                  {showActivation ? (
+                    <div className="activation-panel">
+                      <p className="activation-description">
+                        Activar el tenant lo marca como <code>active</code> en la base de datos y queda registrado en auditoría con la razón indicada.
+                        Esto es necesario para pasar el check "Tenant activo" en go-live.
+                      </p>
+                      <label>
+                        Razón de activación (obligatoria)
+                        <input
+                          placeholder="Ej: Prerrequisitos verificados, tenant aprobado para go-live"
+                          value={activationReason}
+                          onChange={(e) => setActivationReason(e.target.value)}
+                        />
+                      </label>
+                      <button
+                        className="primary-action"
+                        disabled={activationBusy || !tenant?.id || !activationReason.trim()}
+                        onClick={handleActivateTenant}
+                        type="button"
+                      >
+                        {activationBusy ? 'Activando…' : 'Confirmar: activar tenant'}
+                      </button>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
 
           {/* Rollback operativo */}
           <div className="readiness-rollback">

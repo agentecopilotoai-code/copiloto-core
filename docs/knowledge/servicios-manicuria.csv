@@ -1,0 +1,8 @@
+categoria,procedimiento,descripcion,precio_cop,duracion_minutos,requiere_diagnostico,notas
+Manicuria,Manicure tradicional,"Limpieza, limado, cutícula y esmaltado tradicional",28000,35,no,"El color de esmalte puede variar por disponibilidad"
+Manicuria,Manicure semipermanente,"Preparación de uña, base, color semipermanente y brillo UV",48000,55,no,"Incluye un color; diseños tienen costo adicional"
+Manicuria,Retiro de semipermanente,"Retiro seguro de esmalte semipermanente con acetona",18000,25,no,"Gratis si se realiza nuevo semipermanente el mismo día"
+Manicuria,Press-on / uñas postizas,"Set estándar instalado; diseños personalizados desde cotización",70000,70,sí,"Precio final depende del diseño y materiales elegidos"
+Manicuria,Reconstrucción de uña,"Reparación de una uña rota o quebrada con acrílico o gel",15000,20,no,"Precio por uña individual"
+Manicuria,Nail art sencillo,"Diseño simple en hasta dos uñas por mano",22000,25,no,"Diseños avanzados o en todas las uñas requieren cotización"
+Manicuria,Manicure spa,"Manicure tradicional más exfoliación, hidratación y masaje de manos",45000,50,no,"Ideal para relajación o eventos especiales"

@@ -5,6 +5,7 @@ import {
   getTenant,
   getTenantSettings,
   listAuditLogs,
+  patchTenantStatus,
   updateTenant,
   updateTenantSettings,
 } from '../../../services/coreApi.js';
@@ -171,8 +172,8 @@ function formatJson(value) {
   return JSON.stringify(value, null, 2);
 }
 
-export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) {
-  const [activeTab, setActiveTab] = useState('tenant');
+export function TenantSetupWizard({ module, onTenantCreated, session, tenant, initialTab }) {
+  const [activeTab, setActiveTab] = useState(initialTab || 'tenant');
   const [tenantForm, setTenantForm] = useState({
     slug: 'tenant-demo',
     legal_name: 'Tenant Demo S.A.S.',
@@ -205,6 +206,9 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
   const [lastSettings, setLastSettings] = useState(null);
   const [notice, setNotice] = useState(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [tenantStatus, setTenantStatus] = useState(null);
+  const [statusReason, setStatusReason] = useState('');
+  const [targetStatus, setTargetStatus] = useState('active');
 
   const settingsPayload = useMemo(
     () => ({
@@ -236,6 +240,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
           country_code: tenantDetails.country_code || 'CO',
           timezone: tenantDetails.timezone || 'America/Bogota',
         });
+        setTenantStatus(tenantDetails.status || null);
 
         const hydrated = hydrateSettings(loadedSettings);
         setSettingsForm(hydrated.settingsForm);
@@ -300,6 +305,27 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
     if (updated) {
       setLastSettings(updated);
       setActiveTab('audit');
+      await refreshAuditLogs(currentTenantId, false);
+    }
+  }
+
+  const availableStatusTransitions = {
+    trial: [{ value: 'active', label: 'Activar (trial → active)' }, { value: 'suspended', label: 'Suspender (trial → suspended)' }, { value: 'churned', label: 'Dar de baja (trial → churned)' }],
+    active: [{ value: 'suspended', label: 'Suspender (active → suspended)' }, { value: 'churned', label: 'Dar de baja (active → churned)' }],
+    suspended: [{ value: 'active', label: 'Reactivar (suspended → active)' }, { value: 'churned', label: 'Dar de baja (suspended → churned)' }],
+    churned: [],
+  };
+
+  async function handleChangeStatus(event) {
+    event.preventDefault();
+    if (!currentTenantId) return;
+    const updated = await runAction(
+      () => patchTenantStatus(session, currentTenantId, targetStatus, statusReason),
+      `Estado cambiado a "${targetStatus}" y registrado en auditoría.`,
+    );
+    if (updated) {
+      setTenantStatus(updated.status);
+      setStatusReason('');
       await refreshAuditLogs(currentTenantId, false);
     }
   }
@@ -378,6 +404,46 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant }) 
             <button className="primary-action" disabled={isBusy} type="submit">{currentTenantId ? 'Actualizar tenant' : 'Crear tenant'}</button>
           </div>
         </form>
+      ) : null}
+
+      {activeTab === 'tenant' && currentTenantId && tenantStatus ? (
+        <div className="wizard-panel status-panel">
+          <h3>Estado del tenant</h3>
+          <div className="status-current">
+            <span>Estado actual:</span>
+            <span className={`status-badge status-${tenantStatus}`}>{tenantStatus}</span>
+          </div>
+          <p className="hint">
+            {tenantStatus === 'trial' && 'El tenant está en trial. Actívalo cuando cumpla los prerrequisitos de go-live.'}
+            {tenantStatus === 'active' && 'Tenant activo y operando en producción.'}
+            {tenantStatus === 'suspended' && 'Tenant suspendido temporalmente. Puedes reactivarlo cuando el problema esté resuelto.'}
+            {tenantStatus === 'churned' && 'Tenant dado de baja definitivamente. No se puede transicionar a otro estado.'}
+          </p>
+          {(availableStatusTransitions[tenantStatus] || []).length > 0 ? (
+            <form className="form-grid" onSubmit={handleChangeStatus}>
+              <label>
+                Nuevo estado
+                <select value={targetStatus} onChange={(e) => setTargetStatus(e.target.value)}>
+                  {availableStatusTransitions[tenantStatus].map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="wide">
+                Razón (obligatoria)
+                <input
+                  placeholder="Ej: Prerrequisitos verificados, aprobado para go-live"
+                  required
+                  value={statusReason}
+                  onChange={(e) => setStatusReason(e.target.value)}
+                />
+              </label>
+              <div className="form-actions">
+                <button className="primary-action" disabled={isBusy || !statusReason.trim()} type="submit">Cambiar estado</button>
+              </div>
+            </form>
+          ) : null}
+        </div>
       ) : null}
 
       {activeTab === 'settings' ? (

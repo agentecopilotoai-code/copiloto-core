@@ -176,3 +176,55 @@ def store_knowledge_file(
         content=extracted_text,
         extracted_text=extracted_text,
     )
+
+
+def delete_knowledge_file(
+    *,
+    source_uri: str,
+    storage_backend: str,
+    object_key: str | None = None,
+    bucket: str | None = None,
+    settings: Settings,
+    endpoint_url: str | None = None,
+    access_key_id: str | None = None,
+    secret_access_key: str | None = None,
+    region_name: str | None = None,
+) -> None:
+    """Remove a stored knowledge file from local disk or S3. Silently ignores missing files."""
+    backend = (storage_backend or '').lower()
+
+    if backend == 'local':
+        file_path: Path | None = None
+        if source_uri and source_uri.startswith('file://'):
+            file_path = Path(source_uri[7:])
+        elif object_key:
+            file_path = Path(settings.knowledge_storage_local_path) / object_key
+        if file_path:
+            try:
+                file_path.unlink(missing_ok=True)
+                # Remove empty parent directories up to storage root
+                root = Path(settings.knowledge_storage_local_path).resolve()
+                parent = file_path.parent.resolve()
+                while parent != root and parent.is_relative_to(root):
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+                    parent = parent.parent
+            except OSError:
+                pass
+
+    elif backend == 's3':
+        if not object_key or not bucket:
+            return
+        try:
+            client = _s3_client(
+                settings,
+                endpoint_url=endpoint_url,
+                access_key_id=access_key_id,
+                secret_access_key=secret_access_key,
+                region_name=region_name,
+            )
+            client.delete_object(Bucket=bucket, Key=object_key)
+        except Exception:
+            pass

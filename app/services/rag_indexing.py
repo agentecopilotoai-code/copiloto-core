@@ -1,4 +1,6 @@
+import csv
 import hashlib
+import io
 import json
 import math
 import re
@@ -107,6 +109,92 @@ def vector_literal(values: list[float]) -> str:
     return '[' + ','.join(f'{value:.8f}' for value in values) + ']'
 
 
+_PRICE_COLS = re.compile(r'precio|price|costo|cost|valor|tarifa|rate', re.IGNORECASE)
+_DURATION_COLS = re.compile(r'duraci[oó]n|minutos|minutes|duration|tiempo|time', re.IGNORECASE)
+_CATEGORY_COLS = re.compile(r'categor[ií]a|category|tipo|type|grupo|group', re.IGNORECASE)
+_NOTES_COLS = re.compile(r'nota|note|observaci[oó]n|comentario|descripci[oó]n|description|detalle', re.IGNORECASE)
+_BOOL_AFFIRMATIVE = {'si', 'sí', 'yes', 'true', '1', 'verdadero'}
+
+
+def _format_csv_value(header: str, value: str) -> str:
+    """Format a single CSV cell as a human-readable phrase."""
+    value = value.strip()
+    if not value:
+        return ''
+    if _PRICE_COLS.search(header):
+        try:
+            amount = int(float(value.replace(',', '').replace('.', '')))
+            return f'Precio: ${amount:,} COP'
+        except (ValueError, TypeError):
+            pass
+    if _DURATION_COLS.search(header):
+        return f'Duración: {value} min'
+    if header.lower().startswith('requiere') or 'diagn' in header.lower():
+        human = 'Sí' if value.lower() in _BOOL_AFFIRMATIVE else 'No'
+        return f'{header.replace("_", " ").capitalize()}: {human}'
+    return f'{header.replace("_", " ").capitalize()}: {value}'
+
+
+def csv_rows_to_natural_language(text: str) -> str:
+    """Convert CSV text to one readable sentence per row for better retrieval."""
+    try:
+        reader = csv.DictReader(io.StringIO(text.strip()))
+        if not reader.fieldnames or len(reader.fieldnames) < 2:
+            return text
+        headers = list(reader.fieldnames)
+        rows = list(reader)
+    except Exception:
+        return text
+
+    if not rows:
+        return text
+
+    # Identify key column roles
+    name_col = headers[0]
+    category_col = next((h for h in headers if _CATEGORY_COLS.search(h)), None)
+    notes_cols = [h for h in headers if _NOTES_COLS.search(h) and h != name_col]
+    skip_cols = {name_col, category_col} if category_col else {name_col}
+
+    sentences: list[str] = []
+    for row in rows:
+        name = (row.get(name_col) or '').strip()
+        if not name:
+            continue
+
+        category = (row.get(category_col) or '').strip() if category_col else ''
+        entity = f'{name} (categoría: {category})' if category else name
+
+        parts: list[str] = []
+        for header in headers:
+            if header in skip_cols:
+                continue
+            value = (row.get(header) or '').strip()
+            if not value:
+                continue
+            if header in notes_cols:
+                parts.append(value)
+            else:
+                formatted = _format_csv_value(header, value)
+                if formatted:
+                    parts.append(formatted)
+
+        sentences.append(f'{entity}: {". ".join(parts)}.')
+
+    return '\n'.join(sentences) if sentences else text
+
+
+def is_csv_content(text: str) -> bool:
+    """Heuristic: first non-empty line has ≥2 commas and most lines are consistent."""
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return False
+    first_commas = lines[0].count(',')
+    if first_commas < 2:
+        return False
+    consistent = sum(1 for ln in lines[1:5] if abs(ln.count(',') - first_commas) <= 1)
+    return consistent >= min(2, len(lines) - 1)
+
+
 def split_line_by_token_budget(line: str, max_tokens: int) -> list[str]:
     words = WORD_RE.findall(line)
     if not words:
@@ -212,6 +300,9 @@ def build_indexing_result(
     embedding_model: str = 'copilotoia-local-hash-v1',
 ) -> IndexingResult:
     extracted_text = extract_document_text(document)
+    mime_type = (document.get('mime_type') or '').lower()
+    if mime_type == 'text/csv' or is_csv_content(extracted_text):
+        extracted_text = csv_rows_to_natural_language(extracted_text)
     sanitized_text, sanitized_warning_count = sanitize_document_text(extracted_text)
     chunks = chunk_document_text(
         sanitized_text,
