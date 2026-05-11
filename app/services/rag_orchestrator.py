@@ -176,7 +176,7 @@ async def orchestrate_inbound_message(
     # Load tenant settings and tenant display name
     settings_row = await conn.fetchrow(
         """
-        select ts.escalation_policy, ts.max_bot_turns,
+        select ts.escalation_policy,
                t.display_name as business_name, t.vertical_code
         from app.tenant_settings ts
         join app.tenants t on t.id = ts.tenant_id
@@ -194,13 +194,10 @@ async def orchestrate_inbound_message(
     raw_policy = (settings_row['escalation_policy'] if settings_row else None) or {}
     policy = _parse_escalation_policy(raw_policy)
 
-    # escalation_policy.triggers.after_bot_turns takes precedence over the column
-    # so that the UI and the orchestrator always agree on the limit.
-    col_max_turns: int = (settings_row['max_bot_turns'] if settings_row else None) or 10
     policy_max_turns = (policy.get('triggers') or {}).get('after_bot_turns')
-    max_bot_turns: int = int(policy_max_turns) if isinstance(policy_max_turns, (int, float)) and policy_max_turns > 0 else col_max_turns
+    max_bot_turns: int = int(policy_max_turns) if isinstance(policy_max_turns, (int, float)) and policy_max_turns > 0 else 10
     business_name: str = (settings_row['business_name'] if settings_row else None) or 'nuestro negocio'
-    vertical_code: str = (settings_row['vertical_code'] if settings_row else None) or 'beauty'
+    vertical_code: str = (settings_row['vertical_code'] if settings_row else None) or 'general'
 
     log.info(
         'orchestrator.settings_loaded',
@@ -208,7 +205,7 @@ async def orchestrate_inbound_message(
         max_bot_turns=max_bot_turns,
         business_name=business_name,
         answer_engine=get_settings().answer_engine,
-        risk_keywords=policy.get('risk_keywords') or [],
+        handoff_keywords=(policy.get('triggers') or {}).get('keywords') or [],
         has_handoff_message=bool(policy.get('handoff_message')),
     )
 
@@ -284,10 +281,7 @@ async def orchestrate_inbound_message(
             break
 
     policy_result = evaluate_policy(
-        tenant_settings={
-            'max_bot_turns': max_bot_turns,
-            'escalation_policy': policy,
-        },
+        tenant_settings={'escalation_policy': policy},
         conversation={
             'bot_turn_count': bot_turn_count,
             'consecutive_no_context': consecutive_no_context,

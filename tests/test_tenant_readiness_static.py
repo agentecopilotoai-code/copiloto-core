@@ -41,7 +41,8 @@ def test_admin_panel_exposes_go_live_readiness_module():
     assert 'getTenantReadiness' in ui
 
 
-def test_readiness_report_handles_nullable_legacy_settings_without_500():
+def test_readiness_report_handles_nullable_settings_without_500():
+    """The readiness report still works when escalation_policy is null — it just reports not_ready."""
     import asyncio
     from uuid import uuid4
 
@@ -64,7 +65,6 @@ def test_readiness_report_handles_nullable_legacy_settings_without_500():
                     'escalation_policy': None,
                     'pii_policy': {'no_train': True},
                     'no_train': True,
-                    'max_bot_turns': None,
                 }
             if 'from app.tenant_channels' in query:
                 return None
@@ -86,7 +86,9 @@ def test_readiness_report_handles_nullable_legacy_settings_without_500():
 
     assert report['status'] == 'not_ready'
     settings_check = next(check for check in report['checks'] if check['key'] == 'tenant_settings')
-    assert settings_check['ready'] is False
+    # tenant_settings only requires locale, business_hours and pii_policy now (max_bot_turns
+    # column was removed; after_bot_turns lives inside the escalation_policy).
+    assert settings_check['ready'] is False  # business_hours is empty here
 
 
 def test_readiness_requires_live_whatsapp_mode_even_when_secrets_are_configured(monkeypatch):
@@ -112,10 +114,14 @@ def test_readiness_requires_live_whatsapp_mode_even_when_secrets_are_configured(
                 return {
                     'locale': 'es-CO',
                     'business_hours': {'monday': ['09:00-17:00']},
-                    'escalation_policy': {'handoff_required': True},
+                    'escalation_policy': {
+                        'enabled': True,
+                        'queue': 'default-support',
+                        'triggers': {'keywords': ['humano'], 'after_bot_turns': 5},
+                        'handoff_message': 'Te conecto.',
+                    },
                     'pii_policy': {'no_train': True},
                     'no_train': True,
-                    'max_bot_turns': 8,
                 }
             if 'from app.tenant_channels' in query:
                 return {
@@ -152,7 +158,7 @@ def test_readiness_requires_live_whatsapp_mode_even_when_secrets_are_configured(
     assert 'modo live' in whatsapp_check['reason']
 
 
-def _make_fake_connection(escalation_policy, account_mode='live', audit_count=1, max_bot_turns=8):
+def _make_fake_connection(escalation_policy, account_mode='live', audit_count=1):
     from uuid import uuid4
 
     class FakeConn:
@@ -166,7 +172,6 @@ def _make_fake_connection(escalation_policy, account_mode='live', audit_count=1,
                     'escalation_policy': escalation_policy,
                     'pii_policy': {'no_train': True},
                     'no_train': True,
-                    'max_bot_turns': max_bot_turns,
                 }
             if 'from app.tenant_channels' in query:
                 return {
@@ -316,7 +321,8 @@ def test_handoff_readiness_fails_when_no_triggers_and_no_message(monkeypatch):
     assert 'triggers' in handoff_check['reason']
 
 
-def test_handoff_readiness_passes_with_legacy_handoff_required(monkeypatch):
+def test_handoff_readiness_rejects_policy_without_queue_or_triggers(monkeypatch):
+    """A policy that lacks queue and triggers must fail readiness explicitly."""
     import asyncio
     from uuid import uuid4
     import app.api.v1.routes as routes
@@ -326,11 +332,34 @@ def test_handoff_readiness_passes_with_legacy_handoff_required(monkeypatch):
     monkeypatch.setattr(routes, 'build_grounded_answer', lambda *a, **kw: {'answer': 'ok', 'sufficient_context': True})
     monkeypatch.setattr(routes, 'rank_chunks', lambda *a, **kw: [])
 
-    policy = {'handoff_required': True}
-    report = asyncio.run(routes.build_tenant_readiness_report(_make_fake_connection(policy), uuid4()))
+    incomplete_policy = {'enabled': True}  # no queue, no triggers, no message
+    report = asyncio.run(routes.build_tenant_readiness_report(_make_fake_connection(incomplete_policy), uuid4()))
     handoff_check = next(c for c in report['checks'] if c['key'] == 'handoff')
-    assert handoff_check['ready'] is True
-    assert 'legacy' in handoff_check['reason']
+    assert handoff_check['ready'] is False
+    assert 'queue' in handoff_check['reason'] or 'triggers' in handoff_check['reason']
+
+
+def test_policy_engine_readiness_fails_without_after_bot_turns(monkeypatch):
+    """Policy engine check requires triggers.after_bot_turns > 0."""
+    import asyncio
+    from uuid import uuid4
+    import app.api.v1.routes as routes
+
+    monkeypatch.setattr(routes, 'token_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'secret_ref_is_configured', lambda ref: True)
+    monkeypatch.setattr(routes, 'build_grounded_answer', lambda *a, **kw: {'answer': 'ok', 'sufficient_context': True})
+    monkeypatch.setattr(routes, 'rank_chunks', lambda *a, **kw: [])
+
+    policy = {
+        'enabled': True,
+        'queue': 'default-support',
+        'triggers': {'keywords': ['humano']},  # no after_bot_turns
+        'handoff_message': 'Te conecto.',
+    }
+    report = asyncio.run(routes.build_tenant_readiness_report(_make_fake_connection(policy), uuid4()))
+    pe_check = next(c for c in report['checks'] if c['key'] == 'policy_engine')
+    assert pe_check['ready'] is False
+    assert 'after_bot_turns' in pe_check['reason']
 
 
 def test_readiness_ui_has_escalation_navigation():

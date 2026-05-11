@@ -57,15 +57,15 @@ def test_knowledge_document_update_allows_partial_status_change():
     assert payload.model_dump(exclude_unset=True) == {'status': 'active'}
 
 
-def test_knowledge_document_projection_is_compatible_with_legacy_table():
-    from app.api.v1.routes import knowledge_document_projection
+def test_knowledge_document_projection_exposes_canonical_columns():
+    """The projection is now a static list of the canonical columns — there is no
+    runtime column-existence check anymore."""
+    from app.api.v1.routes import KNOWLEDGE_DOCUMENT_PROJECTION
 
-    projection = knowledge_document_projection({'id', 'tenant_id', 'title', 'status'})
-
-    assert 'document_type' in projection
-    assert 'content' in projection
-    assert 'metadata' in projection
-    assert 'select' not in projection.lower()
+    assert 'document_type' in KNOWLEDGE_DOCUMENT_PROJECTION
+    assert 'content' in KNOWLEDGE_DOCUMENT_PROJECTION
+    assert 'metadata' in KNOWLEDGE_DOCUMENT_PROJECTION
+    assert 'select' not in KNOWLEDGE_DOCUMENT_PROJECTION.lower()
 
 
 def test_normalize_knowledge_document_parses_jsonb_metadata_strings():

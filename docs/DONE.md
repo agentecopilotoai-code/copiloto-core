@@ -15,6 +15,40 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0032 — Eliminar todo el código legacy del sistema
+
+- **Fecha:** 2026-05-11
+- **Resumen:** se eliminó por completo el código de compatibilidad acumulado durante el sprint base: verticales hardcodeados a `field_service|beauty|pet_grooming`, formato viejo de política (`risk_keywords` top-level, `handoff_required: true`), columna redundante `max_bot_turns`, defaults de proyección SQL para columnas faltantes, migraciones incrementales en bootstrap, ruta `/assets` duplicada y fallback silencioso a embeddings SHA256 cuando fallan los proveedores reales. El esquema `01-schema.sql` ahora es la única fuente de verdad; `bootstrap.sh` no migra incrementalmente; el policy engine y los endpoints leen únicamente el formato canónico `escalation_policy.triggers.{keywords,after_bot_turns,confidence_below}`.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql` — eliminados 4 CHECK constraints de `vertical_code` (tenants, resources, service_requests, prompt_templates) y el CHECK del `resource_type`; agregada columna `business_type_label text` en `tenants`; eliminada columna `max_bot_turns` de `tenant_settings`.
+  - `infra/postgres/02-seed.sql` — reescrito sin enum hardcodeado: tenants demo con `vertical_code` como texto libre (`taller_mecanico`, `barberia`, `veterinaria`), `business_type_label` poblado, `resource_type='staff'` neutro, política de escalamiento ya en formato canónico desde el seed.
+  - `app/api/v1/schemas.py` — eliminadas regex `'^(field_service|beauty|pet_grooming)$'` en `TenantCreate`, `TenantUpdate`, `ResourceCreate`, `ResourceUpdate`; reemplazadas por `min_length=1, max_length=64`. Agregado `business_type_label` opcional en TenantCreate/Update. `resource_type` ahora también es texto libre.
+  - `app/services/rag_orchestrator.py` — eliminado fallback `or 'beauty'`, reemplazado por `'general'`; eliminada lectura de `ts.max_bot_turns` en la SQL; `after_bot_turns` se lee directo del policy; logging usa `handoff_keywords` (no `risk_keywords`).
+  - `app/services/policy_engine.py` — Regla 2 ahora lee de `escalation_policy.triggers.keywords` exclusivamente; Regla 4 lee de `escalation_policy.triggers.after_bot_turns`; eliminada toda referencia a `risk_keywords` y al campo `max_bot_turns` del nivel superior de `tenant_settings`. Docstring actualizado.
+  - `app/api/v1/routes.py` — eliminado el bloque `_ep_is_legacy` y la rama "formato legacy" en el readiness; eliminadas constantes `KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS` y las funciones `knowledge_document_columns()` / `knowledge_document_projection()`; reemplazadas por la constante estática `KNOWLEDGE_DOCUMENT_PROJECTION`. Eliminada toda la sincronización dual `max_bot_turns ↔ triggers.after_bot_turns`. Endpoint de tenant ahora persiste `business_type_label`. El endpoint de indexación devuelve HTTP 502 cuando el proveedor de embeddings falla con `RuntimeError`.
+  - `app/services/rag_indexing.py` — eliminado el `except RuntimeError: vec = deterministic_embedding(...)` que enmascaraba fallos del proveedor; ahora la excepción se propaga y el endpoint la traduce en 502. `build_indexing_result` (sync) ahora lanza `ValueError` si recibe un proveedor semántico en lugar de hacer downgrade silencioso a `local_hash`.
+  - `scripts/bootstrap.sh` — eliminados todos los bloques `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` y `DROP CONSTRAINT / ADD CONSTRAINT` (3 bloques: tenant_settings.knowledge_storage, knowledge_documents incremental, contacts_opt_in_status_check). Eliminado el bloque `SQL_FIX_ESCALATION_POLICY` que convertía `risk_keywords` → `triggers.keywords`.
+  - `app/admin/routes.py` — eliminada la ruta duplicada `GET /assets/{asset_path:path}` marcada como "legacy".
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — eliminado el `select` de verticales con las 3 opciones fijas; reemplazado por inputs de texto libre "Tipo de negocio" (label) y "Clave técnica" (slug), con autocompletado del slug desde el label. Eliminado el campo `maxBotTurns` de la pestaña Privacy y su persistencia en el payload. Eliminado el campo separado `riskKeywords` del form de Escalamiento; ahora las keywords viven solo en `triggers.keywords`.
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx` — eliminados los 3 fallbacks `|| 'field_service'`; el state de resources usa `resource_type='staff'` neutro.
+  - `admin-panel/src/data/modules.js` — actualizado scope de Tenant Setup eliminando referencia a `max_bot_turns`.
+  - `scripts/smoke-test.sh` — POST `/v1/tenants` ahora usa `vertical_code: 'smoke_test'` (no `field_service`); PATCH settings envía `escalation_policy` completa (no `max_bot_turns`).
+  - `tests/test_policy_engine_static.py` — reescrito el fixture `base_settings` para construir solo el formato canónico `escalation_policy.triggers.*`; eliminados los tests que validaban `risk_keywords` o `max_bot_turns` top-level; agregados tests negativos que confirman que campos desconocidos son ignorados y que una política vacía sigue funcionando con defaults.
+  - `tests/test_whatsapp_rag_orchestrator.py` — renombrados `test_orchestrator_reads_max_bot_turns_...` y `test_orchestrator_enforces_max_bot_turns_limit` a versiones que validan el formato actual; assertions confirman que `ts.max_bot_turns` NO aparece en la SQL del orquestador y que el policy_engine lee `triggers.get('after_bot_turns')`.
+  - `tests/test_tenant_readiness_static.py` — eliminado `test_handoff_readiness_passes_with_legacy_handoff_required`; reemplazado por `test_handoff_readiness_rejects_policy_without_queue_or_triggers` que confirma que una política incompleta es rechazada. Agregado `test_policy_engine_readiness_fails_without_after_bot_turns`. Helper `_make_fake_connection` ya no maneja `max_bot_turns`.
+  - `tests/test_embedding_providers_static.py` — renombrado `test_build_indexing_result_sync_falls_back_to_local_hash_for_real_providers` a `test_build_indexing_result_sync_rejects_real_providers` que confirma que ahora lanza `ValueError`. Renombrado `test_build_indexing_result_async_real_provider_falls_back_on_network_error` a `test_build_indexing_result_async_real_provider_raises_on_network_error`. Corregido `asyncio.get_event_loop()` (eliminado en Python 3.14) → `asyncio.run`.
+  - `tests/test_audit_privacy_static.py` — `test_bootstrap_migrates_suppressed_constraint` reemplazado por `test_schema_defines_suppressed_opt_in_status` que confirma que el constraint vive en `01-schema.sql` y NO en bootstrap.
+  - `tests/test_knowledge_documents.py` — `test_knowledge_document_projection_is_compatible_with_legacy_table` reemplazado por `test_knowledge_document_projection_exposes_canonical_columns` que valida la constante estática.
+- **Comandos ejecutados / criterios cumplidos:**
+  - `grep -rn "field_service\|beauty\|pet_grooming" app/ infra/ admin-panel/src/` → vacío.
+  - `grep -rn "risk_keywords\|_ep_is_legacy\|handoff_required.*True\|COMPAT_DEFAULT\|ADD COLUMN IF NOT EXISTS\|formato legacy\|format legacy" app/ scripts/ tests/` → vacío.
+  - `python3 -m compileall app` → OK.
+  - `python3 -m ruff check app tests` → "All checks passed!".
+  - `python3 -m pytest tests/ -m "not requires_db"` → **428 passed, 5 skipped**.
+  - `bash -n scripts/bootstrap.sh` → OK.
+  - `bash -n scripts/smoke-test.sh` → OK.
+- **Notas:** la columna `max_bot_turns` de `tenant_settings` se eliminó por completo del esquema. El valor canónico ahora vive en `escalation_policy.triggers.after_bot_turns`. Como el MVP no está en producción y el mandato del backlog autoriza rupturas de esquema sin migración, no se preserva compatibilidad hacia atrás. El test pre-existente `test_security.py::test_auth0_rs256_token_sets_tenant_roles_and_support_mode` (no relacionado con esta tarea) sigue pasando en este entorno con `cryptography` instalado.
+
 ### TASK-0024 — Integrar LLM cloud (Claude API / OpenAI) como motor de respuesta
 
 - **Fecha:** 2026-05-11

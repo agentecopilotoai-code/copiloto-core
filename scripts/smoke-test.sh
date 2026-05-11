@@ -158,7 +158,7 @@ expect_json GET "${API_BASE_URL}/v1/health"
 printf 'ok\n'
 
 printf 'POST /v1/tenants -> '
-expect_json POST "${API_BASE_URL}/v1/tenants" "{\"slug\":\"smoke-${RUN_ID}\",\"legal_name\":\"Smoke ${RUN_ID} SAS\",\"display_name\":\"Smoke ${RUN_ID}\",\"vertical_code\":\"field_service\"}" -H "${OWNER_AUTH}"
+expect_json POST "${API_BASE_URL}/v1/tenants" "{\"slug\":\"smoke-${RUN_ID}\",\"legal_name\":\"Smoke ${RUN_ID} SAS\",\"display_name\":\"Smoke ${RUN_ID}\",\"vertical_code\":\"smoke_test\",\"business_type_label\":\"Smoke test\"}" -H "${OWNER_AUTH}"
 printf 'ok\n'
 
 printf 'GET /v1/tenants/{tenant_id} -> '
@@ -166,7 +166,7 @@ expect_json GET "${API_BASE_URL}/v1/tenants/${TENANT_ID}" '' -H "${AGENT_AUTH}"
 printf 'ok\n'
 
 printf 'PATCH /v1/tenants/{tenant_id}/settings -> '
-expect_json PATCH "${API_BASE_URL}/v1/tenants/${TENANT_ID}/settings" '{"locale":"es-CO","max_bot_turns":8}' -H "${ADMIN_AUTH}"
+expect_json PATCH "${API_BASE_URL}/v1/tenants/${TENANT_ID}/settings" '{"locale":"es-CO","escalation_policy":{"enabled":true,"queue":"default-support","triggers":{"keywords":["humano","asesor"],"after_bot_turns":8},"handoff_message":"Te conecto con una persona del equipo."}}' -H "${ADMIN_AUTH}"
 printf 'ok\n'
 
 printf 'POST /v1/tenants/{tenant_id}/channels/whatsapp -> '

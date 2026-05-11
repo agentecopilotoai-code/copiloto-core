@@ -4,7 +4,7 @@ These tests run without any API keys or network access.  They validate:
   (a) local_hash works without API key
   (b) dispatcher selects the correct provider based on config
   (c) vector dimensions are consistent with the schema
-  (d) build_indexing_result falls back to local_hash in the sync path
+  (d) build_indexing_result raises rather than silently downgrading to local_hash
   (e) async path accepts precomputed embeddings correctly
   (f) ANN retrieval helpers expose correct SQL and helpers
 """
@@ -31,7 +31,7 @@ from app.services.rag_retrieval import (
     get_chunk_retrieval_sql,
 )
 
-_run = asyncio.get_event_loop().run_until_complete
+_run = asyncio.run
 
 
 # ── (a) local_hash works without API key ──────────────────────────────────────
@@ -87,19 +87,23 @@ def test_provider_default_dims_cover_all_providers():
         assert _PROVIDER_DEFAULT_DIMS[provider] > 0
 
 
-def test_build_indexing_result_sync_falls_back_to_local_hash_for_real_providers():
-    # Sync path cannot make API calls; must fall back transparently.
+def test_build_indexing_result_sync_rejects_real_providers():
+    """Sync indexer must NOT silently downgrade a real provider to local_hash.
+
+    A semantic provider requires async I/O. Allowing the sync path to fall back
+    silently used to mask configuration mistakes: documents got indexed with
+    deterministic SHA256 vectors that looked healthy but weren't searchable. The
+    new contract is explicit — caller picks the right entry point.
+    """
     doc = {'content': 'Contenido de prueba para provider real.', 'metadata': {}}
     for provider in SUPPORTED_REAL_PROVIDERS:
-        result = build_indexing_result(
-            doc,
-            embedding_provider=provider,
-            embedding_model='test-model',
-            embedding_dimensions=16,
-        )
-        # Sync path silently uses local_hash
-        assert result.embedding_provider == 'local_hash'
-        assert all(len(c.embedding) == 16 for c in result.chunks)
+        with pytest.raises(ValueError, match='requires async indexing'):
+            build_indexing_result(
+                doc,
+                embedding_provider=provider,
+                embedding_model='test-model',
+                embedding_dimensions=16,
+            )
 
 
 # ── (c) vector dimensions are consistent with schema ─────────────────────────
@@ -159,20 +163,22 @@ def test_build_indexing_result_async_local_hash_path():
     assert all(len(c.embedding) == 8 for c in result.chunks)
 
 
-def test_build_indexing_result_async_real_provider_falls_back_on_network_error():
-    # With no API key the real_embedding_async call will fail; the async indexer
-    # catches RuntimeError and substitutes a deterministic_embedding fallback.
+def test_build_indexing_result_async_real_provider_raises_on_network_error():
+    """Async path must surface provider failures as RuntimeError, not fall back silently.
+
+    Previous behaviour caught RuntimeError and substituted deterministic SHA256
+    vectors, which made an unhealthy indexing run look successful. The endpoint
+    now translates RuntimeError into HTTP 502 so the operator sees the failure.
+    """
     doc = {'content': 'Texto de prueba para proveedor real sin API key.', 'metadata': {}}
-    result = _run(build_indexing_result_async(
-        doc,
-        embedding_dimensions=16,
-        embedding_provider='openai',
-        embedding_model='text-embedding-3-small',
-        embedding_api_key=None,
-    ))
-    # Provider label stays 'openai'; embeddings fall back to local_hash dimension.
-    assert result.embedding_provider == 'openai'
-    assert all(len(c.embedding) == 16 for c in result.chunks)
+    with pytest.raises(RuntimeError):
+        _run(build_indexing_result_async(
+            doc,
+            embedding_dimensions=16,
+            embedding_provider='openai',
+            embedding_model='text-embedding-3-small',
+            embedding_api_key=None,
+        ))
 
 
 # ── real_embedding_async raises for unknown provider ─────────────────────────

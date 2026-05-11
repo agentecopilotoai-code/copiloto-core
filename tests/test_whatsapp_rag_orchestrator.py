@@ -43,36 +43,38 @@ def test_orchestrator_skips_suppressed_and_revoked_contacts():
     assert "('revoked', 'suppressed')" in source
 
 
-def test_orchestrator_reads_max_bot_turns_and_escalation_policy_from_tenant_settings():
+def test_orchestrator_reads_escalation_policy_from_tenant_settings():
     source = ORCHESTRATOR.read_text()
 
     assert 'escalation_policy' in source
     assert 'tenant_settings' in source
-    assert 'max_bot_turns' in source
     assert '_parse_escalation_policy' in source
+    # max_bot_turns is no longer a separate column — value lives inside escalation_policy.triggers.after_bot_turns.
+    assert 'ts.max_bot_turns' not in source
 
 
-def test_orchestrator_checks_keyword_triggers_from_escalation_policy():
+def test_orchestrator_checks_keyword_triggers_from_policy_engine():
     source = ORCHESTRATOR.read_text()
     policy_source = (Path(__file__).parent.parent / 'app' / 'services' / 'policy_engine.py').read_text()
 
-    # Keyword escalation handled exclusively by policy engine via risk_keywords.
+    # Keyword escalation handled exclusively by policy engine reading triggers.keywords.
     assert 'evaluate_policy' in source
-    assert 'risk_keyword' in policy_source
-    # Legacy helpers removed — no more _keyword_triggers or _DEFAULT_HUMAN_KEYWORDS.
+    assert "triggers.get('keywords')" in policy_source
+    # No keyword-trigger helper or hardcoded defaults in the orchestrator.
     assert '_keyword_triggers' not in source
     assert '_DEFAULT_HUMAN_KEYWORDS' not in source
 
 
-def test_orchestrator_enforces_max_bot_turns_limit():
+def test_orchestrator_enforces_after_bot_turns_limit():
     source = ORCHESTRATOR.read_text()
     policy_source = (Path(__file__).parent.parent / 'app' / 'services' / 'policy_engine.py').read_text()
 
     # Bot turn count is fetched in orchestrator and passed to evaluate_policy.
     assert 'bot_turn_count' in source
     assert "sender_actor_type='bot'" in source
-    # Max turns enforcement now delegated to policy engine.
+    # Max turns enforcement now delegated to policy engine which reads triggers.after_bot_turns.
     assert 'max_bot_turns_exceeded' in policy_source
+    assert "triggers.get('after_bot_turns')" in policy_source
     assert 'evaluate_policy' in source
 
 
@@ -178,10 +180,14 @@ def test_parse_escalation_policy_handles_invalid_string():
     assert _parse_escalation_policy([]) == {}
 
 
-def test_risk_keywords_trigger_handoff_via_policy_engine():
+def test_trigger_keywords_trigger_handoff_via_policy_engine():
     from app.services.policy_engine import evaluate_policy
 
-    settings = {'max_bot_turns': 8, 'escalation_policy': {'risk_keywords': ['humano', 'asesor', 'agente', 'reclamo']}}
+    settings = {
+        'escalation_policy': {
+            'triggers': {'keywords': ['humano', 'asesor', 'agente', 'reclamo'], 'after_bot_turns': 99},
+        },
+    }
     conv = {'bot_turn_count': 0, 'consecutive_no_context': 0, 'service_window_expires_at': None}
 
     for kw in ['humano', 'asesor', 'agente', 'reclamo']:
@@ -189,13 +195,33 @@ def test_risk_keywords_trigger_handoff_via_policy_engine():
         assert result.action == 'require_handoff', f'keyword {kw!r} debería disparar handoff'
 
 
-def test_no_risk_keywords_continues_bot():
+def test_no_trigger_keywords_continues_bot():
     from app.services.policy_engine import evaluate_policy
 
-    settings = {'max_bot_turns': 8, 'escalation_policy': {'risk_keywords': ['demanda']}}
+    settings = {
+        'escalation_policy': {
+            'triggers': {'keywords': ['demanda'], 'after_bot_turns': 99},
+        },
+    }
     conv = {'bot_turn_count': 0, 'consecutive_no_context': 0, 'service_window_expires_at': None}
 
     result = evaluate_policy(settings, conv, 'tengo una pregunta sobre precios', 'faq')
+    assert result.action == 'continue_bot'
+
+
+def test_policy_engine_ignores_unknown_top_level_fields():
+    """Engine reads only triggers.keywords — unknown top-level fields are noise."""
+    from app.services.policy_engine import evaluate_policy
+
+    settings = {
+        'escalation_policy': {
+            'unrelated_keywords': ['demanda'],  # arbitrary unknown field
+            'triggers': {'keywords': [], 'after_bot_turns': 99},
+            'enforce_service_window': False,
+        },
+    }
+    conv = {'bot_turn_count': 0, 'consecutive_no_context': 0, 'service_window_expires_at': None}
+    result = evaluate_policy(settings, conv, 'voy a poner una demanda', 'faq')
     assert result.action == 'continue_bot'
 
 

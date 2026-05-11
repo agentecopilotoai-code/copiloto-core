@@ -112,9 +112,9 @@ async def real_embedding_async(
 ) -> list[float]:
     """Call a real embedding API and return a normalised float vector.
 
-    Falls back to `deterministic_embedding` on any transient error so indexing
-    is never blocked by provider unavailability in non-production environments.
-    Raises `ValueError` when the provider is unknown.
+    Raises `RuntimeError` when the provider call fails so the caller can surface
+    a clear configuration or availability error to the operator. Raises
+    `ValueError` when the provider is unknown.
     """
     if provider == 'openai':
         try:
@@ -383,32 +383,35 @@ def build_indexing_result(
     embedding_model: str = 'copilotoia-local-hash-v1',
     embedding_api_key: str | None = None,
 ) -> IndexingResult:
-    """Synchronous indexing — always uses local_hash embeddings.
+    """Synchronous indexing — only supports the `local_hash` provider.
 
     For real ML embeddings call `build_indexing_result_async` instead, which
-    dispatches to the configured provider API.
+    dispatches to the configured provider API. Calling this with a semantic
+    provider raises `ValueError` so callers cannot silently downgrade.
     """
+    if is_semantic_provider(embedding_provider):
+        raise ValueError(
+            f'Provider {embedding_provider!r} requires async indexing. '
+            'Call build_indexing_result_async instead.'
+        )
     extracted_text = extract_document_text(document)
     mime_type = (document.get('mime_type') or '').lower()
     if mime_type == 'text/csv' or is_csv_content(extracted_text):
         extracted_text = csv_rows_to_natural_language(extracted_text)
     sanitized_text, sanitized_warning_count = sanitize_document_text(extracted_text)
-    # Real providers require async; fall back to local_hash silently in sync path.
-    actual_provider = embedding_provider if not is_semantic_provider(embedding_provider) else 'local_hash'
-    actual_model = embedding_model if actual_provider == 'local_hash' else 'copilotoia-local-hash-v1'
     chunks = chunk_document_text(
         sanitized_text,
         max_tokens=max_tokens,
         overlap_tokens=overlap_tokens,
         embedding_dimensions=embedding_dimensions,
-        embedding_provider=actual_provider,
-        embedding_model=actual_model,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
     )
     return IndexingResult(
         chunks=chunks,
         sanitized_warning_count=sanitized_warning_count,
-        embedding_provider=actual_provider,
-        embedding_model=actual_model,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
         embedding_dimensions=embedding_dimensions,
     )
 
@@ -426,7 +429,9 @@ async def build_indexing_result_async(
     """Async indexing that calls real ML embedding APIs when the provider is not local_hash.
 
     For `openai`, `anthropic`, and `ollama` providers this calls the respective API
-    for each chunk. Falls back to `local_hash` if the API call fails.
+    for each chunk. Provider failures propagate as `RuntimeError` so the caller
+    can surface a clear 5xx error to the operator instead of producing chunks
+    with deterministic SHA256 vectors that look healthy but are not searchable.
     """
     extracted_text = extract_document_text(document)
     mime_type = (document.get('mime_type') or '').lower()
@@ -461,19 +466,18 @@ async def build_indexing_result_async(
         embedding_model=embedding_model,
     )
 
-    # Then fetch real embeddings for every chunk text.
+    # Then fetch real embeddings for every chunk text. Provider failures
+    # propagate up so the indexing endpoint can return a clear error instead of
+    # silently writing useless SHA256 vectors.
     real_embeddings: list[list[float]] = []
     for draft in draft_chunks:
-        try:
-            vec = await real_embedding_async(
-                draft.chunk_text,
-                provider=embedding_provider,
-                model=embedding_model,
-                api_key=embedding_api_key,
-                dimensions=embedding_dimensions,
-            )
-        except RuntimeError:
-            vec = deterministic_embedding(draft.chunk_text, embedding_dimensions)
+        vec = await real_embedding_async(
+            draft.chunk_text,
+            provider=embedding_provider,
+            model=embedding_model,
+            api_key=embedding_api_key,
+            dimensions=embedding_dimensions,
+        )
         real_embeddings.append(vec)
 
     chunks = chunk_document_text(

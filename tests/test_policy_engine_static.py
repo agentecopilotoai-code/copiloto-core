@@ -1,4 +1,9 @@
-"""Static tests for app/services/policy_engine.py — 20+ cases covering all 5 rules."""
+"""Static tests for app/services/policy_engine.py — covering all 5 rules.
+
+The policy engine reads only the canonical format: every threshold lives under
+`escalation_policy.triggers.*` (keywords, after_bot_turns, confidence_below).
+Older formats are explicitly not supported by the engine.
+"""
 from __future__ import annotations
 
 import sys
@@ -12,17 +17,18 @@ from app.services.policy_engine import PolicyResult, evaluate_policy, _parse_jso
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
-def base_settings(**overrides):
-    s = {
-        'max_bot_turns': 8,
-        'escalation_policy': {
-            'risk_keywords': [],
-            'enforce_service_window': True,
-            'consecutive_no_context_limit': 2,
-        },
+def base_settings(*, triggers=None, escalation_extra=None):
+    triggers = triggers if triggers is not None else {'keywords': [], 'after_bot_turns': 8}
+    escalation_policy = {
+        'enabled': True,
+        'queue': 'default-support',
+        'triggers': triggers,
+        'enforce_service_window': True,
+        'consecutive_no_context_limit': 2,
     }
-    s.update(overrides)
-    return s
+    if escalation_extra:
+        escalation_policy.update(escalation_extra)
+    return {'escalation_policy': escalation_policy}
 
 
 def base_conversation(**overrides):
@@ -53,7 +59,7 @@ def test_rule1_complaint_or_risk_forces_handoff():
 
 
 def test_rule1_complaint_or_risk_takes_priority_over_keywords():
-    settings = base_settings(escalation_policy={'risk_keywords': ['urgente'], 'enforce_service_window': False})
+    settings = base_settings(triggers={'keywords': ['urgente'], 'after_bot_turns': 8}, escalation_extra={'enforce_service_window': False})
     result = evaluate_policy(settings, base_conversation(), 'esto es urgente', 'complaint_or_risk')
     assert result.action == 'require_handoff'
     assert result.reason == 'intent_complaint_or_risk'
@@ -71,47 +77,74 @@ def test_rule1_non_complaint_intent_does_not_trigger():
     assert result.action == 'continue_bot'
 
 
-# ── Rule 2: risk keywords ─────────────────────────────────────────────────────
+# ── Rule 2: trigger keywords (triggers.keywords) ──────────────────────────────
 
-def test_rule2_risk_keyword_triggers_handoff():
-    settings = base_settings(escalation_policy={'risk_keywords': ['demanda', 'fraude']})
+def test_rule2_trigger_keyword_triggers_handoff():
+    settings = base_settings(triggers={'keywords': ['demanda', 'fraude'], 'after_bot_turns': 8})
     result = evaluate_policy(settings, base_conversation(), 'quiero interponer una demanda', 'faq')
     assert result.action == 'require_handoff'
     assert 'demanda' in result.reason
     assert result.risk_level == 'high'
 
 
-def test_rule2_risk_keyword_case_insensitive():
-    settings = base_settings(escalation_policy={'risk_keywords': ['URGENTE']})
+def test_rule2_trigger_keyword_case_insensitive():
+    settings = base_settings(triggers={'keywords': ['URGENTE'], 'after_bot_turns': 8})
     result = evaluate_policy(settings, base_conversation(), 'esto es urgente', 'faq')
     assert result.action == 'require_handoff'
 
 
 def test_rule2_partial_word_match():
-    settings = base_settings(escalation_policy={'risk_keywords': ['legal']})
+    settings = base_settings(triggers={'keywords': ['legal'], 'after_bot_turns': 8})
     result = evaluate_policy(settings, base_conversation(), 'quiero asesoría legal ahora', 'faq')
     assert result.action == 'require_handoff'
 
 
 def test_rule2_no_keyword_match_continues():
-    settings = base_settings(escalation_policy={'risk_keywords': ['demanda']})
+    settings = base_settings(triggers={'keywords': ['demanda'], 'after_bot_turns': 8})
     result = evaluate_policy(settings, base_conversation(), 'tengo una pregunta', 'faq')
     assert result.action == 'continue_bot'
 
 
-def test_rule2_empty_risk_keywords_continues():
-    settings = base_settings(escalation_policy={'risk_keywords': []})
+def test_rule2_empty_trigger_keywords_continues():
+    settings = base_settings(triggers={'keywords': [], 'after_bot_turns': 8})
     result = evaluate_policy(settings, base_conversation(), 'hola', 'greeting')
     assert result.action == 'continue_bot'
 
 
-def test_rule2_risk_keywords_json_string():
+def test_rule2_escalation_policy_json_string():
     import json
-    settings = base_settings(
-        escalation_policy=json.dumps({'risk_keywords': ['amenaza'], 'enforce_service_window': False})
-    )
+    settings = {
+        'escalation_policy': json.dumps({
+            'triggers': {'keywords': ['amenaza'], 'after_bot_turns': 8},
+            'enforce_service_window': False,
+        }),
+    }
     result = evaluate_policy(settings, base_conversation(), 'voy a poner una amenaza', 'faq')
     assert result.action == 'require_handoff'
+
+
+def test_rule2_unknown_top_level_fields_are_ignored():
+    """Only triggers.keywords drives keyword-based handoff. Any unrelated top-level
+    field is treated as noise and must not cause handoff."""
+    settings = {
+        'escalation_policy': {
+            'unrelated_keywords': ['demanda'],  # arbitrary unknown field
+            'triggers': {'keywords': [], 'after_bot_turns': 99},
+            'enforce_service_window': False,
+        },
+    }
+    result = evaluate_policy(settings, base_conversation(), 'voy a demandar', 'faq')
+    assert result.action == 'continue_bot'
+
+
+def test_evaluate_policy_with_empty_escalation_policy_uses_defaults():
+    """An empty policy should still produce a deterministic result (handoff at default
+    after_bot_turns=8) rather than crashing."""
+    settings = {'escalation_policy': {}}
+    conv = base_conversation(bot_turn_count=8)
+    result = evaluate_policy(settings, conv, 'msg', 'faq')
+    assert result.action == 'require_handoff'
+    assert 'max_bot_turns_exceeded' in result.reason
 
 
 # ── Rule 3: service window expired ───────────────────────────────────────────
@@ -137,7 +170,7 @@ def test_rule3_no_window_continues():
 
 
 def test_rule3_enforce_false_ignores_expired_window():
-    settings = base_settings(escalation_policy={'enforce_service_window': False})
+    settings = base_settings(escalation_extra={'enforce_service_window': False})
     conv = base_conversation(service_window_expires_at=_past(hours=5))
     result = evaluate_policy(settings, conv, 'hola', 'greeting')
     assert result.action == 'continue_bot'
@@ -150,10 +183,10 @@ def test_rule3_iso_string_datetime():
     assert result.action == 'require_handoff'
 
 
-# ── Rule 4: max bot turns ─────────────────────────────────────────────────────
+# ── Rule 4: bot turns vs triggers.after_bot_turns ────────────────────────────
 
-def test_rule4_max_bot_turns_exact_limit():
-    settings = base_settings(max_bot_turns=5)
+def test_rule4_after_bot_turns_exact_limit():
+    settings = base_settings(triggers={'keywords': [], 'after_bot_turns': 5})
     conv = base_conversation(bot_turn_count=5)
     result = evaluate_policy(settings, conv, 'msg', 'faq')
     assert result.action == 'require_handoff'
@@ -162,14 +195,14 @@ def test_rule4_max_bot_turns_exact_limit():
 
 
 def test_rule4_below_limit_continues():
-    settings = base_settings(max_bot_turns=5)
+    settings = base_settings(triggers={'keywords': [], 'after_bot_turns': 5})
     conv = base_conversation(bot_turn_count=4)
     result = evaluate_policy(settings, conv, 'msg', 'faq')
     assert result.action == 'continue_bot'
 
 
-def test_rule4_default_limit_applied():
-    settings = {'max_bot_turns': None, 'escalation_policy': {}}
+def test_rule4_default_limit_applied_when_missing():
+    settings = {'escalation_policy': {}}
     conv = base_conversation(bot_turn_count=8)
     result = evaluate_policy(settings, conv, 'msg', 'faq')
     assert result.action == 'require_handoff'
@@ -178,7 +211,7 @@ def test_rule4_default_limit_applied():
 # ── Rule 5: consecutive no-context ───────────────────────────────────────────
 
 def test_rule5_consecutive_no_context_at_limit():
-    settings = base_settings(escalation_policy={'consecutive_no_context_limit': 2})
+    settings = base_settings(escalation_extra={'consecutive_no_context_limit': 2})
     conv = base_conversation(consecutive_no_context=2)
     result = evaluate_policy(settings, conv, 'msg', 'faq')
     assert result.action == 'require_handoff'
@@ -187,14 +220,14 @@ def test_rule5_consecutive_no_context_at_limit():
 
 
 def test_rule5_below_consecutive_limit_continues():
-    settings = base_settings(escalation_policy={'consecutive_no_context_limit': 3})
+    settings = base_settings(escalation_extra={'consecutive_no_context_limit': 3})
     conv = base_conversation(consecutive_no_context=2)
     result = evaluate_policy(settings, conv, 'msg', 'faq')
     assert result.action == 'continue_bot'
 
 
 def test_rule5_default_limit_of_two():
-    settings = base_settings(escalation_policy={})
+    settings = {'escalation_policy': {'triggers': {'keywords': [], 'after_bot_turns': 99}}}
     conv = base_conversation(consecutive_no_context=2)
     result = evaluate_policy(settings, conv, 'msg', 'faq')
     assert result.action == 'require_handoff'
@@ -217,7 +250,7 @@ def test_all_rules_pass_returns_continue_bot():
 # ── Priority: Rule 1 beats Rule 2 ────────────────────────────────────────────
 
 def test_priority_rule1_beats_rule2():
-    settings = base_settings(escalation_policy={'risk_keywords': ['algo'], 'enforce_service_window': False})
+    settings = base_settings(triggers={'keywords': ['algo'], 'after_bot_turns': 8}, escalation_extra={'enforce_service_window': False})
     result = evaluate_policy(settings, base_conversation(), 'algo', 'complaint_or_risk')
     assert result.reason == 'intent_complaint_or_risk'
 
@@ -225,7 +258,7 @@ def test_priority_rule1_beats_rule2():
 # ── Priority: Rule 2 beats Rule 3 ────────────────────────────────────────────
 
 def test_priority_rule2_beats_rule3():
-    settings = base_settings(escalation_policy={'risk_keywords': ['demanda'], 'enforce_service_window': True})
+    settings = base_settings(triggers={'keywords': ['demanda'], 'after_bot_turns': 8}, escalation_extra={'enforce_service_window': True})
     conv = base_conversation(service_window_expires_at=_past())
     result = evaluate_policy(settings, conv, 'voy a demandar', 'faq')
     assert 'demanda' in result.reason  # Rule 2 fires before Rule 3
