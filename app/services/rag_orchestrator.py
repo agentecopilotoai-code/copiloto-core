@@ -2,13 +2,20 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 
 from app.core.config import get_settings
 from app.services.audit import audit
+from app.services.booking_flow import maybe_run_booking_flow
+from app.services.feedback_flow import (
+    maybe_record_confirmation,
+    maybe_record_feedback,
+)
 from app.services.conversation_flow import (
     STAGE_START,
     ConversationContext,
@@ -50,6 +57,49 @@ def _parse_escalation_policy(raw: Any) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+_SPANISH_WEEKDAYS = ('lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo')
+
+
+def _current_datetime_label(timezone_name: str) -> tuple[str, str]:
+    """Return (formatted label, tz name actually used)."""
+    tz_name = timezone_name or 'America/Bogota'
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo('America/Bogota')
+        tz_name = 'America/Bogota'
+    now = datetime.now(tz)
+    weekday = _SPANISH_WEEKDAYS[now.weekday()]
+    label = f"{weekday} {now.strftime('%d/%m/%Y %H:%M')}"
+    return label, tz_name
+
+
+async def _load_active_resources_context(
+    conn: Any, tenant_id: UUID
+) -> str:
+    """Format active resources as bullet lines for the LLM system prompt."""
+    rows = await conn.fetch(
+        """
+        select name, resource_type
+        from app.resources
+        where tenant_id=$1 and is_active=true
+        order by name asc
+        limit 20
+        """,
+        tenant_id,
+    )
+    if not rows:
+        return 'No hay profesionales activos configurados todavía.'
+    lines = []
+    for row in rows:
+        kind = (row['resource_type'] or '').strip()
+        if kind:
+            lines.append(f"- {row['name']} ({kind})")
+        else:
+            lines.append(f"- {row['name']}")
+    return '\n'.join(lines)
+
+
 
 async def orchestrate_inbound_message(
     conn: asyncpg.Connection,
@@ -77,7 +127,7 @@ async def orchestrate_inbound_message(
         conversation_status=conversation['status'],
     )
 
-    if inbound_message['message_type'] != 'text' or not body_text.strip():
+    if inbound_message['message_type'] not in ('text', 'interactive') or not body_text.strip():
         log.info('orchestrator.skip', reason='non_text_message', message_id=message_id)
         return {'action': 'skipped', 'reason': 'non_text_message'}
 
@@ -177,7 +227,7 @@ async def orchestrate_inbound_message(
     settings_row = await conn.fetchrow(
         """
         select ts.escalation_policy,
-               t.display_name as business_name, t.vertical_code
+               t.display_name as business_name, t.vertical_code, t.timezone
         from app.tenant_settings ts
         join app.tenants t on t.id = ts.tenant_id
         where ts.tenant_id=$1
@@ -198,12 +248,17 @@ async def orchestrate_inbound_message(
     max_bot_turns: int = int(policy_max_turns) if isinstance(policy_max_turns, (int, float)) and policy_max_turns > 0 else 10
     business_name: str = (settings_row['business_name'] if settings_row else None) or 'nuestro negocio'
     vertical_code: str = (settings_row['vertical_code'] if settings_row else None) or 'general'
+    tenant_timezone: str = (settings_row['timezone'] if settings_row else None) or 'America/Bogota'
+    current_datetime_label, tenant_timezone = _current_datetime_label(tenant_timezone)
+    resources_context: str = await _load_active_resources_context(conn, tenant_id)
 
     log.info(
         'orchestrator.settings_loaded',
         tenant_id=str(tenant_id),
         max_bot_turns=max_bot_turns,
         business_name=business_name,
+        timezone=tenant_timezone,
+        current_datetime_label=current_datetime_label,
         answer_engine=get_settings().answer_engine,
         handoff_keywords=(policy.get('triggers') or {}).get('keywords') or [],
         has_handoff_message=bool(policy.get('handoff_message')),
@@ -249,15 +304,29 @@ async def orchestrate_inbound_message(
         return {'action': 'skipped', 'reason': 'opt_out_registered'}
 
     # ── Policy engine evaluation ──────────────────────────────────────────────
-    # Fetch bot_turn_count for policy evaluation.
+    # Reset window: only count bot turns produced AFTER the most recent agent
+    # release. When a human takes over and then releases the conversation back
+    # to the bot, the policy counters start fresh so a new conversation isn't
+    # immediately re-escalated just because previous turns existed.
+    last_release_at = await conn.fetchval(
+        """
+        select max(updated_at) from app.handoffs
+        where tenant_id=$1 and conversation_id=$2 and status='resolved'
+        """,
+        tenant_id,
+        conversation['id'],
+    )
+
     bot_turn_count: int = await conn.fetchval(
         """
         select count(*) from app.messages
         where conversation_id=$1
           and direction='outbound'
           and sender_actor_type='bot'
+          and ($2::timestamptz is null or created_at > $2)
         """,
         conversation['id'],
+        last_release_at,
     ) or 0
 
     # Count consecutive recent bot messages with sufficient_context=false.
@@ -268,10 +337,12 @@ async def orchestrate_inbound_message(
         where conversation_id=$1
           and direction='outbound'
           and sender_actor_type='bot'
+          and ($2::timestamptz is null or created_at > $2)
         order by created_at desc
         limit 10
         """,
         conversation['id'],
+        last_release_at,
     )
     consecutive_no_context = 0
     for _row in recent_sc_rows:
@@ -323,6 +394,67 @@ async def orchestrate_inbound_message(
     ):
         log.info('orchestrator.skip', reason='already_processed', idempotency_key=idempotency_key)
         return {'action': 'skipped', 'reason': 'already_processed'}
+
+    # TASK-0036: capture explicit rating replies (1-5) and confirmation
+    # replies (sí/no) before falling into the booking flow or the RAG cascade.
+    # These run cheaply on every inbound and short-circuit only when they match.
+    feedback_result = await maybe_record_feedback(
+        conn,
+        tenant_id=tenant_id,
+        contact_id=contact['id'],
+        inbound_message=inbound_message,
+    )
+    if feedback_result is not None:
+        log.info(
+            'orchestrator.feedback_recorded',
+            conversation_id=conversation_id,
+            appointment_id=feedback_result.get('appointment_id'),
+            rating=feedback_result.get('rating'),
+        )
+        return feedback_result
+
+    confirmation_result = await maybe_record_confirmation(
+        conn,
+        tenant_id=tenant_id,
+        contact_id=contact['id'],
+        inbound_message=inbound_message,
+    )
+    if confirmation_result is not None:
+        log.info(
+            'orchestrator.confirmation_recorded',
+            conversation_id=conversation_id,
+            appointment_id=confirmation_result.get('appointment_id'),
+            decision=confirmation_result.get('confirmation_status'),
+        )
+
+    # Guided booking flow over interactive messages (TASK-0030).
+    # Runs when the tenant has services in the catalogue AND either:
+    #  - the user has just expressed booking intent, or
+    #  - the conversation is mid-flow (state in conversations.metadata.booking_flow),
+    #  - the inbound message is an interactive reply with a booking prefix.
+    has_catalog = bool(await conn.fetchval(
+        'select 1 from app.service_catalog where tenant_id=$1 and is_active=true limit 1',
+        tenant_id,
+    ))
+    booking_result = await maybe_run_booking_flow(
+        conn,
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        conversation=conversation,
+        contact=contact,
+        inbound_message=inbound_message,
+        intent=intent_result.intent,
+        has_catalog=has_catalog,
+    )
+    if booking_result is not None:
+        log.info(
+            'orchestrator.booking_flow_handled',
+            conversation_id=conversation_id,
+            step=booking_result.get('step'),
+            action=booking_result.get('action'),
+        )
+        return booking_result
 
     # Retrieve active knowledge chunks and run RAG ranking
     rows = await conn.fetch(
@@ -410,7 +542,15 @@ async def orchestrate_inbound_message(
         )
 
         decision = await _resolve_conversational(
-            body_text, matches, ctx, history, settings, business_name=business_name,
+            body_text,
+            matches,
+            ctx,
+            history,
+            settings,
+            business_name=business_name,
+            current_datetime_label=current_datetime_label,
+            timezone=tenant_timezone,
+            resources_context=resources_context,
         )
 
         new_stage = decision.get('next_stage', ctx.stage)
@@ -570,6 +710,9 @@ async def _resolve_conversational(
     settings: Any,
     *,
     business_name: str,
+    current_datetime_label: str = 'no disponible',
+    timezone: str = 'America/Bogota',
+    resources_context: str = 'No hay profesionales activos configurados todavía.',
 ) -> dict[str, Any]:
     """Call the conversational LLM with booking state; fall back to Q&A cascade on failure."""
     try:
@@ -583,6 +726,9 @@ async def _resolve_conversational(
             timeout_seconds=settings.local_llm_timeout_seconds,
             min_score=settings.cascade_llm_min_score,
             business_name=business_name,
+            current_datetime_label=current_datetime_label,
+            timezone=timezone,
+            resources_context=resources_context,
         )
     except Exception as exc:
         log.warning(
@@ -616,6 +762,9 @@ async def _resolve_conversational(
                 timeout_seconds=settings.cloud_llm_timeout_seconds,
                 min_score=settings.cascade_llm_min_score,
                 business_name=business_name,
+                current_datetime_label=current_datetime_label,
+                timezone=timezone,
+                resources_context=resources_context,
             )
         except Exception as exc:
             log.warning(

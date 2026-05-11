@@ -25,7 +25,10 @@ def test_webhook_channel_query_fetches_account_mode():
 def test_orchestrator_skips_non_text_and_empty_messages():
     source = ORCHESTRATOR.read_text()
 
-    assert "message_type'] != 'text'" in source
+    # Interactive replies (button_reply/list_reply) are treated as text after
+    # the webhook fills body_text with the interactive title; everything else
+    # is skipped as non_text_message.
+    assert "message_type'] not in ('text', 'interactive')" in source
     assert "'non_text_message'" in source
 
 
@@ -76,6 +79,20 @@ def test_orchestrator_enforces_after_bot_turns_limit():
     assert 'max_bot_turns_exceeded' in policy_source
     assert "triggers.get('after_bot_turns')" in policy_source
     assert 'evaluate_policy' in source
+
+
+def test_orchestrator_resets_bot_turn_count_after_release():
+    """When a human takes over and releases the conversation back to the bot,
+    the policy counters must restart from the most recent release timestamp —
+    otherwise every new message after a release would re-trigger handoff."""
+    source = ORCHESTRATOR.read_text()
+
+    assert 'last_release_at' in source
+    assert "from app.handoffs" in source
+    assert "status='resolved'" in source
+    assert "max(updated_at)" in source
+    # Both the count and the consecutive-no-context query honour the window.
+    assert source.count('$2::timestamptz is null or created_at > $2') >= 2
 
 
 def test_orchestrator_deduplicates_by_idempotency_key():

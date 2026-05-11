@@ -70,6 +70,8 @@ async def process_once(conn: asyncpg.Connection) -> int:
                 row['media_id'],
                 message_payload.get('media_url'),
                 message_payload.get('caption'),
+                message_payload.get('interactive'),
+                message_payload.get('template'),
             )
         except Exception as exc:
             error_message = delivery_error_message(exc)

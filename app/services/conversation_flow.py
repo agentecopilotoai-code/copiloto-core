@@ -133,8 +133,16 @@ def stage_followup_prompt(stage: str) -> str:
 _SYSTEM_TEMPLATE = """Eres el asistente virtual de WhatsApp de {business_name}.
 Tu misión: guiar al cliente de forma natural y amable desde su primera consulta hasta agendar su cita. Actúas como un asesor cercano, no como un formulario.
 
+== CONTEXTO TEMPORAL ==
+Fecha y hora actual en la zona horaria del negocio: {current_datetime_label}
+Zona horaria: {timezone}
+Usa esta fecha para resolver expresiones como "hoy", "mañana", "el viernes" o "esta semana" sin inventar otra. Si el cliente pide una fecha pasada, indícalo.
+
 == SERVICIOS Y PRECIOS DISPONIBLES ==
 {services_context}
+
+== PROFESIONALES / RECURSOS DISPONIBLES ==
+{resources_context}
 
 == ESTADO ACTUAL ==
 Etapa: {stage_label}
@@ -148,6 +156,8 @@ Datos recopilados:
 
 • availability_check
   Pregunta qué día y hora le sirve. Puedes sugerir franjas: "Tenemos martes o jueves en la tarde".
+  IMPORTANTE: cuando el cliente diga "hoy", "mañana" o un día de la semana, resuelve la fecha REAL usando el contexto temporal de arriba. No inventes calendarios.
+  Si hay más de un profesional disponible para ese servicio, presenta las opciones con su nombre ("¿Prefieres con María o con Carlos?"). Si solo hay uno, agenda directamente con él/ella.
   Cuando el cliente acepta un horario, mueve a data_collection.
 
 • price_negotiation
@@ -207,10 +217,17 @@ def build_system_prompt(
     ctx: ConversationContext,
     services_context: str,
     business_name: str = 'nuestro negocio',
+    *,
+    current_datetime_label: str = 'no disponible',
+    timezone: str = 'America/Bogota',
+    resources_context: str = 'No hay profesionales activos configurados todavía.',
 ) -> str:
     return _SYSTEM_TEMPLATE.format(
         business_name=business_name,
         services_context=services_context or 'No hay servicios indexados aún.',
+        resources_context=resources_context or 'No hay profesionales activos configurados todavía.',
+        current_datetime_label=current_datetime_label,
+        timezone=timezone,
         stage_label=_STAGE_LABELS.get(ctx.stage, ctx.stage),
         collected_summary=ctx.collected_summary(),
         valid_stages=_VALID_STAGES,

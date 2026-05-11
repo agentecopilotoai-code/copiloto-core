@@ -6,6 +6,12 @@ export const adminModules = [
     scope: ['Crear tenant', 'Editar settings', 'Horarios y escalamiento', 'PII policy y no_train'],
   },
   {
+    id: 'services',
+    label: 'Servicios',
+    summary: 'Catálogo de servicios del negocio con precio, duración e instrucciones.',
+    scope: ['Crear/editar servicios', 'Reordenar', 'Activar/desactivar', 'Instrucciones pre y post servicio'],
+  },
+  {
     id: 'whatsapp',
     label: 'WhatsApp',
     summary: 'Onboarding y salud del canal WhatsApp/WABA.',

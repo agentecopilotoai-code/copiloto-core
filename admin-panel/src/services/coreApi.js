@@ -390,6 +390,131 @@ export function openConversationStream(session, tenantId) {
   );
 }
 
+export function listAppointmentFeedback(session, tenantId, appointmentId) {
+  return request(`/appointments/${appointmentId}/feedback`, { session, tenantId });
+}
+
+export function createAppointmentFeedback(session, tenantId, appointmentId, payload) {
+  return request(`/appointments/${appointmentId}/feedback`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function getResourceAvailability(session, tenantId, resourceId, { date, serviceId } = {}) {
+  const params = new URLSearchParams();
+  if (date) params.set('date', date);
+  if (serviceId) params.set('service_id', serviceId);
+  const query = params.toString();
+  return request(
+    `/tenants/${tenantId}/resources/${resourceId}/availability${query ? `?${query}` : ''}`,
+    { session, tenantId },
+  );
+}
+
+export function getTenantAvailability(session, tenantId, { date, serviceId } = {}) {
+  const params = new URLSearchParams();
+  if (date) params.set('date', date);
+  if (serviceId) params.set('service_id', serviceId);
+  const query = params.toString();
+  return request(
+    `/tenants/${tenantId}/availability${query ? `?${query}` : ''}`,
+    { session, tenantId },
+  );
+}
+
+export function listWhatsappTemplates(session, tenantId, { purpose, status } = {}) {
+  const params = new URLSearchParams();
+  if (purpose) params.set('purpose', purpose);
+  if (status) params.set('status', status);
+  const query = params.toString();
+  return request(
+    `/tenants/${tenantId}/whatsapp/templates${query ? `?${query}` : ''}`,
+    { session, tenantId },
+  );
+}
+
+export function getWhatsappTemplate(session, tenantId, templateId) {
+  return request(`/tenants/${tenantId}/whatsapp/templates/${templateId}`, { session, tenantId });
+}
+
+export function createWhatsappTemplate(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/whatsapp/templates`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateWhatsappTemplate(session, tenantId, templateId, payload) {
+  return request(`/tenants/${tenantId}/whatsapp/templates/${templateId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deleteWhatsappTemplate(session, tenantId, templateId) {
+  return request(`/tenants/${tenantId}/whatsapp/templates/${templateId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function syncWhatsappTemplates(session, tenantId) {
+  return request(`/tenants/${tenantId}/whatsapp/templates/sync`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: {},
+  });
+}
+
+export function listServices(session, tenantId, { includeInactive = false } = {}) {
+  const query = includeInactive ? '?include_inactive=true' : '';
+  return request(`/tenants/${tenantId}/services${query}`, { session, tenantId });
+}
+
+export function createService(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/services`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateService(session, tenantId, serviceId, payload) {
+  return request(`/tenants/${tenantId}/services/${serviceId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deactivateService(session, tenantId, serviceId) {
+  return request(`/tenants/${tenantId}/services/${serviceId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function reorderServices(session, tenantId, order) {
+  return request(`/tenants/${tenantId}/services/reorder`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { order },
+  });
+}
+
 export function listResources(session, tenantId, filters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {

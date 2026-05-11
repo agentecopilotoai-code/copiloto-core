@@ -9,6 +9,7 @@ import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
 import { KnowledgeStorageSettings } from '../modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
 import { GoLiveReadiness } from '../modules/readiness/GoLiveReadiness.jsx';
 import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
+import { ServiceCatalog } from '../modules/services/ServiceCatalog.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
 import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
 import { Sidebar } from './Sidebar.jsx';
@@ -153,6 +154,8 @@ export function AdminLayout({ session }) {
     );
   } else if (!hasTenant) {
     activeContent = <NoTenantOnboarding onCreateTenant={openTenantCreation} />;
+  } else if (activeModuleId === 'services') {
+    activeContent = <ServiceCatalog module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'whatsapp') {
     activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'knowledge-storage') {

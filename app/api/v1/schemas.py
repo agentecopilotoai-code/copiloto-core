@@ -101,9 +101,84 @@ class MessageCreate(BaseModel):
 
 
 
+WHATSAPP_TEMPLATE_PURPOSES = (
+    'appointment_confirmation',
+    'appointment_reminder_24h',
+    'appointment_reminder_1h',
+    'appointment_reminder_custom',
+    'no_show_confirmation_request',
+    'no_show_followup',
+    'post_appointment_instructions',
+    'post_appointment_feedback',
+    'post_appointment_rebooking',
+    'reschedule_offer',
+    'campaign_promo',
+    'payment_request',
+    'custom',
+)
+WHATSAPP_TEMPLATE_PURPOSE_PATTERN = '^(' + '|'.join(WHATSAPP_TEMPLATE_PURPOSES) + ')$'
+
+
+class WhatsAppTemplateCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=512, pattern=r'^[a-z0-9_]+$')
+    locale: str = Field(default='es', min_length=2, max_length=5)
+    category: str = Field(pattern='^(utility|marketing|authentication)$')
+    purpose: str = Field(pattern=WHATSAPP_TEMPLATE_PURPOSE_PATTERN)
+    components: dict[str, Any] = Field(default_factory=dict)
+    channel_id: UUID | None = None
+
+
+class WhatsAppTemplateUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=512, pattern=r'^[a-z0-9_]+$')
+    locale: str | None = Field(default=None, min_length=2, max_length=5)
+    category: str | None = Field(default=None, pattern='^(utility|marketing|authentication)$')
+    purpose: str | None = Field(default=None, pattern=WHATSAPP_TEMPLATE_PURPOSE_PATTERN)
+    components: dict[str, Any] | None = None
+    status: str | None = Field(default=None, pattern='^(draft|pending|approved|rejected|paused)$')
+    meta_template_id: str | None = None
+    rejection_reason: str | None = None
+
+
+class ServiceCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    category: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    price_amount: float | None = Field(default=None, ge=0)
+    price_currency: str = Field(default='COP', min_length=3, max_length=3)
+    duration_minutes: int = Field(default=60, gt=0, le=1440)
+    preparation_notes: str | None = Field(default=None, max_length=2000)
+    post_service_notes: str | None = Field(default=None, max_length=2000)
+    is_active: bool = True
+    sort_order: int = Field(default=0, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ServiceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    category: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    price_amount: float | None = Field(default=None, ge=0)
+    price_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    duration_minutes: int | None = Field(default=None, gt=0, le=1440)
+    preparation_notes: str | None = Field(default=None, max_length=2000)
+    post_service_notes: str | None = Field(default=None, max_length=2000)
+    is_active: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0)
+    metadata: dict[str, Any] | None = None
+
+
+class ServiceReorderItem(BaseModel):
+    id: UUID
+    sort_order: int = Field(ge=0)
+
+
+class ServiceReorderRequest(BaseModel):
+    order: list[ServiceReorderItem] = Field(default_factory=list)
+
+
 class ResourceCreate(BaseModel):
     tenant_id: UUID
-    vertical_code: str = Field(min_length=1, max_length=64)
+    vertical_code: str | None = Field(default=None, max_length=64)
     resource_type: str = Field(min_length=1, max_length=64)
     code: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=160)
@@ -112,7 +187,7 @@ class ResourceCreate(BaseModel):
 
 
 class ResourceUpdate(BaseModel):
-    vertical_code: str | None = Field(default=None, min_length=1, max_length=64)
+    vertical_code: str | None = Field(default=None, max_length=64)
     resource_type: str | None = Field(default=None, min_length=1, max_length=64)
     code: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, min_length=1, max_length=160)
@@ -173,6 +248,7 @@ class AppointmentCreate(BaseModel):
     ends_at: datetime
     conversation_id: UUID | None = None
     service_request_id: UUID | None = None
+    service_id: UUID | None = None
     notes: str | None = None
 
 

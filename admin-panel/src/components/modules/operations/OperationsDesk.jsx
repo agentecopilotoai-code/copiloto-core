@@ -11,6 +11,8 @@ import {
   createConversationHandoff,
   getConversation,
   getQuoteForSr,
+  getTenantAvailability,
+  listAppointmentFeedback,
   listAppointments,
   listConversations,
   listResources,
@@ -22,8 +24,55 @@ import {
   sendConversationMessage,
   sendQuote,
   updateAppointment,
+  updateResource,
   startConversation,
 } from '../../../services/coreApi.js';
+
+const WORKING_DAYS = [
+  { key: 'mon', label: 'Lun' },
+  { key: 'tue', label: 'Mar' },
+  { key: 'wed', label: 'Mié' },
+  { key: 'thu', label: 'Jue' },
+  { key: 'fri', label: 'Vie' },
+  { key: 'sat', label: 'Sáb' },
+  { key: 'sun', label: 'Dom' },
+];
+
+function emptyWorkingHoursForm() {
+  return WORKING_DAYS.reduce((acc, { key }, index) => {
+    acc[key] = { enabled: index < 5, start: '09:00', end: '18:00' };
+    return acc;
+  }, {});
+}
+
+function workingHoursFromCapabilities(capabilities) {
+  const config = capabilities && typeof capabilities === 'object' ? capabilities : {};
+  const stored = config.working_hours && typeof config.working_hours === 'object' ? config.working_hours : {};
+  return WORKING_DAYS.reduce((acc, { key }, index) => {
+    const slots = Array.isArray(stored[key]) ? stored[key] : [];
+    const slot = slots[0];
+    acc[key] = {
+      enabled: Boolean(slot),
+      start: slot?.start || '09:00',
+      end: slot?.end || '18:00',
+      _defaultEnabled: index < 5,
+    };
+    return acc;
+  }, {});
+}
+
+function workingHoursToJson(hours) {
+  return WORKING_DAYS.reduce((acc, { key }) => {
+    const day = hours[key];
+    acc[key] = day?.enabled ? [{ start: day.start, end: day.end }] : [];
+    return acc;
+  }, {});
+}
+
+function todayISO() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
 
 function formatDate(value) {
   if (!value) return 'Sin fecha';
@@ -53,10 +102,93 @@ function messageLabel(message) {
   const labels = {
     audio: 'Audio',
     image: 'Imagen',
+    interactive: 'Interactivo',
     text: 'Texto',
     video: 'Video',
   };
   return labels[message.message_type] || message.message_type || 'Mensaje';
+}
+
+function interactivePayload(message) {
+  const payload = message?.payload;
+  if (!payload || typeof payload !== 'object') return null;
+  if (payload.interactive && typeof payload.interactive === 'object') {
+    return payload.interactive;
+  }
+  return null;
+}
+
+function interactiveSelection(message) {
+  const payload = message?.payload;
+  if (!payload || typeof payload !== 'object') return null;
+  const id = payload.interactive_id;
+  const title = payload.interactive_title;
+  if (typeof id !== 'string' || typeof title !== 'string') return null;
+  return { id, title, type: payload.interactive_type, description: payload.interactive_description };
+}
+
+function renderInteractiveOutbound(interactive, message) {
+  const body = interactive?.body?.text || message?.body_text || '';
+  const header = interactive?.header?.text;
+  const footer = interactive?.footer?.text;
+  if (interactive?.type === 'button') {
+    const buttons = interactive?.action?.buttons || [];
+    return (
+      <div className="message-interactive">
+        {header ? <p className="interactive-header"><strong>{header}</strong></p> : null}
+        {body ? <p>{body}</p> : null}
+        <div className="interactive-buttons">
+          {buttons.map((button, index) => (
+            <span className="interactive-chip" key={button?.reply?.id || index}>
+              {button?.reply?.title || 'Opción'}
+            </span>
+          ))}
+        </div>
+        {footer ? <p className="interactive-footer">{footer}</p> : null}
+      </div>
+    );
+  }
+  if (interactive?.type === 'list') {
+    const sections = interactive?.action?.sections || [];
+    const buttonLabel = interactive?.action?.button;
+    return (
+      <div className="message-interactive">
+        {header ? <p className="interactive-header"><strong>{header}</strong></p> : null}
+        {body ? <p>{body}</p> : null}
+        {sections.map((section, sectionIndex) => (
+          <div className="interactive-section" key={section?.title || sectionIndex}>
+            {section?.title ? <p className="interactive-section-title">{section.title}</p> : null}
+            <div className="interactive-buttons">
+              {(section.rows || []).map((row, rowIndex) => (
+                <span className="interactive-chip" key={row?.id || `${sectionIndex}-${rowIndex}`}>
+                  {row?.title || 'Opción'}
+                  {row?.description ? <small> · {row.description}</small> : null}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+        {buttonLabel ? <p className="interactive-cta"><em>Botón: {buttonLabel}</em></p> : null}
+        {footer ? <p className="interactive-footer">{footer}</p> : null}
+      </div>
+    );
+  }
+  return body ? <p>{body}</p> : <p><em>Mensaje interactivo</em></p>;
+}
+
+function renderInteractiveInbound(selection, message) {
+  return (
+    <div className="message-interactive">
+      <p>
+        <em>El cliente seleccionó: </em>
+        <span className="interactive-chip interactive-chip-selected">{selection.title}</span>
+      </p>
+      {selection.description ? <p><small>{selection.description}</small></p> : null}
+      {message?.body_text && message.body_text !== selection.title ? (
+        <p>{message.body_text}</p>
+      ) : null}
+    </div>
+  );
 }
 
 function mediaSource(message, session, tenantId) {
@@ -109,6 +241,17 @@ function renderMessageContent(message, session = message._session, tenantId = me
     );
   }
 
+  if (message.message_type === 'interactive') {
+    const inboundSelection = message.direction === 'inbound' ? interactiveSelection(message) : null;
+    if (inboundSelection) {
+      return renderInteractiveInbound(inboundSelection, message);
+    }
+    const interactive = interactivePayload(message);
+    if (interactive) {
+      return renderInteractiveOutbound(interactive, message);
+    }
+  }
+
   return <p>{text || JSON.stringify(message.payload)}</p>;
 }
 
@@ -131,7 +274,12 @@ export function OperationsDesk({ module, session, tenant }) {
   const [handoffReason, setHandoffReason] = useState('manual_or_policy_handoff');
   const [resources, setResources] = useState([]);
   const [appointments, setAppointments] = useState([]);
-  const [resourceForm, setResourceForm] = useState({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '' });
+  const [appointmentFeedback, setAppointmentFeedback] = useState({});
+  const [resourceForm, setResourceForm] = useState({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '', workingHours: emptyWorkingHoursForm() });
+  const [editingResourceId, setEditingResourceId] = useState(null);
+  const [calendarDate, setCalendarDate] = useState(todayISO);
+  const [calendarData, setCalendarData] = useState(null);
+  const [isCalendarLoading, setIsCalendarLoading] = useState(false);
   const [appointmentForm, setAppointmentForm] = useState({ endsAt: '', notes: '', resourceId: '', serviceCode: '', startsAt: '' });
   const [rescheduleForm, setRescheduleForm] = useState({ appointmentId: '', endsAt: '', resourceId: '', startsAt: '' });
   const [serviceRequests, setServiceRequests] = useState([]);
@@ -192,6 +340,23 @@ export function OperationsDesk({ module, session, tenant }) {
       setAppointments(appointmentItems);
       setAppointmentForm((current) => ({ ...current, resourceId: current.resourceId || resourceItems[0]?.id || '' }));
       setRescheduleForm((current) => ({ ...current, resourceId: current.resourceId || resourceItems[0]?.id || '' }));
+
+      // Fetch feedback for the visible slice so the agent can see the rating.
+      const visible = appointmentItems.slice(0, 8);
+      Promise.allSettled(
+        visible.map((appointment) =>
+          listAppointmentFeedback(session, tenant.id, appointment.id).then((items) => [appointment.id, items]),
+        ),
+      ).then((results) => {
+        const next = {};
+        results.forEach((entry) => {
+          if (entry.status === 'fulfilled') {
+            const [appointmentId, items] = entry.value;
+            if (Array.isArray(items) && items.length > 0) next[appointmentId] = items[0];
+          }
+        });
+        setAppointmentFeedback(next);
+      });
     }).catch((error) => {
       if (!silent) setNotice({ type: 'error', text: error.message });
     });
@@ -412,21 +577,68 @@ export function OperationsDesk({ module, session, tenant }) {
     setIsBusy(true);
     setNotice(null);
     try {
-      await createResource(session, tenant.id, {
-        code: resourceForm.code.trim(),
-        name: resourceForm.name.trim(),
-        resource_type: resourceForm.resourceType,
-        vertical_code: resourceForm.verticalCode,
-      });
-      setResourceForm({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '' });
+      const capabilities = { working_hours: workingHoursToJson(resourceForm.workingHours) };
+      if (editingResourceId) {
+        await updateResource(session, tenant.id, editingResourceId, {
+          code: resourceForm.code.trim(),
+          name: resourceForm.name.trim(),
+          resource_type: resourceForm.resourceType,
+          vertical_code: resourceForm.verticalCode,
+          capabilities,
+        });
+      } else {
+        await createResource(session, tenant.id, {
+          code: resourceForm.code.trim(),
+          name: resourceForm.name.trim(),
+          resource_type: resourceForm.resourceType,
+          vertical_code: resourceForm.verticalCode,
+          capabilities,
+        });
+      }
+      setResourceForm({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '', workingHours: emptyWorkingHoursForm() });
+      setEditingResourceId(null);
       await refreshScheduleData();
-      setNotice({ type: 'success', text: 'Recurso creado y disponible para agenda.' });
+      setNotice({ type: 'success', text: editingResourceId ? 'Recurso actualizado.' : 'Recurso creado y disponible para agenda.' });
     } catch (error) {
       setNotice({ type: 'error', text: error.message });
     } finally {
       setIsBusy(false);
     }
   }
+
+  function handleEditResource(resource) {
+    setEditingResourceId(resource.id);
+    setResourceForm({
+      code: resource.code || '',
+      name: resource.name || '',
+      resourceType: resource.resource_type || 'staff',
+      verticalCode: resource.vertical_code || tenant?.vertical_code || '',
+      workingHours: workingHoursFromCapabilities(resource.capabilities),
+    });
+  }
+
+  function handleCancelResourceEdit() {
+    setEditingResourceId(null);
+    setResourceForm({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '', workingHours: emptyWorkingHoursForm() });
+  }
+
+  async function loadCalendar(targetDate = calendarDate) {
+    if (!tenant?.id || !targetDate) return;
+    setIsCalendarLoading(true);
+    try {
+      const data = await getTenantAvailability(session, tenant.id, { date: targetDate });
+      setCalendarData(data);
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsCalendarLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tenant?.id) loadCalendar(calendarDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenant?.id, calendarDate]);
 
   async function handleCreateAppointment(event) {
     event.preventDefault();
@@ -862,8 +1074,127 @@ export function OperationsDesk({ module, session, tenant }) {
                       <option value="vehicle">Vehículo</option>
                     </select>
                   </label>
-                  <button className="secondary-action" disabled={isBusy} type="submit">Crear recurso</button>
+                  <fieldset className="working-hours-builder">
+                    <legend>Horario laboral semanal</legend>
+                    {WORKING_DAYS.map(({ key, label }) => {
+                      const day = resourceForm.workingHours[key];
+                      return (
+                        <div className="working-hours-row" key={key}>
+                          <label className="inline-check">
+                            <input
+                              type="checkbox"
+                              checked={day.enabled}
+                              onChange={(event) => setResourceForm({
+                                ...resourceForm,
+                                workingHours: {
+                                  ...resourceForm.workingHours,
+                                  [key]: { ...day, enabled: event.target.checked },
+                                },
+                              })}
+                            />
+                            {label}
+                          </label>
+                          <input
+                            type="time"
+                            value={day.start}
+                            disabled={!day.enabled}
+                            onChange={(event) => setResourceForm({
+                              ...resourceForm,
+                              workingHours: {
+                                ...resourceForm.workingHours,
+                                [key]: { ...day, start: event.target.value },
+                              },
+                            })}
+                          />
+                          <span> – </span>
+                          <input
+                            type="time"
+                            value={day.end}
+                            disabled={!day.enabled}
+                            onChange={(event) => setResourceForm({
+                              ...resourceForm,
+                              workingHours: {
+                                ...resourceForm.workingHours,
+                                [key]: { ...day, end: event.target.value },
+                              },
+                            })}
+                          />
+                        </div>
+                      );
+                    })}
+                  </fieldset>
+                  <div className="form-actions">
+                    <button className="secondary-action" disabled={isBusy} type="submit">
+                      {editingResourceId ? 'Guardar cambios' : 'Crear recurso'}
+                    </button>
+                    {editingResourceId ? (
+                      <button
+                        className="secondary-action"
+                        disabled={isBusy}
+                        onClick={handleCancelResourceEdit}
+                        type="button"
+                        style={{ marginLeft: '0.5rem' }}
+                      >
+                        Cancelar edición
+                      </button>
+                    ) : null}
+                  </div>
                 </form>
+
+                {resources.length ? (
+                  <div className="resource-list">
+                    <strong>Recursos del tenant</strong>
+                    <ul>
+                      {resources.map((resource) => (
+                        <li key={resource.id}>
+                          <span>{resource.name} · <code>{resource.code}</code></span>
+                          <button className="secondary-action" type="button" onClick={() => handleEditResource(resource)}>
+                            Editar horario
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                <div className="weekly-calendar">
+                  <div className="calendar-header">
+                    <strong>Calendario diario</strong>
+                    <input
+                      type="date"
+                      value={calendarDate}
+                      onChange={(event) => setCalendarDate(event.target.value)}
+                    />
+                    <button className="secondary-action" disabled={isCalendarLoading} onClick={() => loadCalendar()} type="button">
+                      {isCalendarLoading ? 'Cargando…' : 'Refrescar'}
+                    </button>
+                  </div>
+                  {calendarData ? (
+                    <div className="calendar-grid">
+                      {(calendarData.resources || []).map((resource) => (
+                        <div className="calendar-resource" key={resource.resource_id}>
+                          <p className="calendar-resource-title">{resource.resource_name}</p>
+                          {resource.slots && resource.slots.length ? (
+                            <div className="calendar-slots">
+                              {resource.slots.slice(0, 12).map((slot) => (
+                                <span className="calendar-slot calendar-slot-free" key={`${slot.start_time}-${slot.end_time}`}>
+                                  {slot.start_time}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="hint">Sin cupos libres este día.</p>
+                          )}
+                        </div>
+                      ))}
+                      {(!calendarData.resources || calendarData.resources.length === 0) ? (
+                        <p className="hint">Sin recursos activos configurados.</p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="hint">Selecciona una fecha para ver disponibilidad.</p>
+                  )}
+                </div>
 
                 <form className="schedule-form" onSubmit={handleCreateAppointment}>
                   <label>
@@ -958,15 +1289,29 @@ export function OperationsDesk({ module, session, tenant }) {
                 </form>
 
                 <div className="appointment-list">
-                  {appointments.slice(0, 8).map((appointment) => (
-                    <article key={appointment.id}>
-                      <strong>{formatDate(appointment.starts_at)} — {formatDate(appointment.ends_at)}</strong>
-                      <small>{appointment.resource_name} · {appointment.service_code} · {appointment.status}</small>
-                      {appointment.status !== 'cancelled' && (
-                        <button className="secondary-action" disabled={isBusy} onClick={() => handleCancelAppointment(appointment.id)} type="button">Cancelar</button>
-                      )}
-                    </article>
-                  ))}
+                  {appointments.slice(0, 8).map((appointment) => {
+                    const confirmation = appointment.confirmation_status || 'pending';
+                    const feedback = appointmentFeedback[appointment.id];
+                    return (
+                      <article key={appointment.id}>
+                        <strong>{formatDate(appointment.starts_at)} — {formatDate(appointment.ends_at)}</strong>
+                        <small>{appointment.resource_name} · {appointment.service_code} · {appointment.status}</small>
+                        <div className="appointment-badges">
+                          <span className={`status-badge confirmation-${confirmation}`}>
+                            {confirmation === 'confirmed' ? 'Confirmada' : confirmation === 'declined' ? 'Rechazada' : 'Pendiente'}
+                          </span>
+                          {feedback ? (
+                            <span className="status-badge feedback-rating" title={feedback.comment || ''}>
+                              {'⭐'.repeat(feedback.rating)} ({feedback.rating}/5)
+                            </span>
+                          ) : null}
+                        </div>
+                        {appointment.status !== 'cancelled' && (
+                          <button className="secondary-action" disabled={isBusy} onClick={() => handleCancelAppointment(appointment.id)} type="button">Cancelar</button>
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
               </div>
 

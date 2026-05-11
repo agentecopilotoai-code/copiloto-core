@@ -46,6 +46,7 @@ create table app.tenant_settings (
   pii_policy jsonb not null default '{"no_train":true}'::jsonb,
   no_train boolean not null default true,
   knowledge_storage jsonb not null default '{}'::jsonb,
+  notification_settings jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -199,6 +200,25 @@ create table app.resources (
 );
 create index ix_resources_type on app.resources(tenant_id, resource_type);
 
+create table app.service_catalog (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  category text,
+  name text not null,
+  description text,
+  price_amount numeric(10,2),
+  price_currency char(3) not null default 'COP',
+  duration_minutes int not null default 60 check (duration_minutes > 0),
+  preparation_notes text,
+  post_service_notes text,
+  is_active boolean not null default true,
+  sort_order int not null default 0,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_service_catalog_tenant_active on app.service_catalog(tenant_id, is_active, sort_order);
+
 create table app.service_requests (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -249,6 +269,7 @@ create table app.appointments (
   contact_id uuid not null references app.contacts(id) on delete restrict,
   conversation_id uuid references app.conversations(id) on delete set null,
   service_request_id uuid references app.service_requests(id) on delete set null,
+  service_id uuid references app.service_catalog(id) on delete set null,
   resource_id uuid not null references app.resources(id) on delete restrict,
   service_code text not null,
   starts_at timestamptz not null,
@@ -266,6 +287,40 @@ create table app.appointments (
 );
 create index ix_appointments_tenant_starts on app.appointments(tenant_id, starts_at);
 create index ix_appointments_contact_status on app.appointments(contact_id, status);
+
+create table app.whatsapp_templates (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  channel_id uuid references app.tenant_channels(id) on delete set null,
+  name text not null,
+  locale char(5) not null default 'es',
+  category text not null check (category in ('utility','marketing','authentication')),
+  status text not null default 'draft' check (status in ('draft','pending','approved','rejected','paused')),
+  purpose text not null check (purpose in (
+    'appointment_confirmation','appointment_reminder_24h','appointment_reminder_1h',
+    'appointment_reminder_custom','no_show_confirmation_request','no_show_followup',
+    'post_appointment_instructions','post_appointment_feedback','post_appointment_rebooking',
+    'reschedule_offer','campaign_promo','payment_request','custom'
+  )),
+  components jsonb not null default '{}'::jsonb,
+  meta_template_id text,
+  rejection_reason text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, name, locale)
+);
+create index ix_whatsapp_templates_tenant_purpose on app.whatsapp_templates(tenant_id, purpose, status);
+
+create table app.appointment_feedback (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  appointment_id uuid not null references app.appointments(id) on delete cascade,
+  contact_id uuid not null references app.contacts(id) on delete cascade,
+  rating int not null check (rating between 1 and 5),
+  comment text,
+  created_at timestamptz not null default now()
+);
+create index ix_appointment_feedback_tenant on app.appointment_feedback(tenant_id, created_at desc);
 
 create table app.reminder_jobs (
   id uuid primary key default gen_random_uuid(),
@@ -404,6 +459,9 @@ alter table app.contacts add constraint uq_contacts_tenant_id_id unique (tenant_
 alter table app.conversations add constraint uq_conversations_tenant_id_id unique (tenant_id, id);
 alter table app.messages add constraint uq_messages_tenant_id_id unique (tenant_id, id);
 alter table app.resources add constraint uq_resources_tenant_id_id unique (tenant_id, id);
+alter table app.service_catalog add constraint uq_service_catalog_tenant_id_id unique (tenant_id, id);
+alter table app.whatsapp_templates add constraint uq_whatsapp_templates_tenant_id_id unique (tenant_id, id);
+alter table app.appointment_feedback add constraint uq_appointment_feedback_tenant_id_id unique (tenant_id, id);
 alter table app.service_requests add constraint uq_service_requests_tenant_id_id unique (tenant_id, id);
 alter table app.quotes add constraint uq_quotes_tenant_id_id unique (tenant_id, id);
 alter table app.appointments add constraint uq_appointments_tenant_id_id unique (tenant_id, id);
@@ -428,7 +486,8 @@ alter table app.appointments
   add constraint fk_appointments_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
   add constraint fk_appointments_tenant_conversation foreign key (tenant_id, conversation_id) references app.conversations(tenant_id, id),
   add constraint fk_appointments_tenant_service_request foreign key (tenant_id, service_request_id) references app.service_requests(tenant_id, id),
-  add constraint fk_appointments_tenant_resource foreign key (tenant_id, resource_id) references app.resources(tenant_id, id);
+  add constraint fk_appointments_tenant_resource foreign key (tenant_id, resource_id) references app.resources(tenant_id, id),
+  add constraint fk_appointments_tenant_service foreign key (tenant_id, service_id) references app.service_catalog(tenant_id, id);
 alter table app.reminder_jobs
   add constraint fk_reminder_jobs_tenant_channel foreign key (tenant_id, channel_id) references app.tenant_channels(tenant_id, id);
 alter table app.knowledge_chunks
@@ -442,6 +501,8 @@ create trigger trg_tenant_channels_touch before update on app.tenant_channels fo
 create trigger trg_contacts_touch before update on app.contacts for each row execute function app.touch_updated_at();
 create trigger trg_conversations_touch before update on app.conversations for each row execute function app.touch_updated_at();
 create trigger trg_resources_touch before update on app.resources for each row execute function app.touch_updated_at();
+create trigger trg_service_catalog_touch before update on app.service_catalog for each row execute function app.touch_updated_at();
+create trigger trg_whatsapp_templates_touch before update on app.whatsapp_templates for each row execute function app.touch_updated_at();
 create trigger trg_service_requests_touch before update on app.service_requests for each row execute function app.touch_updated_at();
 create trigger trg_quotes_touch before update on app.quotes for each row execute function app.touch_updated_at();
 create trigger trg_appointments_touch before update on app.appointments for each row execute function app.touch_updated_at();
@@ -456,6 +517,9 @@ alter table app.conversations enable row level security;
 alter table app.messages enable row level security;
 alter table app.message_status_events enable row level security;
 alter table app.resources enable row level security;
+alter table app.service_catalog enable row level security;
+alter table app.whatsapp_templates enable row level security;
+alter table app.appointment_feedback enable row level security;
 alter table app.service_requests enable row level security;
 alter table app.quotes enable row level security;
 alter table app.appointments enable row level security;
@@ -472,7 +536,7 @@ do $$
 declare t text;
 begin
   foreach t in array array[
-    'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_requests','quotes',
+    'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','whatsapp_templates','appointment_feedback','service_requests','quotes',
     'appointments','reminder_jobs','knowledge_documents','knowledge_chunks','prompt_templates','handoffs',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop

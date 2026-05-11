@@ -32,26 +32,40 @@ from app.api.v1.schemas import (
     QuotePatch,
     ResourceCreate,
     ResourceUpdate,
+    ServiceCreate,
+    ServiceReorderRequest,
     ServiceRequestCreate,
     ServiceRequestPatch,
+    ServiceUpdate,
     TenantCreate,
     TenantStatusTransition,
     TenantUpdate,
+    WhatsAppTemplateCreate,
+    WhatsAppTemplateUpdate,
 )
 from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
+from app.services.notifications import (
+    cancel_appointment_reminder_jobs,
+    create_appointment_reminder_jobs,
+    regenerate_appointment_reminder_jobs,
+)
 from app.services.rag_indexing import build_indexing_result_async, vector_literal
 from app.services.intent_classifier import classify_intent
 from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
+    delete_template_from_meta,
     download_whatsapp_media,
+    fetch_templates_from_meta,
     normalize_meta_app_secret,
+    parse_interactive_reply,
     resolve_secret_ref,
     secret_ref_is_configured,
+    submit_template_to_meta,
     token_ref_is_configured,
     verify_signature_with_secret,
 )
@@ -256,6 +270,10 @@ platform_admin_router = APIRouter(
 tenant_admin_router = APIRouter(
     tags=['tenant-admin'],
     dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+)
+tenant_catalog_router = APIRouter(
+    tags=['tenant-catalog'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin', allow_service=True))],
 )
 tenant_ops_router = APIRouter(
     tags=['tenant-operations'],
@@ -728,7 +746,11 @@ def _coerce_jsonb(value: Any) -> Any:
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    allowed = {k: payload[k] for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train') if k in payload}
+    allowed = {
+        k: payload[k]
+        for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train', 'notification_settings')
+        if k in payload
+    }
     current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
     if not current:
         raise HTTPException(status_code=404, detail='Settings not found')
@@ -736,14 +758,14 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     merged.update(allowed)
 
     # Normalize jsonb fields: accept both raw dicts and JSON strings from clients
-    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy'):
+    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy', 'notification_settings'):
         merged[jsonb_key] = _coerce_jsonb(merged[jsonb_key]) or {}
 
     row = await conn.fetchrow(
         """
         update app.tenant_settings
         set locale=$2, business_hours=$3::jsonb, escalation_policy=$4::jsonb, pii_policy=$5::jsonb,
-            no_train=$6
+            no_train=$6, notification_settings=$7::jsonb
         where tenant_id=$1 returning *
         """,
         tenant_id,
@@ -752,6 +774,7 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         json.dumps(merged['escalation_policy']),
         json.dumps(merged['pii_policy']),
         merged['no_train'],
+        json.dumps(merged['notification_settings']),
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
     return record_to_dict(row)
@@ -973,6 +996,348 @@ async def patch_channel_mode(
         metadata={'account_mode': payload.account_mode, 'reason': payload.reason},
     )
     return record_to_dict(row)
+
+
+WHATSAPP_TEMPLATE_COLUMNS = (
+    'id',
+    'tenant_id',
+    'channel_id',
+    'name',
+    'locale',
+    'category',
+    'status',
+    'purpose',
+    'components',
+    'meta_template_id',
+    'rejection_reason',
+    'created_at',
+    'updated_at',
+)
+WHATSAPP_TEMPLATE_PROJECTION = ', '.join(WHATSAPP_TEMPLATE_COLUMNS)
+
+WHATSAPP_TEMPLATE_REQUIRED_PURPOSES = (
+    'appointment_confirmation',
+    'appointment_reminder_24h',
+)
+
+
+def normalize_whatsapp_template(row: asyncpg.Record | None) -> dict | None:
+    template = record_to_dict(row)
+    if not template:
+        return None
+    template['components'] = parse_json_object(template.get('components'), default={})
+    return template
+
+
+async def _fetch_template_or_404(
+    conn: asyncpg.Connection, tenant_id: UUID, template_id: UUID
+) -> asyncpg.Record:
+    row = await conn.fetchrow(
+        f'select {WHATSAPP_TEMPLATE_PROJECTION} from app.whatsapp_templates where tenant_id=$1 and id=$2',
+        tenant_id,
+        template_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Template not found')
+    return row
+
+
+async def _resolve_channel_for_template(
+    conn: asyncpg.Connection, tenant_id: UUID, channel_id: UUID | None
+) -> asyncpg.Record:
+    if channel_id:
+        row = await conn.fetchrow(
+            "select id, waba_id, token_ref, account_mode from app.tenant_channels where tenant_id=$1 and id=$2 and provider='whatsapp_cloud_api'",
+            tenant_id,
+            channel_id,
+        )
+    else:
+        row = await conn.fetchrow(
+            "select id, waba_id, token_ref, account_mode from app.tenant_channels where tenant_id=$1 and provider='whatsapp_cloud_api'",
+            tenant_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
+    return row
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/whatsapp/templates', status_code=201)
+async def create_whatsapp_template(
+    tenant_id: UUID,
+    payload: WhatsAppTemplateCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    channel = await _resolve_channel_for_template(conn, tenant_id, payload.channel_id)
+    initial_status = 'draft'
+    meta_template_id: str | None = None
+    rejection_reason: str | None = None
+    if (channel['account_mode'] or 'mock') == 'live' and channel['waba_id']:
+        try:
+            meta_response = await submit_template_to_meta(
+                channel['waba_id'],
+                channel['token_ref'],
+                name=payload.name,
+                locale=payload.locale,
+                category=payload.category,
+                components=payload.components,
+            )
+        except Exception as exc:
+            rejection_reason = str(exc)[:500]
+        else:
+            meta_template_id = (
+                meta_response.get('id') if isinstance(meta_response, dict) else None
+            )
+            initial_status = 'pending'
+    try:
+        row = await conn.fetchrow(
+            f"""
+            insert into app.whatsapp_templates (
+              tenant_id, channel_id, name, locale, category, status,
+              purpose, components, meta_template_id, rejection_reason
+            )
+            values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
+            returning {WHATSAPP_TEMPLATE_PROJECTION}
+            """,
+            tenant_id,
+            channel['id'],
+            payload.name,
+            payload.locale,
+            payload.category,
+            initial_status,
+            payload.purpose,
+            json.dumps(payload.components),
+            meta_template_id,
+            rejection_reason,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail='A template with this name and locale already exists for the tenant',
+        ) from exc
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='whatsapp_template.created',
+        entity_type='whatsapp_template',
+        entity_id=str(row['id']),
+        metadata={
+            'purpose': payload.purpose,
+            'status': initial_status,
+            'meta_template_id': meta_template_id,
+        },
+    )
+    return normalize_whatsapp_template(row)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/whatsapp/templates')
+async def list_whatsapp_templates(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    purpose: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias='status'),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {WHATSAPP_TEMPLATE_PROJECTION}
+        from app.whatsapp_templates
+        where tenant_id=$1
+          and ($2::text is null or purpose=$2)
+          and ($3::text is null or status=$3)
+        order by purpose asc, created_at desc
+        """,
+        tenant_id,
+        purpose,
+        status_filter,
+    )
+    return [normalize_whatsapp_template(row) for row in rows]
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/whatsapp/templates/{template_id}')
+async def get_whatsapp_template(
+    tenant_id: UUID,
+    template_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_template_or_404(conn, tenant_id, template_id)
+    return normalize_whatsapp_template(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/whatsapp/templates/{template_id}')
+async def update_whatsapp_template(
+    tenant_id: UUID,
+    template_id: UUID,
+    payload: WhatsAppTemplateUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    await _fetch_template_or_404(conn, tenant_id, template_id)
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await _fetch_template_or_404(conn, tenant_id, template_id)
+        return normalize_whatsapp_template(row)
+    row = await conn.fetchrow(
+        f"""
+        update app.whatsapp_templates
+        set name=coalesce($3, name),
+            locale=coalesce($4, locale),
+            category=coalesce($5, category),
+            purpose=coalesce($6, purpose),
+            components=coalesce($7::jsonb, components),
+            status=coalesce($8, status),
+            meta_template_id=coalesce($9, meta_template_id),
+            rejection_reason=coalesce($10, rejection_reason)
+        where tenant_id=$1 and id=$2
+        returning {WHATSAPP_TEMPLATE_PROJECTION}
+        """,
+        tenant_id,
+        template_id,
+        update_data.get('name'),
+        update_data.get('locale'),
+        update_data.get('category'),
+        update_data.get('purpose'),
+        json.dumps(update_data['components']) if 'components' in update_data else None,
+        update_data.get('status'),
+        update_data.get('meta_template_id'),
+        update_data.get('rejection_reason'),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='whatsapp_template.updated',
+        entity_type='whatsapp_template',
+        entity_id=str(template_id),
+        metadata={'status': update_data.get('status')},
+    )
+    return normalize_whatsapp_template(row)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/whatsapp/templates/sync')
+async def sync_whatsapp_templates(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    channel = await _resolve_channel_for_template(conn, tenant_id, None)
+    if (channel['account_mode'] or 'mock') != 'live' or not channel['waba_id']:
+        raise HTTPException(
+            status_code=400,
+            detail='Template sync requires the WhatsApp channel in live mode with a configured waba_id',
+        )
+    try:
+        meta_templates = await fetch_templates_from_meta(channel['waba_id'], channel['token_ref'])
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f'Meta sync failed: {exc}') from exc
+    by_key = {
+        (item.get('name'), (item.get('language') or '').lower()): item
+        for item in meta_templates
+        if isinstance(item, dict) and item.get('name')
+    }
+    rows = await conn.fetch(
+        'select id, name, locale from app.whatsapp_templates where tenant_id=$1',
+        tenant_id,
+    )
+    updated = 0
+    for row in rows:
+        key = (row['name'], (row['locale'] or '').lower())
+        meta_entry = by_key.get(key)
+        if not meta_entry:
+            continue
+        meta_status = (meta_entry.get('status') or '').upper()
+        next_status_map = {
+            'APPROVED': 'approved',
+            'PENDING': 'pending',
+            'REJECTED': 'rejected',
+            'PAUSED': 'paused',
+        }
+        next_status = next_status_map.get(meta_status)
+        if not next_status:
+            continue
+        rejection_reason = meta_entry.get('rejected_reason') or meta_entry.get('reason')
+        await conn.execute(
+            """
+            update app.whatsapp_templates
+            set status=$3,
+                meta_template_id=coalesce($4, meta_template_id),
+                rejection_reason=$5
+            where tenant_id=$1 and id=$2
+            """,
+            tenant_id,
+            row['id'],
+            next_status,
+            str(meta_entry.get('id')) if meta_entry.get('id') is not None else None,
+            str(rejection_reason)[:500] if rejection_reason else None,
+        )
+        updated += 1
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='whatsapp_template.synced',
+        entity_type='whatsapp_template',
+        entity_id=str(tenant_id),
+        metadata={'updated': updated, 'meta_total': len(meta_templates)},
+    )
+    return {'updated': updated, 'meta_total': len(meta_templates)}
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/whatsapp/templates/{template_id}', status_code=204)
+async def delete_whatsapp_template(
+    tenant_id: UUID,
+    template_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    template = await _fetch_template_or_404(conn, tenant_id, template_id)
+    channel = await _resolve_channel_for_template(conn, tenant_id, template['channel_id'])
+    if (channel['account_mode'] or 'mock') == 'live' and channel['waba_id']:
+        try:
+            await delete_template_from_meta(
+                channel['waba_id'],
+                channel['token_ref'],
+                template_name=template['name'],
+            )
+        except Exception as exc:
+            log.warning(
+                'whatsapp_template.delete_meta_failed',
+                tenant_id=str(tenant_id),
+                template_id=str(template_id),
+                error=str(exc)[:200],
+            )
+    await conn.execute(
+        'delete from app.whatsapp_templates where tenant_id=$1 and id=$2',
+        tenant_id,
+        template_id,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='whatsapp_template.deleted',
+        entity_type='whatsapp_template',
+        entity_id=str(template_id),
+    )
+    return Response(status_code=204)
 
 
 @system_router.post('/contacts/upsert')
@@ -1664,6 +2029,12 @@ async def list_resources(
 async def create_resource(payload: ResourceCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
+    vertical_code = (payload.vertical_code or '').strip()
+    if not vertical_code:
+        vertical_code = (
+            await conn.fetchval('select vertical_code from app.tenants where id=$1', payload.tenant_id)
+            or 'general'
+        )
     try:
         row = await conn.fetchrow(
             """
@@ -1672,7 +2043,7 @@ async def create_resource(payload: ResourceCreate, request: Request, conn: async
             returning *
             """,
             payload.tenant_id,
-            payload.vertical_code,
+            vertical_code,
             payload.resource_type,
             payload.code,
             payload.name,
@@ -1741,6 +2112,518 @@ async def deactivate_resource(resource_id: UUID, request: Request, conn: asyncpg
         raise HTTPException(status_code=404, detail='Resource not found')
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.deactivated', entity_type='resource', entity_id=str(resource_id))
     return Response(status_code=204)
+
+
+WEEKDAY_KEYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+
+
+def parse_iso_date(value: str) -> datetime:
+    try:
+        return datetime.strptime(value, '%Y-%m-%d')
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail='date must use YYYY-MM-DD format') from exc
+
+
+def working_hours_for_date(capabilities: Any, target_date: datetime) -> list[dict[str, str]]:
+    """Read resources.capabilities.working_hours and return franjas of the target weekday."""
+    config = parse_json_object(capabilities, default={})
+    working_hours = config.get('working_hours')
+    if not isinstance(working_hours, dict):
+        return []
+    weekday_key = WEEKDAY_KEYS[target_date.weekday()]
+    franjas = working_hours.get(weekday_key)
+    if not isinstance(franjas, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for franja in franjas:
+        if not isinstance(franja, dict):
+            continue
+        start = franja.get('start')
+        end = franja.get('end')
+        if isinstance(start, str) and isinstance(end, str) and start and end:
+            normalized.append({'start': start, 'end': end})
+    return normalized
+
+
+def slot_start_minutes(value: str) -> int:
+    hours, _, minutes = value.partition(':')
+    try:
+        return int(hours) * 60 + int(minutes or 0)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f'Invalid time format: {value}') from exc
+
+
+def minutes_to_hhmm(minutes: int) -> str:
+    return f'{minutes // 60:02d}:{minutes % 60:02d}'
+
+
+def compute_free_slots(
+    franjas: list[dict[str, str]],
+    busy_intervals: list[tuple[int, int]],
+    duration_minutes: int,
+    step_minutes: int | None = None,
+) -> list[dict[str, str]]:
+    """Yield free slots of `duration_minutes` skipping any overlap with busy_intervals.
+
+    Slots are aligned to the franja start and advance in `step_minutes`
+    (defaults to duration_minutes — back-to-back slots).
+    """
+    if duration_minutes <= 0:
+        return []
+    step = step_minutes or duration_minutes
+    slots: list[dict[str, str]] = []
+    for franja in franjas:
+        franja_start = slot_start_minutes(franja['start'])
+        franja_end = slot_start_minutes(franja['end'])
+        if franja_end <= franja_start:
+            continue
+        cursor = franja_start
+        while cursor + duration_minutes <= franja_end:
+            slot_start = cursor
+            slot_end = cursor + duration_minutes
+            overlaps = False
+            for busy_start, busy_end in busy_intervals:
+                if slot_start < busy_end and busy_start < slot_end:
+                    overlaps = True
+                    break
+            if not overlaps:
+                slots.append({
+                    'start_time': minutes_to_hhmm(slot_start),
+                    'end_time': minutes_to_hhmm(slot_end),
+                })
+            cursor += step
+    return slots
+
+
+async def fetch_service_duration(
+    conn: asyncpg.Connection, tenant_id: UUID, service_id: UUID | None
+) -> tuple[int | None, asyncpg.Record | None]:
+    """Return (duration_minutes, service_row) for the given service or (None, None)."""
+    if not service_id:
+        return None, None
+    row = await conn.fetchrow(
+        'select id, name, duration_minutes, is_active from app.service_catalog where tenant_id=$1 and id=$2',
+        tenant_id,
+        service_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Service not found')
+    return int(row['duration_minutes']), row
+
+
+async def fetch_fallback_duration(conn: asyncpg.Connection, tenant_id: UUID) -> int:
+    """Return tenant_settings.service_durations.default (in minutes), or 60."""
+    raw = await conn.fetchval(
+        "select escalation_policy->>'service_durations' from app.tenant_settings where tenant_id=$1",
+        tenant_id,
+    )
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                default_minutes = parsed.get('default')
+                if isinstance(default_minutes, int) and default_minutes > 0:
+                    return default_minutes
+        except (json.JSONDecodeError, TypeError):
+            pass
+    settings_row = await conn.fetchval(
+        'select escalation_policy from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    parsed = parse_json_object(settings_row, default={})
+    durations = parsed.get('service_durations') if isinstance(parsed, dict) else None
+    if isinstance(durations, dict):
+        default_minutes = durations.get('default')
+        if isinstance(default_minutes, int) and default_minutes > 0:
+            return default_minutes
+    return 60
+
+
+@tenant_catalog_router.get(
+    '/tenants/{tenant_id}/resources/{resource_id}/availability'
+)
+async def resource_availability(
+    tenant_id: UUID,
+    resource_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    date: str = Query(..., description='Target date in YYYY-MM-DD format'),
+    service_id: UUID | None = Query(default=None),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    target_date = parse_iso_date(date)
+    resource = await conn.fetchrow(
+        'select id, name, code, capabilities, is_active from app.resources where tenant_id=$1 and id=$2',
+        tenant_id,
+        resource_id,
+    )
+    if not resource:
+        raise HTTPException(status_code=404, detail='Resource not found')
+    if not resource['is_active']:
+        return {
+            'date': date,
+            'resource_id': str(resource_id),
+            'service_duration_minutes': 0,
+            'slots': [],
+        }
+    duration, service_row = await fetch_service_duration(conn, tenant_id, service_id)
+    if duration is None:
+        duration = await fetch_fallback_duration(conn, tenant_id)
+    franjas = working_hours_for_date(resource['capabilities'], target_date)
+    if not franjas:
+        return {
+            'date': date,
+            'resource_id': str(resource_id),
+            'service_duration_minutes': duration,
+            'slots': [],
+        }
+    day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC)
+    day_end = day_start.replace(hour=23, minute=59, second=59)
+    busy_rows = await conn.fetch(
+        """
+        select starts_at, ends_at
+        from app.appointments
+        where tenant_id=$1
+          and resource_id=$2
+          and status in ('scheduled','confirmed')
+          and starts_at < $4
+          and ends_at > $3
+        """,
+        tenant_id,
+        resource_id,
+        day_start,
+        day_end,
+    )
+    busy_intervals: list[tuple[int, int]] = []
+    for busy in busy_rows:
+        starts = busy['starts_at']
+        ends = busy['ends_at']
+        if not isinstance(starts, datetime) or not isinstance(ends, datetime):
+            continue
+        starts_local = starts.astimezone(UTC).replace(tzinfo=None)
+        ends_local = ends.astimezone(UTC).replace(tzinfo=None)
+        same_day_start = starts_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        if same_day_start.date() != target_date.date():
+            continue
+        busy_intervals.append((
+            starts_local.hour * 60 + starts_local.minute,
+            ends_local.hour * 60 + ends_local.minute,
+        ))
+    slots = compute_free_slots(franjas, busy_intervals, duration)
+    return {
+        'date': date,
+        'resource_id': str(resource_id),
+        'resource_name': resource['name'],
+        'service_id': str(service_id) if service_id else None,
+        'service_name': service_row['name'] if service_row else None,
+        'service_duration_minutes': duration,
+        'slots': slots,
+    }
+
+
+@tenant_catalog_router.get('/tenants/{tenant_id}/availability')
+async def tenant_availability(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    date: str = Query(..., description='Target date in YYYY-MM-DD format'),
+    service_id: UUID | None = Query(default=None),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    target_date = parse_iso_date(date)
+    duration, service_row = await fetch_service_duration(conn, tenant_id, service_id)
+    if duration is None:
+        duration = await fetch_fallback_duration(conn, tenant_id)
+    resources_rows = await conn.fetch(
+        """
+        select id, name, code, capabilities
+        from app.resources
+        where tenant_id=$1 and is_active=true
+        order by name asc
+        """,
+        tenant_id,
+    )
+    day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC)
+    day_end = day_start.replace(hour=23, minute=59, second=59)
+    busy_rows = await conn.fetch(
+        """
+        select resource_id, starts_at, ends_at
+        from app.appointments
+        where tenant_id=$1
+          and status in ('scheduled','confirmed')
+          and starts_at < $3
+          and ends_at > $2
+        """,
+        tenant_id,
+        day_start,
+        day_end,
+    )
+    busy_by_resource: dict[UUID, list[tuple[int, int]]] = {}
+    for busy in busy_rows:
+        starts = busy['starts_at']
+        ends = busy['ends_at']
+        if not isinstance(starts, datetime) or not isinstance(ends, datetime):
+            continue
+        starts_local = starts.astimezone(UTC).replace(tzinfo=None)
+        ends_local = ends.astimezone(UTC).replace(tzinfo=None)
+        if starts_local.date() != target_date.date():
+            continue
+        busy_by_resource.setdefault(busy['resource_id'], []).append((
+            starts_local.hour * 60 + starts_local.minute,
+            ends_local.hour * 60 + ends_local.minute,
+        ))
+    resources_result: list[dict[str, Any]] = []
+    for resource in resources_rows:
+        franjas = working_hours_for_date(resource['capabilities'], target_date)
+        slots = compute_free_slots(
+            franjas, busy_by_resource.get(resource['id'], []), duration
+        )
+        resources_result.append({
+            'resource_id': str(resource['id']),
+            'resource_name': resource['name'],
+            'resource_code': resource['code'],
+            'slots': slots,
+        })
+    return {
+        'date': date,
+        'service_id': str(service_id) if service_id else None,
+        'service_name': service_row['name'] if service_row else None,
+        'service_duration_minutes': duration,
+        'resources': resources_result,
+    }
+
+
+SERVICE_CATALOG_COLUMNS = (
+    'id',
+    'tenant_id',
+    'name',
+    'category',
+    'description',
+    'price_amount',
+    'price_currency',
+    'duration_minutes',
+    'preparation_notes',
+    'post_service_notes',
+    'is_active',
+    'sort_order',
+    'metadata',
+    'created_at',
+    'updated_at',
+)
+SERVICE_CATALOG_PROJECTION = ', '.join(SERVICE_CATALOG_COLUMNS)
+
+
+def normalize_service_catalog_row(row: asyncpg.Record | None) -> dict | None:
+    service = record_to_dict(row)
+    if not service:
+        return None
+    service['metadata'] = parse_json_object(service.get('metadata'), default={})
+    if service.get('price_amount') is not None:
+        service['price_amount'] = float(service['price_amount'])
+    return service
+
+
+@tenant_catalog_router.get('/tenants/{tenant_id}/services')
+async def list_services(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    include_inactive: bool = Query(default=False),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {SERVICE_CATALOG_PROJECTION}
+        from app.service_catalog
+        where tenant_id=$1
+          and ($2::boolean is true or is_active is true)
+        order by sort_order asc, name asc
+        """,
+        tenant_id,
+        include_inactive,
+    )
+    return [normalize_service_catalog_row(row) for row in rows]
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/services', status_code=201)
+async def create_service(
+    tenant_id: UUID,
+    payload: ServiceCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        f"""
+        insert into app.service_catalog (
+          tenant_id, name, category, description, price_amount, price_currency,
+          duration_minutes, preparation_notes, post_service_notes, is_active, sort_order, metadata
+        )
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+        returning {SERVICE_CATALOG_PROJECTION}
+        """,
+        tenant_id,
+        payload.name,
+        payload.category,
+        payload.description,
+        payload.price_amount,
+        payload.price_currency.upper(),
+        payload.duration_minutes,
+        payload.preparation_notes,
+        payload.post_service_notes,
+        payload.is_active,
+        payload.sort_order,
+        json.dumps(payload.metadata),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.created',
+        entity_type='service_catalog',
+        entity_id=str(row['id']),
+    )
+    return normalize_service_catalog_row(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/services/{service_id}')
+async def update_service(
+    tenant_id: UUID,
+    service_id: UUID,
+    payload: ServiceUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await conn.fetchrow(
+            f'select {SERVICE_CATALOG_PROJECTION} from app.service_catalog where tenant_id=$1 and id=$2',
+            tenant_id,
+            service_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Service not found')
+        return normalize_service_catalog_row(row)
+    if 'price_currency' in update_data and update_data['price_currency']:
+        update_data['price_currency'] = update_data['price_currency'].upper()
+    row = await conn.fetchrow(
+        f"""
+        update app.service_catalog
+        set name=coalesce($3, name),
+            category=coalesce($4, category),
+            description=coalesce($5, description),
+            price_amount=coalesce($6, price_amount),
+            price_currency=coalesce($7, price_currency),
+            duration_minutes=coalesce($8, duration_minutes),
+            preparation_notes=coalesce($9, preparation_notes),
+            post_service_notes=coalesce($10, post_service_notes),
+            is_active=coalesce($11, is_active),
+            sort_order=coalesce($12, sort_order),
+            metadata=coalesce($13::jsonb, metadata)
+        where tenant_id=$1 and id=$2
+        returning {SERVICE_CATALOG_PROJECTION}
+        """,
+        tenant_id,
+        service_id,
+        update_data.get('name'),
+        update_data.get('category'),
+        update_data.get('description'),
+        update_data.get('price_amount'),
+        update_data.get('price_currency'),
+        update_data.get('duration_minutes'),
+        update_data.get('preparation_notes'),
+        update_data.get('post_service_notes'),
+        update_data.get('is_active'),
+        update_data.get('sort_order'),
+        json.dumps(update_data['metadata']) if 'metadata' in update_data else None,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Service not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.updated',
+        entity_type='service_catalog',
+        entity_id=str(service_id),
+    )
+    return normalize_service_catalog_row(row)
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/services/{service_id}', status_code=204)
+async def deactivate_service(
+    tenant_id: UUID,
+    service_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        update app.service_catalog
+        set is_active=false
+        where tenant_id=$1 and id=$2
+        returning id
+        """,
+        tenant_id,
+        service_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Service not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.deactivated',
+        entity_type='service_catalog',
+        entity_id=str(service_id),
+    )
+    return Response(status_code=204)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/services/reorder')
+async def reorder_services(
+    tenant_id: UUID,
+    payload: ServiceReorderRequest,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    if not payload.order:
+        return {'updated': 0}
+    async with conn.transaction():
+        for item in payload.order:
+            await conn.execute(
+                """
+                update app.service_catalog
+                set sort_order=$3
+                where tenant_id=$1 and id=$2
+                """,
+                tenant_id,
+                item.id,
+                item.sort_order,
+            )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.reordered',
+        entity_type='service_catalog',
+        entity_id=str(tenant_id),
+    )
+    return {'updated': len(payload.order)}
 
 
 @tenant_ops_router.post('/service-requests', status_code=201)
@@ -2051,10 +2934,10 @@ async def create_appointment(payload: AppointmentCreate, request: Request, conn:
     try:
         row = await conn.fetchrow(
             """
-            insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, resource_id, service_code, starts_at, ends_at, notes)
-            values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *
+            insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, service_id, resource_id, service_code, starts_at, ends_at, notes)
+            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *
             """,
-            payload.tenant_id, payload.contact_id, payload.conversation_id, payload.service_request_id, payload.resource_id, payload.service_code, payload.starts_at, payload.ends_at, payload.notes,
+            payload.tenant_id, payload.contact_id, payload.conversation_id, payload.service_request_id, payload.service_id, payload.resource_id, payload.service_code, payload.starts_at, payload.ends_at, payload.notes,
         )
     except asyncpg.ExclusionViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource has a conflicting appointment') from exc
@@ -2068,6 +2951,14 @@ async def create_appointment(payload: AppointmentCreate, request: Request, conn:
             payload.tenant_id,
             payload.service_request_id,
             payload.resource_id,
+        )
+    try:
+        await create_appointment_reminder_jobs(conn, payload.tenant_id, row['id'])
+    except Exception:
+        log.exception(
+            'appointment.notifications_failed',
+            tenant_id=str(payload.tenant_id),
+            appointment_id=str(row['id']),
         )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='appointment.created', entity_type='appointment', entity_id=str(row['id']))
     return record_to_dict(row)
@@ -2124,6 +3015,21 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, r
     except asyncpg.ExclusionViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource has a conflicting appointment') from exc
     action = 'appointment.cancelled' if next_status == 'cancelled' else 'appointment.updated'
+    try:
+        if next_status == 'cancelled':
+            await cancel_appointment_reminder_jobs(conn, tenant_id, appointment_id)
+        elif (
+            'starts_at' in update_data
+            or 'ends_at' in update_data
+            or 'resource_id' in update_data
+        ):
+            await regenerate_appointment_reminder_jobs(conn, tenant_id, appointment_id)
+    except Exception:
+        log.exception(
+            'appointment.notifications_failed',
+            tenant_id=str(tenant_id),
+            appointment_id=str(appointment_id),
+        )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action=action, entity_type='appointment', entity_id=str(appointment_id))
     return record_to_dict(row)
 
@@ -2147,7 +3053,85 @@ async def cancel_appointment(appointment_id: UUID, request: Request, conn: async
             raise HTTPException(status_code=404, detail='Appointment not found')
         row = await appointment_detail(conn, tenant_id, appointment_id)
     else:
+        try:
+            await cancel_appointment_reminder_jobs(conn, tenant_id, appointment_id)
+        except Exception:
+            log.exception(
+                'appointment.notifications_failed',
+                tenant_id=str(tenant_id),
+                appointment_id=str(appointment_id),
+            )
         await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='appointment.cancelled', entity_type='appointment', entity_id=str(appointment_id))
+    return record_to_dict(row)
+
+
+@tenant_ops_router.get('/appointments/{appointment_id}/feedback')
+async def list_appointment_feedback(
+    appointment_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    appointment = await conn.fetchrow(
+        'select id from app.appointments where tenant_id=$1 and id=$2',
+        tenant_id,
+        appointment_id,
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail='Appointment not found')
+    rows = await conn.fetch(
+        """
+        select id, tenant_id, appointment_id, contact_id, rating, comment, created_at
+        from app.appointment_feedback
+        where tenant_id=$1 and appointment_id=$2
+        order by created_at desc
+        """,
+        tenant_id,
+        appointment_id,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_ops_router.post('/appointments/{appointment_id}/feedback', status_code=201)
+async def create_appointment_feedback(
+    appointment_id: UUID,
+    payload: dict,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rating = payload.get('rating') if isinstance(payload, dict) else None
+    if not isinstance(rating, int) or rating < 1 or rating > 5:
+        raise HTTPException(status_code=400, detail='rating must be an integer 1-5')
+    appointment = await conn.fetchrow(
+        'select id, contact_id from app.appointments where tenant_id=$1 and id=$2',
+        tenant_id,
+        appointment_id,
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail='Appointment not found')
+    row = await conn.fetchrow(
+        """
+        insert into app.appointment_feedback (tenant_id, appointment_id, contact_id, rating, comment)
+        values ($1, $2, $3, $4, $5)
+        returning id, tenant_id, appointment_id, contact_id, rating, comment, created_at
+        """,
+        tenant_id,
+        appointment_id,
+        appointment['contact_id'],
+        rating,
+        (payload.get('comment') if isinstance(payload, dict) else None),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='appointment.feedback_recorded',
+        entity_type='appointment_feedback',
+        entity_id=str(row['id']),
+        metadata={'rating': rating, 'appointment_id': str(appointment_id)},
+    )
     return record_to_dict(row)
 
 
@@ -3102,6 +4086,43 @@ async def build_tenant_readiness_report(
         )
     )
 
+    template_rows = await conn.fetch(
+        """
+        select purpose, status
+        from app.whatsapp_templates
+        where tenant_id=$1 and purpose = any($2::text[])
+        """,
+        tenant_id,
+        list(WHATSAPP_TEMPLATE_REQUIRED_PURPOSES),
+    )
+    approved_purposes = {
+        row['purpose'] for row in template_rows if row['status'] == 'approved'
+    }
+    missing_purposes = [
+        purpose for purpose in WHATSAPP_TEMPLATE_REQUIRED_PURPOSES
+        if purpose not in approved_purposes
+    ]
+    templates_ready = not missing_purposes
+    template_reason = (
+        'Plantillas mínimas aprobadas para confirmación y recordatorio 24 h.'
+        if templates_ready
+        else f'Faltan plantillas aprobadas: {", ".join(missing_purposes)}. '
+             'Crea y sincroniza con Meta desde la pestaña Plantillas de WhatsApp.'
+    )
+    checks.append(
+        readiness_check(
+            'whatsapp_templates',
+            'Plantillas mínimas aprobadas',
+            templates_ready,
+            template_reason,
+            {
+                'required_purposes': list(WHATSAPP_TEMPLATE_REQUIRED_PURPOSES),
+                'approved_purposes': sorted(approved_purposes),
+                'missing_purposes': missing_purposes,
+            },
+        )
+    )
+
     audit_count = await conn.fetchval('select count(*) from app.audit_logs where tenant_id=$1', tenant_id)
     audit_count = audit_count or 0
     audit_ready = audit_count > 0
@@ -3461,6 +4482,11 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                 body_text = message.get('text', {}).get('body') if isinstance(message.get('text'), dict) else None
                 if body_text is None and isinstance(media_payload, dict):
                     body_text = media_payload.get('caption')
+                interactive_reply = parse_interactive_reply(message) if message_type == 'interactive' else None
+                if interactive_reply:
+                    message = {**message, **interactive_reply}
+                    if not body_text:
+                        body_text = interactive_reply['interactive_title']
                 timestamp = message.get('timestamp')
                 received_at = None
                 if timestamp:
@@ -3521,5 +4547,6 @@ router.include_router(webhook_router)
 router.include_router(platform_admin_router)
 router.include_router(tenant_signup_router)
 router.include_router(tenant_admin_router)
+router.include_router(tenant_catalog_router)
 router.include_router(tenant_ops_router)
 router.include_router(system_router)

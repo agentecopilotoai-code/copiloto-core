@@ -134,6 +134,9 @@ async def build_conversational_llm_answer(
     timeout_seconds: int = 30,
     min_score: float = 0.12,
     business_name: str = 'nuestro negocio',
+    current_datetime_label: str = 'no disponible',
+    timezone: str = 'America/Bogota',
+    resources_context: str = 'No hay profesionales activos configurados todavía.',
 ) -> dict[str, Any]:
     """Multi-turn booking flow response via Ollama.
 
@@ -141,7 +144,14 @@ async def build_conversational_llm_answer(
       next_stage, action, collected — for the orchestrator to persist in DB.
     """
     services_context = _build_context(matches, min_score=min_score)
-    system = build_system_prompt(ctx, services_context, business_name=business_name)
+    system = build_system_prompt(
+        ctx,
+        services_context,
+        business_name=business_name,
+        current_datetime_label=current_datetime_label,
+        timezone=timezone,
+        resources_context=resources_context,
+    )
 
     messages_payload: list[dict[str, str]] = [
         {'role': 'system', 'content': system},
