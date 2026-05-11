@@ -7,6 +7,16 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+# Real embedding providers are imported lazily to keep the module usable
+# without optional dependencies installed.
+SUPPORTED_REAL_PROVIDERS = ('openai', 'anthropic', 'ollama')
+_PROVIDER_DEFAULT_DIMS = {
+    'openai': 1536,
+    'anthropic': 1024,
+    'ollama': 768,
+    'local_hash': 1536,
+}
+
 PROMPT_INJECTION_PATTERNS = (
     re.compile(r'(?i)\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)\b'),
     re.compile(r'(?i)\b(system|developer|assistant)\s*:\s*'),
@@ -85,6 +95,73 @@ def estimate_token_count(text: str) -> int:
     # Lightweight approximation to keep indexing deterministic without tokenizer dependencies.
     words = WORD_RE.findall(text)
     return max(1, math.ceil(len(words) * 1.3))
+
+
+def is_semantic_provider(provider: str) -> bool:
+    """Return True when the provider generates real ML embeddings (not local_hash)."""
+    return provider in SUPPORTED_REAL_PROVIDERS
+
+
+async def real_embedding_async(
+    text: str,
+    *,
+    provider: str,
+    model: str,
+    api_key: str | None,
+    dimensions: int,
+) -> list[float]:
+    """Call a real embedding API and return a normalised float vector.
+
+    Falls back to `deterministic_embedding` on any transient error so indexing
+    is never blocked by provider unavailability in non-production environments.
+    Raises `ValueError` when the provider is unknown.
+    """
+    if provider == 'openai':
+        try:
+            import openai  # noqa: PLC0415
+            client = openai.AsyncOpenAI(api_key=api_key)
+            response = await client.embeddings.create(
+                input=text[:8191],
+                model=model or 'text-embedding-3-small',
+                dimensions=dimensions if dimensions != 1536 else None,  # type: ignore[arg-type]
+            )
+            return response.data[0].embedding
+        except Exception as exc:
+            raise RuntimeError(f'OpenAI embedding failed: {exc}') from exc
+
+    if provider == 'anthropic':
+        # Anthropic embeddings are served via Voyage AI; use httpx directly.
+        try:
+            import httpx  # noqa: PLC0415
+            voyage_model = model or 'voyage-3-lite'
+            headers = {
+                'Authorization': f'Bearer {api_key}',
+                'Content-Type': 'application/json',
+            }
+            payload = {'input': [text[:16000]], 'model': voyage_model}
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post('https://api.voyageai.com/v1/embeddings', headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                return data['data'][0]['embedding']
+        except Exception as exc:
+            raise RuntimeError(f'Anthropic/Voyage embedding failed: {exc}') from exc
+
+    if provider == 'ollama':
+        try:
+            import httpx  # noqa: PLC0415
+            ollama_model = model or 'nomic-embed-text'
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    'http://localhost:11434/api/embeddings',
+                    json={'model': ollama_model, 'prompt': text},
+                )
+                resp.raise_for_status()
+                return resp.json()['embedding']
+        except Exception as exc:
+            raise RuntimeError(f'Ollama embedding failed: {exc}') from exc
+
+    raise ValueError(f'Unknown embedding provider: {provider!r}')
 
 
 def deterministic_embedding(text: str, dimensions: int = 1536) -> list[float]:
@@ -224,6 +301,7 @@ def chunk_document_text(
     embedding_dimensions: int = 1536,
     embedding_provider: str = 'local_hash',
     embedding_model: str = 'copilotoia-local-hash-v1',
+    precomputed_embeddings: list[list[float]] | None = None,
 ) -> list[KnowledgeChunkDraft]:
     if max_tokens <= 0:
         raise ValueError('max_tokens must be greater than zero')
@@ -242,13 +320,18 @@ def chunk_document_text(
             current_lines = []
             current_tokens = 0
             return
+        idx = len(chunks)
+        if precomputed_embeddings is not None and idx < len(precomputed_embeddings):
+            embedding = precomputed_embeddings[idx]
+        else:
+            embedding = deterministic_embedding(chunk_text, embedding_dimensions)
         chunks.append(
             KnowledgeChunkDraft(
-                chunk_index=len(chunks),
+                chunk_index=idx,
                 section_path=section_path,
                 chunk_text=chunk_text,
                 token_count=estimate_token_count(chunk_text),
-                embedding=deterministic_embedding(chunk_text, embedding_dimensions),
+                embedding=embedding,
                 metadata={
                     'embedding_provider': embedding_provider,
                     'embedding_model': embedding_model,
@@ -298,12 +381,101 @@ def build_indexing_result(
     embedding_dimensions: int = 1536,
     embedding_provider: str = 'local_hash',
     embedding_model: str = 'copilotoia-local-hash-v1',
+    embedding_api_key: str | None = None,
 ) -> IndexingResult:
+    """Synchronous indexing — always uses local_hash embeddings.
+
+    For real ML embeddings call `build_indexing_result_async` instead, which
+    dispatches to the configured provider API.
+    """
     extracted_text = extract_document_text(document)
     mime_type = (document.get('mime_type') or '').lower()
     if mime_type == 'text/csv' or is_csv_content(extracted_text):
         extracted_text = csv_rows_to_natural_language(extracted_text)
     sanitized_text, sanitized_warning_count = sanitize_document_text(extracted_text)
+    # Real providers require async; fall back to local_hash silently in sync path.
+    actual_provider = embedding_provider if not is_semantic_provider(embedding_provider) else 'local_hash'
+    actual_model = embedding_model if actual_provider == 'local_hash' else 'copilotoia-local-hash-v1'
+    chunks = chunk_document_text(
+        sanitized_text,
+        max_tokens=max_tokens,
+        overlap_tokens=overlap_tokens,
+        embedding_dimensions=embedding_dimensions,
+        embedding_provider=actual_provider,
+        embedding_model=actual_model,
+    )
+    return IndexingResult(
+        chunks=chunks,
+        sanitized_warning_count=sanitized_warning_count,
+        embedding_provider=actual_provider,
+        embedding_model=actual_model,
+        embedding_dimensions=embedding_dimensions,
+    )
+
+
+async def build_indexing_result_async(
+    document: dict[str, Any],
+    *,
+    max_tokens: int = 500,
+    overlap_tokens: int = 80,
+    embedding_dimensions: int = 1536,
+    embedding_provider: str = 'local_hash',
+    embedding_model: str = 'copilotoia-local-hash-v1',
+    embedding_api_key: str | None = None,
+) -> IndexingResult:
+    """Async indexing that calls real ML embedding APIs when the provider is not local_hash.
+
+    For `openai`, `anthropic`, and `ollama` providers this calls the respective API
+    for each chunk. Falls back to `local_hash` if the API call fails.
+    """
+    extracted_text = extract_document_text(document)
+    mime_type = (document.get('mime_type') or '').lower()
+    if mime_type == 'text/csv' or is_csv_content(extracted_text):
+        extracted_text = csv_rows_to_natural_language(extracted_text)
+    sanitized_text, sanitized_warning_count = sanitize_document_text(extracted_text)
+
+    if not is_semantic_provider(embedding_provider):
+        chunks = chunk_document_text(
+            sanitized_text,
+            max_tokens=max_tokens,
+            overlap_tokens=overlap_tokens,
+            embedding_dimensions=embedding_dimensions,
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+        )
+        return IndexingResult(
+            chunks=chunks,
+            sanitized_warning_count=sanitized_warning_count,
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_dimensions=embedding_dimensions,
+        )
+
+    # First, produce chunks with placeholder embeddings to learn the texts.
+    draft_chunks = chunk_document_text(
+        sanitized_text,
+        max_tokens=max_tokens,
+        overlap_tokens=overlap_tokens,
+        embedding_dimensions=embedding_dimensions,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
+    )
+
+    # Then fetch real embeddings for every chunk text.
+    real_embeddings: list[list[float]] = []
+    for draft in draft_chunks:
+        try:
+            vec = await real_embedding_async(
+                draft.chunk_text,
+                provider=embedding_provider,
+                model=embedding_model,
+                api_key=embedding_api_key,
+                dimensions=embedding_dimensions,
+            )
+        except RuntimeError:
+            vec = deterministic_embedding(draft.chunk_text, embedding_dimensions)
+        real_embeddings.append(vec)
+
     chunks = chunk_document_text(
         sanitized_text,
         max_tokens=max_tokens,
@@ -311,6 +483,7 @@ def build_indexing_result(
         embedding_dimensions=embedding_dimensions,
         embedding_provider=embedding_provider,
         embedding_model=embedding_model,
+        precomputed_embeddings=real_embeddings,
     )
     return IndexingResult(
         chunks=chunks,

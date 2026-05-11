@@ -37,28 +37,6 @@ Las tareas están ordenadas por dependencia: cada una construye sobre la anterio
 
 ## Stack de tareas pendientes
 
-### TASK-0025 — Integrar proveedor real de embeddings para retrieval semántico con pgvector
-
-- **Objetivo:** reemplazar el hash SHA256 determinístico por embeddings ML reales para que el índice HNSW de `app.knowledge_chunks` capture semántica lingüística y el retrieval por similitud coseno sea útil en producción.
-- **Alcance mínimo — backend:**
-  - Ampliar `app/services/rag_indexing.py` para soportar proveedores reales: `openai` (`text-embedding-3-small`, 1536 dims), `anthropic` (`voyage-3-lite`, 1024 dims) y `ollama` (modelo configurable, dims variables). El proveedor `local_hash` se mantiene como fallback para desarrollo sin API key.
-  - El dispatcher elige proveedor según `RAG_EMBEDDING_PROVIDER` ya definido en `app/core/config.py`; agregar `RAG_EMBEDDING_MODEL` y `RAG_EMBEDDING_API_KEY` (opt-in, comentadas en `.env.example`).
-  - Si la dimensión del proveedor elegido difiere de 1536, aplicar migración idempotente en `scripts/bootstrap.sh` que ajuste `vector(N)` en `app.knowledge_chunks` y recree el índice HNSW.
-  - Actualizar `rag_retrieval.py`: cuando el proveedor sea real, usar búsqueda ANN con `<=>` (cosine distance) de pgvector; cuando sea `local_hash`, mantener ranking BM25 léxico actual.
-  - Tests estáticos: (a) `local_hash` funciona sin API key, (b) dispatcher selecciona proveedor correcto según config, (c) dimensión del vector es coherente con el schema.
-- **Alcance mínimo — Admin Panel:**
-  - En `TenantSetupWizard.jsx`: nueva pestaña **"IA y RAG"** con:
-    - Selector de proveedor de embeddings (`local_hash`, `openai`, `anthropic`, `ollama`) con descripción de cada opción.
-    - Campo de modelo (texto libre, con placeholder sugerido según proveedor).
-    - Campo de API key (input tipo `password`, se guarda en `.secrets/tenants/<TENANT_ID>/embedding_api_key`, nunca en DB).
-    - Botón **"Re-indexar todos los documentos"** que llama a un nuevo endpoint `POST /v1/tenants/{tenant_id}/knowledge/reindex-all`; muestra progreso y resultado.
-    - Indicador de estado: badge "Semántico (real)" o "Léxico (hash)" según el proveedor activo.
-  - En `KnowledgeStudio.jsx`: mostrar badge de proveedor de embedding por documento (hash vs real) y advertencia visible cuando el proveedor activo es `local_hash` en un entorno que tiene `AUTH0_DOMAIN` configurado (producción probable).
-- **Criterio de aceptación:** con `RAG_EMBEDDING_PROVIDER=openai` un documento indexado produce un vector real; la búsqueda por similitud coseno devuelve chunks semánticamente relevantes ante una pregunta en lenguaje natural; el Admin Panel permite cambiar el proveedor y re-indexar sin tocar archivos; los tests estáticos pasan en CI.
-- **Dependencias:** ninguna; es la primera tarea a ejecutar.
-
----
-
 ### TASK-0026 — Implementar clasificador de intenciones genérico orientado al journey de agendamiento
 
 - **Objetivo:** la plataforma es un reemplazo de call center genérico para cualquier negocio. El clasificador debe guiar a cualquier usuario desde el saludo hasta la cita confirmada, pasando por sus preguntas, sin conocer el tipo de negocio ni sus servicios — esa información vive en el RAG del tenant. El clasificador actual solo detecta booking intent con keywords y no diferencia si el usuario está preguntando algo, quiere agendar, quiere modificar una cita o está frustrado.

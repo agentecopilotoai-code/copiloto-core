@@ -43,7 +43,7 @@ from app.core.security import authenticate_request, require_min_role, require_pl
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
-from app.services.rag_indexing import build_indexing_result, vector_literal
+from app.services.rag_indexing import build_indexing_result_async, vector_literal
 from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
 from app.services.whatsapp import (
@@ -2603,13 +2603,14 @@ async def index_knowledge_document(
 
     settings = get_settings()
     try:
-        result = build_indexing_result(
+        result = await build_indexing_result_async(
             normalize_knowledge_document(document),
             max_tokens=settings.rag_chunk_max_tokens,
             overlap_tokens=settings.rag_chunk_overlap_tokens,
             embedding_dimensions=settings.rag_embedding_dimensions,
             embedding_provider=settings.rag_embedding_provider,
             embedding_model=settings.rag_embedding_model,
+            embedding_api_key=settings.rag_embedding_api_key,
         )
     except ValueError as exc:
         await conn.execute(
@@ -2718,6 +2719,113 @@ async def index_knowledge_document(
         'embedding_dimensions': result.embedding_dimensions,
     }
     return response
+
+
+@tenant_admin_router.post('/knowledge/reindex-all')
+async def reindex_all_knowledge_documents(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Re-index all active knowledge documents for the tenant using the current embedding provider."""
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    columns = await knowledge_document_columns(conn)
+    docs = await conn.fetch(
+        f"""
+        select {knowledge_document_projection(columns)}
+        from app.knowledge_documents
+        where tenant_id=$1 and status in ('active', 'draft')
+        order by updated_at asc
+        """,
+        tenant_id,
+    )
+    settings = get_settings()
+    indexed = 0
+    failed = 0
+    errors: list[dict] = []
+    for doc in docs:
+        doc_id = doc['id']
+        try:
+            result = await build_indexing_result_async(
+                normalize_knowledge_document(doc),
+                max_tokens=settings.rag_chunk_max_tokens,
+                overlap_tokens=settings.rag_chunk_overlap_tokens,
+                embedding_dimensions=settings.rag_embedding_dimensions,
+                embedding_provider=settings.rag_embedding_provider,
+                embedding_model=settings.rag_embedding_model,
+                embedding_api_key=settings.rag_embedding_api_key,
+            )
+        except ValueError as exc:
+            failed += 1
+            errors.append({'document_id': str(doc_id), 'error': str(exc)})
+            continue
+        indexing_ts = datetime.now(UTC).isoformat()
+        async with conn.transaction():
+            await conn.execute(
+                """
+                update app.knowledge_documents
+                set status='indexing', metadata=metadata || $3::jsonb
+                where tenant_id=$1 and id=$2
+                """,
+                tenant_id, doc_id, json.dumps({'last_indexing_started_at': indexing_ts}),
+            )
+            await conn.execute(
+                'delete from app.knowledge_chunks where tenant_id=$1 and document_id=$2',
+                tenant_id, doc_id,
+            )
+            for chunk in result.chunks:
+                await conn.execute(
+                    """
+                    insert into app.knowledge_chunks (
+                      tenant_id, document_id, chunk_index, section_path, chunk_text,
+                      token_count, embedding, metadata
+                    )
+                    values ($1,$2,$3,$4,$5,$6,$7::vector,$8::jsonb)
+                    """,
+                    tenant_id, doc_id,
+                    chunk.chunk_index, chunk.section_path, chunk.chunk_text,
+                    chunk.token_count, vector_literal(chunk.embedding),
+                    json.dumps(chunk.metadata),
+                )
+            await conn.execute(
+                """
+                update app.knowledge_documents
+                set status='active', metadata=metadata || $3::jsonb
+                where tenant_id=$1 and id=$2
+                """,
+                tenant_id, doc_id,
+                json.dumps({
+                    'chunk_count': len(result.chunks),
+                    'last_indexing_completed_at': datetime.now(UTC).isoformat(),
+                    'embedding_provider': result.embedding_provider,
+                    'embedding_model': result.embedding_model,
+                }),
+            )
+        indexed += 1
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='knowledge.reindex_all',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+        metadata={
+            'indexed': indexed,
+            'failed': failed,
+            'embedding_provider': settings.rag_embedding_provider,
+            'embedding_model': settings.rag_embedding_model,
+        },
+    )
+    return {
+        'tenant_id': str(tenant_id),
+        'indexed': indexed,
+        'failed': failed,
+        'errors': errors,
+        'embedding_provider': settings.rag_embedding_provider,
+        'embedding_model': settings.rag_embedding_model,
+        'embedding_dimensions': settings.rag_embedding_dimensions,
+    }
 
 
 @tenant_admin_router.delete('/knowledge/documents/{document_id}', status_code=204)

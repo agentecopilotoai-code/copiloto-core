@@ -298,6 +298,14 @@ export function indexKnowledgeDocument(session, tenantId, documentId) {
   });
 }
 
+export function reindexAllKnowledgeDocuments(session, tenantId) {
+  return request('/knowledge/reindex-all', {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}
+
 export function deleteKnowledgeDocument(session, tenantId, documentId) {
   return request(`/knowledge/documents/${documentId}`, {
     method: 'DELETE',

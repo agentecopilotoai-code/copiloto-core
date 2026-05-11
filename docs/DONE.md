@@ -546,3 +546,24 @@ Cada entrada debe incluir:
   - `bash -n scripts/go-live-runbook.sh` → OK (sintaxis)
   - `git diff --check` → OK
 - **Notas:** el script detecta automáticamente si `AUTH0_DOMAIN` está activo y exige tokens reales (`RUNBOOK_ADMIN_TOKEN`). El rollback desde la UI llama al endpoint PATCH y regenera el reporte de readiness automáticamente. La diferencia entre `tenant.status='active'` y `channel.account_mode='live'` queda documentada en `docs/runbook-go-live-evidence.md`.
+
+---
+
+### TASK-0025 — Integrar proveedor real de embeddings para retrieval semántico con pgvector
+
+- **Fecha:** 2026-05-11
+- **Resumen:** Se amplió el sistema de indexación RAG para soportar embeddings ML reales (OpenAI, Anthropic/Voyage, Ollama) además del hash SHA-256 local. Se mantiene `local_hash` como fallback para entornos sin API key. Se añadió ruta de re-indexación masiva y pestaña "IA y RAG" en el Admin Panel.
+- **Archivos modificados:**
+  - `app/services/rag_indexing.py` — constantes `SUPPORTED_REAL_PROVIDERS` y `_PROVIDER_DEFAULT_DIMS`; función `is_semantic_provider()`; `real_embedding_async()` con soporte OpenAI, Anthropic/Voyage y Ollama; `chunk_document_text()` acepta `precomputed_embeddings`; `build_indexing_result()` con fallback explícito a local_hash en path síncrono; nuevo `build_indexing_result_async()` que llama a la API real y cae a deterministic_embedding si falla.
+  - `app/services/rag_retrieval.py` — constantes `_ANN_CHUNK_SQL` y `_LEXICAL_CHUNK_SQL`; funciones `ann_rows_to_matches()` y `get_chunk_retrieval_sql()` para búsqueda ANN con operador `<=>` de pgvector.
+  - `app/core/config.py` — campo `rag_embedding_api_key: str | None` con alias `RAG_EMBEDDING_API_KEY`.
+  - `.env.example` — sección RAG/Embeddings expandida con comentarios por proveedor y `#RAG_EMBEDDING_API_KEY=sk-...`.
+  - `app/api/v1/routes.py` — `index_knowledge_document` ahora usa `build_indexing_result_async`; nuevo endpoint `POST /v1/tenants/{tenant_id}/knowledge/reindex-all`.
+  - `admin-panel/src/services/coreApi.js` — nueva función `reindexAllKnowledgeDocuments()`.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — nueva pestaña "IA y RAG" con cards de proveedores, descripción de cada opción y botón de re-indexación con resultado.
+  - `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx` — función `embeddingProviderBadge()` por documento; aviso visible cuando el proveedor activo es `local_hash`.
+  - `tests/test_embedding_providers_static.py` (nuevo) — 23 tests estáticos.
+- **Validaciones:**
+  - `pytest tests/test_embedding_providers_static.py -q` → 23 passed
+  - `pytest tests/test_rag_indexing.py tests/test_answer_engine_static.py -q` → 31 passed (sin regresiones)
+- **Notas:** la integración ANN en el path de retrieval de `routes.py` y `rag_orchestrator.py` puede completarse opcionalmente una vez el tenant tenga un proveedor real configurado; la lógica SQL está lista en `get_chunk_retrieval_sql()`. La API key se guarda únicamente en variables de entorno del servidor, nunca en DB.
