@@ -258,12 +258,22 @@ async def build_conversational_cloud_llm_answer(
     timeout_seconds: int = 30,
     min_score: float = 0.12,
     business_name: str = 'nuestro negocio',
+    current_datetime_label: str = 'no disponible',
+    timezone: str = 'America/Bogota',
+    resources_context: str = 'No hay profesionales activos configurados todavía.',
 ) -> dict[str, Any]:
     """Flujo de booking multi-turno vía LLM cloud (Claude o OpenAI)."""
     services_context = _build_context(matches, min_score=min_score)
     # build_system_prompt embeds context internally; se pasa como system_text completo
     # para que Anthropic lo cachee como bloque único (estable por stage).
-    system = build_system_prompt(ctx, services_context, business_name=business_name)
+    system = build_system_prompt(
+        ctx,
+        services_context,
+        business_name=business_name,
+        current_datetime_label=current_datetime_label,
+        timezone=timezone,
+        resources_context=resources_context,
+    )
 
     messages: list[dict[str, str]] = []
     if history:

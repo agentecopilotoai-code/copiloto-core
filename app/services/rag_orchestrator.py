@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 
@@ -53,6 +55,49 @@ def _parse_escalation_policy(raw: Any) -> dict[str, Any]:
         except (json.JSONDecodeError, TypeError):
             raw = {}
     return raw if isinstance(raw, dict) else {}
+
+
+_SPANISH_WEEKDAYS = ('lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo')
+
+
+def _current_datetime_label(timezone_name: str) -> tuple[str, str]:
+    """Return (formatted label, tz name actually used)."""
+    tz_name = timezone_name or 'America/Bogota'
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo('America/Bogota')
+        tz_name = 'America/Bogota'
+    now = datetime.now(tz)
+    weekday = _SPANISH_WEEKDAYS[now.weekday()]
+    label = f"{weekday} {now.strftime('%d/%m/%Y %H:%M')}"
+    return label, tz_name
+
+
+async def _load_active_resources_context(
+    conn: Any, tenant_id: UUID
+) -> str:
+    """Format active resources as bullet lines for the LLM system prompt."""
+    rows = await conn.fetch(
+        """
+        select name, resource_type
+        from app.resources
+        where tenant_id=$1 and is_active=true
+        order by name asc
+        limit 20
+        """,
+        tenant_id,
+    )
+    if not rows:
+        return 'No hay profesionales activos configurados todavía.'
+    lines = []
+    for row in rows:
+        kind = (row['resource_type'] or '').strip()
+        if kind:
+            lines.append(f"- {row['name']} ({kind})")
+        else:
+            lines.append(f"- {row['name']}")
+    return '\n'.join(lines)
 
 
 
@@ -182,7 +227,7 @@ async def orchestrate_inbound_message(
     settings_row = await conn.fetchrow(
         """
         select ts.escalation_policy,
-               t.display_name as business_name, t.vertical_code
+               t.display_name as business_name, t.vertical_code, t.timezone
         from app.tenant_settings ts
         join app.tenants t on t.id = ts.tenant_id
         where ts.tenant_id=$1
@@ -203,12 +248,17 @@ async def orchestrate_inbound_message(
     max_bot_turns: int = int(policy_max_turns) if isinstance(policy_max_turns, (int, float)) and policy_max_turns > 0 else 10
     business_name: str = (settings_row['business_name'] if settings_row else None) or 'nuestro negocio'
     vertical_code: str = (settings_row['vertical_code'] if settings_row else None) or 'general'
+    tenant_timezone: str = (settings_row['timezone'] if settings_row else None) or 'America/Bogota'
+    current_datetime_label, tenant_timezone = _current_datetime_label(tenant_timezone)
+    resources_context: str = await _load_active_resources_context(conn, tenant_id)
 
     log.info(
         'orchestrator.settings_loaded',
         tenant_id=str(tenant_id),
         max_bot_turns=max_bot_turns,
         business_name=business_name,
+        timezone=tenant_timezone,
+        current_datetime_label=current_datetime_label,
         answer_engine=get_settings().answer_engine,
         handoff_keywords=(policy.get('triggers') or {}).get('keywords') or [],
         has_handoff_message=bool(policy.get('handoff_message')),
@@ -492,7 +542,15 @@ async def orchestrate_inbound_message(
         )
 
         decision = await _resolve_conversational(
-            body_text, matches, ctx, history, settings, business_name=business_name,
+            body_text,
+            matches,
+            ctx,
+            history,
+            settings,
+            business_name=business_name,
+            current_datetime_label=current_datetime_label,
+            timezone=tenant_timezone,
+            resources_context=resources_context,
         )
 
         new_stage = decision.get('next_stage', ctx.stage)
@@ -652,6 +710,9 @@ async def _resolve_conversational(
     settings: Any,
     *,
     business_name: str,
+    current_datetime_label: str = 'no disponible',
+    timezone: str = 'America/Bogota',
+    resources_context: str = 'No hay profesionales activos configurados todavía.',
 ) -> dict[str, Any]:
     """Call the conversational LLM with booking state; fall back to Q&A cascade on failure."""
     try:
@@ -665,6 +726,9 @@ async def _resolve_conversational(
             timeout_seconds=settings.local_llm_timeout_seconds,
             min_score=settings.cascade_llm_min_score,
             business_name=business_name,
+            current_datetime_label=current_datetime_label,
+            timezone=timezone,
+            resources_context=resources_context,
         )
     except Exception as exc:
         log.warning(
@@ -698,6 +762,9 @@ async def _resolve_conversational(
                 timeout_seconds=settings.cloud_llm_timeout_seconds,
                 min_score=settings.cascade_llm_min_score,
                 business_name=business_name,
+                current_datetime_label=current_datetime_label,
+                timezone=timezone,
+                resources_context=resources_context,
             )
         except Exception as exc:
             log.warning(
