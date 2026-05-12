@@ -764,6 +764,7 @@ async def maybe_run_booking_flow(
     inbound_message: Any,
     intent: str,
     has_catalog: bool,
+    prefilled_service_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Run the guided booking flow if the conversation is mid-flow or the
     inbound message indicates the user wants to book and the catalog is non-empty.
@@ -861,13 +862,30 @@ async def maybe_run_booking_flow(
             slot_start=value,
         )
     elif intent == 'book_appointment' and not state:
-        new_state = await _present_services(
-            conn,
-            tenant_id=tenant_id,
-            conversation=conversation,
-            channel_id=channel_id,
-            channel_account_mode=channel_account_mode,
-        )
+        if prefilled_service_id:
+            try:
+                prefilled_uuid = UUID(prefilled_service_id)
+            except ValueError:
+                prefilled_uuid = None
+            if prefilled_uuid:
+                service = await _fetch_service(conn, tenant_id, prefilled_uuid)
+                if service:
+                    new_state = await _present_resources(
+                        conn,
+                        tenant_id=tenant_id,
+                        conversation=conversation,
+                        channel_id=channel_id,
+                        channel_account_mode=channel_account_mode,
+                        state={'selected_service_id': str(prefilled_uuid)},
+                    )
+        if new_state is None:
+            new_state = await _present_services(
+                conn,
+                tenant_id=tenant_id,
+                conversation=conversation,
+                channel_id=channel_id,
+                channel_account_mode=channel_account_mode,
+            )
 
     if new_state is None:
         return None

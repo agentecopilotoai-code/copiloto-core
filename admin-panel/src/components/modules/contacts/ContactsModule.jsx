@@ -307,6 +307,46 @@ export function ContactsModule({ module, session, tenant }) {
                 </div>
               </div>
 
+              {profile.qualification_questions?.length ? (
+                <div className="schedule-panel">
+                  <div>
+                    <strong>Calificación</strong>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                      {profile.qualification_questions.map((question) => {
+                        const raw = profile.qualification_answers?.[question.id];
+                        let display = '—';
+                        if (question.kind === 'yes_no') {
+                          if (raw === true) display = 'Sí';
+                          else if (raw === false) display = 'No';
+                        } else if (
+                          question.kind === 'single_choice'
+                          || question.kind === 'multi_choice'
+                        ) {
+                          const opts = Array.isArray(question.options) ? question.options : [];
+                          const lookup = (val) => {
+                            const found = opts.find((o) => o.value === val);
+                            return found?.label || val;
+                          };
+                          if (Array.isArray(raw)) {
+                            display = raw.map(lookup).join(', ') || '—';
+                          } else if (typeof raw === 'string') {
+                            display = lookup(raw);
+                          }
+                        } else if (raw != null && raw !== '') {
+                          display = String(raw);
+                        }
+                        return (
+                          <li key={question.id} style={{ padding: '0.3rem 0', borderBottom: '1px solid var(--border, #e2e8f0)' }}>
+                            <div className="hint" style={{ fontSize: '0.8rem' }}>{question.label}</div>
+                            <strong>{display}</strong>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="schedule-panel">
                 <div>
                   <strong>Últimas citas</strong>

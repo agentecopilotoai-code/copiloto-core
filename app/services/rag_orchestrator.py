@@ -16,6 +16,7 @@ from app.services.feedback_flow import (
     maybe_record_confirmation,
     maybe_record_feedback,
 )
+from app.services.qualification_flow import maybe_run_qualification_flow
 from app.services.conversation_flow import (
     STAGE_START,
     ConversationContext,
@@ -436,7 +437,12 @@ async def orchestrate_inbound_message(
         'select 1 from app.service_catalog where tenant_id=$1 and is_active=true limit 1',
         tenant_id,
     ))
-    booking_result = await maybe_run_booking_flow(
+
+    # TASK-0042: Conversational qualification before the booking flow. When the
+    # tenant has configured qualification questions and the user is heading
+    # into booking territory, ask them first and persist the answers.
+    prefilled_service_id: str | None = None
+    qualification_result = await maybe_run_qualification_flow(
         conn,
         tenant_id=tenant_id,
         channel_id=channel_id,
@@ -445,7 +451,47 @@ async def orchestrate_inbound_message(
         contact=contact,
         inbound_message=inbound_message,
         intent=intent_result.intent,
+    )
+    if qualification_result is not None:
+        action = qualification_result.get('action')
+        if action == 'qualification_completed':
+            prefilled_service_id = qualification_result.get('recommended_service_id')
+            # Reload the conversation so booking_flow sees the persisted state.
+            refreshed = await conn.fetchrow(
+                'select * from app.conversations where tenant_id=$1 and id=$2',
+                tenant_id,
+                conversation['id'],
+            )
+            if refreshed:
+                conversation = dict(refreshed)
+        else:
+            log.info(
+                'orchestrator.qualification_handled',
+                conversation_id=conversation_id,
+                action=action,
+            )
+            return qualification_result
+
+    booking_intent_override = (
+        'book_appointment' if prefilled_service_id is not None else intent_result.intent
+    )
+    if (
+        qualification_result is not None
+        and qualification_result.get('action') == 'qualification_completed'
+        and not prefilled_service_id
+    ):
+        booking_intent_override = 'book_appointment'
+    booking_result = await maybe_run_booking_flow(
+        conn,
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        conversation=conversation,
+        contact=contact,
+        inbound_message=inbound_message,
+        intent=booking_intent_override,
         has_catalog=has_catalog,
+        prefilled_service_id=prefilled_service_id,
     )
     if booking_result is not None:
         log.info(

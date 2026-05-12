@@ -200,27 +200,7 @@ TASK-0048 (funnel de conversión y atribución por campaña)        # cierre com
 
 ---
 
-### TASK-0042 — Calificación conversacional previa al booking
-
-- **Estado:** PENDING
-- **Por qué bloquea:** el bot salta del saludo al primer paso del booking sin entender **por qué** llama el cliente. Esto produce citas mal clasificadas (servicio equivocado, urgencias no priorizadas, primer contacto tratado igual que recurrente). Es la pieza que más sube conversión y baja no-show.
-- **Alcance:**
-  - Nueva tabla `app.qualification_questions` por tenant (`id, tenant_id, position, label, kind: free_text|single_choice|multi_choice|yes_no|number, options jsonb, required bool, applies_to_service_ids uuid[], created_at, updated_at`) con RLS y trigger touch.
-  - Mini state machine `qualification_flow.py` que corre **antes** de `booking_flow.maybe_run_booking_flow` cuando el intent es `book_appointment`/`check_availability` y no hay respuestas previas en la conversación. Persiste respuestas en `conversations.metadata.qualification` y en una columna nueva `contacts.qualification jsonb` (last snapshot).
-  - Render por WhatsApp: `single_choice`/`yes_no` → botones interactivos (≤3) o lista (>3). `free_text`/`number` → mensaje de texto con validación regex. Idempotencia por `domain_events('qualification_flow.handled')`.
-  - Cuando todas las preguntas requeridas están respondidas, el flow encadena con `booking_flow` pasándole `recommended_service_id` si la lógica del tenant lo deriva (ver criterio).
-  - UI en `admin-panel/.../tenantSetup/QualificationQuestionsPanel.jsx` (nueva pestaña dentro de **Negocio**): CRUD de preguntas con drag-handle de orden, preview en vivo del flujo, mapeo opcional pregunta → servicio (ej.: "¿es tu primera vez?" sí → derivar al servicio "Valoración inicial").
-  - El perfil de contacto en `ContactsModule` muestra las últimas respuestas de calificación.
-- **Criterios de aceptación:**
-  - Un tenant nuevo configura 3 preguntas (motivo, urgencia, primera vez sí/no) en < 2 minutos desde el panel.
-  - Una conversación `hola, quiero una cita` recibe primero las preguntas, en orden, antes del listado de servicios.
-  - Si una respuesta `single_choice` mapea a un `service_id`, el bot **brinca** la pantalla de selección de servicio en el booking.
-  - El campo `contacts.qualification` queda consultable en `GET /v1/contacts/{id}/profile` y se muestra en `OperationsDesk`.
-  - Auditoría: `qualification.created/updated/deleted` y `qualification.answered` (incluye preguntas + respuestas + `service_id` derivado si aplica).
-  - Tests: ≥ 15 estáticos cubriendo schema, registro de endpoints, helpers Pydantic, state machine completa con `FakeConn`, integración con `rag_orchestrator` (no corre si el intent no es de booking).
-- **Notas:**
-  - No usar LLM para parsear respuestas en MVP (solo regex/coincidencia exacta sobre `options.value`); cualquier respuesta inesperada vuelve a presentar la pregunta.
-  - El flow respeta opt-out: si el cliente escribe `stop` durante la calificación, se aborta y se persiste el opt-out.
+_TASK-0042 — Calificación conversacional previa al booking: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

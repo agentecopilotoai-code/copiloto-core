@@ -15,6 +15,48 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0042 — Calificación conversacional previa al booking
+
+- **Fecha:** 2026-05-12
+- **Resumen:** se construyó la pieza de calificación previa que faltaba en el flujo del cliente (gap #1 del análisis del 2026-05-12). Ahora el bot pregunta motivo, urgencia y primera-vez-vs-recurrente **antes** de abrir el booking, persistiendo respuestas en `conversations.metadata.qualification` durante el flujo y snapshoteando el último estado en `contacts.qualification` para análisis y vista operativa. Si una respuesta `single_choice` mapea a un `service_id` el bot **brinca** la pantalla de selección de servicio y entra directo a recurso/día/hora.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`)** — nueva tabla `app.qualification_questions(id, tenant_id, position, label, kind: free_text|single_choice|multi_choice|yes_no|number, options jsonb, required, applies_to_service_ids uuid[], created_at, updated_at)` con FK al tenant, índice por `(tenant_id, position)`, RLS habilitado y trigger `touch_updated_at`. Columna nueva `contacts.qualification jsonb default '{}'` para guardar el snapshot del último flujo.
+  - **State machine (`app/services/qualification_flow.py`)** — módulo nuevo con `maybe_run_qualification_flow(...)` que se ejecuta sólo si hay preguntas configuradas y o bien la conversación viene mid-flow o el intent es `book_appointment`/`check_availability`. Renderiza por WhatsApp: `yes_no` → 2 botones; `single_choice` con ≤3 opciones → botones, >3 → lista; `multi_choice` → lista con sentinela "Listo"; `free_text`/`number` → texto con validación regex. Idempotencia por `domain_events('qualification_flow.handled')` keyed por `inbound_message.id`. Opt-out: `stop`/`baja`/`cancelar` aborta el flujo y revoca opt-in.
+  - **Integración (`app/services/rag_orchestrator.py`)** — el orchestrator llama `maybe_run_qualification_flow` antes de `maybe_run_booking_flow`. Cuando la calificación se completa, refresca la conversación y pasa `prefilled_service_id` al booking si la opción elegida traía `service_id`, forzando intent `book_appointment` para que el booking arranque inmediatamente sin esperar otro mensaje del cliente.
+  - **Booking flow (`app/services/booking_flow.py`)** — `maybe_run_booking_flow` ahora acepta `prefilled_service_id`; cuando viene, salta `_present_services` y va directo a `_present_resources` con el servicio ya pre-seleccionado.
+  - **API (`app/api/v1/routes.py` + `app/api/v1/schemas.py`)** — endpoints CRUD bajo `tenant_admin_router` (`POST/PATCH/DELETE /tenants/{id}/qualification-questions` + `POST /reorder`) y listado bajo `tenant_catalog_router`. `QualificationQuestionCreate/Update` validan `kind` con regex, `QualificationOption` permite `value`, `label` y `service_id` opcional. `GET /contacts/{id}/profile` ahora devuelve `qualification_questions` (las del tenant) y `qualification_answers` (snapshot del contacto).
+  - **Auditoría** — emite `qualification.created/updated/deleted/reordered` desde los endpoints y `qualification.answered`/`qualification.aborted_opt_out` desde el flujo, con metadata que incluye preguntas, respuestas y `recommended_service_id` cuando aplica.
+  - **Admin Panel** — nueva pestaña **Calificación** en `TenantSetupWizard` (entre Negocio y Settings). El componente `QualificationQuestionsPanel.jsx` provee CRUD completo, reordenamiento con flechas ↑/↓ y mapeo opcional pregunta→servicio. `ContactsModule.jsx` muestra el bloque "Calificación" con label de la pregunta y respuesta normalizada en el panel del contacto. `OperationsDesk.jsx` muestra un panel "Calificación previa" leyendo `conversation.metadata.qualification.answered` para que el agente vea lo que el bot ya capturó. Helpers nuevos en `services/coreApi.js`: `list/create/update/delete/reorderQualificationQuestions`.
+- **Archivos:**
+  - `infra/postgres/01-schema.sql` — tabla, constraint composite, trigger, RLS y `contacts.qualification`.
+  - `app/services/qualification_flow.py` (nuevo) — state machine completa.
+  - `app/services/rag_orchestrator.py` — invocación previa al booking, paso de `prefilled_service_id`.
+  - `app/services/booking_flow.py` — soporte de `prefilled_service_id` con skip de `_present_services`.
+  - `app/api/v1/routes.py` — endpoints CRUD/reorder + extensión del profile endpoint.
+  - `app/api/v1/schemas.py` — `QualificationQuestionCreate/Update`, `QualificationOption`, `QualificationReorderRequest`.
+  - `admin-panel/src/services/coreApi.js` — 5 helpers nuevos.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — registro de la tab y montaje del panel.
+  - `admin-panel/src/components/modules/tenantSetup/QualificationQuestionsPanel.jsx` (nuevo) — CRUD UI con reorder y derive-to-service.
+  - `admin-panel/src/components/modules/contacts/ContactsModule.jsx` — render de respuestas en el perfil.
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx` — render del bloque "Calificación previa".
+  - `tests/test_qualification_flow_static.py` (nuevo) — 26 tests estáticos.
+- **Comandos ejecutados / validaciones:**
+  - `pytest tests/test_qualification_flow_static.py` → **26 passed** cubriendo: schema completo (tabla, RLS, trigger, columna `contacts.qualification`), pydantic schemas con cada `kind`, registro de los 5 endpoints bajo el router correcto, auditoría con las 4 acciones, integración orquestador-antes-de-booking, parámetro `prefilled_service_id` del booking, helpers (`_validate_text_reply`, `_next_pending_question`, `_derive_recommended_service`), 7 escenarios end-to-end con `FakeConn` (skip sin preguntas, no arrancar fuera de intents de booking, arranque exitoso, completado con `service_id` derivado, opt-out, idempotencia por inbound, retry de input inválido), `coreApi.js` exporta los 5 helpers, registro de la tab y componente, render de respuestas en `ContactsModule` y `OperationsDesk`.
+  - `pytest tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_crm_contacts_static.py` → **50 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - Un tenant configura preguntas (motivo, urgencia, primera vez sí/no) en < 2 minutos desde la nueva tab Calificación con reorder y deriva a servicio.
+  - Una conversación `hola, quiero una cita` recibe primero las preguntas en orden antes del listado de servicios (cubierto en test end-to-end con `FakeConn`).
+  - Si una respuesta `single_choice` mapea a `service_id`, el orquestador pasa `prefilled_service_id` al booking y `maybe_run_booking_flow` brinca `_present_services`.
+  - `GET /v1/contacts/{id}/profile` devuelve `qualification_questions` + `qualification_answers`; `ContactsModule` los muestra; `OperationsDesk` lee el snapshot de la conversación.
+  - Auditoría: `qualification.created/updated/deleted/reordered/answered/aborted_opt_out`.
+  - Tests: 26 estáticos (objetivo era ≥ 15).
+- **Notas:**
+  - No se usa LLM para parsear respuestas — coincidencia exacta sobre `options.value` o regex para `number`. Cualquier respuesta inesperada vuelve a presentar la misma pregunta.
+  - `multi_choice` acumula respuestas hasta que el usuario toca "Listo".
+  - El orquestador refresca la conversación tras la calificación para que el booking lea el `metadata` actualizado.
+
+---
+
 ### TASK-0029 — Ejecutar y validar drill de restore local (criterio pendiente de TASK-0015)
 
 - **Fecha:** 2026-05-12

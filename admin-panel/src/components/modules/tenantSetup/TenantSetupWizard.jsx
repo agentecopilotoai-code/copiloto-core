@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import QualificationQuestionsPanel from './QualificationQuestionsPanel.jsx';
 import {
   createContactTag,
   createTenant,
@@ -19,6 +20,7 @@ import {
 
 const wizardTabs = [
   { id: 'tenant', label: 'Negocio' },
+  { id: 'calificacion', label: 'Calificación' },
   { id: 'settings', label: 'Settings' },
   { id: 'hours', label: 'Horarios' },
   { id: 'escalation', label: 'Escalamiento' },
@@ -836,6 +838,16 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
               </div>
             </form>
           ) : null}
+        </div>
+      ) : null}
+
+      {activeTab === 'calificacion' ? (
+        <div className="wizard-panel">
+          <QualificationQuestionsPanel
+            session={session}
+            tenantId={currentTenantId}
+            onNotice={setNotice}
+          />
         </div>
       ) : null}
 

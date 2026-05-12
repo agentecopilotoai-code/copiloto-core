@@ -558,6 +558,48 @@ export function reorderServices(session, tenantId, order) {
   });
 }
 
+export function listQualificationQuestions(session, tenantId) {
+  return request(`/tenants/${tenantId}/qualification-questions`, {
+    session,
+    tenantId,
+  });
+}
+
+export function createQualificationQuestion(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/qualification-questions`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateQualificationQuestion(session, tenantId, questionId, payload) {
+  return request(`/tenants/${tenantId}/qualification-questions/${questionId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deleteQualificationQuestion(session, tenantId, questionId) {
+  return request(`/tenants/${tenantId}/qualification-questions/${questionId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function reorderQualificationQuestions(session, tenantId, order) {
+  return request(`/tenants/${tenantId}/qualification-questions/reorder`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { order },
+  });
+}
+
 export function listResources(session, tenantId, filters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {

@@ -1150,6 +1150,39 @@ export function OperationsDesk({ module, session, tenant }) {
                 </div>
               </div>
 
+              {(() => {
+                const rawMeta = conversationDetail?.metadata;
+                const meta = typeof rawMeta === 'string'
+                  ? (() => { try { return JSON.parse(rawMeta); } catch { return null; } })()
+                  : rawMeta;
+                const qualification = meta?.qualification;
+                const answered = qualification?.answered;
+                if (!answered || typeof answered !== 'object') return null;
+                const entries = Object.entries(answered);
+                if (!entries.length) return null;
+                return (
+                  <div className="handoff-panel" aria-label="Respuestas de calificación">
+                    <div>
+                      <strong>Calificación previa</strong>
+                      <p className="hint">Respuestas capturadas por el bot antes del booking.</p>
+                    </div>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                      {entries.map(([qid, value]) => {
+                        let display = String(value);
+                        if (value === true) display = 'Sí';
+                        else if (value === false) display = 'No';
+                        else if (Array.isArray(value)) display = value.join(', ');
+                        return (
+                          <li key={qid} style={{ fontSize: '0.85rem', padding: '0.15rem 0' }}>
+                            <code style={{ opacity: 0.6 }}>{qid.slice(0, 8)}</code>: <strong>{display}</strong>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                );
+              })()}
+
               <div className="handoff-panel" aria-label="Etiquetas y notas del contacto">
                 <div>
                   <strong>Etiquetas y notas</strong>

@@ -116,6 +116,7 @@ create table app.contacts (
   tags text[] not null default '{}',
   metadata jsonb not null default '{}'::jsonb,
   lead_source jsonb not null default '{}'::jsonb,
+  qualification jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, wa_id),
@@ -373,6 +374,20 @@ create table app.contact_notes (
 );
 create index ix_contact_notes_contact on app.contact_notes(tenant_id, contact_id, created_at desc);
 
+create table app.qualification_questions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  position int not null default 0,
+  label text not null,
+  kind text not null check (kind in ('free_text','single_choice','multi_choice','yes_no','number')),
+  options jsonb not null default '[]'::jsonb,
+  required boolean not null default true,
+  applies_to_service_ids uuid[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_qualification_questions_tenant on app.qualification_questions(tenant_id, position);
+
 create table app.campaigns (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -544,6 +559,7 @@ alter table app.knowledge_chunks add constraint uq_knowledge_chunks_tenant_id_id
 alter table app.handoffs add constraint uq_handoffs_tenant_id_id unique (tenant_id, id);
 alter table app.contact_tags add constraint uq_contact_tags_tenant_id_id unique (tenant_id, id);
 alter table app.contact_notes add constraint uq_contact_notes_tenant_id_id unique (tenant_id, id);
+alter table app.qualification_questions add constraint uq_qualification_questions_tenant_id_id unique (tenant_id, id);
 alter table app.contact_tag_assignments
   add constraint fk_contact_tag_assignments_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
   add constraint fk_contact_tag_assignments_tenant_tag foreign key (tenant_id, tag_id) references app.contact_tags(tenant_id, id);
@@ -599,6 +615,7 @@ create trigger trg_prompt_templates_touch before update on app.prompt_templates 
 create trigger trg_handoffs_touch before update on app.handoffs for each row execute function app.touch_updated_at();
 create trigger trg_contact_tags_touch before update on app.contact_tags for each row execute function app.touch_updated_at();
 create trigger trg_contact_notes_touch before update on app.contact_notes for each row execute function app.touch_updated_at();
+create trigger trg_qualification_questions_touch before update on app.qualification_questions for each row execute function app.touch_updated_at();
 create trigger trg_campaigns_touch before update on app.campaigns for each row execute function app.touch_updated_at();
 
 alter table app.tenant_channels enable row level security;
@@ -621,6 +638,7 @@ alter table app.handoffs enable row level security;
 alter table app.contact_tags enable row level security;
 alter table app.contact_tag_assignments enable row level security;
 alter table app.contact_notes enable row level security;
+alter table app.qualification_questions enable row level security;
 alter table app.campaigns enable row level security;
 alter table app.webhook_events_raw enable row level security;
 alter table app.domain_events enable row level security;
@@ -633,6 +651,7 @@ begin
     'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','whatsapp_templates','appointment_feedback','service_requests','quotes',
     'appointments','reminder_jobs','knowledge_documents','knowledge_chunks','prompt_templates','handoffs',
     'contact_tags','contact_tag_assignments','contact_notes',
+    'qualification_questions',
     'campaigns',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop

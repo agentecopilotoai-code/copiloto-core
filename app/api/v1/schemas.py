@@ -404,6 +404,49 @@ class WebChatMessage(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
 
 
+QUALIFICATION_QUESTION_KINDS = (
+    'free_text',
+    'single_choice',
+    'multi_choice',
+    'yes_no',
+    'number',
+)
+QUALIFICATION_QUESTION_KIND_PATTERN = '^(' + '|'.join(QUALIFICATION_QUESTION_KINDS) + ')$'
+
+
+class QualificationOption(BaseModel):
+    value: str = Field(min_length=1, max_length=120)
+    label: str = Field(min_length=1, max_length=120)
+    service_id: UUID | None = None
+
+
+class QualificationQuestionCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=200)
+    kind: str = Field(pattern=QUALIFICATION_QUESTION_KIND_PATTERN)
+    options: list[QualificationOption] = Field(default_factory=list)
+    required: bool = True
+    position: int = Field(default=0, ge=0)
+    applies_to_service_ids: list[UUID] = Field(default_factory=list)
+
+
+class QualificationQuestionUpdate(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=200)
+    kind: str | None = Field(default=None, pattern=QUALIFICATION_QUESTION_KIND_PATTERN)
+    options: list[QualificationOption] | None = None
+    required: bool | None = None
+    position: int | None = Field(default=None, ge=0)
+    applies_to_service_ids: list[UUID] | None = None
+
+
+class QualificationReorderItem(BaseModel):
+    id: UUID
+    position: int = Field(ge=0)
+
+
+class QualificationReorderRequest(BaseModel):
+    order: list[QualificationReorderItem] = Field(default_factory=list)
+
+
 class PromptCreate(BaseModel):
     tenant_id: UUID | None = None
     vertical_code: str = 'common'
