@@ -308,28 +308,7 @@ _TASK-0050 — Multi-sede (branches) con selección explícita durante el bookin
 
 ---
 
-### TASK-0051 — Paquetes y planes de tratamiento multi-cita
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0049 (recurso/especialista) opcional, no bloqueante.
-- **Por qué bloquea:** el modelo "5 sesiones de fisioterapia", "limpieza + blanqueamiento + control", o "membresía 10 visitas/mes" no se puede vender. `appointments` es 1:1 con `service_catalog`; no hay saldo de sesiones, ni descuento por paquete, ni vencimiento. Sin esto los negocios con LTV alto (estética, fitness, terapias) no convierten.
-- **Alcance:**
-  - Nuevas tablas:
-    - `app.treatment_packages(id, tenant_id, name, description, total_sessions int, validity_days int, price_amount, price_currency, includes_service_ids uuid[], is_active, sort_order, metadata jsonb)`.
-    - `app.contact_packages(id, tenant_id, contact_id, package_id, purchased_at, expires_at, remaining_sessions, status check in ('active','exhausted','expired','refunded'), payment_status, payment_amount, payment_currency, notes)`.
-    - `app.appointment_package_links(appointment_id, contact_package_id)` para descontar sesión al `status='completed'`.
-  - `booking_flow` detecta si el contacto tiene paquetes activos para el servicio elegido y ofrece "Usar 1 de tus 3 sesiones restantes del paquete X" como primer botón antes de pedir pago.
-  - Trigger `trg_appointments_consume_package` resta una sesión al pasar a `completed` y marca el paquete `exhausted` cuando `remaining_sessions=0`.
-  - **API:** CRUD de packages bajo `tenant_admin_router`, asignación/refund de packages a contactos bajo `tenant_ops_router` (`POST /contacts/{id}/packages`, `DELETE /contacts/{id}/packages/{cp_id}`).
-  - **Admin Panel:** módulo nuevo `PackagesModule.jsx` (rol admin), bloque "Paquetes activos" en el perfil de contacto en `ContactsModule.jsx`, badge "Pkg: 3 sesiones" en cada cita en `OperationsDesk.jsx`.
-  - **Notificaciones:** al consumir la penúltima sesión, el sistema dispara una `campaign_template` que ofrece la renovación.
-- **Criterios de aceptación:**
-  - Operador crea paquete "5 sesiones de masaje" → asigna a un contacto → contacto recibe link de pago → al pagar, `contact_packages.status='active'` con `remaining_sessions=5`.
-  - Contacto agenda usando el paquete → al completar la cita, `remaining_sessions=4`; en la quinta cita queda en `exhausted`.
-  - Tests: ≥ 16 estáticos: schemas, trigger de consumo (idempotente), expiración por `expires_at`, refund libera sesiones, notificación de renovación.
-- **Notas:**
-  - El precio del paquete vive en `treatment_packages.price_amount`; el pago se hace por el flujo existente de TASK-0040 (Stripe/MercadoPago link).
-  - `validity_days` es opcional; si está, el paquete vence aunque queden sesiones.
+_TASK-0051 — Paquetes y planes de tratamiento multi-cita: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

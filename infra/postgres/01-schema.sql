@@ -548,6 +548,66 @@ create table app.reminder_jobs (
 );
 create index ix_reminder_jobs_due on app.reminder_jobs(scheduled_for, status);
 
+-- TASK-0051: treatment packages / multi-session plans.
+create table app.treatment_packages (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  name text not null,
+  description text,
+  total_sessions int not null check (total_sessions > 0),
+  validity_days int check (validity_days is null or validity_days > 0),
+  price_amount numeric(10,2) not null check (price_amount >= 0),
+  price_currency char(3) not null default 'COP',
+  includes_service_ids uuid[] not null default '{}',
+  renewal_template_id uuid,
+  is_active boolean not null default true,
+  sort_order int not null default 0,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_treatment_packages_tenant_active
+  on app.treatment_packages(tenant_id, is_active, sort_order);
+create index gin_treatment_packages_services
+  on app.treatment_packages using gin(includes_service_ids);
+
+create table app.contact_packages (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  contact_id uuid not null references app.contacts(id) on delete restrict,
+  package_id uuid not null references app.treatment_packages(id) on delete restrict,
+  purchased_at timestamptz not null default now(),
+  expires_at timestamptz,
+  remaining_sessions int not null check (remaining_sessions >= 0),
+  total_sessions int not null check (total_sessions > 0),
+  status text not null default 'active' check (status in ('active','exhausted','expired','refunded')),
+  payment_status text not null default 'pending'
+    check (payment_status in ('not_required','pending','link_sent','paid','failed','refunded')),
+  payment_amount numeric(10,2),
+  payment_currency char(3) not null default 'COP',
+  payment_link text,
+  payment_provider text,
+  payment_provider_reference text,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_contact_packages_contact_active
+  on app.contact_packages(tenant_id, contact_id, status);
+create index ix_contact_packages_expiry
+  on app.contact_packages(expires_at) where status='active' and expires_at is not null;
+
+create table app.appointment_package_links (
+  appointment_id uuid not null,
+  contact_package_id uuid not null references app.contact_packages(id) on delete restrict,
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now(),
+  primary key (appointment_id)
+);
+create index ix_appointment_package_links_pkg
+  on app.appointment_package_links(contact_package_id);
+
 create table app.knowledge_documents (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -734,6 +794,21 @@ alter table app.appointments
   add constraint fk_appointments_tenant_branch foreign key (tenant_id, branch_id) references app.branches(tenant_id, id) on delete restrict;
 alter table app.reminder_jobs
   add constraint fk_reminder_jobs_tenant_channel foreign key (tenant_id, channel_id) references app.tenant_channels(tenant_id, id);
+alter table app.treatment_packages add constraint uq_treatment_packages_tenant_id_id unique (tenant_id, id);
+alter table app.treatment_packages
+  add constraint fk_treatment_packages_tenant_renewal_template foreign key (tenant_id, renewal_template_id)
+    references app.whatsapp_templates(tenant_id, id) on delete set null;
+alter table app.contact_packages add constraint uq_contact_packages_tenant_id_id unique (tenant_id, id);
+alter table app.contact_packages
+  add constraint fk_contact_packages_tenant_contact foreign key (tenant_id, contact_id)
+    references app.contacts(tenant_id, id),
+  add constraint fk_contact_packages_tenant_package foreign key (tenant_id, package_id)
+    references app.treatment_packages(tenant_id, id);
+alter table app.appointment_package_links
+  add constraint fk_appointment_package_links_tenant_appointment foreign key (tenant_id, appointment_id)
+    references app.appointments(tenant_id, id) on delete cascade,
+  add constraint fk_appointment_package_links_tenant_contact_package foreign key (tenant_id, contact_package_id)
+    references app.contact_packages(tenant_id, id);
 alter table app.knowledge_chunks
   add constraint fk_knowledge_chunks_tenant_document foreign key (tenant_id, document_id) references app.knowledge_documents(tenant_id, id);
 alter table app.handoffs
@@ -762,6 +837,87 @@ create trigger trg_promotions_touch before update on app.promotions for each row
 create trigger trg_campaigns_touch before update on app.campaigns for each row execute function app.touch_updated_at();
 create trigger trg_contact_segments_touch before update on app.contact_segments for each row execute function app.touch_updated_at();
 create trigger trg_branches_touch before update on app.branches for each row execute function app.touch_updated_at();
+create trigger trg_treatment_packages_touch before update on app.treatment_packages for each row execute function app.touch_updated_at();
+create trigger trg_contact_packages_touch before update on app.contact_packages for each row execute function app.touch_updated_at();
+
+-- TASK-0051: consume one session from the linked package when an appointment
+-- is closed as completed. Idempotent: the appointment row is updated only
+-- once via the same trigger, and the link.consumed_at guard prevents double
+-- decrement if the row is touched again. When the package reaches zero
+-- sessions it is marked exhausted; if its remaining count drops to 1 we emit
+-- a domain event so a renewal template can be dispatched.
+create or replace function app.consume_package_on_appointment() returns trigger
+language plpgsql as $$
+declare
+  link_row app.appointment_package_links%rowtype;
+  pkg app.contact_packages%rowtype;
+  new_remaining int;
+  new_status text;
+begin
+  if new.status <> 'completed' then
+    return new;
+  end if;
+  if old.status = 'completed' then
+    return new;
+  end if;
+  select * into link_row
+    from app.appointment_package_links
+    where appointment_id = new.id
+    for update;
+  if not found then
+    return new;
+  end if;
+  if link_row.consumed_at is not null then
+    return new;
+  end if;
+  select * into pkg
+    from app.contact_packages
+    where id = link_row.contact_package_id and tenant_id = new.tenant_id
+    for update;
+  if not found then
+    return new;
+  end if;
+  if pkg.status <> 'active' then
+    update app.appointment_package_links
+      set consumed_at = now()
+      where appointment_id = new.id;
+    return new;
+  end if;
+  new_remaining := greatest(pkg.remaining_sessions - 1, 0);
+  new_status := case when new_remaining = 0 then 'exhausted' else pkg.status end;
+  update app.contact_packages
+    set remaining_sessions = new_remaining,
+        status = new_status,
+        updated_at = now()
+    where id = pkg.id;
+  update app.appointment_package_links
+    set consumed_at = now()
+    where appointment_id = new.id;
+  -- Emit a renewal-due event on the penultimate consumption (remaining=1)
+  -- so retention workflows can dispatch a renewal offer.
+  if new_remaining = 1 then
+    insert into app.domain_events (
+      tenant_id, aggregate_type, aggregate_id, event_name,
+      idempotency_key, payload
+    )
+    values (
+      new.tenant_id, 'contact_package', pkg.id, 'package.renewal_offer_due',
+      'pkg_renewal:' || pkg.id::text,
+      jsonb_build_object(
+        'contact_id', pkg.contact_id,
+        'package_id', pkg.package_id,
+        'contact_package_id', pkg.id,
+        'remaining_sessions', new_remaining
+      )
+    )
+    on conflict (tenant_id, idempotency_key) do nothing;
+  end if;
+  return new;
+end;
+$$;
+create trigger trg_appointments_consume_package
+  after update of status on app.appointments
+  for each row execute function app.consume_package_on_appointment();
 
 alter table app.tenant_channels enable row level security;
 alter table app.contacts enable row level security;
@@ -791,6 +947,9 @@ alter table app.campaign_attributions enable row level security;
 alter table app.contact_segments enable row level security;
 alter table app.contact_segment_members enable row level security;
 alter table app.branches enable row level security;
+alter table app.treatment_packages enable row level security;
+alter table app.contact_packages enable row level security;
+alter table app.appointment_package_links enable row level security;
 alter table app.webhook_events_raw enable row level security;
 alter table app.domain_events enable row level security;
 alter table app.audit_logs enable row level security;
@@ -807,6 +966,7 @@ begin
     'campaigns','campaign_attributions',
     'contact_segments','contact_segment_members',
     'branches',
+    'treatment_packages','contact_packages','appointment_package_links',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop
     execute format('create policy %I_tenant_select on app.%I for select using (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);

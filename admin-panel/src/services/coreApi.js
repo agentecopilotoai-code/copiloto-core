@@ -726,6 +726,79 @@ export function deactivateBranch(session, tenantId, branchId) {
   });
 }
 
+export function listTreatmentPackages(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/packages${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+export function createTreatmentPackage(session, tenantId, payload) {
+  return request('/packages', {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateTreatmentPackage(session, tenantId, packageId, payload) {
+  return request(`/packages/${packageId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deactivateTreatmentPackage(session, tenantId, packageId) {
+  return request(`/packages/${packageId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function listContactPackages(session, tenantId, contactId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/contacts/${contactId}/packages${query ? `?${query}` : ''}`, {
+    session,
+    tenantId,
+  });
+}
+
+export function assignContactPackage(session, tenantId, contactId, payload) {
+  return request(`/contacts/${contactId}/packages`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateContactPackage(session, tenantId, contactId, contactPackageId, payload) {
+  return request(`/contacts/${contactId}/packages/${contactPackageId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function refundContactPackage(session, tenantId, contactId, contactPackageId) {
+  return request(`/contacts/${contactId}/packages/${contactPackageId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
 export function listResources(session, tenantId, filters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {

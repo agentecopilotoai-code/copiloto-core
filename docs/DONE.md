@@ -15,6 +15,55 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0051 — Paquetes y planes de tratamiento multi-cita
+
+- **Fecha:** 2026-05-12
+- **Resumen:** un negocio con LTV alto (estética, fisioterapia, fitness, terapias) puede ahora vender packs como "5 sesiones de masaje" o "limpieza + blanqueamiento + control" y descontar saldo automáticamente cuando se completa una cita. El operador crea el paquete una vez, lo asigna al contacto, y el booking flow detecta paquetes activos cuando el cliente quiere agendar: ofrece "Usar 1 de 3 sesiones restantes" como botón antes de pedir pago. Al completar la cita, un trigger descuenta una sesión; cuando solo queda una emite un `domain_event` `package.renewal_offer_due` para que el sistema de campañas dispare la oferta de renovación. Los reembolsos se hacen marcando el paquete como `refunded` (saldo a 0) sin perder la trazabilidad histórica.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):**
+    - `app.treatment_packages`: catálogo por tenant con `name`, `description`, `total_sessions > 0`, `validity_days` opcional, `price_amount/currency`, `includes_service_ids uuid[]` (vacío = aplica a cualquier servicio), `renewal_template_id uuid` (FK compuesta tenant-scoped a `whatsapp_templates`), `is_active`, `sort_order`, `metadata jsonb`. Índice principal `ix_treatment_packages_tenant_active` y GIN `gin_treatment_packages_services` sobre `includes_service_ids` para que el booking flow filtre paquetes que cubren el servicio elegido.
+    - `app.contact_packages`: instancia comprada por contacto con `purchased_at`, `expires_at` opcional, `remaining_sessions`, `total_sessions`, `status check ('active','exhausted','expired','refunded')`, `payment_status` (mismo enum que `appointments`), `payment_amount/currency/link/provider/reference`, `notes`. Índices `ix_contact_packages_contact_active` (lookup por contacto activo) e `ix_contact_packages_expiry` parcial (`where status='active' and expires_at is not null`) para el scheduler de expiración.
+    - `app.appointment_package_links`: PK `appointment_id` (1:1 — una cita consume a lo más un paquete), `contact_package_id` FK on delete restrict (no perder histórico), `consumed_at` para idempotencia del trigger. FK compuesta `(tenant_id, appointment_id) → appointments` on delete cascade.
+    - FKs compuestas tenant-scoped en los tres lados (`uq_treatment_packages_tenant_id_id`, `uq_contact_packages_tenant_id_id`, `fk_appointment_package_links_tenant_*`), RLS habilitada y políticas tenant-scoped generadas vía el loop `do $$ ... end $$`. Triggers `trg_treatment_packages_touch` y `trg_contact_packages_touch`.
+    - Función `app.consume_package_on_appointment()` + trigger `trg_appointments_consume_package after update of status on app.appointments`: corre solo cuando `new.status='completed'` y `old.status<>'completed'`, hace `select ... for update` del link y del `contact_package`, descuenta una sesión clampada a 0 con `greatest(remaining-1, 0)`, marca `exhausted` cuando llega a 0, y emite el evento `package.renewal_offer_due` con `idempotency_key='pkg_renewal:<pkg_id>'` cuando quedan exactamente 1 sesión.
+  - **API (`app/api/v1/routes.py` + `app/api/v1/schemas.py`):**
+    - Pydantic: `TreatmentPackageCreate/Update`, `ContactPackageAssign/Patch`.
+    - CRUD `tenant_admin_router`: `POST /packages`, `PATCH /packages/{id}`, `DELETE /packages/{id}` (soft delete). El create/patch valida que `renewal_template_id` pertenezca al tenant antes de aceptar. Audit: `package.created/updated/deleted`.
+    - Lista `tenant_ops_router`: `GET /packages` para que el operador (cualquier rol con ops) vea el catálogo cuando asigna.
+    - Asignación a contacto bajo `tenant_ops_router`: `GET /contacts/{id}/packages` (con filtro por status), `POST /contacts/{id}/packages` (siembra `remaining_sessions = total_sessions`, deriva `expires_at` desde `validity_days` cuando el caller no lo pasa, deriva `payment_amount/currency` del catálogo cuando faltan), `PATCH /contacts/{id}/packages/{cp_id}` (status, payment_status/amount/currency, expires_at, notes con convención `'<campo>' in update_data`), `DELETE /contacts/{id}/packages/{cp_id}` (mark refunded: `status='refunded'`, `payment_status='refunded'`, `remaining_sessions=0`). Audit: `contact_package.assigned/updated/refunded`.
+  - **Booking flow (`app/services/booking_flow.py`):**
+    - Nuevas constantes `STEP_AWAITING_PACKAGE`, `PREFIX_PACKAGE`, `PACKAGE_USE_NEW='new'`.
+    - `_list_active_contact_packages(conn, tenant_id, contact_id, service_id)`: devuelve hasta 5 paquetes del contacto con `status='active'`, `payment_status='paid'`, `remaining_sessions>0`, no expirados, cuyo `includes_service_ids` cubre el servicio elegido (vacío = cualquier servicio).
+    - `_present_packages`: tras seleccionar servicio, si hay paquetes usables arma botones interactivos `[Pkg: N restante]` × 2 + `[Cita normal]` y publica `STEP_AWAITING_PACKAGE`. Si no hay, devuelve `None` y el flujo cae a `_present_branches` como antes.
+    - `maybe_run_booking_flow`: nueva rama `prefix == PREFIX_PACKAGE`. Si el valor es `PACKAGE_USE_NEW` o no está en el set autorizado, sigue el flujo normal; si es un `contact_package_id` válido, lo guarda en `state.selected_contact_package_id` y enruta a branches/resources.
+    - `_create_appointment`: si hay `selected_contact_package_id` en el state, re-valida el paquete (sigue activo, mismo contacto, no expirado, saldo > 0) e inserta en `appointment_package_links` con `on conflict (appointment_id) do nothing`. El trigger se encarga del descuento cuando la cita pase a `completed`. El resumen al cliente menciona "Usa 1 sesión de tu paquete activo".
+    - Path `prefilled_service_id` (entrada vía `intent_classifier` con servicio pre-rellenado) también pasa por `_present_packages` antes de `_present_branches`.
+  - **Admin Panel:**
+    - Módulo nuevo `PackagesModule.jsx`: form de creación/edición (nombre, descripción, total de sesiones, vencimiento opcional en días, precio, moneda, lista checkbox de servicios incluidos, orden, activo) + listado dividido en activos/inactivos con botones Editar/Desactivar. Reusa `coreApi.listTreatmentPackages/createTreatmentPackage/updateTreatmentPackage/deactivateTreatmentPackage` y `listServices` para poblar el picker.
+    - Registrado en `admin-panel/src/data/modules.js` con `minRole: 'admin'` y wired en `AdminLayout.jsx` con guarda de rol.
+    - `ContactsModule.jsx` gana un panel "Paquetes activos" entre las citas y las notas: select con paquetes activos del catálogo + botón **Asignar**, lista de paquetes del contacto con badge de status y `remaining/total sesiones`, botón **Reembolsar** que llama a `refundContactPackage`. Refresca tras cada acción.
+    - `admin-panel/src/services/coreApi.js`: 8 funciones nuevas (CRUD del catálogo + GET/POST/PATCH/DELETE bajo `/contacts/{id}/packages`).
+- **Archivos tocados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/api/v1/routes.py`, `app/api/v1/schemas.py`
+  - `app/services/booking_flow.py`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/data/modules.js`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/packages/PackagesModule.jsx` (nuevo)
+  - `admin-panel/src/components/modules/contacts/ContactsModule.jsx`
+  - `tests/test_packages_static.py` (nuevo, 25 tests)
+  - `docs/BACKLOG.md` (tarea retirada)
+  - `docs/DONE.md` (esta entrada)
+- **Validaciones:**
+  - `pytest tests/test_packages_static.py` cubre los 7 grupos: schema (las 3 tablas con columnas/constraints/índices, RLS + policy loop, FKs compuestas tenant-scoped, trigger de consumo con sus 4 guards y la emisión del `package.renewal_offer_due`), Pydantic (`TreatmentPackageCreate/Update`, `ContactPackageAssign/Patch`), rutas (los 8 endpoints registrados, audit por verbo, validación de ownership del template de renovación, seeding correcto de `remaining_sessions` desde `total_sessions`, refund con `remaining=0`), booking flow (constantes, filtros del helper de paquetes activos, ramificación `PREFIX_PACKAGE` con escape `PACKAGE_USE_NEW`, inserción del link al crear cita) y admin panel (módulo registrado, panel en `ContactsModule`, coreApi expuesta). Total: 25 tests, todos en verde.
+- **Notas:**
+  - El descuento de sesión ocurre **solo** al marcar la cita como `completed` (no en `confirmed` ni en `scheduled`), alineado con el contrato comercial: si la cita se cancela el paquete queda intacto. El trigger es idempotente por el guard `link.consumed_at is not null`.
+  - El evento `package.renewal_offer_due` queda en `app.domain_events` esperando ser consumido por el sistema de campañas existente (el dispatch concreto vive en `app/services/campaigns.py` y se conecta vía worker — pendiente de tarea futura para enganchar el envío automático del template `renewal_template_id`).
+  - Si un paquete vence (`expires_at` pasado) pero sigue con `status='active'`, el booking flow lo ignora por el WHERE `expires_at > now()`; un job batch puede normalizar el `status` a `'expired'` usando el índice parcial — esa pasada queda como mejora.
+
+---
+
 ### TASK-0050 — Multi-sede (branches) con selección explícita durante el booking
 
 - **Fecha:** 2026-05-12

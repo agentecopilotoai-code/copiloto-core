@@ -224,6 +224,55 @@ class BranchUpdate(BaseModel):
     sort_order: int | None = Field(default=None, ge=0)
 
 
+PACKAGE_PAYMENT_STATUS_PATTERN = '^(not_required|pending|link_sent|paid|failed|refunded)$'
+
+
+class TreatmentPackageCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    total_sessions: int = Field(gt=0, le=500)
+    validity_days: int | None = Field(default=None, gt=0, le=3650)
+    price_amount: float = Field(ge=0)
+    price_currency: str = Field(default='COP', min_length=3, max_length=3)
+    includes_service_ids: list[UUID] = Field(default_factory=list)
+    renewal_template_id: UUID | None = None
+    is_active: bool = True
+    sort_order: int = Field(default=0, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TreatmentPackageUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    total_sessions: int | None = Field(default=None, gt=0, le=500)
+    validity_days: int | None = Field(default=None, gt=0, le=3650)
+    price_amount: float | None = Field(default=None, ge=0)
+    price_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    includes_service_ids: list[UUID] | None = None
+    renewal_template_id: UUID | None = None
+    is_active: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0)
+    metadata: dict[str, Any] | None = None
+
+
+class ContactPackageAssign(BaseModel):
+    package_id: UUID
+    payment_status: str = Field(default='pending', pattern=PACKAGE_PAYMENT_STATUS_PATTERN)
+    payment_amount: float | None = Field(default=None, ge=0)
+    payment_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    expires_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ContactPackagePatch(BaseModel):
+    payment_status: str | None = Field(default=None, pattern=PACKAGE_PAYMENT_STATUS_PATTERN)
+    payment_amount: float | None = Field(default=None, ge=0)
+    payment_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    expires_at: datetime | None = None
+    status: str | None = Field(default=None, pattern='^(active|exhausted|expired|refunded)$')
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class ResourceCreate(BaseModel):
     tenant_id: UUID
     vertical_code: str | None = Field(default=None, max_length=64)
