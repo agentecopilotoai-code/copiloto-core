@@ -445,12 +445,27 @@ create table app.campaigns (
   failed_count int not null default 0,
   started_at timestamptz,
   completed_at timestamptz,
+  cost_amount numeric(12,2),
+  cost_currency char(3) not null default 'COP',
+  attribution_window_days int not null default 14 check (attribution_window_days between 1 and 90),
   created_by uuid references app.users(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create index ix_campaigns_tenant_status on app.campaigns(tenant_id, status, scheduled_at);
 create index ix_campaigns_due on app.campaigns(scheduled_at) where status='scheduled';
+
+create table app.campaign_attributions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  campaign_id uuid not null,
+  contact_id uuid not null,
+  appointment_id uuid not null,
+  attributed_at timestamptz not null default now(),
+  unique (tenant_id, appointment_id)
+);
+create index ix_campaign_attributions_campaign on app.campaign_attributions(tenant_id, campaign_id, attributed_at desc);
+create index ix_campaign_attributions_contact on app.campaign_attributions(tenant_id, contact_id);
 
 create table app.contact_segments (
   id uuid primary key default gen_random_uuid(),
@@ -643,6 +658,10 @@ alter table app.campaigns add column segment_id uuid;
 alter table app.campaigns add column launched_snapshot_at timestamptz;
 alter table app.campaigns
   add constraint fk_campaigns_tenant_template foreign key (tenant_id, template_id) references app.whatsapp_templates(tenant_id, id);
+alter table app.campaign_attributions
+  add constraint fk_campaign_attributions_tenant_campaign foreign key (tenant_id, campaign_id) references app.campaigns(tenant_id, id) on delete cascade,
+  add constraint fk_campaign_attributions_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id) on delete cascade,
+  add constraint fk_campaign_attributions_tenant_appointment foreign key (tenant_id, appointment_id) references app.appointments(tenant_id, id) on delete cascade;
 alter table app.contact_segments add constraint uq_contact_segments_tenant_id_id unique (tenant_id, id);
 alter table app.campaigns
   add constraint fk_campaigns_tenant_segment foreign key (tenant_id, segment_id) references app.contact_segments(tenant_id, id) on delete set null;
@@ -726,6 +745,7 @@ alter table app.qualification_questions enable row level security;
 alter table app.media_assets enable row level security;
 alter table app.promotions enable row level security;
 alter table app.campaigns enable row level security;
+alter table app.campaign_attributions enable row level security;
 alter table app.contact_segments enable row level security;
 alter table app.contact_segment_members enable row level security;
 alter table app.webhook_events_raw enable row level security;
@@ -741,7 +761,7 @@ begin
     'contact_tags','contact_tag_assignments','contact_notes',
     'qualification_questions',
     'media_assets','promotions',
-    'campaigns',
+    'campaigns','campaign_attributions',
     'contact_segments','contact_segment_members',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop

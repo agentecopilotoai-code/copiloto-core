@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 import structlog
 
 from app.services.audit import audit
+from app.services.campaign_attribution import attribute_appointment
 from app.services.notifications import create_appointment_reminder_jobs
 from app.services.promotions import attach_active_promo, queue_promo_message
 from app.services.whatsapp import (
@@ -753,6 +754,20 @@ async def _create_appointment(
     except Exception:
         log.exception(
             'booking_flow.notifications_failed',
+            tenant_id=str(tenant_id),
+            appointment_id=str(appointment['id']),
+        )
+
+    try:
+        await attribute_appointment(
+            conn,
+            tenant_id=tenant_id,
+            appointment_id=appointment['id'],
+            contact_id=contact['id'],
+        )
+    except Exception:
+        log.exception(
+            'booking_flow.attribution_failed',
             tenant_id=str(tenant_id),
             appointment_id=str(appointment['id']),
         )
