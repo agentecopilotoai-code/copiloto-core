@@ -5080,6 +5080,11 @@ async def update_tenant_payment_settings(
         next_settings['webhook_secret_ref'] = ref
     elif payload.provider == 'none':
         next_settings['webhook_secret_ref'] = None
+    if payload.provider != 'none' and not next_settings.get('webhook_secret_ref'):
+        raise HTTPException(
+            status_code=422,
+            detail='Webhook signing secret is required to enable a payment provider',
+        )
     await conn.execute(
         """
         update app.tenant_settings
@@ -5392,21 +5397,24 @@ async def receive_payment_webhook(
 
     payment_settings = await _fetch_tenant_payment_settings(conn, tenant_id)
     secret = resolve_secret_ref(payment_settings.get('webhook_secret_ref'))
-    signature_ok = True
-    if secret:
-        if normalized_provider == 'mercadopago':
-            sig_header = request.headers.get('x-signature')
-            request_id = request.headers.get('x-request-id')
-            data_id = None
-            data = payload.get('data') if isinstance(payload, dict) else None
-            if isinstance(data, dict):
-                data_id = data.get('id')
-            signature_ok = verify_mercadopago_signature(
-                body, sig_header, secret, request_id=request_id, data_id=str(data_id) if data_id else None,
-            )
-        else:
-            sig_header = request.headers.get('stripe-signature')
-            signature_ok = verify_stripe_signature(body, sig_header, secret)
+    if not secret:
+        raise HTTPException(
+            status_code=401,
+            detail='Payment webhook signing secret is not configured for this tenant',
+        )
+    if normalized_provider == 'mercadopago':
+        sig_header = request.headers.get('x-signature')
+        request_id = request.headers.get('x-request-id')
+        data_id = None
+        data = payload.get('data') if isinstance(payload, dict) else None
+        if isinstance(data, dict):
+            data_id = data.get('id')
+        signature_ok = verify_mercadopago_signature(
+            body, sig_header, secret, request_id=request_id, data_id=str(data_id) if data_id else None,
+        )
+    else:
+        sig_header = request.headers.get('stripe-signature')
+        signature_ok = verify_stripe_signature(body, sig_header, secret)
     if not signature_ok:
         raise HTTPException(status_code=401, detail='Invalid payment webhook signature')
 

@@ -1277,7 +1277,7 @@ Tu cita de {servicio} quedó agendada para el {fecha} a las {hora}` + (notificat
             />
           </label>
           <label className="wide">
-            Webhook secret (recomendado)
+            Webhook secret (requerido)
             <input
               autoComplete="off"
               disabled={paymentSettings.provider === 'none'}
@@ -1291,7 +1291,7 @@ Tu cita de {servicio} quedó agendada para el {fecha} a las {hora}` + (notificat
             <p className="hint">
               Estado: proveedor <strong>{paymentSettings.provider}</strong> ·
               API key {paymentSettings.api_key_configured ? '✅ configurada' : '⚠️ no configurada'} ·
-              Webhook secret {paymentSettings.webhook_secret_configured ? '✅ configurado' : 'sin verificación de firma'}.
+              Webhook secret {paymentSettings.webhook_secret_configured ? '✅ configurado' : '⚠️ requerido para validar firmas del proveedor'}.
             </p>
           </div>
           <div className="form-actions">
