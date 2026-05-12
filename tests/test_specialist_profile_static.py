@@ -118,7 +118,8 @@ def test_public_endpoint_filters_public_profile_and_active():
 def test_resource_create_persists_profile_fields():
     source = ROUTES.read_text()
     assert 'bio, photo_media_asset_id, specialty, license_number, years_of_experience' in source
-    assert 'public_profile, is_active' in source
+    # TASK-0050 inserts branch_id between public_profile and is_active.
+    assert 'public_profile, branch_id, is_active' in source
     assert 'payload.public_profile' in source
     assert 'payload.photo_media_asset_id' in source
 

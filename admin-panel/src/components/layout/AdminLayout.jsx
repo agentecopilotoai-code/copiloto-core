@@ -13,6 +13,7 @@ import { KnowledgeStorageSettings } from '../modules/knowledgeStorage/KnowledgeS
 import { MediaLibraryModule } from '../modules/media/MediaLibraryModule.jsx';
 import { GoLiveReadiness } from '../modules/readiness/GoLiveReadiness.jsx';
 import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
+import { BranchesModule } from '../modules/branches/BranchesModule.jsx';
 import { SegmentsModule } from '../modules/segments/SegmentsModule.jsx';
 import { ServiceCatalog } from '../modules/services/ServiceCatalog.jsx';
 import { TeamModule } from '../modules/team/TeamModule.jsx';
@@ -213,6 +214,20 @@ export function AdminLayout({ session }) {
     activeContent = <NoTenantOnboarding onCreateTenant={openTenantCreation} />;
   } else if (activeModuleId === 'services') {
     activeContent = <ServiceCatalog module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'branches') {
+    if (!hasMinRole(activeRoles, 'admin')) {
+      activeContent = (
+        <section className="module-card">
+          <h2>Acceso restringido</h2>
+          <p className="hint">
+            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
+            las sedes.
+          </p>
+        </section>
+      );
+    } else {
+      activeContent = <BranchesModule module={activeModule} session={session} tenant={activeTenant} />;
+    }
   } else if (activeModuleId === 'whatsapp') {
     activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'knowledge-storage') {

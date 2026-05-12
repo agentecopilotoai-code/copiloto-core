@@ -182,21 +182,26 @@ def _scheduled_jobs_post_appointment(
 async def _appointment_context(
     conn: asyncpg.Connection, tenant_id: UUID, appointment_id: UUID
 ) -> dict[str, Any] | None:
-    """Resolve service/resource/contact/conversation/channel for the appointment."""
+    """Resolve service/resource/branch/contact/conversation/channel for the appointment."""
     row = await conn.fetchrow(
         """
         select a.id, a.starts_at, a.ends_at, a.conversation_id,
-               a.service_id, a.resource_id, a.contact_id,
+               a.service_id, a.resource_id, a.contact_id, a.branch_id,
                c.display_name as contact_name,
                cv.channel_id as channel_id,
                sc.name as service_name,
                sc.preparation_notes as preparation_notes,
-               r.name as resource_name
+               r.name as resource_name,
+               b.address as branch_address,
+               b.maps_url as branch_maps_url,
+               b.phone_e164 as branch_phone,
+               b.name as branch_name
         from app.appointments a
         left join app.contacts c on c.id=a.contact_id and c.tenant_id=a.tenant_id
         left join app.conversations cv on cv.id=a.conversation_id and cv.tenant_id=a.tenant_id
         left join app.service_catalog sc on sc.id=a.service_id and sc.tenant_id=a.tenant_id
         left join app.resources r on r.id=a.resource_id and r.tenant_id=a.tenant_id
+        left join app.branches b on b.id=a.branch_id and b.tenant_id=a.tenant_id
         where a.tenant_id=$1 and a.id=$2
         """,
         tenant_id,
@@ -223,6 +228,11 @@ async def _appointment_context(
         'service_name': row['service_name'],
         'preparation_notes': row['preparation_notes'],
         'resource_name': row['resource_name'],
+        'branch_id': row['branch_id'],
+        'branch_address': row['branch_address'],
+        'branch_maps_url': row['branch_maps_url'],
+        'branch_phone': row['branch_phone'],
+        'branch_name': row['branch_name'],
     }
 
 
@@ -273,13 +283,21 @@ async def create_appointment_reminder_jobs(
         return {'created': 0, 'skipped': 'appointment_not_found'}
     starts_at = context['starts_at']
     ends_at = context['ends_at']
+    # TASK-0050: appointments tied to a branch use that branch's address/maps;
+    # appointments without a branch fall back to the tenant-wide defaults.
+    if context.get('branch_id'):
+        address = context.get('branch_address') or None
+        maps_url = context.get('branch_maps_url') or None
+    else:
+        address = settings.get('location_address') or None
+        maps_url = settings.get('location_maps_url') or None
     variables = build_variables(
         contact_name=context['contact_name'],
         service_name=context['service_name'],
         resource_name=context['resource_name'],
         starts_at=starts_at,
-        address=settings.get('location_address') or None,
-        maps_url=settings.get('location_maps_url') or None,
+        address=address,
+        maps_url=maps_url,
         preparation_notes=context.get('preparation_notes'),
         include_location=bool(settings.get('include_location_link')),
         include_preparation=bool(settings.get('include_preparation_notes')),

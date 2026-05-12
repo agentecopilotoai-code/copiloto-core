@@ -152,3 +152,39 @@ def test_campaign_projection_includes_new_columns():
     source = API_ROUTES.read_text()
     assert 'cost_amount, cost_currency, ' in source
     assert 'attribution_window_days' in source
+
+
+def test_campaign_replies_cte_derives_from_conversation_window():
+    """Reply count must stitch inbound/outbound by conversation+attribution window.
+
+    The previous implementation looked for inbound rows tagged with
+    campaign_id and reply_to_external_message_id — fields the WhatsApp
+    webhook never populates — so every real-traffic campaign reported
+    ``replied=0`` and ``response_rate_pct=0``.
+    """
+    source = API_ROUTES.read_text()
+    # New CTE walks outbound campaign messages and verifies a matching inbound
+    # exists in the same conversation inside the attribution window.
+    assert 'from app.messages om' in source
+    assert 'join app.campaigns c' in source
+    assert "om.direction = 'outbound'" in source
+    assert "im.direction = 'inbound'" in source
+    assert 'im.conversation_id = om.conversation_id' in source
+    assert "(c.attribution_window_days || ' days')::interval" in source
+    # The bogus inbound-only filter is gone.
+    assert (
+        "and reply_to_external_message_id is not null\n          group by campaign_id"
+        not in source
+    )
+
+
+def test_whatsapp_webhook_persists_reply_context_id():
+    """Inbound rows must carry ``reply_to_external_message_id`` when WhatsApp
+    sends a ``context`` block (native quote). Without this hygiene fix the
+    field is always NULL and downstream consumers (analytics, threading)
+    cannot link a reply back to the message that triggered it."""
+    source = API_ROUTES.read_text()
+    assert "context_obj = message.get('context')" in source
+    # Insert lists the column and binds the resolved value (param $11).
+    assert 'reply_to_external_message_id\n                    )' in source
+    assert "'received', coalesce($10::timestamptz, now()), $11" in source

@@ -304,25 +304,7 @@ _TASK-0049 — Perfil del especialista (bio/foto/especialidad) visible durante e
 
 ---
 
-### TASK-0050 — Multi-sede (branches) con selección explícita durante el booking
-
-- **Estado:** PENDING
-- **Por qué bloquea:** una cadena con 2+ ubicaciones no puede operar — `tenant_settings.location_address/lat/lng/maps_url` son únicos por tenant. El cliente no elige sede y los recordatorios mandan siempre la misma dirección. Cubrir esto destraba la venta a cadenas (que son los tickets más altos del pipeline).
-- **Alcance:**
-  - Nueva tabla `app.branches(id, tenant_id, name, code unique per tenant, address, city, state, country, lat, lng, maps_url, phone_e164, timezone, opening_hours jsonb, is_active, sort_order, created_at, updated_at)` con FK al tenant, índice por `(tenant_id, is_active, sort_order)`, RLS, trigger touch.
-  - `app.resources` y `app.appointments` ganan columna `branch_id uuid` con FK tenant-scoped (`fk_resources_tenant_branch`, `fk_appointments_tenant_branch`).
-  - **Booking flow:** si el tenant tiene >1 branch activa, `booking_flow` inserta un paso nuevo **antes** de `_present_resources`: lista de branches (interactive list); el branch elegido filtra los recursos. Si hay solo 1 branch, se salta el paso (igual que `_present_services` con un único servicio).
-  - **Confirmación / recordatorios:** `notifications.py` deja de leer `notification_settings.location_maps_url` para citas con `branch_id != null` y arma las variables `{address, maps_url, phone}` desde la branch correspondiente.
-  - **Admin Panel:** módulo nuevo `BranchesModule.jsx` con CRUD (incluye selector de zona horaria, horarios por día, lat/lng con preview de Maps), pestaña en `TenantSetupWizard` para sembrar la primera branch, y filtro de branch en `AnalyticsPanel`/`OperationsDesk`/`CalendarView`.
-  - **Migración (sin compat):** un solo branch "Principal" se crea automáticamente con los datos actuales de `tenant_settings.location_*` al sembrar el primer tenant; recursos y citas existentes se asocian a esa branch. Luego se eliminan las columnas legacy en `tenant_settings` (location_*) — siguiendo el mandato del backlog.
-- **Criterios de aceptación:**
-  - Tenant con 3 branches: cliente en WhatsApp ve "elige sede" (3 botones/lista) → el listado de recursos solo muestra los de esa sede → confirmación trae la dirección y Maps link de esa sede.
-  - Tenant con 1 branch: flujo idéntico al actual (sin paso adicional).
-  - Analytics permite filtrar KPIs por branch (`?branch_id=...`).
-  - Tests: ≥ 14 estáticos: schema, RLS, FKs compuestas, branch picker en booking, branch=1 skip path, notifications usa branch en lugar de tenant_settings, calendar filter, audit `branch.created/updated/deleted`.
-- **Notas:**
-  - Cada branch tiene `opening_hours` propios; los `working_hours` siguen viviendo en `resources.capabilities` y se intersectan con los de la branch para calcular slots libres.
-  - El `widget_config` del canal web puede preseleccionar una branch (atributo `data-branch` en el snippet) para sitios separados por sede.
+_TASK-0050 — Multi-sede (branches) con selección explícita durante el booking: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import QualificationQuestionsPanel from './QualificationQuestionsPanel.jsx';
+import { BranchesModule } from '../branches/BranchesModule.jsx';
 import {
   createContactTag,
   createTenant,
@@ -23,6 +24,7 @@ const wizardTabs = [
   { id: 'calificacion', label: 'Calificación' },
   { id: 'settings', label: 'Settings' },
   { id: 'hours', label: 'Horarios' },
+  { id: 'branches', label: 'Sedes' },
   { id: 'escalation', label: 'Escalamiento' },
   { id: 'intenciones', label: 'Intenciones' },
   { id: 'notificaciones', label: 'Notificaciones' },
@@ -898,6 +900,25 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
             <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">Guardar horarios</button>
           </div>
         </form>
+      ) : null}
+
+      {activeTab === 'branches' ? (
+        <section className="wizard-panel" data-wizard-tab="branches">
+          <p className="hint">
+            Configura una sede para empezar. Si tu negocio opera en varias ubicaciones, agrega más
+            desde el módulo <strong>Sedes</strong> en el menú principal. El bot ofrecerá la
+            selección de sede al cliente cuando exista más de una activa.
+          </p>
+          {currentTenantId ? (
+            <BranchesModule
+              module={{ label: 'Sedes', summary: 'Configura las ubicaciones físicas del tenant.' }}
+              session={session}
+              tenant={{ id: currentTenantId }}
+            />
+          ) : (
+            <p>Primero guarda los datos del negocio para configurar sedes.</p>
+          )}
+        </section>
       ) : null}
 
       {activeTab === 'escalation' ? (

@@ -30,9 +30,17 @@ select id, 'whatsapp_cloud_api', 'demo-business-id', 'demo-waba-id', 'demo-phone
 from app.tenants
 on conflict (tenant_id, provider) do nothing;
 
-insert into app.resources (tenant_id, vertical_code, resource_type, code, name, capabilities)
-select id, vertical_code, 'staff', 'default', 'Recurso principal', '{"default":true}'::jsonb
+-- TASK-0050: cada tenant arranca con una sede "Principal" para que el flujo
+-- multi-sede sea retro-compatible (1 branch ⇒ se salta el paso de selección).
+insert into app.branches (tenant_id, name, code, country, timezone, is_active, sort_order)
+select id, 'Principal', 'principal', country_code, timezone, true, 0
 from app.tenants
+on conflict (tenant_id, code) do nothing;
+
+insert into app.resources (tenant_id, vertical_code, resource_type, code, name, capabilities, branch_id)
+select t.id, t.vertical_code, 'staff', 'default', 'Recurso principal', '{"default":true}'::jsonb, b.id
+from app.tenants t
+left join app.branches b on b.tenant_id = t.id and b.code = 'principal'
 on conflict (tenant_id, code) do nothing;
 
 -- Preconstructed retention/reactivation segments seeded per tenant.  The
