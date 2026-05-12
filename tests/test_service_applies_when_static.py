@@ -309,3 +309,63 @@ def test_qualification_panel_jsx_has_key_input():
     assert "key: question.key || ''" in source
     assert 'KEY_PATTERN' in source
     assert 'key: trimmedKey || null' in source
+
+
+# ───── Review feedback fixes ─────
+
+
+def test_qualification_flow_selects_key_column():
+    """P1: the qualification flow must pull `key` from the DB so
+    ``build_qualification_facts`` can project non-preset answers into the
+    facts dict and ``applies_when`` rules can reference them."""
+    source = QUALIFICATION_FLOW.read_text()
+    assert "select id, position, label, kind, options, required,\n               applies_to_service_ids, preset, key\n        from app.qualification_questions" in source
+
+
+def test_booking_flow_does_not_truncate_catalog_before_filter():
+    """P2: the SQL list must not apply ``limit 10`` because filtering runs
+    in Python after the rows arrive. The Meta interactive list cap is
+    enforced post-filter."""
+    source = BOOKING_FLOW.read_text()
+    assert 'SERVICE_LIST_DISPLAY_CAP = 10' in source
+    # The catalogue SELECT no longer caps at SQL level.
+    assert 'from app.service_catalog\n        where tenant_id=$1 and is_active=true\n        order by sort_order asc, name asc\n        ' in source
+    # And we never restore a ``limit 10`` in that SELECT.
+    select_block = source.split('select id, name, category, description, price_amount, price_currency,', 1)[1]
+    select_block = select_block.split('return [dict(row) for row in rows]', 1)[0]
+    assert 'limit 10' not in select_block
+    # Post-filter cap is applied.
+    assert 'eligible[:SERVICE_LIST_DISPLAY_CAP]' in source
+
+
+def test_booking_flow_auto_selected_service_offers_packages():
+    """P2: the single-match path must call ``_present_packages`` before
+    ``_present_branches``/``_present_resources`` so customers with an
+    active package don't lose their pre-paid sessions."""
+    source = BOOKING_FLOW.read_text()
+    auto_block = source.split('booking_flow.auto_selected_service', 1)[1]
+    auto_block = auto_block.split('return next_state', 1)[0]
+    assert '_present_packages(' in auto_block
+    # And _present_packages comes before _present_branches in this branch.
+    packages_idx = auto_block.find('_present_packages(')
+    branches_idx = auto_block.find('_present_branches(')
+    assert packages_idx != -1 and branches_idx != -1 and packages_idx < branches_idx
+    # And the maybe_run_booking_flow caller forwards the contact id.
+    assert 'contact_id=contact[\'id\'],' in source
+
+
+def test_evaluate_rules_does_not_truthy_compare_bool_vs_string():
+    """P2: an ``eq true`` rule against a free-text answer like 'consultation'
+    must NOT match (previous behaviour fell back to truthiness)."""
+    rule = {'all_of': [{'key': 'reason', 'op': 'eq', 'value': True}]}
+    assert evaluate_rules(rule, {'reason': 'consultation'}) is False
+    assert evaluate_rules(rule, {'reason': ''}) is False
+
+    # ``ne true`` must succeed for a non-boolean string answer.
+    ne_rule = {'all_of': [{'key': 'reason', 'op': 'ne', 'value': True}]}
+    assert evaluate_rules(ne_rule, {'reason': 'consultation'}) is True
+
+    # Real boolean answers still compare cleanly in either direction.
+    assert evaluate_rules(rule, {'reason': True}) is True
+    assert evaluate_rules(rule, {'reason': 'sí'}) is True  # coerces to True
+    assert evaluate_rules(rule, {'reason': False}) is False

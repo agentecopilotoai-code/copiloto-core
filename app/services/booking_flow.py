@@ -90,9 +90,15 @@ def _interactive_id(inbound_message: Any) -> tuple[str | None, str | None]:
     return prefix, value
 
 
+SERVICE_LIST_DISPLAY_CAP = 10
+
+
 async def _list_active_services(
     conn: asyncpg.Connection, tenant_id: UUID
 ) -> list[dict[str, Any]]:
+    # TASK-0054: pull the full active catalogue (no SQL ``limit``) so the
+    # qualification filter sees every candidate. We cap the WhatsApp list
+    # later, after filtering, in ``_present_services``.
     rows = await conn.fetch(
         """
         select id, name, category, description, price_amount, price_currency,
@@ -100,7 +106,6 @@ async def _list_active_services(
         from app.service_catalog
         where tenant_id=$1 and is_active=true
         order by sort_order asc, name asc
-        limit 10
         """,
         tenant_id,
     )
@@ -656,15 +661,17 @@ async def _present_services(
     conversation: Any,
     channel_id: UUID,
     channel_account_mode: str,
+    contact_id: UUID | None = None,
 ) -> dict[str, Any] | None:
     services = await _list_active_services(conn, tenant_id)
     if not services:
         return None
     # TASK-0054: filter by ``applies_when`` against the qualification facts.
-    # If exactly one service remains, auto-select it and skip straight to
-    # packages/branches/resources so the customer doesn't pick from a list
-    # of one. If none remain, return None so the orchestrator escalates the
-    # conversation to a human (no service matched the qualification answers).
+    # If exactly one service remains, auto-select it and continue through
+    # packages/branches/resources just like the normal service-pick path so
+    # the customer doesn't pick from a list of one *and* doesn't lose the
+    # chance to spend an active package session. If none remain, return None
+    # so the orchestrator escalates the conversation to a human.
     facts = _qualification_facts_from_conversation(conversation)
     eligible = _filter_services_by_qualification(services, facts)
     if not eligible:
@@ -677,6 +684,10 @@ async def _present_services(
         return None
     if len(eligible) == 1:
         only = eligible[0]
+        try:
+            only_uuid = UUID(str(only['id']))
+        except (ValueError, TypeError):
+            only_uuid = None
         base_state = {'selected_service_id': str(only['id'])}
         log.info(
             'booking_flow.auto_selected_service',
@@ -684,14 +695,28 @@ async def _present_services(
             conversation_id=str(conversation['id']),
             service_id=str(only['id']),
         )
-        next_state = await _present_branches(
-            conn,
-            tenant_id=tenant_id,
-            conversation=conversation,
-            channel_id=channel_id,
-            channel_account_mode=channel_account_mode,
-            state=base_state,
-        )
+        next_state: dict[str, Any] | None = None
+        # TASK-0051: offer the contact a saved package before charging again.
+        if contact_id is not None and only_uuid is not None:
+            next_state = await _present_packages(
+                conn,
+                tenant_id=tenant_id,
+                conversation=conversation,
+                channel_id=channel_id,
+                channel_account_mode=channel_account_mode,
+                state=base_state,
+                contact_id=contact_id,
+                service_uuid=only_uuid,
+            )
+        if next_state is None:
+            next_state = await _present_branches(
+                conn,
+                tenant_id=tenant_id,
+                conversation=conversation,
+                channel_id=channel_id,
+                channel_account_mode=channel_account_mode,
+                state=base_state,
+            )
         if next_state is None:
             next_state = await _present_resources(
                 conn,
@@ -702,7 +727,10 @@ async def _present_services(
                 state=base_state,
             )
         return next_state
-    services = eligible
+    # Cap the WhatsApp list at 10 rows (Meta interactive list limit) *after*
+    # the qualification filter so a customer with one matching service that
+    # sorts past position 10 doesn't get silently skipped.
+    services = eligible[:SERVICE_LIST_DISPLAY_CAP]
     # TASK-0046: send the active promo (image + text) of the first service
     # that has one so the customer sees the offer before picking.
     for service in services:
@@ -1517,6 +1545,7 @@ async def maybe_run_booking_flow(
                 conversation=conversation,
                 channel_id=channel_id,
                 channel_account_mode=channel_account_mode,
+                contact_id=contact['id'],
             )
 
     if new_state is None:

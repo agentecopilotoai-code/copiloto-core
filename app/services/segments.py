@@ -605,8 +605,14 @@ def _equal(a: Any, b: Any) -> bool:
     if a is None or b is None:
         return a is None and b is None
     ca, cb = _coerce_for_compare(a), _coerce_for_compare(b)
+    # Only compare as booleans when *both* sides actually normalized to a
+    # bool. Falling back to ``bool(...)`` here would treat any non-empty
+    # string like 'consultation' as True and match an ``eq true`` rule —
+    # silently making services eligible/ineligible for the wrong answers.
+    if isinstance(ca, bool) and isinstance(cb, bool):
+        return ca == cb
     if isinstance(ca, bool) or isinstance(cb, bool):
-        return bool(ca) == bool(cb)
+        return False
     if isinstance(ca, (int, float)) and isinstance(cb, (int, float)):
         return float(ca) == float(cb)
     return str(ca).lower() == str(cb).lower()

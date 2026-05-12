@@ -104,7 +104,7 @@ async def _list_questions(
     rows = await conn.fetch(
         """
         select id, position, label, kind, options, required,
-               applies_to_service_ids, preset
+               applies_to_service_ids, preset, key
         from app.qualification_questions
         where tenant_id=$1
         order by position asc, created_at asc
