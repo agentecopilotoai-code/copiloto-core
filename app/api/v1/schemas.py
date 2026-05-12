@@ -128,6 +128,7 @@ WHATSAPP_TEMPLATE_PURPOSES = (
     'reschedule_offer',
     'campaign_promo',
     'payment_request',
+    'service_recall',
     'custom',
 )
 WHATSAPP_TEMPLATE_PURPOSE_PATTERN = '^(' + '|'.join(WHATSAPP_TEMPLATE_PURPOSES) + ')$'
@@ -162,6 +163,10 @@ class ServiceCreate(BaseModel):
     duration_minutes: int = Field(default=60, gt=0, le=1440)
     preparation_notes: str | None = Field(default=None, max_length=2000)
     post_service_notes: str | None = Field(default=None, max_length=2000)
+    # TASK-0052: recall interval ("control en N días") and the template that
+    # carries the nudge. Both default to null when the service is one-off.
+    recall_interval_days: int | None = Field(default=None, gt=0, le=3650)
+    recall_template_id: UUID | None = None
     is_active: bool = True
     sort_order: int = Field(default=0, ge=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -176,6 +181,8 @@ class ServiceUpdate(BaseModel):
     duration_minutes: int | None = Field(default=None, gt=0, le=1440)
     preparation_notes: str | None = Field(default=None, max_length=2000)
     post_service_notes: str | None = Field(default=None, max_length=2000)
+    recall_interval_days: int | None = Field(default=None, ge=0, le=3650)
+    recall_template_id: UUID | None = None
     is_active: bool | None = None
     sort_order: int | None = Field(default=None, ge=0)
     metadata: dict[str, Any] | None = None

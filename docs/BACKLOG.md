@@ -312,9 +312,13 @@ _TASK-0051 — Paquetes y planes de tratamiento multi-cita: COMPLETADA. Ver `doc
 
 ---
 
+_TASK-0052 — Recall automático ("control en 6 meses") por servicio tras completar: COMPLETADA. Ver `docs/DONE.md`._
+
+---
+
 ### TASK-0052 — Recall automático ("control en 6 meses") por servicio tras completar
 
-- **Estado:** PENDING
+- **Estado:** DONE
 - **Por qué bloquea:** el negocio recurrente (limpieza dental cada 6m, control de dermatología trimestral, mantenimiento de fisioterapia) **depende** de que el cliente vuelva. Hoy, si el cliente no agenda solo, no hay recordatorio: ese ingreso se pierde. `service_catalog` ya tiene `post_service_notes` pero no `recall_interval_days`.
 - **Alcance:**
   - Schema:
