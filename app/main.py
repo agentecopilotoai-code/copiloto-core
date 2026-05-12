@@ -6,6 +6,7 @@ from app.api.v1.routes import router as v1_router
 from app.admin.routes import router as admin_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.db.migrations import run_runtime_migrations
 from app.db.pool import db
 
 
@@ -14,6 +15,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
     await db.connect(settings.database_url)
+    if db.pool is not None:
+        await run_runtime_migrations(db.pool)
     yield
     await db.close()
 
