@@ -1022,6 +1022,14 @@ export function getAnalyticsContacts(session, tenantId, range = {}) {
   return request(`/analytics/contacts${buildAnalyticsQuery(range)}`, { session, tenantId });
 }
 
+export function getAnalyticsFunnel(session, tenantId, range = {}) {
+  return request(`/analytics/funnel${buildAnalyticsQuery(range)}`, { session, tenantId });
+}
+
+export function getAnalyticsCampaigns(session, tenantId, range = {}) {
+  return request(`/analytics/campaigns${buildAnalyticsQuery(range)}`, { session, tenantId });
+}
+
 export function getTenantPaymentSettings(session, tenantId) {
   return request(`/tenants/${tenantId}/payments/settings`, { session, tenantId });
 }

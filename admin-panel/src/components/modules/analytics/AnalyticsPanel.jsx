@@ -2,10 +2,26 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   getAnalyticsAppointments,
+  getAnalyticsCampaigns,
   getAnalyticsContacts,
   getAnalyticsConversations,
+  getAnalyticsFunnel,
   getAnalyticsOverview,
 } from '../../../services/coreApi.js';
+
+const SUB_TABS = [
+  { id: 'overview', label: 'Resumen' },
+  { id: 'funnel', label: 'Funnel' },
+  { id: 'campaigns', label: 'Campañas' },
+];
+
+const FUNNEL_STEP_LABELS = {
+  leads: 'Leads',
+  engaged: 'Engaged',
+  appointments_scheduled: 'Citas agendadas',
+  appointments_completed: 'Citas completadas',
+  repeat_customers: 'Clientes recurrentes',
+};
 
 const RANGE_PRESETS = [
   { id: '7d', label: '7 días', days: 7 },
@@ -90,10 +106,13 @@ function Notice({ notice }) {
 export function AnalyticsPanel({ module, session, tenant }) {
   const [preset, setPreset] = useState('30d');
   const [range, setRange] = useState(() => defaultRange(30));
+  const [activeTab, setActiveTab] = useState('overview');
   const [overview, setOverview] = useState(null);
   const [conversations, setConversations] = useState(null);
   const [appointments, setAppointments] = useState(null);
   const [contacts, setContacts] = useState(null);
+  const [funnel, setFunnel] = useState(null);
+  const [campaigns, setCampaigns] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [notice, setNotice] = useState(null);
 
@@ -105,16 +124,20 @@ export function AnalyticsPanel({ module, session, tenant }) {
       setIsLoading(true);
       setNotice(null);
       try {
-        const [ov, conv, appt, ctc] = await Promise.all([
+        const [ov, conv, appt, ctc, fnl, cmp] = await Promise.all([
           getAnalyticsOverview(session, tenantId, rng),
           getAnalyticsConversations(session, tenantId, rng),
           getAnalyticsAppointments(session, tenantId, rng),
           getAnalyticsContacts(session, tenantId, rng),
+          getAnalyticsFunnel(session, tenantId, rng),
+          getAnalyticsCampaigns(session, tenantId, rng),
         ]);
         setOverview(ov);
         setConversations(conv);
         setAppointments(appt);
         setContacts(ctc);
+        setFunnel(fnl);
+        setCampaigns(cmp);
       } catch (error) {
         setNotice({ type: 'error', text: error.message || 'No se pudieron cargar las métricas.' });
       } finally {
@@ -214,7 +237,30 @@ export function AnalyticsPanel({ module, session, tenant }) {
 
       {!tenantId && <p className="hint">Selecciona un tenant para ver sus métricas.</p>}
 
-      {tenantId && overview && (
+      {tenantId && (
+        <div className="analytics-subtabs" role="tablist">
+          {SUB_TABS.map((tab) => (
+            <button
+              className={`analytics-subtab${activeTab === tab.id ? ' active' : ''}`}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              type="button"
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tenantId && activeTab === 'funnel' && (
+        <FunnelView funnel={funnel} isLoading={isLoading} />
+      )}
+
+      {tenantId && activeTab === 'campaigns' && (
+        <CampaignsView campaigns={campaigns} isLoading={isLoading} />
+      )}
+
+      {tenantId && activeTab === 'overview' && overview && (
         <>
           <div className="analytics-kpis">
             <div className="kpi-card">
@@ -525,9 +571,160 @@ export function AnalyticsPanel({ module, session, tenant }) {
         </>
       )}
 
-      {tenantId && !overview && !isLoading && !notice && (
+      {tenantId && activeTab === 'overview' && !overview && !isLoading && !notice && (
         <p className="hint">Cargando métricas…</p>
       )}
     </section>
+  );
+}
+
+function FunnelView({ funnel, isLoading }) {
+  if (isLoading && !funnel) return <p className="hint">Cargando funnel…</p>;
+  if (!funnel) return <p className="hint">Sin datos para el funnel.</p>;
+  const totalSteps = funnel.total ?? [];
+  const top = totalSteps[0]?.count ?? 0;
+  return (
+    <div className="analytics-grid">
+      <div className="analytics-card">
+        <h3>Funnel de conversión (total)</h3>
+        {totalSteps.length === 0 ? (
+          <p className="hint">Sin datos en el rango seleccionado.</p>
+        ) : (
+          <div className="analytics-funnel">
+            {totalSteps.map((step) => {
+              const widthPct = top ? Math.max((step.count / top) * 100, 4) : 0;
+              return (
+                <div className="analytics-funnel-row" key={step.step}>
+                  <div className="analytics-funnel-label">
+                    <strong>{FUNNEL_STEP_LABELS[step.step] || step.step}</strong>
+                    <span>{formatNumber(step.count)}</span>
+                  </div>
+                  <div className="analytics-funnel-bar-track">
+                    <div
+                      className="analytics-funnel-bar-fill"
+                      style={{ width: `${widthPct}%` }}
+                    />
+                  </div>
+                  <div className="analytics-funnel-meta">
+                    <span>vs. anterior: {formatPercent(step.conversion_from_previous_pct)}</span>
+                    <span>vs. top: {formatPercent(step.conversion_from_top_pct)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <p className="hint">
+          Ventana para recurrentes: {funnel.repeat_window_days ?? 90} días.
+        </p>
+      </div>
+
+      <div className="analytics-card">
+        <h3>Funnel por canal de captación</h3>
+        {(funnel.by_channel ?? []).length === 0 ? (
+          <p className="hint">Sin canales con datos.</p>
+        ) : (
+          <table className="analytics-table">
+            <thead>
+              <tr>
+                <th>Canal</th>
+                {totalSteps.map((step) => (
+                  <th key={step.step}>{FUNNEL_STEP_LABELS[step.step] || step.step}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {funnel.by_channel.map((row) => (
+                <tr key={row.channel}>
+                  <td><code>{row.channel}</code></td>
+                  {row.steps.map((step) => (
+                    <td key={step.step}>{formatNumber(step.count)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CampaignsView({ campaigns, isLoading }) {
+  if (isLoading && !campaigns) return <p className="hint">Cargando campañas…</p>;
+  if (!campaigns) return <p className="hint">Sin datos de campañas.</p>;
+  const items = campaigns.items ?? [];
+  const totals = campaigns.totals ?? {};
+  return (
+    <>
+      <div className="analytics-kpis">
+        <div className="kpi-card">
+          <p className="kpi-label">Campañas en rango</p>
+          <p className="kpi-value">{formatNumber(totals.campaigns)}</p>
+        </div>
+        <div className="kpi-card">
+          <p className="kpi-label">Citas atribuidas</p>
+          <p className="kpi-value">{formatNumber(totals.appointments_attributed)}</p>
+          <p className="kpi-hint">
+            {formatNumber(totals.appointments_completed)} completadas
+          </p>
+        </div>
+        <div className="kpi-card">
+          <p className="kpi-label">Ingreso atribuido</p>
+          <p className="kpi-value">{formatCurrency(totals.revenue_attributed)}</p>
+          <p className="kpi-hint">Sólo citas completadas</p>
+        </div>
+      </div>
+      <div className="analytics-card">
+        <h3>Performance por campaña</h3>
+        {items.length === 0 ? (
+          <p className="hint">No hay campañas con actividad en el rango.</p>
+        ) : (
+          <table className="analytics-table">
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Estado</th>
+                <th>Recipients</th>
+                <th>Response rate</th>
+                <th>Citas atribuidas</th>
+                <th>Ingreso atribuido</th>
+                <th>Costo</th>
+                <th>ROI</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row) => (
+                <tr key={row.campaign_id}>
+                  <td>{row.name}</td>
+                  <td><code>{row.status}</code></td>
+                  <td>{formatNumber(row.recipients)}</td>
+                  <td>{formatPercent(row.response_rate_pct)}</td>
+                  <td>
+                    {formatNumber(row.appointments_attributed)}
+                    {row.appointments_completed > 0 && (
+                      <span className="hint">
+                        {' '}({formatNumber(row.appointments_completed)} compl.)
+                      </span>
+                    )}
+                  </td>
+                  <td>{formatCurrency(row.revenue_attributed)}</td>
+                  <td>
+                    {row.cost_amount !== null && row.cost_amount !== undefined
+                      ? `${formatNumber(row.cost_amount)} ${row.cost_currency || ''}`.trim()
+                      : '-'}
+                  </td>
+                  <td>{row.roi_estimated !== null && row.roi_estimated !== undefined ? `${row.roi_estimated.toFixed(2)}x` : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="hint">
+          Atribución last-touch dentro de la ventana configurable por campaña
+          (default 14 días).
+        </p>
+      </div>
+    </>
   );
 }

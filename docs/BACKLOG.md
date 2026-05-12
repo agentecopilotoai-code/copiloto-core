@@ -224,37 +224,7 @@ _TASK-0047 — Segmentos automáticos para retención y reactivación: COMPLETAD
 
 ---
 
-### TASK-0048 — Funnel de conversión y atribución de ingresos por campaña
-
-- **Estado:** PENDING
-- **Por qué bloquea:** el gerente del negocio no puede demostrar el ROI del producto. El panel muestra KPIs sueltos (conversaciones, citas, no-show rate, ingreso) pero no la **conversión punta a punta** (lead → cita agendada → cita completada → cliente recurrente) ni cuánto ingreso atribuir a una campaña específica. Sin esto, el cliente que paga la suscripción no renueva.
-- **Alcance:**
-  - Nuevo endpoint `GET /v1/analytics/funnel?from_date=&to_date=` que devuelve, por canal de origen (`lead_source.channel`):
-    1. `leads` = contactos con `first_contact_at` en el rango.
-    2. `engaged` = contactos con ≥ 1 mensaje outbound del bot/agente.
-    3. `appointments_scheduled` = contactos con ≥ 1 appointment creado en el rango.
-    4. `appointments_completed` = contactos con ≥ 1 appointment `status='completed'`.
-    5. `repeat_customers` = contactos con ≥ 2 appointments `completed` en los últimos 90 días.
-    Cada paso reporta `count`, `conversion_from_previous_pct`, `conversion_from_top_pct`.
-  - Nuevo endpoint `GET /v1/analytics/campaigns?from_date=&to_date=` que devuelve, por campaña ejecutada en el rango:
-    - `recipients`, `delivered`, `read`, `replied` (ya existentes).
-    - `appointments_attributed` = citas creadas por contactos cuya última campaña recibida (en ventana `attribution_window_days`, default 14) fue esta.
-    - `revenue_attributed` = suma de `service_catalog.price_amount` de esas citas en estado `completed`.
-    - `roi_estimated` = `revenue_attributed / campaigns.cost` (si el operador captura el costo opcional).
-  - Tabla nueva `app.campaign_attributions(campaign_id, contact_id, appointment_id, attributed_at)` poblada por un trigger / worker liviano cuando se crea un appointment dentro de la ventana de atribución posterior al `last_message_at` de una campaña al contacto.
-  - Columna nueva `app.campaigns.cost_amount numeric(12,2)` y `cost_currency char(3)` editables desde el módulo Campañas para que el ROI sea computable.
-  - UI: nueva sub-pestaña en `AnalyticsPanel`:
-    - **Funnel** con gráfica de embudo (5 pasos × N canales) usando CSS-only bars.
-    - **Campañas** con tabla ordenada por `revenue_attributed desc`, columnas: nombre, recipients, response rate, citas atribuidas, ingreso atribuido, costo, ROI.
-- **Criterios de aceptación:**
-  - Para un rango de 30 días con tráfico real, el endpoint funnel se ejecuta en < 800ms (índices ya existentes lo soportan).
-  - Cada paso del funnel tiene su porcentaje correcto: si `leads=100`, `engaged=80`, `appointments_scheduled=40`, `completed=30`, `repeat=8`, los `conversion_from_previous_pct` son `80, 50, 75, 26.7`.
-  - Una campaña que genera 5 citas atribuibles (en ventana de 14 días) muestra `appointments_attributed=5` y `revenue_attributed = Σ price`.
-  - Tests: ≥ 10 estáticos: endpoints registrados con `require_min_role('manager')`, query SQL del funnel cubre los 5 pasos, atribución dentro/fuera de ventana, ROI con/sin costo, UI registra las dos sub-pestañas.
-- **Notas:**
-  - La ventana de atribución es **last-touch** simple (no multi-touch). En MVP es suficiente: un cliente vino por una campaña → la cita se le cuenta a esa campaña.
-  - Si el contacto recibió varias campañas dentro de la ventana, gana la más reciente con `delivered_at` antes del `appointment.created_at`.
-  - El cierre de esta tarea es el cierre del MVP comercial: con funnel + atribución + retención automática, el producto está listo para venderse con datos en mano.
+_TASK-0048 — Funnel de conversión y atribución de ingresos por campaña: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

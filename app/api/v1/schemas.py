@@ -366,6 +366,9 @@ class CampaignCreate(BaseModel):
     segment_filter: CampaignSegmentFilter = Field(default_factory=CampaignSegmentFilter)
     segment_id: UUID | None = None
     scheduled_at: datetime | None = None
+    cost_amount: float | None = Field(default=None, ge=0)
+    cost_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    attribution_window_days: int | None = Field(default=None, ge=1, le=90)
 
 
 class CampaignUpdate(BaseModel):
@@ -375,6 +378,9 @@ class CampaignUpdate(BaseModel):
     segment_filter: CampaignSegmentFilter | None = None
     segment_id: UUID | None = None
     scheduled_at: datetime | None = None
+    cost_amount: float | None = Field(default=None, ge=0)
+    cost_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    attribution_window_days: int | None = Field(default=None, ge=1, le=90)
 
 
 SEGMENT_KIND_PATTERN = '^(dynamic|static)$'

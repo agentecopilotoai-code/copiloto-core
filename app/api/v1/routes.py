@@ -72,6 +72,7 @@ from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
+from app.services.campaign_attribution import attribute_appointment
 from app.services.auth0_admin import (
     assign_roles as auth0_assign_roles,
     auth0_management_enabled,
@@ -4822,6 +4823,19 @@ async def create_appointment(payload: AppointmentCreate, request: Request, conn:
             tenant_id=str(payload.tenant_id),
             appointment_id=str(row['id']),
         )
+    try:
+        await attribute_appointment(
+            conn,
+            tenant_id=payload.tenant_id,
+            appointment_id=row['id'],
+            contact_id=payload.contact_id,
+        )
+    except Exception:
+        log.exception(
+            'appointment.attribution_failed',
+            tenant_id=str(payload.tenant_id),
+            appointment_id=str(row['id']),
+        )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='appointment.created', entity_type='appointment', entity_id=str(row['id']))
     return record_to_dict(row)
 
@@ -7696,6 +7710,254 @@ async def analytics_contacts(
     }
 
 
+def _funnel_step(label: str, count: int, prev_count: int, top_count: int) -> dict:
+    return {
+        'step': label,
+        'count': count,
+        'conversion_from_previous_pct': (
+            round(count / prev_count * 100, 1) if prev_count else 0.0
+        ),
+        'conversion_from_top_pct': (
+            round(count / top_count * 100, 1) if top_count else 0.0
+        ),
+    }
+
+
+@tenant_analytics_router.get('/analytics/funnel')
+async def analytics_funnel(
+    request: Request,
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Conversion funnel: leads → engaged → scheduled → completed → repeat.
+
+    Returns aggregated counts plus a per-channel breakdown using
+    ``contacts.lead_source->>'channel'``.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    start, end = _resolve_analytics_range(from_date, to_date)
+    range_start, range_end = _range_bounds(start, end)
+    repeat_window_start = range_end - timedelta(days=90)
+
+    funnel_rows = await conn.fetch(
+        """
+        with leads as (
+          select
+            id as contact_id,
+            coalesce(nullif(lead_source->>'channel', ''), 'unknown') as channel
+          from app.contacts
+          where tenant_id = $1 and created_at >= $2 and created_at < $3
+        ),
+        engaged as (
+          select distinct conv.contact_id
+          from app.conversations conv
+          join app.messages m on m.tenant_id = conv.tenant_id
+                              and m.conversation_id = conv.id
+          where conv.tenant_id = $1
+            and m.direction = 'outbound'
+            and m.sender_actor_type in ('bot','agent')
+            and m.created_at >= $2 and m.created_at < $3
+        ),
+        scheduled as (
+          select distinct contact_id
+          from app.appointments
+          where tenant_id = $1
+            and created_at >= $2 and created_at < $3
+        ),
+        completed as (
+          select distinct contact_id
+          from app.appointments
+          where tenant_id = $1
+            and status = 'completed'
+            and starts_at >= $2 and starts_at < $3
+        ),
+        repeat_customers as (
+          select contact_id
+          from app.appointments
+          where tenant_id = $1
+            and status = 'completed'
+            and starts_at >= $4 and starts_at < $3
+          group by contact_id
+          having count(*) >= 2
+        )
+        select
+          l.channel as channel,
+          count(distinct l.contact_id) as leads,
+          count(distinct e.contact_id) as engaged,
+          count(distinct s.contact_id) as scheduled,
+          count(distinct c.contact_id) as completed,
+          count(distinct r.contact_id) as repeat_customers
+        from leads l
+        left join engaged e on e.contact_id = l.contact_id
+        left join scheduled s on s.contact_id = l.contact_id
+        left join completed c on c.contact_id = l.contact_id
+        left join repeat_customers r on r.contact_id = l.contact_id
+        group by l.channel
+        order by leads desc
+        """,
+        tenant_id, range_start, range_end, repeat_window_start,
+    )
+
+    total_leads = sum(int(row['leads'] or 0) for row in funnel_rows)
+    total_engaged = sum(int(row['engaged'] or 0) for row in funnel_rows)
+    total_scheduled = sum(int(row['scheduled'] or 0) for row in funnel_rows)
+    total_completed = sum(int(row['completed'] or 0) for row in funnel_rows)
+    total_repeat = sum(int(row['repeat_customers'] or 0) for row in funnel_rows)
+
+    total_steps = [
+        _funnel_step('leads', total_leads, total_leads, total_leads),
+        _funnel_step('engaged', total_engaged, total_leads, total_leads),
+        _funnel_step('appointments_scheduled', total_scheduled, total_engaged, total_leads),
+        _funnel_step('appointments_completed', total_completed, total_scheduled, total_leads),
+        _funnel_step('repeat_customers', total_repeat, total_completed, total_leads),
+    ]
+
+    by_channel = []
+    for row in funnel_rows:
+        leads = int(row['leads'] or 0)
+        engaged = int(row['engaged'] or 0)
+        scheduled = int(row['scheduled'] or 0)
+        completed = int(row['completed'] or 0)
+        repeat = int(row['repeat_customers'] or 0)
+        by_channel.append({
+            'channel': row['channel'],
+            'steps': [
+                _funnel_step('leads', leads, leads, leads),
+                _funnel_step('engaged', engaged, leads, leads),
+                _funnel_step('appointments_scheduled', scheduled, engaged, leads),
+                _funnel_step('appointments_completed', completed, scheduled, leads),
+                _funnel_step('repeat_customers', repeat, completed, leads),
+            ],
+        })
+
+    return {
+        'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
+        'repeat_window_days': 90,
+        'total': total_steps,
+        'by_channel': by_channel,
+    }
+
+
+@tenant_analytics_router.get('/analytics/campaigns')
+async def analytics_campaigns(
+    request: Request,
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Per-campaign performance with attributed appointments and revenue.
+
+    Includes campaigns whose ``started_at`` (or ``created_at`` if not yet
+    launched) falls within the range. ``appointments_attributed`` and
+    ``revenue_attributed`` come from ``app.campaign_attributions`` joined
+    with service prices.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    start, end = _resolve_analytics_range(from_date, to_date)
+    range_start, range_end = _range_bounds(start, end)
+
+    rows = await conn.fetch(
+        """
+        with cam as (
+          select
+            c.id, c.name, c.status, c.scheduled_at, c.started_at, c.completed_at,
+            c.recipient_count, c.sent_count, c.delivered_count, c.read_count,
+            c.failed_count, c.cost_amount, c.cost_currency,
+            c.attribution_window_days
+          from app.campaigns c
+          where c.tenant_id = $1
+            and coalesce(c.started_at, c.created_at) >= $2
+            and coalesce(c.started_at, c.created_at) < $3
+        ),
+        replies as (
+          select campaign_id, count(distinct conversation_id) as replied
+          from app.messages
+          where tenant_id = $1
+            and campaign_id is not null
+            and direction = 'inbound'
+            and reply_to_external_message_id is not null
+          group by campaign_id
+        ),
+        attribution as (
+          select
+            ca.campaign_id,
+            count(*) as attributed_count,
+            count(*) filter (where a.status = 'completed') as attributed_completed,
+            coalesce(sum(s.price_amount) filter (where a.status = 'completed'), 0)::float
+              as revenue_attributed
+          from app.campaign_attributions ca
+          join app.appointments a on a.tenant_id = ca.tenant_id
+                                  and a.id = ca.appointment_id
+          left join app.service_catalog s on s.tenant_id = a.tenant_id
+                                          and s.id = a.service_id
+          where ca.tenant_id = $1
+          group by ca.campaign_id
+        )
+        select
+          cam.*,
+          coalesce(replies.replied, 0) as replied,
+          coalesce(attribution.attributed_count, 0) as appointments_attributed,
+          coalesce(attribution.attributed_completed, 0) as appointments_completed,
+          coalesce(attribution.revenue_attributed, 0.0) as revenue_attributed
+        from cam
+        left join replies on replies.campaign_id = cam.id
+        left join attribution on attribution.campaign_id = cam.id
+        order by revenue_attributed desc, cam.started_at desc nulls last
+        """,
+        tenant_id, range_start, range_end,
+    )
+
+    items = []
+    for row in rows:
+        recipients = int(row['recipient_count'] or 0)
+        delivered = int(row['delivered_count'] or 0)
+        read = int(row['read_count'] or 0)
+        replied = int(row['replied'] or 0)
+        cost_amount = float(row['cost_amount']) if row['cost_amount'] is not None else None
+        revenue = float(row['revenue_attributed'] or 0.0)
+        roi = None
+        if cost_amount and cost_amount > 0:
+            roi = round(revenue / cost_amount, 2)
+        items.append({
+            'campaign_id': str(row['id']),
+            'name': row['name'],
+            'status': row['status'],
+            'started_at': row['started_at'].isoformat() if row['started_at'] else None,
+            'recipients': recipients,
+            'sent': int(row['sent_count'] or 0),
+            'delivered': delivered,
+            'read': read,
+            'replied': replied,
+            'failed': int(row['failed_count'] or 0),
+            'response_rate_pct': (
+                round(replied / delivered * 100, 1) if delivered else 0.0
+            ),
+            'appointments_attributed': int(row['appointments_attributed'] or 0),
+            'appointments_completed': int(row['appointments_completed'] or 0),
+            'revenue_attributed': round(revenue, 2),
+            'cost_amount': round(cost_amount, 2) if cost_amount is not None else None,
+            'cost_currency': row['cost_currency'],
+            'roi_estimated': roi,
+            'attribution_window_days': int(row['attribution_window_days'] or 14),
+        })
+
+    totals = {
+        'campaigns': len(items),
+        'appointments_attributed': sum(item['appointments_attributed'] for item in items),
+        'appointments_completed': sum(item['appointments_completed'] for item in items),
+        'revenue_attributed': round(
+            sum(item['revenue_attributed'] for item in items), 2
+        ),
+    }
+
+    return {
+        'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
+        'totals': totals,
+        'items': items,
+    }
+
+
 SEGMENT_PROJECTION = (
     'id, tenant_id, name, description, kind, rules, contact_count, '
     'last_refreshed_at, is_system, created_by, created_at, updated_at'
@@ -8023,7 +8285,8 @@ CAMPAIGN_PROJECTION = (
     'id, tenant_id, name, status, template_id, template_variables, '
     'segment_filter, segment_id, launched_snapshot_at, scheduled_at, '
     'recipient_count, sent_count, delivered_count, read_count, '
-    'failed_count, started_at, completed_at, created_by, created_at, updated_at'
+    'failed_count, started_at, completed_at, cost_amount, cost_currency, '
+    'attribution_window_days, created_by, created_at, updated_at'
 )
 
 
@@ -8105,9 +8368,11 @@ async def create_campaign(
         f"""
         insert into app.campaigns (
           tenant_id, name, template_id, template_variables,
-          segment_filter, segment_id, scheduled_at, recipient_count, created_by
+          segment_filter, segment_id, scheduled_at, recipient_count,
+          cost_amount, cost_currency, attribution_window_days, created_by
         )
-        values ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9)
+        values ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8,
+                $9, coalesce($10, 'COP'), coalesce($11, 14), $12)
         returning {CAMPAIGN_PROJECTION}
         """,
         tenant_id,
@@ -8118,6 +8383,9 @@ async def create_campaign(
         payload.segment_id,
         payload.scheduled_at,
         recipient_count,
+        payload.cost_amount,
+        (payload.cost_currency or '').upper() or None,
+        payload.attribution_window_days,
         created_by,
     )
     await audit(
@@ -8211,6 +8479,9 @@ async def patch_campaign(
         new_recipient_count = await count_campaign_recipients(conn, tenant_id, segment)
     else:
         new_recipient_count = None
+    cost_currency_value = data.get('cost_currency')
+    if isinstance(cost_currency_value, str):
+        cost_currency_value = cost_currency_value.upper()
     updated = await conn.fetchrow(
         f"""
         update app.campaigns
@@ -8221,6 +8492,9 @@ async def patch_campaign(
             segment_id=case when $9 then $10 else segment_id end,
             scheduled_at=coalesce($7, scheduled_at),
             recipient_count=coalesce($8, recipient_count),
+            cost_amount=case when $11 then $12 else cost_amount end,
+            cost_currency=coalesce($13, cost_currency),
+            attribution_window_days=coalesce($14, attribution_window_days),
             updated_at=now()
         where tenant_id=$1 and id=$2
         returning {CAMPAIGN_PROJECTION}
@@ -8235,6 +8509,10 @@ async def patch_campaign(
         new_recipient_count,
         'segment_id' in data,
         data.get('segment_id'),
+        'cost_amount' in data,
+        data.get('cost_amount'),
+        cost_currency_value,
+        data.get('attribution_window_days'),
     )
     await audit(
         conn,

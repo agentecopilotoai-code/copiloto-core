@@ -15,6 +15,50 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0048 — Funnel de conversión y atribución de ingresos por campaña
+
+- **Fecha:** 2026-05-12
+- **Resumen:** el gerente del negocio ya puede ver la conversión punta a punta (lead → engaged → cita agendada → cita completada → cliente recurrente) y cuánto ingreso atribuir a cada campaña. La atribución es **last-touch** dentro de una ventana configurable por campaña (default 14 días): cuando se crea una cita, el sistema busca el mensaje saliente más reciente que el contacto recibió de una campaña dentro de la ventana y registra la atribución en `app.campaign_attributions`. El panel de analítica gana dos sub-pestañas (Funnel y Campañas) sobre el rango temporal existente.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):**
+    - Nueva tabla `app.campaign_attributions(id, tenant_id, campaign_id, contact_id, appointment_id, attributed_at)` con `unique (tenant_id, appointment_id)` para asegurar single-touch por cita, FKs compuestas `(tenant_id, campaign_id) → app.campaigns(tenant_id, id) on delete cascade`, `(tenant_id, contact_id) → app.contacts(tenant_id, id) on delete cascade`, `(tenant_id, appointment_id) → app.appointments(tenant_id, id) on delete cascade`. RLS habilitada y políticas tenant_select/insert/update/delete seedeadas vía el bloque `do $$ ... foreach`.
+    - `app.campaigns` gana `cost_amount numeric(12,2)`, `cost_currency char(3) not null default 'COP'` y `attribution_window_days int not null default 14 check (attribution_window_days between 1 and 90)`.
+  - **Servicio nuevo `app/services/campaign_attribution.py`:**
+    - `attribute_appointment(conn, tenant_id, appointment_id, contact_id)` busca el mensaje saliente con `campaign_id is not null`, ya entregado (`delivered_at` o `sent_at` not null), cuyo `coalesce(delivered_at, sent_at)` esté dentro de `c.attribution_window_days` previos al `appointments.created_at`. Order by `touch_at desc limit 1` → wins el último contacto. Insert con `on conflict (tenant_id, appointment_id) do update set campaign_id = excluded.campaign_id, attributed_at = ...` para idempotencia.
+  - **Wiring (`app/api/v1/routes.py` y `app/services/booking_flow.py`):** tras cada `insert into app.appointments ... returning` (ambos paths: endpoint ops `POST /appointments` y el booking conversacional del bot), se invoca `attribute_appointment` envuelto en try/except (la falla se loggea, nunca rompe la cita).
+  - **Endpoints `app/api/v1/routes.py` (bajo `tenant_analytics_router` con `require_min_role('manager')`):**
+    - `GET /v1/analytics/funnel?from_date=&to_date=` — CTEs `leads` (contactos con `created_at` en rango, agrupando por `lead_source.channel`), `engaged` (mensajes outbound bot/agent en rango), `scheduled` (citas creadas en rango), `completed` (citas `status='completed'` con `starts_at` en rango), `repeat_customers` (≥2 citas `completed` en últimos 90 días). Devuelve `total` (5 pasos con `count`, `conversion_from_previous_pct`, `conversion_from_top_pct`) + `by_channel` (mismo desglose por canal de captación).
+    - `GET /v1/analytics/campaigns?from_date=&to_date=` — join `app.campaigns ⨝ app.campaign_attributions ⨝ app.appointments ⨝ app.service_catalog` con `revenue_attributed = Σ price filter (a.status='completed')`. ROI estimado = `revenue / cost_amount` cuando hay costo. Incluye `replied` (inbound replies con `reply_to_external_message_id` por campaña) y `response_rate_pct`. Filtro temporal por `coalesce(started_at, created_at)`.
+  - **API admin de campañas (`app/api/v1/routes.py`, `app/api/v1/schemas.py`):** `CampaignCreate/Update` aceptan `cost_amount`, `cost_currency`, `attribution_window_days`. El INSERT persiste los nuevos campos y el PATCH soporta `cost_amount=null` explícito (vía flag `'cost_amount' in data`) y normaliza `cost_currency` a mayúsculas. `CAMPAIGN_PROJECTION` los expone para el panel.
+  - **Frontend (`admin-panel/`):**
+    - `coreApi.js`: nuevos helpers `getAnalyticsFunnel(session, tenantId, range)` y `getAnalyticsCampaigns(session, tenantId, range)`.
+    - `AnalyticsPanel.jsx`: sub-pestañas Resumen / Funnel / Campañas. `FunnelView` renderiza las 5 etapas con bars CSS-only proporcionales al top y muestra el desglose por canal. `CampaignsView` muestra KPIs (campañas, citas atribuidas, ingreso atribuido) y una tabla ordenada por ingreso con columnas Estado / Recipients / Response rate / Citas atribuidas (con sub-conteo de completadas) / Ingreso / Costo / ROI.
+    - `styles/global.css`: estilos `.analytics-subtabs`, `.analytics-subtab.active`, `.analytics-funnel` (track + fill con gradient), `.analytics-funnel-meta` para los porcentajes.
+- **Archivos tocados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/services/campaign_attribution.py` (nuevo)
+  - `app/services/booking_flow.py`
+  - `app/api/v1/routes.py`
+  - `app/api/v1/schemas.py`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx`
+  - `admin-panel/src/styles/global.css`
+  - `tests/test_funnel_attribution_static.py` (nuevo)
+  - `docs/BACKLOG.md` (tarea retirada)
+  - `docs/DONE.md` (esta entrada)
+- **Validaciones:**
+  - `python -m pytest tests/test_funnel_attribution_static.py -v` → **12 passed** (cubre schema con FK compuestas + unique appointment, RLS, columnas cost/window, registro de endpoints bajo manager role, los 5 pasos del funnel con `having count(*) >= 2` y ventana de 90 días, join de atribución con revenue filtrado por completed, last-touch order + idempotencia, wiring en ambos paths de creación, panel registra `FunnelView`/`CampaignsView` con labels y ROI, projection y persistencia de costo/ventana).
+  - `python -m pytest tests/test_analytics_static.py tests/test_campaigns_static.py tests/test_booking_flow_static.py` → **54 passed** (no regresiones).
+  - `ruff check` sobre los archivos modificados → All checks passed.
+- **Notas:**
+  - Atribución last-touch simple (no multi-touch): si el contacto recibió varias campañas dentro de la ventana, gana la más reciente con `delivered_at` (o `sent_at` cuando no hay confirmación de entrega) antes del `appointment.created_at`. Consistente con la nota original de la tarea.
+  - `attribution_window_days` admite 1–90 días (constraint check + validador Pydantic `ge=1, le=90`).
+  - El ROI sólo se reporta cuando `cost_amount > 0`; sin costo el campo es `null` y la UI lo dibuja como "-".
+  - El funnel cuenta `engaged` como conversaciones con ≥1 mensaje outbound bot/agent en el rango (no requiere inbound previo del contacto — algunas campañas también cuentan).
+  - Esta tarea cierra el MVP comercial junto con TASK-0047: el producto ya muestra ROI por canal y por campaña con datos reales.
+
+---
+
 ### TASK-0047 — Segmentos automáticos para retención y reactivación
 
 - **Fecha:** 2026-05-12
