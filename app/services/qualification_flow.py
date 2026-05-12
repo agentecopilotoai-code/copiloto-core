@@ -785,9 +785,17 @@ async def maybe_run_qualification_flow(
 
         answered[qid] = new_answer
 
+    # Early triage short-circuit: if the urgency_level preset is already
+    # answered with emergency/high, skip any remaining questions and jump
+    # straight to the completion path so the customer reaches a human ASAP.
+    early_urgency = _urgency_summary(questions, answered)
+    short_circuit_triage = bool(
+        early_urgency and early_urgency['level'] in URGENT_LEVELS
+    )
+
     # Are there still required questions to ask?
     pending = _next_pending_question(questions, answered)
-    if pending is not None:
+    if pending is not None and not short_circuit_triage:
         await _persist_state(
             conn,
             tenant_id,
@@ -848,16 +856,10 @@ async def maybe_run_qualification_flow(
     if is_vip:
         vip_tag_id = await _apply_vip_tag(conn, tenant_id, contact['id'])
 
-    if triage_handoff:
-        await _queue_text_message(
-            conn,
-            tenant_id=tenant_id,
-            conversation_id=conversation['id'],
-            channel_id=channel_id,
-            channel_account_mode=channel_account_mode,
-            body_text=URGENCY_WAIT_MESSAGE,
-            step='urgency_triage',
-        )
+    # Note: the urgency-wait reply is sent by ``_do_handoff`` in the
+    # orchestrator (which overrides ``policy.handoff_message`` with
+    # ``URGENCY_WAIT_MESSAGE``) so the customer receives exactly one
+    # bot reply on the triage path.
 
     persisted_state: dict[str, Any] = {
         'answered': answered,

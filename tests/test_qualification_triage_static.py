@@ -256,7 +256,7 @@ def _urgency_question():
     }
 
 
-def test_urgency_emergency_triggers_triage_handoff_signal_and_wait_message():
+def test_urgency_emergency_triggers_triage_handoff_signal():
     q = _urgency_question()
     qid = str(q['id'])
     conn = FakeConn(questions=[q])
@@ -278,10 +278,85 @@ def test_urgency_emergency_triggers_triage_handoff_signal_and_wait_message():
     assert result['triage_handoff'] is True
     assert result['triage_reason'] == 'urgency_triage'
     assert result['urgency_level'] == 'emergency'
-    # A wait-message must be queued so the customer knows a human is coming.
+    # qualification_flow MUST NOT queue a wait message itself — the
+    # orchestrator delivers it via _do_handoff so we never duplicate the
+    # bot reply. Any bot reply queued here is a regression.
     waits = [m for m in conn.inserted_messages if m['payload'].get('qualification_step') == 'urgency_triage']
-    assert len(waits) == 1
-    assert 'urgente' in waits[0]['body_text'].lower()
+    assert waits == []
+
+
+def test_urgency_emergency_short_circuits_remaining_required_questions():
+    """P1: urgency=emergency answered first must escalate immediately,
+    even if other required questions are still pending."""
+    urgency_q = _urgency_question()
+    follow_up = {
+        'id': uuid4(),
+        'position': 1,
+        'label': '¿Cuál es tu motivo?',
+        'kind': 'free_text',
+        'required': True,
+        'preset': None,
+        'options': [],
+        'applies_to_service_ids': [],
+    }
+    qid = str(urgency_q['id'])
+    conn = FakeConn(questions=[urgency_q, follow_up])
+    conv = _conversation()
+    conv['metadata'] = {'qualification': {'answered': {}}}
+    result = asyncio.run(
+        maybe_run_qualification_flow(
+            conn,
+            tenant_id=uuid4(),
+            channel_id=uuid4(),
+            channel_account_mode='mock',
+            conversation=conv,
+            contact=_contact(),
+            inbound_message=_inbound(interactive_id=f'{PREFIX_QUALIFY}:{qid}:now'),
+            intent='book_appointment',
+        )
+    )
+    # Must complete (with triage) without asking the follow-up question.
+    assert result['action'] == 'qualification_completed'
+    assert result['triage_handoff'] is True
+    assert result['urgency_level'] == 'emergency'
+    # No outbound message must be queued — the follow-up should NOT be presented.
+    assert conn.inserted_messages == []
+
+
+def test_urgency_normal_does_not_short_circuit_remaining_questions():
+    """Regression guard for P1: non-urgent answers must still ask the
+    remaining required questions instead of short-circuiting."""
+    urgency_q = _urgency_question()
+    follow_up = {
+        'id': uuid4(),
+        'position': 1,
+        'label': '¿Cuál es tu motivo?',
+        'kind': 'free_text',
+        'required': True,
+        'preset': None,
+        'options': [],
+        'applies_to_service_ids': [],
+    }
+    qid = str(urgency_q['id'])
+    conn = FakeConn(questions=[urgency_q, follow_up])
+    conv = _conversation()
+    conv['metadata'] = {'qualification': {'answered': {}}}
+    result = asyncio.run(
+        maybe_run_qualification_flow(
+            conn,
+            tenant_id=uuid4(),
+            channel_id=uuid4(),
+            channel_account_mode='mock',
+            conversation=conv,
+            contact=_contact(),
+            inbound_message=_inbound(interactive_id=f'{PREFIX_QUALIFY}:{qid}:whenever'),
+            intent='book_appointment',
+        )
+    )
+    # Flow asked the next question instead of completing.
+    assert result['action'] == 'qualification_step_sent'
+    assert len(conn.inserted_messages) == 1
+    assert conn.inserted_messages[0]['body_text'] == '¿Cuál es tu motivo?'
 
 
 def test_urgency_normal_does_not_trigger_triage():
@@ -396,6 +471,25 @@ def test_orchestrator_forwards_triage_handoff_to_do_handoff():
     assert "qualification_result.get('triage_handoff')" in src
     assert "qualification_result.get('triage_reason')" in src
     assert 'urgency_triage' in src
+
+
+def test_orchestrator_overrides_handoff_message_for_triage():
+    """P2: avoid double bot reply on triage — qualification_flow no longer
+    queues the wait message itself, so the orchestrator must override
+    policy.handoff_message with URGENCY_WAIT_MESSAGE before calling
+    _do_handoff."""
+    src = ORCHESTRATOR.read_text()
+    assert 'URGENCY_WAIT_MESSAGE' in src
+    assert "'handoff_message': URGENCY_WAIT_MESSAGE" in src
+    assert 'triage_policy = {**policy' in src
+
+
+def test_qualification_flow_does_not_queue_urgency_wait_message():
+    """P2 regression guard: ensure qualification_flow itself never queues a
+    bot message on the triage path (the orchestrator owns that reply)."""
+    src = Path('app/services/qualification_flow.py').read_text()
+    assert "step='urgency_triage'" not in src
+    assert "body_text=URGENCY_WAIT_MESSAGE" not in src
 
 
 def test_qualification_panel_exposes_preset_buttons_and_normalized_fields():
