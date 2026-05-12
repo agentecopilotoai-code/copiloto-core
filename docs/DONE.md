@@ -15,6 +15,45 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0054 — Filtrado dinámico de servicios en booking según respuestas de calificación
+
+- **Fecha:** 2026-05-12
+- **Resumen:** el catálogo que se le muestra al cliente durante el booking ahora se **filtra** en función de las respuestas de la calificación previa. Cada servicio puede declarar una regla `applies_when` (mismo lenguaje que los segmentos: `all_of/any_of` de predicados `{key, op, value}`) que se evalúa contra los _facts_ persistidos en `conversations.metadata.qualification.facts`. Sin reglas, el servicio aparece siempre. Si tras el filtro queda **1 sólo** servicio elegible, el flow lo auto-selecciona y salta directo a `_present_branches` / `_present_resources` — el cliente nunca ve una lista de uno. Si quedan **0**, el flow retorna `None` y el orquestador escala la conversación a humano (no se le muestra un menú vacío). Las claves humanas (`first_visit`, `motivo_consulta`, etc.) se definen por pregunta de calificación (campo nuevo `key` en `qualification_questions`); además quedan disponibles los presets `budget_tier` y `urgency_level` que ya construye TASK-0053.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):**
+    - `app.service_catalog`: nueva columna `applies_when jsonb not null default '{}'::jsonb`. Default `{}` ⇒ "aplica siempre".
+    - `app.qualification_questions`: nueva columna `key text` con check `^[a-z][a-z0-9_]{0,59}$` + índice único parcial `uq_qualification_questions_tenant_key on (tenant_id, key) where key is not null` (claves opcionales, únicas por tenant cuando se usan).
+  - **Evaluador puro (`app/services/segments.py`):**
+    - Nuevo `normalize_applies_when(rules)` — saneador del payload: acepta string JSON o dict, valida claves snake_case y operadores en whitelist, drop-silent de predicados inválidos, envuelve condiciones sueltas en `all_of`. Si no queda nada, retorna `{}` (no rompe la fila).
+    - Nuevo `evaluate_rules(rules, facts) -> bool` — evaluador en memoria que recorre `all_of`/`any_of` y `_evaluate_predicate`. Soporta `eq, ne, in, not_in, lt, lte, gt, gte, is_null, is_not_null, contains_any, contains_all`. Operadores de comparación coercionan `'true'/'sí'/'no'` a booleano y strings numéricos a `int/float` (`_coerce_for_compare` + `_equal`). Regla vacía/ilegible ⇒ `True` (defensa por defecto: no se "pierde" un servicio por una regla corrupta).
+  - **Calificación (`app/services/qualification_flow.py`):**
+    - Nuevos helpers puros `_coerce_answer_value(question, raw)` (cast yes_no/number a su tipo) y `build_qualification_facts(questions, answered)` (arma `{key: value}` a partir de las preguntas con `key` definido y agrega los presets `budget_tier`/`urgency_level`).
+    - Al completar la calificación, el flow ahora persiste `metadata.qualification.facts = build_qualification_facts(...)` además de `answered/budget_tier/urgency_level`. Eso es lo que consume el booking flow.
+  - **Booking flow (`app/services/booking_flow.py`):**
+    - `_list_active_services` ahora selecciona `applies_when` en el SQL.
+    - Nuevos helpers `_qualification_facts_from_conversation(conversation)` (parsea `metadata.qualification.facts` + cae a presets) y `_filter_services_by_qualification(services, facts)` (no-op cuando no hay facts; en caso contrario llama a `evaluate_rules` por servicio).
+    - `_present_services` aplica el filtro al inicio. **Caso 0 matches** → `log.info('booking_flow.no_services_match_qualification')` + return `None` (el orquestador escala). **Caso 1 match** → log `booking_flow.auto_selected_service` + invoca `_present_branches`/`_present_resources` con `selected_service_id=<uuid>`, saltando el menú de servicios. **Caso >1** → muestra el menú filtrado.
+  - **API (`app/api/v1/routes.py` + `app/api/v1/schemas.py`):**
+    - `ServiceCreate/Update` aceptan `applies_when: dict[str, Any]` (default `{}` en create; nullable opt-in en update). Routes insert/update normalizan con `normalize_applies_when` antes de bindear `$N::jsonb`. La proyección y `normalize_service_catalog_row` exponen el campo de vuelta como dict (coerción defensiva si llegara string/null).
+    - `QualificationQuestionCreate/Update` aceptan `key: str | None` con el patrón snake_case. La proyección `QUALIFICATION_PROJECTION` incluye `key`. El update usa el patrón `case when $12::boolean then $11 else key end` para distinguir "limpiar a null" de "no enviado".
+  - **Admin Panel:**
+    - `ServiceCatalog.jsx` agrega un **rule builder** completo: nuevos selects (clave + operador) + input (valor), botón "Agregar regla" / "Eliminar regla", soporte para operadores sin valor (`is_null/is_not_null`) y operadores de lista (valores separados por coma). Carga las claves disponibles llamando a `listQualificationQuestions` y siempre incluye los dos presets `budget_tier`/`urgency_level`. `rulesToPayload`/`rulesFromService` traducen entre la forma del formulario y el JSON normalizado del backend.
+    - `QualificationQuestionsPanel.jsx`: nuevo input "Clave (opcional)" con validación regex `^[a-z][a-z0-9_]{0,59}$`. `presetForm` ahora sembra `key: 'budget_tier'` / `'urgency_level'` para los presets, `startEdit` rehidrata `key`, `submit` la valida y la incluye en el payload.
+- **Tests (`tests/test_service_applies_when_static.py`, 22 tests):** schema (`applies_when` + check `key`), pydantic (defaults `{}`, pattern de key), routes (proyección + binding), evaluador puro (empty/invalid match, eq con coerción de booleanos/strings, todos los operadores del whitelist, `all_of/any_of` anidados, normalize drop-silent + bare condition wrap), booking helpers (facts desde conversation, fallback a `{}` cuando falta metadata), `build_qualification_facts` (mapeo por key, coerción yes_no, drop de preguntas sin key), wiring del booking flow (logs y `_filter`), snapshot de `facts` en qualification flow, UI (rule builder testids + key input). Además se ajustó `test_routes_projection_and_inserts_include_preset` (TASK-0053) para reflejar la proyección extendida con `key`.
+- **Validaciones:**
+  - `python3.12 -m pytest tests/test_service_applies_when_static.py -q` → **22 passed**.
+  - `python3.12 -m pytest tests/test_booking_flow_static.py tests/test_segments_static.py tests/test_service_catalog_static.py tests/test_qualification_flow_static.py tests/test_qualification_triage_static.py -q` → **102 passed** (sin regresiones en los suites adyacentes).
+  - `python3.12 -m pytest tests/ -q -m "not requires_db"` → **934 passed, 11 skipped, 1 deselected**.
+  - `ruff check app/services/segments.py app/services/booking_flow.py app/services/qualification_flow.py app/api/v1/routes.py app/api/v1/schemas.py tests/test_service_applies_when_static.py` → All checks passed.
+  - `python3.12 -m compileall app -q` → ok.
+- **Notas:**
+  - `applies_when={}` mantiene el comportamiento original (servicio aplica siempre).
+  - El evaluador no toca la DB; corre en memoria sobre el dict de _facts_ del conversation. Eso lo hace seguro para llamar dentro del flow sin overhead extra.
+  - Cuando 0 servicios matchean, el flow retorna `None` para que el orquestador continúe la cascada (template → LLM → handoff). No se inventa una respuesta por defecto desde aquí.
+  - El campo `key` de `qualification_questions` es **opcional**. Sin él, la pregunta sigue funcionando como antes; sólo no se puede referenciar desde un `applies_when`. Los dos presets `budget_tier`/`urgency_level` siempre están disponibles porque los inyecta `build_qualification_facts` derivándolos de los presets.
+
+---
+
 ### TASK-0053 — Calificación de presupuesto y urgencia con triage automático
 
 - **Fecha:** 2026-05-12

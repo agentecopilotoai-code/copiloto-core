@@ -339,22 +339,7 @@ _TASK-0052 — Recall automático ("control en 6 meses") por servicio tras compl
 
 ---
 
-### TASK-0054 — Filtrado dinámico de servicios en booking según respuestas de calificación
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0042 y TASK-0053 (ideal pero no estrictamente).
-- **Por qué bloquea:** un cliente que respondió "primera vez" no debería ver "control de seguimiento". Hoy `booking_flow._present_services` lista **todos** los servicios activos; solo el `prefilled_service_id` puede saltarse la pantalla y solo cuando la opción de calificación trae `service_id` exacto.
-- **Alcance:**
-  - `service_catalog.applies_when jsonb` — reglas en formato `{ all_of: [{key, op, value}] }` (igual operadores que el segmento de TASK-0047). Ejemplos: `{ all_of: [{key:'first_visit', op:'eq', value:true}] }`.
-  - `booking_flow._present_services` evalúa `applies_when` contra `conversations.metadata.qualification.answered` y filtra la lista; si tras filtrar queda 1 servicio, se salta a `_present_resources` directo. Si quedan 0, retorna a calificación con una pregunta adicional configurada (`fallback_service_id` opcional) o escala a humano.
-  - **Admin Panel:** `ServiceCatalog.jsx` gana un mini-builder de reglas (mismo componente que el de campañas, reutilizable) para definir `applies_when` sin escribir JSON.
-- **Criterios de aceptación:**
-  - Cliente que respondió `first_visit=true` solo ve servicios con `applies_when.first_visit=true` o sin regla.
-  - Si queda un solo servicio aplicable, el flow lo selecciona automáticamente y avanza a recurso.
-  - Tests: ≥ 8 estáticos: evaluador de reglas con todos los operadores, filtro en el flow, skip a recurso, escalado cuando 0 matches.
-- **Notas:**
-  - Si `applies_when` está vacío (default), el servicio se muestra siempre (back-compat dentro del MVP — todavía no hay producción).
-  - El evaluador reusa `app/services/segments.py.evaluate_rules` (que se construye en TASK-0047).
+_TASK-0054 — Filtrado dinámico de servicios en booking según respuestas de calificación: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

@@ -104,7 +104,7 @@ async def _list_questions(
     rows = await conn.fetch(
         """
         select id, position, label, kind, options, required,
-               applies_to_service_ids, preset
+               applies_to_service_ids, preset, key
         from app.qualification_questions
         where tenant_id=$1
         order by position asc, created_at asc
@@ -520,6 +520,67 @@ async def _present_question(
     )
 
 
+def _coerce_answer_value(question: dict[str, Any], raw: Any) -> Any:
+    """Best-effort cast of a stored answer back to a typed Python value.
+
+    Used by ``build_qualification_facts`` (TASK-0054) so an ``applies_when``
+    rule like ``{key:'first_visit', op:'eq', value:true}`` works whether the
+    yes/no answer is persisted as ``True`` or as the strings ``'true'`` / ``'sí'``.
+    """
+    kind = question.get('kind')
+    if raw is None:
+        return None
+    if kind == KIND_YES_NO:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            lowered = raw.strip().lower()
+            if lowered in ('true', 'yes', 'sí', 'si', '1'):
+                return True
+            if lowered in ('false', 'no', '0'):
+                return False
+    if kind == KIND_NUMBER:
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            cleaned = raw.replace(',', '.').strip()
+            try:
+                if '.' in cleaned:
+                    return float(cleaned)
+                return int(cleaned)
+            except ValueError:
+                return raw
+    return raw
+
+
+def build_qualification_facts(
+    questions: list[dict[str, Any]], answered: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a ``{key: value}`` facts dict from the answered map.
+
+    Maps each answered question identified by its stable ``key`` (when set),
+    and also exposes derived presets ``budget_tier`` and ``urgency_level``
+    so ``service_catalog.applies_when`` rules can reuse them directly.
+    """
+    facts: dict[str, Any] = {}
+    for question in questions:
+        qid = str(question['id'])
+        if qid not in answered:
+            continue
+        key = question.get('key')
+        if not isinstance(key, str) or not key:
+            continue
+        facts[key] = _coerce_answer_value(question, answered.get(qid))
+    budget = _budget_tier_summary(questions, answered)
+    if budget:
+        facts.setdefault('budget_tier', budget.get('tier_value'))
+        facts.setdefault('budget_label', budget.get('tier_label'))
+    urgency = _urgency_summary(questions, answered)
+    if urgency:
+        facts.setdefault('urgency_level', urgency.get('level'))
+    return facts
+
+
 def _derive_recommended_service(
     questions: list[dict[str, Any]], answered: dict[str, Any]
 ) -> str | None:
@@ -861,11 +922,15 @@ async def maybe_run_qualification_flow(
     # ``URGENCY_WAIT_MESSAGE``) so the customer receives exactly one
     # bot reply on the triage path.
 
+    # TASK-0054: snapshot the keyed facts so booking_flow can filter the
+    # catalogue without re-running the question lookup.
+    qualification_facts = build_qualification_facts(questions, answered)
     persisted_state: dict[str, Any] = {
         'answered': answered,
         'started_at': state.get('started_at'),
         'completed': True,
         'recommended_service_id': recommended_service_id,
+        'facts': qualification_facts,
     }
     if budget_summary:
         persisted_state['budget_tier'] = {

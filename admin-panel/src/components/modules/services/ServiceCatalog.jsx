@@ -5,6 +5,7 @@ import {
   deactivateService,
   getTenantSettings,
   listPromotions,
+  listQualificationQuestions,
   listServices,
   listWhatsappTemplates,
   reorderServices,
@@ -38,8 +39,89 @@ const emptyForm = {
   // TASK-0052: per-service recall configuration. Empty string means "no recall".
   recall_interval_days: '',
   recall_template_id: '',
+  // TASK-0054: dynamic eligibility rule — list of {key, op, value} predicates
+  // joined with AND. Empty list means "always applies".
+  applies_when_rules: [],
   is_active: true,
 };
+
+const APPLIES_WHEN_OPS = [
+  { value: 'eq', label: 'es igual a' },
+  { value: 'ne', label: 'es distinto de' },
+  { value: 'in', label: 'está en lista' },
+  { value: 'not_in', label: 'no está en lista' },
+  { value: 'lt', label: 'es menor que' },
+  { value: 'lte', label: 'es menor o igual que' },
+  { value: 'gt', label: 'es mayor que' },
+  { value: 'gte', label: 'es mayor o igual que' },
+  { value: 'is_null', label: 'no fue respondida' },
+  { value: 'is_not_null', label: 'fue respondida' },
+  { value: 'contains_any', label: 'contiene alguno' },
+  { value: 'contains_all', label: 'contiene todos' },
+];
+
+const VALUELESS_OPS = new Set(['is_null', 'is_not_null']);
+const LIST_OPS = new Set(['in', 'not_in', 'contains_any', 'contains_all']);
+
+function normalizeRuleValue(op, raw) {
+  if (VALUELESS_OPS.has(op)) return undefined;
+  if (LIST_OPS.has(op)) {
+    if (Array.isArray(raw)) return raw.filter((item) => item !== '' && item !== null);
+    if (typeof raw === 'string') {
+      return raw
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    return [];
+  }
+  if (raw === '' || raw === null || raw === undefined) return '';
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed === '') return '';
+    if (trimmed.toLowerCase() === 'true') return true;
+    if (trimmed.toLowerCase() === 'false') return false;
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+    return trimmed;
+  }
+  return raw;
+}
+
+function rulesToPayload(rules) {
+  // Always wrap in all_of so the server normalizer accepts it. Empty list →
+  // `{}` so the column defaults to "always applies".
+  const cleaned = rules
+    .map((rule) => {
+      if (!rule || typeof rule.key !== 'string' || !rule.key.trim()) return null;
+      const op = APPLIES_WHEN_OPS.some((entry) => entry.value === rule.op) ? rule.op : null;
+      if (!op) return null;
+      const node = { key: rule.key.trim(), op };
+      const value = normalizeRuleValue(op, rule.value);
+      if (value !== undefined) node.value = value;
+      return node;
+    })
+    .filter(Boolean);
+  if (!cleaned.length) return {};
+  return { all_of: cleaned };
+}
+
+function rulesFromService(service) {
+  const stored = service?.applies_when;
+  if (!stored || typeof stored !== 'object') return [];
+  const list = Array.isArray(stored.all_of) ? stored.all_of : null;
+  if (!list) return [];
+  return list
+    .filter((item) => item && typeof item.key === 'string' && typeof item.op === 'string')
+    .map((item) => ({
+      key: item.key,
+      op: item.op,
+      value: LIST_OPS.has(item.op) && Array.isArray(item.value)
+        ? item.value.join(', ')
+        : item.value !== undefined && item.value !== null
+        ? String(item.value)
+        : '',
+    }));
+}
 
 function formatPrice(amount, currency) {
   if (amount === null || amount === undefined || amount === '') return '—';
@@ -105,6 +187,8 @@ function buildPayload(form) {
     post_service_notes: form.post_service_notes?.trim() || null,
     recall_interval_days: recallDays,
     recall_template_id: form.recall_template_id || null,
+    // TASK-0054: emit the rule builder output as a normalized applies_when.
+    applies_when: rulesToPayload(form.applies_when_rules || []),
     is_active: Boolean(form.is_active),
   };
 }
@@ -136,6 +220,8 @@ export function ServiceCatalog({ module, session, tenant }) {
   const [promotions, setPromotions] = useState([]);
   // TASK-0052: approved service_recall templates the operator can pick from.
   const [recallTemplates, setRecallTemplates] = useState([]);
+  // TASK-0054: keys available for applies_when rules (question.key + presets).
+  const [qualificationKeys, setQualificationKeys] = useState([]);
 
   const tenantId = tenant?.id;
   const previewText = useMemo(() => buildPreview(form, tenant), [form, tenant]);
@@ -187,6 +273,61 @@ export function ServiceCatalog({ module, session, tenant }) {
       .then((rows) => setRecallTemplates(Array.isArray(rows) ? rows : []))
       .catch(() => setRecallTemplates([]));
   }, [tenantId, session]);
+
+  // TASK-0054: load the keys (question.key + derived presets) the admin can
+  // reference in applies_when rules. We seed the two presets always so the
+  // tenant can write rules even before tagging their questions with a key.
+  useEffect(() => {
+    if (!tenantId) {
+      setQualificationKeys([]);
+      return;
+    }
+    listQualificationQuestions(session, tenantId)
+      .then((rows) => {
+        const presetKeys = [
+          { key: 'budget_tier', label: 'Presupuesto (tier_value numérico)' },
+          { key: 'urgency_level', label: 'Urgencia (emergency/high/normal/low)' },
+        ];
+        const fromQuestions = (Array.isArray(rows) ? rows : [])
+          .filter((q) => typeof q.key === 'string' && q.key)
+          .map((q) => ({ key: q.key, label: `${q.label} (${q.kind})` }));
+        const merged = [...presetKeys];
+        fromQuestions.forEach((entry) => {
+          if (!merged.some((m) => m.key === entry.key)) merged.push(entry);
+        });
+        setQualificationKeys(merged);
+      })
+      .catch(() => setQualificationKeys([
+        { key: 'budget_tier', label: 'Presupuesto (tier_value numérico)' },
+        { key: 'urgency_level', label: 'Urgencia (emergency/high/normal/low)' },
+      ]));
+  }, [tenantId, session]);
+
+  function addAppliesWhenRule() {
+    setForm((current) => ({
+      ...current,
+      applies_when_rules: [
+        ...(current.applies_when_rules || []),
+        { key: qualificationKeys[0]?.key || '', op: 'eq', value: '' },
+      ],
+    }));
+  }
+
+  function updateAppliesWhenRule(index, patch) {
+    setForm((current) => {
+      const next = [...(current.applies_when_rules || [])];
+      next[index] = { ...next[index], ...patch };
+      return { ...current, applies_when_rules: next };
+    });
+  }
+
+  function removeAppliesWhenRule(index) {
+    setForm((current) => {
+      const next = [...(current.applies_when_rules || [])];
+      next.splice(index, 1);
+      return { ...current, applies_when_rules: next };
+    });
+  }
 
   async function handleSaveDefaultDuration(event) {
     event.preventDefault();
@@ -266,6 +407,7 @@ export function ServiceCatalog({ module, session, tenant }) {
           ? ''
           : String(service.recall_interval_days),
       recall_template_id: service.recall_template_id || '',
+      applies_when_rules: rulesFromService(service),
       is_active: service.is_active !== false,
     });
     setNotice(null);
@@ -601,6 +743,103 @@ export function ServiceCatalog({ module, session, tenant }) {
                 </span>
               ) : null}
             </label>
+            <div className="wide" data-testid="applies-when-builder">
+              <strong>Reglas de elegibilidad (calificación)</strong>
+              <p className="hint" style={{ marginTop: '0.25rem' }}>
+                El servicio sólo se ofrece cuando todas las reglas se cumplen
+                contra las respuestas de calificación del cliente. Sin reglas
+                aplica siempre.
+              </p>
+              {(form.applies_when_rules || []).length === 0 ? (
+                <p className="hint" style={{ marginTop: '0.4rem' }}>
+                  No hay reglas — el servicio aplica a todos los clientes.
+                </p>
+              ) : null}
+              {(form.applies_when_rules || []).map((rule, index) => {
+                const valueless = VALUELESS_OPS.has(rule.op);
+                const listOp = LIST_OPS.has(rule.op);
+                return (
+                  <div
+                    key={`rule-${index}`}
+                    data-testid="applies-when-rule"
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: '0.4rem',
+                      alignItems: 'center',
+                      marginTop: '0.4rem',
+                    }}
+                  >
+                    <select
+                      value={rule.key}
+                      onChange={(event) =>
+                        updateAppliesWhenRule(index, { key: event.target.value })
+                      }
+                      aria-label="Clave de calificación"
+                    >
+                      <option value="">— Selecciona una clave —</option>
+                      {qualificationKeys.map((entry) => (
+                        <option key={entry.key} value={entry.key}>
+                          {entry.key} · {entry.label}
+                        </option>
+                      ))}
+                      {rule.key
+                        && !qualificationKeys.some((entry) => entry.key === rule.key) ? (
+                          <option value={rule.key}>{rule.key}</option>
+                        ) : null}
+                    </select>
+                    <select
+                      value={rule.op}
+                      onChange={(event) =>
+                        updateAppliesWhenRule(index, { op: event.target.value, value: '' })
+                      }
+                      aria-label="Operador"
+                    >
+                      {APPLIES_WHEN_OPS.map((entry) => (
+                        <option key={entry.value} value={entry.value}>
+                          {entry.label}
+                        </option>
+                      ))}
+                    </select>
+                    {!valueless ? (
+                      <input
+                        type="text"
+                        value={rule.value ?? ''}
+                        placeholder={
+                          listOp ? 'valores separados por coma' : 'valor (true/false/número/texto)'
+                        }
+                        onChange={(event) =>
+                          updateAppliesWhenRule(index, { value: event.target.value })
+                        }
+                        aria-label="Valor"
+                      />
+                    ) : null}
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      onClick={() => removeAppliesWhenRule(index)}
+                    >
+                      Eliminar regla
+                    </button>
+                  </div>
+                );
+              })}
+              <div style={{ marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="secondary-action"
+                  onClick={addAppliesWhenRule}
+                  disabled={!qualificationKeys.length}
+                >
+                  Agregar regla
+                </button>
+                {!qualificationKeys.length ? (
+                  <span className="hint" style={{ marginLeft: '0.5rem' }}>
+                    Configura claves en Calificación antes de armar reglas.
+                  </span>
+                ) : null}
+              </div>
+            </div>
             <div className="builder-preview wide">
               <strong>Vista previa para WhatsApp</strong>
               <pre style={{ whiteSpace: 'pre-wrap' }}>{previewText}</pre>

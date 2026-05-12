@@ -50,6 +50,8 @@ const URGENCY_LEVEL_PRESET = {
 function emptyForm() {
   return {
     label: '',
+    // TASK-0054: optional snake_case key used by service_catalog.applies_when.
+    key: '',
     kind: 'yes_no',
     options: [],
     required: true,
@@ -62,6 +64,7 @@ function presetForm(preset) {
   if (preset === PRESET_BUDGET_TIER) {
     return {
       label: BUDGET_TIER_PRESET.label,
+      key: 'budget_tier',
       kind: BUDGET_TIER_PRESET.kind,
       options: BUDGET_TIER_PRESET.options.map((o) => ({ ...o })),
       required: BUDGET_TIER_PRESET.required,
@@ -72,6 +75,7 @@ function presetForm(preset) {
   if (preset === PRESET_URGENCY_LEVEL) {
     return {
       label: URGENCY_LEVEL_PRESET.label,
+      key: 'urgency_level',
       kind: URGENCY_LEVEL_PRESET.kind,
       options: URGENCY_LEVEL_PRESET.options.map((o) => ({ ...o })),
       required: URGENCY_LEVEL_PRESET.required,
@@ -81,6 +85,8 @@ function presetForm(preset) {
   }
   return emptyForm();
 }
+
+const KEY_PATTERN = /^[a-z][a-z0-9_]{0,59}$/;
 
 function previewQuestion(question) {
   if (!question) return null;
@@ -141,6 +147,7 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
     setEditingId(question.id);
     setForm({
       label: question.label || '',
+      key: question.key || '',
       kind: question.kind,
       options: Array.isArray(question.options)
         ? question.options.map((o) => ({
@@ -209,6 +216,14 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
       onNotice?.({ type: 'error', text: 'Agrega al menos una opción.' });
       return;
     }
+    const trimmedKey = (form.key || '').trim();
+    if (trimmedKey && !KEY_PATTERN.test(trimmedKey)) {
+      onNotice?.({
+        type: 'error',
+        text: 'La clave debe ser snake_case (sólo a–z, 0–9 y _) y empezar por letra.',
+      });
+      return;
+    }
     const payload = {
       label: form.label.trim(),
       kind: form.kind,
@@ -216,6 +231,7 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
       required: form.required,
       applies_to_service_ids: form.applies_to_service_ids,
       preset: form.preset || null,
+      key: trimmedKey || null,
     };
     setIsBusy(true);
     try {
@@ -375,6 +391,22 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
             maxLength={200}
             required
           />
+        </label>
+        <label>
+          Clave (opcional)
+          <input
+            type="text"
+            value={form.key}
+            onChange={(event) => setForm({ ...form, key: event.target.value })}
+            placeholder="Ej. first_visit, motivo_consulta"
+            maxLength={60}
+            pattern="^[a-z][a-z0-9_]{0,59}$"
+          />
+          <span className="hint" style={{ display: 'block', marginTop: '0.25rem' }}>
+            Identificador estable (snake_case) que puedes usar en las reglas de
+            elegibilidad de servicios. Déjalo vacío si no piensas filtrar por esta
+            respuesta.
+          </span>
         </label>
         <label>
           Tipo

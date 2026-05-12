@@ -167,6 +167,9 @@ class ServiceCreate(BaseModel):
     # carries the nudge. Both default to null when the service is one-off.
     recall_interval_days: int | None = Field(default=None, gt=0, le=3650)
     recall_template_id: UUID | None = None
+    # TASK-0054: dynamic eligibility rule against qualification answers.
+    # Empty dict (default) means "always applies".
+    applies_when: dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
     sort_order: int = Field(default=0, ge=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -183,6 +186,7 @@ class ServiceUpdate(BaseModel):
     post_service_notes: str | None = Field(default=None, max_length=2000)
     recall_interval_days: int | None = Field(default=None, ge=0, le=3650)
     recall_template_id: UUID | None = None
+    applies_when: dict[str, Any] | None = None
     is_active: bool | None = None
     sort_order: int | None = Field(default=None, ge=0)
     metadata: dict[str, Any] | None = None
@@ -547,6 +551,8 @@ QUALIFICATION_QUESTION_KINDS = (
 QUALIFICATION_QUESTION_KIND_PATTERN = '^(' + '|'.join(QUALIFICATION_QUESTION_KINDS) + ')$'
 QUALIFICATION_QUESTION_PRESETS = ('budget_tier', 'urgency_level')
 QUALIFICATION_QUESTION_PRESET_PATTERN = '^(' + '|'.join(QUALIFICATION_QUESTION_PRESETS) + ')$'
+# TASK-0054: human-readable key for service_catalog.applies_when rules.
+QUALIFICATION_QUESTION_KEY_PATTERN = '^[a-z][a-z0-9_]{0,59}$'
 URGENCY_NORMALIZED_VALUES = ('emergency', 'high', 'normal', 'low')
 URGENCY_NORMALIZED_PATTERN = '^(' + '|'.join(URGENCY_NORMALIZED_VALUES) + ')$'
 
@@ -567,6 +573,8 @@ class QualificationQuestionCreate(BaseModel):
     position: int = Field(default=0, ge=0)
     applies_to_service_ids: list[UUID] = Field(default_factory=list)
     preset: str | None = Field(default=None, pattern=QUALIFICATION_QUESTION_PRESET_PATTERN)
+    # TASK-0054: optional stable key for applies_when rules.
+    key: str | None = Field(default=None, pattern=QUALIFICATION_QUESTION_KEY_PATTERN)
 
 
 class QualificationQuestionUpdate(BaseModel):
@@ -577,6 +585,7 @@ class QualificationQuestionUpdate(BaseModel):
     position: int | None = Field(default=None, ge=0)
     applies_to_service_ids: list[UUID] | None = None
     preset: str | None = Field(default=None, pattern=QUALIFICATION_QUESTION_PRESET_PATTERN)
+    key: str | None = Field(default=None, pattern=QUALIFICATION_QUESTION_KEY_PATTERN)
 
 
 class QualificationReorderItem(BaseModel):
