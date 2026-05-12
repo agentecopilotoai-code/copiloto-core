@@ -11,6 +11,7 @@ import structlog
 
 from app.core.config import get_settings
 from app.services.audit import audit
+from app.services.appointment_self_service import maybe_run_self_service_flow
 from app.services.booking_flow import maybe_run_booking_flow
 from app.services.feedback_flow import (
     maybe_record_confirmation,
@@ -437,6 +438,43 @@ async def orchestrate_inbound_message(
         'select 1 from app.service_catalog where tenant_id=$1 and is_active=true limit 1',
         tenant_id,
     ))
+
+    # TASK-0043: Self-service cancellation / reschedule. Runs before the
+    # qualification + booking pipeline so that "quiero cancelar" / "cambiar mi
+    # cita" intents are handled directly by the bot. When the policy gate or a
+    # paid appointment requires a human, the function returns an "escalated"
+    # action and we drop into the existing handoff path.
+    self_service_result = await maybe_run_self_service_flow(
+        conn,
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        conversation=conversation,
+        contact=contact,
+        inbound_message=inbound_message,
+        intent=intent_result.intent,
+    )
+    if self_service_result is not None:
+        action = self_service_result.get('action')
+        if action == 'self_service_escalated':
+            return await _do_handoff(
+                conn,
+                tenant_id=tenant_id,
+                channel_id=channel_id,
+                conversation=conversation,
+                inbound_message=inbound_message,
+                policy=policy,
+                reason='self_service_escalated',
+                reason_detail=self_service_result.get('reason', ''),
+            )
+        log.info(
+            'orchestrator.self_service_handled',
+            conversation_id=conversation_id,
+            action=action,
+            flow=self_service_result.get('flow'),
+            step=self_service_result.get('step'),
+        )
+        return self_service_result
 
     # TASK-0042: Conversational qualification before the booking flow. When the
     # tenant has configured qualification questions and the user is heading

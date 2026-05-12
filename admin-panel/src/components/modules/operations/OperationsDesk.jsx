@@ -1086,7 +1086,14 @@ export function OperationsDesk({ module, session, tenant }) {
       <div className="operations-layout">
         <aside className="conversation-list" aria-label="Conversaciones">
           {conversations.length === 0 ? <p className="hint">No hay conversaciones para este tenant.</p> : null}
-          {conversations.map((conversation) => (
+          {conversations.map((conversation) => {
+            const rawMeta = conversation.metadata;
+            const meta = typeof rawMeta === 'string'
+              ? (() => { try { return JSON.parse(rawMeta); } catch { return null; } })()
+              : rawMeta;
+            const selfService = meta?.self_service;
+            const selfServiceFlow = selfService?.flow;
+            return (
             <button
               className={`conversation-card ${conversation.id === selectedConversationId ? 'active' : ''}`}
               key={conversation.id}
@@ -1101,6 +1108,20 @@ export function OperationsDesk({ module, session, tenant }) {
                     {conversation.current_intent}
                   </span>
                 )}
+                {selfServiceFlow ? (
+                  <span
+                    className="status-pill"
+                    style={{
+                      fontSize: '0.65rem',
+                      padding: '0.05rem 0.4rem',
+                      background: '#0ea5e9',
+                      color: '#fff',
+                    }}
+                    title={`Cita ${selfServiceFlow === 'cancel' ? 'cancelada' : 'reagendada'} por el bot (self-service)`}
+                  >
+                    self-service
+                  </span>
+                ) : null}
               </div>
               {(conversation.contact_tags || []).length > 0 ? (
                 <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
@@ -1123,7 +1144,8 @@ export function OperationsDesk({ module, session, tenant }) {
               <small>{conversation.latest_message_text || 'Sin mensajes aún'}</small>
               <time>{formatDate(conversation.latest_message_at || conversation.updated_at)}</time>
             </button>
-          ))}
+            );
+          })}
         </aside>
 
         <section className="conversation-detail">

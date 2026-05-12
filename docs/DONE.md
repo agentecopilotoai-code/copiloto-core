@@ -15,6 +15,42 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0043 — Cancelación y reprogramación self-service por WhatsApp
+
+- **Fecha:** 2026-05-12
+- **Resumen:** los intents `cancel_appointment` y `reschedule_appointment` ya se clasificaban, pero hasta hoy un agente humano tenía que ejecutarlos desde Operations Desk. Ahora el bot maneja ambos casos solo, con confirmación interactiva, regenera los jobs de recordatorios, audita cada acción y escala a humano cuando la política lo exige (cita muy próxima al inicio o cita ya pagada).
+- **Implementación:**
+  - **Nuevo módulo `app/services/appointment_self_service.py`** — punto único de entrada `maybe_run_self_service_flow(...)`. Distingue dos flujos por intent y delega a sub-flows que comparten helpers de mensajes/idempotencia:
+    - **Cancel**: busca la próxima cita `scheduled|confirmed` con `starts_at >= now()` (LIMIT 1 por `starts_at`), presenta botones `Sí, cancelar` / `No, mantener` con prefijo `cancel_confirm:`, marca `status='cancelled'`, llama `cancel_appointment_reminder_jobs`, envía mensaje de confirmación y emite `bot.appointment_cancelled`.
+    - **Reschedule**: arma 3 slots libres con el **mismo recurso/servicio** reutilizando `compute_free_slots`, `_busy_intervals` y `_working_hours_for_date` de `booking_flow`. Persiste los slots ofrecidos en la metadata para mapear el botón → slot en la siguiente vuelta. Al elegir, `UPDATE appointments` dentro de una transacción que captura cualquier error de exclusión `EXCLUDE USING GIST`; en conflicto, re-ofrece slots. En éxito, regenera jobs (`regenerate_appointment_reminder_jobs`), confirma al cliente y emite `bot.appointment_rescheduled`.
+  - **Política de ventana**: nuevo nodo `escalation_policy.self_service.min_hours_before_start` (default 2h). El helper `min_hours_before_start` tolera `None`, JSON-string, valores no numéricos y negativos, devolviendo el default cuando corresponde. Si la cita está bajo el umbral, el flow retorna `self_service_escalated` con `reason='too_close_to_start'` y el orquestador dispara handoff. Mismo tratamiento para citas con `payment_status='paid'`.
+  - **Integración (`app/services/rag_orchestrator.py`)** — `maybe_run_self_service_flow` corre **antes** de `qualification_flow` y `booking_flow`, así un "cambiar mi cita" no dispara ni calificación ni booking. Cuando devuelve `self_service_escalated` el orquestador llama directamente a `_do_handoff` con `reason='self_service_escalated'` y `reason_detail` del motivo.
+  - **Persistencia y idempotencia** — estado en `conversations.metadata.self_service = {flow, step, appointment_id, offered_slots?}`. Cada inbound se procesa una sola vez vía `domain_events('self_service.handled')` con clave `self_service:{inbound_message_id}`.
+  - **OperationsDesk** — el inbox lee `conversation.metadata.self_service.flow` y muestra un badge azul "self-service" en las conversaciones modificadas por el bot, para que el agente sepa sin abrir la conversación.
+  - **TenantSetupWizard** — la pestaña Escalamiento expone un nuevo campo "Self-service: horas mínimas antes de la cita" (input numérico con paso 0.5 y rango 0–72), persistido como `escalation_policy.self_service.min_hours_before_start` y leído por el helper del backend.
+- **Archivos:**
+  - `app/services/appointment_self_service.py` (nuevo) — flow completo (~600 líneas).
+  - `app/services/rag_orchestrator.py` — invocación previa a qualification y manejo de escalado.
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx` — badge "self-service" en cada conversation card.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — campo de `min_hours_before_start` (hydrate + payload).
+  - `tests/test_self_service_static.py` (nuevo) — 22 tests.
+  - `docs/BACKLOG.md` / `docs/DONE.md`.
+- **Comandos / validaciones:**
+  - `pytest tests/test_self_service_static.py` → **22 passed** (constantes/prefijos, helper de policy con todos los inputs degradados, fuentes que auditan los dos eventos, integración del orquestador en el orden correcto, presencia del campo en el wizard y del badge en el desk, y 11 escenarios FakeConn end-to-end: sin cita próxima, intent ajeno, cancel con botones, "Sí" ejecuta y audita, "No" mantiene, ventana de política, cita pagada, reschedule ofrece 3 slots, slot conflict re-ofrece, slot exitoso emite audit + UPDATE, idempotencia replay y "no hay slots" escala).
+  - `pytest tests/test_self_service_static.py tests/test_qualification_flow_static.py tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_policy_engine_static.py tests/test_notifications_static.py` → **151 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - "quiero cancelar mi cita" → bot muestra cita, confirma con botones, cancela en DB, cancela jobs pendientes y manda "Listo, tu cita del DD/MM HH:MM se canceló".
+  - "cambiar mi cita" → bot ofrece 3 slots libres del mismo recurso; al elegir, mueve la cita y regenera los reminders.
+  - Cita a < 2h de inicio (configurable desde el panel) → bot escala sin actuar.
+  - Dos clientes intentan el mismo slot → el segundo recibe "ese horario se acaba de ocupar" y vuelve al paso de slots (cubierto por test con flag `reschedule_should_conflict`).
+  - 22 tests estáticos (objetivo era ≥ 12).
+- **Notas:**
+  - No se reasigna a otro recurso automáticamente: si el cliente quiere otro profesional, cancela y vuelve a agendar (lo señaliza el bot en el mensaje de confirmación final).
+  - Citas con `payment_status='paid'` siempre escalan a humano para no manejar reembolsos en MVP.
+  - El flow mid-flow tolera respuestas malformadas re-presentando el mismo paso, sin perder el estado.
+
+---
+
 ### TASK-0042 — Calificación conversacional previa al booking
 
 - **Fecha:** 2026-05-12

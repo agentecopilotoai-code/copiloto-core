@@ -232,6 +232,8 @@ function formFromEscalationPolicy(value) {
       'Te conecto con una persona del equipo para ayudarte mejor.',
     consecutiveNoContextLimit: escalationPolicy.consecutive_no_context_limit ?? 2,
     enforceServiceWindow: escalationPolicy.enforce_service_window ?? true,
+    selfServiceMinHoursBeforeStart:
+      escalationPolicy.self_service?.min_hours_before_start ?? 2,
   };
 }
 
@@ -286,6 +288,9 @@ function toEscalationPolicy(escalationForm) {
     handoff_message: escalationForm.handoffMessage,
     consecutive_no_context_limit: Number(escalationForm.consecutiveNoContextLimit),
     enforce_service_window: escalationForm.enforceServiceWindow,
+    self_service: {
+      min_hours_before_start: Number(escalationForm.selfServiceMinHoursBeforeStart),
+    },
   };
 }
 
@@ -928,6 +933,26 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
             Forzar handoff si la ventana de servicio WhatsApp (24 h) expiró
           </label>
           <label className="wide">Mensaje de handoff<textarea value={escalationForm.handoffMessage} onChange={(event) => setEscalationForm({ ...escalationForm, handoffMessage: event.target.value })} /></label>
+          <label>
+            Self-service: horas mínimas antes de la cita
+            <input
+              type="number"
+              min="0"
+              max="72"
+              step="0.5"
+              value={escalationForm.selfServiceMinHoursBeforeStart}
+              onChange={(event) =>
+                setEscalationForm({
+                  ...escalationForm,
+                  selfServiceMinHoursBeforeStart: event.target.value,
+                })
+              }
+            />
+            <small className="hint">
+              Si el cliente pide cancelar o reagendar a menos horas de inicio que esto, el bot
+              escala a un humano en lugar de actuar (default 2h).
+            </small>
+          </label>
           <div className="form-actions"><button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">Guardar escalamiento</button></div>
         </form>
       ) : null}

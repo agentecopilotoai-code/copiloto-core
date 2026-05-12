@@ -204,27 +204,7 @@ _TASK-0042 — Calificación conversacional previa al booking: COMPLETADA. Ver `
 
 ---
 
-### TASK-0043 — Cancelación y reprogramación self-service por WhatsApp
-
-- **Estado:** PENDING
-- **Por qué bloquea:** los intents `cancel_appointment` y `reschedule_appointment` ya están clasificados pero el bot **no los ejecuta** — solo lo hace un humano desde Operations Desk. Sin esto, el cliente llama por teléfono o no avisa → no-show. Imposible bajar la tasa sin esta pieza.
-- **Alcance:**
-  - Nuevo módulo `app/services/appointment_self_service.py` con dos sub-flows ramificados desde `rag_orchestrator` cuando el intent matchea:
-    - `maybe_run_cancel_flow`: busca la próxima cita del contacto en estado `scheduled|confirmed` (LIMIT 1 por `starts_at`), pide confirmación con botones `Sí, cancelar` / `No, mantener`, actualiza `status='cancelled'` y dispara `cancel_appointment_reminder_jobs`. Auditoría `bot.appointment_cancelled`.
-    - `maybe_run_reschedule_flow`: reutiliza `compute_free_slots` para ofrecer 3 horarios alternativos con el **mismo recurso/servicio**; al elegir, `UPDATE appointments SET starts_at=..., ends_at=...` dentro de un savepoint que captura `ExclusionViolationError` (ver patrón de `booking_flow._create_appointment`) y `regenerate_appointment_reminder_jobs`. Auditoría `bot.appointment_rescheduled`.
-  - Ambos flujos persisten estado en `conversations.metadata.self_service` y son idempotentes por `inbound_message.id`.
-  - Ventana de política: el tenant puede definir `tenant_settings.escalation_policy.self_service.min_hours_before_start` (default 2h). Por debajo de ese umbral el bot responde "muy cerca para hacerlo solo" y lo escala a humano (`handoff_required=true`).
-  - Nuevos prefijos `cancel_confirm:` y `resched_slot:` (interactive_id) consistentes con `book_*`.
-  - `OperationsDesk`: indicador visual en el inbox cuando una cita fue modificada por el bot (badge "self-service") para que el agente lo sepa.
-- **Criterios de aceptación:**
-  - Cliente escribe `quiero cancelar mi cita` → bot muestra cita, confirma, cancela, cancela jobs pendientes, manda "Listo, tu cita del DD/MM se canceló".
-  - Cliente escribe `cambiar mi cita` → bot muestra 3 slots libres mismo recurso, cliente elige, cita movida, jobs regenerados (cancelados los viejos + creados los nuevos).
-  - Si la cita está a < 2h de inicio (configurable), el bot escala a humano sin actuar.
-  - Si dos clientes intentan agarrar el mismo slot al mismo tiempo, el segundo recibe "ese horario se acaba de ocupar" y vuelve al paso de slots.
-  - Tests: ≥ 12 estáticos, cubriendo happy path de cancel y reschedule, ventana de política, `ExclusionViolationError`, idempotencia, integración con `rag_orchestrator`.
-- **Notas:**
-  - No se reasigna a otro recurso automáticamente (mantener UX simple). Si quieren cambiar profesional, el cliente cancela y vuelve a agendar — eso lo señaliza el bot.
-  - No se permite reschedule si la cita ya tiene `payment_status='paid'` sin antes pasar por agente humano (evita ruido de reembolsos en MVP).
+_TASK-0043 — Cancelación y reprogramación self-service por WhatsApp: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
