@@ -197,6 +197,12 @@ class ResourceCreate(BaseModel):
     code: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=160)
     capabilities: dict[str, Any] = Field(default_factory=dict)
+    bio: str | None = Field(default=None, max_length=2000)
+    photo_media_asset_id: UUID | None = None
+    specialty: str | None = Field(default=None, max_length=160)
+    license_number: str | None = Field(default=None, max_length=80)
+    years_of_experience: int | None = Field(default=None, ge=0, le=99)
+    public_profile: bool = True
     is_active: bool = True
 
 
@@ -206,6 +212,12 @@ class ResourceUpdate(BaseModel):
     code: str | None = Field(default=None, min_length=1, max_length=80)
     name: str | None = Field(default=None, min_length=1, max_length=160)
     capabilities: dict[str, Any] | None = None
+    bio: str | None = Field(default=None, max_length=2000)
+    photo_media_asset_id: UUID | None = None
+    specialty: str | None = Field(default=None, max_length=160)
+    license_number: str | None = Field(default=None, max_length=80)
+    years_of_experience: int | None = Field(default=None, ge=0, le=99)
+    public_profile: bool | None = None
     is_active: bool | None = None
 
 

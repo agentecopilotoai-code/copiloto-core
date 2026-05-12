@@ -200,12 +200,19 @@ create table app.resources (
   code text not null,
   name text not null,
   capabilities jsonb not null default '{}'::jsonb,
+  bio text,
+  photo_media_asset_id uuid,
+  specialty text,
+  license_number text,
+  years_of_experience int check (years_of_experience is null or years_of_experience >= 0),
+  public_profile boolean not null default true,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, code)
 );
 create index ix_resources_type on app.resources(tenant_id, resource_type);
+create index ix_resources_public on app.resources(tenant_id, public_profile, is_active);
 
 create table app.service_catalog (
   id uuid primary key default gen_random_uuid(),
@@ -648,6 +655,8 @@ alter table app.media_assets add constraint uq_media_assets_tenant_id_id unique 
 alter table app.promotions add constraint uq_promotions_tenant_id_id unique (tenant_id, id);
 alter table app.promotions
   add constraint fk_promotions_tenant_media foreign key (tenant_id, media_asset_id) references app.media_assets(tenant_id, id);
+alter table app.resources
+  add constraint fk_resources_tenant_photo foreign key (tenant_id, photo_media_asset_id) references app.media_assets(tenant_id, id) on delete set null;
 alter table app.contact_tag_assignments
   add constraint fk_contact_tag_assignments_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
   add constraint fk_contact_tag_assignments_tenant_tag foreign key (tenant_id, tag_id) references app.contact_tags(tenant_id, id);

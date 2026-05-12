@@ -300,23 +300,7 @@ TASK-0061 (política de retención y purgado TTL — GDPR operativo)
 
 ---
 
-### TASK-0049 — Perfil del especialista (bio/foto/especialidad) visible durante el booking
-
-- **Estado:** PENDING
-- **Por qué bloquea:** el cliente elige horario sin saber **quién** lo va a atender. En clínicas estéticas, terapias, salones y servicios médicos la identidad del profesional es señal de confianza decisiva: sin foto/bio el cliente duda al picar el slot y aumenta el no-show. Hoy `app.resources` solo guarda `id, name, code, capabilities` y el booking solo manda `resource_name`.
-- **Alcance:**
-  - Schema: agregar a `app.resources` las columnas `bio text`, `photo_media_asset_id uuid references app.media_assets(id)` (FK compuesta tenant-scoped), `specialty text`, `license_number text`, `years_of_experience int check (years_of_experience >= 0)`, `public_profile boolean not null default true`.
-  - `booking_flow._present_resources` debe enviar la foto del especialista (vía `media_assets`) como mensaje image+caption antes de la lista de recursos cuando haya más de uno, con `name • specialty • bio (140 char)`. Si solo hay 1 recurso, se incluye el caption en el resumen final del booking.
-  - Admin Panel: pestaña **Equipo / Recursos** (`ResourcesPanel.jsx`) gana inputs para bio, foto (selector desde Media Library), especialidad, licencia, años de experiencia, y un toggle `public_profile` para ocultar especialistas que no atienden al público (back-office).
-  - Endpoints CRUD existentes de `resources` se extienden; `GET /v1/tenants/{id}/resources/public` (nuevo, sin auth para widget web) devuelve solo recursos con `public_profile=true` con sus campos públicos.
-- **Criterios de aceptación:**
-  - Cliente en WhatsApp/Web ve la foto + nombre + especialidad del profesional antes de elegir slot.
-  - Si el tenant no sube foto, el flow envía solo el caption sin romper.
-  - El widget web carga los perfiles desde `/v1/tenants/{id}/resources/public` (sin requerir `widget_token`).
-  - Tests: ≥ 8 estáticos: schema (columnas + FK compuesta), endpoint público registrado sin auth, `_present_resources` arma image+caption con foto, fallback a texto cuando no hay foto, panel UI registra inputs, audit `resource.profile_updated`.
-- **Notas:**
-  - El campo `bio` se trunca a 140 char en el caption (cap de WhatsApp); el bio completo se muestra en el panel admin y en el widget web sin truncar.
-  - `license_number` y `years_of_experience` son opcionales y solo se renderizan si están presentes.
+_TASK-0049 — Perfil del especialista (bio/foto/especialidad) visible durante el booking: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

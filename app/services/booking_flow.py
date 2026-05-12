@@ -120,10 +120,17 @@ async def _list_active_resources(
 ) -> list[dict[str, Any]]:
     rows = await conn.fetch(
         """
-        select id, name, code, capabilities
-        from app.resources
-        where tenant_id=$1 and is_active=true
-        order by name asc
+        select r.id, r.name, r.code, r.capabilities,
+               r.bio, r.specialty, r.license_number, r.years_of_experience,
+               r.public_profile, r.photo_media_asset_id,
+               m.kind as photo_kind,
+               m.mime_type as photo_mime_type,
+               m.source_uri as photo_source_uri
+        from app.resources r
+        left join app.media_assets m
+          on m.id = r.photo_media_asset_id and m.tenant_id = r.tenant_id
+        where r.tenant_id=$1 and r.is_active=true and r.public_profile=true
+        order by r.name asc
         limit 10
         """,
         tenant_id,
@@ -144,6 +151,92 @@ async def _fetch_resource(
         resource_id,
     )
     return dict(row) if row else None
+
+
+def _specialist_caption(resource: dict[str, Any]) -> str:
+    """Compose a WhatsApp-safe caption from the specialist profile.
+
+    Format: ``<name> • <specialty>\n<bio>`` truncated to 140 chars (the cap
+    WhatsApp image captions enforce in practice).
+    """
+    head = (resource.get('name') or '').strip()
+    specialty = (resource.get('specialty') or '').strip()
+    if specialty:
+        head = f'{head} • {specialty}'
+    bio = (resource.get('bio') or '').strip()
+    text = f'{head}\n{bio}' if bio else head
+    if len(text) > 140:
+        text = text[:137].rstrip() + '…'
+    return text
+
+
+async def _queue_specialist_photo(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+    channel_id: UUID,
+    channel_account_mode: str,
+    resource: dict[str, Any],
+    booking_step: str,
+) -> UUID | None:
+    """Queue an image+caption message presenting the specialist profile.
+
+    Falls back to a text-only message when the resource has no photo media.
+    """
+    caption = _specialist_caption(resource)
+    photo_uri = resource.get('photo_source_uri')
+    photo_kind = resource.get('photo_kind')
+    photo_mime = resource.get('photo_mime_type')
+    message_type = 'text'
+    payload: dict[str, Any] = {
+        'booking_step': booking_step,
+        'resource_id': str(resource['id']),
+    }
+    if photo_uri and photo_kind == 'image':
+        message_type = 'image'
+        payload['media_source_uri'] = photo_uri
+        payload['media_mime_type'] = photo_mime
+        payload['caption'] = caption
+    outbound = await conn.fetchrow(
+        """
+        insert into app.messages (
+          tenant_id, conversation_id, direction, sender_actor_type,
+          body_text, message_type, status, payload, mime_type
+        )
+        values ($1, $2, 'outbound', 'bot', $3, $4, 'queued', $5::jsonb, $6)
+        returning id
+        """,
+        tenant_id,
+        conversation_id,
+        caption,
+        message_type,
+        json.dumps(payload),
+        photo_mime if message_type != 'text' else None,
+    )
+    idempotency_key = f'bot_specialist:{outbound["id"]}'
+    await conn.execute(
+        """
+        insert into app.domain_events (
+          tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload
+        )
+        values ($1, 'message', $2, 'message.queued', $3, $4::jsonb)
+        on conflict (tenant_id, idempotency_key) do nothing
+        """,
+        tenant_id,
+        outbound['id'],
+        idempotency_key,
+        json.dumps({
+            'message_id': str(outbound['id']),
+            'conversation_id': str(conversation_id),
+            'channel_id': str(channel_id),
+            'channel_account_mode': channel_account_mode,
+            'body_text': caption,
+            'message_type': message_type,
+            'resource_id': str(resource['id']),
+        }),
+    )
+    return outbound['id']
 
 
 def _working_hours_for_date(
@@ -454,7 +547,25 @@ async def _present_resources(
     if not resources:
         return None
     if len(resources) == 1:
-        state = {**state, 'selected_resource_id': str(resources[0]['id']), 'step': STEP_AWAITING_DATE}
+        resource = resources[0]
+        try:
+            if resource.get('bio') or resource.get('specialty') or resource.get('photo_source_uri'):
+                await _queue_specialist_photo(
+                    conn,
+                    tenant_id=tenant_id,
+                    conversation_id=conversation['id'],
+                    channel_id=channel_id,
+                    channel_account_mode=channel_account_mode,
+                    resource=resource,
+                    booking_step=STEP_AWAITING_DATE,
+                )
+        except Exception:
+            log.exception(
+                'booking_flow.specialist_send_failed',
+                tenant_id=str(tenant_id),
+                resource_id=str(resource.get('id')),
+            )
+        state = {**state, 'selected_resource_id': str(resource['id']), 'step': STEP_AWAITING_DATE}
         return await _present_date(
             conn,
             tenant_id=tenant_id,
@@ -463,6 +574,25 @@ async def _present_resources(
             channel_account_mode=channel_account_mode,
             state=state,
         )
+    for resource in resources:
+        if not (resource.get('bio') or resource.get('specialty') or resource.get('photo_source_uri')):
+            continue
+        try:
+            await _queue_specialist_photo(
+                conn,
+                tenant_id=tenant_id,
+                conversation_id=conversation['id'],
+                channel_id=channel_id,
+                channel_account_mode=channel_account_mode,
+                resource=resource,
+                booking_step=STEP_AWAITING_RESOURCE,
+            )
+        except Exception:
+            log.exception(
+                'booking_flow.specialist_send_failed',
+                tenant_id=str(tenant_id),
+                resource_id=str(resource.get('id')),
+            )
     rows = [
         {'id': f'{PREFIX_RESOURCE}:{resource["id"]}', 'title': resource['name'][:24]}
         for resource in resources

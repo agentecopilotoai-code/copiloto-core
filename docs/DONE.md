@@ -15,6 +15,44 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0049 — Perfil del especialista (bio/foto/especialidad) visible durante el booking
+
+- **Fecha:** 2026-05-12
+- **Resumen:** los recursos del tenant pasan de ser nombres anónimos a perfiles públicos verificables: bio corta, foto, especialidad, licencia y años de experiencia. El booking flow ahora envía la foto del especialista (image + caption) **antes** de mostrar la lista de recursos en WhatsApp/Web, y reusa el caption como tarjeta de presentación cuando hay un único recurso. El widget web puede leer los perfiles públicos desde un endpoint sin auth, listo para renderizar cards en el sitio del cliente.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** `app.resources` gana columnas `bio text`, `photo_media_asset_id uuid`, `specialty text`, `license_number text`, `years_of_experience int check (... >= 0)`, `public_profile boolean not null default true`, índice `ix_resources_public(tenant_id, public_profile, is_active)` y FK compuesta tenant-scoped `fk_resources_tenant_photo (tenant_id, photo_media_asset_id) → app.media_assets(tenant_id, id) on delete set null`. La FK se borra a NULL si la foto se elimina del Media Library para no orquestar contra un asset huérfano.
+  - **API (`app/api/v1/routes.py` + `app/api/v1/schemas.py`):** `ResourceCreate/Update` aceptan los nuevos campos con `bio` ≤ 2000 chars, `specialty` ≤ 160, `license_number` ≤ 80, `years_of_experience` ∈ [0, 99]. El insert persiste los 6 campos en una sola sentencia. El PATCH usa flags `'<campo>' in update_data` para distinguir "no enviado" vs "enviado en null" en bio/foto/especialidad/licencia/años, y emite un audit `resource.profile_updated` adicional cuando cambia cualquier campo del perfil (separado del genérico `resource.updated`). Violaciones de FK contra `media_assets` se mapean a HTTP 400 explícito.
+  - **Endpoint público (`app.api.v1.routes`):** `GET /v1/tenants/{tenant_id}/resources/public` registrado en `public_router` (sin auth, sin `widget_token`). El handler hace `select ... from app.resources r left join app.media_assets m where r.is_active=true and r.public_profile=true`, ordena por nombre y devuelve `{resources: [{id, name, specialty, bio, license_number, years_of_experience, photo_url, photo_mime_type}, ...]}`. Aplica RLS implícito al fijar `set_config('app.tenant_id', ...)`.
+  - **Booking flow (`app/services/booking_flow.py`):**
+    - `_list_active_resources` ahora hace JOIN a `media_assets` y filtra por `public_profile=true`; pulls bio/specialty/license/yoe + uri/mime/kind de la foto.
+    - Nueva helper `_specialist_caption(resource) -> str` arma `"<name> • <specialty>\n<bio>"` y trunca a 140 caracteres con `…` si excede (cap WhatsApp).
+    - Nueva helper `_queue_specialist_photo` inserta un mensaje outbound `image` con `payload.media_source_uri / media_mime_type / caption` cuando el recurso tiene foto, o `text` con el caption como cuerpo cuando solo hay bio/especialidad. Idempotency key `bot_specialist:<msg_id>` registrada en `domain_events`.
+    - `_present_resources` envía la foto+caption antes de armar el `interactive_list`. Cuando solo hay un recurso, también envía la presentación (si tiene perfil) y avanza al paso `_present_date`. Falla del envío (excepción) se loggea como `booking_flow.specialist_send_failed` sin romper el flow.
+  - **Admin Panel (`admin-panel/src/components/modules/operations/OperationsDesk.jsx`):**
+    - `resourceForm` extendido con `bio`, `photoMediaAssetId`, `specialty`, `licenseNumber`, `yearsOfExperience`, `publicProfile`.
+    - Nuevo fieldset **"Perfil público del especialista"** con inputs para los 5 campos + selector de foto poblado desde `listMediaAssets({kind: 'image'})` (sin foto = opción vacía) + checkbox `public_profile` (default ON).
+    - `refreshScheduleData` carga el catálogo de imágenes (`listMediaAssets`) en paralelo.
+    - `handleCreateResource` / `handleEditResource` / `handleCancelResourceEdit` mapean los nuevos campos al payload con `null` cuando vienen vacíos.
+- **Archivos tocados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/api/v1/routes.py`
+  - `app/api/v1/schemas.py`
+  - `app/services/booking_flow.py`
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx`
+  - `tests/test_specialist_profile_static.py` (nuevo)
+  - `docs/BACKLOG.md` (tarea retirada)
+  - `docs/DONE.md` (esta entrada)
+- **Validaciones:**
+  - `python -m pytest tests/test_specialist_profile_static.py -v` → **15 passed** (cubre las 6 columnas nuevas + check + default, FK compuesta tenant-scoped, índice `ix_resources_public`, esquemas Pydantic con valores por defecto correctos, registro del endpoint público sin auth, filtros `is_active`/`public_profile` en el query, persistencia de los 6 campos en el INSERT, audit `resource.profile_updated` separado, JOIN a media en `_list_active_resources`, truncado a 140 char del caption, omisión de especialidad cuando falta, `_present_resources` invoca la helper en los dos caminos, fallback a texto cuando no hay foto, UI registra los 6 inputs + Media Library selector).
+  - `python -m pytest tests/test_booking_flow_static.py tests/test_media_promotions_static.py tests/test_operations_desk_static.py -q` → **43 passed** (sin regresiones en booking, media o operations).
+- **Notas:**
+  - El caption se trunca a 140 caracteres porque WhatsApp aplica ese cap a captions de imagen en mensajes regulares. La bio completa sigue intacta en el panel admin y en el endpoint público.
+  - `license_number` y `years_of_experience` se persisten igual aunque queden en null — el frontend solo los renderizará cuando estén presentes (el widget web consumirá el JSON tal cual).
+  - El endpoint público no expone `code` ni `capabilities` para evitar filtrar metadata interna; solo los 8 campos del perfil + URL pública del media. La URL apunta a `source_uri` (la misma que ya consume el booking flow para enviar la imagen vía WhatsApp).
+  - Cuando se borra una foto del Media Library, `on delete set null` deja el recurso sin foto sin romper integridad — el booking flow cae automáticamente a caption-text-only.
+
+---
+
 ### TASK-0048 — Funnel de conversión y atribución de ingresos por campaña
 
 - **Fecha:** 2026-05-12
