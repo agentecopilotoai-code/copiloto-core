@@ -163,6 +163,7 @@ create table app.messages (
   error_code text,
   error_message text,
   reply_to_external_message_id text,
+  campaign_id uuid,
   created_at timestamptz not null default now(),
   unique (tenant_id, external_message_id)
 );
@@ -356,6 +357,29 @@ create table app.contact_notes (
 );
 create index ix_contact_notes_contact on app.contact_notes(tenant_id, contact_id, created_at desc);
 
+create table app.campaigns (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  name text not null,
+  status text not null default 'draft' check (status in ('draft','scheduled','running','completed','cancelled')),
+  template_id uuid references app.whatsapp_templates(id) on delete restrict,
+  template_variables jsonb not null default '{}'::jsonb,
+  segment_filter jsonb not null default '{}'::jsonb,
+  scheduled_at timestamptz,
+  recipient_count int not null default 0,
+  sent_count int not null default 0,
+  delivered_count int not null default 0,
+  read_count int not null default 0,
+  failed_count int not null default 0,
+  started_at timestamptz,
+  completed_at timestamptz,
+  created_by uuid references app.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_campaigns_tenant_status on app.campaigns(tenant_id, status, scheduled_at);
+create index ix_campaigns_due on app.campaigns(scheduled_at) where status='scheduled';
+
 create table app.reminder_jobs (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -509,6 +533,12 @@ alter table app.contact_tag_assignments
   add constraint fk_contact_tag_assignments_tenant_tag foreign key (tenant_id, tag_id) references app.contact_tags(tenant_id, id);
 alter table app.contact_notes
   add constraint fk_contact_notes_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id);
+alter table app.campaigns add constraint uq_campaigns_tenant_id_id unique (tenant_id, id);
+alter table app.campaigns
+  add constraint fk_campaigns_tenant_template foreign key (tenant_id, template_id) references app.whatsapp_templates(tenant_id, id);
+alter table app.messages
+  add constraint fk_messages_tenant_campaign foreign key (tenant_id, campaign_id) references app.campaigns(tenant_id, id) on delete set null;
+create index ix_messages_tenant_campaign on app.messages(tenant_id, campaign_id) where campaign_id is not null;
 
 alter table app.conversations
   add constraint fk_conversations_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
@@ -553,6 +583,7 @@ create trigger trg_prompt_templates_touch before update on app.prompt_templates 
 create trigger trg_handoffs_touch before update on app.handoffs for each row execute function app.touch_updated_at();
 create trigger trg_contact_tags_touch before update on app.contact_tags for each row execute function app.touch_updated_at();
 create trigger trg_contact_notes_touch before update on app.contact_notes for each row execute function app.touch_updated_at();
+create trigger trg_campaigns_touch before update on app.campaigns for each row execute function app.touch_updated_at();
 
 alter table app.tenant_channels enable row level security;
 alter table app.contacts enable row level security;
@@ -574,6 +605,7 @@ alter table app.handoffs enable row level security;
 alter table app.contact_tags enable row level security;
 alter table app.contact_tag_assignments enable row level security;
 alter table app.contact_notes enable row level security;
+alter table app.campaigns enable row level security;
 alter table app.webhook_events_raw enable row level security;
 alter table app.domain_events enable row level security;
 alter table app.audit_logs enable row level security;
@@ -585,6 +617,7 @@ begin
     'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','whatsapp_templates','appointment_feedback','service_requests','quotes',
     'appointments','reminder_jobs','knowledge_documents','knowledge_chunks','prompt_templates','handoffs',
     'contact_tags','contact_tag_assignments','contact_notes',
+    'campaigns',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop
     execute format('create policy %I_tenant_select on app.%I for select using (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);

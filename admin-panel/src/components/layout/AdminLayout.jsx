@@ -5,6 +5,7 @@ import { useTenantOptions } from '../../hooks/useTenantOptions.js';
 import { listMyTenants } from '../../services/coreApi.js';
 import { AnalyticsPanel } from '../modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../modules/audit/AuditPanel.jsx';
+import { CampaignsModule } from '../modules/campaigns/CampaignsModule.jsx';
 import { ContactsModule } from '../modules/contacts/ContactsModule.jsx';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
 import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
@@ -218,6 +219,20 @@ export function AdminLayout({ session }) {
     activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'contacts') {
     activeContent = <ContactsModule module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'campaigns') {
+    if (!hasMinRole(activeRoles, 'admin')) {
+      activeContent = (
+        <section className="module-card">
+          <h2>Acceso restringido</h2>
+          <p className="hint">
+            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
+            campañas masivas. Cambia al tenant donde tengas permisos o pide a un admin que te promocione.
+          </p>
+        </section>
+      );
+    } else {
+      activeContent = <CampaignsModule module={activeModule} session={session} tenant={activeTenant} />;
+    }
   } else if (activeModuleId === 'operations-desk') {
     activeContent = <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'go-live-readiness') {

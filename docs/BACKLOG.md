@@ -131,30 +131,7 @@ TASK-0029 (drill de restore — cierre operacional)
 
 ---
 
-### TASK-0038 — Campañas y mensajes masivos a segmentos de contactos
-
-- **Objetivo:** convertir el directorio de contactos en un motor de retención activa. El negocio necesita enviar mensajes a grupos de clientes (promociones, recordatorios estacionales, reactivación de clientes inactivos) sin salir de la plataforma. Solo se pueden usar templates aprobados de WhatsApp para cumplir la política de Meta.
-- **Alcance mínimo — backend:**
-  - Nueva tabla `app.campaigns`:
-    - `id uuid PK`, `tenant_id`, `name text NOT NULL`, `status text NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','scheduled','running','completed','cancelled'))`, `template_id uuid FK → whatsapp_templates(id)`, `template_variables jsonb DEFAULT '{}'`, `segment_filter jsonb NOT NULL DEFAULT '{}'` (criterios: `{tags:[...], min_appointments:N, last_visit_before_days:N, last_visit_after_days:N, has_upcoming_appointment:bool}`), `scheduled_at timestamptz`, `recipient_count int`, `sent_count int DEFAULT 0`, `delivered_count int DEFAULT 0`, `read_count int DEFAULT 0`, `failed_count int DEFAULT 0`, timestamps. RLS por `tenant_id`.
-  - Endpoints:
-    - `POST /v1/tenants/{tenant_id}/campaigns` — crear campaña.
-    - `GET /v1/tenants/{tenant_id}/campaigns` — listar con métricas.
-    - `PATCH /v1/tenants/{tenant_id}/campaigns/{id}` — editar campaña en borrador.
-    - `POST /v1/tenants/{tenant_id}/campaigns/{id}/preview` — devuelve conteo de destinatarios y primeros 5 contactos según `segment_filter`.
-    - `POST /v1/tenants/{tenant_id}/campaigns/{id}/launch` — pasa a `scheduled`; si `scheduled_at ≤ now()` inicia inmediatamente.
-    - `POST /v1/tenants/{tenant_id}/campaigns/{id}/cancel` — cancela campaña.
-  - Worker de campañas (en el scheduler): detecta campañas `scheduled` con `scheduled_at ≤ now()`, pasa a `running`, evalúa `segment_filter` contra `contacts` + `contact_tag_assignments` + `appointments`, encola template message a cada destinatario con `opt_in_status NOT IN ('suppressed','opted_out')`. Rate limiting: máximo 20 mensajes/segundo por tenant. Actualiza contadores (`sent_count`, `delivered_count`) con los status updates del webhook.
-  - Tests estáticos: evaluación de `segment_filter`, exclusión de contactos opt-out, rate limiting, conteo de destinatarios, estructura de campaña.
-- **Alcance mínimo — Admin Panel:**
-  - Nuevo módulo **"Campañas"** (`admin-panel/src/components/modules/campaigns/CampaignsModule.jsx`):
-    - Lista con estado, fecha, destinatarios, métricas de entrega.
-    - Formulario: nombre, template (solo `approved`), variables del template, filtros de segmento (etiquetas, mínimo de citas, última visita hace N días), fecha/hora de envío.
-    - Botón **"Ver destinatarios estimados"** con conteo y muestra de los primeros 5.
-    - Vista de resultados con barras de progreso enviados/entregados/leídos/fallidos.
-  - Registrar en sidebar, accesible para `admin` o superior.
-- **Criterio de aceptación:** admin crea campaña, previsualiza destinatarios, programa envío; worker envía solo a contactos activos con opt-in; métricas se actualizan con webhooks de status; no se envía a suprimidos; tests pasan en CI.
-- **Dependencias:** TASK-0031 (templates aprobados), TASK-0037 (etiquetas de contactos).
+_TASK-0038 — Campañas y mensajes masivos a segmentos de contactos: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
