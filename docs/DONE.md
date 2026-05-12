@@ -15,6 +15,27 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0029 — Ejecutar y validar drill de restore local (criterio pendiente de TASK-0015)
+
+- **Fecha:** 2026-05-12
+- **Resumen:** se ejecutó por primera vez el ciclo `backup-local.sh` → `bootstrap.sh --reset --yes --skip-smoke` (equivalente: `docker compose down -v --remove-orphans && docker compose up -d postgres`) → `restore-local.sh` contra el contenedor `postgres` (`pgvector/pgvector:pg16`) del Compose real, cumpliendo el criterio "restore local probado con datos demo" que TASK-0015 dejó pendiente. Antes del backup se sembraron datos operativos sobre los 3 tenants/3 settings/3 channels que ya genera `infra/postgres/02-seed.sql`: 2 contactos `granted` en `demo-barberia`, 2 conversaciones (1 abierta + 1 cerrada), 4 mensajes (`inbound contact`/`outbound bot|agent`), 1 `message_status_events`, 2 `knowledge_documents` (`Horarios`, `Servicios`) con 4 `knowledge_chunks`, 1 `audit_logs` y 1 `domain_events` con etiqueta `drill.*`. El drill destapó un **bug real en `backup-local.sh`**: `pg_dump … --file=- > postgres.dump` no escribe a stdout — `pg_dump` interpreta `-` como un archivo literal dentro del contenedor — por lo que el redirect del host capturaba un `postgres.dump` de **0 bytes** y `set -euo pipefail` no lo detectaba; luego `pg_restore` fallaba con `did not find magic string in file header`. Se corrigió eliminando `--file=-` (custom format ya escribe a stdout por defecto) y agregando una guard `[[ ! -s "$BACKUP_DIR/postgres.dump" ]]` que aborta con error explícito si el dump queda vacío. Tras el fix, `restore-local.sh` cierra con `Restore local validado: conteos, tenants, documentos, chunks y audit logs coinciden.` (todos los conteos del backup vs. post-restore matchean exactamente). Se documentó la evidencia (tamaño 168 758 B, sha256 `f7237256…aea3ee8`, conteos antes/después y comandos exactos) como nueva sección al final de `docs/runbook-go-live-evidence.md`. Se agregaron dos regresiones en `tests/test_backup_restore_scripts_static.py`: `test_backup_script_does_not_use_pg_dump_file_dash` (bloquea reintroducir el bug) y `test_backup_and_restore_scripts_have_valid_bash_syntax` (corre `bash -n` sobre ambos scripts), sumando 4 tests verdes.
+- **Archivos modificados:**
+  - `scripts/backup-local.sh` — quitado `--file=-` del invocación de `pg_dump`; agregada validación `[[ ! -s "$BACKUP_DIR/postgres.dump" ]]` con mensaje `Error: pg_dump produjo un archivo vacío …`.
+  - `tests/test_backup_restore_scripts_static.py` — añadidos `test_backup_script_does_not_use_pg_dump_file_dash` y `test_backup_and_restore_scripts_have_valid_bash_syntax` (`subprocess.run([bash, '-n', …])`); imports `shutil`, `subprocess`.
+  - `docs/runbook-go-live-evidence.md` — nueva sección "Drill de restore local — TASK-0029" con tabla de metadatos, datos demo sembrados, conteos antes/después, descripción del bug + fix, comandos exactos para reproducir y limitación del entorno.
+  - `docs/BACKLOG.md` — TASK-0029 retirada del stack pendiente.
+- **Comandos ejecutados / criterios cumplidos:**
+  - `bash -n scripts/backup-local.sh && bash -n scripts/restore-local.sh` → OK (también cubierto ahora por test estático).
+  - `docker compose up -d postgres` (sandbox no permite build de `api`/`event-worker`/`scheduler` por bloqueo de `deb.debian.org`; ambos scripts manejan el camino "api no corriendo → omitir tar de knowledge").
+  - Insert de datos demo y `./scripts/backup-local.sh` → `backups/local/20260512T032110Z` con `postgres.dump` de 168 758 B, `manifest.json` consistente, `table-counts.tsv` con 11 filas y `knowledge-documents.tsv` con 2 entradas.
+  - `docker compose down -v --remove-orphans && docker compose up -d postgres` (equivalente operativo a `bootstrap.sh --reset --yes --skip-smoke`).
+  - `./scripts/restore-local.sh backups/local/20260512T032110Z` → `Restore local validado…`; conteos post-restore matchean al 100 % los del backup (audit_logs 1, contacts 2, conversations 2, domain_events 1, knowledge_chunks 4, knowledge_documents 2, messages 4, message_status_events 1, tenant_channels 3, tenants 3, tenant_settings 3).
+  - `python -m pytest tests/test_backup_restore_scripts_static.py -v` → 4 passed (incluye las 2 regresiones nuevas).
+- **Notas / limitaciones:**
+  - El sandbox no permitió construir las imágenes `api`, `event-worker`, `scheduler` (apt rechazado por `deb.debian.org`), por lo que la rama del backup que tar/untar el volumen `/app/data/knowledge` no se ejercitó. Ambos scripts ya tienen el camino "api no corriendo → omitir tar" y lo siguieron limpiamente (`knowledge-files.sha256` vacío y `knowledge_files_tar=null` en el manifiesto, sin abortar). Se recomienda reejecutar el drill en staging (con la API arriba) antes del primer go-live real para cubrir también el ciclo de objetos.
+  - `restore-local.sh` exige base "limpia" según su `NON_EMPTY_SQL`, que mira sólo tablas operativas (contacts, conversations, messages, message_status_events, knowledge_documents, knowledge_chunks, domain_events, audit_logs); las tablas seed (tenants/tenant_settings/tenant_channels) preexisten en la base recién booteada y eso es esperado y compatible con el flujo (`pg_restore --clean --if-exists` reemplaza esas filas).
+  - Se documentó SHA-256 del dump generado en este drill como referencia, pero el archivo no se commitea (`backups/` queda fuera del repo).
+
 ### TASK-0040 — Links de pago y registro de pagos en citas
 
 - **Fecha:** 2026-05-12

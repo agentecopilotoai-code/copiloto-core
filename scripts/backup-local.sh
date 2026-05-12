@@ -98,7 +98,12 @@ docker compose exec -T postgres pg_dump "$DATABASE_URL_VALUE" \
   --format=custom \
   --no-owner \
   --no-privileges \
-  --file=- > "$BACKUP_DIR/postgres.dump"
+  > "$BACKUP_DIR/postgres.dump"
+
+if [[ ! -s "$BACKUP_DIR/postgres.dump" ]]; then
+  echo "Error: pg_dump produjo un archivo vacío en $BACKUP_DIR/postgres.dump." >&2
+  exit 1
+fi
 
 echo "==> Guardando conteos de validación"
 psql_app -Atc "$TABLE_COUNTS_SQL" > "$BACKUP_DIR/table-counts.tsv"
