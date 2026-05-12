@@ -15,6 +15,53 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0050 — Multi-sede (branches) con selección explícita durante el booking
+
+- **Fecha:** 2026-05-12
+- **Resumen:** un tenant puede ahora operar varias sedes con dirección, contacto, zona horaria y horarios propios. Las sedes son entidades de primera clase: el booking flow inserta un paso `awaiting_branch` cuando hay más de una activa, los recursos se filtran por sede elegida, las citas guardan `branch_id` y los recordatorios envían la dirección/Maps URL de la sede correspondiente en vez de la dirección única que vivía en `tenant_settings.notification_settings.location_*`. Con una sola sede el cliente no ve ningún paso extra — la sede se selecciona sola y el flujo es idéntico al actual.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** nueva tabla `app.branches` con `name`, `code unique per tenant`, `address/city/state/country`, `lat/lng numeric(10,7)`, `maps_url`, `phone_e164`, `timezone`, `opening_hours jsonb`, `is_active`, `sort_order`. Índice `ix_branches_tenant_active(tenant_id, is_active, sort_order)`, RLS habilitado, política tenant-scoped generada en el `do $$ ... end $$` y trigger `trg_branches_touch`. `app.resources` y `app.appointments` ganan columna `branch_id uuid`; FKs compuestas tenant-scoped `fk_resources_tenant_branch (tenant_id, branch_id) → app.branches(tenant_id, id) on delete set null` y `fk_appointments_tenant_branch ... on delete restrict`. Constraint `uq_branches_tenant_id_id` para soportar las FKs compuestas. Índices auxiliares `ix_resources_branch` e `ix_appointments_branch` parciales (donde `branch_id is not null`).
+  - **Seed (`infra/postgres/02-seed.sql`):** cada tenant arranca con una sede `Principal` (`code='principal'`) tomando `country_code`/`timezone` del tenant; el recurso por defecto se inserta con `branch_id` apuntando a esa sede. Idempotente vía `on conflict (tenant_id, code) do nothing`.
+  - **Booking flow (`app/services/booking_flow.py`):**
+    - Nuevas constantes `STEP_AWAITING_BRANCH` / `PREFIX_BRANCH`.
+    - Helpers `_list_active_branches` (orden por sort_order, name) y `_fetch_branch`.
+    - `_list_active_resources` ahora acepta `branch_id` opcional y filtra por `r.branch_id = $2` cuando se pasa.
+    - Nueva `_present_branches`: si no hay sedes activas devuelve `None` (el orquestador cae al flujo previo); con una sola sede auto-selecciona y enruta a `_present_resources` con `selected_branch_id` ya seteado; con varias arma un `interactive_list` (ciudad o dirección como descripción) y publica `STEP_AWAITING_BRANCH`.
+    - `_present_resources` lee `state.selected_branch_id` y lo propaga a `_list_active_resources` para filtrar.
+    - `maybe_run_booking_flow` agrega la rama `prefix == PREFIX_BRANCH` y, tras elegir servicio (interactivo o prefilled), llama a `_present_branches` antes de `_present_resources`.
+    - `_create_appointment` persiste `branch_id` en el INSERT; si el flujo no capturó sede (single-branch via `_present_branches`), deriva la branch del propio recurso vía `select branch_id from app.resources where ...`.
+  - **Notifications (`app/services/notifications.py`):** `_appointment_context` hace `left join app.branches b on b.id=a.branch_id and b.tenant_id=a.tenant_id` y expone `branch_address/maps_url/phone/name`. `create_appointment_reminder_jobs` ahora arma `address`/`maps_url` desde la branch cuando la cita tiene `branch_id`, y solo cae a `settings.location_address/maps_url` cuando la cita no tiene sede asociada.
+  - **API (`app/api/v1/routes.py` + `app/api/v1/schemas.py`):**
+    - Nuevos modelos `BranchCreate` / `BranchUpdate` (full-partial con `default=None` en update).
+    - `ResourceCreate/Update` aceptan `branch_id: UUID | None`; el INSERT persiste la columna y el PATCH usa la convención `('<campo>' in update_data)` para distinguir "no enviado" vs "set a null".
+    - CRUD bajo `tenant_ops_router` (`GET /branches`) y `tenant_admin_router` (`POST /branches`, `PATCH /branches/{id}`, `DELETE /branches/{id}` — soft delete con `is_active=false`). Audit: `branch.created`, `branch.updated`, `branch.deleted`.
+    - `GET /resources` y `GET /appointments` ganan `branch_id: UUID | None` como query filter (`and ($4::uuid is null or branch_id=$4)`).
+    - `GET /analytics/appointments` acepta `branch_id` y lo aplica a las 4 subconsultas (top_services, status_distribution, no-show by weekday, daily evolution).
+  - **Admin Panel:**
+    - Nuevo módulo `BranchesModule.jsx` (CRUD completo): nombre, código, dirección, ciudad/estado, país, lat/lng (con vista previa de Google Maps), maps_url manual, teléfono, zona horaria (select con timezones LatAm + Madrid), checkbox `is_active`, sort order y editor visual de `opening_hours` día por día con franjas múltiples. Reusa `coreApi.listBranches/createBranch/updateBranch/deactivateBranch`.
+    - Registrado en `admin-panel/src/data/modules.js` con `minRole: 'admin'` y wireado en `AdminLayout.jsx` con guarda de rol.
+    - Pestaña nueva `branches` en `TenantSetupWizard.jsx` (entre Horarios y Escalamiento) que monta el mismo módulo para sembrar la primera sede dentro del onboarding.
+- **Archivos tocados:**
+  - `infra/postgres/01-schema.sql`, `infra/postgres/02-seed.sql`
+  - `app/services/booking_flow.py`, `app/services/notifications.py`
+  - `app/api/v1/routes.py`, `app/api/v1/schemas.py`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/data/modules.js`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/branches/BranchesModule.jsx` (nuevo)
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`
+  - `tests/test_branches_static.py` (nuevo, 27 tests)
+  - `docs/BACKLOG.md` (tarea retirada)
+  - `docs/DONE.md` (esta entrada)
+- **Validaciones:**
+  - `pytest tests/test_branches_static.py` cubre los 8 grupos: schema (tabla + columnas + índice + RLS + trigger), FKs compuestas tenant-scoped en `resources` y `appointments`, seed con sede `Principal`, esquemas Pydantic (`BranchCreate/Update`) y `branch_id` en `ResourceCreate/Update`, booking flow (constantes nuevas, `_present_branches` con single-branch skip, filtrado por branch en `_list_active_resources`, `_create_appointment` persistiendo `branch_id`), notifications (JOIN a `app.branches`, prioridad branch sobre `tenant_settings`), rutas (CRUD + audit + filtros `branch_id` en `/resources`, `/appointments`, `/analytics/appointments`) y admin panel (BranchesModule registrado, pestaña en wizard, coreApi expuesta).
+- **Notas:**
+  - Las `opening_hours` de la sede no se intersectan aún con `resources.capabilities.working_hours` para calcular slots — eso queda como mejora futura ligada a la primera cadena con horarios distintos por sede. Hoy el slot generator sigue usando solo `resources.capabilities`.
+  - El `widget_config` aún no preselecciona branch (`data-branch`); como cada cliente nuevo arranca con una sola sede `Principal`, no bloquea el roll-out, y el snippet del widget no cambia.
+  - Los keys `location_*` en `notification_settings` siguen existiendo como defaults para tenants legacy (citas sin `branch_id` o tenants que aún no migraron). El próximo cleanup (cuando el 100% del fleet tenga sedes) puede eliminarlos del `DEFAULT_NOTIFICATION_SETTINGS`.
+
+---
+
 ### TASK-0049 — Perfil del especialista (bio/foto/especialidad) visible durante el booking
 
 - **Fecha:** 2026-05-12

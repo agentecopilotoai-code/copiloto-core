@@ -12,6 +12,13 @@ export const adminModules = [
     scope: ['Crear/editar servicios', 'Reordenar', 'Activar/desactivar', 'Instrucciones pre y post servicio'],
   },
   {
+    id: 'branches',
+    label: 'Sedes',
+    summary: 'Sedes (branches) con dirección, contacto y horario propios. TASK-0050.',
+    scope: ['Crear y editar sedes', 'Selección de sede en booking', 'Recordatorios con dirección por sede', 'Filtrar analytics por sede'],
+    minRole: 'admin',
+  },
+  {
     id: 'whatsapp',
     label: 'WhatsApp',
     summary: 'Onboarding y salud del canal WhatsApp/WABA.',

@@ -39,12 +39,14 @@ log = structlog.get_logger()
 
 
 STEP_AWAITING_SERVICE = 'awaiting_service'
+STEP_AWAITING_BRANCH = 'awaiting_branch'
 STEP_AWAITING_RESOURCE = 'awaiting_resource'
 STEP_AWAITING_DATE = 'awaiting_date'
 STEP_AWAITING_SLOT = 'awaiting_slot'
 STEP_COMPLETED = 'completed'
 
 PREFIX_SERVICE = 'book_service'
+PREFIX_BRANCH = 'book_branch'
 PREFIX_RESOURCE = 'book_resource'
 PREFIX_DATE = 'book_date'
 PREFIX_SLOT = 'book_slot'
@@ -116,13 +118,15 @@ async def _fetch_service(
 
 
 async def _list_active_resources(
-    conn: asyncpg.Connection, tenant_id: UUID
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    branch_id: UUID | None = None,
 ) -> list[dict[str, Any]]:
     rows = await conn.fetch(
         """
         select r.id, r.name, r.code, r.capabilities,
                r.bio, r.specialty, r.license_number, r.years_of_experience,
-               r.public_profile, r.photo_media_asset_id,
+               r.public_profile, r.photo_media_asset_id, r.branch_id,
                m.kind as photo_kind,
                m.mime_type as photo_mime_type,
                m.source_uri as photo_source_uri
@@ -130,12 +134,45 @@ async def _list_active_resources(
         left join app.media_assets m
           on m.id = r.photo_media_asset_id and m.tenant_id = r.tenant_id
         where r.tenant_id=$1 and r.is_active=true and r.public_profile=true
+          and ($2::uuid is null or r.branch_id = $2)
         order by r.name asc
+        limit 10
+        """,
+        tenant_id,
+        branch_id,
+    )
+    return [dict(row) for row in rows]
+
+
+async def _list_active_branches(
+    conn: asyncpg.Connection, tenant_id: UUID
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        """
+        select id, name, code, address, city, maps_url, phone_e164, timezone
+        from app.branches
+        where tenant_id=$1 and is_active=true
+        order by sort_order asc, name asc
         limit 10
         """,
         tenant_id,
     )
     return [dict(row) for row in rows]
+
+
+async def _fetch_branch(
+    conn: asyncpg.Connection, tenant_id: UUID, branch_id: UUID
+) -> dict[str, Any] | None:
+    row = await conn.fetchrow(
+        """
+        select id, name, code, address, city, maps_url, phone_e164, timezone
+        from app.branches
+        where tenant_id=$1 and id=$2 and is_active=true
+        """,
+        tenant_id,
+        branch_id,
+    )
+    return dict(row) if row else None
 
 
 async def _fetch_resource(
@@ -534,6 +571,65 @@ async def _present_services(
     return {'step': STEP_AWAITING_SERVICE}
 
 
+async def _present_branches(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    conversation: Any,
+    channel_id: UUID,
+    channel_account_mode: str,
+    state: dict[str, Any],
+) -> dict[str, Any] | None:
+    """TASK-0050: present branches if the tenant has >1 active branch.
+
+    Returns ``None`` when no active branch exists so the caller can fall back
+    to a tenant-wide flow. With a single branch, auto-selects it and routes
+    straight to ``_present_resources`` (no extra question for the customer).
+    """
+    branches = await _list_active_branches(conn, tenant_id)
+    if not branches:
+        return None
+    if len(branches) == 1:
+        only = branches[0]
+        return await _present_resources(
+            conn,
+            tenant_id=tenant_id,
+            conversation=conversation,
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            state={**state, 'selected_branch_id': str(only['id'])},
+        )
+    rows: list[dict[str, str]] = []
+    for branch in branches:
+        title = branch['name'][:24]
+        description_parts: list[str] = []
+        if branch.get('city'):
+            description_parts.append(str(branch['city']))
+        elif branch.get('address'):
+            description_parts.append(str(branch['address']))
+        rows.append({
+            'id': f'{PREFIX_BRANCH}:{branch["id"]}',
+            'title': title,
+            'description': ' · '.join(description_parts)[:72] if description_parts else None,
+        })
+    interactive = build_interactive_list_payload(
+        body_text='¿En qué sede prefieres tu cita?',
+        button_label='Ver sedes',
+        sections=[{'title': 'Sedes disponibles', 'rows': rows}],
+    )
+    await _queue_interactive_message(
+        conn,
+        tenant_id=tenant_id,
+        conversation_id=conversation['id'],
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        body_text='¿En qué sede prefieres tu cita?',
+        interactive_payload=interactive,
+        booking_step=STEP_AWAITING_BRANCH,
+    )
+    return {**state, 'step': STEP_AWAITING_BRANCH}
+
+
 async def _present_resources(
     conn: asyncpg.Connection,
     *,
@@ -543,7 +639,9 @@ async def _present_resources(
     channel_account_mode: str,
     state: dict[str, Any],
 ) -> dict[str, Any] | None:
-    resources = await _list_active_resources(conn, tenant_id)
+    branch_id_raw = state.get('selected_branch_id')
+    branch_uuid = UUID(branch_id_raw) if branch_id_raw else None
+    resources = await _list_active_resources(conn, tenant_id, branch_uuid)
     if not resources:
         return None
     if len(resources) == 1:
@@ -792,14 +890,24 @@ async def _create_appointment(
         await _fetch_service(conn, tenant_id, service_uuid) if service_uuid else None
     )
     service_code = (service_row['name'] if service_row else 'general')[:80]
+    branch_id_raw = state.get('selected_branch_id')
+    branch_uuid = UUID(branch_id_raw) if branch_id_raw else None
+    if branch_uuid is None:
+        # TASK-0050: derive branch from the chosen resource if the booking flow
+        # ran without an explicit branch step (single-branch tenants).
+        branch_uuid = await conn.fetchval(
+            'select branch_id from app.resources where tenant_id=$1 and id=$2',
+            tenant_id,
+            resource_id,
+        )
     try:
         appointment = await conn.fetchrow(
             """
             insert into app.appointments (
               tenant_id, contact_id, conversation_id, service_id,
-              resource_id, service_code, starts_at, ends_at, status
+              resource_id, service_code, starts_at, ends_at, status, branch_id
             )
-            values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled')
+            values ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled', $9)
             returning id, starts_at, ends_at
             """,
             tenant_id,
@@ -810,6 +918,7 @@ async def _create_appointment(
             service_code,
             starts_at,
             ends_at,
+            branch_uuid,
         )
     except Exception as exc:  # asyncpg.ExclusionViolationError or other
         log.warning(
@@ -989,13 +1098,40 @@ async def maybe_run_booking_flow(
         if service_uuid:
             service = await _fetch_service(conn, tenant_id, service_uuid)
             if service:
+                base_state = {'selected_service_id': str(service_uuid)}
+                # TASK-0050: insert branch selection before resources.
+                new_state = await _present_branches(
+                    conn,
+                    tenant_id=tenant_id,
+                    conversation=conversation,
+                    channel_id=channel_id,
+                    channel_account_mode=channel_account_mode,
+                    state=base_state,
+                )
+                if new_state is None:
+                    new_state = await _present_resources(
+                        conn,
+                        tenant_id=tenant_id,
+                        conversation=conversation,
+                        channel_id=channel_id,
+                        channel_account_mode=channel_account_mode,
+                        state=base_state,
+                    )
+    elif prefix == PREFIX_BRANCH and value:
+        try:
+            branch_uuid = UUID(value)
+        except ValueError:
+            branch_uuid = None
+        if branch_uuid:
+            branch = await _fetch_branch(conn, tenant_id, branch_uuid)
+            if branch:
                 new_state = await _present_resources(
                     conn,
                     tenant_id=tenant_id,
                     conversation=conversation,
                     channel_id=channel_id,
                     channel_account_mode=channel_account_mode,
-                    state={'selected_service_id': str(service_uuid)},
+                    state={**state, 'selected_branch_id': str(branch_uuid)},
                 )
     elif prefix == PREFIX_RESOURCE and value:
         try:
@@ -1059,14 +1195,24 @@ async def maybe_run_booking_flow(
             if prefilled_uuid:
                 service = await _fetch_service(conn, tenant_id, prefilled_uuid)
                 if service:
-                    new_state = await _present_resources(
+                    base_state = {'selected_service_id': str(prefilled_uuid)}
+                    new_state = await _present_branches(
                         conn,
                         tenant_id=tenant_id,
                         conversation=conversation,
                         channel_id=channel_id,
                         channel_account_mode=channel_account_mode,
-                        state={'selected_service_id': str(prefilled_uuid)},
+                        state=base_state,
                     )
+                    if new_state is None:
+                        new_state = await _present_resources(
+                            conn,
+                            tenant_id=tenant_id,
+                            conversation=conversation,
+                            channel_id=channel_id,
+                            channel_account_mode=channel_account_mode,
+                            state=base_state,
+                        )
         if new_state is None:
             new_state = await _present_services(
                 conn,

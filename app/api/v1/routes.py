@@ -20,6 +20,8 @@ from app.api.v1.schemas import (
     AppointmentPaymentLinkRequest,
     AppointmentPaymentStatusUpdate,
     AppointmentUpdate,
+    BranchCreate,
+    BranchUpdate,
     CampaignCreate,
     CampaignLaunch,
     CampaignUpdate,
@@ -3283,12 +3285,179 @@ async def appointment_detail(conn: asyncpg.Connection, tenant_id: UUID, appointm
     )
 
 
+# ───── Branches (TASK-0050) ────────────────────────────────────────────────
+
+
+@tenant_ops_router.get('/branches')
+async def list_branches(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    is_active: bool | None = Query(default=None),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select *
+        from app.branches
+        where tenant_id=$1
+          and ($2::boolean is null or is_active=$2)
+        order by sort_order asc, name asc
+        limit 250
+        """,
+        tenant_id,
+        is_active,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_admin_router.post('/branches', status_code=201)
+async def create_branch(payload: BranchCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
+    try:
+        row = await conn.fetchrow(
+            """
+            insert into app.branches (
+                tenant_id, name, code, address, city, state, country,
+                lat, lng, maps_url, phone_e164, timezone, opening_hours,
+                is_active, sort_order
+            )
+            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15)
+            returning *
+            """,
+            tenant_id,
+            payload.name,
+            payload.code,
+            payload.address,
+            payload.city,
+            payload.state,
+            payload.country,
+            payload.lat,
+            payload.lng,
+            payload.maps_url,
+            payload.phone_e164,
+            payload.timezone,
+            json.dumps(payload.opening_hours),
+            payload.is_active,
+            payload.sort_order,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail='Branch code already exists for tenant') from exc
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='branch.created',
+        entity_type='branch',
+        entity_id=str(row['id']),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.patch('/branches/{branch_id}')
+async def update_branch(branch_id: UUID, payload: BranchUpdate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await conn.fetchrow('select * from app.branches where tenant_id=$1 and id=$2', tenant_id, branch_id)
+        if not row:
+            raise HTTPException(status_code=404, detail='Branch not found')
+        return record_to_dict(row)
+    try:
+        row = await conn.fetchrow(
+            """
+            update app.branches
+            set name=coalesce($3, name),
+                code=coalesce($4, code),
+                address=case when $14::boolean then $5 else address end,
+                city=case when $15::boolean then $6 else city end,
+                state=case when $16::boolean then $7 else state end,
+                country=coalesce($8, country),
+                lat=case when $17::boolean then $9 else lat end,
+                lng=case when $18::boolean then $10 else lng end,
+                maps_url=case when $19::boolean then $11 else maps_url end,
+                phone_e164=case when $20::boolean then $12 else phone_e164 end,
+                timezone=coalesce($13, timezone),
+                opening_hours=coalesce($21::jsonb, opening_hours),
+                is_active=coalesce($22, is_active),
+                sort_order=coalesce($23, sort_order)
+            where tenant_id=$1 and id=$2
+            returning *
+            """,
+            tenant_id,
+            branch_id,
+            update_data.get('name'),
+            update_data.get('code'),
+            update_data.get('address'),
+            update_data.get('city'),
+            update_data.get('state'),
+            update_data.get('country'),
+            update_data.get('lat'),
+            update_data.get('lng'),
+            update_data.get('maps_url'),
+            update_data.get('phone_e164'),
+            update_data.get('timezone'),
+            'address' in update_data,
+            'city' in update_data,
+            'state' in update_data,
+            'lat' in update_data,
+            'lng' in update_data,
+            'maps_url' in update_data,
+            'phone_e164' in update_data,
+            json.dumps(update_data['opening_hours']) if 'opening_hours' in update_data else None,
+            update_data.get('is_active'),
+            update_data.get('sort_order'),
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail='Branch code already exists for tenant') from exc
+    if not row:
+        raise HTTPException(status_code=404, detail='Branch not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='branch.updated',
+        entity_type='branch',
+        entity_id=str(branch_id),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.delete('/branches/{branch_id}', status_code=204)
+async def deactivate_branch(branch_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        update app.branches
+        set is_active=false
+        where tenant_id=$1 and id=$2
+        returning id
+        """,
+        tenant_id,
+        branch_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Branch not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='branch.deleted',
+        entity_type='branch',
+        entity_id=str(branch_id),
+    )
+    return Response(status_code=204)
+
+
 @tenant_ops_router.get('/resources')
 async def list_resources(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
     resource_type: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
+    branch_id: UUID | None = Query(default=None),
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     rows = await conn.fetch(
@@ -3298,12 +3467,14 @@ async def list_resources(
         where tenant_id=$1
           and ($2::text is null or resource_type=$2)
           and ($3::boolean is null or is_active=$3)
+          and ($4::uuid is null or branch_id=$4)
         order by is_active desc, resource_type, name
         limit 250
         """,
         tenant_id,
         resource_type,
         is_active,
+        branch_id,
     )
     return [record_to_dict(row) for row in rows]
 
@@ -3324,9 +3495,9 @@ async def create_resource(payload: ResourceCreate, request: Request, conn: async
             insert into app.resources (
                 tenant_id, vertical_code, resource_type, code, name, capabilities,
                 bio, photo_media_asset_id, specialty, license_number, years_of_experience,
-                public_profile, is_active
+                public_profile, branch_id, is_active
             )
-            values ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13)
+            values ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13,$14)
             returning *
             """,
             payload.tenant_id,
@@ -3341,12 +3512,13 @@ async def create_resource(payload: ResourceCreate, request: Request, conn: async
             payload.license_number,
             payload.years_of_experience,
             payload.public_profile,
+            payload.branch_id,
             payload.is_active,
         )
     except asyncpg.UniqueViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource code already exists for tenant') from exc
     except asyncpg.ForeignKeyViolationError as exc:
-        raise HTTPException(status_code=400, detail='photo_media_asset_id not found for tenant') from exc
+        raise HTTPException(status_code=400, detail='photo_media_asset_id or branch_id not found for tenant') from exc
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.created', entity_type='resource', entity_id=str(row['id']))
     return record_to_dict(row)
 
@@ -3384,6 +3556,7 @@ async def update_resource(resource_id: UUID, payload: ResourceUpdate, request: R
                 license_number=case when $17::boolean then $11 else license_number end,
                 years_of_experience=case when $18::boolean then $12 else years_of_experience end,
                 public_profile=coalesce($13, public_profile),
+                branch_id=case when $20::boolean then $21 else branch_id end,
                 is_active=coalesce($19, is_active)
             where tenant_id=$1 and id=$2
             returning *
@@ -3407,11 +3580,13 @@ async def update_resource(resource_id: UUID, payload: ResourceUpdate, request: R
             'license_number' in update_data,
             'years_of_experience' in update_data,
             update_data.get('is_active'),
+            'branch_id' in update_data,
+            update_data.get('branch_id'),
         )
     except asyncpg.UniqueViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource code already exists for tenant') from exc
     except asyncpg.ForeignKeyViolationError as exc:
-        raise HTTPException(status_code=400, detail='photo_media_asset_id not found for tenant') from exc
+        raise HTTPException(status_code=400, detail='photo_media_asset_id or branch_id not found for tenant') from exc
     if not row:
         raise HTTPException(status_code=404, detail='Resource not found')
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.updated', entity_type='resource', entity_id=str(resource_id))
@@ -4870,6 +5045,7 @@ async def list_appointments(
     conn: asyncpg.Connection = Depends(get_db),
     resource_id: UUID | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias='status'),
+    branch_id: UUID | None = Query(default=None),
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     rows = await conn.fetch(
@@ -4881,12 +5057,14 @@ async def list_appointments(
         where a.tenant_id=$1
           and ($2::uuid is null or a.resource_id=$2)
           and ($3::text is null or a.status=$3)
+          and ($4::uuid is null or a.branch_id=$4)
         order by a.starts_at desc
         limit 250
         """,
         tenant_id,
         resource_id,
         status_filter,
+        branch_id,
     )
     return [record_to_dict(row) for row in rows]
 
@@ -7646,6 +7824,7 @@ async def analytics_appointments(
     request: Request,
     from_date: str | None = Query(None),
     to_date: str | None = Query(None),
+    branch_id: UUID | None = Query(default=None),
     conn: asyncpg.Connection = Depends(get_db),
 ):
     tenant_id = await tenant_id_from_request(request, conn)
@@ -7660,21 +7839,23 @@ async def analytics_appointments(
         from app.appointments a
         left join app.service_catalog s on s.id = a.service_id and s.tenant_id = a.tenant_id
         where a.tenant_id = $1 and a.created_at >= $2 and a.created_at < $3
+          and ($4::uuid is null or a.branch_id = $4)
         group by 1, 2
         order by count desc
         limit 10
         """,
-        tenant_id, range_start, range_end,
+        tenant_id, range_start, range_end, branch_id,
     )
     statuses = await conn.fetch(
         """
         select status, count(*) as count
         from app.appointments
         where tenant_id = $1 and created_at >= $2 and created_at < $3
+          and ($4::uuid is null or branch_id = $4)
         group by status
         order by count desc
         """,
-        tenant_id, range_start, range_end,
+        tenant_id, range_start, range_end, branch_id,
     )
     no_shows_dow = await conn.fetch(
         """
@@ -7682,10 +7863,11 @@ async def analytics_appointments(
         from app.appointments
         where tenant_id = $1 and status = 'no_show'
           and starts_at >= $2 and starts_at < $3
+          and ($4::uuid is null or branch_id = $4)
         group by 1
         order by 1
         """,
-        tenant_id, range_start, range_end,
+        tenant_id, range_start, range_end, branch_id,
     )
     daily = await conn.fetch(
         """
@@ -7694,10 +7876,11 @@ async def analytics_appointments(
                count(*) filter (where status = 'completed') as completed
         from app.appointments
         where tenant_id = $1 and created_at >= $2 and created_at < $3
+          and ($4::uuid is null or branch_id = $4)
         group by 1
         order by 1
         """,
-        tenant_id, range_start, range_end,
+        tenant_id, range_start, range_end, branch_id,
     )
     return {
         'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},

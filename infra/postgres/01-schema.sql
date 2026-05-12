@@ -192,6 +192,30 @@ create table app.message_status_events (
 );
 create index ix_message_status_external on app.message_status_events(external_message_id);
 
+-- TASK-0050: branches (multi-sede) - cada tenant puede tener varias ubicaciones.
+create table app.branches (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  name text not null,
+  code text not null,
+  address text,
+  city text,
+  state text,
+  country char(2) not null default 'CO',
+  lat numeric(10,7),
+  lng numeric(10,7),
+  maps_url text,
+  phone_e164 text,
+  timezone text not null default 'America/Bogota',
+  opening_hours jsonb not null default '{}'::jsonb,
+  is_active boolean not null default true,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, code)
+);
+create index ix_branches_tenant_active on app.branches(tenant_id, is_active, sort_order);
+
 create table app.resources (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -206,11 +230,13 @@ create table app.resources (
   license_number text,
   years_of_experience int check (years_of_experience is null or years_of_experience >= 0),
   public_profile boolean not null default true,
+  branch_id uuid,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, code)
 );
+create index ix_resources_branch on app.resources(tenant_id, branch_id) where branch_id is not null;
 create index ix_resources_type on app.resources(tenant_id, resource_type);
 create index ix_resources_public on app.resources(tenant_id, public_profile, is_active);
 
@@ -303,6 +329,7 @@ create table app.appointments (
   payment_link_generated_at timestamptz,
   payment_link_sent_at timestamptz,
   payment_paid_at timestamptz,
+  branch_id uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   check (starts_at < ends_at),
@@ -312,6 +339,7 @@ create index ix_appointments_payment_ref on app.appointments(tenant_id, payment_
 create index ix_appointments_payment_status on app.appointments(tenant_id, payment_status);
 create index ix_appointments_tenant_starts on app.appointments(tenant_id, starts_at);
 create index ix_appointments_contact_status on app.appointments(contact_id, status);
+create index ix_appointments_branch on app.appointments(tenant_id, branch_id, starts_at) where branch_id is not null;
 
 create table app.whatsapp_templates (
   id uuid primary key default gen_random_uuid(),
@@ -694,12 +722,16 @@ alter table app.service_requests
   add constraint fk_service_requests_tenant_resource foreign key (tenant_id, assigned_resource_id) references app.resources(tenant_id, id);
 alter table app.quotes
   add constraint fk_quotes_tenant_service_request foreign key (tenant_id, service_request_id) references app.service_requests(tenant_id, id);
+alter table app.branches add constraint uq_branches_tenant_id_id unique (tenant_id, id);
+alter table app.resources
+  add constraint fk_resources_tenant_branch foreign key (tenant_id, branch_id) references app.branches(tenant_id, id) on delete set null;
 alter table app.appointments
   add constraint fk_appointments_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
   add constraint fk_appointments_tenant_conversation foreign key (tenant_id, conversation_id) references app.conversations(tenant_id, id),
   add constraint fk_appointments_tenant_service_request foreign key (tenant_id, service_request_id) references app.service_requests(tenant_id, id),
   add constraint fk_appointments_tenant_resource foreign key (tenant_id, resource_id) references app.resources(tenant_id, id),
-  add constraint fk_appointments_tenant_service foreign key (tenant_id, service_id) references app.service_catalog(tenant_id, id);
+  add constraint fk_appointments_tenant_service foreign key (tenant_id, service_id) references app.service_catalog(tenant_id, id),
+  add constraint fk_appointments_tenant_branch foreign key (tenant_id, branch_id) references app.branches(tenant_id, id) on delete restrict;
 alter table app.reminder_jobs
   add constraint fk_reminder_jobs_tenant_channel foreign key (tenant_id, channel_id) references app.tenant_channels(tenant_id, id);
 alter table app.knowledge_chunks
@@ -729,6 +761,7 @@ create trigger trg_media_assets_touch before update on app.media_assets for each
 create trigger trg_promotions_touch before update on app.promotions for each row execute function app.touch_updated_at();
 create trigger trg_campaigns_touch before update on app.campaigns for each row execute function app.touch_updated_at();
 create trigger trg_contact_segments_touch before update on app.contact_segments for each row execute function app.touch_updated_at();
+create trigger trg_branches_touch before update on app.branches for each row execute function app.touch_updated_at();
 
 alter table app.tenant_channels enable row level security;
 alter table app.contacts enable row level security;
@@ -757,6 +790,7 @@ alter table app.campaigns enable row level security;
 alter table app.campaign_attributions enable row level security;
 alter table app.contact_segments enable row level security;
 alter table app.contact_segment_members enable row level security;
+alter table app.branches enable row level security;
 alter table app.webhook_events_raw enable row level security;
 alter table app.domain_events enable row level security;
 alter table app.audit_logs enable row level security;
@@ -772,6 +806,7 @@ begin
     'media_assets','promotions',
     'campaigns','campaign_attributions',
     'contact_segments','contact_segment_members',
+    'branches',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop
     execute format('create policy %I_tenant_select on app.%I for select using (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);

@@ -190,6 +190,40 @@ class ServiceReorderRequest(BaseModel):
     order: list[ServiceReorderItem] = Field(default_factory=list)
 
 
+class BranchCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    code: str = Field(min_length=1, max_length=80)
+    address: str | None = Field(default=None, max_length=500)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=120)
+    country: str = Field(default='CO', min_length=2, max_length=2)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+    maps_url: str | None = Field(default=None, max_length=500)
+    phone_e164: str | None = Field(default=None, max_length=32)
+    timezone: str = Field(default='America/Bogota', min_length=1, max_length=64)
+    opening_hours: dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+    sort_order: int = Field(default=0, ge=0)
+
+
+class BranchUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    code: str | None = Field(default=None, min_length=1, max_length=80)
+    address: str | None = Field(default=None, max_length=500)
+    city: str | None = Field(default=None, max_length=120)
+    state: str | None = Field(default=None, max_length=120)
+    country: str | None = Field(default=None, min_length=2, max_length=2)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+    maps_url: str | None = Field(default=None, max_length=500)
+    phone_e164: str | None = Field(default=None, max_length=32)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    opening_hours: dict[str, Any] | None = None
+    is_active: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0)
+
+
 class ResourceCreate(BaseModel):
     tenant_id: UUID
     vertical_code: str | None = Field(default=None, max_length=64)
@@ -203,6 +237,7 @@ class ResourceCreate(BaseModel):
     license_number: str | None = Field(default=None, max_length=80)
     years_of_experience: int | None = Field(default=None, ge=0, le=99)
     public_profile: bool = True
+    branch_id: UUID | None = None
     is_active: bool = True
 
 
@@ -218,6 +253,7 @@ class ResourceUpdate(BaseModel):
     license_number: str | None = Field(default=None, max_length=80)
     years_of_experience: int | None = Field(default=None, ge=0, le=99)
     public_profile: bool | None = None
+    branch_id: UUID | None = None
     is_active: bool | None = None
 
 
