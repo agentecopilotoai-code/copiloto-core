@@ -331,6 +331,34 @@ class ContactNoteCreate(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
 
 
+class CampaignSegmentFilter(BaseModel):
+    tags: list[UUID] | None = None
+    min_appointments: int | None = Field(default=None, ge=0)
+    last_visit_before_days: int | None = Field(default=None, ge=0)
+    last_visit_after_days: int | None = Field(default=None, ge=0)
+    has_upcoming_appointment: bool | None = None
+
+
+class CampaignCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    template_id: UUID
+    template_variables: dict[str, Any] = Field(default_factory=dict)
+    segment_filter: CampaignSegmentFilter = Field(default_factory=CampaignSegmentFilter)
+    scheduled_at: datetime | None = None
+
+
+class CampaignUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    template_id: UUID | None = None
+    template_variables: dict[str, Any] | None = None
+    segment_filter: CampaignSegmentFilter | None = None
+    scheduled_at: datetime | None = None
+
+
+class CampaignLaunch(BaseModel):
+    scheduled_at: datetime | None = None
+
+
 class PromptCreate(BaseModel):
     tenant_id: UUID | None = None
     vertical_code: str = 'common'

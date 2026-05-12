@@ -36,6 +36,13 @@ export const adminModules = [
     scope: ['Búsqueda y filtros', 'Perfil con historial', 'Etiquetas asignables', 'Notas internas'],
   },
   {
+    id: 'campaigns',
+    label: 'Campañas',
+    summary: 'Mensajes masivos a segmentos de contactos vía templates aprobados.',
+    scope: ['Segmentar por etiquetas y citas', 'Previsualizar destinatarios', 'Programar envío', 'Métricas de entrega'],
+    minRole: 'admin',
+  },
+  {
     id: 'operations-desk',
     label: 'Operations Desk',
     summary: 'Inbox operativo para conversaciones y handoff humano.',

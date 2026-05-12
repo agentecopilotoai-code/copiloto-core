@@ -17,6 +17,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from app.api.v1.schemas import (
     AppointmentCreate,
     AppointmentUpdate,
+    CampaignCreate,
+    CampaignLaunch,
+    CampaignUpdate,
     ChannelCreate,
     ChannelModeUpdate,
     ContactNoteCreate,
@@ -60,6 +63,12 @@ from app.services.auth0_admin import (
     revoke_tenant_roles as auth0_revoke_tenant_roles,
 )
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
+from app.services.campaigns import (
+    count_recipients as count_campaign_recipients,
+    evaluate_segment,
+    normalize_segment_filter,
+    refresh_campaign_counters,
+)
 from app.services.notifications import (
     cancel_appointment_reminder_jobs,
     create_appointment_reminder_jobs,
@@ -5893,6 +5902,330 @@ async def analytics_contacts(
             {'source': row['source'], 'count': row['count']} for row in sources
         ],
     }
+
+
+CAMPAIGN_PROJECTION = (
+    'id, tenant_id, name, status, template_id, template_variables, '
+    'segment_filter, scheduled_at, recipient_count, sent_count, '
+    'delivered_count, read_count, failed_count, started_at, '
+    'completed_at, created_by, created_at, updated_at'
+)
+
+
+def normalize_campaign(row: asyncpg.Record | None) -> dict | None:
+    campaign = record_to_dict(row)
+    if not campaign:
+        return None
+    campaign['template_variables'] = parse_json_object(campaign.get('template_variables'), default={})
+    campaign['segment_filter'] = parse_json_object(campaign.get('segment_filter'), default={})
+    return campaign
+
+
+def _campaign_segment_filter_dict(payload_segment) -> dict[str, Any]:
+    if payload_segment is None:
+        return {}
+    if hasattr(payload_segment, 'model_dump'):
+        raw = payload_segment.model_dump(exclude_none=True)
+    elif isinstance(payload_segment, dict):
+        raw = payload_segment
+    else:
+        raw = {}
+    # UUIDs in the pydantic dump come back as UUID instances; the helper
+    # converts them to strings so the JSON encoder doesn't trip up.
+    if isinstance(raw.get('tags'), list):
+        raw['tags'] = [str(tag) for tag in raw['tags']]
+    return normalize_segment_filter(raw)
+
+
+async def _fetch_campaign_or_404(
+    conn: asyncpg.Connection, tenant_id: UUID, campaign_id: UUID
+) -> asyncpg.Record:
+    row = await conn.fetchrow(
+        f'select {CAMPAIGN_PROJECTION} from app.campaigns where tenant_id=$1 and id=$2',
+        tenant_id,
+        campaign_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Campaign not found')
+    return row
+
+
+async def _ensure_template_approved(
+    conn: asyncpg.Connection, tenant_id: UUID, template_id: UUID
+) -> asyncpg.Record:
+    row = await conn.fetchrow(
+        'select id, name, status, category from app.whatsapp_templates where tenant_id=$1 and id=$2',
+        tenant_id,
+        template_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Template not found')
+    if row['status'] != 'approved':
+        raise HTTPException(
+            status_code=400,
+            detail='Campaign templates must be approved by Meta before launch',
+        )
+    return row
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/campaigns', status_code=201)
+async def create_campaign(
+    tenant_id: UUID,
+    payload: CampaignCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    await _ensure_template_approved(conn, tenant_id, payload.template_id)
+    segment = _campaign_segment_filter_dict(payload.segment_filter)
+    recipient_count = await count_campaign_recipients(conn, tenant_id, segment)
+    created_by = await current_user_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        f"""
+        insert into app.campaigns (
+          tenant_id, name, template_id, template_variables,
+          segment_filter, scheduled_at, recipient_count, created_by
+        )
+        values ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8)
+        returning {CAMPAIGN_PROJECTION}
+        """,
+        tenant_id,
+        payload.name.strip(),
+        payload.template_id,
+        json.dumps(payload.template_variables or {}),
+        json.dumps(segment),
+        payload.scheduled_at,
+        recipient_count,
+        created_by,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='campaign.created',
+        entity_type='campaign',
+        entity_id=str(row['id']),
+        metadata={
+            'template_id': str(payload.template_id),
+            'recipient_count': recipient_count,
+        },
+    )
+    return normalize_campaign(row)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/campaigns')
+async def list_campaigns(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    status_filter: str | None = Query(default=None, alias='status'),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {CAMPAIGN_PROJECTION}
+        from app.campaigns
+        where tenant_id=$1
+          and ($2::text is null or status=$2)
+        order by created_at desc
+        """,
+        tenant_id,
+        status_filter,
+    )
+    return [normalize_campaign(row) for row in rows]
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/campaigns/{campaign_id}')
+async def get_campaign(
+    tenant_id: UUID,
+    campaign_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_campaign_or_404(conn, tenant_id, campaign_id)
+    # Counter refresh on read so the admin panel sees the latest metrics
+    # rolled up from app.messages (sent/delivered/read/failed).
+    if row['status'] in ('running', 'completed'):
+        await refresh_campaign_counters(conn, tenant_id, campaign_id)
+        row = await _fetch_campaign_or_404(conn, tenant_id, campaign_id)
+    return normalize_campaign(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/campaigns/{campaign_id}')
+async def patch_campaign(
+    tenant_id: UUID,
+    campaign_id: UUID,
+    payload: CampaignUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_campaign_or_404(conn, tenant_id, campaign_id)
+    if row['status'] != 'draft':
+        raise HTTPException(
+            status_code=409,
+            detail='Only campaigns in draft can be edited',
+        )
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        return normalize_campaign(row)
+    if payload.template_id is not None:
+        await _ensure_template_approved(conn, tenant_id, payload.template_id)
+    segment = (
+        _campaign_segment_filter_dict(payload.segment_filter)
+        if payload.segment_filter is not None
+        else None
+    )
+    new_recipient_count = (
+        await count_campaign_recipients(conn, tenant_id, segment)
+        if segment is not None
+        else None
+    )
+    updated = await conn.fetchrow(
+        f"""
+        update app.campaigns
+        set name=coalesce($3, name),
+            template_id=coalesce($4, template_id),
+            template_variables=coalesce($5::jsonb, template_variables),
+            segment_filter=coalesce($6::jsonb, segment_filter),
+            scheduled_at=coalesce($7, scheduled_at),
+            recipient_count=coalesce($8, recipient_count),
+            updated_at=now()
+        where tenant_id=$1 and id=$2
+        returning {CAMPAIGN_PROJECTION}
+        """,
+        tenant_id,
+        campaign_id,
+        data.get('name'),
+        data.get('template_id'),
+        json.dumps(data['template_variables']) if 'template_variables' in data else None,
+        json.dumps(segment) if segment is not None else None,
+        data.get('scheduled_at'),
+        new_recipient_count,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='campaign.updated',
+        entity_type='campaign',
+        entity_id=str(campaign_id),
+        metadata={'fields': sorted(data.keys())},
+    )
+    return normalize_campaign(updated)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/campaigns/{campaign_id}/preview')
+async def preview_campaign(
+    tenant_id: UUID,
+    campaign_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_campaign_or_404(conn, tenant_id, campaign_id)
+    segment = parse_json_object(row['segment_filter'], default={})
+    total = await count_campaign_recipients(conn, tenant_id, segment)
+    sample = await evaluate_segment(conn, tenant_id, segment, limit=5)
+    return {
+        'recipient_count': total,
+        'sample': [
+            {
+                'id': str(item['id']),
+                'display_name': item.get('display_name'),
+                'phone_e164': item.get('phone_e164'),
+                'opt_in_status': item.get('opt_in_status'),
+            }
+            for item in sample
+        ],
+    }
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/campaigns/{campaign_id}/launch')
+async def launch_campaign(
+    tenant_id: UUID,
+    campaign_id: UUID,
+    payload: CampaignLaunch,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_campaign_or_404(conn, tenant_id, campaign_id)
+    if row['status'] not in ('draft', 'scheduled'):
+        raise HTTPException(
+            status_code=409,
+            detail=f'Campaign cannot be launched from status={row["status"]}',
+        )
+    await _ensure_template_approved(conn, tenant_id, row['template_id'])
+    next_scheduled = payload.scheduled_at or row['scheduled_at'] or datetime.now(UTC)
+    updated = await conn.fetchrow(
+        f"""
+        update app.campaigns
+        set status='scheduled', scheduled_at=$3, updated_at=now()
+        where tenant_id=$1 and id=$2
+        returning {CAMPAIGN_PROJECTION}
+        """,
+        tenant_id,
+        campaign_id,
+        next_scheduled,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='campaign.launched',
+        entity_type='campaign',
+        entity_id=str(campaign_id),
+        metadata={'scheduled_at': next_scheduled.isoformat()},
+    )
+    return normalize_campaign(updated)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/campaigns/{campaign_id}/cancel')
+async def cancel_campaign(
+    tenant_id: UUID,
+    campaign_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_campaign_or_404(conn, tenant_id, campaign_id)
+    if row['status'] in ('completed', 'cancelled'):
+        raise HTTPException(
+            status_code=409,
+            detail=f'Campaign already in terminal status={row["status"]}',
+        )
+    updated = await conn.fetchrow(
+        f"""
+        update app.campaigns
+        set status='cancelled', completed_at=now(), updated_at=now()
+        where tenant_id=$1 and id=$2
+        returning {CAMPAIGN_PROJECTION}
+        """,
+        tenant_id,
+        campaign_id,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='campaign.cancelled',
+        entity_type='campaign',
+        entity_id=str(campaign_id),
+    )
+    return normalize_campaign(updated)
 
 
 router.include_router(public_router)

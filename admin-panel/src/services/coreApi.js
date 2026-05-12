@@ -738,6 +738,65 @@ export function createContactNote(session, tenantId, contactId, body) {
   });
 }
 
+export function listCampaigns(session, tenantId, { status } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  const query = params.toString();
+  return request(`/tenants/${tenantId}/campaigns${query ? `?${query}` : ''}`, {
+    session,
+    tenantId,
+  });
+}
+
+export function getCampaign(session, tenantId, campaignId) {
+  return request(`/tenants/${tenantId}/campaigns/${campaignId}`, { session, tenantId });
+}
+
+export function createCampaign(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/campaigns`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateCampaign(session, tenantId, campaignId, payload) {
+  return request(`/tenants/${tenantId}/campaigns/${campaignId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function previewCampaign(session, tenantId, campaignId) {
+  return request(`/tenants/${tenantId}/campaigns/${campaignId}/preview`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: {},
+  });
+}
+
+export function launchCampaign(session, tenantId, campaignId, payload = {}) {
+  return request(`/tenants/${tenantId}/campaigns/${campaignId}/launch`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function cancelCampaign(session, tenantId, campaignId) {
+  return request(`/tenants/${tenantId}/campaigns/${campaignId}/cancel`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: {},
+  });
+}
+
 function buildAnalyticsQuery({ fromDate, toDate } = {}) {
   const params = new URLSearchParams();
   if (fromDate) params.set('from_date', fromDate);
