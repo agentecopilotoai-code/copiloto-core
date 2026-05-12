@@ -15,6 +15,32 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0041 — Gestión de equipo y roles del tenant
+
+- **Fecha:** 2026-05-12
+- **Resumen:** se entrega el flujo completo para administrar miembros y roles dentro de un tenant desde el Admin Panel. El backend expone cuatro endpoints bajo `tenant_admin_router` (`GET/POST/PATCH/DELETE /v1/tenants/{tenant_id}/members`) con auditoría (`tenant_member.invited`, `tenant_member.role_updated`, `tenant_member.removed`), reglas de "último owner no se puede degradar/eliminar" y restricción de "solo un owner puede asignar el rol owner". El servicio `app/services/auth0_admin.py` envuelve Auth0 Management API (token con cache por `expires_in`, ticket de password-change para invitaciones, `PATCH /users/{id}` para sincronizar `user_metadata.tenant_roles` y `app_metadata.tenant_revocations`); cuando las credenciales no están configuradas opera en modo no-op (`disabled=True`) y el backend marca `auth0_skipped: true`. El endpoint `GET /v1/me/tenants` pasa a un router con sólo autenticación (no requiere rol) y agrega los roles por tenant (`array_agg(...)`), habilitando el switcher tipo Slack. En el panel se añade un módulo **Equipo** (visible para `admin` u `owner` del tenant activo) con tabla de miembros, formulario "Invitar miembro", cambio de rol inline, revocación con confirmación, badges de rol con color y banner cuando Auth0 está deshabilitado. El sidebar reemplaza el viejo `<select>` por un `TenantSwitcher` con avatar, nombre del tenant y rol; cualquier usuario con más de un tenant puede cambiar entre ellos, y la selección se persiste en `localStorage`. Los módulos se filtran por el rol del tenant activo: un `agent` no ve el módulo Equipo en el sidebar y un acceso directo por hash muestra un mensaje de "acceso restringido".
+- **Archivos modificados:**
+  - `app/services/auth0_admin.py` (nuevo) — helpers `get_management_token`, `invite_user`, `assign_roles`, `revoke_tenant_roles`, `auth0_management_enabled`, cache de token thread-safe con TTL real, lectura del secret desde fichero (`auth0_admin_client_secret_file`) cuando está presente.
+  - `app/api/v1/routes.py` — nuevo `tenant_user_router` con sólo `authenticate_request`, traslado de `/me/tenants` con aggregation `array_agg(utr.role …)` para devolver `roles[]` y `role` (el más alto), endpoints CRUD de miembros con preflight `_ensure_caller_can_target_role`, conteo de owners `_tenant_owner_count`, sincronización con Auth0 al invitar/cambiar/revocar y auditoría dedicada.
+  - `app/api/v1/schemas.py` — `MemberInvite`, `MemberRoleUpdate`, `TENANT_MEMBER_ROLES` (`owner/admin/manager/agent/viewer`).
+  - `app/core/security.py` — `viewer` añadido a `_ROLE_LEVELS` (nivel 5) para que la jerarquía coincida con el check constraint de la BD.
+  - `admin-panel/src/services/coreApi.js` — helpers `listTenantMembers`, `inviteTenantMember`, `updateTenantMemberRole`, `removeTenantMember`.
+  - `admin-panel/src/components/modules/team/TeamModule.jsx` (nuevo) — tabla, invitación, cambio de rol con confirmación, revocación con guard de último owner, banner de "Auth0 no habilitado" y enlace de ticket copiable al portapapeles.
+  - `admin-panel/src/components/layout/AdminLayout.jsx` — fetch de `/me/tenants` ahora carga `roles[]`, persiste `activeTenantId` en `localStorage`, calcula `activeRoles` por tenant, filtra módulos por `minRole`, monta `TeamModule` y muestra mensaje de acceso restringido si el usuario no es admin del tenant activo.
+  - `admin-panel/src/components/layout/Sidebar.jsx` — `TenantSwitcher` tipo Slack con avatar de iniciales, dropdown listbox, cierre al click-out, role chip por opción y `aria-selected` para accesibilidad.
+  - `admin-panel/src/data/modules.js` — registro del módulo `team` con `minRole: 'admin'`.
+  - `admin-panel/src/styles/global.css` — estilos `.tenant-switcher*`, `.warn-banner`, `.info-banner`, `.data-table`, `.danger-action`, `.table-wrapper`.
+  - `tests/test_tenant_team_static.py` (nuevo) — 16 tests cubriendo endpoints registrados con `require_min_role('admin')`, `/me/tenants` accesible sin rol, schemas con todos los roles, jerarquía de `viewer`, acciones de auditoría, "último owner" 409, "solo owner asigna owner", helpers del servicio Auth0 con no-op cuando no hay credenciales, módulo Equipo expuesto en el panel, UI con invitación/cambio/revocación, switcher Slack-style en sidebar, persistencia en localStorage.
+- **Comandos ejecutados / criterios cumplidos:**
+  - `python -m pytest tests/test_tenant_team_static.py` → 16 passed.
+  - `python -m pytest tests/` → 550 passed, 6 skipped.
+  - Owner ve la lista del tenant; invita un usuario y aparece como `invited`; cambia un rol y la fila se actualiza al instante; intenta revocar al último owner y recibe 409; un `agent` no ve el módulo Equipo en el sidebar.
+- **Notas / limitaciones:**
+  - La sincronización real con Auth0 depende de que `AUTH0_DOMAIN` + `AUTH0_ADMIN_CLIENT_ID` + `AUTH0_ADMIN_CLIENT_SECRET` (o el `..._file`) estén configurados. En desarrollo local los cambios se persisten en `app.user_tenant_roles` y se marca `auth0_skipped: true` para que el panel muestre el banner correspondiente.
+  - El claim final de roles en el JWT requiere una Action post-login que lea `user_metadata.tenant_roles` y emita `{namespace}/roles` para el tenant activo; queda fuera del alcance de esta tarea (ya hay scripts en `scripts/configure-auth0.sh` que pueden adaptarse).
+
+---
+
 ### TASK-0027 — Panel de analítica completa del negocio
 
 - **Fecha:** 2026-05-12

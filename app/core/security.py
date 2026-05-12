@@ -9,7 +9,7 @@ from jose import JWTError, jwt
 from app.core.config import get_settings
 
 _jwks_cache: dict[str, tuple[float, dict]] = {}
-_ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
+_ROLE_LEVELS = {'viewer': 5, 'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
 _PRIVILEGED_ROLES = {'admin', 'owner', 'platform_owner'}
 
 

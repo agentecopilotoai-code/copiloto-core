@@ -59,6 +59,13 @@ export const adminModules = [
     summary: 'Trazabilidad de cambios y acciones administrativas.',
     scope: ['Logs de auditoría', 'Actor y entidad', 'Filtros por tenant', 'Evidencia para cumplimiento'],
   },
+  {
+    id: 'team',
+    label: 'Equipo',
+    summary: 'Miembros, roles e invitaciones del tenant.',
+    scope: ['Invitar usuarios', 'Cambiar rol', 'Revocar acceso', 'Sincronización con Auth0'],
+    minRole: 'admin',
+  },
 ];
 
 export const defaultModuleId = adminModules[0].id;

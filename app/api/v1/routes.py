@@ -30,6 +30,8 @@ from app.api.v1.schemas import (
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
     KnowledgeStorageUpdate,
+    MemberInvite,
+    MemberRoleUpdate,
     MessageCreate,
     PromptCreate,
     QuoteCreate,
@@ -51,6 +53,12 @@ from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
 from app.services.audit import audit
+from app.services.auth0_admin import (
+    assign_roles as auth0_assign_roles,
+    auth0_management_enabled,
+    invite_user as auth0_invite_user,
+    revoke_tenant_roles as auth0_revoke_tenant_roles,
+)
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
 from app.services.notifications import (
     cancel_appointment_reminder_jobs,
@@ -290,6 +298,13 @@ tenant_analytics_router = APIRouter(
 tenant_signup_router = APIRouter(
     tags=['tenant-signup'],
     dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+)
+# Endpoints that any authenticated user must be able to call regardless of the
+# role they currently hold inside their default tenant.  Used for the Slack-style
+# tenant switcher (listing tenants the user belongs to).
+tenant_user_router = APIRouter(
+    tags=['tenant-user'],
+    dependencies=[Depends(authenticate_request)],
 )
 system_router = APIRouter(
     tags=['system'],
@@ -544,23 +559,52 @@ async def update_tenant_record(
     return row
 
 
-@tenant_signup_router.get('/me/tenants')
+@tenant_user_router.get('/me/tenants')
 async def list_my_tenants(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    """Return every tenant the authenticated user belongs to with their role.
+
+    Drives the Slack-style tenant switcher in the Admin Panel.  Any
+    authenticated user can hit this regardless of which role they hold in
+    their current tenant, because they may have a different role in a
+    different tenant.
+    """
     actor_id = getattr(request.state, 'actor_id', None)
     if not actor_id:
         raise HTTPException(status_code=401, detail='Authentication required')
     rows = await conn.fetch(
         """
-        select t.id, t.slug, t.legal_name, t.display_name, t.vertical_code, t.business_type_label, t.country_code, t.timezone, t.status, utr.role, utr.is_default
+        select t.id, t.slug, t.legal_name, t.display_name, t.vertical_code,
+               t.business_type_label, t.country_code, t.timezone, t.status,
+               array_agg(utr.role order by
+                   case utr.role
+                       when 'owner' then 1
+                       when 'admin' then 2
+                       when 'manager' then 3
+                       when 'agent' then 4
+                       when 'viewer' then 5
+                       else 6
+                   end
+               ) as roles,
+               bool_or(utr.is_default) as is_default,
+               min(utr.created_at) as joined_at
         from app.users u
         join app.user_tenant_roles utr on utr.user_id = u.id
         join app.tenants t on t.id = utr.tenant_id
         where u.auth_subject=$1 and t.deleted_at is null
-        order by utr.is_default desc, utr.created_at asc
+        group by t.id
+        order by bool_or(utr.is_default) desc, min(utr.created_at) asc
         """,
         actor_id,
     )
-    return [record_to_dict(row) for row in rows]
+    tenants = []
+    for row in rows:
+        record = record_to_dict(row)
+        roles = list(record.get('roles') or [])
+        record['roles'] = roles
+        # Keep backwards-compatible single role field (highest role wins).
+        record['role'] = roles[0] if roles else None
+        tenants.append(record)
+    return tenants
 
 
 @tenant_signup_router.post('/tenant-signup', status_code=status.HTTP_201_CREATED)
@@ -726,6 +770,416 @@ async def patch_tenant_status(
         metadata={'from_status': current_status, 'to_status': payload.status, 'reason': payload.reason},
     )
     return record_to_dict(updated)
+
+
+_TENANT_MEMBER_ROLES = ('owner', 'admin', 'manager', 'agent', 'viewer')
+
+
+async def _ensure_caller_can_target_role(
+    request: Request, conn: asyncpg.Connection, tenant_id: UUID, target_role: str
+) -> None:
+    """Only an existing owner of the tenant may assign or modify the owner role."""
+    if target_role != 'owner':
+        return
+    if is_service_or_support(request):
+        return
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        raise HTTPException(status_code=403, detail='Only an owner can manage the owner role')
+    caller_is_owner = await conn.fetchval(
+        """
+        select exists(
+          select 1
+          from app.users u
+          join app.user_tenant_roles utr on utr.user_id = u.id
+          where u.auth_subject=$1 and utr.tenant_id=$2 and utr.role='owner'
+        )
+        """,
+        actor_id,
+        tenant_id,
+    )
+    if not caller_is_owner:
+        raise HTTPException(status_code=403, detail='Only an owner can manage the owner role')
+
+
+async def _tenant_owner_count(conn: asyncpg.Connection, tenant_id: UUID) -> int:
+    return int(
+        await conn.fetchval(
+            'select count(*) from app.user_tenant_roles where tenant_id=$1 and role=$2',
+            tenant_id,
+            'owner',
+        )
+    )
+
+
+async def _tenant_member_payload(
+    conn: asyncpg.Connection, tenant_id: UUID, user_id: UUID
+) -> dict[str, Any]:
+    row = await conn.fetchrow(
+        """
+        select u.id as user_id, u.auth_subject, u.email, u.display_name,
+               u.status, u.last_login_at, u.created_at,
+               array_agg(utr.role order by
+                   case utr.role
+                       when 'owner' then 1
+                       when 'admin' then 2
+                       when 'manager' then 3
+                       when 'agent' then 4
+                       when 'viewer' then 5
+                       else 6
+                   end
+               ) as roles,
+               bool_or(utr.is_default) as is_default_role
+        from app.users u
+        join app.user_tenant_roles utr on utr.user_id = u.id
+        where u.id=$1 and utr.tenant_id=$2
+        group by u.id
+        """,
+        user_id,
+        tenant_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Member not found')
+    payload = record_to_dict(row)
+    payload['roles'] = list(payload.get('roles') or [])
+    return payload
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/members')
+async def list_tenant_members(
+    tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        """
+        select u.id as user_id, u.auth_subject, u.email, u.display_name,
+               u.status, u.last_login_at, u.created_at,
+               array_agg(utr.role order by
+                   case utr.role
+                       when 'owner' then 1
+                       when 'admin' then 2
+                       when 'manager' then 3
+                       when 'agent' then 4
+                       when 'viewer' then 5
+                       else 6
+                   end
+               ) as roles,
+               bool_or(utr.is_default) as is_default_role
+        from app.user_tenant_roles utr
+        join app.users u on u.id = utr.user_id
+        where utr.tenant_id=$1
+        group by u.id
+        order by min(utr.created_at) asc
+        """,
+        tenant_id,
+    )
+    members = []
+    for row in rows:
+        record = record_to_dict(row)
+        record['roles'] = list(record.get('roles') or [])
+        members.append(record)
+    return {
+        'members': members,
+        'auth0_management_enabled': auth0_management_enabled(),
+    }
+
+
+@tenant_admin_router.post(
+    '/tenants/{tenant_id}/members', status_code=status.HTTP_201_CREATED
+)
+async def invite_tenant_member(
+    tenant_id: UUID,
+    payload: MemberInvite,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    await _ensure_caller_can_target_role(request, conn, tenant_id, payload.role)
+
+    email = payload.email.strip().lower()
+    if '@' not in email:
+        raise HTTPException(status_code=422, detail='A valid email is required')
+
+    existing = await conn.fetchrow(
+        'select id, auth_subject from app.users where email=$1', email
+    )
+
+    if existing:
+        user_id = existing['id']
+        auth_subject = existing['auth_subject']
+        # Refresh display_name when provided.
+        if payload.display_name:
+            await conn.execute(
+                'update app.users set display_name=$2, updated_at=now() where id=$1',
+                user_id,
+                payload.display_name,
+            )
+    else:
+        # No Auth0 subject yet — use a stable placeholder so the schema's
+        # NOT NULL/UNIQUE constraints on auth_subject are satisfied.
+        pending_subject = f'pending|{uuid5(NAMESPACE_URL, email).hex}'
+        row = await conn.fetchrow(
+            """
+            insert into app.users (auth_subject, email, display_name, status)
+            values ($1, $2, $3, 'invited')
+            returning id, auth_subject
+            """,
+            pending_subject,
+            email,
+            payload.display_name or email.split('@', 1)[0],
+        )
+        user_id = row['id']
+        auth_subject = row['auth_subject']
+
+    already_member = await conn.fetchval(
+        'select 1 from app.user_tenant_roles where user_id=$1 and tenant_id=$2 limit 1',
+        user_id,
+        tenant_id,
+    )
+    if already_member:
+        raise HTTPException(
+            status_code=409,
+            detail='This user already belongs to the tenant; update their role instead.',
+        )
+
+    is_default = not bool(
+        await conn.fetchval(
+            'select 1 from app.user_tenant_roles where user_id=$1 limit 1', user_id
+        )
+    )
+    await conn.execute(
+        """
+        insert into app.user_tenant_roles (user_id, tenant_id, role, is_default)
+        values ($1, $2, $3, $4)
+        on conflict (user_id, tenant_id, role) do update set is_default=excluded.is_default
+        """,
+        user_id,
+        tenant_id,
+        payload.role,
+        is_default,
+    )
+
+    auth0_result: dict[str, Any] = {'disabled': True}
+    if not existing or (auth_subject and auth_subject.startswith('pending|')):
+        # New user — try to send invitation ticket through Auth0.
+        try:
+            auth0_result = await auth0_invite_user(
+                email=email,
+                role=payload.role,
+                tenant_id=tenant_id,
+                display_name=payload.display_name,
+            )
+        except Exception as exc:  # noqa: BLE001 - log and continue without Auth0
+            log.warning('tenant_member.auth0_invite_failed', error=str(exc))
+            auth0_result = {'disabled': False, 'error': str(exc)}
+    else:
+        # Existing Auth0 user — keep their tenant_roles claim in sync.
+        try:
+            roles_payload = await conn.fetch(
+                """
+                select utr.tenant_id::text as tenant_id, utr.role
+                from app.user_tenant_roles utr
+                where utr.user_id=$1
+                """,
+                user_id,
+            )
+            roles_list = [
+                {'tenant_id': r['tenant_id'], 'role': r['role']} for r in roles_payload
+            ]
+            auth0_result = await auth0_assign_roles(
+                auth_subject=auth_subject, roles=roles_list
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning('tenant_member.auth0_assign_failed', error=str(exc))
+            auth0_result = {'disabled': False, 'error': str(exc)}
+
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant_member.invited',
+        entity_type='user',
+        entity_id=str(user_id),
+        metadata={'email': email, 'role': payload.role},
+    )
+
+    member = await _tenant_member_payload(conn, tenant_id, user_id)
+    member['auth0'] = auth0_result
+    member['auth0_skipped'] = bool(auth0_result.get('disabled'))
+    return member
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/members/{user_id}')
+async def update_tenant_member_role(
+    tenant_id: UUID,
+    user_id: UUID,
+    payload: MemberRoleUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    user_row = await conn.fetchrow(
+        'select id, auth_subject from app.users where id=$1', user_id
+    )
+    if not user_row:
+        raise HTTPException(status_code=404, detail='User not found')
+
+    current_role_row = await conn.fetchrow(
+        """
+        select role
+        from app.user_tenant_roles
+        where user_id=$1 and tenant_id=$2
+        order by case role
+            when 'owner' then 1
+            when 'admin' then 2
+            when 'manager' then 3
+            when 'agent' then 4
+            when 'viewer' then 5
+            else 6
+        end
+        limit 1
+        """,
+        user_id,
+        tenant_id,
+    )
+    if not current_role_row:
+        raise HTTPException(status_code=404, detail='Member not found in tenant')
+    previous_role = current_role_row['role']
+    if previous_role == payload.role:
+        member = await _tenant_member_payload(conn, tenant_id, user_id)
+        member['auth0'] = {'disabled': not auth0_management_enabled(), 'skipped': 'no_change'}
+        return member
+
+    await _ensure_caller_can_target_role(request, conn, tenant_id, payload.role)
+    await _ensure_caller_can_target_role(request, conn, tenant_id, previous_role)
+
+    if previous_role == 'owner' and payload.role != 'owner':
+        owner_count = await _tenant_owner_count(conn, tenant_id)
+        if owner_count <= 1:
+            raise HTTPException(
+                status_code=409,
+                detail='Cannot demote the last owner of the tenant. Promote another user to owner first.',
+            )
+
+    async with conn.transaction():
+        await conn.execute(
+            'delete from app.user_tenant_roles where user_id=$1 and tenant_id=$2',
+            user_id,
+            tenant_id,
+        )
+        await conn.execute(
+            """
+            insert into app.user_tenant_roles (user_id, tenant_id, role, is_default)
+            values ($1, $2, $3, true)
+            on conflict (user_id, tenant_id, role) do update set is_default=true
+            """,
+            user_id,
+            tenant_id,
+            payload.role,
+        )
+
+    # Sync the user's tenant_roles claim list in Auth0 user_metadata.
+    auth0_result: dict[str, Any] = {'disabled': True}
+    try:
+        roles_payload = await conn.fetch(
+            """
+            select utr.tenant_id::text as tenant_id, utr.role
+            from app.user_tenant_roles utr
+            where utr.user_id=$1
+            """,
+            user_id,
+        )
+        roles_list = [
+            {'tenant_id': r['tenant_id'], 'role': r['role']} for r in roles_payload
+        ]
+        auth0_result = await auth0_assign_roles(
+            auth_subject=user_row['auth_subject'], roles=roles_list
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning('tenant_member.auth0_assign_failed', error=str(exc))
+        auth0_result = {'disabled': False, 'error': str(exc)}
+
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant_member.role_updated',
+        entity_type='user',
+        entity_id=str(user_id),
+        metadata={'previous_role': previous_role, 'new_role': payload.role},
+    )
+
+    member = await _tenant_member_payload(conn, tenant_id, user_id)
+    member['auth0'] = auth0_result
+    return member
+
+
+@tenant_admin_router.delete(
+    '/tenants/{tenant_id}/members/{user_id}', status_code=status.HTTP_204_NO_CONTENT
+)
+async def remove_tenant_member(
+    tenant_id: UUID,
+    user_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> Response:
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    user_row = await conn.fetchrow(
+        'select id, auth_subject from app.users where id=$1', user_id
+    )
+    if not user_row:
+        raise HTTPException(status_code=404, detail='User not found')
+
+    role_rows = await conn.fetch(
+        'select role from app.user_tenant_roles where user_id=$1 and tenant_id=$2',
+        user_id,
+        tenant_id,
+    )
+    if not role_rows:
+        raise HTTPException(status_code=404, detail='Member not found in tenant')
+    member_roles = [row['role'] for row in role_rows]
+
+    if 'owner' in member_roles:
+        await _ensure_caller_can_target_role(request, conn, tenant_id, 'owner')
+        owner_count = await _tenant_owner_count(conn, tenant_id)
+        if owner_count <= 1:
+            raise HTTPException(
+                status_code=409,
+                detail='Cannot remove the last owner of the tenant.',
+            )
+
+    await conn.execute(
+        'delete from app.user_tenant_roles where user_id=$1 and tenant_id=$2',
+        user_id,
+        tenant_id,
+    )
+
+    try:
+        await auth0_revoke_tenant_roles(
+            auth_subject=user_row['auth_subject'], tenant_id=tenant_id
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning('tenant_member.auth0_revoke_failed', error=str(exc))
+
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant_member.removed',
+        entity_type='user',
+        entity_id=str(user_id),
+        metadata={'previous_roles': member_roles},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/settings')
@@ -5445,6 +5899,7 @@ router.include_router(public_router)
 router.include_router(webhook_router)
 router.include_router(platform_admin_router)
 router.include_router(tenant_signup_router)
+router.include_router(tenant_user_router)
 router.include_router(tenant_admin_router)
 router.include_router(tenant_catalog_router)
 router.include_router(tenant_ops_router)

@@ -46,6 +46,20 @@ class ChannelCreate(BaseModel):
     account_mode: str = Field(default='mock', pattern='^(mock|live)$')
 
 
+TENANT_MEMBER_ROLES = ('owner', 'admin', 'manager', 'agent', 'viewer')
+TENANT_MEMBER_ROLE_PATTERN = '^(' + '|'.join(TENANT_MEMBER_ROLES) + ')$'
+
+
+class MemberInvite(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    display_name: str | None = Field(default=None, max_length=160)
+    role: str = Field(pattern=TENANT_MEMBER_ROLE_PATTERN)
+
+
+class MemberRoleUpdate(BaseModel):
+    role: str = Field(pattern=TENANT_MEMBER_ROLE_PATTERN)
+
+
 class TenantStatusTransition(BaseModel):
     status: str = Field(pattern='^(active|suspended|churned)$')
     reason: str = Field(min_length=3, max_length=500)

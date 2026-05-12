@@ -12,12 +12,14 @@ import { KnowledgeStorageSettings } from '../modules/knowledgeStorage/KnowledgeS
 import { GoLiveReadiness } from '../modules/readiness/GoLiveReadiness.jsx';
 import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
 import { ServiceCatalog } from '../modules/services/ServiceCatalog.jsx';
+import { TeamModule } from '../modules/team/TeamModule.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
 import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
 import { Sidebar } from './Sidebar.jsx';
 import { Topbar } from './Topbar.jsx';
 
 const PRIVILEGED_ROLES = new Set(['admin', 'owner', 'platform_owner']);
+const ROLE_LEVELS = { viewer: 5, agent: 10, manager: 20, admin: 30, owner: 40, platform_owner: 50, support: 50 };
 
 function isSystemOwner(profile) {
   return Boolean(profile?.support_mode && profile?.roles?.includes('owner'));
@@ -25,6 +27,20 @@ function isSystemOwner(profile) {
 
 function isPrivilegedProfile(profile) {
   return (profile?.roles || []).some((r) => PRIVILEGED_ROLES.has(r));
+}
+
+function highestRole(roles) {
+  const order = ['owner', 'admin', 'manager', 'agent', 'viewer'];
+  for (const role of order) {
+    if (roles?.includes(role)) return role;
+  }
+  return roles?.[0] || 'viewer';
+}
+
+function hasMinRole(roles, minRole) {
+  if (!minRole) return true;
+  const required = ROLE_LEVELS[minRole] ?? 0;
+  return (roles || []).some((r) => (ROLE_LEVELS[r] ?? 0) >= required);
 }
 
 function MfaRequiredBanner({ onDismiss }) {
@@ -88,7 +104,9 @@ export function AdminLayout({ session }) {
   const initialTenantOptions = useTenantOptions(profile);
   const [tenantOptions, setTenantOptions] = useState(initialTenantOptions);
   const [activeTenantId, setActiveTenantId] = useState(initialTenantOptions[0]?.id);
-  const canSwitchTenants = isSystemOwner(profile) && tenantOptions.length > 1;
+  // Multi-tenant switcher (Slack-style): show whenever the user belongs to
+  // more than one tenant, regardless of support mode.
+  const canSwitchTenants = tenantOptions.length > 1 || isSystemOwner(profile);
   const hasTenant = tenantOptions.length > 0;
 
 
@@ -100,10 +118,22 @@ export function AdminLayout({ session }) {
         if (!mounted || !tenants.length) return;
         const nextOptions = tenants.map((tenant) => ({
           id: tenant.id,
-          label: `${tenant.slug || tenant.display_name} · ${tenant.id}`,
+          slug: tenant.slug,
+          display_name: tenant.display_name,
+          roles: tenant.roles || (tenant.role ? [tenant.role] : []),
+          role: tenant.role || highestRole(tenant.roles),
+          is_default: Boolean(tenant.is_default),
+          label: `${tenant.slug || tenant.display_name || 'tenant'} · ${highestRole(tenant.roles) || 'viewer'}`,
         }));
         setTenantOptions(nextOptions);
-        setActiveTenantId((currentTenantId) => currentTenantId || nextOptions[0]?.id);
+        setActiveTenantId((currentTenantId) => {
+          if (currentTenantId && nextOptions.some((t) => t.id === currentTenantId)) {
+            return currentTenantId;
+          }
+          const stored = window.localStorage?.getItem('copilotoia.activeTenantId');
+          if (stored && nextOptions.some((t) => t.id === stored)) return stored;
+          return nextOptions.find((t) => t.is_default)?.id || nextOptions[0]?.id;
+        });
       })
       .catch(() => {
         // If the user has no tenant yet, the onboarding card remains visible.
@@ -114,9 +144,31 @@ export function AdminLayout({ session }) {
     };
   }, [session]);
 
+  useEffect(() => {
+    if (activeTenantId) {
+      try {
+        window.localStorage?.setItem('copilotoia.activeTenantId', activeTenantId);
+      } catch {
+        /* ignore storage errors */
+      }
+    }
+  }, [activeTenantId]);
+
   const activeTenant = useMemo(
     () => tenantOptions.find((tenant) => tenant.id === activeTenantId) ?? tenantOptions[0],
     [activeTenantId, tenantOptions],
+  );
+
+  const activeRoles = useMemo(() => {
+    const fromTenant = activeTenant?.roles || (activeTenant?.role ? [activeTenant.role] : []);
+    // Platform owners with support_mode keep their privileges across tenants.
+    const fromProfile = isSystemOwner(profile) ? profile?.roles || [] : [];
+    return Array.from(new Set([...fromTenant, ...fromProfile]));
+  }, [activeTenant, profile]);
+
+  const visibleModules = useMemo(
+    () => modules.filter((module) => hasMinRole(activeRoles, module.minRole)),
+    [modules, activeRoles],
   );
 
   function handleTenantCreated(createdTenant) {
@@ -184,6 +236,20 @@ export function AdminLayout({ session }) {
     activeContent = <AnalyticsPanel module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'audit') {
     activeContent = <AuditPanel module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'team') {
+    if (!hasMinRole(activeRoles, 'admin')) {
+      activeContent = (
+        <section className="module-card">
+          <h2>Acceso restringido</h2>
+          <p className="hint">
+            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar el
+            equipo. Cambia al tenant donde tengas permisos o pide a un admin que te promocione.
+          </p>
+        </section>
+      );
+    } else {
+      activeContent = <TeamModule module={activeModule} session={session} tenant={activeTenant} />;
+    }
   } else {
     activeContent = <ModulePlaceholder module={activeModule} tenant={activeTenant} />;
   }
@@ -198,7 +264,7 @@ export function AdminLayout({ session }) {
         activeModuleId={activeModuleId}
         activeTenantId={activeTenantId}
         canSwitchTenants={canSwitchTenants}
-        modules={modules}
+        modules={visibleModules}
         onModuleSelect={handleModuleSelect}
         onTenantChange={setActiveTenantId}
         tenantOptions={tenantOptions}
