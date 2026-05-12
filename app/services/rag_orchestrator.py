@@ -17,7 +17,10 @@ from app.services.feedback_flow import (
     maybe_record_confirmation,
     maybe_record_feedback,
 )
-from app.services.qualification_flow import maybe_run_qualification_flow
+from app.services.qualification_flow import (
+    URGENCY_WAIT_MESSAGE,
+    maybe_run_qualification_flow,
+)
 from app.services.conversation_flow import (
     STAGE_START,
     ConversationContext,
@@ -562,6 +565,30 @@ async def orchestrate_inbound_message(
     if qualification_result is not None:
         action = qualification_result.get('action')
         if action == 'qualification_completed':
+            if qualification_result.get('triage_handoff'):
+                log.info(
+                    'orchestrator.qualification_triage',
+                    conversation_id=conversation_id,
+                    urgency_level=qualification_result.get('urgency_level'),
+                )
+                # Override policy.handoff_message so the customer receives
+                # the triage-specific wait reply exactly once (instead of
+                # whatever generic handoff_message the tenant configured).
+                triage_policy = {**policy, 'handoff_message': URGENCY_WAIT_MESSAGE}
+                return await _do_handoff(
+                    conn,
+                    tenant_id=tenant_id,
+                    channel_id=channel_id,
+                    conversation=conversation,
+                    inbound_message=inbound_message,
+                    policy=triage_policy,
+                    reason=qualification_result.get('triage_reason')
+                    or 'urgency_triage',
+                    reason_detail=(
+                        f"urgency_level={qualification_result.get('urgency_level')}"
+                    ),
+                    risk_level='high',
+                )
             prefilled_service_id = qualification_result.get('recommended_service_id')
             # Reload the conversation so booking_flow sees the persisted state.
             refreshed = await conn.fetchrow(

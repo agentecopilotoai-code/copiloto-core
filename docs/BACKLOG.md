@@ -339,28 +339,6 @@ _TASK-0052 — Recall automático ("control en 6 meses") por servicio tras compl
 
 ---
 
-### TASK-0053 — Calificación de presupuesto y urgencia con triage automático
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0042 (qualification_flow).
-- **Por qué bloquea:** la calificación actual no distingue al **lead VIP** (presupuesto > umbral) del frugal, ni al **caso urgente** del rutinario. Resultado: todos los leads compiten parejo por los slots y el agente no sabe priorizar. Esto resta conversión en negocios con backlog (clínicas, abogados, dentistas).
-- **Alcance:**
-  - `qualification_flow.py`: dos nuevos `kind` presets:
-    - `budget_tier` — renderiza una lista con 3-5 rangos configurables por tenant (`< $X`, `$X–$Y`, `> $Y`) y persiste `qualification.budget_tier` con `tier_label` + `tier_value` numérico.
-    - `urgency_level` — renderiza yes/no o single_choice con valores normalizados (`emergency, high, normal, low`) → persiste `qualification.urgency_level`.
-  - **Triage:** cuando `urgency_level in ('emergency','high')`, el orquestador hace `_do_handoff` con `reason='urgency_triage'` y bypasea el booking; el `OperationsDesk` muestra el caso con badge rojo "🚨 Urgente" en el tope del inbox.
-  - **VIP routing:** si `budget_tier.tier_value >= notification_settings.vip_budget_threshold`, el contacto recibe la etiqueta automática "VIP" y aparece en el segmento preconstruido de TASK-0047.
-  - **Admin Panel:** `QualificationQuestionsPanel.jsx` gana botones "Insertar pregunta de presupuesto" e "Insertar pregunta de urgencia" que crean las preguntas con los presets correctos. `TenantSetupWizard` agrega input "Umbral VIP" en la pestaña Calificación.
-- **Criterios de aceptación:**
-  - Cliente responde "Emergencia" → bot saluda con un mensaje de espera y conversación llega al tope del Desk con badge rojo en < 5s.
-  - Cliente responde "> $1.000.000" cuando el umbral VIP es 800k → contacto queda con etiqueta "VIP" persistente.
-  - Tests: ≥ 10 estáticos: presets registrados, normalización de tier_value, triage handoff, etiqueta VIP, badge UI.
-- **Notas:**
-  - Las preguntas siguen siendo opcionales por tenant; sin ellas el comportamiento es el actual.
-  - La etiqueta "VIP" se idempotenta por `(tenant_id, name)` igual que "Atención prioritaria" (TASK-0045).
-
----
-
 ### TASK-0054 — Filtrado dinámico de servicios en booking según respuestas de calificación
 
 - **Estado:** PENDING

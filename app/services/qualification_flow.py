@@ -47,6 +47,22 @@ KIND_NUMBER = 'number'
 INTERACTIVE_KINDS = {KIND_SINGLE_CHOICE, KIND_MULTI_CHOICE, KIND_YES_NO}
 TEXT_KINDS = {KIND_FREE_TEXT, KIND_NUMBER}
 
+PRESET_BUDGET_TIER = 'budget_tier'
+PRESET_URGENCY_LEVEL = 'urgency_level'
+URGENT_LEVELS = frozenset({'emergency', 'high'})
+URGENCY_VALUES = ('emergency', 'high', 'normal', 'low')
+URGENCY_TRIAGE_REASON = 'urgency_triage'
+URGENCY_WAIT_MESSAGE = (
+    '🚨 Gracias por avisarnos. Marcamos tu caso como urgente y un '
+    'agente humano te va a contactar enseguida.'
+)
+VIP_TAG_NAME = 'VIP'
+VIP_TAG_COLOR = '#f59e0b'
+VIP_TAG_DESCRIPTION = (
+    'Cliente con presupuesto por encima del umbral VIP — atención preferente.'
+)
+DEFAULT_VIP_BUDGET_THRESHOLD = 0.0
+
 OPT_OUT_PATTERN = re.compile(r'^\s*(stop|baja|cancelar)\s*$', re.IGNORECASE)
 NUMBER_PATTERN = re.compile(r'^-?\d+([.,]\d+)?$')
 
@@ -87,7 +103,8 @@ async def _list_questions(
 ) -> list[dict[str, Any]]:
     rows = await conn.fetch(
         """
-        select id, position, label, kind, options, required, applies_to_service_ids
+        select id, position, label, kind, options, required,
+               applies_to_service_ids, preset
         from app.qualification_questions
         where tenant_id=$1
         order by position asc, created_at asc
@@ -100,6 +117,147 @@ async def _list_questions(
         question['options'] = _parse_json(question.get('options'), []) or []
         questions.append(question)
     return questions
+
+
+def _option_for_value(
+    question: dict[str, Any], value: Any
+) -> dict[str, Any] | None:
+    options = question.get('options') or []
+    target = str(value) if value is not None else ''
+    for option in options:
+        if isinstance(option, dict) and str(option.get('value')) == target:
+            return option
+    return None
+
+
+def _question_with_preset(
+    questions: list[dict[str, Any]], preset: str
+) -> dict[str, Any] | None:
+    for question in questions:
+        if question.get('preset') == preset:
+            return question
+    return None
+
+
+def _budget_tier_summary(
+    questions: list[dict[str, Any]], answered: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Return ``{'tier_label', 'tier_value'}`` for the budget_tier preset."""
+    question = _question_with_preset(questions, PRESET_BUDGET_TIER)
+    if question is None:
+        return None
+    raw = answered.get(str(question['id']))
+    if raw is None:
+        return None
+    option = _option_for_value(question, raw)
+    if not option:
+        return None
+    tier_value = option.get('tier_value')
+    try:
+        numeric: float | None = float(tier_value) if tier_value is not None else None
+    except (TypeError, ValueError):
+        numeric = None
+    return {
+        'tier_label': option.get('label') or str(raw),
+        'tier_value': numeric,
+        'option_value': str(raw),
+    }
+
+
+def _urgency_summary(
+    questions: list[dict[str, Any]], answered: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Return ``{'level', 'option_value'}`` for the urgency_level preset."""
+    question = _question_with_preset(questions, PRESET_URGENCY_LEVEL)
+    if question is None:
+        return None
+    raw = answered.get(str(question['id']))
+    if raw is None:
+        return None
+    if question.get('kind') == KIND_YES_NO:
+        level = 'emergency' if raw is True else 'normal'
+        return {'level': level, 'option_value': bool(raw)}
+    option = _option_for_value(question, raw)
+    if not option:
+        return None
+    normalized = option.get('urgency_normalized')
+    if normalized not in URGENCY_VALUES:
+        normalized = 'normal'
+    return {'level': normalized, 'option_value': str(raw)}
+
+
+def _vip_budget_threshold(notification_settings: Any) -> float:
+    raw = notification_settings
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            raw = {}
+    if not isinstance(raw, dict):
+        return DEFAULT_VIP_BUDGET_THRESHOLD
+    value = raw.get('vip_budget_threshold')
+    if value is None:
+        return DEFAULT_VIP_BUDGET_THRESHOLD
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_VIP_BUDGET_THRESHOLD
+
+
+def _is_vip(
+    budget_summary: dict[str, Any] | None, threshold: float
+) -> bool:
+    if not budget_summary:
+        return False
+    if threshold <= 0:
+        return False
+    tier_value = budget_summary.get('tier_value')
+    if tier_value is None:
+        return False
+    try:
+        return float(tier_value) >= threshold
+    except (TypeError, ValueError):
+        return False
+
+
+async def _ensure_vip_tag(
+    conn: asyncpg.Connection, tenant_id: UUID
+) -> UUID | None:
+    await conn.execute(
+        """
+        insert into app.contact_tags (tenant_id, name, color, description)
+        values ($1, $2, $3, $4)
+        on conflict (tenant_id, name) do nothing
+        """,
+        tenant_id,
+        VIP_TAG_NAME,
+        VIP_TAG_COLOR,
+        VIP_TAG_DESCRIPTION,
+    )
+    return await conn.fetchval(
+        'select id from app.contact_tags where tenant_id=$1 and name=$2',
+        tenant_id,
+        VIP_TAG_NAME,
+    )
+
+
+async def _apply_vip_tag(
+    conn: asyncpg.Connection, tenant_id: UUID, contact_id: UUID
+) -> UUID | None:
+    tag_id = await _ensure_vip_tag(conn, tenant_id)
+    if tag_id is None:
+        return None
+    await conn.execute(
+        """
+        insert into app.contact_tag_assignments (tenant_id, contact_id, tag_id)
+        values ($1, $2, $3)
+        on conflict (contact_id, tag_id) do nothing
+        """,
+        tenant_id,
+        contact_id,
+        tag_id,
+    )
+    return tag_id
 
 
 def _options_for_render(question: dict[str, Any]) -> list[dict[str, str]]:
@@ -627,9 +785,17 @@ async def maybe_run_qualification_flow(
 
         answered[qid] = new_answer
 
+    # Early triage short-circuit: if the urgency_level preset is already
+    # answered with emergency/high, skip any remaining questions and jump
+    # straight to the completion path so the customer reaches a human ASAP.
+    early_urgency = _urgency_summary(questions, answered)
+    short_circuit_triage = bool(
+        early_urgency and early_urgency['level'] in URGENT_LEVELS
+    )
+
     # Are there still required questions to ask?
     pending = _next_pending_question(questions, answered)
-    if pending is not None:
+    if pending is not None and not short_circuit_triage:
         await _persist_state(
             conn,
             tenant_id,
@@ -676,18 +842,70 @@ async def maybe_run_qualification_flow(
 
     # All required questions answered — snapshot + emit completion.
     recommended_service_id = _derive_recommended_service(questions, answered)
-    await _persist_state(
-        conn,
+    budget_summary = _budget_tier_summary(questions, answered)
+    urgency_summary = _urgency_summary(questions, answered)
+    notification_settings = await conn.fetchval(
+        'select notification_settings from app.tenant_settings where tenant_id=$1',
         tenant_id,
-        conversation,
-        {
-            'answered': answered,
-            'started_at': state.get('started_at'),
-            'completed': True,
-            'recommended_service_id': recommended_service_id,
-        },
     )
-    await _snapshot_contact(conn, tenant_id, contact['id'], answered)
+    vip_threshold = _vip_budget_threshold(notification_settings)
+    is_vip = _is_vip(budget_summary, vip_threshold)
+    triage_handoff = bool(urgency_summary and urgency_summary['level'] in URGENT_LEVELS)
+
+    vip_tag_id: UUID | None = None
+    if is_vip:
+        vip_tag_id = await _apply_vip_tag(conn, tenant_id, contact['id'])
+
+    # Note: the urgency-wait reply is sent by ``_do_handoff`` in the
+    # orchestrator (which overrides ``policy.handoff_message`` with
+    # ``URGENCY_WAIT_MESSAGE``) so the customer receives exactly one
+    # bot reply on the triage path.
+
+    persisted_state: dict[str, Any] = {
+        'answered': answered,
+        'started_at': state.get('started_at'),
+        'completed': True,
+        'recommended_service_id': recommended_service_id,
+    }
+    if budget_summary:
+        persisted_state['budget_tier'] = {
+            'tier_label': budget_summary['tier_label'],
+            'tier_value': budget_summary['tier_value'],
+        }
+    if urgency_summary:
+        persisted_state['urgency_level'] = urgency_summary['level']
+    if triage_handoff:
+        persisted_state['triage_handoff'] = True
+    if is_vip:
+        persisted_state['vip'] = True
+
+    await _persist_state(conn, tenant_id, conversation, persisted_state)
+
+    snapshot_answers = dict(answered)
+    if budget_summary:
+        snapshot_answers['budget_tier'] = {
+            'tier_label': budget_summary['tier_label'],
+            'tier_value': budget_summary['tier_value'],
+        }
+    if urgency_summary:
+        snapshot_answers['urgency_level'] = urgency_summary['level']
+    await _snapshot_contact(conn, tenant_id, contact['id'], snapshot_answers)
+
+    audit_metadata: dict[str, Any] = {
+        'contact_id': str(contact['id']),
+        'answers': answered,
+        'recommended_service_id': recommended_service_id,
+    }
+    if budget_summary:
+        audit_metadata['budget_tier'] = budget_summary['tier_value']
+        audit_metadata['budget_label'] = budget_summary['tier_label']
+    if urgency_summary:
+        audit_metadata['urgency_level'] = urgency_summary['level']
+    if is_vip:
+        audit_metadata['vip'] = True
+    if triage_handoff:
+        audit_metadata['triage_handoff'] = True
+
     await audit(
         conn,
         tenant_id=tenant_id,
@@ -696,11 +914,7 @@ async def maybe_run_qualification_flow(
         action='qualification.answered',
         entity_type='conversation',
         entity_id=str(conversation['id']),
-        metadata={
-            'contact_id': str(contact['id']),
-            'answers': answered,
-            'recommended_service_id': recommended_service_id,
-        },
+        metadata=audit_metadata,
     )
     await conn.execute(
         """
@@ -718,6 +932,8 @@ async def maybe_run_qualification_flow(
             'inbound_message_id': str(inbound_message['id']),
             'step': 'completed',
             'recommended_service_id': recommended_service_id,
+            'triage_handoff': triage_handoff,
+            'vip': is_vip,
         }),
     )
     log.info(
@@ -725,9 +941,26 @@ async def maybe_run_qualification_flow(
         tenant_id=str(tenant_id),
         conversation_id=str(conversation['id']),
         recommended_service_id=recommended_service_id,
+        triage_handoff=triage_handoff,
+        vip=is_vip,
     )
-    return {
+    result: dict[str, Any] = {
         'action': 'qualification_completed',
         'recommended_service_id': recommended_service_id,
         'answered': answered,
     }
+    if budget_summary:
+        result['budget_tier'] = {
+            'tier_label': budget_summary['tier_label'],
+            'tier_value': budget_summary['tier_value'],
+        }
+    if urgency_summary:
+        result['urgency_level'] = urgency_summary['level']
+    if is_vip:
+        result['vip'] = True
+        if vip_tag_id is not None:
+            result['vip_tag_id'] = str(vip_tag_id)
+    if triage_handoff:
+        result['triage_handoff'] = True
+        result['triage_reason'] = URGENCY_TRIAGE_REASON
+    return result

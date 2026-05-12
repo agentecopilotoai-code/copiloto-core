@@ -19,6 +19,34 @@ const KIND_OPTIONS = [
 
 const CHOICE_KINDS = new Set(['single_choice', 'multi_choice']);
 
+const PRESET_BUDGET_TIER = 'budget_tier';
+const PRESET_URGENCY_LEVEL = 'urgency_level';
+
+const BUDGET_TIER_PRESET = {
+  label: '¿En qué rango de presupuesto te ubicas?',
+  kind: 'single_choice',
+  required: true,
+  preset: PRESET_BUDGET_TIER,
+  options: [
+    { value: 'low', label: 'Menos de $200.000', tier_value: 200000 },
+    { value: 'mid', label: '$200.000 – $800.000', tier_value: 800000 },
+    { value: 'high', label: 'Más de $800.000', tier_value: 1000000 },
+  ],
+};
+
+const URGENCY_LEVEL_PRESET = {
+  label: '¿Qué tan urgente es tu caso?',
+  kind: 'single_choice',
+  required: true,
+  preset: PRESET_URGENCY_LEVEL,
+  options: [
+    { value: 'emergency', label: '🚨 Emergencia', urgency_normalized: 'emergency' },
+    { value: 'high', label: 'Alta', urgency_normalized: 'high' },
+    { value: 'normal', label: 'Normal', urgency_normalized: 'normal' },
+    { value: 'low', label: 'Cuando se pueda', urgency_normalized: 'low' },
+  ],
+};
+
 function emptyForm() {
   return {
     label: '',
@@ -26,7 +54,32 @@ function emptyForm() {
     options: [],
     required: true,
     applies_to_service_ids: [],
+    preset: null,
   };
+}
+
+function presetForm(preset) {
+  if (preset === PRESET_BUDGET_TIER) {
+    return {
+      label: BUDGET_TIER_PRESET.label,
+      kind: BUDGET_TIER_PRESET.kind,
+      options: BUDGET_TIER_PRESET.options.map((o) => ({ ...o })),
+      required: BUDGET_TIER_PRESET.required,
+      applies_to_service_ids: [],
+      preset: PRESET_BUDGET_TIER,
+    };
+  }
+  if (preset === PRESET_URGENCY_LEVEL) {
+    return {
+      label: URGENCY_LEVEL_PRESET.label,
+      kind: URGENCY_LEVEL_PRESET.kind,
+      options: URGENCY_LEVEL_PRESET.options.map((o) => ({ ...o })),
+      required: URGENCY_LEVEL_PRESET.required,
+      applies_to_service_ids: [],
+      preset: PRESET_URGENCY_LEVEL,
+    };
+  }
+  return emptyForm();
 }
 
 function previewQuestion(question) {
@@ -94,11 +147,19 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
             value: o.value || '',
             label: o.label || '',
             service_id: o.service_id || '',
+            tier_value: o.tier_value ?? '',
+            urgency_normalized: o.urgency_normalized || '',
           }))
         : [],
       required: question.required !== false,
       applies_to_service_ids: question.applies_to_service_ids || [],
+      preset: question.preset || null,
     });
+  };
+
+  const insertPreset = (preset) => {
+    setEditingId(null);
+    setForm(presetForm(preset));
   };
 
   const updateOption = (idx, key, value) => {
@@ -133,11 +194,16 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
     const cleanedOptions = CHOICE_KINDS.has(form.kind)
       ? form.options
           .filter((o) => o.value.trim() && o.label.trim())
-          .map((o) => ({
-            value: o.value.trim(),
-            label: o.label.trim(),
-            ...(o.service_id ? { service_id: o.service_id } : {}),
-          }))
+          .map((o) => {
+            const opt = { value: o.value.trim(), label: o.label.trim() };
+            if (o.service_id) opt.service_id = o.service_id;
+            if (o.tier_value !== '' && o.tier_value != null) {
+              const tv = Number(o.tier_value);
+              if (Number.isFinite(tv) && tv >= 0) opt.tier_value = tv;
+            }
+            if (o.urgency_normalized) opt.urgency_normalized = o.urgency_normalized;
+            return opt;
+          })
       : [];
     if (CHOICE_KINDS.has(form.kind) && cleanedOptions.length === 0) {
       onNotice?.({ type: 'error', text: 'Agrega al menos una opción.' });
@@ -149,6 +215,7 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
       options: cleanedOptions,
       required: form.required,
       applies_to_service_ids: form.applies_to_service_ids,
+      preset: form.preset || null,
     };
     setIsBusy(true);
     try {
@@ -273,8 +340,31 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
         )}
       </div>
 
+      <div className="qualification-presets" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={() => insertPreset(PRESET_BUDGET_TIER)}
+          disabled={isBusy}
+        >
+          Insertar pregunta de presupuesto
+        </button>
+        <button
+          type="button"
+          className="secondary-action"
+          onClick={() => insertPreset(PRESET_URGENCY_LEVEL)}
+          disabled={isBusy}
+        >
+          Insertar pregunta de urgencia
+        </button>
+      </div>
+
       <form className="qualification-form form-grid" onSubmit={submit}>
-        <h4>{editingId ? 'Editar pregunta' : 'Nueva pregunta'}</h4>
+        <h4>
+          {editingId ? 'Editar pregunta' : 'Nueva pregunta'}
+          {form.preset === PRESET_BUDGET_TIER ? ' · preset Presupuesto' : null}
+          {form.preset === PRESET_URGENCY_LEVEL ? ' · preset Urgencia' : null}
+        </h4>
         <label>
           Pregunta
           <input
@@ -336,6 +426,28 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
                     </option>
                   ))}
                 </select>
+                {form.preset === PRESET_BUDGET_TIER ? (
+                  <input
+                    type="number"
+                    min="0"
+                    step="1000"
+                    placeholder="Valor numérico del tier"
+                    value={opt.tier_value ?? ''}
+                    onChange={(event) => updateOption(idx, 'tier_value', event.target.value)}
+                  />
+                ) : null}
+                {form.preset === PRESET_URGENCY_LEVEL ? (
+                  <select
+                    value={opt.urgency_normalized || ''}
+                    onChange={(event) => updateOption(idx, 'urgency_normalized', event.target.value)}
+                  >
+                    <option value="">— Nivel normalizado —</option>
+                    <option value="emergency">emergency</option>
+                    <option value="high">high</option>
+                    <option value="normal">normal</option>
+                    <option value="low">low</option>
+                  </select>
+                ) : null}
                 <button type="button" className="danger" onClick={() => removeOption(idx)}>
                   Quitar
                 </button>

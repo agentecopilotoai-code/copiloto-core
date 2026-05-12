@@ -423,6 +423,7 @@ create table app.qualification_questions (
   options jsonb not null default '[]'::jsonb,
   required boolean not null default true,
   applies_to_service_ids uuid[] not null default '{}',
+  preset text check (preset is null or preset in ('budget_tier','urgency_level')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

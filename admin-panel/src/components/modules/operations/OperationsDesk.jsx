@@ -1223,23 +1223,51 @@ export function OperationsDesk({ module, session, tenant }) {
           {inboxFilter === 'all' ? (
             <>
           {conversations.length === 0 ? <p className="hint">No hay conversaciones para este tenant.</p> : null}
-          {conversations.map((conversation) => {
+          {(() => {
+            const parseMeta = (raw) => typeof raw === 'string'
+              ? (() => { try { return JSON.parse(raw); } catch { return null; } })()
+              : raw;
+            const isUrgentConv = (c) => {
+              const m = parseMeta(c.metadata);
+              return ['emergency', 'high'].includes(m?.qualification?.urgency_level);
+            };
+            const sorted = [...conversations].sort((a, b) => {
+              const ua = isUrgentConv(a) ? 1 : 0;
+              const ub = isUrgentConv(b) ? 1 : 0;
+              return ub - ua;
+            });
+            return sorted.map((conversation) => {
             const rawMeta = conversation.metadata;
-            const meta = typeof rawMeta === 'string'
-              ? (() => { try { return JSON.parse(rawMeta); } catch { return null; } })()
-              : rawMeta;
+            const meta = parseMeta(rawMeta);
             const selfService = meta?.self_service;
             const selfServiceFlow = selfService?.flow;
+            const urgencyLevel = meta?.qualification?.urgency_level;
+            const isUrgent = ['emergency', 'high'].includes(urgencyLevel);
             return (
             <button
               className={`conversation-card ${conversation.id === selectedConversationId ? 'active' : ''}`}
               key={conversation.id}
               onClick={() => setSelectedConversationId(conversation.id)}
               type="button"
+              data-urgent={isUrgent ? urgencyLevel : undefined}
             >
               <span>{conversation.contact_label || conversation.contact_id}</span>
               <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <strong>{statusLabel(conversation.status)}</strong>
+                {isUrgent ? (
+                  <span
+                    className="status-pill"
+                    style={{
+                      background: '#dc2626',
+                      color: '#fff',
+                      fontSize: '0.7rem',
+                      padding: '0.1rem 0.4rem',
+                    }}
+                    title={`Caso urgente (${urgencyLevel}) — atender primero`}
+                  >
+                    🚨 Urgente
+                  </span>
+                ) : null}
                 {conversation.current_intent && (
                   <span className="status-pill" style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem' }} title="Intención detectada">
                     {conversation.current_intent}
@@ -1282,7 +1310,8 @@ export function OperationsDesk({ module, session, tenant }) {
               <time>{formatDate(conversation.latest_message_at || conversation.updated_at)}</time>
             </button>
             );
-          })}
+            });
+          })()}
             </>
           ) : null}
         </aside>

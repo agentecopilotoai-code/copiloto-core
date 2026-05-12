@@ -545,12 +545,18 @@ QUALIFICATION_QUESTION_KINDS = (
     'number',
 )
 QUALIFICATION_QUESTION_KIND_PATTERN = '^(' + '|'.join(QUALIFICATION_QUESTION_KINDS) + ')$'
+QUALIFICATION_QUESTION_PRESETS = ('budget_tier', 'urgency_level')
+QUALIFICATION_QUESTION_PRESET_PATTERN = '^(' + '|'.join(QUALIFICATION_QUESTION_PRESETS) + ')$'
+URGENCY_NORMALIZED_VALUES = ('emergency', 'high', 'normal', 'low')
+URGENCY_NORMALIZED_PATTERN = '^(' + '|'.join(URGENCY_NORMALIZED_VALUES) + ')$'
 
 
 class QualificationOption(BaseModel):
     value: str = Field(min_length=1, max_length=120)
     label: str = Field(min_length=1, max_length=120)
     service_id: UUID | None = None
+    tier_value: float | None = Field(default=None, ge=0)
+    urgency_normalized: str | None = Field(default=None, pattern=URGENCY_NORMALIZED_PATTERN)
 
 
 class QualificationQuestionCreate(BaseModel):
@@ -560,6 +566,7 @@ class QualificationQuestionCreate(BaseModel):
     required: bool = True
     position: int = Field(default=0, ge=0)
     applies_to_service_ids: list[UUID] = Field(default_factory=list)
+    preset: str | None = Field(default=None, pattern=QUALIFICATION_QUESTION_PRESET_PATTERN)
 
 
 class QualificationQuestionUpdate(BaseModel):
@@ -569,6 +576,7 @@ class QualificationQuestionUpdate(BaseModel):
     required: bool | None = None
     position: int | None = Field(default=None, ge=0)
     applies_to_service_ids: list[UUID] | None = None
+    preset: str | None = Field(default=None, pattern=QUALIFICATION_QUESTION_PRESET_PATTERN)
 
 
 class QualificationReorderItem(BaseModel):
