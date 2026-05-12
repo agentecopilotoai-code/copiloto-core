@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from app.services.campaigns import (
     DEFAULT_RATE_LIMIT_PER_SECOND,

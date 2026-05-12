@@ -65,7 +65,6 @@ from app.services.auth0_admin import (
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
 from app.services.campaigns import (
     count_recipients as count_campaign_recipients,
-    dispatch_campaign,
     evaluate_segment,
     normalize_segment_filter,
     refresh_campaign_counters,
