@@ -1860,3 +1860,232 @@ button.danger-action:disabled {
 .mfa-required-skip:hover {
   background: #f0f4f8;
 }
+
+/* Analytics panel */
+.analytics-panel .analytics-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin-bottom: 1.5rem;
+}
+
+.analytics-presets {
+  display: inline-flex;
+  border: 1px solid #d8e0ec;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.analytics-preset {
+  background: #fff;
+  border: 0;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  color: #4a5a72;
+  cursor: pointer;
+  border-right: 1px solid #d8e0ec;
+}
+
+.analytics-preset:last-child {
+  border-right: 0;
+}
+
+.analytics-preset.active {
+  background: #1f4dcc;
+  color: #fff;
+}
+
+.analytics-custom-range {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+}
+
+.analytics-custom-range label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.75rem;
+  color: #6a7888;
+  gap: 0.25rem;
+}
+
+.analytics-custom-range input {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #d0d8e4;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.analytics-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.kpi-card {
+  background: #f6f9fd;
+  border: 1px solid #e2e8f1;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+}
+
+.kpi-label {
+  margin: 0 0 0.3rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6a7888;
+  font-weight: 600;
+}
+
+.kpi-value {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #1a2436;
+}
+
+.kpi-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: #738197;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.analytics-card {
+  background: #fff;
+  border: 1px solid #e2e8f1;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+}
+
+.analytics-card h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  color: #1a2436;
+}
+
+.analytics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.analytics-table th,
+.analytics-table td {
+  text-align: left;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid #eef1f6;
+}
+
+.analytics-table.compact th,
+.analytics-table.compact td {
+  padding: 0.3rem 0.45rem;
+}
+
+.analytics-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding-top: 6px;
+}
+
+.analytics-bar {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.analytics-bar-fill {
+  width: 100%;
+  background: linear-gradient(180deg, #4f78ff, #1f4dcc);
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+}
+
+.analytics-bars-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: #8a96a8;
+  margin-top: 0.35rem;
+}
+
+.analytics-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.5rem;
+}
+
+.status-card {
+  background: #f6f9fd;
+  border: 1px solid #e2e8f1;
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+}
+
+.status-card .status-label {
+  margin: 0;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: #738197;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.status-card .status-value {
+  margin: 0.2rem 0 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #1a2436;
+}
+
+.analytics-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.analytics-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #eef1f6;
+  font-size: 0.88rem;
+}
+
+.analytics-list li:last-child {
+  border-bottom: 0;
+}
+
+.analytics-tag-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.analytics-tag-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.analytics-tag-chip {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  color: #1a2436;
+  font-weight: 500;
+}

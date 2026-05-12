@@ -15,6 +15,23 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0027 — Panel de analítica completa del negocio
+
+- **Fecha:** 2026-05-12
+- **Resumen:** se entregan los endpoints de analítica con autorización `manager` y un nuevo módulo **Analítica** en el Admin Panel para que el dueño del negocio pueda medir el funcionamiento del sistema. El backend expone cuatro endpoints (`overview`, `conversations`, `appointments`, `contacts`) que calculan KPIs directamente con SQL sobre tablas existentes (conversaciones, citas, mensajes, feedback, etiquetas) sin nuevas tablas. El panel ofrece selector de rango (7/30/90 días o personalizado), cards de KPIs (conversaciones, citas completadas, tasa de no-show, ingreso estimado, calificación promedio, retención 90 días, mensajes inbound/outbound), un gráfico de barras CSS para la evolución diaria de conversaciones, tabla de evolución diaria de citas (creadas vs. completadas), top intenciones, top servicios, distribución de citas por estado, no-shows por día de la semana, contactos nuevos vs. recurrentes, top etiquetas, tasa de opt-out y distribución por fuente.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py` — nuevo `tenant_analytics_router` (`require_min_role('manager')`); endpoints `GET /v1/analytics/overview`, `GET /v1/analytics/conversations`, `GET /v1/analytics/appointments`, `GET /v1/analytics/contacts`. Helper `_resolve_analytics_range` con default 30 días (`end - 29`) y validación `from_date <= to_date`. Las queries usan `count(*) filter (...)` para distribuir estados y `date_trunc('day', ...)` para evolución diaria. Tasa de no-show = `no_shows / (completed + no_shows)`. Ingreso estimado = `sum(service_catalog.price_amount)` de citas `completed` en el rango. Retención = % de contactos con ≥ 2 citas completadas en los últimos 90 días.
+  - `admin-panel/src/services/coreApi.js` — helpers `getAnalyticsOverview`, `getAnalyticsConversations`, `getAnalyticsAppointments`, `getAnalyticsContacts` con builder de query `?from_date=&to_date=`.
+  - `admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx` (nuevo) — UI completa: presets 7d/30d/90d/personalizado, cards de KPI, gráfico SVG/CSS de barras diarias, tabla de evolución de citas, top intenciones con porcentaje, top servicios, distribución por estado en grid, no-shows por día de la semana, panel de contactos con totales y tasa de opt-out, lista de top etiquetas con chip de color y conteo, fuente de contacto.
+  - `admin-panel/src/data/modules.js` — registro del módulo `analytics` (label "Analítica") en el sidebar.
+  - `admin-panel/src/components/layout/AdminLayout.jsx` — import y montaje del `AnalyticsPanel`.
+  - `admin-panel/src/styles/global.css` — estilos `.analytics-panel`, `.analytics-presets`, `.analytics-kpis`, `.kpi-card`, `.analytics-grid`, `.analytics-card`, `.analytics-table`, `.analytics-bars`, `.analytics-bar-fill`, `.analytics-status-grid`, `.analytics-tag-list` (sin librerías externas).
+  - `tests/test_analytics_static.py` (nuevo) — 10 tests: router con `require_min_role('manager')`, los cuatro endpoints registrados, cálculo correcto de tasa de no-show e ingreso, conteos de conversaciones, intents + evolución diaria, servicios + weekday, contactos con opt-out y fuente, helper de rango por defecto, helpers en `coreApi.js`, componente y registro en sidebar.
+- **Comandos ejecutados / criterios cumplidos:**
+  - `python -m pytest tests/test_analytics_static.py -v` → **10 passed**.
+  - `python -m pytest tests/test_analytics_static.py tests/test_crm_contacts_static.py tests/test_audit_privacy_static.py tests/test_operations_desk_static.py tests/test_policy_engine_static.py` → **89 passed** (regresión).
+- **Notas:** el cálculo de ingreso usa `LEFT JOIN service_catalog` para no perder citas con `service_id` nulo; las que no enlazan a un servicio no suman al total. La tasa de handoff se basa en estados `human_required`/`human_active` o `handoff_required = true`. El tiempo de primera respuesta del bot se obtiene comparando `min(created_at)` inbound vs. primer outbound con `sender_actor_type = 'bot'` por conversación. La retención usa una ventana fija de 90 días anclada en el final del rango. El módulo es visible a partir de rol `manager`; un usuario con rol `agent` recibe 403 vía la dependencia del router.
+
 ### TASK-0037 — CRM básico: historial de contacto, etiquetas y notas internas
 
 - **Fecha:** 2026-05-12

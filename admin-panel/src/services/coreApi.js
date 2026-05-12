@@ -707,3 +707,27 @@ export function createContactNote(session, tenantId, contactId, body) {
     body: { body },
   });
 }
+
+function buildAnalyticsQuery({ fromDate, toDate } = {}) {
+  const params = new URLSearchParams();
+  if (fromDate) params.set('from_date', fromDate);
+  if (toDate) params.set('to_date', toDate);
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+export function getAnalyticsOverview(session, tenantId, range = {}) {
+  return request(`/analytics/overview${buildAnalyticsQuery(range)}`, { session, tenantId });
+}
+
+export function getAnalyticsConversations(session, tenantId, range = {}) {
+  return request(`/analytics/conversations${buildAnalyticsQuery(range)}`, { session, tenantId });
+}
+
+export function getAnalyticsAppointments(session, tenantId, range = {}) {
+  return request(`/analytics/appointments${buildAnalyticsQuery(range)}`, { session, tenantId });
+}
+
+export function getAnalyticsContacts(session, tenantId, range = {}) {
+  return request(`/analytics/contacts${buildAnalyticsQuery(range)}`, { session, tenantId });
+}

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useActiveModule } from '../../hooks/useActiveModule.js';
 import { useTenantOptions } from '../../hooks/useTenantOptions.js';
 import { listMyTenants } from '../../services/coreApi.js';
+import { AnalyticsPanel } from '../modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../modules/audit/AuditPanel.jsx';
 import { ContactsModule } from '../modules/contacts/ContactsModule.jsx';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
@@ -179,6 +180,8 @@ export function AdminLayout({ session }) {
         tenant={activeTenant}
       />
     );
+  } else if (activeModuleId === 'analytics') {
+    activeContent = <AnalyticsPanel module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'audit') {
     activeContent = <AuditPanel module={activeModule} session={session} tenant={activeTenant} />;
   } else {

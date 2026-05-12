@@ -48,6 +48,12 @@ export const adminModules = [
     scope: ['Tenant activo', 'Settings y WhatsApp', 'Retrieval smoke test', 'Handoff y auditoría'],
   },
   {
+    id: 'analytics',
+    label: 'Analítica',
+    summary: 'KPIs de conversaciones, citas, ingresos, retención y no-show del negocio.',
+    scope: ['Rangos 7d/30d/90d', 'Top intenciones y servicios', 'Evolución diaria', 'Distribución por estado'],
+  },
+  {
     id: 'audit',
     label: 'Audit',
     summary: 'Trazabilidad de cambios y acciones administrativas.',

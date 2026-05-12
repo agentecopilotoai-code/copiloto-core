@@ -115,8 +115,6 @@ TASK-0036 (reducción de no-show y flujo post-cita)
     ↓
 TASK-0037 (CRM básico: historial, etiquetas, notas)
     ↓
-TASK-0027 (analítica completa de negocio)
-    ↓
 TASK-0038 (campañas y mensajes masivos)
     ↓
 TASK-0039 (widget web y captura de leads)
@@ -129,37 +127,6 @@ TASK-0029 (drill de restore — cierre operacional)
 ---
 
 ## Stack de tareas pendientes
-
----
-
-### TASK-0027 — Panel de analítica completa del negocio
-
-- **Objetivo:** el rol `manager` no puede medir si el sistema está funcionando. Sin métricas de conversión, no-show, ingresos y retención, la empresa no puede justificar la inversión ni tomar decisiones. Esta tarea implementa los endpoints de analytics y el panel visual con los KPIs más importantes del journey cliente.
-- **Alcance mínimo — backend:**
-  - `GET /v1/analytics/overview`: `from_date`, `to_date` (default 30 días); requiere rol `manager` + `X-Tenant-Id`. Devuelve:
-    - Conversaciones: total, abiertas, resueltas, en handoff, tasa de handoff `%`.
-    - Citas: creadas, confirmadas, completadas, canceladas, no-shows, tasa de no-show `%` = `no_shows / (completadas + no_shows)`.
-    - Ingreso estimado: suma de `service_catalog.price_amount` de citas completadas en el período.
-    - Feedback: promedio de calificaciones 1–5, total de calificaciones recibidas.
-    - Mensajes: inbound y outbound totales.
-    - Retención: `% de contactos con ≥ 2 citas completadas` en los últimos 90 días.
-  - `GET /v1/analytics/conversations`: mismo filtro. Devuelve top 10 intenciones, distribución de estados, tiempo promedio de primer mensaje del bot, evolución diaria `[{date, count}]`.
-  - `GET /v1/analytics/appointments`: mismo filtro. Devuelve servicios más agendados, distribución por estado, no-shows por día de la semana, evolución diaria de creadas vs. completadas.
-  - `GET /v1/analytics/contacts`: mismo filtro. Devuelve nuevos vs. recurrentes, top etiquetas, tasa de opt-out, distribución por fuente de contacto.
-  - Sin tablas nuevas; todo calcula directamente con SQL sobre tablas existentes + `service_catalog` + `appointment_feedback`.
-  - Tests estáticos: estructura de respuesta de cada endpoint, autorización (`agent` → 403, `manager` → 200), cálculo de tasa de no-show, cálculo de ingreso estimado, evolución diaria.
-- **Alcance mínimo — Admin Panel:**
-  - Nuevo módulo **"Analítica"** (`admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx`):
-    - Selector de rango de fechas: 7d / 30d / 90d / personalizado.
-    - Cards de KPIs: conversaciones, citas completadas, tasa de no-show, ingreso estimado, calificación promedio.
-    - Gráfico de evolución diaria de conversaciones (SVG nativo o tabla con mini barras CSS — sin librerías externas).
-    - Gráfico de evolución diaria de citas (completadas vs. canceladas).
-    - Tabla de top intenciones con conteo y %.
-    - Tabla de servicios más solicitados.
-    - Cards de distribución de citas por estado.
-  - Registrar en sidebar, accesible para `manager` o superior.
-- **Criterio de aceptación:** manager ve KPIs coherentes con los datos de la DB; agent recibe 403; tasa de no-show se calcula correctamente; módulo en sidebar; tests pasan en CI.
-- **Dependencias:** TASK-0036 (datos de feedback y no-show), TASK-0037 (datos de etiquetas).
 
 ---
 
