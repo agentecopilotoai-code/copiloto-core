@@ -6801,41 +6801,37 @@ async def web_chat_start(
         referrer=payload.referrer,
     )
 
-    # Look up existing contact by phone or email if provided, otherwise create new.
-    existing_contact = None
+    # SECURITY: Anonymous web widget sessions cannot prove ownership of the
+    # phone/email they submit. Reusing an existing contact based on an
+    # unverified phone enables customer impersonation (an attacker who knows a
+    # victim's phone can submit a message like "no" and mutate the victim's
+    # appointment confirmation state via the orchestrator). Always synthesize
+    # a fresh web-only identity and store the user-supplied phone/email as
+    # unverified metadata. Operations can later verify and merge contacts
+    # through an authenticated flow.
+    seed = f'{tenant_id}:{payload.phone or ""}:{payload.email or ""}:{secrets.token_hex(16)}'
+    wa_id, phone_e164 = synthesize_web_identity(seed)
+    contact_metadata: dict[str, Any] = {'phone_verified': False, 'email_verified': False}
     if payload.phone:
-        existing_contact = await conn.fetchrow(
-            'select * from app.contacts where tenant_id=$1 and phone_e164=$2',
-            tenant_id,
-            payload.phone.strip(),
+        contact_metadata['unverified_phone'] = payload.phone.strip()
+    if payload.email:
+        contact_metadata['unverified_email'] = payload.email.strip()
+    contact = await conn.fetchrow(
+        """
+        insert into app.contacts (
+          tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source
         )
-
-    if existing_contact:
-        contact = existing_contact
-    else:
-        if payload.phone:
-            wa_id = payload.phone.strip()
-            phone_e164 = payload.phone.strip()
-        else:
-            seed = f'{tenant_id}:{payload.email or ""}:{secrets.token_hex(8)}'
-            wa_id, phone_e164 = synthesize_web_identity(seed)
-        contact_metadata = {'email': payload.email} if payload.email else {}
-        contact = await conn.fetchrow(
-            """
-            insert into app.contacts (
-              tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source
-            )
-            values ($1, $2, $3, $4, $5, 'web_widget', $6::jsonb, $7::jsonb)
-            returning *
-            """,
-            tenant_id,
-            wa_id,
-            phone_e164,
-            hash_phone(phone_e164),
-            payload.name.strip(),
-            json.dumps(contact_metadata),
-            json.dumps(lead_source),
-        )
+        values ($1, $2, $3, $4, $5, 'web_widget', $6::jsonb, $7::jsonb)
+        returning *
+        """,
+        tenant_id,
+        wa_id,
+        phone_e164,
+        hash_phone(phone_e164),
+        payload.name.strip(),
+        json.dumps(contact_metadata),
+        json.dumps(lead_source),
+    )
 
     conversation = await conn.fetchrow(
         """
