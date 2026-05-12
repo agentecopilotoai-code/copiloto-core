@@ -405,6 +405,9 @@ async def orchestrate_inbound_message(
         tenant_id=tenant_id,
         contact_id=contact['id'],
         inbound_message=inbound_message,
+        conversation=conversation,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
     )
     if feedback_result is not None:
         log.info(
@@ -412,6 +415,7 @@ async def orchestrate_inbound_message(
             conversation_id=conversation_id,
             appointment_id=feedback_result.get('appointment_id'),
             rating=feedback_result.get('rating'),
+            negative_escalated=feedback_result.get('action') == 'feedback_negative_escalated',
         )
         return feedback_result
 

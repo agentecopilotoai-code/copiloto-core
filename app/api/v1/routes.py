@@ -2577,6 +2577,62 @@ async def list_conversations(request: Request, conn: asyncpg.Connection = Depend
     return conversations
 
 
+@tenant_ops_router.get('/conversations/complaints')
+async def list_complaint_conversations(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """TASK-0045: list conversations escalated due to negative feedback.
+
+    Returns conversations with an open ``handoffs`` row whose
+    ``reason='negative_feedback'``, joined with the latest
+    ``appointment_feedback`` row (rating + comment) for the contact so the
+    agent sees the complaint without opening the conversation.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select c.id, c.status, c.contact_id, c.handoff_required,
+               c.current_intent, c.updated_at, c.created_at,
+               coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
+               ct.phone_e164 as contact_phone,
+               h.id as handoff_id, h.reason as handoff_reason,
+               h.created_at as handoff_created_at,
+               fb.rating as feedback_rating,
+               fb.comment as feedback_comment,
+               fb.created_at as feedback_created_at,
+               fb.appointment_id as feedback_appointment_id
+        from app.handoffs h
+        join app.conversations c
+          on c.tenant_id = h.tenant_id and c.id = h.conversation_id
+        join app.contacts ct
+          on ct.tenant_id = c.tenant_id and ct.id = c.contact_id
+        left join lateral (
+          select rating, comment, created_at, appointment_id
+          from app.appointment_feedback af
+          where af.tenant_id = c.tenant_id and af.contact_id = c.contact_id
+          order by af.created_at desc
+          limit 1
+        ) fb on true
+        where h.tenant_id = $1
+          and h.reason = 'negative_feedback'
+          and h.status in ('open', 'accepted')
+        order by h.created_at desc
+        limit $2
+        """,
+        tenant_id,
+        limit,
+    )
+    complaints = [record_to_dict(r) for r in rows]
+    log.info(
+        'operations.complaints.listed',
+        tenant_id=str(tenant_id),
+        count=len(complaints),
+    )
+    return complaints
+
+
 @tenant_ops_router.post('/conversations/start', status_code=status.HTTP_201_CREATED)
 async def start_conversation(
     payload: ConversationStart,

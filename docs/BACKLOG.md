@@ -212,25 +212,7 @@ _TASK-0044 — Auto-rebooking conversacional al declinar la confirmación activa
 
 ---
 
-### TASK-0045 — Escalamiento automático en feedback negativo
-
-- **Estado:** PENDING
-- **Por qué bloquea:** las quejas se pierden en silencio — un feedback de 1 o 2 estrellas queda solo en `appointment_feedback` sin que nadie se entere. La empresa pierde la oportunidad de "service recovery" y empeora retención.
-- **Alcance:**
-  - En `feedback_flow.maybe_record_feedback`: si `rating <= 2`, además de insertar el feedback:
-    1. Marcar la conversación con `handoff_required=true`, `handoff_reason='negative_feedback'`.
-    2. Disparar `domain_event('feedback.negative_received')` con `appointment_id`, `rating` y `comment`.
-    3. Auto-asignar etiqueta `Atención prioritaria` (creada por bootstrap si no existe).
-    4. Responder al cliente con un mensaje empático configurable (`tenant_settings.notification_settings.negative_feedback_reply`, default "Lamentamos mucho oír eso. Un agente se va a comunicar contigo enseguida.").
-  - Operations Desk: nueva pestaña/filtro **Quejas** que lista conversaciones con `handoff_reason='negative_feedback'` no resueltas, ordenadas por `created_at desc`, con la calificación y comentario visibles directamente en el inbox.
-  - Notificación push opcional al canal de Slack del tenant (si configura webhook URL en `tenant_settings.notification_channels.slack_webhook_url`) — fuera del MVP si suma scope.
-- **Criterios de aceptación:**
-  - Un feedback de 2 estrellas activa el handoff y aparece en el filtro **Quejas** del desk dentro de 5 segundos.
-  - Un feedback de 4 estrellas NO escala.
-  - Tests: ≥ 6 estáticos: trigger correcto por rating, conversación marcada, etiqueta asignada, mensaje de respuesta presente, domain_event emitido, filtro **Quejas** registrado en UI.
-- **Notas:**
-  - El umbral (≤2) puede salir a `notification_settings.negative_feedback_threshold` en una iteración futura; en MVP se hardcodea por simplicidad y porque la escala 1-5 es estándar.
-  - La etiqueta se crea automáticamente la primera vez si el tenant no la tiene; idempotente por `(tenant_id, name='Atención prioritaria')`.
+_TASK-0045 — Escalamiento automático en feedback negativo: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

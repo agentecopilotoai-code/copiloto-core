@@ -18,6 +18,7 @@ import {
   listAppointmentFeedback,
   listAppointments,
   listContactTags,
+  listComplaintConversations,
   listConversations,
   listResources,
   listServiceRequests,
@@ -273,6 +274,8 @@ function deliveryLabel(message) {
 
 export function OperationsDesk({ module, session, tenant }) {
   const [conversations, setConversations] = useState([]);
+  const [complaints, setComplaints] = useState([]);
+  const [inboxFilter, setInboxFilter] = useState('all');
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [conversationDetail, setConversationDetail] = useState(null);
   const [messageText, setMessageText] = useState('');
@@ -318,9 +321,13 @@ export function OperationsDesk({ module, session, tenant }) {
 
   function refreshConversations(showNotice = false, silent = false) {
     if (!tenant?.id) return Promise.resolve();
-    return listConversations(session, tenant.id)
-      .then((items) => {
+    return Promise.all([
+      listConversations(session, tenant.id),
+      listComplaintConversations(session, tenant.id).catch(() => []),
+    ])
+      .then(([items, complaintItems]) => {
         setConversations(items);
+        setComplaints(complaintItems || []);
         setSelectedConversationId((currentId) => currentId || items[0]?.id || null);
         if (showNotice) setNotice({ type: 'success', text: 'Inbox actualizado.' });
       })
@@ -1085,6 +1092,75 @@ export function OperationsDesk({ module, session, tenant }) {
 
       <div className="operations-layout">
         <aside className="conversation-list" aria-label="Conversaciones">
+          <div
+            role="tablist"
+            aria-label="Filtro de inbox"
+            style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.5rem' }}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={inboxFilter === 'all'}
+              className={`tab ${inboxFilter === 'all' ? 'active' : ''}`}
+              onClick={() => setInboxFilter('all')}
+            >
+              Todas ({conversations.length})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={inboxFilter === 'complaints'}
+              className={`tab ${inboxFilter === 'complaints' ? 'active' : ''}`}
+              onClick={() => setInboxFilter('complaints')}
+              title="Conversaciones escaladas por feedback negativo"
+            >
+              Quejas ({complaints.length})
+            </button>
+          </div>
+
+          {inboxFilter === 'complaints' ? (
+            <>
+              {complaints.length === 0 ? (
+                <p className="hint">No hay quejas activas en este tenant.</p>
+              ) : null}
+              {complaints.map((complaint) => (
+                <button
+                  key={complaint.id}
+                  type="button"
+                  className={`conversation-card ${complaint.id === selectedConversationId ? 'active' : ''}`}
+                  onClick={() => setSelectedConversationId(complaint.id)}
+                  data-complaint="negative_feedback"
+                >
+                  <span>{complaint.contact_label || complaint.contact_id}</span>
+                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <strong>
+                      {complaint.feedback_rating != null
+                        ? `${complaint.feedback_rating} ★`
+                        : 'Queja'}
+                    </strong>
+                    <span
+                      className="status-pill"
+                      style={{
+                        background: '#dc2626',
+                        color: '#fff',
+                        fontSize: '0.7rem',
+                        padding: '0.1rem 0.4rem',
+                      }}
+                    >
+                      Atención prioritaria
+                    </span>
+                  </div>
+                  <small style={{ fontStyle: 'italic' }}>
+                    {complaint.feedback_comment || 'Sin comentario'}
+                  </small>
+                  <time>{formatDate(complaint.handoff_created_at || complaint.updated_at)}</time>
+                </button>
+              ))}
+            </>
+          ) : null}
+
+          {inboxFilter === 'all' ? (
+            <>
           {conversations.length === 0 ? <p className="hint">No hay conversaciones para este tenant.</p> : null}
           {conversations.map((conversation) => {
             const rawMeta = conversation.metadata;
@@ -1146,6 +1222,8 @@ export function OperationsDesk({ module, session, tenant }) {
             </button>
             );
           })}
+            </>
+          ) : null}
         </aside>
 
         <section className="conversation-detail">

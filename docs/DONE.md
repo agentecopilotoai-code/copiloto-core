@@ -15,6 +15,37 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0045 — Escalamiento automático en feedback negativo
+
+- **Fecha:** 2026-05-12
+- **Resumen:** un feedback de 1 o 2 estrellas se enviaba en silencio a `appointment_feedback` y nadie se enteraba. Ahora el bot ejecuta automáticamente el ciclo de "service recovery": marca la conversación para handoff con `reason='negative_feedback'`, asigna la etiqueta `Atención prioritaria` al contacto, responde al cliente con un mensaje empático configurable, emite `feedback.negative_received` para integraciones aguas abajo y expone el caso en una pestaña "Quejas" del Operations Desk con la calificación y el comentario visibles directamente en el inbox.
+- **Implementación:**
+  - **`app/services/feedback_flow.py`** — constantes nuevas (`NEGATIVE_FEEDBACK_THRESHOLD=2`, `NEGATIVE_FEEDBACK_TAG_NAME='Atención prioritaria'`, `NEGATIVE_FEEDBACK_HANDOFF_REASON='negative_feedback'`, `DEFAULT_NEGATIVE_FEEDBACK_REPLY`). Helpers públicos `is_negative_rating(rating)` y `negative_feedback_reply(settings)` (tolera dict/JSON-string/None/invalid). `maybe_record_feedback` ahora acepta `conversation`, `channel_id`, `channel_account_mode` opcionales; cuando el rating es ≤2, llama `_escalate_negative_feedback` que (a) upserta la etiqueta `Atención prioritaria` (`on conflict (tenant_id, name) do nothing`) y la asigna al contacto idempotente; (b) marca la conversación con `handoff_required=true` y crea un `handoffs` open con `reason='negative_feedback'` si no había uno; (c) consulta `notification_settings.negative_feedback_reply` y mete en cola el mensaje empático con `domain_events('message.queued')`; (d) emite el evento `feedback.negative_received` con `appointment_id`, `feedback_id`, `rating`, `comment` y `handoff_reason` (idempotente por feedback_id). Devuelve un trace para que el orquestador sepa qué se aplicó.
+  - **`app/services/rag_orchestrator.py`** — propaga `conversation`/`channel_id`/`channel_account_mode` a `maybe_record_feedback` y registra `negative_escalated` en el log estructurado para que las trazas muestren cuándo se disparó.
+  - **API (`app/api/v1/routes.py`)** — nuevo endpoint `GET /v1/conversations/complaints` bajo `tenant_ops_router` (`require_min_role('agent')`). Devuelve conversaciones con un `handoffs` open/accepted cuyo `reason='negative_feedback'`, joineadas con el `appointment_feedback` más reciente del contacto (rating + comment + appointment_id). Ordenado por `h.created_at desc`, paginado con `limit` (default 50, máx 200).
+  - **Admin Panel** — `OperationsDesk` arma el inbox con dos tabs (**Todas (N)** / **Quejas (N)**). El estado `inboxFilter` decide qué lista renderizar; cuando entra en `complaints`, cada card muestra el contacto, la calificación con ★, el comentario en cursiva y un pill rojo con "Atención prioritaria". El fetch de `refreshConversations` ahora pide ambas listas en paralelo (`listConversations` + `listComplaintConversations`). Helper nuevo en `services/coreApi.js`: `listComplaintConversations(session, tenantId)`.
+- **Archivos:**
+  - `app/services/feedback_flow.py` — constants, helpers, `_escalate_negative_feedback`, `_ensure_negative_feedback_tag`, hook en `maybe_record_feedback`.
+  - `app/services/rag_orchestrator.py` — propagación de conversation/channel + log enriquecido.
+  - `app/api/v1/routes.py` — endpoint `/conversations/complaints`.
+  - `admin-panel/src/services/coreApi.js` — `listComplaintConversations`.
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx` — tabs Todas/Quejas, render de complaint cards, fetch en paralelo.
+  - `tests/test_negative_feedback_static.py` (nuevo) — 18 tests.
+  - `docs/BACKLOG.md` / `docs/DONE.md`.
+- **Comandos / validaciones:**
+  - `pytest tests/test_negative_feedback_static.py` → **18 passed** cubriendo: constantes y umbral; parsing del reply custom (dict, JSON-string, vacío, inválido); parser de rating; presencia de `_escalate_negative_feedback`, evento `feedback.negative_received`, asignación de tag, conditional channel/conversation; orquestador thread-through; endpoint `complaints` con join correcto y filtros; helpers en `coreApi.js`; UI con tabs y data attributes; 8 escenarios FakeConn end-to-end (rating 2 dispara todo, rating 1 con reply custom, rating 4 no escala, rating 5 sin events, rating 2 sin conversation manda evento+tag pero no reply, sin cita devuelve None, texto no-rating devuelve None, idempotencia del tag cuando ya existe).
+  - `pytest tests/test_negative_feedback_static.py tests/test_auto_rebook_static.py tests/test_self_service_static.py tests/test_qualification_flow_static.py tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_policy_engine_static.py tests/test_notifications_static.py` → **185 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - Feedback de 2 estrellas → handoff activado (`handoff_required=true`, `handoffs.reason='negative_feedback'`), etiqueta `Atención prioritaria` asignada, mensaje empático enviado, `feedback.negative_received` emitido, queja aparece inmediatamente en el filtro **Quejas** del desk.
+  - Feedback de 4 estrellas → solo se guarda en `appointment_feedback`; no escala, no asigna etiqueta, no responde.
+  - 18 tests estáticos (objetivo era ≥ 6).
+- **Notas:**
+  - El umbral se mantiene hardcodeado en `≤2` para el MVP. Si en una iteración futura se quiere subir o bajar, basta con leer `notification_settings.negative_feedback_threshold` en `is_negative_rating`.
+  - La etiqueta se crea bajo demanda la primera vez (no requiere migración) y queda visible en todos los CRUD de etiquetas existentes para el tenant.
+  - El push opcional a Slack queda fuera de MVP como anticipaba la spec; el evento `feedback.negative_received` deja el hook abierto para una integración futura.
+
+---
+
 ### TASK-0044 — Auto-rebooking conversacional al declinar la confirmación activa
 
 - **Fecha:** 2026-05-12

@@ -371,6 +371,10 @@ export function listConversations(session, tenantId) {
   return request('/conversations', { session, tenantId });
 }
 
+export function listComplaintConversations(session, tenantId) {
+  return request('/conversations/complaints', { session, tenantId });
+}
+
 export function conversationMessageMediaUrl(session, tenantId, conversationId, messageId) {
   const safeConversationId = encodeURIComponent(conversationId);
   const safeMessageId = encodeURIComponent(messageId);
