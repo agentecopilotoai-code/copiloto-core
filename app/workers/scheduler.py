@@ -7,6 +7,7 @@ import structlog
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services.campaigns import process_due_campaigns
+from app.services.segments import refresh_due_segments
 
 log = structlog.get_logger()
 
@@ -110,6 +111,7 @@ async def main() -> None:
         while True:
             await _process_pending_reminder_jobs(conn)
             await process_due_campaigns(conn)
+            await refresh_due_segments(conn)
             await asyncio.sleep(10)
     finally:
         await conn.close()

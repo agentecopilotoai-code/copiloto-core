@@ -43,10 +43,17 @@ export const adminModules = [
     scope: ['Búsqueda y filtros', 'Perfil con historial', 'Etiquetas asignables', 'Notas internas'],
   },
   {
+    id: 'segments',
+    label: 'Segmentos',
+    summary: 'Segmentos automáticos para retención y reactivación de clientes.',
+    scope: ['Reglas dinámicas reutilizables', 'Segmentos preconfigurados', 'Previsualización en vivo', 'Snapshots manuales'],
+    minRole: 'manager',
+  },
+  {
     id: 'campaigns',
     label: 'Campañas',
     summary: 'Mensajes masivos a segmentos de contactos vía templates aprobados.',
-    scope: ['Segmentar por etiquetas y citas', 'Previsualizar destinatarios', 'Programar envío', 'Métricas de entrega'],
+    scope: ['Partir de un segmento', 'Previsualizar destinatarios', 'Programar envío', 'Métricas de entrega'],
     minRole: 'admin',
   },
   {

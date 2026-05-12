@@ -401,6 +401,39 @@ async def refresh_campaign_counters(
     return counters
 
 
+async def _resolve_campaign_recipients(
+    conn: 'asyncpg.Connection',
+    tenant_id: UUID,
+    campaign: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return the contacts a campaign should be delivered to.
+
+    If the campaign references a segment that was snapshotted at launch, the
+    recipient set is locked to that snapshot — so a refresh after launch does
+    not change who receives the message.  Otherwise the legacy
+    ``segment_filter`` query runs against the live ``app.contacts`` table.
+    """
+    segment_id = campaign.get('segment_id')
+    snapshot_at = campaign.get('launched_snapshot_at')
+    if segment_id and snapshot_at:
+        rows = await conn.fetch(
+            """
+            select c.id, c.wa_id, c.phone_e164, c.display_name, c.opt_in_status
+            from app.contact_segment_members m
+            join app.contacts c on c.tenant_id=m.tenant_id and c.id=m.contact_id
+            where m.tenant_id=$1 and m.segment_id=$2 and m.snapshot_at=$3
+              and c.opt_in_status not in ('revoked','suppressed')
+              and c.phone_e164 is not null
+            order by c.created_at
+            """,
+            tenant_id,
+            segment_id,
+            snapshot_at,
+        )
+        return [dict(row) for row in rows]
+    return await evaluate_segment(conn, tenant_id, campaign.get('segment_filter'))
+
+
 async def dispatch_campaign(
     conn: 'asyncpg.Connection',
     tenant_id: UUID,
@@ -434,7 +467,7 @@ async def dispatch_campaign(
     if not channel_id:
         return {'enqueued': 0, 'error': 'channel_not_found'}
 
-    recipients = await evaluate_segment(conn, tenant_id, campaign.get('segment_filter'))
+    recipients = await _resolve_campaign_recipients(conn, tenant_id, campaign)
     variables = coerce_dict(campaign.get('template_variables'))
 
     rate = max(1, int(rate_limit_per_second))
@@ -490,6 +523,8 @@ async def process_due_campaigns(conn: 'asyncpg.Connection') -> int:
         # service helpers can work with native dicts.
         campaign['segment_filter'] = coerce_dict(campaign.get('segment_filter'))
         campaign['template_variables'] = coerce_dict(campaign.get('template_variables'))
+        # ``segment_id`` and ``launched_snapshot_at`` are read transparently;
+        # _resolve_campaign_recipients prefers them when both are present.
         try:
             result = await dispatch_campaign(conn, tenant_id, campaign)
         except Exception as exc:  # pragma: no cover - defensive logging

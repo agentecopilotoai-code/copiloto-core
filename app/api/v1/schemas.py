@@ -364,6 +364,7 @@ class CampaignCreate(BaseModel):
     template_id: UUID
     template_variables: dict[str, Any] = Field(default_factory=dict)
     segment_filter: CampaignSegmentFilter = Field(default_factory=CampaignSegmentFilter)
+    segment_id: UUID | None = None
     scheduled_at: datetime | None = None
 
 
@@ -372,7 +373,29 @@ class CampaignUpdate(BaseModel):
     template_id: UUID | None = None
     template_variables: dict[str, Any] | None = None
     segment_filter: CampaignSegmentFilter | None = None
+    segment_id: UUID | None = None
     scheduled_at: datetime | None = None
+
+
+SEGMENT_KIND_PATTERN = '^(dynamic|static)$'
+
+
+class ContactSegmentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=500)
+    kind: str = Field(default='dynamic', pattern=SEGMENT_KIND_PATTERN)
+    rules: dict[str, Any] = Field(default_factory=dict)
+
+
+class ContactSegmentUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=500)
+    kind: str | None = Field(default=None, pattern=SEGMENT_KIND_PATTERN)
+    rules: dict[str, Any] | None = None
+
+
+class ContactSegmentMembersAssign(BaseModel):
+    contact_ids: list[UUID] = Field(default_factory=list, max_length=10000)
 
 
 class CampaignLaunch(BaseModel):
