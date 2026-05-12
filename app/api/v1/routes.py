@@ -498,6 +498,51 @@ async def health(conn: asyncpg.Connection = Depends(get_db)) -> dict:
     return {'status': 'ok'}
 
 
+@public_router.get('/tenants/{tenant_id}/resources/public')
+async def list_public_resources(
+    tenant_id: UUID,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Expose public-facing specialist profiles for the web widget.
+
+    Returns only resources flagged ``public_profile=true`` and ``is_active=true``.
+    No auth: the widget snippet renders this client-side. Sensitive fields
+    (capabilities, code, license) only surface when explicitly part of the
+    public profile.
+    """
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        """
+        select r.id, r.name, r.specialty, r.bio, r.license_number,
+               r.years_of_experience, r.photo_media_asset_id,
+               m.source_uri as photo_url,
+               m.mime_type as photo_mime_type
+        from app.resources r
+        left join app.media_assets m
+          on m.id = r.photo_media_asset_id and m.tenant_id = r.tenant_id
+        where r.tenant_id = $1
+          and r.is_active = true
+          and r.public_profile = true
+        order by r.name asc
+        limit 50
+        """,
+        tenant_id,
+    )
+    resources = []
+    for row in rows:
+        resources.append({
+            'id': str(row['id']),
+            'name': row['name'],
+            'specialty': row['specialty'],
+            'bio': row['bio'],
+            'license_number': row['license_number'],
+            'years_of_experience': row['years_of_experience'],
+            'photo_url': row['photo_url'],
+            'photo_mime_type': row['photo_mime_type'],
+        })
+    return {'resources': resources}
+
+
 def user_email_from_request(request: Request) -> str:
     email = getattr(request.state, 'email', None) or request.headers.get('X-Admin-User-Email')
     if email:
@@ -3261,8 +3306,12 @@ async def create_resource(payload: ResourceCreate, request: Request, conn: async
     try:
         row = await conn.fetchrow(
             """
-            insert into app.resources (tenant_id, vertical_code, resource_type, code, name, capabilities, is_active)
-            values ($1,$2,$3,$4,$5,$6::jsonb,$7)
+            insert into app.resources (
+                tenant_id, vertical_code, resource_type, code, name, capabilities,
+                bio, photo_media_asset_id, specialty, license_number, years_of_experience,
+                public_profile, is_active
+            )
+            values ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11,$12,$13)
             returning *
             """,
             payload.tenant_id,
@@ -3271,10 +3320,18 @@ async def create_resource(payload: ResourceCreate, request: Request, conn: async
             payload.code,
             payload.name,
             json.dumps(payload.capabilities),
+            payload.bio,
+            payload.photo_media_asset_id,
+            payload.specialty,
+            payload.license_number,
+            payload.years_of_experience,
+            payload.public_profile,
             payload.is_active,
         )
     except asyncpg.UniqueViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource code already exists for tenant') from exc
+    except asyncpg.ForeignKeyViolationError as exc:
+        raise HTTPException(status_code=400, detail='photo_media_asset_id not found for tenant') from exc
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.created', entity_type='resource', entity_id=str(row['id']))
     return record_to_dict(row)
 
@@ -3288,6 +3345,15 @@ async def update_resource(resource_id: UUID, payload: ResourceUpdate, request: R
         if not row:
             raise HTTPException(status_code=404, detail='Resource not found')
         return record_to_dict(row)
+    profile_fields = {
+        'bio',
+        'photo_media_asset_id',
+        'specialty',
+        'license_number',
+        'years_of_experience',
+        'public_profile',
+    }
+    profile_changed = bool(profile_fields & update_data.keys())
     try:
         row = await conn.fetchrow(
             """
@@ -3297,7 +3363,13 @@ async def update_resource(resource_id: UUID, payload: ResourceUpdate, request: R
                 code=coalesce($5, code),
                 name=coalesce($6, name),
                 capabilities=coalesce($7::jsonb, capabilities),
-                is_active=coalesce($8, is_active)
+                bio=case when $14::boolean then $8 else bio end,
+                photo_media_asset_id=case when $15::boolean then $9 else photo_media_asset_id end,
+                specialty=case when $16::boolean then $10 else specialty end,
+                license_number=case when $17::boolean then $11 else license_number end,
+                years_of_experience=case when $18::boolean then $12 else years_of_experience end,
+                public_profile=coalesce($13, public_profile),
+                is_active=coalesce($19, is_active)
             where tenant_id=$1 and id=$2
             returning *
             """,
@@ -3308,13 +3380,28 @@ async def update_resource(resource_id: UUID, payload: ResourceUpdate, request: R
             update_data.get('code'),
             update_data.get('name'),
             json.dumps(update_data['capabilities']) if 'capabilities' in update_data else None,
+            update_data.get('bio'),
+            update_data.get('photo_media_asset_id'),
+            update_data.get('specialty'),
+            update_data.get('license_number'),
+            update_data.get('years_of_experience'),
+            update_data.get('public_profile'),
+            'bio' in update_data,
+            'photo_media_asset_id' in update_data,
+            'specialty' in update_data,
+            'license_number' in update_data,
+            'years_of_experience' in update_data,
             update_data.get('is_active'),
         )
     except asyncpg.UniqueViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource code already exists for tenant') from exc
+    except asyncpg.ForeignKeyViolationError as exc:
+        raise HTTPException(status_code=400, detail='photo_media_asset_id not found for tenant') from exc
     if not row:
         raise HTTPException(status_code=404, detail='Resource not found')
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.updated', entity_type='resource', entity_id=str(resource_id))
+    if profile_changed:
+        await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='resource.profile_updated', entity_type='resource', entity_id=str(resource_id))
     return record_to_dict(row)
 
 

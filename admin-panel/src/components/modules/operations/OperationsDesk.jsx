@@ -20,6 +20,7 @@ import {
   listContactTags,
   listComplaintConversations,
   listConversations,
+  listMediaAssets,
   listResources,
   listServiceRequests,
   openConversationStream,
@@ -285,8 +286,21 @@ export function OperationsDesk({ module, session, tenant }) {
   const [resources, setResources] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [appointmentFeedback, setAppointmentFeedback] = useState({});
-  const [resourceForm, setResourceForm] = useState({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '', workingHours: emptyWorkingHoursForm() });
+  const [resourceForm, setResourceForm] = useState({
+    code: '',
+    name: '',
+    resourceType: 'staff',
+    verticalCode: tenant?.vertical_code || '',
+    workingHours: emptyWorkingHoursForm(),
+    bio: '',
+    photoMediaAssetId: '',
+    specialty: '',
+    licenseNumber: '',
+    yearsOfExperience: '',
+    publicProfile: true,
+  });
   const [editingResourceId, setEditingResourceId] = useState(null);
+  const [imageAssets, setImageAssets] = useState([]);
   const [calendarDate, setCalendarDate] = useState(todayISO);
   const [calendarData, setCalendarData] = useState(null);
   const [isCalendarLoading, setIsCalendarLoading] = useState(false);
@@ -350,6 +364,9 @@ export function OperationsDesk({ module, session, tenant }) {
 
   function refreshScheduleData(silent = false) {
     if (!tenant?.id) return Promise.resolve();
+    listMediaAssets(session, tenant.id, { kind: 'image' })
+      .then((items) => setImageAssets(Array.isArray(items) ? items : []))
+      .catch(() => setImageAssets([]));
     return Promise.all([
       listResources(session, tenant.id),
       listAppointments(session, tenant.id),
@@ -649,6 +666,15 @@ export function OperationsDesk({ module, session, tenant }) {
     setNotice(null);
     try {
       const capabilities = { working_hours: workingHoursToJson(resourceForm.workingHours) };
+      const yoeRaw = (resourceForm.yearsOfExperience ?? '').toString().trim();
+      const profilePayload = {
+        bio: resourceForm.bio.trim() || null,
+        photo_media_asset_id: resourceForm.photoMediaAssetId || null,
+        specialty: resourceForm.specialty.trim() || null,
+        license_number: resourceForm.licenseNumber.trim() || null,
+        years_of_experience: yoeRaw ? Number.parseInt(yoeRaw, 10) : null,
+        public_profile: Boolean(resourceForm.publicProfile),
+      };
       if (editingResourceId) {
         await updateResource(session, tenant.id, editingResourceId, {
           code: resourceForm.code.trim(),
@@ -656,6 +682,7 @@ export function OperationsDesk({ module, session, tenant }) {
           resource_type: resourceForm.resourceType,
           vertical_code: resourceForm.verticalCode,
           capabilities,
+          ...profilePayload,
         });
       } else {
         await createResource(session, tenant.id, {
@@ -664,9 +691,22 @@ export function OperationsDesk({ module, session, tenant }) {
           resource_type: resourceForm.resourceType,
           vertical_code: resourceForm.verticalCode,
           capabilities,
+          ...profilePayload,
         });
       }
-      setResourceForm({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '', workingHours: emptyWorkingHoursForm() });
+      setResourceForm({
+        code: '',
+        name: '',
+        resourceType: 'staff',
+        verticalCode: tenant?.vertical_code || '',
+        workingHours: emptyWorkingHoursForm(),
+        bio: '',
+        photoMediaAssetId: '',
+        specialty: '',
+        licenseNumber: '',
+        yearsOfExperience: '',
+        publicProfile: true,
+      });
       setEditingResourceId(null);
       await refreshScheduleData();
       setNotice({ type: 'success', text: editingResourceId ? 'Recurso actualizado.' : 'Recurso creado y disponible para agenda.' });
@@ -685,12 +725,33 @@ export function OperationsDesk({ module, session, tenant }) {
       resourceType: resource.resource_type || 'staff',
       verticalCode: resource.vertical_code || tenant?.vertical_code || '',
       workingHours: workingHoursFromCapabilities(resource.capabilities),
+      bio: resource.bio || '',
+      photoMediaAssetId: resource.photo_media_asset_id || '',
+      specialty: resource.specialty || '',
+      licenseNumber: resource.license_number || '',
+      yearsOfExperience:
+        resource.years_of_experience === null || resource.years_of_experience === undefined
+          ? ''
+          : String(resource.years_of_experience),
+      publicProfile: resource.public_profile !== false,
     });
   }
 
   function handleCancelResourceEdit() {
     setEditingResourceId(null);
-    setResourceForm({ code: '', name: '', resourceType: 'staff', verticalCode: tenant?.vertical_code || '', workingHours: emptyWorkingHoursForm() });
+    setResourceForm({
+      code: '',
+      name: '',
+      resourceType: 'staff',
+      verticalCode: tenant?.vertical_code || '',
+      workingHours: emptyWorkingHoursForm(),
+      bio: '',
+      photoMediaAssetId: '',
+      specialty: '',
+      licenseNumber: '',
+      yearsOfExperience: '',
+      publicProfile: true,
+    });
   }
 
   async function loadCalendar(targetDate = calendarDate) {
@@ -1424,6 +1485,66 @@ export function OperationsDesk({ module, session, tenant }) {
                       <option value="vehicle">Vehículo</option>
                     </select>
                   </label>
+                  <fieldset className="specialist-profile-fields">
+                    <legend>Perfil público del especialista</legend>
+                    <label>
+                      Especialidad
+                      <input
+                        onChange={(event) => setResourceForm({ ...resourceForm, specialty: event.target.value })}
+                        placeholder="Ej: Odontología estética"
+                        value={resourceForm.specialty}
+                      />
+                    </label>
+                    <label>
+                      Bio breve (máx. 280 caracteres recomendado)
+                      <textarea
+                        maxLength={2000}
+                        onChange={(event) => setResourceForm({ ...resourceForm, bio: event.target.value })}
+                        placeholder="Bio que el cliente verá en WhatsApp / widget"
+                        rows={3}
+                        value={resourceForm.bio}
+                      />
+                    </label>
+                    <label>
+                      Foto del especialista
+                      <select
+                        onChange={(event) => setResourceForm({ ...resourceForm, photoMediaAssetId: event.target.value })}
+                        value={resourceForm.photoMediaAssetId}
+                      >
+                        <option value="">Sin foto</option>
+                        {imageAssets.map((asset) => (
+                          <option key={asset.id} value={asset.id}>{asset.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Licencia / registro profesional
+                      <input
+                        onChange={(event) => setResourceForm({ ...resourceForm, licenseNumber: event.target.value })}
+                        placeholder="Opcional"
+                        value={resourceForm.licenseNumber}
+                      />
+                    </label>
+                    <label>
+                      Años de experiencia
+                      <input
+                        min="0"
+                        max="99"
+                        onChange={(event) => setResourceForm({ ...resourceForm, yearsOfExperience: event.target.value })}
+                        placeholder="Opcional"
+                        type="number"
+                        value={resourceForm.yearsOfExperience}
+                      />
+                    </label>
+                    <label className="inline-check">
+                      <input
+                        checked={resourceForm.publicProfile}
+                        onChange={(event) => setResourceForm({ ...resourceForm, publicProfile: event.target.checked })}
+                        type="checkbox"
+                      />
+                      Mostrar este recurso públicamente al cliente (booking y widget)
+                    </label>
+                  </fieldset>
                   <fieldset className="working-hours-builder">
                     <legend>Horario laboral semanal</legend>
                     {WORKING_DAYS.map(({ key, label }) => {
