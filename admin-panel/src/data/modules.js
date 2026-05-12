@@ -19,6 +19,13 @@ export const adminModules = [
     minRole: 'admin',
   },
   {
+    id: 'packages',
+    label: 'Paquetes',
+    summary: 'Paquetes y planes de tratamiento multi-cita con saldo de sesiones. TASK-0051.',
+    scope: ['Crear y editar paquetes', 'Sesiones, precio y vencimiento', 'Asignar paquetes al contacto', 'Consumo automático al completar cita'],
+    minRole: 'admin',
+  },
+  {
     id: 'whatsapp',
     label: 'WhatsApp',
     summary: 'Onboarding y salud del canal WhatsApp/WABA.',

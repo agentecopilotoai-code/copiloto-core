@@ -39,6 +39,7 @@ log = structlog.get_logger()
 
 
 STEP_AWAITING_SERVICE = 'awaiting_service'
+STEP_AWAITING_PACKAGE = 'awaiting_package'
 STEP_AWAITING_BRANCH = 'awaiting_branch'
 STEP_AWAITING_RESOURCE = 'awaiting_resource'
 STEP_AWAITING_DATE = 'awaiting_date'
@@ -46,10 +47,13 @@ STEP_AWAITING_SLOT = 'awaiting_slot'
 STEP_COMPLETED = 'completed'
 
 PREFIX_SERVICE = 'book_service'
+PREFIX_PACKAGE = 'book_package'
 PREFIX_BRANCH = 'book_branch'
 PREFIX_RESOURCE = 'book_resource'
 PREFIX_DATE = 'book_date'
 PREFIX_SLOT = 'book_slot'
+
+PACKAGE_USE_NEW = 'new'  # value sent when the customer prefers paying instead of using a package
 
 WEEKDAY_KEYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 DEFAULT_DURATION_MINUTES = 60
@@ -142,6 +146,94 @@ async def _list_active_resources(
         branch_id,
     )
     return [dict(row) for row in rows]
+
+
+async def _list_active_contact_packages(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    contact_id: UUID,
+    service_id: UUID,
+) -> list[dict[str, Any]]:
+    """TASK-0051: return active, paid, non-expired packages of the contact whose
+    catalogue covers the picked service (an empty ``includes_service_ids`` means
+    the package applies to any service).
+    """
+    rows = await conn.fetch(
+        """
+        select cp.id, cp.package_id, cp.remaining_sessions, cp.expires_at,
+               tp.name as package_name, tp.includes_service_ids
+        from app.contact_packages cp
+        join app.treatment_packages tp
+          on tp.id = cp.package_id and tp.tenant_id = cp.tenant_id
+        where cp.tenant_id=$1
+          and cp.contact_id=$2
+          and cp.status='active'
+          and cp.payment_status='paid'
+          and cp.remaining_sessions > 0
+          and (cp.expires_at is null or cp.expires_at > now())
+          and (
+            coalesce(array_length(tp.includes_service_ids, 1), 0) = 0
+            or $3 = any(tp.includes_service_ids)
+          )
+        order by cp.expires_at asc nulls last, cp.purchased_at asc
+        limit 5
+        """,
+        tenant_id,
+        contact_id,
+        service_id,
+    )
+    return [dict(row) for row in rows]
+
+
+async def _present_packages(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    conversation: Any,
+    channel_id: UUID,
+    channel_account_mode: str,
+    state: dict[str, Any],
+    contact_id: UUID,
+    service_uuid: UUID,
+) -> dict[str, Any] | None:
+    """Offer the customer to spend one of their existing package sessions.
+
+    Returns ``None`` when no usable package is found so the caller can fall
+    back to the standard branch/resource selection flow. WhatsApp's interactive
+    buttons accept at most 3 entries; we list up to 2 packages plus a third
+    "use a fresh booking" escape hatch.
+    """
+    packages = await _list_active_contact_packages(conn, tenant_id, contact_id, service_uuid)
+    if not packages:
+        return None
+    buttons: list[dict[str, str]] = []
+    for pkg in packages[:2]:
+        title = f'Pkg: {pkg["remaining_sessions"]} restante'[:20]
+        buttons.append({'id': f'{PREFIX_PACKAGE}:{pkg["id"]}', 'title': title})
+    buttons.append({'id': f'{PREFIX_PACKAGE}:{PACKAGE_USE_NEW}', 'title': 'Cita normal'})
+    body_lines = ['Tienes paquetes activos para este servicio:']
+    for pkg in packages[:2]:
+        body_lines.append(
+            f'• {pkg["package_name"]} — quedan {pkg["remaining_sessions"]} sesiones'
+        )
+    body_lines.append('¿Quieres usar una sesión o pagar la cita por separado?')
+    body_text = '\n'.join(body_lines)
+    interactive = build_interactive_button_payload(body_text=body_text, buttons=buttons)
+    await _queue_interactive_message(
+        conn,
+        tenant_id=tenant_id,
+        conversation_id=conversation['id'],
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        body_text=body_text,
+        interactive_payload=interactive,
+        booking_step=STEP_AWAITING_PACKAGE,
+    )
+    return {
+        **state,
+        'step': STEP_AWAITING_PACKAGE,
+        'available_package_ids': [str(pkg['id']) for pkg in packages[:2]],
+    }
 
 
 async def _list_active_branches(
@@ -900,6 +992,13 @@ async def _create_appointment(
             tenant_id,
             resource_id,
         )
+    contact_package_id_raw = state.get('selected_contact_package_id')
+    contact_package_uuid: UUID | None = None
+    if contact_package_id_raw:
+        try:
+            contact_package_uuid = UUID(contact_package_id_raw)
+        except ValueError:
+            contact_package_uuid = None
     try:
         appointment = await conn.fetchrow(
             """
@@ -944,6 +1043,39 @@ async def _create_appointment(
         new_state.pop('proposed_slots', None)
         return new_state
 
+    # TASK-0051: bind the appointment to the chosen package so the on-completion
+    # trigger discounts a session. Validates the package is still active and
+    # belongs to the same contact to avoid replay/race issues.
+    if contact_package_uuid is not None:
+        package_check = await conn.fetchrow(
+            """
+            select id, remaining_sessions
+            from app.contact_packages
+            where tenant_id=$1
+              and id=$2
+              and contact_id=$3
+              and status='active'
+              and remaining_sessions > 0
+              and (expires_at is null or expires_at > now())
+            """,
+            tenant_id,
+            contact_package_uuid,
+            contact['id'],
+        )
+        if package_check:
+            await conn.execute(
+                """
+                insert into app.appointment_package_links (
+                  appointment_id, contact_package_id, tenant_id
+                )
+                values ($1, $2, $3)
+                on conflict (appointment_id) do nothing
+                """,
+                appointment['id'],
+                contact_package_uuid,
+                tenant_id,
+            )
+
     resource_row = await _fetch_resource(conn, tenant_id, resource_id)
     summary_lines = [
         '✅ Tu cita quedó agendada:',
@@ -951,6 +1083,8 @@ async def _create_appointment(
         f'• Fecha: {target_date.strftime("%d/%m/%Y")}',
         f'• Hora: {slot_start} ({duration} min)',
     ]
+    if contact_package_uuid is not None:
+        summary_lines.append('• Usa 1 sesión de tu paquete activo')
     if resource_row:
         summary_lines.append(f'• Profesional: {resource_row["name"]}')
     if service_row and service_row.get('preparation_notes'):
@@ -1038,6 +1172,7 @@ async def _create_appointment(
         'appointment_id': str(appointment['id']),
         'selected_service_id': str(service_uuid) if service_uuid else None,
         'selected_resource_id': str(resource_id),
+        'selected_contact_package_id': str(contact_package_uuid) if contact_package_uuid else None,
         'starts_at': starts_at.isoformat(),
     }
 
@@ -1099,14 +1234,72 @@ async def maybe_run_booking_flow(
             service = await _fetch_service(conn, tenant_id, service_uuid)
             if service:
                 base_state = {'selected_service_id': str(service_uuid)}
-                # TASK-0050: insert branch selection before resources.
-                new_state = await _present_branches(
+                # TASK-0051: if the contact has active packages that cover the
+                # picked service, ask first whether they want to spend one.
+                new_state = await _present_packages(
                     conn,
                     tenant_id=tenant_id,
                     conversation=conversation,
                     channel_id=channel_id,
                     channel_account_mode=channel_account_mode,
                     state=base_state,
+                    contact_id=contact['id'],
+                    service_uuid=service_uuid,
+                )
+                if new_state is None:
+                    # TASK-0050: branch selection if multi-sede, otherwise resources.
+                    new_state = await _present_branches(
+                        conn,
+                        tenant_id=tenant_id,
+                        conversation=conversation,
+                        channel_id=channel_id,
+                        channel_account_mode=channel_account_mode,
+                        state=base_state,
+                    )
+                    if new_state is None:
+                        new_state = await _present_resources(
+                            conn,
+                            tenant_id=tenant_id,
+                            conversation=conversation,
+                            channel_id=channel_id,
+                            channel_account_mode=channel_account_mode,
+                            state=base_state,
+                        )
+    elif prefix == PREFIX_PACKAGE and value:
+        # TASK-0051: customer chose between using a saved package session
+        # or paying for a fresh appointment.
+        if value == PACKAGE_USE_NEW:
+            new_state = await _present_branches(
+                conn,
+                tenant_id=tenant_id,
+                conversation=conversation,
+                channel_id=channel_id,
+                channel_account_mode=channel_account_mode,
+                state={k: v for k, v in state.items() if k != 'available_package_ids'},
+            )
+            if new_state is None:
+                new_state = await _present_resources(
+                    conn,
+                    tenant_id=tenant_id,
+                    conversation=conversation,
+                    channel_id=channel_id,
+                    channel_account_mode=channel_account_mode,
+                    state={k: v for k, v in state.items() if k != 'available_package_ids'},
+                )
+        else:
+            allowed = set(state.get('available_package_ids') or [])
+            if value in allowed:
+                next_state = {
+                    **{k: v for k, v in state.items() if k != 'available_package_ids'},
+                    'selected_contact_package_id': value,
+                }
+                new_state = await _present_branches(
+                    conn,
+                    tenant_id=tenant_id,
+                    conversation=conversation,
+                    channel_id=channel_id,
+                    channel_account_mode=channel_account_mode,
+                    state=next_state,
                 )
                 if new_state is None:
                     new_state = await _present_resources(
@@ -1115,7 +1308,7 @@ async def maybe_run_booking_flow(
                         conversation=conversation,
                         channel_id=channel_id,
                         channel_account_mode=channel_account_mode,
-                        state=base_state,
+                        state=next_state,
                     )
     elif prefix == PREFIX_BRANCH and value:
         try:
@@ -1196,14 +1389,25 @@ async def maybe_run_booking_flow(
                 service = await _fetch_service(conn, tenant_id, prefilled_uuid)
                 if service:
                     base_state = {'selected_service_id': str(prefilled_uuid)}
-                    new_state = await _present_branches(
+                    new_state = await _present_packages(
                         conn,
                         tenant_id=tenant_id,
                         conversation=conversation,
                         channel_id=channel_id,
                         channel_account_mode=channel_account_mode,
                         state=base_state,
+                        contact_id=contact['id'],
+                        service_uuid=prefilled_uuid,
                     )
+                    if new_state is None:
+                        new_state = await _present_branches(
+                            conn,
+                            tenant_id=tenant_id,
+                            conversation=conversation,
+                            channel_id=channel_id,
+                            channel_account_mode=channel_account_mode,
+                            state=base_state,
+                        )
                     if new_state is None:
                         new_state = await _present_resources(
                             conn,

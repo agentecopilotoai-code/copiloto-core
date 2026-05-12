@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import {
+  assignContactPackage,
   assignContactTags,
   createContactNote,
   getContactProfile,
+  listContactPackages,
   listContactTags,
   listContacts,
+  listTreatmentPackages,
+  refundContactPackage,
   unassignContactTag,
 } from '../../../services/coreApi.js';
 
@@ -76,6 +80,9 @@ export function ContactsModule({ module, session, tenant }) {
   const [notice, setNotice] = useState(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [pendingTagId, setPendingTagId] = useState('');
+  const [contactPackages, setContactPackages] = useState([]);
+  const [availablePackages, setAvailablePackages] = useState([]);
+  const [pendingPackageId, setPendingPackageId] = useState('');
 
   const tenantId = tenant?.id;
 
@@ -115,14 +122,35 @@ export function ContactsModule({ module, session, tenant }) {
       .catch((error) => setNotice({ type: 'error', text: error.message }));
   }
 
+  function refreshContactPackages(contactId = selectedContactId) {
+    if (!tenantId || !contactId) {
+      setContactPackages([]);
+      return Promise.resolve();
+    }
+    return listContactPackages(session, tenantId, contactId)
+      .then((items) => setContactPackages(Array.isArray(items) ? items : []))
+      .catch((error) => setNotice({ type: 'error', text: error.message }));
+  }
+
+  function refreshAvailablePackages() {
+    if (!tenantId) return Promise.resolve();
+    return listTreatmentPackages(session, tenantId, { is_active: true })
+      .then((items) => setAvailablePackages(Array.isArray(items) ? items : []))
+      .catch((error) => setNotice({ type: 'error', text: error.message }));
+  }
+
   useEffect(() => {
     if (!tenantId) return;
     refreshTags();
     refreshContacts();
+    refreshAvailablePackages();
   }, [tenantId]);
 
   useEffect(() => {
-    if (selectedContactId) refreshProfile(selectedContactId);
+    if (selectedContactId) {
+      refreshProfile(selectedContactId);
+      refreshContactPackages(selectedContactId);
+    }
   }, [selectedContactId]);
 
   function handleSearch(event) {
@@ -153,6 +181,40 @@ export function ContactsModule({ module, session, tenant }) {
       await unassignContactTag(session, tenantId, selectedContactId, tagId);
       setNotice({ type: 'success', text: 'Etiqueta retirada.' });
       await Promise.all([refreshProfile(), refreshContacts()]);
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleAssignPackage(event) {
+    event.preventDefault();
+    if (!pendingPackageId || !selectedContactId) return;
+    setIsBusy(true);
+    try {
+      await assignContactPackage(session, tenantId, selectedContactId, {
+        package_id: pendingPackageId,
+        payment_status: 'pending',
+      });
+      setPendingPackageId('');
+      setNotice({ type: 'success', text: 'Paquete asignado.' });
+      await refreshContactPackages();
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleRefundPackage(contactPackageId) {
+    if (!selectedContactId) return;
+    if (!window.confirm('¿Reembolsar este paquete? Se marcará como refunded.')) return;
+    setIsBusy(true);
+    try {
+      await refundContactPackage(session, tenantId, selectedContactId, contactPackageId);
+      setNotice({ type: 'success', text: 'Paquete reembolsado.' });
+      await refreshContactPackages();
     } catch (error) {
       setNotice({ type: 'error', text: error.message });
     } finally {
@@ -387,6 +449,59 @@ export function ContactsModule({ module, session, tenant }) {
                     </ul>
                   ) : (
                     <p className="hint">Sin conversaciones todavía.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="schedule-panel" data-testid="contact-packages-panel">
+                <div>
+                  <strong>Paquetes activos</strong>
+                  <form onSubmit={handleAssignPackage} style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    <select
+                      value={pendingPackageId}
+                      onChange={(event) => setPendingPackageId(event.target.value)}
+                      style={{ flex: 1 }}
+                      disabled={isBusy || availablePackages.length === 0}
+                    >
+                      <option value="">— Asignar paquete —</option>
+                      {availablePackages.map((pkg) => (
+                        <option key={pkg.id} value={pkg.id}>
+                          {pkg.name} ({pkg.total_sessions} sesiones · {pkg.price_amount} {pkg.price_currency})
+                        </option>
+                      ))}
+                    </select>
+                    <button className="primary-action" type="submit" disabled={!pendingPackageId || isBusy}>
+                      Asignar
+                    </button>
+                  </form>
+                  {contactPackages.length ? (
+                    <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem' }}>
+                      {contactPackages.map((pkg) => (
+                        <li key={pkg.id} style={{ padding: '0.4rem 0', borderBottom: '1px solid var(--border, #e2e8f0)' }}>
+                          <div>
+                            <strong>{pkg.package_name || pkg.name}</strong>{' '}
+                            <span className={`status-pill status-${pkg.status}`}>{pkg.status}</span>
+                          </div>
+                          <div className="hint" style={{ fontSize: '0.8rem' }}>
+                            {pkg.remaining_sessions} / {pkg.total_sessions} sesiones restantes ·
+                            pago: {pkg.payment_status}
+                            {pkg.expires_at ? ` · vence ${formatDateShort(pkg.expires_at)}` : ''}
+                          </div>
+                          {pkg.status === 'active' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleRefundPackage(pkg.id)}
+                              disabled={isBusy}
+                              style={{ marginTop: '0.35rem' }}
+                            >
+                              Reembolsar
+                            </button>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="hint">Sin paquetes asignados.</p>
                   )}
                 </div>
               </div>

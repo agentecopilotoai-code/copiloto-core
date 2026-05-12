@@ -28,6 +28,8 @@ from app.api.v1.schemas import (
     ChannelCreate,
     ChannelModeUpdate,
     ContactNoteCreate,
+    ContactPackageAssign,
+    ContactPackagePatch,
     ContactSegmentCreate,
     ContactSegmentMembersAssign,
     ContactSegmentUpdate,
@@ -64,6 +66,8 @@ from app.api.v1.schemas import (
     TenantPaymentSettingsUpdate,
     TenantStatusTransition,
     TenantUpdate,
+    TreatmentPackageCreate,
+    TreatmentPackageUpdate,
     WebChannelUpsert,
     WebChatMessage,
     WebChatStart,
@@ -3447,6 +3451,378 @@ async def deactivate_branch(branch_id: UUID, request: Request, conn: asyncpg.Con
         action='branch.deleted',
         entity_type='branch',
         entity_id=str(branch_id),
+    )
+    return Response(status_code=204)
+
+
+# ───── Treatment packages (TASK-0051) ──────────────────────────────────────
+
+
+@tenant_ops_router.get('/packages')
+async def list_treatment_packages(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    is_active: bool | None = Query(default=None),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select *
+        from app.treatment_packages
+        where tenant_id=$1
+          and ($2::boolean is null or is_active=$2)
+        order by sort_order asc, name asc
+        limit 250
+        """,
+        tenant_id,
+        is_active,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_admin_router.post('/packages', status_code=201)
+async def create_treatment_package(
+    payload: TreatmentPackageCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    if payload.renewal_template_id is not None:
+        owns = await conn.fetchval(
+            'select 1 from app.whatsapp_templates where tenant_id=$1 and id=$2',
+            tenant_id,
+            payload.renewal_template_id,
+        )
+        if not owns:
+            raise HTTPException(status_code=400, detail='renewal_template_id not found for tenant')
+    row = await conn.fetchrow(
+        """
+        insert into app.treatment_packages (
+            tenant_id, name, description, total_sessions, validity_days,
+            price_amount, price_currency, includes_service_ids,
+            renewal_template_id, is_active, sort_order, metadata
+        )
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+        returning *
+        """,
+        tenant_id,
+        payload.name,
+        payload.description,
+        payload.total_sessions,
+        payload.validity_days,
+        payload.price_amount,
+        payload.price_currency,
+        [str(s) for s in payload.includes_service_ids],
+        payload.renewal_template_id,
+        payload.is_active,
+        payload.sort_order,
+        json.dumps(payload.metadata),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='package.created',
+        entity_type='treatment_package',
+        entity_id=str(row['id']),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.patch('/packages/{package_id}')
+async def update_treatment_package(
+    package_id: UUID,
+    payload: TreatmentPackageUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await conn.fetchrow(
+            'select * from app.treatment_packages where tenant_id=$1 and id=$2',
+            tenant_id,
+            package_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Package not found')
+        return record_to_dict(row)
+    if 'renewal_template_id' in update_data and update_data['renewal_template_id'] is not None:
+        owns = await conn.fetchval(
+            'select 1 from app.whatsapp_templates where tenant_id=$1 and id=$2',
+            tenant_id,
+            update_data['renewal_template_id'],
+        )
+        if not owns:
+            raise HTTPException(status_code=400, detail='renewal_template_id not found for tenant')
+    row = await conn.fetchrow(
+        """
+        update app.treatment_packages
+        set name=coalesce($3, name),
+            description=case when $13::boolean then $4 else description end,
+            total_sessions=coalesce($5, total_sessions),
+            validity_days=case when $14::boolean then $6 else validity_days end,
+            price_amount=coalesce($7, price_amount),
+            price_currency=coalesce($8, price_currency),
+            includes_service_ids=coalesce($9, includes_service_ids),
+            renewal_template_id=case when $15::boolean then $10 else renewal_template_id end,
+            is_active=coalesce($11, is_active),
+            sort_order=coalesce($12, sort_order),
+            metadata=coalesce($16::jsonb, metadata)
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        package_id,
+        update_data.get('name'),
+        update_data.get('description'),
+        update_data.get('total_sessions'),
+        update_data.get('validity_days'),
+        update_data.get('price_amount'),
+        update_data.get('price_currency'),
+        [str(s) for s in update_data['includes_service_ids']] if 'includes_service_ids' in update_data else None,
+        update_data.get('renewal_template_id'),
+        update_data.get('is_active'),
+        update_data.get('sort_order'),
+        'description' in update_data,
+        'validity_days' in update_data,
+        'renewal_template_id' in update_data,
+        json.dumps(update_data['metadata']) if 'metadata' in update_data else None,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Package not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='package.updated',
+        entity_type='treatment_package',
+        entity_id=str(package_id),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.delete('/packages/{package_id}', status_code=204)
+async def deactivate_treatment_package(
+    package_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        update app.treatment_packages
+        set is_active=false
+        where tenant_id=$1 and id=$2
+        returning id
+        """,
+        tenant_id,
+        package_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Package not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='package.deleted',
+        entity_type='treatment_package',
+        entity_id=str(package_id),
+    )
+    return Response(status_code=204)
+
+
+@tenant_ops_router.get('/contacts/{contact_id}/packages')
+async def list_contact_packages(
+    contact_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    status_filter: str | None = Query(default=None, alias='status'),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select cp.*, tp.name as package_name, tp.includes_service_ids
+        from app.contact_packages cp
+        join app.treatment_packages tp
+          on tp.id=cp.package_id and tp.tenant_id=cp.tenant_id
+        where cp.tenant_id=$1
+          and cp.contact_id=$2
+          and ($3::text is null or cp.status=$3)
+        order by cp.purchased_at desc
+        limit 250
+        """,
+        tenant_id,
+        contact_id,
+        status_filter,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_ops_router.post('/contacts/{contact_id}/packages', status_code=201)
+async def assign_contact_package(
+    contact_id: UUID,
+    payload: ContactPackageAssign,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    pkg = await conn.fetchrow(
+        """
+        select id, total_sessions, validity_days, price_amount, price_currency
+        from app.treatment_packages
+        where tenant_id=$1 and id=$2 and is_active=true
+        """,
+        tenant_id,
+        payload.package_id,
+    )
+    if not pkg:
+        raise HTTPException(status_code=404, detail='Package not found or inactive')
+    contact = await conn.fetchval(
+        'select 1 from app.contacts where tenant_id=$1 and id=$2',
+        tenant_id,
+        contact_id,
+    )
+    if not contact:
+        raise HTTPException(status_code=404, detail='Contact not found')
+    expires_at = payload.expires_at
+    if expires_at is None and pkg['validity_days']:
+        expires_at = datetime.now(UTC) + timedelta(days=int(pkg['validity_days']))
+    payment_amount = payload.payment_amount if payload.payment_amount is not None else float(pkg['price_amount'])
+    currency = payload.payment_currency or pkg['price_currency']
+    row = await conn.fetchrow(
+        """
+        insert into app.contact_packages (
+            tenant_id, contact_id, package_id, expires_at,
+            remaining_sessions, total_sessions, payment_status,
+            payment_amount, payment_currency, notes
+        )
+        values ($1,$2,$3,$4,$5,$5,$6,$7,$8,$9)
+        returning *
+        """,
+        tenant_id,
+        contact_id,
+        payload.package_id,
+        expires_at,
+        pkg['total_sessions'],
+        payload.payment_status,
+        payment_amount,
+        currency,
+        payload.notes,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_package.assigned',
+        entity_type='contact_package',
+        entity_id=str(row['id']),
+        metadata={'package_id': str(payload.package_id), 'contact_id': str(contact_id)},
+    )
+    return record_to_dict(row)
+
+
+@tenant_ops_router.patch('/contacts/{contact_id}/packages/{contact_package_id}')
+async def update_contact_package(
+    contact_id: UUID,
+    contact_package_id: UUID,
+    payload: ContactPackagePatch,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await conn.fetchrow(
+            'select * from app.contact_packages where tenant_id=$1 and contact_id=$2 and id=$3',
+            tenant_id,
+            contact_id,
+            contact_package_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Contact package not found')
+        return record_to_dict(row)
+    row = await conn.fetchrow(
+        """
+        update app.contact_packages
+        set payment_status=coalesce($4, payment_status),
+            payment_amount=case when $9::boolean then $5 else payment_amount end,
+            payment_currency=coalesce($6, payment_currency),
+            expires_at=case when $10::boolean then $7 else expires_at end,
+            status=coalesce($8, status),
+            notes=case when $11::boolean then $12 else notes end
+        where tenant_id=$1 and contact_id=$2 and id=$3
+        returning *
+        """,
+        tenant_id,
+        contact_id,
+        contact_package_id,
+        update_data.get('payment_status'),
+        update_data.get('payment_amount'),
+        update_data.get('payment_currency'),
+        update_data.get('expires_at'),
+        update_data.get('status'),
+        'payment_amount' in update_data,
+        'expires_at' in update_data,
+        'notes' in update_data,
+        update_data.get('notes'),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Contact package not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_package.updated',
+        entity_type='contact_package',
+        entity_id=str(contact_package_id),
+    )
+    return record_to_dict(row)
+
+
+@tenant_ops_router.delete('/contacts/{contact_id}/packages/{contact_package_id}', status_code=204)
+async def refund_contact_package(
+    contact_id: UUID,
+    contact_package_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Mark a contact package as refunded.
+
+    Sets status=refunded, payment_status=refunded, and zeroes the remaining
+    sessions so the booking flow no longer offers them. Existing
+    appointment_package_links are preserved for audit, but the package is no
+    longer 'active'.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        update app.contact_packages
+        set status='refunded',
+            payment_status='refunded',
+            remaining_sessions=0
+        where tenant_id=$1 and contact_id=$2 and id=$3
+        returning id
+        """,
+        tenant_id,
+        contact_id,
+        contact_package_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Contact package not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_package.refunded',
+        entity_type='contact_package',
+        entity_id=str(contact_package_id),
     )
     return Response(status_code=204)
 
