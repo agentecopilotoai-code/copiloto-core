@@ -6130,7 +6130,13 @@ async def delete_knowledge_document(
         'delete from app.knowledge_documents where tenant_id=$1 and id=$2', tenant_id, document_id
     )
 
-    # Delete physical file from local disk or S3
+    # Delete physical file from local disk or S3.
+    # NOTE: source_uri and metadata.* are tenant-admin-writable via the
+    # create/patch APIs, so they cannot be trusted to determine the deletion
+    # target. The storage backend, bucket, and tenant prefix are re-derived
+    # from server-controlled tenant configuration and passed to
+    # delete_knowledge_file(), which enforces containment of the target path
+    # under the tenant's storage region before unlinking / deleting.
     storage_meta = _coerce_jsonb(doc['metadata']) or {}
     settings = get_settings()
     storage_config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
@@ -6139,12 +6145,17 @@ async def delete_knowledge_document(
         if storage_config.get('backend') == 's3' and storage_config.get('secret_ref')
         else None
     )
+    trusted_backend = (storage_config.get('backend') or settings.knowledge_storage_backend)
+    trusted_bucket = storage_config.get('bucket') or settings.knowledge_storage_bucket
+    trusted_prefix = storage_config.get('prefix') or f'tenants/{tenant_id}/knowledge'
     delete_knowledge_file(
         source_uri=doc['source_uri'] or '',
-        storage_backend=storage_meta.get('storage_backend') or storage_config.get('backend') or settings.knowledge_storage_backend,
+        storage_backend=trusted_backend,
         object_key=storage_meta.get('storage_key'),
-        bucket=storage_meta.get('storage_bucket') or storage_config.get('bucket'),
+        bucket=trusted_bucket,
         settings=settings,
+        tenant_prefix=trusted_prefix,
+        expected_bucket=trusted_bucket,
         endpoint_url=storage_config.get('endpoint_url'),
         access_key_id=storage_config.get('access_key_id'),
         secret_access_key=storage_secret,
