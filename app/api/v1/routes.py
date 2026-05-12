@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import io
 import json
+import secrets
 from pathlib import Path
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -49,6 +50,9 @@ from app.api.v1.schemas import (
     TenantCreate,
     TenantStatusTransition,
     TenantUpdate,
+    WebChannelUpsert,
+    WebChatMessage,
+    WebChatStart,
     WhatsAppTemplateCreate,
     WhatsAppTemplateUpdate,
 )
@@ -75,6 +79,16 @@ from app.services.notifications import (
     regenerate_appointment_reminder_jobs,
 )
 from app.services.rag_indexing import build_indexing_result_async, vector_literal
+from app.services.web_widget import (
+    build_lead_source,
+    constant_time_equals,
+    decode_session_token,
+    generate_widget_token,
+    hash_phone,
+    issue_session_token,
+    origin_is_allowed,
+    synthesize_web_identity,
+)
 from app.services.intent_classifier import classify_intent
 from app.services.rag_orchestrator import orchestrate_inbound_message
 from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
@@ -265,10 +279,11 @@ async def upsert_whatsapp_contact(
             json.dumps(metadata),
             existing['id'],
         )
+    default_lead_source = build_lead_source(channel='whatsapp')
     return await conn.fetchrow(
         """
-        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata)
-        values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source)
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
         returning *
         """,
         tenant_id,
@@ -278,6 +293,7 @@ async def upsert_whatsapp_contact(
         display_name,
         source,
         json.dumps(metadata),
+        json.dumps(default_lead_source),
     )
 
 
@@ -1467,6 +1483,140 @@ async def patch_channel_mode(
         metadata={'account_mode': payload.account_mode, 'reason': payload.reason},
     )
     return record_to_dict(row)
+
+
+WEB_CHANNEL_PROJECTION = (
+    "id, tenant_id, provider, status, account_mode, allowed_origins, widget_config, "
+    "token_ref, created_at, updated_at"
+)
+
+
+def _normalize_web_channel(row: asyncpg.Record | None) -> dict[str, Any] | None:
+    channel = record_to_dict(row)
+    if not channel:
+        return None
+    channel['allowed_origins'] = list(channel.get('allowed_origins') or [])
+    channel['widget_config'] = parse_json_object(channel.get('widget_config'), default={})
+    return channel
+
+
+def _build_widget_snippet(*, tenant_slug: str, widget_token: str, color: str | None, greeting: str | None) -> str:
+    attrs = [
+        'src="/admin/widget.js"',
+        f'data-tenant="{tenant_slug}"',
+        f'data-widget-token="{widget_token}"',
+    ]
+    if color:
+        attrs.append(f'data-color="{color}"')
+    if greeting:
+        safe = greeting.replace('"', '&quot;')
+        attrs.append(f'data-greeting="{safe}"')
+    return '<script async ' + ' '.join(attrs) + '></script>'
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/channels/web')
+async def get_web_channel(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        f'select {WEB_CHANNEL_PROJECTION} from app.tenant_channels where tenant_id=$1 and provider=$2',
+        tenant_id,
+        'web',
+    )
+    if not row:
+        return {'channel': None, 'snippet': None, 'has_widget_token': False}
+    channel = _normalize_web_channel(row)
+    token_ref = channel.get('token_ref') if channel else None
+    widget_token = resolve_secret_ref(token_ref) if token_ref else None
+    tenant_slug = await conn.fetchval('select slug from app.tenants where id=$1', tenant_id)
+    snippet = _build_widget_snippet(
+        tenant_slug=tenant_slug or str(tenant_id),
+        widget_token=widget_token or '<missing-widget-token>',
+        color=(channel or {}).get('widget_config', {}).get('primary_color'),
+        greeting=(channel or {}).get('widget_config', {}).get('greeting'),
+    )
+    return {
+        'channel': channel,
+        'snippet': snippet,
+        'has_widget_token': bool(widget_token),
+        'tenant_slug': tenant_slug,
+    }
+
+
+@tenant_admin_router.put('/tenants/{tenant_id}/channels/web')
+async def upsert_web_channel(
+    tenant_id: UUID,
+    payload: WebChannelUpsert,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    token_ref = tenant_secret_ref(tenant_id, 'widget_token')
+    needs_token = payload.rotate_widget_token or not secret_ref_is_configured(token_ref)
+    if needs_token:
+        new_token = generate_widget_token()
+        write_tenant_secret(token_ref, new_token)
+
+    widget_config = {
+        'primary_color': payload.primary_color,
+        'greeting': payload.greeting,
+    }
+    next_status = 'active' if payload.enabled else 'suspended'
+    cleaned_origins = [origin.strip().rstrip('/') for origin in payload.allowed_origins if origin and origin.strip()]
+    row = await conn.fetchrow(
+        """
+        insert into app.tenant_channels (
+          tenant_id, provider, token_ref, account_mode, status, allowed_origins, widget_config
+        )
+        values ($1, 'web', $2, 'live', $3, $4, $5::jsonb)
+        on conflict (tenant_id, provider) do update set
+          token_ref=excluded.token_ref,
+          status=excluded.status,
+          allowed_origins=excluded.allowed_origins,
+          widget_config=excluded.widget_config,
+          updated_at=now()
+        returning """ + WEB_CHANNEL_PROJECTION,
+        tenant_id,
+        token_ref,
+        next_status,
+        cleaned_origins,
+        json.dumps(widget_config),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='web_channel.upserted',
+        entity_type='tenant_channel',
+        entity_id=str(row['id']),
+        metadata={
+            'enabled': payload.enabled,
+            'allowed_origins_count': len(cleaned_origins),
+            'widget_token_rotated': needs_token,
+        },
+    )
+    channel = _normalize_web_channel(row)
+    widget_token = resolve_secret_ref(token_ref)
+    tenant_slug = await conn.fetchval('select slug from app.tenants where id=$1', tenant_id)
+    snippet = _build_widget_snippet(
+        tenant_slug=tenant_slug or str(tenant_id),
+        widget_token=widget_token or '',
+        color=widget_config.get('primary_color'),
+        greeting=widget_config.get('greeting'),
+    )
+    return {
+        'channel': channel,
+        'snippet': snippet,
+        'has_widget_token': bool(widget_token),
+        'tenant_slug': tenant_slug,
+    }
 
 
 WHATSAPP_TEMPLATE_COLUMNS = (
@@ -5281,6 +5431,384 @@ async def export_tenant_data(
     )
 
 
+web_router = APIRouter(prefix='/web', tags=['public-web-widget'])
+
+
+def _resolve_web_session(
+    request: Request,
+    authorization: str | None,
+) -> dict[str, Any]:
+    if not authorization:
+        raise HTTPException(status_code=401, detail='Session token required')
+    scheme, _, token = authorization.partition(' ')
+    if scheme.lower() != 'bearer' or not token:
+        raise HTTPException(status_code=401, detail='Invalid session token header')
+    settings = get_settings()
+    try:
+        return decode_session_token(
+            token,
+            secret_key=settings.jwt_secret,
+            issuer=settings.jwt_issuer,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+async def _persist_bot_reply_sync(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+) -> dict[str, Any] | None:
+    """After the orchestrator runs, claim the latest pending outbound message.
+
+    The RAG orchestrator queues the bot's outbound message via
+    ``message.queued`` for the event worker (WhatsApp delivery). For the web
+    channel we deliver synchronously: we mark the message as ``sent`` and
+    publish the event right here so the response is returned to the browser
+    immediately.
+    """
+    row = await conn.fetchrow(
+        """
+        select id, body_text, message_type, payload, created_at
+        from app.messages
+        where tenant_id=$1 and conversation_id=$2
+          and direction='outbound' and status='queued'
+        order by created_at desc
+        limit 1
+        """,
+        tenant_id,
+        conversation_id,
+    )
+    if not row:
+        return None
+    await conn.execute(
+        """
+        update app.messages
+        set status='sent', sent_at=now()
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        row['id'],
+    )
+    await conn.execute(
+        """
+        update app.domain_events
+        set published_at=now()
+        where tenant_id=$1 and aggregate_id=$2 and event_name='message.queued'
+          and published_at is null
+        """,
+        tenant_id,
+        row['id'],
+    )
+    return {
+        'id': str(row['id']),
+        'body_text': row['body_text'] or '',
+        'message_type': row['message_type'],
+        'created_at': row['created_at'].isoformat() if row.get('created_at') else None,
+    }
+
+
+@web_router.post('/chat/start', status_code=201)
+async def web_chat_start(
+    payload: WebChatStart,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+    tenant_row = await conn.fetchrow(
+        'select id, slug from app.tenants where slug=$1 and deleted_at is null',
+        payload.tenant_slug,
+    )
+    if not tenant_row:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    tenant_id: UUID = tenant_row['id']
+
+    channel = await conn.fetchrow(
+        f"select {WEB_CHANNEL_PROJECTION} from app.tenant_channels where tenant_id=$1 and provider='web'",
+        tenant_id,
+    )
+    if not channel or channel['status'] != 'active':
+        raise HTTPException(status_code=404, detail='Web channel is not active for this tenant')
+
+    expected_token = resolve_secret_ref(channel['token_ref'])
+    if not constant_time_equals(payload.widget_token, expected_token):
+        raise HTTPException(status_code=401, detail='Invalid widget token')
+
+    origin = request.headers.get('origin') or request.headers.get('referer')
+    allowed = list(channel['allowed_origins'] or [])
+    if allowed and not origin_is_allowed(origin, allowed):
+        raise HTTPException(status_code=403, detail='Origin not allowed for this widget')
+
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    lead_source = build_lead_source(
+        utm_source=payload.utm_source,
+        utm_medium=payload.utm_medium,
+        utm_campaign=payload.utm_campaign,
+        referrer=payload.referrer,
+    )
+
+    # Look up existing contact by phone or email if provided, otherwise create new.
+    existing_contact = None
+    if payload.phone:
+        existing_contact = await conn.fetchrow(
+            'select * from app.contacts where tenant_id=$1 and phone_e164=$2',
+            tenant_id,
+            payload.phone.strip(),
+        )
+
+    if existing_contact:
+        contact = existing_contact
+    else:
+        if payload.phone:
+            wa_id = payload.phone.strip()
+            phone_e164 = payload.phone.strip()
+        else:
+            seed = f'{tenant_id}:{payload.email or ""}:{secrets.token_hex(8)}'
+            wa_id, phone_e164 = synthesize_web_identity(seed)
+        contact_metadata = {'email': payload.email} if payload.email else {}
+        contact = await conn.fetchrow(
+            """
+            insert into app.contacts (
+              tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source
+            )
+            values ($1, $2, $3, $4, $5, 'web_widget', $6::jsonb, $7::jsonb)
+            returning *
+            """,
+            tenant_id,
+            wa_id,
+            phone_e164,
+            hash_phone(phone_e164),
+            payload.name.strip(),
+            json.dumps(contact_metadata),
+            json.dumps(lead_source),
+        )
+
+    conversation = await conn.fetchrow(
+        """
+        insert into app.conversations (tenant_id, contact_id, channel_id, status, opened_by, handoff_required)
+        values ($1, $2, $3, 'open', 'user', false)
+        returning *
+        """,
+        tenant_id,
+        contact['id'],
+        channel['id'],
+    )
+
+    inbound_message = await conn.fetchrow(
+        """
+        insert into app.messages (
+          tenant_id, conversation_id, direction, sender_actor_type,
+          body_text, message_type, status, received_at, payload
+        )
+        values ($1, $2, 'inbound', 'contact', $3, 'text', 'received', now(), $4::jsonb)
+        returning *
+        """,
+        tenant_id,
+        conversation['id'],
+        payload.message.strip(),
+        json.dumps({
+            'channel': 'web',
+            'origin': origin,
+            'lead_source': lead_source,
+        }),
+    )
+
+    await notify_operations_change(
+        conn,
+        tenant_id,
+        'conversation.changed',
+        conversation_id=conversation['id'],
+        message_id=inbound_message['id'],
+    )
+
+    try:
+        await orchestrate_inbound_message(
+            conn,
+            tenant_id=tenant_id,
+            channel_id=channel['id'],
+            channel_account_mode=channel['account_mode'] or 'live',
+            conversation=conversation,
+            contact=contact,
+            inbound_message=inbound_message,
+        )
+    except Exception:
+        log.exception(
+            'web_widget.orchestrator_error',
+            tenant_id=str(tenant_id),
+            conversation_id=str(conversation['id']),
+        )
+
+    bot_reply = await _persist_bot_reply_sync(
+        conn,
+        tenant_id=tenant_id,
+        conversation_id=conversation['id'],
+    )
+
+    settings = get_settings()
+    session_token, expires_at = issue_session_token(
+        secret_key=settings.jwt_secret,
+        tenant_id=tenant_id,
+        conversation_id=conversation['id'],
+        contact_id=contact['id'],
+        issuer=settings.jwt_issuer,
+    )
+
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type='anonymous',
+        actor_id=str(contact['id']),
+        action='web_widget.chat_started',
+        entity_type='conversation',
+        entity_id=str(conversation['id']),
+        metadata={'lead_source': lead_source},
+    )
+
+    return {
+        'conversation_id': str(conversation['id']),
+        'contact_id': str(contact['id']),
+        'session_token': session_token,
+        'session_expires_at': expires_at.isoformat(),
+        'inbound_message_id': str(inbound_message['id']),
+        'bot_reply': bot_reply,
+        'lead_source': lead_source,
+    }
+
+
+@web_router.post('/chat/{conversation_id}/messages', status_code=201)
+async def web_chat_send_message(
+    conversation_id: UUID,
+    payload: WebChatMessage,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    authorization: str | None = Header(default=None),
+):
+    session = _resolve_web_session(request, authorization)
+    if session.get('conversation_id') != str(conversation_id):
+        raise HTTPException(status_code=403, detail='Session token does not match conversation')
+
+    tenant_id = UUID(session['tenant_id'])
+    contact_id = UUID(session['contact_id'])
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    conversation = await conn.fetchrow(
+        'select * from app.conversations where tenant_id=$1 and id=$2',
+        tenant_id,
+        conversation_id,
+    )
+    if not conversation or conversation['contact_id'] != contact_id:
+        raise HTTPException(status_code=404, detail='Conversation not found')
+
+    channel = await conn.fetchrow(
+        'select * from app.tenant_channels where tenant_id=$1 and id=$2',
+        tenant_id,
+        conversation['channel_id'],
+    )
+    if not channel or channel['provider'] != 'web':
+        raise HTTPException(status_code=400, detail='Conversation is not on the web channel')
+
+    contact = await conn.fetchrow(
+        'select * from app.contacts where tenant_id=$1 and id=$2',
+        tenant_id,
+        contact_id,
+    )
+    if not contact:
+        raise HTTPException(status_code=404, detail='Contact not found')
+
+    inbound_message = await conn.fetchrow(
+        """
+        insert into app.messages (
+          tenant_id, conversation_id, direction, sender_actor_type,
+          body_text, message_type, status, received_at, payload
+        )
+        values ($1, $2, 'inbound', 'contact', $3, 'text', 'received', now(), $4::jsonb)
+        returning *
+        """,
+        tenant_id,
+        conversation_id,
+        payload.body.strip(),
+        json.dumps({'channel': 'web'}),
+    )
+
+    await notify_operations_change(
+        conn,
+        tenant_id,
+        'conversation.changed',
+        conversation_id=conversation_id,
+        message_id=inbound_message['id'],
+    )
+
+    try:
+        await orchestrate_inbound_message(
+            conn,
+            tenant_id=tenant_id,
+            channel_id=channel['id'],
+            channel_account_mode=channel['account_mode'] or 'live',
+            conversation=conversation,
+            contact=contact,
+            inbound_message=inbound_message,
+        )
+    except Exception:
+        log.exception(
+            'web_widget.orchestrator_error',
+            tenant_id=str(tenant_id),
+            conversation_id=str(conversation_id),
+        )
+
+    bot_reply = await _persist_bot_reply_sync(
+        conn,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+    )
+
+    return {
+        'inbound_message_id': str(inbound_message['id']),
+        'bot_reply': bot_reply,
+    }
+
+
+@web_router.get('/chat/{conversation_id}/messages')
+async def web_chat_history(
+    conversation_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    authorization: str | None = Header(default=None),
+):
+    session = _resolve_web_session(request, authorization)
+    if session.get('conversation_id') != str(conversation_id):
+        raise HTTPException(status_code=403, detail='Session token does not match conversation')
+    tenant_id = UUID(session['tenant_id'])
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        """
+        select id, direction, sender_actor_type, body_text, message_type, created_at
+        from app.messages
+        where tenant_id=$1 and conversation_id=$2
+        order by created_at asc
+        """,
+        tenant_id,
+        conversation_id,
+    )
+    return {
+        'conversation_id': str(conversation_id),
+        'messages': [
+            {
+                'id': str(row['id']),
+                'direction': row['direction'],
+                'sender_actor_type': row['sender_actor_type'],
+                'body_text': row['body_text'] or '',
+                'message_type': row['message_type'],
+                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+            }
+            for row in rows
+        ],
+    }
+
+
 @webhook_router.get('/whatsapp')
 async def verify_whatsapp_webhook(
     hub_mode: str | None = Query(default=None, alias='hub.mode'),
@@ -5597,6 +6125,18 @@ async def analytics_overview(
         tenant_id, retention_start, range_end,
     )
 
+    lead_source_rows = await conn.fetch(
+        """
+        select coalesce(nullif(lead_source->>'channel', ''), 'unknown') as channel,
+               count(*)::int as count
+        from app.contacts
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        group by 1
+        order by count desc
+        """,
+        tenant_id, range_start, range_end,
+    )
+
     conv_total = conv_row['total'] or 0
     handoff_count = conv_row['handoff_count'] or 0
     handoff_rate = (handoff_count / conv_total * 100) if conv_total else 0.0
@@ -5642,6 +6182,10 @@ async def analytics_overview(
             'retention_rate_pct': round(retention_rate, 2),
             'window_days': 90,
         },
+        'lead_sources': [
+            {'channel': row['channel'], 'count': row['count']}
+            for row in lead_source_rows
+        ],
     }
 
 
@@ -6229,6 +6773,7 @@ async def cancel_campaign(
 
 
 router.include_router(public_router)
+router.include_router(web_router)
 router.include_router(webhook_router)
 router.include_router(platform_admin_router)
 router.include_router(tenant_signup_router)

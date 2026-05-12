@@ -359,6 +359,31 @@ class CampaignLaunch(BaseModel):
     scheduled_at: datetime | None = None
 
 
+class WebChannelUpsert(BaseModel):
+    enabled: bool = True
+    allowed_origins: list[str] = Field(default_factory=list)
+    primary_color: str | None = Field(default=None, pattern=r'^#[0-9a-fA-F]{6}$')
+    greeting: str | None = Field(default=None, max_length=500)
+    rotate_widget_token: bool = False
+
+
+class WebChatStart(BaseModel):
+    tenant_slug: str = Field(min_length=1, max_length=160)
+    widget_token: str = Field(min_length=8, max_length=512)
+    name: str = Field(min_length=1, max_length=160)
+    phone: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=320)
+    message: str = Field(min_length=1, max_length=4000)
+    utm_source: str | None = Field(default=None, max_length=160)
+    utm_medium: str | None = Field(default=None, max_length=160)
+    utm_campaign: str | None = Field(default=None, max_length=160)
+    referrer: str | None = Field(default=None, max_length=2048)
+
+
+class WebChatMessage(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
 class PromptCreate(BaseModel):
     tenant_id: UUID | None = None
     vertical_code: str = 'common'

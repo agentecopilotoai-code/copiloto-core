@@ -54,13 +54,15 @@ create table app.tenant_settings (
 create table app.tenant_channels (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
-  provider text not null check (provider in ('whatsapp_cloud_api')),
+  provider text not null check (provider in ('whatsapp_cloud_api','web')),
   business_id text,
   waba_id text,
   phone_number_id text,
   whatsapp_business_profile_id text,
   solution_id text,
   display_phone_number text,
+  allowed_origins text[] not null default '{}',
+  widget_config jsonb not null default '{}'::jsonb,
   token_ref text not null,
   app_secret_ref text,
   verify_token_hash bytea,
@@ -112,6 +114,7 @@ create table app.contacts (
   opt_out_at timestamptz,
   tags text[] not null default '{}',
   metadata jsonb not null default '{}'::jsonb,
+  lead_source jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, wa_id),
@@ -119,6 +122,7 @@ create table app.contacts (
 );
 create index ix_contacts_tenant_phone on app.contacts(tenant_id, phone_e164);
 create index gin_contacts_tags on app.contacts using gin(tags);
+create index gin_contacts_lead_source on app.contacts using gin(lead_source);
 
 create table app.conversations (
   id uuid primary key default gen_random_uuid(),
