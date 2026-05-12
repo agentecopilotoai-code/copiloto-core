@@ -116,6 +116,7 @@ create table app.contacts (
   tags text[] not null default '{}',
   metadata jsonb not null default '{}'::jsonb,
   lead_source jsonb not null default '{}'::jsonb,
+  qualification jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, wa_id),
@@ -373,6 +374,61 @@ create table app.contact_notes (
 );
 create index ix_contact_notes_contact on app.contact_notes(tenant_id, contact_id, created_at desc);
 
+create table app.qualification_questions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  position int not null default 0,
+  label text not null,
+  kind text not null check (kind in ('free_text','single_choice','multi_choice','yes_no','number')),
+  options jsonb not null default '[]'::jsonb,
+  required boolean not null default true,
+  applies_to_service_ids uuid[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_qualification_questions_tenant on app.qualification_questions(tenant_id, position);
+
+create table app.media_assets (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  kind text not null check (kind in ('image','video','pdf','audio')),
+  label text not null,
+  description text,
+  storage_backend text not null check (storage_backend in ('local','s3')),
+  storage_bucket text,
+  object_key text not null,
+  source_uri text not null,
+  mime_type text not null,
+  sha256 text not null,
+  size_bytes bigint not null check (size_bytes > 0),
+  tags text[] not null default '{}',
+  uploaded_by_user_id uuid references app.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_media_assets_tenant on app.media_assets(tenant_id, created_at desc);
+create index gin_media_assets_tags on app.media_assets using gin(tags);
+
+create table app.promotions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  name text not null,
+  description text,
+  media_asset_id uuid references app.media_assets(id) on delete set null,
+  valid_from timestamptz,
+  valid_until timestamptz,
+  applies_to_service_ids uuid[] not null default '{}',
+  coupon_code text,
+  discount_percent numeric(5,2),
+  is_active boolean not null default true,
+  sort_order int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (valid_from is null or valid_until is null or valid_from <= valid_until)
+);
+create index ix_promotions_tenant_active on app.promotions(tenant_id, is_active, sort_order);
+create index gin_promotions_services on app.promotions using gin(applies_to_service_ids);
+
 create table app.campaigns (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -544,6 +600,11 @@ alter table app.knowledge_chunks add constraint uq_knowledge_chunks_tenant_id_id
 alter table app.handoffs add constraint uq_handoffs_tenant_id_id unique (tenant_id, id);
 alter table app.contact_tags add constraint uq_contact_tags_tenant_id_id unique (tenant_id, id);
 alter table app.contact_notes add constraint uq_contact_notes_tenant_id_id unique (tenant_id, id);
+alter table app.qualification_questions add constraint uq_qualification_questions_tenant_id_id unique (tenant_id, id);
+alter table app.media_assets add constraint uq_media_assets_tenant_id_id unique (tenant_id, id);
+alter table app.promotions add constraint uq_promotions_tenant_id_id unique (tenant_id, id);
+alter table app.promotions
+  add constraint fk_promotions_tenant_media foreign key (tenant_id, media_asset_id) references app.media_assets(tenant_id, id);
 alter table app.contact_tag_assignments
   add constraint fk_contact_tag_assignments_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
   add constraint fk_contact_tag_assignments_tenant_tag foreign key (tenant_id, tag_id) references app.contact_tags(tenant_id, id);
@@ -599,6 +660,9 @@ create trigger trg_prompt_templates_touch before update on app.prompt_templates 
 create trigger trg_handoffs_touch before update on app.handoffs for each row execute function app.touch_updated_at();
 create trigger trg_contact_tags_touch before update on app.contact_tags for each row execute function app.touch_updated_at();
 create trigger trg_contact_notes_touch before update on app.contact_notes for each row execute function app.touch_updated_at();
+create trigger trg_qualification_questions_touch before update on app.qualification_questions for each row execute function app.touch_updated_at();
+create trigger trg_media_assets_touch before update on app.media_assets for each row execute function app.touch_updated_at();
+create trigger trg_promotions_touch before update on app.promotions for each row execute function app.touch_updated_at();
 create trigger trg_campaigns_touch before update on app.campaigns for each row execute function app.touch_updated_at();
 
 alter table app.tenant_channels enable row level security;
@@ -621,6 +685,9 @@ alter table app.handoffs enable row level security;
 alter table app.contact_tags enable row level security;
 alter table app.contact_tag_assignments enable row level security;
 alter table app.contact_notes enable row level security;
+alter table app.qualification_questions enable row level security;
+alter table app.media_assets enable row level security;
+alter table app.promotions enable row level security;
 alter table app.campaigns enable row level security;
 alter table app.webhook_events_raw enable row level security;
 alter table app.domain_events enable row level security;
@@ -633,6 +700,8 @@ begin
     'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','whatsapp_templates','appointment_feedback','service_requests','quotes',
     'appointments','reminder_jobs','knowledge_documents','knowledge_chunks','prompt_templates','handoffs',
     'contact_tags','contact_tag_assignments','contact_notes',
+    'qualification_questions',
+    'media_assets','promotions',
     'campaigns',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop

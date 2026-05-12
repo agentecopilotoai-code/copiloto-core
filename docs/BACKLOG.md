@@ -200,116 +200,23 @@ TASK-0048 (funnel de conversión y atribución por campaña)        # cierre com
 
 ---
 
-### TASK-0042 — Calificación conversacional previa al booking
-
-- **Estado:** PENDING
-- **Por qué bloquea:** el bot salta del saludo al primer paso del booking sin entender **por qué** llama el cliente. Esto produce citas mal clasificadas (servicio equivocado, urgencias no priorizadas, primer contacto tratado igual que recurrente). Es la pieza que más sube conversión y baja no-show.
-- **Alcance:**
-  - Nueva tabla `app.qualification_questions` por tenant (`id, tenant_id, position, label, kind: free_text|single_choice|multi_choice|yes_no|number, options jsonb, required bool, applies_to_service_ids uuid[], created_at, updated_at`) con RLS y trigger touch.
-  - Mini state machine `qualification_flow.py` que corre **antes** de `booking_flow.maybe_run_booking_flow` cuando el intent es `book_appointment`/`check_availability` y no hay respuestas previas en la conversación. Persiste respuestas en `conversations.metadata.qualification` y en una columna nueva `contacts.qualification jsonb` (last snapshot).
-  - Render por WhatsApp: `single_choice`/`yes_no` → botones interactivos (≤3) o lista (>3). `free_text`/`number` → mensaje de texto con validación regex. Idempotencia por `domain_events('qualification_flow.handled')`.
-  - Cuando todas las preguntas requeridas están respondidas, el flow encadena con `booking_flow` pasándole `recommended_service_id` si la lógica del tenant lo deriva (ver criterio).
-  - UI en `admin-panel/.../tenantSetup/QualificationQuestionsPanel.jsx` (nueva pestaña dentro de **Negocio**): CRUD de preguntas con drag-handle de orden, preview en vivo del flujo, mapeo opcional pregunta → servicio (ej.: "¿es tu primera vez?" sí → derivar al servicio "Valoración inicial").
-  - El perfil de contacto en `ContactsModule` muestra las últimas respuestas de calificación.
-- **Criterios de aceptación:**
-  - Un tenant nuevo configura 3 preguntas (motivo, urgencia, primera vez sí/no) en < 2 minutos desde el panel.
-  - Una conversación `hola, quiero una cita` recibe primero las preguntas, en orden, antes del listado de servicios.
-  - Si una respuesta `single_choice` mapea a un `service_id`, el bot **brinca** la pantalla de selección de servicio en el booking.
-  - El campo `contacts.qualification` queda consultable en `GET /v1/contacts/{id}/profile` y se muestra en `OperationsDesk`.
-  - Auditoría: `qualification.created/updated/deleted` y `qualification.answered` (incluye preguntas + respuestas + `service_id` derivado si aplica).
-  - Tests: ≥ 15 estáticos cubriendo schema, registro de endpoints, helpers Pydantic, state machine completa con `FakeConn`, integración con `rag_orchestrator` (no corre si el intent no es de booking).
-- **Notas:**
-  - No usar LLM para parsear respuestas en MVP (solo regex/coincidencia exacta sobre `options.value`); cualquier respuesta inesperada vuelve a presentar la pregunta.
-  - El flow respeta opt-out: si el cliente escribe `stop` durante la calificación, se aborta y se persiste el opt-out.
+_TASK-0042 — Calificación conversacional previa al booking: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
-### TASK-0043 — Cancelación y reprogramación self-service por WhatsApp
-
-- **Estado:** PENDING
-- **Por qué bloquea:** los intents `cancel_appointment` y `reschedule_appointment` ya están clasificados pero el bot **no los ejecuta** — solo lo hace un humano desde Operations Desk. Sin esto, el cliente llama por teléfono o no avisa → no-show. Imposible bajar la tasa sin esta pieza.
-- **Alcance:**
-  - Nuevo módulo `app/services/appointment_self_service.py` con dos sub-flows ramificados desde `rag_orchestrator` cuando el intent matchea:
-    - `maybe_run_cancel_flow`: busca la próxima cita del contacto en estado `scheduled|confirmed` (LIMIT 1 por `starts_at`), pide confirmación con botones `Sí, cancelar` / `No, mantener`, actualiza `status='cancelled'` y dispara `cancel_appointment_reminder_jobs`. Auditoría `bot.appointment_cancelled`.
-    - `maybe_run_reschedule_flow`: reutiliza `compute_free_slots` para ofrecer 3 horarios alternativos con el **mismo recurso/servicio**; al elegir, `UPDATE appointments SET starts_at=..., ends_at=...` dentro de un savepoint que captura `ExclusionViolationError` (ver patrón de `booking_flow._create_appointment`) y `regenerate_appointment_reminder_jobs`. Auditoría `bot.appointment_rescheduled`.
-  - Ambos flujos persisten estado en `conversations.metadata.self_service` y son idempotentes por `inbound_message.id`.
-  - Ventana de política: el tenant puede definir `tenant_settings.escalation_policy.self_service.min_hours_before_start` (default 2h). Por debajo de ese umbral el bot responde "muy cerca para hacerlo solo" y lo escala a humano (`handoff_required=true`).
-  - Nuevos prefijos `cancel_confirm:` y `resched_slot:` (interactive_id) consistentes con `book_*`.
-  - `OperationsDesk`: indicador visual en el inbox cuando una cita fue modificada por el bot (badge "self-service") para que el agente lo sepa.
-- **Criterios de aceptación:**
-  - Cliente escribe `quiero cancelar mi cita` → bot muestra cita, confirma, cancela, cancela jobs pendientes, manda "Listo, tu cita del DD/MM se canceló".
-  - Cliente escribe `cambiar mi cita` → bot muestra 3 slots libres mismo recurso, cliente elige, cita movida, jobs regenerados (cancelados los viejos + creados los nuevos).
-  - Si la cita está a < 2h de inicio (configurable), el bot escala a humano sin actuar.
-  - Si dos clientes intentan agarrar el mismo slot al mismo tiempo, el segundo recibe "ese horario se acaba de ocupar" y vuelve al paso de slots.
-  - Tests: ≥ 12 estáticos, cubriendo happy path de cancel y reschedule, ventana de política, `ExclusionViolationError`, idempotencia, integración con `rag_orchestrator`.
-- **Notas:**
-  - No se reasigna a otro recurso automáticamente (mantener UX simple). Si quieren cambiar profesional, el cliente cancela y vuelve a agendar — eso lo señaliza el bot.
-  - No se permite reschedule si la cita ya tiene `payment_status='paid'` sin antes pasar por agente humano (evita ruido de reembolsos en MVP).
+_TASK-0043 — Cancelación y reprogramación self-service por WhatsApp: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
-### TASK-0044 — Auto-rebooking conversacional al declinar la confirmación activa
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0043 (reutiliza el sub-flujo de reschedule).
-- **Por qué bloquea:** hoy cuando el cliente responde `no` al pedido de confirmación activa, solo se actualiza `appointments.confirmation_status='declined'` y queda esperando a un humano. La tasa de rescate de no-show no mejora. La nota de TASK-0035 ya señala que esto se aplazó.
-- **Alcance:**
-  - Modificar `feedback_flow.maybe_record_confirmation`: cuando la decisión es `declined` y el tenant tiene `notification_settings.auto_rebook_on_decline: true` (nuevo toggle, default `true`), invocar el sub-flow de reschedule de TASK-0043 con un mensaje empático ("Sin problema. ¿Quieres elegir otro horario?") seguido de los 3 slots alternativos.
-  - Si el cliente elige un slot → cita reagendada, jobs regenerados, agente notificado solo si lo desea (no es escalación obligatoria).
-  - Si el cliente responde `no` al rebooking → entonces sí se cancela la cita y se escala a humano para llamarlo / cerrar el ciclo.
-  - Toggle adicional en panel `TenantSetupWizard > Notificaciones`: "Ofrecer reprogramar al declinar la confirmación".
-- **Criterios de aceptación:**
-  - Cliente responde `no` al pedido de confirmación → bot ofrece 3 slots; si elige uno, cita reagendada sin intervención humana.
-  - Toggle off → comportamiento actual (solo escala).
-  - Tests: ≥ 5 estáticos: integración del flow, respeta el toggle, no se dispara fuera de la ventana `confirmation_reminder_hours`.
-- **Notas:**
-  - Lo más importante en este MVP es **no** intentar adivinar la mejor hora alternativa con LLM — el cliente elige de la lista. Mantener la UX consistente con TASK-0043.
+_TASK-0044 — Auto-rebooking conversacional al declinar la confirmación activa: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
-### TASK-0045 — Escalamiento automático en feedback negativo
-
-- **Estado:** PENDING
-- **Por qué bloquea:** las quejas se pierden en silencio — un feedback de 1 o 2 estrellas queda solo en `appointment_feedback` sin que nadie se entere. La empresa pierde la oportunidad de "service recovery" y empeora retención.
-- **Alcance:**
-  - En `feedback_flow.maybe_record_feedback`: si `rating <= 2`, además de insertar el feedback:
-    1. Marcar la conversación con `handoff_required=true`, `handoff_reason='negative_feedback'`.
-    2. Disparar `domain_event('feedback.negative_received')` con `appointment_id`, `rating` y `comment`.
-    3. Auto-asignar etiqueta `Atención prioritaria` (creada por bootstrap si no existe).
-    4. Responder al cliente con un mensaje empático configurable (`tenant_settings.notification_settings.negative_feedback_reply`, default "Lamentamos mucho oír eso. Un agente se va a comunicar contigo enseguida.").
-  - Operations Desk: nueva pestaña/filtro **Quejas** que lista conversaciones con `handoff_reason='negative_feedback'` no resueltas, ordenadas por `created_at desc`, con la calificación y comentario visibles directamente en el inbox.
-  - Notificación push opcional al canal de Slack del tenant (si configura webhook URL en `tenant_settings.notification_channels.slack_webhook_url`) — fuera del MVP si suma scope.
-- **Criterios de aceptación:**
-  - Un feedback de 2 estrellas activa el handoff y aparece en el filtro **Quejas** del desk dentro de 5 segundos.
-  - Un feedback de 4 estrellas NO escala.
-  - Tests: ≥ 6 estáticos: trigger correcto por rating, conversación marcada, etiqueta asignada, mensaje de respuesta presente, domain_event emitido, filtro **Quejas** registrado en UI.
-- **Notas:**
-  - El umbral (≤2) puede salir a `notification_settings.negative_feedback_threshold` en una iteración futura; en MVP se hardcodea por simplicidad y porque la escala 1-5 es estándar.
-  - La etiqueta se crea automáticamente la primera vez si el tenant no la tiene; idempotente por `(tenant_id, name='Atención prioritaria')`.
+_TASK-0045 — Escalamiento automático en feedback negativo: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
-### TASK-0046 — Biblioteca de medios y promociones activas que el bot puede enviar
-
-- **Estado:** PENDING
-- **Por qué bloquea:** durante la orientación el bot solo manda texto. No puede compartir fotos del local, video del procedimiento ni la imagen de la promoción del mes. La diferencia con un agente humano real es notoria y baja conversión en servicios estéticos/médicos.
-- **Alcance:**
-  - Nueva tabla `app.media_assets` (`id, tenant_id, kind: image|video|pdf|audio, label, description, file_path, mime_type, sha256, size_bytes, tags text[], created_at, updated_at`) con RLS, índice `gin(tags)`.
-  - Nueva tabla `app.promotions` (`id, tenant_id, name, description, media_asset_id, valid_from, valid_until, applies_to_service_ids uuid[], coupon_code, discount_percent numeric(5,2), is_active, sort_order, created_at, updated_at`) con check `valid_from <= valid_until`.
-  - Endpoints CRUD bajo `tenant_admin_router`: `/v1/tenants/{id}/media`, `/v1/tenants/{id}/promotions`. Upload del binario reutiliza el storage de knowledge (`MinIO/S3`) con prefijo `media/<tenant_id>/`.
-  - Helper `app/services/promotions.py.attach_active_promo(conn, tenant_id, service_id)` que devuelve la promoción vigente para un servicio (o `None`). Se llama desde:
-    - `booking_flow._present_services` para anteponer un mensaje con la imagen + texto de la promoción del primer servicio que la tenga.
-    - El cierre del booking, justo después del resumen, si la cita usa un servicio con promo activa.
-  - UI nueva en `admin-panel`: módulo **Medios y promociones** (`MediaLibraryModule.jsx`) con uploader drag-and-drop, lista en grid, etiquetas, vista previa. Y en `ServiceCatalog.jsx`, link a una promoción existente desde el formulario del servicio.
-  - El RAG no indexa media — solo el texto descriptivo. Las imágenes/videos se mandan por `media_url` directo (Meta los cachea por `media_id` después del primer envío).
-- **Criterios de aceptación:**
-  - Admin sube una foto del local, la etiqueta `lobby`, queda accesible en < 5s.
-  - Admin crea una promoción "Limpieza dental 20% - mayo" con imagen, vigencia y mapeo al servicio "Limpieza dental".
-  - Cliente pide cita para "Limpieza dental" → bot manda primero la imagen de la promo con el texto, después el flujo normal de booking.
-  - Tests: ≥ 10 estáticos: tablas + RLS, endpoints CRUD, integración con `booking_flow`, helper `attach_active_promo`, módulo registrado en sidebar, validación de mime types permitidos.
-- **Notas:**
-  - Cap de tamaño por archivo: imágenes 5MB, videos 16MB (limit Meta WhatsApp Cloud API), pdf 100MB. El uploader rechaza por encima en cliente y servidor.
-  - Si el media falla al enviarse (Meta down), el bot manda solo el texto de la promo y deja un `domain_event('promo.media_send_failed')` para retry. No bloquea el booking.
+_TASK-0046 — Biblioteca de medios y promociones activas: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

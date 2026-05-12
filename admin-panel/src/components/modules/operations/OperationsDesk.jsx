@@ -18,6 +18,7 @@ import {
   listAppointmentFeedback,
   listAppointments,
   listContactTags,
+  listComplaintConversations,
   listConversations,
   listResources,
   listServiceRequests,
@@ -273,6 +274,8 @@ function deliveryLabel(message) {
 
 export function OperationsDesk({ module, session, tenant }) {
   const [conversations, setConversations] = useState([]);
+  const [complaints, setComplaints] = useState([]);
+  const [inboxFilter, setInboxFilter] = useState('all');
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [conversationDetail, setConversationDetail] = useState(null);
   const [messageText, setMessageText] = useState('');
@@ -318,9 +321,13 @@ export function OperationsDesk({ module, session, tenant }) {
 
   function refreshConversations(showNotice = false, silent = false) {
     if (!tenant?.id) return Promise.resolve();
-    return listConversations(session, tenant.id)
-      .then((items) => {
+    return Promise.all([
+      listConversations(session, tenant.id),
+      listComplaintConversations(session, tenant.id).catch(() => []),
+    ])
+      .then(([items, complaintItems]) => {
         setConversations(items);
+        setComplaints(complaintItems || []);
         setSelectedConversationId((currentId) => currentId || items[0]?.id || null);
         if (showNotice) setNotice({ type: 'success', text: 'Inbox actualizado.' });
       })
@@ -1085,8 +1092,84 @@ export function OperationsDesk({ module, session, tenant }) {
 
       <div className="operations-layout">
         <aside className="conversation-list" aria-label="Conversaciones">
+          <div
+            role="tablist"
+            aria-label="Filtro de inbox"
+            style={{ display: 'flex', gap: '0.25rem', marginBottom: '0.5rem' }}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={inboxFilter === 'all'}
+              className={`tab ${inboxFilter === 'all' ? 'active' : ''}`}
+              onClick={() => setInboxFilter('all')}
+            >
+              Todas ({conversations.length})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={inboxFilter === 'complaints'}
+              className={`tab ${inboxFilter === 'complaints' ? 'active' : ''}`}
+              onClick={() => setInboxFilter('complaints')}
+              title="Conversaciones escaladas por feedback negativo"
+            >
+              Quejas ({complaints.length})
+            </button>
+          </div>
+
+          {inboxFilter === 'complaints' ? (
+            <>
+              {complaints.length === 0 ? (
+                <p className="hint">No hay quejas activas en este tenant.</p>
+              ) : null}
+              {complaints.map((complaint) => (
+                <button
+                  key={complaint.id}
+                  type="button"
+                  className={`conversation-card ${complaint.id === selectedConversationId ? 'active' : ''}`}
+                  onClick={() => setSelectedConversationId(complaint.id)}
+                  data-complaint="negative_feedback"
+                >
+                  <span>{complaint.contact_label || complaint.contact_id}</span>
+                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <strong>
+                      {complaint.feedback_rating != null
+                        ? `${complaint.feedback_rating} ★`
+                        : 'Queja'}
+                    </strong>
+                    <span
+                      className="status-pill"
+                      style={{
+                        background: '#dc2626',
+                        color: '#fff',
+                        fontSize: '0.7rem',
+                        padding: '0.1rem 0.4rem',
+                      }}
+                    >
+                      Atención prioritaria
+                    </span>
+                  </div>
+                  <small style={{ fontStyle: 'italic' }}>
+                    {complaint.feedback_comment || 'Sin comentario'}
+                  </small>
+                  <time>{formatDate(complaint.handoff_created_at || complaint.updated_at)}</time>
+                </button>
+              ))}
+            </>
+          ) : null}
+
+          {inboxFilter === 'all' ? (
+            <>
           {conversations.length === 0 ? <p className="hint">No hay conversaciones para este tenant.</p> : null}
-          {conversations.map((conversation) => (
+          {conversations.map((conversation) => {
+            const rawMeta = conversation.metadata;
+            const meta = typeof rawMeta === 'string'
+              ? (() => { try { return JSON.parse(rawMeta); } catch { return null; } })()
+              : rawMeta;
+            const selfService = meta?.self_service;
+            const selfServiceFlow = selfService?.flow;
+            return (
             <button
               className={`conversation-card ${conversation.id === selectedConversationId ? 'active' : ''}`}
               key={conversation.id}
@@ -1101,6 +1184,20 @@ export function OperationsDesk({ module, session, tenant }) {
                     {conversation.current_intent}
                   </span>
                 )}
+                {selfServiceFlow ? (
+                  <span
+                    className="status-pill"
+                    style={{
+                      fontSize: '0.65rem',
+                      padding: '0.05rem 0.4rem',
+                      background: '#0ea5e9',
+                      color: '#fff',
+                    }}
+                    title={`Cita ${selfServiceFlow === 'cancel' ? 'cancelada' : 'reagendada'} por el bot (self-service)`}
+                  >
+                    self-service
+                  </span>
+                ) : null}
               </div>
               {(conversation.contact_tags || []).length > 0 ? (
                 <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
@@ -1123,7 +1220,10 @@ export function OperationsDesk({ module, session, tenant }) {
               <small>{conversation.latest_message_text || 'Sin mensajes aún'}</small>
               <time>{formatDate(conversation.latest_message_at || conversation.updated_at)}</time>
             </button>
-          ))}
+            );
+          })}
+            </>
+          ) : null}
         </aside>
 
         <section className="conversation-detail">
@@ -1149,6 +1249,39 @@ export function OperationsDesk({ module, session, tenant }) {
                   )}
                 </div>
               </div>
+
+              {(() => {
+                const rawMeta = conversationDetail?.metadata;
+                const meta = typeof rawMeta === 'string'
+                  ? (() => { try { return JSON.parse(rawMeta); } catch { return null; } })()
+                  : rawMeta;
+                const qualification = meta?.qualification;
+                const answered = qualification?.answered;
+                if (!answered || typeof answered !== 'object') return null;
+                const entries = Object.entries(answered);
+                if (!entries.length) return null;
+                return (
+                  <div className="handoff-panel" aria-label="Respuestas de calificación">
+                    <div>
+                      <strong>Calificación previa</strong>
+                      <p className="hint">Respuestas capturadas por el bot antes del booking.</p>
+                    </div>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                      {entries.map(([qid, value]) => {
+                        let display = String(value);
+                        if (value === true) display = 'Sí';
+                        else if (value === false) display = 'No';
+                        else if (Array.isArray(value)) display = value.join(', ');
+                        return (
+                          <li key={qid} style={{ fontSize: '0.85rem', padding: '0.15rem 0' }}>
+                            <code style={{ opacity: 0.6 }}>{qid.slice(0, 8)}</code>: <strong>{display}</strong>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                );
+              })()}
 
               <div className="handoff-panel" aria-label="Etiquetas y notas del contacto">
                 <div>

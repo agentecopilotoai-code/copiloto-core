@@ -15,6 +15,196 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0046 — Biblioteca de medios y promociones activas que el bot puede enviar
+
+- **Fecha:** 2026-05-12
+- **Resumen:** durante la orientación el bot solo mandaba texto, lo que en servicios estéticos/médicos resta cierre. Ahora el tenant sube fotos del local, videos de procedimientos y PDFs, los etiqueta y los vincula a una **promoción activa** mapeada a uno o varios servicios. El bot envía la imagen y el texto de la promo **antes** de presentar el listado de servicios (cuando el cliente expresa intención de agendar) y otra vez justo después del resumen del booking, sin bloquear el flujo si el media falla.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`)**:
+    - `app.media_assets(id, tenant_id, kind in (image|video|pdf|audio), label, description, storage_backend, storage_bucket, object_key, source_uri, mime_type, sha256, size_bytes, tags text[], uploaded_by_user_id, created_at, updated_at)` con FK al tenant, `unique (tenant_id, id)`, índice `gin(tags)`, trigger touch y RLS.
+    - `app.promotions(id, tenant_id, name, description, media_asset_id, valid_from, valid_until, applies_to_service_ids uuid[], coupon_code, discount_percent numeric(5,2), is_active, sort_order)` con check `valid_from <= valid_until`, FK compuesta al `media_assets` (mismo tenant), trigger touch, RLS y GIN sobre `applies_to_service_ids`.
+  - **`app/services/media_storage.py`** (nuevo): validador con allowlist de MIME por kind alineado a Meta (image/jpeg|png|webp, video/mp4|3gpp, audio/aac|mp4|mpeg|amr|ogg, application/pdf), caps de tamaño según los límites de WhatsApp Cloud API (5/16/16/100MB), y un `store_media_file` que escribe local o S3 con prefijo `media/<tenant_id>/`. Imports de `boto3` lazy para que entornos de test ligeros no rompan.
+  - **`app/services/promotions.py`** (nuevo): `attach_active_promo(conn, tenant_id, service_id)` corre el SQL que aplica todas las reglas (activa, dentro de ventana, `applies_to_service_ids` vacío o que contiene al servicio) y devuelve la promo con los campos de su media (`media_kind`, `media_source_uri`, `media_mime_type`, …) en una sola fila. `promo_caption(promo)` produce el texto con emoji, descuento, cupón y vigencia. `queue_promo_message` encola el outbound del tipo correcto (image/video/document) con caption y emite el `domain_event('message.queued')`. En fallo, emite `promo.media_send_failed` y devuelve `None` sin abortar el booking.
+  - **`app/services/booking_flow.py`**: `_present_services` recorre la lista buscando el primer servicio con promo activa y la envía antes de la lista de botones. Tras `_create_appointment` y el mensaje de resumen, si el servicio elegido tiene promo activa se envía otra vez como reminder. Cualquier excepción queda en log y no rompe la cita.
+  - **API (`app/api/v1/routes.py`, `app/api/v1/schemas.py`)** — endpoints CRUD completos bajo `tenant_admin_router`:
+    - `GET /v1/tenants/{id}/media?kind=&tag=`
+    - `POST /v1/tenants/{id}/media` (multipart: kind, label, description, tags, file) — valida MIME y tamaño antes de tocar storage; cuenta el upload en `media_asset.created` con `kind` y `size_bytes`.
+    - `PATCH /v1/tenants/{id}/media/{asset_id}` (label/description/tags), `DELETE` (borra el blob físico vía `delete_media_file`).
+    - `GET/POST/PATCH/DELETE /v1/tenants/{id}/promotions` con validación de `media_asset_id` pertenece al tenant y `valid_from <= valid_until`.
+    - Auditoría: `media_asset.{created,updated,deleted}` y `promotion.{created,updated,deleted}`.
+  - **Admin Panel** — nuevo módulo `media-library` (rol `admin`) registrado en `modules.js` y `AdminLayout.jsx`. `MediaLibraryModule.jsx` (nuevo) provee uploader con file picker filtrado por MIME, hint de tamaño máximo por kind, grid de archivos con tags y acciones, formulario CRUD para promociones con selector múltiple de servicios y vinculación al media asset. `ServiceCatalog.jsx` carga las promociones activas en paralelo y muestra un pill 🎁 por cada promo aplicable a cada servicio de la tabla. Helpers nuevos en `services/coreApi.js`: `listMediaAssets`, `uploadMediaAsset` (multipart), `updateMediaAsset`, `deleteMediaAsset`, `listPromotions`, `createPromotion`, `updatePromotion`, `deletePromotion`.
+- **Archivos:**
+  - `infra/postgres/01-schema.sql` — tablas + constraints + RLS + triggers + bloque del loop de policies.
+  - `app/services/media_storage.py` (nuevo) — validación + upload + delete con backend toggle.
+  - `app/services/promotions.py` (nuevo) — helper, caption, queue.
+  - `app/services/booking_flow.py` — hooks pre-list y post-summary.
+  - `app/api/v1/schemas.py` — `MediaAssetUpdate`, `PromotionCreate/Update`, constants.
+  - `app/api/v1/routes.py` — 8 endpoints, imports, normalizers, audit.
+  - `admin-panel/src/data/modules.js` — entrada `media-library`.
+  - `admin-panel/src/components/layout/AdminLayout.jsx` — route + role guard.
+  - `admin-panel/src/components/modules/media/MediaLibraryModule.jsx` (nuevo).
+  - `admin-panel/src/components/modules/services/ServiceCatalog.jsx` — pill por servicio.
+  - `admin-panel/src/services/coreApi.js` — 8 helpers nuevos (uno multipart).
+  - `tests/test_media_promotions_static.py` (nuevo) — 24 tests.
+  - `docs/BACKLOG.md` / `docs/DONE.md`.
+- **Comandos / validaciones:**
+  - `pytest tests/test_media_promotions_static.py` → **24 passed** cubriendo: schema (RLS, índices GIN, constraints, triggers), allowlists MIME (incluye verificar que `image/gif` se rechaza porque Meta no lo soporta), caps de tamaño exactos por Meta, validator (mime/size/kind/empty), `media_object_key` namespacea por tenant y sanea nombres, registro de los 8 endpoints bajo `tenant_admin_router`, auditoría con sus 6 acciones, schemas Pydantic con bounds, `attach_active_promo` (None / row normalizado / SQL con todos los filtros), `promo_caption` (nombre + %off + cupón + vigencia), `queue_promo_message` (outbound + domain event), booking_flow importa y emite el log `booking_flow.promo_close_failed`, módulos del admin panel registrados, helpers exportados, UI con mime hints.
+  - `pytest tests/test_media_promotions_static.py tests/test_negative_feedback_static.py tests/test_auto_rebook_static.py tests/test_self_service_static.py tests/test_qualification_flow_static.py tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_policy_engine_static.py tests/test_notifications_static.py` → **209 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - Admin sube imagen con etiqueta `lobby` → endpoint registra, valida MIME y queda en grid; tags persisten.
+  - Promoción "Limpieza dental 20% - mayo" se crea con imagen, fechas y mapeo al servicio "Limpieza dental".
+  - Cliente con intent `book_appointment` ve primero la imagen + texto de la promo y después la lista de servicios (`_present_services` envía la promo antes del list payload).
+  - 24 tests estáticos (objetivo era ≥10).
+- **Notas:**
+  - Caps de tamaño aplicados tanto del lado cliente (rechazo antes de subir) como del lado servidor (`validate_media_upload`).
+  - El RAG **no** indexa media — solo guardamos el texto descriptivo en la tabla.
+  - Si el insert del outbound falla (DB down, etc.), `queue_promo_message` emite `promo.media_send_failed` para retry futuro y NO bloquea el booking.
+
+---
+
+### TASK-0045 — Escalamiento automático en feedback negativo
+
+- **Fecha:** 2026-05-12
+- **Resumen:** un feedback de 1 o 2 estrellas se enviaba en silencio a `appointment_feedback` y nadie se enteraba. Ahora el bot ejecuta automáticamente el ciclo de "service recovery": marca la conversación para handoff con `reason='negative_feedback'`, asigna la etiqueta `Atención prioritaria` al contacto, responde al cliente con un mensaje empático configurable, emite `feedback.negative_received` para integraciones aguas abajo y expone el caso en una pestaña "Quejas" del Operations Desk con la calificación y el comentario visibles directamente en el inbox.
+- **Implementación:**
+  - **`app/services/feedback_flow.py`** — constantes nuevas (`NEGATIVE_FEEDBACK_THRESHOLD=2`, `NEGATIVE_FEEDBACK_TAG_NAME='Atención prioritaria'`, `NEGATIVE_FEEDBACK_HANDOFF_REASON='negative_feedback'`, `DEFAULT_NEGATIVE_FEEDBACK_REPLY`). Helpers públicos `is_negative_rating(rating)` y `negative_feedback_reply(settings)` (tolera dict/JSON-string/None/invalid). `maybe_record_feedback` ahora acepta `conversation`, `channel_id`, `channel_account_mode` opcionales; cuando el rating es ≤2, llama `_escalate_negative_feedback` que (a) upserta la etiqueta `Atención prioritaria` (`on conflict (tenant_id, name) do nothing`) y la asigna al contacto idempotente; (b) marca la conversación con `handoff_required=true` y crea un `handoffs` open con `reason='negative_feedback'` si no había uno; (c) consulta `notification_settings.negative_feedback_reply` y mete en cola el mensaje empático con `domain_events('message.queued')`; (d) emite el evento `feedback.negative_received` con `appointment_id`, `feedback_id`, `rating`, `comment` y `handoff_reason` (idempotente por feedback_id). Devuelve un trace para que el orquestador sepa qué se aplicó.
+  - **`app/services/rag_orchestrator.py`** — propaga `conversation`/`channel_id`/`channel_account_mode` a `maybe_record_feedback` y registra `negative_escalated` en el log estructurado para que las trazas muestren cuándo se disparó.
+  - **API (`app/api/v1/routes.py`)** — nuevo endpoint `GET /v1/conversations/complaints` bajo `tenant_ops_router` (`require_min_role('agent')`). Devuelve conversaciones con un `handoffs` open/accepted cuyo `reason='negative_feedback'`, joineadas con el `appointment_feedback` más reciente del contacto (rating + comment + appointment_id). Ordenado por `h.created_at desc`, paginado con `limit` (default 50, máx 200).
+  - **Admin Panel** — `OperationsDesk` arma el inbox con dos tabs (**Todas (N)** / **Quejas (N)**). El estado `inboxFilter` decide qué lista renderizar; cuando entra en `complaints`, cada card muestra el contacto, la calificación con ★, el comentario en cursiva y un pill rojo con "Atención prioritaria". El fetch de `refreshConversations` ahora pide ambas listas en paralelo (`listConversations` + `listComplaintConversations`). Helper nuevo en `services/coreApi.js`: `listComplaintConversations(session, tenantId)`.
+- **Archivos:**
+  - `app/services/feedback_flow.py` — constants, helpers, `_escalate_negative_feedback`, `_ensure_negative_feedback_tag`, hook en `maybe_record_feedback`.
+  - `app/services/rag_orchestrator.py` — propagación de conversation/channel + log enriquecido.
+  - `app/api/v1/routes.py` — endpoint `/conversations/complaints`.
+  - `admin-panel/src/services/coreApi.js` — `listComplaintConversations`.
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx` — tabs Todas/Quejas, render de complaint cards, fetch en paralelo.
+  - `tests/test_negative_feedback_static.py` (nuevo) — 18 tests.
+  - `docs/BACKLOG.md` / `docs/DONE.md`.
+- **Comandos / validaciones:**
+  - `pytest tests/test_negative_feedback_static.py` → **18 passed** cubriendo: constantes y umbral; parsing del reply custom (dict, JSON-string, vacío, inválido); parser de rating; presencia de `_escalate_negative_feedback`, evento `feedback.negative_received`, asignación de tag, conditional channel/conversation; orquestador thread-through; endpoint `complaints` con join correcto y filtros; helpers en `coreApi.js`; UI con tabs y data attributes; 8 escenarios FakeConn end-to-end (rating 2 dispara todo, rating 1 con reply custom, rating 4 no escala, rating 5 sin events, rating 2 sin conversation manda evento+tag pero no reply, sin cita devuelve None, texto no-rating devuelve None, idempotencia del tag cuando ya existe).
+  - `pytest tests/test_negative_feedback_static.py tests/test_auto_rebook_static.py tests/test_self_service_static.py tests/test_qualification_flow_static.py tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_policy_engine_static.py tests/test_notifications_static.py` → **185 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - Feedback de 2 estrellas → handoff activado (`handoff_required=true`, `handoffs.reason='negative_feedback'`), etiqueta `Atención prioritaria` asignada, mensaje empático enviado, `feedback.negative_received` emitido, queja aparece inmediatamente en el filtro **Quejas** del desk.
+  - Feedback de 4 estrellas → solo se guarda en `appointment_feedback`; no escala, no asigna etiqueta, no responde.
+  - 18 tests estáticos (objetivo era ≥ 6).
+- **Notas:**
+  - El umbral se mantiene hardcodeado en `≤2` para el MVP. Si en una iteración futura se quiere subir o bajar, basta con leer `notification_settings.negative_feedback_threshold` en `is_negative_rating`.
+  - La etiqueta se crea bajo demanda la primera vez (no requiere migración) y queda visible en todos los CRUD de etiquetas existentes para el tenant.
+  - El push opcional a Slack queda fuera de MVP como anticipaba la spec; el evento `feedback.negative_received` deja el hook abierto para una integración futura.
+
+---
+
+### TASK-0044 — Auto-rebooking conversacional al declinar la confirmación activa
+
+- **Fecha:** 2026-05-12
+- **Resumen:** cuando el cliente responde "no" al pedido de confirmación activa, hasta ahora se quedaba `confirmation_status='declined'` esperando a un humano. Ahora, si el tenant tiene `notification_settings.auto_rebook_on_decline` activo (default `true`), el bot envía un mensaje empático ("Sin problema. ¿Quieres elegir otro horario?") seguido de 3 slots libres del mismo recurso/servicio. Si elige uno, la cita se reagenda y los jobs se regeneran. Si vuelve a decir "no", la cita se cancela y se escala a humano para cerrar el ciclo. Toda la mecánica reutiliza el sub-flow de reschedule de TASK-0043 sin duplicar código.
+- **Implementación:**
+  - **`app/services/appointment_self_service.py`** — nuevo entrypoint público `start_auto_rebook_flow(...)` que envía el intro empático, ofrece slots vía `_present_reschedule_slots` y persiste estado en `conversations.metadata.self_service` etiquetado con `source='auto_rebook'`. Idempotente por `domain_events('self_service.handled')` con clave `self_service_auto_rebook:{inbound_message_id}`. Cuando no hay slots disponibles, devuelve `self_service_escalated` con `reason='no_alternative_slots'` y emite el evento de auditoría correspondiente.
+  - **Rama "decline" durante el rebook** — el helper mid-flow de `maybe_run_self_service_flow` detecta cuando `state.source == 'auto_rebook'` y la respuesta de texto es una decline (`parse_confirmation` la reutilizamos de `feedback_flow`). En ese caso ejecuta `_execute_cancel`, limpia el estado y devuelve `self_service_escalated` con `reason='auto_rebook_declined'`.
+  - **`app/services/feedback_flow.py`** — `maybe_record_confirmation` ahora acepta `conversation`, `channel_id` y `channel_account_mode` opcionales; cuando la decisión es `declined` y `auto_rebook_enabled(notification_settings)` es `True`, invoca `start_auto_rebook_flow` y devuelve `auto_rebook` dentro del resultado. Añade un **guard anti-loop**: si la conversación ya tiene una self-service mid-flow activa, el confirmation handler retorna `None` sin tocar nada (eso evita que un "no" mid-rebook re-arranque otro rebook). Nuevo helper público `auto_rebook_enabled(settings)` que tolera `None`, dict, JSON-string y valores inválidos.
+  - **`app/services/rag_orchestrator.py`** — pasa `conversation`/`channel_id`/`channel_account_mode` a `maybe_record_confirmation`. Cuando el resultado lleva un `auto_rebook` con acción `self_service_step_sent`, hace short-circuit devolviendo el resultado de inmediato. Si llega `self_service_escalated`, dispara `_do_handoff` con `reason='auto_rebook_escalated'`.
+  - **`app/services/notifications.py`** — `DEFAULT_NOTIFICATION_SETTINGS` declara `auto_rebook_on_decline: True`, así un tenant nuevo arranca con el comportamiento activado.
+  - **Admin Panel** — la pestaña **Notificaciones** del `TenantSetupWizard` muestra el checkbox "Ofrecer reprogramar al declinar la confirmación" dentro del fieldset "Reducción de no-show", con texto de ayuda que explica el flujo end-to-end. El default UI también es `true`. Los settings persisten como `notification_settings.auto_rebook_on_decline`.
+- **Archivos modificados:**
+  - `app/services/appointment_self_service.py` — nuevo `start_auto_rebook_flow` (~80 líneas) + rama decline mid-rebook.
+  - `app/services/feedback_flow.py` — `auto_rebook_enabled`, guard de mid-flow, hook que llama al rebook.
+  - `app/services/rag_orchestrator.py` — propaga conversation/channel + short-circuit y escalado.
+  - `app/services/notifications.py` — default `auto_rebook_on_decline=True`.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — default + toggle UI.
+  - `tests/test_auto_rebook_static.py` (nuevo) — 16 tests.
+  - `docs/BACKLOG.md` / `docs/DONE.md`.
+- **Comandos / validaciones:**
+  - `pytest tests/test_auto_rebook_static.py` → **16 passed** cubriendo: parsing del toggle con todos los formatos (dict, JSON string, inválido, missing); módulos exportan `start_auto_rebook_flow` y manejan decline durante auto-rebook; `feedback_flow` pasa conversation/channel y aplica guard mid-flow; orquestador hace short-circuit en `step_sent` y escala en `escalated`; UI expone el toggle; y 5 escenarios FakeConn end-to-end (intro+slots persistidos con `source='auto_rebook'`, idempotencia replay, escalado sin slots, "no" mid-rebook cancela y audita, guard mid-flow no re-trigger, toggle off no dispara, toggle on dispara).
+  - `pytest tests/test_auto_rebook_static.py tests/test_self_service_static.py tests/test_qualification_flow_static.py tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_policy_engine_static.py tests/test_notifications_static.py` → **167 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - Cliente responde `no` al pedido de confirmación → bot ofrece 3 slots; si elige uno, cita reagendada sin intervención humana (mismo path que TASK-0043).
+  - Toggle off → solo actualiza `confirmation_status='declined'` y se comporta como antes (sin rebook).
+  - Cliente responde `no` al rebook → cita cancelada (`bot.appointment_cancelled` audited) y conversación escalada con `reason='auto_rebook_escalated'`.
+  - 16 tests estáticos (objetivo era ≥ 5).
+- **Notas:**
+  - El módulo reutiliza el slot picker, el conflict handler y el regenerate-jobs de TASK-0043 sin duplicar.
+  - El default es `true` porque la pieza recupera no-shows; un tenant que quiera apagarlo lo hace desde Notificaciones.
+  - Si en el momento de declinar no hay slots disponibles (`no_alternative_slots`), no se queda atascado: se escala a humano vía `_do_handoff`.
+
+---
+
+### TASK-0043 — Cancelación y reprogramación self-service por WhatsApp
+
+- **Fecha:** 2026-05-12
+- **Resumen:** los intents `cancel_appointment` y `reschedule_appointment` ya se clasificaban, pero hasta hoy un agente humano tenía que ejecutarlos desde Operations Desk. Ahora el bot maneja ambos casos solo, con confirmación interactiva, regenera los jobs de recordatorios, audita cada acción y escala a humano cuando la política lo exige (cita muy próxima al inicio o cita ya pagada).
+- **Implementación:**
+  - **Nuevo módulo `app/services/appointment_self_service.py`** — punto único de entrada `maybe_run_self_service_flow(...)`. Distingue dos flujos por intent y delega a sub-flows que comparten helpers de mensajes/idempotencia:
+    - **Cancel**: busca la próxima cita `scheduled|confirmed` con `starts_at >= now()` (LIMIT 1 por `starts_at`), presenta botones `Sí, cancelar` / `No, mantener` con prefijo `cancel_confirm:`, marca `status='cancelled'`, llama `cancel_appointment_reminder_jobs`, envía mensaje de confirmación y emite `bot.appointment_cancelled`.
+    - **Reschedule**: arma 3 slots libres con el **mismo recurso/servicio** reutilizando `compute_free_slots`, `_busy_intervals` y `_working_hours_for_date` de `booking_flow`. Persiste los slots ofrecidos en la metadata para mapear el botón → slot en la siguiente vuelta. Al elegir, `UPDATE appointments` dentro de una transacción que captura cualquier error de exclusión `EXCLUDE USING GIST`; en conflicto, re-ofrece slots. En éxito, regenera jobs (`regenerate_appointment_reminder_jobs`), confirma al cliente y emite `bot.appointment_rescheduled`.
+  - **Política de ventana**: nuevo nodo `escalation_policy.self_service.min_hours_before_start` (default 2h). El helper `min_hours_before_start` tolera `None`, JSON-string, valores no numéricos y negativos, devolviendo el default cuando corresponde. Si la cita está bajo el umbral, el flow retorna `self_service_escalated` con `reason='too_close_to_start'` y el orquestador dispara handoff. Mismo tratamiento para citas con `payment_status='paid'`.
+  - **Integración (`app/services/rag_orchestrator.py`)** — `maybe_run_self_service_flow` corre **antes** de `qualification_flow` y `booking_flow`, así un "cambiar mi cita" no dispara ni calificación ni booking. Cuando devuelve `self_service_escalated` el orquestador llama directamente a `_do_handoff` con `reason='self_service_escalated'` y `reason_detail` del motivo.
+  - **Persistencia y idempotencia** — estado en `conversations.metadata.self_service = {flow, step, appointment_id, offered_slots?}`. Cada inbound se procesa una sola vez vía `domain_events('self_service.handled')` con clave `self_service:{inbound_message_id}`.
+  - **OperationsDesk** — el inbox lee `conversation.metadata.self_service.flow` y muestra un badge azul "self-service" en las conversaciones modificadas por el bot, para que el agente sepa sin abrir la conversación.
+  - **TenantSetupWizard** — la pestaña Escalamiento expone un nuevo campo "Self-service: horas mínimas antes de la cita" (input numérico con paso 0.5 y rango 0–72), persistido como `escalation_policy.self_service.min_hours_before_start` y leído por el helper del backend.
+- **Archivos:**
+  - `app/services/appointment_self_service.py` (nuevo) — flow completo (~600 líneas).
+  - `app/services/rag_orchestrator.py` — invocación previa a qualification y manejo de escalado.
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx` — badge "self-service" en cada conversation card.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — campo de `min_hours_before_start` (hydrate + payload).
+  - `tests/test_self_service_static.py` (nuevo) — 22 tests.
+  - `docs/BACKLOG.md` / `docs/DONE.md`.
+- **Comandos / validaciones:**
+  - `pytest tests/test_self_service_static.py` → **22 passed** (constantes/prefijos, helper de policy con todos los inputs degradados, fuentes que auditan los dos eventos, integración del orquestador en el orden correcto, presencia del campo en el wizard y del badge en el desk, y 11 escenarios FakeConn end-to-end: sin cita próxima, intent ajeno, cancel con botones, "Sí" ejecuta y audita, "No" mantiene, ventana de política, cita pagada, reschedule ofrece 3 slots, slot conflict re-ofrece, slot exitoso emite audit + UPDATE, idempotencia replay y "no hay slots" escala).
+  - `pytest tests/test_self_service_static.py tests/test_qualification_flow_static.py tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_policy_engine_static.py tests/test_notifications_static.py` → **151 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - "quiero cancelar mi cita" → bot muestra cita, confirma con botones, cancela en DB, cancela jobs pendientes y manda "Listo, tu cita del DD/MM HH:MM se canceló".
+  - "cambiar mi cita" → bot ofrece 3 slots libres del mismo recurso; al elegir, mueve la cita y regenera los reminders.
+  - Cita a < 2h de inicio (configurable desde el panel) → bot escala sin actuar.
+  - Dos clientes intentan el mismo slot → el segundo recibe "ese horario se acaba de ocupar" y vuelve al paso de slots (cubierto por test con flag `reschedule_should_conflict`).
+  - 22 tests estáticos (objetivo era ≥ 12).
+- **Notas:**
+  - No se reasigna a otro recurso automáticamente: si el cliente quiere otro profesional, cancela y vuelve a agendar (lo señaliza el bot en el mensaje de confirmación final).
+  - Citas con `payment_status='paid'` siempre escalan a humano para no manejar reembolsos en MVP.
+  - El flow mid-flow tolera respuestas malformadas re-presentando el mismo paso, sin perder el estado.
+
+---
+
+### TASK-0042 — Calificación conversacional previa al booking
+
+- **Fecha:** 2026-05-12
+- **Resumen:** se construyó la pieza de calificación previa que faltaba en el flujo del cliente (gap #1 del análisis del 2026-05-12). Ahora el bot pregunta motivo, urgencia y primera-vez-vs-recurrente **antes** de abrir el booking, persistiendo respuestas en `conversations.metadata.qualification` durante el flujo y snapshoteando el último estado en `contacts.qualification` para análisis y vista operativa. Si una respuesta `single_choice` mapea a un `service_id` el bot **brinca** la pantalla de selección de servicio y entra directo a recurso/día/hora.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`)** — nueva tabla `app.qualification_questions(id, tenant_id, position, label, kind: free_text|single_choice|multi_choice|yes_no|number, options jsonb, required, applies_to_service_ids uuid[], created_at, updated_at)` con FK al tenant, índice por `(tenant_id, position)`, RLS habilitado y trigger `touch_updated_at`. Columna nueva `contacts.qualification jsonb default '{}'` para guardar el snapshot del último flujo.
+  - **State machine (`app/services/qualification_flow.py`)** — módulo nuevo con `maybe_run_qualification_flow(...)` que se ejecuta sólo si hay preguntas configuradas y o bien la conversación viene mid-flow o el intent es `book_appointment`/`check_availability`. Renderiza por WhatsApp: `yes_no` → 2 botones; `single_choice` con ≤3 opciones → botones, >3 → lista; `multi_choice` → lista con sentinela "Listo"; `free_text`/`number` → texto con validación regex. Idempotencia por `domain_events('qualification_flow.handled')` keyed por `inbound_message.id`. Opt-out: `stop`/`baja`/`cancelar` aborta el flujo y revoca opt-in.
+  - **Integración (`app/services/rag_orchestrator.py`)** — el orchestrator llama `maybe_run_qualification_flow` antes de `maybe_run_booking_flow`. Cuando la calificación se completa, refresca la conversación y pasa `prefilled_service_id` al booking si la opción elegida traía `service_id`, forzando intent `book_appointment` para que el booking arranque inmediatamente sin esperar otro mensaje del cliente.
+  - **Booking flow (`app/services/booking_flow.py`)** — `maybe_run_booking_flow` ahora acepta `prefilled_service_id`; cuando viene, salta `_present_services` y va directo a `_present_resources` con el servicio ya pre-seleccionado.
+  - **API (`app/api/v1/routes.py` + `app/api/v1/schemas.py`)** — endpoints CRUD bajo `tenant_admin_router` (`POST/PATCH/DELETE /tenants/{id}/qualification-questions` + `POST /reorder`) y listado bajo `tenant_catalog_router`. `QualificationQuestionCreate/Update` validan `kind` con regex, `QualificationOption` permite `value`, `label` y `service_id` opcional. `GET /contacts/{id}/profile` ahora devuelve `qualification_questions` (las del tenant) y `qualification_answers` (snapshot del contacto).
+  - **Auditoría** — emite `qualification.created/updated/deleted/reordered` desde los endpoints y `qualification.answered`/`qualification.aborted_opt_out` desde el flujo, con metadata que incluye preguntas, respuestas y `recommended_service_id` cuando aplica.
+  - **Admin Panel** — nueva pestaña **Calificación** en `TenantSetupWizard` (entre Negocio y Settings). El componente `QualificationQuestionsPanel.jsx` provee CRUD completo, reordenamiento con flechas ↑/↓ y mapeo opcional pregunta→servicio. `ContactsModule.jsx` muestra el bloque "Calificación" con label de la pregunta y respuesta normalizada en el panel del contacto. `OperationsDesk.jsx` muestra un panel "Calificación previa" leyendo `conversation.metadata.qualification.answered` para que el agente vea lo que el bot ya capturó. Helpers nuevos en `services/coreApi.js`: `list/create/update/delete/reorderQualificationQuestions`.
+- **Archivos:**
+  - `infra/postgres/01-schema.sql` — tabla, constraint composite, trigger, RLS y `contacts.qualification`.
+  - `app/services/qualification_flow.py` (nuevo) — state machine completa.
+  - `app/services/rag_orchestrator.py` — invocación previa al booking, paso de `prefilled_service_id`.
+  - `app/services/booking_flow.py` — soporte de `prefilled_service_id` con skip de `_present_services`.
+  - `app/api/v1/routes.py` — endpoints CRUD/reorder + extensión del profile endpoint.
+  - `app/api/v1/schemas.py` — `QualificationQuestionCreate/Update`, `QualificationOption`, `QualificationReorderRequest`.
+  - `admin-panel/src/services/coreApi.js` — 5 helpers nuevos.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — registro de la tab y montaje del panel.
+  - `admin-panel/src/components/modules/tenantSetup/QualificationQuestionsPanel.jsx` (nuevo) — CRUD UI con reorder y derive-to-service.
+  - `admin-panel/src/components/modules/contacts/ContactsModule.jsx` — render de respuestas en el perfil.
+  - `admin-panel/src/components/modules/operations/OperationsDesk.jsx` — render del bloque "Calificación previa".
+  - `tests/test_qualification_flow_static.py` (nuevo) — 26 tests estáticos.
+- **Comandos ejecutados / validaciones:**
+  - `pytest tests/test_qualification_flow_static.py` → **26 passed** cubriendo: schema completo (tabla, RLS, trigger, columna `contacts.qualification`), pydantic schemas con cada `kind`, registro de los 5 endpoints bajo el router correcto, auditoría con las 4 acciones, integración orquestador-antes-de-booking, parámetro `prefilled_service_id` del booking, helpers (`_validate_text_reply`, `_next_pending_question`, `_derive_recommended_service`), 7 escenarios end-to-end con `FakeConn` (skip sin preguntas, no arrancar fuera de intents de booking, arranque exitoso, completado con `service_id` derivado, opt-out, idempotencia por inbound, retry de input inválido), `coreApi.js` exporta los 5 helpers, registro de la tab y componente, render de respuestas en `ContactsModule` y `OperationsDesk`.
+  - `pytest tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_crm_contacts_static.py` → **50 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - Un tenant configura preguntas (motivo, urgencia, primera vez sí/no) en < 2 minutos desde la nueva tab Calificación con reorder y deriva a servicio.
+  - Una conversación `hola, quiero una cita` recibe primero las preguntas en orden antes del listado de servicios (cubierto en test end-to-end con `FakeConn`).
+  - Si una respuesta `single_choice` mapea a `service_id`, el orquestador pasa `prefilled_service_id` al booking y `maybe_run_booking_flow` brinca `_present_services`.
+  - `GET /v1/contacts/{id}/profile` devuelve `qualification_questions` + `qualification_answers`; `ContactsModule` los muestra; `OperationsDesk` lee el snapshot de la conversación.
+  - Auditoría: `qualification.created/updated/deleted/reordered/answered/aborted_opt_out`.
+  - Tests: 26 estáticos (objetivo era ≥ 15).
+- **Notas:**
+  - No se usa LLM para parsear respuestas — coincidencia exacta sobre `options.value` o regex para `number`. Cualquier respuesta inesperada vuelve a presentar la misma pregunta.
+  - `multi_choice` acumula respuestas hasta que el usuario toca "Listo".
+  - El orquestador refresca la conversación tras la calificación para que el booking lea el `metadata` actualizado.
+
+---
+
 ### TASK-0029 — Ejecutar y validar drill de restore local (criterio pendiente de TASK-0015)
 
 - **Fecha:** 2026-05-12

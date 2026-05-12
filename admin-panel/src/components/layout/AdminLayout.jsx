@@ -10,6 +10,7 @@ import { ContactsModule } from '../modules/contacts/ContactsModule.jsx';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
 import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
 import { KnowledgeStorageSettings } from '../modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
+import { MediaLibraryModule } from '../modules/media/MediaLibraryModule.jsx';
 import { GoLiveReadiness } from '../modules/readiness/GoLiveReadiness.jsx';
 import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
 import { ServiceCatalog } from '../modules/services/ServiceCatalog.jsx';
@@ -217,6 +218,20 @@ export function AdminLayout({ session }) {
     activeContent = <KnowledgeStorageSettings module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'knowledge-studio') {
     activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'media-library') {
+    if (!hasMinRole(activeRoles, 'admin')) {
+      activeContent = (
+        <section className="module-card">
+          <h2>Acceso restringido</h2>
+          <p className="hint">
+            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
+            la biblioteca de medios y promociones.
+          </p>
+        </section>
+      );
+    } else {
+      activeContent = <MediaLibraryModule module={activeModule} session={session} tenant={activeTenant} />;
+    }
   } else if (activeModuleId === 'contacts') {
     activeContent = <ContactsModule module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'campaigns') {

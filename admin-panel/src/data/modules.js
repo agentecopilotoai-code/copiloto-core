@@ -30,6 +30,13 @@ export const adminModules = [
     scope: ['Estados draft/indexing/active/failed', 'Visibilidad por documento', 'Fuentes y archivos'],
   },
   {
+    id: 'media-library',
+    label: 'Medios y promociones',
+    summary: 'Imágenes, videos y promociones que el bot puede enviar durante el booking.',
+    scope: ['Subir fotos, videos y PDFs', 'Etiquetar y buscar', 'Crear promociones', 'Vincular promoción → servicio'],
+    minRole: 'admin',
+  },
+  {
     id: 'contacts',
     label: 'Contactos',
     summary: 'CRM básico: perfil de contacto con historial, etiquetas y notas internas.',

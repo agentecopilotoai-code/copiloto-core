@@ -11,11 +11,13 @@ import structlog
 
 from app.core.config import get_settings
 from app.services.audit import audit
+from app.services.appointment_self_service import maybe_run_self_service_flow
 from app.services.booking_flow import maybe_run_booking_flow
 from app.services.feedback_flow import (
     maybe_record_confirmation,
     maybe_record_feedback,
 )
+from app.services.qualification_flow import maybe_run_qualification_flow
 from app.services.conversation_flow import (
     STAGE_START,
     ConversationContext,
@@ -403,6 +405,9 @@ async def orchestrate_inbound_message(
         tenant_id=tenant_id,
         contact_id=contact['id'],
         inbound_message=inbound_message,
+        conversation=conversation,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
     )
     if feedback_result is not None:
         log.info(
@@ -410,6 +415,7 @@ async def orchestrate_inbound_message(
             conversation_id=conversation_id,
             appointment_id=feedback_result.get('appointment_id'),
             rating=feedback_result.get('rating'),
+            negative_escalated=feedback_result.get('action') == 'feedback_negative_escalated',
         )
         return feedback_result
 
@@ -418,6 +424,9 @@ async def orchestrate_inbound_message(
         tenant_id=tenant_id,
         contact_id=contact['id'],
         inbound_message=inbound_message,
+        conversation=conversation,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
     )
     if confirmation_result is not None:
         log.info(
@@ -425,7 +434,25 @@ async def orchestrate_inbound_message(
             conversation_id=conversation_id,
             appointment_id=confirmation_result.get('appointment_id'),
             decision=confirmation_result.get('confirmation_status'),
+            auto_rebook=bool(confirmation_result.get('auto_rebook')),
         )
+        # When auto-rebook actually started the reschedule sub-flow we must
+        # short-circuit here — the bot already replied with the slots and the
+        # mid-flow state lives in conversations.metadata.self_service.
+        auto_rebook = confirmation_result.get('auto_rebook') or {}
+        if auto_rebook.get('action') == 'self_service_step_sent':
+            return confirmation_result
+        if auto_rebook.get('action') == 'self_service_escalated':
+            return await _do_handoff(
+                conn,
+                tenant_id=tenant_id,
+                channel_id=channel_id,
+                conversation=conversation,
+                inbound_message=inbound_message,
+                policy=policy,
+                reason='auto_rebook_escalated',
+                reason_detail=auto_rebook.get('reason', ''),
+            )
 
     # Guided booking flow over interactive messages (TASK-0030).
     # Runs when the tenant has services in the catalogue AND either:
@@ -436,7 +463,13 @@ async def orchestrate_inbound_message(
         'select 1 from app.service_catalog where tenant_id=$1 and is_active=true limit 1',
         tenant_id,
     ))
-    booking_result = await maybe_run_booking_flow(
+
+    # TASK-0043: Self-service cancellation / reschedule. Runs before the
+    # qualification + booking pipeline so that "quiero cancelar" / "cambiar mi
+    # cita" intents are handled directly by the bot. When the policy gate or a
+    # paid appointment requires a human, the function returns an "escalated"
+    # action and we drop into the existing handoff path.
+    self_service_result = await maybe_run_self_service_flow(
         conn,
         tenant_id=tenant_id,
         channel_id=channel_id,
@@ -445,7 +478,83 @@ async def orchestrate_inbound_message(
         contact=contact,
         inbound_message=inbound_message,
         intent=intent_result.intent,
+    )
+    if self_service_result is not None:
+        action = self_service_result.get('action')
+        if action == 'self_service_escalated':
+            return await _do_handoff(
+                conn,
+                tenant_id=tenant_id,
+                channel_id=channel_id,
+                conversation=conversation,
+                inbound_message=inbound_message,
+                policy=policy,
+                reason='self_service_escalated',
+                reason_detail=self_service_result.get('reason', ''),
+            )
+        log.info(
+            'orchestrator.self_service_handled',
+            conversation_id=conversation_id,
+            action=action,
+            flow=self_service_result.get('flow'),
+            step=self_service_result.get('step'),
+        )
+        return self_service_result
+
+    # TASK-0042: Conversational qualification before the booking flow. When the
+    # tenant has configured qualification questions and the user is heading
+    # into booking territory, ask them first and persist the answers.
+    prefilled_service_id: str | None = None
+    qualification_result = await maybe_run_qualification_flow(
+        conn,
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        conversation=conversation,
+        contact=contact,
+        inbound_message=inbound_message,
+        intent=intent_result.intent,
+    )
+    if qualification_result is not None:
+        action = qualification_result.get('action')
+        if action == 'qualification_completed':
+            prefilled_service_id = qualification_result.get('recommended_service_id')
+            # Reload the conversation so booking_flow sees the persisted state.
+            refreshed = await conn.fetchrow(
+                'select * from app.conversations where tenant_id=$1 and id=$2',
+                tenant_id,
+                conversation['id'],
+            )
+            if refreshed:
+                conversation = dict(refreshed)
+        else:
+            log.info(
+                'orchestrator.qualification_handled',
+                conversation_id=conversation_id,
+                action=action,
+            )
+            return qualification_result
+
+    booking_intent_override = (
+        'book_appointment' if prefilled_service_id is not None else intent_result.intent
+    )
+    if (
+        qualification_result is not None
+        and qualification_result.get('action') == 'qualification_completed'
+        and not prefilled_service_id
+    ):
+        booking_intent_override = 'book_appointment'
+    booking_result = await maybe_run_booking_flow(
+        conn,
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        conversation=conversation,
+        contact=contact,
+        inbound_message=inbound_message,
+        intent=booking_intent_override,
         has_catalog=has_catalog,
+        prefilled_service_id=prefilled_service_id,
     )
     if booking_result is not None:
         log.info(

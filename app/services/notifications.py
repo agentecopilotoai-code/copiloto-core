@@ -45,6 +45,8 @@ DEFAULT_NOTIFICATION_SETTINGS: dict[str, Any] = {
     'post_rebooking_enabled': False,
     'post_rebooking_delay_days': 30,
     'post_rebooking_message': '',
+    # TASK-0044: auto-rebooking when the client declines the active confirmation
+    'auto_rebook_on_decline': True,
 }
 
 # Locale used for templates; tenants who need extra locales can register them

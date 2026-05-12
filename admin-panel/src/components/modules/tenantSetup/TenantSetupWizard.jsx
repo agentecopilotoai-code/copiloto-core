@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import QualificationQuestionsPanel from './QualificationQuestionsPanel.jsx';
 import {
   createContactTag,
   createTenant,
@@ -19,6 +20,7 @@ import {
 
 const wizardTabs = [
   { id: 'tenant', label: 'Negocio' },
+  { id: 'calificacion', label: 'Calificación' },
   { id: 'settings', label: 'Settings' },
   { id: 'hours', label: 'Horarios' },
   { id: 'escalation', label: 'Escalamiento' },
@@ -47,6 +49,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   post_rebooking_enabled: false,
   post_rebooking_delay_days: 30,
   post_rebooking_message: '',
+  auto_rebook_on_decline: true,
 };
 
 function hydrateNotificationSettings(raw) {
@@ -230,6 +233,8 @@ function formFromEscalationPolicy(value) {
       'Te conecto con una persona del equipo para ayudarte mejor.',
     consecutiveNoContextLimit: escalationPolicy.consecutive_no_context_limit ?? 2,
     enforceServiceWindow: escalationPolicy.enforce_service_window ?? true,
+    selfServiceMinHoursBeforeStart:
+      escalationPolicy.self_service?.min_hours_before_start ?? 2,
   };
 }
 
@@ -284,6 +289,9 @@ function toEscalationPolicy(escalationForm) {
     handoff_message: escalationForm.handoffMessage,
     consecutive_no_context_limit: Number(escalationForm.consecutiveNoContextLimit),
     enforce_service_window: escalationForm.enforceServiceWindow,
+    self_service: {
+      min_hours_before_start: Number(escalationForm.selfServiceMinHoursBeforeStart),
+    },
   };
 }
 
@@ -839,6 +847,16 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
         </div>
       ) : null}
 
+      {activeTab === 'calificacion' ? (
+        <div className="wizard-panel">
+          <QualificationQuestionsPanel
+            session={session}
+            tenantId={currentTenantId}
+            onNotice={setNotice}
+          />
+        </div>
+      ) : null}
+
       {activeTab === 'settings' ? (
         <form className="wizard-panel form-grid" onSubmit={handleSaveSettings}>
           <label>
@@ -916,6 +934,26 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
             Forzar handoff si la ventana de servicio WhatsApp (24 h) expiró
           </label>
           <label className="wide">Mensaje de handoff<textarea value={escalationForm.handoffMessage} onChange={(event) => setEscalationForm({ ...escalationForm, handoffMessage: event.target.value })} /></label>
+          <label>
+            Self-service: horas mínimas antes de la cita
+            <input
+              type="number"
+              min="0"
+              max="72"
+              step="0.5"
+              value={escalationForm.selfServiceMinHoursBeforeStart}
+              onChange={(event) =>
+                setEscalationForm({
+                  ...escalationForm,
+                  selfServiceMinHoursBeforeStart: event.target.value,
+                })
+              }
+            />
+            <small className="hint">
+              Si el cliente pide cancelar o reagendar a menos horas de inicio que esto, el bot
+              escala a un humano en lugar de actuar (default 2h).
+            </small>
+          </label>
           <div className="form-actions"><button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">Guardar escalamiento</button></div>
         </form>
       ) : null}
@@ -1089,6 +1127,19 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
                 onChange={(e) => setNotificationSettings({ ...notificationSettings, confirmation_reminder_hours: Number(e.target.value) || 0 })}
               />
             </label>
+            <label className="inline-check wide">
+              <input
+                type="checkbox"
+                checked={notificationSettings.auto_rebook_on_decline !== false}
+                onChange={(e) => setNotificationSettings({ ...notificationSettings, auto_rebook_on_decline: e.target.checked })}
+              />
+              Ofrecer reprogramar al declinar la confirmación (TASK-0044)
+            </label>
+            <p className="hint" style={{ marginTop: '0.25rem' }}>
+              Si el cliente responde "no" al pedido de confirmación activa, el bot ofrecerá tres
+              horarios alternativos en lugar de quedarse esperando a un agente. Si responde "no"
+              al rebooking, la cita se cancela y se escala al equipo.
+            </p>
           </fieldset>
 
           <fieldset className="wide" style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '0.75rem 1rem' }}>
