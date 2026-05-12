@@ -100,6 +100,7 @@ from app.services.campaigns import (
 from app.services.segments import (
     count_segment_contacts,
     evaluate_segment_rules,
+    normalize_applies_when,
     normalize_rules as normalize_segment_rules,
     seed_preconstructed_segments,
     snapshot_segment_members,
@@ -4284,6 +4285,7 @@ SERVICE_CATALOG_COLUMNS = (
     'post_service_notes',
     'recall_interval_days',
     'recall_template_id',
+    'applies_when',
     'is_active',
     'sort_order',
     'metadata',
@@ -4298,6 +4300,16 @@ def normalize_service_catalog_row(row: asyncpg.Record | None) -> dict | None:
     if not service:
         return None
     service['metadata'] = parse_json_object(service.get('metadata'), default={})
+    # TASK-0054: applies_when is normalized when written, but rows persisted
+    # before this column existed could surface here as null — coerce to {}.
+    raw_rules = service.get('applies_when')
+    if isinstance(raw_rules, str):
+        try:
+            service['applies_when'] = json.loads(raw_rules) if raw_rules else {}
+        except json.JSONDecodeError:
+            service['applies_when'] = {}
+    elif raw_rules is None:
+        service['applies_when'] = {}
     if service.get('price_amount') is not None:
         service['price_amount'] = float(service['price_amount'])
     return service
@@ -4340,10 +4352,10 @@ async def create_service(
         insert into app.service_catalog (
           tenant_id, name, category, description, price_amount, price_currency,
           duration_minutes, preparation_notes, post_service_notes,
-          recall_interval_days, recall_template_id,
+          recall_interval_days, recall_template_id, applies_when,
           is_active, sort_order, metadata
         )
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb)
         returning {SERVICE_CATALOG_PROJECTION}
         """,
         tenant_id,
@@ -4357,6 +4369,7 @@ async def create_service(
         payload.post_service_notes,
         payload.recall_interval_days,
         payload.recall_template_id,
+        json.dumps(normalize_applies_when(payload.applies_when)),
         payload.is_active,
         payload.sort_order,
         json.dumps(payload.metadata),
@@ -4400,6 +4413,12 @@ async def update_service(
     # really sent the field (clear) vs. omitted it (keep current).
     recall_days_set = 'recall_interval_days' in update_data
     recall_template_set = 'recall_template_id' in update_data
+    # TASK-0054: applies_when uses coalesce semantics — only updated when the
+    # caller sends it; null in the payload means "clear to {}".
+    applies_when_payload: str | None = None
+    if 'applies_when' in update_data:
+        rules = update_data['applies_when'] or {}
+        applies_when_payload = json.dumps(normalize_applies_when(rules))
     row = await conn.fetchrow(
         f"""
         update app.service_catalog
@@ -4413,6 +4432,7 @@ async def update_service(
             post_service_notes=coalesce($10, post_service_notes),
             recall_interval_days = case when $14::boolean then $15 else recall_interval_days end,
             recall_template_id   = case when $16::boolean then $17 else recall_template_id end,
+            applies_when=coalesce($18::jsonb, applies_when),
             is_active=coalesce($11, is_active),
             sort_order=coalesce($12, sort_order),
             metadata=coalesce($13::jsonb, metadata)
@@ -4436,6 +4456,7 @@ async def update_service(
         update_data.get('recall_interval_days'),
         recall_template_set,
         update_data.get('recall_template_id'),
+        applies_when_payload,
     )
     if not row:
         raise HTTPException(status_code=404, detail='Service not found')
@@ -4522,7 +4543,7 @@ async def reorder_services(
 # ── Qualification questions (TASK-0042) ─────────────────────────────────────
 QUALIFICATION_PROJECTION = (
     'id, tenant_id, position, label, kind, options, required, '
-    'applies_to_service_ids, preset, created_at, updated_at'
+    'applies_to_service_ids, preset, key, created_at, updated_at'
 )
 
 
@@ -4582,9 +4603,9 @@ async def create_qualification_question(
         f"""
         insert into app.qualification_questions (
           tenant_id, position, label, kind, options, required,
-          applies_to_service_ids, preset
+          applies_to_service_ids, preset, key
         )
-        values ($1, $2, $3, $4, $5::jsonb, $6, $7::uuid[], $8)
+        values ($1, $2, $3, $4, $5::jsonb, $6, $7::uuid[], $8, $9)
         returning {QUALIFICATION_PROJECTION}
         """,
         tenant_id,
@@ -4595,6 +4616,7 @@ async def create_qualification_question(
         payload.required,
         applies,
         payload.preset,
+        payload.key,
     )
     await audit(
         conn,
@@ -4644,6 +4666,8 @@ async def update_qualification_question(
     )
     preset_update = updates.get('preset') if 'preset' in updates else None
     preset_provided = 'preset' in updates
+    key_update = updates.get('key') if 'key' in updates else None
+    key_provided = 'key' in updates
     row = await conn.fetchrow(
         f"""
         update app.qualification_questions
@@ -4653,7 +4677,8 @@ async def update_qualification_question(
             required=coalesce($6, required),
             position=coalesce($7, position),
             applies_to_service_ids=coalesce($8::uuid[], applies_to_service_ids),
-            preset=case when $10::boolean then $9 else preset end
+            preset=case when $10::boolean then $9 else preset end,
+            key=case when $12::boolean then $11 else key end
         where tenant_id=$1 and id=$2
         returning {QUALIFICATION_PROJECTION}
         """,
@@ -4667,6 +4692,8 @@ async def update_qualification_question(
         applies,
         preset_update,
         preset_provided,
+        key_update,
+        key_provided,
     )
     if not row:
         raise HTTPException(status_code=404, detail='Question not found')

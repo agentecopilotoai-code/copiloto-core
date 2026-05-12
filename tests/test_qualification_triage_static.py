@@ -66,7 +66,9 @@ def test_pydantic_schemas_expose_presets_and_option_metadata():
 
 def test_routes_projection_and_inserts_include_preset():
     src = ROUTES.read_text()
-    assert ", preset, created_at, updated_at" in src
+    # TASK-0054 extended the projection with `key`; check both fragments
+    # remain in their canonical order.
+    assert ", preset, key, created_at, updated_at" in src
     assert 'applies_to_service_ids, preset' in src
     assert '$8::uuid[], $8' not in src  # sanity: don't reuse param
     assert 'payload.preset' in src

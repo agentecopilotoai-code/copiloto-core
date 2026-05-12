@@ -27,6 +27,7 @@ from app.services.audit import audit
 from app.services.campaign_attribution import attribute_appointment
 from app.services.notifications import create_appointment_reminder_jobs
 from app.services.promotions import attach_active_promo, queue_promo_message
+from app.services.segments import evaluate_rules
 from app.services.whatsapp import (
     build_interactive_button_payload,
     build_interactive_list_payload,
@@ -95,7 +96,7 @@ async def _list_active_services(
     rows = await conn.fetch(
         """
         select id, name, category, description, price_amount, price_currency,
-               duration_minutes, preparation_notes
+               duration_minutes, preparation_notes, applies_when
         from app.service_catalog
         where tenant_id=$1 and is_active=true
         order by sort_order asc, name asc
@@ -104,6 +105,55 @@ async def _list_active_services(
         tenant_id,
     )
     return [dict(row) for row in rows]
+
+
+def _qualification_facts_from_conversation(conversation: Any) -> dict[str, Any]:
+    """TASK-0054: pull the keyed qualification facts persisted by the
+    qualification flow into a flat dict the ``applies_when`` evaluator can use.
+
+    The qualification flow snapshots both the raw ``answered`` map (keyed by
+    question UUID) and the derived presets (``budget_tier``, ``urgency_level``)
+    into ``conversations.metadata.qualification``. Newer tenants opt-in by
+    setting ``qualification_questions.key`` and storing keyed facts in
+    ``metadata.qualification.facts``. We honour the keyed map first and
+    silently fall back to presets so older snapshots keep filtering by them.
+    """
+    meta = _parse_json(conversation.get('metadata'), {})
+    if not isinstance(meta, dict):
+        return {}
+    qualification = meta.get('qualification')
+    if not isinstance(qualification, dict):
+        return {}
+    facts: dict[str, Any] = {}
+    keyed = qualification.get('facts')
+    if isinstance(keyed, dict):
+        facts.update({k: v for k, v in keyed.items() if isinstance(k, str)})
+    budget_tier = qualification.get('budget_tier')
+    if isinstance(budget_tier, dict):
+        facts.setdefault('budget_tier', budget_tier.get('tier_value'))
+        facts.setdefault('budget_label', budget_tier.get('tier_label'))
+    urgency_level = qualification.get('urgency_level')
+    if urgency_level is not None:
+        facts.setdefault('urgency_level', urgency_level)
+    return facts
+
+
+def _filter_services_by_qualification(
+    services: list[dict[str, Any]], facts: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Drop services whose ``applies_when`` rule rejects the current facts.
+
+    A service with empty/null ``applies_when`` always survives. The filter is
+    a no-op when ``facts`` is empty so callers without qualification still
+    see the full catalogue.
+    """
+    if not facts:
+        return services
+    filtered: list[dict[str, Any]] = []
+    for service in services:
+        if evaluate_rules(service.get('applies_when'), facts):
+            filtered.append(service)
+    return filtered
 
 
 async def _fetch_service(
@@ -610,6 +660,49 @@ async def _present_services(
     services = await _list_active_services(conn, tenant_id)
     if not services:
         return None
+    # TASK-0054: filter by ``applies_when`` against the qualification facts.
+    # If exactly one service remains, auto-select it and skip straight to
+    # packages/branches/resources so the customer doesn't pick from a list
+    # of one. If none remain, return None so the orchestrator escalates the
+    # conversation to a human (no service matched the qualification answers).
+    facts = _qualification_facts_from_conversation(conversation)
+    eligible = _filter_services_by_qualification(services, facts)
+    if not eligible:
+        log.info(
+            'booking_flow.no_services_match_qualification',
+            tenant_id=str(tenant_id),
+            conversation_id=str(conversation['id']),
+            fact_keys=list(facts.keys()),
+        )
+        return None
+    if len(eligible) == 1:
+        only = eligible[0]
+        base_state = {'selected_service_id': str(only['id'])}
+        log.info(
+            'booking_flow.auto_selected_service',
+            tenant_id=str(tenant_id),
+            conversation_id=str(conversation['id']),
+            service_id=str(only['id']),
+        )
+        next_state = await _present_branches(
+            conn,
+            tenant_id=tenant_id,
+            conversation=conversation,
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            state=base_state,
+        )
+        if next_state is None:
+            next_state = await _present_resources(
+                conn,
+                tenant_id=tenant_id,
+                conversation=conversation,
+                channel_id=channel_id,
+                channel_account_mode=channel_account_mode,
+                state=base_state,
+            )
+        return next_state
+    services = eligible
     # TASK-0046: send the active promo (image + text) of the first service
     # that has one so the customer sees the offer before picking.
     for service in services:

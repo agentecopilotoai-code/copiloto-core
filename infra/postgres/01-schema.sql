@@ -256,6 +256,11 @@ create table app.service_catalog (
   -- must point at an approved whatsapp_templates row with purpose='service_recall'.
   recall_interval_days int check (recall_interval_days is null or recall_interval_days > 0),
   recall_template_id uuid,
+  -- TASK-0054: dynamic eligibility rule evaluated against the conversation's
+  -- qualification answers. Empty object means "always applies". Shape mirrors
+  -- the segment rules normalizer in app.services.segments (all_of / any_of of
+  -- {key, op, value} predicates).
+  applies_when jsonb not null default '{}'::jsonb,
   is_active boolean not null default true,
   sort_order int not null default 0,
   metadata jsonb not null default '{}'::jsonb,
@@ -419,6 +424,10 @@ create table app.qualification_questions (
   tenant_id uuid not null references app.tenants(id) on delete cascade,
   position int not null default 0,
   label text not null,
+  -- TASK-0054: optional stable identifier used by service_catalog.applies_when
+  -- rules. Must be snake_case ([a-z0-9_]+) so admins can write predicates like
+  -- {key:'first_visit', op:'eq', value:true} without juggling UUIDs.
+  key text check (key is null or key ~ '^[a-z][a-z0-9_]{0,59}$'),
   kind text not null check (kind in ('free_text','single_choice','multi_choice','yes_no','number')),
   options jsonb not null default '[]'::jsonb,
   required boolean not null default true,
@@ -428,6 +437,8 @@ create table app.qualification_questions (
   updated_at timestamptz not null default now()
 );
 create index ix_qualification_questions_tenant on app.qualification_questions(tenant_id, position);
+create unique index uq_qualification_questions_tenant_key
+  on app.qualification_questions(tenant_id, key) where key is not null;
 
 create table app.media_assets (
   id uuid primary key default gen_random_uuid(),

@@ -495,6 +495,205 @@ PRECONSTRUCTED_SEGMENTS: tuple[dict[str, Any], ...] = (
 )
 
 
+# ── TASK-0054: in-memory rule evaluator over an arbitrary facts dict ─────────
+#
+# Reused by ``service_catalog.applies_when`` to filter the services shown
+# during booking based on the conversation's qualification answers. The shape
+# is a small subset of the SQL rule language above ({all_of/any_of, with
+# {key, op, value} predicates) but runs purely on a Python dict so callers
+# don't need a DB roundtrip.
+
+APPLIES_WHEN_OPS = frozenset({
+    'eq',
+    'ne',
+    'in',
+    'not_in',
+    'lt',
+    'lte',
+    'gt',
+    'gte',
+    'is_null',
+    'is_not_null',
+    'contains_any',
+    'contains_all',
+})
+
+
+def _valid_fact_key(key: Any) -> bool:
+    return (
+        isinstance(key, str)
+        and bool(key)
+        and len(key) <= 80
+        and all(c.isalnum() or c == '_' for c in key)
+        and not key[0].isdigit()
+    )
+
+
+def normalize_applies_when(rules: Any) -> dict[str, Any]:
+    """Return an ``applies_when`` rule sanitized to the allowed shape.
+
+    Always wraps in ``all_of`` for uniformity. Returns ``{}`` (always
+    applies) when the input is empty or fully invalid — that way a service
+    with a corrupted rule still shows up instead of disappearing silently.
+    """
+    if isinstance(rules, str):
+        try:
+            rules = json.loads(rules)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    if not isinstance(rules, dict) or not rules:
+        return {}
+
+    def _normalize_predicate(node: Any) -> dict[str, Any] | None:
+        if not isinstance(node, dict):
+            return None
+        if isinstance(node.get('all_of'), list):
+            children = [
+                child for child in (_normalize_predicate(c) for c in node['all_of']) if child
+            ]
+            return {'all_of': children} if children else None
+        if isinstance(node.get('any_of'), list):
+            children = [
+                child for child in (_normalize_predicate(c) for c in node['any_of']) if child
+            ]
+            return {'any_of': children} if children else None
+        key = node.get('key')
+        op = node.get('op')
+        if not _valid_fact_key(key) or op not in APPLIES_WHEN_OPS:
+            return None
+        result: dict[str, Any] = {'key': key, 'op': op}
+        if 'value' in node:
+            result['value'] = node['value']
+        return result
+
+    if isinstance(rules.get('all_of'), list):
+        children = [
+            child for child in (_normalize_predicate(c) for c in rules['all_of']) if child
+        ]
+        return {'all_of': children} if children else {}
+    if isinstance(rules.get('any_of'), list):
+        children = [
+            child for child in (_normalize_predicate(c) for c in rules['any_of']) if child
+        ]
+        return {'any_of': children} if children else {}
+    pred = _normalize_predicate(rules)
+    return {'all_of': [pred]} if pred else {}
+
+
+def _coerce_for_compare(value: Any) -> Any:
+    """Best-effort cast so ``"true"`` matches ``True`` and ``"3"`` matches ``3``."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ('true', 'yes', 'sí', 'si'):
+            return True
+        if lowered in ('false', 'no'):
+            return False
+        try:
+            if '.' in lowered:
+                return float(lowered)
+            return int(lowered)
+        except ValueError:
+            return value
+    return value
+
+
+def _equal(a: Any, b: Any) -> bool:
+    if a is None or b is None:
+        return a is None and b is None
+    ca, cb = _coerce_for_compare(a), _coerce_for_compare(b)
+    if isinstance(ca, bool) or isinstance(cb, bool):
+        return bool(ca) == bool(cb)
+    if isinstance(ca, (int, float)) and isinstance(cb, (int, float)):
+        return float(ca) == float(cb)
+    return str(ca).lower() == str(cb).lower()
+
+
+def _evaluate_predicate(pred: dict[str, Any], facts: dict[str, Any]) -> bool:
+    op = pred.get('op')
+    key = pred.get('key')
+    if not isinstance(key, str) or op not in APPLIES_WHEN_OPS:
+        return False
+    actual = facts.get(key)
+    value = pred.get('value')
+
+    if op == 'is_null':
+        return actual is None
+    if op == 'is_not_null':
+        return actual is not None
+
+    if actual is None:
+        # All other operators require a present fact.
+        return False
+
+    if op == 'eq':
+        return _equal(actual, value)
+    if op == 'ne':
+        return not _equal(actual, value)
+    if op == 'in':
+        if not isinstance(value, list):
+            return False
+        return any(_equal(actual, v) for v in value)
+    if op == 'not_in':
+        if not isinstance(value, list):
+            return False
+        return not any(_equal(actual, v) for v in value)
+    if op in ('lt', 'lte', 'gt', 'gte'):
+        ca = _coerce_for_compare(actual)
+        cb = _coerce_for_compare(value)
+        if not isinstance(ca, (int, float)) or not isinstance(cb, (int, float)):
+            return False
+        if op == 'lt':
+            return float(ca) < float(cb)
+        if op == 'lte':
+            return float(ca) <= float(cb)
+        if op == 'gt':
+            return float(ca) > float(cb)
+        return float(ca) >= float(cb)
+    if op == 'contains_any':
+        if not isinstance(value, list) or not isinstance(actual, (list, tuple)):
+            return False
+        return any(any(_equal(item, v) for item in actual) for v in value)
+    if op == 'contains_all':
+        if not isinstance(value, list) or not isinstance(actual, (list, tuple)):
+            return False
+        return all(any(_equal(item, v) for item in actual) for v in value)
+    return False
+
+
+def _evaluate_node(node: Any, facts: dict[str, Any]) -> bool:
+    if not isinstance(node, dict) or not node:
+        return True  # empty rule → always matches
+    if isinstance(node.get('all_of'), list):
+        children = node['all_of']
+        if not children:
+            return True
+        return all(_evaluate_node(child, facts) for child in children)
+    if isinstance(node.get('any_of'), list):
+        children = node['any_of']
+        if not children:
+            return True
+        return any(_evaluate_node(child, facts) for child in children)
+    return _evaluate_predicate(node, facts)
+
+
+def evaluate_rules(rules: Any, facts: Any) -> bool:
+    """Evaluate an ``applies_when``-shaped rule against a facts dict.
+
+    Returns ``True`` when the rule is empty/invalid so callers default to
+    "applies always" rather than dropping the row.
+    """
+    if not isinstance(facts, dict):
+        facts = {}
+    normalized = normalize_applies_when(rules)
+    if not normalized:
+        return True
+    return _evaluate_node(normalized, facts)
+
+
 async def seed_preconstructed_segments(
     conn: 'asyncpg.Connection',
     tenant_id: UUID,
