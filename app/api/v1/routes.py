@@ -4522,7 +4522,7 @@ async def reorder_services(
 # ── Qualification questions (TASK-0042) ─────────────────────────────────────
 QUALIFICATION_PROJECTION = (
     'id, tenant_id, position, label, kind, options, required, '
-    'applies_to_service_ids, created_at, updated_at'
+    'applies_to_service_ids, preset, created_at, updated_at'
 )
 
 
@@ -4574,14 +4574,17 @@ async def create_qualification_question(
 ):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    options_json = json.dumps([o.model_dump(mode='json') for o in payload.options])
+    options_json = json.dumps(
+        [o.model_dump(mode='json', exclude_none=True) for o in payload.options]
+    )
     applies = [str(sid) for sid in payload.applies_to_service_ids]
     row = await conn.fetchrow(
         f"""
         insert into app.qualification_questions (
-          tenant_id, position, label, kind, options, required, applies_to_service_ids
+          tenant_id, position, label, kind, options, required,
+          applies_to_service_ids, preset
         )
-        values ($1, $2, $3, $4, $5::jsonb, $6, $7::uuid[])
+        values ($1, $2, $3, $4, $5::jsonb, $6, $7::uuid[], $8)
         returning {QUALIFICATION_PROJECTION}
         """,
         tenant_id,
@@ -4591,6 +4594,7 @@ async def create_qualification_question(
         options_json,
         payload.required,
         applies,
+        payload.preset,
     )
     await audit(
         conn,
@@ -4629,7 +4633,7 @@ async def update_qualification_question(
             raise HTTPException(status_code=404, detail='Question not found')
         return normalize_qualification_question(row)
     options_json = (
-        json.dumps([o.model_dump(mode='json') for o in payload.options])
+        json.dumps([o.model_dump(mode='json', exclude_none=True) for o in payload.options])
         if payload.options is not None
         else None
     )
@@ -4638,6 +4642,8 @@ async def update_qualification_question(
         if payload.applies_to_service_ids is not None
         else None
     )
+    preset_update = updates.get('preset') if 'preset' in updates else None
+    preset_provided = 'preset' in updates
     row = await conn.fetchrow(
         f"""
         update app.qualification_questions
@@ -4646,7 +4652,8 @@ async def update_qualification_question(
             options=coalesce($5::jsonb, options),
             required=coalesce($6, required),
             position=coalesce($7, position),
-            applies_to_service_ids=coalesce($8::uuid[], applies_to_service_ids)
+            applies_to_service_ids=coalesce($8::uuid[], applies_to_service_ids),
+            preset=case when $10::boolean then $9 else preset end
         where tenant_id=$1 and id=$2
         returning {QUALIFICATION_PROJECTION}
         """,
@@ -4658,6 +4665,8 @@ async def update_qualification_question(
         updates.get('required'),
         updates.get('position'),
         applies,
+        preset_update,
+        preset_provided,
     )
     if not row:
         raise HTTPException(status_code=404, detail='Question not found')

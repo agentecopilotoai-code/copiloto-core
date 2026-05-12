@@ -15,6 +15,51 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0053 — Calificación de presupuesto y urgencia con triage automático
+
+- **Fecha:** 2026-05-12
+- **Resumen:** la calificación previa al booking ya distingue al **lead VIP** del frugal y al **caso urgente** del rutinario. Se agregan dos presets que el operador inserta con un clic desde el Admin Panel: `budget_tier` (lista de rangos de presupuesto con `tier_value` numérico) y `urgency_level` (single-choice con valores normalizados `emergency/high/normal/low`). Cuando el cliente responde una urgencia `emergency` o `high`, el bot envía un mensaje "🚨 Caso urgente, un agente te contactará enseguida", marca `metadata.qualification.urgency_level` y el orquestador escala con `_do_handoff(reason='urgency_triage', risk_level='high')` — bypasea el booking y manda la conversación al Operations Desk con un badge rojo "🚨 Urgente" en el tope del inbox (ordenado primero). Cuando el cliente responde un rango de presupuesto cuyo `tier_value ≥ notification_settings.vip_budget_threshold`, el flow asigna automáticamente la etiqueta `VIP` (color naranja `#f59e0b`), idempotente por `(tenant_id, name)`. Si el umbral es `0`, la lógica VIP queda desactivada (default seguro).
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):**
+    - `app.qualification_questions`: nueva columna `preset text check (preset is null or preset in ('budget_tier','urgency_level'))`. Mantiene retrocompatibilidad: las preguntas existentes quedan con `preset = null` y no activan ninguna lógica especial.
+  - **Pydantic (`app/api/v1/schemas.py`):**
+    - `QualificationOption` se extiende con `tier_value: float | None (ge=0)` y `urgency_normalized: str | None` (patrón `emergency|high|normal|low`).
+    - `QualificationQuestionCreate`/`Update` aceptan `preset: str | None` con patrón de los dos presets.
+    - Nuevas constantes `QUALIFICATION_QUESTION_PRESETS` y `URGENCY_NORMALIZED_VALUES` exportadas.
+  - **Routes (`app/api/v1/routes.py`):**
+    - `QUALIFICATION_PROJECTION` añade `preset` para que GETs y respuestas devuelvan el campo.
+    - `create_qualification_question` bindea `payload.preset` como `$8`; `update_qualification_question` permite cambiar el preset con el patrón `case when $10::boolean then $9 else preset end` (igual semántica que el "set" explícito a null, no via coalesce).
+    - `model_dump(mode='json', exclude_none=True)` para no enviar `tier_value`/`urgency_normalized` ausentes al jsonb.
+  - **qualification_flow (`app/services/qualification_flow.py`):**
+    - Constantes nuevas: `PRESET_BUDGET_TIER`, `PRESET_URGENCY_LEVEL`, `URGENT_LEVELS={'emergency','high'}`, `URGENCY_TRIAGE_REASON='urgency_triage'`, `URGENCY_WAIT_MESSAGE`, `VIP_TAG_NAME='VIP'`, `VIP_TAG_COLOR='#f59e0b'`, `DEFAULT_VIP_BUDGET_THRESHOLD=0.0`.
+    - Helpers puros: `_budget_tier_summary`, `_urgency_summary` (normaliza valores desconocidos a `normal`; para `yes_no` mapea `True→emergency`), `_vip_budget_threshold` (parsea dict o JSON string), `_is_vip` (umbral ≤ 0 desactiva).
+    - `_ensure_vip_tag`/`_apply_vip_tag` insertan en `app.contact_tags` (`on conflict do nothing`) y en `app.contact_tag_assignments`, idempotente por `(tenant_id, name)`.
+    - Tras completar la calificación, el flow ahora: (a) lee `notification_settings` del tenant, (b) decide `triage_handoff` y `is_vip`, (c) si VIP aplica la etiqueta, (d) si triage encola un mensaje de espera con `qualification_step='urgency_triage'`, (e) persiste `metadata.qualification` con `budget_tier`, `urgency_level`, `vip` y `triage_handoff`, (f) snapshota lo mismo en `contacts.qualification`, (g) emite auditoría con los flags. El resultado expone `triage_handoff`, `triage_reason`, `urgency_level`, `budget_tier`, `vip` y `vip_tag_id` para el orquestador.
+  - **Orquestador (`app/services/rag_orchestrator.py`):**
+    - Cuando la calificación se completa con `triage_handoff=True`, el orquestador invoca `_do_handoff(reason='urgency_triage', reason_detail='urgency_level=<x>', risk_level='high')` y NO continúa al booking. Cualquier otro `qualification_completed` sigue el camino existente (booking con `prefilled_service_id`).
+  - **Admin Panel:**
+    - `TenantSetupWizard.jsx`: `DEFAULT_NOTIFICATION_SETTINGS.vip_budget_threshold = 0`. La pestaña "Calificación" agrega arriba del panel un mini-form "Umbral VIP" (input numérico ≥ 0, step 1000) con hint explicativo; se guarda vía `handleSaveSettings` existente.
+    - `QualificationQuestionsPanel.jsx`: dos botones nuevos arriba del formulario — "Insertar pregunta de presupuesto" y "Insertar pregunta de urgencia" — que pre-cargan el form con las opciones default (`200k/800k/1M` para presupuesto, `emergency/high/normal/low` para urgencia). El form muestra el preset activo en el título (`· preset Presupuesto` / `· preset Urgencia`). Cada fila de opción gana un input numérico para `tier_value` (cuando el preset es budget) o un `<select>` con los 4 niveles para `urgency_normalized` (cuando el preset es urgency). `startEdit` rehidrata `preset`, `tier_value` y `urgency_normalized`. `submit` los envía si están definidos.
+  - **OperationsDesk (`admin-panel/src/components/modules/operations/OperationsDesk.jsx`):**
+    - La lista de conversaciones se ordena con un comparador estable: las que tienen `metadata.qualification.urgency_level ∈ {emergency, high}` quedan **al tope** del inbox.
+    - Cada conversación muestra un badge rojo `🚨 Urgente` con `title` que indica el nivel y un atributo `data-urgent` para QA / styling.
+- **Tests (`tests/test_qualification_triage_static.py`, 18 tests nuevos):**
+  - **Schema/Pydantic/Routes (3):** columna `preset` con check, constantes Pydantic, proyección + bindings.
+  - **Helpers puros (5):** constantes, `_budget_tier_summary`, `_urgency_summary` con fallback a `normal`, `_vip_budget_threshold` (dict, JSON string, null, no-json), `_is_vip` (above/below/threshold≤0/None).
+  - **Completion flow (5) con `FakeConn` propio:** urgencia `emergency` dispara `triage_handoff=True` + mensaje de espera; urgencia `normal` no dispara; presupuesto `> 800k` con umbral `800k` asigna la etiqueta VIP; presupuesto `low` no la asigna; umbral `0` desactiva VIP incluso con presupuesto alto.
+  - **Wiring (5):** orquestador forwarda `triage_handoff`, panel expone los botones preset y los campos normalizados, wizard agrega el input "Umbral VIP", OperationsDesk muestra `🚨 Urgente` y ordena urgentes al tope.
+- **Validaciones:**
+  - `pytest tests/test_qualification_triage_static.py -q` → **18 passed**.
+  - `pytest tests/test_qualification_flow_static.py tests/test_qualification_triage_static.py -q` → **44 passed** (TASK-0042 no regresiona).
+  - `pytest tests/ -q -m "not requires_db"` → **876 passed, 1 deselected** (sin regresiones en el resto del suite estático).
+- **Notas:**
+  - Las preguntas siguen siendo opcionales: sin presets configurados el flow se comporta exactamente como en TASK-0042. El campo `preset` es totalmente opcional.
+  - La etiqueta `VIP` es idempotente por `(tenant_id, name)`, igual que `Atención prioritaria` de TASK-0045 — no se duplica entre tenants y se asigna múltiples veces sin error.
+  - El umbral VIP default es `0` (desactivado). El operador debe configurar un valor positivo para activar la lógica.
+  - El `OperationsDesk` ordena en el cliente; un tenant con cientos de conversaciones podría querer ordenar server-side en una iteración futura, pero para el MVP esta sort es suficiente y barata.
+
+---
+
 ### TASK-0052 — Recall automático ("control en 6 meses") por servicio tras completar
 
 - **Fecha:** 2026-05-12

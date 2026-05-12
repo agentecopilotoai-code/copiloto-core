@@ -562,6 +562,26 @@ async def orchestrate_inbound_message(
     if qualification_result is not None:
         action = qualification_result.get('action')
         if action == 'qualification_completed':
+            if qualification_result.get('triage_handoff'):
+                log.info(
+                    'orchestrator.qualification_triage',
+                    conversation_id=conversation_id,
+                    urgency_level=qualification_result.get('urgency_level'),
+                )
+                return await _do_handoff(
+                    conn,
+                    tenant_id=tenant_id,
+                    channel_id=channel_id,
+                    conversation=conversation,
+                    inbound_message=inbound_message,
+                    policy=policy,
+                    reason=qualification_result.get('triage_reason')
+                    or 'urgency_triage',
+                    reason_detail=(
+                        f"urgency_level={qualification_result.get('urgency_level')}"
+                    ),
+                    risk_level='high',
+                )
             prefilled_service_id = qualification_result.get('recommended_service_id')
             # Reload the conversation so booking_flow sees the persisted state.
             refreshed = await conn.fetchrow(
