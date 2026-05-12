@@ -5,7 +5,7 @@ import hmac
 import io
 import json
 from pathlib import Path
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
@@ -282,6 +282,10 @@ tenant_catalog_router = APIRouter(
 tenant_ops_router = APIRouter(
     tags=['tenant-operations'],
     dependencies=[Depends(authenticate_request), Depends(require_min_role('agent', allow_service=True))],
+)
+tenant_analytics_router = APIRouter(
+    tags=['tenant-analytics'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('manager'))],
 )
 tenant_signup_router = APIRouter(
     tags=['tenant-signup'],
@@ -5033,6 +5037,410 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
     return {'accepted': True, 'payload_sha256': sha}
 
 
+def _resolve_analytics_range(from_date: str | None, to_date: str | None) -> tuple[date, date]:
+    today = datetime.now(UTC).date()
+    end = date.fromisoformat(to_date) if to_date else today
+    start = date.fromisoformat(from_date) if from_date else (end - timedelta(days=29))
+    if start > end:
+        raise HTTPException(status_code=400, detail='from_date must be on or before to_date')
+    return start, end
+
+
+def _range_bounds(start: date, end: date) -> tuple[datetime, datetime]:
+    range_start = datetime.combine(start, datetime.min.time(), tzinfo=UTC)
+    range_end = datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+    return range_start, range_end
+
+
+@tenant_analytics_router.get('/analytics/overview')
+async def analytics_overview(
+    request: Request,
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    start, end = _resolve_analytics_range(from_date, to_date)
+    range_start, range_end = _range_bounds(start, end)
+    retention_start = range_end - timedelta(days=90)
+
+    conv_row = await conn.fetchrow(
+        """
+        select
+          count(*) as total,
+          count(*) filter (where status in ('open','waiting_user','waiting_agent')) as open_count,
+          count(*) filter (where status in ('resolved','closed','archived')) as resolved_count,
+          count(*) filter (where status in ('human_required','human_active') or handoff_required) as handoff_count
+        from app.conversations
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        """,
+        tenant_id, range_start, range_end,
+    )
+    appt_row = await conn.fetchrow(
+        """
+        select
+          count(*) as created,
+          count(*) filter (where status = 'confirmed') as confirmed,
+          count(*) filter (where status = 'completed') as completed,
+          count(*) filter (where status = 'cancelled') as cancelled,
+          count(*) filter (where status = 'no_show') as no_shows
+        from app.appointments
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        """,
+        tenant_id, range_start, range_end,
+    )
+    revenue_row = await conn.fetchrow(
+        """
+        select coalesce(sum(s.price_amount), 0)::float as revenue
+        from app.appointments a
+        left join app.service_catalog s on s.id = a.service_id and s.tenant_id = a.tenant_id
+        where a.tenant_id = $1 and a.status = 'completed'
+          and a.starts_at >= $2 and a.starts_at < $3
+        """,
+        tenant_id, range_start, range_end,
+    )
+    feedback_row = await conn.fetchrow(
+        """
+        select coalesce(avg(rating), 0)::float as avg_rating, count(*) as ratings_count
+        from app.appointment_feedback
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        """,
+        tenant_id, range_start, range_end,
+    )
+    msg_row = await conn.fetchrow(
+        """
+        select
+          count(*) filter (where direction = 'inbound') as inbound,
+          count(*) filter (where direction = 'outbound') as outbound
+        from app.messages
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        """,
+        tenant_id, range_start, range_end,
+    )
+    retention_row = await conn.fetchrow(
+        """
+        with completed as (
+          select contact_id, count(*) as ct
+          from app.appointments
+          where tenant_id = $1 and status = 'completed'
+            and starts_at >= $2 and starts_at < $3
+          group by contact_id
+        )
+        select
+          count(*) filter (where ct >= 2)::int as recurring_contacts,
+          count(*)::int as total_contacts
+        from completed
+        """,
+        tenant_id, retention_start, range_end,
+    )
+
+    conv_total = conv_row['total'] or 0
+    handoff_count = conv_row['handoff_count'] or 0
+    handoff_rate = (handoff_count / conv_total * 100) if conv_total else 0.0
+    completed = appt_row['completed'] or 0
+    no_shows = appt_row['no_shows'] or 0
+    no_show_base = completed + no_shows
+    no_show_rate = (no_shows / no_show_base * 100) if no_show_base else 0.0
+    recurring = retention_row['recurring_contacts'] or 0
+    total_retention = retention_row['total_contacts'] or 0
+    retention_rate = (recurring / total_retention * 100) if total_retention else 0.0
+
+    return {
+        'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
+        'conversations': {
+            'total': conv_total,
+            'open': conv_row['open_count'] or 0,
+            'resolved': conv_row['resolved_count'] or 0,
+            'handoff': handoff_count,
+            'handoff_rate_pct': round(handoff_rate, 2),
+        },
+        'appointments': {
+            'created': appt_row['created'] or 0,
+            'confirmed': appt_row['confirmed'] or 0,
+            'completed': completed,
+            'cancelled': appt_row['cancelled'] or 0,
+            'no_shows': no_shows,
+            'no_show_rate_pct': round(no_show_rate, 2),
+        },
+        'revenue': {
+            'estimated_amount': round(revenue_row['revenue'] or 0.0, 2),
+        },
+        'feedback': {
+            'average_rating': round(feedback_row['avg_rating'] or 0.0, 2),
+            'ratings_count': feedback_row['ratings_count'] or 0,
+        },
+        'messages': {
+            'inbound': msg_row['inbound'] or 0,
+            'outbound': msg_row['outbound'] or 0,
+        },
+        'retention': {
+            'recurring_contacts': recurring,
+            'total_contacts_completed': total_retention,
+            'retention_rate_pct': round(retention_rate, 2),
+            'window_days': 90,
+        },
+    }
+
+
+@tenant_analytics_router.get('/analytics/conversations')
+async def analytics_conversations(
+    request: Request,
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    start, end = _resolve_analytics_range(from_date, to_date)
+    range_start, range_end = _range_bounds(start, end)
+
+    intents = await conn.fetch(
+        """
+        select coalesce(current_intent, 'unknown') as intent, count(*) as count
+        from app.conversations
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        group by 1
+        order by count desc
+        limit 10
+        """,
+        tenant_id, range_start, range_end,
+    )
+    statuses = await conn.fetch(
+        """
+        select status, count(*) as count
+        from app.conversations
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        group by status
+        order by count desc
+        """,
+        tenant_id, range_start, range_end,
+    )
+    first_response_row = await conn.fetchrow(
+        """
+        with first_inbound as (
+          select conversation_id, min(created_at) as inbound_at
+          from app.messages
+          where tenant_id = $1 and direction = 'inbound'
+            and created_at >= $2 and created_at < $3
+          group by conversation_id
+        ), first_bot as (
+          select m.conversation_id, min(m.created_at) as bot_at
+          from app.messages m
+          where m.tenant_id = $1 and m.direction = 'outbound' and m.sender_actor_type = 'bot'
+            and m.created_at >= $2 and m.created_at < $3
+          group by m.conversation_id
+        )
+        select coalesce(
+          avg(extract(epoch from (b.bot_at - i.inbound_at))),
+          0
+        )::float as avg_seconds
+        from first_inbound i
+        join first_bot b on b.conversation_id = i.conversation_id
+        where b.bot_at >= i.inbound_at
+        """,
+        tenant_id, range_start, range_end,
+    )
+    daily = await conn.fetch(
+        """
+        select date_trunc('day', created_at)::date as date, count(*) as count
+        from app.conversations
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        group by 1
+        order by 1
+        """,
+        tenant_id, range_start, range_end,
+    )
+    total_intents = sum(row['count'] for row in intents) or 1
+    return {
+        'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
+        'top_intents': [
+            {
+                'intent': row['intent'],
+                'count': row['count'],
+                'percentage': round(row['count'] / total_intents * 100, 2),
+            }
+            for row in intents
+        ],
+        'status_distribution': [
+            {'status': row['status'], 'count': row['count']} for row in statuses
+        ],
+        'avg_first_bot_response_seconds': round(first_response_row['avg_seconds'] or 0.0, 2),
+        'daily_evolution': [
+            {'date': row['date'].isoformat(), 'count': row['count']} for row in daily
+        ],
+    }
+
+
+@tenant_analytics_router.get('/analytics/appointments')
+async def analytics_appointments(
+    request: Request,
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    start, end = _resolve_analytics_range(from_date, to_date)
+    range_start, range_end = _range_bounds(start, end)
+
+    top_services = await conn.fetch(
+        """
+        select coalesce(s.name, a.service_code) as service_name,
+               coalesce(s.id::text, a.service_code) as service_key,
+               count(*) as count
+        from app.appointments a
+        left join app.service_catalog s on s.id = a.service_id and s.tenant_id = a.tenant_id
+        where a.tenant_id = $1 and a.created_at >= $2 and a.created_at < $3
+        group by 1, 2
+        order by count desc
+        limit 10
+        """,
+        tenant_id, range_start, range_end,
+    )
+    statuses = await conn.fetch(
+        """
+        select status, count(*) as count
+        from app.appointments
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        group by status
+        order by count desc
+        """,
+        tenant_id, range_start, range_end,
+    )
+    no_shows_dow = await conn.fetch(
+        """
+        select extract(dow from starts_at)::int as dow, count(*) as count
+        from app.appointments
+        where tenant_id = $1 and status = 'no_show'
+          and starts_at >= $2 and starts_at < $3
+        group by 1
+        order by 1
+        """,
+        tenant_id, range_start, range_end,
+    )
+    daily = await conn.fetch(
+        """
+        select date_trunc('day', created_at)::date as date,
+               count(*) as created,
+               count(*) filter (where status = 'completed') as completed
+        from app.appointments
+        where tenant_id = $1 and created_at >= $2 and created_at < $3
+        group by 1
+        order by 1
+        """,
+        tenant_id, range_start, range_end,
+    )
+    return {
+        'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
+        'top_services': [
+            {
+                'service_key': row['service_key'],
+                'service_name': row['service_name'],
+                'count': row['count'],
+            }
+            for row in top_services
+        ],
+        'status_distribution': [
+            {'status': row['status'], 'count': row['count']} for row in statuses
+        ],
+        'no_shows_by_weekday': [
+            {'weekday': row['dow'], 'count': row['count']} for row in no_shows_dow
+        ],
+        'daily_evolution': [
+            {
+                'date': row['date'].isoformat(),
+                'created': row['created'],
+                'completed': row['completed'],
+            }
+            for row in daily
+        ],
+    }
+
+
+@tenant_analytics_router.get('/analytics/contacts')
+async def analytics_contacts(
+    request: Request,
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    start, end = _resolve_analytics_range(from_date, to_date)
+    range_start, range_end = _range_bounds(start, end)
+
+    new_vs_recurring = await conn.fetchrow(
+        """
+        with new_contacts as (
+          select id from app.contacts
+          where tenant_id = $1 and created_at >= $2 and created_at < $3
+        ), active_contacts as (
+          select distinct contact_id as id from app.appointments
+          where tenant_id = $1 and created_at >= $2 and created_at < $3
+        )
+        select
+          (select count(*) from new_contacts) as new_count,
+          (select count(*) from active_contacts a
+             where a.id not in (select id from new_contacts)) as recurring_count
+        """,
+        tenant_id, range_start, range_end,
+    )
+    top_tags = await conn.fetch(
+        """
+        select t.id, t.name, t.color, count(cta.contact_id) as count
+        from app.contact_tags t
+        left join app.contact_tag_assignments cta on cta.tag_id = t.id and cta.tenant_id = t.tenant_id
+        where t.tenant_id = $1
+        group by t.id
+        order by count desc
+        limit 10
+        """,
+        tenant_id,
+    )
+    opt_row = await conn.fetchrow(
+        """
+        select
+          count(*) as total,
+          count(*) filter (where opt_in_status in ('revoked','suppressed')) as opted_out
+        from app.contacts
+        where tenant_id = $1
+        """,
+        tenant_id,
+    )
+    sources = await conn.fetch(
+        """
+        select coalesce(source, 'unknown') as source, count(*) as count
+        from app.contacts
+        where tenant_id = $1
+        group by 1
+        order by count desc
+        """,
+        tenant_id,
+    )
+
+    total_contacts = opt_row['total'] or 0
+    opted_out = opt_row['opted_out'] or 0
+    opt_out_rate = (opted_out / total_contacts * 100) if total_contacts else 0.0
+
+    return {
+        'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
+        'new_contacts': new_vs_recurring['new_count'] or 0,
+        'recurring_contacts': new_vs_recurring['recurring_count'] or 0,
+        'top_tags': [
+            {
+                'id': str(row['id']),
+                'name': row['name'],
+                'color': row['color'],
+                'count': row['count'],
+            }
+            for row in top_tags
+        ],
+        'opt_out_rate_pct': round(opt_out_rate, 2),
+        'total_contacts': total_contacts,
+        'opted_out': opted_out,
+        'source_distribution': [
+            {'source': row['source'], 'count': row['count']} for row in sources
+        ],
+    }
+
+
 router.include_router(public_router)
 router.include_router(webhook_router)
 router.include_router(platform_admin_router)
@@ -5040,4 +5448,5 @@ router.include_router(tenant_signup_router)
 router.include_router(tenant_admin_router)
 router.include_router(tenant_catalog_router)
 router.include_router(tenant_ops_router)
+router.include_router(tenant_analytics_router)
 router.include_router(system_router)
