@@ -207,6 +207,36 @@ export function listMyTenants(session) {
   return request('/me/tenants', { session });
 }
 
+export function listTenantMembers(session, tenantId) {
+  return request(`/tenants/${tenantId}/members`, { session, tenantId });
+}
+
+export function inviteTenantMember(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/members`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateTenantMemberRole(session, tenantId, userId, role) {
+  return request(`/tenants/${tenantId}/members/${userId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: { role },
+  });
+}
+
+export function removeTenantMember(session, tenantId, userId) {
+  return request(`/tenants/${tenantId}/members/${userId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
 
 export function upsertWhatsAppChannel(session, tenantId, payload) {
   return request(`/tenants/${tenantId}/channels/whatsapp`, {
