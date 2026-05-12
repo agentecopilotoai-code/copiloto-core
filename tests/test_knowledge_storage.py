@@ -5,6 +5,7 @@ import pytest
 
 from app.core.config import Settings
 from app.services.knowledge_storage import (
+    delete_knowledge_file,
     extract_text_if_supported,
     normalize_object_prefix,
     safe_storage_segment,
@@ -98,3 +99,150 @@ def test_object_prefix_defaults_to_tenant_scoped_knowledge_path():
 
     assert normalize_object_prefix(None, tenant_id) == f'tenants/{tenant_id}/knowledge'
     assert normalize_object_prefix('/custom//tenant//knowledge/', tenant_id) == 'custom/tenant/knowledge'
+
+
+def test_delete_knowledge_file_removes_files_inside_tenant_prefix(tmp_path):
+    tenant_id = str(uuid4())
+    tenant_prefix = f'tenants/{tenant_id}/knowledge'
+    target = tmp_path / tenant_prefix / 'doc-1' / 'file.txt'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('payload')
+
+    delete_knowledge_file(
+        source_uri=f'file://{target}',
+        storage_backend='local',
+        object_key=f'{tenant_prefix}/doc-1/file.txt',
+        settings=make_settings(tmp_path),
+        tenant_prefix=tenant_prefix,
+    )
+
+    assert not target.exists()
+
+
+def test_delete_knowledge_file_refuses_absolute_source_uri_outside_storage_root(tmp_path):
+    secret_dir = tmp_path.parent / 'secrets'
+    secret_dir.mkdir(parents=True, exist_ok=True)
+    secret_file = secret_dir / 'tenant-key.pem'
+    secret_file.write_text('SENSITIVE')
+
+    delete_knowledge_file(
+        source_uri=f'file://{secret_file}',
+        storage_backend='local',
+        object_key=None,
+        settings=make_settings(tmp_path),
+        tenant_prefix=f'tenants/{uuid4()}/knowledge',
+    )
+
+    assert secret_file.exists(), 'file outside storage root must not be deleted'
+
+
+def test_delete_knowledge_file_refuses_object_key_traversal(tmp_path):
+    tenant_id = str(uuid4())
+    tenant_prefix = f'tenants/{tenant_id}/knowledge'
+
+    other_tenant_file = tmp_path / 'tenants' / 'victim-tenant' / 'knowledge' / 'doc' / 'private.txt'
+    other_tenant_file.parent.mkdir(parents=True, exist_ok=True)
+    other_tenant_file.write_text('victim data')
+
+    delete_knowledge_file(
+        source_uri='',
+        storage_backend='local',
+        object_key=f'{tenant_prefix}/../../victim-tenant/knowledge/doc/private.txt',
+        settings=make_settings(tmp_path),
+        tenant_prefix=tenant_prefix,
+    )
+
+    assert other_tenant_file.exists(), 'traversal out of tenant prefix must not delete other tenant files'
+
+
+def test_delete_knowledge_file_refuses_object_key_outside_tenant_prefix(tmp_path):
+    tenant_id = str(uuid4())
+    tenant_prefix = f'tenants/{tenant_id}/knowledge'
+
+    other_file = tmp_path / 'tenants' / 'other' / 'knowledge' / 'a.txt'
+    other_file.parent.mkdir(parents=True, exist_ok=True)
+    other_file.write_text('x')
+
+    delete_knowledge_file(
+        source_uri='',
+        storage_backend='local',
+        object_key='tenants/other/knowledge/a.txt',
+        settings=make_settings(tmp_path),
+        tenant_prefix=tenant_prefix,
+    )
+
+    assert other_file.exists()
+
+
+def test_delete_knowledge_file_s3_refuses_bucket_mismatch(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def delete_object(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(
+        'app.services.knowledge_storage._s3_client', lambda *a, **kw: FakeClient()
+    )
+
+    delete_knowledge_file(
+        source_uri='',
+        storage_backend='s3',
+        object_key='tenants/victim/knowledge/file',
+        bucket='attacker-supplied-bucket',
+        settings=make_settings(tmp_path),
+        tenant_prefix='tenants/victim/knowledge',
+        expected_bucket='configured-tenant-bucket',
+    )
+
+    assert calls == []
+
+
+def test_delete_knowledge_file_s3_refuses_key_outside_tenant_prefix(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def delete_object(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(
+        'app.services.knowledge_storage._s3_client', lambda *a, **kw: FakeClient()
+    )
+
+    delete_knowledge_file(
+        source_uri='',
+        storage_backend='s3',
+        object_key='tenants/other-tenant/knowledge/file',
+        bucket='configured-tenant-bucket',
+        settings=make_settings(tmp_path),
+        tenant_prefix='tenants/this-tenant/knowledge',
+        expected_bucket='configured-tenant-bucket',
+    )
+
+    assert calls == []
+
+
+def test_delete_knowledge_file_s3_deletes_when_within_tenant_prefix(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def delete_object(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(
+        'app.services.knowledge_storage._s3_client', lambda *a, **kw: FakeClient()
+    )
+
+    delete_knowledge_file(
+        source_uri='',
+        storage_backend='s3',
+        object_key='tenants/this-tenant/knowledge/doc/file',
+        bucket='configured-tenant-bucket',
+        settings=make_settings(tmp_path),
+        tenant_prefix='tenants/this-tenant/knowledge',
+        expected_bucket='configured-tenant-bucket',
+    )
+
+    assert calls == [
+        {'Bucket': 'configured-tenant-bucket', 'Key': 'tenants/this-tenant/knowledge/doc/file'}
+    ]

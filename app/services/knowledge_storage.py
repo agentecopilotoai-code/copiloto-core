@@ -178,6 +178,20 @@ def store_knowledge_file(
     )
 
 
+def _resolve_within(base: Path, candidate: Path) -> Path | None:
+    """Return candidate.resolve() if it is contained within base.resolve(), else None."""
+    try:
+        base_resolved = base.resolve()
+        candidate_resolved = candidate.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if candidate_resolved == base_resolved:
+        return None
+    if not candidate_resolved.is_relative_to(base_resolved):
+        return None
+    return candidate_resolved
+
+
 def delete_knowledge_file(
     *,
     source_uri: str,
@@ -185,38 +199,82 @@ def delete_knowledge_file(
     object_key: str | None = None,
     bucket: str | None = None,
     settings: Settings,
+    tenant_prefix: str | None = None,
+    expected_bucket: str | None = None,
     endpoint_url: str | None = None,
     access_key_id: str | None = None,
     secret_access_key: str | None = None,
     region_name: str | None = None,
 ) -> None:
-    """Remove a stored knowledge file from local disk or S3. Silently ignores missing files."""
+    """Remove a stored knowledge file from local disk or S3.
+
+    Enforces that the target file/object resides under the trusted storage
+    location (storage root and, if provided, tenant prefix / configured bucket).
+    Inputs derived from caller-controlled DB fields (``source_uri``,
+    ``object_key``, ``bucket``) are validated before any unlink/delete is
+    attempted, so a tenant-writable value pointing outside the tenant's
+    storage region is silently refused. Missing files are also ignored.
+    """
     backend = (storage_backend or '').lower()
 
     if backend == 'local':
-        file_path: Path | None = None
-        if source_uri and source_uri.startswith('file://'):
-            file_path = Path(source_uri[7:])
-        elif object_key:
-            file_path = Path(settings.knowledge_storage_local_path) / object_key
-        if file_path:
+        root = Path(settings.knowledge_storage_local_path)
+        allowed_base = root
+        if tenant_prefix:
+            normalized_prefix = tenant_prefix.strip('/').replace('\\', '/')
+            if normalized_prefix and not any(
+                part in {'', '.', '..'} for part in normalized_prefix.split('/')
+            ):
+                allowed_base = root / normalized_prefix
+
+        candidate: Path | None = None
+        if object_key:
+            normalized_key = object_key.replace('\\', '/').lstrip('/')
+            if normalized_key and not any(
+                part in {'', '.', '..'} for part in normalized_key.split('/')
+            ):
+                candidate = root / normalized_key
+        elif source_uri and source_uri.startswith('file://'):
+            candidate = Path(source_uri[7:])
+
+        if candidate is None:
+            return
+
+        safe_path = _resolve_within(allowed_base, candidate)
+        if safe_path is None:
+            return
+
+        try:
+            safe_path.unlink(missing_ok=True)
+            # Remove empty parent directories up to (but not including) allowed_base
             try:
-                file_path.unlink(missing_ok=True)
-                # Remove empty parent directories up to storage root
-                root = Path(settings.knowledge_storage_local_path).resolve()
-                parent = file_path.parent.resolve()
-                while parent != root and parent.is_relative_to(root):
-                    try:
-                        parent.rmdir()
-                    except OSError:
-                        break
-                    parent = parent.parent
-            except OSError:
-                pass
+                base_resolved = allowed_base.resolve()
+            except (OSError, RuntimeError, ValueError):
+                return
+            parent = safe_path.parent
+            while parent != base_resolved and parent.is_relative_to(base_resolved):
+                try:
+                    parent.rmdir()
+                except OSError:
+                    break
+                parent = parent.parent
+        except OSError:
+            pass
 
     elif backend == 's3':
         if not object_key or not bucket:
             return
+        if expected_bucket and bucket != expected_bucket:
+            return
+        normalized_key = object_key.replace('\\', '/').lstrip('/')
+        if not normalized_key or any(
+            part in {'', '.', '..'} for part in normalized_key.split('/')
+        ):
+            return
+        if tenant_prefix:
+            normalized_prefix = tenant_prefix.strip('/').replace('\\', '/')
+            if normalized_prefix and not normalized_key.startswith(normalized_prefix + '/'):
+                return
         try:
             client = _s3_client(
                 settings,
@@ -225,6 +283,6 @@ def delete_knowledge_file(
                 secret_access_key=secret_access_key,
                 region_name=region_name,
             )
-            client.delete_object(Bucket=bucket, Key=object_key)
+            client.delete_object(Bucket=bucket, Key=normalized_key)
         except Exception:
             pass
