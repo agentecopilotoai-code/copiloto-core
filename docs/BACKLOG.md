@@ -97,6 +97,7 @@ Durante el desarrollo iterativo se acumularon patrones que deben eliminarse ante
 | 10 | Sin campañas / mensajes masivos a segmentos | No hay retención ni recompra activa |
 | 11 | Sin widget web / captura de leads desde sitio web | Solo WhatsApp como canal de entrada |
 | 12 | Sin pagos básicos (link de pago + registro) | No hay cobro anticipado ni seguimiento de pagos |
+| 13 | Sin gestión de equipo / cambio de roles desde el panel | Cambiar el rol de un usuario requiere UPDATE en SQL + edición manual en Auth0 |
 
 ### Orden de ejecución (dependencias explícitas)
 
@@ -120,6 +121,8 @@ TASK-0038 (campañas y mensajes masivos)
 TASK-0039 (widget web y captura de leads)
     ↓
 TASK-0040 (links de pago y registro de pagos)
+    ↓
+TASK-0041 (gestión de equipo y roles del tenant)
     ↓
 TASK-0029 (drill de restore — cierre operacional)
 ```
@@ -218,3 +221,29 @@ TASK-0029 (drill de restore — cierre operacional)
   - Agregar test de sintaxis bash: `bash -n scripts/backup-local.sh && bash -n scripts/restore-local.sh`.
 - **Criterio de aceptación:** restore local ejecutado con datos demo en Docker Compose; conteos documentados; scripts pasan `bash -n`; evidencia commiteada.
 - **Dependencias:** requiere Docker. Si el entorno no lo tiene, documentar el bloqueo y no mover a DONE.
+
+---
+
+### TASK-0041 — Gestión de equipo y roles del tenant
+
+- **Objetivo:** hoy no hay forma de invitar colaboradores ni cambiar el rol de un usuario dentro de un tenant. El único rol que se asigna automáticamente es `owner` al crear el tenant (`app/api/v1/routes.py:632`); cualquier otro cambio requiere `UPDATE` directo en `app.user_tenant_roles` y editar el usuario en Auth0 a mano. Esta tarea cierra esa brecha entregando endpoints + UI para administrar miembros y roles desde el Admin Panel, con sincronización a Auth0 vía Management API.
+- **Alcance mínimo — backend:**
+  - Endpoints (todos requieren rol `admin` o superior del tenant + `X-Tenant-Id`):
+    - `GET /v1/tenants/{tenant_id}/members` — lista miembros (`user_id, auth_subject, email, display_name, roles[], is_default_role, created_at`). Una fila por usuario con sus roles agregados.
+    - `POST /v1/tenants/{tenant_id}/members` — invitar usuario. Body: `{email, display_name?, role}` donde `role ∈ {'admin','manager','agent','viewer'}`. Si el usuario no existe en `app.users` se crea con `auth_subject` pendiente; se inserta una fila en `user_tenant_roles`; se dispara invitación vía Auth0 Management API (endpoint `POST /api/v2/tickets/password-change` con `result_url` al admin panel) si las credenciales Auth0 están configuradas. Si Auth0 no está disponible (modo desarrollo), se persiste el registro y se devuelve un flag `auth0_skipped: true`.
+    - `PATCH /v1/tenants/{tenant_id}/members/{user_id}` — cambia rol. Body: `{role}`. El owner no puede ser degradado por nadie distinto de otro owner. Un usuario no puede degradarse a sí mismo si es el único `owner` del tenant. Tras actualizar la fila, sincronizar con Auth0 Management API (`PATCH /api/v2/users/{auth_subject}/roles`) para que el próximo JWT lleve el claim correcto.
+    - `DELETE /v1/tenants/{tenant_id}/members/{user_id}` — revoca acceso al tenant. Borra todas las filas de `user_tenant_roles` para `(user_id, tenant_id)`. No elimina al usuario de `app.users` (puede pertenecer a otros tenants). Auditoría: `tenant_member.removed`. No permitir borrar al último `owner`.
+  - Servicio nuevo `app/services/auth0_admin.py` con `get_management_token() → str` (cachea token Auth0 con TTL del `expires_in`), `invite_user(email, role, tenant_id) → ticket_url`, `assign_roles(auth_subject, roles) → None`, `revoke_tenant_roles(auth_subject, tenant_id) → None`. Si `AUTH0_DOMAIN` o `AUTH0_MGMT_CLIENT_ID/SECRET` no están en settings, el servicio retorna no-op con flag `disabled=true` (modo dev). Secrets viven en `.secrets/auth0_mgmt_*` siguiendo el patrón actual.
+  - Auditoría: `tenant_member.invited`, `tenant_member.role_updated`, `tenant_member.removed` con `entity_id = user_id` y `metadata = {previous_role, new_role}`.
+  - Tests estáticos: endpoints registrados con `require_min_role('admin')`, schema `MemberInvite`/`MemberRoleUpdate`, prevención de degradación de último owner, no-op de Auth0 cuando no está configurado, acciones de auditoría correctas.
+- **Alcance mínimo — Admin Panel:**
+  - Nuevo módulo **"Equipo"** (`admin-panel/src/components/modules/team/TeamModule.jsx`):
+    - Tabla de miembros con columnas: nombre, email, rol actual (chip de color), último login (si Auth0 lo entrega), acciones.
+    - Formulario "Invitar miembro": email, nombre opcional, select de rol (`admin`, `manager`, `agent`, `viewer`). Tras crear muestra el `ticket_url` para copiar al portapapeles si Auth0 está en modo no-op.
+    - Acción **"Cambiar rol"** por fila: select inline con confirmación. Deshabilitado si el rol objetivo es `owner` y el usuario actual no es owner.
+    - Acción **"Revocar acceso"** por fila con confirmación. Deshabilitada para el último owner.
+    - Banner informativo cuando Auth0 Management API no está configurada: "Los cambios se reflejarán en el próximo login del usuario. Auth0 Management API no está habilitada — sincroniza manualmente desde el dashboard si es necesario."
+  - Helpers en `admin-panel/src/services/coreApi.js`: `listTenantMembers`, `inviteTenantMember`, `updateTenantMemberRole`, `removeTenantMember`.
+  - Registrar en `data/modules.js` y `AdminLayout.jsx`. Accesible para rol `admin` o superior; si el usuario es `manager` o menor, el módulo se oculta del sidebar.
+- **Criterio de aceptación:** owner ve la lista de miembros del tenant; invita a un nuevo usuario con rol `manager` y aparece en la tabla; cambia el rol de un agente a manager y el siguiente JWT del usuario refleja el nuevo claim; intenta revocar al último owner y recibe 409; tests pasan en CI; un usuario con rol `agent` no ve el módulo en el sidebar y recibe 403 al pegar la URL.
+- **Dependencias:** ninguna técnica nueva; usa `app.user_tenant_roles` existente y Auth0 ya integrado para auth. Bloquea la utilidad de TASK-0027 (analítica), TASK-0038 (campañas) y TASK-0040 (pagos) porque los tres asumen roles `manager`/`admin` configurables.
