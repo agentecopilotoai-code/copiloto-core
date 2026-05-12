@@ -11,6 +11,7 @@ import {
   createServiceRequest,
   conversationMessageMediaUrl,
   createConversationHandoff,
+  generateAppointmentPaymentLink,
   getConversation,
   getQuoteForSr,
   getTenantAvailability,
@@ -24,10 +25,12 @@ import {
   patchQuote,
   patchServiceRequest,
   releaseConversation,
+  sendAppointmentPaymentLink,
   sendConversationMessage,
   sendQuote,
   unassignContactTag,
   updateAppointment,
+  updateAppointmentPaymentStatus,
   updateResource,
   startConversation,
 } from '../../../services/coreApi.js';
@@ -286,6 +289,7 @@ export function OperationsDesk({ module, session, tenant }) {
   const [isCalendarLoading, setIsCalendarLoading] = useState(false);
   const [appointmentForm, setAppointmentForm] = useState({ endsAt: '', notes: '', resourceId: '', serviceCode: '', startsAt: '' });
   const [rescheduleForm, setRescheduleForm] = useState({ appointmentId: '', endsAt: '', resourceId: '', startsAt: '' });
+  const [paymentDrafts, setPaymentDrafts] = useState({});
   const [serviceRequests, setServiceRequests] = useState([]);
   const [selectedSrId, setSelectedSrId] = useState(null);
   const [srQuote, setSrQuote] = useState(null);
@@ -759,6 +763,84 @@ export function OperationsDesk({ module, session, tenant }) {
       await cancelAppointment(session, tenant.id, appointmentId);
       await refreshScheduleData();
       setNotice({ type: 'success', text: 'Cita cancelada; el recurso queda liberado.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  function applyPaymentSummary(appointmentId, summary) {
+    if (!summary) return;
+    setAppointments((current) =>
+      current.map((appointment) =>
+        appointment.id === appointmentId
+          ? {
+              ...appointment,
+              payment_status: summary.payment_status ?? appointment.payment_status,
+              payment_amount: summary.payment_amount ?? appointment.payment_amount,
+              payment_currency: summary.payment_currency ?? appointment.payment_currency,
+              payment_link: summary.payment_link ?? appointment.payment_link,
+              payment_provider: summary.payment_provider ?? appointment.payment_provider,
+              payment_provider_reference:
+                summary.payment_provider_reference ?? appointment.payment_provider_reference,
+              payment_link_generated_at:
+                summary.payment_link_generated_at ?? appointment.payment_link_generated_at,
+              payment_link_sent_at: summary.payment_link_sent_at ?? appointment.payment_link_sent_at,
+              payment_paid_at: summary.payment_paid_at ?? appointment.payment_paid_at,
+            }
+          : appointment,
+      ),
+    );
+  }
+
+  async function handleGeneratePaymentLink(appointment) {
+    const draft = paymentDrafts[appointment.id] || {};
+    const amount = draft.amount !== undefined && draft.amount !== '' ? Number(draft.amount) : appointment.payment_amount;
+    if (!amount || Number(amount) <= 0) {
+      setNotice({ type: 'error', text: 'Indica un monto mayor a 0 para generar el link.' });
+      return;
+    }
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      const summary = await generateAppointmentPaymentLink(session, tenant.id, appointment.id, {
+        amount: Number(amount),
+        currency: draft.currency || appointment.payment_currency || undefined,
+        description: draft.description || undefined,
+      });
+      applyPaymentSummary(appointment.id, summary);
+      setNotice({ type: 'success', text: 'Link de pago generado.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleSendPaymentLink(appointmentId) {
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      const summary = await sendAppointmentPaymentLink(session, tenant.id, appointmentId);
+      applyPaymentSummary(appointmentId, summary);
+      setNotice({ type: 'success', text: 'Link enviado por WhatsApp.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleMarkPaymentStatus(appointmentId, paymentStatus) {
+    setIsBusy(true);
+    setNotice(null);
+    try {
+      const summary = await updateAppointmentPaymentStatus(session, tenant.id, appointmentId, {
+        payment_status: paymentStatus,
+      });
+      applyPaymentSummary(appointmentId, summary);
+      setNotice({ type: 'success', text: `Estado de pago actualizado a "${paymentStatus}".` });
     } catch (error) {
       setNotice({ type: 'error', text: error.message });
     } finally {
@@ -1427,6 +1509,18 @@ export function OperationsDesk({ module, session, tenant }) {
                   {appointments.slice(0, 8).map((appointment) => {
                     const confirmation = appointment.confirmation_status || 'pending';
                     const feedback = appointmentFeedback[appointment.id];
+                    const paymentStatus = appointment.payment_status || 'not_required';
+                    const paymentLabels = {
+                      not_required: 'Sin pago',
+                      pending: 'Pendiente',
+                      link_sent: 'Link enviado',
+                      paid: 'Pagado',
+                      failed: 'Fallido',
+                      refunded: 'Reembolsado',
+                    };
+                    const draft = paymentDrafts[appointment.id] || {};
+                    const amountValue = draft.amount !== undefined ? draft.amount : appointment.payment_amount ?? '';
+                    const currencyValue = draft.currency !== undefined ? draft.currency : appointment.payment_currency || 'COP';
                     return (
                       <article key={appointment.id}>
                         <strong>{formatDate(appointment.starts_at)} — {formatDate(appointment.ends_at)}</strong>
@@ -1435,12 +1529,82 @@ export function OperationsDesk({ module, session, tenant }) {
                           <span className={`status-badge confirmation-${confirmation}`}>
                             {confirmation === 'confirmed' ? 'Confirmada' : confirmation === 'declined' ? 'Rechazada' : 'Pendiente'}
                           </span>
+                          <span className={`status-badge payment-${paymentStatus}`}>
+                            Pago: {paymentLabels[paymentStatus] || paymentStatus}
+                          </span>
                           {feedback ? (
                             <span className="status-badge feedback-rating" title={feedback.comment || ''}>
                               {'⭐'.repeat(feedback.rating)} ({feedback.rating}/5)
                             </span>
                           ) : null}
                         </div>
+
+                        <div className="appointment-payment">
+                          <label>
+                            Monto
+                            <input
+                              min="0"
+                              onChange={(event) =>
+                                setPaymentDrafts({
+                                  ...paymentDrafts,
+                                  [appointment.id]: { ...draft, amount: event.target.value },
+                                })
+                              }
+                              placeholder="0"
+                              step="0.01"
+                              type="number"
+                              value={amountValue ?? ''}
+                            />
+                          </label>
+                          <label>
+                            Moneda
+                            <input
+                              maxLength={3}
+                              onChange={(event) =>
+                                setPaymentDrafts({
+                                  ...paymentDrafts,
+                                  [appointment.id]: { ...draft, currency: event.target.value.toUpperCase() },
+                                })
+                              }
+                              value={currencyValue}
+                            />
+                          </label>
+                          <div className="payment-actions">
+                            <button
+                              className="secondary-action"
+                              disabled={isBusy}
+                              onClick={() => handleGeneratePaymentLink(appointment)}
+                              type="button"
+                            >
+                              Generar link
+                            </button>
+                            <button
+                              className="secondary-action"
+                              disabled={isBusy || !appointment.payment_link}
+                              onClick={() => handleSendPaymentLink(appointment.id)}
+                              type="button"
+                            >
+                              Enviar por WhatsApp
+                            </button>
+                            <button
+                              className="secondary-action"
+                              disabled={isBusy || paymentStatus === 'paid'}
+                              onClick={() => handleMarkPaymentStatus(appointment.id, 'paid')}
+                              type="button"
+                            >
+                              Marcar pagado
+                            </button>
+                          </div>
+                          {appointment.payment_link ? (
+                            <small>
+                              Link:&nbsp;
+                              <a href={appointment.payment_link} rel="noreferrer" target="_blank">
+                                {appointment.payment_link}
+                              </a>
+                            </small>
+                          ) : null}
+                        </div>
+
                         {appointment.status !== 'cancelled' && (
                           <button className="secondary-action" disabled={isBusy} onClick={() => handleCancelAppointment(appointment.id)} type="button">Cancelar</button>
                         )}

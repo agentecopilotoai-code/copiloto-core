@@ -139,24 +139,7 @@ _TASK-0039 — Widget web y formulario de captura de leads desde sitio web: COMP
 
 ---
 
-### TASK-0040 — Links de pago y registro de pagos en citas
-
-- **Objetivo:** muchos negocios requieren pago previo o al momento del servicio. Esta tarea agrega soporte básico para generar links de pago (MercadoPago / Stripe) que el bot o el agente envía al cliente, y para registrar el estado del pago en la cita. No se implementa pasarela propia: solo integración con proveedores externos vía sus APIs de links de pago.
-- **Alcance mínimo — backend:**
-  - Columnas en `appointments`: `payment_status text DEFAULT 'not_required' CHECK(payment_status IN ('not_required','pending','link_sent','paid','failed'))`, `payment_amount numeric(10,2)`, `payment_currency char(3) DEFAULT 'COP'`, `payment_link text`, `payment_provider_reference text`.
-  - `app/services/payment_provider.py`: función `generate_payment_link(provider, api_key, amount, currency, description, external_ref) → url` con soporte para MercadoPago (Preference API) y Stripe (Payment Link API).
-  - Endpoints:
-    - `POST /v1/appointments/{id}/payment-link` — genera link y lo guarda en el appointment. Requiere `payment_provider` y `payment_api_key_ref` en `tenant_settings`.
-    - `POST /v1/appointments/{id}/send-payment` — envía el link por WhatsApp al cliente.
-    - `PATCH /v1/appointments/{id}/payment-status` — actualizar estado manualmente.
-    - `POST /v1/webhooks/payments/{provider}` — webhook de confirmación; verifica firma del proveedor, actualiza `payment_status = 'paid'`, envía mensaje de confirmación al cliente.
-  - Campo `payment_provider text` (enum libre: `'mercadopago'|'stripe'|'none'`) y referencia `payment_api_key_ref` en `tenant_settings`. La API key real en `.secrets/tenants/{id}/payment_api_key`.
-  - Tests estáticos: generación de link con mock del proveedor, actualización de estado, webhook de confirmación, verificación de firma, rechazo si no hay proveedor configurado.
-- **Alcance mínimo — Admin Panel:**
-  - En `TenantSetupWizard.jsx`, nueva sección **"Pagos"**: selector de proveedor (MercadoPago / Stripe / Sin pagos), campo API key (enmascarada), moneda por defecto.
-  - En `OperationsDesk.jsx`, detalle de cita: badge de `payment_status`, botón **"Generar link"**, botón **"Enviar por WhatsApp"** (activo cuando hay link), campo editable de monto.
-- **Criterio de aceptación:** admin configura proveedor desde panel; agente genera link y lo envía al cliente; webhook del proveedor actualiza estado a `paid`; tests pasan en CI.
-- **Dependencias:** TASK-0030 (el booking puede solicitar pago al final del flow), TASK-0031 (template para enviar link).
+_TASK-0040 — Links de pago y registro de pagos en citas: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

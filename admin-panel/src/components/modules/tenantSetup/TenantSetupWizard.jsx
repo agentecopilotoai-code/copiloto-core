@@ -5,6 +5,7 @@ import {
   createTenant,
   deleteContactTag,
   getTenant,
+  getTenantPaymentSettings,
   getTenantSettings,
   listAuditLogs,
   listContactTags,
@@ -12,6 +13,7 @@ import {
   reindexAllKnowledgeDocuments,
   updateContactTag,
   updateTenant,
+  updateTenantPaymentSettings,
   updateTenantSettings,
 } from '../../../services/coreApi.js';
 
@@ -22,6 +24,7 @@ const wizardTabs = [
   { id: 'escalation', label: 'Escalamiento' },
   { id: 'intenciones', label: 'Intenciones' },
   { id: 'notificaciones', label: 'Notificaciones' },
+  { id: 'pagos', label: 'Pagos' },
   { id: 'privacy', label: 'Privacidad' },
   { id: 'ia_rag', label: 'IA y RAG' },
   { id: 'audit', label: 'Auditoría' },
@@ -349,6 +352,14 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
   const [contactTags, setContactTags] = useState([]);
   const [tagForm, setTagForm] = useState({ name: '', color: '#4f6ef7', description: '' });
   const [editingTagId, setEditingTagId] = useState(null);
+  const [paymentSettings, setPaymentSettings] = useState({
+    provider: 'none',
+    currency: 'COP',
+    default_amount: '',
+    api_key_configured: false,
+    webhook_secret_configured: false,
+  });
+  const [paymentForm, setPaymentForm] = useState({ apiKey: '', webhookSecret: '' });
 
   const settingsPayload = useMemo(
     () => ({
@@ -518,6 +529,57 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     if (!currentTenantId) return;
     refreshContactTags(currentTenantId);
   }, [currentTenantId]);
+
+  useEffect(() => {
+    if (!currentTenantId) return;
+    let mounted = true;
+    getTenantPaymentSettings(session, currentTenantId)
+      .then((data) => {
+        if (!mounted) return;
+        setPaymentSettings({
+          provider: data.provider || 'none',
+          currency: data.currency || 'COP',
+          default_amount: data.default_amount ?? '',
+          api_key_configured: Boolean(data.api_key_configured),
+          webhook_secret_configured: Boolean(data.webhook_secret_configured),
+        });
+        setPaymentForm({ apiKey: '', webhookSecret: '' });
+      })
+      .catch(() => {
+        // Keep defaults if the call fails.
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [currentTenantId, session]);
+
+  async function handleSavePaymentSettings(event) {
+    event.preventDefault();
+    if (!currentTenantId) return;
+    const payload = {
+      provider: paymentSettings.provider,
+      currency: (paymentSettings.currency || 'COP').toUpperCase(),
+      default_amount: paymentSettings.default_amount === '' || paymentSettings.default_amount === null
+        ? null
+        : Number(paymentSettings.default_amount),
+      api_key: paymentForm.apiKey || null,
+      webhook_secret: paymentForm.webhookSecret || null,
+    };
+    const updated = await runAction(
+      () => updateTenantPaymentSettings(session, currentTenantId, payload),
+      'Configuración de pagos guardada.',
+    );
+    if (updated) {
+      setPaymentSettings({
+        provider: updated.provider || 'none',
+        currency: updated.currency || 'COP',
+        default_amount: updated.default_amount ?? '',
+        api_key_configured: Boolean(updated.api_key_configured),
+        webhook_secret_configured: Boolean(updated.webhook_secret_configured),
+      });
+      setPaymentForm({ apiKey: '', webhookSecret: '' });
+    }
+  }
 
   async function handleSaveTag(event) {
     event.preventDefault();
@@ -1106,6 +1168,84 @@ Tu cita de {servicio} quedó agendada para el {fecha} a las {hora}` + (notificat
           <div className="form-actions">
             <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">
               Guardar notificaciones
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {activeTab === 'pagos' ? (
+        <form className="wizard-panel form-grid" onSubmit={handleSavePaymentSettings}>
+          <div className="wide">
+            <h3>Configuración de pagos</h3>
+            <p className="hint">
+              Genera links de pago para tus citas usando MercadoPago o Stripe. La API key se guarda cifrada y nunca
+              se devuelve al panel. Configura el webhook del proveedor apuntando a
+              <code> /v1/webhooks/payments/{paymentSettings.provider === 'none' ? '{provider}' : paymentSettings.provider}</code>.
+            </p>
+          </div>
+          <label>
+            Proveedor
+            <select
+              onChange={(event) => setPaymentSettings({ ...paymentSettings, provider: event.target.value })}
+              value={paymentSettings.provider}
+            >
+              <option value="none">Sin pagos</option>
+              <option value="mercadopago">MercadoPago</option>
+              <option value="stripe">Stripe</option>
+            </select>
+          </label>
+          <label>
+            Moneda por defecto
+            <input
+              maxLength={3}
+              onChange={(event) => setPaymentSettings({ ...paymentSettings, currency: event.target.value.toUpperCase() })}
+              placeholder="COP"
+              value={paymentSettings.currency || ''}
+            />
+          </label>
+          <label>
+            Monto por defecto (opcional)
+            <input
+              min="0"
+              onChange={(event) => setPaymentSettings({ ...paymentSettings, default_amount: event.target.value })}
+              placeholder="Ej. 50000"
+              step="0.01"
+              type="number"
+              value={paymentSettings.default_amount ?? ''}
+            />
+          </label>
+          <label className="wide">
+            API key del proveedor
+            <input
+              autoComplete="off"
+              disabled={paymentSettings.provider === 'none'}
+              onChange={(event) => setPaymentForm({ ...paymentForm, apiKey: event.target.value })}
+              placeholder={paymentSettings.api_key_configured ? '••••••• (configurada, deja vacío para conservar)' : 'Pega aquí la API key'}
+              type="password"
+              value={paymentForm.apiKey}
+            />
+          </label>
+          <label className="wide">
+            Webhook secret (recomendado)
+            <input
+              autoComplete="off"
+              disabled={paymentSettings.provider === 'none'}
+              onChange={(event) => setPaymentForm({ ...paymentForm, webhookSecret: event.target.value })}
+              placeholder={paymentSettings.webhook_secret_configured ? '••••••• (configurado, deja vacío para conservar)' : 'Pega el secret de firma del proveedor'}
+              type="password"
+              value={paymentForm.webhookSecret}
+            />
+          </label>
+          <div className="wide">
+            <p className="hint">
+              Estado: proveedor <strong>{paymentSettings.provider}</strong> ·
+              API key {paymentSettings.api_key_configured ? '✅ configurada' : '⚠️ no configurada'} ·
+              Webhook secret {paymentSettings.webhook_secret_configured ? '✅ configurado' : 'sin verificación de firma'}.
+            </p>
+          </div>
+          <div className="form-actions">
+            <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">
+              Guardar pagos
             </button>
           </div>
         </form>

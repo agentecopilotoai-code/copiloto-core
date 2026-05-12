@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 
 from app.api.v1.schemas import (
     AppointmentCreate,
+    AppointmentPaymentLinkRequest,
+    AppointmentPaymentStatusUpdate,
     AppointmentUpdate,
     CampaignCreate,
     CampaignLaunch,
@@ -48,6 +50,7 @@ from app.api.v1.schemas import (
     ServiceRequestPatch,
     ServiceUpdate,
     TenantCreate,
+    TenantPaymentSettingsUpdate,
     TenantStatusTransition,
     TenantUpdate,
     WebChannelUpsert,
@@ -72,6 +75,15 @@ from app.services.campaigns import (
     evaluate_segment,
     normalize_segment_filter,
     refresh_campaign_counters,
+)
+from app.services.payment_provider import (
+    PaymentProviderError,
+    extract_external_ref,
+    extract_payment_status,
+    generate_payment_link as provider_generate_payment_link,
+    normalize_provider as normalize_payment_provider,
+    verify_mercadopago_signature,
+    verify_stripe_signature,
 )
 from app.services.notifications import (
     cancel_appointment_reminder_jobs,
@@ -4241,6 +4253,485 @@ async def create_appointment_feedback(
         metadata={'rating': rating, 'appointment_id': str(appointment_id)},
     )
     return record_to_dict(row)
+
+
+def _normalize_payment_settings(value: Any) -> dict[str, Any]:
+    """Read tenant payment_settings jsonb into a dict with predictable keys."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = {}
+    if not isinstance(value, dict):
+        value = {}
+    provider = value.get('provider') or 'none'
+    if provider not in {'mercadopago', 'stripe', 'none'}:
+        provider = 'none'
+    return {
+        'provider': provider,
+        'currency': (value.get('currency') or 'COP').upper()[:3],
+        'default_amount': value.get('default_amount'),
+        'api_key_ref': value.get('api_key_ref'),
+        'webhook_secret_ref': value.get('webhook_secret_ref'),
+    }
+
+
+def _public_payment_settings(tenant_id: UUID, settings: dict[str, Any]) -> dict[str, Any]:
+    """Strip secrets from payment settings before returning them to the panel."""
+    normalized = _normalize_payment_settings(settings)
+    return {
+        'provider': normalized['provider'],
+        'currency': normalized['currency'],
+        'default_amount': normalized['default_amount'],
+        'api_key_configured': secret_ref_is_configured(normalized['api_key_ref']),
+        'webhook_secret_configured': secret_ref_is_configured(normalized['webhook_secret_ref']),
+        'tenant_id': str(tenant_id),
+    }
+
+
+async def _fetch_tenant_payment_settings(
+    conn: asyncpg.Connection, tenant_id: UUID
+) -> dict[str, Any]:
+    value = await conn.fetchval(
+        'select payment_settings from app.tenant_settings where tenant_id=$1', tenant_id
+    )
+    return _normalize_payment_settings(value)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/payments/settings')
+async def get_tenant_payment_settings(
+    tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    settings = await _fetch_tenant_payment_settings(conn, tenant_id)
+    return _public_payment_settings(tenant_id, settings)
+
+
+@tenant_admin_router.put('/tenants/{tenant_id}/payments/settings')
+async def update_tenant_payment_settings(
+    tenant_id: UUID,
+    payload: TenantPaymentSettingsUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    current = await _fetch_tenant_payment_settings(conn, tenant_id)
+    next_settings = {
+        **current,
+        'provider': payload.provider,
+        'currency': payload.currency.upper(),
+        'default_amount': payload.default_amount,
+    }
+    api_key_value = (payload.api_key or '').strip()
+    if api_key_value:
+        ref = tenant_secret_ref(tenant_id, 'payment_api_key')
+        write_tenant_secret(ref, api_key_value)
+        next_settings['api_key_ref'] = ref
+    elif payload.provider == 'none':
+        next_settings['api_key_ref'] = None
+    webhook_secret_value = (payload.webhook_secret or '').strip()
+    if webhook_secret_value:
+        ref = tenant_secret_ref(tenant_id, 'payment_webhook_secret')
+        write_tenant_secret(ref, webhook_secret_value)
+        next_settings['webhook_secret_ref'] = ref
+    elif payload.provider == 'none':
+        next_settings['webhook_secret_ref'] = None
+    await conn.execute(
+        """
+        update app.tenant_settings
+        set payment_settings=$2::jsonb, updated_at=now()
+        where tenant_id=$1
+        """,
+        tenant_id,
+        json.dumps(next_settings),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant_payment_settings.updated',
+        entity_type='tenant_settings',
+        entity_id=str(tenant_id),
+        metadata={'provider': next_settings['provider']},
+    )
+    return _public_payment_settings(tenant_id, next_settings)
+
+
+def _appointment_payment_external_ref(tenant_id: UUID, appointment_id: UUID) -> str:
+    return f'tenant:{tenant_id}:appointment:{appointment_id}'
+
+
+def _parse_appointment_external_ref(ref: str | None) -> UUID | None:
+    if not ref:
+        return None
+    tokens = ref.split(':')
+    for index, token in enumerate(tokens):
+        if token == 'appointment' and index + 1 < len(tokens):
+            try:
+                return UUID(tokens[index + 1])
+            except ValueError:
+                return None
+    return None
+
+
+def _appointment_payment_summary(row: asyncpg.Record) -> dict[str, Any]:
+    appointment = record_to_dict(row)
+    return {
+        'appointment_id': appointment.get('id'),
+        'payment_status': appointment.get('payment_status'),
+        'payment_amount': appointment.get('payment_amount'),
+        'payment_currency': appointment.get('payment_currency'),
+        'payment_link': appointment.get('payment_link'),
+        'payment_provider': appointment.get('payment_provider'),
+        'payment_provider_reference': appointment.get('payment_provider_reference'),
+        'payment_link_generated_at': appointment.get('payment_link_generated_at'),
+        'payment_link_sent_at': appointment.get('payment_link_sent_at'),
+        'payment_paid_at': appointment.get('payment_paid_at'),
+    }
+
+
+@tenant_ops_router.post('/appointments/{appointment_id}/payment-link')
+async def create_appointment_payment_link(
+    appointment_id: UUID,
+    payload: AppointmentPaymentLinkRequest,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    appointment = await conn.fetchrow(
+        'select * from app.appointments where tenant_id=$1 and id=$2',
+        tenant_id,
+        appointment_id,
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail='Appointment not found')
+    payment_settings = await _fetch_tenant_payment_settings(conn, tenant_id)
+    if payment_settings['provider'] == 'none':
+        raise HTTPException(status_code=422, detail='Tenant has no payment provider configured')
+    api_key = resolve_secret_ref(payment_settings.get('api_key_ref'))
+    if not api_key:
+        raise HTTPException(status_code=422, detail='Payment provider API key is not configured')
+    amount = payload.amount if payload.amount is not None else appointment['payment_amount']
+    if amount is None:
+        amount = payment_settings.get('default_amount')
+    if amount is None or float(amount) <= 0:
+        raise HTTPException(status_code=400, detail='Amount is required to generate a payment link')
+    currency = (payload.currency or appointment['payment_currency'] or payment_settings['currency']).upper()
+    description = (
+        payload.description
+        or appointment['service_code']
+        or 'Servicio'
+    )[:200]
+    external_ref = _appointment_payment_external_ref(tenant_id, appointment_id)
+    try:
+        link = await provider_generate_payment_link(
+            provider=payment_settings['provider'],
+            api_key=api_key,
+            amount=amount,
+            currency=currency,
+            description=description,
+            external_ref=external_ref,
+        )
+    except PaymentProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    row = await conn.fetchrow(
+        """
+        update app.appointments
+        set payment_status='pending',
+            payment_amount=$3,
+            payment_currency=$4,
+            payment_link=$5,
+            payment_provider=$6,
+            payment_provider_reference=$7,
+            payment_link_generated_at=now()
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        appointment_id,
+        amount,
+        currency,
+        link.url,
+        payment_settings['provider'],
+        link.provider_reference,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='appointment.payment_link_generated',
+        entity_type='appointment',
+        entity_id=str(appointment_id),
+        metadata={'provider': payment_settings['provider'], 'amount': str(amount), 'currency': currency},
+    )
+    return _appointment_payment_summary(row)
+
+
+@tenant_ops_router.post('/appointments/{appointment_id}/send-payment', status_code=202)
+async def send_appointment_payment_link(
+    appointment_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    appointment = await conn.fetchrow(
+        """
+        select a.*, c.display_name as contact_name
+        from app.appointments a
+        join app.contacts c on c.tenant_id=a.tenant_id and c.id=a.contact_id
+        where a.tenant_id=$1 and a.id=$2
+        """,
+        tenant_id,
+        appointment_id,
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail='Appointment not found')
+    if not appointment['payment_link']:
+        raise HTTPException(status_code=422, detail='Generate a payment link before sending it')
+    conversation_id = appointment['conversation_id']
+    if not conversation_id:
+        conversation = await conn.fetchrow(
+            """
+            select id from app.conversations
+            where tenant_id=$1 and contact_id=$2 and status not in ('archived')
+            order by updated_at desc
+            limit 1
+            """,
+            tenant_id,
+            appointment['contact_id'],
+        )
+        if not conversation:
+            raise HTTPException(status_code=422, detail='Contact has no open conversation to receive the payment link')
+        conversation_id = conversation['id']
+    amount = appointment['payment_amount']
+    currency = appointment['payment_currency'] or 'COP'
+    contact_name = appointment['contact_name'] or 'Hola'
+    body_text = (
+        f'Hola {contact_name}, te compartimos el link para pagar tu cita '
+        f'({amount} {currency}):\n{appointment["payment_link"]}'
+    )
+    message = await conn.fetchrow(
+        """
+        insert into app.messages
+          (tenant_id, conversation_id, direction, sender_actor_type, sender_actor_id, body_text, message_type, payload, status)
+        values ($1,$2,'outbound','agent',$3,$4,'text','{}','queued')
+        returning *
+        """,
+        tenant_id,
+        conversation_id,
+        request.state.actor_id,
+        body_text,
+    )
+    idempotency_key = f'payment-link-{appointment_id}-{message["id"]}'
+    await conn.execute(
+        "insert into app.domain_events (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload) values ($1,'message',$2,'message.queued',$3,$4::jsonb) on conflict do nothing",
+        tenant_id,
+        message['id'],
+        idempotency_key,
+        json.dumps({
+            'conversation_id': str(conversation_id),
+            'appointment_id': str(appointment_id),
+            'payment_link': appointment['payment_link'],
+        }),
+    )
+    row = await conn.fetchrow(
+        """
+        update app.appointments
+        set payment_status=case when payment_status in ('paid','refunded') then payment_status else 'link_sent' end,
+            payment_link_sent_at=now()
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        appointment_id,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='appointment.payment_link_sent',
+        entity_type='appointment',
+        entity_id=str(appointment_id),
+        metadata={'message_id': str(message['id'])},
+    )
+    await notify_operations_change(
+        conn,
+        tenant_id,
+        'conversation.changed',
+        conversation_id=conversation_id,
+        message_id=message['id'],
+    )
+    summary = _appointment_payment_summary(row)
+    summary['message_id'] = str(message['id'])
+    return summary
+
+
+@tenant_ops_router.patch('/appointments/{appointment_id}/payment-status')
+async def patch_appointment_payment_status(
+    appointment_id: UUID,
+    payload: AppointmentPaymentStatusUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    existing = await conn.fetchrow(
+        'select id from app.appointments where tenant_id=$1 and id=$2',
+        tenant_id,
+        appointment_id,
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail='Appointment not found')
+    row = await conn.fetchrow(
+        """
+        update app.appointments
+        set payment_status=$3,
+            payment_amount=coalesce($4, payment_amount),
+            payment_currency=coalesce($5, payment_currency),
+            payment_paid_at=case when $3='paid' then now() else payment_paid_at end
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        appointment_id,
+        payload.payment_status,
+        payload.payment_amount,
+        payload.payment_currency.upper() if payload.payment_currency else None,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='appointment.payment_status_updated',
+        entity_type='appointment',
+        entity_id=str(appointment_id),
+        metadata={'payment_status': payload.payment_status},
+    )
+    return _appointment_payment_summary(row)
+
+
+@webhook_router.post('/payments/{provider}', status_code=202)
+async def receive_payment_webhook(
+    provider: str,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    try:
+        normalized_provider = normalize_payment_provider(provider)
+    except PaymentProviderError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if normalized_provider == 'none':
+        raise HTTPException(status_code=404, detail='Unknown payment provider')
+    body = await request.body()
+    try:
+        payload = json.loads(body or b'{}')
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail='Invalid payment webhook payload') from exc
+
+    external_ref = extract_external_ref(normalized_provider, payload)
+    appointment_id = _parse_appointment_external_ref(external_ref)
+    if not appointment_id:
+        raise HTTPException(status_code=400, detail='Payment webhook payload missing external_reference')
+
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+    appointment = await conn.fetchrow(
+        'select tenant_id, id, conversation_id, contact_id from app.appointments where id=$1',
+        appointment_id,
+    )
+    if not appointment:
+        raise HTTPException(status_code=404, detail='Appointment not found for payment webhook')
+    tenant_id = appointment['tenant_id']
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    payment_settings = await _fetch_tenant_payment_settings(conn, tenant_id)
+    secret = resolve_secret_ref(payment_settings.get('webhook_secret_ref'))
+    signature_ok = True
+    if secret:
+        if normalized_provider == 'mercadopago':
+            sig_header = request.headers.get('x-signature')
+            request_id = request.headers.get('x-request-id')
+            data_id = None
+            data = payload.get('data') if isinstance(payload, dict) else None
+            if isinstance(data, dict):
+                data_id = data.get('id')
+            signature_ok = verify_mercadopago_signature(
+                body, sig_header, secret, request_id=request_id, data_id=str(data_id) if data_id else None,
+            )
+        else:
+            sig_header = request.headers.get('stripe-signature')
+            signature_ok = verify_stripe_signature(body, sig_header, secret)
+    if not signature_ok:
+        raise HTTPException(status_code=401, detail='Invalid payment webhook signature')
+
+    sha = hashlib.sha256(body).hexdigest()
+    await conn.execute(
+        """
+        insert into app.webhook_events_raw (tenant_id, provider, event_type, headers, payload, payload_sha256)
+        values ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+        on conflict (payload_sha256) do nothing
+        """,
+        tenant_id,
+        normalized_provider,
+        str(payload.get('type') or payload.get('action') or 'payment'),
+        json.dumps(dict(request.headers)),
+        json.dumps(payload),
+        sha,
+    )
+
+    new_status = extract_payment_status(normalized_provider, payload)
+    if not new_status:
+        return {'status': 'ignored', 'reason': 'no_status_mapped'}
+
+    row = await conn.fetchrow(
+        """
+        update app.appointments
+        set payment_status=$3,
+            payment_paid_at=case when $3='paid' then now() else payment_paid_at end
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        appointment_id,
+        new_status,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type='service',
+        actor_id=f'payment_provider:{normalized_provider}',
+        action='appointment.payment_webhook',
+        entity_type='appointment',
+        entity_id=str(appointment_id),
+        metadata={'payment_status': new_status, 'provider': normalized_provider},
+    )
+
+    if new_status == 'paid' and appointment['conversation_id']:
+        confirmation_text = '✅ Pago recibido. Tu cita queda confirmada.'
+        message = await conn.fetchrow(
+            """
+            insert into app.messages
+              (tenant_id, conversation_id, direction, sender_actor_type, body_text, message_type, payload, status)
+            values ($1,$2,'outbound','system',$3,'text','{}','queued')
+            returning id
+            """,
+            tenant_id,
+            appointment['conversation_id'],
+            confirmation_text,
+        )
+        await conn.execute(
+            "insert into app.domain_events (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload) values ($1,'message',$2,'message.queued',$3,$4::jsonb) on conflict do nothing",
+            tenant_id,
+            message['id'],
+            f'payment-confirmation-{appointment_id}',
+            json.dumps({'conversation_id': str(appointment['conversation_id']), 'appointment_id': str(appointment_id)}),
+        )
+
+    return _appointment_payment_summary(row)
 
 
 @tenant_admin_router.get('/knowledge/documents')

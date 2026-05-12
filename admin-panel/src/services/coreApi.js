@@ -833,3 +833,42 @@ export function getAnalyticsAppointments(session, tenantId, range = {}) {
 export function getAnalyticsContacts(session, tenantId, range = {}) {
   return request(`/analytics/contacts${buildAnalyticsQuery(range)}`, { session, tenantId });
 }
+
+export function getTenantPaymentSettings(session, tenantId) {
+  return request(`/tenants/${tenantId}/payments/settings`, { session, tenantId });
+}
+
+export function updateTenantPaymentSettings(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/payments/settings`, {
+    method: 'PUT',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function generateAppointmentPaymentLink(session, tenantId, appointmentId, payload = {}) {
+  return request(`/appointments/${appointmentId}/payment-link`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function sendAppointmentPaymentLink(session, tenantId, appointmentId) {
+  return request(`/appointments/${appointmentId}/send-payment`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}
+
+export function updateAppointmentPaymentStatus(session, tenantId, appointmentId, payload) {
+  return request(`/appointments/${appointmentId}/payment-status`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
