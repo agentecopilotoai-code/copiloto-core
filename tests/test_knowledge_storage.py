@@ -246,3 +246,57 @@ def test_delete_knowledge_file_s3_deletes_when_within_tenant_prefix(tmp_path, mo
     assert calls == [
         {'Bucket': 'configured-tenant-bucket', 'Key': 'tenants/this-tenant/knowledge/doc/file'}
     ]
+
+
+@pytest.mark.parametrize('bad_prefix', ['/', '//', '', '.', '..', '/./', '/../'])
+def test_delete_knowledge_file_s3_refuses_root_like_tenant_prefix(tmp_path, monkeypatch, bad_prefix):
+    """A tenant_prefix that normalizes to empty must NOT degrade to 'no containment';
+    otherwise an admin that stored prefix='/' could delete arbitrary objects
+    (including other tenants') in the shared bucket."""
+    calls = []
+
+    class FakeClient:
+        def delete_object(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(
+        'app.services.knowledge_storage._s3_client', lambda *a, **kw: FakeClient()
+    )
+
+    delete_knowledge_file(
+        source_uri='',
+        storage_backend='s3',
+        object_key='tenants/other-tenant/knowledge/secret',
+        bucket='shared-bucket',
+        settings=make_settings(tmp_path),
+        tenant_prefix=bad_prefix,
+        expected_bucket='shared-bucket',
+    )
+
+    assert calls == []
+
+
+@pytest.mark.parametrize('bad_prefix', ['/', '//', '', '.', '..'])
+def test_delete_knowledge_file_local_refuses_root_like_tenant_prefix(tmp_path, bad_prefix):
+    other_tenant_file = tmp_path / 'tenants' / 'victim-tenant' / 'knowledge' / 'doc' / 'private.txt'
+    other_tenant_file.parent.mkdir(parents=True, exist_ok=True)
+    other_tenant_file.write_text('victim data')
+
+    delete_knowledge_file(
+        source_uri='',
+        storage_backend='local',
+        object_key='tenants/victim-tenant/knowledge/doc/private.txt',
+        settings=make_settings(tmp_path),
+        tenant_prefix=bad_prefix,
+    )
+
+    assert other_tenant_file.exists(), (
+        'empty / root-like tenant_prefix must not degrade containment'
+    )
+
+
+def test_normalize_object_prefix_rejects_root_like_values():
+    tenant_id = str(uuid4())
+    for bad in ('/', '//', '///'):
+        with pytest.raises(ValueError):
+            normalize_object_prefix(bad, tenant_id)
