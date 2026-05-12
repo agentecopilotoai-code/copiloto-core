@@ -66,6 +66,348 @@ SLOTS_TO_OFFER = 3
 INTENT_CANCEL = 'cancel_appointment'
 INTENT_RESCHEDULE = 'reschedule_appointment'
 
+# TASK-0056: timeout (minutes) for the silent decline branch of auto-rebook.
+AUTO_REBOOK_TIMEOUT_KIND = 'auto_rebook_timeout'
+DEFAULT_AUTO_REBOOK_TIMEOUT_MINUTES = 90
+MIN_AUTO_REBOOK_TIMEOUT_MINUTES = 10
+MAX_AUTO_REBOOK_TIMEOUT_MINUTES = 240
+
+
+def auto_rebook_timeout_minutes(notification_settings: Any) -> int:
+    """Return the configured timeout for the auto-rebook silent-decline branch.
+
+    Clamped to ``[MIN, MAX]`` so a misconfigured tenant cannot disarm the flow
+    entirely (timeout=0) or wait days for the escalation.
+    """
+    settings = _parse_json(notification_settings, {})
+    if not isinstance(settings, dict):
+        return DEFAULT_AUTO_REBOOK_TIMEOUT_MINUTES
+    raw = settings.get('auto_rebook_timeout_minutes')
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_AUTO_REBOOK_TIMEOUT_MINUTES
+    if value < MIN_AUTO_REBOOK_TIMEOUT_MINUTES:
+        return MIN_AUTO_REBOOK_TIMEOUT_MINUTES
+    if value > MAX_AUTO_REBOOK_TIMEOUT_MINUTES:
+        return MAX_AUTO_REBOOK_TIMEOUT_MINUTES
+    return value
+
+
+async def _schedule_auto_rebook_timeout(
+    conn: 'asyncpg.Connection',
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+    appointment_id: UUID,
+    channel_id: UUID,
+    channel_account_mode: str,
+    minutes: int,
+) -> UUID | None:
+    """Insert a ``reminder_job`` that the scheduler will pick up to escalate the
+    appointment if the customer never replies after seeing the rebook slots."""
+    payload = {
+        'kind': AUTO_REBOOK_TIMEOUT_KIND,
+        'conversation_id': str(conversation_id),
+        'appointment_id': str(appointment_id),
+        'channel_id': str(channel_id),
+        'channel_account_mode': channel_account_mode,
+        'source': 'auto_rebook',
+    }
+    row = await conn.fetchrow(
+        """
+        insert into app.reminder_jobs (
+          tenant_id, target_type, target_id, channel_id,
+          template_name, payload, scheduled_for
+        )
+        values ($1, 'conversation', $2, $3, $4, $5::jsonb,
+                now() + make_interval(mins => $6))
+        on conflict do nothing
+        returning id
+        """,
+        tenant_id,
+        conversation_id,
+        channel_id,
+        AUTO_REBOOK_TIMEOUT_KIND,
+        json.dumps(payload),
+        minutes,
+    )
+    if row is None:
+        log.info(
+            'self_service.auto_rebook_timeout_existed',
+            tenant_id=str(tenant_id),
+            conversation_id=str(conversation_id),
+        )
+        return None
+    return row['id']
+
+
+FOLLOWUP_TAG_NAME = 'Necesita seguimiento'
+FOLLOWUP_TAG_COLOR = '#f59e0b'
+AUTO_REBOOK_TIMEOUT_REASON = 'auto_rebook_timeout'
+
+
+async def _ensure_followup_tag(conn: 'asyncpg.Connection', tenant_id: UUID) -> UUID | None:
+    """Idempotently create the ``Necesita seguimiento`` tag for the tenant."""
+    await conn.execute(
+        """
+        insert into app.contact_tags (tenant_id, name, color, description)
+        values ($1, $2, $3, $4)
+        on conflict (tenant_id, name) do nothing
+        """,
+        tenant_id,
+        FOLLOWUP_TAG_NAME,
+        FOLLOWUP_TAG_COLOR,
+        'Cliente con flujo auto-rebook expirado — requiere contacto humano.',
+    )
+    return await conn.fetchval(
+        'select id from app.contact_tags where tenant_id=$1 and name=$2',
+        tenant_id,
+        FOLLOWUP_TAG_NAME,
+    )
+
+
+async def execute_auto_rebook_timeout(
+    conn: 'asyncpg.Connection',
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+    appointment_id: UUID,
+    job_id: UUID | None = None,
+) -> dict[str, Any]:
+    """Run the silent-decline escalation triggered by the scheduler.
+
+    Guards the execution: only acts if the conversation is still mid-flow with
+    ``source='auto_rebook'`` and there has been no inbound customer message
+    since the rebook slots were sent. If the customer engaged in any way (even
+    a non-decision message) the inbound handler should have cancelled the job
+    first; this is a belt-and-braces re-check.
+    """
+    trace: dict[str, Any] = {
+        'job_id': str(job_id) if job_id else None,
+        'cancelled': False,
+        'handoff_marked': False,
+        'tag_assigned': False,
+        'skipped_reason': None,
+    }
+
+    conversation = await conn.fetchrow(
+        """
+        select id, tenant_id, contact_id, channel_id, status, metadata
+        from app.conversations
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        conversation_id,
+    )
+    if conversation is None:
+        trace['skipped_reason'] = 'conversation_missing'
+        return trace
+
+    state = _self_service_state(conversation)
+    if (
+        not state
+        or state.get('flow') != FLOW_RESCHEDULE
+        or state.get('source') != 'auto_rebook'
+        or state.get('step') == STEP_COMPLETED
+        or state.get('appointment_id') != str(appointment_id)
+    ):
+        trace['skipped_reason'] = 'state_changed'
+        return trace
+
+    rebook_started_at = await conn.fetchval(
+        """
+        select max(created_at)
+        from app.domain_events
+        where tenant_id=$1
+          and aggregate_type='conversation'
+          and aggregate_id=$2
+          and event_name='self_service.handled'
+          and payload->>'source'='auto_rebook'
+          and payload->>'step'=$3
+        """,
+        tenant_id,
+        conversation_id,
+        STEP_AWAITING_RESCHEDULE_SLOT,
+    )
+    if rebook_started_at is not None:
+        recent_inbound = await conn.fetchval(
+            """
+            select 1
+            from app.messages
+            where tenant_id=$1
+              and conversation_id=$2
+              and direction='inbound'
+              and created_at > $3
+            limit 1
+            """,
+            tenant_id,
+            conversation_id,
+            rebook_started_at,
+        )
+        if recent_inbound:
+            trace['skipped_reason'] = 'customer_replied'
+            return trace
+
+    appointment = await _fetch_appointment(conn, tenant_id, appointment_id)
+    if appointment is None or appointment.get('status') == 'cancelled':
+        trace['skipped_reason'] = 'appointment_unavailable'
+        await _persist_state(conn, tenant_id, conversation, None)
+        return trace
+
+    await conn.execute(
+        """
+        update app.appointments
+        set status='cancelled', updated_at=now()
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        appointment_id,
+    )
+    try:
+        await cancel_appointment_reminder_jobs(conn, tenant_id, appointment_id)
+    except Exception:
+        log.exception(
+            'self_service.timeout_cancel_jobs_failed',
+            tenant_id=str(tenant_id),
+            appointment_id=str(appointment_id),
+        )
+    trace['cancelled'] = True
+
+    starts_at = appointment['starts_at'].astimezone(UTC)
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type='bot',
+        actor_id='auto_rebook_timeout',
+        action='bot.appointment_cancelled',
+        entity_type='appointment',
+        entity_id=str(appointment_id),
+        metadata={
+            'reason': AUTO_REBOOK_TIMEOUT_REASON,
+            'previous_starts_at': starts_at.isoformat(),
+            'conversation_id': str(conversation_id),
+        },
+    )
+
+    await conn.execute(
+        """
+        update app.conversations
+        set handoff_required=true,
+            status=case when status in ('human_active') then status else 'waiting_agent' end,
+            updated_at=now()
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        conversation_id,
+    )
+    existing_handoff = await conn.fetchrow(
+        """
+        select id from app.handoffs
+        where tenant_id=$1 and conversation_id=$2 and status='open'
+        order by created_at desc limit 1
+        """,
+        tenant_id,
+        conversation_id,
+    )
+    if existing_handoff is None:
+        handoff_row = await conn.fetchrow(
+            """
+            insert into app.handoffs (tenant_id, conversation_id, reason, status)
+            values ($1, $2, $3, 'open')
+            returning id
+            """,
+            tenant_id,
+            conversation_id,
+            AUTO_REBOOK_TIMEOUT_REASON,
+        )
+        trace['handoff_id'] = str(handoff_row['id'])
+    else:
+        trace['handoff_id'] = str(existing_handoff['id'])
+    trace['handoff_marked'] = True
+
+    tag_id = await _ensure_followup_tag(conn, tenant_id)
+    if tag_id is not None and conversation['contact_id'] is not None:
+        await conn.execute(
+            """
+            insert into app.contact_tag_assignments (tenant_id, contact_id, tag_id)
+            values ($1, $2, $3)
+            on conflict (contact_id, tag_id) do nothing
+            """,
+            tenant_id,
+            conversation['contact_id'],
+            tag_id,
+        )
+        trace['tag_assigned'] = True
+        trace['tag_id'] = str(tag_id)
+
+    await conn.execute(
+        """
+        insert into app.domain_events (
+          tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload
+        )
+        values ($1, 'appointment', $2, 'bot.appointment_cancelled', $3, $4::jsonb)
+        on conflict (tenant_id, idempotency_key) do nothing
+        """,
+        tenant_id,
+        appointment_id,
+        f'auto_rebook_timeout:{appointment_id}',
+        json.dumps({
+            'reason': AUTO_REBOOK_TIMEOUT_REASON,
+            'conversation_id': str(conversation_id),
+            'appointment_id': str(appointment_id),
+        }),
+    )
+
+    await _persist_state(
+        conn,
+        tenant_id,
+        conversation,
+        {
+            'flow': FLOW_RESCHEDULE,
+            'step': STEP_COMPLETED,
+            'appointment_id': str(appointment_id),
+            'source': 'auto_rebook',
+            'closed_reason': AUTO_REBOOK_TIMEOUT_REASON,
+        },
+    )
+
+    log.info(
+        'self_service.auto_rebook_timeout_executed',
+        tenant_id=str(tenant_id),
+        conversation_id=str(conversation_id),
+        appointment_id=str(appointment_id),
+    )
+    return trace
+
+
+async def _cancel_auto_rebook_timeout(
+    conn: 'asyncpg.Connection',
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+) -> int:
+    """Drop any pending auto-rebook timeout for this conversation. Called when
+    the customer replies during the rebook window, when the flow completes
+    (rescheduled / cancelled / declined), or when the appointment is no longer
+    actionable."""
+    result = await conn.fetch(
+        """
+        update app.reminder_jobs
+        set status='cancelled', updated_at=now()
+        where tenant_id=$1
+          and target_type='conversation'
+          and target_id=$2
+          and (payload->>'kind') = $3
+          and status in ('pending','processing')
+        returning id
+        """,
+        tenant_id,
+        conversation_id,
+        AUTO_REBOOK_TIMEOUT_KIND,
+    )
+    return len(result)
+
 
 def _parse_json(value: Any, fallback: Any) -> Any:
     if isinstance(value, str):
@@ -686,6 +1028,23 @@ async def start_auto_rebook_flow(
             'source': 'auto_rebook',
         },
     )
+    # TASK-0056: arm the silent-decline escalation. If the customer never
+    # replies inside the configured window, the scheduler will cancel the
+    # appointment and hand the conversation off to a human.
+    notification_settings = await conn.fetchval(
+        'select notification_settings from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    timeout_minutes = auto_rebook_timeout_minutes(notification_settings)
+    timeout_job_id = await _schedule_auto_rebook_timeout(
+        conn,
+        tenant_id=tenant_id,
+        conversation_id=conversation['id'],
+        appointment_id=appointment['id'],
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        minutes=timeout_minutes,
+    )
     await conn.execute(
         """
         insert into app.domain_events (
@@ -703,6 +1062,8 @@ async def start_auto_rebook_flow(
             'appointment_id': str(appointment['id']),
             'source': 'auto_rebook',
             'offered_count': len(offered),
+            'timeout_job_id': str(timeout_job_id) if timeout_job_id else None,
+            'timeout_minutes': timeout_minutes,
         }),
     )
     log.info(
@@ -710,12 +1071,14 @@ async def start_auto_rebook_flow(
         tenant_id=str(tenant_id),
         appointment_id=str(appointment['id']),
         slots=len(offered),
+        timeout_minutes=timeout_minutes,
     )
     return {
         'action': 'self_service_step_sent',
         'flow': FLOW_RESCHEDULE,
         'step': STEP_AWAITING_RESCHEDULE_SLOT,
         'source': 'auto_rebook',
+        'timeout_minutes': timeout_minutes,
     }
 
 
@@ -758,8 +1121,21 @@ async def maybe_run_self_service_flow(
         appointment = await _fetch_appointment(conn, tenant_id, appointment_id)
         if not appointment:
             await _persist_state(conn, tenant_id, conversation, None)
+            # TASK-0056: the appointment vanished — drop any armed timeout so
+            # the scheduler doesn't try to cancel a phantom.
+            await _cancel_auto_rebook_timeout(
+                conn, tenant_id=tenant_id, conversation_id=conversation['id']
+            )
             return None
         flow = state.get('flow')
+        # TASK-0056: any inbound during the auto-rebook window proves the
+        # customer is still engaged — cancel the silent-decline timeout before
+        # processing the reply so a slow downstream step can't race the
+        # scheduler.
+        if state.get('source') == 'auto_rebook':
+            await _cancel_auto_rebook_timeout(
+                conn, tenant_id=tenant_id, conversation_id=conversation['id']
+            )
         if flow == FLOW_CANCEL and prefix == PREFIX_CANCEL_CONFIRM:
             if value == 'yes':
                 await _execute_cancel(

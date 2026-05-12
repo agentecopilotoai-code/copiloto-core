@@ -245,7 +245,7 @@ Se confrontó el código contra los 10 estadios del **flujo del paciente/cliente
 | 5 | Calificación no captura presupuesto ni urgencia | `qualification_flow.py` soporta `yes_no/single_choice/multi_choice/free_text/number` pero no presets de `budget_tier` ni `urgency_level`. | No se prioriza al cliente VIP ni se fast-tracka un caso urgente → conversión pareja en lugar de selectiva. |
 | 6 | El booking no filtra servicios por respuestas de calificación | `booking_flow._present_services` lista todos los `service_catalog.is_active`. Solo se "salta" con `prefilled_service_id` cuando una opción específica trae `service_id`. | Cliente recibe servicios irrelevantes → fricción y abandono. |
 | 7 | Sin referido distinto del `lead_source.channel` | `contacts.lead_source` guarda `channel/utm` pero no `referrer_contact_id`. | No se mide qué clientes generan más referidos → no se incentiva la palanca de crecimiento orgánico. |
-| 8 | Auto-rebook tras decline no tiene timeout/escalado si el cliente se queda en silencio | `appointment_self_service.start_auto_rebook_flow` arranca el flow, pero si el cliente no responde no hay job de seguimiento ni escalado a humano. | Cita declinada se queda en limbo; se pierde la última oportunidad de rescate. |
+| 8 | ~~Auto-rebook tras decline no tiene timeout/escalado si el cliente se queda en silencio~~ → **resuelto en TASK-0056**: `start_auto_rebook_flow` inserta un `reminder_job` con `kind='auto_rebook_timeout'`, el scheduler lo despacha y `execute_auto_rebook_timeout` cancela la cita, abre handoff `reason='auto_rebook_timeout'` y tagea al contacto `Necesita seguimiento`. Ver `docs/DONE.md`. | — | — |
 | 9 | Feedback negativo escala con handoff pero sin alerta activa al agente | `feedback_flow._escalate_negative_feedback` marca `handoff_required=true` y aparece en pestaña "Quejas" del Desk; no genera notificación push/email ni alerta visible si el agente no está en el panel. | Queja sigue en silencio fuera de horario → reputación y churn. |
 | 10 | Maps link no se autogenera desde la dirección | `notifications.py` lee `notification_settings.location_maps_url` configurado a mano. No hay builder desde `location_address`. | Onboarding lento; cliente recibe enlace inválido si el admin lo pega mal. |
 | 11 | NFR de producción ausentes: rate limiting de webhooks, métricas Prometheus, política de retención TTL | Sin middleware de throttling, sin `/metrics`, sin job de purgado de `audit_logs`/`domain_events`. | Webhook flood de Meta puede tumbar el API; sin alertas no hay detección de fallas silenciosas; GDPR "derecho al olvido" depende de operación manual. |
@@ -341,6 +341,8 @@ _TASK-0052 — Recall automático ("control en 6 meses") por servicio tras compl
 
 _TASK-0054 — Filtrado dinámico de servicios en booking según respuestas de calificación: COMPLETADA. Ver `docs/DONE.md`._
 
+_TASK-0056 — Timeout y escalado del flujo auto-rebook tras decline silencioso: COMPLETADA. Ver `docs/DONE.md`._
+
 ---
 
 ### TASK-0055 — Tracking de referido entre contactos (referrer_contact_id)
@@ -366,7 +368,7 @@ _TASK-0054 — Filtrado dinámico de servicios en booking según respuestas de c
 
 ### TASK-0056 — Timeout y escalado del flujo auto-rebook tras decline silencioso
 
-- **Estado:** PENDING
+- **Estado:** COMPLETADA — ver `docs/DONE.md`.
 - **Depende de:** TASK-0044.
 - **Por qué bloquea:** TASK-0044 arrancó el auto-rebook al declinar, pero si el cliente recibe los 3 slots y no responde, el flow queda colgado: ni se cancela la cita, ni se escala. La cita declinada se queda en limbo y es un no-show seguro.
 - **Alcance:**

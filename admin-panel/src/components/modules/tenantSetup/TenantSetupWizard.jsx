@@ -52,6 +52,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   post_rebooking_delay_days: 30,
   post_rebooking_message: '',
   auto_rebook_on_decline: true,
+  auto_rebook_timeout_minutes: 90,
   vip_budget_threshold: 0,
 };
 
@@ -1188,6 +1189,21 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
               Si el cliente responde "no" al pedido de confirmación activa, el bot ofrecerá tres
               horarios alternativos en lugar de quedarse esperando a un agente. Si responde "no"
               al rebooking, la cita se cancela y se escala al equipo.
+            </p>
+            <label>
+              Tiempo máximo del auto-rebook (min)
+              <input
+                type="number"
+                min="10"
+                max="240"
+                value={notificationSettings.auto_rebook_timeout_minutes ?? 90}
+                onChange={(e) => setNotificationSettings({ ...notificationSettings, auto_rebook_timeout_minutes: Number(e.target.value) || 0 })}
+              />
+            </label>
+            <p className="hint" style={{ marginTop: '0.25rem' }}>
+              Si el cliente recibe los horarios y no responde dentro de esta ventana, la cita se
+              cancela y la conversación se escala con la etiqueta "Necesita seguimiento"
+              (TASK-0056). Rango 10–240 min, por defecto 90.
             </p>
           </fieldset>
 

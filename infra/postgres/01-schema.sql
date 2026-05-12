@@ -819,6 +819,15 @@ create unique index ux_reminder_jobs_service_recall_appointment
   where target_type = 'appointment'
     and (payload->>'purpose') = 'service_recall'
     and status in ('pending','processing');
+-- TASK-0056: at most one active auto-rebook timeout per conversation. The
+-- scheduler reads ``payload->>'kind' = 'auto_rebook_timeout'`` to dispatch the
+-- silent-decline escalation; the index keeps duplicates from piling up if the
+-- flow is re-armed (e.g. the customer declines a second time).
+create unique index ux_reminder_jobs_auto_rebook_timeout
+  on app.reminder_jobs (tenant_id, target_id)
+  where target_type = 'conversation'
+    and (payload->>'kind') = 'auto_rebook_timeout'
+    and status in ('pending','processing');
 alter table app.service_catalog
   add constraint fk_service_catalog_tenant_recall_template
     foreign key (tenant_id, recall_template_id)
