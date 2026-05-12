@@ -251,6 +251,11 @@ create table app.service_catalog (
   duration_minutes int not null default 60 check (duration_minutes > 0),
   preparation_notes text,
   post_service_notes text,
+  -- TASK-0052: per-service recall ("control en N días") configuration. When
+  -- recall_interval_days is null, no recall is scheduled. The template, if set,
+  -- must point at an approved whatsapp_templates row with purpose='service_recall'.
+  recall_interval_days int check (recall_interval_days is null or recall_interval_days > 0),
+  recall_template_id uuid,
   is_active boolean not null default true,
   sort_order int not null default 0,
   metadata jsonb not null default '{}'::jsonb,
@@ -353,7 +358,7 @@ create table app.whatsapp_templates (
     'appointment_confirmation','appointment_reminder_24h','appointment_reminder_1h',
     'appointment_reminder_custom','no_show_confirmation_request','no_show_followup',
     'post_appointment_instructions','post_appointment_feedback','post_appointment_rebooking',
-    'reschedule_offer','campaign_promo','payment_request','custom'
+    'reschedule_offer','campaign_promo','payment_request','service_recall','custom'
   )),
   components jsonb not null default '{}'::jsonb,
   meta_template_id text,
@@ -794,6 +799,18 @@ alter table app.appointments
   add constraint fk_appointments_tenant_branch foreign key (tenant_id, branch_id) references app.branches(tenant_id, id) on delete restrict;
 alter table app.reminder_jobs
   add constraint fk_reminder_jobs_tenant_channel foreign key (tenant_id, channel_id) references app.tenant_channels(tenant_id, id);
+-- TASK-0052: at most one active recall job per appointment. The partial unique
+-- index lets us re-create a recall after a previous one has been cancelled or
+-- already sent, while preventing duplicate live jobs.
+create unique index ux_reminder_jobs_service_recall_appointment
+  on app.reminder_jobs (tenant_id, target_id)
+  where target_type = 'appointment'
+    and (payload->>'purpose') = 'service_recall'
+    and status in ('pending','processing');
+alter table app.service_catalog
+  add constraint fk_service_catalog_tenant_recall_template
+    foreign key (tenant_id, recall_template_id)
+    references app.whatsapp_templates(tenant_id, id) on delete set null;
 alter table app.treatment_packages add constraint uq_treatment_packages_tenant_id_id unique (tenant_id, id);
 alter table app.treatment_packages
   add constraint fk_treatment_packages_tenant_renewal_template foreign key (tenant_id, renewal_template_id)
@@ -918,6 +935,105 @@ $$;
 create trigger trg_appointments_consume_package
   after update of status on app.appointments
   for each row execute function app.consume_package_on_appointment();
+
+-- TASK-0052: when an appointment is closed as `completed`, schedule a service
+-- recall job (e.g. "tu control de 6 meses") if the linked service defines a
+-- `recall_interval_days`. The unique index ux_reminder_jobs_service_recall_appointment
+-- guarantees idempotency: a second trigger fire for the same appointment will
+-- collide and be ignored.
+create or replace function app.schedule_service_recall_on_completion() returns trigger
+language plpgsql as $$
+declare
+  svc app.service_catalog%rowtype;
+  recall_at timestamptz;
+  channel_id uuid;
+begin
+  if new.status <> 'completed' then
+    return new;
+  end if;
+  if old.status = 'completed' then
+    return new;
+  end if;
+  if new.service_id is null then
+    return new;
+  end if;
+  select * into svc
+    from app.service_catalog
+    where tenant_id = new.tenant_id and id = new.service_id;
+  if not found then
+    return new;
+  end if;
+  if svc.recall_interval_days is null then
+    return new;
+  end if;
+  recall_at := new.ends_at + make_interval(days => svc.recall_interval_days);
+  -- Pick the channel from the appointment conversation, if any. Falls back to
+  -- the tenant's WhatsApp Cloud channel so the scheduler still has a target.
+  select cv.channel_id into channel_id
+    from app.conversations cv
+    where cv.tenant_id = new.tenant_id and cv.id = new.conversation_id;
+  if channel_id is null then
+    select id into channel_id
+      from app.tenant_channels
+      where tenant_id = new.tenant_id and provider = 'whatsapp_cloud_api'
+      order by created_at
+      limit 1;
+  end if;
+  insert into app.reminder_jobs (
+    tenant_id, target_type, target_id, channel_id,
+    template_name, template_locale, payload, scheduled_for
+  )
+  values (
+    new.tenant_id, 'appointment', new.id, channel_id,
+    'service_recall', 'es',
+    jsonb_build_object(
+      'purpose', 'service_recall',
+      'appointment_id', new.id::text,
+      'service_id', svc.id::text,
+      'contact_id', new.contact_id::text,
+      'conversation_id', coalesce(new.conversation_id::text, ''),
+      'recall_interval_days', svc.recall_interval_days,
+      'recall_template_id', coalesce(svc.recall_template_id::text, '')
+    ),
+    recall_at
+  )
+  on conflict do nothing;
+  return new;
+end;
+$$;
+create trigger trg_appointments_schedule_service_recall
+  after update of status on app.appointments
+  for each row execute function app.schedule_service_recall_on_completion();
+
+-- TASK-0052: when a contact books a new appointment for the same service, any
+-- still-pending recall for an earlier completed visit of that service becomes
+-- obsolete. Cancel it so we don't nudge a client who already rebooked.
+create or replace function app.cancel_pending_recall_on_rebook() returns trigger
+language plpgsql as $$
+begin
+  if new.service_id is null then
+    return new;
+  end if;
+  if new.status not in ('scheduled','confirmed') then
+    return new;
+  end if;
+  update app.reminder_jobs rj
+    set status = 'cancelled',
+        last_error = 'cancelled_by_rebook',
+        updated_at = now()
+   where rj.tenant_id = new.tenant_id
+     and rj.target_type = 'appointment'
+     and rj.status in ('pending','processing')
+     and (rj.payload->>'purpose') = 'service_recall'
+     and rj.target_id <> new.id
+     and (rj.payload->>'service_id') = new.service_id::text
+     and (rj.payload->>'contact_id') = new.contact_id::text;
+  return new;
+end;
+$$;
+create trigger trg_appointments_cancel_recall_on_rebook
+  after insert on app.appointments
+  for each row execute function app.cancel_pending_recall_on_rebook();
 
 alter table app.tenant_channels enable row level security;
 alter table app.contacts enable row level security;

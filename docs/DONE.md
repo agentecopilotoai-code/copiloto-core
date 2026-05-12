@@ -15,6 +15,58 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0052 — Recall automático ("control en 6 meses") por servicio tras completar
+
+- **Fecha:** 2026-05-12
+- **Resumen:** los negocios recurrentes (limpieza dental cada 6 meses, control trimestral de dermatología, mantenimiento de fisioterapia) ya no pierden ingresos cuando el cliente olvida volver. Cada servicio del catálogo puede llevar un `recall_interval_days` opcional: al completar la cita un trigger crea un `reminder_job` de tipo `service_recall` programado para `ends_at + N días`, y el scheduler dispara la plantilla de WhatsApp aprobada en esa fecha. Cuando el recordatorio se envía, el orquestador marca la conversación con `pending_recall.service_id`; la siguiente respuesta del cliente entra directo a `booking_flow` con el servicio prellenado, sin que el cliente tenga que volver a elegirlo en el menú. Si el cliente reagenda el mismo servicio antes del recall, otro trigger cancela el job pendiente para que no le insistamos por un "control" que ya programó.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):**
+    - `app.service_catalog`: nuevas columnas `recall_interval_days int check (recall_interval_days is null or recall_interval_days > 0)` y `recall_template_id uuid`. Si la columna queda `null`, no se programa recall (default). FK compuesta `fk_service_catalog_tenant_recall_template (tenant_id, recall_template_id) → app.whatsapp_templates(tenant_id, id) on delete set null` para garantizar que la plantilla pertenezca al mismo tenant.
+    - `app.whatsapp_templates.purpose` extiende su CHECK con `'service_recall'`. `WHATSAPP_TEMPLATE_PURPOSES` en `schemas.py` se actualiza para que el Admin Panel pueda crear/listar plantillas de este propósito.
+    - Índice único parcial `ux_reminder_jobs_service_recall_appointment` sobre `(tenant_id, target_id) where target_type='appointment' and (payload->>'purpose')='service_recall' and status in ('pending','processing')`: garantiza que no haya dos jobs vivos para la misma cita, pero permite recrearlo si el anterior fue cancelado o ya envió.
+    - Trigger `trg_appointments_schedule_service_recall after update of status on app.appointments` ejecuta `app.schedule_service_recall_on_completion()`: corre solo cuando `new.status='completed'` y `old.status<>'completed'`, busca el servicio, calcula `recall_at = new.ends_at + make_interval(days => svc.recall_interval_days)`, resuelve el `channel_id` desde la conversación o el primer canal `whatsapp_cloud_api` del tenant, e inserta el `reminder_job` con `payload = {purpose, appointment_id, service_id, contact_id, conversation_id, recall_interval_days, recall_template_id}`. Si `recall_interval_days` es `null` o el servicio no existe, el trigger es no-op. El `on conflict do nothing` se apoya en el índice único para hacer la inserción idempotente.
+    - Trigger `trg_appointments_cancel_recall_on_rebook after insert on app.appointments` ejecuta `app.cancel_pending_recall_on_rebook()`: cuando se inserta una cita con `status in ('scheduled','confirmed')` y `service_id` no nulo, marca como `cancelled` (con `last_error='cancelled_by_rebook'`) todos los `reminder_jobs` pendientes de tipo `service_recall` para el mismo `(tenant_id, contact_id, service_id)`, excepto la propia cita recién creada.
+  - **API (`app/api/v1/routes.py` + `app/api/v1/schemas.py`):**
+    - `ServiceCreate`/`ServiceUpdate` añaden `recall_interval_days: int | None` y `recall_template_id: UUID | None`. En `create_service` se insertan ambos al `service_catalog`; en `update_service` se usa el patrón `<campo>_set = '<campo>' in update_data` con `case when <flag>::boolean then $X else <columna> end` para soportar **borrar** explícitamente la configuración (algo que el `coalesce()` clásico impide).
+    - `SERVICE_CATALOG_COLUMNS`/`SERVICE_CATALOG_PROJECTION` exponen las columnas nuevas para que GETs y respuestas de mutaciones devuelvan la configuración actual al Admin Panel.
+  - **Scheduler (`app/workers/scheduler.py`):**
+    - `_coerce_payload_dict` se extrae para reutilizarlo entre `_extract_purpose` y la lógica de marcado.
+    - `_mark_conversation_pending_recall(conn, *, tenant_id, payload)` escribe `conversations.metadata.pending_recall = {service_id, appointment_id, set_at}` vía `jsonb_set`. Si el payload no tiene `service_id` o `conversation_id` (cita sin conversación), es no-op.
+    - `_process_pending_reminder_jobs` invoca el helper inmediatamente después de marcar el job como `sent`, sólo cuando `purpose == 'service_recall'`. Cualquier excepción se loggea pero no rompe el bucle. La gate de plantilla aprobada existente sigue aplicando: si no hay `whatsapp_templates` con `purpose='service_recall'` y `status='approved'`, el job se marca `failed` con `template_not_approved:service_recall`.
+  - **Orquestador (`app/services/rag_orchestrator.py`):**
+    - `_pending_recall_service_id(conversation)` lee `metadata.pending_recall.service_id` (acepta `metadata` como dict o como JSON serializado, ya que algunos paths lo devuelven como `str`).
+    - `_clear_pending_recall(conn, tenant_id, conversation_id)` borra la clave con `metadata - 'pending_recall'`.
+    - Antes de `maybe_run_qualification_flow` y `maybe_run_booking_flow`, el orquestador inicializa `prefilled_service_id` con `pending_recall_service_id` cuando existe y limpia la marca; el resto del flujo es idéntico, así que la conversación entra directo a `book_appointment` con el servicio del recall ya seleccionado.
+  - **Admin Panel (`admin-panel/src/components/modules/services/ServiceCatalog.jsx`):**
+    - El formulario gana dos campos nuevos: input numérico "Recordatorio de control cada N días" (placeholder `Ej. 180 para control semestral`) y `<select>` "Plantilla del recordatorio" poblado con `listWhatsappTemplates(..., {purpose: 'service_recall', status: 'approved'})`. El select queda deshabilitado mientras el intervalo esté vacío.
+    - Debajo del input se muestra un preview en vivo (`formatRecallPreview`) con la fecha en formato `es-CO` (`Intl.DateTimeFormat`) en la que se enviaría el recordatorio si una cita se completara hoy.
+    - Si el operador configura un intervalo pero el tenant no tiene plantillas `service_recall` aprobadas, aparece un hint rojo recordándole crear la plantilla primero (el scheduler la requiere para enviar).
+    - `buildPayload` parsea el intervalo: vacío o ≤ 0 → `null`, lo que limpia la configuración en backend.
+    - `startEdit` rehidrata los dos campos (numérico como string para el input controlado, template id directo) y `emptyForm` los resetea al cancelar.
+- **Tests (`tests/test_service_recall_static.py`, 24 tests nuevos):**
+  - **Schema (5):** columnas nuevas + check constraint, FK a `whatsapp_templates`, enum `service_recall`, índice único parcial idempotente, trigger de completar (con `make_interval`, payload jsonb_build_object y `on conflict do nothing`), trigger de rebook (`service_id` y `contact_id` cruzados, exclusión de la propia cita).
+  - **Pydantic (4):** `ServiceCreate` acepta ambos campos, defaults a `None`, `ServiceUpdate` soporta cambios parciales sin marcar el otro como `unset`, enum de plantillas incluye `service_recall`.
+  - **Routes (3):** proyección expone columnas, `create_service` bindea payload, `update_service` usa los flags `recall_days_set`/`recall_template_set` y el `case when` para permitir borrar.
+  - **Scheduler (4):** `_mark_conversation_pending_recall` escribe `pending_recall` con `jsonb_set`, es no-op sin `conversation_id`, `_extract_purpose`/`_coerce_payload_dict` aceptan dict y JSON string, y la rama `purpose == 'service_recall'` invoca el helper (con la gate de plantilla aprobada intacta).
+  - **Orquestador (3):** `_pending_recall_service_id` lee dict y string, el flujo principal asigna `prefilled_service_id` y llama a `_clear_pending_recall`, y la query SQL del clear usa el operador `- 'pending_recall'`.
+  - **Admin Panel (4):** import de `listWhatsappTemplates`, render de los inputs + preview, `buildPayload` mapea recall_interval_days/template_id, select deshabilitado sin intervalo.
+  - **Wiring (1):** `_extract_purpose` y `_mark_conversation_pending_recall` viven en el mismo módulo (evita drift si alguien refactoriza el scheduler).
+- **Validaciones:**
+  - `pytest tests/test_service_recall_static.py -q` → **24 passed**.
+  - `pytest -q` → **901 passed, 1 skipped** (sin regresiones).
+  - `ruff check app/api/v1/schemas.py app/api/v1/routes.py app/workers/scheduler.py app/services/rag_orchestrator.py tests/test_service_recall_static.py` → All checks passed.
+- **Criterios de aceptación cubiertos:**
+  - Servicio "Limpieza dental" con `recall_interval_days=180` y cita completada el 1-mar genera un `reminder_job` con `scheduled_for = ends_at + 180 días` y `payload.purpose='service_recall'`.
+  - Cliente que reagenda el mismo servicio antes del recall activa el trigger de rebook, que marca el job pendiente como `cancelled` con `last_error='cancelled_by_rebook'`.
+  - Al disparar, la gate de plantilla aprobada (`_has_approved_template`) exige una plantilla `purpose='service_recall'` `status='approved'`; sin ella el job queda `failed:template_not_approved:service_recall`.
+  - Cuando el recall se envía, la próxima respuesta del cliente entra al `booking_flow` con `prefilled_service_id` del servicio original (vía `metadata.pending_recall`).
+  - El Admin Panel deja configurar el intervalo, el template, y muestra preview de la fecha proyectada; si `recall_interval_days` es `null` no se programa nada.
+- **Notas:**
+  - El payload del job lleva `recall_template_id` por si en el futuro el scheduler quiere usar la plantilla específica del servicio en lugar de la primera aprobada del tenant. Hoy el scheduler aún resuelve por `purpose`; cualquier mejora para usar el template específico no rompe el contrato actual.
+  - El borrado del `pending_recall` falla suave (log + continuar) para no bloquear el orquestador si la conversación cambió de estado entre tanto.
+
+---
+
 ### TASK-0051 — Paquetes y planes de tratamiento multi-cita
 
 - **Fecha:** 2026-05-12

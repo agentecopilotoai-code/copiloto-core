@@ -50,6 +50,36 @@ def _is_cloud_llm_configured(settings: Any) -> bool:
     return bool(settings.cloud_llm_provider and settings.cloud_llm_api_key)
 
 
+def _pending_recall_service_id(conversation: Any) -> str | None:
+    """TASK-0052: read ``conversations.metadata.pending_recall.service_id``."""
+    meta = conversation.get('metadata') if isinstance(conversation, dict) else None
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (json.JSONDecodeError, TypeError):
+            return None
+    if not isinstance(meta, dict):
+        return None
+    pending = meta.get('pending_recall')
+    if not isinstance(pending, dict):
+        return None
+    service_id = pending.get('service_id')
+    return service_id if isinstance(service_id, str) and service_id else None
+
+
+async def _clear_pending_recall(conn: Any, tenant_id: UUID, conversation_id: UUID) -> None:
+    await conn.execute(
+        """
+        update app.conversations
+        set metadata = (coalesce(metadata, '{}'::jsonb)) - 'pending_recall',
+            updated_at = now()
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        conversation_id,
+    )
+
+
 def _parse_escalation_policy(raw: Any) -> dict[str, Any]:
     if isinstance(raw, str):
         try:
@@ -505,6 +535,20 @@ async def orchestrate_inbound_message(
     # tenant has configured qualification questions and the user is heading
     # into booking territory, ask them first and persist the answers.
     prefilled_service_id: str | None = None
+    # TASK-0052: if a service recall message landed on this conversation, the
+    # scheduler left a ``pending_recall`` marker pointing at the service the
+    # customer just got nudged about. Use it as ``prefilled_service_id`` so the
+    # next "sí" / "quiero" lands directly in booking_flow for that service.
+    pending_recall_service_id = _pending_recall_service_id(conversation)
+    if pending_recall_service_id:
+        prefilled_service_id = pending_recall_service_id
+        try:
+            await _clear_pending_recall(conn, tenant_id, conversation['id'])
+        except Exception:
+            log.exception(
+                'orchestrator.recall_marker_clear_failed',
+                conversation_id=conversation_id,
+            )
     qualification_result = await maybe_run_qualification_flow(
         conn,
         tenant_id=tenant_id,

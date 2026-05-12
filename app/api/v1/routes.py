@@ -4282,6 +4282,8 @@ SERVICE_CATALOG_COLUMNS = (
     'duration_minutes',
     'preparation_notes',
     'post_service_notes',
+    'recall_interval_days',
+    'recall_template_id',
     'is_active',
     'sort_order',
     'metadata',
@@ -4337,9 +4339,11 @@ async def create_service(
         f"""
         insert into app.service_catalog (
           tenant_id, name, category, description, price_amount, price_currency,
-          duration_minutes, preparation_notes, post_service_notes, is_active, sort_order, metadata
+          duration_minutes, preparation_notes, post_service_notes,
+          recall_interval_days, recall_template_id,
+          is_active, sort_order, metadata
         )
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)
         returning {SERVICE_CATALOG_PROJECTION}
         """,
         tenant_id,
@@ -4351,6 +4355,8 @@ async def create_service(
         payload.duration_minutes,
         payload.preparation_notes,
         payload.post_service_notes,
+        payload.recall_interval_days,
+        payload.recall_template_id,
         payload.is_active,
         payload.sort_order,
         json.dumps(payload.metadata),
@@ -4389,6 +4395,11 @@ async def update_service(
         return normalize_service_catalog_row(row)
     if 'price_currency' in update_data and update_data['price_currency']:
         update_data['price_currency'] = update_data['price_currency'].upper()
+    # TASK-0052: recall_interval_days / recall_template_id can be cleared back
+    # to null. We pass a "<field>_set" flag so SQL knows whether the caller
+    # really sent the field (clear) vs. omitted it (keep current).
+    recall_days_set = 'recall_interval_days' in update_data
+    recall_template_set = 'recall_template_id' in update_data
     row = await conn.fetchrow(
         f"""
         update app.service_catalog
@@ -4400,6 +4411,8 @@ async def update_service(
             duration_minutes=coalesce($8, duration_minutes),
             preparation_notes=coalesce($9, preparation_notes),
             post_service_notes=coalesce($10, post_service_notes),
+            recall_interval_days = case when $14::boolean then $15 else recall_interval_days end,
+            recall_template_id   = case when $16::boolean then $17 else recall_template_id end,
             is_active=coalesce($11, is_active),
             sort_order=coalesce($12, sort_order),
             metadata=coalesce($13::jsonb, metadata)
@@ -4419,6 +4432,10 @@ async def update_service(
         update_data.get('is_active'),
         update_data.get('sort_order'),
         json.dumps(update_data['metadata']) if 'metadata' in update_data else None,
+        recall_days_set,
+        update_data.get('recall_interval_days'),
+        recall_template_set,
+        update_data.get('recall_template_id'),
     )
     if not row:
         raise HTTPException(status_code=404, detail='Service not found')

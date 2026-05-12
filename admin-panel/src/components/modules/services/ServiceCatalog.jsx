@@ -6,6 +6,7 @@ import {
   getTenantSettings,
   listPromotions,
   listServices,
+  listWhatsappTemplates,
   reorderServices,
   updateService,
   updateTenantSettings,
@@ -34,6 +35,9 @@ const emptyForm = {
   duration_minutes: 60,
   preparation_notes: '',
   post_service_notes: '',
+  // TASK-0052: per-service recall configuration. Empty string means "no recall".
+  recall_interval_days: '',
+  recall_template_id: '',
   is_active: true,
 };
 
@@ -78,6 +82,15 @@ function buildPreview(form, tenant) {
 }
 
 function buildPayload(form) {
+  // TASK-0052: empty string or 0 → null (no recall). Anything else parses to int.
+  const recallRaw = form.recall_interval_days;
+  let recallDays = null;
+  if (recallRaw !== '' && recallRaw !== null && recallRaw !== undefined) {
+    const parsed = Number(recallRaw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      recallDays = Math.trunc(parsed);
+    }
+  }
   return {
     name: form.name.trim(),
     category: form.category?.trim() || null,
@@ -90,8 +103,24 @@ function buildPayload(form) {
     duration_minutes: Number(form.duration_minutes) || 60,
     preparation_notes: form.preparation_notes?.trim() || null,
     post_service_notes: form.post_service_notes?.trim() || null,
+    recall_interval_days: recallDays,
+    recall_template_id: form.recall_template_id || null,
     is_active: Boolean(form.is_active),
   };
+}
+
+// TASK-0052: preview of the date a recall would land if the same service were
+// completed today. Useful so the operator picks an interval that makes sense
+// (180 days for hygiene, 90 for dermatology controls, etc.).
+function formatRecallPreview(intervalDays) {
+  const parsed = Number(intervalDays);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  const target = new Date(Date.now() + parsed * 24 * 60 * 60 * 1000);
+  try {
+    return new Intl.DateTimeFormat('es-CO', { dateStyle: 'long' }).format(target);
+  } catch {
+    return target.toISOString().slice(0, 10);
+  }
 }
 
 export function ServiceCatalog({ module, session, tenant }) {
@@ -105,6 +134,8 @@ export function ServiceCatalog({ module, session, tenant }) {
   const [defaultDuration, setDefaultDuration] = useState(60);
   const [tenantSettings, setTenantSettings] = useState(null);
   const [promotions, setPromotions] = useState([]);
+  // TASK-0052: approved service_recall templates the operator can pick from.
+  const [recallTemplates, setRecallTemplates] = useState([]);
 
   const tenantId = tenant?.id;
   const previewText = useMemo(() => buildPreview(form, tenant), [form, tenant]);
@@ -147,6 +178,14 @@ export function ServiceCatalog({ module, session, tenant }) {
         if (typeof stored === 'number' && stored > 0) setDefaultDuration(stored);
       })
       .catch(() => {});
+  }, [tenantId, session]);
+
+  // TASK-0052: only approved templates are usable by the scheduler.
+  useEffect(() => {
+    if (!tenantId) return;
+    listWhatsappTemplates(session, tenantId, { purpose: 'service_recall', status: 'approved' })
+      .then((rows) => setRecallTemplates(Array.isArray(rows) ? rows : []))
+      .catch(() => setRecallTemplates([]));
   }, [tenantId, session]);
 
   async function handleSaveDefaultDuration(event) {
@@ -222,6 +261,11 @@ export function ServiceCatalog({ module, session, tenant }) {
       duration_minutes: service.duration_minutes || 60,
       preparation_notes: service.preparation_notes || '',
       post_service_notes: service.post_service_notes || '',
+      recall_interval_days:
+        service.recall_interval_days === null || service.recall_interval_days === undefined
+          ? ''
+          : String(service.recall_interval_days),
+      recall_template_id: service.recall_template_id || '',
       is_active: service.is_active !== false,
     });
     setNotice(null);
@@ -516,6 +560,46 @@ export function ServiceCatalog({ module, session, tenant }) {
                 rows={2}
                 value={form.post_service_notes}
               />
+            </label>
+            <label>
+              Recordatorio de control cada N días
+              <input
+                min="0"
+                max="3650"
+                step="1"
+                type="number"
+                placeholder="Ej. 180 para control semestral"
+                value={form.recall_interval_days}
+                onChange={(event) => setForm({ ...form, recall_interval_days: event.target.value })}
+              />
+              <span className="hint" style={{ display: 'block', marginTop: '0.25rem' }}>
+                Si lo dejas vacío, no se envía recordatorio.
+                {(() => {
+                  const preview = formatRecallPreview(form.recall_interval_days);
+                  if (!preview) return null;
+                  return ` Una cita completada hoy dispararía el recordatorio el ${preview}.`;
+                })()}
+              </span>
+            </label>
+            <label>
+              Plantilla del recordatorio
+              <select
+                value={form.recall_template_id || ''}
+                onChange={(event) => setForm({ ...form, recall_template_id: event.target.value })}
+                disabled={!form.recall_interval_days}
+              >
+                <option value="">— Usar la plantilla aprobada por defecto —</option>
+                {recallTemplates.map((tmpl) => (
+                  <option key={tmpl.id} value={tmpl.id}>
+                    {tmpl.name} ({tmpl.locale})
+                  </option>
+                ))}
+              </select>
+              {form.recall_interval_days && recallTemplates.length === 0 ? (
+                <span className="hint" style={{ display: 'block', marginTop: '0.25rem', color: '#b91c1c' }}>
+                  No hay plantillas service_recall aprobadas. Crea una en WhatsApp Templates antes de programar recordatorios.
+                </span>
+              ) : null}
             </label>
             <div className="builder-preview wide">
               <strong>Vista previa para WhatsApp</strong>
