@@ -322,6 +322,40 @@ create table app.appointment_feedback (
 );
 create index ix_appointment_feedback_tenant on app.appointment_feedback(tenant_id, created_at desc);
 
+create table app.contact_tags (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  name text not null,
+  color varchar(7),
+  description text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, name)
+);
+create index ix_contact_tags_tenant on app.contact_tags(tenant_id, name);
+
+create table app.contact_tag_assignments (
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  contact_id uuid not null references app.contacts(id) on delete cascade,
+  tag_id uuid not null references app.contact_tags(id) on delete cascade,
+  assigned_by uuid references app.users(id) on delete set null,
+  assigned_at timestamptz not null default now(),
+  primary key (contact_id, tag_id)
+);
+create index ix_contact_tag_assignments_tag on app.contact_tag_assignments(tag_id);
+create index ix_contact_tag_assignments_tenant on app.contact_tag_assignments(tenant_id);
+
+create table app.contact_notes (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  contact_id uuid not null references app.contacts(id) on delete cascade,
+  body text not null,
+  created_by uuid references app.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_contact_notes_contact on app.contact_notes(tenant_id, contact_id, created_at desc);
+
 create table app.reminder_jobs (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -468,6 +502,13 @@ alter table app.appointments add constraint uq_appointments_tenant_id_id unique 
 alter table app.knowledge_documents add constraint uq_knowledge_documents_tenant_id_id unique (tenant_id, id);
 alter table app.knowledge_chunks add constraint uq_knowledge_chunks_tenant_id_id unique (tenant_id, id);
 alter table app.handoffs add constraint uq_handoffs_tenant_id_id unique (tenant_id, id);
+alter table app.contact_tags add constraint uq_contact_tags_tenant_id_id unique (tenant_id, id);
+alter table app.contact_notes add constraint uq_contact_notes_tenant_id_id unique (tenant_id, id);
+alter table app.contact_tag_assignments
+  add constraint fk_contact_tag_assignments_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
+  add constraint fk_contact_tag_assignments_tenant_tag foreign key (tenant_id, tag_id) references app.contact_tags(tenant_id, id);
+alter table app.contact_notes
+  add constraint fk_contact_notes_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id);
 
 alter table app.conversations
   add constraint fk_conversations_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id),
@@ -510,6 +551,8 @@ create trigger trg_reminder_jobs_touch before update on app.reminder_jobs for ea
 create trigger trg_knowledge_documents_touch before update on app.knowledge_documents for each row execute function app.touch_updated_at();
 create trigger trg_prompt_templates_touch before update on app.prompt_templates for each row execute function app.touch_updated_at();
 create trigger trg_handoffs_touch before update on app.handoffs for each row execute function app.touch_updated_at();
+create trigger trg_contact_tags_touch before update on app.contact_tags for each row execute function app.touch_updated_at();
+create trigger trg_contact_notes_touch before update on app.contact_notes for each row execute function app.touch_updated_at();
 
 alter table app.tenant_channels enable row level security;
 alter table app.contacts enable row level security;
@@ -528,6 +571,9 @@ alter table app.knowledge_documents enable row level security;
 alter table app.knowledge_chunks enable row level security;
 alter table app.prompt_templates enable row level security;
 alter table app.handoffs enable row level security;
+alter table app.contact_tags enable row level security;
+alter table app.contact_tag_assignments enable row level security;
+alter table app.contact_notes enable row level security;
 alter table app.webhook_events_raw enable row level security;
 alter table app.domain_events enable row level security;
 alter table app.audit_logs enable row level security;
@@ -538,6 +584,7 @@ begin
   foreach t in array array[
     'tenant_channels','contacts','conversations','messages','message_status_events','resources','service_catalog','whatsapp_templates','appointment_feedback','service_requests','quotes',
     'appointments','reminder_jobs','knowledge_documents','knowledge_chunks','prompt_templates','handoffs',
+    'contact_tags','contact_tag_assignments','contact_notes',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop
     execute format('create policy %I_tenant_select on app.%I for select using (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);

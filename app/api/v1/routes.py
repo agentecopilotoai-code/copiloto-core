@@ -19,6 +19,10 @@ from app.api.v1.schemas import (
     AppointmentUpdate,
     ChannelCreate,
     ChannelModeUpdate,
+    ContactNoteCreate,
+    ContactTagAssign,
+    ContactTagCreate,
+    ContactTagUpdate,
     ContactUpsert,
     ConversationCreate,
     ConversationStart,
@@ -1377,6 +1381,455 @@ async def get_contact(
     return record_to_dict(row)
 
 
+@tenant_ops_router.get('/contacts')
+async def list_contacts(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    q: str | None = Query(default=None, max_length=160),
+    tag_id: UUID | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    search_term = f'%{q.strip().lower()}%' if q and q.strip() else None
+    rows = await conn.fetch(
+        """
+        select c.id, c.tenant_id, c.wa_id, c.phone_e164, c.display_name,
+               c.opt_in_status, c.source, c.created_at, c.updated_at,
+               (select count(*) from app.appointments a
+                where a.tenant_id = c.tenant_id and a.contact_id = c.id) as appointments_count
+        from app.contacts c
+        where c.tenant_id = $1
+          and (
+                $2::text is null
+                or lower(coalesce(c.display_name, '')) like $2
+                or lower(coalesce(c.phone_e164, '')) like $2
+                or lower(coalesce(c.wa_id, '')) like $2
+              )
+          and (
+                $3::uuid is null
+                or exists (
+                  select 1 from app.contact_tag_assignments cta
+                  where cta.contact_id = c.id and cta.tag_id = $3 and cta.tenant_id = c.tenant_id
+                )
+              )
+        order by c.updated_at desc
+        limit $4 offset $5
+        """,
+        tenant_id,
+        search_term,
+        tag_id,
+        limit,
+        offset,
+    )
+    contacts = [record_to_dict(row) for row in rows]
+    if contacts:
+        contact_ids = [contact['id'] for contact in contacts]
+        tag_rows = await conn.fetch(
+            """
+            select cta.contact_id, t.id, t.name, t.color
+            from app.contact_tag_assignments cta
+            join app.contact_tags t on t.id = cta.tag_id and t.tenant_id = cta.tenant_id
+            where cta.tenant_id = $1 and cta.contact_id = any($2::uuid[])
+            order by t.name
+            """,
+            tenant_id,
+            contact_ids,
+        )
+        tags_by_contact: dict[str, list[dict[str, Any]]] = {}
+        for row in tag_rows:
+            tags_by_contact.setdefault(str(row['contact_id']), []).append(
+                {'id': str(row['id']), 'name': row['name'], 'color': row['color']}
+            )
+        for contact in contacts:
+            contact['tags'] = tags_by_contact.get(str(contact['id']), [])
+    return contacts
+
+
+@tenant_ops_router.get('/contacts/{contact_id}/profile')
+async def get_contact_profile(
+    contact_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    contact = await conn.fetchrow(
+        'select * from app.contacts where tenant_id=$1 and id=$2',
+        tenant_id,
+        contact_id,
+    )
+    if not contact:
+        raise HTTPException(status_code=404, detail='Contact not found')
+    tags = await conn.fetch(
+        """
+        select t.id, t.name, t.color, t.description, cta.assigned_at, cta.assigned_by
+        from app.contact_tag_assignments cta
+        join app.contact_tags t on t.id = cta.tag_id and t.tenant_id = cta.tenant_id
+        where cta.tenant_id = $1 and cta.contact_id = $2
+        order by t.name
+        """,
+        tenant_id,
+        contact_id,
+    )
+    appointments = await conn.fetch(
+        """
+        select a.id, a.starts_at, a.ends_at, a.status, a.confirmation_status,
+               a.service_code, s.name as service_name, r.name as resource_name
+        from app.appointments a
+        left join app.service_catalog s on s.id = a.service_id and s.tenant_id = a.tenant_id
+        left join app.resources r on r.id = a.resource_id and r.tenant_id = a.tenant_id
+        where a.tenant_id = $1 and a.contact_id = $2
+        order by a.starts_at desc
+        limit 10
+        """,
+        tenant_id,
+        contact_id,
+    )
+    conversations = await conn.fetch(
+        """
+        select c.id, c.status, c.current_intent, c.created_at, c.updated_at,
+               (select count(*) from app.messages m
+                where m.tenant_id = c.tenant_id and m.conversation_id = c.id) as message_count
+        from app.conversations c
+        where c.tenant_id = $1 and c.contact_id = $2
+        order by c.updated_at desc
+        limit 5
+        """,
+        tenant_id,
+        contact_id,
+    )
+    notes = await conn.fetch(
+        """
+        select n.id, n.body, n.created_by, n.created_at, n.updated_at,
+               u.display_name as created_by_name
+        from app.contact_notes n
+        left join app.users u on u.id = n.created_by
+        where n.tenant_id = $1 and n.contact_id = $2
+        order by n.created_at desc
+        """,
+        tenant_id,
+        contact_id,
+    )
+    stats = await conn.fetchrow(
+        """
+        select
+          count(*) filter (where status = 'completed') as completed_appointments,
+          count(*) as total_appointments,
+          min(starts_at) filter (where status = 'completed') as first_visit_at,
+          max(starts_at) filter (where status = 'completed') as last_visit_at
+        from app.appointments
+        where tenant_id = $1 and contact_id = $2
+        """,
+        tenant_id,
+        contact_id,
+    )
+    feedback = await conn.fetchrow(
+        """
+        select avg(rating)::float as average_rating, count(*) as ratings_count
+        from app.appointment_feedback
+        where tenant_id = $1 and contact_id = $2
+        """,
+        tenant_id,
+        contact_id,
+    )
+    return {
+        'contact': record_to_dict(contact),
+        'tags': [record_to_dict(row) for row in tags],
+        'appointments': [record_to_dict(row) for row in appointments],
+        'conversations': [record_to_dict(row) for row in conversations],
+        'notes': [record_to_dict(row) for row in notes],
+        'stats': {
+            'total_appointments': stats['total_appointments'] if stats else 0,
+            'completed_appointments': stats['completed_appointments'] if stats else 0,
+            'first_visit_at': stats['first_visit_at'] if stats else None,
+            'last_visit_at': stats['last_visit_at'] if stats else None,
+            'average_rating': feedback['average_rating'] if feedback else None,
+            'ratings_count': feedback['ratings_count'] if feedback else 0,
+        },
+    }
+
+
+@tenant_ops_router.get('/tenants/{tenant_id}/contact-tags')
+async def list_contact_tags(
+    tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        """
+        select t.*,
+               (select count(*) from app.contact_tag_assignments cta
+                where cta.tenant_id = t.tenant_id and cta.tag_id = t.id) as contacts_count
+        from app.contact_tags t
+        where t.tenant_id = $1
+        order by t.name
+        """,
+        tenant_id,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/contact-tags', status_code=201)
+async def create_contact_tag(
+    tenant_id: UUID,
+    payload: ContactTagCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    try:
+        row = await conn.fetchrow(
+            """
+            insert into app.contact_tags (tenant_id, name, color, description)
+            values ($1, $2, $3, $4)
+            returning *
+            """,
+            tenant_id,
+            payload.name.strip(),
+            payload.color,
+            payload.description,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail='Tag name already exists for this tenant') from exc
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_tag.created',
+        entity_type='contact_tag',
+        entity_id=str(row['id']),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/contact-tags/{tag_id}')
+async def update_contact_tag(
+    tenant_id: UUID,
+    tag_id: UUID,
+    payload: ContactTagUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        row = await conn.fetchrow(
+            'select * from app.contact_tags where tenant_id=$1 and id=$2', tenant_id, tag_id
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Tag not found')
+        return record_to_dict(row)
+    set_clauses = []
+    params: list[Any] = [tenant_id, tag_id]
+    for field, value in updates.items():
+        params.append(value)
+        set_clauses.append(f'{field}=${len(params)}')
+    try:
+        row = await conn.fetchrow(
+            f"""
+            update app.contact_tags
+            set {', '.join(set_clauses)}
+            where tenant_id=$1 and id=$2
+            returning *
+            """,
+            *params,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(status_code=409, detail='Tag name already exists for this tenant') from exc
+    if not row:
+        raise HTTPException(status_code=404, detail='Tag not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_tag.updated',
+        entity_type='contact_tag',
+        entity_id=str(tag_id),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/contact-tags/{tag_id}', status_code=204)
+async def delete_contact_tag(
+    tenant_id: UUID,
+    tag_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    deleted = await conn.fetchval(
+        'delete from app.contact_tags where tenant_id=$1 and id=$2 returning id',
+        tenant_id,
+        tag_id,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail='Tag not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_tag.deleted',
+        entity_type='contact_tag',
+        entity_id=str(tag_id),
+    )
+    return Response(status_code=204)
+
+
+@tenant_ops_router.post('/contacts/{contact_id}/tags', status_code=201)
+async def assign_contact_tags(
+    contact_id: UUID,
+    payload: ContactTagAssign,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    contact = await conn.fetchrow(
+        'select id from app.contacts where tenant_id=$1 and id=$2', tenant_id, contact_id
+    )
+    if not contact:
+        raise HTTPException(status_code=404, detail='Contact not found')
+    user_id = await current_user_id_from_request(request, conn)
+    for tag_id in payload.tag_ids:
+        owned = await conn.fetchval(
+            'select id from app.contact_tags where tenant_id=$1 and id=$2', tenant_id, tag_id
+        )
+        if not owned:
+            raise HTTPException(status_code=404, detail=f'Tag {tag_id} not found for this tenant')
+        await conn.execute(
+            """
+            insert into app.contact_tag_assignments (tenant_id, contact_id, tag_id, assigned_by)
+            values ($1, $2, $3, $4)
+            on conflict (contact_id, tag_id) do nothing
+            """,
+            tenant_id,
+            contact_id,
+            tag_id,
+            user_id,
+        )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_tag.assigned',
+        entity_type='contact',
+        entity_id=str(contact_id),
+        metadata={'tag_ids': [str(t) for t in payload.tag_ids]},
+    )
+    rows = await conn.fetch(
+        """
+        select t.id, t.name, t.color
+        from app.contact_tag_assignments cta
+        join app.contact_tags t on t.id = cta.tag_id and t.tenant_id = cta.tenant_id
+        where cta.tenant_id = $1 and cta.contact_id = $2
+        order by t.name
+        """,
+        tenant_id,
+        contact_id,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_ops_router.delete('/contacts/{contact_id}/tags/{tag_id}', status_code=204)
+async def unassign_contact_tag(
+    contact_id: UUID,
+    tag_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    deleted = await conn.fetchval(
+        """
+        delete from app.contact_tag_assignments
+        where tenant_id=$1 and contact_id=$2 and tag_id=$3
+        returning tag_id
+        """,
+        tenant_id,
+        contact_id,
+        tag_id,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail='Tag assignment not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_tag.unassigned',
+        entity_type='contact',
+        entity_id=str(contact_id),
+        metadata={'tag_id': str(tag_id)},
+    )
+    return Response(status_code=204)
+
+
+@tenant_ops_router.get('/contacts/{contact_id}/notes')
+async def list_contact_notes(
+    contact_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        """
+        select n.id, n.tenant_id, n.contact_id, n.body, n.created_by, n.created_at, n.updated_at,
+               u.display_name as created_by_name
+        from app.contact_notes n
+        left join app.users u on u.id = n.created_by
+        where n.tenant_id = $1 and n.contact_id = $2
+        order by n.created_at desc
+        """,
+        tenant_id,
+        contact_id,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_ops_router.post('/contacts/{contact_id}/notes', status_code=201)
+async def create_contact_note(
+    contact_id: UUID,
+    payload: ContactNoteCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    contact = await conn.fetchrow(
+        'select id from app.contacts where tenant_id=$1 and id=$2', tenant_id, contact_id
+    )
+    if not contact:
+        raise HTTPException(status_code=404, detail='Contact not found')
+    user_id = await current_user_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        insert into app.contact_notes (tenant_id, contact_id, body, created_by)
+        values ($1, $2, $3, $4)
+        returning *
+        """,
+        tenant_id,
+        contact_id,
+        payload.body.strip(),
+        user_id,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_note.created',
+        entity_type='contact_note',
+        entity_id=str(row['id']),
+    )
+    return record_to_dict(row)
+
+
 @system_router.post('/conversations', status_code=201)
 async def create_conversation(payload: ConversationCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, payload.tenant_id, conn)
@@ -1435,6 +1888,30 @@ async def list_conversations(request: Request, conn: asyncpg.Connection = Depend
         tenant_id,
     )
     conversations = [record_to_dict(r) for r in rows]
+    if conversations:
+        contact_ids = list({c['contact_id'] for c in conversations if c.get('contact_id')})
+        if contact_ids:
+            tag_rows = await conn.fetch(
+                """
+                select cta.contact_id, t.id, t.name, t.color
+                from app.contact_tag_assignments cta
+                join app.contact_tags t on t.id = cta.tag_id and t.tenant_id = cta.tenant_id
+                where cta.tenant_id = $1 and cta.contact_id = any($2::uuid[])
+                order by t.name
+                """,
+                tenant_id,
+                contact_ids,
+            )
+            tags_by_contact: dict[str, list[dict[str, Any]]] = {}
+            for row in tag_rows:
+                tags_by_contact.setdefault(str(row['contact_id']), []).append(
+                    {'id': str(row['id']), 'name': row['name'], 'color': row['color']}
+                )
+            for conversation in conversations:
+                conversation['contact_tags'] = tags_by_contact.get(str(conversation.get('contact_id')), [])
+        else:
+            for conversation in conversations:
+                conversation['contact_tags'] = []
     log.info(
         'operations.conversations.listed',
         tenant_id=str(tenant_id),
@@ -1682,6 +2159,20 @@ async def get_conversation(
     data = record_to_dict(row)
     data['messages'] = [record_to_dict(m) for m in messages]
     data['handoffs'] = [record_to_dict(h) for h in handoffs]
+    tag_rows = await conn.fetch(
+        """
+        select t.id, t.name, t.color
+        from app.contact_tag_assignments cta
+        join app.contact_tags t on t.id = cta.tag_id and t.tenant_id = cta.tenant_id
+        where cta.tenant_id = $1 and cta.contact_id = $2
+        order by t.name
+        """,
+        tenant_id,
+        row['contact_id'],
+    )
+    data['contact_tags'] = [
+        {'id': str(r['id']), 'name': r['name'], 'color': r['color']} for r in tag_rows
+    ]
     return data
 
 @tenant_ops_router.get('/conversations/{conversation_id}/messages/{message_id}/media')

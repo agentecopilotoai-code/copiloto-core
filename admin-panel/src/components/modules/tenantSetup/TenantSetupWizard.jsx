@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import {
+  createContactTag,
   createTenant,
+  deleteContactTag,
   getTenant,
   getTenantSettings,
   listAuditLogs,
+  listContactTags,
   patchTenantStatus,
   reindexAllKnowledgeDocuments,
+  updateContactTag,
   updateTenant,
   updateTenantSettings,
 } from '../../../services/coreApi.js';
@@ -342,6 +346,9 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     dimensions: 1536,
   });
   const [reindexResult, setReindexResult] = useState(null);
+  const [contactTags, setContactTags] = useState([]);
+  const [tagForm, setTagForm] = useState({ name: '', color: '#4f6ef7', description: '' });
+  const [editingTagId, setEditingTagId] = useState(null);
 
   const settingsPayload = useMemo(
     () => ({
@@ -496,6 +503,64 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     }
   }
 
+  async function refreshContactTags(tenantId = currentTenantId, showNotice = false) {
+    if (!tenantId) return;
+    try {
+      const tags = await listContactTags(session, tenantId);
+      setContactTags(tags || []);
+      if (showNotice) setNotice({ type: 'success', text: 'Etiquetas recargadas.' });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    }
+  }
+
+  useEffect(() => {
+    if (!currentTenantId) return;
+    refreshContactTags(currentTenantId);
+  }, [currentTenantId]);
+
+  async function handleSaveTag(event) {
+    event.preventDefault();
+    if (!currentTenantId || !tagForm.name.trim()) return;
+    const payload = {
+      name: tagForm.name.trim(),
+      color: tagForm.color || null,
+      description: tagForm.description || null,
+    };
+    const action = editingTagId
+      ? () => updateContactTag(session, currentTenantId, editingTagId, payload)
+      : () => createContactTag(session, currentTenantId, payload);
+    const saved = await runAction(action, editingTagId ? 'Etiqueta actualizada.' : 'Etiqueta creada.');
+    if (saved) {
+      setTagForm({ name: '', color: '#4f6ef7', description: '' });
+      setEditingTagId(null);
+      await refreshContactTags();
+    }
+  }
+
+  async function handleDeleteTag(tagId) {
+    if (!currentTenantId) return;
+    const ok = await runAction(
+      () => deleteContactTag(session, currentTenantId, tagId),
+      'Etiqueta eliminada.',
+    );
+    if (ok !== null) await refreshContactTags();
+  }
+
+  function startEditingTag(tag) {
+    setEditingTagId(tag.id);
+    setTagForm({
+      name: tag.name,
+      color: tag.color || '#4f6ef7',
+      description: tag.description || '',
+    });
+  }
+
+  function cancelEditingTag() {
+    setEditingTagId(null);
+    setTagForm({ name: '', color: '#4f6ef7', description: '' });
+  }
+
   async function refreshAuditLogs(tenantId = currentTenantId, showNotice = true) {
     if (!tenantId) return;
     const logs = await runAction(
@@ -589,6 +654,87 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
             <button className="primary-action" disabled={isBusy} type="submit">{currentTenantId ? 'Actualizar tenant' : 'Crear tenant'}</button>
           </div>
         </form>
+      ) : null}
+
+      {activeTab === 'tenant' && currentTenantId ? (
+        <div className="wizard-panel">
+          <h3>Etiquetas de contacto</h3>
+          <p className="hint">
+            Define las etiquetas disponibles para clasificar contactos del CRM (ej. VIP, Nuevo, En tratamiento).
+          </p>
+          <form className="form-grid" onSubmit={handleSaveTag}>
+            <label>
+              Nombre
+              <input
+                value={tagForm.name}
+                onChange={(event) => setTagForm({ ...tagForm, name: event.target.value })}
+                maxLength={80}
+                placeholder="Ej. VIP"
+                required
+              />
+            </label>
+            <label>
+              Color
+              <input
+                type="color"
+                value={tagForm.color}
+                onChange={(event) => setTagForm({ ...tagForm, color: event.target.value })}
+              />
+            </label>
+            <label className="wide">
+              Descripción
+              <input
+                value={tagForm.description}
+                onChange={(event) => setTagForm({ ...tagForm, description: event.target.value })}
+                maxLength={500}
+                placeholder="Opcional"
+              />
+            </label>
+            <div className="form-actions">
+              <button className="primary-action" type="submit" disabled={isBusy || !tagForm.name.trim()}>
+                {editingTagId ? 'Actualizar etiqueta' : 'Crear etiqueta'}
+              </button>
+              {editingTagId ? (
+                <button className="secondary-action" type="button" onClick={cancelEditingTag}>
+                  Cancelar edición
+                </button>
+              ) : null}
+            </div>
+          </form>
+          {contactTags.length ? (
+            <ul style={{ listStyle: 'none', padding: 0, marginTop: '1rem' }}>
+              {contactTags.map((tag) => (
+                <li
+                  key={tag.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.6rem',
+                    padding: '0.4rem 0',
+                    borderBottom: '1px solid var(--border, #e2e8f0)',
+                  }}
+                >
+                  <span
+                    className="status-pill"
+                    style={{ background: tag.color || '#4f6ef7', color: '#fff', padding: '0.15rem 0.6rem' }}
+                  >
+                    {tag.name}
+                  </span>
+                  <span className="hint" style={{ flex: 1 }}>{tag.description || '—'}</span>
+                  <span className="hint">{tag.contacts_count ?? 0} contactos</span>
+                  <button className="secondary-action" type="button" onClick={() => startEditingTag(tag)}>
+                    Editar
+                  </button>
+                  <button className="secondary-action" type="button" onClick={() => handleDeleteTag(tag.id)}>
+                    Eliminar
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="hint">Aún no hay etiquetas configuradas.</p>
+          )}
+        </div>
       ) : null}
 
       {activeTab === 'tenant' && currentTenantId && tenantStatus ? (

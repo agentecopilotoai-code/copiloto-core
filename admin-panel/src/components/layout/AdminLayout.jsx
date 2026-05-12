@@ -4,6 +4,7 @@ import { useActiveModule } from '../../hooks/useActiveModule.js';
 import { useTenantOptions } from '../../hooks/useTenantOptions.js';
 import { listMyTenants } from '../../services/coreApi.js';
 import { AuditPanel } from '../modules/audit/AuditPanel.jsx';
+import { ContactsModule } from '../modules/contacts/ContactsModule.jsx';
 import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
 import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
 import { KnowledgeStorageSettings } from '../modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
@@ -162,6 +163,8 @@ export function AdminLayout({ session }) {
     activeContent = <KnowledgeStorageSettings module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'knowledge-studio') {
     activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'contacts') {
+    activeContent = <ContactsModule module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'operations-desk') {
     activeContent = <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'go-live-readiness') {

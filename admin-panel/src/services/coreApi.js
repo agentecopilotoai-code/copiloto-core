@@ -633,3 +633,77 @@ export function sendQuote(session, tenantId, quoteId) {
     tenantId,
   });
 }
+
+export function listContactTags(session, tenantId) {
+  return request(`/tenants/${tenantId}/contact-tags`, { session, tenantId });
+}
+
+export function createContactTag(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/contact-tags`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateContactTag(session, tenantId, tagId, payload) {
+  return request(`/tenants/${tenantId}/contact-tags/${tagId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deleteContactTag(session, tenantId, tagId) {
+  return request(`/tenants/${tenantId}/contact-tags/${tagId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function listContacts(session, tenantId, { q, tagId, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (tagId) params.set('tag_id', tagId);
+  if (limit != null) params.set('limit', String(limit));
+  if (offset != null) params.set('offset', String(offset));
+  const qs = params.toString();
+  return request(`/contacts${qs ? `?${qs}` : ''}`, { session, tenantId });
+}
+
+export function getContactProfile(session, tenantId, contactId) {
+  return request(`/contacts/${contactId}/profile`, { session, tenantId });
+}
+
+export function assignContactTags(session, tenantId, contactId, tagIds) {
+  return request(`/contacts/${contactId}/tags`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { tag_ids: tagIds },
+  });
+}
+
+export function unassignContactTag(session, tenantId, contactId, tagId) {
+  return request(`/contacts/${contactId}/tags/${tagId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function listContactNotes(session, tenantId, contactId) {
+  return request(`/contacts/${contactId}/notes`, { session, tenantId });
+}
+
+export function createContactNote(session, tenantId, contactId, body) {
+  return request(`/contacts/${contactId}/notes`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { body },
+  });
+}
