@@ -7522,13 +7522,24 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                         received_at = datetime.fromtimestamp(int(timestamp), UTC)
                     except (TypeError, ValueError, OSError):
                         received_at = None
+                # WhatsApp surfaces the quoted message id in `context.id` when the
+                # contact uses the native "reply" affordance. Persist it on the
+                # column so reply-stitching (analytics, threading) can stop reading
+                # from the raw payload.
+                context_obj = message.get('context') if isinstance(message, dict) else None
+                reply_to_external_id = None
+                if isinstance(context_obj, dict):
+                    candidate = context_obj.get('id')
+                    if isinstance(candidate, str) and candidate:
+                        reply_to_external_id = candidate
                 inbound_message = await conn.fetchrow(
                     """
                     insert into app.messages (
                       tenant_id, conversation_id, external_message_id, direction, sender_actor_type, sender_actor_id,
-                      body_text, message_type, media_id, mime_type, payload, status, received_at
+                      body_text, message_type, media_id, mime_type, payload, status, received_at,
+                      reply_to_external_message_id
                     )
-                    values ($1, $2, $3, 'inbound', 'contact', $4, $5, $6, $7, $8, $9::jsonb, 'received', coalesce($10::timestamptz, now()))
+                    values ($1, $2, $3, 'inbound', 'contact', $4, $5, $6, $7, $8, $9::jsonb, 'received', coalesce($10::timestamptz, now()), $11)
                     on conflict (tenant_id, external_message_id) do nothing
                     returning *
                     """,
@@ -7542,6 +7553,7 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     str(mime_type) if mime_type else None,
                     json.dumps(message),
                     received_at,
+                    reply_to_external_id,
                 )
                 if inbound_message:
                     await notify_operations_change(
@@ -8156,13 +8168,31 @@ async def analytics_campaigns(
             and coalesce(c.started_at, c.created_at) < $3
         ),
         replies as (
-          select campaign_id, count(distinct conversation_id) as replied
-          from app.messages
-          where tenant_id = $1
-            and campaign_id is not null
-            and direction = 'inbound'
-            and reply_to_external_message_id is not null
-          group by campaign_id
+          -- A "reply" is any inbound message that lands in the same conversation
+          -- as a campaign-tagged outbound, within that campaign's attribution
+          -- window. We can't rely on inbound rows carrying campaign_id (the
+          -- WhatsApp webhook never sets it) nor on reply_to_external_message_id
+          -- (only present when the contact uses the native quote affordance),
+          -- so we stitch by conversation+time exactly like campaign_attributions
+          -- already does for appointments.
+          select om.campaign_id, count(distinct om.conversation_id) as replied
+          from app.messages om
+          join app.campaigns c
+            on c.tenant_id = om.tenant_id and c.id = om.campaign_id
+          where om.tenant_id = $1
+            and om.direction = 'outbound'
+            and om.campaign_id is not null
+            and exists (
+              select 1
+              from app.messages im
+              where im.tenant_id = om.tenant_id
+                and im.conversation_id = om.conversation_id
+                and im.direction = 'inbound'
+                and im.received_at >= coalesce(om.sent_at, om.created_at)
+                and im.received_at < coalesce(om.sent_at, om.created_at)
+                                      + (c.attribution_window_days || ' days')::interval
+            )
+          group by om.campaign_id
         ),
         attribution as (
           select
