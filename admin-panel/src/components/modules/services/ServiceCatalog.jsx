@@ -4,6 +4,7 @@ import {
   createService,
   deactivateService,
   getTenantSettings,
+  listPromotions,
   listServices,
   reorderServices,
   updateService,
@@ -103,6 +104,7 @@ export function ServiceCatalog({ module, session, tenant }) {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [defaultDuration, setDefaultDuration] = useState(60);
   const [tenantSettings, setTenantSettings] = useState(null);
+  const [promotions, setPromotions] = useState([]);
 
   const tenantId = tenant?.id;
   const previewText = useMemo(() => buildPreview(form, tenant), [form, tenant]);
@@ -117,8 +119,12 @@ export function ServiceCatalog({ module, session, tenant }) {
     setIsLoading(true);
     setNotice(null);
     try {
-      const result = await listServices(session, tenantId, { includeInactive });
-      setServices(Array.isArray(result) ? result : []);
+      const [serviceResult, promoResult] = await Promise.all([
+        listServices(session, tenantId, { includeInactive }),
+        listPromotions(session, tenantId, { includeInactive: false }).catch(() => []),
+      ]);
+      setServices(Array.isArray(serviceResult) ? serviceResult : []);
+      setPromotions(Array.isArray(promoResult) ? promoResult : []);
     } catch (error) {
       setNotice({ type: 'error', text: error.message });
     } finally {
@@ -332,14 +338,38 @@ export function ServiceCatalog({ module, session, tenant }) {
                 </tr>
               </thead>
               <tbody>
-                {services.map((service, index) => (
-                  <tr key={service.id}>
+                {services.map((service, index) => {
+                  const servicePromos = promotions.filter(
+                    (p) =>
+                      p.is_active
+                      && (
+                        !p.applies_to_service_ids
+                        || p.applies_to_service_ids.length === 0
+                        || p.applies_to_service_ids.includes(service.id)
+                      ),
+                  );
+                  return (
+                  <tr key={service.id} data-service-promos={servicePromos.length}>
                     <td>{index + 1}</td>
                     <td>
                       <strong>{service.name}</strong>
                       {service.description ? (
                         <div className="hint" style={{ marginTop: '0.25rem' }}>
                           {service.description}
+                        </div>
+                      ) : null}
+                      {servicePromos.length ? (
+                        <div style={{ marginTop: '0.3rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
+                          {servicePromos.map((promo) => (
+                            <span
+                              key={promo.id}
+                              className="status-pill"
+                              style={{ background: '#0ea5e9', color: '#fff', fontSize: '0.7rem', padding: '0.05rem 0.4rem' }}
+                              title="Promoción activa para este servicio"
+                            >
+                              🎁 {promo.name}
+                            </span>
+                          ))}
                         </div>
                       ) : null}
                     </td>
@@ -392,7 +422,8 @@ export function ServiceCatalog({ module, session, tenant }) {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           )}

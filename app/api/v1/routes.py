@@ -36,9 +36,12 @@ from app.api.v1.schemas import (
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
     KnowledgeStorageUpdate,
+    MediaAssetUpdate,
     MemberInvite,
     MemberRoleUpdate,
     MessageCreate,
+    PromotionCreate,
+    PromotionUpdate,
     PromptCreate,
     QualificationQuestionCreate,
     QualificationQuestionUpdate,
@@ -73,6 +76,12 @@ from app.services.auth0_admin import (
     revoke_tenant_roles as auth0_revoke_tenant_roles,
 )
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
+from app.services.media_storage import (
+    MEDIA_KINDS,
+    MEDIA_SIZE_LIMITS_BYTES,
+    delete_media_file,
+    store_media_file,
+)
 from app.services.campaigns import (
     count_recipients as count_campaign_recipients,
     evaluate_segment,
@@ -4045,6 +4054,427 @@ async def reorder_qualification_questions(
         entity_id=str(tenant_id),
     )
     return {'updated': len(payload.order)}
+
+
+# ── Media library + promotions (TASK-0046) ─────────────────────────────────
+MEDIA_ASSET_COLUMNS = (
+    'id, tenant_id, kind, label, description, storage_backend, storage_bucket, '
+    'object_key, source_uri, mime_type, sha256, size_bytes, tags, '
+    'uploaded_by_user_id, created_at, updated_at'
+)
+PROMOTION_COLUMNS = (
+    'id, tenant_id, name, description, media_asset_id, valid_from, valid_until, '
+    'applies_to_service_ids, coupon_code, discount_percent, is_active, '
+    'sort_order, created_at, updated_at'
+)
+
+
+def normalize_media_asset(row: asyncpg.Record | None) -> dict | None:
+    asset = record_to_dict(row)
+    if not asset:
+        return None
+    asset['tags'] = list(asset.get('tags') or [])
+    return asset
+
+
+def normalize_promotion(row: asyncpg.Record | None) -> dict | None:
+    promo = record_to_dict(row)
+    if not promo:
+        return None
+    promo['applies_to_service_ids'] = [str(s) for s in (promo.get('applies_to_service_ids') or [])]
+    if promo.get('discount_percent') is not None:
+        promo['discount_percent'] = float(promo['discount_percent'])
+    return promo
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/media')
+async def list_media_assets(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    kind: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    if kind is not None and kind not in MEDIA_KINDS:
+        raise HTTPException(status_code=422, detail='Unsupported media kind')
+    rows = await conn.fetch(
+        f"""
+        select {MEDIA_ASSET_COLUMNS}
+        from app.media_assets
+        where tenant_id = $1
+          and ($2::text is null or kind = $2)
+          and ($3::text is null or $3 = any(tags))
+        order by created_at desc
+        """,
+        tenant_id,
+        kind,
+        tag,
+    )
+    return [normalize_media_asset(row) for row in rows]
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/media', status_code=201)
+async def upload_media_asset(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    try:
+        form = await request.form()
+    except AssertionError as exc:
+        raise HTTPException(
+            status_code=500, detail='python-multipart dependency is required for file uploads'
+        ) from exc
+    kind = str(form.get('kind') or '').strip()
+    label = str(form.get('label') or '').strip()
+    description = form.get('description')
+    description_text = str(description).strip() if description else None
+    raw_tags = form.get('tags')
+    tags: list[str] = []
+    if raw_tags:
+        tags = [t.strip() for t in str(raw_tags).split(',') if t.strip()]
+    file = form.get('file')
+    if kind not in MEDIA_KINDS:
+        raise HTTPException(status_code=422, detail='kind must be one of image|video|pdf|audio')
+    if not label:
+        raise HTTPException(status_code=422, detail='label is required')
+    if not file or not hasattr(file, 'read'):
+        raise HTTPException(status_code=422, detail='file is required')
+
+    data = await file.read()
+    filename = getattr(file, 'filename', None) or 'media.bin'
+    mime_type = getattr(file, 'content_type', None)
+    asset_id = uuid4()
+    settings = get_settings()
+    try:
+        stored = store_media_file(
+            data=data,
+            tenant_id=str(tenant_id),
+            asset_id=str(asset_id),
+            kind=kind,
+            filename=filename,
+            mime_type=mime_type,
+            settings=settings,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    uploader_id = await current_user_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        f"""
+        insert into app.media_assets (
+          id, tenant_id, kind, label, description,
+          storage_backend, storage_bucket, object_key, source_uri,
+          mime_type, sha256, size_bytes, tags, uploaded_by_user_id
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::text[], $14)
+        returning {MEDIA_ASSET_COLUMNS}
+        """,
+        asset_id,
+        tenant_id,
+        kind,
+        label,
+        description_text,
+        stored.storage_backend,
+        stored.bucket,
+        stored.object_key,
+        stored.source_uri,
+        stored.mime_type,
+        stored.sha256,
+        stored.size_bytes,
+        tags,
+        uploader_id,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='media_asset.created',
+        entity_type='media_asset',
+        entity_id=str(asset_id),
+        metadata={'kind': kind, 'size_bytes': stored.size_bytes, 'label': label},
+    )
+    return normalize_media_asset(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/media/{asset_id}')
+async def update_media_asset(
+    tenant_id: UUID,
+    asset_id: UUID,
+    payload: MediaAssetUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        row = await conn.fetchrow(
+            f'select {MEDIA_ASSET_COLUMNS} from app.media_assets where tenant_id=$1 and id=$2',
+            tenant_id,
+            asset_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Media asset not found')
+        return normalize_media_asset(row)
+    row = await conn.fetchrow(
+        f"""
+        update app.media_assets
+        set label=coalesce($3, label),
+            description=coalesce($4, description),
+            tags=coalesce($5::text[], tags)
+        where tenant_id=$1 and id=$2
+        returning {MEDIA_ASSET_COLUMNS}
+        """,
+        tenant_id,
+        asset_id,
+        updates.get('label'),
+        updates.get('description'),
+        updates.get('tags'),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Media asset not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='media_asset.updated',
+        entity_type='media_asset',
+        entity_id=str(asset_id),
+    )
+    return normalize_media_asset(row)
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/media/{asset_id}', status_code=204)
+async def delete_media_asset(
+    tenant_id: UUID,
+    asset_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        select storage_backend, storage_bucket, object_key, source_uri
+        from app.media_assets
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        asset_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Media asset not found')
+    settings = get_settings()
+    delete_media_file(
+        storage_backend=row['storage_backend'],
+        object_key=row['object_key'],
+        source_uri=row['source_uri'],
+        bucket=row['storage_bucket'],
+        settings=settings,
+    )
+    await conn.execute(
+        'delete from app.media_assets where tenant_id=$1 and id=$2',
+        tenant_id,
+        asset_id,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='media_asset.deleted',
+        entity_type='media_asset',
+        entity_id=str(asset_id),
+    )
+    return Response(status_code=204)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/promotions')
+async def list_promotions(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    include_inactive: bool = Query(default=True),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {PROMOTION_COLUMNS}
+        from app.promotions
+        where tenant_id=$1
+          and ($2::boolean is true or is_active is true)
+        order by sort_order asc, created_at desc
+        """,
+        tenant_id,
+        include_inactive,
+    )
+    return [normalize_promotion(row) for row in rows]
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/promotions', status_code=201)
+async def create_promotion(
+    tenant_id: UUID,
+    payload: PromotionCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    if payload.media_asset_id:
+        owns = await conn.fetchval(
+            'select 1 from app.media_assets where tenant_id=$1 and id=$2',
+            tenant_id,
+            payload.media_asset_id,
+        )
+        if not owns:
+            raise HTTPException(status_code=422, detail='media_asset_id does not belong to this tenant')
+    if payload.valid_from and payload.valid_until and payload.valid_from > payload.valid_until:
+        raise HTTPException(status_code=422, detail='valid_from must be <= valid_until')
+    applies = [str(sid) for sid in payload.applies_to_service_ids]
+    row = await conn.fetchrow(
+        f"""
+        insert into app.promotions (
+          tenant_id, name, description, media_asset_id, valid_from, valid_until,
+          applies_to_service_ids, coupon_code, discount_percent, is_active, sort_order
+        )
+        values ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, $9, $10, $11)
+        returning {PROMOTION_COLUMNS}
+        """,
+        tenant_id,
+        payload.name,
+        payload.description,
+        payload.media_asset_id,
+        payload.valid_from,
+        payload.valid_until,
+        applies,
+        payload.coupon_code,
+        payload.discount_percent,
+        payload.is_active,
+        payload.sort_order,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='promotion.created',
+        entity_type='promotion',
+        entity_id=str(row['id']),
+        metadata={'name': payload.name},
+    )
+    return normalize_promotion(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/promotions/{promotion_id}')
+async def update_promotion(
+    tenant_id: UUID,
+    promotion_id: UUID,
+    payload: PromotionUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        row = await conn.fetchrow(
+            f'select {PROMOTION_COLUMNS} from app.promotions where tenant_id=$1 and id=$2',
+            tenant_id,
+            promotion_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Promotion not found')
+        return normalize_promotion(row)
+    if 'media_asset_id' in updates and updates['media_asset_id']:
+        owns = await conn.fetchval(
+            'select 1 from app.media_assets where tenant_id=$1 and id=$2',
+            tenant_id,
+            updates['media_asset_id'],
+        )
+        if not owns:
+            raise HTTPException(status_code=422, detail='media_asset_id does not belong to this tenant')
+    applies = (
+        [str(sid) for sid in payload.applies_to_service_ids]
+        if payload.applies_to_service_ids is not None
+        else None
+    )
+    row = await conn.fetchrow(
+        f"""
+        update app.promotions
+        set name=coalesce($3, name),
+            description=coalesce($4, description),
+            media_asset_id=coalesce($5, media_asset_id),
+            valid_from=coalesce($6, valid_from),
+            valid_until=coalesce($7, valid_until),
+            applies_to_service_ids=coalesce($8::uuid[], applies_to_service_ids),
+            coupon_code=coalesce($9, coupon_code),
+            discount_percent=coalesce($10, discount_percent),
+            is_active=coalesce($11, is_active),
+            sort_order=coalesce($12, sort_order)
+        where tenant_id=$1 and id=$2
+        returning {PROMOTION_COLUMNS}
+        """,
+        tenant_id,
+        promotion_id,
+        updates.get('name'),
+        updates.get('description'),
+        updates.get('media_asset_id'),
+        updates.get('valid_from'),
+        updates.get('valid_until'),
+        applies,
+        updates.get('coupon_code'),
+        updates.get('discount_percent'),
+        updates.get('is_active'),
+        updates.get('sort_order'),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Promotion not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='promotion.updated',
+        entity_type='promotion',
+        entity_id=str(promotion_id),
+    )
+    return normalize_promotion(row)
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/promotions/{promotion_id}', status_code=204)
+async def delete_promotion(
+    tenant_id: UUID,
+    promotion_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    deleted = await conn.fetchval(
+        'delete from app.promotions where tenant_id=$1 and id=$2 returning id',
+        tenant_id,
+        promotion_id,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail='Promotion not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='promotion.deleted',
+        entity_type='promotion',
+        entity_id=str(promotion_id),
+    )
+    return Response(status_code=204)
 
 
 @tenant_ops_router.post('/service-requests', status_code=201)

@@ -216,27 +216,7 @@ _TASK-0045 — Escalamiento automático en feedback negativo: COMPLETADA. Ver `d
 
 ---
 
-### TASK-0046 — Biblioteca de medios y promociones activas que el bot puede enviar
-
-- **Estado:** PENDING
-- **Por qué bloquea:** durante la orientación el bot solo manda texto. No puede compartir fotos del local, video del procedimiento ni la imagen de la promoción del mes. La diferencia con un agente humano real es notoria y baja conversión en servicios estéticos/médicos.
-- **Alcance:**
-  - Nueva tabla `app.media_assets` (`id, tenant_id, kind: image|video|pdf|audio, label, description, file_path, mime_type, sha256, size_bytes, tags text[], created_at, updated_at`) con RLS, índice `gin(tags)`.
-  - Nueva tabla `app.promotions` (`id, tenant_id, name, description, media_asset_id, valid_from, valid_until, applies_to_service_ids uuid[], coupon_code, discount_percent numeric(5,2), is_active, sort_order, created_at, updated_at`) con check `valid_from <= valid_until`.
-  - Endpoints CRUD bajo `tenant_admin_router`: `/v1/tenants/{id}/media`, `/v1/tenants/{id}/promotions`. Upload del binario reutiliza el storage de knowledge (`MinIO/S3`) con prefijo `media/<tenant_id>/`.
-  - Helper `app/services/promotions.py.attach_active_promo(conn, tenant_id, service_id)` que devuelve la promoción vigente para un servicio (o `None`). Se llama desde:
-    - `booking_flow._present_services` para anteponer un mensaje con la imagen + texto de la promoción del primer servicio que la tenga.
-    - El cierre del booking, justo después del resumen, si la cita usa un servicio con promo activa.
-  - UI nueva en `admin-panel`: módulo **Medios y promociones** (`MediaLibraryModule.jsx`) con uploader drag-and-drop, lista en grid, etiquetas, vista previa. Y en `ServiceCatalog.jsx`, link a una promoción existente desde el formulario del servicio.
-  - El RAG no indexa media — solo el texto descriptivo. Las imágenes/videos se mandan por `media_url` directo (Meta los cachea por `media_id` después del primer envío).
-- **Criterios de aceptación:**
-  - Admin sube una foto del local, la etiqueta `lobby`, queda accesible en < 5s.
-  - Admin crea una promoción "Limpieza dental 20% - mayo" con imagen, vigencia y mapeo al servicio "Limpieza dental".
-  - Cliente pide cita para "Limpieza dental" → bot manda primero la imagen de la promo con el texto, después el flujo normal de booking.
-  - Tests: ≥ 10 estáticos: tablas + RLS, endpoints CRUD, integración con `booking_flow`, helper `attach_active_promo`, módulo registrado en sidebar, validación de mime types permitidos.
-- **Notas:**
-  - Cap de tamaño por archivo: imágenes 5MB, videos 16MB (limit Meta WhatsApp Cloud API), pdf 100MB. El uploader rechaza por encima en cliente y servidor.
-  - Si el media falla al enviarse (Meta down), el bot manda solo el texto de la promo y deja un `domain_event('promo.media_send_failed')` para retry. No bloquea el booking.
+_TASK-0046 — Biblioteca de medios y promociones activas: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

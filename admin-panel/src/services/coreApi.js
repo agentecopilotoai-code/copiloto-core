@@ -604,6 +604,93 @@ export function reorderQualificationQuestions(session, tenantId, order) {
   });
 }
 
+export function listMediaAssets(session, tenantId, { kind, tag } = {}) {
+  const params = new URLSearchParams();
+  if (kind) params.set('kind', kind);
+  if (tag) params.set('tag', tag);
+  const qs = params.toString();
+  return request(
+    `/tenants/${tenantId}/media${qs ? `?${qs}` : ''}`,
+    { session, tenantId },
+  );
+}
+
+export async function uploadMediaAsset(session, tenantId, { kind, label, description, tags, file }) {
+  const formData = new FormData();
+  formData.append('kind', kind);
+  formData.append('label', label);
+  if (description) formData.append('description', description);
+  if (tags && tags.length) formData.append('tags', tags.join(','));
+  formData.append('file', file);
+  const response = await fetch(coreApiPath(session, `/tenants/${tenantId}/media`), {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      accept: 'application/json',
+      ...(session?.accessToken ? { authorization: `Bearer ${session.accessToken}` } : {}),
+      ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
+    },
+    body: formData,
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      detail = payload?.detail || detail;
+    } catch { /* noop */ }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+export function updateMediaAsset(session, tenantId, assetId, payload) {
+  return request(`/tenants/${tenantId}/media/${assetId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deleteMediaAsset(session, tenantId, assetId) {
+  return request(`/tenants/${tenantId}/media/${assetId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function listPromotions(session, tenantId, { includeInactive = true } = {}) {
+  const query = includeInactive ? '' : '?include_inactive=false';
+  return request(`/tenants/${tenantId}/promotions${query}`, { session, tenantId });
+}
+
+export function createPromotion(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/promotions`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updatePromotion(session, tenantId, promotionId, payload) {
+  return request(`/tenants/${tenantId}/promotions/${promotionId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deletePromotion(session, tenantId, promotionId) {
+  return request(`/tenants/${tenantId}/promotions/${promotionId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
 export function listResources(session, tenantId, filters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {

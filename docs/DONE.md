@@ -15,6 +15,53 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0046 — Biblioteca de medios y promociones activas que el bot puede enviar
+
+- **Fecha:** 2026-05-12
+- **Resumen:** durante la orientación el bot solo mandaba texto, lo que en servicios estéticos/médicos resta cierre. Ahora el tenant sube fotos del local, videos de procedimientos y PDFs, los etiqueta y los vincula a una **promoción activa** mapeada a uno o varios servicios. El bot envía la imagen y el texto de la promo **antes** de presentar el listado de servicios (cuando el cliente expresa intención de agendar) y otra vez justo después del resumen del booking, sin bloquear el flujo si el media falla.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`)**:
+    - `app.media_assets(id, tenant_id, kind in (image|video|pdf|audio), label, description, storage_backend, storage_bucket, object_key, source_uri, mime_type, sha256, size_bytes, tags text[], uploaded_by_user_id, created_at, updated_at)` con FK al tenant, `unique (tenant_id, id)`, índice `gin(tags)`, trigger touch y RLS.
+    - `app.promotions(id, tenant_id, name, description, media_asset_id, valid_from, valid_until, applies_to_service_ids uuid[], coupon_code, discount_percent numeric(5,2), is_active, sort_order)` con check `valid_from <= valid_until`, FK compuesta al `media_assets` (mismo tenant), trigger touch, RLS y GIN sobre `applies_to_service_ids`.
+  - **`app/services/media_storage.py`** (nuevo): validador con allowlist de MIME por kind alineado a Meta (image/jpeg|png|webp, video/mp4|3gpp, audio/aac|mp4|mpeg|amr|ogg, application/pdf), caps de tamaño según los límites de WhatsApp Cloud API (5/16/16/100MB), y un `store_media_file` que escribe local o S3 con prefijo `media/<tenant_id>/`. Imports de `boto3` lazy para que entornos de test ligeros no rompan.
+  - **`app/services/promotions.py`** (nuevo): `attach_active_promo(conn, tenant_id, service_id)` corre el SQL que aplica todas las reglas (activa, dentro de ventana, `applies_to_service_ids` vacío o que contiene al servicio) y devuelve la promo con los campos de su media (`media_kind`, `media_source_uri`, `media_mime_type`, …) en una sola fila. `promo_caption(promo)` produce el texto con emoji, descuento, cupón y vigencia. `queue_promo_message` encola el outbound del tipo correcto (image/video/document) con caption y emite el `domain_event('message.queued')`. En fallo, emite `promo.media_send_failed` y devuelve `None` sin abortar el booking.
+  - **`app/services/booking_flow.py`**: `_present_services` recorre la lista buscando el primer servicio con promo activa y la envía antes de la lista de botones. Tras `_create_appointment` y el mensaje de resumen, si el servicio elegido tiene promo activa se envía otra vez como reminder. Cualquier excepción queda en log y no rompe la cita.
+  - **API (`app/api/v1/routes.py`, `app/api/v1/schemas.py`)** — endpoints CRUD completos bajo `tenant_admin_router`:
+    - `GET /v1/tenants/{id}/media?kind=&tag=`
+    - `POST /v1/tenants/{id}/media` (multipart: kind, label, description, tags, file) — valida MIME y tamaño antes de tocar storage; cuenta el upload en `media_asset.created` con `kind` y `size_bytes`.
+    - `PATCH /v1/tenants/{id}/media/{asset_id}` (label/description/tags), `DELETE` (borra el blob físico vía `delete_media_file`).
+    - `GET/POST/PATCH/DELETE /v1/tenants/{id}/promotions` con validación de `media_asset_id` pertenece al tenant y `valid_from <= valid_until`.
+    - Auditoría: `media_asset.{created,updated,deleted}` y `promotion.{created,updated,deleted}`.
+  - **Admin Panel** — nuevo módulo `media-library` (rol `admin`) registrado en `modules.js` y `AdminLayout.jsx`. `MediaLibraryModule.jsx` (nuevo) provee uploader con file picker filtrado por MIME, hint de tamaño máximo por kind, grid de archivos con tags y acciones, formulario CRUD para promociones con selector múltiple de servicios y vinculación al media asset. `ServiceCatalog.jsx` carga las promociones activas en paralelo y muestra un pill 🎁 por cada promo aplicable a cada servicio de la tabla. Helpers nuevos en `services/coreApi.js`: `listMediaAssets`, `uploadMediaAsset` (multipart), `updateMediaAsset`, `deleteMediaAsset`, `listPromotions`, `createPromotion`, `updatePromotion`, `deletePromotion`.
+- **Archivos:**
+  - `infra/postgres/01-schema.sql` — tablas + constraints + RLS + triggers + bloque del loop de policies.
+  - `app/services/media_storage.py` (nuevo) — validación + upload + delete con backend toggle.
+  - `app/services/promotions.py` (nuevo) — helper, caption, queue.
+  - `app/services/booking_flow.py` — hooks pre-list y post-summary.
+  - `app/api/v1/schemas.py` — `MediaAssetUpdate`, `PromotionCreate/Update`, constants.
+  - `app/api/v1/routes.py` — 8 endpoints, imports, normalizers, audit.
+  - `admin-panel/src/data/modules.js` — entrada `media-library`.
+  - `admin-panel/src/components/layout/AdminLayout.jsx` — route + role guard.
+  - `admin-panel/src/components/modules/media/MediaLibraryModule.jsx` (nuevo).
+  - `admin-panel/src/components/modules/services/ServiceCatalog.jsx` — pill por servicio.
+  - `admin-panel/src/services/coreApi.js` — 8 helpers nuevos (uno multipart).
+  - `tests/test_media_promotions_static.py` (nuevo) — 24 tests.
+  - `docs/BACKLOG.md` / `docs/DONE.md`.
+- **Comandos / validaciones:**
+  - `pytest tests/test_media_promotions_static.py` → **24 passed** cubriendo: schema (RLS, índices GIN, constraints, triggers), allowlists MIME (incluye verificar que `image/gif` se rechaza porque Meta no lo soporta), caps de tamaño exactos por Meta, validator (mime/size/kind/empty), `media_object_key` namespacea por tenant y sanea nombres, registro de los 8 endpoints bajo `tenant_admin_router`, auditoría con sus 6 acciones, schemas Pydantic con bounds, `attach_active_promo` (None / row normalizado / SQL con todos los filtros), `promo_caption` (nombre + %off + cupón + vigencia), `queue_promo_message` (outbound + domain event), booking_flow importa y emite el log `booking_flow.promo_close_failed`, módulos del admin panel registrados, helpers exportados, UI con mime hints.
+  - `pytest tests/test_media_promotions_static.py tests/test_negative_feedback_static.py tests/test_auto_rebook_static.py tests/test_self_service_static.py tests/test_qualification_flow_static.py tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_policy_engine_static.py tests/test_notifications_static.py` → **209 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - Admin sube imagen con etiqueta `lobby` → endpoint registra, valida MIME y queda en grid; tags persisten.
+  - Promoción "Limpieza dental 20% - mayo" se crea con imagen, fechas y mapeo al servicio "Limpieza dental".
+  - Cliente con intent `book_appointment` ve primero la imagen + texto de la promo y después la lista de servicios (`_present_services` envía la promo antes del list payload).
+  - 24 tests estáticos (objetivo era ≥10).
+- **Notas:**
+  - Caps de tamaño aplicados tanto del lado cliente (rechazo antes de subir) como del lado servidor (`validate_media_upload`).
+  - El RAG **no** indexa media — solo guardamos el texto descriptivo en la tabla.
+  - Si el insert del outbound falla (DB down, etc.), `queue_promo_message` emite `promo.media_send_failed` para retry futuro y NO bloquea el booking.
+
+---
+
 ### TASK-0045 — Escalamiento automático en feedback negativo
 
 - **Fecha:** 2026-05-12

@@ -447,6 +447,42 @@ class QualificationReorderRequest(BaseModel):
     order: list[QualificationReorderItem] = Field(default_factory=list)
 
 
+MEDIA_KINDS = ('image', 'video', 'pdf', 'audio')
+MEDIA_KIND_PATTERN = '^(' + '|'.join(MEDIA_KINDS) + ')$'
+
+
+class MediaAssetUpdate(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    tags: list[str] | None = Field(default=None, max_length=20)
+
+
+class PromotionCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    media_asset_id: UUID | None = None
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    applies_to_service_ids: list[UUID] = Field(default_factory=list)
+    coupon_code: str | None = Field(default=None, max_length=80)
+    discount_percent: float | None = Field(default=None, ge=0, le=100)
+    is_active: bool = True
+    sort_order: int = Field(default=0, ge=0)
+
+
+class PromotionUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    media_asset_id: UUID | None = None
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    applies_to_service_ids: list[UUID] | None = None
+    coupon_code: str | None = Field(default=None, max_length=80)
+    discount_percent: float | None = Field(default=None, ge=0, le=100)
+    is_active: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0)
+
+
 class PromptCreate(BaseModel):
     tenant_id: UUID | None = None
     vertical_code: str = 'common'

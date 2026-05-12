@@ -25,6 +25,7 @@ import structlog
 
 from app.services.audit import audit
 from app.services.notifications import create_appointment_reminder_jobs
+from app.services.promotions import attach_active_promo, queue_promo_message
 from app.services.whatsapp import (
     build_interactive_button_payload,
     build_interactive_list_payload,
@@ -386,6 +387,27 @@ async def _present_services(
     services = await _list_active_services(conn, tenant_id)
     if not services:
         return None
+    # TASK-0046: send the active promo (image + text) of the first service
+    # that has one so the customer sees the offer before picking.
+    for service in services:
+        promo = await attach_active_promo(conn, tenant_id, service['id'])
+        if promo:
+            try:
+                await queue_promo_message(
+                    conn,
+                    tenant_id=tenant_id,
+                    conversation_id=conversation['id'],
+                    channel_id=channel_id,
+                    channel_account_mode=channel_account_mode,
+                    promo=promo,
+                )
+            except Exception:
+                log.exception(
+                    'booking_flow.promo_send_failed',
+                    tenant_id=str(tenant_id),
+                    promo_id=str(promo.get('id')),
+                )
+            break
     rows: list[dict[str, str]] = []
     for service in services:
         title = service['name'][:24]
@@ -703,6 +725,28 @@ async def _create_appointment(
         body_text='\n'.join(summary_lines),
         booking_step=STEP_COMPLETED,
     )
+
+    # TASK-0046: if the chosen service has an active promo, send it after the
+    # booking summary so the customer remembers the offer when they review the
+    # confirmation. Failures are logged but never block the booking.
+    if service_uuid:
+        try:
+            booking_promo = await attach_active_promo(conn, tenant_id, service_uuid)
+            if booking_promo:
+                await queue_promo_message(
+                    conn,
+                    tenant_id=tenant_id,
+                    conversation_id=conversation['id'],
+                    channel_id=channel_id,
+                    channel_account_mode=channel_account_mode,
+                    promo=booking_promo,
+                )
+        except Exception:
+            log.exception(
+                'booking_flow.promo_close_failed',
+                tenant_id=str(tenant_id),
+                service_id=str(service_uuid),
+            )
 
     try:
         await create_appointment_reminder_jobs(conn, tenant_id, appointment['id'])
