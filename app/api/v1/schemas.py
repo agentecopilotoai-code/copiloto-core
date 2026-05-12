@@ -278,6 +278,26 @@ class AppointmentUpdate(BaseModel):
     notes: str | None = None
 
 
+class AppointmentPaymentLinkRequest(BaseModel):
+    amount: float | None = Field(default=None, gt=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    description: str | None = Field(default=None, max_length=200)
+
+
+class AppointmentPaymentStatusUpdate(BaseModel):
+    payment_status: str = Field(pattern='^(not_required|pending|link_sent|paid|failed|refunded)$')
+    payment_amount: float | None = Field(default=None, ge=0)
+    payment_currency: str | None = Field(default=None, min_length=3, max_length=3)
+
+
+class TenantPaymentSettingsUpdate(BaseModel):
+    provider: str = Field(pattern='^(mercadopago|stripe|none)$')
+    currency: str = Field(default='COP', min_length=3, max_length=3)
+    default_amount: float | None = Field(default=None, ge=0)
+    api_key: str | None = Field(default=None, max_length=500)
+    webhook_secret: str | None = Field(default=None, max_length=500)
+
+
 class KnowledgeDocumentCreate(BaseModel):
     tenant_id: UUID
     title: str

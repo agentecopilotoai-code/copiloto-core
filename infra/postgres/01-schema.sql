@@ -47,6 +47,7 @@ create table app.tenant_settings (
   no_train boolean not null default true,
   knowledge_storage jsonb not null default '{}'::jsonb,
   notification_settings jsonb not null default '{}'::jsonb,
+  payment_settings jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -285,11 +286,22 @@ create table app.appointments (
   location_data jsonb not null default '{}'::jsonb,
   confirmation_status text not null default 'pending' check (confirmation_status in ('pending','confirmed','declined')),
   notes text,
+  payment_status text not null default 'not_required' check (payment_status in ('not_required','pending','link_sent','paid','failed','refunded')),
+  payment_amount numeric(10,2),
+  payment_currency char(3) not null default 'COP',
+  payment_link text,
+  payment_provider text,
+  payment_provider_reference text,
+  payment_link_generated_at timestamptz,
+  payment_link_sent_at timestamptz,
+  payment_paid_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   check (starts_at < ends_at),
   exclude using gist (resource_id with =, tstzrange(starts_at, ends_at, '[)') with &&) where (status in ('scheduled','confirmed'))
 );
+create index ix_appointments_payment_ref on app.appointments(tenant_id, payment_provider, payment_provider_reference) where payment_provider_reference is not null;
+create index ix_appointments_payment_status on app.appointments(tenant_id, payment_status);
 create index ix_appointments_tenant_starts on app.appointments(tenant_id, starts_at);
 create index ix_appointments_contact_status on app.appointments(contact_id, status);
 
@@ -467,7 +479,7 @@ create table app.handoffs (
 create table app.webhook_events_raw (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid references app.tenants(id) on delete set null,
-  provider text not null check (provider in ('whatsapp_cloud_api')),
+  provider text not null check (provider in ('whatsapp_cloud_api','mercadopago','stripe')),
   provider_event_id text,
   event_type text not null,
   headers jsonb not null default '{}'::jsonb,
