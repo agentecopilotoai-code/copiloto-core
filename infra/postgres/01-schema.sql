@@ -452,6 +452,34 @@ create table app.campaigns (
 create index ix_campaigns_tenant_status on app.campaigns(tenant_id, status, scheduled_at);
 create index ix_campaigns_due on app.campaigns(scheduled_at) where status='scheduled';
 
+create table app.contact_segments (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  name text not null,
+  description text,
+  kind text not null default 'dynamic' check (kind in ('dynamic','static')),
+  rules jsonb not null default '{}'::jsonb,
+  contact_count int not null default 0,
+  last_refreshed_at timestamptz,
+  is_system boolean not null default false,
+  created_by uuid references app.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, name)
+);
+create index ix_contact_segments_tenant on app.contact_segments(tenant_id, kind);
+create index ix_contact_segments_refresh on app.contact_segments(last_refreshed_at) where kind='dynamic';
+
+create table app.contact_segment_members (
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  segment_id uuid not null references app.contact_segments(id) on delete cascade,
+  contact_id uuid not null references app.contacts(id) on delete cascade,
+  snapshot_at timestamptz not null default now(),
+  primary key (segment_id, contact_id, snapshot_at)
+);
+create index ix_contact_segment_members_segment on app.contact_segment_members(segment_id, snapshot_at desc);
+create index ix_contact_segment_members_tenant on app.contact_segment_members(tenant_id);
+
 create table app.reminder_jobs (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -611,8 +639,16 @@ alter table app.contact_tag_assignments
 alter table app.contact_notes
   add constraint fk_contact_notes_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id);
 alter table app.campaigns add constraint uq_campaigns_tenant_id_id unique (tenant_id, id);
+alter table app.campaigns add column segment_id uuid;
+alter table app.campaigns add column launched_snapshot_at timestamptz;
 alter table app.campaigns
   add constraint fk_campaigns_tenant_template foreign key (tenant_id, template_id) references app.whatsapp_templates(tenant_id, id);
+alter table app.contact_segments add constraint uq_contact_segments_tenant_id_id unique (tenant_id, id);
+alter table app.campaigns
+  add constraint fk_campaigns_tenant_segment foreign key (tenant_id, segment_id) references app.contact_segments(tenant_id, id) on delete set null;
+alter table app.contact_segment_members
+  add constraint fk_contact_segment_members_tenant_segment foreign key (tenant_id, segment_id) references app.contact_segments(tenant_id, id) on delete cascade,
+  add constraint fk_contact_segment_members_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id) on delete cascade;
 alter table app.messages
   add constraint fk_messages_tenant_campaign foreign key (tenant_id, campaign_id) references app.campaigns(tenant_id, id) on delete set null;
 create index ix_messages_tenant_campaign on app.messages(tenant_id, campaign_id) where campaign_id is not null;
@@ -664,6 +700,7 @@ create trigger trg_qualification_questions_touch before update on app.qualificat
 create trigger trg_media_assets_touch before update on app.media_assets for each row execute function app.touch_updated_at();
 create trigger trg_promotions_touch before update on app.promotions for each row execute function app.touch_updated_at();
 create trigger trg_campaigns_touch before update on app.campaigns for each row execute function app.touch_updated_at();
+create trigger trg_contact_segments_touch before update on app.contact_segments for each row execute function app.touch_updated_at();
 
 alter table app.tenant_channels enable row level security;
 alter table app.contacts enable row level security;
@@ -689,6 +726,8 @@ alter table app.qualification_questions enable row level security;
 alter table app.media_assets enable row level security;
 alter table app.promotions enable row level security;
 alter table app.campaigns enable row level security;
+alter table app.contact_segments enable row level security;
+alter table app.contact_segment_members enable row level security;
 alter table app.webhook_events_raw enable row level security;
 alter table app.domain_events enable row level security;
 alter table app.audit_logs enable row level security;
@@ -703,6 +742,7 @@ begin
     'qualification_questions',
     'media_assets','promotions',
     'campaigns',
+    'contact_segments','contact_segment_members',
     'webhook_events_raw','domain_events','audit_logs'
   ] loop
     execute format('create policy %I_tenant_select on app.%I for select using (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);

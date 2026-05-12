@@ -943,6 +943,61 @@ export function cancelCampaign(session, tenantId, campaignId) {
   });
 }
 
+export function listContactSegments(session, tenantId, { kind } = {}) {
+  const params = new URLSearchParams();
+  if (kind) params.set('kind', kind);
+  const query = params.toString();
+  return request(`/tenants/${tenantId}/segments${query ? `?${query}` : ''}`, {
+    session,
+    tenantId,
+  });
+}
+
+export function createContactSegment(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/segments`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateContactSegment(session, tenantId, segmentId, payload) {
+  return request(`/tenants/${tenantId}/segments/${segmentId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deleteContactSegment(session, tenantId, segmentId) {
+  return request(`/tenants/${tenantId}/segments/${segmentId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function previewContactSegment(session, tenantId, segmentId, { limit } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set('limit', String(limit));
+  const query = params.toString();
+  return request(
+    `/tenants/${tenantId}/segments/${segmentId}/preview${query ? `?${query}` : ''}`,
+    { session, tenantId },
+  );
+}
+
+export function refreshContactSegment(session, tenantId, segmentId) {
+  return request(`/tenants/${tenantId}/segments/${segmentId}/refresh`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: {},
+  });
+}
+
 function buildAnalyticsQuery({ fromDate, toDate } = {}) {
   const params = new URLSearchParams();
   if (fromDate) params.set('from_date', fromDate);

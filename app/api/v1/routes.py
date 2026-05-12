@@ -26,6 +26,9 @@ from app.api.v1.schemas import (
     ChannelCreate,
     ChannelModeUpdate,
     ContactNoteCreate,
+    ContactSegmentCreate,
+    ContactSegmentMembersAssign,
+    ContactSegmentUpdate,
     ContactTagAssign,
     ContactTagCreate,
     ContactTagUpdate,
@@ -86,6 +89,13 @@ from app.services.campaigns import (
     evaluate_segment,
     normalize_segment_filter,
     refresh_campaign_counters,
+)
+from app.services.segments import (
+    count_segment_contacts,
+    evaluate_segment_rules,
+    normalize_rules as normalize_segment_rules,
+    seed_preconstructed_segments,
+    snapshot_segment_members,
 )
 from app.services.payment_provider import (
     PaymentProviderError,
@@ -562,6 +572,7 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
         tenant_id,
         json.dumps(default_escalation_policy),
     )
+    await seed_preconstructed_segments(conn, tenant_id)
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.created', entity_type='tenant', entity_id=str(tenant_id))
     return record_to_dict(row)
 
@@ -729,6 +740,7 @@ async def create_own_tenant(
         user_row['id'],
         tenant_id,
     )
+    await seed_preconstructed_segments(conn, tenant_id, created_by=user_row['id'])
     await audit(
         conn,
         tenant_id=tenant_id,
@@ -7680,11 +7692,334 @@ async def analytics_contacts(
     }
 
 
+SEGMENT_PROJECTION = (
+    'id, tenant_id, name, description, kind, rules, contact_count, '
+    'last_refreshed_at, is_system, created_by, created_at, updated_at'
+)
+
+
+def normalize_segment_row(row: asyncpg.Record | None) -> dict | None:
+    seg = record_to_dict(row)
+    if not seg:
+        return None
+    seg['rules'] = parse_json_object(seg.get('rules'), default={})
+    return seg
+
+
+async def _fetch_segment_or_404(
+    conn: asyncpg.Connection, tenant_id: UUID, segment_id: UUID
+) -> asyncpg.Record:
+    row = await conn.fetchrow(
+        f'select {SEGMENT_PROJECTION} from app.contact_segments where tenant_id=$1 and id=$2',
+        tenant_id,
+        segment_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Segment not found')
+    return row
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/segments')
+async def list_contact_segments(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    kind: str | None = Query(default=None, pattern='^(dynamic|static)$'),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {SEGMENT_PROJECTION}
+        from app.contact_segments
+        where tenant_id=$1 and ($2::text is null or kind=$2)
+        order by is_system desc, name asc
+        """,
+        tenant_id,
+        kind,
+    )
+    return [normalize_segment_row(row) for row in rows]
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/segments', status_code=201)
+async def create_contact_segment(
+    tenant_id: UUID,
+    payload: ContactSegmentCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rules = normalize_segment_rules(payload.rules) if payload.kind == 'dynamic' else {}
+    created_by = await current_user_id_from_request(request, conn)
+    initial_count = (
+        await count_segment_contacts(conn, tenant_id, rules) if payload.kind == 'dynamic' else 0
+    )
+    row = await conn.fetchrow(
+        f"""
+        insert into app.contact_segments (
+          tenant_id, name, description, kind, rules, contact_count, last_refreshed_at, created_by
+        )
+        values ($1, $2, $3, $4, $5::jsonb, $6, case when $4='dynamic' then now() else null end, $7)
+        returning {SEGMENT_PROJECTION}
+        """,
+        tenant_id,
+        payload.name.strip(),
+        payload.description,
+        payload.kind,
+        json.dumps(rules),
+        initial_count,
+        created_by,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='segment.created',
+        entity_type='contact_segment',
+        entity_id=str(row['id']),
+        metadata={'kind': payload.kind, 'contact_count': initial_count},
+    )
+    return normalize_segment_row(row)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/segments/{segment_id}')
+async def get_contact_segment(
+    tenant_id: UUID,
+    segment_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_segment_or_404(conn, tenant_id, segment_id)
+    return normalize_segment_row(row)
+
+
+@tenant_admin_router.patch('/tenants/{tenant_id}/segments/{segment_id}')
+async def patch_contact_segment(
+    tenant_id: UUID,
+    segment_id: UUID,
+    payload: ContactSegmentUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_segment_or_404(conn, tenant_id, segment_id)
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        return normalize_segment_row(row)
+    next_kind = data.get('kind') or row['kind']
+    if 'rules' in data:
+        rules = normalize_segment_rules(data['rules']) if next_kind == 'dynamic' else {}
+    else:
+        rules = None
+    new_count = None
+    if next_kind == 'dynamic' and rules is not None:
+        new_count = await count_segment_contacts(conn, tenant_id, rules)
+    updated = await conn.fetchrow(
+        f"""
+        update app.contact_segments
+        set name=coalesce($3, name),
+            description=coalesce($4, description),
+            kind=coalesce($5, kind),
+            rules=coalesce($6::jsonb, rules),
+            contact_count=coalesce($7, contact_count),
+            last_refreshed_at=case when $5='dynamic' and $6 is not null then now() else last_refreshed_at end,
+            updated_at=now()
+        where tenant_id=$1 and id=$2
+        returning {SEGMENT_PROJECTION}
+        """,
+        tenant_id,
+        segment_id,
+        data.get('name'),
+        data.get('description'),
+        data.get('kind'),
+        json.dumps(rules) if rules is not None else None,
+        new_count,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='segment.updated',
+        entity_type='contact_segment',
+        entity_id=str(segment_id),
+        metadata={'fields': sorted(data.keys())},
+    )
+    return normalize_segment_row(updated)
+
+
+@tenant_admin_router.delete(
+    '/tenants/{tenant_id}/segments/{segment_id}', status_code=204
+)
+async def delete_contact_segment(
+    tenant_id: UUID,
+    segment_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_segment_or_404(conn, tenant_id, segment_id)
+    if row['is_system']:
+        raise HTTPException(
+            status_code=409,
+            detail='System segments cannot be deleted; edit the rules instead.',
+        )
+    await conn.execute(
+        'delete from app.contact_segments where tenant_id=$1 and id=$2',
+        tenant_id,
+        segment_id,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='segment.deleted',
+        entity_type='contact_segment',
+        entity_id=str(segment_id),
+    )
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/segments/{segment_id}/preview')
+async def preview_contact_segment(
+    tenant_id: UUID,
+    segment_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    limit: int = Query(default=25, ge=1, le=100),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_segment_or_404(conn, tenant_id, segment_id)
+    rules = parse_json_object(row['rules'], default={})
+    if row['kind'] == 'dynamic':
+        sample = await evaluate_segment_rules(conn, tenant_id, rules, limit=limit)
+        total = await count_segment_contacts(conn, tenant_id, rules)
+    else:
+        # Static segments: pull the most recent snapshot's members.
+        members = await conn.fetch(
+            """
+            select m.contact_id as contact_id, c.display_name, c.phone_e164, c.opt_in_status
+            from app.contact_segment_members m
+            join app.contacts c on c.tenant_id=m.tenant_id and c.id=m.contact_id
+            where m.tenant_id=$1 and m.segment_id=$2
+              and m.snapshot_at = (
+                select max(snapshot_at) from app.contact_segment_members
+                where segment_id=$2
+              )
+            order by c.display_name nulls last
+            limit $3
+            """,
+            tenant_id,
+            segment_id,
+            limit,
+        )
+        sample = [dict(r) for r in members]
+        total = await conn.fetchval(
+            """
+            select count(*) from app.contact_segment_members
+            where segment_id=$1
+              and snapshot_at = (
+                select max(snapshot_at) from app.contact_segment_members
+                where segment_id=$1
+              )
+            """,
+            segment_id,
+        ) or 0
+    return {
+        'segment_id': str(segment_id),
+        'contact_count': int(total),
+        'sample': [
+            {
+                'contact_id': str(item['contact_id']),
+                'display_name': item.get('display_name'),
+                'phone_e164': item.get('phone_e164'),
+                'opt_in_status': item.get('opt_in_status'),
+            }
+            for item in sample
+        ],
+    }
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/segments/{segment_id}/refresh')
+async def refresh_contact_segment(
+    tenant_id: UUID,
+    segment_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_segment_or_404(conn, tenant_id, segment_id)
+    rules = parse_json_object(row['rules'], default={})
+    count, _snapshot_at = await snapshot_segment_members(conn, tenant_id, segment_id, rules)
+    refreshed = await _fetch_segment_or_404(conn, tenant_id, segment_id)
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='segment.refreshed',
+        entity_type='contact_segment',
+        entity_id=str(segment_id),
+        metadata={'contact_count': count},
+    )
+    return normalize_segment_row(refreshed)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/segments/{segment_id}/members')
+async def set_static_segment_members(
+    tenant_id: UUID,
+    segment_id: UUID,
+    payload: ContactSegmentMembersAssign,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await _fetch_segment_or_404(conn, tenant_id, segment_id)
+    if row['kind'] != 'static':
+        raise HTTPException(
+            status_code=409,
+            detail='Only static segments accept manually managed members.',
+        )
+    snapshot_at = await conn.fetchval('select now()')
+    if payload.contact_ids:
+        await conn.executemany(
+            """
+            insert into app.contact_segment_members (tenant_id, segment_id, contact_id, snapshot_at)
+            values ($1, $2, $3, $4)
+            on conflict (segment_id, contact_id, snapshot_at) do nothing
+            """,
+            [(tenant_id, segment_id, cid, snapshot_at) for cid in payload.contact_ids],
+        )
+    await conn.execute(
+        """
+        update app.contact_segments
+        set contact_count=$3, last_refreshed_at=$4, updated_at=now()
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        segment_id,
+        len(payload.contact_ids),
+        snapshot_at,
+    )
+    return normalize_segment_row(
+        await _fetch_segment_or_404(conn, tenant_id, segment_id)
+    )
+
+
 CAMPAIGN_PROJECTION = (
     'id, tenant_id, name, status, template_id, template_variables, '
-    'segment_filter, scheduled_at, recipient_count, sent_count, '
-    'delivered_count, read_count, failed_count, started_at, '
-    'completed_at, created_by, created_at, updated_at'
+    'segment_filter, segment_id, launched_snapshot_at, scheduled_at, '
+    'recipient_count, sent_count, delivered_count, read_count, '
+    'failed_count, started_at, completed_at, created_by, created_at, updated_at'
 )
 
 
@@ -7755,15 +8090,20 @@ async def create_campaign(
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     await _ensure_template_approved(conn, tenant_id, payload.template_id)
     segment = _campaign_segment_filter_dict(payload.segment_filter)
-    recipient_count = await count_campaign_recipients(conn, tenant_id, segment)
+    segment_row = None
+    if payload.segment_id is not None:
+        segment_row = await _fetch_segment_or_404(conn, tenant_id, payload.segment_id)
+        recipient_count = int(segment_row['contact_count'] or 0)
+    else:
+        recipient_count = await count_campaign_recipients(conn, tenant_id, segment)
     created_by = await current_user_id_from_request(request, conn)
     row = await conn.fetchrow(
         f"""
         insert into app.campaigns (
           tenant_id, name, template_id, template_variables,
-          segment_filter, scheduled_at, recipient_count, created_by
+          segment_filter, segment_id, scheduled_at, recipient_count, created_by
         )
-        values ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8)
+        values ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9)
         returning {CAMPAIGN_PROJECTION}
         """,
         tenant_id,
@@ -7771,6 +8111,7 @@ async def create_campaign(
         payload.template_id,
         json.dumps(payload.template_variables or {}),
         json.dumps(segment),
+        payload.segment_id,
         payload.scheduled_at,
         recipient_count,
         created_by,
@@ -7858,11 +8199,14 @@ async def patch_campaign(
         if payload.segment_filter is not None
         else None
     )
-    new_recipient_count = (
-        await count_campaign_recipients(conn, tenant_id, segment)
-        if segment is not None
-        else None
-    )
+    next_segment_id = data.get('segment_id') if 'segment_id' in data else row['segment_id']
+    if next_segment_id is not None and 'segment_id' in data:
+        segment_row = await _fetch_segment_or_404(conn, tenant_id, next_segment_id)
+        new_recipient_count = int(segment_row['contact_count'] or 0)
+    elif segment is not None:
+        new_recipient_count = await count_campaign_recipients(conn, tenant_id, segment)
+    else:
+        new_recipient_count = None
     updated = await conn.fetchrow(
         f"""
         update app.campaigns
@@ -7870,6 +8214,7 @@ async def patch_campaign(
             template_id=coalesce($4, template_id),
             template_variables=coalesce($5::jsonb, template_variables),
             segment_filter=coalesce($6::jsonb, segment_filter),
+            segment_id=case when $9 then $10 else segment_id end,
             scheduled_at=coalesce($7, scheduled_at),
             recipient_count=coalesce($8, recipient_count),
             updated_at=now()
@@ -7884,6 +8229,8 @@ async def patch_campaign(
         json.dumps(segment) if segment is not None else None,
         data.get('scheduled_at'),
         new_recipient_count,
+        'segment_id' in data,
+        data.get('segment_id'),
     )
     await audit(
         conn,
@@ -7908,20 +8255,36 @@ async def preview_campaign(
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     row = await _fetch_campaign_or_404(conn, tenant_id, campaign_id)
-    segment = parse_json_object(row['segment_filter'], default={})
-    total = await count_campaign_recipients(conn, tenant_id, segment)
-    sample = await evaluate_segment(conn, tenant_id, segment, limit=5)
-    return {
-        'recipient_count': total,
-        'sample': [
+    if row['segment_id'] is not None:
+        seg_row = await _fetch_segment_or_404(conn, tenant_id, row['segment_id'])
+        rules = parse_json_object(seg_row['rules'], default={})
+        total = await count_segment_contacts(conn, tenant_id, rules)
+        sample_rows = await evaluate_segment_rules(conn, tenant_id, rules, limit=5)
+        sample = [
+            {
+                'id': str(item['contact_id']),
+                'display_name': item.get('display_name'),
+                'phone_e164': item.get('phone_e164'),
+                'opt_in_status': item.get('opt_in_status'),
+            }
+            for item in sample_rows
+        ]
+    else:
+        segment = parse_json_object(row['segment_filter'], default={})
+        total = await count_campaign_recipients(conn, tenant_id, segment)
+        sample_rows = await evaluate_segment(conn, tenant_id, segment, limit=5)
+        sample = [
             {
                 'id': str(item['id']),
                 'display_name': item.get('display_name'),
                 'phone_e164': item.get('phone_e164'),
                 'opt_in_status': item.get('opt_in_status'),
             }
-            for item in sample
-        ],
+            for item in sample_rows
+        ]
+    return {
+        'recipient_count': total,
+        'sample': sample,
     }
 
 
@@ -7943,16 +8306,36 @@ async def launch_campaign(
         )
     await _ensure_template_approved(conn, tenant_id, row['template_id'])
     next_scheduled = payload.scheduled_at or row['scheduled_at'] or datetime.now(UTC)
+    launched_snapshot_at = None
+    if row['segment_id'] is not None:
+        seg_row = await _fetch_segment_or_404(conn, tenant_id, row['segment_id'])
+        rules = parse_json_object(seg_row['rules'], default={})
+        if seg_row['kind'] == 'dynamic':
+            _count, launched_snapshot_at = await snapshot_segment_members(
+                conn, tenant_id, row['segment_id'], rules
+            )
+        else:
+            # Static segment: use the latest manual snapshot.
+            launched_snapshot_at = await conn.fetchval(
+                """
+                select max(snapshot_at) from app.contact_segment_members
+                where segment_id=$1
+                """,
+                row['segment_id'],
+            )
     updated = await conn.fetchrow(
         f"""
         update app.campaigns
-        set status='scheduled', scheduled_at=$3, updated_at=now()
+        set status='scheduled', scheduled_at=$3,
+            launched_snapshot_at=coalesce($4, launched_snapshot_at),
+            updated_at=now()
         where tenant_id=$1 and id=$2
         returning {CAMPAIGN_PROJECTION}
         """,
         tenant_id,
         campaign_id,
         next_scheduled,
+        launched_snapshot_at,
     )
     await audit(
         conn,

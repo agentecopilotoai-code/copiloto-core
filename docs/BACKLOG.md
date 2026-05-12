@@ -220,28 +220,7 @@ _TASK-0046 — Biblioteca de medios y promociones activas: COMPLETADA. Ver `docs
 
 ---
 
-### TASK-0047 — Segmentos automáticos para retención y reactivación
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0042 (datos de calificación) y CRM existente (TASK-0037).
-- **Por qué bloquea:** las campañas existen pero el operador tiene que armar el filtro a mano cada vez, sin una vista clara de "quién es candidato". El equipo no usa campañas → recompra y reactivación quedan dependientes del agente.
-- **Alcance:**
-  - Nueva tabla `app.contact_segments` (`id, tenant_id, name, description, kind: dynamic|static, rules jsonb, contact_count int default 0, last_refreshed_at, created_by, created_at, updated_at`).
-  - Builder de **segmentos dinámicos**: `app/services/segments.py.build_segment_query(rules) -> (sql, params)` que traduce reglas JSON (`any_of`, `all_of`, operadores `eq/in/lt/gt/between`, campos `last_appointment_at`, `total_appointments_completed`, `total_spent`, `tags`, `lead_source.channel`, `qualification.<key>`) a un `SELECT contact_id FROM ...`. Reutiliza el patrón ya usado por `campaigns.build_recipients_query`.
-  - Segmentos **preconstruidos** sembrados al crear un tenant: "Sin visita en 60+ días", "Clientes recurrentes (3+ citas)", "VIP (gasto > umbral)", "Primer contacto sin agendar", "No-show reciente". Editables por el tenant.
-  - Job programado (worker `scheduler.py`) que recalcula `contact_count` y persiste un snapshot en `app.contact_segment_members(segment_id, contact_id, snapshot_at)` para los segmentos dinámicos cada 1h.
-  - Endpoints `/v1/tenants/{id}/segments` (CRUD + `/preview` que devuelve los primeros 25 contactos del segmento).
-  - En el módulo **Campañas**, el formulario de creación permite **partir de un segmento** (en lugar de armar `segment_filter` libre). El segmento se snapshotea al lanzar la campaña (no se recalcula durante la entrega).
-  - Vista de "candidatos por segmento" en `ContactsModule` con filtro de segmento.
-- **Criterios de aceptación:**
-  - Al crear un tenant nuevo, los 5 segmentos preconstruidos aparecen ya sembrados.
-  - Operador crea una campaña "Reactivación mayo" eligiendo el segmento "Sin visita en 60+ días" → la campaña hereda los recipients.
-  - `GET /v1/tenants/{id}/segments/{sid}/preview` responde en < 1s con 25 contactos.
-  - El job de refresh actualiza `contact_count` y no duplica miembros (idempotente por `(segment_id, contact_id)`).
-  - Tests: ≥ 12 estáticos: schema, builder de query con cada operador, segmentos preconstruidos sembrados por bootstrap, integración con campaigns, refresh worker.
-- **Notas:**
-  - Los segmentos **estáticos** (kind=`static`) sirven para snapshots manuales — el operador puede capturar "asistentes al taller del 12 de mayo" sin reglas.
-  - Si un campo `qualification.<key>` no existe en un tenant, la regla devuelve 0 contactos (no error). Esto desacopla la deuda contra TASK-0042.
+_TASK-0047 — Segmentos automáticos para retención y reactivación: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

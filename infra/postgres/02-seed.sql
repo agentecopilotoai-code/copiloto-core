@@ -34,3 +34,28 @@ insert into app.resources (tenant_id, vertical_code, resource_type, code, name, 
 select id, vertical_code, 'staff', 'default', 'Recurso principal', '{"default":true}'::jsonb
 from app.tenants
 on conflict (tenant_id, code) do nothing;
+
+-- Preconstructed retention/reactivation segments seeded per tenant.  The
+-- application layer also seeds these on tenant creation; the SQL seed makes
+-- the demo tenants ready for E2E flows without bootstrapping through the API.
+insert into app.contact_segments (tenant_id, name, description, kind, rules, is_system)
+select t.id, s.name, s.description, 'dynamic', s.rules::jsonb, true
+from app.tenants t
+cross join (values
+  ('Sin visita en 60+ días',
+   'Contactos cuya última cita fue hace más de 60 días.',
+   '{"all_of":[{"field":"last_appointment_at","op":"lt_days_ago","value":60}]}'),
+  ('Clientes recurrentes (3+ citas)',
+   'Han completado 3 o más citas.',
+   '{"all_of":[{"field":"total_appointments_completed","op":"gte","value":3}]}'),
+  ('VIP (gasto > $500.000)',
+   'Han gastado más de $500.000 en servicios completados.',
+   '{"all_of":[{"field":"total_spent","op":"gt","value":500000}]}'),
+  ('Primer contacto sin agendar',
+   'No registran citas completadas todavía.',
+   '{"all_of":[{"field":"total_appointments_completed","op":"eq","value":0},{"field":"last_appointment_at","op":"is_null"}]}'),
+  ('No-show reciente (30 días)',
+   'Tuvieron al menos un no-show en los últimos 30 días.',
+   '{"all_of":[{"field":"total_appointments_no_show","op":"in_window_days","value":30}]}')
+) as s(name, description, rules)
+on conflict (tenant_id, name) do nothing;

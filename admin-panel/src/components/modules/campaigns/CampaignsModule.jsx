@@ -5,6 +5,7 @@ import {
   createCampaign,
   launchCampaign,
   listCampaigns,
+  listContactSegments,
   listContactTags,
   listWhatsappTemplates,
   previewCampaign,
@@ -116,6 +117,7 @@ export function CampaignsModule({ module, session, tenant }) {
   const [campaigns, setCampaigns] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [availableTags, setAvailableTags] = useState([]);
+  const [segments, setSegments] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [notice, setNotice] = useState(null);
   const [isBusy, setIsBusy] = useState(false);
@@ -127,6 +129,7 @@ export function CampaignsModule({ module, session, tenant }) {
     template_id: '',
     template_variables: '',
     scheduled_at: '',
+    segment_id: '',
     segment: { ...EMPTY_FILTER },
   });
 
@@ -141,6 +144,7 @@ export function CampaignsModule({ module, session, tenant }) {
       template_id: '',
       template_variables: '',
       scheduled_at: '',
+      segment_id: '',
       segment: { ...EMPTY_FILTER },
     });
   }
@@ -173,11 +177,19 @@ export function CampaignsModule({ module, session, tenant }) {
       .catch(() => setAvailableTags([]));
   }
 
+  function refreshSegments() {
+    if (!tenantId) return Promise.resolve();
+    return listContactSegments(session, tenantId)
+      .then((items) => setSegments(items || []))
+      .catch(() => setSegments([]));
+  }
+
   useEffect(() => {
     if (!tenantId) return;
     refreshCampaigns();
     refreshTemplates();
     refreshTags();
+    refreshSegments();
   }, [tenantId]);
 
   function startCreate() {
@@ -198,6 +210,7 @@ export function CampaignsModule({ module, session, tenant }) {
       scheduled_at: campaign.scheduled_at
         ? new Date(campaign.scheduled_at).toISOString().slice(0, 16)
         : '',
+      segment_id: campaign.segment_id || '',
       segment: {
         tags: Array.isArray(segment.tags) ? segment.tags : [],
         min_appointments: segment.min_appointments ?? '',
@@ -220,7 +233,8 @@ export function CampaignsModule({ module, session, tenant }) {
       name: form.name.trim(),
       template_id: form.template_id || null,
       template_variables: parseVariables(form.template_variables),
-      segment_filter: buildSegmentPayload(form.segment),
+      segment_filter: form.segment_id ? {} : buildSegmentPayload(form.segment),
+      segment_id: form.segment_id || null,
       scheduled_at: form.scheduled_at ? new Date(form.scheduled_at).toISOString() : null,
     };
   }
@@ -416,8 +430,37 @@ export function CampaignsModule({ module, session, tenant }) {
                 />
               </label>
 
-              <fieldset style={{ gridColumn: '1 / -1', border: '1px solid var(--border, #e2e8f0)', borderRadius: 8, padding: '0.8rem' }}>
-                <legend>Filtros de segmento</legend>
+              <label>
+                Segmento guardado
+                <select
+                  value={form.segment_id}
+                  onChange={(e) => setForm((p) => ({ ...p, segment_id: e.target.value }))}
+                >
+                  <option value="">— Sin segmento (usar filtros) —</option>
+                  {segments.map((seg) => (
+                    <option key={seg.id} value={seg.id}>
+                      {seg.name} ({seg.contact_count})
+                    </option>
+                  ))}
+                </select>
+                {form.segment_id ? (
+                  <small className="hint">
+                    Al lanzar la campaña, el segmento se snapshotea y los destinatarios quedan fijos.
+                  </small>
+                ) : null}
+              </label>
+
+              <fieldset
+                disabled={Boolean(form.segment_id)}
+                style={{
+                  gridColumn: '1 / -1',
+                  border: '1px solid var(--border, #e2e8f0)',
+                  borderRadius: 8,
+                  padding: '0.8rem',
+                  opacity: form.segment_id ? 0.5 : 1,
+                }}
+              >
+                <legend>Filtros de segmento (alternativos)</legend>
                 <div className="form-grid">
                   <label>
                     Mínimo de citas

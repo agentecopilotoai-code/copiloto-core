@@ -15,6 +15,73 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0047 — Segmentos automáticos para retención y reactivación
+
+- **Fecha:** 2026-05-12
+- **Resumen:** las campañas pasaban por un `segment_filter` que el operador tenía que armar a mano cada vez. Ahora el tenant guarda **segmentos** reutilizables (5 preconstruidos seedeados al crear el tenant: "Sin visita en 60+ días", "Clientes recurrentes (3+ citas)", "VIP (gasto > $500.000)", "Primer contacto sin agendar", "No-show reciente"). El módulo "Campañas" permite **partir de un segmento**; al lanzar la campaña el segmento se snapshotea en `app.contact_segment_members` y el dispatcher entrega exactamente esa lista — un refresh posterior no altera la entrega en curso. Un worker recalcula `contact_count` y refresca el snapshot cada hora.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`)**:
+    - `app.contact_segments(id, tenant_id, name, description, kind in ('dynamic','static'), rules jsonb, contact_count int, last_refreshed_at, is_system bool, created_by, created_at, updated_at)` con `unique (tenant_id, name)`, FK compuesta `(tenant_id, id)`, trigger touch y RLS.
+    - `app.contact_segment_members(tenant_id, segment_id, contact_id, snapshot_at)` con PK compuesta `(segment_id, contact_id, snapshot_at)` para soportar varios snapshots históricos (refresh horario + campaña lanzada), índice `(segment_id, snapshot_at desc)`, RLS y FKs `(tenant_id, segment_id)` / `(tenant_id, contact_id)`.
+    - `alter table app.campaigns add column segment_id uuid` + `launched_snapshot_at timestamptz` con FK `(tenant_id, segment_id) → app.contact_segments(tenant_id, id) on delete set null`.
+    - Seed `infra/postgres/02-seed.sql` siembra los 5 segmentos preconstruidos en cada tenant demo.
+  - **`app/services/segments.py`** (nuevo):
+    - `build_segment_query(rules) -> (sql, params)` con whitelist estricta de campos (`last_appointment_at`, `total_appointments_completed`, `total_appointments_no_show`, `total_spent`, `tags`, `lead_source.channel`, `created_at`, `qualification.<key>` con regex `[a-z0-9_]`), operadores por tipo (`eq/in/lt/lte/gt/gte/between` para numéricos, `lt_days_ago/gte_days_ago/is_null/is_not_null` para fechas, `contains_any/contains_all/is_empty/is_not_empty` para arrays, `eq/in/is_null/is_not_null` para texto), combinadores `all_of`/`any_of`. Cualquier campo u operador fuera del whitelist se descarta silenciosamente.
+    - `normalize_rules` sanitiza la entrada y envuelve siempre en `all_of`/`any_of`.
+    - `evaluate_segment_rules`, `count_segment_contacts`, `snapshot_segment_members` (atómico con `now()` y `executemany`), `refresh_due_segments(interval=timedelta(hours=1))`.
+    - `PRECONSTRUCTED_SEGMENTS` + `seed_preconstructed_segments(conn, tenant_id, created_by=None)` idempotente vía `on conflict (tenant_id, name) do nothing`.
+  - **API (`app/api/v1/routes.py` + `app/api/v1/schemas.py`)** — endpoints bajo `tenant_admin_router`:
+    - `GET /v1/tenants/{tenant_id}/segments?kind=`
+    - `POST /v1/tenants/{tenant_id}/segments` (201)
+    - `GET /v1/tenants/{tenant_id}/segments/{segment_id}`
+    - `PATCH /v1/tenants/{tenant_id}/segments/{segment_id}`
+    - `DELETE /v1/tenants/{tenant_id}/segments/{segment_id}` (los `is_system=true` retornan 409)
+    - `GET /v1/tenants/{tenant_id}/segments/{segment_id}/preview?limit=25` (dinámicos evalúan en vivo, estáticos leen el último snapshot)
+    - `POST /v1/tenants/{tenant_id}/segments/{segment_id}/refresh`
+    - `POST /v1/tenants/{tenant_id}/segments/{segment_id}/members` (sólo estáticos)
+    - Auditoría: `segment.{created,updated,deleted,refreshed}`.
+    - `create_tenant` y `create_own_tenant` invocan `seed_preconstructed_segments` para que cualquier tenant nuevo arranque con los 5 segmentos visibles.
+  - **Campañas (`app/services/campaigns.py` + `routes.py`)**:
+    - Pydantic `CampaignCreate/Update` aceptan `segment_id: UUID | None`.
+    - `create_campaign`/`patch_campaign` resuelven `recipient_count` desde `contact_segments.contact_count` cuando hay `segment_id`; si no, mantienen el cálculo legacy desde `segment_filter`.
+    - `launch_campaign` toma un **snapshot** del segmento dinámico (escribe en `contact_segment_members` con `snapshot_at=now()`) o lee el último snapshot estático, y persiste `launched_snapshot_at` en la campaña.
+    - `_resolve_campaign_recipients` (nuevo) lee de `contact_segment_members` cuando hay `(segment_id, launched_snapshot_at)` — la entrega es determinística aunque el segmento se refresque después. Si no hay snapshot, vuelve al query legacy.
+    - `preview_campaign` reutiliza la misma evaluación, así el preview en admin refleja el segmento real.
+  - **Scheduler (`app/workers/scheduler.py`)** suma `await refresh_due_segments(conn)` al loop principal, recalculando los segmentos dinámicos con `last_refreshed_at` < 1h y poblando los miembros del snapshot.
+  - **Admin Panel**:
+    - Nuevo módulo `segments` (rol mínimo `manager`) registrado en `modules.js` + `AdminLayout.jsx`.
+    - `SegmentsModule.jsx` (nuevo): lista lateral con badges (tipo, contacto count, `last_refreshed_at`), formulario con `RuleEditor` por condición (selector de campo+operador con tipos derivados), combinador `AND`/`OR`, soporte para segmentos estáticos. Acciones: editar, previsualizar (top 25), refrescar, eliminar (bloqueado para `is_system`).
+    - `CampaignsModule.jsx` ahora ofrece un selector "Segmento guardado" que desactiva los filtros manuales cuando se elige un segmento.
+    - Helpers en `services/coreApi.js`: `listContactSegments`, `createContactSegment`, `updateContactSegment`, `deleteContactSegment`, `previewContactSegment`, `refreshContactSegment`.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`, `infra/postgres/02-seed.sql`
+  - `app/services/segments.py` (nuevo), `app/services/campaigns.py`
+  - `app/api/v1/routes.py`, `app/api/v1/schemas.py`
+  - `app/workers/scheduler.py`
+  - `admin-panel/src/components/modules/segments/SegmentsModule.jsx` (nuevo)
+  - `admin-panel/src/components/modules/campaigns/CampaignsModule.jsx`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/data/modules.js`
+  - `admin-panel/src/services/coreApi.js`
+  - `tests/test_segments_static.py` (nuevo)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Comandos / validaciones:**
+  - `pytest tests/test_segments_static.py` → **34 passed** cubriendo: schema (RLS, PK compuesta, guards, columnas nuevas en `campaigns`), seed con los 5 nombres, normalizador (drop de campos/ops fuera de whitelist, qualification namespace, qualification keys inválidas, JSON string), builder (tenant filter + opt-in guard, `lt_days_ago`, `any_of` → OR, `contains_any` con `&&`, qualification literal, key insegura ignorada, `is_null`), 5 segmentos preconstruidos definidos, `seed_preconstructed_segments` inserta 5 idempotente, dispatch resuelve por snapshot vs fallback, endpoints registrados con auditoría, scheduler invoca `refresh_due_segments`, default `interval = 1h`, helpers del admin panel.
+  - `pytest tests/test_campaigns_static.py tests/test_segments_static.py tests/test_self_service_static.py tests/test_tenant_readiness_static.py` → **99 passed**, sin regresiones.
+  - `ruff check app tests` → **All checks passed!**
+- **Criterios de aceptación verificados:**
+  - Al crear un tenant nuevo (`POST /v1/tenants` y `POST /v1/tenant-signup`), los 5 segmentos preconstruidos aparecen ya sembrados (`seed_preconstructed_segments` se invoca en ambos paths).
+  - El operador crea una campaña eligiendo el segmento "Sin visita en 60+ días" → al lanzar, `_resolve_campaign_recipients` lee de `contact_segment_members where segment_id=… and snapshot_at=launched_snapshot_at`.
+  - `GET /segments/{sid}/preview` devuelve los primeros 25 contactos (default `limit=25`, max 100) — la query evalúa contra `app.contacts` filtrando opt-in.
+  - Refresh idempotente: PK compuesta `(segment_id, contact_id, snapshot_at)` + `on conflict do nothing` evita duplicados.
+  - 34 tests estáticos (objetivo era ≥ 12).
+- **Notas:**
+  - Los segmentos `is_system=true` no se pueden eliminar (409 desde el endpoint, botón oculto en UI) — el operador puede editar sus reglas.
+  - Si un tenant no tiene `qualification.<key>` definido, la regla devuelve 0 contactos (no error), desacoplando la deuda contra TASK-0042.
+  - El snapshot se mantiene tras la entrega de la campaña: queda como histórico hasta el siguiente refresh.
+
+---
+
 ### TASK-0046 — Biblioteca de medios y promociones activas que el bot puede enviar
 
 - **Fecha:** 2026-05-12

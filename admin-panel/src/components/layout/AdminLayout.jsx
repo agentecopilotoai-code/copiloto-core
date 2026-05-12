@@ -13,6 +13,7 @@ import { KnowledgeStorageSettings } from '../modules/knowledgeStorage/KnowledgeS
 import { MediaLibraryModule } from '../modules/media/MediaLibraryModule.jsx';
 import { GoLiveReadiness } from '../modules/readiness/GoLiveReadiness.jsx';
 import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
+import { SegmentsModule } from '../modules/segments/SegmentsModule.jsx';
 import { ServiceCatalog } from '../modules/services/ServiceCatalog.jsx';
 import { TeamModule } from '../modules/team/TeamModule.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
@@ -234,6 +235,20 @@ export function AdminLayout({ session }) {
     }
   } else if (activeModuleId === 'contacts') {
     activeContent = <ContactsModule module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'segments') {
+    if (!hasMinRole(activeRoles, 'manager')) {
+      activeContent = (
+        <section className="module-card">
+          <h2>Acceso restringido</h2>
+          <p className="hint">
+            Necesitas rol <strong>manager</strong>, <strong>admin</strong> u <strong>owner</strong> en este
+            tenant para gestionar segmentos.
+          </p>
+        </section>
+      );
+    } else {
+      activeContent = <SegmentsModule module={activeModule} session={session} tenant={activeTenant} />;
+    }
   } else if (activeModuleId === 'campaigns') {
     if (!hasMinRole(activeRoles, 'admin')) {
       activeContent = (
