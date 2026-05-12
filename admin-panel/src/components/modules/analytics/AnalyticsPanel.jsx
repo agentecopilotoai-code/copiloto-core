@@ -7,6 +7,7 @@ import {
   getAnalyticsConversations,
   getAnalyticsFunnel,
   getAnalyticsOverview,
+  getAnalyticsReferrals,
 } from '../../../services/coreApi.js';
 
 const SUB_TABS = [
@@ -113,6 +114,7 @@ export function AnalyticsPanel({ module, session, tenant }) {
   const [contacts, setContacts] = useState(null);
   const [funnel, setFunnel] = useState(null);
   const [campaigns, setCampaigns] = useState(null);
+  const [referrals, setReferrals] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [notice, setNotice] = useState(null);
 
@@ -124,13 +126,14 @@ export function AnalyticsPanel({ module, session, tenant }) {
       setIsLoading(true);
       setNotice(null);
       try {
-        const [ov, conv, appt, ctc, fnl, cmp] = await Promise.all([
+        const [ov, conv, appt, ctc, fnl, cmp, refs] = await Promise.all([
           getAnalyticsOverview(session, tenantId, rng),
           getAnalyticsConversations(session, tenantId, rng),
           getAnalyticsAppointments(session, tenantId, rng),
           getAnalyticsContacts(session, tenantId, rng),
           getAnalyticsFunnel(session, tenantId, rng),
           getAnalyticsCampaigns(session, tenantId, rng),
+          getAnalyticsReferrals(session, tenantId, rng),
         ]);
         setOverview(ov);
         setConversations(conv);
@@ -138,6 +141,7 @@ export function AnalyticsPanel({ module, session, tenant }) {
         setContacts(ctc);
         setFunnel(fnl);
         setCampaigns(cmp);
+        setReferrals(refs);
       } catch (error) {
         setNotice({ type: 'error', text: error.message || 'No se pudieron cargar las métricas.' });
       } finally {
@@ -566,6 +570,47 @@ export function AnalyticsPanel({ module, session, tenant }) {
                   </tbody>
                 </table>
               )}
+            </div>
+
+            <div className="analytics-card" data-testid="analytics-top-referrers">
+              <h3>Top referidores</h3>
+              {(referrals?.items ?? []).length === 0 ? (
+                <p className="hint">
+                  Aún no hay referidos registrados en el rango.
+                </p>
+              ) : (
+                <table className="analytics-table">
+                  <thead>
+                    <tr>
+                      <th>Embajador</th>
+                      <th>Referidos</th>
+                      <th>Citas</th>
+                      <th>Ingreso</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {referrals.items.map((row) => (
+                      <tr key={row.contact_id}>
+                        <td>
+                          <strong>{row.display_name}</strong>
+                          {row.phone_e164 ? (
+                            <div className="hint" style={{ fontSize: '0.75rem' }}>
+                              {row.phone_e164}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td>{formatNumber(row.count_referrals)}</td>
+                        <td>{formatNumber(row.appointments_generated)}</td>
+                        <td>{formatCurrency(row.revenue_generated)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <p className="hint">
+                Activa "¿Quién te recomendó?" en Notificaciones para que el bot
+                capture el embajador durante el booking.
+              </p>
             </div>
           </div>
         </>

@@ -53,6 +53,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   post_rebooking_message: '',
   auto_rebook_on_decline: true,
   vip_budget_threshold: 0,
+  ask_referrer: false,
 };
 
 function hydrateNotificationSettings(raw) {
@@ -1188,6 +1189,18 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
               Si el cliente responde "no" al pedido de confirmación activa, el bot ofrecerá tres
               horarios alternativos en lugar de quedarse esperando a un agente. Si responde "no"
               al rebooking, la cita se cancela y se escala al equipo.
+            </p>
+            <label className="inline-check wide" data-wizard-field="ask_referrer">
+              <input
+                type="checkbox"
+                checked={notificationSettings.ask_referrer === true}
+                onChange={(e) => setNotificationSettings({ ...notificationSettings, ask_referrer: e.target.checked })}
+              />
+              Preguntar "¿quién te recomendó?" al iniciar el booking (TASK-0055)
+            </label>
+            <p className="hint" style={{ marginTop: '0.25rem' }}>
+              Captura al embajador para medir referidos en Analítica → Top
+              referidores. Default desactivado.
             </p>
           </fieldset>
 
