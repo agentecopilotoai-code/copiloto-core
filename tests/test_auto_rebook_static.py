@@ -21,12 +21,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-import pytest
-
 from app.services import appointment_self_service
 from app.services.appointment_self_service import (
     FLOW_RESCHEDULE,
-    PREFIX_RESCHED_SLOT,
     STEP_AWAITING_RESCHEDULE_SLOT,
     start_auto_rebook_flow,
 )

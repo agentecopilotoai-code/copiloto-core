@@ -15,11 +15,8 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-import pytest
-
 from app.services import qualification_flow
 from app.services.qualification_flow import (
-    DONE_TOKEN,
     KIND_FREE_TEXT,
     KIND_MULTI_CHOICE,
     KIND_NUMBER,

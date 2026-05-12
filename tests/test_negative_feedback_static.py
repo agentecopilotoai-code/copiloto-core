@@ -19,9 +19,6 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-import pytest
-
-from app.services import feedback_flow
 from app.services.feedback_flow import (
     DEFAULT_NEGATIVE_FEEDBACK_REPLY,
     NEGATIVE_FEEDBACK_HANDOFF_REASON,

@@ -78,7 +78,6 @@ from app.services.auth0_admin import (
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
 from app.services.media_storage import (
     MEDIA_KINDS,
-    MEDIA_SIZE_LIMITS_BYTES,
     delete_media_file,
     store_media_file,
 )

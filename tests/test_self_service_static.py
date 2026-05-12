@@ -11,11 +11,8 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-import pytest
-
-from app.services import appointment_self_service as self_service
 from app.services.appointment_self_service import (
     FLOW_CANCEL,
     FLOW_RESCHEDULE,

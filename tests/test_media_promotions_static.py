@@ -17,15 +17,13 @@ Coverage:
 from __future__ import annotations
 
 import asyncio
-import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from app.services.media_storage import (
-    MEDIA_KINDS,
     MEDIA_MIME_ALLOWLIST,
     MEDIA_SIZE_LIMITS_BYTES,
     media_object_key,
