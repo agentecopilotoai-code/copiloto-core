@@ -217,15 +217,23 @@ def delete_knowledge_file(
     """
     backend = (storage_backend or '').lower()
 
+    # Normalize the tenant prefix up front. A provided-but-empty / root-like
+    # / traversal-laden prefix is treated as untrusted: we refuse the delete
+    # rather than fall back to "no containment", which would let a tenant
+    # admin who configured prefix='/' (or '', '.', '..') reach objects
+    # outside their tenant region in the shared bucket / storage root.
+    normalized_tenant_prefix: str | None = None
+    if tenant_prefix is not None:
+        candidate_prefix = tenant_prefix.strip('/').replace('\\', '/')
+        if not candidate_prefix or any(
+            part in {'', '.', '..'} for part in candidate_prefix.split('/')
+        ):
+            return
+        normalized_tenant_prefix = candidate_prefix
+
     if backend == 'local':
         root = Path(settings.knowledge_storage_local_path)
-        allowed_base = root
-        if tenant_prefix:
-            normalized_prefix = tenant_prefix.strip('/').replace('\\', '/')
-            if normalized_prefix and not any(
-                part in {'', '.', '..'} for part in normalized_prefix.split('/')
-            ):
-                allowed_base = root / normalized_prefix
+        allowed_base = root / normalized_tenant_prefix if normalized_tenant_prefix else root
 
         candidate: Path | None = None
         if object_key:
@@ -271,10 +279,10 @@ def delete_knowledge_file(
             part in {'', '.', '..'} for part in normalized_key.split('/')
         ):
             return
-        if tenant_prefix:
-            normalized_prefix = tenant_prefix.strip('/').replace('\\', '/')
-            if normalized_prefix and not normalized_key.startswith(normalized_prefix + '/'):
-                return
+        if normalized_tenant_prefix and not normalized_key.startswith(
+            normalized_tenant_prefix + '/'
+        ):
+            return
         try:
             client = _s3_client(
                 settings,

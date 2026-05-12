@@ -79,7 +79,7 @@ from app.services.auth0_admin import (
     invite_user as auth0_invite_user,
     revoke_tenant_roles as auth0_revoke_tenant_roles,
 )
-from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
+from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, normalize_object_prefix, store_knowledge_file
 from app.services.media_storage import (
     MEDIA_KINDS,
     delete_media_file,
@@ -186,7 +186,14 @@ def normalize_knowledge_storage_config(tenant_id: UUID, value: Any) -> dict[str,
             if key in value:
                 config[key] = value[key]
     config['backend'] = config.get('backend') if config.get('backend') in {'local', 's3'} else 'local'
-    if not config.get('prefix'):
+    # Validate the prefix against traversal / root-like values. If the stored
+    # config has a bad prefix (legacy data or a tenant admin that managed to
+    # write '/' before this validation was in place), fall back to the
+    # tenant-default rather than let an unrestricted prefix flow into the
+    # deletion code path.
+    try:
+        config['prefix'] = normalize_object_prefix(config.get('prefix'), str(tenant_id))
+    except ValueError:
         config['prefix'] = f'tenants/{tenant_id}/knowledge'
     return config
 
@@ -1325,6 +1332,14 @@ async def patch_knowledge_storage_settings(
     current = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
     incoming = payload.model_dump(exclude_unset=True)
     secret_access_key = incoming.pop('secret_access_key', None)
+    if 'prefix' in incoming and incoming['prefix'] is not None:
+        try:
+            incoming['prefix'] = normalize_object_prefix(incoming['prefix'], str(tenant_id))
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail='Invalid knowledge storage prefix',
+            )
     next_config = {**current, **incoming}
     next_config = normalize_knowledge_storage_config(tenant_id, next_config)
 
