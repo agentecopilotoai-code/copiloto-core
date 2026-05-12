@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   acceptConversationHandoff,
+  assignContactTags,
   cancelAppointment,
   createAppointment,
+  createContactNote,
   createQuote,
   createResource,
   createServiceRequest,
@@ -14,6 +16,7 @@ import {
   getTenantAvailability,
   listAppointmentFeedback,
   listAppointments,
+  listContactTags,
   listConversations,
   listResources,
   listServiceRequests,
@@ -23,6 +26,7 @@ import {
   releaseConversation,
   sendConversationMessage,
   sendQuote,
+  unassignContactTag,
   updateAppointment,
   updateResource,
   startConversation,
@@ -291,6 +295,9 @@ export function OperationsDesk({ module, session, tenant }) {
   const [quoteTax, setQuoteTax] = useState(0);
   const [isBusy, setIsBusy] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [contactTags, setContactTags] = useState([]);
+  const [quickNote, setQuickNote] = useState('');
+  const [pendingTagAssign, setPendingTagAssign] = useState('');
   const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState(null);
   const [streamStatus, setStreamStatus] = useState('disconnected');
   const messageThreadRef = useRef(null);
@@ -401,6 +408,11 @@ export function OperationsDesk({ module, session, tenant }) {
     refreshConversations();
     refreshScheduleData(true);
     setResourceForm((current) => ({ ...current, verticalCode: tenant?.vertical_code || '' }));
+    if (tenant?.id) {
+      listContactTags(session, tenant.id)
+        .then((items) => setContactTags(items || []))
+        .catch(() => undefined);
+    }
   }, [tenant?.id]);
 
   useEffect(() => {
@@ -524,6 +536,54 @@ export function OperationsDesk({ module, session, tenant }) {
       await refreshConversations();
       await refreshDetail();
       setNotice({ type: 'success', text: successText });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleAssignTagToContact(event) {
+    event.preventDefault();
+    const contactId = conversationDetail?.contact_id;
+    if (!contactId || !pendingTagAssign) return;
+    setIsBusy(true);
+    try {
+      await assignContactTags(session, tenant.id, contactId, [pendingTagAssign]);
+      setPendingTagAssign('');
+      setNotice({ type: 'success', text: 'Etiqueta asignada al contacto.' });
+      await Promise.all([refreshConversations(), refreshDetail()]);
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleRemoveTagFromContact(tagId) {
+    const contactId = conversationDetail?.contact_id;
+    if (!contactId || !tagId) return;
+    setIsBusy(true);
+    try {
+      await unassignContactTag(session, tenant.id, contactId, tagId);
+      setNotice({ type: 'success', text: 'Etiqueta retirada.' });
+      await Promise.all([refreshConversations(), refreshDetail()]);
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleQuickNote(event) {
+    event.preventDefault();
+    const contactId = conversationDetail?.contact_id;
+    if (!contactId || !quickNote.trim()) return;
+    setIsBusy(true);
+    try {
+      await createContactNote(session, tenant.id, contactId, quickNote.trim());
+      setQuickNote('');
+      setNotice({ type: 'success', text: 'Nota interna registrada.' });
     } catch (error) {
       setNotice({ type: 'error', text: error.message });
     } finally {
@@ -960,6 +1020,24 @@ export function OperationsDesk({ module, session, tenant }) {
                   </span>
                 )}
               </div>
+              {(conversation.contact_tags || []).length > 0 ? (
+                <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                  {(conversation.contact_tags || []).map((tag) => (
+                    <span
+                      key={tag.id}
+                      className="status-pill"
+                      style={{
+                        background: tag.color || '#4f6ef7',
+                        color: '#fff',
+                        fontSize: '0.65rem',
+                        padding: '0.05rem 0.4rem',
+                      }}
+                    >
+                      {tag.name}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <small>{conversation.latest_message_text || 'Sin mensajes aún'}</small>
               <time>{formatDate(conversation.latest_message_at || conversation.updated_at)}</time>
             </button>
@@ -988,6 +1066,63 @@ export function OperationsDesk({ module, session, tenant }) {
                     </span>
                   )}
                 </div>
+              </div>
+
+              <div className="handoff-panel" aria-label="Etiquetas y notas del contacto">
+                <div>
+                  <strong>Etiquetas y notas</strong>
+                  <p className="hint">Clasifica al contacto y deja una nota interna visible solo para el equipo.</p>
+                </div>
+                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                  {(conversationDetail?.contact_tags || selectedConversation.contact_tags || []).map((tag) => (
+                    <span
+                      key={tag.id}
+                      className="status-pill"
+                      style={{
+                        background: tag.color || '#4f6ef7',
+                        color: '#fff',
+                        fontSize: '0.75rem',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                        padding: '0.15rem 0.5rem',
+                      }}
+                    >
+                      {tag.name}
+                      <button
+                        type="button"
+                        aria-label={`Quitar ${tag.name}`}
+                        onClick={() => handleRemoveTagFromContact(tag.id)}
+                        disabled={isBusy}
+                        style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0 }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <form className="action-row" onSubmit={handleAssignTagToContact}>
+                  <select value={pendingTagAssign} onChange={(event) => setPendingTagAssign(event.target.value)}>
+                    <option value="">— Asignar etiqueta —</option>
+                    {contactTags.map((tag) => (
+                      <option key={tag.id} value={tag.id}>{tag.name}</option>
+                    ))}
+                  </select>
+                  <button className="secondary-action" type="submit" disabled={!pendingTagAssign || isBusy}>
+                    Asignar
+                  </button>
+                </form>
+                <form className="action-row" onSubmit={handleQuickNote} style={{ marginTop: '0.5rem' }}>
+                  <input
+                    aria-label="Nota interna rápida"
+                    placeholder="Nota interna rápida"
+                    value={quickNote}
+                    onChange={(event) => setQuickNote(event.target.value)}
+                  />
+                  <button className="secondary-action" type="submit" disabled={!quickNote.trim() || isBusy}>
+                    Guardar nota
+                  </button>
+                </form>
               </div>
 
               <div className="handoff-panel">

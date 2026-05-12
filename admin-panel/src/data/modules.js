@@ -30,6 +30,12 @@ export const adminModules = [
     scope: ['Estados draft/indexing/active/failed', 'Visibilidad por documento', 'Fuentes y archivos'],
   },
   {
+    id: 'contacts',
+    label: 'Contactos',
+    summary: 'CRM básico: perfil de contacto con historial, etiquetas y notas internas.',
+    scope: ['Búsqueda y filtros', 'Perfil con historial', 'Etiquetas asignables', 'Notas internas'],
+  },
+  {
     id: 'operations-desk',
     label: 'Operations Desk',
     summary: 'Inbox operativo para conversaciones y handoff humano.',

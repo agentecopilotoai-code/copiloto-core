@@ -132,41 +132,6 @@ TASK-0029 (drill de restore — cierre operacional)
 
 ---
 
-### TASK-0037 — CRM básico: historial de contacto, etiquetas y notas internas
-
-- **Objetivo:** los agentes y el bot operan sin contexto del historial del cliente. Un CRM básico permite etiquetar contactos por perfil (ej. "VIP", "Nuevo", "En tratamiento"), ver todo su historial de citas y conversaciones, y agregar notas internas. Es la base para la segmentación de TASK-0038 (campañas).
-- **Alcance mínimo — backend:**
-  - Nueva tabla `app.contact_tags` (etiquetas disponibles del tenant):
-    - `id uuid PK`, `tenant_id`, `name text NOT NULL`, `color varchar(7)` (hex), `description text`, timestamps. UNIQUE `(tenant_id, name)`. RLS por `tenant_id`.
-  - Nueva tabla `app.contact_tag_assignments`:
-    - `contact_id uuid FK`, `tag_id uuid FK`, `assigned_by uuid FK → users(id)`, `assigned_at timestamptz DEFAULT now()`. PK `(contact_id, tag_id)`. RLS vía `tenant_id` en `contact_tags`.
-  - Nueva tabla `app.contact_notes`:
-    - `id uuid PK`, `tenant_id`, `contact_id FK`, `body text NOT NULL`, `created_by uuid FK → users(id)`, timestamps. RLS por `tenant_id`.
-  - Endpoints:
-    - `GET /v1/tenants/{tenant_id}/contact-tags` — listar etiquetas del tenant.
-    - `POST /v1/tenants/{tenant_id}/contact-tags` — crear etiqueta.
-    - `PATCH /v1/tenants/{tenant_id}/contact-tags/{tag_id}` — editar nombre/color.
-    - `DELETE /v1/tenants/{tenant_id}/contact-tags/{tag_id}` — eliminar (y desasignar de todos los contactos).
-    - `POST /v1/contacts/{contact_id}/tags` — asignar etiquetas (body: `{tag_ids: [...]}`).
-    - `DELETE /v1/contacts/{contact_id}/tags/{tag_id}` — quitar etiqueta.
-    - `POST /v1/contacts/{contact_id}/notes` — crear nota interna.
-    - `GET /v1/contacts/{contact_id}/notes` — listar notas.
-    - `GET /v1/contacts/{contact_id}/profile` — perfil completo: datos del contacto, etiquetas asignadas, últimas 10 citas (con estado y servicio), últimas 5 conversaciones, calificaciones promedio, notas internas, total de citas, fecha primera y última visita.
-  - En el endpoint de inbox `GET /v1/conversations` (lista), incluir `tags` del contacto en cada item.
-  - Tests estáticos: CRUD de etiquetas de tenant, asignación/desasignación a contacto, CRUD de notas, perfil completo del contacto con historial, inbox incluye tags.
-- **Alcance mínimo — Admin Panel:**
-  - Nuevo módulo **"Contactos"** (`admin-panel/src/components/modules/contacts/ContactsModule.jsx`):
-    - Lista de contactos con búsqueda por nombre/teléfono, filtro por etiqueta, paginación.
-    - Al hacer clic: perfil completo con historial de citas, conversaciones, calificaciones y notas.
-    - Desde el perfil: asignar/quitar etiquetas, agregar nota interna.
-  - En `TenantSetupWizard.jsx`, sección en pestaña "Negocio": gestión de etiquetas del tenant (crear, editar color, eliminar).
-  - En `OperationsDesk.jsx`, header del detalle de conversación: chips de etiquetas del contacto, botón para asignar/quitar etiquetas, campo de nota rápida.
-  - En el inbox del Operations Desk: chips de etiquetas visibles en cada card de conversación.
-- **Criterio de aceptación:** admin crea etiquetas, agente las asigna desde conversación, perfil muestra historial completo, inbox muestra etiquetas, filtro por etiqueta funciona, tests pasan en CI.
-- **Dependencias:** TASK-0036 (feedback visible en el perfil).
-
----
-
 ### TASK-0027 — Panel de analítica completa del negocio
 
 - **Objetivo:** el rol `manager` no puede medir si el sistema está funcionando. Sin métricas de conversión, no-show, ingresos y retención, la empresa no puede justificar la inversión ni tomar decisiones. Esta tarea implementa los endpoints de analytics y el panel visual con los KPIs más importantes del journey cliente.

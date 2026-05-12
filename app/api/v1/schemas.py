@@ -297,6 +297,26 @@ class IntentEvaluateRequest(BaseModel):
     min_score: float = Field(default=0.12, ge=0, le=1)
 
 
+class ContactTagCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    color: str | None = Field(default=None, pattern=r'^#[0-9a-fA-F]{6}$')
+    description: str | None = Field(default=None, max_length=500)
+
+
+class ContactTagUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    color: str | None = Field(default=None, pattern=r'^#[0-9a-fA-F]{6}$')
+    description: str | None = Field(default=None, max_length=500)
+
+
+class ContactTagAssign(BaseModel):
+    tag_ids: list[UUID] = Field(default_factory=list)
+
+
+class ContactNoteCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
 class PromptCreate(BaseModel):
     tenant_id: UUID | None = None
     vertical_code: str = 'common'
