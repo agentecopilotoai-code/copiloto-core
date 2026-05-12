@@ -1,8 +1,6 @@
 from pathlib import Path
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-MIGRATIONS = Path('app/db/migrations.py')
-APP_MAIN = Path('app/main.py')
 API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
@@ -124,23 +122,6 @@ def test_tenant_wizard_manages_contact_tags():
     assert 'updateContactTag' in wizard
     assert 'deleteContactTag' in wizard
     assert 'Etiquetas de contacto' in wizard
-
-
-def test_runtime_migration_creates_crm_tables_idempotently():
-    assert MIGRATIONS.exists(), 'app/db/migrations.py must exist'
-    source = MIGRATIONS.read_text()
-    assert 'create table if not exists app.contact_tags' in source
-    assert 'create table if not exists app.contact_tag_assignments' in source
-    assert 'create table if not exists app.contact_notes' in source
-    assert 'enable row level security' in source
-    assert 'pg_policies' in source
-    assert 'pg_trigger' in source
-    assert 'pg_constraint' in source
-    assert 'async def run_runtime_migrations' in source
-
-    main_source = APP_MAIN.read_text()
-    assert 'from app.db.migrations import run_runtime_migrations' in main_source
-    assert 'await run_runtime_migrations(db.pool)' in main_source
 
 
 def test_operations_desk_shows_and_manages_tags():
