@@ -245,6 +245,13 @@ def _build_appointment(channel_id):
         'service_name': 'Manicure',
         'preparation_notes': 'Llega 10 min antes',
         'resource_name': 'Ana',
+        # TASK-0050: appointments now carry branch info. Default to no branch
+        # so the legacy tenant-wide location_* path is exercised.
+        'branch_id': None,
+        'branch_address': None,
+        'branch_maps_url': None,
+        'branch_phone': None,
+        'branch_name': None,
     }
 
 
