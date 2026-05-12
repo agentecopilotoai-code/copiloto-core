@@ -604,6 +604,121 @@ async def _record_handled(
     )
 
 
+async def start_auto_rebook_flow(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    channel_id: UUID,
+    channel_account_mode: str,
+    conversation: Any,
+    appointment: dict[str, Any],
+    inbound_message: Any,
+) -> dict[str, Any]:
+    """Trigger the reschedule sub-flow programmatically (TASK-0044).
+
+    Used when the client replies "no" to the active confirmation and the tenant
+    has ``notification_settings.auto_rebook_on_decline`` enabled. The empathic
+    intro is sent first; if no alternative slot exists, the caller should run
+    the normal handoff path.
+
+    The persisted state is tagged with ``source='auto_rebook'`` so that a
+    follow-up "no" mid-flow cancels the appointment and escalates instead of
+    bouncing back to the start.
+    """
+    idempotency_key = f'self_service_auto_rebook:{inbound_message["id"]}'
+    if await conn.fetchval(
+        'select id from app.domain_events where tenant_id=$1 and idempotency_key=$2',
+        tenant_id,
+        idempotency_key,
+    ):
+        return {'action': 'skipped', 'reason': 'already_processed'}
+
+    await _queue_text_message(
+        conn,
+        tenant_id=tenant_id,
+        conversation_id=conversation['id'],
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        body_text='Sin problema. ¿Quieres elegir otro horario?',
+        step='auto_rebook_intro',
+    )
+
+    offered = await _present_reschedule_slots(
+        conn,
+        tenant_id=tenant_id,
+        conversation=conversation,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        appointment=appointment,
+    )
+    if offered is None:
+        await conn.execute(
+            """
+            insert into app.domain_events (
+              tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload
+            )
+            values ($1, 'conversation', $2, 'self_service.handled', $3, $4::jsonb)
+            on conflict (tenant_id, idempotency_key) do nothing
+            """,
+            tenant_id,
+            conversation['id'],
+            idempotency_key,
+            json.dumps({
+                'flow': FLOW_RESCHEDULE,
+                'step': 'auto_rebook_no_slots',
+                'appointment_id': str(appointment['id']),
+            }),
+        )
+        return {
+            'action': 'self_service_escalated',
+            'reason': 'no_alternative_slots',
+            'appointment_id': str(appointment['id']),
+        }
+    await _persist_state(
+        conn,
+        tenant_id,
+        conversation,
+        {
+            'flow': FLOW_RESCHEDULE,
+            'step': STEP_AWAITING_RESCHEDULE_SLOT,
+            'appointment_id': str(appointment['id']),
+            'offered_slots': offered,
+            'source': 'auto_rebook',
+        },
+    )
+    await conn.execute(
+        """
+        insert into app.domain_events (
+          tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload
+        )
+        values ($1, 'conversation', $2, 'self_service.handled', $3, $4::jsonb)
+        on conflict (tenant_id, idempotency_key) do nothing
+        """,
+        tenant_id,
+        conversation['id'],
+        idempotency_key,
+        json.dumps({
+            'flow': FLOW_RESCHEDULE,
+            'step': STEP_AWAITING_RESCHEDULE_SLOT,
+            'appointment_id': str(appointment['id']),
+            'source': 'auto_rebook',
+            'offered_count': len(offered),
+        }),
+    )
+    log.info(
+        'self_service.auto_rebook_started',
+        tenant_id=str(tenant_id),
+        appointment_id=str(appointment['id']),
+        slots=len(offered),
+    )
+    return {
+        'action': 'self_service_step_sent',
+        'flow': FLOW_RESCHEDULE,
+        'step': STEP_AWAITING_RESCHEDULE_SLOT,
+        'source': 'auto_rebook',
+    }
+
+
 async def maybe_run_self_service_flow(
     conn: asyncpg.Connection,
     *,
@@ -696,6 +811,42 @@ async def maybe_run_self_service_flow(
                 )
                 return {
                     'action': 'self_service_kept',
+                    'appointment_id': str(appointment_id),
+                }
+        if (
+            flow == FLOW_RESCHEDULE
+            and state.get('source') == 'auto_rebook'
+            and not prefix
+            and inbound_message.get('body_text')
+        ):
+            from app.services.feedback_flow import parse_confirmation as _parse_conf
+
+            decision = _parse_conf(inbound_message.get('body_text'))
+            if decision == 'declined':
+                await _execute_cancel(
+                    conn,
+                    tenant_id=tenant_id,
+                    conversation=conversation,
+                    channel_id=channel_id,
+                    channel_account_mode=channel_account_mode,
+                    appointment=appointment,
+                )
+                await _persist_state(conn, tenant_id, conversation, None)
+                await _record_handled(
+                    conn,
+                    tenant_id,
+                    conversation['id'],
+                    inbound_message['id'],
+                    flow=FLOW_RESCHEDULE,
+                    step='auto_rebook_declined',
+                    extra={
+                        'appointment_id': str(appointment_id),
+                        'source': 'auto_rebook',
+                    },
+                )
+                return {
+                    'action': 'self_service_escalated',
+                    'reason': 'auto_rebook_declined',
                     'appointment_id': str(appointment_id),
                 }
         if flow == FLOW_RESCHEDULE and prefix == PREFIX_RESCHED_SLOT:

@@ -49,6 +49,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   post_rebooking_enabled: false,
   post_rebooking_delay_days: 30,
   post_rebooking_message: '',
+  auto_rebook_on_decline: true,
 };
 
 function hydrateNotificationSettings(raw) {
@@ -1126,6 +1127,19 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
                 onChange={(e) => setNotificationSettings({ ...notificationSettings, confirmation_reminder_hours: Number(e.target.value) || 0 })}
               />
             </label>
+            <label className="inline-check wide">
+              <input
+                type="checkbox"
+                checked={notificationSettings.auto_rebook_on_decline !== false}
+                onChange={(e) => setNotificationSettings({ ...notificationSettings, auto_rebook_on_decline: e.target.checked })}
+              />
+              Ofrecer reprogramar al declinar la confirmación (TASK-0044)
+            </label>
+            <p className="hint" style={{ marginTop: '0.25rem' }}>
+              Si el cliente responde "no" al pedido de confirmación activa, el bot ofrecerá tres
+              horarios alternativos en lugar de quedarse esperando a un agente. Si responde "no"
+              al rebooking, la cita se cancela y se escala al equipo.
+            </p>
           </fieldset>
 
           <fieldset className="wide" style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '0.75rem 1rem' }}>

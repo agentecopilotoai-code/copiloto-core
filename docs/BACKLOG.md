@@ -208,22 +208,7 @@ _TASK-0043 — Cancelación y reprogramación self-service por WhatsApp: COMPLET
 
 ---
 
-### TASK-0044 — Auto-rebooking conversacional al declinar la confirmación activa
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0043 (reutiliza el sub-flujo de reschedule).
-- **Por qué bloquea:** hoy cuando el cliente responde `no` al pedido de confirmación activa, solo se actualiza `appointments.confirmation_status='declined'` y queda esperando a un humano. La tasa de rescate de no-show no mejora. La nota de TASK-0035 ya señala que esto se aplazó.
-- **Alcance:**
-  - Modificar `feedback_flow.maybe_record_confirmation`: cuando la decisión es `declined` y el tenant tiene `notification_settings.auto_rebook_on_decline: true` (nuevo toggle, default `true`), invocar el sub-flow de reschedule de TASK-0043 con un mensaje empático ("Sin problema. ¿Quieres elegir otro horario?") seguido de los 3 slots alternativos.
-  - Si el cliente elige un slot → cita reagendada, jobs regenerados, agente notificado solo si lo desea (no es escalación obligatoria).
-  - Si el cliente responde `no` al rebooking → entonces sí se cancela la cita y se escala a humano para llamarlo / cerrar el ciclo.
-  - Toggle adicional en panel `TenantSetupWizard > Notificaciones`: "Ofrecer reprogramar al declinar la confirmación".
-- **Criterios de aceptación:**
-  - Cliente responde `no` al pedido de confirmación → bot ofrece 3 slots; si elige uno, cita reagendada sin intervención humana.
-  - Toggle off → comportamiento actual (solo escala).
-  - Tests: ≥ 5 estáticos: integración del flow, respeta el toggle, no se dispara fuera de la ventana `confirmation_reminder_hours`.
-- **Notas:**
-  - Lo más importante en este MVP es **no** intentar adivinar la mejor hora alternativa con LLM — el cliente elige de la lista. Mantener la UX consistente con TASK-0043.
+_TASK-0044 — Auto-rebooking conversacional al declinar la confirmación activa: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

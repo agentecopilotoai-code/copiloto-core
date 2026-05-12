@@ -420,6 +420,9 @@ async def orchestrate_inbound_message(
         tenant_id=tenant_id,
         contact_id=contact['id'],
         inbound_message=inbound_message,
+        conversation=conversation,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
     )
     if confirmation_result is not None:
         log.info(
@@ -427,7 +430,25 @@ async def orchestrate_inbound_message(
             conversation_id=conversation_id,
             appointment_id=confirmation_result.get('appointment_id'),
             decision=confirmation_result.get('confirmation_status'),
+            auto_rebook=bool(confirmation_result.get('auto_rebook')),
         )
+        # When auto-rebook actually started the reschedule sub-flow we must
+        # short-circuit here — the bot already replied with the slots and the
+        # mid-flow state lives in conversations.metadata.self_service.
+        auto_rebook = confirmation_result.get('auto_rebook') or {}
+        if auto_rebook.get('action') == 'self_service_step_sent':
+            return confirmation_result
+        if auto_rebook.get('action') == 'self_service_escalated':
+            return await _do_handoff(
+                conn,
+                tenant_id=tenant_id,
+                channel_id=channel_id,
+                conversation=conversation,
+                inbound_message=inbound_message,
+                policy=policy,
+                reason='auto_rebook_escalated',
+                reason_detail=auto_rebook.get('reason', ''),
+            )
 
     # Guided booking flow over interactive messages (TASK-0030).
     # Runs when the tenant has services in the catalogue AND either:

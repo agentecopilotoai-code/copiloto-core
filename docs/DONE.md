@@ -15,6 +15,40 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0044 — Auto-rebooking conversacional al declinar la confirmación activa
+
+- **Fecha:** 2026-05-12
+- **Resumen:** cuando el cliente responde "no" al pedido de confirmación activa, hasta ahora se quedaba `confirmation_status='declined'` esperando a un humano. Ahora, si el tenant tiene `notification_settings.auto_rebook_on_decline` activo (default `true`), el bot envía un mensaje empático ("Sin problema. ¿Quieres elegir otro horario?") seguido de 3 slots libres del mismo recurso/servicio. Si elige uno, la cita se reagenda y los jobs se regeneran. Si vuelve a decir "no", la cita se cancela y se escala a humano para cerrar el ciclo. Toda la mecánica reutiliza el sub-flow de reschedule de TASK-0043 sin duplicar código.
+- **Implementación:**
+  - **`app/services/appointment_self_service.py`** — nuevo entrypoint público `start_auto_rebook_flow(...)` que envía el intro empático, ofrece slots vía `_present_reschedule_slots` y persiste estado en `conversations.metadata.self_service` etiquetado con `source='auto_rebook'`. Idempotente por `domain_events('self_service.handled')` con clave `self_service_auto_rebook:{inbound_message_id}`. Cuando no hay slots disponibles, devuelve `self_service_escalated` con `reason='no_alternative_slots'` y emite el evento de auditoría correspondiente.
+  - **Rama "decline" durante el rebook** — el helper mid-flow de `maybe_run_self_service_flow` detecta cuando `state.source == 'auto_rebook'` y la respuesta de texto es una decline (`parse_confirmation` la reutilizamos de `feedback_flow`). En ese caso ejecuta `_execute_cancel`, limpia el estado y devuelve `self_service_escalated` con `reason='auto_rebook_declined'`.
+  - **`app/services/feedback_flow.py`** — `maybe_record_confirmation` ahora acepta `conversation`, `channel_id` y `channel_account_mode` opcionales; cuando la decisión es `declined` y `auto_rebook_enabled(notification_settings)` es `True`, invoca `start_auto_rebook_flow` y devuelve `auto_rebook` dentro del resultado. Añade un **guard anti-loop**: si la conversación ya tiene una self-service mid-flow activa, el confirmation handler retorna `None` sin tocar nada (eso evita que un "no" mid-rebook re-arranque otro rebook). Nuevo helper público `auto_rebook_enabled(settings)` que tolera `None`, dict, JSON-string y valores inválidos.
+  - **`app/services/rag_orchestrator.py`** — pasa `conversation`/`channel_id`/`channel_account_mode` a `maybe_record_confirmation`. Cuando el resultado lleva un `auto_rebook` con acción `self_service_step_sent`, hace short-circuit devolviendo el resultado de inmediato. Si llega `self_service_escalated`, dispara `_do_handoff` con `reason='auto_rebook_escalated'`.
+  - **`app/services/notifications.py`** — `DEFAULT_NOTIFICATION_SETTINGS` declara `auto_rebook_on_decline: True`, así un tenant nuevo arranca con el comportamiento activado.
+  - **Admin Panel** — la pestaña **Notificaciones** del `TenantSetupWizard` muestra el checkbox "Ofrecer reprogramar al declinar la confirmación" dentro del fieldset "Reducción de no-show", con texto de ayuda que explica el flujo end-to-end. El default UI también es `true`. Los settings persisten como `notification_settings.auto_rebook_on_decline`.
+- **Archivos modificados:**
+  - `app/services/appointment_self_service.py` — nuevo `start_auto_rebook_flow` (~80 líneas) + rama decline mid-rebook.
+  - `app/services/feedback_flow.py` — `auto_rebook_enabled`, guard de mid-flow, hook que llama al rebook.
+  - `app/services/rag_orchestrator.py` — propaga conversation/channel + short-circuit y escalado.
+  - `app/services/notifications.py` — default `auto_rebook_on_decline=True`.
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` — default + toggle UI.
+  - `tests/test_auto_rebook_static.py` (nuevo) — 16 tests.
+  - `docs/BACKLOG.md` / `docs/DONE.md`.
+- **Comandos / validaciones:**
+  - `pytest tests/test_auto_rebook_static.py` → **16 passed** cubriendo: parsing del toggle con todos los formatos (dict, JSON string, inválido, missing); módulos exportan `start_auto_rebook_flow` y manejan decline durante auto-rebook; `feedback_flow` pasa conversation/channel y aplica guard mid-flow; orquestador hace short-circuit en `step_sent` y escala en `escalated`; UI expone el toggle; y 5 escenarios FakeConn end-to-end (intro+slots persistidos con `source='auto_rebook'`, idempotencia replay, escalado sin slots, "no" mid-rebook cancela y audita, guard mid-flow no re-trigger, toggle off no dispara, toggle on dispara).
+  - `pytest tests/test_auto_rebook_static.py tests/test_self_service_static.py tests/test_qualification_flow_static.py tests/test_booking_flow_static.py tests/test_whatsapp_rag_orchestrator.py tests/test_policy_engine_static.py tests/test_notifications_static.py` → **167 passed**, sin regresiones.
+- **Criterios de aceptación verificados:**
+  - Cliente responde `no` al pedido de confirmación → bot ofrece 3 slots; si elige uno, cita reagendada sin intervención humana (mismo path que TASK-0043).
+  - Toggle off → solo actualiza `confirmation_status='declined'` y se comporta como antes (sin rebook).
+  - Cliente responde `no` al rebook → cita cancelada (`bot.appointment_cancelled` audited) y conversación escalada con `reason='auto_rebook_escalated'`.
+  - 16 tests estáticos (objetivo era ≥ 5).
+- **Notas:**
+  - El módulo reutiliza el slot picker, el conflict handler y el regenerate-jobs de TASK-0043 sin duplicar.
+  - El default es `true` porque la pieza recupera no-shows; un tenant que quiera apagarlo lo hace desde Notificaciones.
+  - Si en el momento de declinar no hay slots disponibles (`no_alternative_slots`), no se queda atascado: se escala a humano vía `_do_handoff`.
+
+---
+
 ### TASK-0043 — Cancelación y reprogramación self-service por WhatsApp
 
 - **Fecha:** 2026-05-12

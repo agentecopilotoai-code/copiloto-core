@@ -124,17 +124,72 @@ async def maybe_record_feedback(
     }
 
 
+def auto_rebook_enabled(notification_settings: Any) -> bool:
+    """Read the ``auto_rebook_on_decline`` toggle from notification settings.
+
+    Defaults to ``True`` so customers who decline are offered alternatives
+    even before the tenant explicitly turns the feature on.
+    """
+    settings = notification_settings
+    if isinstance(settings, str):
+        import json as _json
+        try:
+            settings = _json.loads(settings)
+        except (ValueError, TypeError):
+            settings = {}
+    if not isinstance(settings, dict):
+        return True
+    if 'auto_rebook_on_decline' not in settings:
+        return True
+    value = settings.get('auto_rebook_on_decline')
+    if value is None:
+        return True
+    return bool(value)
+
+
 async def maybe_record_confirmation(
     conn: asyncpg.Connection,
     *,
     tenant_id: UUID,
     contact_id: UUID,
     inbound_message: Any,
+    conversation: Any | None = None,
+    channel_id: UUID | None = None,
+    channel_account_mode: str | None = None,
 ) -> dict[str, Any] | None:
-    """Apply confirmation_status updates from a 'sí'/'no' reply."""
+    """Apply confirmation_status updates from a 'sí'/'no' reply.
+
+    TASK-0044: when the decision is ``declined`` and the tenant has
+    ``notification_settings.auto_rebook_on_decline`` enabled (default ``True``),
+    triggers the reschedule sub-flow (see
+    ``appointment_self_service.start_auto_rebook_flow``) so the customer can
+    pick another time without involving a human. The caller must pass the
+    conversation, channel_id and channel_account_mode so the bot can reply on
+    the same channel.
+    """
     decision = parse_confirmation(inbound_message.get('body_text'))
     if decision is None:
         return None
+    # When the conversation already has an active self-service flow (e.g.
+    # auto-rebook just offered slots), let that flow handle the reply instead
+    # of re-running confirmation. Otherwise a "no" mid-rebook would loop the
+    # client back into another rebooking.
+    if conversation is not None:
+        import json as _json
+
+        raw_meta = conversation.get('metadata')
+        if isinstance(raw_meta, str):
+            try:
+                raw_meta = _json.loads(raw_meta)
+            except (ValueError, TypeError):
+                raw_meta = None
+        if isinstance(raw_meta, dict):
+            self_service_state = raw_meta.get('self_service')
+            if (
+                isinstance(self_service_state, dict)
+                and self_service_state.get('step') not in (None, 'completed')
+            ):
+                return None
     appt = await _latest_appointment_for_contact(
         conn,
         tenant_id,
@@ -159,8 +214,33 @@ async def maybe_record_confirmation(
         appointment_id=str(appt['id']),
         decision=decision,
     )
-    return {
+    result: dict[str, Any] = {
         'action': 'confirmation_recorded',
         'appointment_id': str(appt['id']),
         'confirmation_status': decision,
     }
+
+    if decision == 'declined' and conversation is not None and channel_id is not None:
+        notification_settings = await conn.fetchval(
+            'select notification_settings from app.tenant_settings where tenant_id=$1',
+            tenant_id,
+        )
+        if auto_rebook_enabled(notification_settings):
+            from app.services.appointment_self_service import (
+                _fetch_appointment,
+                start_auto_rebook_flow,
+            )
+
+            appointment = await _fetch_appointment(conn, tenant_id, appt['id'])
+            if appointment is not None:
+                rebook = await start_auto_rebook_flow(
+                    conn,
+                    tenant_id=tenant_id,
+                    channel_id=channel_id,
+                    channel_account_mode=channel_account_mode or 'mock',
+                    conversation=conversation,
+                    appointment=appointment,
+                    inbound_message=inbound_message,
+                )
+                result['auto_rebook'] = rebook
+    return result
