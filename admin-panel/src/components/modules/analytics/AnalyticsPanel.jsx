@@ -324,6 +324,39 @@ export function AnalyticsPanel({ module, session, tenant }) {
             </div>
 
             <div className="analytics-card">
+              <h3>Origen de leads (lead_source.channel)</h3>
+              {(overview.lead_sources ?? []).length === 0 ? (
+                <p className="hint">Aún no se registran contactos en el rango seleccionado.</p>
+              ) : (
+                <table className="analytics-table">
+                  <thead>
+                    <tr>
+                      <th>Canal</th>
+                      <th>Contactos</th>
+                      <th>%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const total = overview.lead_sources.reduce((sum, row) => sum + (row.count || 0), 0);
+                      return overview.lead_sources.map((row) => (
+                        <tr key={row.channel}>
+                          <td><code>{row.channel}</code></td>
+                          <td>{formatNumber(row.count)}</td>
+                          <td>{formatPercent(total ? (row.count / total) * 100 : 0)}</td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              )}
+              <p className="hint">
+                Distribución por canal de captación (web widget, WhatsApp, manual, etc.). Útil
+                para medir TASK-0039.
+              </p>
+            </div>
+
+            <div className="analytics-card">
               <h3>Top intenciones</h3>
               {(conversations?.top_intents ?? []).length === 0 ? (
                 <p className="hint">Sin intenciones registradas.</p>

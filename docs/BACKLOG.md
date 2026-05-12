@@ -135,29 +135,7 @@ _TASK-0038 — Campañas y mensajes masivos a segmentos de contactos: COMPLETADA
 
 ---
 
-### TASK-0039 — Widget web y formulario de captura de leads desde sitio web
-
-- **Objetivo:** ampliar los canales de captación más allá de WhatsApp. El widget es un script JavaScript que el negocio embebe en su sitio web y que abre un chat flotante conectado directamente a CopilotoIA, creando contacto y conversación automáticamente y enrutando la respuesta del bot igual que WhatsApp.
-- **Alcance mínimo — backend:**
-  - Canal `web` en `tenant_channels`: `provider = 'web'`. La tabla ya soporta providers adicionales — no requiere cambios de esquema.
-  - Endpoints públicos (autenticados con `widget_token` firmado, no con JWT de usuario):
-    - `POST /v1/web/chat/start` — inicia conversación. Body: `{tenant_slug, name, phone?, email?, message, utm_source?, utm_medium?, utm_campaign?, referrer?}`. Devuelve `{conversation_id, session_token}`. El `session_token` es JWT firmado con `SECRET_KEY`, expira en 24h, contiene `conversation_id` y `contact_id`.
-    - `POST /v1/web/chat/{conversation_id}/messages` — enviar mensaje (autenticado con `session_token`). Devuelve respuesta del bot.
-    - `GET /v1/web/chat/{conversation_id}/messages` — historial de la sesión.
-  - El orquestador RAG procesa mensajes web igual que WhatsApp; `channel_type = 'web'` en `messages`.
-  - Campo `lead_source jsonb NOT NULL DEFAULT '{}'` en `contacts`: `{channel, utm_source, utm_medium, utm_campaign, referrer, first_contact_at}`. Poblado al crear el contacto desde el widget.
-  - `widget_token` del tenant en `.secrets/tenants/{id}/widget_token`.
-  - Tests estáticos: inicio de sesión web, generación y validación de `session_token`, envío de mensaje, extracción de UTMs en `lead_source`, rechazo de `session_token` expirado.
-- **Alcance mínimo — Admin Panel:**
-  - Nueva sección en `WhatsAppOnboarding.jsx` (o módulo **"Canales"**): pestaña **"Widget Web"**:
-    - Toggle: activar canal web.
-    - Campo: dominio(s) permitidos (para CORS).
-    - Generador de snippet: `<script src=".../widget.js" data-tenant="{slug}" data-color="{hex}" data-greeting="..."></script>`.
-    - Botón copiar snippet al portapapeles.
-  - Widget JS embebible: `admin-panel/public/widget.js` — script sin dependencias externas que abre iframe flotante en esquina inferior derecha. El iframe sirve `/web/chat/ui?tenant={slug}`. Configurable vía atributos `data-color` y `data-greeting` del script tag.
-  - En `AnalyticsPanel.jsx` (TASK-0027): distribución de contactos por `lead_source.channel`.
-- **Criterio de aceptación:** snippet embebible en cualquier HTML; widget inicia conversación y respuesta del bot llega en < 3s; la conversación aparece en Operations Desk inbox; `lead_source` queda registrado; tests pasan en CI.
-- **Dependencias:** TASK-0033 (catálogo para respuestas del bot), TASK-0037 (`lead_source` en contactos).
+_TASK-0039 — Widget web y formulario de captura de leads desde sitio web: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

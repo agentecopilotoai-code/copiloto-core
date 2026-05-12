@@ -260,6 +260,19 @@ export function patchWhatsAppChannelMode(session, tenantId, accountMode, reason)
   });
 }
 
+export function getWebChannel(session, tenantId) {
+  return request(`/tenants/${tenantId}/channels/web`, { session, tenantId });
+}
+
+export function upsertWebChannel(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/channels/web`, {
+    method: 'PUT',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
 export function getKnowledgeStorageSettings(session, tenantId) {
   return request(`/tenants/${tenantId}/knowledge/storage`, { session, tenantId });
 }

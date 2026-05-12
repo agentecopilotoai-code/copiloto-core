@@ -8,6 +8,12 @@ import {
   syncWhatsappTemplates,
   upsertWhatsAppChannel,
 } from '../../../services/coreApi.js';
+import { WebWidgetPanel } from './WebWidgetPanel.jsx';
+
+const CHANNEL_TABS = [
+  { id: 'whatsapp', label: 'WhatsApp Cloud API' },
+  { id: 'web', label: 'Widget Web' },
+];
 
 const TEMPLATE_PURPOSES = [
   { id: 'appointment_confirmation', label: 'Confirmación de cita', required: true },
@@ -126,6 +132,7 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
   const [templates, setTemplates] = useState([]);
   const [templateForm, setTemplateForm] = useState(emptyTemplateForm);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [activeTab, setActiveTab] = useState('whatsapp');
 
   const currentTenantId = tenant?.id;
 
@@ -376,7 +383,7 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
     <section className="module-card wizard-card">
       <div className="module-heading">
         <div>
-          <p className="eyebrow">Onboarding WABA</p>
+          <p className="eyebrow">Canales de captación</p>
           <h2>{module.label}</h2>
           <p>{module.summary}</p>
         </div>
@@ -386,6 +393,76 @@ export function WhatsAppOnboarding({ module, session, tenant }) {
         </div>
       </div>
 
+      <nav className="channel-tabs" role="tablist" style={{ display: 'flex', gap: 8, margin: '8px 0 16px' }}>
+        {CHANNEL_TABS.map((tab) => (
+          <button
+            aria-selected={activeTab === tab.id}
+            className={activeTab === tab.id ? 'primary-action' : 'secondary-action'}
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            role="tab"
+            type="button"
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === 'web' ? (
+        <WebWidgetPanel session={session} tenant={tenant} />
+      ) : (
+        <WhatsAppPanel
+          checklist={checklist}
+          channel={channel}
+          form={form}
+          handleCreateTemplate={handleCreateTemplate}
+          handleDeleteTemplate={handleDeleteTemplate}
+          handleSubmit={handleSubmit}
+          handleSyncTemplates={handleSyncTemplates}
+          health={health}
+          isBusy={isBusy}
+          isLoadingChannel={isLoadingChannel}
+          isLoadingTemplates={isLoadingTemplates}
+          loadError={loadError}
+          notice={notice}
+          refreshHealth={refreshHealth}
+          templateForm={templateForm}
+          templates={templates}
+          templatesByPurpose={templatesByPurpose}
+          tenantId={currentTenantId}
+          setTemplateForm={setTemplateForm}
+          updateField={updateField}
+        />
+      )}
+    </section>
+  );
+}
+
+function WhatsAppPanel({
+  checklist,
+  channel,
+  form,
+  handleCreateTemplate,
+  handleDeleteTemplate,
+  handleSubmit,
+  handleSyncTemplates,
+  health,
+  isBusy,
+  isLoadingChannel,
+  isLoadingTemplates,
+  loadError,
+  notice,
+  refreshHealth,
+  setTemplateForm,
+  templateForm,
+  templates,
+  templatesByPurpose,
+  tenantId,
+  updateField,
+}) {
+  const currentTenantId = tenantId;
+  return (
+    <>
       {notice ? <p className={`notice ${notice.type}`}>{notice.text}</p> : null}
       {health?.checks?.delivery_ready === false ? (
         <p className="notice error">
@@ -714,6 +791,6 @@ Modo mock: el worker marca el mensaje como simulado y no llama a Meta.
 Modo real: el worker llama a Meta usando el secreto meta_access_token del tenant; si ese secreto falta o es local-mock/change-me, el mensaje falla explícitamente.
 El usuario solo pega los tres valores secretos; las referencias internas se derivan automáticamente con la misma estructura para todos los tenants.`}</pre>
       </div>
-    </section>
+    </>
   );
 }

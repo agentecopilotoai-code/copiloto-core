@@ -41,6 +41,7 @@ async def process_once(conn: asyncpg.Connection) -> int:
         join app.contacts ct on ct.id = cv.contact_id and ct.tenant_id = e.tenant_id
         join app.tenant_channels c on c.id = cv.channel_id and c.tenant_id = e.tenant_id
         where e.published_at is null and e.event_name='message.queued'
+          and c.provider = 'whatsapp_cloud_api'
         order by e.occurred_at
         limit 10
         """
