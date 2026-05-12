@@ -148,3 +148,226 @@ _TASK-0029 — Ejecutar y validar drill de restore local (criterio pendiente de 
 ---
 
 _TASK-0041 — Gestión de equipo y roles del tenant: COMPLETADA. Ver `docs/DONE.md`._
+
+---
+
+## Análisis de brechas para go-live comercial — 2026-05-12
+
+Se revisó el código contra el **flujo clave del paciente/cliente** definido por producto (captación → primer contacto → calificación → orientación → agendamiento → confirmación → reducción de no-show → seguimiento → retención → métricas). El sistema cubre el camino feliz end-to-end en español sobre WhatsApp y Widget Web, con booking guiado, recordatorios automáticos, panel operativo, analítica básica, CRM, campañas y links de pago hospedados. **No está bloqueado por una falla estructural**, pero hay siete brechas funcionales que impiden vender el producto a una empresa real sin trabajo manual sobre el bot:
+
+| # | Brecha detectada | Evidencia en código | Impacto operativo |
+|---|------------------|---------------------|-------------------|
+| 1 | El bot no califica al lead antes del booking (motivo de consulta, urgencia, primera vez vs. recurrente). Solo clasifica intención. | `app/services/intent_classifier.py` solo devuelve `intent + confidence`; el booking flow salta directo a elegir servicio sin preguntar el motivo. | Se agendan citas equivocadas (servicio incorrecto, urgencias no priorizadas). Resta conversión y aumenta no-show. |
+| 2 | El cliente no puede **cancelar ni reprogramar** su cita por WhatsApp. La intención se detecta (`cancel_appointment`, `reschedule_appointment`) pero no hay state machine que la ejecute — solo lo hace un humano desde Operations Desk. | `app/services/rag_orchestrator.py:495` reconoce los intents; `booking_flow.maybe_run_booking_flow` solo opera sobre crear. | Cliente llama o se queda sin cancelar → no-show. Carga manual sobre el agente. |
+| 3 | Cuando el cliente responde **"no"** al pedido de confirmación activa, queda `confirmation_status='declined'` y un humano interviene. No hay auto-rebooking guiado por el bot. Reconocido como pendiente en notas de TASK-0035. | `app/services/feedback_flow.py:127` solo escribe el status; el orquestador no lanza un sub-flujo de "elegí otro horario". | Cita declinada se queda en el aire; oportunidad de rescate se pierde. |
+| 4 | El feedback **1-2 estrellas no escala** automáticamente a un humano para "service recovery". Se guarda en `app.appointment_feedback` y no genera alerta ni handoff. | `app/services/feedback_flow.py:80` (`maybe_record_feedback`) solo persiste; no toca `conversations.handoff_required`. | Quejas se pierden en silencio. Reputación y recompra dañadas. |
+| 5 | El bot no puede enviar **media proactiva** (fotos del local, videos del procedimiento, imagen de promoción activa) durante la orientación. Hay soporte de transporte (`whatsapp.py` acepta `media_url`) pero no hay UI, ni tabla para registrar promociones, ni regla que dispare el envío. | `app/services/whatsapp.py:219` acepta media; no existe `app.media_assets` ni regla de orquestación. | Cliente no ve evidencia visual → más fricción para cerrar el agendamiento. |
+| 6 | No hay **segmentos automáticos para retención**: clientes sin visita en N días, citas perdidas sin recuperar, top-spenders. Las campañas existen pero requieren armar el filtro a mano cada vez. | `app/services/campaigns.py:53-185` arma `segment_filter` libre; no hay segmentos predefinidos ni evaluación por reglas (sin visita > X días, total gastado > Y, etc.). | Equipo no usa campañas porque toca pensar SQL implícito. Recompra y reactivación quedan dependientes del agente. |
+| 7 | No hay **métrica de funnel** (lead → cita → completada → recurrente) ni atribución por campaña (citas/ingreso generados por una campaña en particular). El panel muestra KPIs sueltos pero no la conversión punta a punta. | `app/api/v1/routes.py:6537+` (`analytics_overview`) calcula KPIs aislados; `campaigns.refresh_campaign_counters` solo cuenta sent/delivered/read. | Gerente no ve el ROI por canal/campaña → no puede invertir. Bloqueo comercial. |
+
+### Lo que **sí** está listo (no requiere ajuste)
+
+- Captura multi-canal (WhatsApp, Widget Web con UTM/referrer en `contacts.lead_source`, importación desde campañas saliente).
+- Primer contacto sub-segundo: cascade `template → local LLM → cloud LLM` en `rag_orchestrator.py` + RAG con embeddings reales y answer engine configurable.
+- Agendamiento conversacional completo con mensajes interactivos, disponibilidad real desde `resources.capabilities.working_hours`, exclusión por `EXCLUDE USING GIST` en `appointments`.
+- Confirmaciones, recordatorios 24h/1h, no-show prompt y post-cita (instrucciones + feedback + rebooking message) — `notifications.py` + gate de plantillas aprobadas en `scheduler.py`.
+- CRM básico (etiquetas, notas internas, historial de citas/conversaciones por contacto) + Operations Desk con badges de confirmación/feedback/pago.
+- Panel de analítica con KPIs por rango (no-show rate, ingreso, retención 90d, top intenciones/servicios, distribución por origen de lead, top etiquetas).
+- Links de pago Stripe/MercadoPago con webhook verificado, badges de estado por cita, envío del link por WhatsApp desde el desk.
+- Gestión de equipo + tenant switcher tipo Slack + RLS multitenant + Auth0/MFA + auditoría completa + drill de backup/restore validado.
+
+### Orden de ejecución sugerido (dependencias explícitas)
+
+```
+TASK-0042 (calificación previa al booking)        # prerrequisito de cualquier mejora de conversión
+    ↓
+TASK-0043 (cancelación / reprogramación self-service por WhatsApp)
+    ↓
+TASK-0044 (auto-rebooking al declinar la confirmación activa)   # depende de TASK-0043
+    ↓
+TASK-0045 (escalamiento automático en feedback negativo)
+    ↓
+TASK-0046 (biblioteca de medios + promociones activas)
+    ↓
+TASK-0047 (segmentos automáticos para retención y reactivación)  # depende de TASK-0042 y CRM
+    ↓
+TASK-0048 (funnel de conversión y atribución por campaña)        # cierre comercial del MVP
+```
+
+---
+
+## Stack de tareas pendientes (post go-live técnico)
+
+---
+
+### TASK-0042 — Calificación conversacional previa al booking
+
+- **Estado:** PENDING
+- **Por qué bloquea:** el bot salta del saludo al primer paso del booking sin entender **por qué** llama el cliente. Esto produce citas mal clasificadas (servicio equivocado, urgencias no priorizadas, primer contacto tratado igual que recurrente). Es la pieza que más sube conversión y baja no-show.
+- **Alcance:**
+  - Nueva tabla `app.qualification_questions` por tenant (`id, tenant_id, position, label, kind: free_text|single_choice|multi_choice|yes_no|number, options jsonb, required bool, applies_to_service_ids uuid[], created_at, updated_at`) con RLS y trigger touch.
+  - Mini state machine `qualification_flow.py` que corre **antes** de `booking_flow.maybe_run_booking_flow` cuando el intent es `book_appointment`/`check_availability` y no hay respuestas previas en la conversación. Persiste respuestas en `conversations.metadata.qualification` y en una columna nueva `contacts.qualification jsonb` (last snapshot).
+  - Render por WhatsApp: `single_choice`/`yes_no` → botones interactivos (≤3) o lista (>3). `free_text`/`number` → mensaje de texto con validación regex. Idempotencia por `domain_events('qualification_flow.handled')`.
+  - Cuando todas las preguntas requeridas están respondidas, el flow encadena con `booking_flow` pasándole `recommended_service_id` si la lógica del tenant lo deriva (ver criterio).
+  - UI en `admin-panel/.../tenantSetup/QualificationQuestionsPanel.jsx` (nueva pestaña dentro de **Negocio**): CRUD de preguntas con drag-handle de orden, preview en vivo del flujo, mapeo opcional pregunta → servicio (ej.: "¿es tu primera vez?" sí → derivar al servicio "Valoración inicial").
+  - El perfil de contacto en `ContactsModule` muestra las últimas respuestas de calificación.
+- **Criterios de aceptación:**
+  - Un tenant nuevo configura 3 preguntas (motivo, urgencia, primera vez sí/no) en < 2 minutos desde el panel.
+  - Una conversación `hola, quiero una cita` recibe primero las preguntas, en orden, antes del listado de servicios.
+  - Si una respuesta `single_choice` mapea a un `service_id`, el bot **brinca** la pantalla de selección de servicio en el booking.
+  - El campo `contacts.qualification` queda consultable en `GET /v1/contacts/{id}/profile` y se muestra en `OperationsDesk`.
+  - Auditoría: `qualification.created/updated/deleted` y `qualification.answered` (incluye preguntas + respuestas + `service_id` derivado si aplica).
+  - Tests: ≥ 15 estáticos cubriendo schema, registro de endpoints, helpers Pydantic, state machine completa con `FakeConn`, integración con `rag_orchestrator` (no corre si el intent no es de booking).
+- **Notas:**
+  - No usar LLM para parsear respuestas en MVP (solo regex/coincidencia exacta sobre `options.value`); cualquier respuesta inesperada vuelve a presentar la pregunta.
+  - El flow respeta opt-out: si el cliente escribe `stop` durante la calificación, se aborta y se persiste el opt-out.
+
+---
+
+### TASK-0043 — Cancelación y reprogramación self-service por WhatsApp
+
+- **Estado:** PENDING
+- **Por qué bloquea:** los intents `cancel_appointment` y `reschedule_appointment` ya están clasificados pero el bot **no los ejecuta** — solo lo hace un humano desde Operations Desk. Sin esto, el cliente llama por teléfono o no avisa → no-show. Imposible bajar la tasa sin esta pieza.
+- **Alcance:**
+  - Nuevo módulo `app/services/appointment_self_service.py` con dos sub-flows ramificados desde `rag_orchestrator` cuando el intent matchea:
+    - `maybe_run_cancel_flow`: busca la próxima cita del contacto en estado `scheduled|confirmed` (LIMIT 1 por `starts_at`), pide confirmación con botones `Sí, cancelar` / `No, mantener`, actualiza `status='cancelled'` y dispara `cancel_appointment_reminder_jobs`. Auditoría `bot.appointment_cancelled`.
+    - `maybe_run_reschedule_flow`: reutiliza `compute_free_slots` para ofrecer 3 horarios alternativos con el **mismo recurso/servicio**; al elegir, `UPDATE appointments SET starts_at=..., ends_at=...` dentro de un savepoint que captura `ExclusionViolationError` (ver patrón de `booking_flow._create_appointment`) y `regenerate_appointment_reminder_jobs`. Auditoría `bot.appointment_rescheduled`.
+  - Ambos flujos persisten estado en `conversations.metadata.self_service` y son idempotentes por `inbound_message.id`.
+  - Ventana de política: el tenant puede definir `tenant_settings.escalation_policy.self_service.min_hours_before_start` (default 2h). Por debajo de ese umbral el bot responde "muy cerca para hacerlo solo" y lo escala a humano (`handoff_required=true`).
+  - Nuevos prefijos `cancel_confirm:` y `resched_slot:` (interactive_id) consistentes con `book_*`.
+  - `OperationsDesk`: indicador visual en el inbox cuando una cita fue modificada por el bot (badge "self-service") para que el agente lo sepa.
+- **Criterios de aceptación:**
+  - Cliente escribe `quiero cancelar mi cita` → bot muestra cita, confirma, cancela, cancela jobs pendientes, manda "Listo, tu cita del DD/MM se canceló".
+  - Cliente escribe `cambiar mi cita` → bot muestra 3 slots libres mismo recurso, cliente elige, cita movida, jobs regenerados (cancelados los viejos + creados los nuevos).
+  - Si la cita está a < 2h de inicio (configurable), el bot escala a humano sin actuar.
+  - Si dos clientes intentan agarrar el mismo slot al mismo tiempo, el segundo recibe "ese horario se acaba de ocupar" y vuelve al paso de slots.
+  - Tests: ≥ 12 estáticos, cubriendo happy path de cancel y reschedule, ventana de política, `ExclusionViolationError`, idempotencia, integración con `rag_orchestrator`.
+- **Notas:**
+  - No se reasigna a otro recurso automáticamente (mantener UX simple). Si quieren cambiar profesional, el cliente cancela y vuelve a agendar — eso lo señaliza el bot.
+  - No se permite reschedule si la cita ya tiene `payment_status='paid'` sin antes pasar por agente humano (evita ruido de reembolsos en MVP).
+
+---
+
+### TASK-0044 — Auto-rebooking conversacional al declinar la confirmación activa
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0043 (reutiliza el sub-flujo de reschedule).
+- **Por qué bloquea:** hoy cuando el cliente responde `no` al pedido de confirmación activa, solo se actualiza `appointments.confirmation_status='declined'` y queda esperando a un humano. La tasa de rescate de no-show no mejora. La nota de TASK-0035 ya señala que esto se aplazó.
+- **Alcance:**
+  - Modificar `feedback_flow.maybe_record_confirmation`: cuando la decisión es `declined` y el tenant tiene `notification_settings.auto_rebook_on_decline: true` (nuevo toggle, default `true`), invocar el sub-flow de reschedule de TASK-0043 con un mensaje empático ("Sin problema. ¿Quieres elegir otro horario?") seguido de los 3 slots alternativos.
+  - Si el cliente elige un slot → cita reagendada, jobs regenerados, agente notificado solo si lo desea (no es escalación obligatoria).
+  - Si el cliente responde `no` al rebooking → entonces sí se cancela la cita y se escala a humano para llamarlo / cerrar el ciclo.
+  - Toggle adicional en panel `TenantSetupWizard > Notificaciones`: "Ofrecer reprogramar al declinar la confirmación".
+- **Criterios de aceptación:**
+  - Cliente responde `no` al pedido de confirmación → bot ofrece 3 slots; si elige uno, cita reagendada sin intervención humana.
+  - Toggle off → comportamiento actual (solo escala).
+  - Tests: ≥ 5 estáticos: integración del flow, respeta el toggle, no se dispara fuera de la ventana `confirmation_reminder_hours`.
+- **Notas:**
+  - Lo más importante en este MVP es **no** intentar adivinar la mejor hora alternativa con LLM — el cliente elige de la lista. Mantener la UX consistente con TASK-0043.
+
+---
+
+### TASK-0045 — Escalamiento automático en feedback negativo
+
+- **Estado:** PENDING
+- **Por qué bloquea:** las quejas se pierden en silencio — un feedback de 1 o 2 estrellas queda solo en `appointment_feedback` sin que nadie se entere. La empresa pierde la oportunidad de "service recovery" y empeora retención.
+- **Alcance:**
+  - En `feedback_flow.maybe_record_feedback`: si `rating <= 2`, además de insertar el feedback:
+    1. Marcar la conversación con `handoff_required=true`, `handoff_reason='negative_feedback'`.
+    2. Disparar `domain_event('feedback.negative_received')` con `appointment_id`, `rating` y `comment`.
+    3. Auto-asignar etiqueta `Atención prioritaria` (creada por bootstrap si no existe).
+    4. Responder al cliente con un mensaje empático configurable (`tenant_settings.notification_settings.negative_feedback_reply`, default "Lamentamos mucho oír eso. Un agente se va a comunicar contigo enseguida.").
+  - Operations Desk: nueva pestaña/filtro **Quejas** que lista conversaciones con `handoff_reason='negative_feedback'` no resueltas, ordenadas por `created_at desc`, con la calificación y comentario visibles directamente en el inbox.
+  - Notificación push opcional al canal de Slack del tenant (si configura webhook URL en `tenant_settings.notification_channels.slack_webhook_url`) — fuera del MVP si suma scope.
+- **Criterios de aceptación:**
+  - Un feedback de 2 estrellas activa el handoff y aparece en el filtro **Quejas** del desk dentro de 5 segundos.
+  - Un feedback de 4 estrellas NO escala.
+  - Tests: ≥ 6 estáticos: trigger correcto por rating, conversación marcada, etiqueta asignada, mensaje de respuesta presente, domain_event emitido, filtro **Quejas** registrado en UI.
+- **Notas:**
+  - El umbral (≤2) puede salir a `notification_settings.negative_feedback_threshold` en una iteración futura; en MVP se hardcodea por simplicidad y porque la escala 1-5 es estándar.
+  - La etiqueta se crea automáticamente la primera vez si el tenant no la tiene; idempotente por `(tenant_id, name='Atención prioritaria')`.
+
+---
+
+### TASK-0046 — Biblioteca de medios y promociones activas que el bot puede enviar
+
+- **Estado:** PENDING
+- **Por qué bloquea:** durante la orientación el bot solo manda texto. No puede compartir fotos del local, video del procedimiento ni la imagen de la promoción del mes. La diferencia con un agente humano real es notoria y baja conversión en servicios estéticos/médicos.
+- **Alcance:**
+  - Nueva tabla `app.media_assets` (`id, tenant_id, kind: image|video|pdf|audio, label, description, file_path, mime_type, sha256, size_bytes, tags text[], created_at, updated_at`) con RLS, índice `gin(tags)`.
+  - Nueva tabla `app.promotions` (`id, tenant_id, name, description, media_asset_id, valid_from, valid_until, applies_to_service_ids uuid[], coupon_code, discount_percent numeric(5,2), is_active, sort_order, created_at, updated_at`) con check `valid_from <= valid_until`.
+  - Endpoints CRUD bajo `tenant_admin_router`: `/v1/tenants/{id}/media`, `/v1/tenants/{id}/promotions`. Upload del binario reutiliza el storage de knowledge (`MinIO/S3`) con prefijo `media/<tenant_id>/`.
+  - Helper `app/services/promotions.py.attach_active_promo(conn, tenant_id, service_id)` que devuelve la promoción vigente para un servicio (o `None`). Se llama desde:
+    - `booking_flow._present_services` para anteponer un mensaje con la imagen + texto de la promoción del primer servicio que la tenga.
+    - El cierre del booking, justo después del resumen, si la cita usa un servicio con promo activa.
+  - UI nueva en `admin-panel`: módulo **Medios y promociones** (`MediaLibraryModule.jsx`) con uploader drag-and-drop, lista en grid, etiquetas, vista previa. Y en `ServiceCatalog.jsx`, link a una promoción existente desde el formulario del servicio.
+  - El RAG no indexa media — solo el texto descriptivo. Las imágenes/videos se mandan por `media_url` directo (Meta los cachea por `media_id` después del primer envío).
+- **Criterios de aceptación:**
+  - Admin sube una foto del local, la etiqueta `lobby`, queda accesible en < 5s.
+  - Admin crea una promoción "Limpieza dental 20% - mayo" con imagen, vigencia y mapeo al servicio "Limpieza dental".
+  - Cliente pide cita para "Limpieza dental" → bot manda primero la imagen de la promo con el texto, después el flujo normal de booking.
+  - Tests: ≥ 10 estáticos: tablas + RLS, endpoints CRUD, integración con `booking_flow`, helper `attach_active_promo`, módulo registrado en sidebar, validación de mime types permitidos.
+- **Notas:**
+  - Cap de tamaño por archivo: imágenes 5MB, videos 16MB (limit Meta WhatsApp Cloud API), pdf 100MB. El uploader rechaza por encima en cliente y servidor.
+  - Si el media falla al enviarse (Meta down), el bot manda solo el texto de la promo y deja un `domain_event('promo.media_send_failed')` para retry. No bloquea el booking.
+
+---
+
+### TASK-0047 — Segmentos automáticos para retención y reactivación
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0042 (datos de calificación) y CRM existente (TASK-0037).
+- **Por qué bloquea:** las campañas existen pero el operador tiene que armar el filtro a mano cada vez, sin una vista clara de "quién es candidato". El equipo no usa campañas → recompra y reactivación quedan dependientes del agente.
+- **Alcance:**
+  - Nueva tabla `app.contact_segments` (`id, tenant_id, name, description, kind: dynamic|static, rules jsonb, contact_count int default 0, last_refreshed_at, created_by, created_at, updated_at`).
+  - Builder de **segmentos dinámicos**: `app/services/segments.py.build_segment_query(rules) -> (sql, params)` que traduce reglas JSON (`any_of`, `all_of`, operadores `eq/in/lt/gt/between`, campos `last_appointment_at`, `total_appointments_completed`, `total_spent`, `tags`, `lead_source.channel`, `qualification.<key>`) a un `SELECT contact_id FROM ...`. Reutiliza el patrón ya usado por `campaigns.build_recipients_query`.
+  - Segmentos **preconstruidos** sembrados al crear un tenant: "Sin visita en 60+ días", "Clientes recurrentes (3+ citas)", "VIP (gasto > umbral)", "Primer contacto sin agendar", "No-show reciente". Editables por el tenant.
+  - Job programado (worker `scheduler.py`) que recalcula `contact_count` y persiste un snapshot en `app.contact_segment_members(segment_id, contact_id, snapshot_at)` para los segmentos dinámicos cada 1h.
+  - Endpoints `/v1/tenants/{id}/segments` (CRUD + `/preview` que devuelve los primeros 25 contactos del segmento).
+  - En el módulo **Campañas**, el formulario de creación permite **partir de un segmento** (en lugar de armar `segment_filter` libre). El segmento se snapshotea al lanzar la campaña (no se recalcula durante la entrega).
+  - Vista de "candidatos por segmento" en `ContactsModule` con filtro de segmento.
+- **Criterios de aceptación:**
+  - Al crear un tenant nuevo, los 5 segmentos preconstruidos aparecen ya sembrados.
+  - Operador crea una campaña "Reactivación mayo" eligiendo el segmento "Sin visita en 60+ días" → la campaña hereda los recipients.
+  - `GET /v1/tenants/{id}/segments/{sid}/preview` responde en < 1s con 25 contactos.
+  - El job de refresh actualiza `contact_count` y no duplica miembros (idempotente por `(segment_id, contact_id)`).
+  - Tests: ≥ 12 estáticos: schema, builder de query con cada operador, segmentos preconstruidos sembrados por bootstrap, integración con campaigns, refresh worker.
+- **Notas:**
+  - Los segmentos **estáticos** (kind=`static`) sirven para snapshots manuales — el operador puede capturar "asistentes al taller del 12 de mayo" sin reglas.
+  - Si un campo `qualification.<key>` no existe en un tenant, la regla devuelve 0 contactos (no error). Esto desacopla la deuda contra TASK-0042.
+
+---
+
+### TASK-0048 — Funnel de conversión y atribución de ingresos por campaña
+
+- **Estado:** PENDING
+- **Por qué bloquea:** el gerente del negocio no puede demostrar el ROI del producto. El panel muestra KPIs sueltos (conversaciones, citas, no-show rate, ingreso) pero no la **conversión punta a punta** (lead → cita agendada → cita completada → cliente recurrente) ni cuánto ingreso atribuir a una campaña específica. Sin esto, el cliente que paga la suscripción no renueva.
+- **Alcance:**
+  - Nuevo endpoint `GET /v1/analytics/funnel?from_date=&to_date=` que devuelve, por canal de origen (`lead_source.channel`):
+    1. `leads` = contactos con `first_contact_at` en el rango.
+    2. `engaged` = contactos con ≥ 1 mensaje outbound del bot/agente.
+    3. `appointments_scheduled` = contactos con ≥ 1 appointment creado en el rango.
+    4. `appointments_completed` = contactos con ≥ 1 appointment `status='completed'`.
+    5. `repeat_customers` = contactos con ≥ 2 appointments `completed` en los últimos 90 días.
+    Cada paso reporta `count`, `conversion_from_previous_pct`, `conversion_from_top_pct`.
+  - Nuevo endpoint `GET /v1/analytics/campaigns?from_date=&to_date=` que devuelve, por campaña ejecutada en el rango:
+    - `recipients`, `delivered`, `read`, `replied` (ya existentes).
+    - `appointments_attributed` = citas creadas por contactos cuya última campaña recibida (en ventana `attribution_window_days`, default 14) fue esta.
+    - `revenue_attributed` = suma de `service_catalog.price_amount` de esas citas en estado `completed`.
+    - `roi_estimated` = `revenue_attributed / campaigns.cost` (si el operador captura el costo opcional).
+  - Tabla nueva `app.campaign_attributions(campaign_id, contact_id, appointment_id, attributed_at)` poblada por un trigger / worker liviano cuando se crea un appointment dentro de la ventana de atribución posterior al `last_message_at` de una campaña al contacto.
+  - Columna nueva `app.campaigns.cost_amount numeric(12,2)` y `cost_currency char(3)` editables desde el módulo Campañas para que el ROI sea computable.
+  - UI: nueva sub-pestaña en `AnalyticsPanel`:
+    - **Funnel** con gráfica de embudo (5 pasos × N canales) usando CSS-only bars.
+    - **Campañas** con tabla ordenada por `revenue_attributed desc`, columnas: nombre, recipients, response rate, citas atribuidas, ingreso atribuido, costo, ROI.
+- **Criterios de aceptación:**
+  - Para un rango de 30 días con tráfico real, el endpoint funnel se ejecuta en < 800ms (índices ya existentes lo soportan).
+  - Cada paso del funnel tiene su porcentaje correcto: si `leads=100`, `engaged=80`, `appointments_scheduled=40`, `completed=30`, `repeat=8`, los `conversion_from_previous_pct` son `80, 50, 75, 26.7`.
+  - Una campaña que genera 5 citas atribuibles (en ventana de 14 días) muestra `appointments_attributed=5` y `revenue_attributed = Σ price`.
+  - Tests: ≥ 10 estáticos: endpoints registrados con `require_min_role('manager')`, query SQL del funnel cubre los 5 pasos, atribución dentro/fuera de ventana, ROI con/sin costo, UI registra las dos sub-pestañas.
+- **Notas:**
+  - La ventana de atribución es **last-touch** simple (no multi-touch). En MVP es suficiente: un cliente vino por una campaña → la cita se le cuenta a esa campaña.
+  - Si el contacto recibió varias campañas dentro de la ventana, gana la más reciente con `delivered_at` antes del `appointment.created_at`.
+  - El cierre de esta tarea es el cierre del MVP comercial: con funnel + atribución + retención automática, el producto está listo para venderse con datos en mano.
+
+---
