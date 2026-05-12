@@ -143,20 +143,7 @@ _TASK-0040 — Links de pago y registro de pagos en citas: COMPLETADA. Ver `docs
 
 ---
 
-### TASK-0029 — Ejecutar y validar drill de restore local (criterio pendiente de TASK-0015)
-
-- **Objetivo:** los scripts `backup-local.sh` y `restore-local.sh` existen y pasan `bash -n`, pero nunca se ejecutaron contra un Docker Compose real con datos. El criterio de aceptación de TASK-0015 dice "restore local probado con datos demo" y no se cumplió. Esta tarea lo valida antes de go-live.
-- **Alcance mínimo:**
-  - En un entorno con Docker y Docker Compose disponible:
-    1. Levantar el stack con `./scripts/bootstrap.sh`.
-    2. Ejecutar `./scripts/backup-local.sh` y verificar dump SQL + manifiesto.
-    3. Ejecutar `./scripts/bootstrap.sh --reset --yes --skip-smoke` para limpiar la base.
-    4. Ejecutar `./scripts/restore-local.sh <backup-file>` y validar conteos en SQL.
-    5. Documentar antes/después en `docs/runbook-go-live-evidence.md`.
-  - Si se detectan errores en los scripts, corregirlos.
-  - Agregar test de sintaxis bash: `bash -n scripts/backup-local.sh && bash -n scripts/restore-local.sh`.
-- **Criterio de aceptación:** restore local ejecutado con datos demo en Docker Compose; conteos documentados; scripts pasan `bash -n`; evidencia commiteada.
-- **Dependencias:** requiere Docker. Si el entorno no lo tiene, documentar el bloqueo y no mover a DONE.
+_TASK-0029 — Ejecutar y validar drill de restore local (criterio pendiente de TASK-0015): COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

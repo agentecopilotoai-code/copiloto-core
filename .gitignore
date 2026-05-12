@@ -23,6 +23,9 @@ postgres-data/
 redis-data/
 minio-data/
 
+# Local backup artifacts (output of scripts/backup-local.sh; never commit dumps)
+backups/
+
 # OS/editor
 .DS_Store
 .idea/
