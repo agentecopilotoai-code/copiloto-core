@@ -159,12 +159,18 @@ def test_tenant_connection_sets_rls_context(tenant_factory):
 
 def test_scenario_capture_consent_qualification_booking(tenant_factory):
     """Inbound from a brand-new contact triggers the consent template, the
-    button reply writes to ``consent_ledger`` and flips ``opt_in_status``, and a
-    follow-up appointment lands with ``confirmation_status='pending'``."""
+    button reply writes to ``consent_ledger`` and flips ``opt_in_status``, the
+    qualification flow then queues the first question on the next
+    booking-related inbound, and a follow-up appointment lands with
+    ``confirmation_status='pending'``."""
     from app.services.consent import (
         CONSENT_BUTTON_YES,
         CONSENT_REQUEST_BODY,
         enforce_inbound_consent,
+    )
+    from app.services.qualification_flow import (
+        PREFIX_QUALIFY,
+        maybe_run_qualification_flow,
     )
 
     async def run():
@@ -253,22 +259,118 @@ def test_scenario_capture_consent_qualification_booking(tenant_factory):
             # The exact text the contact saw must be captured for SIC audits.
             assert CONSENT_REQUEST_BODY.split('{')[0] in (ledger[0]['copy_shown'] or '')
 
-            # ── Step 3: qualification facts are persisted on the contact ──
-            await conn.execute(
+            # ── Step 3: qualification flow kicks off on a booking intent ──
+            qualification_qid = await conn.fetchval(
                 """
-                update app.contacts
-                set qualification=$2::jsonb, updated_at=now()
-                where id=$1
+                insert into app.qualification_questions
+                  (tenant_id, position, label, key, kind, options, required)
+                values ($1, 1, '¿Es tu primera visita?', 'first_visit',
+                        'yes_no', '[]'::jsonb, true)
+                returning id
                 """,
-                handle.contact_id,
-                json.dumps({
-                    'reason': 'consulta',
-                    'urgency': 'media',
-                    'first_time': True,
-                }),
+                handle.tenant_id,
             )
 
-            # ── Step 4: a booking lands as scheduled+pending confirmation ─
+            # Refresh conversation so the qualification flow sees the latest
+            # metadata (empty self_service/qualification state).
+            conversation_after_consent = dict(await conn.fetchrow(
+                'select * from app.conversations where id=$1', handle.conversation_id
+            ))
+            booking_inbound = dict(await conn.fetchrow(
+                """
+                insert into app.messages
+                  (tenant_id, conversation_id, direction, sender_actor_type,
+                   body_text, message_type, status, payload)
+                values ($1, $2, 'inbound', 'contact',
+                        'Quiero agendar una cita', 'text', 'received', '{}'::jsonb)
+                returning *
+                """,
+                handle.tenant_id, handle.conversation_id,
+            ))
+            contact_granted = dict(await conn.fetchrow(
+                'select * from app.contacts where id=$1', handle.contact_id
+            ))
+            qual_result = await maybe_run_qualification_flow(
+                conn,
+                tenant_id=handle.tenant_id,
+                channel_id=handle.channel_id,
+                channel_account_mode='mock',
+                conversation=conversation_after_consent,
+                contact=contact_granted,
+                inbound_message=booking_inbound,
+                intent='book_appointment',
+            )
+            assert qual_result is not None
+            assert qual_result['action'] == 'qualification_step_sent', \
+                f'expected qualification to start, got {qual_result}'
+
+            # The first qualification question must have been queued outbound
+            # as an interactive message that references the question id.
+            outbound_after_qual = await _outbound_messages(conn, handle.conversation_id)
+
+            def _payload_str(m):
+                raw = m['payload']
+                if isinstance(raw, str):
+                    return raw
+                return json.dumps(raw or {})
+
+            qual_outbound = [
+                m for m in outbound_after_qual
+                if m['message_type'] == 'interactive' and PREFIX_QUALIFY in _payload_str(m)
+            ]
+            assert qual_outbound, 'qualification flow must queue an interactive question'
+            assert str(qualification_qid) in _payload_str(qual_outbound[-1]), \
+                'the queued question payload must reference the question id'
+
+            # ── Step 4: contact provides qualification answer ─────────────
+            qual_answer = dict(await conn.fetchrow(
+                """
+                insert into app.messages
+                  (tenant_id, conversation_id, direction, sender_actor_type,
+                   body_text, message_type, status, payload)
+                values ($1, $2, 'inbound', 'contact', 'Sí',
+                        'interactive', 'received', $3::jsonb)
+                returning *
+                """,
+                handle.tenant_id, handle.conversation_id,
+                json.dumps({
+                    'interactive_id': f'{PREFIX_QUALIFY}:{qualification_qid}:yes'
+                }),
+            ))
+            conversation_mid_qual = dict(await conn.fetchrow(
+                'select * from app.conversations where id=$1', handle.conversation_id
+            ))
+            answer_result = await maybe_run_qualification_flow(
+                conn,
+                tenant_id=handle.tenant_id,
+                channel_id=handle.channel_id,
+                channel_account_mode='mock',
+                conversation=conversation_mid_qual,
+                contact=contact_granted,
+                inbound_message=qual_answer,
+                intent='book_appointment',
+            )
+            assert answer_result is not None
+            # Only one question exists, so the flow completes immediately.
+            assert answer_result['action'] in {
+                'qualification_completed',
+                'qualification_step_sent',
+            }, f'unexpected qualification answer outcome: {answer_result}'
+
+            # The answer must be persisted in conversation.metadata.qualification
+            conversation_after_answer = await conn.fetchrow(
+                'select metadata from app.conversations where id=$1',
+                handle.conversation_id,
+            )
+            meta = conversation_after_answer['metadata']
+            if isinstance(meta, str):
+                meta = json.loads(meta)
+            qual_state = meta.get('qualification') or {}
+            answered = qual_state.get('answered') or {}
+            assert answered.get(str(qualification_qid)) is True, \
+                'qualification flow must persist the yes/no answer on the conversation'
+
+            # ── Step 5: a booking lands as scheduled+pending confirmation ─
             starts = _now_utc() + timedelta(days=2)
             appointment_id = await conn.fetchval(
                 """
@@ -619,6 +721,97 @@ def test_scenario_negative_feedback_escalates(tenant_factory):
                 handle.tenant_id,
             )
             assert alert_count == 1
+
+    run_async(run())
+
+
+# ---------------------------------------------------------------------------
+# Scenario 5a: booking flow presents the service catalog on book_appointment
+# ---------------------------------------------------------------------------
+
+def test_scenario_booking_flow_presents_services(tenant_factory):
+    """On a ``book_appointment`` intent for a tenant with an active catalog,
+    the booking flow must queue an interactive list with the services so the
+    customer can pick one. This is the bridge between qualification and the
+    actual appointment creation."""
+    from app.services.booking_flow import (
+        PREFIX_SERVICE,
+        maybe_run_booking_flow,
+    )
+
+    async def run():
+        handle = await tenant_factory(label='journey-6', opt_in_status='granted')
+        url = os.environ.get('TEST_DATABASE_URL') or os.environ['DATABASE_URL']
+        async with tenant_connection(url, handle.tenant_id, support_mode=True) as conn:
+            # The resource needs working_hours so the booking flow can later
+            # compute slots; the catalog is already populated by tenant_factory.
+            await conn.execute(
+                """
+                update app.resources
+                set capabilities=$2::jsonb
+                where id=$1
+                """,
+                handle.resource_id,
+                json.dumps({
+                    'services': [handle.service_code],
+                    'working_hours': {
+                        'monday': [{'start': '09:00', 'end': '18:00'}],
+                        'tuesday': [{'start': '09:00', 'end': '18:00'}],
+                        'wednesday': [{'start': '09:00', 'end': '18:00'}],
+                        'thursday': [{'start': '09:00', 'end': '18:00'}],
+                        'friday': [{'start': '09:00', 'end': '18:00'}],
+                    },
+                }),
+            )
+
+            conversation = dict(await conn.fetchrow(
+                'select * from app.conversations where id=$1', handle.conversation_id
+            ))
+            contact = dict(await conn.fetchrow(
+                'select * from app.contacts where id=$1', handle.contact_id
+            ))
+            inbound = dict(await conn.fetchrow(
+                """
+                insert into app.messages
+                  (tenant_id, conversation_id, direction, sender_actor_type,
+                   body_text, message_type, status, payload)
+                values ($1, $2, 'inbound', 'contact',
+                        'Quiero agendar una cita', 'text', 'received', '{}'::jsonb)
+                returning *
+                """,
+                handle.tenant_id, handle.conversation_id,
+            ))
+
+            result = await maybe_run_booking_flow(
+                conn,
+                tenant_id=handle.tenant_id,
+                channel_id=handle.channel_id,
+                channel_account_mode='mock',
+                conversation=conversation,
+                contact=contact,
+                inbound_message=inbound,
+                intent='book_appointment',
+                has_catalog=True,
+            )
+            assert result is not None
+            assert result.get('action', '').startswith('booking_'), \
+                f'booking flow must engage on book_appointment intent, got {result}'
+
+            outbound = await _outbound_messages(conn, handle.conversation_id)
+
+            def _payload_str(m):
+                raw = m['payload']
+                return raw if isinstance(raw, str) else json.dumps(raw or {})
+
+            service_outbound = [
+                m for m in outbound
+                if m['message_type'] == 'interactive' and PREFIX_SERVICE in _payload_str(m)
+            ]
+            assert service_outbound, \
+                'booking flow must queue an interactive message with the service catalog'
+            # The interactive payload must carry the seeded service id so the
+            # next inbound (interactive_id=service:<uuid>) can be matched back.
+            assert str(handle.service_id) in _payload_str(service_outbound[-1])
 
     run_async(run())
 
