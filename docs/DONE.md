@@ -15,6 +15,41 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0061 — Política de retención y purgado TTL — GDPR operativo
+
+- **Fecha:** 2026-05-13
+- **Resumen:** cada tenant ahora tiene políticas de retención editables por entidad (`messages`, `conversations`, `audit_logs`, `domain_events`, `webhook_events_raw`, `reminder_jobs`). Un worker dedicado corre 1 vez al día a las 03:00 UTC, recorre las políticas y o bien DELETEa en lotes (paginados con `LIMIT retention_page_size`) o bien anonimiza in-place (`messages`/`conversations`) reemplazando `body_text`/`summary` con un token estable y borrando `metadata`. Cada (tenant, entity) procesado emite una fila en `audit_logs` con `deleted_count`, `anonymized_count`, `total_before`, `removed_pct` y un flag `anomaly` cuando se elimina >10% del histórico; el cierre del ciclo emite también un `domain_events('retention.cycle_completed')` con la idempotency key del día para evitar dobles ejecuciones. El Admin Panel expone la tabla editable en la pestaña Privacidad con preview ("se purgarán mañana N").
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** nueva tabla `app.data_retention_policies(tenant_id, entity, retention_days, anonymize_instead_of_delete, updated_at)` con CHECK `retention_days >= 30`, enumeración de entidades válidas, y `chk_audit_logs_no_anonymize` que prohíbe la anonimización para `audit_logs`. RLS habilitada y el nombre se agrega al loop genérico de policies. Trigger `trg_data_retention_policies_touch` mantiene `updated_at` actualizado.
+  - **`app/services/retention.py` (nuevo):** define `RETENTION_ENTITIES`, `ANONYMIZABLE_ENTITIES = {messages, conversations}`, `DEFAULT_RETENTION_DAYS` (messages 365, conversations 365, audit_logs 1825, domain_events 90, webhook_events_raw 30, reminder_jobs 30) y los helpers `default_policy_rows`, `seed_default_retention_policies`, `validate_policy` (mismas validaciones que el CHECK, devolviendo errores legibles). `run_retention_cycle_for_tenant` aplica una política a la vez: para entidades sin anonimización, lanza un DELETE paginado con CTE+ctid que devuelve el count vía `conn.execute`; para `messages`/`conversations` emite un UPDATE paginado que reemplaza `body_text`/`summary` por `[redacted]` y limpia `metadata/payload`. Tras anonimizar conversations también limpia el `display_name`/`phone_e164` de contactos cuyo `updated_at` ya está fuera de la ventana y aún no tienen el prefijo `+anon:`. Cada entidad escribe un `audit_logs(action='retention.purged')` con metadata JSON estructurada. `run_retention_cycle` itera tenants activos (`status='active'`) y emite el evento `retention.cycle_completed` con idempotency key `retention:<tenant>:<YYYY-MM-DD>`. `preview_retention` cuenta filas con `created_at < now() + 1 day - retention_days` para el preview "mañana".
+  - **`app/workers/retention_worker.py` (nuevo):** entrypoint dedicado. Calcula `_seconds_until_next_run(retention_run_hour_utc)` (próxima ejecución 03:00 UTC), duerme hasta entonces y dispara `run_retention_cycle`. Soporta failover: si una ejecución falla a nivel top-level se loguea y se reintenta al siguiente ciclo. Se loguea como `retention.cycle_done` con el conteo de tenants procesados.
+  - **`app/core/config.py`:** añade `retention_run_hour_utc=3`, `retention_page_size=5000`, `retention_anomaly_threshold_pct=10.0`.
+  - **`app/api/v1/routes.py`:** importa el helper y siembra defaults al final de ambos flujos de creación de tenant (admin y self-service). Nuevos endpoints bajo `tenant_admin_router`: `GET /tenants/{id}/retention/policies`, `PUT /tenants/{id}/retention/policies` (upsert idempotente con validación previa por entry; rechaza 400 al menor problema y deja `audit_logs(action='retention.policies_updated')`), `GET /tenants/{id}/retention/preview` (delega a `preview_retention`).
+  - **`app/api/v1/schemas.py`:** nuevos pydantic models `RetentionPolicyEntry` (regex sobre `entity`, ge=30 / le=10950 sobre `retention_days`) y `RetentionPoliciesUpdate` (`list[RetentionPolicyEntry]`).
+  - **Admin Panel (`admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`):** la pestaña Privacidad ahora muestra una segunda sección con una tabla editable (entidad, días, anonimizar, "se purgarán mañana", total). El checkbox de anonimización queda deshabilitado para entidades fuera de `RETENTION_ANONYMIZABLE = {messages, conversations}`. Botones "Guardar política de retención" y "Refrescar preview" (con `data-testid` para tests E2E). `coreApi.js` expone `listRetentionPolicies`, `updateRetentionPolicies` y `getRetentionPreview`.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/services/retention.py` (nuevo)
+  - `app/workers/retention_worker.py` (nuevo)
+  - `app/core/config.py`
+  - `app/api/v1/routes.py`
+  - `app/api/v1/schemas.py`
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`
+  - `admin-panel/src/services/coreApi.js`
+  - `tests/test_retention_static.py` (nuevo, 15 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `uv run pytest tests/test_retention_static.py -q` → 15 passed (schema CHECK + RLS, defaults documentados, wiring en `create_tenant`, validación 30-day floor + audit_logs not-anonymizable, DELETE paginado, anonimización solo para messages/conversations, idempotencia, audit row por entidad con `anomaly` flag, evento `retention.cycle_completed` con idempotency key diaria, endpoints HTTP wired + validados, UI con tabla + checkbox restringido, scheduling al hora UTC correcta).
+  - `uv run pytest -q --ignore=tests/test_extraction_worker.py --ignore=tests/test_rls_multitenant_e2e.py --ignore=tests/test_audit.py --ignore=tests/test_knowledge_documents.py --ignore=tests/test_knowledge_storage.py --ignore=tests/test_security.py --ignore=tests/test_mfa_enforcement.py --ignore=tests/test_rag_indexing.py --ignore=tests/test_rag_retrieval.py --ignore=tests/test_tenant_access.py --ignore=tests/test_whatsapp_webhook_helpers.py` → 946 passed, 11 skipped (regresión global).
+  - `uv run ruff check app/services/retention.py app/workers/retention_worker.py app/api/v1/routes.py app/api/v1/schemas.py app/core/config.py tests/test_retention_static.py` → All checks passed!
+- **Notas:**
+  - `audit_logs` no admite anonimización: la CHECK constraint lo impide a nivel DB y `validate_policy` lo rechaza antes de tocar la transacción.
+  - El worker emite `retention.cycle_completed` con idempotency key `retention:<tenant>:<YYYY-MM-DD>`, así que una segunda corrida el mismo día queda como no-op a nivel evento. Los DELETE/anonimizaciones son inherentemente idempotentes — la segunda corrida no encuentra filas dentro de la ventana.
+  - El flag `anomaly` (`removed_pct > retention_anomaly_threshold_pct`) va dentro del payload del audit log y queda disponible para que `operator_alerts` (TASK-0057) consuma `retention.cycle_completed` y notifique al equipo si se borra >10% del histórico (señal de error).
+  - El worker fue separado del scheduler (no se montó en el tick de `scheduler.py`) porque un DELETE de 100k filas con paginación de 5k puede tomar minutos y no debe atrasar el procesamiento de `reminder_jobs`. Cada deployment monta `python -m app.workers.retention_worker` en un container/process distinto.
+
+---
+
 ### TASK-0060 — Observabilidad: métricas Prometheus + alertas básicas
 
 - **Fecha:** 2026-05-13

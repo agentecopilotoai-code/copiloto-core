@@ -127,6 +127,23 @@ export function updateTenantSettings(session, tenantId, payload) {
   });
 }
 
+export function listRetentionPolicies(session, tenantId) {
+  return request(`/tenants/${tenantId}/retention/policies`, { session, tenantId });
+}
+
+export function updateRetentionPolicies(session, tenantId, policies) {
+  return request(`/tenants/${tenantId}/retention/policies`, {
+    method: 'PUT',
+    session,
+    tenantId,
+    body: { policies },
+  });
+}
+
+export function getRetentionPreview(session, tenantId) {
+  return request(`/tenants/${tenantId}/retention/preview`, { session, tenantId });
+}
+
 
 export function getTenantReadiness(session, tenantId, options = {}) {
   const params = new URLSearchParams();

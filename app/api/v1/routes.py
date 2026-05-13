@@ -55,6 +55,7 @@ from app.api.v1.schemas import (
     QualificationReorderRequest,
     QuoteCreate,
     QuotePatch,
+    RetentionPoliciesUpdate,
     ResourceCreate,
     ResourceUpdate,
     ServiceCreate,
@@ -115,6 +116,12 @@ from app.services.payment_provider import (
     verify_stripe_signature,
 )
 from app.services.maps import build_maps_url
+from app.services.retention import (
+    RETENTION_ENTITIES,
+    preview_retention,
+    seed_default_retention_policies,
+    validate_policy,
+)
 from app.services.metrics import (
     record_appointment,
     record_handoff,
@@ -639,6 +646,7 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
         json.dumps(default_escalation_policy),
     )
     await seed_preconstructed_segments(conn, tenant_id)
+    await seed_default_retention_policies(conn, tenant_id)
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.created', entity_type='tenant', entity_id=str(tenant_id))
     return record_to_dict(row)
 
@@ -807,6 +815,7 @@ async def create_own_tenant(
         tenant_id,
     )
     await seed_preconstructed_segments(conn, tenant_id, created_by=user_row['id'])
+    await seed_default_retention_policies(conn, tenant_id)
     await audit(
         conn,
         tenant_id=tenant_id,
@@ -1366,6 +1375,82 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
     return record_to_dict(row)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/retention/policies')
+async def list_retention_policies(
+    tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        """
+        select entity, retention_days, anonymize_instead_of_delete, updated_at
+        from app.data_retention_policies
+        where tenant_id=$1
+        order by entity
+        """,
+        tenant_id,
+    )
+    return {
+        'tenant_id': str(tenant_id),
+        'entities': list(RETENTION_ENTITIES),
+        'policies': [record_to_dict(row) for row in rows],
+    }
+
+
+@tenant_admin_router.put('/tenants/{tenant_id}/retention/policies')
+async def put_retention_policies(
+    tenant_id: UUID,
+    payload: RetentionPoliciesUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    for entry in payload.policies:
+        try:
+            validate_policy(entry.entity, entry.retention_days, entry.anonymize_instead_of_delete)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    async with conn.transaction():
+        for entry in payload.policies:
+            await conn.execute(
+                """
+                insert into app.data_retention_policies
+                  (tenant_id, entity, retention_days, anonymize_instead_of_delete)
+                values ($1, $2, $3, $4)
+                on conflict (tenant_id, entity) do update
+                set retention_days = excluded.retention_days,
+                    anonymize_instead_of_delete = excluded.anonymize_instead_of_delete
+                """,
+                tenant_id,
+                entry.entity,
+                entry.retention_days,
+                entry.anonymize_instead_of_delete,
+            )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='retention.policies_updated',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+    )
+    return await list_retention_policies(tenant_id, request, conn)
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/retention/preview')
+async def get_retention_preview(
+    tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    return {
+        'tenant_id': str(tenant_id),
+        'preview': await preview_retention(conn, tenant_id),
+    }
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/knowledge/storage')
