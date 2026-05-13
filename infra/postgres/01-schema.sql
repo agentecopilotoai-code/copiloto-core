@@ -927,6 +927,85 @@ create index ix_digest_subscriptions_tenant on app.digest_subscriptions(tenant_i
 create index ix_digest_subscriptions_due on app.digest_subscriptions(enabled, cadence, last_sent_at);
 
 
+-- TASK-0076: páginas legales por tenant (Términos, Privacidad, Consentimiento).
+-- Append-only por versión: cada publicación inserta una fila nueva; nunca se
+-- borra ni se reescribe contenido publicado, porque la Circular SIC 002 y
+-- Ley 1581 exigen evidencia histórica del aviso vigente al momento del
+-- consentimiento. ``archived_at`` se setea por trigger cuando una versión
+-- superior es publicada en el mismo (kind, language).
+create table app.tenant_legal_documents (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  kind text not null check (kind in ('terms','privacy','consent')),
+  language text not null default 'es' check (length(language) between 2 and 8),
+  version int not null check (version >= 1),
+  title text not null,
+  content_md text not null,
+  published_at timestamptz,
+  archived_at timestamptz,
+  created_by_user_id uuid,
+  created_at timestamptz not null default now(),
+  constraint uq_tenant_legal_documents_version unique (tenant_id, kind, language, version),
+  constraint chk_tenant_legal_documents_archived_only_if_published check (
+    archived_at is null or published_at is not null
+  )
+);
+create index ix_tenant_legal_documents_tenant_kind
+  on app.tenant_legal_documents(tenant_id, kind, language, version desc);
+create unique index ux_tenant_legal_documents_published_current
+  on app.tenant_legal_documents(tenant_id, kind, language)
+  where published_at is not null and archived_at is null;
+
+create or replace function app.tenant_legal_documents_block_content_mutations() returns trigger
+language plpgsql as $$
+begin
+  if old.content_md is distinct from new.content_md
+     or old.kind is distinct from new.kind
+     or old.language is distinct from new.language
+     or old.version is distinct from new.version
+     or old.tenant_id is distinct from new.tenant_id then
+    raise exception 'tenant_legal_documents is append-only by version (TASK-0076)'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+create trigger trg_tenant_legal_documents_no_content_update
+  before update on app.tenant_legal_documents
+  for each row execute function app.tenant_legal_documents_block_content_mutations();
+
+create or replace function app.tenant_legal_documents_block_delete() returns trigger
+language plpgsql as $$
+begin
+  raise exception 'tenant_legal_documents rows cannot be deleted (TASK-0076 audit trail)'
+    using errcode = '42501';
+end;
+$$;
+create trigger trg_tenant_legal_documents_no_delete
+  before delete on app.tenant_legal_documents
+  for each row execute function app.tenant_legal_documents_block_delete();
+
+create or replace function app.tenant_legal_documents_archive_previous() returns trigger
+language plpgsql as $$
+begin
+  if new.published_at is not null and (old.published_at is null) then
+    update app.tenant_legal_documents
+      set archived_at = new.published_at
+      where tenant_id = new.tenant_id
+        and kind = new.kind
+        and language = new.language
+        and id <> new.id
+        and published_at is not null
+        and archived_at is null;
+  end if;
+  return new;
+end;
+$$;
+create trigger trg_tenant_legal_documents_archive_previous
+  after update on app.tenant_legal_documents
+  for each row execute function app.tenant_legal_documents_archive_previous();
+
+
 -- Tenant consistency guards for operational rows. RLS limits each statement to the
 -- current tenant, while these composite foreign keys prevent same-tenant writes
 -- from linking to records that belong to another tenant.
@@ -1319,6 +1398,7 @@ alter table app.operator_alerts enable row level security;
 alter table app.data_retention_policies enable row level security;
 alter table app.consent_ledger enable row level security;
 alter table app.digest_subscriptions enable row level security;
+alter table app.tenant_legal_documents enable row level security;
 
 do $$
 declare t text;
@@ -1335,7 +1415,7 @@ begin
     'treatment_packages','contact_packages','appointment_package_links',
     'subscription_plans','contact_subscriptions',
     'webhook_events_raw','domain_events','audit_logs','operator_alerts','data_retention_policies',
-    'consent_ledger','digest_subscriptions'
+    'consent_ledger','digest_subscriptions','tenant_legal_documents'
   ] loop
     execute format('create policy %I_tenant_select on app.%I for select using (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);
     execute format('create policy %I_tenant_insert on app.%I for insert with check (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);

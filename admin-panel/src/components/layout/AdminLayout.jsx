@@ -20,6 +20,7 @@ import { SubscriptionsModule } from '../modules/subscriptions/SubscriptionsModul
 import { SegmentsModule } from '../modules/segments/SegmentsModule.jsx';
 import { ServiceCatalog } from '../modules/services/ServiceCatalog.jsx';
 import { TeamModule } from '../modules/team/TeamModule.jsx';
+import { LegalModule } from '../modules/legal/LegalModule.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
 import { OnboardingWizard } from '../modules/onboarding/OnboardingWizard.jsx';
 import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
@@ -382,6 +383,20 @@ export function AdminLayout({ session }) {
       );
     } else {
       activeContent = <TeamModule module={activeModule} session={session} tenant={activeTenant} />;
+    }
+  } else if (activeModuleId === 'legal') {
+    if (!hasMinRole(activeRoles, 'admin')) {
+      activeContent = (
+        <section className="module-card">
+          <h2>Acceso restringido</h2>
+          <p className="hint">
+            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar las
+            páginas legales y los avisos de privacidad.
+          </p>
+        </section>
+      );
+    } else {
+      activeContent = <LegalModule module={activeModule} session={session} tenant={activeTenant} />;
     }
   } else {
     activeContent = <ModulePlaceholder module={activeModule} tenant={activeTenant} />;

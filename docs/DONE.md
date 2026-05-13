@@ -15,6 +15,47 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0076 — Páginas legales por tenant: Términos y Privacidad
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se incorpora un módulo legal por tenant que persiste versiones append-only de Términos, Política de Privacidad y Aviso de Tratamiento de Datos. Cada publicación archiva la versión anterior por trigger sin borrarla. El bot inserta automáticamente el link a la versión vigente en el template `consent_request_v1` (cumplimiento Circular SIC 002). El admin gestiona los documentos desde un nuevo módulo "Legal" con editor Markdown + vista previa renderizada por el mismo subset sanitizado que usa el endpoint público.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** nueva tabla `app.tenant_legal_documents(id, tenant_id, kind in ('terms','privacy','consent'), language, version, title, content_md, published_at, archived_at, created_by_user_id, created_at)` con `unique(tenant_id, kind, language, version)` y índice único parcial `ux_tenant_legal_documents_published_current` que garantiza una sola versión publicada y no archivada por (tenant, kind, language). Triggers: `trg_tenant_legal_documents_no_content_update` (append-only por versión: bloquea UPDATE de `content_md`/`kind`/`language`/`version`/`tenant_id`), `trg_tenant_legal_documents_no_delete` (sin DELETE), `trg_tenant_legal_documents_archive_previous` (al setear `published_at` archiva la versión live previa). RLS habilitado y participación en el loop genérico de policies.
+  - **Renderer (`app/services/legal.py`):** módulo nuevo con `render_markdown_to_safe_html` (subset puro Python: headings `#`–`######`, párrafos, listas `-`/`*`/`+` y `1.`, `**bold**`, `*italic*`, `` `code` ``, `[label](http(s)://...)` / `mailto:`), todo escapado con `html.escape` antes de transformar; `javascript:` y `data:` se neutralizan. `legal_public_url` arma la URL pública canónica para el bot/campañas y rechaza kinds desconocidos. Constantes `LEGAL_KINDS` y `LEGAL_KIND_LABELS_ES`.
+  - **Consent integration (`app/services/consent.py`):** `build_consent_request_body_text(business_name, legal_url)` y `build_consent_request_payload(..., legal_url)` añaden el sufijo "Conoce nuestra política: <url>" cuando el tenant tiene un documento `privacy` publicado. Helper async nuevo `fetch_published_legal_url(conn, tenant_id, kind='privacy')` con la query de versión vigente; lo llama el flujo `enforce_inbound_consent` antes de queuear el `consent_request`.
+  - **Routes (`app/api/v1/routes.py`):**
+    - `GET /v1/tenants/{tenant_id}/legal/{kind}` (público, sin auth) devuelve `HTMLResponse` con el documento publicado renderizado dentro de un layout minimal (incluye `<meta name="robots" content="noindex">`); 404 si no hay versión publicada.
+    - `GET /v1/tenants/{tenant_id}/legal` (admin) lista todas las versiones, filtrable por `?kind=`.
+    - `POST /v1/tenants/{tenant_id}/legal` (admin) crea un borrador en la siguiente `version` para el `(kind, language)` indicado. Auditado como `legal_document.drafted`.
+    - `POST /v1/tenants/{tenant_id}/legal/{document_id}/publish` (admin) setea `published_at` con `RETURNING`; el trigger archiva la versión anterior. Auditado como `legal_document.published`. 409 si ya estaba publicada, 404 si no existe.
+  - **Pydantic (`app/api/v1/schemas.py`):** `LegalDocumentDraftCreate` con `kind` regex `^(terms|privacy|consent)$`, `language` 2–8 chars, `title` 1–200, `content_md` 1–200 000.
+  - **Admin Panel:**
+    - Nuevo módulo `legal` en `admin-panel/src/data/modules.js` con `minRole: 'admin'`.
+    - Componente `admin-panel/src/components/modules/legal/LegalModule.jsx`: muestra qué versión publicada está vigente por tipo + link a la página pública, formulario para nuevo borrador con editor Markdown y vista previa lado-a-lado (mismo subset sanitizado que el backend), tabla histórica por tipo con acción "Publicar" sobre borradores. Reset de borrador y mensajes de éxito/error.
+    - `admin-panel/src/services/coreApi.js`: `listLegalDocuments`, `createLegalDocumentDraft`, `publishLegalDocument`, `legalDocumentPublicUrl`.
+    - `admin-panel/src/components/layout/AdminLayout.jsx` cablea el módulo con guard `hasMinRole('admin')`.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/api/v1/routes.py`
+  - `app/api/v1/schemas.py`
+  - `app/services/consent.py`
+  - `app/services/legal.py` (nuevo)
+  - `admin-panel/src/data/modules.js`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/legal/LegalModule.jsx` (nuevo)
+  - `admin-panel/src/services/coreApi.js`
+  - `tests/test_legal_documents_static.py` (nuevo, 19 tests)
+  - `docs/BACKLOG.md`
+- **Validaciones:**
+  - `uv run pytest tests/test_legal_documents_static.py -q` → 19 passed
+  - `uv run pytest -q -m "not requires_db and not e2e"` → 1345 passed, 12 skipped (sin regresiones)
+  - `uv run ruff check app/services/legal.py app/services/consent.py app/api/v1/routes.py app/api/v1/schemas.py tests/test_legal_documents_static.py` → All checks passed
+  - `npm run lint` y `npm run build` (admin-panel) → OK
+- **Criterios de aceptación cubiertos:**
+  - Admin sube T&C v1 y al publicarlo el endpoint público devuelve esa versión.
+  - Publica v2 y el trigger `archive_previous` marca v1 como archivada (la fila se preserva).
+  - 19 tests estáticos cubren: schema + triggers + RLS, sanitización HTML/javascript:, helpers de URL, payload de consentimiento con link, routes públicos y admin, schema Pydantic, módulo + cliente en el panel.
+
 ### TASK-0075 — Suscripciones / membresías con cobro recurrente
 
 - **Fecha:** 2026-05-13
