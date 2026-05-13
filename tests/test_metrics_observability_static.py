@@ -219,7 +219,7 @@ def test_circuit_breaker_updates_metric_on_state_change() -> None:
     import asyncio
 
     from app.services import metrics
-    from app.services.circuit_breaker import CircuitBreaker, CircuitOpenError
+    from app.services.circuit_breaker import CircuitBreaker
 
     breaker = CircuitBreaker(name='cb_metric_test', failure_threshold=2, cooldown_seconds=10.0)
 

@@ -15,7 +15,6 @@ from app.services.audit import audit
 from app.services.metrics import (
     observe_response_latency,
     record_handoff,
-    record_message,
 )
 from app.services.appointment_self_service import maybe_run_self_service_flow
 from app.services.booking_flow import maybe_run_booking_flow

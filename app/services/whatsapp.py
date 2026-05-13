@@ -6,7 +6,6 @@ from typing import Any
 import httpx
 
 from app.core.config import get_settings
-from app.services.metrics import record_message
 
 
 def _candidate_secret_paths(secret_name: str) -> list[Path]:
