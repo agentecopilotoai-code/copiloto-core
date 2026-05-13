@@ -406,3 +406,413 @@ _TASK-0060 — Observabilidad: métricas Prometheus + alertas básicas: COMPLETA
 _TASK-0061 — Política de retención y purgado TTL — GDPR operativo: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
+
+## Análisis de readiness vs. flujo clave del paciente/cliente — 2026-05-13 (tercera revisión, pre go-live comercial)
+
+Se cruzó el código actual (61 tareas completadas, 25.7 k LOC en `app/`, 38 tablas en `infra/postgres/01-schema.sql`, 150 endpoints REST, 1020 tests + 11 skipped) contra el **flujo de 10 estadios del paciente/cliente** definido por producto y contra los "drivers de interés para empresa y cliente". El veredicto general es:
+
+| Estadio del flujo | Estado | Evidencia |
+|---|---|---|
+| 1. Captación del interesado | ✅ Parcial | WhatsApp (`/v1/webhooks/whatsapp`) + Widget Web (`/v1/web/chat/*`) + import por campañas. Falta Instagram DM / Facebook Messenger y voz. |
+| 2. Primer contacto inmediato | ✅ | Cascade `template → local LLM → cloud LLM` con RAG cerrado por tenant. Latencia sub-2 s observada vía `cpi_response_latency_seconds`. |
+| 3. Calificación del cliente | ✅ | `qualification_flow.py` con 5 tipos de pregunta + tier de presupuesto/urgencia (TASK-0053). |
+| 4. Orientación y educación | ✅ | Biblioteca de medios + promociones activas (TASK-0046), perfil de especialista con bio/foto (TASK-0049). |
+| 5. Agendamiento sin fricción | ✅ | Booking conversacional interactivo + multi-sede (TASK-0050) + paquetes (TASK-0051) + filtrado por calificación (TASK-0054). |
+| 6. Confirmación y recordatorios | ✅ | Plantillas (TASK-0031), recordatorios 24h/1h, Maps URL auto (TASK-0058). |
+| 7. Reducción de no-show | ✅ | Confirmación activa + auto-rebook (TASK-0044) + timeout (TASK-0056) + self-service cancel/reschedule (TASK-0043). |
+| 8. Seguimiento posterior | ✅ | Post-cita feedback (TASK-0036), escalamiento negativo (TASK-0045), alerta operativa (TASK-0057), recall automático (TASK-0052). |
+| 9. Retención y recompra | ⚠️ Parcial | Campañas + segmentos automáticos (TASK-0047) + atribución (TASK-0048). **Falta:** suscripciones/membresías recurrentes y reactivación por canal alternativo cuando opt-out. |
+| 10. Métricas para la empresa | ⚠️ Parcial | 7 endpoints de analytics + Prometheus (TASK-0060). **Falta:** KPIs por agente, digest periódico, vista de DLQ outbound. |
+
+### Drivers de interés cruzados con el código
+
+| Driver para la empresa | Cubierto | Brecha |
+|---|---|---|
+| Más citas / menos lead perdido | ✅ | — |
+| Menos trabajo manual | ✅ | El onboarding aún es manual (templates Meta, canal, primer test). |
+| Control de agenda | ✅ | — |
+| Menos ausencias | ✅ | — |
+| Más seguimiento | ✅ | — |
+| Más ventas recurrentes | ⚠️ | Faltan suscripciones; sin notificación de cobro recurrente fallido. |
+| Centralizar conversaciones | ✅ | Solo WhatsApp + Web. Sin Instagram/Facebook DM. |
+| Historial del cliente | ✅ | — |
+| Pagos | ✅ | Stripe + MercadoPago links. Falta cobro automático recurrente. |
+| Promociones | ✅ | — |
+| Rendimiento del equipo | ❌ | Analytics agrega a nivel tenant; no hay vista por agente. |
+
+| Driver para el cliente | Cubierto | Brecha |
+|---|---|---|
+| Rapidez | ✅ | — |
+| Claridad | ✅ | — |
+| Facilidad de agendar sin llamar | ✅ | — |
+| Recordatorios | ✅ | — |
+| Reprogramar fácil | ✅ | — |
+| Ubicación / instrucciones | ✅ | — |
+| Atención personalizada | ⚠️ | Tono del bot no es configurable por tenant; falta `personality_prompt`. |
+
+### Brechas reales para go-live comercial — 2026-05-13
+
+| # | Brecha | Evidencia en código | Impacto | Severidad |
+|---|--------|---------------------|---------|-----------|
+| 1 | Sin doble opt-in con registro de consentimiento auditable | `app.contacts.opt_in_status` se setea por upsert sin trazabilidad; no hay tabla `consent_ledger`. La Ley 1581 exige autorización previa **documentada** con timestamp, base legal, finalidad y canal. | Riesgo regulatorio: una queja a la SIC bloquea la operación. | P0 |
+| 2 | Sin tests E2E reales con DB efímera | De 60 archivos de test, 48 son estáticos. Solo `test_rls_multitenant_e2e.py` y un puñado tocan Postgres real. No hay un journey full webhook → respuesta → booking → recordatorio → no-show → feedback. | Regresiones silenciosas en flujos críticos pasan a producción. | P0 |
+| 3 | Backups en cloud no automatizados | `scripts/` contiene drill local (TASK-0029) pero no hay job programado de snapshot a S3/RDS con cifrado SSE-KMS ni verificación periódica de integridad. | RPO real desconocido; si el host muere el sábado, ¿qué se pierde? | P0 |
+| 4 | Outbound DLQ no observable desde el panel | `event_worker.py` reintenta y persiste `messages.status='failed'`, pero no hay endpoint `GET /v1/outbound/dlq` ni vista en el Admin Panel. El operador descubre el problema cuando el cliente reclama. | Mensajes perdidos sin alarma; reputación dañada. | P0 |
+| 5 | Sin runbooks por incidente | Solo existe `docs/runbook-go-live-evidence.md`. Falta: "Meta token expirado", "WABA quality rating bajado", "Postgres replica lag", "rate limit Meta golpeado", "cloud LLM rate limited", "circuit breaker abierto >5 min". | Operación reactiva sin guía; tiempo de respuesta de incidente alto. | P1 |
+| 6 | Sin digest periódico (diario/semanal) por email/WhatsApp al manager | `analytics_overview` requiere que alguien entre al panel. No hay job programado que envíe el resumen del día/semana al manager. | El gerente no usa el panel → no ve oportunidades de mejora → churn del SaaS. | P1 |
+| 7 | Métricas de rendimiento por agente ausentes | `analytics_*` solo agrega por tenant. No hay vista de "mensajes resueltos por agente", "tiempo medio de respuesta humano", "% handoffs cerrados por agente", "satisfaction por agente". | Manager no puede gestionar al equipo con datos. | P2 |
+| 8 | Onboarding tenant requiere intervención manual | `POST /v1/tenant-signup` crea el shell, pero el admin tiene que pegar templates Meta, configurar canal, cargar servicios, calibrar prompt. No hay wizard guiado paso-a-paso con verificación de cada paso. | Cada cliente nuevo consume 4-8h de soporte; bloquea escalado comercial. | P2 |
+| 9 | Sin widget JS embebible distribuible | El backend `/v1/web/chat/*` está listo (TASK-0039) pero el cliente recibe solo endpoints. No hay un `widget.js` minificado en CDN que se pegue como `<script>` y renderice el chat. | El cliente pyme no sabe programar React; widget queda inservible para 80% del mercado. | P2 |
+| 10 | Tono / personalidad del bot no configurable por tenant | `prompt_templates` permite cambiar prompt entero pero no expone "tono" como atributo de UI. Todos los tenants suenan igual. | Salones premium suenan como talleres económicos → percepción de marca dañada. | P3 |
+| 11 | Sin pruebas de carga ni SLA documentado | No hay artefacto Locust/k6 ni `docs/sla.md`. ¿Aguanta 100 msg/s? ¿200? ¿Cuándo se degrada? | Vender con SLA sin medirlo es contraproducente. | P3 |
+| 12 | i18n limitada a es-CO; otros mercados sin formato local | `locale='es-CO'` hardcodeado en defaults, monedas y formatos. México, Argentina, Chile usan otra moneda, otra zona horaria y formato de teléfono. | Bloquea expansión regional; el primer cliente fuera de CO requiere refactor. | P3 |
+| 13 | Sin canal Instagram DM / Facebook Messenger | Solo `tenant_channels.provider='whatsapp_cloud_api'`. El flujo del producto dice "redes sociales". | Lead que escribe por Instagram queda sin atención. | P3 |
+| 14 | Sin suscripciones / membresías recurrentes | `treatment_packages` cubre paquetes finitos. No hay `subscriptions` con cobro recurrente ni notificación al cliente cuando el cobro falla. | Negocios de membresía (gym, dental anual) no pueden vender con el bot. | P3 |
+| 15 | Sin páginas legales por tenant (Términos / Privacidad) | No existe `tenant_legal_documents`. El admin no puede subir su T&C y el bot no puede mandarlo al cliente. | Cumplimiento contractual con el usuario final ausente. | P3 |
+
+### Lo que **sí** está listo (no requiere ajuste adicional)
+
+- **Captación:** WhatsApp + Widget Web con `lead_source.channel/utm/referrer`, tracking `referrer_contact_id` (TASK-0055).
+- **Primer contacto:** cascade RAG con local LLM (Ollama) + cloud LLM (Claude/OpenAI), circuit breaker por proveedor (TASK-0059), embeddings reales con `pgvector` HNSW.
+- **Calificación:** flujo conversacional con 5 tipos de pregunta, tier de presupuesto/urgencia, triage automático.
+- **Orientación:** biblioteca de medios (`app.media_assets`) + promociones activas (`app.promotions`) + perfil de especialista (bio/foto/especialidad).
+- **Agendamiento:** booking conversacional interactivo (botones/listas), multi-sede (`app.branches`), paquetes multi-cita (`app.treatment_packages`), disponibilidad real con `EXCLUDE USING GIST`.
+- **Confirmación:** plantillas WhatsApp sincronizadas con Meta, recordatorios 24h/1h, Maps URL autogenerado desde lat/lng/dirección (TASK-0058).
+- **No-show:** confirmación activa + auto-rebook al declinar (TASK-0044) con timeout (TASK-0056) + self-service cancel/reschedule (TASK-0043).
+- **Seguimiento:** feedback post-cita, escalamiento ≤2★ con etiqueta "Atención prioritaria" + alerta operativa multicanal (email/WhatsApp/webhook con HMAC) (TASK-0057), recall automático por servicio (TASK-0052).
+- **Retención:** campañas a segmentos automáticos (`app.contact_segments` con reglas), atribución de ingresos por campaña (TASK-0048).
+- **Métricas backend:** 7 endpoints analytics (overview, conversations, appointments, contacts, funnel, campaigns, referrals) + `/metrics` Prometheus protegido por IP allowlist + 6 reglas de alerta seed.
+- **Infraestructura:** RLS multitenant + Auth0/OIDC + MFA obligatoria por rol + auditoría completa (`audit_logs`) + rate limiting por bucket + circuit breaker por proveedor + retención GDPR con anonimización/purgado por entidad (TASK-0061).
+- **Pagos:** links Stripe/MercadoPago con webhook firmado, badges de estado por cita.
+
+### Orden de ejecución sugerido (dependencias explícitas)
+
+```
+TASK-0062 (consentimiento doble opt-in + ledger auditable)        # P0 — bloqueo regulatorio
+    ↓
+TASK-0063 (tests E2E con DB efímera para el journey completo)     # P0 — bloqueo de calidad
+    ↓
+TASK-0064 (backups automatizados a cloud + verificación)          # P0 — bloqueo operacional
+    ↓
+TASK-0065 (DLQ outbound visible en panel + alerta)                # P0 — bloqueo operacional
+    ↓
+TASK-0066 (runbooks por incidente)                                # P1
+    ↓
+TASK-0067 (digest periódico al manager)                           # P1
+    ↓
+TASK-0068 (KPIs por agente en analytics)                          # P2
+    ↓
+TASK-0069 (wizard de onboarding self-service con verificación)    # P2
+    ↓
+TASK-0070 (widget JS embebible distribuido por CDN)               # P2
+    ↓
+TASK-0071 (tono/personalidad configurable por tenant)             # P3
+    ↓
+TASK-0072 (pruebas de carga + SLA documentado)                    # P3
+    ↓
+TASK-0073 (i18n multi-país: locale, currency, timezone)           # P3
+    ↓
+TASK-0074 (canal Instagram DM / Facebook Messenger)               # P3
+    ↓
+TASK-0075 (suscripciones / membresías con cobro recurrente)       # P3
+    ↓
+TASK-0076 (páginas legales por tenant: T&C + privacidad)          # P3
+```
+
+---
+
+## Stack de tareas pendientes (pre go-live comercial)
+
+---
+
+### TASK-0062 — Consentimiento doble opt-in + ledger auditable de autorizaciones
+
+- **Estado:** PENDING
+- **Depende de:** Ninguno.
+- **Por qué bloquea:** la Ley 1581 (Decreto 1377) exige autorización previa, documentada, con base legal, finalidad y canal trazable. Hoy `contacts.opt_in_status` se setea sin registrar quién, cuándo, en qué canal y con qué texto se autorizó. Una queja ante la SIC obliga a entregar evidencia que el sistema no puede producir.
+- **Alcance:**
+  - Schema:
+    - Nueva tabla `app.consent_ledger(id, tenant_id, contact_id, event check in ('granted','revoked','reaffirmed','suppressed'), channel check in ('whatsapp','web','admin','import'), legal_basis text, purpose text, copy_shown text, evidence_payload jsonb, occurred_at, ip inet, user_agent)` con RLS y append-only (no UPDATE/DELETE; bloqueado por trigger).
+    - `contacts.consent_version int default 1` para versionar.
+  - **Doble opt-in al primer mensaje inbound de un contacto nuevo:** el orquestador detecta `opt_in_status='unknown'` y envía template `consent_request_v1` con botones `[Acepto] [No acepto]`. Solo después de un click "Acepto" se inserta `consent_ledger(event='granted')` y se permite continuar el flujo. Sin opt-in: el bot solo responde "necesitamos tu autorización para continuar".
+  - **Opt-out por palabra clave:** intent classifier ya detecta `BAJA / STOP / CANCELAR / UNSUBSCRIBE`. La diferencia: además de setear `opt_in_status='revoked'`, inserta `consent_ledger(event='revoked', copy_shown=...)`.
+  - **Reafirmación periódica:** un job en `scheduler.py` corre 1x al día y emite el template `consent_reaffirm_v1` a contactos con `consent_at < now() - 12 months` (configurable por tenant).
+  - **Endpoint admin:** `GET /v1/tenants/{tenant_id}/contacts/{contact_id}/consent` devuelve el ledger completo paginado, para respuesta a derecho de acceso.
+  - **Admin Panel:** la ficha del contacto agrega pestaña "Consentimiento" con la lista de eventos del ledger.
+- **Criterios de aceptación:**
+  - Primer mensaje de un wa_id nuevo NO dispara respuesta normal; sí dispara el template de consentimiento.
+  - Si el cliente toca "Acepto", el siguiente mensaje cae en el flujo normal y el ledger tiene el evento `granted` con `copy_shown` del template renderizado.
+  - Si toca "No acepto", el bot responde "entendido, no te molestaremos" y la conversación queda `closed`.
+  - Reescribir el ledger (UPDATE/DELETE) falla con error 42501 por el trigger.
+  - Tests: ≥ 12 estáticos: schema + trigger append-only, ledger no editable, intercept del primer inbound, ramas de aceptación / rechazo, opt-out por keyword genera evento, reafirmación periódica programada, endpoint del ledger, integración con la pestaña.
+- **Notas:**
+  - El template `consent_request_v1` debe estar aprobado por Meta (categoría `UTILITY`). El gate ya existe en `scheduler.py`.
+  - El opt-out por keyword se queda como mecanismo de respaldo aunque WhatsApp pida unsubscribe nativo (StopAds): la palabra clave funciona también en Widget Web.
+
+---
+
+### TASK-0063 — Tests E2E con DB efímera para el journey completo del paciente
+
+- **Estado:** PENDING
+- **Depende de:** Ninguno.
+- **Por qué bloquea:** de 60 archivos de test, 48 son `*_static` (parsean código, no ejercen DB). Solo `test_rls_multitenant_e2e.py`, `test_extraction_worker.py`, `test_audit.py` y un puñado tocan Postgres. No hay un journey end-to-end real con efectos secundarios (mensaje outbound, scheduler, evento dominio). Regresiones pasan silenciosas a producción.
+- **Alcance:**
+  - Fixture `tests/conftest_e2e.py` que levanta un Postgres en testcontainers (o usa la instancia local), aplica `infra/postgres/01-schema.sql` + seed, expone una connection pool con `app.tenant_id` ya seteado y retorna URLs de la API en modo `httpx.AsyncClient(app=create_app())`.
+  - Suite `tests/test_journey_e2e.py` con 5 escenarios secuenciales:
+    1. **Captación → consentimiento → calificación → booking:** webhook inbound → opt-in template → respuesta a botón → 3 preguntas de calificación → presentación de servicios → selección de slot → cita confirmada.
+    2. **Recordatorio + confirmación activa + no-show:** avanza el reloj 24h, despacha `reminder_jobs`, simula cliente responde "Sí", avanza 2h post-fecha sin cliente, verifica `status='no_show'` y handoff con etiqueta "Atención prioritaria".
+    3. **Cancel self-service + recall:** cliente envía "CANCELAR", verifica `confirmation_status='cancelled'`, dispara recall a `recall_interval_days`, verifica template enviado.
+    4. **Feedback negativo + escalamiento:** completa cita → cliente envía "1 estrella, mal servicio" → verifica handoff abierto, etiqueta asignada, `operator_alerts` insertado.
+    5. **Campaña a segmento + atribución:** crea segmento "sin visita >90 días", lanza campaña, simula respuesta de un contacto → verifica `campaign_attributions` con la cita atribuida.
+  - Marcadores: `pytest -m e2e` para ejecutar solo este subset; en CI corre como job separado tras los estáticos.
+- **Criterios de aceptación:**
+  - Cada escenario corre <60s en CI con Postgres en container.
+  - Los tests fallan si rompemos el contrato (p.ej. cambiar el nombre del template o el campo `confirmation_status`).
+  - CI nuevo job `tests-e2e` agregado a `.github/workflows/ci.yml`.
+  - Tests: 5 escenarios + ≥ 3 helpers de fixture probados.
+- **Notas:**
+  - `testcontainers-python` + `pgvector/pgvector:pg16` ya está documentado en docker-compose.
+  - Reusar `infra/postgres/01-schema.sql` evita duplicación.
+
+---
+
+### TASK-0064 — Backups automatizados a cloud con verificación periódica
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0029 (drill local) — ya completada.
+- **Por qué bloquea:** el drill local valida la mecánica pero no protege contra pérdida del host. Sin job programado de backup a un bucket externo cifrado y sin verificación regular, el RPO real es "indefinido". Cualquier cliente serio exige evidencia de backups con prueba reciente.
+- **Alcance:**
+  - Script `scripts/backup-to-cloud.sh` que: hace `pg_dump --format=custom` comprimido + GPG-encrypted con la clave del tenant operacional, sube a `s3://<bucket>/backups/<env>/<YYYY-MM-DD>/db.dump.gpg`, registra metadata (hash sha256, size, duration) en una tabla `app.backup_runs(id, started_at, finished_at, status, sha256, size_bytes, error, evidence_path)`.
+  - Cron en docker-compose: nuevo servicio `backup-worker` con cronicle ligero (`schedule: 0 3 * * *` UTC) que invoca el script.
+  - **Verificación semanal:** script `scripts/verify-backup.sh` baja el último backup, restaura a una base efímera (`copilotoia_verify`), corre 3 consultas de sanity (`select count(*) from app.tenants/conversations/messages`) y reporta a `audit_logs(action='backup.verified')`. Si falla, emite `operator_alerts(kind='backup_failure')`.
+  - **Retención de backups:** 30 días diarios + 12 mensuales (el primero de cada mes se renombra para no ser purgado). Política implementada en el script con `aws s3 ls` + `aws s3 mv`.
+  - **Documentación:** `docs/backup-policy.md` con RPO objetivo (≤24h), procedimiento de restore, y cómo rotar la clave GPG.
+- **Criterios de aceptación:**
+  - Backup diario corre y deja evidencia en `backup_runs` con `status='ok'`.
+  - Restore de prueba semanal pasa los 3 sanity checks; falla → alerta operativa.
+  - Backups con >30 días se purgan; mensuales se preservan.
+  - Tests: ≥ 8 estáticos: schema de `backup_runs`, parsing de la salida de `pg_dump`, validación del path S3, integración con `operator_alerts`, scheduler hour wiring.
+- **Notas:**
+  - En MVP no usamos AWS Backup gestionado para no atar el producto a un cloud; el script habla S3 estándar (compatible con MinIO local para tests).
+  - La clave GPG vive en `.secrets/backup_gpg_pubkey.asc`; rotación documentada en el runbook.
+
+---
+
+### TASK-0065 — DLQ de mensajes outbound visible en panel + alerta
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0057 (operator_alerts).
+- **Por qué bloquea:** `event_worker.py` reintenta envíos a Meta, pero cuando agota retries el mensaje queda con `messages.status='failed'` y `messages.error_*`. No hay panel para verlo. El operador descubre el problema cuando el cliente reclama por otro canal.
+- **Alcance:**
+  - Endpoint `GET /v1/tenants/{tenant_id}/outbound/dlq?since=...&until=...&limit=...` que lista mensajes con `status='failed'` agrupados por `error_code`, con counters y previews. Devuelve `{items, totals_by_error_code}`.
+  - Endpoint `POST /v1/tenants/{tenant_id}/outbound/dlq/{message_id}/retry` que vuelve a encolar el mensaje (resetea `status='queued'`, `retry_count=0`, dispara evento `message.outbound.requested`).
+  - **Alerta automática:** cuando el conteo de `messages.status='failed'` en la última hora supera `dlq_alert_threshold` (default 10), el scheduler emite `operator_alerts(kind='outbound_dlq_threshold')` con preview de los últimos 5 errores.
+  - **Admin Panel:** nuevo módulo `outbound/OutboundDLQ.jsx` listado en el nav lateral, con filtro por código de error, botón "reintentar" y modal de detalle con el payload completo y el error de Meta.
+  - **Métricas Prometheus:** nuevo counter `cpi_outbound_dlq_total{tenant, error_code}` incrementado por `event_worker` al marcar fail definitivo; nueva regla de alerta `OutboundDLQGrowing` en `infra/observability/alerts.yaml` (>5 fails en 5 min).
+- **Criterios de aceptación:**
+  - 12 mensajes con error 131026 (recipient unreachable) → endpoint devuelve grupo con count=12.
+  - Click "reintentar" en uno → re-encolado y eventualmente entregado.
+  - Alerta dispara cuando >10 fails en 1h.
+  - Tests: ≥ 10 estáticos: schema del endpoint, agrupación por error_code, retry idempotente, threshold de alerta, regla Prometheus, módulo en admin panel.
+- **Notas:**
+  - El reintento manual no afecta a `retry_count` automático; el operador decide cuántos intentos hacer.
+
+---
+
+### TASK-0066 — Runbooks operacionales por tipo de incidente
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0060 (alertas), TASK-0064 (backups).
+- **Por qué bloquea:** sin runbook, cada incidente requiere reinventar la respuesta. Lo que diferencia un MVP operacional de un SaaS vendible es la capacidad de responder a un incidente con un procedimiento conocido. Hoy solo existe `docs/runbook-go-live-evidence.md`.
+- **Alcance:**
+  - Carpeta `docs/runbooks/` con un archivo por escenario, cada uno con: **síntoma**, **diagnóstico (queries SQL / curl / kubectl)**, **mitigación inmediata**, **fix definitivo**, **post-mortem checklist**.
+  - Runbooks mínimos:
+    - `meta-token-expired.md` — síntoma: `cpi_outbound_dlq_total` con error 190; mitigación: rotar token vía panel y reencolar.
+    - `meta-quality-rating-dropped.md` — síntoma: `tenant_channels.quality_rating='RED'`; mitigación: bajar volumen de templates UTILITY, revisar plantillas activas.
+    - `postgres-down.md` — síntoma: alerta `BotResponseLatencyP95High` sostenida + healthcheck rojo; mitigación: failover/restore desde backup.
+    - `rate-limit-meta-hit.md` — síntoma: error 80007 en `error_code`; mitigación: bajar rate del scheduler, aumentar backoff.
+    - `cloud-llm-rate-limited.md` — síntoma: circuit breaker `cloud_llm:claude` open; mitigación: degradar a `answer_engine=local_llm` temporalmente.
+    - `circuit-breaker-open-sustained.md` — síntoma: gauge `cpi_circuit_breaker_state=2` >5 min; mitigación: verificar proveedor + cambiar al alterno.
+    - `worker-queue-backlog.md` — síntoma: `cpi_worker_queue_depth >1000`; mitigación: escalar `event-worker` réplicas.
+    - `webhook-flood.md` — síntoma: 429s en `rate_limit.blocked` >100/min; mitigación: validar firma del payload, sospechar de fuente externa.
+    - `consent-violation-claim.md` — síntoma: queja del cliente; entrega: extracto del `consent_ledger`.
+  - Cada runbook linkeado desde la regla de alerta correspondiente en `alerts.yaml` con anotación `runbook_url`.
+  - Test estático: `tests/test_runbooks_static.py` valida que cada regla de alerta tenga un `runbook_url` válido apuntando a un archivo existente.
+- **Criterios de aceptación:**
+  - 9 runbooks creados, cada uno con las 5 secciones mínimas.
+  - Cada regla de alerta apunta a su runbook; el test estático verifica el wiring.
+- **Notas:**
+  - Los runbooks viven en el repo (no en Notion) para versionarlos con el código.
+
+---
+
+### TASK-0067 — Digest periódico (diario y semanal) por email/WhatsApp al manager
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0048 (funnel), TASK-0057 (alerts SMTP infra reutilizable).
+- **Por qué bloquea:** el manager no entra al panel cada día. Sin un resumen empujado al canal del manager, los KPIs no se ven y las decisiones no se toman. Esto causa churn del SaaS aunque el producto funcione.
+- **Alcance:**
+  - Tabla `app.digest_subscriptions(id, tenant_id, recipient_email, recipient_whatsapp, cadence check in ('daily','weekly'), enabled, last_sent_at, created_at, updated_at)`.
+  - Worker dedicado `app/workers/digest_worker.py` que corre 1x al día a las 08:00 hora del tenant (`tenants.timezone`) y arma:
+    - **Daily:** citas confirmadas hoy, citas para mañana, no-shows de ayer, top 3 quejas abiertas, mensajes recibidos (24h), conversión funnel del día.
+    - **Weekly (lunes):** lo del daily + ingreso semanal, top campañas, top servicios, retención 90d, comparación vs semana anterior.
+  - Generador `app/services/digest.py` con `build_daily_digest(conn, tenant_id) -> {text, html, whatsapp_template_components}` que reusa los endpoints de analytics.
+  - Email vía SMTP (infra existente de TASK-0057); WhatsApp via template `digest_daily_v1` / `digest_weekly_v1`.
+  - **Admin Panel:** sección "Suscripciones a resúmenes" en pestaña Notificaciones del wizard, con input para emails y WhatsApp, toggle daily/weekly.
+- **Criterios de aceptación:**
+  - Manager configura email y recibe a las 08:00 del día siguiente un email con los 6 KPIs del daily.
+  - Lunes a las 08:00 recibe el weekly con la comparación vs semana anterior.
+  - Tests: ≥ 10 estáticos: schema de `digest_subscriptions`, builder del payload (snapshot test), wiring del worker en compose, idempotencia (`last_sent_at`).
+- **Notas:**
+  - Reusar `operator_alerts._send_email_channel` / `_send_whatsapp_channel` para no duplicar SMTP.
+
+---
+
+### TASK-0068 — KPIs de rendimiento por agente en analytics
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0041 (team management), TASK-0048 (funnel).
+- **Por qué bloquea:** el manager quiere saber qué agente cierra más, responde más rápido y deja menos handoffs abiertos. Hoy `analytics_*` agrega solo a nivel tenant.
+- **Alcance:**
+  - Endpoint `GET /v1/analytics/agents?since=...&until=...` que devuelve por agente: `messages_sent`, `handoffs_accepted`, `handoffs_resolved`, `avg_response_time_seconds`, `appointments_confirmed`, `revenue_attributed`, `feedback_avg_rating`.
+  - Cálculos: `avg_response_time_seconds` = avg(diff entre el último inbound del cliente y la primera respuesta del agente en `messages.sender_actor_type='agent'`).
+  - **Admin Panel:** nuevo módulo `analytics/AgentPerformance.jsx` con tabla ranqueable y badge "top performer" del mes.
+  - Atribución de ingresos: cuando un agente cierra una cita por el desk, `appointments.metadata.closed_by_user_id` se setea; `revenue_attributed` agrega por ese campo.
+- **Criterios de aceptación:**
+  - Endpoint devuelve métricas por agente con 5 agentes activos.
+  - Tests: ≥ 8 estáticos: SQL de las métricas, persistencia de `closed_by_user_id`, módulo en admin panel.
+
+---
+
+### TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0003 (wizard base), TASK-0033 (catálogo).
+- **Por qué bloquea:** cada cliente nuevo consume 4-8h de soporte humano. Para escalar comercialmente el cliente tiene que poder onboardearse solo con un wizard guiado que verifique cada paso antes de avanzar.
+- **Alcance:**
+  - Wizard de 7 pasos: (1) datos del negocio, (2) timezone + locale + moneda, (3) canal WhatsApp (con verificación de la firma del webhook contra Meta), (4) primer template `consent_request_v1` (cargado vía Meta API), (5) catálogo de servicios mínimo (≥ 1 servicio), (6) horarios de atención, (7) test E2E: el wizard envía un mensaje de prueba al wa_id del admin y verifica que el inbound llegue.
+  - Cada paso emite un evento `tenant_onboarding.step_completed(step=N)` y solo desbloquea el siguiente cuando el actual pasó su check.
+  - Estado del onboarding visible en `GET /v1/tenants/{tenant_id}/readiness` (ya existe; se extiende con `onboarding_progress: {step, total, last_completed_step}`).
+- **Criterios de aceptación:**
+  - Un cliente nuevo termina onboarding en <30 min sin soporte humano.
+  - Si un paso falla (token Meta inválido), el wizard explica el error y bloquea.
+  - Tests: ≥ 12 estáticos: cada paso valida sus precondiciones, ningún paso permite saltar al siguiente sin completar, estado persistido en `tenant_settings.onboarding_progress`.
+
+---
+
+### TASK-0070 — Widget JS embebible distribuido por CDN
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0039 (web widget backend).
+- **Por qué bloquea:** el backend del widget está listo, pero el cliente pyme recibe solo endpoints. No sabe programar React. Sin un `<script>` que se pegue y renderice un chat, el widget queda inservible para 80% del mercado.
+- **Alcance:**
+  - Nuevo paquete `web-widget/` con un build Vite que produce `widget.js` (≤ 30 KB gzipped), `widget.css` (≤ 5 KB), y un snippet de inicialización:
+    ```html
+    <script src="https://cdn.copilotoia.com/widget.js" data-tenant="<UUID>"></script>
+    ```
+  - El widget hace `POST /v1/web/chat/start` al cargar, abre un panel flotante en bottom-right, mantiene polling cada 3s a `GET /v1/web/chat/{conversation_id}/messages`.
+  - **Customización por tenant:** colores, logo, copy de bienvenida, posición del botón, vienen de `GET /v1/tenants/{tenant_id}/channels/web` (ya existe).
+  - **Distribución:** GitHub Action que publica el artefacto a `s3://copilotoia-cdn/widget/v1/widget.js` con cache headers y versionado.
+- **Criterios de aceptación:**
+  - Pegando el snippet en un HTML estático aparece el chat en <1s.
+  - Tests: ≥ 6 (lint + size + smoke en headless Chrome con Playwright).
+
+---
+
+### TASK-0071 — Tono / personalidad del bot configurable por tenant
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0024 (cloud LLM).
+- **Por qué bloquea:** un spa premium y un taller de motos no pueden sonar igual. Hoy todos los tenants comparten el mismo system prompt base. Esto daña la percepción de marca y la conversión en tenants premium.
+- **Alcance:**
+  - `tenant_settings.bot_personality jsonb default '{"tone":"neutral","formality":"tu","emoji_level":"moderate","custom_persona":""}'`.
+  - El builder del system prompt (`rag_orchestrator._build_system_prompt`) inyecta la personalidad como sección dedicada antes del template RAG.
+  - **Admin Panel:** pestaña "Voz del bot" con previews: 3 ejemplos de respuesta renderizados con la configuración actual ("Hola, ¿en qué te ayudo?" en formal vs informal vs amigable con emoji).
+- **Criterios de aceptación:**
+  - Cambiar `tone=playful` produce respuestas notoriamente distintas vs `tone=formal` con el mismo input.
+  - Tests: ≥ 6 estáticos: schema del jsonb, builder del prompt incorpora cada campo, preview en admin panel.
+
+---
+
+### TASK-0072 — Pruebas de carga + SLA documentado
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0060 (métricas).
+- **Por qué bloquea:** vender con SLA sin medirlo es contraproducente. Sin medir, ¿cuántos mensajes/segundo aguanta el API? ¿Cuándo se degrada?
+- **Alcance:**
+  - Escenario Locust en `tests/load/test_journey_load.py` con perfil mixto: 70% inbound message, 20% panel queries, 10% admin actions.
+  - Job `load-test` en GitHub Actions corriendo cada release contra un compose efímero, con baseline en `docs/sla.md`.
+  - **`docs/sla.md`:** SLA propuesto (99% requests <2s, 99.9% disponibilidad) y resultado del último load test (p50/p95/p99).
+- **Criterios de aceptación:**
+  - Load test con 50 msg/s sostenidos durante 5 min sin degradación (p95 <2s).
+  - `docs/sla.md` se regenera con cada run.
+
+---
+
+### TASK-0073 — i18n multi-país: locale, currency, timezone, formato de teléfono
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0033 (catálogo).
+- **Por qué bloquea:** `locale='es-CO'` y `COP` están hardcodeados en defaults, en formatos de fecha y en validación de teléfono. El primer cliente de México exige refactor.
+- **Alcance:**
+  - `tenants.country_code` ya existe; ampliar a soportar `MX, AR, CL, PE, EC, UY`.
+  - `tenant_settings.currency char(3)` con default derivado de `country_code` (MX→MXN, AR→ARS, etc.).
+  - Validador de teléfono pasa de regex CO a `phonenumbers` library con `country_code` como hint.
+  - Strings del bot vienen de `app/i18n/<locale>.toml`; `es-CO`, `es-MX`, `es-AR`, `es-CL` inicialmente.
+- **Criterios de aceptación:**
+  - Tenant MX con currency MXN muestra precios "$ 1,500.00 MXN" en lugar de "$ 1.500 COP".
+  - Validación de teléfono acepta `+52 55 1234 5678`.
+  - Tests: ≥ 10 estáticos por país soportado.
+
+---
+
+### TASK-0074 — Canal Instagram DM / Facebook Messenger
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0021 (orquestación).
+- **Por qué bloquea:** el flujo del producto dice "redes sociales". Hoy solo WhatsApp + Widget Web. El lead que escribe por Instagram queda sin atención.
+- **Alcance:**
+  - `tenant_channels.provider` extiende a `'instagram_messenger', 'facebook_messenger'`.
+  - Webhook `/v1/webhooks/meta/{provider}` reusa la validación HMAC (mismo App Secret de la app Meta del tenant).
+  - Adaptador en `app/services/instagram.py` y `app/services/facebook.py` que normaliza payloads al formato canónico que ya consume `rag_orchestrator`.
+  - **Limitación:** Instagram solo permite responder a un DM iniciado por el usuario en ventana 24h. El policy engine ya respeta la ventana 24h de WhatsApp; mismo gate aplica.
+- **Criterios de aceptación:**
+  - Inbound desde Instagram persiste un mensaje y dispara el mismo flujo que WhatsApp.
+  - Outbound a Instagram fuera de la ventana 24h se bloquea con error `outside_service_window`.
+  - Tests: ≥ 12 estáticos: extensión del enum, normalizador de Instagram, normalizador de Facebook, gate de ventana 24h por provider.
+
+---
+
+### TASK-0075 — Suscripciones / membresías con cobro recurrente
+
+- **Estado:** PENDING
+- **Depende de:** TASK-0040 (payment links), TASK-0051 (packages).
+- **Por qué bloquea:** `treatment_packages` cubre paquetes finitos (5 sesiones). Gimnasios, dental anual, spa mensual necesitan **cobro recurrente** con notificación al cliente cuando el cobro falla. Hoy no es vendible a esos verticales.
+- **Alcance:**
+  - Nueva tabla `app.subscription_plans(id, tenant_id, name, billing_period check in ('monthly','quarterly','yearly'), price_amount, currency, included_services jsonb, status)`.
+  - `app.contact_subscriptions(id, tenant_id, contact_id, plan_id, status check in ('active','past_due','cancelled'), started_at, next_billing_at, payment_provider_subscription_id, payment_method_id)`.
+  - Webhook de Stripe/MercadoPago para eventos `invoice.payment_succeeded` / `invoice.payment_failed` actualiza el status y, en `payment_failed`, dispara WhatsApp template `subscription_payment_failed_v1`.
+  - **Admin Panel:** módulo `subscriptions/SubscriptionsModule.jsx` con CRUD de planes + lista de suscriptores activos.
+- **Criterios de aceptación:**
+  - Cliente compra plan mensual, se cobra automáticamente cada 30 días.
+  - Si falla el cobro, el cliente recibe WhatsApp con el link de reintentar pago.
+  - Tests: ≥ 14 estáticos: schemas, webhook handlers Stripe y MercadoPago, template de fallo, módulo en panel.
+
+---
+
+### TASK-0076 — Páginas legales por tenant: Términos y Privacidad
+
+- **Estado:** PENDING
+- **Depende de:** Ninguno.
+- **Por qué bloquea:** la Circular SIC 002 exige aviso de privacidad. Hoy no hay forma de que el admin suba su T&C y el bot lo envíe o linkee. Cumplimiento contractual ausente.
+- **Alcance:**
+  - Tabla `app.tenant_legal_documents(id, tenant_id, kind check in ('terms','privacy','consent'), language, content_md, version, published_at, archived_at)` con append-only por versión.
+  - Endpoint público `GET /v1/tenants/{tenant_id}/legal/{kind}` que devuelve la versión publicada vigente como HTML renderizado desde Markdown.
+  - El bot puede insertar el link en el opt-in template (`consent_request_v1` de TASK-0062) y en pie de campañas.
+  - **Admin Panel:** módulo `legal/LegalModule.jsx` con editor Markdown + preview + control de versión + auditoría de publicaciones.
+- **Criterios de aceptación:**
+  - Admin sube T&C v1, lo publica, el endpoint devuelve la versión v1.
+  - Publica v2, el endpoint devuelve v2 y archiva v1 (sin borrar).
+  - Tests: ≥ 8 estáticos: schema, append-only por trigger, render Markdown→HTML seguro, link en template de consentimiento.
+
+---
