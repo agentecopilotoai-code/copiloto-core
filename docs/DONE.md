@@ -15,6 +15,54 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0066 — Runbooks operacionales por tipo de incidente
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se cierra la brecha operativa "cada incidente reinventa la respuesta": ahora existe `docs/runbooks/` con nueve runbooks accionables (token Meta vencido, quality_rating en RED, Postgres down, rate limit Meta 80007, cloud LLM rate-limited, circuit breaker abierto sostenido, backlog de workers, flood de webhooks, queja por consentimiento). Cada runbook sigue la plantilla obligatoria de 5 secciones (síntoma, diagnóstico con comandos SQL/`curl`/`docker compose`, mitigación inmediata, fix definitivo, post-mortem checklist). Cada regla de Prometheus en `infra/observability/alerts.yaml` apunta a su runbook vía la anotación `runbook_url`. Un test estático garantiza que cada `runbook_url` resuelve a un archivo existente, que cada runbook tenga las 5 secciones, no sea un stub vacío (≥30 líneas no vacías y ≥1200 chars) y que el README los liste todos.
+- **Implementación:**
+  - **`docs/runbooks/` (nuevo):**
+    - `README.md` — índice con la mapping alerta → runbook y descripción de la plantilla.
+    - `meta-token-expired.md` — diagnostica via `messages.metadata.graph_error_code='190'`, rota token desde el panel, reencola DLQ con idempotency key fresca.
+    - `meta-quality-rating-dropped.md` — pausa campañas, identifica plantillas MARKETING con peor `quality_score`, migra a UTILITY donde aplica.
+    - `postgres-down.md` — `pg_isready`, `pg_stat_activity`, `pg_cancel_backend`, restore desde backup cloud apuntando a `docs/backup-policy.md`.
+    - `rate-limit-meta-hit.md` — baja el `event_worker.outbound_rate_per_second`, sube backoff, pausa campañas, solicita upgrade de tier.
+    - `cloud-llm-rate-limited.md` — degrada a `answer_engine='local_llm'` para los top consumers, cambia provider anthropic↔openai, plantea token bucket por tenant.
+    - `circuit-breaker-open-sustained.md` — referencia cruzada a los runbooks por provider, comando manual de reset vía endpoint interno.
+    - `worker-queue-backlog.md` — `docker compose up -d --scale event-worker=4`, pausa workers no críticos, partición de stream Redis por tenant como fix definitivo.
+    - `webhook-flood.md` — distingue HMAC válido vs inválido (atacante externo), WAF + iptables, rotación del `signing_secret` si las firmas son válidas.
+    - `consent-violation-claim.md` — SQL para timeline del `consent_ledger`, intersección con mensajes MARKETING, extracto firmado para el titular, supresión `INSERT consent_ledger action='revoked'`.
+  - **`infra/observability/alerts.yaml`:** se añade la anotación `runbook_url` a las 7 alertas que no la tenían (las 2 de backup ya apuntaban a `docs/backup-policy.md`):
+    - `HighOutboundErrorRate` → `docs/runbooks/rate-limit-meta-hit.md`
+    - `BotResponseLatencyP95High` → `docs/runbooks/postgres-down.md`
+    - `WorkerQueueBacklog` → `docs/runbooks/worker-queue-backlog.md`
+    - `CircuitBreakerOpenSustained` → `docs/runbooks/circuit-breaker-open-sustained.md`
+    - `SchedulerBehind` → `docs/runbooks/worker-queue-backlog.md`
+    - `OutboundDLQGrowing` → `docs/runbooks/meta-token-expired.md`
+    - `MetricsEndpointSilent` → `docs/runbooks/postgres-down.md`
+  - **`tests/test_runbooks_static.py` (nuevo, 34 tests):** parser minimalista de `alerts.yaml` (sin PyYAML para mantener el test estático libre de fixtures) que recorre cada bloque `- alert: NAME`, extrae el `runbook_url` de `annotations:` y verifica que (a) toda regla tenga `runbook_url`, (b) el `runbook_url` apunte a un archivo real, (c) los 9 runbooks existan, (d) cada runbook tenga las 5 secciones requeridas, (e) cada runbook supere el umbral mínimo de longitud, (f) el README los liste todos, (g) el directorio `docs/runbooks/` solo contenga `.md`, (h) el set de alertas esperadas siga presente (sentinel para detectar regresiones).
+- **Archivos modificados:**
+  - `docs/runbooks/README.md` (nuevo)
+  - `docs/runbooks/meta-token-expired.md` (nuevo)
+  - `docs/runbooks/meta-quality-rating-dropped.md` (nuevo)
+  - `docs/runbooks/postgres-down.md` (nuevo)
+  - `docs/runbooks/rate-limit-meta-hit.md` (nuevo)
+  - `docs/runbooks/cloud-llm-rate-limited.md` (nuevo)
+  - `docs/runbooks/circuit-breaker-open-sustained.md` (nuevo)
+  - `docs/runbooks/worker-queue-backlog.md` (nuevo)
+  - `docs/runbooks/webhook-flood.md` (nuevo)
+  - `docs/runbooks/consent-violation-claim.md` (nuevo)
+  - `infra/observability/alerts.yaml`
+  - `tests/test_runbooks_static.py` (nuevo, 34 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `pytest tests/test_runbooks_static.py -v` → **34 passed in 0.06s**.
+  - Inspección manual: cada runbook abre con un síntoma observable y deja al menos un comando SQL o `curl` que el operador puede pegar sin editar el grueso (solo placeholders entre `<...>`).
+- **Notas:**
+  - Los runbooks de backup ya apuntaban a `docs/backup-policy.md` desde TASK-0064 y se mantienen así; el test acepta cualquier path relativo a la raíz del repo que apunte a un archivo existente, no impone que esté dentro de `docs/runbooks/`.
+  - El parser de `alerts.yaml` se mantiene local al test estático (no dependemos de PyYAML para esta verificación) para alinearse con el patrón ya usado en `test_metrics_observability_static.py`.
+
+---
+
 ### TASK-0065 — DLQ de mensajes outbound visible en panel + alerta
 
 - **Fecha:** 2026-05-13

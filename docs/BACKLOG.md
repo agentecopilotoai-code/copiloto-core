@@ -559,30 +559,7 @@ _TASK-0065 — DLQ de mensajes outbound visible en panel + alerta: COMPLETADA. V
 
 ---
 
-### TASK-0066 — Runbooks operacionales por tipo de incidente
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0060 (alertas), TASK-0064 (backups).
-- **Por qué bloquea:** sin runbook, cada incidente requiere reinventar la respuesta. Lo que diferencia un MVP operacional de un SaaS vendible es la capacidad de responder a un incidente con un procedimiento conocido. Hoy solo existe `docs/runbook-go-live-evidence.md`.
-- **Alcance:**
-  - Carpeta `docs/runbooks/` con un archivo por escenario, cada uno con: **síntoma**, **diagnóstico (queries SQL / curl / kubectl)**, **mitigación inmediata**, **fix definitivo**, **post-mortem checklist**.
-  - Runbooks mínimos:
-    - `meta-token-expired.md` — síntoma: `cpi_outbound_dlq_total` con error 190; mitigación: rotar token vía panel y reencolar.
-    - `meta-quality-rating-dropped.md` — síntoma: `tenant_channels.quality_rating='RED'`; mitigación: bajar volumen de templates UTILITY, revisar plantillas activas.
-    - `postgres-down.md` — síntoma: alerta `BotResponseLatencyP95High` sostenida + healthcheck rojo; mitigación: failover/restore desde backup.
-    - `rate-limit-meta-hit.md` — síntoma: error 80007 en `error_code`; mitigación: bajar rate del scheduler, aumentar backoff.
-    - `cloud-llm-rate-limited.md` — síntoma: circuit breaker `cloud_llm:claude` open; mitigación: degradar a `answer_engine=local_llm` temporalmente.
-    - `circuit-breaker-open-sustained.md` — síntoma: gauge `cpi_circuit_breaker_state=2` >5 min; mitigación: verificar proveedor + cambiar al alterno.
-    - `worker-queue-backlog.md` — síntoma: `cpi_worker_queue_depth >1000`; mitigación: escalar `event-worker` réplicas.
-    - `webhook-flood.md` — síntoma: 429s en `rate_limit.blocked` >100/min; mitigación: validar firma del payload, sospechar de fuente externa.
-    - `consent-violation-claim.md` — síntoma: queja del cliente; entrega: extracto del `consent_ledger`.
-  - Cada runbook linkeado desde la regla de alerta correspondiente en `alerts.yaml` con anotación `runbook_url`.
-  - Test estático: `tests/test_runbooks_static.py` valida que cada regla de alerta tenga un `runbook_url` válido apuntando a un archivo existente.
-- **Criterios de aceptación:**
-  - 9 runbooks creados, cada uno con las 5 secciones mínimas.
-  - Cada regla de alerta apunta a su runbook; el test estático verifica el wiring.
-- **Notas:**
-  - Los runbooks viven en el repo (no en Notion) para versionarlos con el código.
+_TASK-0066 — Runbooks operacionales por tipo de incidente: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
