@@ -1363,3 +1363,32 @@ export function retryOutboundDlqMessage(session, tenantId, messageId) {
     tenantId,
   });
 }
+
+// TASK-0076: páginas legales por tenant (Términos / Privacidad / Consent).
+export function listLegalDocuments(session, tenantId, { kind } = {}) {
+  const qs = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+  return request(`/tenants/${tenantId}/legal${qs}`, { session, tenantId });
+}
+
+export function createLegalDocumentDraft(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/legal`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function publishLegalDocument(session, tenantId, documentId) {
+  return request(`/tenants/${tenantId}/legal/${documentId}/publish`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}
+
+export function legalDocumentPublicUrl(session, tenantId, kind) {
+  // Built from the configured core base URL so the admin can copy/share
+  // the same link the bot inserts in the consent template.
+  return `${coreApiPath(session, `/tenants/${tenantId}/legal/${kind}`)}`;
+}

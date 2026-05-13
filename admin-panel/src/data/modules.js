@@ -123,6 +123,13 @@ export const adminModules = [
     scope: ['Logs de auditoría', 'Actor y entidad', 'Filtros por tenant', 'Evidencia para cumplimiento'],
   },
   {
+    id: 'legal',
+    label: 'Legal',
+    summary: 'Páginas legales por tenant: Términos, Privacidad y Aviso de Consentimiento, con control de versión auditado. TASK-0076.',
+    scope: ['Editor Markdown con preview', 'Publicación versionada (append-only)', 'Auditoría de publicaciones', 'Link público referenciado por el bot'],
+    minRole: 'admin',
+  },
+  {
     id: 'team',
     label: 'Equipo',
     summary: 'Miembros, roles e invitaciones del tenant.',

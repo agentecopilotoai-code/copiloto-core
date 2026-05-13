@@ -627,7 +627,7 @@ _TASK-0075 — Suscripciones / membresías con cobro recurrente: COMPLETADA. Ver
 
 ### TASK-0076 — Páginas legales por tenant: Términos y Privacidad
 
-- **Estado:** PENDING
+- **Estado:** COMPLETADA (ver `docs/DONE.md`).
 - **Depende de:** Ninguno.
 - **Por qué bloquea:** la Circular SIC 002 exige aviso de privacidad. Hoy no hay forma de que el admin suba su T&C y el bot lo envíe o linkee. Cumplimiento contractual ausente.
 - **Alcance:**

@@ -30,7 +30,35 @@ from uuid import UUID
 
 import structlog
 
+from app.core.config import get_settings
+from app.services.legal import legal_public_url
+
 log = structlog.get_logger()
+
+
+async def fetch_published_legal_url(
+    conn: Any, tenant_id: UUID, kind: str = 'privacy'
+) -> str | None:
+    """Return the public link to the tenant's published legal page, or None.
+
+    The helper is used by the consent template builder and by the campaign
+    footer so they can reference the active version without re-implementing
+    the lookup.  Returns ``None`` when the tenant has no published document
+    for the requested ``kind``.
+    """
+    row = await conn.fetchrow(
+        """
+        select 1 from app.tenant_legal_documents
+        where tenant_id=$1 and kind=$2
+          and published_at is not null and archived_at is null
+        limit 1
+        """,
+        tenant_id,
+        kind,
+    )
+    if not row:
+        return None
+    return legal_public_url(get_settings().web_widget_api_base, tenant_id, kind)
 
 
 CONSENT_PREFIX = 'consent'
@@ -43,6 +71,12 @@ CONSENT_REQUEST_BODY = (
     '¿Aceptas que te contactemos por este canal para gestionar tus citas y '
     'consultas?'
 )
+# TASK-0076: si el tenant publicó su Política de Privacidad / Términos, el
+# bot inserta el link en el pie del template consent_request_v1 para cumplir
+# con la Circular SIC 002 (consentimiento informado: el titular debe conocer
+# las finalidades del tratamiento). El renderer del payload añade el sufijo
+# si recibe ``legal_url``.
+CONSENT_REQUEST_LEGAL_SUFFIX = '\n\nConoce nuestra política: {legal_url}'
 CONSENT_REQUEST_PURPOSE = 'consent_request'
 CONSENT_REAFFIRM_PURPOSE = 'consent_reaffirm'
 CONSENT_LEGAL_BASIS = 'Ley 1581 de 2012 (Decreto 1377), art. 9 — autorización del titular'
@@ -88,7 +122,21 @@ def is_consent_reply(inbound_message: Any) -> bool:
     return iid in (CONSENT_BUTTON_YES, CONSENT_BUTTON_NO)
 
 
-def build_consent_request_payload(business_name: str) -> dict[str, Any]:
+def build_consent_request_body_text(business_name: str, legal_url: str | None = None) -> str:
+    """Compose the body shown above the Acepto / No acepto buttons.
+
+    When ``legal_url`` is provided (a tenant has a published privacy /
+    terms page from TASK-0076), append a footer line linking to it.
+    """
+    body_text = CONSENT_REQUEST_BODY.format(business_name=business_name or 'nuestro negocio')
+    if legal_url:
+        body_text = body_text + CONSENT_REQUEST_LEGAL_SUFFIX.format(legal_url=legal_url)
+    return body_text
+
+
+def build_consent_request_payload(
+    business_name: str, legal_url: str | None = None
+) -> dict[str, Any]:
     """Build the interactive button payload for the double opt-in template.
 
     Falls back to a plain interactive button shape so the WhatsApp worker
@@ -96,7 +144,7 @@ def build_consent_request_payload(business_name: str) -> dict[str, Any]:
     template exists in the templates table.  The scheduler-driven path
     (reaffirmation) does require an approved template.
     """
-    body_text = CONSENT_REQUEST_BODY.format(business_name=business_name or 'nuestro negocio')
+    body_text = build_consent_request_body_text(business_name, legal_url)
     return {
         'type': 'button',
         'body': {'text': body_text},
@@ -362,14 +410,15 @@ async def enforce_inbound_consent(
 
     # First-ever inbound from a brand-new contact ─ send the double opt-in.
     if opt_in == 'unknown':
-        interactive_payload = build_consent_request_payload(business_name)
+        legal_url = await fetch_published_legal_url(conn, tenant_id, 'privacy')
+        interactive_payload = build_consent_request_payload(business_name, legal_url)
         outbound_id = await _queue_consent_outbound(
             conn,
             tenant_id=tenant_id,
             conversation_id=conversation_id,
             channel_id=channel_id,
             channel_account_mode=channel_account_mode,
-            body_text=CONSENT_REQUEST_BODY.format(business_name=business_name or 'nuestro negocio'),
+            body_text=build_consent_request_body_text(business_name, legal_url),
             interactive_payload=interactive_payload,
             step='request',
         )

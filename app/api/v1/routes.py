@@ -14,6 +14,7 @@ import httpx
 import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi.responses import HTMLResponse
 
 from app.api.v1.schemas import (
     AppointmentCreate,
@@ -61,6 +62,7 @@ from app.api.v1.schemas import (
     RetentionPoliciesUpdate,
     DigestSubscriptionCreate,
     DigestSubscriptionUpdate,
+    LegalDocumentDraftCreate,
     ResourceCreate,
     ResourceUpdate,
     ServiceCreate,
@@ -169,6 +171,11 @@ from app.services.whatsapp import (
     submit_template_to_meta,
     token_ref_is_configured,
     verify_signature_with_secret,
+)
+from app.services.legal import (
+    LEGAL_KIND_LABELS_ES,
+    LEGAL_KINDS,
+    render_markdown_to_safe_html,
 )
 from app.services.meta_messenger import (
     META_MESSENGER_PROVIDERS,
@@ -11540,6 +11547,220 @@ async def retry_outbound_dlq_message(
         entity_id=str(message_id),
     )
     return result
+
+
+# ─── TASK-0076: páginas legales por tenant ───────────────────────────────
+
+
+def _legal_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
+    return {
+        'id': str(row['id']),
+        'tenant_id': str(row['tenant_id']),
+        'kind': row['kind'],
+        'language': row['language'],
+        'version': row['version'],
+        'title': row['title'],
+        'content_md': row['content_md'],
+        'published_at': row['published_at'].isoformat() if row['published_at'] else None,
+        'archived_at': row['archived_at'].isoformat() if row['archived_at'] else None,
+        'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+    }
+
+
+@public_router.get('/tenants/{tenant_id}/legal/{kind}')
+async def get_public_legal_document(
+    tenant_id: UUID,
+    kind: str,
+    language: str = Query(default='es', min_length=2, max_length=8),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Return the current published legal document as sanitized HTML.
+
+    TASK-0076: required by Circular SIC 002 — anyone (including the data
+    subject before signing up) must be able to read the privacy notice
+    referenced from the consent template.  No auth: the page is public by
+    contract; RLS is bypassed by ``set_config`` keyed on the path param.
+    """
+    if kind not in LEGAL_KINDS:
+        raise HTTPException(status_code=404, detail='Unknown legal document kind')
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        select id, tenant_id, kind, language, version, title, content_md,
+               published_at, archived_at, created_at
+        from app.tenant_legal_documents
+        where tenant_id=$1 and kind=$2 and language=$3
+          and published_at is not null and archived_at is null
+        limit 1
+        """,
+        tenant_id,
+        kind,
+        language,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Legal document not published')
+    title = row['title']
+    body_html = render_markdown_to_safe_html(row['content_md'])
+    escaped_title = title.replace('<', '&lt;').replace('>', '&gt;')
+    label = LEGAL_KIND_LABELS_ES.get(kind, kind)
+    html_doc = (
+        '<!doctype html><html lang="' + html_escape_attr(row['language']) + '"><head>'
+        '<meta charset="utf-8">'
+        '<meta name="robots" content="noindex">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f'<title>{escaped_title} — {label} (v{row["version"]})</title>'
+        '<style>body{font-family:system-ui,sans-serif;max-width:780px;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#1f2937}'
+        'article.legal-document h1,article.legal-document h2,article.legal-document h3{margin-top:1.4em}'
+        'article.legal-document a{color:#2563eb}</style>'
+        '</head><body>'
+        f'<header><h1>{escaped_title}</h1>'
+        f'<p><small>{label} — versión {row["version"]} — publicado {row["published_at"].date().isoformat()}</small></p></header>'
+        f'{body_html}'
+        '</body></html>'
+    )
+    return HTMLResponse(content=html_doc, status_code=200)
+
+
+def html_escape_attr(value: str) -> str:
+    return value.replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;')
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/legal')
+async def list_legal_documents(
+    tenant_id: UUID,
+    request: Request,
+    kind: str | None = Query(default=None, pattern='^(terms|privacy|consent)$'),
+    conn: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    if kind:
+        rows = await conn.fetch(
+            """
+            select id, tenant_id, kind, language, version, title, content_md,
+                   published_at, archived_at, created_at
+            from app.tenant_legal_documents
+            where tenant_id=$1 and kind=$2
+            order by language asc, version desc
+            """,
+            tenant_id,
+            kind,
+        )
+    else:
+        rows = await conn.fetch(
+            """
+            select id, tenant_id, kind, language, version, title, content_md,
+                   published_at, archived_at, created_at
+            from app.tenant_legal_documents
+            where tenant_id=$1
+            order by kind asc, language asc, version desc
+            """,
+            tenant_id,
+        )
+    return {'documents': [_legal_row_to_dict(row) for row in rows]}
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/legal', status_code=201)
+async def create_legal_document_draft(
+    tenant_id: UUID,
+    payload: LegalDocumentDraftCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Create a new draft (unpublished) version.
+
+    A subsequent ``POST /tenants/{tid}/legal/{id}/publish`` flips the
+    ``published_at`` timestamp and the schema trigger archives the previous
+    live version for the same (kind, language).
+    """
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    next_version = await conn.fetchval(
+        """
+        select coalesce(max(version), 0) + 1
+        from app.tenant_legal_documents
+        where tenant_id=$1 and kind=$2 and language=$3
+        """,
+        tenant_id,
+        payload.kind,
+        payload.language,
+    )
+    created_by = await current_user_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        insert into app.tenant_legal_documents (
+          tenant_id, kind, language, version, title, content_md, created_by_user_id
+        )
+        values ($1, $2, $3, $4, $5, $6, $7)
+        returning id, tenant_id, kind, language, version, title, content_md,
+                  published_at, archived_at, created_at
+        """,
+        tenant_id,
+        payload.kind,
+        payload.language,
+        next_version,
+        payload.title,
+        payload.content_md,
+        created_by,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='legal_document.drafted',
+        entity_type='tenant_legal_document',
+        entity_id=str(row['id']),
+        metadata={'kind': payload.kind, 'language': payload.language, 'version': next_version},
+    )
+    return _legal_row_to_dict(row)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/legal/{document_id}/publish')
+async def publish_legal_document(
+    tenant_id: UUID,
+    document_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        update app.tenant_legal_documents
+        set published_at = now()
+        where tenant_id=$1 and id=$2 and published_at is null
+        returning id, tenant_id, kind, language, version, title, content_md,
+                  published_at, archived_at, created_at
+        """,
+        tenant_id,
+        document_id,
+    )
+    if not row:
+        existing = await conn.fetchrow(
+            'select id from app.tenant_legal_documents where tenant_id=$1 and id=$2',
+            tenant_id,
+            document_id,
+        )
+        if not existing:
+            raise HTTPException(status_code=404, detail='Legal document not found')
+        raise HTTPException(status_code=409, detail='Legal document already published')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='legal_document.published',
+        entity_type='tenant_legal_document',
+        entity_id=str(row['id']),
+        metadata={
+            'kind': row['kind'],
+            'language': row['language'],
+            'version': row['version'],
+            'published_at': row['published_at'].isoformat(),
+        },
+    )
+    return _legal_row_to_dict(row)
 
 
 router.include_router(public_router)

@@ -750,3 +750,16 @@ class PromptCreate(BaseModel):
     version: int = 1
     content: str
     variables: list[str] = Field(default_factory=list)
+
+
+# TASK-0076: páginas legales por tenant. ``kind`` ∈ {terms, privacy, consent}.
+# ``content_md`` se persiste verbatim para preservar la prueba auditable; el
+# render a HTML ocurre en el endpoint público con un sanitizador interno.
+LEGAL_KIND_PATTERN = '^(terms|privacy|consent)$'
+
+
+class LegalDocumentDraftCreate(BaseModel):
+    kind: str = Field(pattern=LEGAL_KIND_PATTERN)
+    language: str = Field(default='es', min_length=2, max_length=8)
+    title: str = Field(min_length=1, max_length=200)
+    content_md: str = Field(min_length=1, max_length=200_000)
