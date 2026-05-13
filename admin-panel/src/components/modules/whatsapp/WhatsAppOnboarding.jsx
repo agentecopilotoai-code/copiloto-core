@@ -503,6 +503,11 @@ function WhatsAppPanel({
               required
               value={form.phone_number_id}
             />
+            <small className="hint">
+              El servidor valida que este Phone Number ID no esté bound a otro
+              tenant activo. Si otro tenant ya lo registró, el guardado falla
+              con <code>409</code> y debes contactar a soporte para liberarlo.
+            </small>
           </label>
           <label>
             Modo de entrega

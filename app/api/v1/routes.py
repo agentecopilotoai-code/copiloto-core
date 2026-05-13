@@ -2058,6 +2058,34 @@ async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Reque
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
 
+    # TASK-0081 / BUG21: a Meta phone_number_id can only be bound to one
+    # active tenant channel at a time. If another tenant already claimed it,
+    # refuse with 409 before any secret is written. The unique partial index
+    # in 01-schema.sql is the final guarantee; this check produces a clean
+    # business error instead of a SQL integrity violation.
+    if payload.phone_number_id:
+        await conn.execute("select set_config('app.support_mode', 'true', true)")
+        existing = await conn.fetchrow(
+            """
+            select tenant_id, status
+            from app.tenant_channels
+            where phone_number_id=$1
+              and provider='whatsapp_cloud_api'
+              and status='active'
+              and tenant_id <> $2
+            """,
+            payload.phone_number_id,
+            tenant_id,
+        )
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail='phone_number_id is already bound to another active tenant channel',
+            )
+        # Restore the per-tenant scope so the upsert below runs under RLS.
+        await conn.execute("select set_config('app.support_mode', 'false', true)")
+        await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
     token_ref = tenant_secret_ref(tenant_id, 'meta_access_token')
     app_secret_ref = tenant_secret_ref(tenant_id, 'whatsapp_app_secret')
     verify_token_ref = tenant_secret_ref(tenant_id, 'whatsapp_verify_token')
@@ -9673,9 +9701,35 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
         sha,
     )
 
+    # TASK-0081 / BUG20: the signature was verified against the channel
+    # resolved from the FIRST phone_number_id in the payload. Each change in
+    # entry → changes carries its own metadata.phone_number_id; if any of
+    # those differ from the signature-verified channel, the change must be
+    # dropped. Otherwise an attacker could ship a payload that mixes two
+    # tenants' numbers: the first one passes the signature check and every
+    # other change inherits the wrong tenant binding.
+    signed_channel_phone_id = phone_number_id
     for entry in payload.get('entry', []):
         for change in entry.get('changes', []):
             value = change.get('value', {})
+            change_phone_id = (value.get('metadata') or {}).get('phone_number_id')
+            if change_phone_id and str(change_phone_id) != signed_channel_phone_id:
+                # Drop this change. We do not stop processing the rest of
+                # the payload — only this specific change is suspect.
+                await audit(
+                    conn,
+                    tenant_id=channel['tenant_id'],
+                    actor_type='system',
+                    actor_id=None,
+                    action='webhook.phone_number_id_mismatch',
+                    entity_type='tenant_channel',
+                    entity_id=str(channel['id']),
+                    metadata={
+                        'signed_phone_number_id': signed_channel_phone_id,
+                        'change_phone_number_id': str(change_phone_id),
+                    },
+                )
+                continue
             contacts_by_wa_id = {
                 str(contact.get('wa_id')): contact
                 for contact in value.get('contacts', [])

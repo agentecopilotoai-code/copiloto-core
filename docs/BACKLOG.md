@@ -808,9 +808,12 @@ _TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante
 
 ---
 
-### TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id
+_TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** la cadena de validación del webhook WhatsApp ata el tenant al **primer** `phone_number_id` del payload y no garantiza uniqueness global de `phone_number_id` entre tenants. Resultado: (a) changes posteriores en el mismo payload se escriben en el tenant equivocado, y (b) un tenant puede registrar el `phone_number_id` de otro y secuestrar la validación de firma.
 - **Bugs cubiertos (2):**
   - **BUG20** (`docs/BUGS/BUG20`, commit `af1e91c`): handler usa un único `channel/tenant_id` para todos los changes del payload, no re-resuelve por change.
@@ -828,6 +831,7 @@ _TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante
   - Test de handler (BUG20): payload firmado con app_secret de A que contiene un change con `phone_number_id` de B → change B descartado, audit emitido, ningún insert en A.
   - Test del rubric BUG21: dos rows con mismo `phone_number_id` activo → la DB lo previene (la migration tiraba antes).
   - PoC dinámico de las dos rutas documentado.
+-->
 
 ---
 

@@ -15,6 +15,39 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG20 (handler usaba el primer `phone_number_id` del payload para todas las changes), BUG21 (sin unique constraint global activa sobre `tenant_channels.phone_number_id`, dos tenants podían registrar el mismo número activo).
+- **Fase 1 — verificación en HEAD:** ambos bugs reproducibles. `01-schema.sql` solo tenía un índice no-único `ix_tenant_channels_phone`; `create_channel` no chequeaba colisiones entre tenants y el upsert solo enforced `unique (tenant_id, provider)`. El handler del webhook resolvía `channel` una sola vez via `whatsapp_phone_number_id_from_payload(payload)` (primer match en el payload) y reusaba ese `channel/tenant_id` en todo el loop `for entry → changes → messages`.
+- **Fase 2 — remediación (causa raíz, tres capas):**
+  - **Schema (BUG21):** `CREATE UNIQUE INDEX ux_tenant_channels_phone_number_active ON app.tenant_channels(phone_number_id) WHERE status='active' AND phone_number_id IS NOT NULL;` en `infra/postgres/01-schema.sql`. El partial index permite re-claim de un número después de offboard (status != 'active'). El índice no-único `ix_tenant_channels_phone` se conserva para velocidad de lookup del webhook (no agrega CHECK overhead).
+  - **Admin endpoint (BUG21):** `create_channel` (`app/api/v1/routes.py`) consulta — con `support_mode='true'` para saltarse RLS — si otro tenant tiene el `phone_number_id` activo y devuelve `409 phone_number_id is already bound to another active tenant channel` ANTES de escribir secretos (sino dejaríamos refs huérfanos). El partial index actúa como salvaguarda final.
+  - **Webhook handler (BUG20):** `receive_whatsapp_webhook` captura el `signed_channel_phone_id` (el `phone_number_id` cuyo channel verificó la firma HMAC). Para cada `entry → changes`, extrae `value.metadata.phone_number_id` y compara con el firmado. Si difieren, emite `audit_logs(action='webhook.phone_number_id_mismatch', actor_type='system', metadata={signed, change})` y hace `continue` — el resto del payload sigue procesándose. Esto cierra el vector de payload mixto que combinaba números de dos tenants.
+- **UI:**
+  - `admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx`: hint debajo del input `Phone Number ID` explicando que el server valida uniqueness y que un duplicado falla con 409.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql` (unique partial index)
+  - `app/api/v1/routes.py` (`create_channel` + `receive_whatsapp_webhook`)
+  - `admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx` (hint)
+  - `tests/test_whatsapp_channel_binding.py` (nuevo, 8 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py tests/test_whatsapp_channel_binding.py` → all checks passed.
+  - `uv run pytest tests/test_whatsapp_channel_binding.py -q` → 8 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1473 passed, 22 skipped.
+- **Cobertura por bug:**
+  - **BUG21 schema:** `test_schema_has_unique_partial_index_on_active_phone_number_id`, `test_schema_keeps_non_unique_lookup_index_for_speed`.
+  - **BUG21 admin endpoint:** `test_create_channel_rejects_phone_number_id_active_in_another_tenant`, `test_create_channel_runs_uniqueness_check_before_writing_secrets`.
+  - **BUG20 handler:** `test_webhook_handler_validates_change_phone_number_id_against_signed_channel`, `test_webhook_handler_drops_mismatched_changes_with_audit`, `test_webhook_handler_uses_system_actor_type_for_audit_compliance`.
+  - **Constraint compliance:** `test_audit_logs_actor_type_check_includes_system` (regresión guard para el `actor_type` del audit en la rama de mismatch).
+- **Notas:**
+  - El partial index requiere que cualquier tenant con número en `status='provisioning' | 'degraded' | 'suspended' | 'offboarded'` pueda coexistir con otro tenant que lo tenga activo. Eso es deseable: un tenant en offboarding no debe bloquear a su sucesor.
+  - El lookup cross-tenant en `create_channel` usa `set_config('app.support_mode','true', true)` con `is_local=true` (rollback al fin de la transacción). Una vez confirmada la uniqueness, se vuelve a `app.support_mode='false'` y se re-fija `app.tenant_id` para que el upsert respete RLS.
+  - La rama de mismatch del webhook NO aborta el lote: si una payload trae 5 changes y uno solo es sospechoso, los 4 legítimos siguen procesándose. Eso evita que un atacante pueda DOS-ear el inbound del tenant víctima inyectando una change falsa.
+
+---
+
 ### TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante
 
 - **Fecha:** 2026-05-13
