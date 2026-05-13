@@ -55,7 +55,13 @@ def _skip_unless_ready() -> str:
 
 
 async def _apply_schema(url: str) -> None:
-    """Drop and re-create the ``app`` schema from the canonical SQL file."""
+    """Drop and re-create the ``app`` schema from the canonical SQL file.
+
+    The canonical schema ends with ``GRANT ... TO copiloto_app`` (the role the
+    application uses to satisfy RLS). In a production-like deploy that role is
+    created by ``00-init-roles.sh`` before ``01-schema.sql`` runs. For the E2E
+    job we provision the role here so the suite is self-contained.
+    """
     import asyncpg
 
     if not SCHEMA_FILE.is_file():
@@ -63,6 +69,17 @@ async def _apply_schema(url: str) -> None:
     sql = SCHEMA_FILE.read_text(encoding='utf-8')
     conn = await asyncpg.connect(url)
     try:
+        await conn.execute(
+            """
+            do $$
+            begin
+              if not exists (select 1 from pg_roles where rolname = 'copiloto_app') then
+                create role copiloto_app login password 'copiloto_app_e2e';
+              end if;
+            end
+            $$;
+            """
+        )
         await conn.execute('drop schema if exists app cascade')
         await conn.execute(sql)
     finally:
@@ -210,25 +227,28 @@ async def _seed_tenant(
             await conn.execute(
                 """
                 insert into app.resources
-                  (id, tenant_id, name, code, capabilities, status)
-                values ($1, $2, 'Profesional ' || $3, 'res-' || $3,
-                        '{"services": []}'::jsonb, 'active')
+                  (id, tenant_id, vertical_code, resource_type, code, name,
+                   capabilities, is_active)
+                values ($1, $2, 'general', 'staff', 'res-' || $3,
+                        'Profesional ' || $3, '{"services": []}'::jsonb, true)
                 """,
                 resource_id,
                 tenant_id,
                 label,
             )
+            # `service_catalog` doesn't have a `code` column — appointments
+            # carry `service_code` as a free-form text. We store the label-derived
+            # code on the appointments table side; here we only need a service row.
             await conn.execute(
                 """
                 insert into app.service_catalog
-                  (id, tenant_id, name, code, duration_minutes, is_active,
+                  (id, tenant_id, name, duration_minutes, is_active,
                    price_amount, price_currency)
-                values ($1, $2, 'Servicio ' || $3, $4, 30, true, 50000, 'COP')
+                values ($1, $2, 'Servicio ' || $3, 30, true, 50000, 'COP')
                 """,
                 service_id,
                 tenant_id,
                 label,
-                service_code,
             )
     finally:
         await conn.close()

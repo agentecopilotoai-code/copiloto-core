@@ -112,10 +112,10 @@ def test_tenant_factory_seeds_required_records(tenant_factory):
             assert conversation['status'] == 'open'
 
             service = await conn.fetchrow(
-                'select is_active, code from app.service_catalog where id=$1', handle.service_id
+                'select is_active, name from app.service_catalog where id=$1', handle.service_id
             )
             assert service['is_active'] is True
-            assert service['code'] == handle.service_code
+            assert service['name'].startswith('Servicio ')
 
     run_async(run())
 
