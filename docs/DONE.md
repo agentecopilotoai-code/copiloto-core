@@ -15,6 +15,48 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0059 — Rate limiting y circuit breaker en webhooks Meta y LLMs externos
+
+- **Fecha:** 2026-05-13
+- **Resumen:** el API ahora rechaza bursts abusivos antes de tocar las rutas y los proveedores externos (Anthropic / OpenAI / MercadoPago / Stripe) quedan envueltos en un circuit breaker. Si un proveedor encadena fallos, el circuito se abre, evita seguir golpeando un servicio caído y deja que el orquestador caiga al siguiente tier del cascade (template → LLM local → cloud LLM) sin agotar workers. Los webhooks de Meta conservan un cap más permisivo (600 req/min vs 60 req/min default) para no descartar reintentos legítimos.
+- **Implementación:**
+  - **`app/services/rate_limit.py` (nuevo):**
+    - `TokenBucket` con refill continuo (tokens/segundo) y método `consume(amount)` que devuelve `(allowed, retry_after_seconds)`. El refill se computa por diferencia de `time.monotonic()`, así no necesitamos un task de background.
+    - `RateLimiter` registra un bucket por clave en memoria, con dos capacidades distintas según `scope` (`'webhook'` vs `'default'`). El `asyncio.Lock` cubre la carrera de creación.
+    - `classify_scope(path)` deriva el scope: cualquier path que arranque con `/webhooks/whatsapp` cae al cap webhook. `build_rate_limit_key(client_ip, path)` arma una clave `ip:tenant_uuid` cuando el UUID aparece en el path; si no hay tenant en el path, la clave es `ip:-`.
+    - `extract_client_ip(request)` toma el primer hop de `X-Forwarded-For` si viene (compatibilidad con reverse proxies) y cae a `request.client.host`. Sin nada → `'unknown'`.
+    - `build_rate_limit_middleware(limiter)` retorna el `dispatch` listo para `@api.middleware('http')`. Cuando bloquea, responde `429` con `Retry-After: <segundos>` y emite `log.warning('rate_limit.blocked', rate_limited=True, ...)`.
+  - **`app/services/circuit_breaker.py` (nuevo):**
+    - `CircuitBreaker` con estados `closed/open/half_open`, contador de fallos consecutivos (`failure_threshold`, default 5) y `cooldown_seconds` (default 30). La propiedad `state` deriva `half_open` automáticamente cuando el cooldown expira sin necesidad de un timer externo.
+    - `call(func, *args, **kwargs)` corre el callable bajo `asyncio.Lock` para que llamadas paralelas no se pisen al abrir/cerrar el circuito. En `open` levanta `CircuitOpenError(name, retry_after_seconds)`; en `half_open` permite una sola prueba y la promueve a `closed` si tiene éxito o re-abre el circuito si vuelve a fallar.
+    - `get_breaker(name, ...)` mantiene un registro global por nombre (`cloud_llm:claude`, `cloud_llm:openai`, `payment:mercadopago`, `payment:stripe`) para compartir el estado entre todas las llamadas del proceso. Llamadas posteriores con el mismo nombre retornan la misma instancia.
+    - Logs estructurados: `circuit_breaker.opened` (`circuit_open=true`), `circuit_breaker.closed` (`circuit_open=false`), `circuit_breaker.rejected`, `circuit_breaker.half_open_probe`.
+  - **`app/main.py`:** registra el middleware de rate limiting **al final** (último en agregarse → outermost en la cadena Starlette → primer middleware en recibir cada request). Lee `rate_limit_per_min` y `rate_limit_webhook_per_min` del settings.
+  - **`app/services/cloud_llm_answer.py`:** `_call_provider` envuelve cada provider en `get_breaker(f'cloud_llm:{provider}')` via helper `_breaker_for(provider)`. Cuando el circuito está abierto, `CircuitOpenError` se propaga; el orquestador (`rag_orchestrator._resolve_answer` / `_resolve_conversational`) ya tiene `except Exception` que loguea `cascade.cloud_llm_unavailable` y cae al template, conservando el comportamiento de cascada.
+  - **`app/services/payment_provider.py`:** `generate_payment_link` enruta cada provider por `get_breaker(f'payment:{provider}')`. MercadoPago y Stripe quedan protegidos por separado, ya que comparten el helper `_payment_breaker` pero registran un nombre distinto por provider.
+  - **Helpers de breaker resilientes a settings:** ambos helpers (`_breaker_for` y `_payment_breaker`) hacen `try/except` sobre `get_settings()`. Si las settings no se pueden materializar (caso de tests estáticos sin env), caen a `threshold=5, cooldown=30.0`.
+  - **`app/core/config.py`:** añade `rate_limit_per_min`, `rate_limit_webhook_per_min`, `circuit_breaker_failure_threshold`, `circuit_breaker_cooldown_seconds` con `Field(ge=...)` para que valores inválidos en `.env` fallen pronto.
+  - **`.env.example`:** documenta las cuatro variables nuevas con valor por defecto y la razón del cap separado para webhooks Meta.
+- **Archivos modificados:**
+  - `app/services/rate_limit.py` (nuevo)
+  - `app/services/circuit_breaker.py` (nuevo)
+  - `app/main.py`
+  - `app/services/cloud_llm_answer.py`
+  - `app/services/payment_provider.py`
+  - `app/core/config.py`
+  - `.env.example`
+  - `tests/test_rate_limit_circuit_static.py` (nuevo, 18 tests)
+- **Validaciones:**
+  - `uv run pytest tests/test_rate_limit_circuit_static.py` → 18 passed (token bucket capacity + refill, X-Forwarded-For parsing, scope clasificación, key con tenant_id, capacidad webhook vs default, 429 con Retry-After, middleware registrado en `create_app`, transitions closed→open→half_open→closed y half_open→open al fallar el probe, `get_breaker` idempotente por nombre, integración con `_call_provider` y `generate_payment_link`, settings expuestas).
+  - `uv run pytest tests/` → 1020 passed, 11 skipped (los skips eran preexistentes; ningún test regresó).
+  - `uv run ruff check app/services/circuit_breaker.py app/services/rate_limit.py app/main.py app/services/cloud_llm_answer.py app/services/payment_provider.py tests/test_rate_limit_circuit_static.py` → All checks passed.
+- **Notas:**
+  - El bucket está en memoria local del proceso; al escalar a >1 réplica detrás del proxy hay que migrar a Redis (ya disponible en el compose) usando `INCR`/`PEXPIRE` o un script Lua. Para el MVP single-instance es suficiente.
+  - El breaker es proceso-local también. En multi-instancia cada réplica tiene su propio breaker, lo cual está bien porque el efecto agregado es el mismo: el sistema deja de golpear al proveedor caído tras N fallos por réplica.
+  - El cascade del orquestador ya capturaba `Exception` al llamar al cloud LLM, así que `CircuitOpenError` se trata automáticamente como "cloud LLM no disponible" y cae al siguiente tier. No hay handling especial extra.
+
+---
+
 ### TASK-0058 — Auto-generación del link de Google Maps desde la dirección
 
 - **Fecha:** 2026-05-13

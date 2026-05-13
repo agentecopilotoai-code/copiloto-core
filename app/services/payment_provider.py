@@ -16,7 +16,36 @@ from typing import Any
 import httpx
 import structlog
 
+from app.core.config import get_settings
+from app.services.circuit_breaker import CircuitOpenError, get_breaker
+
 log = structlog.get_logger()
+
+__all__ = (
+    'PaymentLink',
+    'PaymentProviderError',
+    'CircuitOpenError',
+    'generate_payment_link',
+    'normalize_provider',
+    'verify_mercadopago_signature',
+    'verify_stripe_signature',
+    'extract_external_ref',
+    'extract_payment_status',
+)
+
+
+def _payment_breaker(provider: str):
+    try:
+        settings = get_settings()
+        threshold = settings.circuit_breaker_failure_threshold
+        cooldown = settings.circuit_breaker_cooldown_seconds
+    except Exception:  # noqa: BLE001
+        threshold, cooldown = 5, 30.0
+    return get_breaker(
+        f'payment:{provider}',
+        failure_threshold=threshold,
+        cooldown_seconds=cooldown,
+    )
 
 SUPPORTED_PROVIDERS = ('mercadopago', 'stripe', 'none')
 PAID_STATES = {'paid'}
@@ -77,8 +106,10 @@ async def generate_payment_link(
     if len(currency_code) != 3:
         raise PaymentProviderError('Invalid currency code')
 
+    breaker = _payment_breaker(provider)
     if provider == 'mercadopago':
-        return await _create_mercadopago_preference(
+        return await breaker.call(
+            _create_mercadopago_preference,
             api_key=api_key,
             amount=amount_decimal,
             currency=currency_code,
@@ -89,7 +120,8 @@ async def generate_payment_link(
             transport=transport,
         )
     if provider == 'stripe':
-        return await _create_stripe_payment_link(
+        return await breaker.call(
+            _create_stripe_payment_link,
             api_key=api_key,
             amount=amount_decimal,
             currency=currency_code,

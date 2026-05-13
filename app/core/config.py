@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     alerts_smtp_use_tls: bool = True
     alerts_max_attempts: int = 5
     alerts_retry_base_seconds: int = 60
+    # TASK-0059: rate limiting + circuit breaker
+    rate_limit_per_min: int = Field(default=60, ge=1)
+    rate_limit_webhook_per_min: int = Field(default=600, ge=1)
+    circuit_breaker_failure_threshold: int = Field(default=5, ge=1)
+    circuit_breaker_cooldown_seconds: float = Field(default=30.0, ge=1.0)
 
     @property
     def knowledge_storage_bucket(self) -> str:

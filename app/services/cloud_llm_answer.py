@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from app.core.config import get_settings
+from app.services.circuit_breaker import get_breaker
 from app.services.conversation_flow import (
     ConversationContext,
     build_system_prompt,
@@ -130,6 +132,20 @@ async def _call_openai(
     return text, _extract_token_usage(response.usage, 'openai')
 
 
+def _breaker_for(provider: str):
+    try:
+        settings = get_settings()
+        threshold = settings.circuit_breaker_failure_threshold
+        cooldown = settings.circuit_breaker_cooldown_seconds
+    except Exception:  # noqa: BLE001
+        threshold, cooldown = 5, 30.0
+    return get_breaker(
+        f'cloud_llm:{provider}',
+        failure_threshold=threshold,
+        cooldown_seconds=cooldown,
+    )
+
+
 async def _call_provider(
     *,
     system_text: str,
@@ -143,7 +159,8 @@ async def _call_provider(
     temperature: float,
 ) -> tuple[str, dict[str, int]]:
     if provider == 'claude':
-        return await _call_anthropic(
+        return await _breaker_for('claude').call(
+            _call_anthropic,
             system_text=system_text,
             context_text=context_text,
             messages=messages,
@@ -154,7 +171,8 @@ async def _call_provider(
             temperature=temperature,
         )
     if provider == 'openai':
-        return await _call_openai(
+        return await _breaker_for('openai').call(
+            _call_openai,
             system_text=system_text,
             context_text=context_text,
             messages=messages,
