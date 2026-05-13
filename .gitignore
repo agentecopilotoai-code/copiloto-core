@@ -2,6 +2,7 @@
 node_modules/
 admin-panel/node_modules/
 admin-panel/dist/
+admin-panel/package-lock.json
 
 # Python
 __pycache__/
@@ -10,6 +11,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.venv-*/
 *.egg-info/
 
 # Local env and secrets
