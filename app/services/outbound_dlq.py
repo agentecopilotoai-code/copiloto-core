@@ -1,0 +1,356 @@
+"""TASK-0065 — Dead-letter queue de mensajes outbound.
+
+Cuando ``event_worker`` agota el envío de un mensaje a Meta y lo deja con
+``messages.status='failed'`` y ``error_code/error_message`` poblados, ese
+mensaje queda invisible para el operador. Este módulo expone tres operaciones
+puras (sin FastAPI) que las rutas y el scheduler reutilizan:
+
+1.  ``list_dlq``: lista paginada con preview por ``error_code``.
+2.  ``count_recent_failures``: conteo agrupado por ``error_code`` en la
+    ventana móvil para alimentar la alerta automática.
+3.  ``requeue_message``: resetea el mensaje a ``status='queued'`` y vuelve a
+    encolar el evento ``message.queued`` para que el worker lo procese.
+
+La alerta ``operator_alerts(kind='outbound_dlq_threshold')`` se enfila desde
+el scheduler cuando el total en la ventana excede ``dlq_alert_threshold``.
+"""
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+from typing import Any, Iterable
+from uuid import UUID
+
+import structlog
+
+log = structlog.get_logger()
+
+
+PREVIEW_PER_GROUP = 3
+
+
+def normalize_error_code(value: Any) -> str:
+    """Convierte ``error_code`` a un slug estable para agrupar/contar.
+
+    Vacío o ``None`` se mapea a ``'transport_error'``: mismo bucket que usa
+    el ``event_worker`` cuando el fallo es de red y no hay respuesta HTTP de
+    Meta. Esto evita que un puñado de timeouts queden invisibles bajo un
+    grupo NULL.
+    """
+    if value is None:
+        return 'transport_error'
+    text = str(value).strip()
+    return text or 'transport_error'
+
+
+def _row_to_item(row: Any) -> dict[str, Any]:
+    payload = row['payload'] if 'payload' in row.keys() else None
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        'id': str(row['id']),
+        'conversation_id': str(row['conversation_id']) if row.get('conversation_id') else None,
+        'contact_phone_last4': (row.get('contact_phone') or '')[-4:],
+        'message_type': row.get('message_type'),
+        'body_preview': (row.get('body_text') or '')[:160],
+        'error_code': normalize_error_code(row.get('error_code')),
+        'error_message': row.get('error_message'),
+        'failed_at': row['failed_at'].isoformat() if row.get('failed_at') else None,
+        'created_at': row['created_at'].isoformat() if row.get('created_at') else None,
+        'payload': payload,
+    }
+
+
+async def list_dlq(
+    conn: Any,
+    *,
+    tenant_id: UUID,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int = 50,
+    error_code: str | None = None,
+) -> dict[str, Any]:
+    """Devuelve ``{items, totals_by_error_code}``.
+
+    ``items`` son los últimos ``limit`` mensajes ``status='failed'`` dentro
+    de la ventana, opcionalmente filtrados por ``error_code``.
+    ``totals_by_error_code`` es el conteo total por código en la ventana
+    (sin aplicar el filtro), para que el panel pueda mostrar los buckets
+    completos.
+    """
+    bounded_limit = max(1, min(int(limit), 500))
+    where_parts = ['m.tenant_id = $1', "m.status = 'failed'"]
+    params: list[Any] = [tenant_id]
+    if since is not None:
+        params.append(since)
+        where_parts.append(f'coalesce(m.failed_at, m.created_at) >= ${len(params)}')
+    if until is not None:
+        params.append(until)
+        where_parts.append(f'coalesce(m.failed_at, m.created_at) <= ${len(params)}')
+    base_where = ' and '.join(where_parts)
+
+    totals_rows = await conn.fetch(
+        f"""
+        select coalesce(nullif(m.error_code, ''), 'transport_error') as error_code,
+               count(*) as count
+        from app.messages m
+        where {base_where}
+          and m.direction='outbound'
+        group by 1
+        order by 2 desc
+        """,
+        *params,
+    )
+    totals = [
+        {'error_code': normalize_error_code(row['error_code']), 'count': int(row['count'])}
+        for row in totals_rows
+    ]
+
+    if error_code:
+        params.append(error_code)
+        items_where = (
+            base_where
+            + f" and coalesce(nullif(m.error_code, ''), 'transport_error') = ${len(params)}"
+        )
+    else:
+        items_where = base_where
+
+    params.append(bounded_limit)
+    items_rows = await conn.fetch(
+        f"""
+        select m.id, m.conversation_id, m.message_type, m.body_text,
+               m.error_code, m.error_message, m.failed_at, m.created_at,
+               m.payload, ct.phone_e164 as contact_phone
+        from app.messages m
+        left join app.conversations cv on cv.id = m.conversation_id and cv.tenant_id = m.tenant_id
+        left join app.contacts ct on ct.id = cv.contact_id and ct.tenant_id = m.tenant_id
+        where {items_where}
+          and m.direction='outbound'
+        order by coalesce(m.failed_at, m.created_at) desc
+        limit ${len(params)}
+        """,
+        *params,
+    )
+    items = [_row_to_item(row) for row in items_rows]
+    return {'items': items, 'totals_by_error_code': totals}
+
+
+async def count_recent_failures(
+    conn: Any,
+    *,
+    tenant_id: UUID,
+    window_minutes: int,
+) -> dict[str, Any]:
+    """Devuelve ``{total, by_error_code, preview}`` para la alerta automática.
+
+    ``preview`` contiene hasta 5 fallos recientes (id, error_code,
+    error_message, failed_at) que se inyectan en el payload de la alerta
+    para que el operador entienda de un vistazo qué está fallando.
+    """
+    since = datetime.now(UTC) - timedelta(minutes=max(1, int(window_minutes)))
+    rows = await conn.fetch(
+        """
+        select coalesce(nullif(m.error_code, ''), 'transport_error') as error_code,
+               count(*) as count
+        from app.messages m
+        where m.tenant_id = $1
+          and m.status = 'failed'
+          and m.direction = 'outbound'
+          and coalesce(m.failed_at, m.created_at) >= $2
+        group by 1
+        order by 2 desc
+        """,
+        tenant_id,
+        since,
+    )
+    by_error_code = [
+        {'error_code': normalize_error_code(row['error_code']), 'count': int(row['count'])}
+        for row in rows
+    ]
+    total = sum(item['count'] for item in by_error_code)
+
+    preview_rows = await conn.fetch(
+        """
+        select m.id, m.error_code, m.error_message,
+               coalesce(m.failed_at, m.created_at) as at
+        from app.messages m
+        where m.tenant_id = $1
+          and m.status = 'failed'
+          and m.direction = 'outbound'
+          and coalesce(m.failed_at, m.created_at) >= $2
+        order by coalesce(m.failed_at, m.created_at) desc
+        limit 5
+        """,
+        tenant_id,
+        since,
+    )
+    preview = [
+        {
+            'id': str(row['id']),
+            'error_code': normalize_error_code(row['error_code']),
+            'error_message': (row['error_message'] or '')[:300],
+            'at': row['at'].isoformat() if row['at'] else None,
+        }
+        for row in preview_rows
+    ]
+    return {
+        'total': total,
+        'window_minutes': int(window_minutes),
+        'by_error_code': by_error_code,
+        'preview': preview,
+        'since': since.isoformat(),
+    }
+
+
+async def requeue_message(
+    conn: Any,
+    *,
+    tenant_id: UUID,
+    message_id: UUID,
+    requested_by: str | None = None,
+) -> dict[str, Any]:
+    """Resetea un mensaje ``status='failed'`` a ``queued`` y lo re-encola.
+
+    Operación idempotente desde el punto de vista del operador: si ya está
+    en ``queued`` (re-clic accidental) la función devuelve
+    ``{'requeued': False, 'reason': 'already_queued'}`` sin lanzar.
+    Devuelve ``None`` si el mensaje no existe en este tenant.
+
+    El reset no toca ningún contador de reintentos automático: la nota del
+    TASK-0065 dice que el reintento manual es decisión del operador y no
+    afecta a la lógica del worker.
+    """
+    row = await conn.fetchrow(
+        """
+        select id, status, direction
+        from app.messages
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        message_id,
+    )
+    if row is None:
+        return {'requeued': False, 'reason': 'not_found'}
+    if row['direction'] != 'outbound':
+        return {'requeued': False, 'reason': 'not_outbound'}
+    if row['status'] == 'queued':
+        return {'requeued': False, 'reason': 'already_queued'}
+    if row['status'] not in ('failed',):
+        return {'requeued': False, 'reason': f'invalid_status:{row["status"]}'}
+
+    await conn.execute(
+        """
+        update app.messages
+        set status='queued',
+            failed_at=null,
+            error_code=null,
+            error_message=null
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        message_id,
+    )
+    # Emit a fresh ``message.queued`` so the event_worker picks it up. The
+    # idempotency key includes a monotonic suffix to avoid collisions with the
+    # original event (which is already ``published_at``).
+    idem = f'message-retry:{message_id}:{int(datetime.now(UTC).timestamp())}'
+    await conn.execute(
+        """
+        insert into app.domain_events
+          (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload)
+        values ($1,'message',$2,'message.queued',$3,$4::jsonb)
+        on conflict do nothing
+        """,
+        tenant_id,
+        message_id,
+        idem,
+        json.dumps({'retry': True, 'requested_by': requested_by or 'operator'}),
+    )
+    log.info(
+        'outbound_dlq.requeued',
+        tenant_id=str(tenant_id),
+        message_id=str(message_id),
+        requested_by=requested_by,
+    )
+    return {'requeued': True, 'message_id': str(message_id), 'idempotency_key': idem}
+
+
+async def maybe_emit_dlq_threshold_alerts(
+    conn: Any,
+    *,
+    threshold: int,
+    window_minutes: int,
+    enqueue_alert: Any,
+) -> int:
+    """Recorre tenants y emite alertas cuando el conteo supera el umbral.
+
+    ``enqueue_alert`` es ``app.services.operator_alerts.enqueue_operator_alert``
+    inyectado para que los tests puedan ejercitar la rama sin tocar redes ni
+    SMTP. Devuelve la cantidad de alertas encoladas en este tick.
+
+    Para evitar duplicados ruidosos, se descarta el tick si ya hay una alerta
+    ``outbound_dlq_threshold`` ``pending`` o ``sent`` en la ventana corriente
+    para el mismo tenant.
+    """
+    tenants: Iterable[Any] = await conn.fetch(
+        """
+        select distinct m.tenant_id
+        from app.messages m
+        where m.status='failed'
+          and m.direction='outbound'
+          and coalesce(m.failed_at, m.created_at) >= now() - ($1 * interval '1 minute')
+        """,
+        int(window_minutes),
+    )
+    emitted = 0
+    for tenant_row in tenants:
+        tenant_id = tenant_row['tenant_id']
+        stats = await count_recent_failures(
+            conn,
+            tenant_id=tenant_id,
+            window_minutes=window_minutes,
+        )
+        if stats['total'] < threshold:
+            continue
+        existing = await conn.fetchval(
+            """
+            select 1 from app.operator_alerts
+            where tenant_id=$1
+              and kind='outbound_dlq_threshold'
+              and status in ('pending','sent')
+              and created_at >= now() - ($2 * interval '1 minute')
+            limit 1
+            """,
+            tenant_id,
+            int(window_minutes),
+        )
+        if existing:
+            continue
+        await enqueue_alert(
+            conn,
+            tenant_id=tenant_id,
+            kind='outbound_dlq_threshold',
+            payload={
+                'threshold': int(threshold),
+                'window_minutes': int(window_minutes),
+                'total': stats['total'],
+                'by_error_code': stats['by_error_code'],
+                'preview': stats['preview'],
+            },
+        )
+        emitted += 1
+    return emitted
+
+
+__all__ = [
+    'count_recent_failures',
+    'list_dlq',
+    'maybe_emit_dlq_threshold_alerts',
+    'normalize_error_code',
+    'requeue_message',
+]

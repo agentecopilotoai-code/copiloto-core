@@ -13,6 +13,7 @@ import { KnowledgeStorageSettings } from '../modules/knowledgeStorage/KnowledgeS
 import { MediaLibraryModule } from '../modules/media/MediaLibraryModule.jsx';
 import { GoLiveReadiness } from '../modules/readiness/GoLiveReadiness.jsx';
 import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
+import { OutboundDLQ } from '../modules/outbound/OutboundDLQ.jsx';
 import { BranchesModule } from '../modules/branches/BranchesModule.jsx';
 import { PackagesModule } from '../modules/packages/PackagesModule.jsx';
 import { SegmentsModule } from '../modules/segments/SegmentsModule.jsx';
@@ -295,6 +296,8 @@ export function AdminLayout({ session }) {
     }
   } else if (activeModuleId === 'operations-desk') {
     activeContent = <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'outbound-dlq') {
+    activeContent = <OutboundDLQ module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'go-live-readiness') {
     activeContent = (
       <GoLiveReadiness

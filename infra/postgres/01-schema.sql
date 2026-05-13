@@ -748,7 +748,7 @@ create table app.operator_alerts (
   -- ``backup_failure`` does not belong to any tenant). RLS only surfaces NULL
   -- rows under ``app.support_mode()``, which is the expected operator path.
   tenant_id uuid references app.tenants(id) on delete cascade,
-  kind text not null check (kind in ('negative_feedback','complaint','backup_failure')),
+  kind text not null check (kind in ('negative_feedback','complaint','backup_failure','outbound_dlq_threshold')),
   constraint chk_operator_alerts_system_alerts_have_no_tenant check (
     (kind = 'backup_failure') or (tenant_id is not null)
   ),

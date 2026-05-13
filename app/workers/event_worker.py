@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services.metrics import (
     record_message,
+    record_outbound_dlq,
     set_worker_queue_depth,
     start_metrics_http_server,
 )
@@ -34,6 +35,29 @@ def delivery_error_message(exc: Exception) -> str:
         response_text = exc.response.text[:1000]
         return f'Meta Graph API HTTP {exc.response.status_code}: {response_text}'
     return str(exc)[:1000]
+
+
+def delivery_error_code(exc: Exception) -> str:
+    """Extrae el ``error.code`` que devuelve Meta cuando un envío falla.
+
+    El payload típico de error de Graph API es::
+
+        {"error": {"message": "...", "type": "...", "code": 131026, ...}}
+
+    Si no se puede parsear, se usa el HTTP status (`http_<status>`) o
+    ``transport_error`` cuando ni siquiera hubo respuesta HTTP (timeout,
+    DNS, etc.).
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            body = exc.response.json()
+            code = body.get('error', {}).get('code')
+            if code is not None:
+                return str(code)
+        except (json.JSONDecodeError, ValueError, AttributeError, TypeError):
+            pass
+        return f'http_{exc.response.status_code}'
+    return 'transport_error'
 
 
 async def process_once(conn: asyncpg.Connection) -> int:
@@ -88,21 +112,30 @@ async def process_once(conn: asyncpg.Connection) -> int:
             )
         except Exception as exc:
             error_message = delivery_error_message(exc)
+            error_code = delivery_error_code(exc)
             record_message(
                 tenant_id=row['tenant_id'],
                 direction='outbound',
                 channel='whatsapp',
                 status='failed',
             )
+            # TASK-0065: contador de DLQ por error_code para alertas Prometheus
+            # y dashboards. Se incrementa una sola vez por fallo definitivo,
+            # alineado con el insert en ``messages.status='failed'``.
+            record_outbound_dlq(
+                tenant_id=row['tenant_id'],
+                error_code=error_code,
+            )
             async with conn.transaction():
                 await conn.execute(
                     """
                     update app.messages
-                    set status='failed', failed_at=now(), error_message=$2
+                    set status='failed', failed_at=now(), error_message=$2, error_code=$3
                     where id=$1
                     """,
                     row['aggregate_id'],
                     error_message,
+                    error_code,
                 )
                 await conn.execute(
                     """
@@ -128,6 +161,7 @@ async def process_once(conn: asyncpg.Connection) -> int:
                 message_id=str(row['aggregate_id']),
                 tenant_id=str(row['tenant_id']),
                 error=error_message,
+                error_code=error_code,
             )
             continue
 

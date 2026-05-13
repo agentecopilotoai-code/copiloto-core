@@ -15,6 +15,60 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0065 — DLQ de mensajes outbound visible en panel + alerta
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se cierra el agujero operativo donde un envío de WhatsApp fallido por el `event_worker` quedaba con `messages.status='failed'` y `error_*` poblados pero invisible para el operador: ahora hay endpoints REST, contador Prometheus, alerta automática vía `operator_alerts`, alerta Prometheus + runbook implícito en el dashboard, y un módulo "Outbound DLQ" en el Admin Panel para listar, filtrar por `error_code`, abrir el detalle (payload + error de Meta) y reintentar mensajes individualmente. El reintento manual no toca ningún contador automático: simplemente resetea el mensaje a `status='queued'`, limpia `failed_at/error_code/error_message` y vuelve a publicar un evento `message.queued` con idempotency key fresca (`message-retry:<msg-id>:<epoch>`) para que el worker lo procese. La alerta automática se enfila desde el scheduler en cada tick: si en la ventana móvil (`dlq_alert_window_minutes`, default 60) hay más de `dlq_alert_threshold` mensajes fallidos para un tenant y aún no hay un `operator_alerts(kind='outbound_dlq_threshold')` `pending`/`sent` reciente, se inserta uno con `total`, `by_error_code` y un `preview` con los últimos 5 errores. La métrica Prometheus `cpi_outbound_dlq_total{tenant_id, error_code}` la incrementa el `event_worker` cuando marca el envío como fail definitivo; la regla `OutboundDLQGrowing` (>5 increments en 5 min) cumple el criterio de aceptación literal del backlog.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** el CHECK de `app.operator_alerts.kind` se extiende a `('negative_feedback','complaint','backup_failure','outbound_dlq_threshold')`. El constraint compuesto sobre `tenant_id NULL` no cambia: la alerta DLQ es tenant-scoped y exige `tenant_id IS NOT NULL`, así que sigue cubierta por la cláusula `(kind = 'backup_failure') or (tenant_id is not null)` sin tener que agregar al nuevo kind a la lista de excepciones.
+  - **Config (`app/core/config.py`):** dos settings nuevas, `dlq_alert_threshold: int = 10` y `dlq_alert_window_minutes: int = 60`, validadas con `Field(ge=1)` / `Field(ge=1, le=1440)`. No requieren env new — los defaults son los del backlog. El scheduler lee ambas vía `get_settings()`.
+  - **Métrica (`app/services/metrics.py`):** nuevo `Counter('cpi_outbound_dlq_total', labelnames=('tenant_id','error_code'))` y helper `record_outbound_dlq(tenant_id, error_code)`. `error_code` vacío/None se normaliza a `'transport_error'` para no perder los fallos de red bajo un bucket NULL en Prometheus.
+  - **Event worker (`app/workers/event_worker.py`):** ahora el bloque de fallo persiste también `error_code` (`update app.messages set status='failed', failed_at=now(), error_message=$2, error_code=$3`) y emite `record_outbound_dlq(...)`. El nuevo helper `delivery_error_code(exc)` parsea `error.code` del JSON de Meta cuando el fallo es `httpx.HTTPStatusError`, cae a `http_<status>` si el body no es JSON parseable y a `'transport_error'` para excepciones de red. El log estructurado `message_delivery_failed` incluye `error_code` para correlacionar con dashboards.
+  - **Servicio DLQ (`app/services/outbound_dlq.py` nuevo):** cuatro funciones puras (sin FastAPI), reutilizables por rutas y scheduler.
+    - `list_dlq(conn, *, tenant_id, since, until, limit, error_code)`: devuelve `{items, totals_by_error_code}`. El total agrupa por `coalesce(nullif(m.error_code, ''), 'transport_error')` y se calcula sobre la ventana completa (no se filtra por `error_code` para que el panel vea todos los buckets aunque tenga un filtro activo). Los items se filtran por `error_code` cuando viene, se ordenan por `coalesce(m.failed_at, m.created_at) desc`, limitados al `min(limit, 500)`. Cada item expone `id`, `conversation_id`, `contact_phone_last4`, `message_type`, `body_preview` (160 chars), `error_code`, `error_message`, `failed_at`, `created_at` y el `payload` completo para el modal.
+    - `count_recent_failures(conn, *, tenant_id, window_minutes)`: el `total`, `by_error_code` y un `preview` con los 5 fallos más recientes (id, error_code, error_message truncado a 300 chars, timestamp). Lo consume el scheduler para construir el payload de la alerta.
+    - `requeue_message(conn, *, tenant_id, message_id, requested_by)`: chequea existencia, dirección (`outbound`) y status. Si el mensaje ya está `queued` devuelve `{'requeued': False, 'reason': 'already_queued'}` sin lanzar (idempotente para re-clicks del operador). Si está `failed`, hace `update app.messages set status='queued', failed_at=null, error_code=null, error_message=null` y emite `insert into app.domain_events ... 'message.queued'` con idempotency key `message-retry:<msg-id>:<epoch>` para que no colisione con el evento original ya publicado.
+    - `maybe_emit_dlq_threshold_alerts(conn, *, threshold, window_minutes, enqueue_alert)`: itera los tenants con al menos un fail reciente, agrega via `count_recent_failures`, compara con el umbral, debouncea contra una alerta existente `pending`/`sent` en la ventana, y enfila vía el callable `enqueue_alert` inyectado (en producción `app.services.operator_alerts.enqueue_operator_alert`).
+  - **Endpoints (`app/api/v1/routes.py`):** dos endpoints registrados contra `tenant_ops_router` (requiere rol `agent` o superior, alineado con el resto del Operations Desk).
+    - `GET /v1/tenants/{tenant_id}/outbound/dlq?since=&until=&limit=&error_code=` — query params validados (`limit` 1–500), llama a `list_dlq`.
+    - `POST /v1/tenants/{tenant_id}/outbound/dlq/{message_id}/retry` — devuelve 404 si `not_found`, 409 si `already_queued`/`invalid_status`/`not_outbound`, y `{'requeued': True, ...}` en éxito. Auditado con `action='outbound.dlq.retried'`.
+  - **Scheduler (`app/workers/scheduler.py`):** la corutina principal llama `maybe_emit_dlq_threshold_alerts` con `enqueue_alert=enqueue_operator_alert` *antes* de `process_pending_operator_alerts`, así la alerta sale en el mismo tick. Excepciones se logean con `dlq_threshold_check_failed` sin tirar el scheduler entero (los otros pipelines no dependen de la DLQ).
+  - **Prometheus (`infra/observability/alerts.yaml`):** nueva regla `OutboundDLQGrowing` con `expr: sum(increase(cpi_outbound_dlq_total[5m])) > 5`, `for: 5m`, severity `page`. Cumple literal el criterio de aceptación "Alerta dispara cuando >5 fails en 5 min". La descripción referencia códigos típicos (131026, 190, 80007) para acelerar el triage.
+  - **Admin Panel:**
+    - `admin-panel/src/components/modules/outbound/OutboundDLQ.jsx` (nuevo): módulo con totales clicables como chips (filtro por `error_code`), tabla con last4 del teléfono + preview del body + botón "Reintentar", modal de detalle con el `payload` completo, `error_code`, `error_message` y `failed_at`. Hooks de QA: `data-module="outbound-dlq"`, `data-error-code`, `data-action="retry"`, `data-message-id`.
+    - `admin-panel/src/data/modules.js`: nuevo módulo `outbound-dlq` con `minRole: 'agent'` y descripción explícita.
+    - `admin-panel/src/components/layout/AdminLayout.jsx`: import del nuevo componente y router switch para `activeModuleId === 'outbound-dlq'`.
+    - `admin-panel/src/services/coreApi.js`: dos helpers nuevos, `listOutboundDlq(session, tenantId, {since, until, limit, errorCode})` y `retryOutboundDlqMessage(session, tenantId, messageId)`.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/core/config.py`
+  - `app/services/metrics.py`
+  - `app/services/outbound_dlq.py` (nuevo)
+  - `app/workers/event_worker.py`
+  - `app/workers/scheduler.py`
+  - `app/api/v1/routes.py`
+  - `infra/observability/alerts.yaml`
+  - `admin-panel/src/data/modules.js`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/outbound/OutboundDLQ.jsx` (nuevo)
+  - `tests/test_outbound_dlq_static.py` (nuevo, 21 tests)
+  - `tests/test_operator_alerts_static.py` (asserts ajustadas para el nuevo kind + import compartido del scheduler)
+  - `tests/test_backup_cloud_static.py` (assert del enum extendido)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `uv run pytest tests/test_outbound_dlq_static.py` → **21 passed**. Cubre: nuevo kind en schema, settings expuestos, métrica y `record_outbound_dlq` normalizando vacíos a `transport_error`, parsing del `error.code` de Meta en `delivery_error_code`, agrupación 12×131026, `requeue_message` resetea status + emite `message.queued` idempotente, `already_queued`/`not_found` no lanzan, `maybe_emit_dlq_threshold_alerts` dispara cuando total≥threshold, lo evita debajo y debouncea con alerta existente, scheduler importa el helper, regla `OutboundDLQGrowing` con `> 5`, endpoints registrados en `tenant_ops_router`, `coreApi` exporta los helpers, módulo del panel renderiza filtros y botón retry.
+  - `uv run pytest tests/test_operator_alerts_static.py tests/test_backup_cloud_static.py tests/test_metrics_observability_static.py tests/test_outbound_dlq_static.py` → **73 passed**.
+  - `uv run pytest tests/` (suite completa estática) → **1104 passed, 20 skipped**. No regresiones.
+  - `uv run ruff check app/services/outbound_dlq.py app/workers/event_worker.py app/workers/scheduler.py app/services/metrics.py app/api/v1/routes.py tests/test_outbound_dlq_static.py` → All checks passed!
+- **Notas / limitaciones:**
+  - El reintento manual *no* lleva contador propio: el backlog dice "no afecta a `retry_count` automático; el operador decide cuántos intentos hacer". Como el `event_worker` actual no tiene `retry_count` en `app.messages` (cada fallo va directo a `status='failed'`), el reintento simplemente vuelve al ciclo normal: el worker intentará una vez más y, si vuelve a fallar, otra fila quedará en la DLQ. No se introdujo `retry_count` como columna nueva para mantener el alcance acotado al MVP.
+  - La métrica Prometheus se incrementa una vez por fallo definitivo en el `event_worker`. Si el operador reencola y el segundo intento también falla, hay un segundo increment (correcto: la regla `OutboundDLQGrowing` lo cuenta como un nuevo evento).
+  - El debounce de la alerta automática usa la misma ventana del umbral (`dlq_alert_window_minutes`): mientras haya una alerta `pending`/`sent` en esa ventana para el tenant, no se enfila otra. Esto evita ruido si el operador ya está investigando.
+  - El módulo del panel está accesible para roles `agent`+; el reintento dispara `audit_logs(action='outbound.dlq.retried')` para trazabilidad.
+
+---
+
 ### TASK-0064 — Backups automatizados a cloud con verificación periódica
 
 - **Fecha:** 2026-05-13
