@@ -71,6 +71,29 @@ def test_analytics_agents_computes_required_metrics():
     assert 'avg(f.rating)' in block
 
 
+def test_analytics_agents_never_casts_text_user_id_to_uuid():
+    """``messages.sender_actor_id`` and ``metadata->>'closed_by_user_id'`` are
+    free-form ``text``. Casting them directly to ``uuid`` blows up the whole
+    endpoint as soon as a tenant has a non-UUID agent actor (e.g. the
+    ``send_quote`` path uses ``request.state.actor_id`` which is the auth
+    subject). The safe direction is to cast the agent's ``users.id`` (always
+    a uuid) to text and join on text equality.
+    """
+    source = API_ROUTES.read_text()
+    block = source.split('async def analytics_agents(')[1]
+    block = block.split('SEGMENT_PROJECTION')[0]
+    # No "<text col>::uuid = <uuid col>" join in the final select.
+    assert 'ms.user_id::uuid' not in block
+    assert 'rt.user_id::uuid' not in block
+    assert 'ac.user_id::uuid' not in block
+    assert 'fp.user_id::uuid' not in block
+    # The safe direction (uuid → text) is used instead.
+    assert 'ms.user_id = ag.user_id::text' in block
+    assert 'rt.user_id = ag.user_id::text' in block
+    assert 'ac.user_id = ag.user_id::text' in block
+    assert 'fp.user_id = ag.user_id::text' in block
+
+
 def test_analytics_agents_returns_top_performer_and_totals():
     source = API_ROUTES.read_text()
     block = source.split('async def analytics_agents(')[1]

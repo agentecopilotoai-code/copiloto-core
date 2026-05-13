@@ -9347,12 +9347,12 @@ async def analytics_agents(
           coalesce(fp.avg_rating, 0)::float as feedback_avg_rating,
           coalesce(fp.ratings_count, 0)::int as feedback_ratings_count
         from agents ag
-        left join messages_sent ms on ms.user_id::uuid = ag.user_id
+        left join messages_sent ms on ms.user_id = ag.user_id::text
         left join handoffs_accepted ha on ha.user_id = ag.user_id
         left join handoffs_resolved hr on hr.user_id = ag.user_id
-        left join response_times rt on rt.user_id::uuid = ag.user_id
-        left join appts_closed ac on ac.user_id::uuid = ag.user_id
-        left join feedback_per_agent fp on fp.user_id::uuid = ag.user_id
+        left join response_times rt on rt.user_id = ag.user_id::text
+        left join appts_closed ac on ac.user_id = ag.user_id::text
+        left join feedback_per_agent fp on fp.user_id = ag.user_id::text
         order by revenue_attributed desc,
                  appointments_confirmed desc,
                  handoffs_resolved desc,
