@@ -7498,7 +7498,10 @@ async def _verify_onboarding_business_hours(conn: asyncpg.Connection, tenant_id:
     hours = _coerce_jsonb(row['business_hours']) or {}
     if not isinstance(hours, dict) or not hours:
         return False, 'Horarios de atención vacíos.', {}
-    populated = {day: ranges for day, ranges in hours.items() if ranges}
+    # TenantSetupWizard persiste {timezone_strategy, weekly_schedule: {mon: [...]}}.
+    # Aceptamos esa forma y también el flat {day: [...]} para tests/seeds.
+    weekly = hours.get('weekly_schedule') if isinstance(hours.get('weekly_schedule'), dict) else hours
+    populated = {day: ranges for day, ranges in weekly.items() if ranges}
     if not populated:
         return False, 'Ningún día tiene rangos de atención definidos.', {}
     return True, f'Horarios definidos para {len(populated)} día(s).', {'days_configured': sorted(populated.keys())}
@@ -7514,19 +7517,36 @@ async def _verify_onboarding_end_to_end_test(conn: asyncpg.Connection, tenant_id
     sent_at = step7.get('test_message_sent_at')
     if not sent_at:
         return False, 'Aún no se envió el mensaje de prueba al wa_id del admin.', {}
+    target_wa_id = step7.get('target_wa_id')
+    if not target_wa_id:
+        return False, (
+            'No se registró el wa_id del admin al que se envió la prueba. '
+            'Vuelve a marcar el envío con el wa_id correcto.'
+        ), {'sent_at': sent_at}
     inbound = await conn.fetchrow(
         """
-        select id, created_at from app.messages
-        where tenant_id=$1 and direction='inbound' and created_at >= $2::timestamptz
-        order by created_at desc limit 1
+        select m.id, m.created_at, c.wa_id
+        from app.messages m
+        join app.conversations conv on conv.id=m.conversation_id and conv.tenant_id=m.tenant_id
+        join app.contacts c on c.id=conv.contact_id and c.tenant_id=m.tenant_id
+        where m.tenant_id=$1
+          and m.direction='inbound'
+          and m.created_at >= $2::timestamptz
+          and c.wa_id=$3
+        order by m.created_at desc limit 1
         """,
         tenant_id,
         sent_at,
+        str(target_wa_id),
     )
     if not inbound:
-        return False, 'No se recibió ningún mensaje inbound después de enviar la prueba.', {'sent_at': sent_at}
-    return True, 'Test E2E exitoso: inbound recibido tras envío de prueba.', {
+        return False, (
+            f'No se recibió ningún mensaje inbound de {target_wa_id} '
+            'después de enviar la prueba. Pide al admin que responda al mensaje.'
+        ), {'sent_at': sent_at, 'target_wa_id': target_wa_id}
+    return True, 'Test E2E exitoso: inbound del wa_id del admin recibido.', {
         'sent_at': sent_at,
+        'target_wa_id': target_wa_id,
         'inbound_message_id': str(inbound['id']),
         'inbound_at': inbound['created_at'].isoformat() if inbound['created_at'] else None,
     }
@@ -7709,13 +7729,18 @@ async def record_onboarding_test_message_sent(
             status_code=409,
             detail='Completa los pasos 1..6 antes de enviar la prueba E2E.',
         )
+    raw_wa_id = payload.get('wa_id') if isinstance(payload, dict) else None
+    target_wa_id = str(raw_wa_id).strip() if raw_wa_id is not None else ''
+    if not target_wa_id:
+        raise HTTPException(
+            status_code=422,
+            detail='wa_id del admin es obligatorio para registrar el envío de prueba.',
+        )
     sent_at = datetime.now(UTC).isoformat()
-    target_wa_id = payload.get('wa_id') if isinstance(payload, dict) else None
     new_steps = dict(progress['steps'])
     step_entry = dict(new_steps.get('7') or {})
     step_entry['test_message_sent_at'] = sent_at
-    if target_wa_id:
-        step_entry['target_wa_id'] = str(target_wa_id)
+    step_entry['target_wa_id'] = target_wa_id
     new_steps['7'] = step_entry
     new_progress = {
         'last_completed_step': progress['last_completed_step'],

@@ -241,6 +241,33 @@ def test_verifier_step6_business_hours_rejects_empty_payload():
     assert 'monday' in details['days_configured']
 
 
+def test_verifier_step6_business_hours_inspects_weekly_schedule():
+    """The TenantSetupWizard emits {timezone_strategy, weekly_schedule: {mon: [...]}}.
+
+    The verifier MUST look inside weekly_schedule rather than treating the
+    top-level keys as days, otherwise a fully empty schedule produced by the
+    wizard would still pass because `timezone_strategy` is a truthy string.
+    """
+    from app.api.v1.routes import _verify_onboarding_business_hours
+    empty_weekly = {
+        'timezone_strategy': 'tenant_timezone',
+        'weekly_schedule': {'mon': [], 'tue': [], 'wed': [], 'thu': [], 'fri': [], 'sat': [], 'sun': []},
+    }
+    conn = FakeConn(fetchrow={'from app.tenant_settings': {'business_hours': empty_weekly}})
+    ready, reason, _ = asyncio.run(_verify_onboarding_business_hours(conn, uuid4()))
+    assert ready is False
+    assert 'Ningún día' in reason
+
+    populated_weekly = {
+        'timezone_strategy': 'tenant_timezone',
+        'weekly_schedule': {'mon': [{'start': '09:00', 'end': '17:00'}], 'tue': []},
+    }
+    conn2 = FakeConn(fetchrow={'from app.tenant_settings': {'business_hours': populated_weekly}})
+    ready2, _, details = asyncio.run(_verify_onboarding_business_hours(conn2, uuid4()))
+    assert ready2 is True
+    assert details['days_configured'] == ['mon']
+
+
 def test_verifier_step7_end_to_end_requires_sent_and_inbound():
     from app.api.v1.routes import _verify_onboarding_end_to_end_test
     # No sent timestamp recorded yet.
@@ -252,6 +279,85 @@ def test_verifier_step7_end_to_end_requires_sent_and_inbound():
     ready, reason, _ = asyncio.run(_verify_onboarding_end_to_end_test(conn, uuid4()))
     assert ready is False
     assert 'mensaje de prueba' in reason
+
+
+def test_verifier_step7_rejects_inbound_from_other_contact():
+    """An unrelated customer reply must NOT complete the E2E onboarding step.
+
+    The verifier must filter inbound messages by the recorded admin wa_id, not
+    just by tenant + timestamp.
+    """
+    from app.api.v1.routes import _verify_onboarding_end_to_end_test
+
+    progress = {
+        'last_completed_step': 6,
+        'steps': {
+            '7': {'test_message_sent_at': '2026-05-01T00:00:00+00:00', 'target_wa_id': '573001112233'},
+        },
+    }
+
+    class Conn:
+        async def fetchrow(self, query, *args):
+            if 'from app.tenant_settings' in query:
+                return {'onboarding_progress': progress}
+            if 'from app.messages m' in query:
+                # The verifier MUST pass the wa_id as the 3rd argument.
+                assert args[2] == '573001112233', f'verifier did not filter by wa_id, got args={args}'
+                return None  # no inbound from the admin contact
+            raise AssertionError(query)
+
+    ready, reason, details = asyncio.run(_verify_onboarding_end_to_end_test(Conn(), uuid4()))
+    assert ready is False
+    assert '573001112233' in reason
+    assert details['target_wa_id'] == '573001112233'
+
+
+def test_verifier_step7_accepts_inbound_from_matching_admin_contact():
+    from app.api.v1.routes import _verify_onboarding_end_to_end_test
+    from datetime import datetime, UTC as _UTC
+
+    progress = {
+        'last_completed_step': 6,
+        'steps': {
+            '7': {'test_message_sent_at': '2026-05-01T00:00:00+00:00', 'target_wa_id': '573001112233'},
+        },
+    }
+    inbound_at = datetime.now(_UTC)
+
+    class Conn:
+        async def fetchrow(self, query, *args):
+            if 'from app.tenant_settings' in query:
+                return {'onboarding_progress': progress}
+            if 'from app.messages m' in query:
+                assert args[2] == '573001112233'
+                return {'id': uuid4(), 'created_at': inbound_at, 'wa_id': '573001112233'}
+            raise AssertionError(query)
+
+    ready, reason, details = asyncio.run(_verify_onboarding_end_to_end_test(Conn(), uuid4()))
+    assert ready is True
+    assert 'inbound del wa_id del admin' in reason
+    assert details['target_wa_id'] == '573001112233'
+    assert details['inbound_message_id']
+
+
+def test_verifier_step7_requires_recorded_target_wa_id():
+    """If the wizard somehow records sent_at without target_wa_id, the verifier blocks."""
+    from app.api.v1.routes import _verify_onboarding_end_to_end_test
+
+    class Conn:
+        async def fetchrow(self, query, *args):
+            if 'from app.tenant_settings' in query:
+                return {
+                    'onboarding_progress': {
+                        'last_completed_step': 6,
+                        'steps': {'7': {'test_message_sent_at': '2026-05-01T00:00:00+00:00'}},
+                    },
+                }
+            raise AssertionError(query)
+
+    ready, reason, _ = asyncio.run(_verify_onboarding_end_to_end_test(Conn(), uuid4()))
+    assert ready is False
+    assert 'wa_id' in reason
 
 
 # ─────────────────────────────────────────────────────────────────────────────
