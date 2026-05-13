@@ -345,24 +345,7 @@ _TASK-0056 — Timeout y escalado del flujo auto-rebook tras decline silencioso:
 
 ---
 
-### TASK-0055 — Tracking de referido entre contactos (referrer_contact_id)
-
-- **Estado:** PENDING
-- **Por qué bloquea:** los referidos son la palanca de crecimiento orgánico más rentable en servicios locales (peluquerías, clínicas, dentistas). Hoy no se puede medir "quién trae más clientes" porque `contacts.lead_source` solo guarda canal/UTM. Sin esto no hay programa de incentivos ni tablero de "embajadores".
-- **Alcance:**
-  - `contacts.referrer_contact_id uuid` con FK auto-referencial tenant-scoped (`fk_contacts_referrer`) y check `referrer_contact_id <> id`.
-  - Booking flow agrega una pregunta opcional ("¿quién te recomendó?") solo si `notification_settings.ask_referrer=true`. La respuesta se busca por nombre/teléfono en `contacts` y se asigna; si no se encuentra, se guarda en `contacts.lead_source.referred_by_name` como texto libre.
-  - Widget web: el snippet acepta `data-ref=<contact_id>` o `?ref=<contact_id>` en la URL → poblado automáticamente.
-  - Endpoint `GET /v1/analytics/referrals?from_date=&to_date=` que devuelve top 20 referidores con `count_referrals`, `appointments_generated`, `revenue_generated`.
-  - `AnalyticsPanel`: nueva tarjeta "Top referidores" con foto/nombre del contacto y métricas.
-  - `ContactsModule`: bloque "Referidos" en el perfil que muestra a quién refirió y quién lo refirió.
-- **Criterios de aceptación:**
-  - Bot pregunta "¿quién te recomendó?" → el cliente escribe "María Pérez" → si existe, queda `referrer_contact_id=...`; si no, `lead_source.referred_by_name='María Pérez'`.
-  - `/analytics/referrals` devuelve top referidores con su contribución.
-  - Tests: ≥ 8 estáticos: schema, FK auto-referencial, endpoint, integración booking, widget read-param.
-- **Notas:**
-  - El campo `ask_referrer` default `false` — no contamina el flow para tenants que no lo necesitan.
-  - El UTM ya existente (`lead_source.utm_*`) se mantiene; el referrer es ortogonal.
+_TASK-0055 — Tracking de referido entre contactos (referrer_contact_id): COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

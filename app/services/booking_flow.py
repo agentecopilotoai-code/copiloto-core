@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 
+STEP_AWAITING_REFERRER = 'awaiting_referrer'
 STEP_AWAITING_SERVICE = 'awaiting_service'
 STEP_AWAITING_PACKAGE = 'awaiting_package'
 STEP_AWAITING_BRANCH = 'awaiting_branch'
@@ -46,6 +47,13 @@ STEP_AWAITING_RESOURCE = 'awaiting_resource'
 STEP_AWAITING_DATE = 'awaiting_date'
 STEP_AWAITING_SLOT = 'awaiting_slot'
 STEP_COMPLETED = 'completed'
+
+# TASK-0055: tokens we accept as "no one referred me" so the bot skips referrer
+# capture without nagging the customer.
+REFERRER_SKIP_TOKENS = frozenset({
+    'no', 'nadie', 'ninguno', 'ninguna', 'n/a', 'na', 'skip', 'omitir',
+    'nada', 'no se', 'no sé', 'no recuerdo',
+})
 
 PREFIX_SERVICE = 'book_service'
 PREFIX_PACKAGE = 'book_package'
@@ -1307,6 +1315,157 @@ def _resolve_date_choice(value: str) -> date | None:
     return None
 
 
+def _normalize_phone_query(text: str) -> str | None:
+    """TASK-0055: pull a phone-ish substring out of free text for contact lookup.
+
+    Returns digits only when the input contains at least 7 digits; ``None``
+    otherwise. We tolerate spaces, dashes and ``+`` so customers can write
+    things like "300 555 1212" or "+57 300 555 1212".
+    """
+    digits = ''.join(ch for ch in text if ch.isdigit())
+    return digits if len(digits) >= 7 else None
+
+
+async def _ask_referrer(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    conversation: Any,
+    channel_id: UUID,
+    channel_account_mode: str,
+) -> dict[str, Any]:
+    """TASK-0055: queue the open referrer question and set the matching state."""
+    body_text = (
+        '¿Quién te recomendó? Escribe el nombre o el número de WhatsApp '
+        '(o responde "no" si nadie te recomendó).'
+    )
+    await _queue_text_message(
+        conn,
+        tenant_id=tenant_id,
+        conversation_id=conversation['id'],
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        body_text=body_text,
+        booking_step=STEP_AWAITING_REFERRER,
+    )
+    return {'step': STEP_AWAITING_REFERRER}
+
+
+async def _resolve_referrer_answer(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    contact_id: UUID,
+    answer_text: str,
+) -> dict[str, Any]:
+    """TASK-0055: persist the referrer answer onto the contact.
+
+    Returns a small dict describing the outcome so the caller can log/audit
+    consistently. Lookup precedence: explicit phone match → display_name match
+    → free-text fallback into ``lead_source.referred_by_name``.
+    """
+    raw = (answer_text or '').strip()
+    outcome: dict[str, Any] = {'resolved': False, 'skipped': False}
+    if not raw or raw.lower() in REFERRER_SKIP_TOKENS:
+        outcome['skipped'] = True
+        return outcome
+
+    digits = _normalize_phone_query(raw)
+    referrer_row = None
+    if digits:
+        referrer_row = await conn.fetchrow(
+            """
+            select id, display_name
+            from app.contacts
+            where tenant_id=$1 and id <> $2 and phone_e164 like '%' || $3
+            order by created_at asc
+            limit 1
+            """,
+            tenant_id,
+            contact_id,
+            digits,
+        )
+    if referrer_row is None:
+        referrer_row = await conn.fetchrow(
+            """
+            select id, display_name
+            from app.contacts
+            where tenant_id=$1 and id <> $2
+              and display_name is not null
+              and lower(display_name) like '%' || lower($3) || '%'
+            order by created_at asc
+            limit 1
+            """,
+            tenant_id,
+            contact_id,
+            raw,
+        )
+
+    if referrer_row is not None:
+        await conn.execute(
+            """
+            update app.contacts
+            set referrer_contact_id=$3, updated_at=now()
+            where tenant_id=$1 and id=$2
+            """,
+            tenant_id,
+            contact_id,
+            referrer_row['id'],
+        )
+        outcome['resolved'] = True
+        outcome['referrer_contact_id'] = str(referrer_row['id'])
+        outcome['referrer_name'] = referrer_row['display_name']
+        return outcome
+
+    # Free-text fallback — keep the verbatim answer in lead_source so the team
+    # can reconcile it later from the Contacts module.
+    await conn.execute(
+        """
+        update app.contacts
+        set lead_source = coalesce(lead_source, '{}'::jsonb)
+                          || jsonb_build_object('referred_by_name', $3::text),
+            updated_at=now()
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        contact_id,
+        raw[:160],
+    )
+    outcome['referred_by_name'] = raw[:160]
+    return outcome
+
+
+async def _ask_referrer_enabled(
+    conn: asyncpg.Connection, tenant_id: UUID
+) -> bool:
+    """TASK-0055: per-tenant toggle ``notification_settings.ask_referrer``.
+
+    Default ``false`` — tenants opt in from the Notificaciones tab.
+    """
+    raw = await conn.fetchval(
+        "select coalesce(notification_settings->>'ask_referrer', 'false') "
+        'from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    return (raw or 'false').lower() == 'true'
+
+
+def _contact_has_referrer(contact: Any) -> bool:
+    """TASK-0055: skip the question when the contact already has referrer info.
+
+    Either ``referrer_contact_id`` is set or the free-text fallback
+    ``lead_source.referred_by_name`` is populated.
+    """
+    if contact is None:
+        return False
+    if contact.get('referrer_contact_id'):
+        return True
+    lead_source = _parse_json(contact.get('lead_source'), {})
+    if isinstance(lead_source, dict) and lead_source.get('referred_by_name'):
+        return True
+    return False
+
+
 async def maybe_run_booking_flow(
     conn: asyncpg.Connection,
     *,
@@ -1500,8 +1659,50 @@ async def maybe_run_booking_flow(
             state=state,
             slot_start=value,
         )
+    elif state.get('step') == STEP_AWAITING_REFERRER and prefix is None:
+        # TASK-0055: capture the referrer answer (free text) and continue with
+        # the regular service-selection flow. The contact row is updated in
+        # place; nothing about it lives in the booking state.
+        answer_text = (inbound_message.get('body_text') or '') if isinstance(
+            inbound_message, dict
+        ) else (getattr(inbound_message, 'body_text', '') or '')
+        outcome = await _resolve_referrer_answer(
+            conn,
+            tenant_id=tenant_id,
+            contact_id=contact['id'],
+            answer_text=answer_text,
+        )
+        log.info(
+            'booking_flow.referrer_captured',
+            tenant_id=str(tenant_id),
+            conversation_id=str(conversation['id']),
+            resolved=outcome.get('resolved'),
+            skipped=outcome.get('skipped'),
+        )
+        new_state = await _present_services(
+            conn,
+            tenant_id=tenant_id,
+            conversation=conversation,
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            contact_id=contact['id'],
+        )
     elif intent == 'book_appointment' and not state:
-        if prefilled_service_id:
+        # TASK-0055: ask for the referrer before any service selection if the
+        # tenant opted in and the contact hasn't already been tagged.
+        if (
+            not prefilled_service_id
+            and not _contact_has_referrer(contact)
+            and await _ask_referrer_enabled(conn, tenant_id)
+        ):
+            new_state = await _ask_referrer(
+                conn,
+                tenant_id=tenant_id,
+                conversation=conversation,
+                channel_id=channel_id,
+                channel_account_mode=channel_account_mode,
+            )
+        if new_state is None and prefilled_service_id:
             try:
                 prefilled_uuid = UUID(prefilled_service_id)
             except ValueError:

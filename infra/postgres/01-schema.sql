@@ -117,14 +117,17 @@ create table app.contacts (
   metadata jsonb not null default '{}'::jsonb,
   lead_source jsonb not null default '{}'::jsonb,
   qualification jsonb not null default '{}'::jsonb,
+  referrer_contact_id uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, wa_id),
-  unique (tenant_id, phone_e164)
+  unique (tenant_id, phone_e164),
+  constraint chk_contacts_referrer_not_self check (referrer_contact_id is null or referrer_contact_id <> id)
 );
 create index ix_contacts_tenant_phone on app.contacts(tenant_id, phone_e164);
 create index gin_contacts_tags on app.contacts using gin(tags);
 create index gin_contacts_lead_source on app.contacts using gin(lead_source);
+create index ix_contacts_tenant_referrer on app.contacts(tenant_id, referrer_contact_id) where referrer_contact_id is not null;
 
 create table app.conversations (
   id uuid primary key default gen_random_uuid(),
@@ -741,6 +744,12 @@ create index ix_audit_logs_entity on app.audit_logs(entity_type, entity_id);
 -- from linking to records that belong to another tenant.
 alter table app.tenant_channels add constraint uq_tenant_channels_tenant_id_id unique (tenant_id, id);
 alter table app.contacts add constraint uq_contacts_tenant_id_id unique (tenant_id, id);
+-- TASK-0055: referrer_contact_id is tenant-scoped (cannot reference a contact
+-- from another tenant); on delete set null so deleting the referrer does not
+-- cascade-delete the referee.
+alter table app.contacts
+  add constraint fk_contacts_referrer foreign key (tenant_id, referrer_contact_id)
+    references app.contacts(tenant_id, id) on delete set null;
 alter table app.conversations add constraint uq_conversations_tenant_id_id unique (tenant_id, id);
 alter table app.messages add constraint uq_messages_tenant_id_id unique (tenant_id, id);
 alter table app.resources add constraint uq_resources_tenant_id_id unique (tenant_id, id);

@@ -47,6 +47,42 @@ Cada entrada debe incluir:
 
 ---
 
+### TASK-0055 — Tracking de referido entre contactos (referrer_contact_id)
+
+- **Fecha:** 2026-05-12
+- **Resumen:** ahora el sistema sabe **quién trajo a quién**. Se agrega `contacts.referrer_contact_id` (auto-referencia tenant-scoped) y dos puntos de captura: (1) el booking flow conversacional pregunta "¿quién te recomendó?" cuando el tenant activa `notification_settings.ask_referrer=true` y el contacto no tiene referidor previo — la respuesta se busca primero por teléfono, luego por nombre, y si no matchea queda como texto libre en `lead_source.referred_by_name`; (2) el widget web acepta `data-ref=<contact_id>` en el script o `?ref=<contact_id>` en la URL del landing, validándose contra el mismo tenant antes de linkear. Un nuevo endpoint `GET /v1/analytics/referrals` devuelve los top 20 embajadores con `count_referrals`, `appointments_generated` y `revenue_generated`, y el `AnalyticsPanel` lo renderiza como tarjeta. El perfil de contacto expone `referrals.referred_by` y `referred_contacts` para que el equipo vea la red de referidos directo en `ContactsModule`.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):**
+    - `app.contacts` agrega `referrer_contact_id uuid` + check `chk_contacts_referrer_not_self` + índice parcial `ix_contacts_tenant_referrer (tenant_id, referrer_contact_id) where referrer_contact_id is not null`.
+    - Composite FK `fk_contacts_referrer (tenant_id, referrer_contact_id) references app.contacts(tenant_id, id) on delete set null` — la referencia no puede cruzar tenants y borrar al referidor no propaga al referido.
+  - **Defaults (`app/services/notifications.py`):** `DEFAULT_NOTIFICATION_SETTINGS['ask_referrer'] = False` (opt-in).
+  - **Booking flow (`app/services/booking_flow.py`):**
+    - Nuevo step `STEP_AWAITING_REFERRER`, tokens `REFERRER_SKIP_TOKENS` (`no`, `nadie`, `ninguno`, `n/a`, `skip`, …) y helpers `_ask_referrer`, `_resolve_referrer_answer`, `_ask_referrer_enabled`, `_contact_has_referrer`, `_normalize_phone_query`.
+    - En `maybe_run_booking_flow`: cuando llega `intent=book_appointment` sin estado, se chequea `_ask_referrer_enabled` + `_contact_has_referrer`; si corresponde, se pregunta antes de presentar servicios. El reply (texto libre) entra por la rama `state.get('step') == STEP_AWAITING_REFERRER`, se resuelve y se continúa a `_present_services`.
+    - `_resolve_referrer_answer` busca primero por substring de teléfono (≥7 dígitos), luego por nombre (`lower(display_name) like '%' || lower($3) || '%'`), nunca matchea al propio contacto (`id <> $2`); si no encuentra nada, escribe `lead_source.referred_by_name=<texto>` con `jsonb_build_object`.
+  - **Widget web (`admin-panel/public/widget.js`):** lee `data-ref` y `?ref=`, los pasa como `referrer_contact_id` al `POST /v1/web/chat/start`.
+  - **API (`app/api/v1/schemas.py`, `app/api/v1/routes.py`):**
+    - `WebChatStart` acepta `referrer_contact_id: UUID | None`.
+    - `web_chat_start` valida que el referidor exista en el mismo tenant antes de linkear; el insert de `app.contacts` ahora incluye `referrer_contact_id`.
+    - Nuevo endpoint `GET /v1/analytics/referrals?from_date=&to_date=` registrado en `tenant_analytics_router` (rol `manager`). CTE: cuenta referidos creados en el rango y suma citas completadas (`a.status='completed'`) cuya `starts_at` cae en el rango; cap `limit 20`, orden por `revenue_generated desc, count_referrals desc`.
+    - `get_contact_profile` agrega bloque `referrals: { referred_by, referred_contacts }`.
+  - **Admin Panel:**
+    - `coreApi.js`: `getAnalyticsReferrals`.
+    - `AnalyticsPanel.jsx`: nuevo estado `referrals`, llamada en `loadAll`, tarjeta "Top referidores" (`data-testid="analytics-top-referrers"`) en la grilla del Overview con embajador, referidos, citas e ingreso.
+    - `ContactsModule.jsx`: nuevo panel `data-testid="contact-referrals-panel"` que muestra quién recomendó al contacto y la lista de personas que él/ella refirió.
+    - `TenantSetupWizard.jsx`: nuevo checkbox `data-wizard-field="ask_referrer"` en la tab Notificaciones con default `false` y copy explicativo.
+- **Tests (`tests/test_referrer_tracking_static.py`, 20 tests):** schema (columna + check + FK tenant-scoped + índice), defaults de notificaciones, helpers del booking flow (`_ask_referrer_enabled`, `_resolve_referrer_answer`, `_contact_has_referrer`), wiring de `maybe_run_booking_flow`, widget (`data-ref`/`?ref=` + payload), schema Pydantic `WebChatStart`, `web_chat_start` con validación tenant-scoped, endpoint `/analytics/referrals` (registro en router, SQL con métricas correctas, `limit 20`), perfil de contacto, AnalyticsPanel, ContactsModule, Wizard. Además se actualiza `tests/test_qualification_flow_static.py::test_booking_flow_accepts_prefilled_service_id` para reflejar el nuevo gating del prefilled service (`if new_state is None and prefilled_service_id:`).
+- **Validaciones:**
+  - `/tmp/venv/bin/python -m pytest tests/test_referrer_tracking_static.py -q` → **20 passed**.
+  - `/tmp/venv/bin/python -m pytest tests/ -q -m "not requires_db" --ignore=<suites con dependencias DB/red>` → **851 passed, 11 skipped**.
+- **Notas:**
+  - `ask_referrer` default `false` — los tenants existentes no ven la pregunta hasta opt-in desde el wizard.
+  - El UTM existente (`lead_source.utm_*`) no se toca; el referrer es ortogonal y se persiste en una columna dedicada (búsquedas y FK son más eficientes que parsear JSON).
+  - El widget acepta el referidor como UUID; el backend re-valida que pertenezca al mismo tenant antes de aceptarlo (rechazo silencioso si no existe).
+  - `appointments_generated` y `revenue_generated` siguen la convención de los demás endpoints de analytics (solo citas completadas en el rango). `count_referrals` se calcula sobre los referidos creados en el rango.
+
+---
+
 ### TASK-0054 — Filtrado dinámico de servicios en booking según respuestas de calificación
 
 - **Fecha:** 2026-05-12

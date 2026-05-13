@@ -54,6 +54,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   auto_rebook_on_decline: true,
   auto_rebook_timeout_minutes: 90,
   vip_budget_threshold: 0,
+  ask_referrer: false,
 };
 
 function hydrateNotificationSettings(raw) {
@@ -1204,6 +1205,18 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
               Si el cliente recibe los horarios y no responde dentro de esta ventana, la cita se
               cancela y la conversación se escala con la etiqueta "Necesita seguimiento"
               (TASK-0056). Rango 10–240 min, por defecto 90.
+            </p>
+            <label className="inline-check wide" data-wizard-field="ask_referrer">
+              <input
+                type="checkbox"
+                checked={notificationSettings.ask_referrer === true}
+                onChange={(e) => setNotificationSettings({ ...notificationSettings, ask_referrer: e.target.checked })}
+              />
+              Preguntar "¿quién te recomendó?" al iniciar el booking (TASK-0055)
+            </label>
+            <p className="hint" style={{ marginTop: '0.25rem' }}>
+              Captura al embajador para medir referidos en Analítica → Top
+              referidores. Default desactivado.
             </p>
           </fieldset>
 
