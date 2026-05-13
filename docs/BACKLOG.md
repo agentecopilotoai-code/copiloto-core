@@ -641,3 +641,311 @@ _TASK-0075 — Suscripciones / membresías con cobro recurrente: COMPLETADA. Ver
   - Tests: ≥ 8 estáticos: schema, append-only por trigger, render Markdown→HTML seguro, link en template de consentimiento.
 
 ---
+
+
+## Backlog de bugs reportados — 2026-05-13 (auditoría de seguridad, consolidado por causa raíz)
+
+Se auditaron los 25 hallazgos almacenados en `docs/BUGS/BUG01`–`docs/BUGS/BUG25` (todos `Severidad: High`, validados con evidencia dinámica por ChatGPT Codex Security). El análisis encontró que **los 25 bugs se reducen a 10 tareas estructurales**: cinco grupos comparten causa raíz y se cierran con un único fix, y seis hallazgos quedan como tareas individuales por no compartir patrón.
+
+**Protocolo obligatorio por tarea (dos fases):**
+
+1. **Verificación en HEAD:** la auditoría se ejecutó contra commits viejos (ver `Commits auditados` por tarea). Tareas posteriores (TASK-0059 rate limit, TASK-0060 observabilidad, TASK-0061 retention, TASK-0062 consent ledger, TASK-0063 E2E, etc.) pueden haberlo mitigado parcial o totalmente. **Antes de tocar código, ejecutar el rubric de validación de cada BUG cubierto** y dejar evidencia escrita (comando ejecutado, archivos leídos, líneas relevantes). Si **todos** los rubrics dan negativo en HEAD, mover la tarea a `DONE.md` con la evidencia y sin escribir patch.
+2. **Remediación de la causa raíz:** si **algún** rubric persiste, aplicar el fix estructural una sola vez (no por endpoint), agregar tests estáticos que cubran cada BUG del grupo, validar con `uv run pytest` y `uv run ruff check`. Documentar en `DONE.md` qué bug del grupo quedó cubierto por qué assertion.
+
+**Trazabilidad bug → tarea:**
+
+| Tarea | Causa raíz / patrón | Bugs cubiertos |
+|---|---|---|
+| TASK-0077 | RBAC tenant-scoped: JWT role + DB role en el tenant target | BUG03, BUG07, BUG08, BUG11, BUG16, BUG17, BUG23, BUG24, BUG25 |
+| TASK-0078 | Visibilidad RAG `agents_only` en retrieval SQL | BUG10, BUG12, BUG13 |
+| TASK-0079 | SSRF desde URLs/endpoints controlados por tenant | BUG01, BUG18, BUG19 |
+| TASK-0080 | MFA enforcement server-side + gate UI bloqueante | BUG14, BUG15 |
+| TASK-0081 | Binding webhook WhatsApp ↔ tenant_channel | BUG20, BUG21 |
+| TASK-0082 | Identidad de contacto: validación de fuente y mutación | BUG05, BUG22 |
+| TASK-0083 | Webhook de pagos fail-closed | BUG04 |
+| TASK-0084 | Operaciones financieras requieren admin + payment_status server-only | BUG02 |
+| TASK-0085 | Auth0 invite por user_id, nunca por email | BUG06 |
+| TASK-0086 | Clasificador LLM async + timeout efectivo | BUG09 |
+
+**Orden de ejecución (P0 → P2):**
+
+```
+P0 — bloqueo regulatorio / financiero / cross-tenant inmediato
+    TASK-0083 (BUG04)  webhook de pagos fail-closed
+    TASK-0079 (BUG01, BUG18, BUG19)  SSRF tenant-controlled URLs
+    TASK-0077 (familia RBAC, 9 bugs)  fix raíz de tenant-role mismatch
+    TASK-0081 (BUG20, BUG21)  webhook tenant binding
+    TASK-0080 (BUG14, BUG15)  MFA server-side
+
+P1 — fuga de datos al cliente final / suplantación
+    TASK-0078 (BUG10, BUG12, BUG13)  RAG agents_only
+    TASK-0082 (BUG05, BUG22)  identidad de contacto
+    TASK-0084 (BUG02)  paquetes pagados admin-only
+
+P2 — abuso lateral / DoS / leakage de credenciales secundarias
+    TASK-0085 (BUG06)  Auth0 invite
+    TASK-0086 (BUG09)  clasificador async
+```
+
+---
+
+### TASK-0077 — Fix estructural: autorización tenant-scoped con doble chequeo JWT + DB role
+
+- **Estado:** PENDING
+- **Causa raíz:** `require_min_role('admin')` (o `'owner'`) valida únicamente `request.state.roles` del JWT (rol "global" o de la sesión). `ensure_tenant_access` luego acepta cualquier fila en `app.user_tenant_roles` para el tenant target sin verificar **rol mínimo en ese tenant**. La combinación permite que un JWT con rol alto + membership viewer/agent en un tenant víctima escale a operaciones admin/owner sobre ese tenant.
+- **Bugs cubiertos (9):**
+  - **BUG03** (`docs/BUGS/BUG03`, commit `7ca68ea`): media/promotions CRUD cross-tenant.
+  - **BUG07** (`docs/BUGS/BUG07`, commit `3d62d3f`): WhatsApp templates list/create/update/sync/delete cross-tenant — incluye borrado remoto en Meta.
+  - **BUG08** (`docs/BUGS/BUG08`, commit `39f5c49`): service catalog read/write/reorder cross-tenant.
+  - **BUG11** (`docs/BUGS/BUG11`, commit `562fa70`): tenant lifecycle `status` mutable por admin tenant — debe ser `platform_owner` only.
+  - **BUG16** (`docs/BUGS/BUG16`, commit `bc5c4ed`): unscoped JWT + `X-Tenant-Id` + cualquier membership pasa controles admin.
+  - **BUG17** (`docs/BUGS/BUG17`, commit `fffccbb`): `GET /tenants/{id}/data-export` permite owner JWT A + viewer DB B.
+  - **BUG23** (`docs/BUGS/BUG23`, commit `f98c19e`): Knowledge Studio list/get/update/delete cross-tenant.
+  - **BUG24** (`docs/BUGS/BUG24`, commit `f6d8e15`): tenant profile PATCH cross-tenant + `tenant-signup` hijack (actualiza la primera membership sin verificar rol).
+  - **BUG25** (`docs/BUGS/BUG25`, commit `e942cfd`): tenant DB membership fallback acepta cualquier rol.
+- **Fase 1 — verificación en HEAD (ejecutar antes de patch):**
+  1. `grep -rn "ensure_tenant_access\|has_user_tenant_role\|require_min_role" app/` para inventariar los call sites.
+  2. Re-leer `app/api/v1/dependencies.py` (o donde vivan los helpers) y confirmar el estado actual de cada cascada.
+  3. Re-ejecutar cada rubric de los 9 BUGs en archivos `docs/BUGS/BUG{03,07,08,11,16,17,23,24,25}`: para cada uno, identificar el endpoint vulnerable, montar mentalmente la combinación JWT/DB del atacante y confirmar si HEAD lo rechaza con 403 o lo acepta.
+  4. Documentar en `DONE.md` cuántos de los 9 BUGs siguen reproducibles. Si los 9 dan negativo, no escribir patch.
+- **Fase 2 — remediación (causa raíz, un solo fix):**
+  - Crear `app/api/v1/auth.py::ensure_tenant_role(request, tenant_id, conn, *, min_role)` que aplica **dos chequeos AND**:
+    1. **JWT role gate:** `request.state.roles` (lista de roles del token) debe contener al menos uno con rango ≥ `min_role` según el ranking `viewer < agent < manager < admin < owner < platform_owner`. Sin esto, 403 `insufficient_token_role`. *Esto preserva el comportamiento de `require_min_role` y responde al review del bot que señaló la regresión.*
+    2. **DB role gate:** `select role from app.user_tenant_roles where user_id=$1 and tenant_id=$2` debe existir Y `rank(role) ≥ rank(min_role)`. Sin esto, 403 `insufficient_tenant_role`.
+  - Bypass solo para `support_mode='true'` real (proceso scheduler/worker con flag de sesión Postgres) y para `platform_owner` cuando el endpoint lo permite explícitamente.
+  - Reemplazar las parejas `Depends(require_min_role(...)) + ensure_tenant_access(...)` por `Depends(ensure_tenant_role(min_role=...))` en TODOS los routers tenant-scoped. `require_min_role` queda válido SOLO para endpoints sin `tenant_id` en path (`/v1/platform/...`).
+  - **Casos especiales del grupo:**
+    - **BUG11:** el campo `status` se mueve de `TenantUpdate` a `PlatformTenantUpdate` y solo `platform_admin_router` lo persiste. `update_tenant_record` recibe flag `actor_is_platform_owner` y rechaza `status` si False.
+    - **BUG24 (tenant-signup):** si el actor ya tiene membership, retornar 409 sin tocar `app.tenants`. Sólo crear tenant nuevo si no hay memberships previas.
+    - **BUG25:** eliminar `has_user_tenant_role` (semántica "existe fila") y reemplazar por `get_user_tenant_role` (devuelve el rol o `None`). `grep -rn "has_user_tenant_role" app/` debe quedar en 0.
+- **Criterios de aceptación:**
+  - Suite estática `tests/test_tenant_role_authz.py` con una matriz que cubre cada uno de los 9 BUGs:
+    - BUG03: JWT admin A + DB viewer B → 403 en `/tenants/B/media/*` y `/tenants/B/promotions/*` (GET/POST/PATCH/DELETE).
+    - BUG07: misma combinación contra `/tenants/B/whatsapp/templates/*` incluyendo `sync` y `delete` (con stub Meta que verifica que NO se llamó).
+    - BUG08: misma combinación contra `/tenants/B/services` (reorder incluido).
+    - BUG11: PATCH tenant con `{status: 'active'}` desde tenant-admin → 422 / ignorado; el mismo PATCH desde `platform_owner` → 200.
+    - BUG16: unscoped JWT admin + DB viewer B en cualquier endpoint tenant-admin → 403. Negative control: DB admin B → 200.
+    - BUG17: owner JWT A + viewer DB B → 403; owner JWT A + sin membership B → 403; admin JWT A + owner DB B → 403; owner JWT A + owner DB A → 200.
+    - BUG23: list/get/patch/delete Knowledge Studio con JWT admin A + DB viewer B → 403.
+    - BUG24: PATCH `/tenants/B` con JWT admin A + DB viewer B → 403; `POST /tenant-signup` por user con membership previa → 409.
+    - BUG25: `grep -rn "has_user_tenant_role" app/` → 0; test de regresión global.
+  - Auditoría: cada 403 emite `audit_logs(action='authz.denied', detail={endpoint, reason})`.
+- **Notas:**
+  - El review del bot revisor en PR #111 corrigió el draft anterior: el doble chequeo (JWT AND DB) es defensa en profundidad y mantiene el invariante "el token debe portar el rol que el endpoint exige" además del nuevo "la DB debe confirmarlo para ese tenant".
+  - Esta es **una sola tarea**, no nueve. La verificación rubric-por-rubric ocurre dentro de Fase 1; el fix es estructural.
+
+---
+
+### TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG
+
+- **Estado:** PENDING
+- **Causa raíz:** la consulta SQL del orquestador RAG filtra `tenant_id` + `status='active'` pero **NO excluye `knowledge_documents.visibility='agents_only'`**. Los builders downstream (template grounded, local LLM, cloud LLM) concatenan todos los chunks scoreados sin re-filtrar. Resultado: contenido staff-only termina en la respuesta saliente al cliente final y/o en el prompt enviado al proveedor cloud.
+- **Bugs cubiertos (3):**
+  - **BUG13** (`docs/BUGS/BUG13`, commit `760284a`): WhatsApp inbound recibe excerpts `agents_only` en la respuesta — fix raíz.
+  - **BUG12** (`docs/BUGS/BUG12`, commit `c8e7238`): respuesta template concatena múltiples chunks (no solo el best) — amplifica la fuga si la SQL no filtra.
+  - **BUG10** (`docs/BUGS/BUG10`, commit `197c6ab`): el camino cloud_llm (standalone y cascade fallback) envía contexto sin filtrar al SDK externo — fuga al proveedor.
+- **Fase 1 — verificación en HEAD:**
+  1. Re-leer la query de retrieval en `app/services/rag_orchestrator.py` (lexical pg_trgm + ANN pgvector + fusion). Confirmar si HEAD ya incluye `and kd.visibility <> 'agents_only'` o equivalente.
+  2. Re-leer `build_grounded_answer`, `_build_local_llm_context`, `build_cloud_llm_answer` (o equivalentes). Confirmar si rechazan defensivamente chunks `agents_only`.
+  3. Reproducir los tres rubrics (BUG10/12/13) con un chunk `agents_only` ranqueado #1 y luego #2. Capturar la respuesta saliente y el payload enviado al SDK cloud.
+- **Fase 2 — remediación (causa raíz, un solo fix):**
+  - Constante compartida `END_USER_VISIBILITY = ('public', 'tenant')` en `app/services/rag_orchestrator.py`.
+  - Filtro aplicado en la query SQL del retrieval, no en post-filter, para los tres caminos (lexical, ANN, fusion): `WHERE kd.visibility = ANY($N::text[])` con `END_USER_VISIBILITY` como parámetro.
+  - Override explícito `include_agents_only: bool = False` solo para Knowledge Studio admin RAG-test (ruta `/tenants/{id}/knowledge/rag-test`), y solo cuando el caller cumple `ensure_tenant_role(min_role='admin')` (depende de TASK-0077 conceptualmente, no en orden).
+  - Defense-in-depth: cada builder (`build_grounded_answer`, `_build_local_llm_context`, `build_cloud_llm_answer`) hace `assert chunk['visibility'] in END_USER_VISIBILITY` y emite `log.warning('agents_only.leaked_into_builder', chunk_id=...)` si llega un chunk `agents_only` (no debería, pero si llega, lo descarta).
+- **Criterios de aceptación:**
+  - Tests estáticos ≥ 6 en `tests/test_rag_visibility.py`:
+    - BUG13: chunk `agents_only` ranqueado #1 → respuesta saliente NO contiene el excerpt.
+    - BUG12: chunk `agents_only` ranqueado #2 + chunk `public` #1 → respuesta multi-chunk solo trae el #1.
+    - BUG10: chunk `agents_only` con score sobre threshold → payload enviado a stub `AsyncAnthropic.messages.create` NO contiene el texto agents_only.
+    - Override `include_agents_only=true` con caller `admin` → SÍ incluye (Knowledge Studio path).
+    - Override sin permisos → 403.
+    - Defense-in-depth: builder al que se le inyecta un chunk `agents_only` lo descarta y emite warning.
+
+---
+
+### TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant
+
+- **Estado:** PENDING
+- **Causa raíz:** el backend hace requests HTTP outbound a URLs cuyos componentes (host, scheme) están bajo control del tenant — sin enforce HTTPS, sin allowlist, sin bloqueo de loopback / RFC1918 / link-local / metadata. El proceso adjunta credenciales sensibles (token Meta del tenant, credenciales S3 plataforma) a esas requests, generando SSRF + leak de secretos.
+- **Bugs cubiertos (3):**
+  - **BUG01** (`docs/BUGS/BUG01`, commit `517add2`): `complaint_alert_channels.webhook_url` aceptado sin validar → POST desde `_send_webhook_channel` a 127.0.0.1, 169.254.169.254, etc.
+  - **BUG18** (`docs/BUGS/BUG18`, commit `2798e80`): `tenant_storage_settings.endpoint_url` aceptado sin validar → `boto3.client(endpoint_url=...)` + `put_object`. Si el tenant omite credenciales, fallback a credenciales **plataforma** firmando contra el endpoint atacante.
+  - **BUG19** (`docs/BUGS/BUG19`, commit `8f048cf`): `download_whatsapp_media` confía en `media_info['url']` devuelto por Graph y adjunta `Bearer <tenant Meta token>` sin allowlist de host CDN Meta. `media_id` interpolado sin URL-encode permite crafted IDs.
+- **Fase 1 — verificación en HEAD:**
+  1. `grep -rn "httpx.AsyncClient\|boto3.client\|requests.post\|requests.get" app/` para inventariar sinks outbound.
+  2. Confirmar si existe `app/services/url_guard.py` (o similar) y si los tres sinks lo usan.
+  3. Reproducir los tres rubrics: PoC dinámico con webhook → loopback, S3 → endpoint loopback con credenciales plataforma, media proxy → host fuera de `*.fbcdn.net/*.fbsbx.com`.
+- **Fase 2 — remediación (causa raíz, un solo fix):**
+  - Crear `app/services/url_guard.py::validate_outbound_url(url, *, allowed_schemes=('https',), host_allowlist=None, allow_http_for_local_dev=False) -> str`:
+    - Rechaza scheme no permitido.
+    - Resuelve DNS y bloquea `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`, hostname `metadata.google.internal`, `localhost`.
+    - Si `host_allowlist` se pasa, exige match (wildcard subdominio permitido: `*.fbcdn.net`).
+    - Devuelve la URL canónica para usar; raise `UnsafeOutboundURLError` si no pasa.
+  - **Cliente HTTP compartido:** wrapper `app/services/http_client.py::safe_post(url, ...)` que:
+    - Pre-valida con `validate_outbound_url`.
+    - Construye `httpx.AsyncClient(follow_redirects=False, timeout=Timeout(connect=5, read=10, write=5, pool=5))`.
+    - Detecta redirects manualmente y re-valida la `Location` antes de seguirla.
+  - **Aplicación por bug:**
+    - **BUG01:** `normalize_alert_channels` rechaza al guardar; `_send_webhook_channel` re-valida antes del POST (defensa en profundidad por si la DB trae un registro viejo). `notification_settings` se valida con Pydantic `NotificationSettingsUpdate` (no `dict` libre).
+    - **BUG18:** schema Pydantic `TenantStorageSettings` valida `endpoint_url` con HTTPS + host allowlist (regional AWS endpoints + MinIO solo en `LOCAL_DEV_MODE=true`). `prefix` debe empezar con `tenants/<tenant_id>/` enforced server-side. **Si tenant no provee `access_key_id/secret_access_key`, rechazar la config (no fallback a credenciales plataforma).**
+    - **BUG19:** `media_id` validado con regex `^\d{10,30}$` antes de cualquier interpolación; usar `urllib.parse.quote(media_id, safe='')`. `media_info['url']` validado contra allowlist `('*.fbcdn.net', '*.fbsbx.com', 'lookaside.fbsbx.com')` antes del segundo GET con el token. POST de mensajes outbound rechaza `media_id` que viole la regex.
+- **Criterios de aceptación:**
+  - Suite `tests/test_url_guard.py` ≥ 12 tests:
+    - Reject HTTP, reject loopback, reject 169.254.169.254, reject `metadata.google.internal`, reject redirect-to-private.
+    - Webhook alert: `webhook_url='http://127.0.0.1:6379'` → 422 en PATCH; `_send_webhook_channel` re-valida y rechaza.
+    - S3: endpoint HTTP / loopback / fuera de allowlist → 422.
+    - S3 sin credenciales tenant → 422 (no fallback).
+    - Media proxy: `media_id='../foo'` → 422 en POST de mensaje; `media_info['url']='http://attacker.com'` → 502 sin segundo GET.
+  - PoC dinámico documentado en `DONE.md` para cada uno de los 3 BUGs.
+
+---
+
+### TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante
+
+- **Estado:** PENDING
+- **Causa raíz:** el control MFA es solo UI: la dependency `require_mfa_for_privileged` existe pero no está cableada a ningún router productivo, y el proxy BFF no chequea `_session_mfa_required`. La UI permite "Continuar sin MFA" descartando el banner. Resultado: cualquier sesión admin/owner/platform_owner sin segundo factor accede a operaciones privilegiadas.
+- **Bugs cubiertos (2):**
+  - **BUG14** (`docs/BUGS/BUG14`, commit `ff7c0dc`): UI overlay dismissible + proxy reenvía sin chequear MFA.
+  - **BUG15** (`docs/BUGS/BUG15`, commit `3ba2e2f`): `require_mfa_for_privileged` no está adjunta a `tenant_admin_router` ni `platform_admin_router`; tests cubren la dependency aislada pero no su integración.
+- **Fase 1 — verificación en HEAD:**
+  1. `grep -rn "require_mfa_for_privileged" app/` — confirmar dónde está adjunta hoy.
+  2. Revisar `admin-panel/src/components/.../MfaOverlay.jsx` (o equivalente) — confirmar si el botón "Continuar sin MFA" sigue existiendo.
+  3. Revisar el proxy BFF — confirmar si rechaza con 403 cuando `mfa_required=true`.
+- **Fase 2 — remediación (causa raíz):**
+  - **Server-side (fix de BUG15):** adjuntar `Depends(require_mfa_for_privileged)` a nivel de router en `tenant_admin_router` y `platform_admin_router`. Path "service account" (no humano) sigue funcionando porque `require_mfa_for_privileged` solo aplica a identidades Auth0 humanas.
+  - **Proxy BFF (fix de BUG14, mitad servidor):** rechazar con 403 toda request privilegiada cuando la sesión tiene `mfa_required=true && mfa_verified=false`. Propagar el header `X-Session-MFA-Verified` al Core API.
+  - **UI (fix de BUG14, mitad cliente):** el overlay MFA es bloqueante — no renderizar children mientras `mfa_required=true && mfa_verified=false`. Quitar el botón "Continuar sin MFA".
+- **Criterios de aceptación:**
+  - Test de integración por cada uno de los ~30 endpoints privileged enumerados: sesión `mfa_verified=false` → 403 `mfa_required`.
+  - Test E2E (Playwright o stub) que con MFA pendiente NO se puede ejecutar PATCH desde la UI.
+  - Test que el proxy rechaza con 403 una request privilegiada cuando `mfa_required=true`.
+  - Test que service-account (sin MFA porque no aplica) sigue funcionando.
+
+---
+
+### TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id
+
+- **Estado:** PENDING
+- **Causa raíz:** la cadena de validación del webhook WhatsApp ata el tenant al **primer** `phone_number_id` del payload y no garantiza uniqueness global de `phone_number_id` entre tenants. Resultado: (a) changes posteriores en el mismo payload se escriben en el tenant equivocado, y (b) un tenant puede registrar el `phone_number_id` de otro y secuestrar la validación de firma.
+- **Bugs cubiertos (2):**
+  - **BUG20** (`docs/BUGS/BUG20`, commit `af1e91c`): handler usa un único `channel/tenant_id` para todos los changes del payload, no re-resuelve por change.
+  - **BUG21** (`docs/BUGS/BUG21`, commit `9cfbead`): `tenant_channels.phone_number_id` no tiene unique constraint global activa; el lookup del webhook puede seleccionar la fila duplicada del atacante y validar firma con su app_secret.
+- **Fase 1 — verificación en HEAD:**
+  1. Re-leer `infra/postgres/01-schema.sql` → ¿hay `UNIQUE INDEX ... WHERE status='active'` sobre `phone_number_id`?
+  2. Re-leer `whatsapp_webhook_post` en routes → ¿itera por change re-resolviendo channel?
+  3. Re-leer `create_channel` admin endpoint → ¿valida que el `phone_number_id` no esté activo en otro tenant?
+- **Fase 2 — remediación (causa raíz, un solo fix):**
+  - **Schema (fix de BUG21):** migration que agrega `CREATE UNIQUE INDEX ux_tenant_channels_phone_number_active ON app.tenant_channels(phone_number_id) WHERE status='active';`. Si la migration detecta duplicados existentes, falla con instrucción operacional (drill local pre-prod).
+  - **Admin endpoint (fix de BUG21):** `create_channel` y `update_channel` rechazan con 409 si otro tenant ya tiene el `phone_number_id` activo. Claim de un número que ya estuvo en otro tenant requiere `platform_owner` (operación manual auditada).
+  - **Webhook handler (fix de BUG20):** iterar `entry → changes → metadata.phone_number_id`. Para cada change: (a) re-resolver `channel = lookup_channel(phone_number_id, status='active')`; (b) verificar que el `app_secret` que firmó el payload matchea el del channel resuelto; si no matchea, descartar ese change con `audit_logs(action='webhook.phone_number_id_mismatch', detail={...})`; (c) setear `app.tenant_id` per change con transacción aislada antes de cada insert.
+- **Criterios de aceptación:**
+  - Test de schema: `create_channel` con `phone_number_id` activo en otro tenant → 409.
+  - Test de handler (BUG20): payload firmado con app_secret de A que contiene un change con `phone_number_id` de B → change B descartado, audit emitido, ningún insert en A.
+  - Test del rubric BUG21: dos rows con mismo `phone_number_id` activo → la DB lo previene (la migration tiraba antes).
+  - PoC dinámico de las dos rutas documentado.
+
+---
+
+### TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto
+
+- **Estado:** PENDING
+- **Causa raíz:** dos rutas distintas permiten que un actor no-confiable afecte la identidad/routing de un `contact` existente: el widget web (anónimo) lo hace por phone-match implícito; el endpoint de "iniciar conversación" lo hace por `wa_id` controlado por el agent. Ambos casos comparten el patrón "el contacto se resuelve por un campo que el caller controla, y luego se reusa/sobrescribe sin proof of ownership".
+- **Bugs cubiertos (2):**
+  - **BUG05** (`docs/BUGS/BUG05`, commit `eb786e8`): `POST /v1/web/chat/start` acepta `phone` del browser y reusa el contacto existente del tenant si coincide → impersonación.
+  - **BUG22** (`docs/BUGS/BUG22`, commit `1ec5213`): `POST /v1/conversations/start` (rol `agent`+) acepta `wa_id` + `phone_e164` separados, upsertea por `(tenant_id, wa_id)` y sobrescribe `phone_e164/phone_hash` → redirige outbound al teléfono del atacante.
+- **Fase 1 — verificación en HEAD:**
+  1. Re-leer `web_chat_start` → ¿reusa contacto por `phone`?
+  2. Re-leer `conversation_start` y `ConversationStart` schema → ¿acepta `wa_id` del cliente? ¿sobrescribe `phone_e164` en conflict?
+- **Fase 2 — remediación (causa raíz):**
+  - **Principio compartido:** un contacto solo se identifica por canal de origen verificado. Mutación de campos de identidad (`phone_e164`, `wa_id`) requiere flujo separado con auth elevada.
+  - **BUG05 — widget web:** crear siempre un `contact` nuevo con `channel='web'` y `wa_id=null`. Si el widget captura phone, encolar `phone_verification_challenge` (OTP via SMS/WhatsApp) y solo entonces mergear con un contacto existente. Orquestador rechaza acciones contact-scoped (cancel/feedback) si el contacto está en estado `unverified_web`.
+  - **BUG22 — conversation/start:** `ConversationStart` schema NO acepta `wa_id`. El cliente pasa `contact_id` (UUID) si quiere conversar con uno existente; o pasa `phone_e164` para crear uno nuevo (validando que NO existe ya). Cambiar `phone_e164` de un contacto existente requiere un endpoint separado `PATCH /v1/contacts/{id}/phone` con rol `manager`+ y `audit_logs(action='contact.phone_changed')` obligatorio.
+- **Criterios de aceptación:**
+  - BUG05: test estático que `phone` enviado por widget NO altera/reusa ningún `contact` existente; test que mensaje "no" desde widget sin OTP NO cambia `confirmation_status` de citas pre-existentes.
+  - BUG22: test que agente con POST `wa_id=<victima>` + `phone_e164=<atacante>` → 403/422; test que `PATCH /contacts/{id}/phone` requiere `manager` y produce audit.
+
+---
+
+### TASK-0083 — Webhook de pagos fail-closed con secret obligatorio
+
+- **Estado:** PENDING
+- **Causa raíz:** `POST /v1/webhooks/payments/{provider}` inicializa `signature_ok = True` y solo verifica firma si el tenant tiene `webhook_secret_ref` configurado. Sin secret → cualquier payload anónimo con un UUID de `appointment` válido marca la cita como `payment_status='paid'`. Es el único bug en su clase (las otras superficies webhook son Meta o suscripciones, ya cubiertas).
+- **Bugs cubiertos (1):**
+  - **BUG04** (`docs/BUGS/BUG04`, commit `3201a6c`): payment webhook fail-open + UI permite habilitar provider sin secret.
+- **Fase 1 — verificación en HEAD:**
+  1. Re-leer el handler del webhook de pago y el helper `verify_stripe_signature` / `verify_mercadopago_signature`.
+  2. Confirmar si HEAD rechaza con 401/503 cuando el tenant no tiene `webhook_secret_ref`.
+  3. Confirmar si el módulo admin de pagos exige el secret antes de habilitar el provider.
+- **Fase 2 — remediación:**
+  - `signature_ok = False` por default. Sin secret configurado → 503 `payment.webhook_unconfigured`. NO procesar el appointment.
+  - Admin schema Pydantic `PaymentProviderConfig` exige `webhook_secret` antes de aceptar `enabled=true`. La UI del módulo de pagos refleja la restricción.
+  - Audit obligatorio `payment.webhook_rejected` con el motivo (`missing_secret`, `bad_signature`).
+- **Criterios de aceptación:**
+  - Test PoC: payload Stripe `checkout.session.completed` falso con UUID válido y sin secret tenant → 503, cita NO se marca `paid`.
+  - Test: tenant con secret pero payload sin header `Stripe-Signature` → 401.
+  - Test: admin habilita provider sin secret → 422.
+
+---
+
+### TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only
+
+- **Estado:** PENDING
+- **Causa raíz:** los endpoints de asignación, patch y refund de `contact_packages` se montaron en `tenant_ops_router` (rol `agent`+) y los schemas aceptan `payment_status='paid'` y `payment_amount=0`. Un agent puede otorgar paquetes pagados y disparar refunds sin pasar por la pasarela. Es un bug aislado de input hardening + RBAC del módulo paquetes.
+- **Bugs cubiertos (1):**
+  - **BUG02** (`docs/BUGS/BUG02`, commit `177389d`): contact package mutation accessible to agent + `payment_status` controlable por cliente.
+- **Fase 1 — verificación en HEAD:**
+  1. `grep -rn "contact_packages\|treatment_package" app/api/v1/routes.py` y confirmar el router actual.
+  2. Re-leer `ContactPackageCreate/Patch` en `app/api/v1/schemas.py`.
+  3. Buscar si TASK-0075 u otra ya migró el patrón "payment_status solo lo escribe el webhook firmado".
+- **Fase 2 — remediación:**
+  - Mover los endpoints de mutación a `tenant_admin_router` (mínimo `admin`).
+  - En los schemas, restringir `payment_status` a `'unpaid'` para writes del cliente. La transición a `'paid'` solo ocurre en el handler del webhook de pago (TASK-0083 hardened).
+  - El refund (transición a `'refunded'`) requiere `admin` + `audit_logs(action='contact_package.refunded')` con user_id, monto, motivo.
+- **Criterios de aceptación:**
+  - Test estático del router montado en `tenant_admin_router`.
+  - Test que POST con `payment_status='paid'` desde cliente externo → 422 / sobrescrito a `unpaid`.
+  - Test de auditoría con la entrada `contact_package.refunded` por `admin`.
+
+---
+
+### TASK-0085 — Invitación Auth0 por user_id en lugar de email
+
+- **Estado:** PENDING
+- **Causa raíz:** el endpoint de invitación de miembros llama a Auth0 `/tickets/password-change` pivoteando por email del invitado. Auth0 devuelve un password-reset ticket válido para cualquier cuenta Auth0 existente con ese email (incluyendo cuentas plataforma/soporte). El backend retorna el ticket URL al admin que invita, convirtiendo el flow en un account takeover primitive.
+- **Bugs cubiertos (1):**
+  - **BUG06** (`docs/BUGS/BUG06`, commit `500953d`): Auth0 reset ticket exposed via tenant invite.
+- **Fase 1 — verificación en HEAD:**
+  1. `grep -rn "tickets/password-change\|invite_user" app/` para localizar el helper.
+  2. Confirmar si HEAD crea/bind un Auth0 user nuevo por `user_id` antes de generar el ticket.
+  3. Confirmar si el ticket URL se propaga al inviter o se envía directamente al destinatario.
+- **Fase 2 — remediación:**
+  - Crear primero el usuario Auth0 (`POST /api/v2/users`) con email y `email_verified=false`. Capturar el `user_id`.
+  - Generar el ticket con `user_id` (no con email) y enviarlo directamente al destinatario vía Auth0 Email Template o nuestro propio mail. La API NO devuelve el ticket URL al inviter.
+  - Si el email ya existe en Auth0, retornar 409. El admin usa el flow alterno "add existing user to tenant" que requiere accept del destinatario.
+- **Criterios de aceptación:**
+  - Test: la respuesta de invitación NO incluye `ticket_url`.
+  - Test: si el email ya existe en Auth0 (mock) → 409.
+  - Test: `audit_logs(action='user.invited')` captura `auth0_user_id`, no email plano.
+
+---
+
+### TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo
+
+- **Estado:** PENDING
+- **Causa raíz:** `app/services/intent_classifier.py::_llm_classify` instancia clientes **síncronos** Anthropic/OpenAI y llama `create()` desde dentro de una función `async`, sin pasar `timeout`. Cada mensaje WhatsApp que no matchea regla regex de alta confianza bloquea el event loop hasta que el proveedor responde o cuelga. Un attacker puede inundar el webhook con mensajes ambiguos y tumbar el servicio.
+- **Bugs cubiertos (1):**
+  - **BUG09** (`docs/BUGS/BUG09`, commit `bced236`): blocking cloud LLM classifier enables webhook DoS.
+- **Fase 1 — verificación en HEAD:**
+  1. Re-leer `app/services/intent_classifier.py` → ¿usa `AsyncAnthropic` / `AsyncOpenAI` con `await`?
+  2. Confirmar si `cloud_llm_timeout` configurado en `tenant_settings` se propaga al SDK.
+  3. Confirmar si TASK-0059 (rate limit + circuit breaker) ya envuelve estas llamadas.
+- **Fase 2 — remediación:**
+  - Migrar a `AsyncAnthropic(api_key=..., timeout=settings.cloud_llm_timeout)` y `AsyncOpenAI(...)` con `await client.messages.create(...)`.
+  - Si por alguna razón se mantiene un cliente síncrono, ejecutar en `asyncio.to_thread` envuelto en `asyncio.wait_for(timeout=...)`.
+  - El classifier corre **después** del dedup/idempotency/rate-limit gate para que un attacker no llegue al sink LLM sin pagar el costo de los gates baratos.
+- **Criterios de aceptación:**
+  - Test estático que confirma uso de `AsyncAnthropic`/`AsyncOpenAI` y `timeout` parametrizado.
+  - Test que un proveedor mock que `raise asyncio.TimeoutError` cae en `fallback` sin colgar el event loop (medido con event loop monitor: latencia P99 de otras tareas concurrentes < 200ms).
+
+---
