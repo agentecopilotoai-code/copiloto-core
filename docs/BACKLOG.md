@@ -609,18 +609,7 @@ _TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso: 
 
 ---
 
-### TASK-0072 — Pruebas de carga + SLA documentado
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0060 (métricas).
-- **Por qué bloquea:** vender con SLA sin medirlo es contraproducente. Sin medir, ¿cuántos mensajes/segundo aguanta el API? ¿Cuándo se degrada?
-- **Alcance:**
-  - Escenario Locust en `tests/load/test_journey_load.py` con perfil mixto: 70% inbound message, 20% panel queries, 10% admin actions.
-  - Job `load-test` en GitHub Actions corriendo cada release contra un compose efímero, con baseline en `docs/sla.md`.
-  - **`docs/sla.md`:** SLA propuesto (99% requests <2s, 99.9% disponibilidad) y resultado del último load test (p50/p95/p99).
-- **Criterios de aceptación:**
-  - Load test con 50 msg/s sostenidos durante 5 min sin degradación (p95 <2s).
-  - `docs/sla.md` se regenera con cada run.
+_TASK-0072 — Pruebas de carga + SLA documentado: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

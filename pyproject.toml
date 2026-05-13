@@ -25,6 +25,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest==8.3.4", "ruff==0.8.4"]
+# TASK-0072: dependencias del job `load-test` (Locust). Mantener en un extras
+# aparte para que el CI normal no las instale.
+load = ["locust>=2.31,<3"]
 
 [tool.ruff]
 line-length = 100

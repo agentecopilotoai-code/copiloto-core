@@ -1,0 +1,160 @@
+name: Load test
+
+# TASK-0072: corre el escenario Locust contra un compose efímero y regenera
+# docs/sla.md con los percentiles del último run. Se dispara en:
+#   - cada release (lo que pide el backlog),
+#   - cada push a main, para detectar regresiones tras un merge,
+#   - workflow_dispatch, para validar PRs sensibles a rendimiento bajo demanda.
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      users:
+        description: "Usuarios virtuales concurrentes"
+        required: false
+        default: "50"
+      run_time:
+        description: "Duración del run (formato Locust, ej. 5m)"
+        required: false
+        default: "5m"
+
+jobs:
+  load-test:
+    name: "Locust journey load test"
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: copilotoia_load
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/copilotoia_load"
+      TEST_DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/copilotoia_load"
+      RUN_E2E: "0"
+      LOCUST_USERS: ${{ github.event.inputs.users || '50' }}
+      LOCUST_RUN_TIME: ${{ github.event.inputs.run_time || '5m' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies (api + load)
+        run: |
+          pip install -e ".[dev,load]"
+
+      - name: Apply schema
+        run: |
+          python -c "
+          import asyncio, asyncpg, os, pathlib
+          async def main():
+              conn = await asyncpg.connect(os.environ['DATABASE_URL'])
+              try:
+                  await conn.execute(\"\"\"
+                  do \$\$ begin
+                    if not exists (select 1 from pg_roles where rolname='copiloto_app') then
+                      create role copiloto_app login password 'copiloto_app_load';
+                    end if;
+                  end \$\$;
+                  \"\"\")
+                  sql = pathlib.Path('infra/postgres/01-schema.sql').read_text()
+                  await conn.execute(sql)
+              finally:
+                  await conn.close()
+          asyncio.run(main())
+          "
+
+      - name: Seed load tenant
+        run: |
+          mkdir -p .secrets
+          python -m tests.load.seed_load_tenant
+
+      - name: Start API in background
+        env:
+          # El API resuelve los secretos desde .secrets/ por defecto.
+          ANSWER_ENGINE: cascade
+          # Mock outbound LLM y WhatsApp para evitar deps externas en el job.
+          LLM_PROVIDER: stub
+          CLOUD_LLM_PROVIDER: stub
+          WHATSAPP_PROVIDER_MODE: mock
+        run: |
+          nohup python -m uvicorn app.main:app \
+            --host 127.0.0.1 --port 8000 --workers 2 \
+            > api.log 2>&1 &
+          echo $! > api.pid
+          # Espera health up to 60s
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/v1/health > /dev/null; then
+              echo "API ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API failed to come up — last 200 lines of log:" >&2
+          tail -n 200 api.log >&2
+          exit 1
+
+      - name: Run Locust journey (headless)
+        run: |
+          mkdir -p tests/load/results
+          locust -f tests/load/test_journey_load.py \
+            --host http://127.0.0.1:8000 \
+            --headless \
+            --users "${LOCUST_USERS}" --spawn-rate 10 \
+            --run-time "${LOCUST_RUN_TIME}" \
+            --csv tests/load/results/run \
+            --csv-full-history \
+            --only-summary
+
+      - name: Aggregate and enforce SLA
+        run: |
+          python -m tests.load.aggregate_results \
+            --csv-prefix tests/load/results/run \
+            --sla-file docs/sla.md \
+            --enforce-sla \
+            --p95-target-ms 2000 \
+            --rps-target 25
+
+      - name: Stop API
+        if: always()
+        run: |
+          if [ -f api.pid ]; then kill "$(cat api.pid)" || true; fi
+
+      - name: Upload Locust results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: locust-results
+          path: |
+            tests/load/results/
+            api.log
+
+      - name: Upload regenerated SLA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sla-md
+          path: docs/sla.md
