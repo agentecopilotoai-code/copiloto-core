@@ -377,6 +377,10 @@ _TASK-0058 — Auto-generación del link de Google Maps desde la dirección: COM
 
 ---
 
+_TASK-0059 — Rate limiting y circuit breaker en webhooks Meta y LLMs externos: COMPLETADA. Ver `docs/DONE.md`._
+
+---
+
 ### TASK-0058 — Auto-generación del link de Google Maps desde la dirección
 
 - **Estado:** DONE
@@ -392,24 +396,6 @@ _TASK-0058 — Auto-generación del link de Google Maps desde la dirección: COM
   - Tests: ≥ 6 estáticos: builder con coords, builder sin coords, encoding correcto de caracteres especiales, integración con branch save, preview UI.
 - **Notas:**
   - No se hace geocoding (ahorra API key); se confía en lo que el admin meta. Geocoding queda para una fase posterior.
-
----
-
-### TASK-0059 — Rate limiting y circuit breaker en webhooks Meta y LLMs externos
-
-- **Estado:** PENDING
-- **Por qué bloquea:** el endpoint `/webhooks/whatsapp/{tenant_id}` está abierto a Meta y a Internet (Meta puede reintentar miles de veces ante un 500). Los endpoints del LLM cloud no tienen retry con backoff ni circuit breaker — un Claude/OpenAI lento bloquea el worker. En producción esto significa caída del API ante un flood o una caída del LLM.
-- **Alcance:**
-  - Middleware `app/main.py.rate_limit_middleware` con bucket por IP + tenant_id (token bucket, refill 60 req/min por IP por defecto, configurable por env `RATE_LIMIT_PER_MIN`). Respuesta `429 Too Many Requests` con header `Retry-After`. Excepción explícita para `/webhooks/whatsapp/*` (Meta debe poder reintentar) que aplica un cap más permisivo de 600/min.
-  - Helper `app/services/circuit_breaker.py` con estado `closed/open/half_open`, contador de fallos consecutivos (default 5) y cooldown (default 30s). Se aplica a `cloud_llm_answer.call_claude/call_openai` y a `payment_provider.generate_payment_link`. Cuando está `open`, el orquestador cae automáticamente al siguiente nivel (template → local LLM → cloud LLM).
-  - Logs estructurados con `rate_limited=true` y `circuit_open=true` para correlación.
-- **Criterios de aceptación:**
-  - 200 requests/min al mismo endpoint desde una IP → la #61 recibe 429.
-  - 5 fallos consecutivos del cloud LLM → cascada del orquestador omite cloud LLM y usa local; tras 30s prueba 1 request half-open.
-  - Tests: ≥ 12 estáticos: middleware registrado, exclusión para webhook Meta, builder de bucket, circuit breaker transitions, integración con cloud_llm_answer, logs.
-- **Notas:**
-  - El bucket en memoria es suficiente para MVP; si se escala a >2 instancias se cambia a Redis (ya disponible en el compose).
-  - Meta puede mandar bursts legítimos; por eso el cap es por tenant y la signature ya filtra requests no firmadas.
 
 ---
 

@@ -7,6 +7,10 @@ from app.admin.routes import router as admin_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.pool import db
+from app.services.rate_limit import (
+    RateLimiter,
+    build_rate_limit_middleware,
+)
 
 
 @asynccontextmanager
@@ -48,6 +52,14 @@ def create_app() -> FastAPI:
         response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type'
         response.headers['Access-Control-Max-Age'] = '600'
         return response
+
+    # Rate limiting runs first (outermost). Starlette wraps middlewares in
+    # reverse order of registration, so this must be added last.
+    limiter = RateLimiter(
+        default_per_minute=settings.rate_limit_per_min,
+        webhook_per_minute=settings.rate_limit_webhook_per_min,
+    )
+    api.middleware('http')(build_rate_limit_middleware(limiter))
 
     api.include_router(admin_router)
     api.include_router(v1_router)
