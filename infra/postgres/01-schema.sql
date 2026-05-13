@@ -366,7 +366,8 @@ create table app.whatsapp_templates (
     'appointment_confirmation','appointment_reminder_24h','appointment_reminder_1h',
     'appointment_reminder_custom','no_show_confirmation_request','no_show_followup',
     'post_appointment_instructions','post_appointment_feedback','post_appointment_rebooking',
-    'reschedule_offer','campaign_promo','payment_request','service_recall','custom'
+    'reschedule_offer','campaign_promo','payment_request','service_recall',
+    'consent_request','consent_reaffirm','custom'
   )),
   components jsonb not null default '{}'::jsonb,
   meta_template_id text,
@@ -757,6 +758,53 @@ create table app.operator_alerts (
 create index ix_operator_alerts_due on app.operator_alerts(scheduled_for, status);
 create index ix_operator_alerts_tenant on app.operator_alerts(tenant_id, created_at desc);
 
+-- TASK-0062: append-only ledger of consent events for Ley 1581 / GDPR.
+-- The orquestador intercepts the first inbound from a new contact and sends a
+-- double opt-in template; only after the client clicks "Acepto" the flow
+-- continues and a `granted` event is written here. Opt-out by keyword writes
+-- a `revoked` event. The scheduler emits a `reaffirm` template once per year.
+-- An admin endpoint exposes the full ledger paginated for derecho-de-acceso
+-- requests. Rows are append-only: a trigger raises insufficient_privilege
+-- (SQLSTATE 42501) on any UPDATE or DELETE.
+create table app.consent_ledger (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  contact_id uuid not null,
+  event text not null check (event in ('granted','revoked','reaffirmed','suppressed')),
+  channel text not null check (channel in ('whatsapp','web','admin','import')),
+  legal_basis text,
+  purpose text,
+  copy_shown text,
+  evidence_payload jsonb not null default '{}'::jsonb,
+  occurred_at timestamptz not null default now(),
+  ip inet,
+  user_agent text
+);
+create index ix_consent_ledger_tenant_contact_time
+  on app.consent_ledger(tenant_id, contact_id, occurred_at desc);
+create index ix_consent_ledger_tenant_event
+  on app.consent_ledger(tenant_id, event, occurred_at desc);
+alter table app.consent_ledger
+  add constraint fk_consent_ledger_tenant_contact
+    foreign key (tenant_id, contact_id)
+    references app.contacts(tenant_id, id) on delete cascade;
+
+create or replace function app.consent_ledger_block_mutations() returns trigger
+language plpgsql as $$
+begin
+  raise exception 'consent_ledger is append-only (Ley 1581 audit trail)'
+    using errcode = '42501';
+end;
+$$;
+create trigger trg_consent_ledger_no_update
+  before update on app.consent_ledger
+  for each row execute function app.consent_ledger_block_mutations();
+create trigger trg_consent_ledger_no_delete
+  before delete on app.consent_ledger
+  for each row execute function app.consent_ledger_block_mutations();
+
+alter table app.contacts add column consent_version int not null default 1;
+
 -- TASK-0061: per-tenant retention policy. The retention worker reads one row
 -- per (tenant, entity) and either DELETEs or anonymizes rows older than
 -- ``retention_days``. ``audit_logs`` only supports DELETE for compliance.
@@ -1140,6 +1188,7 @@ alter table app.domain_events enable row level security;
 alter table app.audit_logs enable row level security;
 alter table app.operator_alerts enable row level security;
 alter table app.data_retention_policies enable row level security;
+alter table app.consent_ledger enable row level security;
 
 do $$
 declare t text;
@@ -1154,7 +1203,8 @@ begin
     'contact_segments','contact_segment_members',
     'branches',
     'treatment_packages','contact_packages','appointment_package_links',
-    'webhook_events_raw','domain_events','audit_logs','operator_alerts','data_retention_policies'
+    'webhook_events_raw','domain_events','audit_logs','operator_alerts','data_retention_policies',
+    'consent_ledger'
   ] loop
     execute format('create policy %I_tenant_select on app.%I for select using (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);
     execute format('create policy %I_tenant_insert on app.%I for insert with check (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);

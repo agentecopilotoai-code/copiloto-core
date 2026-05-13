@@ -15,6 +15,40 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0062 — Consentimiento doble opt-in + ledger auditable de autorizaciones
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se cierra la brecha de Ley 1581 / Decreto 1377. El orquestador ya no permite que el bot responda a un contacto desconocido: el primer inbound de un `wa_id` con `opt_in_status='unknown'` dispara un mensaje interactivo de doble opt-in (`Acepto` / `No acepto`) y deja la conversación pendiente. El click "Acepto" inserta una fila `granted` en `app.consent_ledger` (tabla append-only con trigger que rechaza UPDATE/DELETE con SQLSTATE 42501) y sólo entonces se permiten los flujos de RAG/booking. El click "No acepto" inserta `revoked`, agradece y cierra la conversación. El opt-out por palabra clave (STOP/BAJA/CANCELAR) ahora también escribe al ledger con el texto exacto del cliente. El scheduler ejecuta cada ~hora `enqueue_consent_reaffirmations`, que encola `reminder_jobs(purpose=consent_reaffirm)` para los contactos cuya última autorización supere los 12 meses (configurable). El Admin Panel expone una pestaña "Consentimiento (Ley 1581 / GDPR)" en la ficha del contacto con el estado actual y el ledger paginado; un nuevo endpoint admin `GET /v1/.../contacts/{contact_id}/consent` devuelve el mismo ledger para respuesta a derecho de acceso.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** nueva tabla `app.consent_ledger(id, tenant_id, contact_id, event, channel, legal_basis, purpose, copy_shown, evidence_payload, occurred_at, ip, user_agent)` con CHECK sobre `event in ('granted','revoked','reaffirmed','suppressed')`, CHECK sobre `channel in ('whatsapp','web','admin','import')`, FK compuesto a `app.contacts(tenant_id, id) on delete cascade` y dos índices (`(tenant_id, contact_id, occurred_at desc)` y `(tenant_id, event, occurred_at desc)`). Función `app.consent_ledger_block_mutations()` + triggers BEFORE `UPDATE` y BEFORE `DELETE` que lanzan `raise exception ... using errcode = '42501'` (insufficient_privilege). RLS habilitada y la tabla se agrega al loop de policies. Nueva columna `app.contacts.consent_version int not null default 1` para versionar autorizaciones. La CHECK de `app.whatsapp_templates.purpose` admite los nuevos valores `consent_request` y `consent_reaffirm`.
+  - **`app/services/consent.py` (nuevo):** define constantes (`CONSENT_BUTTON_YES='consent:yes'`, `CONSENT_BUTTON_NO='consent:no'`, `CONSENT_REAFFIRM_PURPOSE='consent_reaffirm'`, `CONSENT_LEGAL_BASIS`, `CONSENT_PURPOSE_TEXT`, `REAFFIRM_INTERVAL_MONTHS_DEFAULT=12`) y los textos `CONSENT_REQUEST_BODY`, `THANKS_GRANTED`, `THANKS_REVOKED`. Funciones: `build_consent_request_payload(business_name)` arma el payload interactivo de dos botones; `record_consent_event(...)` valida `event/channel` y hace el INSERT al ledger devolviendo el `id`; `enforce_inbound_consent(...)` es el gate que llama el orquestador (devuelve `ConsentDecision(handled, reason, ...)` para `unknown` → request enviada; para `consent:yes`/`consent:no` → ledger + update de `opt_in_status` + outbound de cierre; para `revoked/suppressed` → skip; para `granted` → `None` y el orquestador sigue normal); `record_opt_out_by_keyword(...)` deja la entrada `revoked` con el texto del cliente como `copy_shown`; `enqueue_consent_reaffirmations(interval_months, limit)` recorre `consent_ledger` agregado por contacto, busca los `granted/reaffirmed` con `last_at < now() - interval` que no tengan un `reminder_jobs` `consent_reaffirm` pendiente, y los encola apuntando al canal WhatsApp del tenant.
+  - **`app/services/rag_orchestrator.py`:** carga `tenant_settings` antes (necesita `business_name` para renderizar el template), reemplaza el bloque legacy `if opt_in in ('revoked','suppressed')` por una llamada a `enforce_inbound_consent(...)` que, si `handled=True`, retorna `{'action': 'skipped', 'reason': consent_decision.reason}`. El handler de `INTENT_OPT_OUT` ahora también llama `record_opt_out_by_keyword` y actualiza `opt_out_at=now()` (antes sólo seteaba `opt_in_status='revoked'`).
+  - **`app/workers/scheduler.py`:** importa `enqueue_consent_reaffirmations`, define `CONSENT_REAFFIRM_EVERY_TICKS = 360` (≈1 hora a 10 s/tick) y lo invoca cada N ticks dentro del loop principal con try/except para no romper el resto del procesamiento.
+  - **`app/api/v1/routes.py`:** nuevo endpoint `@tenant_ops_router.get('/contacts/{contact_id}/consent')` `list_contact_consent(...)` que valida la existencia del contacto, cuenta total de eventos y devuelve `{contact: {opt_in_status, opt_in_at, opt_out_at, consent_version}, total, limit, offset, items: [...]}` con `ORDER BY occurred_at desc` y paginación `limit/offset` (1–500).
+  - **Admin Panel:** `coreApi.js` añade `listContactConsent(session, tenantId, contactId, {limit, offset})`. `ContactsModule.jsx` importa la función, mantiene estado `consent`, refresca al cambiar el contacto seleccionado y renderiza un panel `data-testid='contact-consent-panel'` con el estado actual, fechas de opt-in / opt-out y la lista de eventos del ledger (chip por `event`, canal, base legal y el texto mostrado al cliente).
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/services/consent.py` (nuevo)
+  - `app/services/rag_orchestrator.py`
+  - `app/workers/scheduler.py`
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/components/modules/contacts/ContactsModule.jsx`
+  - `tests/test_consent_ledger_static.py` (nuevo, 17 tests)
+  - `tests/test_service_recall_static.py` (ajuste por el nuevo orden de `purpose` enum)
+  - `tests/test_whatsapp_rag_orchestrator.py` (la regresión del opt-in skip ahora vive en `consent.py`)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `.venv/bin/pytest tests/test_consent_ledger_static.py -v` → **17 passed** (schema con constraint/RLS/triggers, append-only trigger, columna `consent_version`, purpose enum extendido, intercept `unknown` envía template sin escribir al ledger, `consent:yes` graba `granted` + actualiza contacts, `consent:no` graba `revoked` + cierra conversación, contacto `granted` pasa de largo, contacto `revoked` se skip-ea, opt-out por keyword graba con texto exacto, wiring en orchestrator + scheduler, reaffirmación encola sólo los vencidos, endpoint admin paginado, admin panel renderiza la pestaña, `record_consent_event` rechaza eventos/canales inválidos).
+  - `.venv/bin/pytest tests/ -m "not requires_db"` → **1070 passed, 11 skipped, 1 deselected** (sin regresiones tras ajustar 2 tests que mencionaban el orden viejo del enum).
+  - `.venv/bin/ruff check .` → All checks passed!
+- **Notas:**
+  - El template `consent_request_v1` (categoría `UTILITY`) debe estar aprobado en Meta para enviarse fuera de la ventana de 24h. El primer mensaje del cliente abre la sesión, así que el envío inicial siempre cae dentro de la ventana y va por mensaje interactivo estándar. La reafirmación periódica sí depende del template aprobado: el scheduler ya hace `_has_approved_template(tenant_id, 'consent_reaffirm')` antes de despachar y, si falta, marca el job `failed:template_not_approved:consent_reaffirm` (comportamiento esperado hasta que el tenant lo cargue).
+  - El opt-out por keyword se mantiene como mecanismo de respaldo: si WhatsApp introduce un unsubscribe nativo, el flujo no requiere cambios (ambos terminan en `consent_ledger`).
+  - El widget web (TASK-0039) hereda el mismo schema: el campo `channel` admite `'web'` para registrar el opt-in en la captura del formulario; la integración concreta queda lista para que TASK-0070 (widget JS via CDN) escriba al ledger desde el frontend.
+
+---
+
 ### TASK-0061 — Política de retención y purgado TTL — GDPR operativo
 
 - **Fecha:** 2026-05-13

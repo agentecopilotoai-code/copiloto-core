@@ -40,10 +40,16 @@ def test_orchestrator_skips_human_active_conversations():
 
 
 def test_orchestrator_skips_suppressed_and_revoked_contacts():
+    """TASK-0062: the legacy inline opt-in skip was replaced by
+    ``enforce_inbound_consent`` which returns ``contact_opt_in_revoked`` /
+    ``contact_opt_in_suppressed`` for revoked/suppressed contacts."""
     source = ORCHESTRATOR.read_text()
+    consent_source = (Path(__file__).parent.parent / 'app' / 'services' / 'consent.py').read_text()
 
-    assert "opt_in_status" in source
-    assert "('revoked', 'suppressed')" in source
+    # Orchestrator delegates the gate.
+    assert 'enforce_inbound_consent' in source
+    # The consent service is the one checking revoked / suppressed status.
+    assert "opt_in in ('revoked', 'suppressed')" in consent_source
 
 
 def test_orchestrator_reads_escalation_policy_from_tenant_settings():

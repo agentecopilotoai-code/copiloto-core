@@ -2704,6 +2704,62 @@ async def create_contact_note(
     return record_to_dict(row)
 
 
+@tenant_ops_router.get('/contacts/{contact_id}/consent')
+async def list_contact_consent(
+    contact_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """TASK-0062: return the consent ledger for a single contact (append-only).
+
+    The ledger is the evidence required by Ley 1581 / GDPR for derecho de
+    acceso requests.  Paginated with ``limit``/``offset``; ordered newest
+    first.  Returns ``{items, total, contact: {opt_in_status, opt_in_at,
+    opt_out_at, consent_version}}``.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    contact_row = await conn.fetchrow(
+        """
+        select id, opt_in_status, opt_in_at, opt_out_at, consent_version
+        from app.contacts
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        contact_id,
+    )
+    if contact_row is None:
+        raise HTTPException(status_code=404, detail='Contact not found')
+    total = await conn.fetchval(
+        'select count(*) from app.consent_ledger where tenant_id=$1 and contact_id=$2',
+        tenant_id,
+        contact_id,
+    ) or 0
+    rows = await conn.fetch(
+        """
+        select id, event, channel, legal_basis, purpose, copy_shown,
+               evidence_payload, occurred_at, ip, user_agent
+        from app.consent_ledger
+        where tenant_id=$1 and contact_id=$2
+        order by occurred_at desc, id desc
+        limit $3 offset $4
+        """,
+        tenant_id,
+        contact_id,
+        limit,
+        offset,
+    )
+    return {
+        'contact': record_to_dict(contact_row),
+        'total': int(total),
+        'limit': limit,
+        'offset': offset,
+        'items': [record_to_dict(row) for row in rows],
+    }
+
+
 @system_router.post('/conversations', status_code=201)
 async def create_conversation(payload: ConversationCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, payload.tenant_id, conn)
