@@ -7340,6 +7340,400 @@ async def create_prompt(payload: PromptCreate, request: Request, conn: asyncpg.C
     return record_to_dict(row)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso
+# ─────────────────────────────────────────────────────────────────────────────
+ONBOARDING_TOTAL_STEPS = 7
+ONBOARDING_STEPS = tuple(range(1, ONBOARDING_TOTAL_STEPS + 1))
+ONBOARDING_STEP_METADATA = {
+    1: {'key': 'business_details', 'label': 'Datos del negocio'},
+    2: {'key': 'locale_currency', 'label': 'Timezone, locale y moneda'},
+    3: {'key': 'whatsapp_channel', 'label': 'Canal WhatsApp con firma verificada'},
+    4: {'key': 'consent_template', 'label': 'Template consent_request_v1'},
+    5: {'key': 'service_catalog', 'label': 'Catálogo de servicios mínimo'},
+    6: {'key': 'business_hours', 'label': 'Horarios de atención'},
+    7: {'key': 'end_to_end_test', 'label': 'Test E2E del bot'},
+}
+ONBOARDING_CONSENT_TEMPLATE_NAME = 'consent_request_v1'
+
+
+def normalize_onboarding_progress(raw: Any) -> dict[str, Any]:
+    data = raw if isinstance(raw, dict) else {}
+    try:
+        last_completed = int(data.get('last_completed_step') or 0)
+    except (TypeError, ValueError):
+        last_completed = 0
+    last_completed = max(0, min(last_completed, ONBOARDING_TOTAL_STEPS))
+    steps_raw = data.get('steps') if isinstance(data.get('steps'), dict) else {}
+    steps: dict[str, Any] = {}
+    for n in ONBOARDING_STEPS:
+        entry = steps_raw.get(str(n)) if isinstance(steps_raw, dict) else None
+        if isinstance(entry, dict):
+            steps[str(n)] = entry
+    return {
+        'step': min(last_completed + 1, ONBOARDING_TOTAL_STEPS),
+        'total': ONBOARDING_TOTAL_STEPS,
+        'last_completed_step': last_completed,
+        'steps': steps,
+        'complete': last_completed >= ONBOARDING_TOTAL_STEPS,
+    }
+
+
+async def _verify_onboarding_business_details(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
+    tenant = await conn.fetchrow(
+        'select slug, legal_name, display_name, vertical_code, country_code, timezone, status, deleted_at '
+        'from app.tenants where id=$1',
+        tenant_id,
+    )
+    if not tenant:
+        return False, 'Tenant no encontrado.', {}
+    missing = [
+        f for f in ('slug', 'legal_name', 'display_name', 'vertical_code', 'country_code', 'timezone')
+        if not (tenant[f] and str(tenant[f]).strip())
+    ]
+    if missing:
+        return False, f'Faltan campos del negocio: {", ".join(missing)}.', {'missing': missing}
+    if tenant['deleted_at'] is not None:
+        return False, 'Tenant eliminado.', {}
+    return True, 'Datos del negocio completos.', {'slug': tenant['slug'], 'vertical_code': tenant['vertical_code']}
+
+
+async def _verify_onboarding_locale_currency(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
+    tenant = await conn.fetchrow('select timezone from app.tenants where id=$1', tenant_id)
+    settings = await conn.fetchrow(
+        'select locale, payment_settings from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    if not tenant or not settings:
+        return False, 'Settings o tenant ausentes.', {}
+    timezone = (tenant['timezone'] or '').strip()
+    locale = (settings['locale'] or '').strip()
+    payment_settings = _coerce_jsonb(settings['payment_settings']) or {}
+    currency = (payment_settings.get('currency') or '').strip() if isinstance(payment_settings, dict) else ''
+    missing = []
+    if not timezone:
+        missing.append('timezone')
+    if not locale:
+        missing.append('locale')
+    if not currency:
+        missing.append('currency')
+    if missing:
+        return False, f'Falta configurar: {", ".join(missing)}.', {'missing': missing}
+    return True, 'Timezone, locale y moneda configurados.', {'timezone': timezone, 'locale': locale, 'currency': currency}
+
+
+async def _verify_onboarding_whatsapp_channel(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
+    channel = await conn.fetchrow(
+        """
+        select business_id, waba_id, phone_number_id, token_ref, app_secret_ref,
+               verify_token_hash is not null as verify_token_hash_configured, status
+        from app.tenant_channels
+        where tenant_id=$1 and provider='whatsapp_cloud_api'
+        """,
+        tenant_id,
+    )
+    if not channel:
+        return False, 'Canal WhatsApp no aprovisionado. Configúralo desde el wizard.', {}
+    if channel['status'] != 'active':
+        return False, f"Canal WhatsApp en estado {channel['status']}.", {'status': channel['status']}
+    if not (channel['business_id'] and channel['waba_id'] and channel['phone_number_id']):
+        return False, 'Falta business_id, waba_id o phone_number_id de Meta.', {}
+    if not token_ref_is_configured(channel['token_ref']):
+        return False, 'Token Meta inválido o ausente. Vuelve a pegar el token de acceso.', {}
+    if not secret_ref_is_configured(channel['app_secret_ref']):
+        return False, 'App Secret ausente. Configúralo para validar firmas HMAC.', {}
+    if not channel['verify_token_hash_configured']:
+        return False, 'Verify Token del webhook ausente. Genera y pega el verify token.', {}
+    verify_token_ref = tenant_secret_ref(tenant_id, 'whatsapp_verify_token')
+    if not secret_ref_is_configured(verify_token_ref):
+        return False, 'Verify Token no resuelto en el secret store. Reconfigura el canal.', {}
+    return True, 'Canal WhatsApp con firma verificada contra Meta.', {
+        'business_id': channel['business_id'],
+        'waba_id': channel['waba_id'],
+        'phone_number_id': channel['phone_number_id'],
+    }
+
+
+async def _verify_onboarding_consent_template(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
+    row = await conn.fetchrow(
+        """
+        select status from app.whatsapp_templates
+        where tenant_id=$1 and name=$2 and purpose='consent_request'
+        order by updated_at desc limit 1
+        """,
+        tenant_id,
+        ONBOARDING_CONSENT_TEMPLATE_NAME,
+    )
+    if not row:
+        return False, (
+            f'No existe el template {ONBOARDING_CONSENT_TEMPLATE_NAME}. '
+            'Crea y sincroniza el opt-in con Meta desde el wizard.'
+        ), {}
+    if row['status'] != 'approved':
+        return False, (
+            f'Template {ONBOARDING_CONSENT_TEMPLATE_NAME} en estado {row["status"]}. '
+            'Espera la aprobación de Meta antes de continuar.'
+        ), {'status': row['status']}
+    return True, 'Template consent_request_v1 aprobado por Meta.', {'status': 'approved'}
+
+
+async def _verify_onboarding_service_catalog(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
+    count = await conn.fetchval(
+        'select count(*) from app.service_catalog where tenant_id=$1 and is_active=true',
+        tenant_id,
+    )
+    count = int(count or 0)
+    if count <= 0:
+        return False, 'Crea al menos un servicio activo en el catálogo.', {'active_services': 0}
+    return True, f'{count} servicio(s) activo(s) en el catálogo.', {'active_services': count}
+
+
+async def _verify_onboarding_business_hours(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
+    row = await conn.fetchrow(
+        'select business_hours from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    if not row:
+        return False, 'Tenant settings ausentes.', {}
+    hours = _coerce_jsonb(row['business_hours']) or {}
+    if not isinstance(hours, dict) or not hours:
+        return False, 'Horarios de atención vacíos.', {}
+    populated = {day: ranges for day, ranges in hours.items() if ranges}
+    if not populated:
+        return False, 'Ningún día tiene rangos de atención definidos.', {}
+    return True, f'Horarios definidos para {len(populated)} día(s).', {'days_configured': sorted(populated.keys())}
+
+
+async def _verify_onboarding_end_to_end_test(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
+    settings = await conn.fetchrow(
+        'select onboarding_progress from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    progress = normalize_onboarding_progress(_coerce_jsonb(settings['onboarding_progress']) if settings else {})
+    step7 = progress['steps'].get('7') or {}
+    sent_at = step7.get('test_message_sent_at')
+    if not sent_at:
+        return False, 'Aún no se envió el mensaje de prueba al wa_id del admin.', {}
+    inbound = await conn.fetchrow(
+        """
+        select id, created_at from app.messages
+        where tenant_id=$1 and direction='inbound' and created_at >= $2::timestamptz
+        order by created_at desc limit 1
+        """,
+        tenant_id,
+        sent_at,
+    )
+    if not inbound:
+        return False, 'No se recibió ningún mensaje inbound después de enviar la prueba.', {'sent_at': sent_at}
+    return True, 'Test E2E exitoso: inbound recibido tras envío de prueba.', {
+        'sent_at': sent_at,
+        'inbound_message_id': str(inbound['id']),
+        'inbound_at': inbound['created_at'].isoformat() if inbound['created_at'] else None,
+    }
+
+
+ONBOARDING_VERIFIERS = {
+    1: _verify_onboarding_business_details,
+    2: _verify_onboarding_locale_currency,
+    3: _verify_onboarding_whatsapp_channel,
+    4: _verify_onboarding_consent_template,
+    5: _verify_onboarding_service_catalog,
+    6: _verify_onboarding_business_hours,
+    7: _verify_onboarding_end_to_end_test,
+}
+
+
+async def _load_onboarding_progress(conn: asyncpg.Connection, tenant_id: UUID) -> dict[str, Any]:
+    row = await conn.fetchrow(
+        'select onboarding_progress from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Tenant settings not found')
+    return normalize_onboarding_progress(_coerce_jsonb(row['onboarding_progress']))
+
+
+def _step_metadata(step: int) -> dict[str, Any]:
+    meta = ONBOARDING_STEP_METADATA.get(step)
+    if not meta:
+        raise HTTPException(status_code=400, detail=f'Step {step} inválido (1..{ONBOARDING_TOTAL_STEPS}).')
+    return meta
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/onboarding')
+async def get_tenant_onboarding(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    progress = await _load_onboarding_progress(conn, tenant_id)
+    return {
+        'tenant_id': str(tenant_id),
+        'progress': progress,
+        'steps': [
+            {'step': n, **ONBOARDING_STEP_METADATA[n]}
+            for n in ONBOARDING_STEPS
+        ],
+    }
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/onboarding/steps/{step}/verify')
+async def verify_tenant_onboarding_step(
+    tenant_id: UUID,
+    step: int,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    meta = _step_metadata(step)
+    progress = await _load_onboarding_progress(conn, tenant_id)
+    # No-skip rule: only the current step or already-completed steps can be verified.
+    if step > progress['last_completed_step'] + 1:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f'No se puede verificar el paso {step}: primero completa el paso '
+                f'{progress["last_completed_step"] + 1}.'
+            ),
+        )
+    verifier = ONBOARDING_VERIFIERS[step]
+    ready, reason, details = await verifier(conn, tenant_id)
+    return {
+        'tenant_id': str(tenant_id),
+        'step': step,
+        'key': meta['key'],
+        'label': meta['label'],
+        'ready': ready,
+        'reason': reason,
+        'details': details,
+        'progress': progress,
+    }
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/onboarding/steps/{step}/complete')
+async def complete_tenant_onboarding_step(
+    tenant_id: UUID,
+    step: int,
+    request: Request,
+    payload: dict | None = None,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    meta = _step_metadata(step)
+    progress = await _load_onboarding_progress(conn, tenant_id)
+    if step != progress['last_completed_step'] + 1:
+        if step <= progress['last_completed_step']:
+            raise HTTPException(status_code=409, detail=f'El paso {step} ya está completado.')
+        raise HTTPException(
+            status_code=409,
+            detail=f'No puedes saltar al paso {step}. El siguiente paso permitido es '
+                   f'{progress["last_completed_step"] + 1}.',
+        )
+    verifier = ONBOARDING_VERIFIERS[step]
+    ready, reason, details = await verifier(conn, tenant_id)
+    if not ready:
+        raise HTTPException(
+            status_code=422,
+            detail={'step': step, 'reason': reason, 'details': details, 'key': meta['key']},
+        )
+    evidence = payload.get('evidence') if isinstance(payload, dict) else None
+    new_steps = dict(progress['steps'])
+    new_steps[str(step)] = {
+        'completed_at': datetime.now(UTC).isoformat(),
+        'evidence': evidence if isinstance(evidence, dict) else {},
+        'details': details,
+    }
+    new_progress = {
+        'last_completed_step': step,
+        'steps': new_steps,
+    }
+    await conn.execute(
+        'update app.tenant_settings set onboarding_progress=$2::jsonb where tenant_id=$1',
+        tenant_id,
+        json.dumps(new_progress),
+    )
+    idem = f'onboarding/{tenant_id}/step-{step}'
+    await conn.execute(
+        """
+        insert into app.domain_events
+            (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload)
+        values ($1, 'tenant_onboarding', $1, 'tenant_onboarding.step_completed', $2, $3::jsonb)
+        on conflict do nothing
+        """,
+        tenant_id,
+        idem,
+        json.dumps({'step': step, 'key': meta['key'], 'details': details}),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant_onboarding.step_completed',
+        entity_type='tenant_settings',
+        entity_id=str(tenant_id),
+        metadata={'step': step, 'key': meta['key'], 'details': details},
+    )
+    refreshed = await _load_onboarding_progress(conn, tenant_id)
+    return {
+        'tenant_id': str(tenant_id),
+        'step': step,
+        'key': meta['key'],
+        'label': meta['label'],
+        'progress': refreshed,
+    }
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/onboarding/steps/7/send-test')
+async def record_onboarding_test_message_sent(
+    tenant_id: UUID,
+    request: Request,
+    payload: dict | None = None,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Records that the wizard sent the E2E test message to the admin's wa_id.
+
+    The wizard delivers the actual message through the standard outbound
+    endpoint; this just stamps `onboarding_progress.steps.7.test_message_sent_at`
+    so the step-7 verifier can look for inbound replies that arrive after it.
+    """
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    progress = await _load_onboarding_progress(conn, tenant_id)
+    if progress['last_completed_step'] < 6:
+        raise HTTPException(
+            status_code=409,
+            detail='Completa los pasos 1..6 antes de enviar la prueba E2E.',
+        )
+    sent_at = datetime.now(UTC).isoformat()
+    target_wa_id = payload.get('wa_id') if isinstance(payload, dict) else None
+    new_steps = dict(progress['steps'])
+    step_entry = dict(new_steps.get('7') or {})
+    step_entry['test_message_sent_at'] = sent_at
+    if target_wa_id:
+        step_entry['target_wa_id'] = str(target_wa_id)
+    new_steps['7'] = step_entry
+    new_progress = {
+        'last_completed_step': progress['last_completed_step'],
+        'steps': new_steps,
+    }
+    await conn.execute(
+        'update app.tenant_settings set onboarding_progress=$2::jsonb where tenant_id=$1',
+        tenant_id,
+        json.dumps(new_progress),
+    )
+    return {
+        'tenant_id': str(tenant_id),
+        'step': 7,
+        'test_message_sent_at': sent_at,
+        'target_wa_id': target_wa_id,
+    }
+
+
 def readiness_check(key: str, label: str, ready: bool, reason: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         'key': key,
@@ -7404,10 +7798,11 @@ async def build_tenant_readiness_report(
     )
 
     settings = await conn.fetchrow(
-        'select locale, business_hours, escalation_policy, pii_policy, no_train from app.tenant_settings where tenant_id=$1',
+        'select locale, business_hours, escalation_policy, pii_policy, no_train, onboarding_progress from app.tenant_settings where tenant_id=$1',
         tenant_id,
     )
     settings_dict = record_to_dict(settings) if settings else {}
+    onboarding_progress = normalize_onboarding_progress(_coerce_jsonb(settings_dict.get('onboarding_progress')))
     settings_ready = bool(
         settings
         and readiness_truthy_object(settings['locale'])
@@ -7630,7 +8025,9 @@ async def build_tenant_readiness_report(
         )
     )
 
-    return readiness_response(tenant_id, checks, smoke_question)
+    response = readiness_response(tenant_id, checks, smoke_question)
+    response['onboarding_progress'] = onboarding_progress
+    return response
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/readiness')

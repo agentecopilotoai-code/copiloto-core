@@ -20,6 +20,7 @@ import { SegmentsModule } from '../modules/segments/SegmentsModule.jsx';
 import { ServiceCatalog } from '../modules/services/ServiceCatalog.jsx';
 import { TeamModule } from '../modules/team/TeamModule.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
+import { OnboardingWizard } from '../modules/onboarding/OnboardingWizard.jsx';
 import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
 import { Sidebar } from './Sidebar.jsx';
 import { Topbar } from './Topbar.jsx';
@@ -214,6 +215,30 @@ export function AdminLayout({ session }) {
     );
   } else if (!hasTenant) {
     activeContent = <NoTenantOnboarding onCreateTenant={openTenantCreation} />;
+  } else if (activeModuleId === 'onboarding-wizard') {
+    if (!hasMinRole(activeRoles, 'admin')) {
+      activeContent = (
+        <section className="module-card">
+          <h2>Acceso restringido</h2>
+          <p className="hint">
+            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para correr
+            el wizard de onboarding.
+          </p>
+        </section>
+      );
+    } else {
+      activeContent = (
+        <OnboardingWizard
+          module={activeModule}
+          session={session}
+          tenant={activeTenant}
+          onNavigateToModule={(targetModuleId) => {
+            if (targetModuleId === 'tenant-setup') setTenantSetupInitialTab(null);
+            selectModule(targetModuleId);
+          }}
+        />
+      );
+    }
   } else if (activeModuleId === 'services') {
     activeContent = <ServiceCatalog module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'branches') {

@@ -6,6 +6,13 @@ export const adminModules = [
     scope: ['Crear tenant', 'Editar settings', 'Horarios y escalamiento', 'PII policy y no_train'],
   },
   {
+    id: 'onboarding-wizard',
+    label: 'Onboarding self-service',
+    summary: 'Wizard guiado de 7 pasos para que un cliente nuevo se onboardee solo, con verificación paso-a-paso. TASK-0069.',
+    scope: ['Datos del negocio', 'Timezone, locale y moneda', 'Canal WhatsApp con firma verificada', 'Template consent_request_v1', 'Catálogo mínimo', 'Horarios', 'Test E2E del bot'],
+    minRole: 'admin',
+  },
+  {
     id: 'services',
     label: 'Servicios',
     summary: 'Catálogo de servicios del negocio con precio, duración e instrucciones.',
