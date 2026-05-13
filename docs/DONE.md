@@ -15,6 +15,50 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0071 — Tono / personalidad del bot configurable por tenant
+
+- **Fecha:** 2026-05-13
+- **Resumen:** un spa premium ya no suena igual que un taller de motos. Cada tenant configura `tone`, `formality`, `emoji_level` y un `custom_persona` libre que se inyecta como bloque dedicado antes del template RAG. El builder del system prompt (`build_system_prompt`) antepone el bloque "VOZ DEL BOT" cuando hay overrides; con la default no se renderiza nada (evita inflar prompts ya costosos en producción). El admin panel ganó un tab "Voz del bot" con previews vivos: 3 ejemplos de respuesta (saludo, disponibilidad, manejo de objeción) renderizados con la configuración actual para que el cliente vea cómo cambia el bot antes de guardar.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** `tenant_settings.bot_personality jsonb not null default '{"tone":"neutral","formality":"tu","emoji_level":"moderate","custom_persona":""}'::jsonb`. Defaults conservadores para no romper tenants existentes.
+  - **Builder del prompt (`app/services/conversation_flow.py`):**
+    - Constantes `DEFAULT_BOT_PERSONALITY`, `_TONE_DESCRIPTIONS`, `_FORMALITY_DESCRIPTIONS`, `_EMOJI_LEVEL_DESCRIPTIONS` con catálogo cerrado de valores válidos.
+    - `_normalize_personality(value)`: tolera string JSON, dicts arbitrarios, `None`. Valores fuera de catálogo caen al default; `custom_persona` se trunca a 600 caracteres para no reventar el budget.
+    - `build_personality_block(personality)`: devuelve cadena vacía si todo es default (corto-circuito anti-bloat); en caso contrario emite sección "== VOZ DEL BOT ==" con tono, trato, emojis y persona personalizada.
+    - `build_system_prompt(..., bot_personality=None)`: antepone el bloque al template RAG cuando aplica. Orden garantizado: voz → contexto temporal → servicios → recursos → estado → instrucciones por etapa.
+  - **Wiring orchestrator → LLM (`app/services/rag_orchestrator.py`):** la query inicial de `tenant_settings` ahora selecciona `bot_personality`; se parsea el jsonb (acepta dict o string), se propaga vía `_resolve_conversational` hacia `build_conversational_llm_answer` (Ollama, `app/services/llm_answer.py`) y `build_conversational_cloud_llm_answer` (Claude/OpenAI, `app/services/cloud_llm_answer.py`).
+  - **API admin (`app/api/v1/routes.py`):** `PATCH /v1/tenants/{id}/settings` acepta el nuevo campo `bot_personality`, lo coerce con `_coerce_jsonb`, lo pasa por `_normalize_personality` antes de persistir y lo escribe como `$8::jsonb` en el UPDATE. La query `select * from tenant_settings` que ya usaba `record_to_dict` lo expone automáticamente al cliente.
+  - **Admin Panel — tab "Voz del bot" (`admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`):**
+    - Nuevo `id: 'voz'` en `wizardTabs` (entre Privacidad e IA y RAG).
+    - 3 grupos de tarjetas radio (`option-card`) para tono / trato / emojis con descripción humana en cada opción.
+    - Textarea para `custom_persona` con contador `n/600`.
+    - `PERSONALITY_PREVIEW_SAMPLES` × 3 (saludo, disponibilidad, objeción) renderizados por `renderPersonalityPreview` con sustituciones léxicas mínimas para "tú/usted/vos", "playful/formal" y un mapa de sufijos de emojis por nivel; el cliente ve cómo cambia el mismo mensaje en vivo.
+    - `hydrateSettings` carga `botPersonality` desde el GET inicial; `settingsPayload` lo incluye en el PATCH; "Restablecer" vuelve a defaults sin guardar.
+  - **CSS (`admin-panel/src/styles/global.css`):** estilos para `.option-card`, `.option-grid`, `.preview-bubble`, `.preview-list` y `.voz-bot-panel`; cards seleccionadas con borde índigo y halo de foco para feedback visual.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/services/conversation_flow.py`
+  - `app/services/llm_answer.py`
+  - `app/services/cloud_llm_answer.py`
+  - `app/services/rag_orchestrator.py`
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`
+  - `admin-panel/src/styles/global.css`
+  - `tests/test_bot_personality_static.py`
+  - `docs/BACKLOG.md`
+- **Validaciones:**
+  - `uv run pytest tests/test_bot_personality_static.py` → 10/10 passed.
+  - `uv run pytest tests/test_conversation_flow_static.py tests/test_cloud_llm_answer_static.py` → 64/64 passed (no se rompió el contrato existente).
+- **Criterios de aceptación cumplidos:**
+  - Mismo input con `tone=playful` vs `tone=formal` produce prompts distinguibles (verificado en test `test_build_system_prompt_playful_vs_formal_differ`); el bloque inyectado le dice al modelo cómo modular el tono, y `emoji_level=none` añade la regla explícita "NO uses emojis".
+  - 10 tests estáticos (esquema, normalizer, builder, orchestrator wiring, admin API, UI) — supera el mínimo de ≥ 6 exigido por el backlog.
+- **Notas y limitaciones:**
+  - El bloque de voz se concatena con `\n\n` antes del template; cuando el tenant deja la default, NO se renderiza (mantiene el comportamiento histórico y no encarece la facturación de tokens en tenants que no usan la feature).
+  - La preview en el panel hace sustituciones léxicas en JS (cliente) para "tú→usted/vos", "playful→exclamaciones" y emojis; es indicativa, el modelo final tiene libertad creativa. No se hace round-trip al backend para previews — el cliente ve cambios en tiempo real sin gasto de tokens.
+  - `custom_persona` se sanea (trim, max 600 chars) tanto en el normalizer como en el textarea. No se hace escape adicional porque la cadena va a un system prompt, no a HTML/SQL.
+
+---
+
 ### TASK-0070 — Widget JS embebible distribuido por CDN
 
 - **Fecha:** 2026-05-13

@@ -921,6 +921,14 @@ alter table app.contact_notes
 alter table app.campaigns add constraint uq_campaigns_tenant_id_id unique (tenant_id, id);
 alter table app.campaigns add column segment_id uuid;
 alter table app.campaigns add column launched_snapshot_at timestamptz;
+
+-- TASK-0071: voz/personalidad configurable por tenant. Migración idempotente
+-- para deployments existentes. tone ∈ {neutral,formal,friendly,playful},
+-- formality ∈ {tu,usted,vos}, emoji_level ∈ {none,low,moderate,high},
+-- custom_persona texto libre (≤ 600 chars saneados en backend).
+alter table app.tenant_settings
+  add column if not exists bot_personality jsonb not null
+  default '{"tone":"neutral","formality":"tu","emoji_level":"moderate","custom_persona":""}'::jsonb;
 alter table app.campaigns
   add constraint fk_campaigns_tenant_template foreign key (tenant_id, template_id) references app.whatsapp_templates(tenant_id, id);
 alter table app.campaign_attributions

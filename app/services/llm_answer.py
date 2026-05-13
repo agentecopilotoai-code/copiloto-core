@@ -49,6 +49,20 @@ def _build_context(matches: list[RetrievalMatch], *, min_score: float) -> str:
     return '\n\n'.join(parts)
 
 
+def _qa_system_prompt(bot_personality: Any) -> str:
+    """Prepend the personality block (if non-default) to the Q&A system prompt.
+
+    TASK-0071: la voz del bot debe aplicar también al cascade Q&A (no sólo al
+    flujo conversacional de booking); de lo contrario tenants que eligen
+    usted/sin-emojis veían respuestas inconsistentes para preguntas de catálogo.
+    """
+    from app.services.conversation_flow import build_personality_block  # noqa: PLC0415
+    block = build_personality_block(bot_personality)
+    if not block:
+        return _SYSTEM_PROMPT
+    return f'{block}\n\n{_SYSTEM_PROMPT}'
+
+
 async def build_llm_answer(
     question: str,
     matches: list[RetrievalMatch],
@@ -57,6 +71,7 @@ async def build_llm_answer(
     model: str,
     timeout_seconds: int = 30,
     min_score: float = 0.12,
+    bot_personality: Any = None,
 ) -> dict[str, Any]:
     """Call a local Ollama instance to generate a conversational answer from retrieved chunks."""
     context = _build_context(matches, min_score=min_score)
@@ -72,6 +87,7 @@ async def build_llm_answer(
         }
 
     user_message = _USER_TEMPLATE.format(context=context, question=question)
+    system_prompt = _qa_system_prompt(bot_personality)
 
     try:
         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
@@ -82,7 +98,7 @@ async def build_llm_answer(
                     'stream': False,
                     'options': {'temperature': 0.2, 'num_predict': 400},
                     'messages': [
-                        {'role': 'system', 'content': _SYSTEM_PROMPT},
+                        {'role': 'system', 'content': system_prompt},
                         {'role': 'user', 'content': user_message},
                     ],
                 },
@@ -142,6 +158,7 @@ async def build_conversational_llm_answer(
     current_datetime_label: str = 'no disponible',
     timezone: str = 'America/Bogota',
     resources_context: str = 'No hay profesionales activos configurados todavía.',
+    bot_personality: Any = None,
 ) -> dict[str, Any]:
     """Multi-turn booking flow response via Ollama.
 
@@ -156,6 +173,7 @@ async def build_conversational_llm_answer(
         current_datetime_label=current_datetime_label,
         timezone=timezone,
         resources_context=resources_context,
+        bot_personality=bot_personality,
     )
 
     messages_payload: list[dict[str, str]] = [
