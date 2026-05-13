@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     rate_limit_webhook_per_min: int = Field(default=600, ge=1)
     circuit_breaker_failure_threshold: int = Field(default=5, ge=1)
     circuit_breaker_cooldown_seconds: float = Field(default=30.0, ge=1.0)
+    # TASK-0060: observabilidad — endpoint /metrics restringido a IPs allowlisted.
+    # Lista separada por comas; vacío = endpoint inaccesible. No soporta CIDR.
+    observability_allowed_ips: str = ''
 
     @property
     def knowledge_storage_bucket(self) -> str:

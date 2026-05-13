@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -11,6 +12,11 @@ import structlog
 
 from app.core.config import get_settings
 from app.services.audit import audit
+from app.services.metrics import (
+    observe_response_latency,
+    record_handoff,
+    record_message,
+)
 from app.services.appointment_self_service import maybe_run_self_service_flow
 from app.services.booking_flow import maybe_run_booking_flow
 from app.services.feedback_flow import (
@@ -136,7 +142,57 @@ async def _load_active_resources_context(
 
 
 
+_TIER_BY_ACTION = {
+    'bot_reply': 'template',
+    'handoff': 'handoff',
+}
+
+
+def _tier_from_result(result: dict[str, Any]) -> str:
+    if not isinstance(result, dict):
+        return 'unknown'
+    if result.get('cloud_llm_used'):
+        return 'cloud_llm'
+    if result.get('llm_used'):
+        return 'local_llm'
+    action = result.get('action')
+    return _TIER_BY_ACTION.get(action, action or 'unknown')
+
+
 async def orchestrate_inbound_message(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    channel_id: UUID,
+    channel_account_mode: str,
+    conversation: asyncpg.Record,
+    contact: asyncpg.Record,
+    inbound_message: asyncpg.Record,
+) -> dict[str, Any]:
+    """Decide whether to reply automatically via RAG/LLM or escalate to a human agent."""
+    started = time.monotonic()
+    tier = 'unknown'
+    try:
+        result = await _orchestrate_inbound_message_impl(
+            conn,
+            tenant_id=tenant_id,
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            conversation=conversation,
+            contact=contact,
+            inbound_message=inbound_message,
+        )
+        tier = _tier_from_result(result)
+        return result
+    finally:
+        observe_response_latency(
+            tenant_id=tenant_id,
+            tier=tier,
+            seconds=time.monotonic() - started,
+        )
+
+
+async def _orchestrate_inbound_message_impl(
     conn: asyncpg.Connection,
     *,
     tenant_id: UUID,
@@ -1400,6 +1456,7 @@ async def _do_handoff(
             reason,
         )
         handoff_id = handoff_row['id']
+        record_handoff(tenant_id=tenant_id, reason=reason or 'unspecified')
 
     # Send handoff_message if the policy defines one
     handoff_message_sent = False

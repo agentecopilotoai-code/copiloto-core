@@ -399,28 +399,7 @@ _TASK-0059 — Rate limiting y circuit breaker en webhooks Meta y LLMs externos:
 
 ---
 
-### TASK-0060 — Observabilidad: métricas Prometheus + alertas básicas
-
-- **Estado:** PENDING
-- **Por qué bloquea:** hoy si el bot deja de responder o el LLM cloud cae, nadie se entera hasta que un cliente se queja. Sin observabilidad operativa no hay SLA contractual ni soporte fuera de horario.
-- **Alcance:**
-  - Endpoint `GET /metrics` con `prometheus_client`, expuesto solo a IPs en `OBSERVABILITY_ALLOWED_IPS` (env). Métricas:
-    - `cpi_messages_total{tenant_id, direction, channel, status}`
-    - `cpi_response_latency_seconds{tenant_id, tier}` (histogram con buckets 0.5/1/2/5/10s)
-    - `cpi_llm_calls_total{provider, status}`
-    - `cpi_appointments_total{tenant_id, status}`
-    - `cpi_handoff_total{tenant_id, reason}`
-    - `cpi_circuit_breaker_state{provider}` (gauge 0=closed 1=half_open 2=open)
-    - `cpi_worker_queue_depth{worker}` (gauge)
-  - Reglas de Prometheus (archivo `infra/observability/alerts.yaml`) con 6 alertas seed: alta tasa de error (> 5% en 5min), latencia P95 > 5s, queue depth > 1000, circuit breaker open > 2min, scheduler atrasado > 5min, sin métricas durante 3min.
-  - `docker-compose.yml` agrega servicio `prometheus` opt-in (perfil `observability`) y Grafana opt-in (sin dashboards detallados en MVP — solo `/metrics` accesible).
-- **Criterios de aceptación:**
-  - `curl http://api:8000/metrics` desde una IP allowlisted retorna métricas Prometheus.
-  - Reglas de alerta cargan en Prometheus sin error.
-  - Tests: ≥ 8 estáticos: endpoint registrado, métricas declaradas, IP allowlist, archivo `alerts.yaml` válido (parsing YAML), perfil compose.
-- **Notas:**
-  - Dashboards de Grafana se entregarán post-MVP — el cierre de esta tarea es solo el contrato de métricas + alertas backend.
-  - Las métricas no incluyen PII (sin `phone_e164`, sin contenido del mensaje); solo IDs y agregados.
+_TASK-0060 — Observabilidad: métricas Prometheus + alertas básicas: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

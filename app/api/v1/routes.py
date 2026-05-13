@@ -115,6 +115,11 @@ from app.services.payment_provider import (
     verify_stripe_signature,
 )
 from app.services.maps import build_maps_url
+from app.services.metrics import (
+    record_appointment,
+    record_handoff,
+    record_message,
+)
 from app.services.notifications import (
     cancel_appointment_reminder_jobs,
     create_appointment_reminder_jobs,
@@ -3188,6 +3193,7 @@ async def create_handoff(
     )
     await conn.execute("update app.conversations set status='human_required', handoff_required=true where tenant_id=$1 and id=$2", tenant_id, conversation_id)
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='handoff.created', entity_type='handoff', entity_id=str(row['id']))
+    record_handoff(tenant_id=tenant_id, reason=str(row['reason'] or 'manual'))
     return record_to_dict(row)
 
 
@@ -5609,6 +5615,7 @@ async def create_appointment(payload: AppointmentCreate, request: Request, conn:
             appointment_id=str(row['id']),
         )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='appointment.created', entity_type='appointment', entity_id=str(row['id']))
+    record_appointment(tenant_id=payload.tenant_id, status='created')
     return record_to_dict(row)
 
 
@@ -5663,6 +5670,8 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, r
     except asyncpg.ExclusionViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource has a conflicting appointment') from exc
     action = 'appointment.cancelled' if next_status == 'cancelled' else 'appointment.updated'
+    if next_status in {'cancelled', 'completed', 'no_show', 'confirmed'}:
+        record_appointment(tenant_id=tenant_id, status=next_status)
     try:
         if next_status == 'cancelled':
             await cancel_appointment_reminder_jobs(conn, tenant_id, appointment_id)
@@ -5710,6 +5719,7 @@ async def cancel_appointment(appointment_id: UUID, request: Request, conn: async
                 appointment_id=str(appointment_id),
             )
         await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='appointment.cancelled', entity_type='appointment', entity_id=str(appointment_id))
+        record_appointment(tenant_id=tenant_id, status='cancelled')
     return record_to_dict(row)
 
 
@@ -8062,6 +8072,12 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     reply_to_external_id,
                 )
                 if inbound_message:
+                    record_message(
+                        tenant_id=channel['tenant_id'],
+                        direction='inbound',
+                        channel='whatsapp',
+                        status='accepted',
+                    )
                     await notify_operations_change(
                         conn,
                         channel['tenant_id'],

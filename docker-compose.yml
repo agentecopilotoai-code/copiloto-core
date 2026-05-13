@@ -128,6 +128,42 @@ services:
       - "4318:4318"
       - "8889:8889"
 
+  # TASK-0060: stack de observabilidad opt-in. Arranca con
+  #   docker compose --profile observability up
+  # OBSERVABILITY_ALLOWED_IPS debe incluir la IP del contenedor de Prometheus
+  # (típicamente la subred docker, p.ej. 172.18.0.0/16) o la del host.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["observability"]
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+
   # ── LLM local (Ollama) ────────────────────────────────────────────────────
   # Ollama corre FUERA de este compose, en la máquina host o servidor con GPU.
   # El compose le envía requests via LOCAL_LLM_BASE_URL en .env.
@@ -153,3 +189,5 @@ volumes:
   redis-data:
   minio-data:
   knowledge-files:
+  prometheus-data:
+  grafana-data:
