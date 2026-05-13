@@ -552,6 +552,10 @@ class IntentEvaluateRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
     max_chunks: int = Field(default=5, ge=1, le=10)
     min_score: float = Field(default=0.12, ge=0, le=1)
+    # Admin-only RAG-test path: opt-in to include staff-only chunks
+    # (visibility='agents_only') in the evaluation. The runtime end-user
+    # response path (orchestrator) NEVER sees this flag.
+    include_agents_only: bool = False
 
 
 class ContactTagCreate(BaseModel):

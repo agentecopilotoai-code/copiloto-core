@@ -736,31 +736,7 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
 
 ---
 
-### TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG
-
-- **Estado:** PENDING
-- **Causa raíz:** la consulta SQL del orquestador RAG filtra `tenant_id` + `status='active'` pero **NO excluye `knowledge_documents.visibility='agents_only'`**. Los builders downstream (template grounded, local LLM, cloud LLM) concatenan todos los chunks scoreados sin re-filtrar. Resultado: contenido staff-only termina en la respuesta saliente al cliente final y/o en el prompt enviado al proveedor cloud.
-- **Bugs cubiertos (3):**
-  - **BUG13** (`docs/BUGS/BUG13`, commit `760284a`): WhatsApp inbound recibe excerpts `agents_only` en la respuesta — fix raíz.
-  - **BUG12** (`docs/BUGS/BUG12`, commit `c8e7238`): respuesta template concatena múltiples chunks (no solo el best) — amplifica la fuga si la SQL no filtra.
-  - **BUG10** (`docs/BUGS/BUG10`, commit `197c6ab`): el camino cloud_llm (standalone y cascade fallback) envía contexto sin filtrar al SDK externo — fuga al proveedor.
-- **Fase 1 — verificación en HEAD:**
-  1. Re-leer la query de retrieval en `app/services/rag_orchestrator.py` (lexical pg_trgm + ANN pgvector + fusion). Confirmar si HEAD ya incluye `and kd.visibility <> 'agents_only'` o equivalente.
-  2. Re-leer `build_grounded_answer`, `_build_local_llm_context`, `build_cloud_llm_answer` (o equivalentes). Confirmar si rechazan defensivamente chunks `agents_only`.
-  3. Reproducir los tres rubrics (BUG10/12/13) con un chunk `agents_only` ranqueado #1 y luego #2. Capturar la respuesta saliente y el payload enviado al SDK cloud.
-- **Fase 2 — remediación (causa raíz, un solo fix):**
-  - Constante compartida `END_USER_VISIBILITY = ('public', 'tenant')` en `app/services/rag_orchestrator.py`.
-  - Filtro aplicado en la query SQL del retrieval, no en post-filter, para los tres caminos (lexical, ANN, fusion): `WHERE kd.visibility = ANY($N::text[])` con `END_USER_VISIBILITY` como parámetro.
-  - Override explícito `include_agents_only: bool = False` solo para Knowledge Studio admin RAG-test (ruta `/tenants/{id}/knowledge/rag-test`), y solo cuando el caller cumple `ensure_tenant_role(min_role='admin')` (depende de TASK-0077 conceptualmente, no en orden).
-  - Defense-in-depth: cada builder (`build_grounded_answer`, `_build_local_llm_context`, `build_cloud_llm_answer`) hace `assert chunk['visibility'] in END_USER_VISIBILITY` y emite `log.warning('agents_only.leaked_into_builder', chunk_id=...)` si llega un chunk `agents_only` (no debería, pero si llega, lo descarta).
-- **Criterios de aceptación:**
-  - Tests estáticos ≥ 6 en `tests/test_rag_visibility.py`:
-    - BUG13: chunk `agents_only` ranqueado #1 → respuesta saliente NO contiene el excerpt.
-    - BUG12: chunk `agents_only` ranqueado #2 + chunk `public` #1 → respuesta multi-chunk solo trae el #1.
-    - BUG10: chunk `agents_only` con score sobre threshold → payload enviado a stub `AsyncAnthropic.messages.create` NO contiene el texto agents_only.
-    - Override `include_agents_only=true` con caller `admin` → SÍ incluye (Knowledge Studio path).
-    - Override sin permisos → 403.
-    - Defense-in-depth: builder al que se le inyecta un chunk `agents_only` lo descarta y emite warning.
+_TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

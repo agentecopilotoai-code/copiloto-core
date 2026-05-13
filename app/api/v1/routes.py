@@ -166,7 +166,13 @@ from app.services.web_widget import (
 )
 from app.services.intent_classifier import classify_intent
 from app.services.rag_orchestrator import orchestrate_inbound_message
-from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
+from app.services.rag_retrieval import (
+    ALL_VISIBILITY,
+    END_USER_VISIBILITY,
+    build_grounded_answer,
+    rank_chunks,
+    retrieval_match_to_dict,
+)
 from app.services.whatsapp import (
     delete_template_from_meta,
     download_whatsapp_media,
@@ -7527,6 +7533,7 @@ async def evaluate_intent_retrieval(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    visibility_filter = list(ALL_VISIBILITY) if payload.include_agents_only else list(END_USER_VISIBILITY)
     rows = await conn.fetch(
         """
         select kc.id,
@@ -7545,16 +7552,23 @@ async def evaluate_intent_retrieval(
         join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
         where kc.tenant_id=$1
           and kd.status='active'
+          and kd.visibility = ANY($2::text[])
         order by kd.updated_at desc, kc.chunk_index asc
         """,
         tenant_id,
+        visibility_filter,
     )
     matches = rank_chunks(
         payload.question,
         [record_to_dict(row) for row in rows],
         max_chunks=payload.max_chunks,
     )
-    answer = build_grounded_answer(payload.question, matches, min_score=payload.min_score)
+    answer = build_grounded_answer(
+        payload.question,
+        matches,
+        min_score=payload.min_score,
+        allow_agents_only=payload.include_agents_only,
+    )
 
     # Intent classification
     intent_result = await classify_intent(payload.question, settings=get_settings())
@@ -7589,6 +7603,7 @@ async def evaluate_intent_retrieval(
             'sufficient_context': response['sufficient_context'],
             'returned_chunk_count': len(matches),
             'top_score': matches[0].score if matches else None,
+            'include_agents_only': payload.include_agents_only,
         },
     )
     return response
@@ -8779,10 +8794,12 @@ async def build_tenant_readiness_report(
         from app.knowledge_chunks kc
         join app.knowledge_documents kd on kd.id=kc.document_id and kd.tenant_id=kc.tenant_id
         where kc.tenant_id=$1 and kd.status='active'
+          and kd.visibility = ANY($2::text[])
         order by kd.updated_at desc, kc.chunk_index asc
         limit 500
         """,
         tenant_id,
+        list(END_USER_VISIBILITY),
     )
     matches = rank_chunks(smoke_question, [record_to_dict(row) for row in retrieval_rows], max_chunks=3)
     retrieval_answer = build_grounded_answer(smoke_question, matches, min_score=retrieval_min_score)

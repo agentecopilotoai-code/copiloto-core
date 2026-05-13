@@ -36,9 +36,19 @@ Responde siempre en español, de forma natural y conversacional."""
 
 
 def _build_context(matches: list[RetrievalMatch], *, min_score: float) -> str:
+    from app.services.rag_retrieval import END_USER_VISIBILITY  # noqa: PLC0415
+
     parts = []
     for m in matches:
         if m.score < min_score:
+            continue
+        if m.visibility not in END_USER_VISIBILITY:
+            log.warning(
+                'rag.agents_only_blocked_in_builder',
+                builder='cloud_llm',
+                chunk_id=str(m.id),
+                visibility=m.visibility,
+            )
             continue
         header = f'[{m.document_title}]'
         if m.section_path:

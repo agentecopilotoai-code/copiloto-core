@@ -15,6 +15,44 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG10 (cloud LLM payload), BUG12 (template multi-chunk concat), BUG13 (WhatsApp inbound response).
+- **Fase 1 — verificación en HEAD:** los tres BUGs siguen reproducibles. La query inline del orquestador (`app/services/rag_orchestrator.py` ~L737) y las plantillas `_ANN_CHUNK_SQL` / `_LEXICAL_CHUNK_SQL` filtran únicamente por `tenant_id` + `status='active'`. Los builders downstream (`build_grounded_answer`, `_build_context` en `llm_answer.py` y `cloud_llm_answer.py`) tampoco re-filtran por `visibility`. El endpoint admin `/v1/intents/evaluate` igualmente devuelve chunks `agents_only` sin opt-in. Resultado: un chunk staff-only con score alto termina embebido en la respuesta saliente y en el payload enviado al proveedor cloud.
+- **Fase 2 — remediación (causa raíz, un único fix estructural):**
+  - **Constantes compartidas** en `app/services/rag_retrieval.py`: `END_USER_VISIBILITY = ('public', 'tenant')` y `ALL_VISIBILITY = ('public', 'tenant', 'agents_only')`. Cualquier camino que sirva a un cliente final pasa el primero como allowlist; sólo el RAG-test admin del Knowledge Studio puede pedir el segundo.
+  - **Filtro SQL en la fuente** (no en post-filter): `_ANN_CHUNK_SQL` y `_LEXICAL_CHUNK_SQL` añaden `and kd.visibility = ANY($N::text[])`; la query inline del orquestador y la del readiness check (`app/api/v1/routes.py` ~L8774) replican el mismo predicado con `END_USER_VISIBILITY` parametrizado.
+  - **Defense-in-depth en builders:** `filter_end_user_matches(matches)` se aplica dentro de `build_grounded_answer` y como skip explícito en `_build_context` (tanto `llm_answer.py` como `cloud_llm_answer.py`). Si un chunk `agents_only` llegara al builder, se descarta y se emite `log.warning('rag.agents_only_blocked_in_builder', ...)`.
+  - **Override admin opt-in:** `IntentEvaluateRequest.include_agents_only: bool = False`; el endpoint `/intents/evaluate` (tenant_admin_router, ya restringido a admin) pasa `ALL_VISIBILITY` al SQL y `allow_agents_only=True` a `build_grounded_answer` sólo cuando el flag está activo. El audit registra el flag para trazabilidad.
+  - **UI Knowledge Studio:** checkbox "Incluir documentos **Solo agentes** (vista interna; nunca se envía al cliente)" en el bloque "Probar clasificador + RAG"; el state `ragIncludeAgentsOnly` se envía a `evaluateIntent` y nunca se persiste por defecto.
+- **Archivos modificados:**
+  - `app/services/rag_retrieval.py`
+  - `app/services/rag_orchestrator.py`
+  - `app/services/llm_answer.py`
+  - `app/services/cloud_llm_answer.py`
+  - `app/api/v1/routes.py`
+  - `app/api/v1/schemas.py`
+  - `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx`
+  - `tests/test_rag_visibility.py` (nuevo, 16 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/services/rag_retrieval.py app/services/rag_orchestrator.py app/services/cloud_llm_answer.py app/services/llm_answer.py app/api/v1/routes.py app/api/v1/schemas.py tests/test_rag_visibility.py` → all checks passed.
+  - `uv run pytest tests/test_rag_visibility.py -q` → 16 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1411 passed, 22 skipped.
+- **Cobertura por bug:**
+  - **BUG13:** `test_build_grounded_answer_drops_agents_only_chunk_ranked_first`, `test_build_grounded_answer_escalates_when_only_agents_only_matches`, `test_rank_chunks_then_grounded_answer_blocks_agents_only_end_to_end`.
+  - **BUG12:** `test_build_grounded_answer_filters_agents_only_when_ranked_second`.
+  - **BUG10:** `test_cloud_llm_context_excludes_agents_only_chunks`, `test_local_llm_context_excludes_agents_only_chunks`.
+  - **Override admin:** `test_admin_override_includes_agents_only_chunks_in_answer`, `test_intent_evaluate_request_schema_defaults_include_agents_only_false`, `test_intent_evaluate_endpoint_respects_include_agents_only_flag`.
+  - **Layer SQL:** `test_ann_chunk_sql_filters_visibility_allowlist`, `test_lexical_chunk_sql_filters_visibility_allowlist`, `test_orchestrator_inline_retrieval_sql_filters_visibility`, `test_readiness_retrieval_sql_filters_visibility`.
+  - **Constantes / helper:** `test_end_user_visibility_excludes_agents_only`, `test_all_visibility_includes_agents_only`, `test_filter_end_user_matches_helper_strips_agents_only`.
+- **Notas:**
+  - Mandato MVP cumplido: una sola allowlist canónica (`END_USER_VISIBILITY`), una sola excepción explícita (opt-in admin), sin fallbacks ni columnas legacy.
+  - El UI checkbox queda en `false` por defecto cada vez que se monta el componente — no se persiste en localStorage para que ningún admin lo deje encendido por accidente entre sesiones.
+
+---
+
 ### TASK-0077 — Fix estructural: autorización tenant-scoped con doble chequeo JWT + DB role
 
 - **Fecha:** 2026-05-13
