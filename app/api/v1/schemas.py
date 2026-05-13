@@ -24,6 +24,13 @@ class TenantCreate(BaseModel):
 
 
 class TenantUpdate(BaseModel):
+    """Fields a tenant admin may patch on their own tenant.
+
+    TASK-0077/BUG11: ``status`` is intentionally excluded — lifecycle
+    transitions (trial → active → suspended → churned) belong to platform
+    operators only and live on :class:`PlatformTenantUpdate`.
+    """
+
     slug: str | None = None
     legal_name: str | None = None
     display_name: str | None = None
@@ -31,6 +38,12 @@ class TenantUpdate(BaseModel):
     business_type_label: str | None = Field(default=None, min_length=1, max_length=160)
     country_code: str | None = Field(default=None, pattern=SUPPORTED_COUNTRY_PATTERN)
     timezone: str | None = None
+
+
+class PlatformTenantUpdate(TenantUpdate):
+    """Platform-owner superset of :class:`TenantUpdate` that may also write
+    ``status``.  Only ``platform_admin_router`` handlers should accept this."""
+
     status: str | None = Field(default=None, pattern='^(trial|active|suspended|churned)$')
 
 

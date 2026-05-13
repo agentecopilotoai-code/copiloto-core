@@ -74,6 +74,7 @@ from app.api.v1.schemas import (
     SubscriptionPlanUpdate,
     TenantCreate,
     TenantPaymentSettingsUpdate,
+    PlatformTenantUpdate,
     TenantStatusTransition,
     TenantUpdate,
     TreatmentPackageCreate,
@@ -85,7 +86,13 @@ from app.api.v1.schemas import (
     WhatsAppTemplateUpdate,
 )
 from app.core.config import get_settings
-from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
+from app.core.security import (
+    authenticate_request,
+    has_jwt_role,
+    require_min_role,
+    require_platform_owner,
+    require_service,
+)
 from app.db.pool import get_db, record_to_dict
 from app.services import locale as locale_service
 from app.services.audit import audit
@@ -493,26 +500,11 @@ def is_service_or_support(request: Request) -> bool:
     )
 
 
-async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenant_id: UUID) -> bool:
-    actor_id = getattr(request.state, 'actor_id', None)
-    if not actor_id:
-        return False
-    return bool(
-        await conn.fetchval(
-            """
-            select exists(
-              select 1
-              from app.users u
-              join app.user_tenant_roles utr on utr.user_id = u.id
-              where u.auth_subject=$1 and utr.tenant_id=$2
-            )
-            """,
-            actor_id,
-            tenant_id,
-        )
-    )
-
-
+# TASK-0077: per-tenant role ranking.  ``platform_owner`` is intentionally not
+# part of this table because that role is never stored in
+# ``app.user_tenant_roles``; it lives in the JWT only.  The JWT half of the
+# double-check uses ``has_jwt_role`` from ``app.core.security`` which *does*
+# include ``platform_owner`` in its ranking.
 _TENANT_ROLE_LEVELS = {
     'viewer': 5,
     'agent': 10,
@@ -521,6 +513,36 @@ _TENANT_ROLE_LEVELS = {
     'owner': 40,
     'support': 50,
 }
+
+
+async def get_user_tenant_role(
+    conn: asyncpg.Connection, request: Request, tenant_id: UUID
+) -> str | None:
+    """Return the highest-ranked role the actor holds *in this tenant*, or ``None``.
+
+    Replaces the legacy ``has_user_tenant_role`` (existence-only) check.  Pure
+    existence is insufficient for authorization decisions because the schema
+    permits low-privilege roles (viewer/agent) — see BUG25.
+    """
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        return None
+    rows = await conn.fetch(
+        """
+        select utr.role
+        from app.users u
+        join app.user_tenant_roles utr on utr.user_id = u.id
+        where u.auth_subject=$1 and utr.tenant_id=$2
+        """,
+        actor_id,
+        tenant_id,
+    )
+    if not rows:
+        return None
+    return max(
+        (row['role'] for row in rows),
+        key=lambda role: _TENANT_ROLE_LEVELS.get(role, 0),
+    )
 
 
 async def user_tenant_roles_for(
@@ -542,21 +564,109 @@ async def user_tenant_roles_for(
     return [row['role'] for row in rows]
 
 
+async def _audit_authz_denied(
+    request: Request,
+    conn: asyncpg.Connection | None,
+    *,
+    tenant_id: UUID | None,
+    reason: str,
+) -> None:
+    """Best-effort audit log for authorization denials.
+
+    Failures here must never mask the 403 raised by the caller, so we swallow
+    any exception (eg. fake test connections lacking ``execute``).
+    """
+    if conn is None:
+        return
+    try:
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type=getattr(request.state, 'actor_type', 'anonymous'),
+            actor_id=getattr(request.state, 'actor_id', None),
+            action='authz.denied',
+            entity_type='tenant',
+            entity_id=str(tenant_id) if tenant_id else None,
+            metadata={'reason': reason, 'path': getattr(request.scope, 'get', lambda *_: None)('path') or request.scope.get('path')},
+        )
+    except Exception:  # pragma: no cover - defensive
+        pass
+
+
+def _tenant_db_role_meets(role: str | None, minimum_role: str) -> bool:
+    if role is None:
+        return False
+    return _TENANT_ROLE_LEVELS.get(role, 0) >= _TENANT_ROLE_LEVELS.get(minimum_role, 0)
+
+
 async def ensure_tenant_access(
     request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
 ) -> None:
+    """Confirm the caller may operate as the actor for ``tenant_id``.
+
+    TASK-0077 hardens this helper relative to the prior contract:
+
+    * The DB membership check is no longer existence-only.  When the router
+      installed a JWT-level ``require_min_role`` dependency it leaves the
+      expected minimum on ``request.state.required_tenant_role``; we use that
+      to gate ``user_tenant_roles`` so JWT-admin + DB-viewer combinations are
+      rejected (BUG16/BUG25).
+    * ``platform_owner`` JWTs on unscoped tokens (platform staff are not
+      tracked in ``user_tenant_roles``) are recognized as a global bypass.
+    * Same-token-scope still implies access for read-only routers that did
+      *not* install a ``require_min_role`` dependency.  Routers that *did*
+      (``tenant_admin_router``, ``tenant_ops_router``, ``tenant_catalog_router``)
+      always go through the DB role gate.
+    """
     if is_service_or_support(request):
         return
+    roles = getattr(request.state, 'roles', []) or []
+    if 'platform_owner' in roles and not getattr(request.state, 'tenant_id', None):
+        return
+
+    required_tenant_role = getattr(request.state, 'required_tenant_role', None)
     request_tenant_id = getattr(request.state, 'tenant_id', None)
-    if request_tenant_id == tenant_id:
+
+    if required_tenant_role is None:
+        # Router did not declare a minimum tenant role (eg. ``tenant_user_router``
+        # endpoints that any authenticated user may call).  Fall back to the
+        # legacy semantics: token tenant scope or any DB membership row.
+        if request_tenant_id == tenant_id:
+            return
+        if conn is not None and await get_user_tenant_role(conn, request, tenant_id) is not None:
+            return
+        if not request_tenant_id:
+            await _audit_authz_denied(
+                request, conn, tenant_id=tenant_id, reason='no_tenant_scope'
+            )
+            raise HTTPException(
+                status_code=400, detail='X-Tenant-Id header or tenant_id claim is required'
+            )
+        await _audit_authz_denied(
+            request, conn, tenant_id=tenant_id, reason='tenant_scope_mismatch'
+        )
+        raise HTTPException(status_code=403, detail='Tenant scope does not match request')
+
+    # A required tenant role is in effect → always consult the DB for that
+    # tenant, regardless of whether the token nominally scopes to it.
+    db_role = await get_user_tenant_role(conn, request, tenant_id) if conn is not None else None
+    if _tenant_db_role_meets(db_role, required_tenant_role):
         return
-    if conn and await has_user_tenant_role(conn, request, tenant_id):
-        return
-    if not request_tenant_id:
+
+    if db_role is None and not request_tenant_id and conn is None:
+        await _audit_authz_denied(
+            request, conn, tenant_id=tenant_id, reason='no_tenant_scope'
+        )
         raise HTTPException(
             status_code=400, detail='X-Tenant-Id header or tenant_id claim is required'
         )
-    raise HTTPException(status_code=403, detail='Tenant scope does not match request')
+    await _audit_authz_denied(
+        request, conn, tenant_id=tenant_id, reason='insufficient_tenant_role'
+    )
+    raise HTTPException(
+        status_code=403,
+        detail=f'{required_tenant_role} role or higher is required for this tenant',
+    )
 
 
 async def ensure_tenant_role(
@@ -565,19 +675,42 @@ async def ensure_tenant_role(
     tenant_id: UUID,
     minimum_role: str,
 ) -> None:
-    """Verify the actor holds at least ``minimum_role`` *for the target tenant*.
+    """Double-check that the actor holds ``minimum_role`` in **both** the JWT
+    and the per-tenant DB role table.
 
-    The router-level ``require_min_role`` only inspects the JWT's session
-    roles, which are issued in the context of the actor's home tenant.  For
-    destructive endpoints that mutate another tenant's state we must instead
-    consult ``user_tenant_roles`` for the path tenant.
+    TASK-0077 elevates this from a DB-only check to a defense-in-depth gate
+    that preserves the JWT invariant (the token must carry the role the
+    endpoint demands) while also requiring the DB row for the *target* tenant
+    to confirm it.  Either half failing → 403 with a distinct ``reason`` in
+    the audit log.
+
+    Bypasses:
+      * service tokens and explicit Postgres support_mode sessions
+      * ``platform_owner`` JWTs on unscoped tokens (platform staff are not
+        tracked in ``app.user_tenant_roles``)
     """
     if is_service_or_support(request):
         return
-    required = _TENANT_ROLE_LEVELS[minimum_role]
-    roles = await user_tenant_roles_for(conn, request, tenant_id)
-    if any(_TENANT_ROLE_LEVELS.get(role, 0) >= required for role in roles):
+    roles = getattr(request.state, 'roles', []) or []
+    if 'platform_owner' in roles and not getattr(request.state, 'tenant_id', None):
         return
+
+    if not has_jwt_role(roles, minimum_role):
+        await _audit_authz_denied(
+            request, conn, tenant_id=tenant_id, reason='insufficient_token_role'
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f'{minimum_role} token role or higher is required',
+        )
+
+    db_role = await get_user_tenant_role(conn, request, tenant_id)
+    if _tenant_db_role_meets(db_role, minimum_role):
+        return
+
+    await _audit_authz_denied(
+        request, conn, tenant_id=tenant_id, reason='insufficient_tenant_role'
+    )
     raise HTTPException(
         status_code=403,
         detail=f'{minimum_role} role or higher is required for this tenant',
@@ -742,9 +875,25 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
 async def update_tenant_record(
     conn: asyncpg.Connection,
     tenant_id: UUID,
-    payload: TenantUpdate,
+    payload: TenantUpdate | PlatformTenantUpdate,
+    *,
+    actor_is_platform_owner: bool = False,
 ) -> asyncpg.Record:
+    """Persist tenant profile fields.
+
+    TASK-0077/BUG11: ``status`` may only be written when the caller is
+    ``platform_owner`` (``actor_is_platform_owner=True``).  ``TenantUpdate``
+    no longer carries a ``status`` field, so tenant admins can never set it;
+    if a ``PlatformTenantUpdate`` arrives without that flag we refuse to
+    persist the ``status`` change defensively.
+    """
     allowed = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if 'status' in allowed and not actor_is_platform_owner:
+        # Defense in depth: even if a future caller passes a PlatformTenantUpdate
+        # without the platform-owner flag, never let ``status`` leak through.
+        raise HTTPException(
+            status_code=403, detail='Only platform_owner may change tenant status'
+        )
     current = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
     if not current:
         raise HTTPException(status_code=404, detail='Tenant not found')
@@ -835,6 +984,11 @@ async def create_own_tenant(
     actor_id = getattr(request.state, 'actor_id', None)
     if not actor_id:
         raise HTTPException(status_code=401, detail='Authentication required')
+    # TASK-0077/BUG24: callers that already belong to a tenant must NOT be
+    # able to hijack that tenant's profile via the unauthenticated-shape
+    # tenant-signup flow.  Self-service signup is reserved for users with no
+    # membership yet.  Existing members manage their tenant through the
+    # tenant-admin endpoints (which enforce JWT+DB role checks).
     existing_tenant_id = await conn.fetchval(
         """
         select utr.tenant_id
@@ -847,19 +1001,10 @@ async def create_own_tenant(
         actor_id,
     )
     if existing_tenant_id:
-        row = await update_tenant_record(conn, existing_tenant_id, TenantUpdate(**payload.model_dump()))
-        await audit(
-            conn,
-            tenant_id=existing_tenant_id,
-            actor_type=request.state.actor_type,
-            actor_id=request.state.actor_id,
-            action='tenant.self_service_updated',
-            entity_type='tenant',
-            entity_id=str(existing_tenant_id),
+        raise HTTPException(
+            status_code=409,
+            detail='Actor already belongs to a tenant; use the tenant admin endpoints to update it.',
         )
-        response = record_to_dict(row)
-        response['user_role'] = 'owner'
-        return response
 
     # TASK-0073: en el self-service también derivamos tz/locale/currency del país.
     profile = locale_service.profile_for(payload.country_code)
@@ -965,14 +1110,17 @@ _VALID_STATUS_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
-@tenant_admin_router.patch('/tenants/{tenant_id}/status')
+@platform_admin_router.patch('/tenants/{tenant_id}/status')
 async def patch_tenant_status(
     tenant_id: UUID,
     payload: TenantStatusTransition,
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ):
-    await ensure_tenant_access(request, tenant_id, conn)
+    # TASK-0077/BUG11: tenant lifecycle transitions (active/suspended/churned)
+    # are platform-owner-only.  The router-level ``require_platform_owner``
+    # dependency already enforces the unscoped owner role; we still keep the
+    # set_config so RLS-aware audit triggers see the right tenant.
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     row = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
     if not row:
@@ -8920,8 +9068,10 @@ async def export_tenant_data(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ):
-    await require_min_role('owner')(request)
-    await ensure_tenant_access(request, tenant_id, conn)
+    # TASK-0077/BUG17: data-export must double-check owner across JWT and the
+    # target tenant's DB row.  ``ensure_tenant_role`` enforces both halves and
+    # rejects owner-JWT-A + viewer-DB-B (and similar cross-tenant) combos.
+    await ensure_tenant_role(request, conn, tenant_id, 'owner')
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     tenant = await conn.fetchrow('select * from app.tenants where id=$1', tenant_id)
     if not tenant:

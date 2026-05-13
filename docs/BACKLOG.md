@@ -691,7 +691,7 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
 
 ### TASK-0077 — Fix estructural: autorización tenant-scoped con doble chequeo JWT + DB role
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-13) — ver `docs/DONE.md`.
 - **Causa raíz:** `require_min_role('admin')` (o `'owner'`) valida únicamente `request.state.roles` del JWT (rol "global" o de la sesión). `ensure_tenant_access` luego acepta cualquier fila en `app.user_tenant_roles` para el tenant target sin verificar **rol mínimo en ese tenant**. La combinación permite que un JWT con rol alto + membership viewer/agent en un tenant víctima escale a operaciones admin/owner sobre ese tenant.
 - **Bugs cubiertos (9):**
   - **BUG03** (`docs/BUGS/BUG03`, commit `7ca68ea`): media/promotions CRUD cross-tenant.

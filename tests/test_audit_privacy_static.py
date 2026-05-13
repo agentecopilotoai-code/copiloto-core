@@ -96,8 +96,11 @@ def test_tenant_data_export_endpoint_exists():
 
 
 def test_tenant_data_export_requires_owner():
+    """TASK-0077/BUG17: data-export is gated by ``ensure_tenant_role('owner')``,
+    a double-check (JWT + DB) that replaces the single-side
+    ``require_min_role('owner')`` previously used at the handler level."""
     source = API_ROUTES.read_text()
-    assert "require_min_role('owner')(request)" in source
+    assert "ensure_tenant_role(request, conn, tenant_id, 'owner')" in source
 
 
 # --- coreApi.js ---

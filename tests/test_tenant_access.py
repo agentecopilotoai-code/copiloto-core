@@ -13,15 +13,22 @@ def make_request() -> Request:
 
 
 class FakeTenantRoleConnection:
-    def __init__(self, has_role: bool) -> None:
+    def __init__(self, has_role: bool, role: str = 'admin') -> None:
         self.has_role = has_role
+        self.role = role
         self.configured_tenant_id = None
+
+    async def fetch(self, *_args, **_kwargs):
+        if not self.has_role:
+            return []
+        return [{'role': self.role}]
 
     async def fetchval(self, *_args, **_kwargs):
         return self.has_role
 
-    async def execute(self, _query, tenant_id):
-        self.configured_tenant_id = tenant_id
+    async def execute(self, query, *args, **_kwargs):
+        if 'set_config' in query and args:
+            self.configured_tenant_id = args[0]
 
 
 def test_unscoped_user_with_requested_tenant_still_requires_database_tenant_role():
