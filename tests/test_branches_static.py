@@ -73,8 +73,8 @@ def test_schema_adds_branch_id_to_resources_and_appointments():
     schema = SCHEMA.read_text()
     # column on resources (declared in the create-table block)
     assert 'branch_id uuid,\n  is_active boolean not null default true' in schema
-    # column on appointments (before created_at)
-    assert 'branch_id uuid,\n  created_at timestamptz not null default now()' in schema
+    # column on appointments (before metadata + created_at)
+    assert "branch_id uuid,\n  metadata jsonb not null default '{}'::jsonb" in schema
     # composite tenant-scoped FKs
     assert 'fk_resources_tenant_branch' in schema
     assert (

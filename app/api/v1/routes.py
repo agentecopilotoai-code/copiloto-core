@@ -5888,13 +5888,18 @@ async def create_appointment(payload: AppointmentCreate, request: Request, conn:
     await ensure_tenant_access(request, payload.tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(payload.tenant_id))
     await ensure_resource_available(conn, tenant_id=payload.tenant_id, resource_id=payload.resource_id, starts_at=payload.starts_at, ends_at=payload.ends_at)
+    closing_user_id = await current_user_id_from_request(request, conn)
+    appointment_metadata: dict[str, Any] = {}
+    if closing_user_id is not None:
+        appointment_metadata['closed_by_user_id'] = str(closing_user_id)
+        appointment_metadata['closed_at'] = datetime.now(UTC).isoformat()
     try:
         row = await conn.fetchrow(
             """
-            insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, service_id, resource_id, service_code, starts_at, ends_at, notes)
-            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *
+            insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, service_id, resource_id, service_code, starts_at, ends_at, notes, metadata)
+            values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb) returning *
             """,
-            payload.tenant_id, payload.contact_id, payload.conversation_id, payload.service_request_id, payload.service_id, payload.resource_id, payload.service_code, payload.starts_at, payload.ends_at, payload.notes,
+            payload.tenant_id, payload.contact_id, payload.conversation_id, payload.service_request_id, payload.service_id, payload.resource_id, payload.service_code, payload.starts_at, payload.ends_at, payload.notes, json.dumps(appointment_metadata),
         )
     except asyncpg.ExclusionViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource has a conflicting appointment') from exc
@@ -5959,6 +5964,21 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, r
             )
             if not resource:
                 raise HTTPException(status_code=404, detail='Resource not found')
+    closing_user_id = await current_user_id_from_request(request, conn)
+    existing_metadata = existing['metadata']
+    if isinstance(existing_metadata, str):
+        existing_metadata = json.loads(existing_metadata) if existing_metadata else {}
+    elif existing_metadata is None:
+        existing_metadata = {}
+    metadata_patch: dict[str, Any] = {}
+    if (
+        closing_user_id is not None
+        and next_status in {'confirmed', 'completed'}
+        and existing['status'] != next_status
+        and not existing_metadata.get('closed_by_user_id')
+    ):
+        metadata_patch['closed_by_user_id'] = str(closing_user_id)
+        metadata_patch['closed_at'] = datetime.now(UTC).isoformat()
     try:
         row = await conn.fetchrow(
             """
@@ -5969,7 +5989,8 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, r
                 ends_at=$6,
                 status=$7,
                 confirmation_status=coalesce($8, confirmation_status),
-                notes=coalesce($9, notes)
+                notes=coalesce($9, notes),
+                metadata=metadata || $10::jsonb
             where tenant_id=$1 and id=$2
             returning *
             """,
@@ -5982,6 +6003,7 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, r
             next_status,
             update_data.get('confirmation_status'),
             update_data.get('notes'),
+            json.dumps(metadata_patch),
         )
     except asyncpg.ExclusionViolationError as exc:
         raise HTTPException(status_code=409, detail='Resource has a conflicting appointment') from exc
@@ -9197,6 +9219,189 @@ async def analytics_referrals(
     return {
         'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
         'totals': totals,
+        'items': items,
+    }
+
+
+@tenant_analytics_router.get('/analytics/agents')
+async def analytics_agents(
+    request: Request,
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """TASK-0068: per-agent performance KPIs.
+
+    Returns metrics for every user with role ``agent`` in this tenant:
+    messages sent on the desk, handoffs accepted/resolved, average response
+    time after a customer inbound, appointments confirmed by them through the
+    desk, revenue attributed to those appointments (price_amount of completed
+    ones) and feedback rating on their closed appointments. The "top
+    performer of the month" flag points at the agent with the highest
+    ``revenue_attributed`` inside the requested range; ties broken by
+    ``appointments_confirmed`` then ``handoffs_resolved``.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    start, end = _resolve_analytics_range(from_date, to_date)
+    range_start, range_end = _range_bounds(start, end)
+
+    rows = await conn.fetch(
+        """
+        with agents as (
+          select u.id as user_id, u.display_name, u.email
+          from app.users u
+          join app.user_tenant_roles r on r.user_id = u.id
+          where r.tenant_id = $1 and r.role = 'agent'
+        ),
+        messages_sent as (
+          select sender_actor_id as user_id, count(*)::int as count
+          from app.messages
+          where tenant_id = $1
+            and direction = 'outbound'
+            and sender_actor_type = 'agent'
+            and sender_actor_id is not null
+            and created_at >= $2 and created_at < $3
+          group by sender_actor_id
+        ),
+        handoffs_accepted as (
+          select assigned_to as user_id, count(*)::int as count
+          from app.handoffs
+          where tenant_id = $1
+            and assigned_to is not null
+            and status in ('accepted','resolved')
+            and updated_at >= $2 and updated_at < $3
+          group by assigned_to
+        ),
+        handoffs_resolved as (
+          select assigned_to as user_id, count(*)::int as count
+          from app.handoffs
+          where tenant_id = $1
+            and assigned_to is not null
+            and status = 'resolved'
+            and updated_at >= $2 and updated_at < $3
+          group by assigned_to
+        ),
+        agent_responses as (
+          select m.sender_actor_id as user_id,
+                 extract(epoch from (m.created_at - prev_inbound.created_at)) as response_seconds
+          from app.messages m
+          join lateral (
+            select i.created_at
+            from app.messages i
+            where i.tenant_id = m.tenant_id
+              and i.conversation_id = m.conversation_id
+              and i.direction = 'inbound'
+              and i.created_at < m.created_at
+            order by i.created_at desc
+            limit 1
+          ) as prev_inbound on true
+          where m.tenant_id = $1
+            and m.direction = 'outbound'
+            and m.sender_actor_type = 'agent'
+            and m.sender_actor_id is not null
+            and m.created_at >= $2 and m.created_at < $3
+        ),
+        response_times as (
+          select user_id, avg(response_seconds)::float as avg_seconds
+          from agent_responses
+          where response_seconds is not null and response_seconds >= 0
+          group by user_id
+        ),
+        appts_closed as (
+          select metadata->>'closed_by_user_id' as user_id,
+                 count(*) filter (where status = 'confirmed')::int as confirmed_count,
+                 coalesce(
+                   sum(s.price_amount) filter (where a.status = 'completed'),
+                   0
+                 )::float as revenue,
+                 count(a.id) filter (where a.status = 'completed')::int as completed_count
+          from app.appointments a
+          left join app.service_catalog s on s.tenant_id = a.tenant_id and s.id = a.service_id
+          where a.tenant_id = $1
+            and a.metadata ? 'closed_by_user_id'
+            and a.created_at >= $2 and a.created_at < $3
+          group by a.metadata->>'closed_by_user_id'
+        ),
+        feedback_per_agent as (
+          select a.metadata->>'closed_by_user_id' as user_id,
+                 avg(f.rating)::float as avg_rating,
+                 count(f.id)::int as ratings_count
+          from app.appointment_feedback f
+          join app.appointments a on a.tenant_id = f.tenant_id and a.id = f.appointment_id
+          where f.tenant_id = $1
+            and a.metadata ? 'closed_by_user_id'
+            and f.created_at >= $2 and f.created_at < $3
+          group by a.metadata->>'closed_by_user_id'
+        )
+        select
+          ag.user_id,
+          ag.display_name,
+          ag.email,
+          coalesce(ms.count, 0)::int as messages_sent,
+          coalesce(ha.count, 0)::int as handoffs_accepted,
+          coalesce(hr.count, 0)::int as handoffs_resolved,
+          coalesce(rt.avg_seconds, 0)::float as avg_response_time_seconds,
+          coalesce(ac.confirmed_count, 0)::int as appointments_confirmed,
+          coalesce(ac.completed_count, 0)::int as appointments_completed,
+          coalesce(ac.revenue, 0)::float as revenue_attributed,
+          coalesce(fp.avg_rating, 0)::float as feedback_avg_rating,
+          coalesce(fp.ratings_count, 0)::int as feedback_ratings_count
+        from agents ag
+        left join messages_sent ms on ms.user_id::uuid = ag.user_id
+        left join handoffs_accepted ha on ha.user_id = ag.user_id
+        left join handoffs_resolved hr on hr.user_id = ag.user_id
+        left join response_times rt on rt.user_id::uuid = ag.user_id
+        left join appts_closed ac on ac.user_id::uuid = ag.user_id
+        left join feedback_per_agent fp on fp.user_id::uuid = ag.user_id
+        order by revenue_attributed desc,
+                 appointments_confirmed desc,
+                 handoffs_resolved desc,
+                 ag.display_name asc nulls last
+        """,
+        tenant_id, range_start, range_end,
+    )
+
+    items = [
+        {
+            'user_id': str(row['user_id']),
+            'display_name': row['display_name'],
+            'email': row['email'],
+            'messages_sent': int(row['messages_sent'] or 0),
+            'handoffs_accepted': int(row['handoffs_accepted'] or 0),
+            'handoffs_resolved': int(row['handoffs_resolved'] or 0),
+            'avg_response_time_seconds': round(float(row['avg_response_time_seconds'] or 0.0), 2),
+            'appointments_confirmed': int(row['appointments_confirmed'] or 0),
+            'appointments_completed': int(row['appointments_completed'] or 0),
+            'revenue_attributed': round(float(row['revenue_attributed'] or 0.0), 2),
+            'feedback_avg_rating': round(float(row['feedback_avg_rating'] or 0.0), 2),
+            'feedback_ratings_count': int(row['feedback_ratings_count'] or 0),
+        }
+        for row in rows
+    ]
+    top_performer_id: str | None = None
+    for item in items:
+        if (
+            item['revenue_attributed'] > 0
+            or item['appointments_confirmed'] > 0
+            or item['handoffs_resolved'] > 0
+        ):
+            top_performer_id = item['user_id']
+            break
+    totals = {
+        'agents': len(items),
+        'messages_sent': sum(item['messages_sent'] for item in items),
+        'handoffs_accepted': sum(item['handoffs_accepted'] for item in items),
+        'handoffs_resolved': sum(item['handoffs_resolved'] for item in items),
+        'appointments_confirmed': sum(item['appointments_confirmed'] for item in items),
+        'appointments_completed': sum(item['appointments_completed'] for item in items),
+        'revenue_attributed': round(
+            sum(item['revenue_attributed'] for item in items), 2
+        ),
+    }
+    return {
+        'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
+        'totals': totals,
+        'top_performer_user_id': top_performer_id,
         'items': items,
     }
 

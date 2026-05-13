@@ -343,6 +343,7 @@ create table app.appointments (
   payment_link_sent_at timestamptz,
   payment_paid_at timestamptz,
   branch_id uuid,
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   check (starts_at < ends_at),
@@ -353,6 +354,8 @@ create index ix_appointments_payment_status on app.appointments(tenant_id, payme
 create index ix_appointments_tenant_starts on app.appointments(tenant_id, starts_at);
 create index ix_appointments_contact_status on app.appointments(contact_id, status);
 create index ix_appointments_branch on app.appointments(tenant_id, branch_id, starts_at) where branch_id is not null;
+create index ix_appointments_closed_by on app.appointments(tenant_id, (metadata->>'closed_by_user_id'))
+  where metadata ? 'closed_by_user_id';
 
 create table app.whatsapp_templates (
   id uuid primary key default gen_random_uuid(),

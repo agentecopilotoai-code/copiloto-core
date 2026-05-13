@@ -105,7 +105,7 @@ def test_appointment_schema_accepts_service_id():
     schemas_source = SCHEMAS.read_text()
     assert 'service_id: UUID | None = None' in schemas_source
     routes_source = API_ROUTES.read_text()
-    assert 'insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, service_id, resource_id, service_code, starts_at, ends_at, notes)' in routes_source
+    assert 'insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, service_id, resource_id, service_code, starts_at, ends_at, notes, metadata)' in routes_source
 
 
 def test_availability_endpoints_registered():

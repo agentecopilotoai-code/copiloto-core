@@ -1201,6 +1201,10 @@ export function getAnalyticsReferrals(session, tenantId, range = {}) {
   return request(`/analytics/referrals${buildAnalyticsQuery(range)}`, { session, tenantId });
 }
 
+export function getAnalyticsAgents(session, tenantId, range = {}) {
+  return request(`/analytics/agents${buildAnalyticsQuery(range)}`, { session, tenantId });
+}
+
 export function getTenantPaymentSettings(session, tenantId) {
   return request(`/tenants/${tenantId}/payments/settings`, { session, tenantId });
 }

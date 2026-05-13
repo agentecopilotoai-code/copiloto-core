@@ -567,19 +567,7 @@ _TASK-0067 — Digest periódico (diario y semanal) por email/WhatsApp al manage
 
 ---
 
-### TASK-0068 — KPIs de rendimiento por agente en analytics
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0041 (team management), TASK-0048 (funnel).
-- **Por qué bloquea:** el manager quiere saber qué agente cierra más, responde más rápido y deja menos handoffs abiertos. Hoy `analytics_*` agrega solo a nivel tenant.
-- **Alcance:**
-  - Endpoint `GET /v1/analytics/agents?since=...&until=...` que devuelve por agente: `messages_sent`, `handoffs_accepted`, `handoffs_resolved`, `avg_response_time_seconds`, `appointments_confirmed`, `revenue_attributed`, `feedback_avg_rating`.
-  - Cálculos: `avg_response_time_seconds` = avg(diff entre el último inbound del cliente y la primera respuesta del agente en `messages.sender_actor_type='agent'`).
-  - **Admin Panel:** nuevo módulo `analytics/AgentPerformance.jsx` con tabla ranqueable y badge "top performer" del mes.
-  - Atribución de ingresos: cuando un agente cierra una cita por el desk, `appointments.metadata.closed_by_user_id` se setea; `revenue_attributed` agrega por ese campo.
-- **Criterios de aceptación:**
-  - Endpoint devuelve métricas por agente con 5 agentes activos.
-  - Tests: ≥ 8 estáticos: SQL de las métricas, persistencia de `closed_by_user_id`, módulo en admin panel.
+_TASK-0068 — KPIs de rendimiento por agente en analytics: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
