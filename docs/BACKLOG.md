@@ -369,26 +369,7 @@ _TASK-0055 — Tracking de referido entre contactos (referrer_contact_id): COMPL
 
 ---
 
-### TASK-0057 — Alerta operativa activa en feedback negativo y quejas
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0045.
-- **Por qué bloquea:** TASK-0045 deja la queja en la pestaña "Quejas" del Desk, pero si el agente no está mirando el panel (fin de semana, fuera de horario) la queja se duerme. Reputación y churn dependen de respuestas en horas, no en días.
-- **Alcance:**
-  - Nuevo campo `notification_settings.complaint_alert_channels jsonb` con keys `email` (array), `whatsapp` (array de números), `webhook_url`. Permite combinar.
-  - `feedback_flow._escalate_negative_feedback` emite ahora también un `pending_notification` (insert en una tabla nueva `app.operator_alerts(id, tenant_id, kind, payload, status check in ('pending','sent','failed'), attempts, last_error, created_at, sent_at)`).
-  - Worker nuevo `app/workers/alerts_worker.py` (o ampliación del scheduler) procesa `operator_alerts.status='pending'`:
-    - Email vía SMTP del tenant (config existente o SES con remitente del producto).
-    - WhatsApp vía template aprobado `complaint_alert_v1` con variables `{contact_name, rating, comment_preview, conversation_url}`.
-    - Webhook genérico POST JSON con HMAC.
-  - **Admin Panel:** pestaña Notificaciones del `TenantSetupWizard` agrega bloque "Alertas al equipo" con los 3 canales.
-- **Criterios de aceptación:**
-  - Feedback de 1★ con email configurado → 2 minutos después llega correo al manager con resumen y link al desk.
-  - Si el SMTP del tenant falla, `operator_alerts.attempts` se incrementa con retry exponencial hasta 5 intentos.
-  - Tests: ≥ 10 estáticos: schema, helpers de cada canal (mock SMTP, mock webhook), retry, link al desk, registro de la tab.
-- **Notas:**
-  - El primer canal recomendado es WhatsApp al manager — un humano lee WhatsApp más rápido que email.
-  - El payload del webhook lleva HMAC firmado con `notification_settings.alerts_webhook_secret` (almacenado en `.secrets/tenants/{id}/alerts_webhook_secret`).
+_TASK-0057 — Alerta operativa activa en feedback negativo y quejas: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

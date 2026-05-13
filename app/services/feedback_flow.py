@@ -288,6 +288,47 @@ async def _escalate_negative_feedback(
     )
     trace['event_emitted'] = True
 
+    # TASK-0057: notify the operator team out-of-band so a 1–2★ rating doesn't
+    # wait until someone reopens the Desk. The helper checks the tenant's
+    # configured channels and silently no-ops if none are configured.
+    from app.services.operator_alerts import (
+        ALERT_KIND_NEGATIVE_FEEDBACK,
+        build_comment_preview,
+        build_desk_link,
+        enqueue_operator_alert,
+    )
+
+    contact_name = None
+    if conversation is not None:
+        contact_name = await conn.fetchval(
+            'select display_name from app.contacts where tenant_id=$1 and id=$2',
+            tenant_id,
+            contact_id,
+        )
+    try:
+        from app.core.config import get_settings
+
+        public_url = get_settings().admin_panel_public_url
+    except Exception:
+        public_url = None
+    conversation_id_for_link = conversation['id'] if conversation is not None else None
+    alert_id = await enqueue_operator_alert(
+        conn,
+        tenant_id=tenant_id,
+        kind=ALERT_KIND_NEGATIVE_FEEDBACK,
+        payload={
+            'appointment_id': str(appointment_id),
+            'feedback_id': str(feedback_id),
+            'contact_id': str(contact_id),
+            'contact_name': contact_name,
+            'rating': rating,
+            'comment_preview': build_comment_preview(comment),
+            'conversation_url': build_desk_link(public_url, tenant_id, conversation_id_for_link),
+        },
+    )
+    if alert_id is not None:
+        trace['operator_alert_id'] = str(alert_id)
+
     log.info(
         'feedback.negative_escalated',
         tenant_id=str(tenant_id),

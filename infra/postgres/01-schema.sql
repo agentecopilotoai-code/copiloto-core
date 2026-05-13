@@ -738,6 +738,25 @@ create table app.audit_logs (
 create index ix_audit_logs_tenant_time on app.audit_logs(tenant_id, created_at desc);
 create index ix_audit_logs_entity on app.audit_logs(entity_type, entity_id);
 
+-- TASK-0057: outbound operator alerts (email / WhatsApp / webhook). The
+-- worker consumes ``status='pending'`` rows with exponential retry and stops
+-- after 5 failed attempts.
+create table app.operator_alerts (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  kind text not null check (kind in ('negative_feedback','complaint')),
+  payload jsonb not null default '{}'::jsonb,
+  status text not null default 'pending' check (status in ('pending','sent','failed')),
+  attempts integer not null default 0,
+  last_error text,
+  scheduled_for timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  sent_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+create index ix_operator_alerts_due on app.operator_alerts(scheduled_for, status);
+create index ix_operator_alerts_tenant on app.operator_alerts(tenant_id, created_at desc);
+
 
 -- Tenant consistency guards for operational rows. RLS limits each statement to the
 -- current tenant, while these composite foreign keys prevent same-tenant writes
@@ -873,6 +892,7 @@ create trigger trg_service_requests_touch before update on app.service_requests 
 create trigger trg_quotes_touch before update on app.quotes for each row execute function app.touch_updated_at();
 create trigger trg_appointments_touch before update on app.appointments for each row execute function app.touch_updated_at();
 create trigger trg_reminder_jobs_touch before update on app.reminder_jobs for each row execute function app.touch_updated_at();
+create trigger trg_operator_alerts_touch before update on app.operator_alerts for each row execute function app.touch_updated_at();
 create trigger trg_knowledge_documents_touch before update on app.knowledge_documents for each row execute function app.touch_updated_at();
 create trigger trg_prompt_templates_touch before update on app.prompt_templates for each row execute function app.touch_updated_at();
 create trigger trg_handoffs_touch before update on app.handoffs for each row execute function app.touch_updated_at();
@@ -1099,6 +1119,7 @@ alter table app.appointment_package_links enable row level security;
 alter table app.webhook_events_raw enable row level security;
 alter table app.domain_events enable row level security;
 alter table app.audit_logs enable row level security;
+alter table app.operator_alerts enable row level security;
 
 do $$
 declare t text;
@@ -1113,7 +1134,7 @@ begin
     'contact_segments','contact_segment_members',
     'branches',
     'treatment_packages','contact_packages','appointment_package_links',
-    'webhook_events_raw','domain_events','audit_logs'
+    'webhook_events_raw','domain_events','audit_logs','operator_alerts'
   ] loop
     execute format('create policy %I_tenant_select on app.%I for select using (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);
     execute format('create policy %I_tenant_insert on app.%I for insert with check (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);
