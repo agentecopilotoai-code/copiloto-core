@@ -1,0 +1,171 @@
+"""Regression test for cross-tenant retention policy authorization.
+
+The PUT /v1/tenants/{tenant_id}/retention/policies endpoint must reject a
+caller who only has a non-admin membership in the target tenant, even if
+the JWT's session role is ``admin`` (issued in the context of a different
+tenant where they are an administrator).
+
+See: ``ensure_tenant_role`` and the ``put_retention_policies`` handler.
+"""
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
+
+from app.api.v1.routes import ensure_tenant_role
+
+
+ROUTES = Path('app/api/v1/routes.py')
+
+
+def _make_request() -> Request:
+    return Request({'type': 'http', 'method': 'PUT', 'path': '/', 'headers': []})
+
+
+class _FakeRolesConn:
+    def __init__(self, roles_for_target: list[str]) -> None:
+        self._roles = roles_for_target
+
+    async def fetch(self, *_args, **_kwargs):
+        return [{'role': role} for role in self._roles]
+
+
+def test_viewer_in_target_tenant_cannot_satisfy_admin_check():
+    async def run_test():
+        request = _make_request()
+        request.state.actor_type = 'user'
+        request.state.actor_id = 'auth0|cross-tenant-attacker'
+        request.state.support_mode = False
+        # The attacker is admin in their *home* tenant (JWT roles), but only
+        # ``viewer`` in the victim tenant.
+        request.state.roles = ['admin']
+        request.state.tenant_id = uuid4()
+
+        victim_tenant_id = uuid4()
+        conn = _FakeRolesConn(['viewer'])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ensure_tenant_role(request, conn, victim_tenant_id, 'admin')
+
+        assert exc_info.value.status_code == 403
+
+    asyncio.run(run_test())
+
+
+def test_agent_in_target_tenant_cannot_satisfy_admin_check():
+    async def run_test():
+        request = _make_request()
+        request.state.actor_type = 'user'
+        request.state.actor_id = 'auth0|user'
+        request.state.support_mode = False
+        request.state.roles = ['admin']
+        request.state.tenant_id = uuid4()
+
+        conn = _FakeRolesConn(['agent', 'viewer'])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+        assert exc_info.value.status_code == 403
+
+    asyncio.run(run_test())
+
+
+def test_admin_in_target_tenant_passes_admin_check():
+    async def run_test():
+        request = _make_request()
+        request.state.actor_type = 'user'
+        request.state.actor_id = 'auth0|user'
+        request.state.support_mode = False
+        request.state.roles = ['viewer']  # session role is irrelevant here
+        request.state.tenant_id = uuid4()
+
+        conn = _FakeRolesConn(['admin'])
+
+        await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+    asyncio.run(run_test())
+
+
+def test_owner_in_target_tenant_passes_admin_check():
+    async def run_test():
+        request = _make_request()
+        request.state.actor_type = 'user'
+        request.state.actor_id = 'auth0|user'
+        request.state.support_mode = False
+        request.state.roles = []
+        request.state.tenant_id = uuid4()
+
+        conn = _FakeRolesConn(['owner'])
+
+        await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+    asyncio.run(run_test())
+
+
+def test_support_mode_bypasses_tenant_role_check():
+    async def run_test():
+        request = _make_request()
+        request.state.actor_type = 'user'
+        request.state.actor_id = 'auth0|support-user'
+        request.state.support_mode = True
+        request.state.roles = []
+        request.state.tenant_id = None
+
+        conn = _FakeRolesConn([])
+
+        await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+    asyncio.run(run_test())
+
+
+def test_support_role_in_target_tenant_passes_admin_check():
+    """A ``support`` membership row in the target tenant outranks admin in
+    the shared role hierarchy (see ``_ROLE_LEVELS`` in ``app.core.security``),
+    so the per-tenant check must accept it."""
+    async def run_test():
+        request = _make_request()
+        request.state.actor_type = 'user'
+        request.state.actor_id = 'auth0|support'
+        request.state.support_mode = False
+        request.state.roles = []
+        request.state.tenant_id = uuid4()
+
+        conn = _FakeRolesConn(['support'])
+
+        await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+    asyncio.run(run_test())
+
+
+def test_service_actor_bypasses_tenant_role_check():
+    async def run_test():
+        request = _make_request()
+        request.state.actor_type = 'service'
+        request.state.actor_id = None
+        request.state.support_mode = False
+        request.state.roles = []
+
+        conn = _FakeRolesConn([])
+
+        await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+    asyncio.run(run_test())
+
+
+def test_put_retention_policies_handler_calls_ensure_tenant_role():
+    """Static guard: the destructive PUT handler must consult the per-tenant
+    role table, not just the router-level ``require_min_role('admin')`` which
+    is satisfied by any JWT carrying admin for *some* tenant."""
+    source = ROUTES.read_text()
+    handler_start = source.index(
+        "@tenant_admin_router.put('/tenants/{tenant_id}/retention/policies')"
+    )
+    handler_end = source.index('@tenant_admin_router', handler_start + 1)
+    handler_source = source[handler_start:handler_end]
+    assert "ensure_tenant_role(request, conn, tenant_id, 'admin')" in handler_source
