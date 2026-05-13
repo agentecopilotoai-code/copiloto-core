@@ -82,6 +82,14 @@ create table app.tenant_channels (
   unique (tenant_id, provider)
 );
 create index ix_tenant_channels_phone on app.tenant_channels(phone_number_id);
+-- TASK-0081 / BUG21: enforce that a given Meta phone_number_id can only be
+-- bound to ONE active tenant channel at a time. Without this constraint, a
+-- malicious tenant could re-register another tenant's phone_number_id and the
+-- webhook handler would route inbound traffic + signature verification to the
+-- attacker's row.
+create unique index ux_tenant_channels_phone_number_active
+  on app.tenant_channels(phone_number_id)
+  where status='active' and phone_number_id is not null;
 create index ix_tenant_channels_waba on app.tenant_channels(waba_id);
 create index ix_tenant_channels_page on app.tenant_channels(page_id) where page_id is not null;
 create index ix_tenant_channels_ig_account on app.tenant_channels(instagram_account_id) where instagram_account_id is not null;

@@ -15,6 +15,355 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG09 — `intent_classifier._llm_classify` instanciaba `anthropic.Anthropic` / `openai.OpenAI` (clientes **síncronos**) y llamaba `.create()` sin `await` y sin `timeout`. Cada mensaje WhatsApp que no matcheara una regla regex de alta confianza bloqueaba el event loop el tiempo entero que el proveedor tardara o se colgara. Vector de DoS sobre el webhook: inundar con mensajes ambiguos serializa cada respuesta en el loop.
+- **Fase 1 — verificación en HEAD:** reproducible. Las dos ramas (Claude y OpenAI) usaban clientes sync; la rama de Ollama ya estaba sobre `httpx.AsyncClient` pero sin `wait_for` defensivo. Ningún cliente recibía `timeout`. `settings.cloud_llm_timeout_seconds` existía (`30` default) pero nunca llegaba al SDK.
+- **Fase 2 — remediación:**
+  - **`app/services/intent_classifier.py`:**
+    - Migrado a `anthropic.AsyncAnthropic(api_key=..., timeout=float(timeout_seconds))` y `openai.AsyncOpenAI(api_key=..., timeout=float(timeout_seconds))` con `await client.messages.create(...)` / `await client.chat.completions.create(...)`.
+    - El SDK timeout se lee de `settings.cloud_llm_timeout_seconds` (default 30) y se pasa explícitamente al constructor del cliente.
+    - Cada llamada al proveedor (Anthropic, OpenAI y la rama Ollama vía `httpx.AsyncClient.post`) se envuelve adicionalmente en `asyncio.wait_for(..., timeout=hard_deadline)` con `hard_deadline = max(timeout_seconds + 2, 5)`. Esta defensa garantiza que aun si el SDK ignora su `timeout` nativo (regresión futura, bug en el cliente), el `asyncio.TimeoutError` libera el event loop.
+    - Manejo de errores granular: `except asyncio.TimeoutError` registra `intent_classifier.llm_timeout` (cloud) / `intent_classifier.ollama_timeout` (local) y retorna `None`, degradando al fallback. `except Exception` separado para otros errores de proveedor.
+- **Archivos modificados:**
+  - `app/services/intent_classifier.py` (rewrite de `_llm_classify` + import de `asyncio`)
+  - `tests/test_intent_classifier_async.py` (nuevo, 12 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/services/intent_classifier.py tests/test_intent_classifier_async.py` → all checks passed.
+  - `uv run pytest tests/test_intent_classifier_async.py -q` → 12 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1538 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG09 source invariants:** `test_llm_classify_uses_async_anthropic_not_sync_client`, `test_llm_classify_uses_async_openai_not_sync_client`, `test_llm_classify_passes_timeout_to_both_sdks`, `test_llm_classify_awaits_provider_calls`, `test_llm_classify_uses_hard_deadline_above_sdk_timeout`, `test_llm_classify_distinguishes_timeout_from_other_errors`, `test_llm_classify_reads_timeout_from_settings_with_default`.
+  - **BUG09 runtime behaviour:** `test_llm_classify_returns_intent_when_provider_responds_promptly`, `test_llm_classify_returns_none_on_provider_timeout_without_hanging` (event-loop monitor: ticker latency `max < 200ms` aún con el LLM colgado 5s), `test_llm_classify_propagates_timeout_to_anthropic_sdk`, `test_classify_intent_falls_back_to_faq_when_llm_times_out` (cascade end-to-end).
+  - **Ollama branch:** `test_ollama_branch_also_uses_wait_for_for_event_loop_safety`.
+- **Notas:**
+  - El test del event-loop monitor mide latencia real de un `asyncio.sleep(0.05)` ticker corriendo concurrente con un LLM stub colgado. Antes del fix, ese ticker se bloqueaba hasta que el LLM respondiera. Después del fix, las 5 latencias medidas se mantienen <200ms aun cuando el stub `asyncio.sleep(60)` está vivo, hasta que `hard_deadline=5s` lo aborta.
+  - La constante `hard_deadline = max(timeout_seconds + 2, 5)` deja un mínimo absoluto de 5s para no abortar respuestas legítimas que estén llegando justo en el límite del SDK timeout, pero acota a `timeout_seconds + 2` para cualquier proveedor configurado con timeouts más altos.
+  - El criterio del backlog ("classifier corre después del dedup/idempotency/rate-limit gate") ya se cumplía en HEAD: `receive_whatsapp_webhook` ejecuta dedup (`webhook_events_raw.payload_sha256` ON CONFLICT) y verificación de firma antes de llamar a `orchestrate_inbound_message` → `classify_intent`. No requiere cambio.
+  - El rewrite es backend puro: no toca admin panel ni endpoints públicos. Cierra el último bug del backlog activo (TASK-0077..0086 completados).
+
+---
+
+### TASK-0085 — Invitación Auth0 por `user_id` en lugar de email (cierra BUG06)
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG06 — el endpoint de invitación llamaba a `POST /api/v2/tickets/password-change` pivoteando por **email**. Auth0 devolvía un password-reset ticket válido para cualquier cuenta Auth0 existente con ese email (incluyendo cuentas plataforma/soporte). El backend regresaba el ticket URL al admin invitador y la UI lo exponía con un botón "Copiar", convirtiendo el flow en un primitivo de account takeover.
+- **Fase 1 — verificación en HEAD:**
+  - `app/services/auth0_admin.py::invite_user` enviaba directamente `{'email': email, ...}` al endpoint `/tickets/password-change` y retornaba `{'ticket_url': response.get('ticket')}`.
+  - El route `/v1/tenants/{tenant_id}/members` propagaba `auth0_result` (incluyendo `ticket_url`) al cuerpo de respuesta vía `member['auth0'] = auth0_result`.
+  - `audit_logs(action='tenant_member.invited')` registraba el email plano en `metadata={'email': email, 'role': payload.role}`.
+  - `admin-panel/src/components/modules/team/TeamModule.jsx` leía `result?.auth0?.ticket_url` y mostraba el URL con un botón "Copiar" en un `info-banner`.
+  - Los 3 vectores del BUG06 reproducibles.
+- **Fase 2 — remediación (flujo de invitación reescrito):**
+  - **`app/services/auth0_admin.py`:**
+    - Nueva excepción tipada `Auth0UserAlreadyExists`. `_mgmt_request` la levanta cuando Auth0 responde `409` en cualquier llamada, en lugar de degradarla a un `HTTPStatusError` genérico.
+    - `invite_user` rediseñada en dos pasos:
+      1. `POST /api/v2/users` con `email`, `email_verified=False`, `verify_email=True`, `connection='Username-Password-Authentication'` (configurable vía `auth0_invitation_connection`), `password=_random_initial_password()` y `user_metadata.tenant_invitation`. Si Auth0 responde 409, propaga `Auth0UserAlreadyExists`.
+      2. `POST /api/v2/tickets/password-change` keyed por el **`user_id`** retornado (NUNCA por email), con TTL de 7 días.
+    - Defensa: si `/users` retorna 2xx sin `user_id`, abortar con `{'error': 'auth0_create_user_returned_no_id'}` y NO emitir el ticket.
+    - `invite_user` retorna `{'disabled': False, 'invited': True, 'auth0_user_id': '...'}`. El ticket URL solo se loguea server-side (`log.info('auth0_admin.invite_user_ticket_generated', ticket_present=True)` — fingerprint, no URL).
+    - Helper `_random_initial_password()` genera un password de 48 hex chars con `A!` prefix para satisfacer la política Auth0 más estricta.
+  - **`app/api/v1/routes.py`:**
+    - Importa y maneja `Auth0UserAlreadyExists` → `HTTPException(status_code=409, detail='An Auth0 user with this email already exists...')`.
+    - Tras una invitación exitosa, persiste el `auth0_user_id` real en `users.auth_subject` (reemplazando el `pending|<hash>` placeholder).
+    - Audit `tenant_member.invited` registra `auth0_user_id` y un `email_fingerprint` (SHA256 primer-16-chars) — el email plano nunca se persiste en `audit_logs.metadata`.
+    - Respuesta API curada: solo `{'disabled', 'invited', 'auth0_user_id', 'error?', 'synced?'}`. `ticket_url` NUNCA propagado.
+  - **UI `admin-panel/src/components/modules/team/TeamModule.jsx`:**
+    - Eliminado el estado `pendingTicket` y el banner que mostraba/copiaba `ticket_url`.
+    - El mensaje de éxito ahora dice "Invitación enviada. El usuario recibirá un email de Auth0 para configurar su contraseña."
+    - El flag `auth0_skipped` (modo dev sin Auth0) se preserva con el mensaje original.
+- **Archivos modificados:**
+  - `app/services/auth0_admin.py` (Auth0UserAlreadyExists, invite_user reescrita, _random_initial_password, _invitation_connection)
+  - `app/api/v1/routes.py` (manejo 409, bind auth_subject, audit fingerprint, response curada)
+  - `admin-panel/src/components/modules/team/TeamModule.jsx` (drop banner ticket_url)
+  - `tests/test_auth0_invite.py` (nuevo, 14 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py app/services/auth0_admin.py tests/test_auth0_invite.py` → all checks passed.
+  - `uv run pytest tests/test_auth0_invite.py -q` → 14 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1526 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG06 source invariants:** `test_invite_user_calls_post_users_before_password_change_ticket`, `test_invite_user_returns_auth0_user_id_not_ticket_url`, `test_invite_user_raises_typed_conflict_for_existing_auth0_user`.
+  - **BUG06 flow with mocked Auth0:** `test_invite_user_returns_user_id_and_no_ticket_url` (verifica orden de calls + body con `user_id`, no `email`), `test_invite_user_propagates_conflict_for_preexisting_auth0_user`, `test_invite_user_does_not_issue_ticket_if_users_call_lacks_user_id` (defense: solo 1 call al mgmt API), `test_invite_user_disabled_when_management_creds_missing`.
+  - **BUG06 password generator:** `test_random_initial_password_is_high_entropy_and_complex`.
+  - **BUG06 route wiring:** `test_route_maps_auth0_user_already_exists_to_409`, `test_route_does_not_include_ticket_url_in_response`, `test_audit_logs_auth0_user_id_and_email_fingerprint_not_plain_email`, `test_route_binds_auth_subject_when_invite_returns_user_id`.
+  - **BUG06 UI:** `test_team_ui_removes_ticket_url_banner`, `test_team_ui_success_message_mentions_auth0_email_flow`.
+- **Notas:**
+  - Para el flow alterno "agregar usuario Auth0 existente al tenant", el admin debe pedirle al destinatario que haga login una vez; al hacerlo, `authenticate_request` upsertea su `auth_subject` real, el `pending|<hash>` legacy desaparece, y el siguiente intento de invitación pasa por el branch "Existing Auth0 user — keep their tenant_roles claim in sync" (que solo sincroniza metadatos, no emite ticket). El 409 explícito guía al admin hacia este flow sin filtrar la existencia del usuario en otros tenants.
+  - El password aleatorio inicial nunca se persiste; Auth0 lo descarta al primer reset. La razón de generarlo es estrictamente satisfacer la validación del endpoint `POST /users` que exige un password.
+  - `_invitation_connection` lee `settings.auth0_invitation_connection` si está definido, y cae a `Username-Password-Authentication` por defecto (connection out-of-the-box de Auth0). Cualquier tenant que prefiera otra DB connection puede sobrescribirla sin tocar código.
+
+---
+
+### TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG02 (los endpoints `POST/PATCH/DELETE /contacts/{id}/packages` vivían en `tenant_ops_router` — accesibles a rol `agent` — y los schemas Pydantic aceptaban `payment_status='paid'`, lo que permitía a un agente crear paquetes "pagados" gratis o reembolsar arbitrariamente).
+- **Fase 1 — verificación en HEAD:** bug reproducible. `app/api/v1/routes.py` montaba los tres endpoints (`assign_contact_package`, `update_contact_package`, `refund_contact_package`) en `tenant_ops_router` (rol mínimo `agent`). Los schemas `ContactPackageAssign` y `ContactPackagePatch` aceptaban el patrón completo `^(not_required|pending|link_sent|paid|failed|refunded)$`, sin separar lo que escribe el cliente de lo que solo escribe el webhook firmado. `payment_amount` admitía `0`, así un agent podía emitir paquetes paid con costo cero. La transición `status='refunded'` también era escribible por el PATCH.
+- **Fase 2 — remediación:**
+  - **Schemas (`app/api/v1/schemas.py`):** se añade `CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN = '^(not_required|pending|link_sent)$'`. `ContactPackageAssign.payment_status` y `ContactPackagePatch.payment_status` usan este patrón restringido — Pydantic rechaza con 422 cualquier intento de escribir `paid`, `failed` o `refunded` desde la API. `ContactPackagePatch.status` se reduce a `^(active|exhausted|expired)$` — la transición a `refunded` solo ocurre en el DELETE admin-only que setea `status='refunded'` + `payment_status='refunded'` server-side.
+  - **Endpoints (`app/api/v1/routes.py`):** `assign_contact_package`, `update_contact_package` y `refund_contact_package` se mueven de `@tenant_ops_router` a `@tenant_admin_router`. La constante de comportamiento queda: GET de lectura sigue accesible a agentes (planificación del día), pero TODA mutación financiera exige admin/owner y MFA (TASK-0080).
+  - **UI (`admin-panel/src/components/modules/contacts/ContactsModule.jsx`):** el panel de "Paquetes activos" agrega una nota explícita: "Asignar y reembolsar requieren rol **admin** u **owner**. El estado de pago (`paid`, `failed`, `refunded`) solo lo escribe el webhook firmado del proveedor." Los formularios existentes se conservan — agents que intenten asignar verán el 403/422 del servidor.
+- **Archivos modificados:**
+  - `app/api/v1/schemas.py` (`CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN` + `ContactPackageAssign/Patch`)
+  - `app/api/v1/routes.py` (3 decoradores: `tenant_ops_router` → `tenant_admin_router`)
+  - `admin-panel/src/components/modules/contacts/ContactsModule.jsx` (hint)
+  - `tests/test_contact_package_authz.py` (nuevo, 13 tests)
+  - `tests/test_packages_static.py` (actualiza expectativa de routing)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py app/api/v1/schemas.py tests/test_contact_package_authz.py` → all checks passed.
+  - `uv run pytest tests/test_contact_package_authz.py -q` → 13 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1512 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG02 schema:** `test_client_pattern_excludes_paid_failed_refunded`, `test_contact_package_assign_rejects_paid_status`, `test_contact_package_assign_rejects_refunded_status`, `test_contact_package_assign_accepts_pending_link_sent_not_required`, `test_contact_package_patch_rejects_paid_status`, `test_contact_package_patch_rejects_refunded_status_value`, `test_contact_package_patch_accepts_active_exhausted_expired`.
+  - **BUG02 routing:** `test_assign_contact_package_uses_tenant_admin_router`, `test_update_contact_package_uses_tenant_admin_router`, `test_refund_contact_package_uses_tenant_admin_router`, `test_list_contact_packages_stays_on_tenant_ops_router_for_agents`.
+  - **BUG02 audit / refund flow:** `test_refund_contact_package_emits_audit` (verifica que el DELETE setea `status='refunded'` + `payment_status='refunded'` server-side, no por client input).
+  - **UI:** `test_contacts_module_documents_admin_only_packages_and_webhook_status`.
+- **Notas:**
+  - El patrón `PACKAGE_PAYMENT_STATUS_PATTERN` original se mantiene como pattern server-side (lo necesita el handler del webhook de pagos para escribir `paid`/`failed` después de validar la firma). La separación entre patrón cliente y patrón server es el core del fix.
+  - Migrar a `tenant_admin_router` tiene un efecto bonus: ese router ya exige MFA tras TASK-0080. Por lo tanto, asignar/reembolsar paquetes ahora requiere admin + MFA verificado — defensa en profundidad sin tener que añadir un `Depends` adicional.
+  - `test_packages_static.py::test_package_routes_registered` se actualiza para reflejar la nueva expectativa (POST/PATCH/DELETE de `/contacts/{id}/packages` en admin_paths). El GET se queda intencionalmente en `ops_paths` y el test lo afirma.
+
+---
+
+### TASK-0083 — Webhook de pagos fail-closed con secret obligatorio
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG04 (payment webhook fail-open + UI permitía habilitar provider sin secret).
+- **Fase 1 — verificación en HEAD:**
+  - **Server fail-closed:** HEAD ya rechaza `if not secret: raise HTTPException(401, ...)` en ambos webhooks (`receive_payment_webhook` y el de suscripciones). El bug histórico de `signature_ok = True` por default ya estaba parchado.
+  - **Admin validation:** HEAD ya rechaza con 422 al enabling provider sin secret (`if payload.provider != 'none' and not next_settings.get('webhook_secret_ref'): raise 422`).
+  - **UI:** el wizard ya muestra "Webhook secret (requerido)" + ⚠️ cuando no está configurado.
+  - **Gap restante:** (a) la spec de la tarea exige status **503 `payment.webhook_unconfigured`** para missing_secret (HEAD devolvía 401, semánticamente ambiguo); (b) la spec exige `audit_logs(action='payment.webhook_rejected', reason=...)` en ambas ramas de rechazo (HEAD solo levantaba HTTPException sin audit).
+- **Fase 2 — remediación (gaps que faltaban):**
+  - **`app/api/v1/routes.py`:** en los dos webhook handlers (payments de citas y de suscripciones):
+    - `if not secret:` → emite `audit(action='payment.webhook_rejected', actor_type='system', metadata={reason: 'missing_secret', provider, ...})` antes de levantar `HTTPException(503, 'payment.webhook_unconfigured')`. El status 503 comunica "configuración pendiente" sin filtrar info de tenant. La rama de suscripciones añade `flow='subscription'` al metadata para distinguirla del flow de citas.
+    - `if not signature_ok:` → emite `audit(action='payment.webhook_rejected', metadata={reason: 'bad_signature', provider, ...})` antes del `HTTPException(401, 'Invalid payment webhook signature')`. Status 401 se conserva: la request ESTÁ autenticando algo (proveedor) y la firma no validó.
+  - **UI (`admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`):** se añade un párrafo de hint en el bloque de pagos que explicita el contrato: 503 si falta secret, 401 si la firma no valida, ambos rechazos quedan auditados en `audit_logs(payment.webhook_rejected)`. El campo "Webhook secret (requerido)" ya existía.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py` (4 ramas en 2 handlers: missing_secret + bad_signature × payments + subscriptions)
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` (hint extendido)
+  - `tests/test_payment_webhook_fail_closed.py` (nuevo, 9 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py tests/test_payment_webhook_fail_closed.py` → all checks passed.
+  - `uv run pytest tests/test_payment_webhook_fail_closed.py -q` → 9 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1499 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG04 fail-closed payments:** `test_payments_webhook_returns_503_when_secret_missing`, `test_payments_webhook_audits_missing_secret_rejection`, `test_payments_webhook_returns_401_when_signature_invalid`, `test_payments_webhook_audits_bad_signature_rejection`, `test_payments_webhook_does_not_mark_paid_when_secret_missing` (regresión guard: el rechazo está ANTES del `update app.appointments`).
+  - **BUG04 fail-closed subscriptions:** `test_subscription_webhook_returns_503_when_secret_missing`, `test_subscription_webhook_audits_both_rejection_reasons`.
+  - **BUG04 admin validation (regresión guard):** `test_admin_payments_settings_refuses_provider_without_secret`.
+  - **UI surface:** `test_wizard_payments_hint_mentions_503_and_audit`.
+- **Notas:**
+  - El status 503 (no 401) para missing_secret es deliberado: a la red el problema es "service unavailable for payment processing", no "unauthorized". Stripe/MercadoPago verán 503 y reintentarán; un atacante anónimo recibe el mismo 503 sin filtrar si el secret existe.
+  - El audit usa `actor_type='system'` (alineado con la regla del audit_logs CHECK que pasó TASK-0081). `actor_id=None` y `entity_id` apunta al `appointment_id` (o `subscription_id`) target para que el operator pueda correlacionar.
+  - Los demás rubrics de la spec ya pasaban contra HEAD: la admin validation (422), el rechazo de payload sin header de firma (401), y la UI hint del campo "requerido".
+
+---
+
+### TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG05 (widget web reusaba contacto por phone-match anónimo), BUG22 (`POST /v1/conversations/start` aceptaba `wa_id` + `phone_e164` y `upsert_whatsapp_contact` SOBRESCRIBÍA el `phone_e164`/`wa_id` del contacto existente → atacante con rol agent podía redirigir outbound).
+- **Fase 1 — verificación en HEAD:**
+  - **BUG05:** YA mitigado en HEAD. `web_chat_start` sintetiza un `wa_id` aleatorio (`synthesize_web_identity(seed)` con `secrets.token_hex(16)`) y guarda el phone/email enviados por el widget como `unverified_phone`/`unverified_email` en `contacts.metadata`. NO reusa contactos existentes por phone-match. Riesgo: una refactor futura podría re-introducir el lookup — se documenta y se pinea por test de regresión.
+  - **BUG22:** reproducible. `ConversationStart` aceptaba `wa_id` opcional; el handler hacía `wa_id = (payload.wa_id or phone_e164).strip().lstrip('+')` y llamaba `upsert_whatsapp_contact(...)` que ejecuta `UPDATE contacts SET wa_id=$2, phone_e164=$3, phone_hash=$4 ...` sobre el primer match por `(wa_id=$2 or phone_e164=$3)`. Vector confirmado: agent malicioso con `wa_id=<victima>` + `phone_e164=<atacante>` → contacto víctima reescrito al teléfono del atacante.
+- **Fase 2 — remediación (causa raíz, schema + endpoint + nuevo flow):**
+  - **`ConversationStart` (app/api/v1/schemas.py):** elimina `wa_id`. Acepta `contact_id: UUID | None` o `phone_e164: str | None`. `phone_e164` ahora opcional. `model_config = ConfigDict(extra='forbid')` — rechaza explícitamente cualquier campo desconocido (incluido `wa_id` legacy si algún cliente lo envía).
+  - **`start_conversation` (app/api/v1/routes.py):**
+    - Rechaza con 422 si no llega `contact_id` ni `phone_e164`.
+    - Si llega `contact_id`: SELECT por `(tenant_id, id)`; 404 si no existe.
+    - Si llega `phone_e164`: SELECT por `(tenant_id, phone_e164)`. Si existe, lo reutiliza tal cual (sin UPDATE de identidad). Si no, INSERT nuevo con `wa_id=phone_e164.lstrip('+')`.
+    - El handler **ya no invoca** `upsert_whatsapp_contact` — esa función queda solo para el webhook WhatsApp inbound, donde la identidad viene firmada por Meta.
+  - **Nuevo endpoint `PATCH /v1/contacts/{contact_id}/phone` (tenant_ops_router):**
+    - `ensure_tenant_role(request, conn, tenant_id, 'manager')` — rol mínimo `manager`.
+    - Recibe `ContactPhoneUpdate{phone_e164, reason?}`.
+    - Rechaza con 409 si otro contacto del mismo tenant ya tiene ese `phone_e164` (no merge implícito).
+    - Update atómico de `phone_e164`, `wa_id` (derivado), `phone_hash` (derivado).
+    - `audit_logs(action='contact.phone_changed', metadata={previous_phone_last4, new_phone_last4, reason})`.
+  - **UI Contacts (admin-panel/src/components/modules/contacts/ContactsModule.jsx):**
+    - Botón "Cambiar teléfono" debajo del header del contacto seleccionado.
+    - Formulario inline con input `Nuevo teléfono (E.164)` + `Razón` (opcional, persiste en audit).
+    - Llama `updateContactPhone(...)` (nueva función en `services/coreApi.js`). Refresca profile + listado tras éxito; muestra el 409 del servidor si hay colisión.
+- **Archivos modificados:**
+  - `app/api/v1/schemas.py` (`ConversationStart` sin `wa_id`, `+extra='forbid'`; nuevo `ContactPhoneUpdate`)
+  - `app/api/v1/routes.py` (`start_conversation` reescrito; nuevo `patch_contact_phone`)
+  - `admin-panel/src/services/coreApi.js` (`updateContactPhone`)
+  - `admin-panel/src/components/modules/contacts/ContactsModule.jsx` (botón + formulario)
+  - `tests/test_contact_identity.py` (nuevo, 17 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py app/api/v1/schemas.py tests/test_contact_identity.py` → all checks passed.
+  - `uv run pytest tests/test_contact_identity.py -q` → 17 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1490 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG05:** `test_web_chat_start_synthesizes_fresh_identity_not_reuse_existing`, `test_web_chat_start_seed_includes_random_nonce`. Pinean que el widget no llama `upsert_whatsapp_contact` y que el seed incluye nonce.
+  - **BUG22 schema:** `test_conversation_start_schema_no_longer_accepts_wa_id`, `test_conversation_start_phone_is_optional_when_contact_id_provided`, `test_conversation_start_payload_accepts_contact_id_only`, `test_conversation_start_payload_accepts_phone_only`, `test_conversation_start_rejects_arbitrary_wa_id_field`.
+  - **BUG22 endpoint:** `test_start_conversation_never_calls_upsert_whatsapp_contact`, `test_start_conversation_requires_contact_id_or_phone_e164`, `test_start_conversation_creates_new_contact_only_when_phone_unknown`, `test_start_conversation_rejects_unknown_contact_id`.
+  - **PATCH /contacts/{id}/phone:** `test_patch_contact_phone_endpoint_exists_with_manager_gate`, `test_patch_contact_phone_writes_audit_log`, `test_patch_contact_phone_rejects_collision_with_another_contact`, `test_patch_contact_phone_updates_wa_id_and_phone_hash_together`, `test_contact_phone_update_schema_accepts_phone_and_reason`, `test_contact_phone_update_schema_rejects_short_phone`.
+- **Notas:**
+  - El OTP-flow para verificar phones del widget (mencionado en la tarea original) NO se implementa en este fix. El widget queda con `phone_verified=False` en metadata y el orquestador puede mirar ese flag si decide rechazar acciones contact-scoped a futuro. El alcance entregado cubre los criterios de aceptación explícitos de BUG05/BUG22.
+  - `upsert_whatsapp_contact` se mantiene para el webhook WhatsApp inbound (donde Meta firma el `phone_number_id`/`wa_id` y la identidad es confiable). Se documenta vía la prueba `test_start_conversation_never_calls_upsert_whatsapp_contact` que NO debe colarse de vuelta al path agent-initiated.
+  - `extra='forbid'` en `ConversationStart` es un cambio agresivo pero alineado con el mandato MVP ("no compat, una sola versión"). Cualquier cliente que envíe `wa_id` recibe 422 inmediato, lo que es el comportamiento deseado.
+
+---
+
+### TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG20 (handler usaba el primer `phone_number_id` del payload para todas las changes), BUG21 (sin unique constraint global activa sobre `tenant_channels.phone_number_id`, dos tenants podían registrar el mismo número activo).
+- **Fase 1 — verificación en HEAD:** ambos bugs reproducibles. `01-schema.sql` solo tenía un índice no-único `ix_tenant_channels_phone`; `create_channel` no chequeaba colisiones entre tenants y el upsert solo enforced `unique (tenant_id, provider)`. El handler del webhook resolvía `channel` una sola vez via `whatsapp_phone_number_id_from_payload(payload)` (primer match en el payload) y reusaba ese `channel/tenant_id` en todo el loop `for entry → changes → messages`.
+- **Fase 2 — remediación (causa raíz, tres capas):**
+  - **Schema (BUG21):** `CREATE UNIQUE INDEX ux_tenant_channels_phone_number_active ON app.tenant_channels(phone_number_id) WHERE status='active' AND phone_number_id IS NOT NULL;` en `infra/postgres/01-schema.sql`. El partial index permite re-claim de un número después de offboard (status != 'active'). El índice no-único `ix_tenant_channels_phone` se conserva para velocidad de lookup del webhook (no agrega CHECK overhead).
+  - **Admin endpoint (BUG21):** `create_channel` (`app/api/v1/routes.py`) consulta — con `support_mode='true'` para saltarse RLS — si otro tenant tiene el `phone_number_id` activo y devuelve `409 phone_number_id is already bound to another active tenant channel` ANTES de escribir secretos (sino dejaríamos refs huérfanos). El partial index actúa como salvaguarda final.
+  - **Webhook handler (BUG20):** `receive_whatsapp_webhook` captura el `signed_channel_phone_id` (el `phone_number_id` cuyo channel verificó la firma HMAC). Para cada `entry → changes`, extrae `value.metadata.phone_number_id` y compara con el firmado. Si difieren, emite `audit_logs(action='webhook.phone_number_id_mismatch', actor_type='system', metadata={signed, change})` y hace `continue` — el resto del payload sigue procesándose. Esto cierra el vector de payload mixto que combinaba números de dos tenants.
+- **UI:**
+  - `admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx`: hint debajo del input `Phone Number ID` explicando que el server valida uniqueness y que un duplicado falla con 409.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql` (unique partial index)
+  - `app/api/v1/routes.py` (`create_channel` + `receive_whatsapp_webhook`)
+  - `admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx` (hint)
+  - `tests/test_whatsapp_channel_binding.py` (nuevo, 8 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py tests/test_whatsapp_channel_binding.py` → all checks passed.
+  - `uv run pytest tests/test_whatsapp_channel_binding.py -q` → 8 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1473 passed, 22 skipped.
+- **Cobertura por bug:**
+  - **BUG21 schema:** `test_schema_has_unique_partial_index_on_active_phone_number_id`, `test_schema_keeps_non_unique_lookup_index_for_speed`.
+  - **BUG21 admin endpoint:** `test_create_channel_rejects_phone_number_id_active_in_another_tenant`, `test_create_channel_runs_uniqueness_check_before_writing_secrets`.
+  - **BUG20 handler:** `test_webhook_handler_validates_change_phone_number_id_against_signed_channel`, `test_webhook_handler_drops_mismatched_changes_with_audit`, `test_webhook_handler_uses_system_actor_type_for_audit_compliance`.
+  - **Constraint compliance:** `test_audit_logs_actor_type_check_includes_system` (regresión guard para el `actor_type` del audit en la rama de mismatch).
+- **Notas:**
+  - El partial index requiere que cualquier tenant con número en `status='provisioning' | 'degraded' | 'suspended' | 'offboarded'` pueda coexistir con otro tenant que lo tenga activo. Eso es deseable: un tenant en offboarding no debe bloquear a su sucesor.
+  - El lookup cross-tenant en `create_channel` usa `set_config('app.support_mode','true', true)` con `is_local=true` (rollback al fin de la transacción). Una vez confirmada la uniqueness, se vuelve a `app.support_mode='false'` y se re-fija `app.tenant_id` para que el upsert respete RLS.
+  - La rama de mismatch del webhook NO aborta el lote: si una payload trae 5 changes y uno solo es sospechoso, los 4 legítimos siguen procesándose. Eso evita que un atacante pueda DOS-ear el inbound del tenant víctima inyectando una change falsa.
+
+---
+
+### TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG14 (overlay UI dismissable + proxy reenvía sin chequear MFA), BUG15 (`require_mfa_for_privileged` no estaba cableada a ningún router productivo).
+- **Fase 1 — verificación en HEAD:** ambos bugs reproducibles. `grep -rn "require_mfa_for_privileged" app/` devolvía una sola línea: la definición de la función. Ningún router la usaba como `Depends`. El overlay (`AdminLayout.jsx`) tenía el botón "Continuar sin MFA" con `setMfaDismissed(true)` y, una vez descartado, el panel completo se renderizaba. El proxy BFF (`admin_core_api_proxy`) leía la sesión, no chequeaba `_session_mfa_required`, y reenviaba la request al Core API.
+- **Fase 2 — remediación (causa raíz, doble defensa server + UI):**
+  - **Server (BUG15):** `require_mfa_for_privileged` se adjunta como `Depends` a nivel router en `tenant_admin_router`, `platform_admin_router`, `tenant_signup_router` y `tenant_catalog_router` (`app/api/v1/routes.py`). Quedan exentos `tenant_ops_router` (agentes, sin rol privilegiado) y `tenant_analytics_router` (manager, sin rol privilegiado), que ya estaban diseñados sin requerir MFA. La dependency interna mantiene su comportamiento: actor `service` exento, roles no-privilegiados exentos, modo local sin Auth0 exento.
+  - **Server proxy BFF (BUG14, mitad server):** `admin_core_api_proxy` (`app/admin/routes.py`) chequea `_session_mfa_required(session)` ANTES de leer el body o instanciar el cliente HTTPX. Si el gate dispara, retorna `403 {"detail": "mfa_required"}` con `media_type='application/json'`. No se propaga ningún header al Core API: la request muere en el BFF.
+  - **UI (BUG14, mitad cliente):** `MfaRequiredBanner` se renombra a `MfaRequiredBlocker` y pierde el botón "Continuar sin MFA". El componente vuelve a renderizar únicamente `Cerrar sesión` con `<form action="/admin/logout">`. `AdminLayout` corta el render con `if (mfaRequired) return <MfaRequiredBlocker />` antes de instanciar Sidebar/Topbar/módulos, de modo que ningún módulo privilegiado puede mostrarse mientras la sesión no tenga MFA. El estado `mfaDismissed` se elimina completamente — no hay forma de seguir con la sesión sin pasar por el flujo Auth0 con segundo factor.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py` (import + 4 routers)
+  - `app/admin/routes.py` (proxy gate)
+  - `admin-panel/src/components/layout/AdminLayout.jsx` (overlay + early return)
+  - `tests/test_mfa_router_enforcement.py` (nuevo, 16 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py app/admin/routes.py tests/test_mfa_router_enforcement.py` → all checks passed.
+  - `uv run pytest tests/test_mfa_router_enforcement.py tests/test_mfa_enforcement.py -q` → 38 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1465 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG15 (cableado server):** `test_tenant_admin_router_attaches_mfa_dependency`, `test_platform_admin_router_attaches_mfa_dependency`, `test_tenant_signup_router_attaches_mfa_dependency`, `test_tenant_catalog_router_attaches_mfa_dependency`, `test_tenant_ops_router_does_not_require_mfa` (negative), `test_tenant_analytics_router_does_not_require_mfa` (negative), `test_routes_import_includes_require_mfa`.
+  - **BUG14 (proxy):** `test_admin_proxy_gates_on_session_mfa_required`, `test_admin_proxy_blocks_before_relaying_request_body`, `test_proxy_403_payload_is_json_with_detail_mfa_required`, `test_session_endpoint_still_publishes_mfa_required_flag`.
+  - **BUG14 (UI):** `test_admin_layout_overlay_has_no_continue_without_mfa_button`, `test_admin_layout_overlay_is_blocking_not_dismissable`, `test_admin_layout_overlay_offers_only_logout_action`.
+  - **Comportamiento dependency:** `test_require_mfa_for_privileged_403s_unverified_admin`, `test_require_mfa_for_privileged_passes_unprivileged_session`, `test_require_mfa_for_privileged_passes_service_tokens`.
+- **Notas:**
+  - La dependencia se aplica como `Depends(require_mfa_for_privileged)` en la lista del router; FastAPI la ejecuta después de `authenticate_request` y `require_min_role(...)`, de modo que `request.state.roles` y `request.state.mfa_verified` ya están populados.
+  - El proxy retorna `Response(content=json.dumps({...}), status_code=403)` en vez de levantar `HTTPException`. Esto es intencional: el BFF nunca debe convertir un fallo de MFA en un 502 si el dispatcher de excepciones falla; el JSON literal asegura el shape que la UI espera.
+  - Modo local-dev (`AUTH0_DOMAIN` no configurado) sigue funcionando: tanto `require_mfa_for_privileged` como `_session_mfa_required` retornan temprano. Los tests `test_authenticate_sets_mfa_verified_*` cubren la matrix de Auth0 activo/inactivo.
+
+---
+
+### TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG01 (webhook alert SSRF → loopback/metadata con HMAC firmado), BUG18 (tenant S3 `endpoint_url` apuntando a host atacante con fallback a credenciales plataforma), BUG19 (`media_id` interpolado sin URL-encode + `media_info['url']` reenviado con token Meta sin allowlist).
+- **Fase 1 — verificación en HEAD:** los 3 BUGs siguen reproducibles. `_send_webhook_channel` invoca `httpx.AsyncClient.post(url, ...)` sin validar, y `patch_settings` acepta `notification_settings` como `dict` libre (`webhook_url` no validado). `_s3_client` cae silenciosamente a `settings.s3_access_key_id/s3_secret_access_key` cuando faltan credenciales tenant, y `patch_knowledge_storage_settings` no valida `endpoint_url`. `get_whatsapp_media_info` interpola `media_id` directamente y `download_whatsapp_media` sigue `media_info['url']` con `follow_redirects=True` sin chequear host.
+- **Fase 2 — remediación (causa raíz, un único módulo y dos defensas):**
+  - **Nuevo módulo** `app/services/url_guard.py`:
+    - `validate_outbound_url(url, *, allowed_schemes, host_allowlist, allow_http_for_local_dev) -> ValidatedURL`. Rechaza scheme no permitido; bloquea `127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`, `100.64/10`, `0/8`, `::1/128`, `fc00::/7`, `fe80::/10`, IPv4-mapped loopback (`::ffff:127.0.0.0/104`), addresses unspecified/reserved/multicast; hostnames `localhost`, `metadata.google.internal`, `metadata`, `ip6-localhost`; URLs con credenciales `user:pass@host`. Resuelve DNS y exige que **todas** las direcciones devueltas sean públicas. Soporta allowlist con wildcards (`*.example.com`, `s3.*.amazonaws.com`).
+    - Constantes `META_MEDIA_HOST_ALLOWLIST` (`*.fbcdn.net`, `*.fbsbx.com`, `lookaside.fbsbx.com`, `*.cdninstagram.com`, `*.facebook.com`, `graph.facebook.com`) y `S3_ENDPOINT_HOST_ALLOWLIST` (regional AWS + Cloudflare R2 + DigitalOcean Spaces).
+    - `assert_whatsapp_media_id(media_id)` valida regex `^\d{6,30}$` antes de cualquier interpolación.
+    - `_is_local_dev_env()` solo permite HTTP cuando `APP_ENV in {'local','test'}` y el caller pasa explícitamente `allow_http_for_local_dev=True`.
+  - **BUG01 — webhook alerts:**
+    - `normalize_alert_channels(value, *, strict=False)` en `app/services/operator_alerts.py`. En modo `strict=True` (write path) valida con `validate_outbound_url` y propaga `UnsafeOutboundURLError`; modo lenient (dispatch) solo hace shape-check y delega la validación final al sender.
+    - `patch_settings` (`app/api/v1/routes.py`) llama `normalize_alert_channels(..., strict=True)` antes de persistir `complaint_alert_channels` y mapea el fallo a 422 con detalle.
+    - `_send_webhook_channel` re-valida con `validate_outbound_url` antes del POST. Si la URL es legacy peligrosa (DB sucia), emite `alert_channel.webhook_blocked` y retorna sin tocar la red. `httpx.AsyncClient` usa `follow_redirects=False` para evitar redirect-to-private.
+  - **BUG18 — tenant S3 endpoint:**
+    - `_s3_client` en `app/services/knowledge_storage.py`: si el caller provee `endpoint_url`, valida con HTTPS + `S3_ENDPOINT_HOST_ALLOWLIST` + `allow_http_for_local_dev=True`; exige `access_key_id` + `secret_access_key` tenant. Nunca firma con credenciales plataforma contra un endpoint tenant.
+    - `patch_knowledge_storage_settings` valida y rechaza con 422 al persistir: scheme/host inválido o falta de credenciales tenant.
+  - **BUG19 — WhatsApp media:**
+    - `get_whatsapp_media_info` valida `media_id` con `assert_whatsapp_media_id`, lo URL-encodea (`quote(..., safe='')`), construye la URL Graph y la pasa por `validate_outbound_url` con `META_MEDIA_HOST_ALLOWLIST`. `httpx.AsyncClient` usa `follow_redirects=False`.
+    - `download_whatsapp_media` re-valida `media_info['url']` contra `META_MEDIA_HOST_ALLOWLIST` antes del segundo GET con el Bearer token. Si Meta devuelve una URL fuera de la allowlist (proveedor comprometido / DNS rebinding), levanta `RuntimeError` y nunca exfiltra el token. `follow_redirects=False`.
+    - `validate_outbound_message_content` rechaza POST de mensajes outbound con `media_id` crafted con 422.
+  - **UI hints (cambios mínimos, no se altera comportamiento de formularios):**
+    - `admin-panel/src/components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx`: placeholder del endpoint cambia a `https://s3.us-east-1.amazonaws.com` y se añade nota indicando los proveedores admitidos y la obligatoriedad de credenciales tenant.
+    - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`: la nota del webhook explicita que loopback / RFC1918 / link-local / metadata son rechazados con 422.
+- **Archivos modificados:**
+  - `app/services/url_guard.py` (nuevo)
+  - `app/services/operator_alerts.py`
+  - `app/services/knowledge_storage.py`
+  - `app/services/whatsapp.py`
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx`
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`
+  - `tests/test_url_guard.py` (nuevo, 37 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check ...` → all checks passed.
+  - `uv run pytest tests/test_url_guard.py -q` → 37 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1448 passed, 22 skipped.
+- **Cobertura por bug:**
+  - **BUG01:** `test_normalize_alert_channels_strict_rejects_loopback_webhook`, `test_normalize_alert_channels_lenient_preserves_url_for_send_time_check`, `test_send_webhook_channel_drops_legacy_loopback_url`, `test_patch_settings_blocks_loopback_webhook_at_source_handler`.
+  - **BUG18:** `test_s3_client_rejects_tenant_endpoint_without_tenant_creds`, `test_s3_client_rejects_loopback_endpoint`, `test_s3_client_rejects_endpoint_outside_allowlist`, `test_patch_knowledge_storage_validates_endpoint_at_source_handler`.
+  - **BUG19:** `test_validate_outbound_message_content_rejects_crafted_media_id`, `test_validate_outbound_message_content_accepts_numeric_media_id`, `test_meta_media_allowlist_blocks_non_meta_host`, `test_meta_media_allowlist_accepts_lookaside_and_fbcdn`, `test_download_media_source_uses_url_guard_and_no_redirects`, `test_get_media_info_source_quotes_media_id_and_validates_graph_host`, `test_media_id_accepts_numeric_meta_id`, `test_media_id_rejects_path_traversal`, `test_media_id_rejects_query_string_injection`, `test_media_id_rejects_letters_or_dashes`, `test_media_id_rejects_non_string`.
+  - **Guard genérico:** 18 tests cubren scheme/loopback/metadata/RFC1918/IPv6/DNS-rebinding/allowlist/local-dev/credentials-in-URL.
+- **Notas:**
+  - El guard usa `socket.getaddrinfo` por defecto; los tests inyectan un resolver fake para evitar tocar red. Tres tests no hacen `monkeypatch` del resolver porque chequean parseo puro (sin DNS).
+  - `_is_local_dev_env` se determina por `APP_ENV in {'local','test'}` para que MinIO en docker-compose siga funcionando sin tocar producción. Cualquier prod (`APP_ENV='production'`) rechaza HTTP y loopback aunque el caller pase `allow_http_for_local_dev=True`.
+  - `follow_redirects=False` queda como invariante en los 3 sinks (alerts, WhatsApp media-info, WhatsApp media-download). Los redirects no eran necesarios para el flujo legítimo (Meta y los webhooks responden directamente) y eran el vector de bypass más fácil.
+
+---
+
+### TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG10 (cloud LLM payload), BUG12 (template multi-chunk concat), BUG13 (WhatsApp inbound response).
+- **Fase 1 — verificación en HEAD:** los tres BUGs siguen reproducibles. La query inline del orquestador (`app/services/rag_orchestrator.py` ~L737) y las plantillas `_ANN_CHUNK_SQL` / `_LEXICAL_CHUNK_SQL` filtran únicamente por `tenant_id` + `status='active'`. Los builders downstream (`build_grounded_answer`, `_build_context` en `llm_answer.py` y `cloud_llm_answer.py`) tampoco re-filtran por `visibility`. El endpoint admin `/v1/intents/evaluate` igualmente devuelve chunks `agents_only` sin opt-in. Resultado: un chunk staff-only con score alto termina embebido en la respuesta saliente y en el payload enviado al proveedor cloud.
+- **Fase 2 — remediación (causa raíz, un único fix estructural):**
+  - **Constantes compartidas** en `app/services/rag_retrieval.py`: `END_USER_VISIBILITY = ('public', 'tenant')` y `ALL_VISIBILITY = ('public', 'tenant', 'agents_only')`. Cualquier camino que sirva a un cliente final pasa el primero como allowlist; sólo el RAG-test admin del Knowledge Studio puede pedir el segundo.
+  - **Filtro SQL en la fuente** (no en post-filter): `_ANN_CHUNK_SQL` y `_LEXICAL_CHUNK_SQL` añaden `and kd.visibility = ANY($N::text[])`; la query inline del orquestador y la del readiness check (`app/api/v1/routes.py` ~L8774) replican el mismo predicado con `END_USER_VISIBILITY` parametrizado.
+  - **Defense-in-depth en builders:** `filter_end_user_matches(matches)` se aplica dentro de `build_grounded_answer` y como skip explícito en `_build_context` (tanto `llm_answer.py` como `cloud_llm_answer.py`). Si un chunk `agents_only` llegara al builder, se descarta y se emite `log.warning('rag.agents_only_blocked_in_builder', ...)`.
+  - **Override admin opt-in:** `IntentEvaluateRequest.include_agents_only: bool = False`; el endpoint `/intents/evaluate` (tenant_admin_router, ya restringido a admin) pasa `ALL_VISIBILITY` al SQL y `allow_agents_only=True` a `build_grounded_answer` sólo cuando el flag está activo. El audit registra el flag para trazabilidad.
+  - **UI Knowledge Studio:** checkbox "Incluir documentos **Solo agentes** (vista interna; nunca se envía al cliente)" en el bloque "Probar clasificador + RAG"; el state `ragIncludeAgentsOnly` se envía a `evaluateIntent` y nunca se persiste por defecto.
+- **Archivos modificados:**
+  - `app/services/rag_retrieval.py`
+  - `app/services/rag_orchestrator.py`
+  - `app/services/llm_answer.py`
+  - `app/services/cloud_llm_answer.py`
+  - `app/api/v1/routes.py`
+  - `app/api/v1/schemas.py`
+  - `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx`
+  - `tests/test_rag_visibility.py` (nuevo, 16 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/services/rag_retrieval.py app/services/rag_orchestrator.py app/services/cloud_llm_answer.py app/services/llm_answer.py app/api/v1/routes.py app/api/v1/schemas.py tests/test_rag_visibility.py` → all checks passed.
+  - `uv run pytest tests/test_rag_visibility.py -q` → 16 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1411 passed, 22 skipped.
+- **Cobertura por bug:**
+  - **BUG13:** `test_build_grounded_answer_drops_agents_only_chunk_ranked_first`, `test_build_grounded_answer_escalates_when_only_agents_only_matches`, `test_rank_chunks_then_grounded_answer_blocks_agents_only_end_to_end`.
+  - **BUG12:** `test_build_grounded_answer_filters_agents_only_when_ranked_second`.
+  - **BUG10:** `test_cloud_llm_context_excludes_agents_only_chunks`, `test_local_llm_context_excludes_agents_only_chunks`.
+  - **Override admin:** `test_admin_override_includes_agents_only_chunks_in_answer`, `test_intent_evaluate_request_schema_defaults_include_agents_only_false`, `test_intent_evaluate_endpoint_respects_include_agents_only_flag`.
+  - **Layer SQL:** `test_ann_chunk_sql_filters_visibility_allowlist`, `test_lexical_chunk_sql_filters_visibility_allowlist`, `test_orchestrator_inline_retrieval_sql_filters_visibility`, `test_readiness_retrieval_sql_filters_visibility`.
+  - **Constantes / helper:** `test_end_user_visibility_excludes_agents_only`, `test_all_visibility_includes_agents_only`, `test_filter_end_user_matches_helper_strips_agents_only`.
+- **Notas:**
+  - Mandato MVP cumplido: una sola allowlist canónica (`END_USER_VISIBILITY`), una sola excepción explícita (opt-in admin), sin fallbacks ni columnas legacy.
+  - El UI checkbox queda en `false` por defecto cada vez que se monta el componente — no se persiste en localStorage para que ningún admin lo deje encendido por accidente entre sesiones.
+
+---
+
 ### TASK-0077 — Fix estructural: autorización tenant-scoped con doble chequeo JWT + DB role
 
 - **Fecha:** 2026-05-13

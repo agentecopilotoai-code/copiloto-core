@@ -39,7 +39,13 @@ from app.services.cloud_llm_answer import (
     build_conversational_cloud_llm_answer,
 )
 from app.services.llm_answer import build_conversational_llm_answer, build_llm_answer
-from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
+from app.services.rag_retrieval import (
+    END_USER_VISIBILITY,
+    build_grounded_answer,
+    filter_end_user_matches,
+    rank_chunks,
+    retrieval_match_to_dict,
+)
 from app.services.intent_classifier import (
     INTENT_BOOK_APPOINTMENT,
     INTENT_GREETING,
@@ -733,7 +739,9 @@ async def _orchestrate_inbound_message_impl(
         )
         return booking_result
 
-    # Retrieve active knowledge chunks and run RAG ranking
+    # Retrieve active knowledge chunks and run RAG ranking.
+    # The end-user response path MUST exclude documents marked 'agents_only';
+    # those are staff-only and would leak internal notes to the customer.
     rows = await conn.fetch(
         """
         select kc.id, kc.document_id,
@@ -744,12 +752,14 @@ async def _orchestrate_inbound_message_impl(
         join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
         where kc.tenant_id=$1
           and kd.status='active'
+          and kd.visibility = ANY($2::text[])
         order by kd.updated_at desc, kc.chunk_index asc
         """,
         tenant_id,
+        list(END_USER_VISIBILITY),
     )
     chunks = [dict(row) for row in rows]
-    matches = rank_chunks(body_text, chunks)
+    matches = filter_end_user_matches(rank_chunks(body_text, chunks))
 
     settings = get_settings()
     engine = settings.answer_engine

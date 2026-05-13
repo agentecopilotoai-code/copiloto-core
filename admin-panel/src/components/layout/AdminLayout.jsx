@@ -53,32 +53,29 @@ function hasMinRole(roles, minRole) {
   return (roles || []).some((r) => (ROLE_LEVELS[r] ?? 0) >= required);
 }
 
-function MfaRequiredBanner({ onDismiss }) {
+function MfaRequiredBlocker() {
   return (
-    <div className="mfa-required-overlay">
+    <div className="mfa-required-overlay" role="alertdialog" aria-modal="true">
       <div className="mfa-required-card">
         <div className="mfa-required-icon" aria-hidden="true">🔐</div>
-        <h2 className="mfa-required-title">Verificacion en dos pasos recomendada</h2>
+        <h2 className="mfa-required-title">Verificación en dos pasos obligatoria</h2>
         <p className="mfa-required-body">
-          Tu sesion tiene acceso privilegiado (<strong>admin</strong> /{' '}
-          <strong>owner</strong>) pero no se detecto autenticacion de segundo
-          factor (MFA). Se recomienda reiniciar sesion con MFA habilitado en
-          Auth0 para mayor seguridad.
+          Tu sesión tiene acceso privilegiado (<strong>admin</strong> /{' '}
+          <strong>owner</strong> / <strong>platform_owner</strong>) pero no se
+          detectó autenticación de segundo factor (MFA). El servidor rechazará
+          cualquier operación privilegiada con <code>403 mfa_required</code>
+          hasta que reinicies sesión con MFA habilitado en Auth0.
         </p>
         <p className="mfa-required-hint">
-          Si no tienes Auth0 configurado o estas en desarrollo local, puedes
-          continuar sin MFA. Si Auth0 esta activo, cierra sesion y reiniciala
-          para que solicite el segundo factor.
+          Cierra sesión y vuelve a entrar; Auth0 te pedirá el segundo factor
+          configurado en tu cuenta.
         </p>
         <div className="mfa-required-actions">
           <form method="post" action="/admin/logout">
             <button className="mfa-required-action" type="submit">
-              Cerrar sesion
+              Cerrar sesión
             </button>
           </form>
-          <button className="mfa-required-skip" type="button" onClick={onDismiss}>
-            Continuar sin MFA
-          </button>
         </div>
       </div>
     </div>
@@ -106,10 +103,11 @@ export function AdminLayout({ session }) {
   const [tenantSetupInitialTab, setTenantSetupInitialTab] = useState(null);
   const profile = session.profile;
 
-  // Show MFA warning only when the server explicitly signals it (Auth0 active +
-  // privileged role + no MFA).  Dismissable so local/dev setups are not blocked.
-  const mfaWarning = session.mfa_required === true;
-  const [mfaDismissed, setMfaDismissed] = useState(false);
+  // TASK-0080 / BUG14: when the server reports mfa_required=true we hard
+  // block the panel — no children render until the user logs out and
+  // reauthenticates with MFA. The gate is non-dismissable and matches the
+  // server-side 403 the BFF proxy now returns.
+  const mfaRequired = session.mfa_required === true;
 
   const initialTenantOptions = useTenantOptions(profile);
   const [tenantOptions, setTenantOptions] = useState(initialTenantOptions);
@@ -402,11 +400,11 @@ export function AdminLayout({ session }) {
     activeContent = <ModulePlaceholder module={activeModule} tenant={activeTenant} />;
   }
 
+  if (mfaRequired) {
+    return <MfaRequiredBlocker />;
+  }
+
   return (
-    <>
-      {mfaWarning && !mfaDismissed && (
-        <MfaRequiredBanner onDismiss={() => setMfaDismissed(true)} />
-      )}
     <main className="admin-shell">
       <Sidebar
         activeModuleId={activeModuleId}
@@ -422,6 +420,5 @@ export function AdminLayout({ session }) {
         {activeContent}
       </section>
     </main>
-    </>
   );
 }

@@ -41,6 +41,7 @@ from app.api.v1.schemas import (
     ContactTagUpdate,
     ContactUpsert,
     ConversationCreate,
+    ContactPhoneUpdate,
     ConversationStart,
     IntentEvaluateRequest,
     KnowledgeDocumentCreate,
@@ -89,6 +90,7 @@ from app.core.config import get_settings
 from app.core.security import (
     authenticate_request,
     has_jwt_role,
+    require_mfa_for_privileged,
     require_min_role,
     require_platform_owner,
     require_service,
@@ -98,6 +100,7 @@ from app.services import locale as locale_service
 from app.services.audit import audit
 from app.services.campaign_attribution import attribute_appointment
 from app.services.auth0_admin import (
+    Auth0UserAlreadyExists,
     assign_roles as auth0_assign_roles,
     auth0_management_enabled,
     invite_user as auth0_invite_user,
@@ -166,7 +169,13 @@ from app.services.web_widget import (
 )
 from app.services.intent_classifier import classify_intent
 from app.services.rag_orchestrator import orchestrate_inbound_message
-from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
+from app.services.rag_retrieval import (
+    ALL_VISIBILITY,
+    END_USER_VISIBILITY,
+    build_grounded_answer,
+    rank_chunks,
+    retrieval_match_to_dict,
+)
 from app.services.whatsapp import (
     delete_template_from_meta,
     download_whatsapp_media,
@@ -328,6 +337,19 @@ def validate_outbound_message_content(
         raise HTTPException(status_code=400, detail='Text messages require body_text')
     if message_type in MEDIA_MESSAGE_TYPES and not ((media_id or '').strip() or (media_url or '').strip()):
         raise HTTPException(status_code=400, detail=f'{message_type} messages require media_id or payload.media_url')
+    # TASK-0079 / BUG19: reject crafted media_id values BEFORE they reach the
+    # Graph URL interpolation path. The validator accepts numeric Meta IDs
+    # only; anything else (path traversal, query string, NUL bytes) is dropped.
+    cleaned_media_id = (media_id or '').strip() if media_id else ''
+    if cleaned_media_id:
+        from app.services.url_guard import (  # noqa: PLC0415
+            UnsafeOutboundURLError,
+            assert_whatsapp_media_id,
+        )
+        try:
+            assert_whatsapp_media_id(cleaned_media_id)
+        except UnsafeOutboundURLError as exc:
+            raise HTTPException(status_code=422, detail=f'media_id rejected: {exc}')
 
 async def upsert_whatsapp_contact(
     conn: asyncpg.Connection,
@@ -398,15 +420,27 @@ public_router = APIRouter(tags=['public'])
 webhook_router = APIRouter(prefix='/webhooks', tags=['public-webhooks'])
 platform_admin_router = APIRouter(
     tags=['platform-admin'],
-    dependencies=[Depends(authenticate_request), Depends(require_platform_owner)],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(require_platform_owner),
+        Depends(require_mfa_for_privileged),
+    ],
 )
 tenant_admin_router = APIRouter(
     tags=['tenant-admin'],
-    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(require_min_role('admin')),
+        Depends(require_mfa_for_privileged),
+    ],
 )
 tenant_catalog_router = APIRouter(
     tags=['tenant-catalog'],
-    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin', allow_service=True))],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(require_min_role('admin', allow_service=True)),
+        Depends(require_mfa_for_privileged),
+    ],
 )
 tenant_ops_router = APIRouter(
     tags=['tenant-operations'],
@@ -418,7 +452,11 @@ tenant_analytics_router = APIRouter(
 )
 tenant_signup_router = APIRouter(
     tags=['tenant-signup'],
-    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(require_min_role('admin')),
+        Depends(require_mfa_for_privileged),
+    ],
 )
 # Endpoints that any authenticated user must be able to call regardless of the
 # role they currently hold inside their default tenant.  Used for the Slack-style
@@ -1342,7 +1380,10 @@ async def invite_tenant_member(
 
     auth0_result: dict[str, Any] = {'disabled': True}
     if not existing or (auth_subject and auth_subject.startswith('pending|')):
-        # New user — try to send invitation ticket through Auth0.
+        # New user — create a fresh Auth0 identity and issue a ticket keyed by
+        # user_id (TASK-0085 / BUG06). If the email is already taken in Auth0
+        # we refuse with 409 instead of issuing a reset ticket that would land
+        # in the inbox of an unrelated account.
         try:
             auth0_result = await auth0_invite_user(
                 email=email,
@@ -1350,9 +1391,26 @@ async def invite_tenant_member(
                 tenant_id=tenant_id,
                 display_name=payload.display_name,
             )
+        except Auth0UserAlreadyExists:
+            raise HTTPException(
+                status_code=409,
+                detail='An Auth0 user with this email already exists; ask them '
+                'to log in so we can attach them to this tenant.',
+            )
         except Exception as exc:  # noqa: BLE001 - log and continue without Auth0
             log.warning('tenant_member.auth0_invite_failed', error=str(exc))
             auth0_result = {'disabled': False, 'error': str(exc)}
+        else:
+            # On success, bind the real Auth0 user_id into our users row so
+            # future role syncs go through assign_roles, not invite again.
+            new_auth_subject = auth0_result.get('auth0_user_id') if isinstance(auth0_result, dict) else None
+            if new_auth_subject:
+                await conn.execute(
+                    "update app.users set auth_subject=$2, updated_at=now() where id=$1",
+                    user_id,
+                    new_auth_subject,
+                )
+                auth_subject = new_auth_subject
     else:
         # Existing Auth0 user — keep their tenant_roles claim in sync.
         try:
@@ -1374,6 +1432,16 @@ async def invite_tenant_member(
             log.warning('tenant_member.auth0_assign_failed', error=str(exc))
             auth0_result = {'disabled': False, 'error': str(exc)}
 
+    # TASK-0085 / BUG06: audit captures the Auth0 user_id (when known), not
+    # the raw email — the email value is sensitive PII and the user_id is the
+    # canonical reference for downstream account forensics. Email is reduced
+    # to the local-part hash for correlation without leaking the full address.
+    import hashlib as _hashlib  # noqa: PLC0415
+    audit_metadata: dict[str, Any] = {
+        'role': payload.role,
+        'auth0_user_id': auth_subject if auth_subject and not auth_subject.startswith('pending|') else None,
+        'email_fingerprint': _hashlib.sha256(email.encode('utf-8')).hexdigest()[:16],
+    }
     await audit(
         conn,
         tenant_id=tenant_id,
@@ -1382,11 +1450,23 @@ async def invite_tenant_member(
         action='tenant_member.invited',
         entity_type='user',
         entity_id=str(user_id),
-        metadata={'email': email, 'role': payload.role},
+        metadata=audit_metadata,
     )
 
     member = await _tenant_member_payload(conn, tenant_id, user_id)
-    member['auth0'] = auth0_result
+    # TASK-0085 / BUG06: the API response carries only auth0_user_id /
+    # invited / error flags; the ticket URL is never propagated to the
+    # caller — the invitee receives it via Auth0's email template.
+    safe_auth0 = {
+        'disabled': bool(auth0_result.get('disabled')),
+        'invited': bool(auth0_result.get('invited')),
+        'auth0_user_id': auth0_result.get('auth0_user_id'),
+    }
+    if auth0_result.get('error'):
+        safe_auth0['error'] = auth0_result['error']
+    if auth0_result.get('synced'):
+        safe_auth0['synced'] = True
+    member['auth0'] = safe_auth0
     member['auth0_skipped'] = bool(auth0_result.get('disabled'))
     return member
 
@@ -1604,6 +1684,25 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     # Normalize jsonb fields: accept both raw dicts and JSON strings from clients
     for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy', 'notification_settings', 'bot_personality'):
         merged[jsonb_key] = _coerce_jsonb(merged.get(jsonb_key)) or {}
+
+    # TASK-0079: validate the webhook URL inside notification_settings BEFORE
+    # persisting. The webhook is invoked from the alerts worker with a HMAC
+    # signature; accepting an unvalidated URL allows SSRF + secret leak.
+    notification_settings_value = merged.get('notification_settings') or {}
+    if isinstance(notification_settings_value, dict):
+        channels_value = notification_settings_value.get('complaint_alert_channels')
+        if channels_value is not None:
+            from app.services.operator_alerts import normalize_alert_channels  # noqa: PLC0415
+            from app.services.url_guard import UnsafeOutboundURLError  # noqa: PLC0415
+            try:
+                normalized_channels = normalize_alert_channels(channels_value, strict=True)
+            except UnsafeOutboundURLError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f'complaint_alert_channels.webhook_url rejected: {exc}',
+                )
+            notification_settings_value['complaint_alert_channels'] = normalized_channels
+            merged['notification_settings'] = notification_settings_value
 
     # TASK-0071: sanea la personalidad antes de persistir (rechaza valores fuera de catálogo).
     from app.services.conversation_flow import _normalize_personality as _normalize_bot_personality  # noqa: PLC0415
@@ -1915,6 +2014,42 @@ async def patch_knowledge_storage_settings(
     if next_config['backend'] == 's3':
         if not next_config.get('bucket'):
             raise HTTPException(status_code=400, detail='S3 bucket is required for tenant knowledge storage')
+        # TASK-0079 / BUG18: validate the tenant-supplied endpoint_url BEFORE
+        # persisting. The validator enforces HTTPS, an AWS/MinIO allowlist, and
+        # blocks loopback / RFC1918 / metadata hosts. Local dev mode (APP_ENV
+        # in {'local','test'}) is the only context where MinIO HTTP is allowed.
+        if next_config.get('endpoint_url'):
+            from app.services.url_guard import (  # noqa: PLC0415
+                S3_ENDPOINT_HOST_ALLOWLIST,
+                UnsafeOutboundURLError,
+                validate_outbound_url,
+            )
+            try:
+                validate_outbound_url(
+                    next_config['endpoint_url'],
+                    allowed_schemes=('https',),
+                    host_allowlist=S3_ENDPOINT_HOST_ALLOWLIST,
+                    allow_http_for_local_dev=True,
+                )
+            except UnsafeOutboundURLError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f'S3 endpoint_url rejected: {exc}',
+                )
+            # When the tenant points to a custom endpoint, tenant credentials
+            # are mandatory — we never sign against an attacker-supplied host
+            # with platform-wide access keys.
+            has_tenant_creds = bool(
+                next_config.get('access_key_id')
+                and (secret_access_key or secret_ref_is_configured(next_config.get('secret_ref')))
+            )
+            if not has_tenant_creds:
+                raise HTTPException(
+                    status_code=422,
+                    detail='Tenant S3 endpoint_url requires tenant-supplied '
+                           'access_key_id + secret_access_key (no fallback to '
+                           'platform credentials).',
+                )
         if secret_access_key and not next_config.get('access_key_id'):
             raise HTTPException(
                 status_code=400,
@@ -1966,6 +2101,34 @@ async def patch_knowledge_storage_settings(
 async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    # TASK-0081 / BUG21: a Meta phone_number_id can only be bound to one
+    # active tenant channel at a time. If another tenant already claimed it,
+    # refuse with 409 before any secret is written. The unique partial index
+    # in 01-schema.sql is the final guarantee; this check produces a clean
+    # business error instead of a SQL integrity violation.
+    if payload.phone_number_id:
+        await conn.execute("select set_config('app.support_mode', 'true', true)")
+        existing = await conn.fetchrow(
+            """
+            select tenant_id, status
+            from app.tenant_channels
+            where phone_number_id=$1
+              and provider='whatsapp_cloud_api'
+              and status='active'
+              and tenant_id <> $2
+            """,
+            payload.phone_number_id,
+            tenant_id,
+        )
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail='phone_number_id is already bound to another active tenant channel',
+            )
+        # Restore the per-tenant scope so the upsert below runs under RLS.
+        await conn.execute("select set_config('app.support_mode', 'false', true)")
+        await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
 
     token_ref = tenant_secret_ref(tenant_id, 'meta_access_token')
     app_secret_ref = tenant_secret_ref(tenant_id, 'whatsapp_app_secret')
@@ -2776,6 +2939,79 @@ async def get_contact(
     return record_to_dict(row)
 
 
+@tenant_ops_router.patch('/contacts/{contact_id}/phone')
+async def patch_contact_phone(
+    contact_id: UUID,
+    payload: ContactPhoneUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """TASK-0082 / BUG22: mutate a contact's phone_e164 (and derived
+    ``wa_id`` + ``phone_hash``) only through this dedicated endpoint, gated by
+    role ``manager``+ and recorded in ``audit_logs``. The ``start_conversation``
+    flow is now read-only with respect to identity.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    await ensure_tenant_role(request, conn, tenant_id, 'manager')
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    existing = await conn.fetchrow(
+        'select id, phone_e164, wa_id from app.contacts where tenant_id=$1 and id=$2',
+        tenant_id,
+        contact_id,
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail='Contact not found')
+
+    new_phone = payload.phone_e164.strip()
+    new_wa_id = new_phone.lstrip('+')
+    new_hash = hashlib.sha256(new_phone.encode()).digest()
+
+    # Prevent silently colliding with another contact (another tenant row that
+    # already owns this phone). If the operator wants to merge, that's a
+    # separate flow; here we refuse to overwrite identity ambiguously.
+    collision = await conn.fetchrow(
+        'select id from app.contacts where tenant_id=$1 and phone_e164=$2 and id<>$3',
+        tenant_id,
+        new_phone,
+        contact_id,
+    )
+    if collision:
+        raise HTTPException(
+            status_code=409,
+            detail='Another contact in this tenant already has this phone_e164',
+        )
+
+    row = await conn.fetchrow(
+        """
+        update app.contacts
+        set phone_e164=$3, wa_id=$4, phone_hash=$5, updated_at=now()
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        contact_id,
+        new_phone,
+        new_wa_id,
+        new_hash,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact.phone_changed',
+        entity_type='contact',
+        entity_id=str(contact_id),
+        metadata={
+            'previous_phone_last4': (existing['phone_e164'] or '')[-4:],
+            'new_phone_last4': new_phone[-4:],
+            'reason': payload.reason,
+        },
+    )
+    return record_to_dict(row)
+
+
 @tenant_ops_router.get('/contacts')
 async def list_contacts(
     request: Request,
@@ -3524,22 +3760,52 @@ async def start_conversation(
         tenant_id=str(payload.tenant_id),
         channel_id=str(channel['id']),
         phone_last4=payload.phone_e164[-4:] if payload.phone_e164 else None,
+        contact_id=str(payload.contact_id) if payload.contact_id else None,
         actor_id=request.state.actor_id,
     )
 
-    phone_e164 = payload.phone_e164.strip()
-    wa_id = (payload.wa_id or phone_e164).strip().lstrip('+')
-    phone_hash = hashlib.sha256(phone_e164.encode()).digest()
-    contact = await upsert_whatsapp_contact(
-        conn,
-        tenant_id=payload.tenant_id,
-        wa_id=wa_id,
-        phone_e164=phone_e164,
-        phone_hash=phone_hash,
-        display_name=payload.display_name,
-        metadata=payload.metadata,
-        source='operations_desk',
-    )
+    # TASK-0082 / BUG22: pick the contact by ID first, then by phone — and
+    # NEVER mutate an existing contact's phone_e164/wa_id from this endpoint.
+    # The previous upsert path overwrote phone_e164 on conflict, which let an
+    # agent redirect outbound traffic to an attacker's phone; phone changes
+    # now go through PATCH /contacts/{id}/phone (manager+, audited).
+    if payload.contact_id is None and not (payload.phone_e164 or '').strip():
+        raise HTTPException(
+            status_code=422,
+            detail='Either contact_id or phone_e164 is required to start a conversation',
+        )
+    if payload.contact_id is not None:
+        contact = await conn.fetchrow(
+            'select * from app.contacts where tenant_id=$1 and id=$2',
+            payload.tenant_id,
+            payload.contact_id,
+        )
+        if not contact:
+            raise HTTPException(status_code=404, detail='Contact not found in this tenant')
+    else:
+        phone_e164 = payload.phone_e164.strip()
+        phone_hash = hashlib.sha256(phone_e164.encode()).digest()
+        contact = await conn.fetchrow(
+            'select * from app.contacts where tenant_id=$1 and phone_e164=$2',
+            payload.tenant_id,
+            phone_e164,
+        )
+        if not contact:
+            wa_id = phone_e164.lstrip('+')
+            contact = await conn.fetchrow(
+                """
+                insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source)
+                values ($1, $2, $3, $4, $5, 'operations_desk', $6::jsonb, $7::jsonb)
+                returning *
+                """,
+                payload.tenant_id,
+                wa_id,
+                phone_e164,
+                phone_hash,
+                payload.display_name,
+                json.dumps(payload.metadata or {}),
+                json.dumps(build_lead_source(channel='whatsapp')),
+            )
     conversation = await conn.fetchrow(
         """
         select *
@@ -4457,7 +4723,10 @@ async def list_contact_packages(
     return [record_to_dict(row) for row in rows]
 
 
-@tenant_ops_router.post('/contacts/{contact_id}/packages', status_code=201)
+# TASK-0084 / BUG02: package mutation endpoints live on the admin router
+# (admin+ role) because they encode financial state. Agents keep read access
+# via list_contact_packages above.
+@tenant_admin_router.post('/contacts/{contact_id}/packages', status_code=201)
 async def assign_contact_package(
     contact_id: UUID,
     payload: ContactPackageAssign,
@@ -4521,7 +4790,7 @@ async def assign_contact_package(
     return record_to_dict(row)
 
 
-@tenant_ops_router.patch('/contacts/{contact_id}/packages/{contact_package_id}')
+@tenant_admin_router.patch('/contacts/{contact_id}/packages/{contact_package_id}')
 async def update_contact_package(
     contact_id: UUID,
     contact_package_id: UUID,
@@ -4580,7 +4849,7 @@ async def update_contact_package(
     return record_to_dict(row)
 
 
-@tenant_ops_router.delete('/contacts/{contact_id}/packages/{contact_package_id}', status_code=204)
+@tenant_admin_router.delete('/contacts/{contact_id}/packages/{contact_package_id}', status_code=204)
 async def refund_contact_package(
     contact_id: UUID,
     contact_package_id: UUID,
@@ -7256,9 +7525,24 @@ async def receive_payment_webhook(
     payment_settings = await _fetch_tenant_payment_settings(conn, tenant_id)
     secret = resolve_secret_ref(payment_settings.get('webhook_secret_ref'))
     if not secret:
+        # TASK-0083 / BUG04: fail-closed with 503 when the tenant has not
+        # configured a webhook signing secret. We must NOT process the payload
+        # — a forged event with a known appointment UUID would otherwise mark
+        # the appointment as paid. Audit the rejection so operators can spot
+        # the misconfiguration in dashboards.
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type='system',
+            actor_id=None,
+            action='payment.webhook_rejected',
+            entity_type='appointment',
+            entity_id=str(appointment_id),
+            metadata={'reason': 'missing_secret', 'provider': normalized_provider},
+        )
         raise HTTPException(
-            status_code=401,
-            detail='Payment webhook signing secret is not configured for this tenant',
+            status_code=503,
+            detail='payment.webhook_unconfigured',
         )
     if normalized_provider == 'mercadopago':
         sig_header = request.headers.get('x-signature')
@@ -7274,6 +7558,16 @@ async def receive_payment_webhook(
         sig_header = request.headers.get('stripe-signature')
         signature_ok = verify_stripe_signature(body, sig_header, secret)
     if not signature_ok:
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type='system',
+            actor_id=None,
+            action='payment.webhook_rejected',
+            entity_type='appointment',
+            entity_id=str(appointment_id),
+            metadata={'reason': 'bad_signature', 'provider': normalized_provider},
+        )
         raise HTTPException(status_code=401, detail='Invalid payment webhook signature')
 
     sha = hashlib.sha256(body).hexdigest()
@@ -7395,9 +7689,22 @@ async def receive_subscription_webhook(
     payment_settings = await _fetch_tenant_payment_settings(conn, tenant_id)
     secret = resolve_secret_ref(payment_settings.get('webhook_secret_ref'))
     if not secret:
+        # TASK-0083 / BUG04 (subscriptions): same fail-closed rule as the
+        # appointment payments webhook above. Without a configured signing
+        # secret we refuse the event and audit the rejection.
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type='system',
+            actor_id=None,
+            action='payment.webhook_rejected',
+            entity_type='contact_subscription',
+            entity_id=str(subscription['id']),
+            metadata={'reason': 'missing_secret', 'provider': normalized_provider, 'flow': 'subscription'},
+        )
         raise HTTPException(
-            status_code=401,
-            detail='Payment webhook signing secret is not configured for this tenant',
+            status_code=503,
+            detail='payment.webhook_unconfigured',
         )
     if normalized_provider == 'mercadopago':
         sig_header = request.headers.get('x-signature')
@@ -7413,6 +7720,16 @@ async def receive_subscription_webhook(
         sig_header = request.headers.get('stripe-signature')
         signature_ok = verify_stripe_signature(body, sig_header, secret)
     if not signature_ok:
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type='system',
+            actor_id=None,
+            action='payment.webhook_rejected',
+            entity_type='contact_subscription',
+            entity_id=str(subscription['id']),
+            metadata={'reason': 'bad_signature', 'provider': normalized_provider, 'flow': 'subscription'},
+        )
         raise HTTPException(status_code=401, detail='Invalid subscription webhook signature')
 
     sha = hashlib.sha256(body).hexdigest()
@@ -7527,6 +7844,7 @@ async def evaluate_intent_retrieval(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    visibility_filter = list(ALL_VISIBILITY) if payload.include_agents_only else list(END_USER_VISIBILITY)
     rows = await conn.fetch(
         """
         select kc.id,
@@ -7545,16 +7863,23 @@ async def evaluate_intent_retrieval(
         join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
         where kc.tenant_id=$1
           and kd.status='active'
+          and kd.visibility = ANY($2::text[])
         order by kd.updated_at desc, kc.chunk_index asc
         """,
         tenant_id,
+        visibility_filter,
     )
     matches = rank_chunks(
         payload.question,
         [record_to_dict(row) for row in rows],
         max_chunks=payload.max_chunks,
     )
-    answer = build_grounded_answer(payload.question, matches, min_score=payload.min_score)
+    answer = build_grounded_answer(
+        payload.question,
+        matches,
+        min_score=payload.min_score,
+        allow_agents_only=payload.include_agents_only,
+    )
 
     # Intent classification
     intent_result = await classify_intent(payload.question, settings=get_settings())
@@ -7589,6 +7914,7 @@ async def evaluate_intent_retrieval(
             'sufficient_context': response['sufficient_context'],
             'returned_chunk_count': len(matches),
             'top_score': matches[0].score if matches else None,
+            'include_agents_only': payload.include_agents_only,
         },
     )
     return response
@@ -8779,10 +9105,12 @@ async def build_tenant_readiness_report(
         from app.knowledge_chunks kc
         join app.knowledge_documents kd on kd.id=kc.document_id and kd.tenant_id=kc.tenant_id
         where kc.tenant_id=$1 and kd.status='active'
+          and kd.visibility = ANY($2::text[])
         order by kd.updated_at desc, kc.chunk_index asc
         limit 500
         """,
         tenant_id,
+        list(END_USER_VISIBILITY),
     )
     matches = rank_chunks(smoke_question, [record_to_dict(row) for row in retrieval_rows], max_chunks=3)
     retrieval_answer = build_grounded_answer(smoke_question, matches, min_score=retrieval_min_score)
@@ -9571,9 +9899,35 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
         sha,
     )
 
+    # TASK-0081 / BUG20: the signature was verified against the channel
+    # resolved from the FIRST phone_number_id in the payload. Each change in
+    # entry → changes carries its own metadata.phone_number_id; if any of
+    # those differ from the signature-verified channel, the change must be
+    # dropped. Otherwise an attacker could ship a payload that mixes two
+    # tenants' numbers: the first one passes the signature check and every
+    # other change inherits the wrong tenant binding.
+    signed_channel_phone_id = phone_number_id
     for entry in payload.get('entry', []):
         for change in entry.get('changes', []):
             value = change.get('value', {})
+            change_phone_id = (value.get('metadata') or {}).get('phone_number_id')
+            if change_phone_id and str(change_phone_id) != signed_channel_phone_id:
+                # Drop this change. We do not stop processing the rest of
+                # the payload — only this specific change is suspect.
+                await audit(
+                    conn,
+                    tenant_id=channel['tenant_id'],
+                    actor_type='system',
+                    actor_id=None,
+                    action='webhook.phone_number_id_mismatch',
+                    entity_type='tenant_channel',
+                    entity_id=str(channel['id']),
+                    metadata={
+                        'signed_phone_number_id': signed_channel_phone_id,
+                        'change_phone_number_id': str(change_phone_id),
+                    },
+                )
+                continue
             contacts_by_wa_id = {
                 str(contact.get('wa_id')): contact
                 for contact in value.get('contacts', [])

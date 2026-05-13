@@ -569,6 +569,15 @@ async def get_whatsapp_media_info(
     media_id: str,
     token_ref: str | None,
 ) -> dict[str, Any]:
+    from urllib.parse import quote  # noqa: PLC0415
+
+    from app.services.url_guard import (  # noqa: PLC0415
+        META_MEDIA_HOST_ALLOWLIST,
+        UnsafeOutboundURLError,
+        assert_whatsapp_media_id,
+        validate_outbound_url,
+    )
+
     settings = get_settings()
     access_token = resolve_secret_ref(token_ref)
 
@@ -577,11 +586,26 @@ async def get_whatsapp_media_info(
             'WhatsApp media download requires a real Meta access token.'
         )
 
-    url = f'https://graph.facebook.com/{settings.meta_graph_version}/{media_id}'
+    # BUG19: validate the media_id before interpolating it into the Graph URL.
+    # Meta IDs are pure numeric; anything else is a crafted payload trying to
+    # escape the URL path (e.g. ``../foo`` or ``123?token=...``).
+    safe_media_id = quote(assert_whatsapp_media_id(media_id), safe='')
 
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        response = await client.get(
+    url = f'https://graph.facebook.com/{settings.meta_graph_version}/{safe_media_id}'
+
+    # The Graph URL is platform-controlled but we validate it anyway so the
+    # follow-redirects=False / host-allowlist guard is applied consistently.
+    try:
+        validated_graph = validate_outbound_url(
             url,
+            host_allowlist=META_MEDIA_HOST_ALLOWLIST,
+        )
+    except UnsafeOutboundURLError as exc:
+        raise RuntimeError(f'Graph URL failed validation: {exc}') from exc
+
+    async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+        response = await client.get(
+            validated_graph.canonical,
             headers={'Authorization': f'Bearer {access_token}'},
         )
         response.raise_for_status()
@@ -592,6 +616,12 @@ async def download_whatsapp_media(
     media_id: str,
     token_ref: str | None,
 ) -> tuple[bytes, str]:
+    from app.services.url_guard import (  # noqa: PLC0415
+        META_MEDIA_HOST_ALLOWLIST,
+        UnsafeOutboundURLError,
+        validate_outbound_url,
+    )
+
     media_info = await get_whatsapp_media_info(
         media_id=media_id,
         token_ref=token_ref,
@@ -601,6 +631,18 @@ async def download_whatsapp_media(
     if not media_url:
         raise RuntimeError('Meta did not return a media download URL.')
 
+    # BUG19 defense: even though the URL came from the Graph response, treat it
+    # as untrusted (the upstream API could be compromised or DNS-poisoned).
+    # Without this gate the bearer token is leaked to whichever host Graph
+    # decides to return.
+    try:
+        validated_media = validate_outbound_url(
+            media_url,
+            host_allowlist=META_MEDIA_HOST_ALLOWLIST,
+        )
+    except UnsafeOutboundURLError as exc:
+        raise RuntimeError(f'Meta media URL failed validation: {exc}') from exc
+
     access_token = resolve_secret_ref(token_ref)
 
     if not meta_token_is_configured(access_token):
@@ -608,9 +650,9 @@ async def download_whatsapp_media(
             'WhatsApp media download requires a real Meta access token.'
         )
 
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
         response = await client.get(
-            media_url,
+            validated_media.canonical,
             headers={'Authorization': f'Bearer {access_token}'},
         )
         response.raise_for_status()

@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+# Chunks that may reach an end-user (cliente final) response. Anything with
+# visibility='agents_only' is staff-only and MUST be excluded from the retrieval
+# path that feeds outbound messages or external LLM payloads.
+END_USER_VISIBILITY: tuple[str, ...] = ('public', 'tenant')
+ALL_VISIBILITY: tuple[str, ...] = ('public', 'tenant', 'agents_only')
+
 # SQL template for ANN (approximate nearest neighbor) search via pgvector.
 # Used when the active embedding provider is semantic (not local_hash).
 _ANN_CHUNK_SQL = """
@@ -24,6 +30,7 @@ from app.knowledge_chunks kc
 join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
 where kc.tenant_id=$1
   and kd.status='active'
+  and kd.visibility = ANY($4::text[])
 order by kc.embedding <=> $2::vector
 limit $3
 """
@@ -45,6 +52,7 @@ from app.knowledge_chunks kc
 join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
 where kc.tenant_id=$1
   and kd.status='active'
+  and kd.visibility = ANY($2::text[])
 order by kd.updated_at desc, kc.chunk_index asc
 """
 
@@ -188,7 +196,33 @@ def chunk_excerpt(text: str, *, limit: int = 520) -> str:
     return f'{normalized[: limit - 1].rstrip()}…'
 
 
-def build_grounded_answer(question: str, matches: list[RetrievalMatch], *, min_score: float = DEFAULT_MIN_SCORE) -> dict[str, Any]:
+def filter_end_user_matches(matches: list[RetrievalMatch]) -> list[RetrievalMatch]:
+    import structlog  # noqa: PLC0415
+
+    log = structlog.get_logger()
+    filtered: list[RetrievalMatch] = []
+    for match in matches:
+        if match.visibility not in END_USER_VISIBILITY:
+            log.warning(
+                'rag.agents_only_blocked_in_builder',
+                chunk_id=str(match.id),
+                document_id=str(match.document_id),
+                visibility=match.visibility,
+            )
+            continue
+        filtered.append(match)
+    return filtered
+
+
+def build_grounded_answer(
+    question: str,
+    matches: list[RetrievalMatch],
+    *,
+    min_score: float = DEFAULT_MIN_SCORE,
+    allow_agents_only: bool = False,
+) -> dict[str, Any]:
+    if not allow_agents_only:
+        matches = filter_end_user_matches(matches)
     sufficient_context = bool(matches) and matches[0].score >= min_score
     if not sufficient_context:
         return {
@@ -265,7 +299,13 @@ def ann_rows_to_matches(rows: list[dict[str, Any]], *, max_chunks: int = DEFAULT
 
 
 def get_chunk_retrieval_sql(provider: str) -> str:
-    """Return the appropriate SQL query for chunk retrieval based on embedding provider."""
+    """Return the appropriate SQL query for chunk retrieval based on embedding provider.
+
+    The returned SQL enforces a visibility allowlist as the last positional
+    parameter; callers must always supply ``END_USER_VISIBILITY`` (or
+    ``ALL_VISIBILITY`` for admin-only RAG-test paths) so ``agents_only``
+    chunks never reach end-user responses by accident.
+    """
     from app.services.rag_indexing import is_semantic_provider  # noqa: PLC0415
     if is_semantic_provider(provider):
         return _ANN_CHUNK_SQL

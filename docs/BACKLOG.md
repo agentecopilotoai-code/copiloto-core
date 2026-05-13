@@ -736,37 +736,16 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
 
 ---
 
-### TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG
-
-- **Estado:** PENDING
-- **Causa raíz:** la consulta SQL del orquestador RAG filtra `tenant_id` + `status='active'` pero **NO excluye `knowledge_documents.visibility='agents_only'`**. Los builders downstream (template grounded, local LLM, cloud LLM) concatenan todos los chunks scoreados sin re-filtrar. Resultado: contenido staff-only termina en la respuesta saliente al cliente final y/o en el prompt enviado al proveedor cloud.
-- **Bugs cubiertos (3):**
-  - **BUG13** (`docs/BUGS/BUG13`, commit `760284a`): WhatsApp inbound recibe excerpts `agents_only` en la respuesta — fix raíz.
-  - **BUG12** (`docs/BUGS/BUG12`, commit `c8e7238`): respuesta template concatena múltiples chunks (no solo el best) — amplifica la fuga si la SQL no filtra.
-  - **BUG10** (`docs/BUGS/BUG10`, commit `197c6ab`): el camino cloud_llm (standalone y cascade fallback) envía contexto sin filtrar al SDK externo — fuga al proveedor.
-- **Fase 1 — verificación en HEAD:**
-  1. Re-leer la query de retrieval en `app/services/rag_orchestrator.py` (lexical pg_trgm + ANN pgvector + fusion). Confirmar si HEAD ya incluye `and kd.visibility <> 'agents_only'` o equivalente.
-  2. Re-leer `build_grounded_answer`, `_build_local_llm_context`, `build_cloud_llm_answer` (o equivalentes). Confirmar si rechazan defensivamente chunks `agents_only`.
-  3. Reproducir los tres rubrics (BUG10/12/13) con un chunk `agents_only` ranqueado #1 y luego #2. Capturar la respuesta saliente y el payload enviado al SDK cloud.
-- **Fase 2 — remediación (causa raíz, un solo fix):**
-  - Constante compartida `END_USER_VISIBILITY = ('public', 'tenant')` en `app/services/rag_orchestrator.py`.
-  - Filtro aplicado en la query SQL del retrieval, no en post-filter, para los tres caminos (lexical, ANN, fusion): `WHERE kd.visibility = ANY($N::text[])` con `END_USER_VISIBILITY` como parámetro.
-  - Override explícito `include_agents_only: bool = False` solo para Knowledge Studio admin RAG-test (ruta `/tenants/{id}/knowledge/rag-test`), y solo cuando el caller cumple `ensure_tenant_role(min_role='admin')` (depende de TASK-0077 conceptualmente, no en orden).
-  - Defense-in-depth: cada builder (`build_grounded_answer`, `_build_local_llm_context`, `build_cloud_llm_answer`) hace `assert chunk['visibility'] in END_USER_VISIBILITY` y emite `log.warning('agents_only.leaked_into_builder', chunk_id=...)` si llega un chunk `agents_only` (no debería, pero si llega, lo descarta).
-- **Criterios de aceptación:**
-  - Tests estáticos ≥ 6 en `tests/test_rag_visibility.py`:
-    - BUG13: chunk `agents_only` ranqueado #1 → respuesta saliente NO contiene el excerpt.
-    - BUG12: chunk `agents_only` ranqueado #2 + chunk `public` #1 → respuesta multi-chunk solo trae el #1.
-    - BUG10: chunk `agents_only` con score sobre threshold → payload enviado a stub `AsyncAnthropic.messages.create` NO contiene el texto agents_only.
-    - Override `include_agents_only=true` con caller `admin` → SÍ incluye (Knowledge Studio path).
-    - Override sin permisos → 403.
-    - Defense-in-depth: builder al que se le inyecta un chunk `agents_only` lo descarta y emite warning.
+_TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
-### TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant
+_TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** el backend hace requests HTTP outbound a URLs cuyos componentes (host, scheme) están bajo control del tenant — sin enforce HTTPS, sin allowlist, sin bloqueo de loopback / RFC1918 / link-local / metadata. El proceso adjunta credenciales sensibles (token Meta del tenant, credenciales S3 plataforma) a esas requests, generando SSRF + leak de secretos.
 - **Bugs cubiertos (3):**
   - **BUG01** (`docs/BUGS/BUG01`, commit `517add2`): `complaint_alert_channels.webhook_url` aceptado sin validar → POST desde `_send_webhook_channel` a 127.0.0.1, 169.254.169.254, etc.
@@ -798,12 +777,16 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
     - S3 sin credenciales tenant → 422 (no fallback).
     - Media proxy: `media_id='../foo'` → 422 en POST de mensaje; `media_info['url']='http://attacker.com'` → 502 sin segundo GET.
   - PoC dinámico documentado en `DONE.md` para cada uno de los 3 BUGs.
+-->
 
 ---
 
-### TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante
+_TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** el control MFA es solo UI: la dependency `require_mfa_for_privileged` existe pero no está cableada a ningún router productivo, y el proxy BFF no chequea `_session_mfa_required`. La UI permite "Continuar sin MFA" descartando el banner. Resultado: cualquier sesión admin/owner/platform_owner sin segundo factor accede a operaciones privilegiadas.
 - **Bugs cubiertos (2):**
   - **BUG14** (`docs/BUGS/BUG14`, commit `ff7c0dc`): UI overlay dismissible + proxy reenvía sin chequear MFA.
@@ -821,12 +804,16 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
   - Test E2E (Playwright o stub) que con MFA pendiente NO se puede ejecutar PATCH desde la UI.
   - Test que el proxy rechaza con 403 una request privilegiada cuando `mfa_required=true`.
   - Test que service-account (sin MFA porque no aplica) sigue funcionando.
+-->
 
 ---
 
-### TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id
+_TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** la cadena de validación del webhook WhatsApp ata el tenant al **primer** `phone_number_id` del payload y no garantiza uniqueness global de `phone_number_id` entre tenants. Resultado: (a) changes posteriores en el mismo payload se escriben en el tenant equivocado, y (b) un tenant puede registrar el `phone_number_id` de otro y secuestrar la validación de firma.
 - **Bugs cubiertos (2):**
   - **BUG20** (`docs/BUGS/BUG20`, commit `af1e91c`): handler usa un único `channel/tenant_id` para todos los changes del payload, no re-resuelve por change.
@@ -844,12 +831,16 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
   - Test de handler (BUG20): payload firmado con app_secret de A que contiene un change con `phone_number_id` de B → change B descartado, audit emitido, ningún insert en A.
   - Test del rubric BUG21: dos rows con mismo `phone_number_id` activo → la DB lo previene (la migration tiraba antes).
   - PoC dinámico de las dos rutas documentado.
+-->
 
 ---
 
-### TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto
+_TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** dos rutas distintas permiten que un actor no-confiable afecte la identidad/routing de un `contact` existente: el widget web (anónimo) lo hace por phone-match implícito; el endpoint de "iniciar conversación" lo hace por `wa_id` controlado por el agent. Ambos casos comparten el patrón "el contacto se resuelve por un campo que el caller controla, y luego se reusa/sobrescribe sin proof of ownership".
 - **Bugs cubiertos (2):**
   - **BUG05** (`docs/BUGS/BUG05`, commit `eb786e8`): `POST /v1/web/chat/start` acepta `phone` del browser y reusa el contacto existente del tenant si coincide → impersonación.
@@ -864,12 +855,16 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
 - **Criterios de aceptación:**
   - BUG05: test estático que `phone` enviado por widget NO altera/reusa ningún `contact` existente; test que mensaje "no" desde widget sin OTP NO cambia `confirmation_status` de citas pre-existentes.
   - BUG22: test que agente con POST `wa_id=<victima>` + `phone_e164=<atacante>` → 403/422; test que `PATCH /contacts/{id}/phone` requiere `manager` y produce audit.
+-->
 
 ---
 
-### TASK-0083 — Webhook de pagos fail-closed con secret obligatorio
+_TASK-0083 — Webhook de pagos fail-closed con secret obligatorio: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0083 — Webhook de pagos fail-closed con secret obligatorio (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** `POST /v1/webhooks/payments/{provider}` inicializa `signature_ok = True` y solo verifica firma si el tenant tiene `webhook_secret_ref` configurado. Sin secret → cualquier payload anónimo con un UUID de `appointment` válido marca la cita como `payment_status='paid'`. Es el único bug en su clase (las otras superficies webhook son Meta o suscripciones, ya cubiertas).
 - **Bugs cubiertos (1):**
   - **BUG04** (`docs/BUGS/BUG04`, commit `3201a6c`): payment webhook fail-open + UI permite habilitar provider sin secret.
@@ -885,12 +880,16 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
   - Test PoC: payload Stripe `checkout.session.completed` falso con UUID válido y sin secret tenant → 503, cita NO se marca `paid`.
   - Test: tenant con secret pero payload sin header `Stripe-Signature` → 401.
   - Test: admin habilita provider sin secret → 422.
+-->
 
 ---
 
-### TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only
+_TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** los endpoints de asignación, patch y refund de `contact_packages` se montaron en `tenant_ops_router` (rol `agent`+) y los schemas aceptan `payment_status='paid'` y `payment_amount=0`. Un agent puede otorgar paquetes pagados y disparar refunds sin pasar por la pasarela. Es un bug aislado de input hardening + RBAC del módulo paquetes.
 - **Bugs cubiertos (1):**
   - **BUG02** (`docs/BUGS/BUG02`, commit `177389d`): contact package mutation accessible to agent + `payment_status` controlable por cliente.
@@ -906,12 +905,16 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
   - Test estático del router montado en `tenant_admin_router`.
   - Test que POST con `payment_status='paid'` desde cliente externo → 422 / sobrescrito a `unpaid`.
   - Test de auditoría con la entrada `contact_package.refunded` por `admin`.
+-->
 
 ---
 
-### TASK-0085 — Invitación Auth0 por user_id en lugar de email
+_TASK-0085 — Invitación Auth0 por user_id en lugar de email: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0085 — Invitación Auth0 por user_id en lugar de email (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** el endpoint de invitación de miembros llama a Auth0 `/tickets/password-change` pivoteando por email del invitado. Auth0 devuelve un password-reset ticket válido para cualquier cuenta Auth0 existente con ese email (incluyendo cuentas plataforma/soporte). El backend retorna el ticket URL al admin que invita, convirtiendo el flow en un account takeover primitive.
 - **Bugs cubiertos (1):**
   - **BUG06** (`docs/BUGS/BUG06`, commit `500953d`): Auth0 reset ticket exposed via tenant invite.
@@ -927,12 +930,16 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
   - Test: la respuesta de invitación NO incluye `ticket_url`.
   - Test: si el email ya existe en Auth0 (mock) → 409.
   - Test: `audit_logs(action='user.invited')` captura `auth0_user_id`, no email plano.
+-->
 
 ---
 
-### TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo
+_TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** `app/services/intent_classifier.py::_llm_classify` instancia clientes **síncronos** Anthropic/OpenAI y llama `create()` desde dentro de una función `async`, sin pasar `timeout`. Cada mensaje WhatsApp que no matchea regla regex de alta confianza bloquea el event loop hasta que el proveedor responde o cuelga. Un attacker puede inundar el webhook con mensajes ambiguos y tumbar el servicio.
 - **Bugs cubiertos (1):**
   - **BUG09** (`docs/BUGS/BUG09`, commit `bced236`): blocking cloud LLM classifier enables webhook DoS.
@@ -947,5 +954,6 @@ P2 — abuso lateral / DoS / leakage de credenciales secundarias
 - **Criterios de aceptación:**
   - Test estático que confirma uso de `AsyncAnthropic`/`AsyncOpenAI` y `timeout` parametrizado.
   - Test que un proveedor mock que `raise asyncio.TimeoutError` cae en `fallback` sin colgar el event loop (medido con event loop monitor: latencia P99 de otras tareas concurrentes < 200ms).
+-->
 
 ---

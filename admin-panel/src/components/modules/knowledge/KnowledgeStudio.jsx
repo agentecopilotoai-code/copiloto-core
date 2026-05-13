@@ -76,6 +76,7 @@ export function KnowledgeStudio({ module, session, tenant }) {
   const [ragQuestion, setRagQuestion] = useState('');
   const [ragResult, setRagResult] = useState(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [ragIncludeAgentsOnly, setRagIncludeAgentsOnly] = useState(false);
   const [uploadForm, setUploadForm] = useState({ title: '', document_type: 'reference', visibility: 'tenant', file: null });
   const [isUploading, setIsUploading] = useState(false);
 
@@ -186,7 +187,10 @@ export function KnowledgeStudio({ module, session, tenant }) {
     setIsEvaluating(true);
     setNotice(null);
     try {
-      const result = await evaluateIntent(session, tenant.id, { question: ragQuestion.trim() });
+      const result = await evaluateIntent(session, tenant.id, {
+        question: ragQuestion.trim(),
+        include_agents_only: ragIncludeAgentsOnly,
+      });
       setRagResult(result);
       setNotice({
         type: result.sufficient_context ? 'success' : 'info',
@@ -305,6 +309,16 @@ export function KnowledgeStudio({ module, session, tenant }) {
             onChange={(event) => setRagQuestion(event.target.value)}
             placeholder="Ej. ¿Cuánto dura la garantía del servicio?"
           />
+        </label>
+        <label className="rag-tester-toggle" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <input
+            type="checkbox"
+            checked={ragIncludeAgentsOnly}
+            onChange={(event) => setRagIncludeAgentsOnly(event.target.checked)}
+          />
+          <span>
+            Incluir documentos <strong>Solo agentes</strong> (vista interna; nunca se envía al cliente)
+          </span>
         </label>
         <div className="form-actions">
           <button className="primary-action" disabled={isEvaluating || !ragQuestion.trim()} type="submit">

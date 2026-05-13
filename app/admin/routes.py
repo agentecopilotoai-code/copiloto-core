@@ -509,6 +509,18 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
     if not session:
         return Response(status_code=401)
 
+    # TASK-0080 / BUG14: the BFF must refuse to relay any request when the
+    # session is privileged but MFA was not completed. Without this gate, the
+    # frontend overlay could be bypassed (e.g. by calling the API directly with
+    # the session cookie) and the Core API would happily serve the request
+    # because the BFF runs as the user.
+    if _session_mfa_required(session):
+        return Response(
+            content=json.dumps({'detail': 'mfa_required'}),
+            status_code=403,
+            media_type='application/json',
+        )
+
     body = await request.body()
     target_url = _core_api_url(path, request.url.query)
     headers = _core_api_headers(request, session, has_body=bool(body))

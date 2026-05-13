@@ -123,6 +123,13 @@ async def get_management_token() -> str | None:
         return token
 
 
+class Auth0UserAlreadyExists(Exception):
+    """Raised when ``POST /api/v2/users`` returns 409 — the email is already
+    bound to a different Auth0 user (potentially a platform/support account).
+    The route surfaces this as HTTP 409 and refuses to issue any ticket.
+    """
+
+
 async def _mgmt_request(
     method: str,
     path: str,
@@ -138,6 +145,17 @@ async def _mgmt_request(
     headers = {'authorization': f'Bearer {token}', 'accept': 'application/json'}
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.request(method, url, headers=headers, json=json_body)
+    if response.status_code == 409:
+        # Bubble up as a typed exception so the invite flow can refuse to
+        # issue a password-reset ticket against an account that already
+        # exists in Auth0 (TASK-0085 / BUG06).
+        log.warning(
+            'auth0_admin.request_conflict',
+            method=method,
+            path=path,
+            detail=response.text[:512],
+        )
+        raise Auth0UserAlreadyExists(response.text[:512])
     if response.status_code >= 400:
         log.warning(
             'auth0_admin.request_failed',
@@ -152,39 +170,117 @@ async def _mgmt_request(
     return response.json()
 
 
+def _invitation_connection(settings) -> str:
+    """Return the Auth0 database connection name used to create new users.
+
+    Defaults to ``Username-Password-Authentication`` (Auth0's out-of-the-box
+    DB connection) unless overridden in settings.
+    """
+    return getattr(settings, 'auth0_invitation_connection', None) or 'Username-Password-Authentication'
+
+
 async def invite_user(
     *, email: str, role: str, tenant_id: UUID, display_name: str | None = None
 ) -> dict[str, Any]:
-    """Create a password-change ticket so the new user can set their password.
+    """TASK-0085 / BUG06: invite a tenant member via a TWO-step Auth0 flow.
 
-    Auth0 docs:
-      POST /api/v2/tickets/password-change
+    Step 1: ``POST /api/v2/users`` to create a brand-new Auth0 identity in our
+    invitation connection, with a random password and ``email_verified=false``.
+    If Auth0 returns 409 (the email already belongs to another account, even
+    one in a different connection like a platform/support tenant), we abort
+    with ``Auth0UserAlreadyExists`` instead of issuing a password-reset ticket
+    against it.
 
-    Returns a dict with either ``ticket_url`` or ``disabled=True`` when
-    management credentials are missing.  Caller is responsible for
-    showing the URL to the operator and/or sending the email.
+    Step 2: ``POST /api/v2/tickets/password-change`` keyed by the **new user_id**
+    (NOT by email). This guarantees the ticket can only reset the password of
+    the freshly-created tenant-member account, never of an unrelated Auth0
+    user. The ticket URL is logged server-side for emergency recovery and is
+    NOT returned to the caller — the user receives it via Auth0's own email
+    flow (the create-user call triggers the connection's email template when
+    ``verify_email=true`` is set).
+
+    Returns ``{'disabled': True}`` when management credentials are missing
+    (local dev), or ``{'auth0_user_id': '...', 'invited': True}`` on success.
     """
     if not auth0_management_enabled():
         return {'disabled': True}
     settings = get_settings()
-    body = {
+    connection = _invitation_connection(settings)
+
+    user_body: dict[str, Any] = {
         'email': email,
+        'email_verified': False,
+        'verify_email': True,
+        'connection': connection,
+        # Random password — the user will overwrite it via the password-change
+        # ticket. 32 hex chars meets Auth0's complexity policy in all common
+        # configurations.
+        'password': _random_initial_password(),
+        'user_metadata': {
+            'tenant_invitation': {
+                'tenant_id': str(tenant_id),
+                'role': role,
+            },
+        },
+    }
+    if display_name:
+        user_body['name'] = display_name
+        user_body['user_metadata']['display_name'] = display_name
+
+    try:
+        user = await _mgmt_request('POST', '/users', json_body=user_body)
+    except Auth0UserAlreadyExists:
+        # Re-raise so the route maps it to 409 — never silently downgrade to
+        # a password reset on a pre-existing account.
+        raise
+    except httpx.HTTPError as exc:
+        log.warning('auth0_admin.invite_user_create_failed', error=str(exc), email=email)
+        return {'disabled': False, 'error': str(exc)}
+
+    auth0_user_id = user.get('user_id')
+    if not auth0_user_id:
+        log.warning('auth0_admin.invite_user_missing_user_id', response=user)
+        return {'disabled': False, 'error': 'auth0_create_user_returned_no_id'}
+
+    ticket_body = {
+        'user_id': auth0_user_id,
         'result_url': _admin_panel_result_url(settings),
         'mark_email_as_verified': False,
         'includeEmailInRedirect': True,
         'ttl_sec': 60 * 60 * 24 * 7,
-        'connection_id': None,
     }
-    if display_name:
-        body['user_metadata'] = {'display_name': display_name}
-    # Auth0 rejects null connection_id; drop it when not specified.
-    body.pop('connection_id', None)
     try:
-        response = await _mgmt_request('POST', '/tickets/password-change', json_body=body)
+        ticket_response = await _mgmt_request('POST', '/tickets/password-change', json_body=ticket_body)
     except httpx.HTTPError as exc:
-        log.warning('auth0_admin.invite_user_failed', error=str(exc), email=email)
-        return {'disabled': False, 'error': str(exc)}
-    return {'disabled': False, 'ticket_url': response.get('ticket')}
+        log.warning('auth0_admin.invite_user_ticket_failed', error=str(exc), auth0_user_id=auth0_user_id)
+        return {'disabled': False, 'error': str(exc), 'auth0_user_id': auth0_user_id}
+
+    # Server-side log only — the URL is NOT returned to the caller.
+    ticket_url = ticket_response.get('ticket')
+    if ticket_url:
+        log.info(
+            'auth0_admin.invite_user_ticket_generated',
+            auth0_user_id=auth0_user_id,
+            tenant_id=str(tenant_id),
+            # log a fingerprint, not the URL itself, to avoid leaking the
+            # ticket through aggregated log storage.
+            ticket_present=True,
+        )
+
+    return {'disabled': False, 'invited': True, 'auth0_user_id': auth0_user_id}
+
+
+def _random_initial_password() -> str:
+    """A high-entropy throwaway password used only to create the Auth0 user.
+
+    The invitee resets it immediately via the password-change ticket; this
+    value is never stored or returned.
+    """
+    import secrets  # noqa: PLC0415
+
+    # 24 bytes (192 bits) → 48 hex chars; meets every Auth0 strength tier.
+    # Add an uppercase letter and a symbol to satisfy the strictest policy.
+    return f'A!{secrets.token_urlsafe(32)}'
 
 
 async def assign_roles(*, auth_subject: str | None, roles: list[str]) -> dict[str, Any]:

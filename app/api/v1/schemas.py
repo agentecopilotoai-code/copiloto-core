@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.locale import SUPPORTED_COUNTRIES
 
@@ -157,9 +157,24 @@ class ConversationCreate(BaseModel):
 
 
 class ConversationStart(BaseModel):
+    """Start a conversation on behalf of an agent.
+
+    TASK-0082 / BUG22: the caller may provide ONE of:
+      - ``contact_id``: open or reuse a conversation with that existing contact,
+        without touching its phone/wa_id (no identity mutation).
+      - ``phone_e164``: look up by phone in this tenant; if no contact exists,
+        create a new one. NEVER mutate an existing contact's phone_e164/wa_id.
+
+    The legacy ``wa_id`` field is removed. Agents must NOT be able to map a
+    foreign wa_id onto an attacker-controlled phone via this endpoint, so the
+    schema rejects extra fields outright (``ConfigDict(extra='forbid')``).
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
     tenant_id: UUID
-    phone_e164: str = Field(min_length=6, max_length=32)
-    wa_id: str | None = None
+    contact_id: UUID | None = None
+    phone_e164: str | None = Field(default=None, min_length=6, max_length=32)
     display_name: str | None = None
     initial_message: str | None = Field(default=None, max_length=4096)
     initial_message_type: str = Field(default='text', pattern='^(text|image|audio|video)$')
@@ -168,6 +183,14 @@ class ConversationStart(BaseModel):
     initial_mime_type: str | None = None
     current_intent: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ContactPhoneUpdate(BaseModel):
+    """TASK-0082 / BUG22: phone changes go through a separate endpoint
+    requiring ``manager``+ role and producing a dedicated audit entry."""
+
+    phone_e164: str = Field(min_length=6, max_length=32)
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class MessageCreate(BaseModel):
@@ -305,6 +328,11 @@ class BranchUpdate(BaseModel):
 
 
 PACKAGE_PAYMENT_STATUS_PATTERN = '^(not_required|pending|link_sent|paid|failed|refunded)$'
+# TASK-0084 / BUG02: client-writable values exclude any status that implies
+# money was actually moved. ``paid`` / ``failed`` / ``refunded`` are
+# transitioned ONLY by the payment webhook handler (signed by the provider)
+# or by the admin-only refund endpoint, never by a free-form client field.
+CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN = '^(not_required|pending|link_sent)$'
 
 
 class TreatmentPackageCreate(BaseModel):
@@ -337,7 +365,7 @@ class TreatmentPackageUpdate(BaseModel):
 
 class ContactPackageAssign(BaseModel):
     package_id: UUID
-    payment_status: str = Field(default='pending', pattern=PACKAGE_PAYMENT_STATUS_PATTERN)
+    payment_status: str = Field(default='pending', pattern=CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN)
     payment_amount: float | None = Field(default=None, ge=0)
     payment_currency: str | None = Field(default=None, min_length=3, max_length=3)
     expires_at: datetime | None = None
@@ -345,11 +373,17 @@ class ContactPackageAssign(BaseModel):
 
 
 class ContactPackagePatch(BaseModel):
-    payment_status: str | None = Field(default=None, pattern=PACKAGE_PAYMENT_STATUS_PATTERN)
+    # TASK-0084 / BUG02: ``paid`` / ``failed`` / ``refunded`` are never
+    # client-writable. The payment webhook owns transitions to ``paid``/
+    # ``failed`` (validated signature); refunds go through the admin-only
+    # DELETE endpoint with audit.
+    payment_status: str | None = Field(default=None, pattern=CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN)
     payment_amount: float | None = Field(default=None, ge=0)
     payment_currency: str | None = Field(default=None, min_length=3, max_length=3)
     expires_at: datetime | None = None
-    status: str | None = Field(default=None, pattern='^(active|exhausted|expired|refunded)$')
+    # ``status`` excludes ``refunded`` for the same reason: refund flows
+    # through the DELETE endpoint, not a PATCH from an agent UI.
+    status: str | None = Field(default=None, pattern='^(active|exhausted|expired)$')
     notes: str | None = Field(default=None, max_length=2000)
 
 
@@ -552,6 +586,10 @@ class IntentEvaluateRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
     max_chunks: int = Field(default=5, ge=1, le=10)
     min_score: float = Field(default=0.12, ge=0, le=1)
+    # Admin-only RAG-test path: opt-in to include staff-only chunks
+    # (visibility='agents_only') in the evaluation. The runtime end-user
+    # response path (orchestrator) NEVER sees this flag.
+    include_agents_only: bool = False
 
 
 class ContactTagCreate(BaseModel):
