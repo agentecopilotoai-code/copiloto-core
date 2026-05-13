@@ -15,6 +15,53 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG05 (widget web reusaba contacto por phone-match anónimo), BUG22 (`POST /v1/conversations/start` aceptaba `wa_id` + `phone_e164` y `upsert_whatsapp_contact` SOBRESCRIBÍA el `phone_e164`/`wa_id` del contacto existente → atacante con rol agent podía redirigir outbound).
+- **Fase 1 — verificación en HEAD:**
+  - **BUG05:** YA mitigado en HEAD. `web_chat_start` sintetiza un `wa_id` aleatorio (`synthesize_web_identity(seed)` con `secrets.token_hex(16)`) y guarda el phone/email enviados por el widget como `unverified_phone`/`unverified_email` en `contacts.metadata`. NO reusa contactos existentes por phone-match. Riesgo: una refactor futura podría re-introducir el lookup — se documenta y se pinea por test de regresión.
+  - **BUG22:** reproducible. `ConversationStart` aceptaba `wa_id` opcional; el handler hacía `wa_id = (payload.wa_id or phone_e164).strip().lstrip('+')` y llamaba `upsert_whatsapp_contact(...)` que ejecuta `UPDATE contacts SET wa_id=$2, phone_e164=$3, phone_hash=$4 ...` sobre el primer match por `(wa_id=$2 or phone_e164=$3)`. Vector confirmado: agent malicioso con `wa_id=<victima>` + `phone_e164=<atacante>` → contacto víctima reescrito al teléfono del atacante.
+- **Fase 2 — remediación (causa raíz, schema + endpoint + nuevo flow):**
+  - **`ConversationStart` (app/api/v1/schemas.py):** elimina `wa_id`. Acepta `contact_id: UUID | None` o `phone_e164: str | None`. `phone_e164` ahora opcional. `model_config = ConfigDict(extra='forbid')` — rechaza explícitamente cualquier campo desconocido (incluido `wa_id` legacy si algún cliente lo envía).
+  - **`start_conversation` (app/api/v1/routes.py):**
+    - Rechaza con 422 si no llega `contact_id` ni `phone_e164`.
+    - Si llega `contact_id`: SELECT por `(tenant_id, id)`; 404 si no existe.
+    - Si llega `phone_e164`: SELECT por `(tenant_id, phone_e164)`. Si existe, lo reutiliza tal cual (sin UPDATE de identidad). Si no, INSERT nuevo con `wa_id=phone_e164.lstrip('+')`.
+    - El handler **ya no invoca** `upsert_whatsapp_contact` — esa función queda solo para el webhook WhatsApp inbound, donde la identidad viene firmada por Meta.
+  - **Nuevo endpoint `PATCH /v1/contacts/{contact_id}/phone` (tenant_ops_router):**
+    - `ensure_tenant_role(request, conn, tenant_id, 'manager')` — rol mínimo `manager`.
+    - Recibe `ContactPhoneUpdate{phone_e164, reason?}`.
+    - Rechaza con 409 si otro contacto del mismo tenant ya tiene ese `phone_e164` (no merge implícito).
+    - Update atómico de `phone_e164`, `wa_id` (derivado), `phone_hash` (derivado).
+    - `audit_logs(action='contact.phone_changed', metadata={previous_phone_last4, new_phone_last4, reason})`.
+  - **UI Contacts (admin-panel/src/components/modules/contacts/ContactsModule.jsx):**
+    - Botón "Cambiar teléfono" debajo del header del contacto seleccionado.
+    - Formulario inline con input `Nuevo teléfono (E.164)` + `Razón` (opcional, persiste en audit).
+    - Llama `updateContactPhone(...)` (nueva función en `services/coreApi.js`). Refresca profile + listado tras éxito; muestra el 409 del servidor si hay colisión.
+- **Archivos modificados:**
+  - `app/api/v1/schemas.py` (`ConversationStart` sin `wa_id`, `+extra='forbid'`; nuevo `ContactPhoneUpdate`)
+  - `app/api/v1/routes.py` (`start_conversation` reescrito; nuevo `patch_contact_phone`)
+  - `admin-panel/src/services/coreApi.js` (`updateContactPhone`)
+  - `admin-panel/src/components/modules/contacts/ContactsModule.jsx` (botón + formulario)
+  - `tests/test_contact_identity.py` (nuevo, 17 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py app/api/v1/schemas.py tests/test_contact_identity.py` → all checks passed.
+  - `uv run pytest tests/test_contact_identity.py -q` → 17 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1490 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG05:** `test_web_chat_start_synthesizes_fresh_identity_not_reuse_existing`, `test_web_chat_start_seed_includes_random_nonce`. Pinean que el widget no llama `upsert_whatsapp_contact` y que el seed incluye nonce.
+  - **BUG22 schema:** `test_conversation_start_schema_no_longer_accepts_wa_id`, `test_conversation_start_phone_is_optional_when_contact_id_provided`, `test_conversation_start_payload_accepts_contact_id_only`, `test_conversation_start_payload_accepts_phone_only`, `test_conversation_start_rejects_arbitrary_wa_id_field`.
+  - **BUG22 endpoint:** `test_start_conversation_never_calls_upsert_whatsapp_contact`, `test_start_conversation_requires_contact_id_or_phone_e164`, `test_start_conversation_creates_new_contact_only_when_phone_unknown`, `test_start_conversation_rejects_unknown_contact_id`.
+  - **PATCH /contacts/{id}/phone:** `test_patch_contact_phone_endpoint_exists_with_manager_gate`, `test_patch_contact_phone_writes_audit_log`, `test_patch_contact_phone_rejects_collision_with_another_contact`, `test_patch_contact_phone_updates_wa_id_and_phone_hash_together`, `test_contact_phone_update_schema_accepts_phone_and_reason`, `test_contact_phone_update_schema_rejects_short_phone`.
+- **Notas:**
+  - El OTP-flow para verificar phones del widget (mencionado en la tarea original) NO se implementa en este fix. El widget queda con `phone_verified=False` en metadata y el orquestador puede mirar ese flag si decide rechazar acciones contact-scoped a futuro. El alcance entregado cubre los criterios de aceptación explícitos de BUG05/BUG22.
+  - `upsert_whatsapp_contact` se mantiene para el webhook WhatsApp inbound (donde Meta firma el `phone_number_id`/`wa_id` y la identidad es confiable). Se documenta vía la prueba `test_start_conversation_never_calls_upsert_whatsapp_contact` que NO debe colarse de vuelta al path agent-initiated.
+  - `extra='forbid'` en `ConversationStart` es un cambio agresivo pero alineado con el mandato MVP ("no compat, una sola versión"). Cualquier cliente que envíe `wa_id` recibe 422 inmediato, lo que es el comportamiento deseado.
+
+---
+
 ### TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por phone_number_id
 
 - **Fecha:** 2026-05-13

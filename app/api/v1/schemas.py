@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.locale import SUPPORTED_COUNTRIES
 
@@ -157,9 +157,24 @@ class ConversationCreate(BaseModel):
 
 
 class ConversationStart(BaseModel):
+    """Start a conversation on behalf of an agent.
+
+    TASK-0082 / BUG22: the caller may provide ONE of:
+      - ``contact_id``: open or reuse a conversation with that existing contact,
+        without touching its phone/wa_id (no identity mutation).
+      - ``phone_e164``: look up by phone in this tenant; if no contact exists,
+        create a new one. NEVER mutate an existing contact's phone_e164/wa_id.
+
+    The legacy ``wa_id`` field is removed. Agents must NOT be able to map a
+    foreign wa_id onto an attacker-controlled phone via this endpoint, so the
+    schema rejects extra fields outright (``ConfigDict(extra='forbid')``).
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
     tenant_id: UUID
-    phone_e164: str = Field(min_length=6, max_length=32)
-    wa_id: str | None = None
+    contact_id: UUID | None = None
+    phone_e164: str | None = Field(default=None, min_length=6, max_length=32)
     display_name: str | None = None
     initial_message: str | None = Field(default=None, max_length=4096)
     initial_message_type: str = Field(default='text', pattern='^(text|image|audio|video)$')
@@ -168,6 +183,14 @@ class ConversationStart(BaseModel):
     initial_mime_type: str | None = None
     current_intent: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ContactPhoneUpdate(BaseModel):
+    """TASK-0082 / BUG22: phone changes go through a separate endpoint
+    requiring ``manager``+ role and producing a dedicated audit entry."""
+
+    phone_e164: str = Field(min_length=6, max_length=32)
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class MessageCreate(BaseModel):

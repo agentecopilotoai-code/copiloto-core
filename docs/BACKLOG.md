@@ -835,9 +835,12 @@ _TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por 
 
 ---
 
-### TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto
+_TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** dos rutas distintas permiten que un actor no-confiable afecte la identidad/routing de un `contact` existente: el widget web (anónimo) lo hace por phone-match implícito; el endpoint de "iniciar conversación" lo hace por `wa_id` controlado por el agent. Ambos casos comparten el patrón "el contacto se resuelve por un campo que el caller controla, y luego se reusa/sobrescribe sin proof of ownership".
 - **Bugs cubiertos (2):**
   - **BUG05** (`docs/BUGS/BUG05`, commit `eb786e8`): `POST /v1/web/chat/start` acepta `phone` del browser y reusa el contacto existente del tenant si coincide → impersonación.
@@ -852,6 +855,7 @@ _TASK-0081 — Fix estructural: binding webhook WhatsApp ↔ tenant_channel por 
 - **Criterios de aceptación:**
   - BUG05: test estático que `phone` enviado por widget NO altera/reusa ningún `contact` existente; test que mensaje "no" desde widget sin OTP NO cambia `confirmation_status` de citas pre-existentes.
   - BUG22: test que agente con POST `wa_id=<victima>` + `phone_e164=<atacante>` → 403/422; test que `PATCH /contacts/{id}/phone` requiere `manager` y produce audit.
+-->
 
 ---
 

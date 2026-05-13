@@ -41,6 +41,7 @@ from app.api.v1.schemas import (
     ContactTagUpdate,
     ContactUpsert,
     ConversationCreate,
+    ContactPhoneUpdate,
     ConversationStart,
     IntentEvaluateRequest,
     KnowledgeDocumentCreate,
@@ -2895,6 +2896,79 @@ async def get_contact(
     return record_to_dict(row)
 
 
+@tenant_ops_router.patch('/contacts/{contact_id}/phone')
+async def patch_contact_phone(
+    contact_id: UUID,
+    payload: ContactPhoneUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """TASK-0082 / BUG22: mutate a contact's phone_e164 (and derived
+    ``wa_id`` + ``phone_hash``) only through this dedicated endpoint, gated by
+    role ``manager``+ and recorded in ``audit_logs``. The ``start_conversation``
+    flow is now read-only with respect to identity.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    await ensure_tenant_role(request, conn, tenant_id, 'manager')
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    existing = await conn.fetchrow(
+        'select id, phone_e164, wa_id from app.contacts where tenant_id=$1 and id=$2',
+        tenant_id,
+        contact_id,
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail='Contact not found')
+
+    new_phone = payload.phone_e164.strip()
+    new_wa_id = new_phone.lstrip('+')
+    new_hash = hashlib.sha256(new_phone.encode()).digest()
+
+    # Prevent silently colliding with another contact (another tenant row that
+    # already owns this phone). If the operator wants to merge, that's a
+    # separate flow; here we refuse to overwrite identity ambiguously.
+    collision = await conn.fetchrow(
+        'select id from app.contacts where tenant_id=$1 and phone_e164=$2 and id<>$3',
+        tenant_id,
+        new_phone,
+        contact_id,
+    )
+    if collision:
+        raise HTTPException(
+            status_code=409,
+            detail='Another contact in this tenant already has this phone_e164',
+        )
+
+    row = await conn.fetchrow(
+        """
+        update app.contacts
+        set phone_e164=$3, wa_id=$4, phone_hash=$5, updated_at=now()
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        contact_id,
+        new_phone,
+        new_wa_id,
+        new_hash,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact.phone_changed',
+        entity_type='contact',
+        entity_id=str(contact_id),
+        metadata={
+            'previous_phone_last4': (existing['phone_e164'] or '')[-4:],
+            'new_phone_last4': new_phone[-4:],
+            'reason': payload.reason,
+        },
+    )
+    return record_to_dict(row)
+
+
 @tenant_ops_router.get('/contacts')
 async def list_contacts(
     request: Request,
@@ -3643,22 +3717,52 @@ async def start_conversation(
         tenant_id=str(payload.tenant_id),
         channel_id=str(channel['id']),
         phone_last4=payload.phone_e164[-4:] if payload.phone_e164 else None,
+        contact_id=str(payload.contact_id) if payload.contact_id else None,
         actor_id=request.state.actor_id,
     )
 
-    phone_e164 = payload.phone_e164.strip()
-    wa_id = (payload.wa_id or phone_e164).strip().lstrip('+')
-    phone_hash = hashlib.sha256(phone_e164.encode()).digest()
-    contact = await upsert_whatsapp_contact(
-        conn,
-        tenant_id=payload.tenant_id,
-        wa_id=wa_id,
-        phone_e164=phone_e164,
-        phone_hash=phone_hash,
-        display_name=payload.display_name,
-        metadata=payload.metadata,
-        source='operations_desk',
-    )
+    # TASK-0082 / BUG22: pick the contact by ID first, then by phone — and
+    # NEVER mutate an existing contact's phone_e164/wa_id from this endpoint.
+    # The previous upsert path overwrote phone_e164 on conflict, which let an
+    # agent redirect outbound traffic to an attacker's phone; phone changes
+    # now go through PATCH /contacts/{id}/phone (manager+, audited).
+    if payload.contact_id is None and not (payload.phone_e164 or '').strip():
+        raise HTTPException(
+            status_code=422,
+            detail='Either contact_id or phone_e164 is required to start a conversation',
+        )
+    if payload.contact_id is not None:
+        contact = await conn.fetchrow(
+            'select * from app.contacts where tenant_id=$1 and id=$2',
+            payload.tenant_id,
+            payload.contact_id,
+        )
+        if not contact:
+            raise HTTPException(status_code=404, detail='Contact not found in this tenant')
+    else:
+        phone_e164 = payload.phone_e164.strip()
+        phone_hash = hashlib.sha256(phone_e164.encode()).digest()
+        contact = await conn.fetchrow(
+            'select * from app.contacts where tenant_id=$1 and phone_e164=$2',
+            payload.tenant_id,
+            phone_e164,
+        )
+        if not contact:
+            wa_id = phone_e164.lstrip('+')
+            contact = await conn.fetchrow(
+                """
+                insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source)
+                values ($1, $2, $3, $4, $5, 'operations_desk', $6::jsonb, $7::jsonb)
+                returning *
+                """,
+                payload.tenant_id,
+                wa_id,
+                phone_e164,
+                phone_hash,
+                payload.display_name,
+                json.dumps(payload.metadata or {}),
+                json.dumps(build_lead_source(channel='whatsapp')),
+            )
     conversation = await conn.fetchrow(
         """
         select *

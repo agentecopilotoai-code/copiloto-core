@@ -1108,6 +1108,17 @@ export function getContactProfile(session, tenantId, contactId) {
   return request(`/contacts/${contactId}/profile`, { session, tenantId });
 }
 
+// TASK-0082 / BUG22: dedicated endpoint to mutate a contact's phone_e164.
+// Requires role manager+ on the tenant and produces an audit row.
+export function updateContactPhone(session, tenantId, contactId, { phone_e164, reason }) {
+  return request(`/contacts/${contactId}/phone`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: { phone_e164, reason: reason || null },
+  });
+}
+
 export function assignContactTags(session, tenantId, contactId, tagIds) {
   return request(`/contacts/${contactId}/tags`, {
     method: 'POST',

@@ -12,6 +12,7 @@ import {
   listTreatmentPackages,
   refundContactPackage,
   unassignContactTag,
+  updateContactPhone,
 } from '../../../services/coreApi.js';
 
 function formatDate(value) {
@@ -85,6 +86,9 @@ export function ContactsModule({ module, session, tenant }) {
   const [availablePackages, setAvailablePackages] = useState([]);
   const [pendingPackageId, setPendingPackageId] = useState('');
   const [consent, setConsent] = useState(null);
+  const [phoneEditOpen, setPhoneEditOpen] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState('');
+  const [phoneReason, setPhoneReason] = useState('');
 
   const tenantId = tenant?.id;
 
@@ -237,6 +241,33 @@ export function ContactsModule({ module, session, tenant }) {
     }
   }
 
+  async function handleUpdatePhone(event) {
+    event.preventDefault();
+    if (!selectedContactId) return;
+    const trimmed = phoneDraft.trim();
+    if (!trimmed) {
+      setNotice({ type: 'error', text: 'El nuevo teléfono es obligatorio.' });
+      return;
+    }
+    setIsBusy(true);
+    try {
+      await updateContactPhone(session, tenantId, selectedContactId, {
+        phone_e164: trimmed,
+        reason: phoneReason.trim() || undefined,
+      });
+      setNotice({ type: 'success', text: 'Teléfono actualizado y registrado en audit_logs.' });
+      setPhoneEditOpen(false);
+      setPhoneDraft('');
+      setPhoneReason('');
+      await refreshProfile();
+      await refreshContacts();
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleCreateNote(event) {
     event.preventDefault();
     if (!noteDraft.trim() || !selectedContactId) return;
@@ -343,7 +374,21 @@ export function ContactsModule({ module, session, tenant }) {
                 <div>
                   <p className="eyebrow">Contacto</p>
                   <h3>{profile.contact.display_name || profile.contact.phone_e164 || profile.contact.wa_id}</h3>
-                  <p className="hint">{profile.contact.phone_e164}</p>
+                  <p className="hint">
+                    {profile.contact.phone_e164}{' '}
+                    <button
+                      type="button"
+                      className="link-action"
+                      onClick={() => {
+                        setPhoneDraft(profile.contact.phone_e164 || '');
+                        setPhoneReason('');
+                        setPhoneEditOpen(true);
+                      }}
+                      style={{ marginLeft: '0.5rem' }}
+                    >
+                      Cambiar teléfono
+                    </button>
+                  </p>
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
                   {(profile.tags || []).map((tag) => (
@@ -351,6 +396,50 @@ export function ContactsModule({ module, session, tenant }) {
                   ))}
                 </div>
               </div>
+
+              {phoneEditOpen && (
+                <form className="form-grid" onSubmit={handleUpdatePhone}>
+                  <label>
+                    Nuevo teléfono (E.164)
+                    <input
+                      onChange={(event) => setPhoneDraft(event.target.value)}
+                      placeholder="+573001234567"
+                      required
+                      value={phoneDraft}
+                    />
+                    <small className="hint">
+                      Requiere rol <strong>manager</strong> o superior. La
+                      operación queda registrada en <code>audit_logs</code>
+                      (<code>contact.phone_changed</code>). Si otro contacto del
+                      tenant ya tiene este número, el servidor responde 409.
+                    </small>
+                  </label>
+                  <label>
+                    Razón (opcional, queda en el audit)
+                    <input
+                      onChange={(event) => setPhoneReason(event.target.value)}
+                      placeholder="Cliente cambió de número"
+                      value={phoneReason}
+                    />
+                  </label>
+                  <div className="form-actions">
+                    <button className="primary-action" type="submit" disabled={isBusy}>
+                      Guardar nuevo teléfono
+                    </button>
+                    <button
+                      className="secondary-action"
+                      type="button"
+                      onClick={() => {
+                        setPhoneEditOpen(false);
+                        setPhoneDraft('');
+                        setPhoneReason('');
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              )}
 
               <form className="form-grid" onSubmit={handleAssignTag}>
                 <label>
