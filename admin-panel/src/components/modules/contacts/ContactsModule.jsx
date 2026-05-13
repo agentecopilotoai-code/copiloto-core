@@ -453,6 +453,53 @@ export function ContactsModule({ module, session, tenant }) {
                 </div>
               </div>
 
+              <div className="schedule-panel" data-testid="contact-referrals-panel">
+                <div>
+                  <strong>Referidos</strong>
+                  {profile.referrals?.referred_by ? (
+                    <p className="hint" style={{ marginTop: '0.4rem' }}>
+                      Le recomendó este negocio:{' '}
+                      <strong>
+                        {profile.referrals.referred_by.display_name
+                          || profile.referrals.referred_by.phone_e164
+                          || profile.referrals.referred_by.contact_id}
+                      </strong>
+                    </p>
+                  ) : (
+                    <p className="hint" style={{ marginTop: '0.4rem' }}>
+                      Sin referidor registrado.
+                    </p>
+                  )}
+                  {profile.referrals?.referred_contacts?.length ? (
+                    <>
+                      <p
+                        className="hint"
+                        style={{ marginTop: '0.6rem', fontWeight: 600 }}
+                      >
+                        Personas que recomendó ({profile.referrals.referred_contacts.length})
+                      </p>
+                      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                        {profile.referrals.referred_contacts.map((ref) => (
+                          <li
+                            key={ref.contact_id}
+                            style={{
+                              padding: '0.3rem 0',
+                              borderBottom: '1px solid var(--border, #e2e8f0)',
+                            }}
+                          >
+                            <strong>{ref.display_name || ref.phone_e164 || '—'}</strong>
+                            <div className="hint" style={{ fontSize: '0.75rem' }}>
+                              {formatDateShort(ref.created_at)}
+                              {ref.phone_e164 ? ` · ${ref.phone_e164}` : ''}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+
               <div className="schedule-panel" data-testid="contact-packages-panel">
                 <div>
                   <strong>Paquetes activos</strong>

@@ -535,6 +535,9 @@ class WebChatStart(BaseModel):
     utm_medium: str | None = Field(default=None, max_length=160)
     utm_campaign: str | None = Field(default=None, max_length=160)
     referrer: str | None = Field(default=None, max_length=2048)
+    # TASK-0055: optional UUID of the contact who referred this lead, sourced
+    # from ``data-ref`` or ``?ref=`` on the embedding page.
+    referrer_contact_id: UUID | None = Field(default=None)
 
 
 class WebChatMessage(BaseModel):

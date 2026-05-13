@@ -30,6 +30,11 @@
   var greeting =
     scriptEl.getAttribute('data-greeting') ||
     'Hola 👋, ¿en qué te podemos ayudar?';
+  // TASK-0055: referrer can be passed by the embedding page either explicitly
+  // via data-ref="<contact_uuid>" or implicitly via the ?ref=<contact_uuid>
+  // query parameter on the landing URL. We forward it to /v1/web/chat/start
+  // so the new contact gets ``referrer_contact_id`` populated.
+  var referrerAttr = scriptEl.getAttribute('data-ref') || '';
   if (!tenant || !widgetToken) {
     console.warn('[copilotoia] Missing data-tenant or data-widget-token');
     return;
@@ -51,6 +56,16 @@
       utm_campaign: params.get('utm_campaign') || undefined,
       referrer: document.referrer || undefined,
     };
+  }
+
+  function readReferrerContactId() {
+    // TASK-0055: prefer the explicit data-ref attribute, fall back to ?ref=
+    // on the page URL. Format must be a UUID string; the backend validates
+    // shape before linking, so we just trim here.
+    if (referrerAttr) return referrerAttr.trim();
+    var params = new URLSearchParams(window.location.search);
+    var fromQuery = params.get('ref');
+    return fromQuery ? fromQuery.trim() : undefined;
   }
 
   function injectStyles() {
@@ -199,6 +214,7 @@
       utm_medium: utm.utm_medium,
       utm_campaign: utm.utm_campaign,
       referrer: utm.referrer,
+      referrer_contact_id: readReferrerContactId(),
     };
     if (!body.name || !body.message) return;
     state.sending = true;

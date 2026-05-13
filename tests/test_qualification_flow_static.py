@@ -134,7 +134,10 @@ def test_orchestrator_calls_qualification_before_booking():
 def test_booking_flow_accepts_prefilled_service_id():
     source = BOOKING_FLOW.read_text()
     assert 'prefilled_service_id: str | None = None' in source
-    assert 'if prefilled_service_id:' in source
+    # Prefilled service still drives the package/branch/resource chain. The
+    # surrounding gating (``new_state is None and ...``) lets the referrer
+    # question (TASK-0055) run first when the tenant opted in.
+    assert 'prefilled_service_id:' in source
     assert "selected_service_id" in source
 
 

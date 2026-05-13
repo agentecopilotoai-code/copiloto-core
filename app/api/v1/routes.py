@@ -2271,6 +2271,34 @@ async def get_contact_profile(
     if not isinstance(raw_qualification, dict):
         raw_qualification = {}
     contact_dict['qualification'] = raw_qualification
+
+    # TASK-0055: surface referrer relationships on the contact profile.
+    referred_by = None
+    if contact_dict.get('referrer_contact_id'):
+        ref_row = await conn.fetchrow(
+            'select id, display_name, phone_e164 from app.contacts '
+            'where tenant_id=$1 and id=$2',
+            tenant_id,
+            contact_dict['referrer_contact_id'],
+        )
+        if ref_row:
+            referred_by = {
+                'contact_id': str(ref_row['id']),
+                'display_name': ref_row['display_name'],
+                'phone_e164': ref_row['phone_e164'],
+            }
+    referred_contacts = await conn.fetch(
+        """
+        select id, display_name, phone_e164, created_at
+        from app.contacts
+        where tenant_id=$1 and referrer_contact_id=$2
+        order by created_at desc
+        limit 20
+        """,
+        tenant_id,
+        contact_id,
+    )
+
     return {
         'contact': contact_dict,
         'tags': [record_to_dict(row) for row in tags],
@@ -2288,6 +2316,18 @@ async def get_contact_profile(
             'last_visit_at': stats['last_visit_at'] if stats else None,
             'average_rating': feedback['average_rating'] if feedback else None,
             'ratings_count': feedback['ratings_count'] if feedback else 0,
+        },
+        'referrals': {
+            'referred_by': referred_by,
+            'referred_contacts': [
+                {
+                    'contact_id': str(row['id']),
+                    'display_name': row['display_name'],
+                    'phone_e164': row['phone_e164'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                }
+                for row in referred_contacts
+            ],
         },
     }
 
@@ -7539,12 +7579,25 @@ async def web_chat_start(
         contact_metadata['unverified_phone'] = payload.phone.strip()
     if payload.email:
         contact_metadata['unverified_email'] = payload.email.strip()
+    # TASK-0055: link the new lead to the referring contact when the widget
+    # received a ?ref=<contact_uuid> or data-ref=<contact_uuid> hint. We only
+    # honour it if the referrer is a real contact of the same tenant.
+    referrer_id: UUID | None = None
+    if payload.referrer_contact_id:
+        if await conn.fetchval(
+            'select 1 from app.contacts where tenant_id=$1 and id=$2',
+            tenant_id,
+            payload.referrer_contact_id,
+        ):
+            referrer_id = payload.referrer_contact_id
+
     contact = await conn.fetchrow(
         """
         insert into app.contacts (
-          tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source
+          tenant_id, wa_id, phone_e164, phone_hash, display_name, source,
+          metadata, lead_source, referrer_contact_id
         )
-        values ($1, $2, $3, $4, $5, 'web_widget', $6::jsonb, $7::jsonb)
+        values ($1, $2, $3, $4, $5, 'web_widget', $6::jsonb, $7::jsonb, $8)
         returning *
         """,
         tenant_id,
@@ -7554,6 +7607,7 @@ async def web_chat_start(
         payload.name.strip(),
         json.dumps(contact_metadata),
         json.dumps(lead_source),
+        referrer_id,
     )
 
     conversation = await conn.fetchrow(
@@ -8695,6 +8749,96 @@ async def analytics_campaigns(
         ),
     }
 
+    return {
+        'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
+        'totals': totals,
+        'items': items,
+    }
+
+
+@tenant_analytics_router.get('/analytics/referrals')
+async def analytics_referrals(
+    request: Request,
+    from_date: str | None = Query(None),
+    to_date: str | None = Query(None),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """TASK-0055: top 20 referrers with their contribution.
+
+    A "referral" is counted when a contact's ``referrer_contact_id`` points at
+    another contact in the same tenant and the *referred* contact was created
+    inside the requested range. ``appointments_generated`` and
+    ``revenue_generated`` aggregate completed appointments of the referred
+    contacts whose ``starts_at`` falls inside the same window — so the metrics
+    line up with the rest of the analytics dashboard.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    start, end = _resolve_analytics_range(from_date, to_date)
+    range_start, range_end = _range_bounds(start, end)
+
+    rows = await conn.fetch(
+        """
+        with referrals as (
+          select referrer_contact_id, id as referred_contact_id
+          from app.contacts
+          where tenant_id = $1
+            and referrer_contact_id is not null
+            and created_at >= $2 and created_at < $3
+        ),
+        per_referrer as (
+          select
+            r.referrer_contact_id,
+            count(*)::int as count_referrals,
+            count(distinct a.id) filter (where a.status = 'completed')::int
+              as appointments_generated,
+            coalesce(
+              sum(s.price_amount) filter (where a.status = 'completed'),
+              0
+            )::float as revenue_generated
+          from referrals r
+          left join app.appointments a on a.tenant_id = $1
+                                       and a.contact_id = r.referred_contact_id
+                                       and a.starts_at >= $2
+                                       and a.starts_at < $3
+          left join app.service_catalog s on s.tenant_id = $1
+                                          and s.id = a.service_id
+          group by r.referrer_contact_id
+        )
+        select
+          p.referrer_contact_id as id,
+          c.display_name,
+          c.phone_e164,
+          p.count_referrals,
+          p.appointments_generated,
+          p.revenue_generated
+        from per_referrer p
+        join app.contacts c on c.tenant_id = $1 and c.id = p.referrer_contact_id
+        order by p.revenue_generated desc, p.count_referrals desc,
+                 c.display_name asc nulls last
+        limit 20
+        """,
+        tenant_id, range_start, range_end,
+    )
+
+    items = [
+        {
+            'contact_id': str(row['id']),
+            'display_name': row['display_name'] or row['phone_e164'] or '—',
+            'phone_e164': row['phone_e164'],
+            'count_referrals': int(row['count_referrals'] or 0),
+            'appointments_generated': int(row['appointments_generated'] or 0),
+            'revenue_generated': round(float(row['revenue_generated'] or 0.0), 2),
+        }
+        for row in rows
+    ]
+    totals = {
+        'referrers': len(items),
+        'referrals': sum(item['count_referrals'] for item in items),
+        'appointments_generated': sum(item['appointments_generated'] for item in items),
+        'revenue_generated': round(
+            sum(item['revenue_generated'] for item in items), 2
+        ),
+    }
     return {
         'range': {'from_date': start.isoformat(), 'to_date': end.isoformat()},
         'totals': totals,

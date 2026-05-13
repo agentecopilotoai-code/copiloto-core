@@ -47,6 +47,8 @@ DEFAULT_NOTIFICATION_SETTINGS: dict[str, Any] = {
     'post_rebooking_message': '',
     # TASK-0044: auto-rebooking when the client declines the active confirmation
     'auto_rebook_on_decline': True,
+    # TASK-0055: ask "¿quién te recomendó?" during the booking flow. Opt-in.
+    'ask_referrer': False,
 }
 
 # Locale used for templates; tenants who need extra locales can register them
