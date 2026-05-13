@@ -186,9 +186,14 @@ def test_03_consent_ledger_has_rls_and_policy_loop():
 
 def test_04_contacts_has_consent_version_column():
     text = SCHEMA.read_text()
+    # consent_version vive inline en el CREATE TABLE de app.contacts; no se
+    # agrega vía ALTER TABLE incremental (el MVP no está en producción).
+    assert 'alter table app.contacts add column consent_version' not in text
+    create_block_start = text.index('create table app.contacts')
+    create_block_end = text.index(');', create_block_start)
+    create_block = text[create_block_start:create_block_end]
     assert re.search(
-        r'alter table app\.contacts add column consent_version int not null default 1',
-        text,
+        r'consent_version int not null default 1', create_block
     )
 
 

@@ -199,7 +199,7 @@ expect_json POST "${API_BASE_URL}/v1/conversations/${CONVERSATION_ID}/handoff" '
 printf 'ok\n'
 
 printf 'POST /v1/service-requests -> '
-SERVICE_REQUEST_JSON="$(curl_json POST "${API_BASE_URL}/v1/service-requests" "{\"tenant_id\":\"${TENANT_ID}\",\"contact_id\":\"${CONTACT_ID}\",\"conversation_id\":\"${CONVERSATION_ID}\",\"vertical_code\":\"field_service\",\"service_type\":\"diagnostico\",\"problem_summary\":\"Smoke test\"}" -H "${AGENT_AUTH}")"
+SERVICE_REQUEST_JSON="$(curl_json POST "${API_BASE_URL}/v1/service-requests" "{\"tenant_id\":\"${TENANT_ID}\",\"contact_id\":\"${CONTACT_ID}\",\"conversation_id\":\"${CONVERSATION_ID}\",\"vertical_code\":\"smoke_test\",\"service_type\":\"diagnostico\",\"problem_summary\":\"Smoke test\"}" -H "${AGENT_AUTH}")"
 SERVICE_REQUEST_ID="$(printf '%s' "${SERVICE_REQUEST_JSON}" | json_get "['id']")"
 printf 'ok\n'
 
@@ -221,7 +221,7 @@ expect_json POST "${API_BASE_URL}/v1/knowledge/documents" "{\"tenant_id\":\"${TE
 printf 'ok\n'
 
 printf 'POST /v1/prompts -> '
-expect_json POST "${API_BASE_URL}/v1/prompts" "{\"tenant_id\":\"${TENANT_ID}\",\"vertical_code\":\"field_service\",\"prompt_type\":\"system\",\"name\":\"smoke-${RUN_ID}\",\"version\":1,\"content\":\"Responde de forma segura.\",\"variables\":[\"tenant\"]}" -H "${ADMIN_AUTH}"
+expect_json POST "${API_BASE_URL}/v1/prompts" "{\"tenant_id\":\"${TENANT_ID}\",\"vertical_code\":\"smoke_test\",\"prompt_type\":\"system\",\"name\":\"smoke-${RUN_ID}\",\"version\":1,\"content\":\"Responde de forma segura.\",\"variables\":[\"tenant\"]}" -H "${ADMIN_AUTH}"
 printf 'ok\n'
 
 printf 'GET /v1/webhooks/whatsapp -> '

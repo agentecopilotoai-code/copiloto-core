@@ -50,6 +50,7 @@ create table app.tenant_settings (
   notification_settings jsonb not null default '{}'::jsonb,
   payment_settings jsonb not null default '{}'::jsonb,
   onboarding_progress jsonb not null default '{"last_completed_step":0,"steps":{}}'::jsonb,
+  bot_personality jsonb not null default '{"tone":"neutral","formality":"tu","emoji_level":"moderate","custom_persona":""}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -120,6 +121,7 @@ create table app.contacts (
   opt_in_status text not null default 'unknown' check (opt_in_status in ('unknown','granted','revoked','suppressed')),
   opt_in_at timestamptz,
   opt_out_at timestamptz,
+  consent_version int not null default 1,
   tags text[] not null default '{}',
   metadata jsonb not null default '{}'::jsonb,
   lead_source jsonb not null default '{}'::jsonb,
@@ -504,6 +506,8 @@ create table app.campaigns (
   template_id uuid references app.whatsapp_templates(id) on delete restrict,
   template_variables jsonb not null default '{}'::jsonb,
   segment_filter jsonb not null default '{}'::jsonb,
+  segment_id uuid,
+  launched_snapshot_at timestamptz,
   scheduled_at timestamptz,
   recipient_count int not null default 0,
   sent_count int not null default 0,
@@ -864,8 +868,6 @@ create trigger trg_consent_ledger_no_delete
   before delete on app.consent_ledger
   for each row execute function app.consent_ledger_block_mutations();
 
-alter table app.contacts add column consent_version int not null default 1;
-
 -- TASK-0061: per-tenant retention policy. The retention worker reads one row
 -- per (tenant, entity) and either DELETEs or anonymizes rows older than
 -- ``retention_days``. ``audit_logs`` only supports DELETE for compliance.
@@ -1050,16 +1052,7 @@ alter table app.contact_tag_assignments
 alter table app.contact_notes
   add constraint fk_contact_notes_tenant_contact foreign key (tenant_id, contact_id) references app.contacts(tenant_id, id);
 alter table app.campaigns add constraint uq_campaigns_tenant_id_id unique (tenant_id, id);
-alter table app.campaigns add column segment_id uuid;
-alter table app.campaigns add column launched_snapshot_at timestamptz;
 
--- TASK-0071: voz/personalidad configurable por tenant. Migración idempotente
--- para deployments existentes. tone ∈ {neutral,formal,friendly,playful},
--- formality ∈ {tu,usted,vos}, emoji_level ∈ {none,low,moderate,high},
--- custom_persona texto libre (≤ 600 chars saneados en backend).
-alter table app.tenant_settings
-  add column if not exists bot_personality jsonb not null
-  default '{"tone":"neutral","formality":"tu","emoji_level":"moderate","custom_persona":""}'::jsonb;
 alter table app.campaigns
   add constraint fk_campaigns_tenant_template foreign key (tenant_id, template_id) references app.whatsapp_templates(tenant_id, id);
 alter table app.campaign_attributions
