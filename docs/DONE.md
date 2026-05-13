@@ -15,6 +15,47 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0072 — Pruebas de carga + SLA documentado
+
+- **Fecha:** 2026-05-13
+- **Resumen:** ya no se vende un SLA sin haberlo medido. Se agrega un escenario Locust con perfil de tráfico mixto (70% webhook inbound, 20% lecturas del panel, 10% acciones de catálogo), un job `load-test` en GitHub Actions que lo corre sobre un compose efímero, y un `docs/sla.md` que documenta el SLA propuesto (99.9% disponibilidad, p95 < 2s) y que se regenera automáticamente al final de cada run con p50/p95/p99 reales del último Locust. El job hace exit 1 si el p95 agregado excede 2000 ms o si el RPS sostenido cae bajo 25 req/s.
+- **Implementación:**
+  - **Locustfile mixto (`tests/load/test_journey_load.py`):** `JourneyUser` con `wait_time = between(1, 3)` y tres `@task`:
+    - `@task(7)` → `POST /v1/webhooks/whatsapp` con payload Cloud API canónico firmado con HMAC SHA256 (`X-Hub-Signature-256`) usando el secret leído desde `.secrets/load_test_app_secret`. Rota 8 prompts (FAQ, booking, escalación, despedida) para tocar distintas ramas del clasificador.
+    - `@task(2)` → `GET /v1/health` + `GET /v1/tenants/[tid]/resources/public` (lecturas de panel que tocan RLS).
+    - `@task(1)` → `GET /v1/tenants/[tid]/services` con `Authorization: Bearer <SERVICE_TOKEN>` y `X-Tenant-Id`, ejercitando el path admin/catálogo autenticado.
+    - Hook `events.quitting` enforce-fast: imprime warning si el RPS sostenido cae bajo `LOAD_TEST_RPS` y fuerza `process_exit_code = 1` si el p95 agregado excede `LOAD_TEST_P95_MS` (default 2000 ms).
+    - Shim para `from locust import …`: el módulo es importable incluso sin Locust instalado (los `@task` se conservan como atributos), lo que permite tests estáticos y validación de imports en el CI normal.
+  - **Seed idempotente (`tests/load/seed_load_tenant.py`):** crea (o reutiliza por slug) un tenant `load-test`, inserta `tenant_settings` con escalación mínima, genera un `app_secret` aleatorio de 32 bytes, lo escribe a `.secrets/load_test_app_secret` (modo 600), crea/actualiza el `tenant_channels.whatsapp_cloud_api` con `phone_number_id='pn-load-test'`, `app_secret_ref='secrets/load_test_app_secret'`, `account_mode='mock'` y `status='active'`. También persiste el `tenant_id` y `phone_number_id` en `.secrets/` para que el Locustfile los lea sin variables de entorno.
+  - **Agregador + regeneración de `docs/sla.md` (`tests/load/aggregate_results.py`):** lee `<prefix>_stats.csv` de Locust, localiza la fila `Aggregated`, calcula p50/p95/p99/RPS y reescribe el bloque delimitado por `<!-- load-test-results:start -->` y `<!-- load-test-results:end -->` con un resumen + tabla por endpoint. Con `--enforce-sla` retorna exit 1 si el p95 supera el target o si el RPS sostenido cae bajo `--rps-target`.
+  - **Documento SLA (`docs/sla.md`):** tabla de objetivos (disponibilidad 99.9%, p95 < 2s, p99 < 4s, error rate < 1%, throughput sostenido ≥ 50 msg/s, RPO ≤ 24 h, RTO ≤ 4 h), ventanas de mantenimiento, exclusiones de upstream providers, bloque auto-regenerado del último run y guía de reproducción local end-to-end (compose → seed → locust → aggregate).
+  - **Job CI (`.github/workflows/load-test.yml`):** dispara en `release.published`, `push` a `main` y `workflow_dispatch` (con inputs `users` y `run_time`). Servicios `postgres pgvector/pg16` + `redis 7.4`, aplica `infra/postgres/01-schema.sql`, corre el seed, levanta `uvicorn` con 2 workers en background (modo mock para WhatsApp y stub para LLM, sin deps externas), espera health 60s, ejecuta Locust headless 50 users / spawn 10 / 5m con `--csv tests/load/results/run`, agrega los percentiles, enforce SLA y sube los CSVs + `docs/sla.md` como artefactos.
+  - **Extras `[load]` (`pyproject.toml`):** `locust>=2.31,<3` en un opcional dedicado para que el CI de unit/static (`pip install -e ".[dev]"`) no lo arrastre. El job `load-test` instala `".[dev,load]"`.
+  - **Exclusión de colección (`tests/conftest.py`):** `collect_ignore_glob = ['load/*']` evita que pytest intente recolectar el Locustfile (cuyo nombre empieza con `test_`) durante el CI normal.
+- **Archivos modificados / creados:**
+  - `tests/load/__init__.py` (nuevo)
+  - `tests/load/test_journey_load.py` (nuevo)
+  - `tests/load/seed_load_tenant.py` (nuevo)
+  - `tests/load/aggregate_results.py` (nuevo)
+  - `tests/test_load_journey_static.py` (nuevo)
+  - `tests/conftest.py` (collect_ignore_glob)
+  - `.github/workflows/load-test.yml` (nuevo)
+  - `docs/sla.md` (nuevo)
+  - `pyproject.toml` (extras `load`)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `pytest tests/test_load_journey_static.py -v` → 13/13 passed.
+  - `ruff check tests/load/ tests/test_load_journey_static.py` → All checks passed.
+  - `ruff check .` → All checks passed.
+  - El test `test_aggregator_renders_section_from_synthetic_csv` ejecuta el agregador end-to-end sobre un CSV sintético y verifica el rewrite del bloque entre marcadores. `test_aggregator_enforces_sla_failure` confirma exit code 1 cuando p95 > 2000 ms.
+  - El test `test_locustfile_importable_without_locust` confirma que el shim permite cargar el módulo sin la dependencia (CI unit-test queda libre de locust).
+- **Notas y limitaciones:**
+  - El job CI corre con `LLM_PROVIDER=stub` + `WHATSAPP_PROVIDER_MODE=mock`: lo que se mide es el path API + DB + worker, no la latencia del LLM cloud. Para medir el LLM real hay que disparar `workflow_dispatch` con secrets de proveedor — fuera del scope de este SLA "infra-level".
+  - El primer run llenará el bloque `load-test-results` de `docs/sla.md`; mientras tanto el documento queda con la marca "pendiente" y los marcadores intactos (que el agregador requiere para localizar el bloque).
+  - Los archivos `.secrets/load_test_*` se generan dentro del runner de CI y no se commitean; viven sólo durante el job.
+
+---
+
 ### TASK-0071 — Tono / personalidad del bot configurable por tenant
 
 - **Fecha:** 2026-05-13
