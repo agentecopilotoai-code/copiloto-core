@@ -5,6 +5,7 @@ import {
   assignContactTags,
   createContactNote,
   getContactProfile,
+  listContactConsent,
   listContactPackages,
   listContactTags,
   listContacts,
@@ -83,6 +84,7 @@ export function ContactsModule({ module, session, tenant }) {
   const [contactPackages, setContactPackages] = useState([]);
   const [availablePackages, setAvailablePackages] = useState([]);
   const [pendingPackageId, setPendingPackageId] = useState('');
+  const [consent, setConsent] = useState(null);
 
   const tenantId = tenant?.id;
 
@@ -132,6 +134,16 @@ export function ContactsModule({ module, session, tenant }) {
       .catch((error) => setNotice({ type: 'error', text: error.message }));
   }
 
+  function refreshConsent(contactId = selectedContactId) {
+    if (!tenantId || !contactId) {
+      setConsent(null);
+      return Promise.resolve();
+    }
+    return listContactConsent(session, tenantId, contactId, { limit: 100 })
+      .then(setConsent)
+      .catch((error) => setNotice({ type: 'error', text: error.message }));
+  }
+
   function refreshAvailablePackages() {
     if (!tenantId) return Promise.resolve();
     return listTreatmentPackages(session, tenantId, { is_active: true })
@@ -150,6 +162,9 @@ export function ContactsModule({ module, session, tenant }) {
     if (selectedContactId) {
       refreshProfile(selectedContactId);
       refreshContactPackages(selectedContactId);
+      refreshConsent(selectedContactId);
+    } else {
+      setConsent(null);
     }
   }, [selectedContactId]);
 
@@ -549,6 +564,53 @@ export function ContactsModule({ module, session, tenant }) {
                     </ul>
                   ) : (
                     <p className="hint">Sin paquetes asignados.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="schedule-panel" data-testid="contact-consent-panel">
+                <div>
+                  <strong>Consentimiento (Ley 1581 / GDPR)</strong>
+                  <p className="hint" style={{ marginTop: '0.3rem' }}>
+                    Estado actual:{' '}
+                    <strong>{consent?.contact?.opt_in_status || profile.contact.opt_in_status || '—'}</strong>
+                    {consent?.contact?.opt_in_at
+                      ? ` · concedido ${formatDate(consent.contact.opt_in_at)}`
+                      : ''}
+                    {consent?.contact?.opt_out_at
+                      ? ` · revocado ${formatDate(consent.contact.opt_out_at)}`
+                      : ''}
+                  </p>
+                  {consent?.items?.length ? (
+                    <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem' }}>
+                      {consent.items.map((evt) => (
+                        <li
+                          key={evt.id}
+                          style={{
+                            padding: '0.4rem 0',
+                            borderBottom: '1px solid var(--border, #e2e8f0)',
+                          }}
+                        >
+                          <div>
+                            <span className={`status-pill status-${evt.event}`}>{evt.event}</span>
+                            <span style={{ marginLeft: '0.4rem' }}>
+                              canal: <strong>{evt.channel}</strong>
+                            </span>
+                          </div>
+                          <div className="hint" style={{ fontSize: '0.8rem' }}>
+                            {formatDate(evt.occurred_at)}
+                            {evt.legal_basis ? ` · ${evt.legal_basis}` : ''}
+                          </div>
+                          {evt.copy_shown ? (
+                            <div className="hint" style={{ fontSize: '0.75rem', marginTop: '0.2rem' }}>
+                              «{evt.copy_shown.slice(0, 240)}»
+                            </div>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="hint">Aún no hay eventos registrados de consentimiento.</p>
                   )}
                 </div>
               </div>

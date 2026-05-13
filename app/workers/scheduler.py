@@ -7,6 +7,7 @@ import structlog
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services.campaigns import process_due_campaigns
+from app.services.consent import enqueue_consent_reaffirmations
 from app.services.metrics import set_worker_queue_depth, start_metrics_http_server
 from app.services.operator_alerts import process_pending_operator_alerts
 from app.services.segments import refresh_due_segments
@@ -264,12 +265,16 @@ async def _update_scheduler_queue_depth(conn: asyncpg.Connection) -> None:
     set_worker_queue_depth(worker='scheduler', depth=int(pending or 0))
 
 
+CONSENT_REAFFIRM_EVERY_TICKS = 360  # ≈ once per hour at 10s/loop
+
+
 async def main() -> None:
     configure_logging(get_settings().log_level)
     settings = get_settings()
     start_metrics_http_server(settings.worker_metrics_port)
     conn = await asyncpg.connect(settings.database_url)
     await conn.execute("select set_config('app.support_mode', 'true', false)")
+    tick = 0
     try:
         while True:
             await _update_scheduler_queue_depth(conn)
@@ -277,6 +282,12 @@ async def main() -> None:
             await process_due_campaigns(conn)
             await refresh_due_segments(conn)
             await process_pending_operator_alerts(conn)
+            if tick % CONSENT_REAFFIRM_EVERY_TICKS == 0:
+                try:
+                    await enqueue_consent_reaffirmations(conn)
+                except Exception:
+                    log.exception('consent_reaffirm_enqueue_failed')
+            tick += 1
             await asyncio.sleep(10)
     finally:
         await conn.close()

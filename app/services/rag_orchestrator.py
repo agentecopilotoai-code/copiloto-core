@@ -46,6 +46,7 @@ from app.services.intent_classifier import (
     INTENT_OPT_OUT,
     classify_intent,
 )
+from app.services.consent import enforce_inbound_consent, record_opt_out_by_keyword
 from app.services.policy_engine import evaluate_policy
 
 if TYPE_CHECKING:
@@ -308,12 +309,9 @@ async def _orchestrate_inbound_message_impl(
             )
             return {'action': 'skipped', 'reason': 'waiting_agent_handoff_pending'}
 
-    opt_in = contact.get('opt_in_status') or 'unknown'
-    if opt_in in ('revoked', 'suppressed'):
-        log.info('orchestrator.skip', reason=f'contact_opt_in_{opt_in}', conversation_id=conversation_id)
-        return {'action': 'skipped', 'reason': f'contact_opt_in_{opt_in}'}
-
-    # Load tenant settings and tenant display name
+    # Load tenant settings and tenant display name (needed early so the
+    # TASK-0062 consent gate can render the double opt-in template with the
+    # real business name).
     settings_row = await conn.fetchrow(
         """
         select ts.escalation_policy,
@@ -324,6 +322,29 @@ async def _orchestrate_inbound_message_impl(
         """,
         tenant_id,
     )
+    early_business_name = (settings_row['business_name'] if settings_row else None) or 'nuestro negocio'
+
+    # TASK-0062: doble opt-in gate. Replaces the legacy opt_in skip block.
+    # On first inbound from an unknown contact the bot sends the consent
+    # template and stops. The user's tap on the resulting button is also
+    # handled here (writes to consent_ledger and updates contacts.opt_in_status).
+    consent_decision = await enforce_inbound_consent(
+        conn,
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        channel_account_mode=channel_account_mode,
+        conversation=conversation,
+        contact=contact,
+        inbound_message=inbound_message,
+        business_name=early_business_name,
+    )
+    if consent_decision is not None and consent_decision.handled:
+        log.info(
+            'orchestrator.consent_gate',
+            conversation_id=conversation_id,
+            reason=consent_decision.reason,
+        )
+        return {'action': 'skipped', 'reason': consent_decision.reason}
     if settings_row is None:
         log.warning(
             'orchestrator.no_tenant_settings',
@@ -383,13 +404,24 @@ async def _orchestrate_inbound_message_impl(
         conversation['id'],
     )
 
-    # opt_out — register and skip bot reply
+    # opt_out — register and skip bot reply. TASK-0062: also append the
+    # revocation to the consent ledger so the audit trail captures the exact
+    # words the customer used and the inbound message that triggered it.
     if intent_result.intent == INTENT_OPT_OUT:
         await conn.execute(
-            "update app.contacts set opt_in_status='revoked', updated_at=now() where tenant_id=$1 and id=$2",
+            "update app.contacts set opt_in_status='revoked', opt_out_at=now(), updated_at=now() where tenant_id=$1 and id=$2",
             tenant_id,
             contact['id'],
         )
+        try:
+            await record_opt_out_by_keyword(
+                conn,
+                tenant_id=tenant_id,
+                contact_id=contact['id'],
+                inbound_message=inbound_message,
+            )
+        except Exception:
+            log.exception('orchestrator.opt_out_ledger_failed', conversation_id=conversation_id)
         log.info('orchestrator.opt_out_registered', conversation_id=conversation_id)
         return {'action': 'skipped', 'reason': 'opt_out_registered'}
 

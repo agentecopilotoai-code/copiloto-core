@@ -70,7 +70,11 @@ def test_schema_adds_recall_columns_to_service_catalog():
 
 def test_schema_extends_whatsapp_purpose_check_with_service_recall():
     schema = SCHEMA.read_text()
-    assert "'payment_request','service_recall','custom'" in schema
+    # TASK-0062 inserted 'consent_request','consent_reaffirm' between
+    # 'service_recall' and 'custom' — keep the assertion focused on the
+    # presence of the recall purpose.
+    assert "'payment_request','service_recall'" in schema
+    assert "'custom'" in schema
 
 
 def test_schema_creates_idempotency_index_for_service_recall_jobs():

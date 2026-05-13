@@ -1000,6 +1000,17 @@ export function listContactNotes(session, tenantId, contactId) {
   return request(`/contacts/${contactId}/notes`, { session, tenantId });
 }
 
+export function listContactConsent(session, tenantId, contactId, { limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (limit != null) params.set('limit', String(limit));
+  if (offset != null) params.set('offset', String(offset));
+  const query = params.toString();
+  return request(`/contacts/${contactId}/consent${query ? `?${query}` : ''}`, {
+    session,
+    tenantId,
+  });
+}
+
 export function createContactNote(session, tenantId, contactId, body) {
   return request(`/contacts/${contactId}/notes`, {
     method: 'POST',

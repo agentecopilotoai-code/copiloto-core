@@ -525,32 +525,6 @@ TASK-0076 (páginas legales por tenant: T&C + privacidad)          # P3
 
 ---
 
-### TASK-0062 — Consentimiento doble opt-in + ledger auditable de autorizaciones
-
-- **Estado:** PENDING
-- **Depende de:** Ninguno.
-- **Por qué bloquea:** la Ley 1581 (Decreto 1377) exige autorización previa, documentada, con base legal, finalidad y canal trazable. Hoy `contacts.opt_in_status` se setea sin registrar quién, cuándo, en qué canal y con qué texto se autorizó. Una queja ante la SIC obliga a entregar evidencia que el sistema no puede producir.
-- **Alcance:**
-  - Schema:
-    - Nueva tabla `app.consent_ledger(id, tenant_id, contact_id, event check in ('granted','revoked','reaffirmed','suppressed'), channel check in ('whatsapp','web','admin','import'), legal_basis text, purpose text, copy_shown text, evidence_payload jsonb, occurred_at, ip inet, user_agent)` con RLS y append-only (no UPDATE/DELETE; bloqueado por trigger).
-    - `contacts.consent_version int default 1` para versionar.
-  - **Doble opt-in al primer mensaje inbound de un contacto nuevo:** el orquestador detecta `opt_in_status='unknown'` y envía template `consent_request_v1` con botones `[Acepto] [No acepto]`. Solo después de un click "Acepto" se inserta `consent_ledger(event='granted')` y se permite continuar el flujo. Sin opt-in: el bot solo responde "necesitamos tu autorización para continuar".
-  - **Opt-out por palabra clave:** intent classifier ya detecta `BAJA / STOP / CANCELAR / UNSUBSCRIBE`. La diferencia: además de setear `opt_in_status='revoked'`, inserta `consent_ledger(event='revoked', copy_shown=...)`.
-  - **Reafirmación periódica:** un job en `scheduler.py` corre 1x al día y emite el template `consent_reaffirm_v1` a contactos con `consent_at < now() - 12 months` (configurable por tenant).
-  - **Endpoint admin:** `GET /v1/tenants/{tenant_id}/contacts/{contact_id}/consent` devuelve el ledger completo paginado, para respuesta a derecho de acceso.
-  - **Admin Panel:** la ficha del contacto agrega pestaña "Consentimiento" con la lista de eventos del ledger.
-- **Criterios de aceptación:**
-  - Primer mensaje de un wa_id nuevo NO dispara respuesta normal; sí dispara el template de consentimiento.
-  - Si el cliente toca "Acepto", el siguiente mensaje cae en el flujo normal y el ledger tiene el evento `granted` con `copy_shown` del template renderizado.
-  - Si toca "No acepto", el bot responde "entendido, no te molestaremos" y la conversación queda `closed`.
-  - Reescribir el ledger (UPDATE/DELETE) falla con error 42501 por el trigger.
-  - Tests: ≥ 12 estáticos: schema + trigger append-only, ledger no editable, intercept del primer inbound, ramas de aceptación / rechazo, opt-out por keyword genera evento, reafirmación periódica programada, endpoint del ledger, integración con la pestaña.
-- **Notas:**
-  - El template `consent_request_v1` debe estar aprobado por Meta (categoría `UTILITY`). El gate ya existe en `scheduler.py`.
-  - El opt-out por keyword se queda como mecanismo de respaldo aunque WhatsApp pida unsubscribe nativo (StopAds): la palabra clave funciona también en Widget Web.
-
----
-
 ### TASK-0063 — Tests E2E con DB efímera para el journey completo del paciente
 
 - **Estado:** PENDING
