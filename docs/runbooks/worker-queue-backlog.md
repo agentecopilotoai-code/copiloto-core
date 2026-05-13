@@ -35,13 +35,29 @@ GROUP BY status;
 ```
 
 ```sql
--- Jobs del scheduler atrasados.
-SELECT kind, COUNT(*) AS pending, MIN(run_at) AS oldest
-FROM app.scheduled_jobs
-WHERE run_at < now()
-  AND status = 'pending'
-GROUP BY kind
+-- Recordatorios atrasados (TASK-0035: app.reminder_jobs.scheduled_for con
+-- status='pending' que ya debió haberse enviado).
+SELECT
+  target_type,
+  COUNT(*) AS pending,
+  MIN(scheduled_for) AS oldest_due,
+  MAX(retry_count) AS max_retries
+FROM app.reminder_jobs
+WHERE status = 'pending'
+  AND scheduled_for < now()
+GROUP BY target_type
 ORDER BY pending DESC;
+```
+
+```sql
+-- Campañas programadas que no arrancaron a tiempo.
+SELECT
+  id, name, scheduled_at, recipient_count, status
+FROM app.campaigns
+WHERE status = 'scheduled'
+  AND scheduled_at < now() - interval '5 minutes'
+ORDER BY scheduled_at ASC
+LIMIT 20;
 ```
 
 ## Mitigación inmediata

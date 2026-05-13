@@ -19,48 +19,60 @@ docker compose logs --tail=200 api | grep -E "RateLimitError|429|circuit_breaker
 ```
 
 ```sql
--- Volumen de requests cloud LLM por tenant en la última hora.
+-- Volumen de outbound bot en la última hora por tenant (el engine usado
+-- queda en payload.answer_engine cuando rag_orchestrator persiste la respuesta).
 SELECT
-  tenant_id,
-  COUNT(*) FILTER (WHERE metadata->>'engine' = 'cloud_llm') AS cloud_calls,
-  COUNT(*) FILTER (WHERE metadata->>'engine_error' IS NOT NULL) AS errors
-FROM app.messages
-WHERE direction = 'outbound'
-  AND created_at > now() - interval '1 hour'
-GROUP BY tenant_id
+  m.tenant_id,
+  COUNT(*) FILTER (WHERE m.payload->>'answer_engine' = 'cloud_llm') AS cloud_calls,
+  COUNT(*) FILTER (WHERE m.status = 'failed') AS failed
+FROM app.messages m
+WHERE m.direction = 'outbound'
+  AND m.sender_actor_type = 'bot'
+  AND m.created_at > now() - interval '1 hour'
+GROUP BY m.tenant_id
 ORDER BY cloud_calls DESC;
 ```
 
+> **Importante:** `answer_engine` y `cloud_llm_provider` son **settings
+> globales** (env vars consumidas por `app/core/config.py`), no columnas de
+> `app.tenant_settings`. La mitigación inmediata aplica a *todos* los
+> tenants. No existe degradación por-tenant en el MVP; cuando se necesite,
+> ver la sección "Fix definitivo".
+
 ## Mitigación inmediata
 
-1. **Degradar a `answer_engine='local_llm'`** para los tenants con tráfico
-   alto:
-   ```sql
-   UPDATE app.tenant_settings
-   SET answer_engine = 'local_llm', updated_at = now()
-   WHERE tenant_id IN (
-     SELECT tenant_id FROM app.messages
-     WHERE direction='outbound' AND created_at > now() - interval '1 hour'
-     GROUP BY tenant_id ORDER BY COUNT(*) DESC LIMIT 5
-   );
+1. **Degradar globalmente a `cascade`** (template → Ollama → cloud) o a
+   `local_llm` (solo Ollama). Esto se hace cambiando la env var
+   `ANSWER_ENGINE` y reiniciando `api` + `event-worker`:
+   ```bash
+   # Edita .env (o el bloque environment del docker-compose.yml):
+   #   ANSWER_ENGINE=cascade        # mantiene cloud como tier-3, prioriza Ollama
+   #   ANSWER_ENGINE=local_llm      # ignora cloud completamente
+   docker compose up -d --no-deps --force-recreate api event-worker
    ```
-   El motor `cascade` ya prueba template → Ollama → cloud, así que cambiar a
-   `local_llm` mantiene el servicio aunque con respuestas menos sofisticadas.
-2. Verificar que el contenedor `ollama` está sano (`docker compose ps ollama`,
-   `curl -sS http://localhost:11434/api/tags`).
-3. Para tenants premium con SLA estricto, **cambiar el provider** dentro de
-   cloud_llm:
-   ```sql
-   UPDATE app.tenant_settings
-   SET cloud_llm_provider = 'openai'
-   WHERE tenant_id = '<tenant_id>' AND cloud_llm_provider = 'anthropic';
+   El motor `cascade` ya prueba template → Ollama → cloud; degradar a
+   `local_llm` evita por completo el provider rate-limited.
+2. Verificar que el contenedor `ollama` está sano antes de degradar:
+   ```bash
+   docker compose ps ollama
+   curl -sS http://localhost:11434/api/tags
    ```
-   (o viceversa).
+3. **Cambiar el provider cloud** (Anthropic ↔ OpenAI) si solo uno está
+   rate-limited y el cascade sigue siendo deseable. También es env var:
+   ```bash
+   # CLOUD_LLM_PROVIDER=openai  (era 'claude'), o viceversa
+   # CLOUD_LLM_API_KEY=<key del provider alterno>
+   # CLOUD_LLM_MODEL=<modelo>
+   docker compose up -d --no-deps --force-recreate api event-worker
+   ```
 4. Si el rate es organizacional (cuota Anthropic/OpenAI agotada), abrir
    ticket de billing y subir el límite del workspace.
 
 ## Fix definitivo
 
+- **Llevar `answer_engine` y `cloud_llm_provider` a `app.tenant_settings`**
+  (columnas dedicadas + override por tenant) para poder degradar tenant a
+  tenant en lugar de globalmente. Hoy es env-var-only.
 - Implementar **rate limit por tenant** en `cloud_llm_client` (token bucket
   por `tenant_id`) para impedir que un tenant ruidoso queme la cuota global.
 - Cache de respuestas frecuentes vía `rag_orchestrator.response_cache`
@@ -72,7 +84,8 @@ ORDER BY cloud_calls DESC;
 
 ## Post-mortem checklist
 
-- [ ] Restaurar `answer_engine` original para los tenants degradados.
+- [ ] Restaurar `ANSWER_ENGINE` y `CLOUD_LLM_PROVIDER` originales tras la
+      degradación.
 - [ ] Cerrar el circuit breaker (auto-cierra tras window de éxito, verificar).
 - [ ] Documentar el pico (RPM observado vs cuota del workspace).
 - [ ] Si la degradación a Ollama fue notoria en calidad: comunicar al cliente.

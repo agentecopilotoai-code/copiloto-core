@@ -13,58 +13,75 @@
 
 ```sql
 -- 1) Historial completo del consentimiento del contacto.
+-- Schema de app.consent_ledger (ver infra/postgres/01-schema.sql):
+--   event        check ('granted','revoked','reaffirmed','suppressed')
+--   channel      check ('whatsapp','web','admin','import')
+--   evidence_payload jsonb
+--   occurred_at  timestamptz
 SELECT
-  cl.action,           -- granted | revoked | renewed
-  cl.channel,          -- whatsapp | web | manual
-  cl.purpose,          -- transactional | marketing | analytics
-  cl.evidence,         -- jsonb: ip, user_agent, message_id, etc.
-  cl.created_at,
-  cl.actor_id
+  cl.event,
+  cl.channel,
+  cl.purpose,
+  cl.legal_basis,
+  cl.copy_shown,
+  cl.evidence_payload,
+  cl.occurred_at,
+  cl.ip,
+  cl.user_agent
 FROM app.consent_ledger cl
 JOIN app.contacts c ON c.tenant_id = cl.tenant_id AND c.id = cl.contact_id
 WHERE c.tenant_id = '<tenant_id>'
-  AND (c.wa_id = '<wa_id>' OR c.email = '<email>')
-ORDER BY cl.created_at ASC;
+  AND c.wa_id = '<wa_id>'
+ORDER BY cl.occurred_at ASC;
 ```
 
 ```sql
--- 2) Mensajes enviados al contacto, junto con su clasificación
---    (transactional / marketing / campaign).
+-- 2) Mensajes enviados al contacto. messages se vincula al contact vía
+--    conversations.contact_id; el cuerpo está en body_text y los flags de
+--    campaña en payload (no en metadata).
 SELECT
   m.id,
   m.direction,
   m.created_at,
-  m.body,
-  m.metadata->>'category' AS category,
-  m.metadata->>'campaign_id' AS campaign_id,
-  m.metadata->>'template_name' AS template
+  m.message_type,
+  m.body_text,
+  m.campaign_id,
+  m.payload->>'template_name' AS template
 FROM app.messages m
-JOIN app.contacts c ON c.tenant_id = m.tenant_id AND c.id = m.contact_id
+JOIN app.conversations cv ON cv.id = m.conversation_id
+JOIN app.contacts c ON c.id = cv.contact_id
 WHERE c.tenant_id = '<tenant_id>'
   AND c.wa_id = '<wa_id>'
 ORDER BY m.created_at ASC;
 ```
 
 ```sql
--- 3) ¿Existió consentimiento vigente en el momento de cada envío MARKETING?
+-- 3) ¿Existió consentimiento vigente en el momento de cada envío de
+--    CAMPAIGN (marketing)? Un campaign_id NOT NULL indica que el mensaje
+--    fue parte de un envío masivo, no transaccional.
 WITH msgs AS (
   SELECT m.id, m.created_at
   FROM app.messages m
-  JOIN app.contacts c ON c.id = m.contact_id
+  JOIN app.conversations cv ON cv.id = m.conversation_id
+  JOIN app.contacts c ON c.id = cv.contact_id
   WHERE c.wa_id = '<wa_id>'
-    AND m.direction='outbound'
-    AND (m.metadata->>'category') = 'marketing'
+    AND c.tenant_id = '<tenant_id>'
+    AND m.direction = 'outbound'
+    AND m.campaign_id IS NOT NULL
 )
 SELECT
   msgs.id,
   msgs.created_at,
   (
-    SELECT cl.action
+    SELECT cl.event
     FROM app.consent_ledger cl
-    WHERE cl.contact_id = (SELECT id FROM app.contacts WHERE wa_id='<wa_id>')
+    JOIN app.contacts c2 ON c2.id = cl.contact_id
+    WHERE c2.wa_id = '<wa_id>'
+      AND c2.tenant_id = '<tenant_id>'
       AND cl.purpose = 'marketing'
-      AND cl.created_at <= msgs.created_at
-    ORDER BY cl.created_at DESC LIMIT 1
+      AND cl.occurred_at <= msgs.created_at
+    ORDER BY cl.occurred_at DESC
+    LIMIT 1
   ) AS consent_state_at_send
 FROM msgs
 ORDER BY msgs.created_at;
@@ -72,22 +89,51 @@ ORDER BY msgs.created_at;
 
 ## Mitigación inmediata
 
-1. **Detener envíos** al contacto inmediatamente:
+1. **Detener envíos** al contacto inmediatamente. `app.consent_ledger` es
+   append-only y exige los nombres reales de columnas (`event`,
+   `evidence_payload`, `channel='admin'` para revocaciones operadas desde el
+   panel; ver `infra/postgres/01-schema.sql`). Además, marcar el contacto
+   como `suppressed` para que el orquestador deje de generar outbound:
    ```sql
-   INSERT INTO app.consent_ledger (tenant_id, contact_id, action, purpose, channel, evidence)
-   SELECT tenant_id, id, 'revoked', 'all', 'manual',
-          jsonb_build_object('reason','user_complaint','ticket','<id>')
-   FROM app.contacts WHERE wa_id = '<wa_id>' AND tenant_id = '<tenant_id>';
+   BEGIN;
+
+   INSERT INTO app.consent_ledger (
+     tenant_id, contact_id, event, channel, purpose,
+     legal_basis, copy_shown, evidence_payload, occurred_at
+   )
+   SELECT
+     c.tenant_id, c.id, 'revoked', 'admin', 'marketing',
+     'Ley 1581 art. 8(c) - revocación a solicitud del titular',
+     'Revocación registrada por el operador tras queja del titular.',
+     jsonb_build_object('reason','user_complaint','ticket','<ticket_id>',
+                        'operator_user_id','<operator_uuid>'),
+     now()
+   FROM app.contacts c
+   WHERE c.tenant_id = '<tenant_id>' AND c.wa_id = '<wa_id>';
+
+   UPDATE app.contacts
+   SET opt_in_status = 'suppressed',
+       opt_out_at    = now(),
+       updated_at    = now()
+   WHERE tenant_id = '<tenant_id>' AND wa_id = '<wa_id>';
+
+   COMMIT;
    ```
-2. Generar **extracto del ledger** para entregar al titular:
+2. Generar **extracto del ledger** para entregar al titular vía el endpoint
+   ya existente de export firmado (TASK-0061):
    ```bash
-   docker compose exec api \
-     python -m app.tools.consent_export \
-       --tenant <id> --contact <wa_id_or_email> \
-       --output ./extracto-<wa_id>.pdf
+   curl -sS -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+     "https://<api>/v1/tenants/<tenant_id>/data-export?contact_id=<contact_uuid>&kinds=consent_ledger,messages" \
+     -o extracto-<wa_id>.json
    ```
-3. Si la queja es por canal masivo (campaña): revisar las últimas 24h de la
-   campaña y pausarla si más de un caso reportó lo mismo.
+3. Si la queja es por canal masivo (campaña): identificar la campaña vía
+   `messages.campaign_id` (query #2) y cancelarla si más de un caso reporta
+   lo mismo:
+   ```sql
+   UPDATE app.campaigns
+   SET status = 'cancelled', updated_at = now()
+   WHERE id = '<campaign_id>' AND status = 'running';
+   ```
 4. Responder al titular dentro del plazo legal (15 días hábiles en Colombia
    bajo Ley 1581) con el extracto firmado y la confirmación de supresión.
 

@@ -7,21 +7,24 @@
 - En el panel **Outbound DLQ** los items tienen `error_code='190'` y
   `error_title` con texto similar a *"Access token has expired"*.
 - Mensajes outbound recientes en `messages` con `status='failed'` y
-  `metadata->>'graph_error_code' = '190'`.
+  `error_code = '190'` (el `event_worker` persiste el `error.code` de Meta
+  en la columna `app.messages.error_code`).
 
 ## Diagnóstico
 
 ```sql
--- ¿Cuántos fallos por canal en las últimas 4 h?
+-- ¿Cuántos fallos por canal en las últimas 4 h? messages no tiene
+-- channel_id propio; el canal vive en conversations.channel_id.
 SELECT
-  c.tenant_id,
-  c.id AS channel_id,
-  COUNT(*) FILTER (WHERE m.metadata->>'graph_error_code' = '190') AS token_expired,
+  tc.tenant_id,
+  tc.id AS channel_id,
+  COUNT(*) FILTER (WHERE m.error_code = '190') AS token_expired,
   COUNT(*) FILTER (WHERE m.status = 'failed') AS total_failed
 FROM app.messages m
-JOIN app.tenant_channels c ON c.id = m.channel_id
+JOIN app.conversations cv ON cv.id = m.conversation_id
+JOIN app.tenant_channels tc ON tc.id = cv.channel_id
 WHERE m.created_at > now() - interval '4 hours'
-GROUP BY c.tenant_id, c.id
+GROUP BY tc.tenant_id, tc.id
 ORDER BY token_expired DESC;
 ```
 

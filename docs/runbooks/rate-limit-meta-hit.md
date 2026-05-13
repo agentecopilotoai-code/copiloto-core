@@ -11,9 +11,11 @@
 ## Diagnóstico
 
 ```sql
--- Distribución de error_code en la DLQ (últimas 2 h).
+-- Distribución de error_code en la DLQ (últimas 2 h). El worker persiste el
+-- code de Meta tal cual en la columna app.messages.error_code; ver
+-- ``delivery_error_code`` en app/workers/event_worker.py.
 SELECT
-  m.metadata->>'graph_error_code' AS error_code,
+  COALESCE(NULLIF(m.error_code, ''), 'transport_error') AS error_code,
   COUNT(*) AS occurrences
 FROM app.messages m
 WHERE m.status = 'failed'
@@ -24,40 +26,51 @@ ORDER BY occurrences DESC;
 ```
 
 ```sql
--- Throughput actual por canal (mensajes/min).
+-- Throughput actual por tenant_channel (mensajes/min). messages no tiene
+-- channel_id propio; se deriva vía conversations → tenant_channels.
 SELECT
-  m.channel_id,
+  cv.channel_id,
   date_trunc('minute', m.created_at) AS minute,
   COUNT(*)
 FROM app.messages m
+JOIN app.conversations cv ON cv.id = m.conversation_id
 WHERE m.direction = 'outbound'
   AND m.created_at > now() - interval '30 minutes'
-GROUP BY m.channel_id, minute
-ORDER BY minute DESC, m.channel_id;
+GROUP BY cv.channel_id, minute
+ORDER BY minute DESC, cv.channel_id;
 ```
 
-```bash
-# Tier del canal (Meta limita por tier: 1K / 10K / 100K / 1M conversaciones/24h).
-docker compose exec api python -m app.tools.show_channel_tier --channel <id>
+```sql
+-- Tier del canal (Meta limita por tier: 1K / 10K / 100K / 1M conversaciones/24h).
+SELECT id, phone_number_id, quality_rating, messaging_limit_tier, status
+FROM app.tenant_channels
+WHERE id = '<channel_id>';
 ```
 
 ## Mitigación inmediata
 
-1. **Reducir rate del scheduler** en caliente:
-   ```bash
-   docker compose exec api \
-     python -m app.tools.set_runtime_config \
-       --key event_worker.outbound_rate_per_second --value 5
-   ```
-   Valor previo típico: 20/s. Reduce a 5/s mientras Meta se enfría.
-2. **Aumentar backoff exponencial**: setear `event_worker.retry_backoff_base`
-   a `4` (segundos) en lugar de `2`.
-3. Pausar campañas en curso para liberar capacidad para mensajería
-   transaccional:
+1. **Pausar campañas en curso** para liberar capacidad outbound para
+   mensajería transaccional. El status válido en `app.campaigns` para detener
+   un envío es `cancelled` (ver CHECK del schema):
    ```sql
-   UPDATE app.campaigns SET status = 'paused'
+   UPDATE app.campaigns
+   SET status = 'cancelled', updated_at = now()
    WHERE status = 'running' AND tenant_id = '<tenant_id>';
    ```
+2. **Reducir paralelismo** del worker para que Meta se enfríe:
+   ```bash
+   docker compose up -d --scale event-worker=1
+   ```
+   Volver a la escala baseline una vez `cpi_messages_total{status="sent"}`
+   se recupere.
+3. **Subir el cooldown del circuit breaker** (env var, requiere reinicio del
+   `api` y `event-worker`):
+   ```bash
+   # En .env o docker-compose.yml:
+   CIRCUIT_BREAKER_COOLDOWN_SECONDS=60
+   ```
+   Default = 30s. Subir a 60–120s evita el flapping mientras Meta sigue
+   limitando.
 4. Reencolar la DLQ una vez que el throughput se estabilice (Operations Desk
    → Outbound DLQ → Reintentar).
 

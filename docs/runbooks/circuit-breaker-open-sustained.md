@@ -20,10 +20,12 @@ curl -sS "http://localhost:8000/metrics" | grep -E 'cpi_provider_call_total'
 ```
 
 ```sql
--- Errores recientes por provider (los workers persisten metadata.error_provider).
+-- Errores recientes (el provider downstream solo se distingue por el rango
+-- del error_code: códigos de Meta son numéricos 4–6 dígitos; transport_error
+-- agrupa fallos de red; http_4xx/5xx vienen de proveedores externos).
 SELECT
-  metadata->>'error_provider' AS provider,
-  metadata->>'error_code' AS code,
+  COALESCE(NULLIF(error_code, ''), 'transport_error') AS code,
+  LEFT(COALESCE(error_message, ''), 120) AS sample_message,
   COUNT(*) AS occurrences,
   MAX(created_at) AS last_seen
 FROM app.messages
