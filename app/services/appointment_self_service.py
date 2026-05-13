@@ -359,17 +359,31 @@ async def execute_auto_rebook_timeout(
         }),
     )
 
-    await _persist_state(
-        conn,
+    # Persist the terminal state metadata without touching ``status``: the
+    # earlier UPDATE already set ``waiting_agent`` + ``handoff_required=true``
+    # for this conversation, and ``_persist_state`` would clobber that back to
+    # ``waiting_user`` — letting the bot reply on the next inbound and skip the
+    # human handoff.
+    final_state = {
+        'flow': FLOW_RESCHEDULE,
+        'step': STEP_COMPLETED,
+        'appointment_id': str(appointment_id),
+        'source': 'auto_rebook',
+        'closed_reason': AUTO_REBOOK_TIMEOUT_REASON,
+    }
+    meta = _parse_json(conversation.get('metadata'), {})
+    if not isinstance(meta, dict):
+        meta = {}
+    meta['self_service'] = final_state
+    await conn.execute(
+        """
+        update app.conversations
+        set metadata=$1::jsonb, updated_at=now()
+        where tenant_id=$2 and id=$3
+        """,
+        json.dumps(meta),
         tenant_id,
-        conversation,
-        {
-            'flow': FLOW_RESCHEDULE,
-            'step': STEP_COMPLETED,
-            'appointment_id': str(appointment_id),
-            'source': 'auto_rebook',
-            'closed_reason': AUTO_REBOOK_TIMEOUT_REASON,
-        },
+        conversation_id,
     )
 
     log.info(

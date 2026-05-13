@@ -255,6 +255,8 @@ class FakeConn:
             if "set status='cancelled'" in query and self.appointment is not None:
                 self.appointment['status'] = 'cancelled'
         elif 'update app.conversations' in query:
+            self.conversation_updates = getattr(self, 'conversation_updates', [])
+            self.conversation_updates.append({'query': query, 'args': args})
             if args and isinstance(args[0], str):
                 try:
                     self.metadata_updates.append(json.loads(args[0]))
@@ -541,3 +543,56 @@ def test_execute_auto_rebook_timeout_handles_missing_conversation():
     assert trace['skipped_reason'] == 'conversation_missing'
     assert not conn.appointment_updates
     assert not conn.handoff_inserts
+
+
+def test_execute_auto_rebook_timeout_preserves_waiting_agent_status():
+    """The final metadata write must NOT reset ``status`` back to
+    ``waiting_user``. The earlier UPDATE in the timeout path set
+    ``waiting_agent`` + ``handoff_required=true`` so the orchestrator keeps
+    suppressing bot replies; if a subsequent ``_persist_state`` clobbered the
+    status, the next inbound would be answered by the bot and bypass the
+    handoff. Regression guard for the post-merge review on PR #83."""
+    appointment = _future_appointment(hours_ahead=72)
+    conv_id = uuid4()
+    tenant_id = uuid4()
+    conversation_row = {
+        'id': conv_id,
+        'tenant_id': tenant_id,
+        'contact_id': appointment['contact_id'],
+        'channel_id': uuid4(),
+        'status': 'bot_active',
+        'metadata': json.dumps({
+            'self_service': {
+                'flow': FLOW_RESCHEDULE,
+                'step': STEP_AWAITING_RESCHEDULE_SLOT,
+                'appointment_id': str(appointment['id']),
+                'source': 'auto_rebook',
+            }
+        }),
+    }
+    conn = FakeConn(
+        appointment=appointment,
+        conversation_row=conversation_row,
+        rebook_started_at=datetime.now(UTC) - timedelta(minutes=120),
+        has_recent_inbound=False,
+    )
+    asyncio.run(
+        execute_auto_rebook_timeout(
+            conn,
+            tenant_id=tenant_id,
+            conversation_id=conv_id,
+            appointment_id=appointment['id'],
+        )
+    )
+    conv_updates = getattr(conn, 'conversation_updates', [])
+    # One UPDATE escalates the conversation to waiting_agent; the terminal
+    # metadata UPDATE must skip the status column entirely.
+    escalations = [u for u in conv_updates if "set handoff_required=true" in u['query']]
+    metadata_writes = [u for u in conv_updates if 'set metadata=' in u['query']]
+    assert escalations, 'expected the escalation UPDATE to run'
+    assert metadata_writes, 'expected the terminal metadata UPDATE to run'
+    for write in metadata_writes:
+        assert "status='waiting_user'" not in write['query'], (
+            'terminal metadata write must not reset status — it would let the '
+            'bot reply on the next inbound and skip the open handoff'
+        )
