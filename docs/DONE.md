@@ -15,6 +15,47 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se cierra la brecha "cada cliente nuevo consume 4-8h de soporte". Ahora un admin recién creado puede recorrer un wizard de 7 pasos (datos del negocio → timezone+locale+moneda → canal WhatsApp con firma verificada → template `consent_request_v1` aprobado → catálogo mínimo → horarios → test E2E del bot) sin asistencia humana. Cada paso tiene su propio verifier en el backend que inspecciona la DB y devuelve `ready/reason/details`; la API rechaza con 409 cualquier intento de saltar pasos y con 422 cualquier intento de completar un paso cuyo verifier no pasa. El estado se persiste en `tenant_settings.onboarding_progress jsonb` y se expone en `GET /v1/tenants/{tenant_id}/onboarding` y dentro del reporte de `GET /v1/tenants/{tenant_id}/readiness` (`onboarding_progress: {step, total, last_completed_step, steps, complete}`). El admin panel gana un módulo nuevo `Onboarding self-service` con un wizard lineal que llama `verify` → `complete` paso a paso, navega al módulo correspondiente para cada paso, y para el paso 7 ofrece un input para el `wa_id` del admin y un botón "Marcar envío de prueba" que registra `test_message_sent_at`; el verifier de paso 7 confirma que llegó un inbound posterior a esa marca.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** nueva columna `tenant_settings.onboarding_progress jsonb not null default '{"last_completed_step":0,"steps":{}}'::jsonb`. Se aprovecha el default para que ningún insert existente necesite cambiar (no se rompe `02-seed.sql` ni el `insert into app.tenant_settings (tenant_id) values ($1)` que dispara la creación del tenant).
+  - **Backend (`app/api/v1/routes.py`):**
+    - Constantes `ONBOARDING_TOTAL_STEPS=7`, `ONBOARDING_STEPS`, `ONBOARDING_STEP_METADATA` (clave estable por paso) y `ONBOARDING_CONSENT_TEMPLATE_NAME='consent_request_v1'`.
+    - Helper `normalize_onboarding_progress` que tolera payloads corruptos (NULL, strings, ints fuera de rango) y devuelve siempre `{step, total, last_completed_step, steps, complete}`.
+    - Siete verifiers (`_verify_onboarding_*`): step 1 chequea slug/legal_name/display_name/vertical_code/country_code/timezone; step 2 chequea timezone del tenant + `settings.locale` + `payment_settings.currency`; step 3 reusa `token_ref_is_configured` y `secret_ref_is_configured` y exige canal `status='active'` con verify_token_hash + verify_token_ref resueltos (cumple "verificación de la firma del webhook contra Meta"); step 4 exige un row en `whatsapp_templates` con `name='consent_request_v1' and purpose='consent_request' and status='approved'`; step 5 exige `count(*) > 0` en `service_catalog` con `is_active=true`; step 6 exige `business_hours` no vacío con al menos un día con rangos; step 7 exige `onboarding_progress.steps.7.test_message_sent_at` + un row en `messages` con `direction='inbound'` creado después.
+    - Endpoints nuevos en `tenant_admin_router`:
+      - `GET /v1/tenants/{tenant_id}/onboarding` — devuelve `{tenant_id, progress, steps}` con el catálogo de pasos para que la UI no tenga que duplicar metadata.
+      - `POST /v1/tenants/{tenant_id}/onboarding/steps/{step}/verify` — no muta nada; corre el verifier y devuelve `{ready, reason, details, progress}`. Rechaza con 409 si `step > last_completed_step + 1`.
+      - `POST /v1/tenants/{tenant_id}/onboarding/steps/{step}/complete` — corre el verifier; si falla devuelve 422 con `{step, reason, details, key}`. Si pasa, actualiza `onboarding_progress` (set `last_completed_step=N`, agrega `steps[N]={completed_at, evidence, details}`), inserta un `domain_events` con `event_name='tenant_onboarding.step_completed'` y `idempotency_key='onboarding/{tenant_id}/step-{N}'` (idempotente por tenant), y emite audit log `tenant_onboarding.step_completed` con el step y la key.
+      - `POST /v1/tenants/{tenant_id}/onboarding/steps/7/send-test` — registra la marca de tiempo del envío del mensaje de prueba (no envía el mensaje; eso lo hace el endpoint outbound existente). Bloquea si `last_completed_step < 6`.
+    - `build_tenant_readiness_report` ahora hace `select onboarding_progress, ...` y agrega `onboarding_progress` al payload final (cumple el "se extiende con onboarding_progress" del backlog).
+  - **Admin Panel:**
+    - `admin-panel/src/data/modules.js`: nuevo módulo `onboarding-wizard` (minRole admin) con scope explícito de los 7 pasos.
+    - `admin-panel/src/services/coreApi.js`: `getTenantOnboarding`, `verifyOnboardingStep`, `completeOnboardingStep`, `recordOnboardingTestMessageSent`.
+    - `admin-panel/src/components/modules/onboarding/OnboardingWizard.jsx`: lista lineal de los 7 pasos con badges (Completado / Paso actual / Bloqueado), botones `Verificar` y `Completar paso N` (este último deshabilitado hasta que la verificación devuelva ready=true), input de `wa_id` y botón "Marcar envío de prueba" para el paso 7, y deep-link a cada módulo asociado (Tenant Setup, WhatsApp, Servicios). Cuando el backend devuelve 422 con `detail.reason` la UI muestra exactamente la razón devuelta por el verifier.
+    - `admin-panel/src/components/layout/AdminLayout.jsx`: integración del módulo con `onNavigateToModule` para saltar al módulo correspondiente desde el wizard.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/data/modules.js`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/onboarding/OnboardingWizard.jsx` (nuevo)
+  - `tests/test_onboarding_wizard_static.py` (nuevo, 18 tests)
+  - `tests/test_tenant_readiness_static.py` (fakes actualizados con el nuevo campo)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `uv run --with pytest pytest tests/test_onboarding_wizard_static.py -q` → 18 passed.
+  - `uv run --with pytest pytest tests/ --ignore=tests/test_journey_e2e.py --ignore=tests/test_rls_multitenant_e2e.py -q` → 1190 passed, 11 skipped (suite completa, ningún test regresivo).
+- **Criterios de aceptación cubiertos:**
+  - "Un cliente nuevo termina onboarding en <30 min sin soporte humano": el wizard lineal con `verify` previo a cada `complete` y deep-links a los módulos correspondientes elimina la necesidad de intervención.
+  - "Si un paso falla (token Meta inválido), el wizard explica el error y bloquea": el verifier del paso 3 chequea `token_ref_is_configured` y devuelve la razón exacta `Token Meta inválido o ausente. Vuelve a pegar el token de acceso.`, que la UI muestra textual.
+  - "≥ 12 tests estáticos": 18 tests cubren constantes, normalizador, schema, endpoints registrados, verificadores por paso (positivo + negativo), no-skip rule, readiness integration y wiring del admin panel.
+
+---
+
 ### TASK-0068 — KPIs de rendimiento por agente en analytics
 
 - **Fecha:** 2026-05-13

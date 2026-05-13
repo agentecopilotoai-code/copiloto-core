@@ -176,6 +176,39 @@ export function deleteDigestSubscription(session, tenantId, subscriptionId) {
 }
 
 
+// TASK-0069: onboarding self-service wizard.
+export function getTenantOnboarding(session, tenantId) {
+  return request(`/tenants/${tenantId}/onboarding`, { session, tenantId });
+}
+
+export function verifyOnboardingStep(session, tenantId, step) {
+  return request(`/tenants/${tenantId}/onboarding/steps/${step}/verify`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: {},
+  });
+}
+
+export function completeOnboardingStep(session, tenantId, step, evidence = {}) {
+  return request(`/tenants/${tenantId}/onboarding/steps/${step}/complete`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { evidence },
+  });
+}
+
+export function recordOnboardingTestMessageSent(session, tenantId, waId) {
+  return request(`/tenants/${tenantId}/onboarding/steps/7/send-test`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: { wa_id: waId },
+  });
+}
+
+
 export function getTenantReadiness(session, tenantId, options = {}) {
   const params = new URLSearchParams();
   if (options.smokeQuestion) params.set('smoke_question', options.smokeQuestion);

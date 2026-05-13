@@ -571,19 +571,7 @@ _TASK-0068 — KPIs de rendimiento por agente en analytics: COMPLETADA. Ver `doc
 
 ---
 
-### TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0003 (wizard base), TASK-0033 (catálogo).
-- **Por qué bloquea:** cada cliente nuevo consume 4-8h de soporte humano. Para escalar comercialmente el cliente tiene que poder onboardearse solo con un wizard guiado que verifique cada paso antes de avanzar.
-- **Alcance:**
-  - Wizard de 7 pasos: (1) datos del negocio, (2) timezone + locale + moneda, (3) canal WhatsApp (con verificación de la firma del webhook contra Meta), (4) primer template `consent_request_v1` (cargado vía Meta API), (5) catálogo de servicios mínimo (≥ 1 servicio), (6) horarios de atención, (7) test E2E: el wizard envía un mensaje de prueba al wa_id del admin y verifica que el inbound llegue.
-  - Cada paso emite un evento `tenant_onboarding.step_completed(step=N)` y solo desbloquea el siguiente cuando el actual pasó su check.
-  - Estado del onboarding visible en `GET /v1/tenants/{tenant_id}/readiness` (ya existe; se extiende con `onboarding_progress: {step, total, last_completed_step}`).
-- **Criterios de aceptación:**
-  - Un cliente nuevo termina onboarding en <30 min sin soporte humano.
-  - Si un paso falla (token Meta inválido), el wizard explica el error y bloquea.
-  - Tests: ≥ 12 estáticos: cada paso valida sus precondiciones, ningún paso permite saltar al siguiente sin completar, estado persistido en `tenant_settings.onboarding_progress`.
+_TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

@@ -65,6 +65,7 @@ def test_readiness_report_handles_nullable_settings_without_500():
                     'escalation_policy': None,
                     'pii_policy': {'no_train': True},
                     'no_train': True,
+                    'onboarding_progress': {},
                 }
             if 'from app.tenant_channels' in query:
                 return None
@@ -124,6 +125,7 @@ def test_readiness_requires_live_whatsapp_mode_even_when_secrets_are_configured(
                     },
                     'pii_policy': {'no_train': True},
                     'no_train': True,
+                    'onboarding_progress': {},
                 }
             if 'from app.tenant_channels' in query:
                 return {
@@ -176,6 +178,7 @@ def _make_fake_connection(escalation_policy, account_mode='live', audit_count=1)
                     'escalation_policy': escalation_policy,
                     'pii_policy': {'no_train': True},
                     'no_train': True,
+                    'onboarding_progress': {},
                 }
             if 'from app.tenant_channels' in query:
                 return {

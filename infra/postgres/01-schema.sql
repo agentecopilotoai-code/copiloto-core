@@ -48,6 +48,7 @@ create table app.tenant_settings (
   knowledge_storage jsonb not null default '{}'::jsonb,
   notification_settings jsonb not null default '{}'::jsonb,
   payment_settings jsonb not null default '{}'::jsonb,
+  onboarding_progress jsonb not null default '{"last_completed_step":0,"steps":{}}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
