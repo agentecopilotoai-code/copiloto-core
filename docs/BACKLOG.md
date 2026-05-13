@@ -859,9 +859,12 @@ _TASK-0082 — Fix estructural: validación de fuente y mutación de identidad d
 
 ---
 
-### TASK-0083 — Webhook de pagos fail-closed con secret obligatorio
+_TASK-0083 — Webhook de pagos fail-closed con secret obligatorio: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0083 — Webhook de pagos fail-closed con secret obligatorio (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** `POST /v1/webhooks/payments/{provider}` inicializa `signature_ok = True` y solo verifica firma si el tenant tiene `webhook_secret_ref` configurado. Sin secret → cualquier payload anónimo con un UUID de `appointment` válido marca la cita como `payment_status='paid'`. Es el único bug en su clase (las otras superficies webhook son Meta o suscripciones, ya cubiertas).
 - **Bugs cubiertos (1):**
   - **BUG04** (`docs/BUGS/BUG04`, commit `3201a6c`): payment webhook fail-open + UI permite habilitar provider sin secret.
@@ -877,6 +880,7 @@ _TASK-0082 — Fix estructural: validación de fuente y mutación de identidad d
   - Test PoC: payload Stripe `checkout.session.completed` falso con UUID válido y sin secret tenant → 503, cita NO se marca `paid`.
   - Test: tenant con secret pero payload sin header `Stripe-Signature` → 401.
   - Test: admin habilita provider sin secret → 422.
+-->
 
 ---
 

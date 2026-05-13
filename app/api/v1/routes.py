@@ -7479,9 +7479,24 @@ async def receive_payment_webhook(
     payment_settings = await _fetch_tenant_payment_settings(conn, tenant_id)
     secret = resolve_secret_ref(payment_settings.get('webhook_secret_ref'))
     if not secret:
+        # TASK-0083 / BUG04: fail-closed with 503 when the tenant has not
+        # configured a webhook signing secret. We must NOT process the payload
+        # — a forged event with a known appointment UUID would otherwise mark
+        # the appointment as paid. Audit the rejection so operators can spot
+        # the misconfiguration in dashboards.
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type='system',
+            actor_id=None,
+            action='payment.webhook_rejected',
+            entity_type='appointment',
+            entity_id=str(appointment_id),
+            metadata={'reason': 'missing_secret', 'provider': normalized_provider},
+        )
         raise HTTPException(
-            status_code=401,
-            detail='Payment webhook signing secret is not configured for this tenant',
+            status_code=503,
+            detail='payment.webhook_unconfigured',
         )
     if normalized_provider == 'mercadopago':
         sig_header = request.headers.get('x-signature')
@@ -7497,6 +7512,16 @@ async def receive_payment_webhook(
         sig_header = request.headers.get('stripe-signature')
         signature_ok = verify_stripe_signature(body, sig_header, secret)
     if not signature_ok:
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type='system',
+            actor_id=None,
+            action='payment.webhook_rejected',
+            entity_type='appointment',
+            entity_id=str(appointment_id),
+            metadata={'reason': 'bad_signature', 'provider': normalized_provider},
+        )
         raise HTTPException(status_code=401, detail='Invalid payment webhook signature')
 
     sha = hashlib.sha256(body).hexdigest()
@@ -7618,9 +7643,22 @@ async def receive_subscription_webhook(
     payment_settings = await _fetch_tenant_payment_settings(conn, tenant_id)
     secret = resolve_secret_ref(payment_settings.get('webhook_secret_ref'))
     if not secret:
+        # TASK-0083 / BUG04 (subscriptions): same fail-closed rule as the
+        # appointment payments webhook above. Without a configured signing
+        # secret we refuse the event and audit the rejection.
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type='system',
+            actor_id=None,
+            action='payment.webhook_rejected',
+            entity_type='contact_subscription',
+            entity_id=str(subscription['id']),
+            metadata={'reason': 'missing_secret', 'provider': normalized_provider, 'flow': 'subscription'},
+        )
         raise HTTPException(
-            status_code=401,
-            detail='Payment webhook signing secret is not configured for this tenant',
+            status_code=503,
+            detail='payment.webhook_unconfigured',
         )
     if normalized_provider == 'mercadopago':
         sig_header = request.headers.get('x-signature')
@@ -7636,6 +7674,16 @@ async def receive_subscription_webhook(
         sig_header = request.headers.get('stripe-signature')
         signature_ok = verify_stripe_signature(body, sig_header, secret)
     if not signature_ok:
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type='system',
+            actor_id=None,
+            action='payment.webhook_rejected',
+            entity_type='contact_subscription',
+            entity_id=str(subscription['id']),
+            metadata={'reason': 'bad_signature', 'provider': normalized_provider, 'flow': 'subscription'},
+        )
         raise HTTPException(status_code=401, detail='Invalid subscription webhook signature')
 
     sha = hashlib.sha256(body).hexdigest()

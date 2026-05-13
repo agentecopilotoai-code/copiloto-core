@@ -15,6 +15,41 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0083 — Webhook de pagos fail-closed con secret obligatorio
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG04 (payment webhook fail-open + UI permitía habilitar provider sin secret).
+- **Fase 1 — verificación en HEAD:**
+  - **Server fail-closed:** HEAD ya rechaza `if not secret: raise HTTPException(401, ...)` en ambos webhooks (`receive_payment_webhook` y el de suscripciones). El bug histórico de `signature_ok = True` por default ya estaba parchado.
+  - **Admin validation:** HEAD ya rechaza con 422 al enabling provider sin secret (`if payload.provider != 'none' and not next_settings.get('webhook_secret_ref'): raise 422`).
+  - **UI:** el wizard ya muestra "Webhook secret (requerido)" + ⚠️ cuando no está configurado.
+  - **Gap restante:** (a) la spec de la tarea exige status **503 `payment.webhook_unconfigured`** para missing_secret (HEAD devolvía 401, semánticamente ambiguo); (b) la spec exige `audit_logs(action='payment.webhook_rejected', reason=...)` en ambas ramas de rechazo (HEAD solo levantaba HTTPException sin audit).
+- **Fase 2 — remediación (gaps que faltaban):**
+  - **`app/api/v1/routes.py`:** en los dos webhook handlers (payments de citas y de suscripciones):
+    - `if not secret:` → emite `audit(action='payment.webhook_rejected', actor_type='system', metadata={reason: 'missing_secret', provider, ...})` antes de levantar `HTTPException(503, 'payment.webhook_unconfigured')`. El status 503 comunica "configuración pendiente" sin filtrar info de tenant. La rama de suscripciones añade `flow='subscription'` al metadata para distinguirla del flow de citas.
+    - `if not signature_ok:` → emite `audit(action='payment.webhook_rejected', metadata={reason: 'bad_signature', provider, ...})` antes del `HTTPException(401, 'Invalid payment webhook signature')`. Status 401 se conserva: la request ESTÁ autenticando algo (proveedor) y la firma no validó.
+  - **UI (`admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`):** se añade un párrafo de hint en el bloque de pagos que explicita el contrato: 503 si falta secret, 401 si la firma no valida, ambos rechazos quedan auditados en `audit_logs(payment.webhook_rejected)`. El campo "Webhook secret (requerido)" ya existía.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py` (4 ramas en 2 handlers: missing_secret + bad_signature × payments + subscriptions)
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` (hint extendido)
+  - `tests/test_payment_webhook_fail_closed.py` (nuevo, 9 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py tests/test_payment_webhook_fail_closed.py` → all checks passed.
+  - `uv run pytest tests/test_payment_webhook_fail_closed.py -q` → 9 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1499 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG04 fail-closed payments:** `test_payments_webhook_returns_503_when_secret_missing`, `test_payments_webhook_audits_missing_secret_rejection`, `test_payments_webhook_returns_401_when_signature_invalid`, `test_payments_webhook_audits_bad_signature_rejection`, `test_payments_webhook_does_not_mark_paid_when_secret_missing` (regresión guard: el rechazo está ANTES del `update app.appointments`).
+  - **BUG04 fail-closed subscriptions:** `test_subscription_webhook_returns_503_when_secret_missing`, `test_subscription_webhook_audits_both_rejection_reasons`.
+  - **BUG04 admin validation (regresión guard):** `test_admin_payments_settings_refuses_provider_without_secret`.
+  - **UI surface:** `test_wizard_payments_hint_mentions_503_and_audit`.
+- **Notas:**
+  - El status 503 (no 401) para missing_secret es deliberado: a la red el problema es "service unavailable for payment processing", no "unauthorized". Stripe/MercadoPago verán 503 y reintentarán; un atacante anónimo recibe el mismo 503 sin filtrar si el secret existe.
+  - El audit usa `actor_type='system'` (alineado con la regla del audit_logs CHECK que pasó TASK-0081). `actor_id=None` y `entity_id` apunta al `appointment_id` (o `subscription_id`) target para que el operator pueda correlacionar.
+  - Los demás rubrics de la spec ya pasaban contra HEAD: la admin validation (422), el rechazo de payload sin header de firma (401), y la UI hint del campo "requerido".
+
+---
+
 ### TASK-0082 — Fix estructural: validación de fuente y mutación de identidad de contacto
 
 - **Fecha:** 2026-05-13

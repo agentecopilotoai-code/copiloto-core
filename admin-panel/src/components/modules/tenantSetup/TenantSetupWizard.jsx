@@ -1680,6 +1680,13 @@ Tu cita de {servicio} quedó agendada para el {fecha} a las {hora}` + (notificat
               API key {paymentSettings.api_key_configured ? '✅ configurada' : '⚠️ no configurada'} ·
               Webhook secret {paymentSettings.webhook_secret_configured ? '✅ configurado' : '⚠️ requerido para validar firmas del proveedor'}.
             </p>
+            <p className="hint">
+              <strong>Importante:</strong> el servidor rechaza los webhooks de
+              pago con <code>503 payment.webhook_unconfigured</code> si no hay
+              secret cargado, y con <code>401</code> si la firma no valida.
+              Cualquiera de los dos rechazos queda registrado en{' '}
+              <code>audit_logs</code> (<code>payment.webhook_rejected</code>).
+            </p>
           </div>
           <div className="form-actions">
             <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">
