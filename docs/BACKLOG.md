@@ -613,20 +613,7 @@ _TASK-0072 — Pruebas de carga + SLA documentado: COMPLETADA. Ver `docs/DONE.md
 
 ---
 
-### TASK-0073 — i18n multi-país: locale, currency, timezone, formato de teléfono
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0033 (catálogo).
-- **Por qué bloquea:** `locale='es-CO'` y `COP` están hardcodeados en defaults, en formatos de fecha y en validación de teléfono. El primer cliente de México exige refactor.
-- **Alcance:**
-  - `tenants.country_code` ya existe; ampliar a soportar `MX, AR, CL, PE, EC, UY`.
-  - `tenant_settings.currency char(3)` con default derivado de `country_code` (MX→MXN, AR→ARS, etc.).
-  - Validador de teléfono pasa de regex CO a `phonenumbers` library con `country_code` como hint.
-  - Strings del bot vienen de `app/i18n/<locale>.toml`; `es-CO`, `es-MX`, `es-AR`, `es-CL` inicialmente.
-- **Criterios de aceptación:**
-  - Tenant MX con currency MXN muestra precios "$ 1,500.00 MXN" en lugar de "$ 1.500 COP".
-  - Validación de teléfono acepta `+52 55 1234 5678`.
-  - Tests: ≥ 10 estáticos por país soportado.
+_TASK-0073 — i18n multi-país (locale, currency, timezone, teléfono): COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

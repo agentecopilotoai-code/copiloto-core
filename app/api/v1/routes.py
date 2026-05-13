@@ -80,6 +80,7 @@ from app.api.v1.schemas import (
 from app.core.config import get_settings
 from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
 from app.db.pool import get_db, record_to_dict
+from app.services import locale as locale_service
 from app.services.audit import audit
 from app.services.campaign_attribution import attribute_appointment
 from app.services.auth0_admin import (
@@ -615,6 +616,10 @@ async def current_user_id_from_request(request: Request, conn: asyncpg.Connectio
 
 @platform_admin_router.post('/tenants', status_code=status.HTTP_201_CREATED)
 async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    # TASK-0073: timezone/locale/currency se derivan del country_code cuando el
+    # caller no fija un override explícito.
+    profile = locale_service.profile_for(payload.country_code)
+    tz_value = payload.timezone or profile['timezone']
     row = await conn.fetchrow(
         """
         insert into app.tenants (slug, legal_name, display_name, vertical_code, business_type_label, country_code, timezone)
@@ -627,7 +632,7 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
         payload.vertical_code,
         payload.business_type_label,
         payload.country_code,
-        payload.timezone,
+        tz_value,
     )
     tenant_id = row['id']
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
@@ -641,11 +646,13 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
     }
     await conn.execute(
         """
-        insert into app.tenant_settings (tenant_id, escalation_policy)
-        values ($1, $2::jsonb)
+        insert into app.tenant_settings (tenant_id, escalation_policy, locale, currency)
+        values ($1, $2::jsonb, $3, $4)
         """,
         tenant_id,
         json.dumps(default_escalation_policy),
+        profile['locale'],
+        profile['currency'],
     )
     await seed_preconstructed_segments(conn, tenant_id)
     await seed_default_retention_policies(conn, tenant_id)
@@ -775,6 +782,9 @@ async def create_own_tenant(
         response['user_role'] = 'owner'
         return response
 
+    # TASK-0073: en el self-service también derivamos tz/locale/currency del país.
+    profile = locale_service.profile_for(payload.country_code)
+    tz_value = payload.timezone or profile['timezone']
     row = await conn.fetchrow(
         """
         insert into app.tenants (slug, legal_name, display_name, vertical_code, business_type_label, country_code, timezone)
@@ -787,11 +797,16 @@ async def create_own_tenant(
         payload.vertical_code,
         payload.business_type_label,
         payload.country_code,
-        payload.timezone,
+        tz_value,
     )
     tenant_id = row['id']
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    await conn.execute('insert into app.tenant_settings (tenant_id) values ($1)', tenant_id)
+    await conn.execute(
+        'insert into app.tenant_settings (tenant_id, locale, currency) values ($1, $2, $3)',
+        tenant_id,
+        profile['locale'],
+        profile['currency'],
+    )
     user_row = await conn.fetchrow(
         """
         insert into app.users (auth_subject, email, display_name, last_login_at)

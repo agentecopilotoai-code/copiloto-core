@@ -1,0 +1,22 @@
+# TASK-0073 — Locale es-EC. Tono y vocabulario ecuatoriano.
+
+[greetings]
+hello = "¡Hola! ¿En qué te puedo ayudar?"
+farewell = "Gracias por escribirnos. ¡Que tengas un buen día!"
+welcome_back = "¡Hola de nuevo! ¿Cómo te puedo ayudar hoy?"
+
+[booking]
+ask_service = "¿Qué servicio te gustaría reservar?"
+ask_date = "¿Qué día te queda bien?"
+ask_time = "¿A qué hora te queda mejor?"
+confirmation = "Listo, tu cita quedó reservada."
+cancellation = "Tu cita fue cancelada."
+reschedule_prompt = "¿Para cuándo quieres reprogramar?"
+
+[fallback]
+out_of_scope = "Disculpa, no puedo ayudarte con eso por aquí. Te paso con un asesor."
+not_understood = "No entendí, ¿podrías repetir?"
+
+[currency]
+symbol = "$"
+suffix = "USD"

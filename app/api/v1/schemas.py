@@ -4,6 +4,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.services.locale import SUPPORTED_COUNTRIES
+
+# TASK-0073: el MVP solo vende a 7 países LatAm. El patrón viene del catálogo
+# autoritativo de `app.services.locale` para evitar drift.
+SUPPORTED_COUNTRY_PATTERN = '^(' + '|'.join(SUPPORTED_COUNTRIES) + ')$'
+
 
 class TenantCreate(BaseModel):
     slug: str
@@ -11,8 +17,10 @@ class TenantCreate(BaseModel):
     display_name: str
     vertical_code: str = Field(min_length=1, max_length=64)
     business_type_label: str | None = Field(default=None, min_length=1, max_length=160)
-    country_code: str = 'CO'
-    timezone: str = 'America/Bogota'
+    country_code: str = Field(default='CO', pattern=SUPPORTED_COUNTRY_PATTERN)
+    # Si ``timezone`` viene vacío, el route lo deriva de ``country_code`` vía
+    # ``app.services.locale.default_timezone``.
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class TenantUpdate(BaseModel):
@@ -21,7 +29,7 @@ class TenantUpdate(BaseModel):
     display_name: str | None = None
     vertical_code: str | None = Field(default=None, min_length=1, max_length=64)
     business_type_label: str | None = Field(default=None, min_length=1, max_length=160)
-    country_code: str | None = None
+    country_code: str | None = Field(default=None, pattern=SUPPORTED_COUNTRY_PATTERN)
     timezone: str | None = None
     status: str | None = Field(default=None, pattern='^(trial|active|suspended|churned)$')
 

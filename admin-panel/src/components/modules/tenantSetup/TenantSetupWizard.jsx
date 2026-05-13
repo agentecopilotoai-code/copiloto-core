@@ -23,6 +23,19 @@ import {
   updateTenantSettings,
 } from '../../../services/coreApi.js';
 
+// TASK-0073: catálogo de países soportados con su locale/currency/timezone por
+// defecto.  Cualquier país fuera de este set se rechaza en backend (schemas.py).
+const COUNTRY_PROFILES = {
+  CO: { label: 'Colombia', locale: 'es-CO', currency: 'COP', timezone: 'America/Bogota' },
+  MX: { label: 'México', locale: 'es-MX', currency: 'MXN', timezone: 'America/Mexico_City' },
+  AR: { label: 'Argentina', locale: 'es-AR', currency: 'ARS', timezone: 'America/Argentina/Buenos_Aires' },
+  CL: { label: 'Chile', locale: 'es-CL', currency: 'CLP', timezone: 'America/Santiago' },
+  PE: { label: 'Perú', locale: 'es-PE', currency: 'PEN', timezone: 'America/Lima' },
+  EC: { label: 'Ecuador', locale: 'es-EC', currency: 'USD', timezone: 'America/Guayaquil' },
+  UY: { label: 'Uruguay', locale: 'es-UY', currency: 'UYU', timezone: 'America/Montevideo' },
+};
+const SUPPORTED_COUNTRIES = ['CO', 'MX', 'AR', 'CL', 'PE', 'EC', 'UY'];
+
 const RETENTION_ENTITIES = [
   'messages',
   'conversations',
@@ -906,7 +919,28 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
           </label>
           <label>
             País
-            <input value={tenantForm.country_code} onChange={(event) => setTenantForm({ ...tenantForm, country_code: event.target.value.toUpperCase() })} required maxLength={2} />
+            {/* TASK-0073: selector cerrado al catálogo soportado.  Cambiar el
+                país preselecciona timezone y locale por defecto. */}
+            <select
+              value={tenantForm.country_code}
+              onChange={(event) => {
+                const next = event.target.value;
+                const profile = COUNTRY_PROFILES[next] || COUNTRY_PROFILES.CO;
+                setTenantForm({
+                  ...tenantForm,
+                  country_code: next,
+                  timezone: profile.timezone,
+                });
+                setSettingsForm({ ...settingsForm, locale: profile.locale });
+              }}
+              required
+            >
+              {SUPPORTED_COUNTRIES.map((code) => (
+                <option key={code} value={code}>
+                  {COUNTRY_PROFILES[code].label} ({COUNTRY_PROFILES[code].currency})
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Zona horaria
@@ -1080,7 +1114,18 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
         <form className="wizard-panel form-grid" onSubmit={handleSaveSettings}>
           <label>
             Locale del tenant
-            <input value={settingsForm.locale} onChange={(event) => setSettingsForm({ locale: event.target.value })} required />
+            {/* TASK-0073: el locale se elige del catálogo ``es-XX`` soportado. */}
+            <select
+              value={settingsForm.locale}
+              onChange={(event) => setSettingsForm({ locale: event.target.value })}
+              required
+            >
+              {SUPPORTED_COUNTRIES.map((code) => (
+                <option key={code} value={COUNTRY_PROFILES[code].locale}>
+                  {COUNTRY_PROFILES[code].locale} — {COUNTRY_PROFILES[code].label}
+                </option>
+              ))}
+            </select>
           </label>
           <div className="builder-preview">
             <strong>Payload construido por el formulario</strong>
