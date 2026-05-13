@@ -15,6 +15,37 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG14 (overlay UI dismissable + proxy reenvía sin chequear MFA), BUG15 (`require_mfa_for_privileged` no estaba cableada a ningún router productivo).
+- **Fase 1 — verificación en HEAD:** ambos bugs reproducibles. `grep -rn "require_mfa_for_privileged" app/` devolvía una sola línea: la definición de la función. Ningún router la usaba como `Depends`. El overlay (`AdminLayout.jsx`) tenía el botón "Continuar sin MFA" con `setMfaDismissed(true)` y, una vez descartado, el panel completo se renderizaba. El proxy BFF (`admin_core_api_proxy`) leía la sesión, no chequeaba `_session_mfa_required`, y reenviaba la request al Core API.
+- **Fase 2 — remediación (causa raíz, doble defensa server + UI):**
+  - **Server (BUG15):** `require_mfa_for_privileged` se adjunta como `Depends` a nivel router en `tenant_admin_router`, `platform_admin_router`, `tenant_signup_router` y `tenant_catalog_router` (`app/api/v1/routes.py`). Quedan exentos `tenant_ops_router` (agentes, sin rol privilegiado) y `tenant_analytics_router` (manager, sin rol privilegiado), que ya estaban diseñados sin requerir MFA. La dependency interna mantiene su comportamiento: actor `service` exento, roles no-privilegiados exentos, modo local sin Auth0 exento.
+  - **Server proxy BFF (BUG14, mitad server):** `admin_core_api_proxy` (`app/admin/routes.py`) chequea `_session_mfa_required(session)` ANTES de leer el body o instanciar el cliente HTTPX. Si el gate dispara, retorna `403 {"detail": "mfa_required"}` con `media_type='application/json'`. No se propaga ningún header al Core API: la request muere en el BFF.
+  - **UI (BUG14, mitad cliente):** `MfaRequiredBanner` se renombra a `MfaRequiredBlocker` y pierde el botón "Continuar sin MFA". El componente vuelve a renderizar únicamente `Cerrar sesión` con `<form action="/admin/logout">`. `AdminLayout` corta el render con `if (mfaRequired) return <MfaRequiredBlocker />` antes de instanciar Sidebar/Topbar/módulos, de modo que ningún módulo privilegiado puede mostrarse mientras la sesión no tenga MFA. El estado `mfaDismissed` se elimina completamente — no hay forma de seguir con la sesión sin pasar por el flujo Auth0 con segundo factor.
+- **Archivos modificados:**
+  - `app/api/v1/routes.py` (import + 4 routers)
+  - `app/admin/routes.py` (proxy gate)
+  - `admin-panel/src/components/layout/AdminLayout.jsx` (overlay + early return)
+  - `tests/test_mfa_router_enforcement.py` (nuevo, 16 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py app/admin/routes.py tests/test_mfa_router_enforcement.py` → all checks passed.
+  - `uv run pytest tests/test_mfa_router_enforcement.py tests/test_mfa_enforcement.py -q` → 38 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1465 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG15 (cableado server):** `test_tenant_admin_router_attaches_mfa_dependency`, `test_platform_admin_router_attaches_mfa_dependency`, `test_tenant_signup_router_attaches_mfa_dependency`, `test_tenant_catalog_router_attaches_mfa_dependency`, `test_tenant_ops_router_does_not_require_mfa` (negative), `test_tenant_analytics_router_does_not_require_mfa` (negative), `test_routes_import_includes_require_mfa`.
+  - **BUG14 (proxy):** `test_admin_proxy_gates_on_session_mfa_required`, `test_admin_proxy_blocks_before_relaying_request_body`, `test_proxy_403_payload_is_json_with_detail_mfa_required`, `test_session_endpoint_still_publishes_mfa_required_flag`.
+  - **BUG14 (UI):** `test_admin_layout_overlay_has_no_continue_without_mfa_button`, `test_admin_layout_overlay_is_blocking_not_dismissable`, `test_admin_layout_overlay_offers_only_logout_action`.
+  - **Comportamiento dependency:** `test_require_mfa_for_privileged_403s_unverified_admin`, `test_require_mfa_for_privileged_passes_unprivileged_session`, `test_require_mfa_for_privileged_passes_service_tokens`.
+- **Notas:**
+  - La dependencia se aplica como `Depends(require_mfa_for_privileged)` en la lista del router; FastAPI la ejecuta después de `authenticate_request` y `require_min_role(...)`, de modo que `request.state.roles` y `request.state.mfa_verified` ya están populados.
+  - El proxy retorna `Response(content=json.dumps({...}), status_code=403)` en vez de levantar `HTTPException`. Esto es intencional: el BFF nunca debe convertir un fallo de MFA en un 502 si el dispatcher de excepciones falla; el JSON literal asegura el shape que la UI espera.
+  - Modo local-dev (`AUTH0_DOMAIN` no configurado) sigue funcionando: tanto `require_mfa_for_privileged` como `_session_mfa_required` retornan temprano. Los tests `test_authenticate_sets_mfa_verified_*` cubren la matrix de Auth0 activo/inactivo.
+
+---
+
 ### TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant
 
 - **Fecha:** 2026-05-13

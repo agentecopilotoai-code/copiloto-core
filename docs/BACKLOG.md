@@ -781,9 +781,12 @@ _TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados po
 
 ---
 
-### TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante
+_TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0080 — Fix estructural: MFA enforcement server-side + gate UI bloqueante (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** el control MFA es solo UI: la dependency `require_mfa_for_privileged` existe pero no está cableada a ningún router productivo, y el proxy BFF no chequea `_session_mfa_required`. La UI permite "Continuar sin MFA" descartando el banner. Resultado: cualquier sesión admin/owner/platform_owner sin segundo factor accede a operaciones privilegiadas.
 - **Bugs cubiertos (2):**
   - **BUG14** (`docs/BUGS/BUG14`, commit `ff7c0dc`): UI overlay dismissible + proxy reenvía sin chequear MFA.
@@ -801,6 +804,7 @@ _TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados po
   - Test E2E (Playwright o stub) que con MFA pendiente NO se puede ejecutar PATCH desde la UI.
   - Test que el proxy rechaza con 403 una request privilegiada cuando `mfa_required=true`.
   - Test que service-account (sin MFA porque no aplica) sigue funcionando.
+-->
 
 ---
 

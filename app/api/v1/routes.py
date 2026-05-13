@@ -89,6 +89,7 @@ from app.core.config import get_settings
 from app.core.security import (
     authenticate_request,
     has_jwt_role,
+    require_mfa_for_privileged,
     require_min_role,
     require_platform_owner,
     require_service,
@@ -417,15 +418,27 @@ public_router = APIRouter(tags=['public'])
 webhook_router = APIRouter(prefix='/webhooks', tags=['public-webhooks'])
 platform_admin_router = APIRouter(
     tags=['platform-admin'],
-    dependencies=[Depends(authenticate_request), Depends(require_platform_owner)],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(require_platform_owner),
+        Depends(require_mfa_for_privileged),
+    ],
 )
 tenant_admin_router = APIRouter(
     tags=['tenant-admin'],
-    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(require_min_role('admin')),
+        Depends(require_mfa_for_privileged),
+    ],
 )
 tenant_catalog_router = APIRouter(
     tags=['tenant-catalog'],
-    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin', allow_service=True))],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(require_min_role('admin', allow_service=True)),
+        Depends(require_mfa_for_privileged),
+    ],
 )
 tenant_ops_router = APIRouter(
     tags=['tenant-operations'],
@@ -437,7 +450,11 @@ tenant_analytics_router = APIRouter(
 )
 tenant_signup_router = APIRouter(
     tags=['tenant-signup'],
-    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(require_min_role('admin')),
+        Depends(require_mfa_for_privileged),
+    ],
 )
 # Endpoints that any authenticated user must be able to call regardless of the
 # role they currently hold inside their default tenant.  Used for the Slack-style
