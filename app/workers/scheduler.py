@@ -38,6 +38,20 @@ def _extract_purpose(payload: object) -> str | None:
     return purpose if isinstance(purpose, str) and purpose else None
 
 
+def _extract_kind(payload: object) -> str | None:
+    """Return ``payload->>'kind'`` if present and a string.
+
+    TASK-0056: ``reminder_jobs`` use ``kind`` for non-templated worker actions
+    (e.g. ``auto_rebook_timeout``) that should not be gated by an approved
+    WhatsApp template.
+    """
+    data = _coerce_payload_dict(payload)
+    if data is None:
+        return None
+    kind = data.get('kind')
+    return kind if isinstance(kind, str) and kind else None
+
+
 async def _mark_conversation_pending_recall(
     conn: asyncpg.Connection,
     *,
@@ -98,6 +112,71 @@ async def _has_approved_template(
     )
 
 
+async def _dispatch_auto_rebook_timeout(
+    conn: asyncpg.Connection, row: asyncpg.Record
+) -> None:
+    """Run the TASK-0056 silent-decline escalation for one timeout job.
+
+    Imported lazily so the scheduler module stays importable even if the
+    self-service module is being edited.
+    """
+    from uuid import UUID
+
+    from app.services.appointment_self_service import execute_auto_rebook_timeout
+
+    payload = _coerce_payload_dict(row['payload']) or {}
+    conversation_id = payload.get('conversation_id')
+    appointment_id = payload.get('appointment_id')
+    if not conversation_id or not appointment_id:
+        await conn.execute(
+            """
+            update app.reminder_jobs
+            set status='failed', last_error=$2, updated_at=now()
+            where id=$1
+            """,
+            row['id'],
+            'auto_rebook_timeout_invalid_payload',
+        )
+        log.warning(
+            'auto_rebook_timeout_invalid_payload',
+            reminder_id=str(row['id']),
+            tenant_id=str(row['tenant_id']),
+        )
+        return
+    try:
+        trace = await execute_auto_rebook_timeout(
+            conn,
+            tenant_id=row['tenant_id'],
+            conversation_id=UUID(conversation_id),
+            appointment_id=UUID(appointment_id),
+            job_id=row['id'],
+        )
+    except Exception as exc:
+        await conn.execute(
+            """
+            update app.reminder_jobs
+            set status='failed', last_error=$2, updated_at=now()
+            where id=$1
+            """,
+            row['id'],
+            f'auto_rebook_timeout_exception:{str(exc)[:200]}',
+        )
+        log.exception(
+            'auto_rebook_timeout_failed',
+            reminder_id=str(row['id']),
+            tenant_id=str(row['tenant_id']),
+        )
+        return
+    await conn.execute("update app.reminder_jobs set status='sent' where id=$1", row['id'])
+    log.info(
+        'auto_rebook_timeout_dispatched',
+        reminder_id=str(row['id']),
+        tenant_id=str(row['tenant_id']),
+        cancelled=trace.get('cancelled', False),
+        skipped_reason=trace.get('skipped_reason'),
+    )
+
+
 async def _process_pending_reminder_jobs(conn: asyncpg.Connection) -> int:
     rows = await conn.fetch(
         """
@@ -114,6 +193,14 @@ async def _process_pending_reminder_jobs(conn: asyncpg.Connection) -> int:
         """
     )
     for row in rows:
+        kind = _extract_kind(row['payload'])
+        # TASK-0056: silent-decline escalation. The auto-rebook timeout is a
+        # pure worker action — no WhatsApp template is sent — so it is
+        # dispatched via ``execute_auto_rebook_timeout`` and the row is marked
+        # ``sent`` directly without emitting ``reminder.due``.
+        if kind == 'auto_rebook_timeout':
+            await _dispatch_auto_rebook_timeout(conn, row)
+            continue
         purpose = _extract_purpose(row['payload'])
         if purpose and not await _has_approved_template(conn, row['tenant_id'], purpose):
             error = f'template_not_approved:{purpose}'

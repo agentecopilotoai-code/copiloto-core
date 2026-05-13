@@ -15,6 +15,38 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0056 — Timeout y escalado del flujo auto-rebook tras decline silencioso
+
+- **Fecha:** 2026-05-12
+- **Resumen:** el auto-rebook que arrancó TASK-0044 ya no se queda en limbo si el cliente no responde después de ver los tres horarios alternativos. Al inicio del flow se inserta un `reminder_job` con `target_type='conversation'`, `template_name='auto_rebook_timeout'` y payload `{kind:'auto_rebook_timeout', conversation_id, appointment_id, source:'auto_rebook'}`, programado a `now() + auto_rebook_timeout_minutes` (default 90, clamp `[10, 240]`). El scheduler reconoce el `kind` y delega en `execute_auto_rebook_timeout`, que: (a) cancela la cita (`status='cancelled'` + `cancel_appointment_reminder_jobs`), (b) emite `bot.appointment_cancelled` (audit + `domain_events` con `reason='auto_rebook_timeout'`), (c) abre un handoff si no hay uno abierto (`reason='auto_rebook_timeout'`), (d) asigna al contacto la etiqueta `Necesita seguimiento` (color `#f59e0b`, idempotente por `(tenant_id, name)`), y (e) marca la conversación como `waiting_agent` con `handoff_required=true`. Si el cliente responde antes del timeout, el job se cancela (`status='cancelled'`) en el primer inbound mid-flow del path `source='auto_rebook'` — el cancel sucede **antes** de procesar el reply para evitar carreras con el scheduler. El executor además es idempotente: si el state ya pasó al step `completed` o si hay un inbound posterior al envío de los slots, retorna `skipped_reason='state_changed'` / `'customer_replied'` sin tocar la cita.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):**
+    - Nuevo índice único parcial `ux_reminder_jobs_auto_rebook_timeout on (tenant_id, target_id) where target_type='conversation' and payload->>'kind'='auto_rebook_timeout' and status in ('pending','processing')`. Previene duplicados activos por conversación; al cancelarse, el slot vuelve a estar libre para re-armar la ventana en una nueva decline.
+  - **`app/services/appointment_self_service.py`:**
+    - Constantes nuevas: `AUTO_REBOOK_TIMEOUT_KIND='auto_rebook_timeout'`, `DEFAULT_AUTO_REBOOK_TIMEOUT_MINUTES=90`, `MIN/MAX` (10/240), `FOLLOWUP_TAG_NAME='Necesita seguimiento'`, `FOLLOWUP_TAG_COLOR='#f59e0b'`, `AUTO_REBOOK_TIMEOUT_REASON='auto_rebook_timeout'`.
+    - Helper puro `auto_rebook_timeout_minutes(notification_settings)` — parsea dict o JSON string, clamp al rango documentado, default a 90 ante valor ausente/inválido.
+    - `_schedule_auto_rebook_timeout(...)` inserta el job con `on conflict do nothing` (gracias al índice parcial). Devuelve `None` si ya había uno activo.
+    - `_cancel_auto_rebook_timeout(...)` marca como `cancelled` cualquier timeout pendiente para la conversación. Devuelve el conteo afectado.
+    - `execute_auto_rebook_timeout(...)` — entrypoint del scheduler. Re-fetchea la conversación + state, valida que sigue en `flow=reschedule`, `source=auto_rebook`, `step=awaiting_reschedule_slot` y que el `appointment_id` coincide. Verifica que **no hay inbound desde el envío de los slots** (consulta `max(created_at)` en `domain_events` con `event_name='self_service.handled'` + `source='auto_rebook'` para localizar el envío, luego `select 1 from messages` con `direction='inbound'` posterior). Si pasa los guards: cancela cita + jobs, audita, abre handoff, tagea al contacto, persiste state `completed` con `closed_reason='auto_rebook_timeout'` y emite `domain_events('bot.appointment_cancelled')` idempotente. Si algún guard falla, retorna `skipped_reason` y no toca nada.
+    - `start_auto_rebook_flow` ahora llama a `_schedule_auto_rebook_timeout` después de persistir el state, lee `notification_settings` del tenant para el minutaje. El `self_service.handled` que registra el evento incluye `timeout_minutes` y `timeout_job_id`.
+    - `maybe_run_self_service_flow` cancela el timeout al tope del mid-flow cuando `state.source=='auto_rebook'`, **antes** de procesar el reply — así un downstream lento (e.g. conflict de slot que re-presenta opciones) no pierde la carrera contra el scheduler. También limpia el timeout si la cita desapareció.
+  - **`app/workers/scheduler.py`:**
+    - Helper `_extract_kind(payload)` espejo de `_extract_purpose`. `_process_pending_reminder_jobs` ahora, antes del template gate, despacha jobs con `payload.kind=='auto_rebook_timeout'` vía `_dispatch_auto_rebook_timeout` (import lazy de `execute_auto_rebook_timeout`). El dispatcher valida payload, captura excepciones (las marca `failed` con `last_error`), y marca `sent` en el happy path; el `kind` no requiere template aprobado.
+  - **Admin Panel (`TenantSetupWizard.jsx`):**
+    - `DEFAULT_NOTIFICATION_SETTINGS.auto_rebook_timeout_minutes = 90`. La pestaña Notificaciones, dentro del bloque "Confirmación activa", agrega un input numérico "Tiempo máximo del auto-rebook (min)" (`min=10`, `max=240`) con hint que explica la etiqueta y el rango.
+- **Tests (`tests/test_auto_rebook_timeout_static.py`, 12 tests):** default + clamp de `auto_rebook_timeout_minutes`, schema con índice único parcial, scheduler reconoce el `kind` y rutea sin template, `start_auto_rebook_flow` programa un job con el payload correcto, mid-flow cancela el timeout antes de procesar el reply, `execute_auto_rebook_timeout` skip cuando state cambió, skip cuando hay inbound reciente, happy path que cancela cita + audita + abre handoff + tagea, skip limpio cuando la conversación ya no existe, y wizard expone el input con el rango documentado.
+- **Validaciones:**
+  - `uv run --extra dev pytest tests/test_auto_rebook_timeout_static.py -q` → **12 passed**.
+  - `uv run --extra dev pytest tests/test_auto_rebook_static.py tests/test_self_service_static.py -q` → **38 passed** (sin regresiones en los flows previos).
+  - `uv run --extra dev pytest tests/ -q -m "not requires_db"` → **950 passed, 11 skipped**.
+- **Notas:**
+  - El timeout es por conversación, no global; un contacto puede tener varios timeouts activos si hay varias citas en juego, cada uno con su `target_id` distinto.
+  - La cita declinada **no** se reutiliza: si el cliente vuelve después del timeout, agenda como nuevo lead (la cita anterior queda `cancelled`).
+  - El clamp `[10, 240]` evita que una configuración accidental (`0` o un valor enorme) desarme la red de seguridad o demore el escalado por días.
+  - El cancel mid-flow se ejecuta como una operación independiente; si después el cliente envía un mensaje que no se puede parsear, igual se re-presenta el step pero ya sin riesgo de escalado fantasma.
+
+---
+
 ### TASK-0055 — Tracking de referido entre contactos (referrer_contact_id)
 
 - **Fecha:** 2026-05-12
