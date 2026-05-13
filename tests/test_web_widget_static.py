@@ -36,7 +36,12 @@ ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPa
 
 def test_schema_allows_web_provider_in_tenant_channels():
     schema = SCHEMA.read_text()
-    assert "check (provider in ('whatsapp_cloud_api','web'))" in schema
+    # TASK-0074 extended the enum to add Instagram and Facebook Messenger.
+    # The check still includes 'web' so the widget channel keeps working.
+    assert (
+        "check (provider in ('whatsapp_cloud_api','web','instagram_messenger','facebook_messenger'))"
+        in schema
+    )
 
 
 def test_schema_tenant_channels_has_allowed_origins_and_widget_config():
@@ -96,8 +101,16 @@ def test_routes_analytics_overview_returns_lead_sources():
 
 
 def test_event_worker_skips_non_whatsapp_providers():
+    # TASK-0074: the worker now dispatches WhatsApp + Instagram + Facebook
+    # Messenger from the same queue. The 'web' provider remains excluded
+    # because web widget responses are read by the widget itself (polling),
+    # not pushed back via the worker.
     text = WORKER.read_text()
-    assert "c.provider = 'whatsapp_cloud_api'" in text
+    assert (
+        "c.provider in ('whatsapp_cloud_api','instagram_messenger','facebook_messenger')"
+        in text
+    )
+    assert "'web'" not in text.split('where e.published_at is null')[1].split('order by')[0]
 
 
 def test_main_adds_cors_middleware_for_web_widget():

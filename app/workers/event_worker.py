@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+from datetime import datetime, timezone
 
 import asyncpg
 import httpx
@@ -8,6 +9,12 @@ import structlog
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.services.meta_messenger import (
+    META_MESSENGER_PROVIDERS,
+    OutsideServiceWindowError,
+    is_within_service_window,
+    send_messenger_message,
+)
 from app.services.metrics import (
     record_message,
     record_outbound_dlq,
@@ -63,14 +70,19 @@ def delivery_error_code(exc: Exception) -> str:
 async def process_once(conn: asyncpg.Connection) -> int:
     rows = await conn.fetch(
         """
-        select e.id, e.tenant_id, e.aggregate_id, m.conversation_id, m.body_text, m.message_type, m.media_id, m.mime_type, m.payload, c.phone_number_id, c.account_mode, c.token_ref, ct.phone_e164
+        select e.id, e.tenant_id, e.aggregate_id, m.conversation_id, m.body_text,
+               m.message_type, m.media_id, m.mime_type, m.payload,
+               c.provider, c.phone_number_id, c.page_id, c.instagram_account_id,
+               c.account_mode, c.token_ref, c.service_window_hours,
+               cv.service_window_expires_at,
+               ct.phone_e164, ct.wa_id
         from app.domain_events e
         join app.messages m on m.id = e.aggregate_id and m.tenant_id = e.tenant_id
         join app.conversations cv on cv.id = m.conversation_id and cv.tenant_id = e.tenant_id
         join app.contacts ct on ct.id = cv.contact_id and ct.tenant_id = e.tenant_id
         join app.tenant_channels c on c.id = cv.channel_id and c.tenant_id = e.tenant_id
         where e.published_at is null and e.event_name='message.queued'
-          and c.provider = 'whatsapp_cloud_api'
+          and c.provider in ('whatsapp_cloud_api','instagram_messenger','facebook_messenger')
         order by e.occurred_at
         limit 10
         """
@@ -93,30 +105,77 @@ async def process_once(conn: asyncpg.Connection) -> int:
             token_ref=row['token_ref'],
             to_last4=row['phone_e164'][-4:] if row['phone_e164'] else None,
         )
+        provider = row['provider'] or 'whatsapp_cloud_api'
+        channel_label = 'whatsapp' if provider == 'whatsapp_cloud_api' else provider
         try:
             message_payload = row['payload'] or {}
             if isinstance(message_payload, str):
                 message_payload = json.loads(message_payload)
-            result = await send_whatsapp_message(
-                row['phone_number_id'],
-                row['phone_e164'],
-                row['message_type'] or 'text',
-                row['body_text'] or '',
-                row['account_mode'] or 'mock',
-                row['token_ref'],
-                row['media_id'],
-                message_payload.get('media_url'),
-                message_payload.get('caption'),
-                message_payload.get('interactive'),
-                message_payload.get('template'),
-            )
+            if provider in META_MESSENGER_PROVIDERS:
+                # 24h service window gate. The expiry was set on inbound by
+                # the messenger webhook; we double-check here in case it was
+                # nudged forward by ops or replaced by a later inbound.
+                window_expires = row['service_window_expires_at']
+                window_open = False
+                if isinstance(window_expires, datetime):
+                    expires = window_expires
+                    if expires.tzinfo is None:
+                        expires = expires.replace(tzinfo=timezone.utc)
+                    window_open = datetime.now(timezone.utc) <= expires
+                else:
+                    window_open = is_within_service_window(
+                        None,
+                        window_hours=int(row['service_window_hours'] or 24),
+                    )
+                recipient_account_id = (
+                    row['instagram_account_id']
+                    if provider == 'instagram_messenger'
+                    else row['page_id']
+                )
+                if not recipient_account_id:
+                    raise RuntimeError(
+                        f'{provider} channel missing recipient_account_id'
+                    )
+                result = await send_messenger_message(
+                    provider,
+                    recipient_account_id,
+                    row['wa_id'],
+                    text=row['body_text'] or '',
+                    media_url=message_payload.get('media_url'),
+                    media_type=row['message_type'] if row['message_type'] in {
+                        'image', 'video', 'audio', 'file', 'document'
+                    } else None,
+                    delivery_mode=row['account_mode'] or 'mock',
+                    token_ref=row['token_ref'],
+                    within_service_window=window_open,
+                )
+            else:
+                result = await send_whatsapp_message(
+                    row['phone_number_id'],
+                    row['phone_e164'],
+                    row['message_type'] or 'text',
+                    row['body_text'] or '',
+                    row['account_mode'] or 'mock',
+                    row['token_ref'],
+                    row['media_id'],
+                    message_payload.get('media_url'),
+                    message_payload.get('caption'),
+                    message_payload.get('interactive'),
+                    message_payload.get('template'),
+                )
         except Exception as exc:
-            error_message = delivery_error_message(exc)
-            error_code = delivery_error_code(exc)
+            if isinstance(exc, OutsideServiceWindowError):
+                error_code = 'outside_service_window'
+                error_message = (
+                    f'{provider} 24h service window expired; outbound bloqueado.'
+                )
+            else:
+                error_message = delivery_error_message(exc)
+                error_code = delivery_error_code(exc)
             record_message(
                 tenant_id=row['tenant_id'],
                 direction='outbound',
-                channel='whatsapp',
+                channel=channel_label,
                 status='failed',
             )
             # TASK-0065: contador de DLQ por error_code para alertas Prometheus
@@ -194,7 +253,7 @@ async def process_once(conn: asyncpg.Connection) -> int:
         record_message(
             tenant_id=row['tenant_id'],
             direction='outbound',
-            channel='whatsapp',
+            channel=channel_label,
             status='sent',
         )
         log.info(
