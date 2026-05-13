@@ -67,7 +67,7 @@ flowchart LR
 |---|---|---:|---|---|
 | `api` | `./Dockerfile` (uvicorn FastAPI) | 8000 | REST `/v1`, webhooks Meta + payments, `/v1/web/*`, `/metrics`, Admin Panel API proxy. Carga `app.main:app`. | horizontal |
 | `admin-panel` | `./admin-panel/Dockerfile` | 3000 | SPA React (Vite) + proxy `app.admin.main:app` que sirve assets y delega API al `api` interno por `ADMIN_CORE_API_BASE_URL`. | horizontal |
-| `event-worker` | mismo build que `api` | 9100 (interno) | Procesa `domain_events` con `published_at IS NULL`: envía outbound a Meta, marca status, instrumenta `cpi_messages_total`. | horizontal |
+| `event-worker` | mismo build que `api` | 9100 (interno) | Procesa `domain_events` con `published_at IS NULL`: envía outbound a Meta, marca status, instrumenta `cpi_messages_total`. | singleton hasta reclamar filas con `FOR UPDATE SKIP LOCKED` (ver `app/workers/event_worker.py`); escalar horizontalmente dispara envíos duplicados a Meta |
 | `scheduler` | mismo build que `api` | 9100 (interno) | Tick periódico: despacha `reminder_jobs` vencidos, ejecuta `operator_alerts` pendientes, recall, auto-rebook timeouts, refresh de segmentos. | singleton recomendado |
 | `retention-worker` | mismo build (no en compose default, ver TASK-0061) | — | Job diario a 03:00 UTC: aplica `data_retention_policies` por tenant; DELETE paginado o anonimización in-place. | singleton |
 | `alerts-worker` | mismo build (entrypoint separado opcional) | — | Despacha `operator_alerts` con backoff exponencial. Reusable como subset del `scheduler` o proceso aparte. | singleton |

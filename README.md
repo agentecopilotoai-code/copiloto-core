@@ -1606,7 +1606,7 @@ La guía paso a paso vive en [`INSTALL.md`](INSTALL.md): requisitos, generación
 ./scripts/bootstrap.sh
 ```
 
-Genera `.env` y `.secrets/*` con permisos seguros si no existen, levanta PostgreSQL con `pgvector`, Redis, MinIO, OpenTelemetry Collector, API, worker de eventos, scheduler y workers de retención/alertas/extracción. Los archivos con secretos reales están en `.gitignore`; usa `.env.example` como plantilla y cambia los valores antes de producción.
+Genera `.env` y `.secrets/*` con permisos seguros si no existen y levanta los servicios definidos en `docker-compose.yml`: PostgreSQL con `pgvector`, Redis, MinIO, OpenTelemetry Collector, API, `event-worker` y `scheduler`. Los workers de retención, alertas y extracción no se incluyen en el compose por defecto: revisa [`ARCHITECTURE.md`](ARCHITECTURE.md) para arrancarlos manualmente cuando los necesites. Los archivos con secretos reales están en `.gitignore`; usa `.env.example` como plantilla y cambia los valores antes de producción.
 
 Para arrancar también el stack de observabilidad (Prometheus + Grafana):
 
