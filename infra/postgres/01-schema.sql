@@ -784,10 +784,9 @@ create index ix_consent_ledger_tenant_contact_time
   on app.consent_ledger(tenant_id, contact_id, occurred_at desc);
 create index ix_consent_ledger_tenant_event
   on app.consent_ledger(tenant_id, event, occurred_at desc);
-alter table app.consent_ledger
-  add constraint fk_consent_ledger_tenant_contact
-    foreign key (tenant_id, contact_id)
-    references app.contacts(tenant_id, id) on delete cascade;
+-- NOTE: the composite FK `fk_consent_ledger_tenant_contact` requires the
+-- unique constraint `uq_contacts_tenant_id_id` (created below at the
+-- "Tenant consistency guards" block) so it lives there, not here.
 
 create or replace function app.consent_ledger_block_mutations() returns trigger
 language plpgsql as $$
@@ -829,6 +828,12 @@ create index ix_data_retention_policies_tenant on app.data_retention_policies(te
 -- from linking to records that belong to another tenant.
 alter table app.tenant_channels add constraint uq_tenant_channels_tenant_id_id unique (tenant_id, id);
 alter table app.contacts add constraint uq_contacts_tenant_id_id unique (tenant_id, id);
+-- TASK-0062: append-only consent ledger references contacts by composite key.
+-- The FK depends on `uq_contacts_tenant_id_id` being in place first.
+alter table app.consent_ledger
+  add constraint fk_consent_ledger_tenant_contact
+    foreign key (tenant_id, contact_id)
+    references app.contacts(tenant_id, id) on delete cascade;
 -- TASK-0055: referrer_contact_id is tenant-scoped (cannot reference a contact
 -- from another tenant); on delete set null so deleting the referrer does not
 -- cascade-delete the referee.
