@@ -9,11 +9,13 @@ import {
   getAnalyticsOverview,
   getAnalyticsReferrals,
 } from '../../../services/coreApi.js';
+import { AgentPerformance } from './AgentPerformance.jsx';
 
 const SUB_TABS = [
   { id: 'overview', label: 'Resumen' },
   { id: 'funnel', label: 'Funnel' },
   { id: 'campaigns', label: 'Campañas' },
+  { id: 'agents', label: 'Agentes' },
 ];
 
 const FUNNEL_STEP_LABELS = {
@@ -262,6 +264,15 @@ export function AnalyticsPanel({ module, session, tenant }) {
 
       {tenantId && activeTab === 'campaigns' && (
         <CampaignsView campaigns={campaigns} isLoading={isLoading} />
+      )}
+
+      {tenantId && activeTab === 'agents' && (
+        <AgentPerformance
+          isLoading={isLoading}
+          range={range}
+          session={session}
+          tenantId={tenantId}
+        />
       )}
 
       {tenantId && activeTab === 'overview' && overview && (

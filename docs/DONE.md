@@ -15,6 +15,50 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0068 — KPIs de rendimiento por agente en analytics
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se cierra la brecha "el manager no sabe qué agente cierra más, responde más rápido o deja handoffs abiertos". Ahora `GET /v1/analytics/agents` agrega por `user_id` (rol `agent` en el tenant) las 7 métricas del backlog (mensajes enviados, handoffs aceptados/resueltos, tiempo medio de respuesta, citas confirmadas, ingreso atribuido y rating de feedback) dentro del mismo rango/ventana que usa el resto de `/v1/analytics/*`. La atribución de citas e ingresos vive en `appointments.metadata.closed_by_user_id`, que se setea automáticamente cuando un agente crea una cita por el desk (`POST /v1/appointments`) o cuando confirma/completa una existente (`PATCH`). El admin panel gana una pestaña *Agentes* (`AgentPerformance.jsx`) con tabla ranqueable por cualquier KPI y badge "top performer" al agente con mayor revenue del rango (con tiebreakers por citas confirmadas y handoffs resueltos).
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** nueva columna `appointments.metadata jsonb not null default '{}'::jsonb` + índice parcial `ix_appointments_closed_by on (tenant_id, metadata->>'closed_by_user_id') where metadata ? 'closed_by_user_id'` para que la atribución por agente no requiera un seq-scan de `appointments`.
+  - **Wire de atribución (`app/api/v1/routes.py`):**
+    - `POST /v1/appointments`: si `current_user_id_from_request` devuelve un user (actor_type='user'), el insert incluye `metadata = {"closed_by_user_id": <uuid>, "closed_at": <iso>}`. Cuando el bot crea la cita (actor_type='service'), `metadata` queda vacío y el agente no se lleva el crédito.
+    - `PATCH /v1/appointments/{id}`: si el status transita a `confirmed`/`completed` por acción de un usuario y aún no hay `closed_by_user_id`, el `update` aplica `metadata = metadata || {"closed_by_user_id": ..., "closed_at": ...}` (merge no-destructivo).
+  - **Endpoint nuevo (`@tenant_analytics_router.get('/analytics/agents')`):** una CTE por métrica para que el plan quede explícito y se pueda iterar:
+    - `agents`: join `users` + `user_tenant_roles role='agent'` para listar sólo agentes del tenant.
+    - `messages_sent`: count(*) sobre `messages` con `direction='outbound' and sender_actor_type='agent'`.
+    - `handoffs_accepted` / `handoffs_resolved`: count en `handoffs` filtrado por `status in ('accepted','resolved')` y `'resolved'` respectivamente.
+    - `agent_responses` + `response_times`: lateral join contra `messages` para encontrar el último inbound del cliente antes de cada respuesta del agente, luego `avg(epoch_diff)`. Sólo `response_seconds >= 0` para descartar mensajes fuera de orden.
+    - `appts_closed`: agrega por `metadata->>'closed_by_user_id'` con `count filter(status='confirmed')` y `sum(s.price_amount) filter(status='completed')` (revenue sólo sobre citas efectivamente completadas).
+    - `feedback_per_agent`: `avg(rating)` en `appointment_feedback` cruzando con `appointments.metadata->>'closed_by_user_id'`.
+    - Salida ordenada por revenue desc → appointments_confirmed desc → handoffs_resolved desc → display_name asc, e incluye `totals` agregados y `top_performer_user_id` (el primer agente con métricas reales > 0).
+  - **API client (`admin-panel/src/services/coreApi.js`):** `getAnalyticsAgents(session, tenantId, range)` siguiendo el mismo patrón que el resto.
+  - **Admin Panel (`admin-panel/src/components/modules/analytics/AgentPerformance.jsx` nuevo, registrado como pestaña `agents` en `AnalyticsPanel.jsx`):**
+    - KPI cards: agentes activos, mensajes, handoffs resueltos (con accepted como hint), citas confirmadas (con completed como hint), ingreso atribuido.
+    - Tabla con columnas mensajes / handoffs aceptados / handoffs resueltos / tiempo medio de respuesta / citas confirmadas / ingreso atribuido / rating, con selector de orden y badge "top performer" sobre el agente apuntado por el endpoint.
+    - Helpers de formato (`formatSeconds` decide entre s/min/h según magnitud, `formatRating` muestra `X.XX ★ (N)`).
+  - **Tests (`tests/test_analytics_agents_static.py` nuevo, 9 estáticos):** schema (columna + índice), persistencia de `closed_by_user_id` en `POST` y `PATCH /appointments`, endpoint registrado en el router de manager, CTEs requeridas (agents/users/handoffs/lateral inbound/metadata/feedback), output con todos los campos documentados + `top_performer_user_id` y `totals`, helper de coreApi, módulo `AgentPerformance.jsx` con columnas + badge, pestaña `agents` registrada en `AnalyticsPanel`. Además ajustes mínimos a `tests/test_booking_flow_static.py` y `tests/test_branches_static.py` para reflejar la columna `metadata` añadida a la tabla.
+- **Comandos ejecutados:**
+  - `.venv/bin/pytest tests/test_analytics_agents_static.py tests/test_analytics_static.py -v` → **19 passed** (9 nuevos + 10 existentes).
+  - `.venv/bin/pytest --ignore=tests/e2e --ignore=tests/load -q` → **1172 passed, 21 skipped** (sin regresión).
+  - `.venv/bin/ruff check app/api/v1/routes.py` → **All checks passed!**.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/services/coreApi.js`
+  - `admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx`
+  - `admin-panel/src/components/modules/analytics/AgentPerformance.jsx` (nuevo)
+  - `tests/test_analytics_agents_static.py` (nuevo)
+  - `tests/test_booking_flow_static.py` (assertion del INSERT actualizada)
+  - `tests/test_branches_static.py` (assertion de la columna `branch_id` actualizada para reconocer `metadata` antes de `created_at`)
+  - `docs/BACKLOG.md` / `docs/DONE.md`
+- **Limitaciones / notas:**
+  - El bot que cierra citas via flujo automático (`booking_flow`) no setea `closed_by_user_id` — eso es deliberado, esas citas no se le atribuyen a ningún agente y quedan visibles únicamente en el agregado del tenant. Si más adelante queremos atribuirle conversiones al bot, basta con marcarlas como `closed_by_user_id='bot'` y filtrar en la query (no se hace ahora para mantener el ranking limpio entre humanos).
+  - El `top_performer_user_id` salta agentes que terminan en cero en todas las métricas relevantes (evita el caso "tenant nuevo, todos los agentes en 0 → primero por display_name queda como top performer" que sería ruido).
+  - La PATCH-route preserva `metadata` existente y sólo agrega `closed_by_user_id` si todavía no lo tiene; eso protege la atribución original cuando hay re-confirmaciones por otro agente más adelante.
+
+---
+
 ### TASK-0067 — Digest periódico (diario y semanal) al manager
 
 - **Fecha:** 2026-05-13
