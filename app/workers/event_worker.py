@@ -8,7 +8,11 @@ import structlog
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.services.metrics import record_message, set_worker_queue_depth
+from app.services.metrics import (
+    record_message,
+    set_worker_queue_depth,
+    start_metrics_http_server,
+)
 from app.services.whatsapp import send_whatsapp_message
 
 log = structlog.get_logger()
@@ -174,6 +178,7 @@ async def process_once(conn: asyncpg.Connection) -> int:
 async def main() -> None:
     configure_logging(get_settings().log_level)
     settings = get_settings()
+    start_metrics_http_server(settings.worker_metrics_port)
     conn = await asyncpg.connect(settings.database_url)
     await conn.execute("select set_config('app.support_mode', 'true', false)")
     try:

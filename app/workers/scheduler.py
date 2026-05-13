@@ -7,6 +7,7 @@ import structlog
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.services.campaigns import process_due_campaigns
+from app.services.metrics import set_worker_queue_depth, start_metrics_http_server
 from app.services.operator_alerts import process_pending_operator_alerts
 from app.services.segments import refresh_due_segments
 
@@ -253,13 +254,25 @@ async def _process_pending_reminder_jobs(conn: asyncpg.Connection) -> int:
     return len(rows)
 
 
+async def _update_scheduler_queue_depth(conn: asyncpg.Connection) -> None:
+    pending = await conn.fetchval(
+        """
+        select count(*) from app.reminder_jobs
+        where status = 'pending' and run_at <= now()
+        """
+    )
+    set_worker_queue_depth(worker='scheduler', depth=int(pending or 0))
+
+
 async def main() -> None:
     configure_logging(get_settings().log_level)
     settings = get_settings()
+    start_metrics_http_server(settings.worker_metrics_port)
     conn = await asyncpg.connect(settings.database_url)
     await conn.execute("select set_config('app.support_mode', 'true', false)")
     try:
         while True:
+            await _update_scheduler_queue_depth(conn)
             await _process_pending_reminder_jobs(conn)
             await process_due_campaigns(conn)
             await refresh_due_segments(conn)

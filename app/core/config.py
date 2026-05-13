@@ -98,6 +98,10 @@ class Settings(BaseSettings):
     # TASK-0060: observabilidad — endpoint /metrics restringido a IPs allowlisted.
     # Lista separada por comas; vacío = endpoint inaccesible. No soporta CIDR.
     observability_allowed_ips: str = ''
+    # Puerto en el que cada proceso worker expone su /metrics (cada worker corre
+    # en un container separado, por lo que pueden compartir el mismo puerto
+    # interno y diferenciarse por el `targets:` de Prometheus).
+    worker_metrics_port: int = Field(default=9100, ge=1, le=65535)
 
     @property
     def knowledge_storage_bucket(self) -> str:

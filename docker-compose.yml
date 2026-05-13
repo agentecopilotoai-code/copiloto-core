@@ -65,6 +65,11 @@ services:
       postgres:
         condition: service_healthy
     command: python3 -m app.workers.event_worker
+    # /metrics expuesto en :9100 dentro de la red docker; Prometheus lo
+    # raspa con target event-worker:9100. No publicamos al host porque solo
+    # interesa el scrape interno.
+    expose:
+      - "9100"
     volumes:
       - ./.secrets:/app/.secrets:ro
 
@@ -76,6 +81,8 @@ services:
       postgres:
         condition: service_healthy
     command: python3 -m app.workers.scheduler
+    expose:
+      - "9100"
 
   postgres:
     image: pgvector/pgvector:pg16

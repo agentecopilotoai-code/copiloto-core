@@ -90,6 +90,44 @@ _VALID_APPOINTMENT_STATUSES = frozenset(
 )
 _CB_STATE_VALUES = {'closed': 0, 'half_open': 1, 'open': 2}
 
+# Bucket conocidos para `cpi_handoff_total{reason}`. Cualquier texto libre
+# que envíen operadores u clientes cae a `other` para evitar explosión de
+# cardinalidad en Prometheus.
+_HANDOFF_REASONS = frozenset({
+    'manual',
+    'manual_or_policy_handoff',
+    'policy',
+    'risk_keyword',
+    'max_turns',
+    'outside_window_24h',
+    'knowledge_context_insufficient',
+    'llm_no_information',
+    'llm_unavailable',
+    'waiting_agent_handoff_pending',
+    'negative_feedback',
+    'complaint',
+    'vip_routing',
+    'urgent_triage',
+    'unspecified',
+})
+
+
+def normalize_handoff_reason(reason: object) -> str:
+    """Mapea texto libre de motivo de handoff a un enum acotado.
+
+    Prometheus crea una serie por valor distinto de label; sin esta
+    normalización el endpoint manual de handoff (`POST .../handoff`) podría
+    crear series ilimitadas con cada mensaje libre que envíe el operador.
+    """
+    if reason is None:
+        return 'unspecified'
+    token = str(reason).strip().lower().replace(' ', '_')
+    if not token:
+        return 'unspecified'
+    if token in _HANDOFF_REASONS:
+        return token
+    return 'other'
+
 
 def _safe_tenant(tenant_id: object) -> str:
     if tenant_id is None:
@@ -139,10 +177,10 @@ def record_appointment(*, tenant_id: object, status: str) -> None:
     appointments_total.labels(tenant_id=_safe_tenant(tenant_id), status=status).inc()
 
 
-def record_handoff(*, tenant_id: object, reason: str) -> None:
+def record_handoff(*, tenant_id: object, reason: object) -> None:
     handoff_total.labels(
         tenant_id=_safe_tenant(tenant_id),
-        reason=reason or 'unspecified',
+        reason=normalize_handoff_reason(reason),
     ).inc()
 
 
@@ -162,6 +200,19 @@ def set_worker_queue_depth(*, worker: str, depth: int) -> None:
 def render_latest() -> tuple[bytes, str]:
     """Devuelve (payload, content_type) listo para servir desde el endpoint /metrics."""
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
+
+
+def start_metrics_http_server(port: int, addr: str = '0.0.0.0') -> None:
+    """Levanta un endpoint /metrics standalone para procesos sin FastAPI.
+
+    Los workers (event_worker, scheduler) corren en procesos separados con
+    su propio `REGISTRY` en memoria; sin este servidor las métricas que
+    actualizan nunca llegarían al scraper de Prometheus. Se llama una sola
+    vez al arrancar cada worker.
+    """
+    from prometheus_client import start_http_server  # noqa: PLC0415
+
+    start_http_server(port, addr=addr, registry=REGISTRY)
 
 
 def parse_ip_allowlist(raw: str | None) -> frozenset[str]:

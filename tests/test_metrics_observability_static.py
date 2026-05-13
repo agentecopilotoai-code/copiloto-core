@@ -270,3 +270,77 @@ def test_cloud_llm_call_provider_reports_metric_states() -> None:
     assert "'success'" in source
     assert "'error'" in source
     assert "'rejected'" in source
+
+
+def test_normalize_handoff_reason_buckets_freeform_text() -> None:
+    from app.services.metrics import normalize_handoff_reason
+
+    # Valores conocidos pasan tal cual (lowercased).
+    assert normalize_handoff_reason('manual') == 'manual'
+    assert normalize_handoff_reason('Policy') == 'policy'
+    assert normalize_handoff_reason('max_turns') == 'max_turns'
+
+    # Texto libre cae a 'other' para evitar explotar la cardinalidad.
+    assert normalize_handoff_reason('cliente furioso por demora') == 'other'
+    assert normalize_handoff_reason('123') == 'other'
+
+    # None/vacío → 'unspecified'.
+    assert normalize_handoff_reason(None) == 'unspecified'
+    assert normalize_handoff_reason('') == 'unspecified'
+    assert normalize_handoff_reason('   ') == 'unspecified'
+
+
+def test_record_handoff_normalizes_label_value() -> None:
+    from app.services import metrics
+
+    metrics.record_handoff(tenant_id='t1', reason='este texto no está en el enum')
+    metrics.record_handoff(tenant_id='t1', reason='manual')
+
+    reasons = {
+        sample.labels['reason']
+        for metric in metrics.handoff_total.collect()
+        for sample in metric.samples
+        if sample.name.endswith('_total')
+    }
+    # El texto libre nunca aparece como label: solo el bucket.
+    assert 'este texto no está en el enum' not in reasons
+    assert 'other' in reasons
+    assert 'manual' in reasons
+
+
+def test_workers_expose_metrics_http_server() -> None:
+    from app.services import metrics
+    from app.workers import event_worker, scheduler
+
+    # El helper debe estar declarado y delegar en prometheus_client.
+    assert hasattr(metrics, 'start_metrics_http_server')
+
+    event_src = inspect.getsource(event_worker.main)
+    scheduler_src = inspect.getsource(scheduler.main)
+    assert 'start_metrics_http_server' in event_src
+    assert 'start_metrics_http_server' in scheduler_src
+
+    # El scheduler también actualiza su gauge de queue depth.
+    full_src = inspect.getsource(scheduler)
+    assert "set_worker_queue_depth(worker='scheduler'" in full_src
+
+
+def test_prometheus_config_scrapes_workers() -> None:
+    yaml = pytest.importorskip('yaml')
+    config = yaml.safe_load(
+        (ROOT / 'infra' / 'observability' / 'prometheus.yml').read_text()
+    )
+    jobs = {sc['job_name']: sc for sc in config['scrape_configs']}
+    assert 'copilotoia-workers' in jobs
+    targets = jobs['copilotoia-workers']['static_configs'][0]['targets']
+    assert any('event-worker' in t for t in targets)
+    assert any('scheduler' in t for t in targets)
+
+
+def test_compose_workers_expose_metrics_port() -> None:
+    yaml = pytest.importorskip('yaml')
+    compose = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())
+    for worker in ('event-worker', 'scheduler'):
+        svc = compose['services'][worker]
+        expose = [str(p) for p in svc.get('expose', [])]
+        assert '9100' in expose, f'{worker} should expose port 9100 for metrics'
