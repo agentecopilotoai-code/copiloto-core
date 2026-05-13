@@ -15,6 +15,57 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0085 — Invitación Auth0 por `user_id` en lugar de email (cierra BUG06)
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG06 — el endpoint de invitación llamaba a `POST /api/v2/tickets/password-change` pivoteando por **email**. Auth0 devolvía un password-reset ticket válido para cualquier cuenta Auth0 existente con ese email (incluyendo cuentas plataforma/soporte). El backend regresaba el ticket URL al admin invitador y la UI lo exponía con un botón "Copiar", convirtiendo el flow en un primitivo de account takeover.
+- **Fase 1 — verificación en HEAD:**
+  - `app/services/auth0_admin.py::invite_user` enviaba directamente `{'email': email, ...}` al endpoint `/tickets/password-change` y retornaba `{'ticket_url': response.get('ticket')}`.
+  - El route `/v1/tenants/{tenant_id}/members` propagaba `auth0_result` (incluyendo `ticket_url`) al cuerpo de respuesta vía `member['auth0'] = auth0_result`.
+  - `audit_logs(action='tenant_member.invited')` registraba el email plano en `metadata={'email': email, 'role': payload.role}`.
+  - `admin-panel/src/components/modules/team/TeamModule.jsx` leía `result?.auth0?.ticket_url` y mostraba el URL con un botón "Copiar" en un `info-banner`.
+  - Los 3 vectores del BUG06 reproducibles.
+- **Fase 2 — remediación (flujo de invitación reescrito):**
+  - **`app/services/auth0_admin.py`:**
+    - Nueva excepción tipada `Auth0UserAlreadyExists`. `_mgmt_request` la levanta cuando Auth0 responde `409` en cualquier llamada, en lugar de degradarla a un `HTTPStatusError` genérico.
+    - `invite_user` rediseñada en dos pasos:
+      1. `POST /api/v2/users` con `email`, `email_verified=False`, `verify_email=True`, `connection='Username-Password-Authentication'` (configurable vía `auth0_invitation_connection`), `password=_random_initial_password()` y `user_metadata.tenant_invitation`. Si Auth0 responde 409, propaga `Auth0UserAlreadyExists`.
+      2. `POST /api/v2/tickets/password-change` keyed por el **`user_id`** retornado (NUNCA por email), con TTL de 7 días.
+    - Defensa: si `/users` retorna 2xx sin `user_id`, abortar con `{'error': 'auth0_create_user_returned_no_id'}` y NO emitir el ticket.
+    - `invite_user` retorna `{'disabled': False, 'invited': True, 'auth0_user_id': '...'}`. El ticket URL solo se loguea server-side (`log.info('auth0_admin.invite_user_ticket_generated', ticket_present=True)` — fingerprint, no URL).
+    - Helper `_random_initial_password()` genera un password de 48 hex chars con `A!` prefix para satisfacer la política Auth0 más estricta.
+  - **`app/api/v1/routes.py`:**
+    - Importa y maneja `Auth0UserAlreadyExists` → `HTTPException(status_code=409, detail='An Auth0 user with this email already exists...')`.
+    - Tras una invitación exitosa, persiste el `auth0_user_id` real en `users.auth_subject` (reemplazando el `pending|<hash>` placeholder).
+    - Audit `tenant_member.invited` registra `auth0_user_id` y un `email_fingerprint` (SHA256 primer-16-chars) — el email plano nunca se persiste en `audit_logs.metadata`.
+    - Respuesta API curada: solo `{'disabled', 'invited', 'auth0_user_id', 'error?', 'synced?'}`. `ticket_url` NUNCA propagado.
+  - **UI `admin-panel/src/components/modules/team/TeamModule.jsx`:**
+    - Eliminado el estado `pendingTicket` y el banner que mostraba/copiaba `ticket_url`.
+    - El mensaje de éxito ahora dice "Invitación enviada. El usuario recibirá un email de Auth0 para configurar su contraseña."
+    - El flag `auth0_skipped` (modo dev sin Auth0) se preserva con el mensaje original.
+- **Archivos modificados:**
+  - `app/services/auth0_admin.py` (Auth0UserAlreadyExists, invite_user reescrita, _random_initial_password, _invitation_connection)
+  - `app/api/v1/routes.py` (manejo 409, bind auth_subject, audit fingerprint, response curada)
+  - `admin-panel/src/components/modules/team/TeamModule.jsx` (drop banner ticket_url)
+  - `tests/test_auth0_invite.py` (nuevo, 14 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py app/services/auth0_admin.py tests/test_auth0_invite.py` → all checks passed.
+  - `uv run pytest tests/test_auth0_invite.py -q` → 14 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1526 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG06 source invariants:** `test_invite_user_calls_post_users_before_password_change_ticket`, `test_invite_user_returns_auth0_user_id_not_ticket_url`, `test_invite_user_raises_typed_conflict_for_existing_auth0_user`.
+  - **BUG06 flow with mocked Auth0:** `test_invite_user_returns_user_id_and_no_ticket_url` (verifica orden de calls + body con `user_id`, no `email`), `test_invite_user_propagates_conflict_for_preexisting_auth0_user`, `test_invite_user_does_not_issue_ticket_if_users_call_lacks_user_id` (defense: solo 1 call al mgmt API), `test_invite_user_disabled_when_management_creds_missing`.
+  - **BUG06 password generator:** `test_random_initial_password_is_high_entropy_and_complex`.
+  - **BUG06 route wiring:** `test_route_maps_auth0_user_already_exists_to_409`, `test_route_does_not_include_ticket_url_in_response`, `test_audit_logs_auth0_user_id_and_email_fingerprint_not_plain_email`, `test_route_binds_auth_subject_when_invite_returns_user_id`.
+  - **BUG06 UI:** `test_team_ui_removes_ticket_url_banner`, `test_team_ui_success_message_mentions_auth0_email_flow`.
+- **Notas:**
+  - Para el flow alterno "agregar usuario Auth0 existente al tenant", el admin debe pedirle al destinatario que haga login una vez; al hacerlo, `authenticate_request` upsertea su `auth_subject` real, el `pending|<hash>` legacy desaparece, y el siguiente intento de invitación pasa por el branch "Existing Auth0 user — keep their tenant_roles claim in sync" (que solo sincroniza metadatos, no emite ticket). El 409 explícito guía al admin hacia este flow sin filtrar la existencia del usuario en otros tenants.
+  - El password aleatorio inicial nunca se persiste; Auth0 lo descarta al primer reset. La razón de generarlo es estrictamente satisfacer la validación del endpoint `POST /users` que exige un password.
+  - `_invitation_connection` lee `settings.auth0_invitation_connection` si está definido, y cae a `Username-Password-Authentication` por defecto (connection out-of-the-box de Auth0). Cualquier tenant que prefiera otra DB connection puede sobrescribirla sin tocar código.
+
+---
+
 ### TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only
 
 - **Fecha:** 2026-05-13

@@ -69,7 +69,6 @@ export function TeamModule({ module, session, tenant }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [inviteForm, setInviteForm] = useState({ email: '', display_name: '', role: 'agent' });
-  const [pendingTicket, setPendingTicket] = useState(null);
 
   const profileRoles = useMemo(() => {
     const fromProfile = session?.profile?.roles || [];
@@ -106,7 +105,6 @@ export function TeamModule({ module, session, tenant }) {
     }
     setIsBusy(true);
     setNotice(null);
-    setPendingTicket(null);
     try {
       const result = await inviteTenantMember(session, tenant.id, {
         email: inviteForm.email.trim(),
@@ -114,12 +112,13 @@ export function TeamModule({ module, session, tenant }) {
         role: inviteForm.role,
       });
       setInviteForm({ email: '', display_name: '', role: 'agent' });
-      const ticketUrl = result?.auth0?.ticket_url;
-      if (ticketUrl) {
-        setPendingTicket({ email: result.email, ticket_url: ticketUrl });
+      // TASK-0085 / BUG06: the API no longer returns a password-change
+      // ticket URL — Auth0 emails the invitation directly to the new user.
+      // The UI must NOT display, copy or persist any such link.
+      if (result?.auth0?.invited) {
         setNotice({
           type: 'success',
-          text: 'Invitación creada. Copia el enlace para que el usuario configure su contraseña.',
+          text: 'Invitación enviada. El usuario recibirá un email de Auth0 para configurar su contraseña.',
         });
       } else if (result?.auth0_skipped) {
         setNotice({
@@ -200,21 +199,6 @@ export function TeamModule({ module, session, tenant }) {
       ) : null}
 
       <Notice notice={notice} />
-
-      {pendingTicket ? (
-        <div className="info-banner" style={{ wordBreak: 'break-all' }}>
-          <strong>Enlace para {pendingTicket.email}:</strong>
-          <br />
-          <code>{pendingTicket.ticket_url}</code>{' '}
-          <button
-            type="button"
-            className="secondary-action"
-            onClick={() => navigator.clipboard?.writeText(pendingTicket.ticket_url)}
-          >
-            Copiar
-          </button>
-        </div>
-      ) : null}
 
       <form className="form-grid" onSubmit={handleInvite}>
         <h3>Invitar miembro</h3>

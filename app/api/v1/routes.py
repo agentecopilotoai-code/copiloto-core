@@ -100,6 +100,7 @@ from app.services import locale as locale_service
 from app.services.audit import audit
 from app.services.campaign_attribution import attribute_appointment
 from app.services.auth0_admin import (
+    Auth0UserAlreadyExists,
     assign_roles as auth0_assign_roles,
     auth0_management_enabled,
     invite_user as auth0_invite_user,
@@ -1379,7 +1380,10 @@ async def invite_tenant_member(
 
     auth0_result: dict[str, Any] = {'disabled': True}
     if not existing or (auth_subject and auth_subject.startswith('pending|')):
-        # New user — try to send invitation ticket through Auth0.
+        # New user — create a fresh Auth0 identity and issue a ticket keyed by
+        # user_id (TASK-0085 / BUG06). If the email is already taken in Auth0
+        # we refuse with 409 instead of issuing a reset ticket that would land
+        # in the inbox of an unrelated account.
         try:
             auth0_result = await auth0_invite_user(
                 email=email,
@@ -1387,9 +1391,26 @@ async def invite_tenant_member(
                 tenant_id=tenant_id,
                 display_name=payload.display_name,
             )
+        except Auth0UserAlreadyExists:
+            raise HTTPException(
+                status_code=409,
+                detail='An Auth0 user with this email already exists; ask them '
+                'to log in so we can attach them to this tenant.',
+            )
         except Exception as exc:  # noqa: BLE001 - log and continue without Auth0
             log.warning('tenant_member.auth0_invite_failed', error=str(exc))
             auth0_result = {'disabled': False, 'error': str(exc)}
+        else:
+            # On success, bind the real Auth0 user_id into our users row so
+            # future role syncs go through assign_roles, not invite again.
+            new_auth_subject = auth0_result.get('auth0_user_id') if isinstance(auth0_result, dict) else None
+            if new_auth_subject:
+                await conn.execute(
+                    "update app.users set auth_subject=$2, updated_at=now() where id=$1",
+                    user_id,
+                    new_auth_subject,
+                )
+                auth_subject = new_auth_subject
     else:
         # Existing Auth0 user — keep their tenant_roles claim in sync.
         try:
@@ -1411,6 +1432,16 @@ async def invite_tenant_member(
             log.warning('tenant_member.auth0_assign_failed', error=str(exc))
             auth0_result = {'disabled': False, 'error': str(exc)}
 
+    # TASK-0085 / BUG06: audit captures the Auth0 user_id (when known), not
+    # the raw email — the email value is sensitive PII and the user_id is the
+    # canonical reference for downstream account forensics. Email is reduced
+    # to the local-part hash for correlation without leaking the full address.
+    import hashlib as _hashlib  # noqa: PLC0415
+    audit_metadata: dict[str, Any] = {
+        'role': payload.role,
+        'auth0_user_id': auth_subject if auth_subject and not auth_subject.startswith('pending|') else None,
+        'email_fingerprint': _hashlib.sha256(email.encode('utf-8')).hexdigest()[:16],
+    }
     await audit(
         conn,
         tenant_id=tenant_id,
@@ -1419,11 +1450,23 @@ async def invite_tenant_member(
         action='tenant_member.invited',
         entity_type='user',
         entity_id=str(user_id),
-        metadata={'email': email, 'role': payload.role},
+        metadata=audit_metadata,
     )
 
     member = await _tenant_member_payload(conn, tenant_id, user_id)
-    member['auth0'] = auth0_result
+    # TASK-0085 / BUG06: the API response carries only auth0_user_id /
+    # invited / error flags; the ticket URL is never propagated to the
+    # caller — the invitee receives it via Auth0's email template.
+    safe_auth0 = {
+        'disabled': bool(auth0_result.get('disabled')),
+        'invited': bool(auth0_result.get('invited')),
+        'auth0_user_id': auth0_result.get('auth0_user_id'),
+    }
+    if auth0_result.get('error'):
+        safe_auth0['error'] = auth0_result['error']
+    if auth0_result.get('synced'):
+        safe_auth0['synced'] = True
+    member['auth0'] = safe_auth0
     member['auth0_skipped'] = bool(auth0_result.get('disabled'))
     return member
 

@@ -909,9 +909,12 @@ _TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_st
 
 ---
 
-### TASK-0085 — Invitación Auth0 por user_id en lugar de email
+_TASK-0085 — Invitación Auth0 por user_id en lugar de email: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0085 — Invitación Auth0 por user_id en lugar de email (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** el endpoint de invitación de miembros llama a Auth0 `/tickets/password-change` pivoteando por email del invitado. Auth0 devuelve un password-reset ticket válido para cualquier cuenta Auth0 existente con ese email (incluyendo cuentas plataforma/soporte). El backend retorna el ticket URL al admin que invita, convirtiendo el flow en un account takeover primitive.
 - **Bugs cubiertos (1):**
   - **BUG06** (`docs/BUGS/BUG06`, commit `500953d`): Auth0 reset ticket exposed via tenant invite.
@@ -927,6 +930,7 @@ _TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_st
   - Test: la respuesta de invitación NO incluye `ticket_url`.
   - Test: si el email ya existe en Auth0 (mock) → 409.
   - Test: `audit_logs(action='user.invited')` captura `auth0_user_id`, no email plano.
+-->
 
 ---
 
