@@ -1,0 +1,84 @@
+groups:
+  - name: copilotoia.core
+    interval: 30s
+    rules:
+      - alert: HighOutboundErrorRate
+        expr: |
+          sum(rate(cpi_messages_total{direction="outbound",status="failed"}[5m]))
+            /
+          clamp_min(sum(rate(cpi_messages_total{direction="outbound"}[5m])), 1)
+            > 0.05
+        for: 5m
+        labels:
+          severity: page
+          team: copilotoia
+        annotations:
+          summary: "Más del 5% de mensajes outbound están fallando."
+          description: |
+            La tasa de fallo en envíos a Meta superó 5% durante 5 minutos. Revisa
+            credenciales del canal, ventana de 24h y el estado del circuit breaker.
+
+      - alert: BotResponseLatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(cpi_response_latency_seconds_bucket[5m]))
+          ) > 5
+        for: 10m
+        labels:
+          severity: page
+          team: copilotoia
+        annotations:
+          summary: "Latencia P95 del bot > 5s sostenida."
+          description: |
+            Más del 5% de las respuestas tarda más de 5 segundos. Posible
+            saturación del LLM, RAG lento o presión sobre la base.
+
+      - alert: WorkerQueueBacklog
+        expr: max by (worker) (cpi_worker_queue_depth) > 1000
+        for: 5m
+        labels:
+          severity: page
+          team: copilotoia
+        annotations:
+          summary: "Cola del worker {{ $labels.worker }} > 1000 elementos."
+          description: |
+            El worker no está drenando la cola. Verifica si el proceso está vivo
+            y si Meta está aceptando los envíos.
+
+      - alert: CircuitBreakerOpenSustained
+        expr: max by (provider) (cpi_circuit_breaker_state) >= 2
+        for: 2m
+        labels:
+          severity: page
+          team: copilotoia
+        annotations:
+          summary: "Circuit breaker {{ $labels.provider }} OPEN > 2min."
+          description: |
+            El proveedor {{ $labels.provider }} acumuló suficientes fallos para
+            abrir el circuito y no se ha recuperado en 2 minutos. Considera
+            failover manual o degradación a template.
+
+      - alert: SchedulerBehind
+        expr: max(cpi_worker_queue_depth{worker="scheduler"}) > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: copilotoia
+        annotations:
+          summary: "Scheduler atrasado más de 5 minutos."
+          description: |
+            La cola del scheduler superó 100 jobs sin procesar durante 5
+            minutos. Recordatorios y timeouts pueden estarse retrasando.
+
+      - alert: MetricsEndpointSilent
+        expr: absent(up{job="copilotoia-core"}) or (max(up{job="copilotoia-core"}) == 0)
+        for: 3m
+        labels:
+          severity: page
+          team: copilotoia
+        annotations:
+          summary: "/metrics no responde hace 3 minutos."
+          description: |
+            Prometheus dejó de raspar /metrics durante 3 minutos. Verifica que la
+            API esté arriba y que la IP del scraper siga en OBSERVABILITY_ALLOWED_IPS.

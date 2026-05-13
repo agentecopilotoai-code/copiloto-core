@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from app.core.config import get_settings
-from app.services.circuit_breaker import get_breaker
+from app.services.circuit_breaker import CircuitOpenError, get_breaker
+from app.services.metrics import record_llm_call
 from app.services.conversation_flow import (
     ConversationContext,
     build_system_prompt,
@@ -159,8 +160,14 @@ async def _call_provider(
     temperature: float,
 ) -> tuple[str, dict[str, int]]:
     if provider == 'claude':
-        return await _breaker_for('claude').call(
-            _call_anthropic,
+        impl, breaker = _call_anthropic, _breaker_for('claude')
+    elif provider == 'openai':
+        impl, breaker = _call_openai, _breaker_for('openai')
+    else:
+        raise ValueError(f'Proveedor cloud LLM desconocido: {provider!r}. Usa "claude" o "openai".')
+    try:
+        result = await breaker.call(
+            impl,
             system_text=system_text,
             context_text=context_text,
             messages=messages,
@@ -170,19 +177,14 @@ async def _call_provider(
             max_tokens=max_tokens,
             temperature=temperature,
         )
-    if provider == 'openai':
-        return await _breaker_for('openai').call(
-            _call_openai,
-            system_text=system_text,
-            context_text=context_text,
-            messages=messages,
-            model=model,
-            api_key=api_key,
-            timeout_seconds=timeout_seconds,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-    raise ValueError(f'Proveedor cloud LLM desconocido: {provider!r}. Usa "claude" o "openai".')
+    except CircuitOpenError:
+        record_llm_call(provider=provider, status='rejected')
+        raise
+    except Exception:
+        record_llm_call(provider=provider, status='error')
+        raise
+    record_llm_call(provider=provider, status='success')
+    return result
 
 
 async def build_cloud_llm_answer(

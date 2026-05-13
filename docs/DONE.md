@@ -15,6 +15,50 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0060 — Observabilidad: métricas Prometheus + alertas básicas
+
+- **Fecha:** 2026-05-13
+- **Resumen:** la API expone ahora un endpoint `GET /metrics` con el contrato Prometheus que necesita producción: counters de mensajes (inbound/outbound, status), histograma de latencia de respuesta del bot, contador de llamadas a LLM por proveedor, contadores de citas y handoffs, gauge del estado del circuit breaker y profundidad de cola de workers. El endpoint está protegido por una allowlist de IPs (env `OBSERVABILITY_ALLOWED_IPS`) — sin allowlist contestada responde 403. Se incluye un set seed de 6 reglas de alerta y un stack Prometheus + Grafana opt-in via `--profile observability` en docker-compose. Las métricas no incluyen PII: solo IDs y agregados.
+- **Implementación:**
+  - **`app/services/metrics.py` (nuevo):** declara los collectors con los nombres canónicos `cpi_messages_total`, `cpi_response_latency_seconds` (buckets 0.5/1/2/5/10s), `cpi_llm_calls_total`, `cpi_appointments_total`, `cpi_handoff_total`, `cpi_circuit_breaker_state` (gauge 0=closed/1=half_open/2=open), `cpi_worker_queue_depth`. Expone `record_message`, `observe_response_latency`, `record_llm_call`, `record_appointment`, `record_handoff`, `set_circuit_breaker_state`, `set_worker_queue_depth` como la API de instrumentación; cada helper valida los valores antes de incrementar para evitar cardinalidad explosiva por valores arbitrarios. `render_latest()` produce el payload en `CONTENT_TYPE_LATEST` y `parse_ip_allowlist`/`ip_allowed` cubren la allowlist (match exacto; sin CIDR para mantenerlo simple — el operador lista las IPs del scraper explícitamente).
+  - **`app/main.py`:** registra `@api.get('/metrics')` a nivel raíz (fuera de `/v1`) con IP allowlist parseada al boot. Sin IP autorizada → 403; con IP autorizada → bytes de Prometheus.
+  - **`app/core/config.py`:** añade `observability_allowed_ips: str = ''`. Vacío = endpoint inaccesible (deny por defecto).
+  - **`app/services/circuit_breaker.py`:** cada transición de estado (`_trip`, `_reset`, promoción a `half_open`) llama a `set_circuit_breaker_state(provider=name, state=...)`. El gauge queda sincronizado sin polling.
+  - **`app/services/cloud_llm_answer.py`:** `_call_provider` envuelve la invocación al breaker y reporta `record_llm_call(provider=..., status=...)` con `success/error/rejected` (rejected = circuito abierto).
+  - **`app/services/llm_answer.py`:** `build_llm_answer` y `build_conversational_llm_answer` reportan `local_llm` con `success/error/timeout` según el resultado del POST a Ollama.
+  - **`app/services/rag_orchestrator.py`:** `orchestrate_inbound_message` queda como wrapper delgado que mide `time.monotonic()` antes/después de delegar a `_orchestrate_inbound_message_impl`, y observa el histograma con el tier deducido del resultado (`cloud_llm` / `local_llm` / `template` / `handoff`). Cada inserción automática de handoff (escalado por el bot) ahora incrementa `cpi_handoff_total`.
+  - **`app/workers/event_worker.py`:** `process_once` consulta la cantidad total de `domain_events` con `published_at IS NULL` y actualiza `cpi_worker_queue_depth{worker="event_worker"}`. Cada envío exitoso a Meta incrementa `cpi_messages_total{direction="outbound", status="sent"}` y los fallos `status="failed"`.
+  - **`app/api/v1/routes.py`:** el endpoint inbound de WhatsApp (`/webhooks/whatsapp`) incrementa `cpi_messages_total{direction="inbound", status="accepted"}` al persistir un mensaje. La creación, cancelación y actualización de citas reportan `cpi_appointments_total{status=...}`, y la creación manual de handoff via `POST /conversations/{id}/handoff` reporta `cpi_handoff_total`.
+  - **`infra/observability/alerts.yaml` (nuevo):** 6 reglas seed — `HighOutboundErrorRate` (>5% fallos outbound en 5m), `BotResponseLatencyP95High` (P95 > 5s durante 10m), `WorkerQueueBacklog` (queue depth > 1000 en 5m), `CircuitBreakerOpenSustained` (state ≥ 2 durante 2m), `SchedulerBehind` (cola del scheduler > 100 en 5m), `MetricsEndpointSilent` (sin métricas durante 3m).
+  - **`infra/observability/prometheus.yml` (nuevo):** scraping cada 15s del job `copilotoia-core` apuntando a `api:8000/metrics` con las reglas montadas en `/etc/prometheus/alerts.yaml`.
+  - **`docker-compose.yml`:** servicios `prometheus` (v2.55.1) y `grafana` (11.4.0) bajo `profiles: [observability]`. Por defecto no arrancan; con `docker compose --profile observability up` se levantan junto al resto. Volúmenes `prometheus-data` y `grafana-data` persistentes.
+  - **`pyproject.toml`:** añade `prometheus-client==0.21.1` a las dependencias del runtime.
+- **Archivos modificados:**
+  - `app/services/metrics.py` (nuevo)
+  - `app/main.py`
+  - `app/core/config.py`
+  - `app/services/circuit_breaker.py`
+  - `app/services/cloud_llm_answer.py`
+  - `app/services/llm_answer.py`
+  - `app/services/rag_orchestrator.py`
+  - `app/workers/event_worker.py`
+  - `app/api/v1/routes.py`
+  - `app/services/whatsapp.py`
+  - `infra/observability/alerts.yaml` (nuevo)
+  - `infra/observability/prometheus.yml` (nuevo)
+  - `docker-compose.yml`
+  - `pyproject.toml`
+  - `tests/test_metrics_observability_static.py` (nuevo, 13 tests)
+- **Validaciones:**
+  - `python3 -m pytest tests/test_metrics_observability_static.py` → 13 passed (declaración de collectors, validación de valores en helpers, mapping del gauge de breaker, parseo de allowlist, match exacto de IP, content-type Prometheus, endpoint registrado a nivel raíz con IP guard, alerts.yaml válido con ≥6 reglas, perfil observability en compose, integración del breaker con el gauge, instrumentación en event_worker y cloud_llm_answer).
+  - Smoke import de `app.services.metrics`, `app.services.rag_orchestrator` (wrapper + impl separados), `app.workers.event_worker` y `app.services.cloud_llm_answer` desde `python3 -c '...'`.
+- **Notas:**
+  - Dashboards de Grafana detallados se entregarán post-MVP — el contrato cerrado por esta tarea es métricas backend + alertas. Grafana se levanta con admin/admin por default (`GRAFANA_ADMIN_PASSWORD` para override).
+  - La allowlist es match exacto, sin CIDR. En producción el operador debe listar la IP del contenedor de Prometheus (en la red docker de compose, vía `docker network inspect`) o la IP del scraper externo. Esto evita parsing de CIDR pero pide configuración explícita — alineado con "no exponer métricas a redes no confiables".
+  - El gauge de queue depth se actualiza dentro del loop del worker (cada vez que `process_once` corre). No requiere un task separado.
+
+---
+
 ### TASK-0059 — Rate limiting y circuit breaker en webhooks Meta y LLMs externos
 
 - **Fecha:** 2026-05-13

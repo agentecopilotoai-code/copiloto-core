@@ -20,6 +20,8 @@ from typing import Awaitable, Callable, TypeVar
 
 import structlog
 
+from app.services.metrics import set_circuit_breaker_state
+
 log = structlog.get_logger()
 
 T = TypeVar('T')
@@ -74,6 +76,7 @@ class CircuitBreaker:
     def _trip(self) -> None:
         self._state = OPEN
         self._opened_at = time.monotonic()
+        set_circuit_breaker_state(provider=self.name, state=OPEN)
         log.warning(
             'circuit_breaker.opened',
             circuit_open=True,
@@ -92,6 +95,7 @@ class CircuitBreaker:
         self._state = CLOSED
         self._consecutive_failures = 0
         self._opened_at = None
+        set_circuit_breaker_state(provider=self.name, state=CLOSED)
 
     def record_success(self) -> None:
         self._reset()
@@ -123,6 +127,7 @@ class CircuitBreaker:
                 # Promueve el estado interno para que llamadas paralelas
                 # vean `half_open` y no intenten otra prueba.
                 self._state = HALF_OPEN
+                set_circuit_breaker_state(provider=self.name, state=HALF_OPEN)
                 log.info(
                     'circuit_breaker.half_open_probe',
                     name=self.name,

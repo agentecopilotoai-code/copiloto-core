@@ -7,6 +7,11 @@ from app.admin.routes import router as admin_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.pool import db
+from app.services.metrics import (
+    ip_allowed,
+    parse_ip_allowlist,
+    render_latest,
+)
 from app.services.rate_limit import (
     RateLimiter,
     build_rate_limit_middleware,
@@ -26,9 +31,26 @@ def _is_web_widget_path(path: str) -> bool:
     return path.startswith('/v1/web/')
 
 
+def _client_ip(request: Request) -> str | None:
+    """IP del cliente. Ignora X-Forwarded-For: el endpoint se restringe por red
+    privada y un proxy mal configurado no debe degradar la allowlist."""
+    if request.client is None:
+        return None
+    return request.client.host
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     api = FastAPI(title=settings.app_name, version='0.1.0', lifespan=lifespan)
+    allowlist = parse_ip_allowlist(settings.observability_allowed_ips)
+
+    @api.get('/metrics', include_in_schema=False)
+    async def metrics(request: Request) -> Response:
+        if not ip_allowed(_client_ip(request), allowlist):
+            return Response(status_code=403)
+        payload, content_type = render_latest()
+        return Response(content=payload, media_type=content_type)
+
 
     @api.middleware('http')
     async def web_widget_cors(request: Request, call_next):

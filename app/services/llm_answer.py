@@ -16,6 +16,7 @@ from app.services.conversation_flow import (
     build_system_prompt,
     parse_llm_response,
 )
+from app.services.metrics import record_llm_call
 
 if TYPE_CHECKING:
     from app.services.rag_retrieval import RetrievalMatch
@@ -91,14 +92,18 @@ async def build_llm_answer(
             answer_text: str = data.get('message', {}).get('content', '').strip()
     except httpx.TimeoutException:
         log.warning('llm_answer.timeout', model=model, base_url=base_url)
+        record_llm_call(provider='local_llm', status='timeout')
         raise
     except httpx.HTTPStatusError as exc:
         log.warning('llm_answer.http_error', status=exc.response.status_code, model=model)
+        record_llm_call(provider='local_llm', status='error')
         raise
     except Exception:
         log.exception('llm_answer.error', model=model)
+        record_llm_call(provider='local_llm', status='error')
         raise
 
+    record_llm_call(provider='local_llm', status='success')
     no_info_signal = 'no tengo esa información' in answer_text.lower()
     if not answer_text or no_info_signal:
         return {
@@ -177,14 +182,18 @@ async def build_conversational_llm_answer(
             raw_text: str = data.get('message', {}).get('content', '').strip()
     except httpx.TimeoutException:
         log.warning('llm_conv.timeout', model=model, base_url=base_url)
+        record_llm_call(provider='local_llm', status='timeout')
         raise
     except httpx.HTTPStatusError as exc:
         log.warning('llm_conv.http_error', status=exc.response.status_code, model=model)
+        record_llm_call(provider='local_llm', status='error')
         raise
     except Exception:
         log.exception('llm_conv.error', model=model)
+        record_llm_call(provider='local_llm', status='error')
         raise
 
+    record_llm_call(provider='local_llm', status='success')
     parsed = parse_llm_response(raw_text, ctx)
     action = parsed.get('action')
     message_text = parsed.get('message', '')

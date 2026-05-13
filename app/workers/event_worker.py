@@ -8,6 +8,11 @@ import structlog
 
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.services.metrics import (
+    record_message,
+    set_worker_queue_depth,
+    start_metrics_http_server,
+)
 from app.services.whatsapp import send_whatsapp_message
 
 log = structlog.get_logger()
@@ -46,6 +51,13 @@ async def process_once(conn: asyncpg.Connection) -> int:
         limit 10
         """
     )
+    pending_total = await conn.fetchval(
+        """
+        select count(*) from app.domain_events
+        where published_at is null and event_name='message.queued'
+        """
+    )
+    set_worker_queue_depth(worker='event_worker', depth=int(pending_total or 0))
     for row in rows:
         log.info(
             'message_delivery_attempt',
@@ -76,6 +88,12 @@ async def process_once(conn: asyncpg.Connection) -> int:
             )
         except Exception as exc:
             error_message = delivery_error_message(exc)
+            record_message(
+                tenant_id=row['tenant_id'],
+                direction='outbound',
+                channel='whatsapp',
+                status='failed',
+            )
             async with conn.transaction():
                 await conn.execute(
                     """
@@ -139,6 +157,12 @@ async def process_once(conn: asyncpg.Connection) -> int:
                 }),
             )
         mocked = bool(result.get('mocked'))
+        record_message(
+            tenant_id=row['tenant_id'],
+            direction='outbound',
+            channel='whatsapp',
+            status='sent',
+        )
         log.info(
             'message_delivery_mocked' if mocked else 'message_delivery_sent',
             event_id=str(row['id']),
@@ -154,6 +178,7 @@ async def process_once(conn: asyncpg.Connection) -> int:
 async def main() -> None:
     configure_logging(get_settings().log_level)
     settings = get_settings()
+    start_metrics_http_server(settings.worker_metrics_port)
     conn = await asyncpg.connect(settings.database_url)
     await conn.execute("select set_config('app.support_mode', 'true', false)")
     try:
