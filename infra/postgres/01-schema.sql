@@ -744,8 +744,14 @@ create index ix_audit_logs_entity on app.audit_logs(entity_type, entity_id);
 -- after 5 failed attempts.
 create table app.operator_alerts (
   id uuid primary key default gen_random_uuid(),
-  tenant_id uuid not null references app.tenants(id) on delete cascade,
-  kind text not null check (kind in ('negative_feedback','complaint')),
+  -- ``tenant_id`` is nullable to allow system-level alerts (TASK-0064
+  -- ``backup_failure`` does not belong to any tenant). RLS only surfaces NULL
+  -- rows under ``app.support_mode()``, which is the expected operator path.
+  tenant_id uuid references app.tenants(id) on delete cascade,
+  kind text not null check (kind in ('negative_feedback','complaint','backup_failure')),
+  constraint chk_operator_alerts_system_alerts_have_no_tenant check (
+    (kind = 'backup_failure') or (tenant_id is not null)
+  ),
   payload jsonb not null default '{}'::jsonb,
   status text not null default 'pending' check (status in ('pending','sent','failed')),
   attempts integer not null default 0,
@@ -821,6 +827,25 @@ create table app.data_retention_policies (
   )
 );
 create index ix_data_retention_policies_tenant on app.data_retention_policies(tenant_id);
+
+-- TASK-0064: operational ledger of cloud backup runs. Append-only (the verify
+-- step writes a separate ``audit_logs`` row, never updates the original). Not
+-- tenant-scoped: a backup snapshots the whole cluster.
+create table app.backup_runs (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null default 'cloud_dump' check (kind in ('cloud_dump','cloud_verify')),
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  status text not null default 'running' check (status in ('running','ok','failed')),
+  sha256 text,
+  size_bytes bigint check (size_bytes is null or size_bytes >= 0),
+  duration_seconds numeric(10,3) check (duration_seconds is null or duration_seconds >= 0),
+  evidence_path text,
+  error text,
+  metadata jsonb not null default '{}'::jsonb
+);
+create index ix_backup_runs_started on app.backup_runs(started_at desc);
+create index ix_backup_runs_kind_status on app.backup_runs(kind, status, started_at desc);
 
 
 -- Tenant consistency guards for operational rows. RLS limits each statement to the

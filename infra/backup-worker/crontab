@@ -1,0 +1,8 @@
+# TASK-0064 — Calendario de backups y verificación.
+#
+# El dump diario corre a las 03:00 UTC. La verificación semanal corre los
+# domingos a las 04:00 UTC para que apunte siempre a un dump reciente.
+SHELL=/bin/bash
+
+0 3 * * *   root . /etc/cron.d/copilotoia-env && /app/scripts/backup-to-cloud.sh >> /var/log/copilotoia-backup.log 2>&1
+0 4 * * 0   root . /etc/cron.d/copilotoia-env && /app/scripts/verify-backup.sh   >> /var/log/copilotoia-backup.log 2>&1

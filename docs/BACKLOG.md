@@ -529,9 +529,13 @@ _TASK-0063 — Tests E2E con DB efímera para el journey completo del paciente: 
 
 ---
 
+_TASK-0064 — Backups automatizados a cloud con verificación periódica: COMPLETADA. Ver `docs/DONE.md`._
+
+---
+
 ### TASK-0064 — Backups automatizados a cloud con verificación periódica
 
-- **Estado:** PENDING
+- **Estado:** DONE
 - **Depende de:** TASK-0029 (drill local) — ya completada.
 - **Por qué bloquea:** el drill local valida la mecánica pero no protege contra pérdida del host. Sin job programado de backup a un bucket externo cifrado y sin verificación regular, el RPO real es "indefinido". Cualquier cliente serio exige evidencia de backups con prueba reciente.
 - **Alcance:**
