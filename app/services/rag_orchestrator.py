@@ -934,7 +934,7 @@ async def _orchestrate_inbound_message_impl(
 
     # ── Q&A cascade (template → LLM → handoff) ───────────────────────────────
     log.info('orchestrator.qa_cascade', conversation_id=conversation_id, engine=engine)
-    decision = await _resolve_answer(body_text, matches, settings)
+    decision = await _resolve_answer(body_text, matches, settings, bot_personality=bot_personality)
 
     top_score = matches[0].score if matches else None
     top_document = matches[0].document_title if matches else None
@@ -1056,7 +1056,7 @@ async def _resolve_conversational(
             )
 
     # Todos los LLMs no disponibles — Q&A template + seguimiento de etapa.
-    result = await _resolve_answer(question, matches, settings)
+    result = await _resolve_answer(question, matches, settings, bot_personality=bot_personality)
     if result['sufficient_context']:
         followup = stage_followup_prompt(ctx.stage)
         if followup:
@@ -1069,6 +1069,8 @@ async def _resolve_answer(
     question: str,
     matches: list,
     settings: Any,
+    *,
+    bot_personality: Any = None,
 ) -> dict[str, Any]:
     """
     Cascade strategy:
@@ -1076,6 +1078,10 @@ async def _resolve_answer(
       2. LLM local (Ollama) con umbral bajo → interpreta frases ambiguas.
       3. Si Ollama no está disponible → devuelve insufficient para que el
          caller haga handoff. Nunca lanza excepción.
+
+    TASK-0071: `bot_personality` se propaga a los tier-2 y tier-3 del cascade
+    para que la voz del tenant aplique también a las preguntas de catálogo
+    (no sólo al flujo conversacional de booking).
     """
     engine = settings.answer_engine
 
@@ -1090,6 +1096,7 @@ async def _resolve_answer(
             base_url=settings.local_llm_base_url,
             model=settings.local_llm_model,
             timeout_seconds=settings.local_llm_timeout_seconds,
+            bot_personality=bot_personality,
         )
 
     if engine == 'cloud_llm':
@@ -1104,6 +1111,7 @@ async def _resolve_answer(
             model=settings.cloud_llm_model,
             api_key=settings.cloud_llm_api_key,
             timeout_seconds=settings.cloud_llm_timeout_seconds,
+            bot_personality=bot_personality,
         )
 
     # cascade: template → llm local → cloud llm → handoff
@@ -1138,6 +1146,7 @@ async def _resolve_answer(
                 model=settings.local_llm_model,
                 timeout_seconds=settings.local_llm_timeout_seconds,
                 min_score=settings.cascade_llm_min_score,
+                bot_personality=bot_personality,
             )
             log.info(
                 'cascade.llm_result',
@@ -1175,6 +1184,7 @@ async def _resolve_answer(
                         api_key=settings.cloud_llm_api_key,
                         timeout_seconds=settings.cloud_llm_timeout_seconds,
                         min_score=settings.cascade_llm_min_score,
+                        bot_personality=bot_personality,
                     )
                     log.info(
                         'cascade.cloud_llm_result',

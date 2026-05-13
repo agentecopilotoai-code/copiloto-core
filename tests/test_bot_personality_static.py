@@ -156,3 +156,54 @@ def test_orchestrator_threads_bot_personality():
     cloud = CLOUD_LLM.read_text()
     assert 'bot_personality' in llm
     assert 'bot_personality' in cloud
+
+
+# 11 ── Migración idempotente (P1 review)
+def test_schema_has_idempotent_alter_for_existing_deployments():
+    src = SCHEMA.read_text()
+    # Debe existir un ALTER TABLE ... ADD COLUMN IF NOT EXISTS para deployments existentes,
+    # no sólo la CREATE TABLE que se aplica únicamente a clusters frescos.
+    assert 'alter table app.tenant_settings' in src
+    assert 'add column if not exists bot_personality' in src
+
+
+# 12 ── Q&A path también recibe la voz del bot (P2 review)
+def test_qa_cascade_receives_bot_personality():
+    # _resolve_answer y los Q&A builders aceptan bot_personality y lo
+    # antepuestan al system prompt cuando no es default.
+    llm = LLM_ANSWER.read_text()
+    cloud = CLOUD_LLM.read_text()
+    orch = ORCH.read_text()
+    # Las firmas exponen el kwarg.
+    assert 'bot_personality: Any = None' in llm
+    assert 'bot_personality: Any = None' in cloud
+    # build_llm_answer y build_cloud_llm_answer construyen el system prompt vía helper dedicado.
+    assert '_qa_system_prompt' in llm
+    assert '_qa_system_prompt' in cloud
+    # El orchestrator pasa bot_personality en los dos call sites del Q&A cascade.
+    occurrences = orch.count('_resolve_answer(')
+    threads = orch.count('bot_personality=bot_personality')
+    assert occurrences >= 2
+    # Espera al menos un threading por cada llamada cascada + el conversational.
+    assert threads >= 4, f'esperaba >=4 threading de bot_personality, encontré {threads}'
+
+
+# 13 ── Q&A helper antepone bloque sólo cuando hay overrides (cache-friendly)
+def test_qa_helper_preserves_default_prompt():
+    # No importamos los módulos (require httpx); inspeccionamos el código fuente.
+    llm = LLM_ANSWER.read_text()
+    cloud = CLOUD_LLM.read_text()
+    for src in (llm, cloud):
+        # El helper devuelve el system prompt original cuando block está vacío,
+        # preservando el cache hit en Anthropic y la huella estable en Ollama.
+        assert 'if not block:' in src
+        assert 'return _SYSTEM_PROMPT' in src
+        # Y antepone el bloque al SYSTEM_PROMPT cuando hay overrides.
+        assert 'f\'{block}\\n\\n{_SYSTEM_PROMPT}\'' in src
+    # build_personality_block sigue devolviendo cadena vacía con la default
+    # (smoke check directo en conversation_flow, que no requiere httpx).
+    from app.services.conversation_flow import build_personality_block
+    assert build_personality_block(None) == ''
+    assert '== VOZ DEL BOT' in build_personality_block(
+        {'tone': 'formal', 'formality': 'usted', 'emoji_level': 'none', 'custom_persona': ''},
+    )

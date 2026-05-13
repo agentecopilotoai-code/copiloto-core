@@ -187,6 +187,19 @@ async def _call_provider(
     return result
 
 
+def _qa_system_prompt(bot_personality: Any) -> str:
+    """TASK-0071: antepone el bloque de voz al system prompt del cascade Q&A.
+
+    Devuelve `_SYSTEM_PROMPT` sin modificar cuando la personalidad es la default,
+    preservando el cache hit en Anthropic (mismo bloque estable).
+    """
+    from app.services.conversation_flow import build_personality_block  # noqa: PLC0415
+    block = build_personality_block(bot_personality)
+    if not block:
+        return _SYSTEM_PROMPT
+    return f'{block}\n\n{_SYSTEM_PROMPT}'
+
+
 async def build_cloud_llm_answer(
     question: str,
     matches: list[RetrievalMatch],
@@ -196,6 +209,7 @@ async def build_cloud_llm_answer(
     api_key: str,
     timeout_seconds: int = 30,
     min_score: float = 0.12,
+    bot_personality: Any = None,
 ) -> dict[str, Any]:
     """Llama a un LLM cloud (Claude o OpenAI) para generar respuesta conversacional desde chunks RAG."""
     context = _build_context(matches, min_score=min_score)
@@ -214,7 +228,7 @@ async def build_cloud_llm_answer(
 
     try:
         answer_text, token_usage = await _call_provider(
-            system_text=_SYSTEM_PROMPT,
+            system_text=_qa_system_prompt(bot_personality),
             context_text=context,
             messages=[{'role': 'user', 'content': f'Pregunta del cliente: {question}'}],
             provider=provider,
