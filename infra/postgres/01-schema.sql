@@ -57,13 +57,15 @@ create table app.tenant_settings (
 create table app.tenant_channels (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
-  provider text not null check (provider in ('whatsapp_cloud_api','web')),
+  provider text not null check (provider in ('whatsapp_cloud_api','web','instagram_messenger','facebook_messenger')),
   business_id text,
   waba_id text,
   phone_number_id text,
   whatsapp_business_profile_id text,
   solution_id text,
   display_phone_number text,
+  page_id text,
+  instagram_account_id text,
   allowed_origins text[] not null default '{}',
   widget_config jsonb not null default '{}'::jsonb,
   token_ref text not null,
@@ -73,12 +75,15 @@ create table app.tenant_channels (
   messaging_limit_tier text,
   account_mode text not null default 'mock' check (account_mode in ('mock','live')),
   status text not null default 'provisioning' check (status in ('provisioning','active','degraded','suspended','offboarded')),
+  service_window_hours integer not null default 24 check (service_window_hours > 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, provider)
 );
 create index ix_tenant_channels_phone on app.tenant_channels(phone_number_id);
 create index ix_tenant_channels_waba on app.tenant_channels(waba_id);
+create index ix_tenant_channels_page on app.tenant_channels(page_id) where page_id is not null;
+create index ix_tenant_channels_ig_account on app.tenant_channels(instagram_account_id) where instagram_account_id is not null;
 
 create table app.users (
   id uuid primary key default gen_random_uuid(),
@@ -699,7 +704,7 @@ create table app.handoffs (
 create table app.webhook_events_raw (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid references app.tenants(id) on delete set null,
-  provider text not null check (provider in ('whatsapp_cloud_api','mercadopago','stripe')),
+  provider text not null check (provider in ('whatsapp_cloud_api','mercadopago','stripe','instagram_messenger','facebook_messenger')),
   provider_event_id text,
   event_type text not null,
   headers jsonb not null default '{}'::jsonb,

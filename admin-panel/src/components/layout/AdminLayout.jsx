@@ -22,6 +22,7 @@ import { TeamModule } from '../modules/team/TeamModule.jsx';
 import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
 import { OnboardingWizard } from '../modules/onboarding/OnboardingWizard.jsx';
 import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
+import { SocialChannelsModule } from '../modules/socialChannels/SocialChannelsModule.jsx';
 import { Sidebar } from './Sidebar.jsx';
 import { Topbar } from './Topbar.jsx';
 
@@ -271,6 +272,20 @@ export function AdminLayout({ session }) {
     }
   } else if (activeModuleId === 'whatsapp') {
     activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
+  } else if (activeModuleId === 'social-channels') {
+    if (!hasMinRole(activeRoles, 'admin')) {
+      activeContent = (
+        <section className="module-card">
+          <h2>Acceso restringido</h2>
+          <p className="hint">
+            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
+            los canales sociales (Instagram DM y Facebook Messenger).
+          </p>
+        </section>
+      );
+    } else {
+      activeContent = <SocialChannelsModule module={activeModule} session={session} tenant={activeTenant} />;
+    }
   } else if (activeModuleId === 'knowledge-storage') {
     activeContent = <KnowledgeStorageSettings module={activeModule} session={session} tenant={activeTenant} />;
   } else if (activeModuleId === 'knowledge-studio') {

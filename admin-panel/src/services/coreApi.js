@@ -345,6 +345,19 @@ export function getWebChannel(session, tenantId) {
   return request(`/tenants/${tenantId}/channels/web`, { session, tenantId });
 }
 
+export function listMessengerChannels(session, tenantId) {
+  return request(`/tenants/${tenantId}/channels/messenger`, { session, tenantId });
+}
+
+export function upsertMessengerChannel(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/channels/messenger`, {
+    method: 'PUT',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
 export function upsertWebChannel(session, tenantId, payload) {
   return request(`/tenants/${tenantId}/channels/web`, {
     method: 'PUT',

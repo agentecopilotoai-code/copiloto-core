@@ -15,6 +15,49 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0074 — Canal Instagram DM / Facebook Messenger
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se extiende la orquestación de WhatsApp a Instagram DM y Facebook Messenger reusando la misma cascada (RAG → policy engine → handoff) y el mismo formato de `messages`. Inbound entra por un webhook único `/v1/webhooks/meta/{provider}` con validación HMAC; outbound sale del mismo `event_worker` con un dispatcher por `provider`. La ventana de servicio de 24h queda enforced en `conversations.service_window_expires_at` (la setea cada inbound) y rechazada en outbound con error code canónico `outside_service_window`.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** el check de `tenant_channels.provider` y `webhook_events_raw.provider` se extiende a `'instagram_messenger','facebook_messenger'`. Se agregan columnas `tenant_channels.page_id`, `tenant_channels.instagram_account_id` (identificadores Meta) y `tenant_channels.service_window_hours int default 24 check (>0)` para tunear la ventana por canal. Índices parciales en `page_id` e `instagram_account_id` para la búsqueda del webhook.
+  - **Adaptador (`app/services/meta_messenger.py`):** módulo único para ambos canales — ambos comparten contrato de webhook (Messenger Platform). Funciones públicas: `META_MESSENGER_PROVIDERS` (constante), `verify_messenger_signature` (HMAC, reutiliza `normalize_meta_app_secret`), `expected_object_for_provider` (instagram vs page), `recipient_id_from_payload`, `normalize_messenger_events` (descarta echoes, normaliza adjuntos image/video/audio/file y reply_to), `is_within_service_window`, `service_window_expiry`, `build_messenger_send_payload`, `send_messenger_message` (raise `OutsideServiceWindowError` si el caller pasa `within_service_window=False`), `serialize_event_for_storage`.
+  - **Webhook (`app/api/v1/routes.py`):** dos endpoints nuevos
+    - `GET /v1/webhooks/meta/{provider}`: hub.challenge handshake; verifica `tenant_secret_ref(tenant, f'{provider}_verify_token')` con `hmac.compare_digest`.
+    - `POST /v1/webhooks/meta/{provider}`: chequea `payload.object` esperado por provider, ubica el canal por `instagram_account_id` o `page_id`, valida HMAC con el app secret, persiste el raw event en `webhook_events_raw` y para cada inbound: upsertea contacto con PSID en `wa_id` (pseudo-phone `+ig:<psid>` / `+fb:<psid>`), reutiliza/crea `conversations` con `service_window_expires_at = now + service_window_hours`, inserta el mensaje en `messages` y llama al mismo `orchestrate_inbound_message` que WhatsApp.
+  - **Outbound (`app/workers/event_worker.py`):** la query filtra ahora por `c.provider in ('whatsapp_cloud_api','instagram_messenger','facebook_messenger')` y carga `c.page_id`, `c.instagram_account_id`, `c.service_window_hours`, `cv.service_window_expires_at`. Dispatcher por `provider`: WhatsApp sigue por `send_whatsapp_message`; Messenger va por `send_messenger_message` con `within_service_window` calculado desde `service_window_expires_at`. Si la ventana cerró, levanta `OutsideServiceWindowError`, deja la fila `messages.status='failed'`, `error_code='outside_service_window'` y emite el contador DLQ por provider.
+  - **Admin Panel:**
+    - Nuevo módulo `social-channels` en `admin-panel/src/data/modules.js` con `minRole: 'admin'`.
+    - Componente `admin-panel/src/components/modules/socialChannels/SocialChannelsModule.jsx` con tabs Instagram / Facebook, formulario para `recipient_account_id`, `business_id`, `meta_access_token`, `app_secret`, `verify_token` (min 16), `account_mode` (mock/live) y `service_window_hours` (1–168). Muestra el estado actual del canal (token/app secret/verify token configurados, modo, ventana, ID).
+    - `admin-panel/src/services/coreApi.js` expone `listMessengerChannels` y `upsertMessengerChannel`.
+    - `admin-panel/src/components/layout/AdminLayout.jsx` renderiza el módulo respetando el guard de rol.
+  - **Endpoints admin (`app/api/v1/routes.py`):**
+    - `GET /v1/tenants/{tenant_id}/channels/messenger`: lista canales sociales con flags `token_configured / app_secret_configured / verify_token_configured` (nunca expone el hash).
+    - `PUT /v1/tenants/{tenant_id}/channels/messenger`: upsert idempotente por `(tenant_id, provider)`, escribe secrets en `secrets/tenants/<tenant>/<provider>_access_token` / `_app_secret` / `_verify_token`, conserva el hash anterior si no se manda uno nuevo (`coalesce`), audita con `action='channel.messenger_upserted'`.
+  - **Schema Pydantic (`app/api/v1/schemas.py`):** `MessengerChannelUpsert` con `provider` pattern, `recipient_account_id` requerido, secretos opcionales (validados en min length), `account_mode` mock/live, `service_window_hours` ∈ [1, 168].
+- **Archivos creados:**
+  - `app/services/meta_messenger.py`
+  - `admin-panel/src/components/modules/socialChannels/SocialChannelsModule.jsx`
+  - `tests/test_meta_messenger_static.py` (18 tests)
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql` (provider checks, columnas + índices nuevos, service_window_hours)
+  - `app/api/v1/routes.py` (imports messenger, webhook GET/POST, endpoints admin GET/PUT messenger, helper `_upsert_messenger_contact`)
+  - `app/api/v1/schemas.py` (`MessengerChannelUpsert`)
+  - `app/workers/event_worker.py` (filtro extendido, dispatcher por provider, gate ventana, error code outside_service_window)
+  - `admin-panel/src/data/modules.js` (entrada social-channels)
+  - `admin-panel/src/services/coreApi.js` (list/upsert messenger)
+  - `admin-panel/src/components/layout/AdminLayout.jsx` (renderiza el módulo)
+  - `tests/test_web_widget_static.py` (aserciones actualizadas al nuevo enum y filtro del worker)
+- **Validación:**
+  - `pytest tests/test_meta_messenger_static.py` → 18 passed.
+  - `pytest tests/ --ignore=tests/test_journey_e2e.py --ignore=tests/test_extraction_worker.py` → 1290 passed, 6 skipped. (Las skips son E2E que requieren Postgres real; los tests sin esa restricción pasan limpio.)
+- **Notas y límites:**
+  - Mensajes interactivos (quick replies / generic template) de Messenger no entran en este MVP. El send_payload solo soporta texto y adjuntos URL; la orquestación los degrada a texto cuando arma respuestas.
+  - PSIDs son por (página, usuario), no portables entre páginas. La pseudo-`phone_e164 = '+ig:<psid>'` evita romper la unique `(tenant_id, phone_e164)` sin migrar el contrato del CRM.
+  - Tests usan exclusivamente fixtures estáticas (lectura de archivos + helpers puros). Validación contra Meta real requiere App Review y queda fuera de scope local.
+
+---
+
 ### TASK-0073 — i18n multi-país: locale, currency, timezone y validación de teléfono
 
 - **Fecha:** 2026-05-13

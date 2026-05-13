@@ -104,6 +104,28 @@ class ChannelModeUpdate(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+MESSENGER_PROVIDER_PATTERN = '^(instagram_messenger|facebook_messenger)$'
+
+
+class MessengerChannelUpsert(BaseModel):
+    """Upsert payload for Instagram DM / Facebook Messenger channels.
+
+    ``recipient_account_id`` is the page id (Facebook) or business
+    Instagram account id. ``meta_access_token`` is the page access token
+    (long-lived). ``app_secret`` and ``verify_token`` follow the same Meta
+    pattern as WhatsApp Cloud webhooks.
+    """
+
+    provider: str = Field(pattern=MESSENGER_PROVIDER_PATTERN)
+    recipient_account_id: str = Field(min_length=1, max_length=64)
+    business_id: str | None = None
+    meta_access_token: str | None = Field(default=None, min_length=1)
+    app_secret: str | None = Field(default=None, min_length=1)
+    verify_token: str | None = Field(default=None, min_length=16)
+    account_mode: str = Field(default='mock', pattern='^(mock|live)$')
+    service_window_hours: int = Field(default=24, ge=1, le=168)
+
+
 class ContactUpsert(BaseModel):
     tenant_id: UUID
     wa_id: str

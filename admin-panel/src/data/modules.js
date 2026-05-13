@@ -39,6 +39,13 @@ export const adminModules = [
     scope: ['Business ID', 'WABA ID', 'Phone Number ID', 'Referencias de token y app secret'],
   },
   {
+    id: 'social-channels',
+    label: 'Redes sociales',
+    summary: 'Canales Instagram DM y Facebook Messenger con la misma orquestación que WhatsApp. TASK-0074.',
+    scope: ['Page ID / Instagram Account ID', 'Page access token', 'App secret y verify token', 'Ventana de servicio 24h por canal'],
+    minRole: 'admin',
+  },
+  {
     id: 'knowledge-storage',
     label: 'Storage S3',
     summary: 'Configuración del bucket/prefix de conocimiento por tenant.',

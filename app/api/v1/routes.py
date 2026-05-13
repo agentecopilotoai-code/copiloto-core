@@ -47,6 +47,7 @@ from app.api.v1.schemas import (
     MemberInvite,
     MemberRoleUpdate,
     MessageCreate,
+    MessengerChannelUpsert,
     PromotionCreate,
     PromotionUpdate,
     PromptCreate,
@@ -160,6 +161,15 @@ from app.services.whatsapp import (
     submit_template_to_meta,
     token_ref_is_configured,
     verify_signature_with_secret,
+)
+from app.services.meta_messenger import (
+    META_MESSENGER_PROVIDERS,
+    expected_object_for_provider,
+    normalize_messenger_events,
+    recipient_id_from_payload,
+    serialize_event_for_storage,
+    service_window_expiry,
+    verify_messenger_signature,
 )
 
 log = structlog.get_logger()
@@ -1881,6 +1891,130 @@ WEB_CHANNEL_PROJECTION = (
     "id, tenant_id, provider, status, account_mode, allowed_origins, widget_config, "
     "token_ref, created_at, updated_at"
 )
+
+
+MESSENGER_CHANNEL_PROJECTION = (
+    "id, tenant_id, provider, business_id, page_id, instagram_account_id, "
+    "account_mode, status, service_window_hours, token_ref, app_secret_ref, "
+    "verify_token_hash, created_at, updated_at"
+)
+
+
+def _normalize_messenger_channel(row: asyncpg.Record | None) -> dict[str, Any] | None:
+    channel = record_to_dict(row)
+    if not channel:
+        return None
+    channel['token_configured'] = token_ref_is_configured(channel.get('token_ref'))
+    channel['app_secret_configured'] = secret_ref_is_configured(channel.get('app_secret_ref'))
+    channel['verify_token_configured'] = bool(channel.get('verify_token_hash'))
+    # Avoid leaking raw bytes through JSON. The bool flag is enough.
+    channel.pop('verify_token_hash', None)
+    return channel
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/channels/messenger')
+async def list_messenger_channels(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Return Instagram + Facebook channels for the tenant. TASK-0074."""
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {MESSENGER_CHANNEL_PROJECTION}
+        from app.tenant_channels
+        where tenant_id=$1 and provider in ('instagram_messenger','facebook_messenger')
+        order by provider asc
+        """,
+        tenant_id,
+    )
+    return {
+        'channels': [_normalize_messenger_channel(row) for row in rows],
+    }
+
+
+@tenant_admin_router.put('/tenants/{tenant_id}/channels/messenger')
+async def upsert_messenger_channel(
+    tenant_id: UUID,
+    payload: MessengerChannelUpsert,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Create or update an Instagram/Facebook Messenger channel. TASK-0074.
+
+    Secrets follow the same pattern as WhatsApp:
+    ``secrets/tenants/<tenant>/<provider>_access_token`` / ``..._app_secret`` /
+    ``..._verify_token``. The verify_token hash is persisted so the webhook
+    GET handshake can match without exposing the secret.
+    """
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    provider = payload.provider
+    token_ref = tenant_secret_ref(tenant_id, f'{provider}_access_token')
+    if payload.meta_access_token:
+        write_tenant_secret(token_ref, payload.meta_access_token.strip())
+
+    app_secret_ref = tenant_secret_ref(tenant_id, f'{provider}_app_secret')
+    if payload.app_secret:
+        normalized_secret = normalize_meta_app_secret(payload.app_secret)
+        if normalized_secret:
+            write_tenant_secret(app_secret_ref, normalized_secret)
+
+    verify_token_ref = tenant_secret_ref(tenant_id, f'{provider}_verify_token')
+    if payload.verify_token:
+        write_tenant_secret(verify_token_ref, payload.verify_token.strip())
+    verify_token = resolve_secret_ref(verify_token_ref)
+
+    page_id = payload.recipient_account_id if provider == 'facebook_messenger' else None
+    ig_account_id = (
+        payload.recipient_account_id if provider == 'instagram_messenger' else None
+    )
+
+    row = await conn.fetchrow(
+        f"""
+        insert into app.tenant_channels (
+            tenant_id, provider, business_id, page_id, instagram_account_id,
+            token_ref, app_secret_ref, verify_token_hash, account_mode,
+            service_window_hours, status
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active')
+        on conflict (tenant_id, provider) do update set
+            business_id=excluded.business_id,
+            page_id=excluded.page_id,
+            instagram_account_id=excluded.instagram_account_id,
+            token_ref=excluded.token_ref,
+            app_secret_ref=excluded.app_secret_ref,
+            verify_token_hash=coalesce(excluded.verify_token_hash, app.tenant_channels.verify_token_hash),
+            account_mode=excluded.account_mode,
+            service_window_hours=excluded.service_window_hours,
+            status='active'
+        returning {MESSENGER_CHANNEL_PROJECTION}
+        """,
+        tenant_id,
+        provider,
+        payload.business_id,
+        page_id,
+        ig_account_id,
+        token_ref,
+        app_secret_ref,
+        verify_token_hash(verify_token) if verify_token else None,
+        payload.account_mode,
+        payload.service_window_hours,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='channel.messenger_upserted',
+        entity_type='tenant_channel',
+        entity_id=str(row['id']),
+        metadata={'provider': provider},
+    )
+    return _normalize_messenger_channel(row)
 
 
 def _normalize_web_channel(row: asyncpg.Record | None) -> dict[str, Any] | None:
@@ -8919,6 +9053,287 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                             conversation_id=str(conversation['id']),
                         )
     return {'accepted': True, 'payload_sha256': sha}
+
+
+async def _upsert_messenger_contact(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    provider: str,
+    psid: str,
+    display_name: str | None,
+):
+    """Upsert a contact identified by a Messenger PSID.
+
+    Instagram/Facebook PSIDs are opaque numeric strings tied to the page+user
+    pair. They are not phone numbers, so we stash them in ``wa_id`` (acts as
+    the canonical external id) and synthesize a placeholder ``phone_e164``
+    of the form ``+ig:<psid>`` / ``+fb:<psid>``. This keeps the existing
+    ``unique (tenant_id, phone_e164)`` constraint usable without altering
+    the schema or requiring real phones for social channels.
+    """
+    prefix = 'ig' if provider == 'instagram_messenger' else 'fb'
+    pseudo_phone = f'+{prefix}:{psid}'
+    phone_hash = hashlib.sha256(pseudo_phone.encode()).digest()
+    existing = await conn.fetchrow(
+        """
+        select *
+        from app.contacts
+        where tenant_id=$1 and wa_id=$2
+        limit 1
+        """,
+        tenant_id,
+        psid,
+    )
+    if existing:
+        return await conn.fetchrow(
+            """
+            update app.contacts
+            set display_name=coalesce($3, display_name),
+                source=coalesce($4, source),
+                updated_at=now()
+            where tenant_id=$1 and id=$2
+            returning *
+            """,
+            tenant_id,
+            existing['id'],
+            display_name,
+            provider,
+        )
+    default_lead_source = build_lead_source(channel=provider)
+    return await conn.fetchrow(
+        """
+        insert into app.contacts (
+            tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source
+        )
+        values ($1, $2, $3, $4, $5, $6, '{}'::jsonb, $7::jsonb)
+        returning *
+        """,
+        tenant_id,
+        psid,
+        pseudo_phone,
+        phone_hash,
+        display_name,
+        provider,
+        json.dumps(default_lead_source),
+    )
+
+
+@webhook_router.get('/meta/{provider}')
+async def verify_messenger_webhook(
+    provider: str,
+    hub_mode: str | None = Query(default=None, alias='hub.mode'),
+    hub_verify_token: str | None = Query(default=None, alias='hub.verify_token'),
+    hub_challenge: str | None = Query(default=None, alias='hub.challenge'),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    if provider not in META_MESSENGER_PROVIDERS:
+        raise HTTPException(status_code=404, detail='Unsupported Meta channel provider')
+    if hub_mode != 'subscribe' or not hub_verify_token:
+        raise HTTPException(status_code=403, detail='Invalid verify token')
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+    rows = await conn.fetch(
+        """
+        select tenant_id
+        from app.tenant_channels
+        where provider=$1
+          and status='active'
+        """,
+        provider,
+    )
+    for row in rows:
+        verify_token = resolve_secret_ref(
+            tenant_secret_ref(row['tenant_id'], f'{provider}_verify_token')
+        )
+        if verify_token and hmac.compare_digest(verify_token, hub_verify_token):
+            return Response(content=hub_challenge or '', media_type='text/plain')
+    raise HTTPException(status_code=403, detail='Invalid verify token')
+
+
+@webhook_router.post('/meta/{provider}', status_code=202)
+async def receive_messenger_webhook(
+    provider: str,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    x_hub_signature_256: str | None = Header(default=None, alias='X-Hub-Signature-256'),
+):
+    if provider not in META_MESSENGER_PROVIDERS:
+        raise HTTPException(status_code=404, detail='Unsupported Meta channel provider')
+    body = await request.body()
+    try:
+        payload = json.loads(body or b'{}')
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail='Invalid webhook payload') from exc
+
+    expected_object = expected_object_for_provider(provider)
+    if expected_object and payload.get('object') and payload.get('object') != expected_object:
+        raise HTTPException(status_code=400, detail='Webhook object does not match provider')
+
+    recipient_id = recipient_id_from_payload(provider, payload)
+    if not recipient_id:
+        raise HTTPException(status_code=404, detail='Meta channel not found for payload')
+
+    lookup_column = (
+        'instagram_account_id' if provider == 'instagram_messenger' else 'page_id'
+    )
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+    channel = await conn.fetchrow(
+        f"""
+        select id, tenant_id, app_secret_ref, account_mode, service_window_hours,
+               page_id, instagram_account_id
+        from app.tenant_channels
+        where provider=$1
+          and {lookup_column}=$2
+          and status='active'
+        """,
+        provider,
+        recipient_id,
+    )
+    if not channel:
+        raise HTTPException(status_code=404, detail='Meta channel not found')
+
+    app_secret = resolve_secret_ref(channel['app_secret_ref'])
+    if not verify_messenger_signature(body, x_hub_signature_256, app_secret):
+        raise HTTPException(status_code=401, detail='Invalid webhook signature')
+
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(channel['tenant_id']))
+    sha = hashlib.sha256(body).hexdigest()
+    await conn.fetchrow(
+        """
+        insert into app.webhook_events_raw (tenant_id, provider, event_type, headers, payload, payload_sha256)
+        values ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+        on conflict (payload_sha256) do nothing returning *
+        """,
+        channel['tenant_id'],
+        provider,
+        payload.get('object', 'unknown'),
+        json.dumps(dict(request.headers)),
+        json.dumps(payload),
+        sha,
+    )
+
+    events = normalize_messenger_events(provider, payload)
+    window_hours = int(channel['service_window_hours'] or 24)
+    for event in events:
+        contact = await _upsert_messenger_contact(
+            conn,
+            tenant_id=channel['tenant_id'],
+            provider=provider,
+            psid=event.sender_id,
+            display_name=None,
+        )
+        received_at = event.timestamp or datetime.now(UTC)
+        window_expires = service_window_expiry(received_at, window_hours)
+
+        conversation = await conn.fetchrow(
+            """
+            select *
+            from app.conversations
+            where tenant_id=$1
+              and contact_id=$2
+              and channel_id=$3
+              and status not in ('resolved','closed','archived')
+            order by updated_at desc
+            limit 1
+            """,
+            channel['tenant_id'],
+            contact['id'],
+            channel['id'],
+        )
+        if conversation:
+            conversation = await conn.fetchrow(
+                """
+                update app.conversations
+                set status=case
+                        when status='human_active' then 'human_active'
+                        when status='waiting_agent' and handoff_required then 'waiting_agent'
+                        else 'waiting_user'
+                    end,
+                    handoff_required=case
+                        when status='human_active' then handoff_required
+                        when status='waiting_agent' and handoff_required then true
+                        else false
+                    end,
+                    service_window_expires_at=$3,
+                    updated_at=now()
+                where tenant_id=$1 and id=$2
+                returning *
+                """,
+                channel['tenant_id'],
+                conversation['id'],
+                window_expires,
+            )
+        else:
+            conversation = await conn.fetchrow(
+                """
+                insert into app.conversations (
+                    tenant_id, contact_id, channel_id, status, opened_by,
+                    handoff_required, service_window_expires_at
+                )
+                values ($1, $2, $3, 'open', 'user', false, $4)
+                returning *
+                """,
+                channel['tenant_id'],
+                contact['id'],
+                channel['id'],
+                window_expires,
+            )
+
+        inbound_message = await conn.fetchrow(
+            """
+            insert into app.messages (
+              tenant_id, conversation_id, external_message_id, direction, sender_actor_type, sender_actor_id,
+              body_text, message_type, media_id, mime_type, payload, status, received_at,
+              reply_to_external_message_id
+            )
+            values ($1, $2, $3, 'inbound', 'contact', $4, $5, $6, $7, $8, $9::jsonb, 'received', $10::timestamptz, $11)
+            on conflict (tenant_id, external_message_id) do nothing
+            returning *
+            """,
+            channel['tenant_id'],
+            conversation['id'],
+            event.external_message_id,
+            event.sender_id,
+            event.body_text,
+            event.message_type,
+            event.media_id,
+            event.mime_type,
+            serialize_event_for_storage(event),
+            received_at,
+            event.reply_to_external_id,
+        )
+        if inbound_message:
+            await notify_operations_change(
+                conn,
+                channel['tenant_id'],
+                'conversation.changed',
+                conversation_id=conversation['id'],
+                message_id=inbound_message['id'],
+            )
+            record_message(
+                tenant_id=channel['tenant_id'],
+                direction='inbound',
+                channel=provider,
+                status='accepted',
+            )
+            try:
+                await orchestrate_inbound_message(
+                    conn,
+                    tenant_id=channel['tenant_id'],
+                    channel_id=channel['id'],
+                    channel_account_mode=channel['account_mode'] or 'mock',
+                    conversation=conversation,
+                    contact=contact,
+                    inbound_message=inbound_message,
+                )
+            except Exception:
+                log.exception(
+                    'rag_orchestrator.error',
+                    tenant_id=str(channel['tenant_id']),
+                    conversation_id=str(conversation['id']),
+                )
+
+    return {'accepted': True, 'payload_sha256': sha, 'provider': provider}
 
 
 def _resolve_analytics_range(from_date: str | None, to_date: str | None) -> tuple[date, date]:

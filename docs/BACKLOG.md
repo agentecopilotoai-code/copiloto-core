@@ -617,20 +617,7 @@ _TASK-0073 — i18n multi-país (locale, currency, timezone, teléfono): COMPLET
 
 ---
 
-### TASK-0074 — Canal Instagram DM / Facebook Messenger
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0021 (orquestación).
-- **Por qué bloquea:** el flujo del producto dice "redes sociales". Hoy solo WhatsApp + Widget Web. El lead que escribe por Instagram queda sin atención.
-- **Alcance:**
-  - `tenant_channels.provider` extiende a `'instagram_messenger', 'facebook_messenger'`.
-  - Webhook `/v1/webhooks/meta/{provider}` reusa la validación HMAC (mismo App Secret de la app Meta del tenant).
-  - Adaptador en `app/services/instagram.py` y `app/services/facebook.py` que normaliza payloads al formato canónico que ya consume `rag_orchestrator`.
-  - **Limitación:** Instagram solo permite responder a un DM iniciado por el usuario en ventana 24h. El policy engine ya respeta la ventana 24h de WhatsApp; mismo gate aplica.
-- **Criterios de aceptación:**
-  - Inbound desde Instagram persiste un mensaje y dispara el mismo flujo que WhatsApp.
-  - Outbound a Instagram fuera de la ventana 24h se bloquea con error `outside_service_window`.
-  - Tests: ≥ 12 estáticos: extensión del enum, normalizador de Instagram, normalizador de Facebook, gate de ventana 24h por provider.
+_TASK-0074 — Canal Instagram DM / Facebook Messenger: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
