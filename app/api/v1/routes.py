@@ -8072,18 +8072,18 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                     reply_to_external_id,
                 )
                 if inbound_message:
-                    record_message(
-                        tenant_id=channel['tenant_id'],
-                        direction='inbound',
-                        channel='whatsapp',
-                        status='accepted',
-                    )
                     await notify_operations_change(
                         conn,
                         channel['tenant_id'],
                         'conversation.changed',
                         conversation_id=conversation['id'],
                         message_id=inbound_message['id'],
+                    )
+                    record_message(
+                        tenant_id=channel['tenant_id'],
+                        direction='inbound',
+                        channel='whatsapp',
+                        status='accepted',
                     )
                     try:
                         await orchestrate_inbound_message(
