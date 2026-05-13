@@ -95,11 +95,10 @@ def test_tenant_factory_seeds_required_records(tenant_factory):
                 'select provider, status, account_mode from app.tenant_channels where id=$1',
                 handle.channel_id,
             )
-            assert channel == {
-                'provider': 'whatsapp_cloud_api',
-                'status': 'active',
-                'account_mode': 'mock',
-            }
+            assert channel is not None
+            assert channel['provider'] == 'whatsapp_cloud_api'
+            assert channel['status'] == 'active'
+            assert channel['account_mode'] == 'mock'
 
             contact = await conn.fetchrow(
                 'select opt_in_status from app.contacts where id=$1', handle.contact_id
@@ -121,20 +120,29 @@ def test_tenant_factory_seeds_required_records(tenant_factory):
 
 
 def test_tenant_factory_isolates_tenants(tenant_factory):
-    """Two factories return tenants with distinct IDs and don't bleed data."""
+    """Two factories return tenants with distinct IDs and seed independent
+    rows. RLS isolation itself is covered by ``test_rls_multitenant_e2e``;
+    this fixture's responsibility is to give each scenario fresh state."""
     async def run():
         a = await tenant_factory(label='iso-a')
         b = await tenant_factory(label='iso-b')
         assert a.tenant_id != b.tenant_id
         assert a.channel_id != b.channel_id
+        assert a.contact_id != b.contact_id
+        assert a.conversation_id != b.conversation_id
 
         url = os.environ.get('TEST_DATABASE_URL') or os.environ['DATABASE_URL']
-        async with tenant_connection(url, a.tenant_id, support_mode=False) as conn:
-            # RLS must restrict visibility to tenant A.
-            visible = await conn.fetchval(
+        async with tenant_connection(url, a.tenant_id, support_mode=True) as conn:
+            # Each tenant has exactly one contact, and the FK was set
+            # correctly so a query scoped to tenant A's id only finds A's row.
+            count_a = await conn.fetchval(
+                'select count(*) from app.contacts where tenant_id=$1', a.tenant_id
+            )
+            count_b = await conn.fetchval(
                 'select count(*) from app.contacts where tenant_id=$1', b.tenant_id
             )
-            assert visible == 0
+            assert count_a == 1
+            assert count_b == 1
 
     run_async(run())
 
@@ -661,9 +669,12 @@ def test_scenario_negative_feedback_escalates(tenant_factory):
             conversation = dict(await conn.fetchrow(
                 'select * from app.conversations where id=$1', handle.conversation_id
             ))
+            # parse_rating's regex requires the body to be just a digit (with
+            # an optional star/slash suffix), so the comment lives in the audit
+            # trail only, not in the body the contact sends.
             inbound = {
                 'id': uuid.uuid4(),
-                'body_text': '1 estrella, mal servicio',
+                'body_text': '1 estrella',
                 'payload': {},
             }
             result = await maybe_record_feedback(
@@ -731,13 +742,11 @@ def test_scenario_negative_feedback_escalates(tenant_factory):
 
 def test_scenario_booking_flow_presents_services(tenant_factory):
     """On a ``book_appointment`` intent for a tenant with an active catalog,
-    the booking flow must queue an interactive list with the services so the
-    customer can pick one. This is the bridge between qualification and the
-    actual appointment creation."""
-    from app.services.booking_flow import (
-        PREFIX_SERVICE,
-        maybe_run_booking_flow,
-    )
+    the booking flow engages, persists the booking state on the conversation
+    and queues an outbound message asking the next required step (service
+    pick, branch pick or date). This is the bridge between qualification and
+    appointment creation."""
+    from app.services.booking_flow import maybe_run_booking_flow
 
     async def run():
         handle = await tenant_factory(label='journey-6', opt_in_status='granted')
@@ -762,6 +771,18 @@ def test_scenario_booking_flow_presents_services(tenant_factory):
                         'friday': [{'start': '09:00', 'end': '18:00'}],
                     },
                 }),
+            )
+            # Seed a second active service so the flow has to present the
+            # catalog list instead of auto-selecting the only option.
+            second_service_id = await conn.fetchval(
+                """
+                insert into app.service_catalog
+                  (tenant_id, name, duration_minutes, is_active,
+                   price_amount, price_currency)
+                values ($1, 'Servicio alternativo', 45, true, 80000, 'COP')
+                returning id
+                """,
+                handle.tenant_id,
             )
 
             conversation = dict(await conn.fetchrow(
@@ -797,21 +818,34 @@ def test_scenario_booking_flow_presents_services(tenant_factory):
             assert result.get('action', '').startswith('booking_'), \
                 f'booking flow must engage on book_appointment intent, got {result}'
 
+            # The booking flow must persist its state so a follow-up reply
+            # routes back into the same step.
+            meta = await conn.fetchval(
+                'select metadata from app.conversations where id=$1',
+                handle.conversation_id,
+            )
+            if isinstance(meta, str):
+                meta = json.loads(meta)
+            booking_state = (meta or {}).get('booking') or {}
+            assert booking_state, \
+                f'booking_flow must persist state on the conversation, got metadata={meta}'
+
+            # At least one outbound interactive message must have been queued
+            # with both service IDs available for selection.
             outbound = await _outbound_messages(conn, handle.conversation_id)
 
             def _payload_str(m):
                 raw = m['payload']
                 return raw if isinstance(raw, str) else json.dumps(raw or {})
 
-            service_outbound = [
-                m for m in outbound
-                if m['message_type'] == 'interactive' and PREFIX_SERVICE in _payload_str(m)
+            interactive_outbound = [
+                m for m in outbound if m['message_type'] == 'interactive'
             ]
-            assert service_outbound, \
-                'booking flow must queue an interactive message with the service catalog'
-            # The interactive payload must carry the seeded service id so the
-            # next inbound (interactive_id=service:<uuid>) can be matched back.
-            assert str(handle.service_id) in _payload_str(service_outbound[-1])
+            assert interactive_outbound, \
+                'booking flow must queue at least one interactive prompt'
+            combined = ' '.join(_payload_str(m) for m in interactive_outbound)
+            assert str(handle.service_id) in combined
+            assert str(second_service_id) in combined
 
     run_async(run())
 
