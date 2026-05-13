@@ -373,9 +373,13 @@ _TASK-0057 — Alerta operativa activa en feedback negativo y quejas: COMPLETADA
 
 ---
 
+_TASK-0058 — Auto-generación del link de Google Maps desde la dirección: COMPLETADA. Ver `docs/DONE.md`._
+
+---
+
 ### TASK-0058 — Auto-generación del link de Google Maps desde la dirección
 
-- **Estado:** PENDING
+- **Estado:** DONE
 - **Depende de:** TASK-0050 (branches).
 - **Por qué bloquea:** hoy el admin pega manualmente el `location_maps_url` y se equivoca el 30% de las veces (pega URL de búsqueda en lugar de pin, formato inválido, etc.). Cliente recibe link que no abre el lugar correcto y se queja.
 - **Alcance:**

@@ -114,6 +114,7 @@ from app.services.payment_provider import (
     verify_mercadopago_signature,
     verify_stripe_signature,
 )
+from app.services.maps import build_maps_url
 from app.services.notifications import (
     cancel_appointment_reminder_jobs,
     create_appointment_reminder_jobs,
@@ -3358,6 +3359,10 @@ async def list_branches(
 @tenant_admin_router.post('/branches', status_code=201)
 async def create_branch(payload: BranchCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     tenant_id = await tenant_id_from_request(request, conn)
+    # TASK-0058: auto-generate the Google Maps URL when the admin leaves it blank.
+    maps_url_value = payload.maps_url
+    if not maps_url_value:
+        maps_url_value = build_maps_url(payload.lat, payload.lng, payload.address)
     try:
         row = await conn.fetchrow(
             """
@@ -3378,7 +3383,7 @@ async def create_branch(payload: BranchCreate, request: Request, conn: asyncpg.C
             payload.country,
             payload.lat,
             payload.lng,
-            payload.maps_url,
+            maps_url_value,
             payload.phone_e164,
             payload.timezone,
             json.dumps(payload.opening_hours),
@@ -3408,6 +3413,24 @@ async def update_branch(branch_id: UUID, payload: BranchUpdate, request: Request
         if not row:
             raise HTTPException(status_code=404, detail='Branch not found')
         return record_to_dict(row)
+    # TASK-0058: regenerate the maps URL when the admin clears it while editing
+    # location data — keeps the link consistent with the updated address/coords.
+    if 'maps_url' in update_data and not update_data.get('maps_url'):
+        existing = await conn.fetchrow(
+            'select lat, lng, address from app.branches where tenant_id=$1 and id=$2',
+            tenant_id,
+            branch_id,
+        )
+        final_lat = update_data['lat'] if 'lat' in update_data else (existing['lat'] if existing else None)
+        final_lng = update_data['lng'] if 'lng' in update_data else (existing['lng'] if existing else None)
+        final_address = (
+            update_data['address']
+            if 'address' in update_data
+            else (existing['address'] if existing else None)
+        )
+        auto_url = build_maps_url(final_lat, final_lng, final_address)
+        if auto_url:
+            update_data['maps_url'] = auto_url
     try:
         row = await conn.fetchrow(
             """

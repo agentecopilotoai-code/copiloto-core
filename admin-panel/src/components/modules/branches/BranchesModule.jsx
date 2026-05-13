@@ -68,17 +68,36 @@ function toForm(branch) {
   };
 }
 
-function buildMapsPreview(lat, lng, address) {
+const MAPS_BASE_URL = 'https://www.google.com/maps/search/?api=1&query=';
+
+// TASK-0058: mirror app/services/maps.py build_maps_url so the admin sees the
+// exact URL the backend will persist when the field is left blank.
+export function buildMapsUrlFromInputs(lat, lng, address) {
   const trimmedLat = (lat ?? '').toString().trim();
   const trimmedLng = (lng ?? '').toString().trim();
-  if (trimmedLat && trimmedLng) {
-    return `https://www.google.com/maps?q=${encodeURIComponent(`${trimmedLat},${trimmedLng}`)}`;
+  if (trimmedLat !== '' && trimmedLng !== '') {
+    const latNum = Number(trimmedLat);
+    const lngNum = Number(trimmedLng);
+    if (
+      Number.isFinite(latNum) &&
+      Number.isFinite(lngNum) &&
+      latNum >= -90 &&
+      latNum <= 90 &&
+      lngNum >= -180 &&
+      lngNum <= 180
+    ) {
+      return `${MAPS_BASE_URL}${encodeURIComponent(`${latNum},${lngNum}`)}`;
+    }
   }
   const trimmedAddress = (address ?? '').trim();
   if (trimmedAddress) {
-    return `https://www.google.com/maps?q=${encodeURIComponent(trimmedAddress)}`;
+    return `${MAPS_BASE_URL}${encodeURIComponent(trimmedAddress)}`;
   }
   return null;
+}
+
+function buildMapsPreview(lat, lng, address) {
+  return buildMapsUrlFromInputs(lat, lng, address);
 }
 
 export function BranchesModule({ module, session, tenant }) {
@@ -296,7 +315,36 @@ export function BranchesModule({ module, session, tenant }) {
               value={form.maps_url}
               onChange={(e) => setForm({ ...form, maps_url: e.target.value })}
               placeholder="https://maps.google.com/..."
+              data-testid="branches-maps-url"
             />
+            <span className="branches-maps-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  const generated = buildMapsUrlFromInputs(form.lat, form.lng, form.address);
+                  if (generated) {
+                    setForm((prev) => ({ ...prev, maps_url: generated }));
+                  }
+                }}
+                disabled={!mapsPreviewUrl}
+                data-testid="branches-maps-generate"
+              >
+                Generar desde la dirección
+              </button>
+              {form.maps_url ? (
+                <a
+                  href={form.maps_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="branches-maps-open"
+                >
+                  Abrir
+                </a>
+              ) : null}
+            </span>
+            <small className="hint">
+              Se autogenera al guardar si dejás el campo vacío. Prioriza lat/lng sobre la dirección.
+            </small>
           </label>
           <label>
             Teléfono (E.164)

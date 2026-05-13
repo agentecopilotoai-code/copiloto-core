@@ -15,6 +15,36 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0058 — Auto-generación del link de Google Maps desde la dirección
+
+- **Fecha:** 2026-05-13
+- **Resumen:** el admin ya no tiene que pegar manualmente el `maps_url` de cada sede. El backend genera la URL canónica (`https://www.google.com/maps/search/?api=1&query=...`) cuando el campo viene vacío, priorizando `lat,lng` y cayendo a la dirección url-encoded. El admin panel agrega un botón "Generar desde la dirección" que computa la URL en cliente para que el operador vea exactamente lo que se va a persistir, más un enlace "Abrir" que permite verificar el pin en una pestaña nueva antes de guardar.
+- **Implementación:**
+  - **`app/services/maps.py` (nuevo):** helper puro `build_maps_url(lat, lng, address) -> str | None`. Coordina la conversión defensiva a `float` (asyncpg suele devolver `Decimal` para columnas `numeric`), valida rangos `[-90, 90]` / `[-180, 180]` y arma la URL canónica. Sin coordenadas usables, cae a la dirección con `urllib.parse.quote(..., safe='')` para que `&`, `#`, espacios y acentos queden bien escapados. Sin ninguna entrada usable retorna `None` (sin asumir geocoding).
+  - **`app/api/v1/routes.py`:**
+    - Import de `build_maps_url`.
+    - `create_branch`: si `payload.maps_url` viene vacío, computa la URL desde `payload.lat/lng/address` y la persiste en la columna `maps_url`. Si el admin pega un link explícito, se respeta tal cual.
+    - `update_branch`: cuando `'maps_url'` está en `update_data` y vale falsy (admin lo limpia), se relee `lat/lng/address` actuales (combinando lo enviado en este PATCH con lo persistido) y se regenera la URL antes de aplicar el `UPDATE`. Esto evita que un edit que "borre" el maps_url deje a la sede sin link.
+  - **Admin Panel — `admin-panel/src/components/modules/branches/BranchesModule.jsx`:**
+    - Helper exportado `buildMapsUrlFromInputs(lat, lng, address)` que espeja la lógica de Python (mismo prefijo, mismo orden de prioridad, misma validación de rangos) para que la preview coincida con lo que el backend va a guardar.
+    - Botón "Generar desde la dirección" en la fila del Maps URL: clica → setea `form.maps_url` al valor calculado y muestra un link "Abrir" para validar contra Google Maps real. Disabled cuando no hay datos suficientes (`mapsPreviewUrl` null).
+    - Copy explicativa debajo del input: "Se autogenera al guardar si dejás el campo vacío. Prioriza lat/lng sobre la dirección."
+  - **Tests (`tests/test_maps_static.py`, 10 nuevos):** builder con coords / sin coords / vacío / fuera de rango / inputs `str` / encoding de caracteres especiales; wiring en `create_branch` y `update_branch`; presencia del botón y la preview en el admin panel.
+- **Archivos tocados:**
+  - `app/services/maps.py` (nuevo)
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/components/modules/branches/BranchesModule.jsx`
+  - `tests/test_maps_static.py` (nuevo, 10 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `uv run python -m pytest tests/test_maps_static.py tests/test_branches_static.py -v` → 37 passed (10 nuevos + 27 existentes de TASK-0050 sin regresión).
+- **Notas:**
+  - No se hace geocoding (sin API key). Si la dirección está mal escrita, el pin caerá al lugar que Google Maps interprete: el admin puede usar el botón "Abrir" para verificar antes de guardar.
+  - Si el admin pega una URL custom (por ejemplo, un `goo.gl/maps/...` corto), no se sobreescribe — solo se autogenera cuando el campo viene vacío.
+  - El formato canónico `?api=1&query=...` funciona tanto en mobile (abre la app nativa) como en web (abre maps.google.com).
+
+---
+
 ### TASK-0057 — Alerta operativa activa en feedback negativo y quejas
 
 - **Fecha:** 2026-05-13
