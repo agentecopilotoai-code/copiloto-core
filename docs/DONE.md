@@ -15,6 +15,43 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0064 — Backups automatizados a cloud con verificación periódica
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se cierra el P0 operacional pendiente: el cluster ahora tiene un dump diario cifrado en cloud y verificación semanal con restore real. Cada dump corre via `pg_dump --format=custom`, se cifra con la clave pública GPG `BACKUP_GPG_RECIPIENT`, se sube a `s3://<bucket>/backups/<env>/<YYYY-MM-DD>/db.dump.gpg` y registra metadata (sha256 + bytes + duración) en `app.backup_runs`. La política de retención es 30 días daily + el dump del día 01 de cada mes se copia a un prefijo `monthly/` que el purgador nunca toca, dando hasta 12 mensuales preservados. La verificación semanal (`scripts/verify-backup.sh`) descarga, descifra, restaura sobre `copilotoia_verify` (DB efímera), corre los 3 sanity checks (`tenants/conversations/messages`) y escribe `audit_logs(action='backup.verified')`. Si algo falla, emite `operator_alerts(kind='backup_failure', tenant_id=null)` y deja `audit_logs(action='backup.verify_failed')`. Dos alertas Prometheus opt-in (`BackupCloudStale`, `BackupVerifyFailed`) referencian `docs/backup-policy.md` como runbook.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** nueva tabla `app.backup_runs(id, kind, started_at, finished_at, status, sha256, size_bytes, duration_seconds, evidence_path, error, metadata)` con CHECK sobre `kind in ('cloud_dump','cloud_verify')` y `status in ('running','ok','failed')`, índices `ix_backup_runs_started` y `ix_backup_runs_kind_status`. No es tenant-scoped — los backups snapshotean el cluster completo — por lo que queda fuera del loop RLS y el acceso lo controla el rol con permisos sobre la tabla. La tabla `app.operator_alerts` se extiende: la columna `tenant_id` deja de ser `NOT NULL`, el CHECK de `kind` admite el nuevo valor `'backup_failure'`, y un CHECK compuesto `chk_operator_alerts_system_alerts_have_no_tenant` exige que sólo `kind='backup_failure'` use `tenant_id IS NULL`. RLS sigue funcionando: las filas con tenant null sólo son visibles bajo `app.support_mode()`.
+  - **`scripts/backup-to-cloud.sh` (nuevo):** valida vars requeridas (`BACKUP_S3_BUCKET`, `BACKUP_ENV`, `DATABASE_ADMIN_URL`, `BACKUP_GPG_RECIPIENT`), valida la presencia de `pg_dump`, `gpg`, `sha256sum`, `aws`, `psql`, valida la S3 URI contra un regex anti-typo, inserta una fila `kind='cloud_dump', status='running'` en `backup_runs`, hace el dump, lo cifra con `gpg --batch --yes --trust-model always --recipient ... --encrypt`, sube con `aws s3 cp` (incluye metadata `sha256=...,run-id=...,env=...`), actualiza la fila a `status='ok'` con `sha256/size_bytes/duration_seconds`. Si el día es 01 copia adicionalmente a `monthly/<YYYY-MM-DD>/db.dump.gpg.monthly`. La purga itera prefijos del bucket; sólo borra los que matchean `^[0-9]{4}-[0-9]{2}-[0-9]{2}$` y están fuera de la ventana `BACKUP_RETENTION_DAYS` (default 30). En cualquier fallo intermedio el handler `cleanup_failure` deja `backup_runs.status='failed'` con `error` y emite `operator_alerts(kind='backup_failure')`. Los strings SQL se pasan vía `psql -v` para evitar inyección por substitución de bash.
+  - **`scripts/verify-backup.sh` (nuevo):** descarga el dump del día (o `--date YYYY-MM-DD`), compara el SHA256 contra el metadata del objeto S3, descifra, recrea `copilotoia_verify` con `dropdb`/`createdb`, restaura con `pg_restore --exit-on-error`, corre `select count(*)` sobre `app.tenants`, `app.conversations`, `app.messages`, marca el run como `ok` y emite `audit_logs(action='backup.verified')` con los conteos. En cada fallo (`s3_download_failed`, `sha256_mismatch`, `gpg_decrypt_failed`, `pg_restore_failed`, `sanity_check_failed`) deja `backup_runs.status='failed'`, `operator_alerts(kind='backup_failure', tenant_id=null)` y `audit_logs(action='backup.verify_failed')`. El `trap EXIT` borra la DB efímera y el directorio temporal.
+  - **`infra/backup-worker/` (nuevo):** imagen basada en `postgres:16-bookworm` con `gnupg`, `cron` y la AWS CLI v2. La `crontab` define `0 3 * * *` para `backup-to-cloud.sh` y `0 4 * * 0` para `verify-backup.sh`. El `entrypoint.sh` vuelca las variables del container a `/etc/cron.d/copilotoia-env` (cron no hereda el environment), importa las claves GPG presentes en `.secrets/`, arranca `cron -f` y stream-ea `/var/log/copilotoia-backup.log`.
+  - **`docker-compose.yml`:** nuevo servicio `backup-worker` con `profiles: ["backups"]` (opt-in), build context `infra/backup-worker/Dockerfile`, env explícito de `BACKUP_*` y `AWS_*`, monta `./scripts:/app/scripts:ro`, `./.secrets:/app/.secrets:ro` y un volume `backup-logs`. Depende del healthcheck de `postgres`. Se arranca con `docker compose --profile backups up -d backup-worker`.
+  - **`infra/observability/alerts.yaml`:** dos reglas nuevas con `runbook_url: docs/backup-policy.md`. `BackupCloudStale` dispara si la métrica `cpi_backup_last_success_age_seconds{kind="cloud_dump"} > 108000` (30h sin éxito → RPO en riesgo). `BackupVerifyFailed` dispara si `cpi_backup_last_verify_failed_age_seconds < 86400` (verify fallido en las últimas 24h).
+  - **`docs/backup-policy.md` (nuevo):** documenta objetivos (RPO ≤ 24h, RTO ≤ 2h), componentes, variables, calendario, política de retención (incl. la inviolabilidad del prefijo `monthly/`), rotación de la clave GPG en 7 pasos, procedimiento de restore en 6 pasos y triage por alerta.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `scripts/backup-to-cloud.sh` (nuevo)
+  - `scripts/verify-backup.sh` (nuevo)
+  - `infra/backup-worker/Dockerfile` (nuevo)
+  - `infra/backup-worker/crontab` (nuevo)
+  - `infra/backup-worker/entrypoint.sh` (nuevo)
+  - `docker-compose.yml`
+  - `infra/observability/alerts.yaml`
+  - `docs/backup-policy.md` (nuevo)
+  - `tests/test_backup_cloud_static.py` (nuevo, 13 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `bash -n scripts/backup-to-cloud.sh scripts/verify-backup.sh infra/backup-worker/entrypoint.sh` → OK.
+  - `pytest tests/test_backup_cloud_static.py` → **12 passed, 1 skipped** (`PyYAML` no estaba en este host; `pytest.importorskip('yaml')`).
+  - `pytest tests/test_backup_restore_scripts_static.py tests/test_backup_cloud_static.py` → **16 passed, 1 skipped** (regresión local ok).
+  - `ruff check tests/test_backup_cloud_static.py` → All checks passed!
+- **Notas / limitaciones:**
+  - El cifrado se hace siempre en cliente con GPG; el bucket nunca ve plaintext. La clave privada vive sólo en el nodo de verificación (mountada como `/app/.secrets/backup_gpg_privkey.asc` cuando ese host arranca el worker). El procedimiento de rotación está documentado en `docs/backup-policy.md`.
+  - La política de purga sólo opera sobre prefijos `YYYY-MM-DD/`; cualquier otro prefijo (incluido `monthly/`) se ignora, así que un typo en el script no puede borrar snapshots largos.
+  - Las dos nuevas alertas asumen que `app/services/metrics.py` exporta `cpi_backup_last_success_age_seconds` y `cpi_backup_last_verify_failed_age_seconds`. La instrumentación del endpoint `/metrics` para emitirlas queda como follow-up corto (consulta `select extract(epoch from now() - max(finished_at)) from app.backup_runs where kind=... and status=...`); en este commit las reglas declaran el contrato y el doc lo referencia.
+  - El servicio en docker-compose está bajo el perfil `backups` para no encender el worker en `docker compose up` por defecto. Producción levanta el perfil; dev local sigue usando `scripts/backup-local.sh`.
+
+---
+
 ### TASK-0063 — Tests E2E con DB efímera para el journey completo del paciente
 
 - **Fecha:** 2026-05-13

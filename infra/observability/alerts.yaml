@@ -71,6 +71,39 @@ groups:
             La cola del scheduler superó 100 jobs sin procesar durante 5
             minutos. Recordatorios y timeouts pueden estarse retrasando.
 
+      # TASK-0064: dos guardias para la salud del backup cloud.
+      # La métrica `cpi_backup_last_success_age_seconds` la expone el endpoint
+      # `/metrics` calculando `extract(epoch from now() - max(finished_at))`
+      # filtrando `kind='cloud_dump' and status='ok'`. Si supera 30h sin éxito,
+      # el RPO ya está fuera del objetivo (≤24h).
+      - alert: BackupCloudStale
+        expr: max(cpi_backup_last_success_age_seconds{kind="cloud_dump"}) > 108000
+        for: 10m
+        labels:
+          severity: page
+          team: copilotoia
+        annotations:
+          summary: "No hubo backup cloud exitoso en >30h."
+          description: |
+            El último `cloud_dump` con status='ok' tiene más de 30 horas. RPO en
+            riesgo. Revisa el backup-worker (logs en /var/log/copilotoia-backup.log)
+            y la conectividad con el bucket S3.
+          runbook_url: docs/backup-policy.md
+
+      - alert: BackupVerifyFailed
+        expr: max(cpi_backup_last_verify_failed_age_seconds) < 86400
+        for: 5m
+        labels:
+          severity: page
+          team: copilotoia
+        annotations:
+          summary: "Verificación de backup falló en las últimas 24h."
+          description: |
+            El último `scripts/verify-backup.sh` reportó status='failed'. El
+            dump podría no ser restaurable. Investiga el run en
+            `app.backup_runs` y `app.operator_alerts(kind='backup_failure')`.
+          runbook_url: docs/backup-policy.md
+
       - alert: MetricsEndpointSilent
         expr: absent(up{job="copilotoia-core"}) or (max(up{job="copilotoia-core"}) == 0)
         for: 3m

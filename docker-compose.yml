@@ -84,6 +84,39 @@ services:
     expose:
       - "9100"
 
+  # TASK-0064: backup automatizado a cloud (perfil opt-in `backups`).
+  # Arranca con:
+  #   docker compose --profile backups up -d backup-worker
+  # Variables requeridas en .env: BACKUP_S3_BUCKET, BACKUP_ENV,
+  # BACKUP_GPG_RECIPIENT. La clave pública GPG debe vivir en
+  # .secrets/backup_gpg_pubkey.asc; la privada (sólo nodo de verificación)
+  # en .secrets/backup_gpg_privkey.asc.
+  backup-worker:
+    build:
+      context: .
+      dockerfile: infra/backup-worker/Dockerfile
+    profiles: ["backups"]
+    restart: unless-stopped
+    env_file: *app-env-files
+    environment:
+      POSTGRES_HOST: postgres
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_ENV: ${BACKUP_ENV:-local}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-http://minio:9000}
+      BACKUP_GPG_RECIPIENT: ${BACKUP_GPG_RECIPIENT:-}
+      BACKUP_GPG_PUBKEY_PATH: ${BACKUP_GPG_PUBKEY_PATH:-/app/.secrets/backup_gpg_pubkey.asc}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    volumes:
+      - ./.secrets:/app/.secrets:ro
+      - ./scripts:/app/scripts:ro
+      - backup-logs:/var/log
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
@@ -198,3 +231,4 @@ volumes:
   knowledge-files:
   prometheus-data:
   grafana-data:
+  backup-logs:
