@@ -216,11 +216,13 @@ def test_package_routes_registered():
     assert ('/packages', ('POST',)) in admin_paths
     assert ('/packages/{package_id}', ('PATCH',)) in admin_paths
     assert ('/packages/{package_id}', ('DELETE',)) in admin_paths
-    # Ops-level assignment/refund of a package to a contact.
+    # TASK-0084 / BUG02: assignment/patch/refund of a contact_package are
+    # financial side-effects and now live on tenant_admin_router (admin+).
+    # Read access (list) stays on tenant_ops_router so agents can plan.
     assert ('/contacts/{contact_id}/packages', ('GET',)) in ops_paths
-    assert ('/contacts/{contact_id}/packages', ('POST',)) in ops_paths
-    assert ('/contacts/{contact_id}/packages/{contact_package_id}', ('PATCH',)) in ops_paths
-    assert ('/contacts/{contact_id}/packages/{contact_package_id}', ('DELETE',)) in ops_paths
+    assert ('/contacts/{contact_id}/packages', ('POST',)) in admin_paths
+    assert ('/contacts/{contact_id}/packages/{contact_package_id}', ('PATCH',)) in admin_paths
+    assert ('/contacts/{contact_id}/packages/{contact_package_id}', ('DELETE',)) in admin_paths
 
 
 def test_package_routes_emit_audit_events():

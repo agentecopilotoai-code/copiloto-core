@@ -884,9 +884,12 @@ _TASK-0083 — Webhook de pagos fail-closed con secret obligatorio: COMPLETADA. 
 
 ---
 
-### TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only
+_TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** los endpoints de asignación, patch y refund de `contact_packages` se montaron en `tenant_ops_router` (rol `agent`+) y los schemas aceptan `payment_status='paid'` y `payment_amount=0`. Un agent puede otorgar paquetes pagados y disparar refunds sin pasar por la pasarela. Es un bug aislado de input hardening + RBAC del módulo paquetes.
 - **Bugs cubiertos (1):**
   - **BUG02** (`docs/BUGS/BUG02`, commit `177389d`): contact package mutation accessible to agent + `payment_status` controlable por cliente.
@@ -902,6 +905,7 @@ _TASK-0083 — Webhook de pagos fail-closed con secret obligatorio: COMPLETADA. 
   - Test estático del router montado en `tenant_admin_router`.
   - Test que POST con `payment_status='paid'` desde cliente externo → 422 / sobrescrito a `unpaid`.
   - Test de auditoría con la entrada `contact_package.refunded` por `admin`.
+-->
 
 ---
 

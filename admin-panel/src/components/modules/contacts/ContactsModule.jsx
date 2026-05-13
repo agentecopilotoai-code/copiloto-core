@@ -607,6 +607,12 @@ export function ContactsModule({ module, session, tenant }) {
               <div className="schedule-panel" data-testid="contact-packages-panel">
                 <div>
                   <strong>Paquetes activos</strong>
+                  <p className="hint" style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                    Asignar y reembolsar requieren rol <strong>admin</strong> u
+                    <strong> owner</strong>. El estado de pago
+                    (<code>paid</code>, <code>failed</code>, <code>refunded</code>)
+                    solo lo escribe el webhook firmado del proveedor.
+                  </p>
                   <form onSubmit={handleAssignPackage} style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                     <select
                       value={pendingPackageId}

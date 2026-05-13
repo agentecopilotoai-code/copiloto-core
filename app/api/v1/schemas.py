@@ -328,6 +328,11 @@ class BranchUpdate(BaseModel):
 
 
 PACKAGE_PAYMENT_STATUS_PATTERN = '^(not_required|pending|link_sent|paid|failed|refunded)$'
+# TASK-0084 / BUG02: client-writable values exclude any status that implies
+# money was actually moved. ``paid`` / ``failed`` / ``refunded`` are
+# transitioned ONLY by the payment webhook handler (signed by the provider)
+# or by the admin-only refund endpoint, never by a free-form client field.
+CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN = '^(not_required|pending|link_sent)$'
 
 
 class TreatmentPackageCreate(BaseModel):
@@ -360,7 +365,7 @@ class TreatmentPackageUpdate(BaseModel):
 
 class ContactPackageAssign(BaseModel):
     package_id: UUID
-    payment_status: str = Field(default='pending', pattern=PACKAGE_PAYMENT_STATUS_PATTERN)
+    payment_status: str = Field(default='pending', pattern=CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN)
     payment_amount: float | None = Field(default=None, ge=0)
     payment_currency: str | None = Field(default=None, min_length=3, max_length=3)
     expires_at: datetime | None = None
@@ -368,11 +373,17 @@ class ContactPackageAssign(BaseModel):
 
 
 class ContactPackagePatch(BaseModel):
-    payment_status: str | None = Field(default=None, pattern=PACKAGE_PAYMENT_STATUS_PATTERN)
+    # TASK-0084 / BUG02: ``paid`` / ``failed`` / ``refunded`` are never
+    # client-writable. The payment webhook owns transitions to ``paid``/
+    # ``failed`` (validated signature); refunds go through the admin-only
+    # DELETE endpoint with audit.
+    payment_status: str | None = Field(default=None, pattern=CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN)
     payment_amount: float | None = Field(default=None, ge=0)
     payment_currency: str | None = Field(default=None, min_length=3, max_length=3)
     expires_at: datetime | None = None
-    status: str | None = Field(default=None, pattern='^(active|exhausted|expired|refunded)$')
+    # ``status`` excludes ``refunded`` for the same reason: refund flows
+    # through the DELETE endpoint, not a PATCH from an agent UI.
+    status: str | None = Field(default=None, pattern='^(active|exhausted|expired)$')
     notes: str | None = Field(default=None, max_length=2000)
 
 

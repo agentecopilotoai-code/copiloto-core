@@ -4680,7 +4680,10 @@ async def list_contact_packages(
     return [record_to_dict(row) for row in rows]
 
 
-@tenant_ops_router.post('/contacts/{contact_id}/packages', status_code=201)
+# TASK-0084 / BUG02: package mutation endpoints live on the admin router
+# (admin+ role) because they encode financial state. Agents keep read access
+# via list_contact_packages above.
+@tenant_admin_router.post('/contacts/{contact_id}/packages', status_code=201)
 async def assign_contact_package(
     contact_id: UUID,
     payload: ContactPackageAssign,
@@ -4744,7 +4747,7 @@ async def assign_contact_package(
     return record_to_dict(row)
 
 
-@tenant_ops_router.patch('/contacts/{contact_id}/packages/{contact_package_id}')
+@tenant_admin_router.patch('/contacts/{contact_id}/packages/{contact_package_id}')
 async def update_contact_package(
     contact_id: UUID,
     contact_package_id: UUID,
@@ -4803,7 +4806,7 @@ async def update_contact_package(
     return record_to_dict(row)
 
 
-@tenant_ops_router.delete('/contacts/{contact_id}/packages/{contact_package_id}', status_code=204)
+@tenant_admin_router.delete('/contacts/{contact_id}/packages/{contact_package_id}', status_code=204)
 async def refund_contact_package(
     contact_id: UUID,
     contact_package_id: UUID,

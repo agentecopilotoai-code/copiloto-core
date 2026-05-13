@@ -15,6 +15,38 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0084 — Operaciones financieras de paquetes requieren admin + `payment_status` server-only
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG02 (los endpoints `POST/PATCH/DELETE /contacts/{id}/packages` vivían en `tenant_ops_router` — accesibles a rol `agent` — y los schemas Pydantic aceptaban `payment_status='paid'`, lo que permitía a un agente crear paquetes "pagados" gratis o reembolsar arbitrariamente).
+- **Fase 1 — verificación en HEAD:** bug reproducible. `app/api/v1/routes.py` montaba los tres endpoints (`assign_contact_package`, `update_contact_package`, `refund_contact_package`) en `tenant_ops_router` (rol mínimo `agent`). Los schemas `ContactPackageAssign` y `ContactPackagePatch` aceptaban el patrón completo `^(not_required|pending|link_sent|paid|failed|refunded)$`, sin separar lo que escribe el cliente de lo que solo escribe el webhook firmado. `payment_amount` admitía `0`, así un agent podía emitir paquetes paid con costo cero. La transición `status='refunded'` también era escribible por el PATCH.
+- **Fase 2 — remediación:**
+  - **Schemas (`app/api/v1/schemas.py`):** se añade `CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN = '^(not_required|pending|link_sent)$'`. `ContactPackageAssign.payment_status` y `ContactPackagePatch.payment_status` usan este patrón restringido — Pydantic rechaza con 422 cualquier intento de escribir `paid`, `failed` o `refunded` desde la API. `ContactPackagePatch.status` se reduce a `^(active|exhausted|expired)$` — la transición a `refunded` solo ocurre en el DELETE admin-only que setea `status='refunded'` + `payment_status='refunded'` server-side.
+  - **Endpoints (`app/api/v1/routes.py`):** `assign_contact_package`, `update_contact_package` y `refund_contact_package` se mueven de `@tenant_ops_router` a `@tenant_admin_router`. La constante de comportamiento queda: GET de lectura sigue accesible a agentes (planificación del día), pero TODA mutación financiera exige admin/owner y MFA (TASK-0080).
+  - **UI (`admin-panel/src/components/modules/contacts/ContactsModule.jsx`):** el panel de "Paquetes activos" agrega una nota explícita: "Asignar y reembolsar requieren rol **admin** u **owner**. El estado de pago (`paid`, `failed`, `refunded`) solo lo escribe el webhook firmado del proveedor." Los formularios existentes se conservan — agents que intenten asignar verán el 403/422 del servidor.
+- **Archivos modificados:**
+  - `app/api/v1/schemas.py` (`CLIENT_PACKAGE_PAYMENT_STATUS_PATTERN` + `ContactPackageAssign/Patch`)
+  - `app/api/v1/routes.py` (3 decoradores: `tenant_ops_router` → `tenant_admin_router`)
+  - `admin-panel/src/components/modules/contacts/ContactsModule.jsx` (hint)
+  - `tests/test_contact_package_authz.py` (nuevo, 13 tests)
+  - `tests/test_packages_static.py` (actualiza expectativa de routing)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/api/v1/routes.py app/api/v1/schemas.py tests/test_contact_package_authz.py` → all checks passed.
+  - `uv run pytest tests/test_contact_package_authz.py -q` → 13 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1512 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG02 schema:** `test_client_pattern_excludes_paid_failed_refunded`, `test_contact_package_assign_rejects_paid_status`, `test_contact_package_assign_rejects_refunded_status`, `test_contact_package_assign_accepts_pending_link_sent_not_required`, `test_contact_package_patch_rejects_paid_status`, `test_contact_package_patch_rejects_refunded_status_value`, `test_contact_package_patch_accepts_active_exhausted_expired`.
+  - **BUG02 routing:** `test_assign_contact_package_uses_tenant_admin_router`, `test_update_contact_package_uses_tenant_admin_router`, `test_refund_contact_package_uses_tenant_admin_router`, `test_list_contact_packages_stays_on_tenant_ops_router_for_agents`.
+  - **BUG02 audit / refund flow:** `test_refund_contact_package_emits_audit` (verifica que el DELETE setea `status='refunded'` + `payment_status='refunded'` server-side, no por client input).
+  - **UI:** `test_contacts_module_documents_admin_only_packages_and_webhook_status`.
+- **Notas:**
+  - El patrón `PACKAGE_PAYMENT_STATUS_PATTERN` original se mantiene como pattern server-side (lo necesita el handler del webhook de pagos para escribir `paid`/`failed` después de validar la firma). La separación entre patrón cliente y patrón server es el core del fix.
+  - Migrar a `tenant_admin_router` tiene un efecto bonus: ese router ya exige MFA tras TASK-0080. Por lo tanto, asignar/reembolsar paquetes ahora requiere admin + MFA verificado — defensa en profundidad sin tener que añadir un `Depends` adicional.
+  - `test_packages_static.py::test_package_routes_registered` se actualiza para reflejar la nueva expectativa (POST/PATCH/DELETE de `/contacts/{id}/packages` en admin_paths). El GET se queda intencionalmente en `ops_paths` y el test lo afirma.
+
+---
+
 ### TASK-0083 — Webhook de pagos fail-closed con secret obligatorio
 
 - **Fecha:** 2026-05-13
