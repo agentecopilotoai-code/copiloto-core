@@ -403,24 +403,6 @@ _TASK-0060 — Observabilidad: métricas Prometheus + alertas básicas: COMPLETA
 
 ---
 
-### TASK-0061 — Política de retención y purgado TTL — GDPR operativo
-
-- **Estado:** PENDING
-- **Por qué bloquea:** `audit_logs`, `domain_events`, `webhook_events_raw`, `messages`, `conversations` crecen indefinidamente. Una empresa con 30k conversaciones/mes acumula >1M registros/año. Aparte del costo, GDPR exige plazos de retención **definidos** y purgado automático, no manual.
-- **Alcance:**
-  - Nueva tabla `app.data_retention_policies(tenant_id, entity check in ('messages','conversations','audit_logs','domain_events','webhook_events_raw','reminder_jobs'), retention_days int check (retention_days >= 30), anonymize_instead_of_delete boolean default false, updated_at)`.
-  - Worker `app/workers/retention_worker.py` corre 1 vez al día (3am UTC). Por cada (tenant, entity):
-    - Si `anonymize_instead_of_delete=false`: `DELETE FROM <entity> WHERE created_at < now() - retention_days * interval '1 day' AND tenant_id = ...` paginado (`LIMIT 5000` por iteración).
-    - Si `anonymize_instead_of_delete=true` (caso de `messages` y `conversations`): `UPDATE` que reemplaza `content_text`, `phone_e164` y `display_name` con tokens hash. Mantiene los IDs y las foreign keys.
-  - Defaults sembrados al crear tenant: messages 365d, conversations 365d, audit_logs 1825d (5 años, requisito legal), domain_events 90d, webhook_events_raw 30d, reminder_jobs 30d (solo `completed/cancelled/failed`).
-  - **Admin Panel:** pestaña Privacidad del `TenantSetupWizard` con tabla editable y preview "se borrarán X registros mañana".
-  - Audit log de cada ciclo de purgado: `retention.purged` con `entity, deleted_count, anonymized_count`.
-- **Criterios de aceptación:**
-  - Tenant con 100k `messages` de más de 365 días → tras una corrida del worker, esos 100k quedan eliminados o anonimizados según la política.
-  - Endpoint `GET /v1/tenants/{id}/retention/preview` devuelve cuántos registros se purgarían mañana por entidad.
-  - Tests: ≥ 12 estáticos: schema, defaults sembrados, worker paginado, anonimización idempotente, integración con audit, endpoint preview, UI panel.
-- **Notas:**
-  - `audit_logs` no se puede anonimizar (debe quedar tal cual por compliance); por eso solo soporta DELETE.
-  - El worker emite `domain_events('retention.cycle_completed')` con un resumen, útil para que `operator_alerts` (TASK-0057) notifique si una corrida elimina >10% del histórico (señal de error).
+_TASK-0061 — Política de retención y purgado TTL — GDPR operativo: COMPLETADA. Ver `docs/DONE.md`._
 
 ---

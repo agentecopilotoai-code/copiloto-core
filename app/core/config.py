@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     # en un container separado, por lo que pueden compartir el mismo puerto
     # interno y diferenciarse por el `targets:` de Prometheus).
     worker_metrics_port: int = Field(default=9100, ge=1, le=65535)
+    # TASK-0061: política de retención GDPR. El worker corre 1x al día a esta
+    # hora UTC. ``retention_page_size`` controla el ``LIMIT`` por iteración del
+    # DELETE/UPDATE paginado. ``retention_anomaly_threshold_pct`` dispara una
+    # señal de auditoría si una corrida borra más del N% del histórico.
+    retention_run_hour_utc: int = Field(default=3, ge=0, le=23)
+    retention_page_size: int = Field(default=5000, ge=100, le=50000)
+    retention_anomaly_threshold_pct: float = Field(default=10.0, ge=0.0, le=100.0)
 
     @property
     def knowledge_storage_bucket(self) -> str:

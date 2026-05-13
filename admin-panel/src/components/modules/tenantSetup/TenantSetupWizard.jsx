@@ -6,18 +6,31 @@ import {
   createContactTag,
   createTenant,
   deleteContactTag,
+  getRetentionPreview,
   getTenant,
   getTenantPaymentSettings,
   getTenantSettings,
   listAuditLogs,
   listContactTags,
+  listRetentionPolicies,
   patchTenantStatus,
   reindexAllKnowledgeDocuments,
   updateContactTag,
+  updateRetentionPolicies,
   updateTenant,
   updateTenantPaymentSettings,
   updateTenantSettings,
 } from '../../../services/coreApi.js';
+
+const RETENTION_ENTITIES = [
+  'messages',
+  'conversations',
+  'audit_logs',
+  'domain_events',
+  'webhook_events_raw',
+  'reminder_jobs',
+];
+const RETENTION_ANONYMIZABLE = new Set(['messages', 'conversations']);
 
 const wizardTabs = [
   { id: 'tenant', label: 'Negocio' },
@@ -396,6 +409,8 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     webhook_secret_configured: false,
   });
   const [paymentForm, setPaymentForm] = useState({ apiKey: '', webhookSecret: '' });
+  const [retentionPolicies, setRetentionPolicies] = useState([]);
+  const [retentionPreview, setRetentionPreview] = useState([]);
 
   const settingsPayload = useMemo(
     () => ({
@@ -588,6 +603,58 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
       mounted = false;
     };
   }, [currentTenantId, session]);
+
+  async function refreshRetention(tenantId = currentTenantId) {
+    if (!tenantId) return;
+    try {
+      const [policiesRes, previewRes] = await Promise.all([
+        listRetentionPolicies(session, tenantId),
+        getRetentionPreview(session, tenantId),
+      ]);
+      const byEntity = new Map(
+        (policiesRes?.policies || []).map((row) => [row.entity, row]),
+      );
+      const merged = RETENTION_ENTITIES.map((entity) => {
+        const existing = byEntity.get(entity);
+        return {
+          entity,
+          retention_days: existing?.retention_days ?? (entity === 'audit_logs' ? 1825 : 90),
+          anonymize_instead_of_delete: existing?.anonymize_instead_of_delete ?? false,
+        };
+      });
+      setRetentionPolicies(merged);
+      setRetentionPreview(previewRes?.preview || []);
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message });
+    }
+  }
+
+  useEffect(() => {
+    if (!currentTenantId) return;
+    refreshRetention(currentTenantId);
+  }, [currentTenantId]);
+
+  function updateRetentionRow(entity, patch) {
+    setRetentionPolicies((rows) =>
+      rows.map((row) => (row.entity === entity ? { ...row, ...patch } : row)),
+    );
+  }
+
+  async function handleSaveRetention(event) {
+    event.preventDefault();
+    if (!currentTenantId) return;
+    const payload = retentionPolicies.map((row) => ({
+      entity: row.entity,
+      retention_days: Number(row.retention_days),
+      anonymize_instead_of_delete:
+        RETENTION_ANONYMIZABLE.has(row.entity) && Boolean(row.anonymize_instead_of_delete),
+    }));
+    const updated = await runAction(
+      () => updateRetentionPolicies(session, currentTenantId, payload),
+      'Política de retención guardada.',
+    );
+    if (updated) await refreshRetention(currentTenantId);
+  }
 
   async function handleSavePaymentSettings(event) {
     event.preventDefault();
@@ -1484,6 +1551,89 @@ Tu cita de {servicio} quedó agendada para el {fecha} a las {hora}` + (notificat
           </div>
           <div className="builder-preview wide"><strong>Builder resultante</strong><pre>{formatJson({ pii_policy: settingsPayload.pii_policy, no_train: settingsPayload.no_train })}</pre></div>
           <div className="form-actions"><button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">Guardar privacidad</button></div>
+        </form>
+      ) : null}
+
+      {activeTab === 'privacy' ? (
+        <form
+          className="wizard-panel"
+          data-testid="retention-policies-form"
+          onSubmit={handleSaveRetention}
+        >
+          <h3>Retención y purgado de datos (GDPR)</h3>
+          <p className="hint">
+            El worker corre 1 vez al día (3am UTC) y elimina o anonimiza registros más viejos
+            que el plazo configurado. <strong>audit_logs</strong> no se puede anonimizar — solo borrar — por
+            requisito legal. El plazo mínimo permitido es 30 días.
+          </p>
+          <table className="retention-table" data-testid="retention-policies-table">
+            <thead>
+              <tr>
+                <th>Entidad</th>
+                <th>Días de retención</th>
+                <th>Anonimizar (en vez de borrar)</th>
+                <th>Se purgarán mañana</th>
+                <th>Total actual</th>
+              </tr>
+            </thead>
+            <tbody>
+              {retentionPolicies.map((row) => {
+                const preview = retentionPreview.find((p) => p.entity === row.entity) || {};
+                return (
+                  <tr key={row.entity} data-testid={`retention-row-${row.entity}`}>
+                    <td>{row.entity}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min="30"
+                        value={row.retention_days}
+                        onChange={(event) =>
+                          updateRetentionRow(row.entity, { retention_days: event.target.value })
+                        }
+                        data-testid={`retention-days-${row.entity}`}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(row.anonymize_instead_of_delete)}
+                        disabled={!RETENTION_ANONYMIZABLE.has(row.entity)}
+                        onChange={(event) =>
+                          updateRetentionRow(row.entity, {
+                            anonymize_instead_of_delete: event.target.checked,
+                          })
+                        }
+                        data-testid={`retention-anon-${row.entity}`}
+                      />
+                    </td>
+                    <td data-testid={`retention-candidates-${row.entity}`}>
+                      {preview.candidates ?? '—'}
+                    </td>
+                    <td>{preview.total ?? '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div className="form-actions">
+            <button
+              className="primary-action"
+              disabled={isBusy || !currentTenantId}
+              type="submit"
+              data-testid="retention-save"
+            >
+              Guardar política de retención
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isBusy || !currentTenantId}
+              onClick={() => refreshRetention(currentTenantId)}
+              type="button"
+              data-testid="retention-refresh"
+            >
+              Refrescar preview
+            </button>
+          </div>
         </form>
       ) : null}
 

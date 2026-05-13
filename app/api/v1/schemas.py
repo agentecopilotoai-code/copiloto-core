@@ -26,6 +26,18 @@ class TenantUpdate(BaseModel):
     status: str | None = Field(default=None, pattern='^(trial|active|suspended|churned)$')
 
 
+class RetentionPolicyEntry(BaseModel):
+    entity: str = Field(
+        pattern='^(messages|conversations|audit_logs|domain_events|webhook_events_raw|reminder_jobs)$'
+    )
+    retention_days: int = Field(ge=30, le=10950)
+    anonymize_instead_of_delete: bool = False
+
+
+class RetentionPoliciesUpdate(BaseModel):
+    policies: list[RetentionPolicyEntry]
+
+
 class KnowledgeStorageUpdate(BaseModel):
     backend: str = Field(default='local', pattern='^(local|s3)$')
     bucket: str | None = Field(default=None, min_length=3, max_length=255)
