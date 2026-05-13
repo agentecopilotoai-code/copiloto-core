@@ -158,13 +158,18 @@ def test_orchestrator_threads_bot_personality():
     assert 'bot_personality' in cloud
 
 
-# 11 ── Migración idempotente (P1 review)
-def test_schema_has_idempotent_alter_for_existing_deployments():
+# 11 ── bot_personality vive en el CREATE TABLE (no como migración incremental)
+def test_schema_defines_bot_personality_inline_on_create_table():
     src = SCHEMA.read_text()
-    # Debe existir un ALTER TABLE ... ADD COLUMN IF NOT EXISTS para deployments existentes,
-    # no sólo la CREATE TABLE que se aplica únicamente a clusters frescos.
-    assert 'alter table app.tenant_settings' in src
-    assert 'add column if not exists bot_personality' in src
+    # El esquema es la única fuente de verdad: bot_personality se declara en el
+    # CREATE TABLE de tenant_settings, no como ALTER TABLE ADD COLUMN para
+    # deployments existentes (no hay producción que migrar).
+    assert 'add column if not exists bot_personality' not in src
+    assert 'alter table app.tenant_settings\n  add column' not in src
+    create_block_start = src.index('create table app.tenant_settings')
+    create_block_end = src.index(');', create_block_start)
+    create_block = src[create_block_start:create_block_end]
+    assert 'bot_personality jsonb' in create_block
 
 
 # 12 ── Q&A path también recibe la voz del bot (P2 review)

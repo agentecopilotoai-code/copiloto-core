@@ -81,8 +81,16 @@ def test_schema_creates_contact_segment_members_with_composite_pk():
 
 def test_campaigns_table_gains_segment_columns():
     schema = SCHEMA.read_text()
-    assert 'alter table app.campaigns add column segment_id uuid' in schema
-    assert 'alter table app.campaigns add column launched_snapshot_at timestamptz' in schema
+    # segment_id y launched_snapshot_at viven inline en el CREATE TABLE de
+    # app.campaigns; no se agregan como ALTER TABLE incremental porque el MVP
+    # no está en producción y el esquema se aplica una sola vez.
+    assert 'alter table app.campaigns add column segment_id' not in schema
+    assert 'alter table app.campaigns add column launched_snapshot_at' not in schema
+    create_block_start = schema.index('create table app.campaigns')
+    create_block_end = schema.index(');', create_block_start)
+    create_block = schema[create_block_start:create_block_end]
+    assert 'segment_id uuid' in create_block
+    assert 'launched_snapshot_at timestamptz' in create_block
     assert 'fk_campaigns_tenant_segment' in schema
 
 
