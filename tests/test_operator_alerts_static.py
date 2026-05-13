@@ -69,8 +69,12 @@ def _settings_env(monkeypatch):
 def test_schema_creates_operator_alerts_table_with_rls():
     source = SCHEMA.read_text()
     assert 'create table app.operator_alerts (' in source
-    # TASK-0064 extendió el enum con `backup_failure` (system-wide).
-    assert "kind text not null check (kind in ('negative_feedback','complaint','backup_failure'))" in source
+    # TASK-0064 extendió el enum con `backup_failure` (system-wide); TASK-0065
+    # añade `outbound_dlq_threshold` (alerta por DLQ saturada).
+    assert (
+        "kind text not null check (kind in ('negative_feedback','complaint','backup_failure','outbound_dlq_threshold'))"
+        in source
+    )
     assert "status text not null default 'pending' check (status in ('pending','sent','failed'))" in source
     assert 'attempts integer not null default 0' in source
     assert 'scheduled_for timestamptz not null default now()' in source
@@ -82,7 +86,11 @@ def test_schema_creates_operator_alerts_table_with_rls():
 
 def test_scheduler_processes_operator_alerts_each_tick():
     source = SCHEDULER.read_text()
-    assert 'from app.services.operator_alerts import process_pending_operator_alerts' in source
+    # Scheduler may import additional helpers from operator_alerts (e.g.
+    # TASK-0065 imports ``enqueue_operator_alert`` alongside the worker tick),
+    # so we assert by reference instead of by exact import line.
+    assert 'from app.services.operator_alerts import' in source
+    assert 'process_pending_operator_alerts' in source
     assert 'await process_pending_operator_alerts(conn)' in source
 
 

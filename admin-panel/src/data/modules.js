@@ -77,6 +77,13 @@ export const adminModules = [
     scope: ['Conversaciones', 'Mensajes', 'Tomar/liberar handoff', 'Auditoría operacional'],
   },
   {
+    id: 'outbound-dlq',
+    label: 'Outbound DLQ',
+    summary: 'Mensajes outbound que el worker no pudo entregar a Meta. TASK-0065.',
+    scope: ['Listar fallos por error_code', 'Ver payload y error de Meta', 'Reintentar envío manual', 'Alertas cuando supera umbral'],
+    minRole: 'agent',
+  },
+  {
     id: 'go-live-readiness',
     label: 'Go-live Readiness',
     summary: 'Checklist automatizado para validar si un tenant puede entrar a producción controlada.',

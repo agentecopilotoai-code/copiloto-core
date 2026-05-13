@@ -555,24 +555,7 @@ _TASK-0064 — Backups automatizados a cloud con verificación periódica: COMPL
 
 ---
 
-### TASK-0065 — DLQ de mensajes outbound visible en panel + alerta
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0057 (operator_alerts).
-- **Por qué bloquea:** `event_worker.py` reintenta envíos a Meta, pero cuando agota retries el mensaje queda con `messages.status='failed'` y `messages.error_*`. No hay panel para verlo. El operador descubre el problema cuando el cliente reclama por otro canal.
-- **Alcance:**
-  - Endpoint `GET /v1/tenants/{tenant_id}/outbound/dlq?since=...&until=...&limit=...` que lista mensajes con `status='failed'` agrupados por `error_code`, con counters y previews. Devuelve `{items, totals_by_error_code}`.
-  - Endpoint `POST /v1/tenants/{tenant_id}/outbound/dlq/{message_id}/retry` que vuelve a encolar el mensaje (resetea `status='queued'`, `retry_count=0`, dispara evento `message.outbound.requested`).
-  - **Alerta automática:** cuando el conteo de `messages.status='failed'` en la última hora supera `dlq_alert_threshold` (default 10), el scheduler emite `operator_alerts(kind='outbound_dlq_threshold')` con preview de los últimos 5 errores.
-  - **Admin Panel:** nuevo módulo `outbound/OutboundDLQ.jsx` listado en el nav lateral, con filtro por código de error, botón "reintentar" y modal de detalle con el payload completo y el error de Meta.
-  - **Métricas Prometheus:** nuevo counter `cpi_outbound_dlq_total{tenant, error_code}` incrementado por `event_worker` al marcar fail definitivo; nueva regla de alerta `OutboundDLQGrowing` en `infra/observability/alerts.yaml` (>5 fails en 5 min).
-- **Criterios de aceptación:**
-  - 12 mensajes con error 131026 (recipient unreachable) → endpoint devuelve grupo con count=12.
-  - Click "reintentar" en uno → re-encolado y eventualmente entregado.
-  - Alerta dispara cuando >10 fails en 1h.
-  - Tests: ≥ 10 estáticos: schema del endpoint, agrupación por error_code, retry idempotente, threshold de alerta, regla Prometheus, módulo en admin panel.
-- **Notas:**
-  - El reintento manual no afecta a `retry_count` automático; el operador decide cuántos intentos hacer.
+_TASK-0065 — DLQ de mensajes outbound visible en panel + alerta: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

@@ -1208,3 +1208,25 @@ export function updateAppointmentPaymentStatus(session, tenantId, appointmentId,
     body: payload,
   });
 }
+
+// TASK-0065: Outbound DLQ (mensajes que el event_worker no logró entregar).
+export function listOutboundDlq(session, tenantId, { since, until, limit, errorCode } = {}) {
+  const params = new URLSearchParams();
+  if (since) params.set('since', since);
+  if (until) params.set('until', until);
+  if (limit) params.set('limit', String(limit));
+  if (errorCode) params.set('error_code', errorCode);
+  const qs = params.toString();
+  return request(`/tenants/${tenantId}/outbound/dlq${qs ? `?${qs}` : ''}`, {
+    session,
+    tenantId,
+  });
+}
+
+export function retryOutboundDlqMessage(session, tenantId, messageId) {
+  return request(`/tenants/${tenantId}/outbound/dlq/${messageId}/retry`, {
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}

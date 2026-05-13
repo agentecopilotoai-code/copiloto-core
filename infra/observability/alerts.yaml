@@ -104,6 +104,25 @@ groups:
             `app.backup_runs` y `app.operator_alerts(kind='backup_failure')`.
           runbook_url: docs/backup-policy.md
 
+      # TASK-0065: la DLQ outbound crece sostenidamente. La métrica
+      # ``cpi_outbound_dlq_total`` la incrementa ``event_worker`` cada vez que
+      # un envío a Meta termina con ``messages.status='failed'``. Una rampa de
+      # >5 fallos en 5 minutos indica problema sistémico (token vencido,
+      # quality_rating en RED, rate-limit) y exige intervención humana.
+      - alert: OutboundDLQGrowing
+        expr: sum(increase(cpi_outbound_dlq_total[5m])) > 5
+        for: 5m
+        labels:
+          severity: page
+          team: copilotoia
+        annotations:
+          summary: "DLQ outbound creciendo (>5 fallos en 5min)."
+          description: |
+            En los últimos 5 minutos hubo más de 5 envíos outbound que
+            terminaron en la DLQ. Revisa el panel Outbound DLQ por
+            ``error_code`` para identificar la causa (131026 = recipient
+            unreachable, 190 = token vencido, 80007 = rate limit).
+
       - alert: MetricsEndpointSilent
         expr: absent(up{job="copilotoia-core"}) or (max(up{job="copilotoia-core"}) == 0)
         for: 3m

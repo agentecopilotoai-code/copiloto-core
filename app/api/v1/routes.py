@@ -9737,6 +9737,66 @@ async def cancel_campaign(
     return normalize_campaign(updated)
 
 
+# ─── TASK-0065: DLQ de mensajes outbound ────────────────────────────────────
+
+
+@tenant_ops_router.get('/tenants/{tenant_id}/outbound/dlq')
+async def list_outbound_dlq(
+    tenant_id: UUID,
+    request: Request,
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    error_code: str | None = Query(default=None),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    from app.services.outbound_dlq import list_dlq
+
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    return await list_dlq(
+        conn,
+        tenant_id=tenant_id,
+        since=since,
+        until=until,
+        limit=limit,
+        error_code=error_code,
+    )
+
+
+@tenant_ops_router.post('/tenants/{tenant_id}/outbound/dlq/{message_id}/retry')
+async def retry_outbound_dlq_message(
+    tenant_id: UUID,
+    message_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    from app.services.outbound_dlq import requeue_message
+
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    result = await requeue_message(
+        conn,
+        tenant_id=tenant_id,
+        message_id=message_id,
+        requested_by=getattr(request.state, 'actor_id', None),
+    )
+    if result.get('reason') == 'not_found':
+        raise HTTPException(status_code=404, detail='Outbound message not found in this tenant')
+    if not result.get('requeued'):
+        raise HTTPException(status_code=409, detail=result.get('reason') or 'cannot_requeue')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='outbound.dlq.retried',
+        entity_type='message',
+        entity_id=str(message_id),
+    )
+    return result
+
+
 router.include_router(public_router)
 router.include_router(web_router)
 router.include_router(webhook_router)

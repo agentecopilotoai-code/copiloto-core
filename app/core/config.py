@@ -109,6 +109,12 @@ class Settings(BaseSettings):
     retention_run_hour_utc: int = Field(default=3, ge=0, le=23)
     retention_page_size: int = Field(default=5000, ge=100, le=50000)
     retention_anomaly_threshold_pct: float = Field(default=10.0, ge=0.0, le=100.0)
+    # TASK-0065: alerta automática cuando la DLQ outbound crece. Se evalúa cada
+    # tick del scheduler contando mensajes ``status='failed'`` en la última hora
+    # por tenant. Si supera el umbral, encola un ``operator_alerts(kind=
+    # 'outbound_dlq_threshold')`` con el preview de los últimos 5 errores.
+    dlq_alert_threshold: int = Field(default=10, ge=1)
+    dlq_alert_window_minutes: int = Field(default=60, ge=1, le=1440)
 
     @property
     def knowledge_storage_bucket(self) -> str:

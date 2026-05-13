@@ -79,6 +79,18 @@ worker_queue_depth = Gauge(
     registry=REGISTRY,
 )
 
+# TASK-0065: contador de mensajes outbound que terminaron en la dead-letter
+# queue (status='failed' después de agotar reintentos del event_worker). El
+# `error_code` se normaliza al código devuelto por Meta o ``transport_error``
+# cuando el fallo fue de red. Permite alertar sobre crecimiento sostenido
+# (regla ``OutboundDLQGrowing`` en ``infra/observability/alerts.yaml``).
+outbound_dlq_total = Counter(
+    'cpi_outbound_dlq_total',
+    'Mensajes outbound que terminaron en la DLQ (fail definitivo), por tenant y error_code.',
+    labelnames=('tenant_id', 'error_code'),
+    registry=REGISTRY,
+)
+
 
 _VALID_DIRECTIONS = frozenset({'inbound', 'outbound'})
 _VALID_MESSAGE_STATUSES = frozenset(
@@ -195,6 +207,21 @@ def set_worker_queue_depth(*, worker: str, depth: int) -> None:
     if depth < 0:
         return
     worker_queue_depth.labels(worker=worker or 'unknown').set(depth)
+
+
+def record_outbound_dlq(*, tenant_id: object, error_code: object) -> None:
+    """Incrementa ``cpi_outbound_dlq_total`` cuando un mensaje cae en la DLQ.
+
+    Llamado por ``event_worker`` al marcar un envío como ``failed`` de forma
+    definitiva. ``error_code`` se normaliza a cadena no vacía; cuando es
+    ``None`` o ``''`` se usa ``transport_error`` para distinguir un fallo de
+    red de un error de Meta con código numérico.
+    """
+    code = str(error_code).strip() if error_code is not None else ''
+    outbound_dlq_total.labels(
+        tenant_id=_safe_tenant(tenant_id),
+        error_code=code or 'transport_error',
+    ).inc()
 
 
 def render_latest() -> tuple[bytes, str]:

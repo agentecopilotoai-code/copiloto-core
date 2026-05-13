@@ -89,7 +89,7 @@ def test_backup_runs_indexes_present() -> None:
 def test_operator_alerts_supports_system_wide_backup_failure() -> None:
     schema = _schema()
     # New enum value reachable.
-    assert "kind in ('negative_feedback','complaint','backup_failure')" in schema
+    assert "kind in ('negative_feedback','complaint','backup_failure','outbound_dlq_threshold')" in schema
     # Composite constraint: only `backup_failure` may have null tenant_id.
     assert 'chk_operator_alerts_system_alerts_have_no_tenant' in schema
     assert "(kind = 'backup_failure') or (tenant_id is not null)" in schema

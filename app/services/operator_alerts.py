@@ -35,8 +35,14 @@ log = structlog.get_logger()
 
 ALERT_KIND_NEGATIVE_FEEDBACK = 'negative_feedback'
 ALERT_KIND_COMPLAINT = 'complaint'
+ALERT_KIND_OUTBOUND_DLQ_THRESHOLD = 'outbound_dlq_threshold'
 WHATSAPP_ALERT_TEMPLATE = 'complaint_alert_v1'
 WHATSAPP_ALERT_TEMPLATE_LOCALE = 'es'
+# TASK-0065: template separado para alertas de DLQ outbound. Es independiente
+# del de queja (variables y tono distintos: hablamos de fallos de envío al
+# operador, no de retroalimentación de un cliente).
+WHATSAPP_DLQ_ALERT_TEMPLATE = 'operator_dlq_alert_v1'
+WHATSAPP_DLQ_ALERT_TEMPLATE_LOCALE = 'es'
 
 
 def _coerce_dict(value: Any) -> dict[str, Any]:
@@ -172,7 +178,61 @@ def build_email_message(
     return msg
 
 
-def build_email_body(payload: dict[str, Any]) -> tuple[str, str]:
+def _resolve_alert_kind(payload: dict[str, Any]) -> str:
+    """Return the alert ``kind`` stamped into the payload by the dispatcher.
+
+    Falls back to ``negative_feedback`` for legacy payloads that predate the
+    kind-aware formatters (TASK-0065). The dispatcher always stamps the kind,
+    so this fallback only matters when the builders are called directly from
+    tests.
+    """
+    kind = payload.get('_kind') or payload.get('kind')
+    if isinstance(kind, str) and kind:
+        return kind
+    return ALERT_KIND_NEGATIVE_FEEDBACK
+
+
+def _build_outbound_dlq_email(payload: dict[str, Any]) -> tuple[str, str]:
+    total = payload.get('total') or 0
+    threshold = payload.get('threshold') or 0
+    window = payload.get('window_minutes') or 0
+    by_code = payload.get('by_error_code') or []
+    preview = payload.get('preview') or []
+    subject = (
+        f'[CopilotoIA] DLQ outbound — {total} fallos en {window} min '
+        f'(umbral {threshold})'
+    )
+    lines = [
+        f'En los últimos {window} minutos hubo {total} mensajes outbound que '
+        f'terminaron en la DLQ (umbral configurado: {threshold}).',
+        '',
+        'Distribución por error_code:',
+    ]
+    if by_code:
+        for group in by_code:
+            code = group.get('error_code') or '—'
+            count = group.get('count') or 0
+            lines.append(f'  • {code}: {count}')
+    else:
+        lines.append('  (sin datos)')
+    if preview:
+        lines += ['', 'Últimos fallos:']
+        for sample in preview[:5]:
+            at = sample.get('at') or '—'
+            code = sample.get('error_code') or '—'
+            msg = (sample.get('error_message') or '').strip().replace('\n', ' ')
+            if len(msg) > 200:
+                msg = msg[:199] + '…'
+            lines.append(f'  • [{at}] {code}: {msg or "—"}')
+    lines += [
+        '',
+        'Abre el panel: Admin Panel → Outbound DLQ para inspeccionar el',
+        'payload completo y reintentar los envíos.',
+    ]
+    return subject, '\n'.join(lines)
+
+
+def _build_negative_feedback_email(payload: dict[str, Any]) -> tuple[str, str]:
     contact = payload.get('contact_name') or 'cliente'
     rating = payload.get('rating')
     preview = payload.get('comment_preview') or ''
@@ -196,7 +256,45 @@ def build_email_body(payload: dict[str, Any]) -> tuple[str, str]:
     return subject, '\n'.join(body_lines)
 
 
-def build_whatsapp_template_components(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def build_email_body(payload: dict[str, Any]) -> tuple[str, str]:
+    """Render ``(subject, body)`` for the alert kind stamped in ``payload``.
+
+    The dispatcher injects ``_kind`` from ``operator_alerts.kind`` before
+    calling the channel senders, so the builder picks the right format
+    (negative feedback / complaint vs DLQ saturation) without coupling the
+    sender code to the kind.
+    """
+    if _resolve_alert_kind(payload) == ALERT_KIND_OUTBOUND_DLQ_THRESHOLD:
+        return _build_outbound_dlq_email(payload)
+    return _build_negative_feedback_email(payload)
+
+
+def _build_outbound_dlq_template_components(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Variables 1..4 for ``operator_dlq_alert_v1``.
+
+    {{1}} total, {{2}} ventana en minutos, {{3}} top error_code "131026 (12)",
+    {{4}} link al panel (placeholder ``—`` si no se configura).
+    """
+    by_code = payload.get('by_error_code') or []
+    if by_code:
+        top = by_code[0]
+        top_code = f"{top.get('error_code') or '—'} ({top.get('count') or 0})"
+    else:
+        top_code = '—'
+    return [
+        {
+            'type': 'body',
+            'parameters': [
+                {'type': 'text', 'text': str(payload.get('total') or 0)},
+                {'type': 'text', 'text': str(payload.get('window_minutes') or 0)},
+                {'type': 'text', 'text': top_code},
+                {'type': 'text', 'text': payload.get('panel_url') or '—'},
+            ],
+        }
+    ]
+
+
+def _build_negative_feedback_template_components(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Variables 1..4 for ``complaint_alert_v1``."""
     rating = payload.get('rating')
     rating_text = f'{rating}/5' if rating is not None else 'queja'
@@ -211,6 +309,20 @@ def build_whatsapp_template_components(payload: dict[str, Any]) -> list[dict[str
             ],
         }
     ]
+
+
+def build_whatsapp_template_components(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Render template variables for the alert kind stamped in ``payload``."""
+    if _resolve_alert_kind(payload) == ALERT_KIND_OUTBOUND_DLQ_THRESHOLD:
+        return _build_outbound_dlq_template_components(payload)
+    return _build_negative_feedback_template_components(payload)
+
+
+def whatsapp_template_for_kind(kind: str) -> tuple[str, str]:
+    """Return ``(template_name, template_locale)`` for an alert ``kind``."""
+    if kind == ALERT_KIND_OUTBOUND_DLQ_THRESHOLD:
+        return WHATSAPP_DLQ_ALERT_TEMPLATE, WHATSAPP_DLQ_ALERT_TEMPLATE_LOCALE
+    return WHATSAPP_ALERT_TEMPLATE, WHATSAPP_ALERT_TEMPLATE_LOCALE
 
 
 async def _send_email_channel(
@@ -267,7 +379,15 @@ async def _send_whatsapp_channel(
     )
     if channel_id is None:
         raise RuntimeError('whatsapp_channel_not_provisioned')
+    kind = _resolve_alert_kind(payload)
+    template_name, template_locale = whatsapp_template_for_kind(kind)
     components = build_whatsapp_template_components(payload)
+    if kind == ALERT_KIND_OUTBOUND_DLQ_THRESHOLD:
+        body_label = (
+            f'[operator_alert] outbound_dlq total={payload.get("total") or 0}'
+        )
+    else:
+        body_label = f'[operator_alert] {payload.get("contact_name") or "cliente"}'
     queued = 0
     for to in recipients:
         await conn.execute(
@@ -281,13 +401,14 @@ async def _send_whatsapp_channel(
             tenant_id,
             json.dumps({
                 'operator_alert': True,
+                'operator_alert_kind': kind,
                 'to_phone': to,
-                'template_name': WHATSAPP_ALERT_TEMPLATE,
-                'template_locale': WHATSAPP_ALERT_TEMPLATE_LOCALE,
+                'template_name': template_name,
+                'template_locale': template_locale,
                 'channel_id': str(channel_id),
                 'components': components,
             }),
-            f'[operator_alert] {payload.get("contact_name") or "cliente"}',
+            body_label,
         )
         queued += 1
     return queued
@@ -337,6 +458,24 @@ async def dispatch_operator_alert(
     """
     cfg = config or get_settings()
     payload = _coerce_dict(alert_row['payload'])
+    # TASK-0065: stamp the alert ``kind`` into the payload so the channel
+    # builders can pick the right subject / template without each sender
+    # signature growing a new positional argument. ``alert_row`` may be an
+    # asyncpg.Record (production) or a plain dict (tests); both support the
+    # subscript access pattern below.
+    try:
+        kind_value = alert_row['kind']
+    except (KeyError, TypeError):
+        kind_value = None
+    if isinstance(kind_value, str) and kind_value:
+        payload['_kind'] = kind_value
+    # TASK-0065: surface the panel URL once so both the WhatsApp template
+    # and the email body link to the Outbound DLQ tab without leaking SMTP
+    # config to the generic builder.
+    if kind_value == ALERT_KIND_OUTBOUND_DLQ_THRESHOLD and not payload.get('panel_url'):
+        base = (cfg.admin_panel_public_url or '').rstrip('/')
+        if base:
+            payload['panel_url'] = f'{base}/admin?tenant={alert_row["tenant_id"]}#outbound-dlq'
     channels = normalize_alert_channels(payload.get('channels'))
     trace: dict[str, Any] = {
         'email_sent': 0,
@@ -489,7 +628,9 @@ async def process_pending_operator_alerts(
 __all__ = [
     'ALERT_KIND_COMPLAINT',
     'ALERT_KIND_NEGATIVE_FEEDBACK',
+    'ALERT_KIND_OUTBOUND_DLQ_THRESHOLD',
     'WHATSAPP_ALERT_TEMPLATE',
+    'WHATSAPP_DLQ_ALERT_TEMPLATE',
     'build_comment_preview',
     'build_desk_link',
     'build_email_body',
@@ -503,6 +644,7 @@ __all__ = [
     'process_pending_operator_alerts',
     'read_webhook_secret',
     'sign_webhook_payload',
+    'whatsapp_template_for_kind',
 ]
 
 

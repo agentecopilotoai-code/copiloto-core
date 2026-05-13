@@ -9,7 +9,8 @@ from app.core.logging import configure_logging
 from app.services.campaigns import process_due_campaigns
 from app.services.consent import enqueue_consent_reaffirmations
 from app.services.metrics import set_worker_queue_depth, start_metrics_http_server
-from app.services.operator_alerts import process_pending_operator_alerts
+from app.services.operator_alerts import enqueue_operator_alert, process_pending_operator_alerts
+from app.services.outbound_dlq import maybe_emit_dlq_threshold_alerts
 from app.services.segments import refresh_due_segments
 
 log = structlog.get_logger()
@@ -281,6 +282,17 @@ async def main() -> None:
             await _process_pending_reminder_jobs(conn)
             await process_due_campaigns(conn)
             await refresh_due_segments(conn)
+            # TASK-0065: chequea la DLQ outbound y enfila operator_alerts
+            # antes del dispatch, para que la alerta salga en el mismo tick.
+            try:
+                await maybe_emit_dlq_threshold_alerts(
+                    conn,
+                    threshold=settings.dlq_alert_threshold,
+                    window_minutes=settings.dlq_alert_window_minutes,
+                    enqueue_alert=enqueue_operator_alert,
+                )
+            except Exception:
+                log.exception('dlq_threshold_check_failed')
             await process_pending_operator_alerts(conn)
             if tick % CONSENT_REAFFIRM_EVERY_TICKS == 0:
                 try:
