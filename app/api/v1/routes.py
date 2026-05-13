@@ -1869,17 +1869,40 @@ def _normalize_web_channel(row: asyncpg.Record | None) -> dict[str, Any] | None:
     return channel
 
 
-def _build_widget_snippet(*, tenant_slug: str, widget_token: str, color: str | None, greeting: str | None) -> str:
+def _build_widget_snippet(
+    *,
+    tenant_slug: str,
+    widget_token: str,
+    color: str | None,
+    greeting: str | None,
+    logo_url: str | None = None,
+    welcome_copy: str | None = None,
+    button_position: str | None = None,
+) -> str:
+    # TASK-0070: snippet points at the CDN-hosted bundle and carries the full
+    # per-tenant customisation as data-* attributes so the widget renders
+    # without an extra round-trip. ``data-api-base`` is required: the CDN host
+    # only serves static assets, so the widget must know the real API origin
+    # to call /v1/web/chat/*.
+    settings = get_settings()
     attrs = [
-        'src="/admin/widget.js"',
+        f'src="{settings.web_widget_cdn_url}"',
         f'data-tenant="{tenant_slug}"',
         f'data-widget-token="{widget_token}"',
+        f'data-api-base="{settings.web_widget_api_base.rstrip("/")}"',
     ]
     if color:
         attrs.append(f'data-color="{color}"')
     if greeting:
         safe = greeting.replace('"', '&quot;')
         attrs.append(f'data-greeting="{safe}"')
+    if logo_url:
+        attrs.append(f'data-logo="{logo_url}"')
+    if welcome_copy:
+        safe = welcome_copy.replace('"', '&quot;')
+        attrs.append(f'data-welcome="{safe}"')
+    if button_position in ('left', 'right'):
+        attrs.append(f'data-position="{button_position}"')
     return '<script async ' + ' '.join(attrs) + '></script>'
 
 
@@ -1902,11 +1925,15 @@ async def get_web_channel(
     token_ref = channel.get('token_ref') if channel else None
     widget_token = resolve_secret_ref(token_ref) if token_ref else None
     tenant_slug = await conn.fetchval('select slug from app.tenants where id=$1', tenant_id)
+    widget_config = (channel or {}).get('widget_config', {}) or {}
     snippet = _build_widget_snippet(
         tenant_slug=tenant_slug or str(tenant_id),
         widget_token=widget_token or '<missing-widget-token>',
-        color=(channel or {}).get('widget_config', {}).get('primary_color'),
-        greeting=(channel or {}).get('widget_config', {}).get('greeting'),
+        color=widget_config.get('primary_color'),
+        greeting=widget_config.get('greeting'),
+        logo_url=widget_config.get('logo_url'),
+        welcome_copy=widget_config.get('welcome_copy'),
+        button_position=widget_config.get('button_position'),
     )
     return {
         'channel': channel,
@@ -1935,6 +1962,10 @@ async def upsert_web_channel(
     widget_config = {
         'primary_color': payload.primary_color,
         'greeting': payload.greeting,
+        # TASK-0070: extra per-tenant customisation for the CDN widget.
+        'logo_url': payload.logo_url,
+        'welcome_copy': payload.welcome_copy,
+        'button_position': payload.button_position,
     }
     next_status = 'active' if payload.enabled else 'suspended'
     cleaned_origins = [origin.strip().rstrip('/') for origin in payload.allowed_origins if origin and origin.strip()]
@@ -1979,6 +2010,9 @@ async def upsert_web_channel(
         widget_token=widget_token or '',
         color=widget_config.get('primary_color'),
         greeting=widget_config.get('greeting'),
+        logo_url=widget_config.get('logo_url'),
+        welcome_copy=widget_config.get('welcome_copy'),
+        button_position=widget_config.get('button_position'),
     )
     return {
         'channel': channel,

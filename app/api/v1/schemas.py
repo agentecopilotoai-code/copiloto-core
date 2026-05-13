@@ -547,6 +547,10 @@ class WebChannelUpsert(BaseModel):
     allowed_origins: list[str] = Field(default_factory=list)
     primary_color: str | None = Field(default=None, pattern=r'^#[0-9a-fA-F]{6}$')
     greeting: str | None = Field(default=None, max_length=500)
+    # TASK-0070: customisation surfaced by the CDN-distributed widget snippet.
+    logo_url: str | None = Field(default=None, max_length=2048)
+    welcome_copy: str | None = Field(default=None, max_length=500)
+    button_position: str | None = Field(default=None, pattern=r'^(left|right)$')
     rotate_widget_token: bool = False
 
 

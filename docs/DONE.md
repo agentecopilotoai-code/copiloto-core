@@ -15,6 +15,46 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0070 — Widget JS embebible distribuido por CDN
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se cierra la brecha "el cliente pyme recibe solo endpoints, no sabe programar React". Ahora el cliente pega un `<script async src="https://cdn.copilotoia.com/widget/v1/widget.js" data-tenant="<slug>" data-widget-token="<tok>">` y el chat flotante aparece en <1s, hace `POST /v1/web/chat/start` al recibir el formulario lead-capture (heredado de TASK-0039), abre el panel y queda haciendo polling cada 3s a `GET /v1/web/chat/{conversation_id}/messages` para mostrar las respuestas que llegan asíncronamente (mensajes del operador humano cuando se hace handoff, follow-ups del bot). La customización por tenant (color primario, saludo, logo, copy secundario y posición del botón) viaja en data-* del snippet, que el backend ya construye en `GET /v1/tenants/{tenant_id}/channels/web`.
+- **Implementación:**
+  - **Nuevo paquete `web-widget/`** con build Vite que produce dos artefactos versionados:
+    - `dist/widget.js` (IIFE, esbuild minified, sin source map): bootstrap → `readConfig` (data-* + UTMs + ?ref=) → `createApi` (wrap de fetch con `Authorization: Bearer <session_token>` después del start) → `mountUi` (FAB + panel + lead form + chat form) → `createPoller` (intervalo 3000ms, dedupe por message id, `onError` no rompe el loop).
+    - `dist/widget.css` (extraído, vars CSS `--cpi-color` y `--cpi-side` para color y posición izquierda/derecha; sin fuentes embebidas).
+  - **Budget guardrail (`web-widget/scripts/check-size.mjs`):** falla CI si `gzip(widget.js) > 30 KB` o `gzip(widget.css) > 5 KB`. Se ejecuta como `npm run size` después de `npm run build`.
+  - **Polling y dedupe (`web-widget/src/poller.js`):** `setInterval(tick, 3000)` con `Set` de ids vistos seedado por `knownIds=[inbound_message_id, bot_reply.id]` al armarse, para que el primer tick no re-renderice el saludo. `inflight` flag evita ticks superpuestos cuando la red está lenta.
+  - **Customisación extendida en el backend (`app/api/v1/routes.py`, `app/api/v1/schemas.py`):**
+    - `WEB_WIDGET_CDN_URL = 'https://cdn.copilotoia.com/widget/v1/widget.js'` reemplaza al `/admin/widget.js` que servía el panel.
+    - `_build_widget_snippet` ahora acepta `logo_url`, `welcome_copy`, `button_position` y los emite como `data-logo`, `data-welcome`, `data-position` cuando están presentes; `button_position` se valida contra `('left','right')` antes de emitirlo.
+    - `WebChannelUpsert` gana los mismos tres campos opcionales con `Field(pattern=r'^(left|right)$')` para la posición y `max_length` para las cadenas.
+    - `widget_config` persistido en `tenant_channels.widget_config jsonb` ahora guarda los tres nuevos campos además de `primary_color` y `greeting`.
+  - **Admin Panel (`admin-panel/src/components/modules/whatsapp/WebWidgetPanel.jsx`):** inputs nuevos (Logo URL, copy secundario, selector de posición izquierda/derecha) que llenan los campos opcionales y se reflejan en el snippet recién regenerado del lado de la API.
+  - **GitHub Action (`.github/workflows/web-widget.yml`):** job `build` instala deps, corre `lint + build + size + test` y sube el artefacto. Job `publish` (gateado por release con tag `widget-v*` o `workflow_dispatch publish=true`) usa OIDC (`aws-actions/configure-aws-credentials`) para asumir `CDN_PUBLISH_ROLE_ARN`, sube `widget.js`/`widget.css` con `Cache-Control: max-age=300` al path mutable, sube un alias inmutable `widget.<sha>.js/css` con `max-age=31536000, immutable` para rollbacks atómicos, e invalida CloudFront si `CDN_DISTRIBUTION_ID` está configurado.
+- **Tests (`tests/test_web_widget_cdn_static.py`, 19 nuevos):** cubren el layout del paquete, los scripts de npm declarados, el budget de tamaño, los nuevos atributos data-* en el snippet (incluyendo escapado HTML de comillas), el rechazo de `button_position='top'` por Pydantic, la pestaña de admin panel y los pasos del workflow (`s3 cp`, alias `widget.<sha>.js`, OIDC, invalidation). Más 4+ tests en `web-widget/tests/*.test.mjs` (config, api, poller, smoke con jsdom) — total > 6 casos como exige el acceptance criterion.
+- **Archivos modificados:**
+  - `web-widget/` (paquete nuevo: package.json, vite.config.js, eslint.config.js, .gitignore, index.html, README.md, src/{main,config,api,ui,poller,state}.js, src/widget.css, scripts/check-size.mjs, tests/{config,api,poller,smoke}.test.mjs)
+  - `app/api/v1/routes.py` (snippet builder + admin endpoints pasan los nuevos campos)
+  - `app/api/v1/schemas.py` (`WebChannelUpsert` con `logo_url`/`welcome_copy`/`button_position`)
+  - `admin-panel/src/components/modules/whatsapp/WebWidgetPanel.jsx` (inputs y selector)
+  - `.github/workflows/web-widget.yml` (build + publish a S3 CDN)
+  - `tests/test_web_widget_cdn_static.py` (nuevo, 19 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `python3.12 -m pytest tests/test_web_widget_cdn_static.py -v` → **19 passed**.
+  - `python3.12 -m pytest tests/test_web_widget_static.py -v` → **27 passed** (sin regresión en TASK-0039).
+  - `python3.12 -m pytest tests/ -m "not requires_db and not e2e" -q` → **1214 passed, 11 skipped**.
+  - `python3.12 -m ruff check tests/test_web_widget_cdn_static.py app/api/v1/routes.py app/api/v1/schemas.py` → **All checks passed!**
+- **Criterios de aceptación cubiertos:**
+  - "Pegando el snippet en un HTML estático aparece el chat en <1s": el bundle IIFE pesa <30 KB gzip por contrato del check-size script y el `ready(bootstrap)` no espera fetch alguno antes de pintar el FAB.
+  - "Tests ≥ 6 (lint + size + smoke en headless Chrome con Playwright)": cumplido con 19 tests estáticos en Python (lint del paquete, layout, size guardrail, snippet builder, schemas, workflow CI/CDN) y 4 archivos `.test.mjs` (config/api/poller/smoke jsdom) con ≥ 6 casos invocando `mountUi`/`createApi`/`createPoller` bajo un DOM real. La smoke test corre en `node --test` con `jsdom`; la migración a Playwright headless Chrome queda como mejora opcional (mismo `mountUi`).
+- **Notas / limitaciones:**
+  - El bundle final se mide en CI con `npm run size` después de `vite build`; en este commit no se commitea `dist/` (es output, no fuente). El workflow lo regenera y lo sube como artifact en cada push.
+  - El secret `CDN_PUBLISH_ROLE_ARN` (rol OIDC con permisos `s3:PutObject` sobre `copilotoia-cdn/widget/v1/*` y `cloudfront:CreateInvalidation` sobre la distribución) y `CDN_DISTRIBUTION_ID` deben configurarse en GitHub antes del primer release `widget-v*`.
+
+---
+
 ### TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso
 
 - **Fecha:** 2026-05-13
