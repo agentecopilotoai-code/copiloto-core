@@ -124,6 +124,25 @@ def test_support_mode_bypasses_tenant_role_check():
     asyncio.run(run_test())
 
 
+def test_support_role_in_target_tenant_passes_admin_check():
+    """A ``support`` membership row in the target tenant outranks admin in
+    the shared role hierarchy (see ``_ROLE_LEVELS`` in ``app.core.security``),
+    so the per-tenant check must accept it."""
+    async def run_test():
+        request = _make_request()
+        request.state.actor_type = 'user'
+        request.state.actor_id = 'auth0|support'
+        request.state.support_mode = False
+        request.state.roles = []
+        request.state.tenant_id = uuid4()
+
+        conn = _FakeRolesConn(['support'])
+
+        await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+    asyncio.run(run_test())
+
+
 def test_service_actor_bypasses_tenant_role_check():
     async def run_test():
         request = _make_request()

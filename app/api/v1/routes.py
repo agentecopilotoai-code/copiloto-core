@@ -513,7 +513,14 @@ async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenan
     )
 
 
-_TENANT_ROLE_LEVELS = {'viewer': 5, 'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40}
+_TENANT_ROLE_LEVELS = {
+    'viewer': 5,
+    'agent': 10,
+    'manager': 20,
+    'admin': 30,
+    'owner': 40,
+    'support': 50,
+}
 
 
 async def user_tenant_roles_for(
