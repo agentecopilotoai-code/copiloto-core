@@ -1,0 +1,719 @@
+MFA warning can be dismissed for privileged admin sessions
+Link: https://chatgpt.com/codex/cloud/security/findings/1d595944ebcc8191be5be25833362741?repo=https%3A%2F%2Fgithub.com%2Fvmantilla%2FCopilotoIA&sev=high
+Criticality: high (attack path: high)
+Status: new
+
+# Metadata
+Repo: vmantilla/CopilotoIA
+Commit: ff7c0dc
+Author: noreply@anthropic.com
+Created: 5/11/2026, 10:10:07 PM
+Assignee: Unassigned
+Signals: Security, Validated, Patch generated, Attack-path
+
+# Summary
+Introduced: the commit downgraded the MFA-required state from a blocking admin UI to a dismissible client-side warning. Although server-side MFA enforcement appears incomplete already, this change newly makes the standard privileged admin UI accessible without MFA whenever the server flags the session as MFA-required.
+When Auth0 is configured, `_session_mfa_required()` still reports `mfa_required=true` for admin/owner/platform_owner sessions that did not complete MFA. However, the React layout now renders the application behind the overlay and provides a `Continuar sin MFA` button that simply hides the MFA banner. The admin backend proxy only checks for an active admin session before forwarding requests with the stored bearer token, and the core API router dependencies shown for tenant/platform admin routes enforce role but not `require_mfa_for_privileged`. As a result, a user or attacker with a privileged account password but no second factor can dismiss the warning and perform privileged admin actions through the UI.
+
+# Validation
+## Rubric
+- [x] Confirm the commit made the MFA UI dismissible and renders/admin-shell content instead of returning only an MFA blocker.
+- [x] Confirm the server still computes `mfa_required=true` for Auth0-enabled privileged sessions with `mfa_verified=false`.
+- [x] Confirm the admin backend proxy accepts an active session and forwards Core API requests without checking `_session_mfa_required`.
+- [x] Confirm Core API tenant/platform admin routers enforce authentication/role but do not include `require_mfa_for_privileged`, despite privileged write endpoints.
+- [x] Reproduce dynamically against real project functions, with debugger evidence, that a session requiring MFA can still result in a forwarded privileged request.
+## Report
+Validated the finding. The commit changes the admin UI from a blocking MFA gate to a dismissible warning: AdminLayout.jsx now defines MfaRequiredBanner({ onDismiss }) with a 'Continuar sin MFA' button at admin-panel/src/components/layout/AdminLayout.jsx:27-52, tracks only session.mfa_required plus mfaDismissed at lines 79-82, and renders the normal <main className="admin-shell"> behind the banner at lines 164-181. git show also confirmed the previous blocking early return `if (mfaRequired) return <MfaRequiredBanner />;` was removed. Server-side, Auth0 privileged non-MFA sessions are still identified as MFA-required by app/admin/routes.py:389-401 and returned by /admin/api/session at app/admin/routes.py:404-425. However, the admin Core API proxy at app/admin/routes.py:512-519 checks only `_active_session(request)` before building target_url/headers and forwarding; it never rejects `_session_mfa_required(session) == True`. The Core API admin routers at app/api/v1/routes.py:248-255 depend on authenticate_request plus role checks only, not require_mfa_for_privileged, while privileged write endpoints exist such as platform tenant creation at app/api/v1/routes.py:468 and tenant settings patch at app/api/v1/routes.py:676. Dynamic PoC evidence: `server_mfa_required True`, `admin_session_mfa_required True`, `require_mfa_for_privileged blocked:403:MFA is required...`, router dependencies `['authenticate_request', 'dependency']` / `['authenticate_request', 'require_platform_owner']`, then `proxy_status 200` and `proxy_forwarded` with `Authorization: Bearer ACCESS_TOKEN_WITH_ADMIN_ROLE_BUT_NO_MFA`. The pdb trace hit app/admin/routes.py:514 inside admin_core_api_proxy with profile roles ['admin'], mfa_verified False, and `_session_mfa_required(session)` evaluating True immediately before the proxy returned 200. A direct crash-style run completed normally because this is an authorization logic flaw, not memory corruption; valgrind was unavailable and not applicable. The React admin panel also built successfully with Vite.
+
+# Evidence
+admin-panel/src/components/layout/AdminLayout.jsx (L164 to 181)
+  Note: The admin shell and privileged module content are rendered even while the MFA warning is active; dismissing the overlay exposes the normal admin UI.
+```
+  return (
+    <>
+      {mfaWarning && !mfaDismissed && (
+        <MfaRequiredBanner onDismiss={() => setMfaDismissed(true)} />
+      )}
+    <main className="admin-shell">
+      <Sidebar
+        activeModuleId={activeModuleId}
+        activeTenantId={activeTenantId}
+        canSwitchTenants={canSwitchTenants}
+        modules={modules}
+        onModuleSelect={selectModule}
+        onTenantChange={setActiveTenantId}
+        tenantOptions={tenantOptions}
+      />
+      <section className="workspace">
+        <Topbar activeModule={activeModule} profile={profile} />
+        {activeContent}
+```
+
+admin-panel/src/components/layout/AdminLayout.jsx (L27 to 52)
+  Note: The MFA banner was changed from a required re-login blocker to a recommendation and now includes a 'Continuar sin MFA' button that calls the dismiss handler.
+```
+function MfaRequiredBanner({ onDismiss }) {
+  return (
+    <div className="mfa-required-overlay">
+      <div className="mfa-required-card">
+        <div className="mfa-required-icon" aria-hidden="true">🔐</div>
+        <h2 className="mfa-required-title">Verificacion en dos pasos recomendada</h2>
+        <p className="mfa-required-body">
+          Tu sesion tiene acceso privilegiado (<strong>admin</strong> /{' '}
+          <strong>owner</strong>) pero no se detecto autenticacion de segundo
+          factor (MFA). Se recomienda reiniciar sesion con MFA habilitado en
+          Auth0 para mayor seguridad.
+        </p>
+        <p className="mfa-required-hint">
+          Si no tienes Auth0 configurado o estas en desarrollo local, puedes
+          continuar sin MFA. Si Auth0 esta activo, cierra sesion y reiniciala
+          para que solicite el segundo factor.
+        </p>
+        <div className="mfa-required-actions">
+          <form method="post" action="/admin/logout">
+            <button className="mfa-required-action" type="submit">
+              Cerrar sesion
+            </button>
+          </form>
+          <button className="mfa-required-skip" type="button" onClick={onDismiss}>
+            Continuar sin MFA
+          </button>
+```
+
+admin-panel/src/components/layout/AdminLayout.jsx (L79 to 82)
+  Note: The privileged MFA state is now only tracked as a dismissible warning based solely on `session.mfa_required`.
+```
+  // Show MFA warning only when the server explicitly signals it (Auth0 active +
+  // privileged role + no MFA).  Dismissable so local/dev setups are not blocked.
+  const mfaWarning = session.mfa_required === true;
+  const [mfaDismissed, setMfaDismissed] = useState(false);
+```
+
+app/admin/routes.py (L389 to 401)
+  Note: The server still identifies Auth0 privileged sessions without MFA as requiring MFA, so these are exactly the sessions now allowed to continue in the UI.
+```
+def _session_mfa_required(session: dict[str, Any]) -> bool:
+    """Return True only when Auth0 is active, the session has a privileged role
+    and MFA was not completed.  In local/dev mode (no AUTH0_DOMAIN) the check
+    is always skipped so the panel remains accessible without MFA.
+    """
+    settings = get_admin_settings()
+    if not settings.auth0_domain:
+        return False
+    profile = session.get('profile') or {}
+    roles = set(profile.get('roles') or [])
+    if not roles.intersection(_PRIVILEGED_ROLES):
+        return False
+    return not profile.get('mfa_verified', False)
+```
+
+app/admin/routes.py (L512 to 519)
+  Note: The admin core API proxy gates requests only on the existence of an active session before forwarding the request; it does not reject sessions for which `_session_mfa_required` is true.
+```
+async def admin_core_api_proxy(path: str, request: Request) -> Response:
+    session = _active_session(request)
+    if not session:
+        return Response(status_code=401)
+
+    body = await request.body()
+    target_url = _core_api_url(path, request.url.query)
+    headers = _core_api_headers(request, session, has_body=bool(body))
+```
+
+app/api/v1/routes.py (L248 to 254)
+  Note: Core admin routers enforce authentication and role checks, but the shown dependencies do not include the existing `require_mfa_for_privileged` check.
+```
+platform_admin_router = APIRouter(
+    tags=['platform-admin'],
+    dependencies=[Depends(authenticate_request), Depends(require_platform_owner)],
+)
+tenant_admin_router = APIRouter(
+    tags=['tenant-admin'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+```
+
+Proposed patch:
+diff --git a/admin-panel/src/components/layout/AdminLayout.jsx b/admin-panel/src/components/layout/AdminLayout.jsx
+index c6cb362ca4e13f4479a0d198abf969dd81adbb20..41b8d4344dbd03c06945243bcd1e96fb9525a6c0 100644
+--- a/admin-panel/src/components/layout/AdminLayout.jsx
++++ b/admin-panel/src/components/layout/AdminLayout.jsx
+@@ -2,107 +2,101 @@ import { useEffect, useMemo, useState } from 'react';
+ 
+ import { useActiveModule } from '../../hooks/useActiveModule.js';
+ import { useTenantOptions } from '../../hooks/useTenantOptions.js';
+ import { listMyTenants } from '../../services/coreApi.js';
+ import { AuditPanel } from '../modules/audit/AuditPanel.jsx';
+ import { ModulePlaceholder } from '../modules/ModulePlaceholder.jsx';
+ import { KnowledgeStudio } from '../modules/knowledge/KnowledgeStudio.jsx';
+ import { KnowledgeStorageSettings } from '../modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
+ import { GoLiveReadiness } from '../modules/readiness/GoLiveReadiness.jsx';
+ import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
+ import { TenantSetupWizard } from '../modules/tenantSetup/TenantSetupWizard.jsx';
+ import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
+ import { Sidebar } from './Sidebar.jsx';
+ import { Topbar } from './Topbar.jsx';
+ 
+ const PRIVILEGED_ROLES = new Set(['admin', 'owner', 'platform_owner']);
+ 
+ function isSystemOwner(profile) {
+   return Boolean(profile?.support_mode && profile?.roles?.includes('owner'));
+ }
+ 
+ function isPrivilegedProfile(profile) {
+   return (profile?.roles || []).some((r) => PRIVILEGED_ROLES.has(r));
+ }
+ 
+-function MfaRequiredBanner({ onDismiss }) {
++function MfaRequiredBanner() {
+   return (
+     <div className="mfa-required-overlay">
+       <div className="mfa-required-card">
+         <div className="mfa-required-icon" aria-hidden="true">🔐</div>
+-        <h2 className="mfa-required-title">Verificacion en dos pasos recomendada</h2>
++        <h2 className="mfa-required-title">Verificacion en dos pasos requerida</h2>
+         <p className="mfa-required-body">
+           Tu sesion tiene acceso privilegiado (<strong>admin</strong> /{' '}
+           <strong>owner</strong>) pero no se detecto autenticacion de segundo
+-          factor (MFA). Se recomienda reiniciar sesion con MFA habilitado en
+-          Auth0 para mayor seguridad.
++          factor (MFA). Debes reiniciar sesion con MFA habilitado en Auth0
++          antes de continuar.
+         </p>
+         <p className="mfa-required-hint">
+-          Si no tienes Auth0 configurado o estas en desarrollo local, puedes
+-          continuar sin MFA. Si Auth0 esta activo, cierra sesion y reiniciala
+-          para que solicite el segundo factor.
++          Si Auth0 esta activo, cierra sesion y reiniciala para que solicite
++          el segundo factor. En desarrollo local esta pantalla no se muestra.
+         </p>
+-        <div className="mfa-required-actions">
+-          <form method="post" action="/admin/logout">
+-            <button className="mfa-required-action" type="submit">
+-              Cerrar sesion
+-            </button>
+-          </form>
+-          <button className="mfa-required-skip" type="button" onClick={onDismiss}>
+-            Continuar sin MFA
++        <form method="post" action="/admin/logout">
++          <button className="mfa-required-action" type="submit">
++            Cerrar sesion
+           </button>
+-        </div>
++        </form>
+       </div>
+     </div>
+   );
+ }
+ 
+ function NoTenantOnboarding({ onCreateTenant }) {
+   return (
+     <section className="module-card empty-tenant-card">
+       <p className="eyebrow">Primer tenant</p>
+       <h2>Crea tu tenant para empezar</h2>
+       <p className="hint">
+         Tu usuario todavía no está asociado a un tenant. Crea uno y quedarás como su
+         administrador principal para continuar la configuración.
+       </p>
+       <button className="primary-action" onClick={onCreateTenant} type="button">
+         Crear tenant
+       </button>
+     </section>
+   );
+ }
+ 
+ export function AdminLayout({ session }) {
+   const { activeModule, activeModuleId, modules, selectModule } = useActiveModule();
+   const [tenantSetupInitialTab, setTenantSetupInitialTab] = useState(null);
+   const profile = session.profile;
+ 
+-  // Show MFA warning only when the server explicitly signals it (Auth0 active +
+-  // privileged role + no MFA).  Dismissable so local/dev setups are not blocked.
+-  const mfaWarning = session.mfa_required === true;
+-  const [mfaDismissed, setMfaDismissed] = useState(false);
++  // Block privileged admin sessions when the server explicitly signals that
++  // Auth0 MFA is required but was not completed. Local/dev sessions are not
++  // blocked because the server only sets this flag when Auth0 is active.
++  const mfaRequired = session.mfa_required === true;
+ 
+   const initialTenantOptions = useTenantOptions(profile);
+   const [tenantOptions, setTenantOptions] = useState(initialTenantOptions);
+   const [activeTenantId, setActiveTenantId] = useState(initialTenantOptions[0]?.id);
+   const canSwitchTenants = isSystemOwner(profile) && tenantOptions.length > 1;
+   const hasTenant = tenantOptions.length > 0;
+ 
+ 
+   useEffect(() => {
+     let mounted = true;
+ 
+     listMyTenants(session)
+       .then((tenants) => {
+         if (!mounted || !tenants.length) return;
+         const nextOptions = tenants.map((tenant) => ({
+           id: tenant.id,
+           label: `${tenant.slug || tenant.display_name} · ${tenant.id}`,
+         }));
+         setTenantOptions(nextOptions);
+         setActiveTenantId((currentTenantId) => currentTenantId || nextOptions[0]?.id);
+       })
+       .catch(() => {
+         // If the user has no tenant yet, the onboarding card remains visible.
+       });
+ 
+@@ -157,48 +151,47 @@ export function AdminLayout({ session }) {
+     activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
+   } else if (activeModuleId === 'knowledge-storage') {
+     activeContent = <KnowledgeStorageSettings module={activeModule} session={session} tenant={activeTenant} />;
+   } else if (activeModuleId === 'knowledge-studio') {
+     activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
+   } else if (activeModuleId === 'operations-desk') {
+     activeContent = <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />;
+   } else if (activeModuleId === 'go-live-readiness') {
+     activeContent = (
+       <GoLiveReadiness
+         module={activeModule}
+         onGoToEscalation={() => {
+           setTenantSetupInitialTab('escalation');
+           selectModule('tenant-setup');
+         }}
+         session={session}
+         tenant={activeTenant}
+       />
+     );
+   } else if (activeModuleId === 'audit') {
+     activeContent = <AuditPanel module={activeModule} session={session} tenant={activeTenant} />;
+   } else {
+     activeContent = <ModulePlaceholder module={activeModule} tenant={activeTenant} />;
+   }
+ 
++  if (mfaRequired) {
++    return <MfaRequiredBanner />;
++  }
++
+   return (
+-    <>
+-      {mfaWarning && !mfaDismissed && (
+-        <MfaRequiredBanner onDismiss={() => setMfaDismissed(true)} />
+-      )}
+     <main className="admin-shell">
+       <Sidebar
+         activeModuleId={activeModuleId}
+         activeTenantId={activeTenantId}
+         canSwitchTenants={canSwitchTenants}
+         modules={modules}
+         onModuleSelect={handleModuleSelect}
+         onTenantChange={setActiveTenantId}
+         tenantOptions={tenantOptions}
+       />
+       <section className="workspace">
+         <Topbar activeModule={activeModule} profile={profile} />
+         {activeContent}
+       </section>
+     </main>
+-    </>
+   );
+ }
+
+
+diff --git a/admin-panel/src/styles/global.css b/admin-panel/src/styles/global.css
+index 492e2c3dceab51167bc73f1dd3dd2d5926560f44..38001e79a00481d6a0f6e3a1d0c500c704ffaccb 100644
+--- a/admin-panel/src/styles/global.css
++++ b/admin-panel/src/styles/global.css
+@@ -1536,65 +1536,41 @@ button.danger-action:disabled {
+   font-size: 3rem;
+   margin-bottom: 1rem;
+ }
+ 
+ .mfa-required-title {
+   font-size: 1.3rem;
+   font-weight: 700;
+   color: var(--ink);
+   margin: 0 0 1rem;
+ }
+ 
+ .mfa-required-body {
+   font-size: 0.95rem;
+   color: var(--ink);
+   line-height: 1.5;
+   margin-bottom: 0.75rem;
+ }
+ 
+ .mfa-required-hint {
+   font-size: 0.85rem;
+   color: #6b7c93;
+   margin-bottom: 1.5rem;
+   line-height: 1.4;
+ }
+ 
+-.mfa-required-actions {
+-  display: flex;
+-  gap: 0.75rem;
+-  justify-content: center;
+-  flex-wrap: wrap;
+-}
+-
+ .mfa-required-action {
+   display: inline-block;
+   background: var(--brand);
+   color: #fff;
+   border: none;
+   border-radius: 6px;
+   padding: 0.7rem 1.5rem;
+   font-size: 0.95rem;
+   font-weight: 600;
+   cursor: pointer;
+   transition: opacity 0.15s;
+ }
+ 
+ .mfa-required-action:hover {
+   opacity: 0.85;
+ }
+-
+-.mfa-required-skip {
+-  display: inline-block;
+-  background: transparent;
+-  color: #6b7c93;
+-  border: 1px solid #d0d8e4;
+-  border-radius: 6px;
+-  padding: 0.7rem 1.5rem;
+-  font-size: 0.95rem;
+-  font-weight: 500;
+-  cursor: pointer;
+-  transition: background 0.15s;
+-}
+-
+-.mfa-required-skip:hover {
+-  background: #f0f4f8;
+-}
+
+
+diff --git a/app/admin/routes.py b/app/admin/routes.py
+index 0247d19563227d9630fd500ef8acd4eacaeb12c5..9fabbc8509ceddcbf859fc5347640baf67906d46 100644
+--- a/app/admin/routes.py
++++ b/app/admin/routes.py
+@@ -491,50 +491,56 @@ async def admin_conversations_stream(websocket: WebSocket) -> None:
+     async with db.pool.acquire() as conn:
+         await conn.add_listener('tenant_operations_events', listener)
+         await conn.execute('listen tenant_operations_events')
+         try:
+             await websocket.send_json({'type': 'connected', 'tenant_id': str(tenant_id)})
+             while True:
+                 try:
+                     payload = await asyncio.wait_for(queue.get(), timeout=25)
+                     await websocket.send_text(payload)
+                 except asyncio.TimeoutError:
+                     await websocket.send_json({'type': 'heartbeat', 'tenant_id': str(tenant_id)})
+         except WebSocketDisconnect:
+             return
+         finally:
+             await conn.remove_listener('tenant_operations_events', listener)
+             await conn.execute('unlisten tenant_operations_events')
+ 
+ 
+ @router.api_route(
+     '/admin/api/core/{path:path}', methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+ )
+ async def admin_core_api_proxy(path: str, request: Request) -> Response:
+     session = _active_session(request)
+     if not session:
+         return Response(status_code=401)
++    if _session_mfa_required(session):
++        return Response(
++            json.dumps({'detail': 'MFA is required for privileged admin sessions'}),
++            status_code=status.HTTP_403_FORBIDDEN,
++            media_type='application/json',
++        )
+ 
+     body = await request.body()
+     target_url = _core_api_url(path, request.url.query)
+     headers = _core_api_headers(request, session, has_body=bool(body))
+     try:
+         async with httpx.AsyncClient(timeout=20) as client:
+             upstream_response = await client.request(
+                 request.method,
+                 target_url,
+                 content=body or None,
+                 headers=headers,
+             )
+     except httpx.HTTPError as exc:
+         raise HTTPException(
+             status_code=502,
+             detail=(
+                 'Admin proxy could not reach core API at '
+                 f'{get_admin_settings().admin_core_api_base_url}'
+             ),
+         ) from exc
+ 
+     response_headers = {}
+     content_type = upstream_response.headers.get('content-type')
+     if content_type:
+         response_headers['content-type'] = content_type
+
+
+diff --git a/app/api/v1/routes.py b/app/api/v1/routes.py
+index 96cb5703341ef1373c2e01888843c90ea498284f..35e2f0eee505a5fba506daba559dd14347d88f2b 100644
+--- a/app/api/v1/routes.py
++++ b/app/api/v1/routes.py
+@@ -17,51 +17,57 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
+ from app.api.v1.schemas import (
+     AppointmentCreate,
+     AppointmentUpdate,
+     ChannelCreate,
+     ChannelModeUpdate,
+     ContactUpsert,
+     ConversationCreate,
+     ConversationStart,
+     IntentEvaluateRequest,
+     KnowledgeDocumentCreate,
+     KnowledgeDocumentUpdate,
+     KnowledgeStorageUpdate,
+     MessageCreate,
+     PromptCreate,
+     QuoteCreate,
+     QuotePatch,
+     ResourceCreate,
+     ResourceUpdate,
+     ServiceRequestCreate,
+     ServiceRequestPatch,
+     TenantCreate,
+     TenantStatusTransition,
+     TenantUpdate,
+ )
+ from app.core.config import get_settings
+-from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
++from app.core.security import (
++    authenticate_request,
++    require_mfa_for_privileged,
++    require_min_role,
++    require_platform_owner,
++    require_service,
++)
+ from app.db.pool import get_db, record_to_dict
+ from app.services.audit import audit
+ from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
+ from app.services.rag_indexing import build_indexing_result, vector_literal
+ from app.services.rag_orchestrator import orchestrate_inbound_message
+ from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
+ from app.services.whatsapp import (
+     download_whatsapp_media,
+     normalize_meta_app_secret,
+     resolve_secret_ref,
+     secret_ref_is_configured,
+     token_ref_is_configured,
+     verify_signature_with_secret,
+ )
+ 
+ log = structlog.get_logger()
+ 
+ 
+ def tenant_secret_ref(tenant_id: UUID, secret_name: str) -> str:
+     return f'secrets/tenants/{tenant_id}/{secret_name}'
+ 
+ 
+ def write_tenant_secret(secret_ref: str, value: str) -> None:
+     relative_name = secret_ref.removeprefix('secrets/').strip('/')
+     if not relative_name or '..' in Path(relative_name).parts:
+@@ -228,55 +234,63 @@ async def upsert_whatsapp_contact(
+             source,
+             json.dumps(metadata),
+             existing['id'],
+         )
+     return await conn.fetchrow(
+         """
+         insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata)
+         values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+         returning *
+         """,
+         tenant_id,
+         wa_id,
+         phone_e164,
+         phone_hash,
+         display_name,
+         source,
+         json.dumps(metadata),
+     )
+ 
+ 
+ router = APIRouter(prefix='/v1')
+ public_router = APIRouter(tags=['public'])
+ webhook_router = APIRouter(prefix='/webhooks', tags=['public-webhooks'])
+ platform_admin_router = APIRouter(
+     tags=['platform-admin'],
+-    dependencies=[Depends(authenticate_request), Depends(require_platform_owner)],
++    dependencies=[
++        Depends(authenticate_request),
++        Depends(require_platform_owner),
++        Depends(require_mfa_for_privileged),
++    ],
+ )
+ tenant_admin_router = APIRouter(
+     tags=['tenant-admin'],
+-    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
++    dependencies=[
++        Depends(authenticate_request),
++        Depends(require_min_role('admin')),
++        Depends(require_mfa_for_privileged),
++    ],
+ )
+ tenant_ops_router = APIRouter(
+     tags=['tenant-operations'],
+     dependencies=[Depends(authenticate_request), Depends(require_min_role('agent', allow_service=True))],
+ )
+ tenant_signup_router = APIRouter(
+     tags=['tenant-signup'],
+     dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+ )
+ system_router = APIRouter(
+     tags=['system'],
+     dependencies=[Depends(authenticate_request), Depends(require_service)],
+ )
+ 
+ 
+ KNOWLEDGE_DOCUMENT_RESPONSE_COLUMNS = (
+     'id',
+     'tenant_id',
+     'source_type',
+     'document_type',
+     'title',
+     'source_uri',
+     'checksum',
+     'mime_type',
+     'content',
+
+
+diff --git a/tests/test_mfa_enforcement.py b/tests/test_mfa_enforcement.py
+index 30a8cf9932912ed9c9bc63cafaf1f65bbf8201b7..0f8b69187834ed5dba9ae689cbc1a50a5ef47a7c 100644
+--- a/tests/test_mfa_enforcement.py
++++ b/tests/test_mfa_enforcement.py
+@@ -219,50 +219,82 @@ def test_session_mfa_required_privileged_with_mfa():
+ 
+     session = {
+         'profile': {'roles': ['owner'], 'mfa_verified': True},
+         'expires_at': time.time() + 3600,
+     }
+     assert _session_mfa_required(session) is False
+ 
+ 
+ def test_session_mfa_required_unprivileged():
+     from app.admin.routes import _session_mfa_required
+ 
+     session = {
+         'profile': {'roles': ['agent'], 'mfa_verified': False},
+         'expires_at': time.time() + 3600,
+     }
+     assert _session_mfa_required(session) is False
+ 
+ 
+ def test_session_mfa_required_no_roles():
+     from app.admin.routes import _session_mfa_required
+ 
+     session = {'profile': {}, 'expires_at': time.time() + 3600}
+     assert _session_mfa_required(session) is False
+ 
+ 
++def test_admin_proxy_blocks_privileged_session_without_mfa(monkeypatch):
++    from app.admin.config import get_admin_settings
++    from app.admin import routes as admin_routes
++
++    monkeypatch.setenv('AUTH0_DOMAIN', 'test.auth0.com')
++    get_admin_settings.cache_clear()
++    session_id = 'mfa-required-session'
++    admin_routes._sessions[session_id] = {
++        'access_token': 'ACCESS_TOKEN_WITH_ADMIN_ROLE_BUT_NO_MFA',
++        'expires_at': time.time() + 3600,
++        'profile': {'roles': ['admin'], 'mfa_verified': False},
++    }
++    try:
++        req = make_request({'Cookie': f'{admin_routes.SESSION_COOKIE}={session_id}'})
++        response = asyncio.run(admin_routes.admin_core_api_proxy('v1/tenants', req))
++        assert response.status_code == 403
++        assert json.loads(response.body)['detail'] == 'MFA is required for privileged admin sessions'
++    finally:
++        admin_routes._sessions.pop(session_id, None)
++        get_admin_settings.cache_clear()
++
++
++def test_core_admin_routers_require_mfa_dependency():
++    from app.api.v1.routes import platform_admin_router, tenant_admin_router
++
++    platform_dependencies = [dependency.dependency for dependency in platform_admin_router.dependencies]
++    tenant_dependencies = [dependency.dependency for dependency in tenant_admin_router.dependencies]
++
++    assert require_mfa_for_privileged in platform_dependencies
++    assert require_mfa_for_privileged in tenant_dependencies
++
++
+ # ── admin callback: mfa_verified stored from id_token amr ─────────────────
+ 
+ def test_admin_callback_stores_mfa_verified_in_profile():
+     """The session builder stores mfa_verified=True when id_token has amr=['mfa']."""
+     import base64
+ 
+     def b64(data: dict) -> str:
+         raw = json.dumps(data).encode()
+         return base64.urlsafe_b64encode(raw).rstrip(b'=').decode()
+ 
+     id_token_payload = {
+         'sub': 'user|123',
+         'amr': ['pwd', 'mfa'],
+         'exp': int(time.time()) + 3600,
+     }
+     fake_id_token = f"header.{b64(id_token_payload)}.sig"
+ 
+     # Simulate what the callback does when building the session.
+     id_token_claims: dict = {}
+     payload_segment = fake_id_token.split('.')[1]
+     padding = '=' * (-len(payload_segment) % 4)
+     id_token_claims = json.loads(base64.urlsafe_b64decode(payload_segment + padding))
+ 
+     amr = id_token_claims.get('amr') or []
+     if isinstance(amr, str):
+
+# Attack-path analysis
+Final: high | Decider: model_decided | Matrix severity: high | Policy adjusted: high
+## Rationale
+Kept as high. The code evidence and validation PoC support a real, reachable MFA bypass in the product admin path: the UI allows dismissal, the BFF proxy forwards requests without checking _session_mfa_required, and Core API admin routers lack require_mfa_for_privileged. The impact is major because privileged tenant/platform actions become available without the intended second factor. It is not critical because exploitation requires valid privileged primary credentials or a privileged session and does not create unauthenticated access, cross-tenant access by a low-privileged user, RCE, or direct secret compromise.
+## Likelihood
+high - The exposed attack surface is network-reachable admin functionality, and exploitation is simple after obtaining valid privileged primary credentials or an equivalent non-MFA session. Likelihood is moderated because the attacker still needs privileged credentials and production Auth0 tenant policy might enforce MFA before token issuance. | Remote network vector
+## Impact
+high - Bypassing MFA permits use of privileged admin capabilities after only primary-factor compromise. Affected operations include tenant/platform administration and tenant settings, and the threat model treats privileged admin control and tenant data/configuration as high-value assets. The issue does not by itself grant a role or passwordless access, so impact is high rather than critical.
+## Assumptions
+- Auth0/OIDC is enabled in the deployed environment and may issue an access token/session after primary authentication where the ID token does not contain MFA evidence in amr.
+- Privileged MFA is an intended application security boundary for admin, owner, and platform_owner roles, as reflected by require_mfa_for_privileged and _session_mfa_required.
+- The admin panel or combined API service is reachable by privileged users over the network, consistent with the Docker and uvicorn bindings in the repository.
+- Valid privileged account primary credentials or an already-created privileged admin session with mfa_verified=false
+- AUTH0_DOMAIN configured so the application treats missing MFA as a privileged-session risk
+- Reachable /admin/ UI or /admin/api/core proxy
+## Path
+Privileged password/no MFA
+  -> /admin/api/session: mfa_required=true
+  -> AdminLayout overlay can be dismissed
+  -> /admin/api/core proxy accepts active session
+  -> Core API admin routers check role only
+  -> privileged tenant/platform actions
+## Path evidence
+- `admin-panel/src/components/layout/AdminLayout.jsx:27-52` - Defines the MFA banner as a warning with a 'Continuar sin MFA' button wired to an onDismiss handler.
+- `admin-panel/src/components/layout/AdminLayout.jsx:79-82` - Tracks the server mfa_required flag only as local mfaWarning plus client-side mfaDismissed state.
+- `admin-panel/src/components/layout/AdminLayout.jsx:164-181` - Renders the normal admin shell and active privileged module content even while the MFA warning exists.
+- `app/admin/routes.py:389-401` - Server-side helper identifies Auth0 privileged sessions without mfa_verified as requiring MFA.
+- `app/admin/routes.py:404-415` - Admin session API returns mfa_required to the frontend, confirming this state is expected and observable.
+- `app/admin/routes.py:171-180` - Admin proxy builds Core API headers using the stored session access token.
+- `app/admin/routes.py:512-519` - Admin Core API proxy checks only for an active session before building target URL and forwarding headers; no MFA gate is applied.
+- `app/api/v1/routes.py:248-255` - Platform and tenant admin routers depend on authentication and role checks only, not require_mfa_for_privileged.
+- `app/api/v1/routes.py:468-478` - Example platform-admin privileged write endpoint for tenant creation.
+- `app/api/v1/routes.py:676-684` - Example tenant-admin privileged write endpoint for tenant settings changes.
+- `docker-compose.yml:19-21` - Main API is bound on 0.0.0.0 and mapped to host port 8000.
+- `docker-compose.yml:48-50` - Standalone admin panel is bound on 0.0.0.0 and mapped to host port 3000.
+## Narrative
+The finding is real and reachable in the checked-in product code. The server computes mfa_required=true for Auth0 privileged sessions without MFA, and /admin/api/session returns that flag. The React admin layout then treats it as a dismissible warning, renders the normal admin shell behind it, and lets the user click 'Continuar sin MFA'. The admin BFF proxy only checks for an active session and forwards the stored bearer token; it does not reject sessions for which _session_mfa_required is true. The Core API admin routers shown enforce authentication and role checks but not require_mfa_for_privileged, while privileged endpoints such as platform tenant creation and tenant settings patching are present. This is not unauthenticated account takeover, because valid privileged primary credentials/session are required, but it bypasses an intended second-factor control for high-value admin actions.
+## Controls
+- Auth0/OIDC Authorization Code Flow for admin login
+- HttpOnly SameSite=Lax admin session cookie
+- Server-side _session_mfa_required computes privileged no-MFA state
+- Existing require_mfa_for_privileged helper in app/core/security.py
+- Core API authenticate_request JWT validation
+- Core API role checks for tenant_admin_router and platform_admin_router
+- Tenant access checks on tenant-scoped endpoints
+## Blindspots
+- Static repository review cannot confirm the production Auth0 tenant MFA policy; if Auth0 hard-requires MFA before issuing admin tokens, real-world reachability is reduced.
+- No production ingress, Kubernetes, or load balancer manifests were present to prove internet exposure beyond Docker/uvicorn host bindings.
+- Static review did not enumerate every privileged endpoint, but representative platform and tenant admin write endpoints are present.

@@ -1,0 +1,253 @@
+Agents can grant or refund paid treatment packages
+Informar
+Ajuste
+
+Chat
+Nivel de gravedad
+High
+Ajustar para mejorar la precisión en futuros análisis
+
+Confirmar
+177389d
+1:41 PM May 12, 2026
+por Claude
+
+Repositorio
+vmantilla/CopilotoIA
+Resumen
+
+Introduced authorization flaw: newly added contact package mutation endpoints use tenant_ops_router instead of an admin/manager-only router, while accepting sensitive payment and status fields from the caller.
+
+The commit adds treatment package management. Catalog CRUD is admin-only, but contact package assignment, patch, and refund are registered on tenant_ops_router, which only requires the 'agent' role. The request schemas let callers set payment_status to 'paid' and patch payment/status fields. As a result, any authenticated agent for a tenant can directly POST a package assignment with payment_status='paid' and optionally payment_amount=0, causing the booking flow to treat it as an active paid package with the full session balance. The same agent can PATCH package payment/status metadata or DELETE/refund a customer's active package, causing financial/entitlement manipulation and denial of purchased sessions. These are administrative/payment operations and should require at least admin/manager authorization or server-side payment-provider confirmation for paid/refunded transitions.
+
+Validación
+
+ Confirm the new contact package mutation routes are registered under an agent-accessible router rather than an admin/manager-only router.
+ Confirm request schemas accept sensitive payment and package status fields, including paid/refunded transitions and zero payment amount.
+ Confirm the POST path persists caller-controlled payment_status/payment_amount and grants the full session balance.
+ Confirm PATCH and DELETE/refund paths are reachable by an agent and can alter payment/status/remaining sessions.
+ Confirm the booking flow later treats active paid packages with remaining sessions as usable customer entitlements.
+Artefacto de validación
+Pruebas
+
+app/api/v1/routes.py
+app/api/v1/routes.py
+tenant_ops_router = APIRouter(
+tenant_ops_router only requires the agent role, so any route registered on it is available to low-privileged tenant agents.
+    tags=['tenant-operations'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('agent', allow_service=True))],
+)
+@tenant_ops_router.post('/contacts/{contact_id}/packages', status_code=201)
+The agent-level POST endpoint creates a contact package and stores caller-controlled payment_status while seeding the full remaining session balance.
+async def assign_contact_package(
+    contact_id: UUID,
+    payload: ContactPackageAssign,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    pkg = await conn.fetchrow(
+        """
+        select id, total_sessions, validity_days, price_amount, price_currency
+        from app.treatment_packages
+        where tenant_id=$1 and id=$2 and is_active=true
+        """,
+        tenant_id,
+        payload.package_id,
+    )
+    if not pkg:
+        raise HTTPException(status_code=404, detail='Package not found or inactive')
+    contact = await conn.fetchval(
+        'select 1 from app.contacts where tenant_id=$1 and id=$2',
+        tenant_id,
+        contact_id,
+    )
+    if not contact:
+        raise HTTPException(status_code=404, detail='Contact not found')
+    expires_at = payload.expires_at
+    if expires_at is None and pkg['validity_days']:
+        expires_at = datetime.now(UTC) + timedelta(days=int(pkg['validity_days']))
+    payment_amount = payload.payment_amount if payload.payment_amount is not None else float(pkg['price_amount'])
+    currency = payload.payment_currency or pkg['price_currency']
+    row = await conn.fetchrow(
+        """
+        insert into app.contact_packages (
+            tenant_id, contact_id, package_id, expires_at,
+            remaining_sessions, total_sessions, payment_status,
+            payment_amount, payment_currency, notes
+        )
+        values ($1,$2,$3,$4,$5,$5,$6,$7,$8,$9)
+        returning *
+        """,
+        tenant_id,
+        contact_id,
+        payload.package_id,
+        expires_at,
+        pkg['total_sessions'],
+        payload.payment_status,
+        payment_amount,
+        currency,
+        payload.notes,
+    )
+@tenant_ops_router.patch('/contacts/{contact_id}/packages/{contact_package_id}')
+The agent-level PATCH endpoint lets the caller change package payment/status fields.
+async def update_contact_package(
+    contact_id: UUID,
+    contact_package_id: UUID,
+    payload: ContactPackagePatch,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await conn.fetchrow(
+            'select * from app.contact_packages where tenant_id=$1 and contact_id=$2 and id=$3',
+            tenant_id,
+            contact_id,
+            contact_package_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Contact package not found')
+        return record_to_dict(row)
+    row = await conn.fetchrow(
+        """
+        update app.contact_packages
+        set payment_status=coalesce($4, payment_status),
+            payment_amount=case when $9::boolean then $5 else payment_amount end,
+            payment_currency=coalesce($6, payment_currency),
+            expires_at=case when $10::boolean then $7 else expires_at end,
+            status=coalesce($8, status),
+            notes=case when $11::boolean then $12 else notes end
+        where tenant_id=$1 and contact_id=$2 and id=$3
+        returning *
+        """,
+        tenant_id,
+        contact_id,
+        contact_package_id,
+        update_data.get('payment_status'),
+        update_data.get('payment_amount'),
+        update_data.get('payment_currency'),
+        update_data.get('expires_at'),
+        update_data.get('status'),
+        'payment_amount' in update_data,
+        'expires_at' in update_data,
+        'notes' in update_data,
+        update_data.get('notes'),
+    )
+@tenant_ops_router.delete('/contacts/{contact_id}/packages/{contact_package_id}', status_code=204)
+The agent-level DELETE endpoint marks a contact package refunded and zeroes remaining sessions.
+async def refund_contact_package(
+    contact_id: UUID,
+    contact_package_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Mark a contact package as refunded.
+
+    Sets status=refunded, payment_status=refunded, and zeroes the remaining
+    sessions so the booking flow no longer offers them. Existing
+    appointment_package_links are preserved for audit, but the package is no
+    longer 'active'.
+    """
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        update app.contact_packages
+        set status='refunded',
+            payment_status='refunded',
+            remaining_sessions=0
+        where tenant_id=$1 and contact_id=$2 and id=$3
+        returning id
+        """,
+        tenant_id,
+        contact_id,
+        contact_package_id,
+    )
+app/api/v1/schemas.py
+app/api/v1/schemas.py
+class ContactPackageAssign(BaseModel):
+The new schemas allow callers to set payment_status, payment_amount, expires_at, and package status, including 'paid' and 'refunded'.
+    package_id: UUID
+    payment_status: str = Field(default='pending', pattern=PACKAGE_PAYMENT_STATUS_PATTERN)
+    payment_amount: float | None = Field(default=None, ge=0)
+    payment_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    expires_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ContactPackagePatch(BaseModel):
+    payment_status: str | None = Field(default=None, pattern=PACKAGE_PAYMENT_STATUS_PATTERN)
+    payment_amount: float | None = Field(default=None, ge=0)
+    payment_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    expires_at: datetime | None = None
+    status: str | None = Field(default=None, pattern='^(active|exhausted|expired|refunded)$')
+app/services/booking_flow.py
+app/services/booking_flow.py
+async def _list_active_contact_packages(
+The booking flow automatically offers packages whose payment_status is 'paid', so an agent-created paid package becomes usable for session consumption.
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    contact_id: UUID,
+    service_id: UUID,
+) -> list[dict[str, Any]]:
+    """TASK-0051: return active, paid, non-expired packages of the contact whose
+    catalogue covers the picked service (an empty ``includes_service_ids`` means
+    the package applies to any service).
+    """
+    rows = await conn.fetch(
+        """
+        select cp.id, cp.package_id, cp.remaining_sessions, cp.expires_at,
+               tp.name as package_name, tp.includes_service_ids
+        from app.contact_packages cp
+        join app.treatment_packages tp
+          on tp.id = cp.package_id and tp.tenant_id = cp.tenant_id
+        where cp.tenant_id=$1
+          and cp.contact_id=$2
+          and cp.status='active'
+          and cp.payment_status='paid'
+          and cp.remaining_sessions > 0
+          and (cp.expires_at is null or cp.expires_at > now())
+          and (
+            coalesce(array_length(tp.includes_service_ids, 1), 0) = 0
+            or $3 = any(tp.includes_service_ids)
+          )
+        order by cp.expires_at asc nulls last, cp.purchased_at asc
+        limit 5
+        """,
+        tenant_id,
+        contact_id,
+        service_id,
+    )
+    return [dict(row) for row in rows]
+Análisis de la ruta de ataque
+
+The original high severity is appropriate. Evidence shows the vulnerable code is in the main runtime API, is reachable over authenticated tenant operations routes, and was dynamically exercised with an agent-role TestClient PoC. The authorization gap allows payment/refund/entitlement manipulation that should be manager/admin or payment-provider controlled. It is not raised to critical because exploitation requires an authenticated same-tenant agent and the evidence does not show cross-tenant access, platform compromise, credential exposure, or code execution.
+
+Ruta
+Agent-authenticated HTTP client --Authenticated agent passes require_min_role('agent')--> FastAPI /v1 tenant operations router --Routes registered on tenant_ops_router--> Contact package POST/PATCH/DELETE handlers --Caller-controlled paid/refunded/status fields are inserted or updated--> app.contact_packages payment_status/status/remaining_sessions --Booking selects status='active' and payment_status='paid' with remaining sessions--> Booking flow consumes active paid package sessions
+This is a real, reachable authorization flaw in the main FastAPI product API. The contact package mutation endpoints are included under /v1 and registered on tenant_ops_router, which requires only the agent role. Their request models allow caller-controlled payment and status fields, including paid and refunded. The POST handler stores payload.payment_status and seeds full remaining_sessions; PATCH changes payment/status fields; DELETE marks packages refunded and zeroes sessions. The booking flow later treats active, paid packages with remaining_sessions > 0 as usable entitlements. The provided validation PoC further confirmed that a viewer was rejected but an agent could create a paid package with payment_amount 0, patch status/payment metadata, and trigger refund SQL. Severity remains high because this is unauthorized same-tenant financial/entitlement manipulation by a low-privileged actor, but not critical because it requires authentication and no cross-tenant or platform-wide compromise is evidenced.
+
+Probabilidad
+High - The attack is a straightforward remote API call by any authenticated agent. Package and contact package IDs are exposed through agent-level list endpoints, and the validation PoC demonstrated exploitation through normal FastAPI routing with auth active. | Remote network vector
+Impacto
+High - A low-privileged tenant agent can alter financially meaningful package payment and entitlement state: create paid sessions without verified payment, modify payment/status metadata, or refund and zero a customer's package. This is a significant integrity and business-logic impact within a tenant, though no cross-tenant compromise or full account takeover is shown.
+Suposiciones
+The FastAPI application in app/main.py and app/api/v1/routes.py is part of the deployed product API.
+Tenant users with the agent role are realistic in-scope actors and are not trusted to perform admin/payment operations.
+Treatment packages and contacts in the same tenant are discoverable or otherwise known to agents through normal tenant operations endpoints.
+Paid/refunded treatment package state is financially and operationally significant for this application.
+Authenticated tenant user with at least the agent role
+A valid same-tenant contact_id
+A valid same-tenant active treatment package id for assignment, or existing contact_package_id for update/refund
+Controles
+authenticate_request is present
+tenant_ops_router uses require_min_role('agent', allow_service=True)
+tenant_id_from_request and tenant-scoped SQL constrain the issue to the selected tenant
+Audit calls are present for assigned/updated/refunded actions but do not prevent exploitation
+Catalog CRUD routes use tenant_admin_router, showing stronger authorization exists but was not applied to contact package payment/refund mutations
+Puntos ciegos
+Static repository review cannot confirm the actual production ingress, load balancer exposure, or whether all tenants use the package feature.
+The precise business policy for what an agent is allowed to do is not fully specified, though the code itself distinguishes admin-only catalog CRUD from agent-level operations.
+No live production database or cloud deployment was inspected; reachability is inferred from routes, Docker configuration, and provided validation PoC.
+Financial settlement side effects of marking refunded are not fully visible in the inspected code, so impact is based on application entitlement state and booking behavior.

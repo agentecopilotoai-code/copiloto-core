@@ -1,0 +1,569 @@
+Tenant DB membership bypasses per-tenant role checks
+Link: https://chatgpt.com/codex/cloud/security/findings/06a8d1d4d344819198e015563626850a?repo=https%3A%2F%2Fgithub.com%2Fvmantilla%2FCopilotoIA&sev=high&page=2
+Criticality: high (attack path: high)
+Status: new
+
+# Metadata
+Repo: vmantilla/CopilotoIA
+Commit: e942cfd
+Author: 30736755+vmantilla@users.noreply.github.com
+Created: 5/8/2026, 9:49:47 AM
+Assignee: Unassigned
+Signals: Security, Validated, Patch generated, Attack-path
+
+# Summary
+Introduced: the commit removed the prior rejection of X-Tenant-Id for unscoped tokens and added a DB membership fallback that authorizes tenant access based on membership existence only, without checking the role stored in user_tenant_roles against the endpoint's required role.
+The new tenant-membership fallback checks only whether the authenticated subject appears in app.user_tenant_roles for the requested tenant. It does not verify that the stored per-tenant role meets the endpoint's required role. Router-level require_min_role('admin') still checks only the JWT roles, which may be unscoped or from another/default tenant. As a result, a user with an unscoped token carrying an admin role, and only viewer/agent membership in a victim tenant, can pass ensure_tenant_access for that victim tenant and invoke tenant-admin endpoints such as PATCH /tenants/{tenant_id}/settings or POST /tenants/{tenant_id}/channels/whatsapp. Those endpoints then set app.tenant_id to the victim tenant and perform privileged updates.
+
+# Validation
+## Rubric
+- [x] Confirm the current commit accepts X-Tenant-Id with an unscoped non-support user token instead of rejecting it.
+- [x] Confirm router-level admin RBAC checks only JWT roles and does not consult per-tenant user_tenant_roles.role.
+- [x] Confirm the new tenant membership fallback checks only existence of any user_tenant_roles row for actor and tenant.
+- [x] Confirm a tenant-admin endpoint calls ensure_tenant_access and then performs a privileged tenant-scoped write.
+- [x] Dynamically reproduce the bypass with a low-privileged tenant membership and an unscoped admin JWT using actual application functions.
+- [ ] Crash/Valgrind reproduction: not applicable to this Python authorization logic flaw; valgrind/gdb were not installed in the container and the vulnerability is not memory-safety related.
+## Report
+Validated the finding at commit e942cfd5f5d51a99eb94c6187392d1d8abf1ab36. Code review showed the introduced behavior: app/core/security.py:179-190 only rejects mismatched X-Tenant-Id when the token already has a tenant_id; an unscoped non-support token with X-Tenant-Id is accepted and leaves request.state.tenant_id=None while preserving requested_tenant_id. app/core/security.py:218-230 implements require_min_role using only request.state.roles from the JWT. app/api/v1/routes.py:56-72 implements has_user_tenant_role as select exists(...) over app.user_tenant_roles without selecting or filtering utr.role, and app/api/v1/routes.py:76-85 allows access when that existence check returns true. app/api/v1/routes.py:259-285 then uses ensure_tenant_access and performs the tenant settings update after setting app.tenant_id. I reproduced this with tenant_rbac_bypass_poc.py using the real authenticate_request, require_min_role('admin'), ensure_tenant_access, and patch_settings functions. The PoC creates an unscoped HS256 JWT with roles=['admin'], sends X-Tenant-Id for victim tenant 11111111-1111-1111-1111-111111111111, and uses a fake asyncpg connection modeling a DB membership row with role='viewer'. Output showed request.state.tenant_id=None, request.state.roles=['admin'], require_min_role accepted the JWT-only admin role, has_user_tenant_role SQL did not check role, and patch_settings returned an updated locale es-CO. I also ran a non-interactive bdb debugger trace. Breakpoint at app/core/security.py:179 showed token_tenant_id=None, x_tenant_id=victim, support_mode=False, roles=['admin']; breakpoint at app/api/v1/routes.py:84 showed request_tenant_id=None and tenant_id=victim immediately before the role-blind membership fallback. The previous commit diff also confirms this was introduced by removing the prior rejection: `if x_tenant_id and not token_tenant_id and not support_mode: ... X-Tenant-Id requires a tenant-scoped token`.
+
+# Evidence
+app/api/v1/routes.py (L259 to 308)
+  Note: Privileged tenant-admin endpoints call ensure_tenant_access and then set app.tenant_id to the target tenant before updating settings or WhatsApp channel configuration, making the role-bypass exploitable for admin-level writes.
+```
+@tenant_admin_router.patch('/tenants/{tenant_id}/settings')
+async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    allowed = {k: payload[k] for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train', 'max_bot_turns') if k in payload}
+    current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
+    if not current:
+        raise HTTPException(status_code=404, detail='Settings not found')
+    merged = dict(current)
+    merged.update(allowed)
+    row = await conn.fetchrow(
+        """
+        update app.tenant_settings
+        set locale=$2, business_hours=$3::jsonb, escalation_policy=$4::jsonb, pii_policy=$5::jsonb,
+            no_train=$6, max_bot_turns=$7
+        where tenant_id=$1 returning *
+        """,
+        tenant_id,
+        merged['locale'],
+        json.dumps(merged['business_hours']),
+        json.dumps(merged['escalation_policy']),
+        json.dumps(merged['pii_policy']),
+        merged['no_train'],
+        merged['max_bot_turns'],
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
+    return record_to_dict(row)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/channels/whatsapp', status_code=201)
+async def create_channel(tenant_id: UUID, payload: ChannelCreate, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        insert into app.tenant_channels (tenant_id, provider, business_id, waba_id, phone_number_id, token_ref, app_secret_ref, status)
+        values ($1, 'whatsapp_cloud_api', $2, $3, $4, $5, $6, 'active')
+        on conflict (tenant_id, provider) do update set
+          business_id=excluded.business_id, waba_id=excluded.waba_id, phone_number_id=excluded.phone_number_id,
+          token_ref=excluded.token_ref, app_secret_ref=excluded.app_secret_ref, status='active'
+        returning *
+        """,
+        tenant_id,
+        payload.business_id,
+        payload.waba_id,
+        payload.phone_number_id,
+        payload.token_ref,
+        payload.app_secret_ref,
+    )
+    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='channel.upserted', entity_type='tenant_channel', entity_id=str(row['id']))
+```
+
+app/api/v1/routes.py (L32 to 43)
+  Note: Tenant-admin and tenant-signup routers rely on the JWT-based require_min_role('admin') dependency before tenant access is checked.
+```
+tenant_admin_router = APIRouter(
+    tags=['tenant-admin'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+)
+tenant_ops_router = APIRouter(
+    tags=['tenant-operations'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('agent', allow_service=True))],
+)
+tenant_signup_router = APIRouter(
+    tags=['tenant-signup'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+)
+```
+
+app/api/v1/routes.py (L56 to 85)
+  Note: has_user_tenant_role checks only that any user_tenant_roles row exists for the actor and tenant; ensure_tenant_access accepts that as sufficient tenant access without validating role level.
+```
+async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenant_id: UUID) -> bool:
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        return False
+    return bool(
+        await conn.fetchval(
+            """
+            select exists(
+              select 1
+              from app.users u
+              join app.user_tenant_roles utr on utr.user_id = u.id
+              where u.auth_subject=$1 and utr.tenant_id=$2
+            )
+            """,
+            actor_id,
+            tenant_id,
+        )
+    )
+
+
+async def ensure_tenant_access(
+    request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
+) -> None:
+    if is_service_or_support(request):
+        return
+    request_tenant_id = getattr(request.state, 'tenant_id', None)
+    if request_tenant_id == tenant_id:
+        return
+    if conn and await has_user_tenant_role(conn, request, tenant_id):
+        return
+```
+
+app/core/security.py (L133 to 190)
+  Note: Unscoped tokens now retain X-Tenant-Id as requested_tenant_id and are no longer rejected when token_tenant_id is absent; roles are taken directly from the JWT and tenant_id remains unset for non-support unscoped tokens.
+```
+    request.state.tenant_id = None
+    request.state.requested_tenant_id = x_tenant_id
+    request.state.actor_type = 'anonymous'
+    request.state.actor_id = None
+    request.state.roles = []
+    request.state.support_mode = False
+    request.state.email = None
+    request.state.name = None
+
+    if not authorization:
+        if x_tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='X-Tenant-Id requires Authorization',
+            )
+        return
+    scheme, _, token = authorization.partition(' ')
+    if scheme.lower() != 'bearer' or not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid Authorization header'
+        )
+
+    if token == settings.service_token:
+        request.state.actor_type = 'service'
+        request.state.support_mode = True
+        return
+
+    payload = await _decode_user_token(token, settings)
+
+    exp = payload.get('exp')
+    if exp and datetime.fromtimestamp(exp, UTC) < datetime.now(UTC):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Expired token')
+
+    namespace = settings.auth0_claims_namespace
+    token_tenant_claim = _claim(payload, namespace, 'tenant_id')
+    try:
+        token_tenant_id = UUID(token_tenant_claim) if token_tenant_claim else None
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid token tenant_id'
+        ) from exc
+    support_mode = _coerce_bool(_claim(payload, namespace, 'support_mode'))
+    roles = _claim(payload, namespace, 'roles') or []
+    if isinstance(roles, str):
+        roles = [roles]
+
+    if token_tenant_id and x_tenant_id and x_tenant_id != token_tenant_id and not support_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='X-Tenant-Id does not match token tenant_id',
+        )
+    request.state.actor_type = 'user'
+    request.state.actor_id = payload.get('sub')
+    request.state.roles = roles
+    request.state.support_mode = support_mode
+    request.state.email = payload.get('email')
+    request.state.name = payload.get('name') or payload.get('nickname')
+    request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
+```
+
+app/core/security.py (L218 to 230)
+  Note: Route RBAC checks only request.state.roles from the JWT, not the role stored for the requested tenant in app.user_tenant_roles.
+```
+def require_min_role(minimum_role: str, *, allow_service: bool = False):
+    async def dependency(request: Request) -> None:
+        actor_type = getattr(request.state, 'actor_type', 'anonymous')
+        if actor_type == 'anonymous':
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required'
+            )
+        if actor_type == 'service':
+            if allow_service:
+                return
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User role required')
+        if _has_role(getattr(request.state, 'roles', []), minimum_role):
+            return
+```
+
+Proposed patch:
+diff --git a/app/api/v1/routes.py b/app/api/v1/routes.py
+index b444e1e004e967edf3787db630b09fa4c790fad8..4390bec97dd1b6ff6d30afbc2581c594c46f8bd7 100644
+--- a/app/api/v1/routes.py
++++ b/app/api/v1/routes.py
+@@ -12,51 +12,57 @@ import asyncpg
+ import structlog
+ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+ 
+ from app.api.v1.schemas import (
+     AppointmentCreate,
+     AppointmentUpdate,
+     ChannelCreate,
+     ContactUpsert,
+     ConversationCreate,
+     ConversationStart,
+     IntentEvaluateRequest,
+     KnowledgeDocumentCreate,
+     KnowledgeDocumentUpdate,
+     MessageCreate,
+     PromptCreate,
+     QuoteCreate,
+     QuotePatch,
+     ResourceCreate,
+     ResourceUpdate,
+     ServiceRequestCreate,
+     ServiceRequestPatch,
+     TenantCreate,
+     TenantUpdate,
+ )
+ from app.core.config import get_settings
+-from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
++from app.core.security import (
++    _has_role,
++    authenticate_request,
++    require_min_role,
++    require_platform_owner,
++    require_service,
++)
+ from app.db.pool import get_db, record_to_dict
+ from app.services.audit import audit
+ from app.services.rag_indexing import build_indexing_result, vector_literal
+ from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
+ from app.services.whatsapp import (
+     download_whatsapp_media,
+     normalize_meta_app_secret,
+     resolve_secret_ref,
+     secret_ref_is_configured,
+     token_ref_is_configured,
+     verify_signature_with_secret,
+ )
+ 
+ log = structlog.get_logger()
+ 
+ 
+ def tenant_secret_ref(tenant_id: UUID, secret_name: str) -> str:
+     return f'secrets/tenants/{tenant_id}/{secret_name}'
+ 
+ 
+ def write_tenant_secret(secret_ref: str, value: str) -> None:
+     relative_name = secret_ref.removeprefix('secrets/').strip('/')
+     if not relative_name or '..' in Path(relative_name).parts:
+         raise HTTPException(status_code=400, detail='Invalid tenant secret ref')
+     path = Path('/app/.secrets') / relative_name
+@@ -282,79 +288,79 @@ def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
+     return document
+ 
+ 
+ def normalize_knowledge_documents(rows: list[asyncpg.Record]) -> list[dict]:
+     return [normalize_knowledge_document(row) for row in rows]
+ 
+ 
+ def metadata_extracted_text(value: Any) -> str | None:
+     if isinstance(value, str):
+         try:
+             value = json.loads(value)
+         except json.JSONDecodeError:
+             return None
+     if not isinstance(value, dict):
+         return None
+     extracted_text = value.get('extracted_text')
+     return extracted_text if isinstance(extracted_text, str) else None
+ 
+ 
+ def is_service_or_support(request: Request) -> bool:
+     return getattr(request.state, 'actor_type', None) == 'service' or getattr(
+         request.state, 'support_mode', False
+     )
+ 
+ 
+-async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenant_id: UUID) -> bool:
++async def has_user_tenant_role(
++    conn: asyncpg.Connection, request: Request, tenant_id: UUID, minimum_role: str = 'viewer'
++) -> bool:
+     actor_id = getattr(request.state, 'actor_id', None)
+     if not actor_id:
+         return False
+-    return bool(
+-        await conn.fetchval(
+-            """
+-            select exists(
+-              select 1
+-              from app.users u
+-              join app.user_tenant_roles utr on utr.user_id = u.id
+-              where u.auth_subject=$1 and utr.tenant_id=$2
+-            )
+-            """,
+-            actor_id,
+-            tenant_id,
+-        )
++    rows = await conn.fetch(
++        """
++        select utr.role
++        from app.users u
++        join app.user_tenant_roles utr on utr.user_id = u.id
++        where u.auth_subject=$1 and utr.tenant_id=$2
++        """,
++        actor_id,
++        tenant_id,
+     )
++    return _has_role([row['role'] for row in rows], minimum_role)
+ 
+ 
+ async def ensure_tenant_access(
+     request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
+ ) -> None:
+     if is_service_or_support(request):
+         return
+     request_tenant_id = getattr(request.state, 'tenant_id', None)
+     if request_tenant_id == tenant_id:
+         return
+-    if conn and await has_user_tenant_role(conn, request, tenant_id):
++    minimum_role = getattr(request.state, 'minimum_role', 'viewer')
++    if conn and await has_user_tenant_role(conn, request, tenant_id, minimum_role):
+         return
+     if not request_tenant_id:
+         raise HTTPException(
+             status_code=400, detail='X-Tenant-Id header or tenant_id claim is required'
+         )
+     raise HTTPException(status_code=403, detail='Tenant scope does not match request')
+ 
+ 
+ async def require_tenant(request: Request) -> UUID:
+     if not getattr(request.state, 'tenant_id', None):
+         raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
+     return request.state.tenant_id
+ 
+ 
+ async def tenant_id_from_request(request: Request, conn: asyncpg.Connection) -> UUID:
+     tenant_id = getattr(request.state, 'tenant_id', None) or getattr(
+         request.state, 'requested_tenant_id', None
+     )
+     if not tenant_id:
+         raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
+     await ensure_tenant_access(request, tenant_id, conn)
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     return tenant_id
+ 
+ 
+
+
+diff --git a/app/core/security.py b/app/core/security.py
+index 3c81a12ea17bff4b48325893a779b2bc4073b22e..c86a749ecc2af4d064eb078dcad0a3b538783238 100644
+--- a/app/core/security.py
++++ b/app/core/security.py
+@@ -1,37 +1,37 @@
+ from datetime import UTC, datetime
+ from time import monotonic
+ from uuid import UUID
+ 
+ import httpx
+ from fastapi import Header, HTTPException, Request, status
+ from jose import JWTError, jwt
+ 
+ from app.core.config import get_settings
+ 
+ _jwks_cache: dict[str, tuple[float, dict]] = {}
+-_ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
++_ROLE_LEVELS = {'viewer': 0, 'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
+ 
+ 
+ def clear_jwks_cache() -> None:
+     _jwks_cache.clear()
+ 
+ 
+ def _claim(payload: dict, namespace: str, name: str):
+     normalized_namespace = namespace.rstrip('/')
+     return payload.get(
+         f'{normalized_namespace}/{name}', payload.get(f'{namespace}{name}', payload.get(name))
+     )
+ 
+ 
+ def _coerce_bool(value) -> bool:
+     if isinstance(value, bool):
+         return value
+     if isinstance(value, str):
+         return value.lower() in {'1', 'true', 'yes', 'on'}
+     return bool(value)
+ 
+ 
+ def _normalize_auth0_domain(domain: str) -> str:
+     return domain.removeprefix('https://').removeprefix('http://').rstrip('/')
+ 
+ 
+@@ -204,33 +204,34 @@ async def require_platform_owner(request: Request) -> None:
+     if getattr(request.state, 'tenant_id', None):
+         raise HTTPException(
+             status_code=status.HTTP_403_FORBIDDEN,
+             detail='Platform administration requires an unscoped token',
+         )
+     if 'owner' not in getattr(request.state, 'roles', []):
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='owner role is required')
+ 
+ 
+ async def require_service(request: Request) -> None:
+     if getattr(request.state, 'actor_type', None) != 'service':
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Service token required')
+ 
+ 
+ def require_min_role(minimum_role: str, *, allow_service: bool = False):
+     async def dependency(request: Request) -> None:
+         actor_type = getattr(request.state, 'actor_type', 'anonymous')
+         if actor_type == 'anonymous':
+             raise HTTPException(
+                 status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required'
+             )
+         if actor_type == 'service':
+             if allow_service:
+                 return
+             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User role required')
++        request.state.minimum_role = minimum_role
+         if _has_role(getattr(request.state, 'roles', []), minimum_role):
+             return
+         raise HTTPException(
+             status_code=status.HTTP_403_FORBIDDEN,
+             detail=f'{minimum_role} role or higher is required',
+         )
+ 
+     return dependency
+
+
+diff --git a/tests/test_tenant_rbac.py b/tests/test_tenant_rbac.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..4f6f928711b47ac31df5924152daa38204f24b41
+--- /dev/null
++++ b/tests/test_tenant_rbac.py
+@@ -0,0 +1,57 @@
++import asyncio
++from uuid import uuid4
++
++import pytest
++from fastapi import HTTPException
++from starlette.requests import Request
++
++from app.api.v1.routes import ensure_tenant_access
++from app.core.security import require_min_role
++
++
++def make_request() -> Request:
++    return Request({'type': 'http', 'method': 'GET', 'path': '/', 'headers': []})
++
++
++class TenantRoleConn:
++    def __init__(self, roles: list[str]):
++        self.roles = roles
++
++    async def fetch(self, query: str, actor_id: str, tenant_id):
++        assert 'select utr.role' in query
++        assert actor_id == 'auth0|user-1'
++        return [{'role': role} for role in self.roles]
++
++
++def admin_request() -> Request:
++    request = make_request()
++    request.state.actor_type = 'user'
++    request.state.actor_id = 'auth0|user-1'
++    request.state.tenant_id = None
++    request.state.roles = ['admin']
++    request.state.support_mode = False
++    return request
++
++
++def test_tenant_access_fallback_rejects_membership_below_route_role():
++    async def run_test():
++        request = admin_request()
++        await require_min_role('admin')(request)
++
++        with pytest.raises(HTTPException) as exc_info:
++            await ensure_tenant_access(request, uuid4(), TenantRoleConn(['viewer']))
++
++        assert exc_info.value.status_code == 400
++        assert exc_info.value.detail == 'X-Tenant-Id header or tenant_id claim is required'
++
++    asyncio.run(run_test())
++
++
++def test_tenant_access_fallback_accepts_membership_matching_route_role():
++    async def run_test():
++        request = admin_request()
++        await require_min_role('admin')(request)
++
++        await ensure_tenant_access(request, uuid4(), TenantRoleConn(['admin']))
++
++    asyncio.run(run_test())
+
+# Attack-path analysis
+Final: high | Decider: model_decided | Matrix severity: high | Policy adjusted: high
+## Rationale
+Keep as high. Static review and the supplied executable validation PoC both support the finding: require_min_role checks JWT roles only, has_user_tenant_role is role-blind, and privileged endpoints set app.tenant_id to the requested tenant before performing admin writes. This is a material cross-tenant privilege escalation and tenant-isolation break. It does not warrant critical based on the checked-in evidence because exploitation still requires a valid JWT with an admin role in some unscoped/non-victim context plus an existing membership row in the victim tenant, rather than being unauthenticated, universally exploitable, or full platform compromise.
+## Likelihood
+high - The vulnerable endpoints are normal remote API routes, and exploitation is straightforward once the attacker has a valid admin-capable unscoped/global JWT and any membership in the target tenant. Likelihood is not high because those identity/membership preconditions are more restrictive than an unauthenticated or ordinary low-privilege-only attack. | Remote network vector
+## Impact
+high - Successful exploitation crosses a tenant authorization boundary and grants admin-level writes in a victim tenant where the actor may only have viewer/agent membership. Demonstrated targets include tenant settings and WhatsApp channel configuration; similar tenant-admin routes can affect knowledge documents, prompts, and audit access.
+## Assumptions
+- The FastAPI core API is deployed for tenant users/admins similarly to the checked-in Dockerfile/docker-compose configuration.
+- The identity provider can issue a user token whose roles claim contains admin without a tenant_id claim, or with roles not scoped to the requested victim tenant.
+- An attacker can have any membership row, such as viewer or agent, in the target tenant and can learn that tenant UUID through normal product flows or prior access.
+- Valid authenticated user JWT accepted by the API
+- JWT roles claim satisfies require_min_role('admin')
+- Token is unscoped to the victim tenant, or its admin role is not verified against the victim tenant
+- Attacker auth_subject has any app.user_tenant_roles row for the victim tenant
+- Attacker sends victim tenant_id in the path and/or X-Tenant-Id
+## Path
+User JWT(admin, no victim scope) + viewer membership in victim
+  -> /v1/tenants/{victim}/settings
+  -> require_min_role('admin') checks JWT roles only
+  -> has_user_tenant_role checks existence only, not utr.role
+  -> set_config('app.tenant_id', victim)
+  -> victim tenant admin write
+## Path evidence
+- `app/main.py:21-25` - The vulnerable v1 API router is part of the main FastAPI application.
+- `docker-compose.yml:19-21` - The API service is configured to listen on 0.0.0.0:8000 and publish port 8000 in the checked-in deployment configuration.
+- `app/core/security.py:130-190` - authenticate_request accepts X-Tenant-Id input, preserves requested_tenant_id, only rejects mismatched X-Tenant-Id when token_tenant_id exists, stores JWT roles, and leaves request.state.tenant_id as token_tenant_id for non-support users.
+- `app/core/security.py:218-233` - require_min_role authorizes based only on request.state.roles from the JWT; it does not resolve or verify a per-tenant role.
+- `app/api/v1/routes.py:32-43` - tenant-admin and tenant-signup routers are protected by the JWT-only require_min_role('admin') dependency.
+- `app/api/v1/routes.py:56-85` - has_user_tenant_role checks only existence of a user_tenant_roles row for the actor and tenant; ensure_tenant_access treats that as sufficient and does not check utr.role.
+- `app/api/v1/routes.py:259-285` - PATCH /tenants/{tenant_id}/settings calls the weak ensure_tenant_access check, sets app.tenant_id to the requested tenant, and updates tenant settings.
+- `app/api/v1/routes.py:288-307` - POST /tenants/{tenant_id}/channels/whatsapp uses the same access check and writes WhatsApp channel configuration for the requested tenant.
+- `infra/postgres/01-schema.sql:88-97` - The user_tenant_roles table stores the tenant role, including lower roles such as viewer/agent, but the authorization fallback does not use this role column.
+## Narrative
+This is a real in-scope authorization flaw in the main runtime API. The code accepts an authenticated unscoped user token, keeps the JWT roles, and leaves request.state.tenant_id unset. Tenant-admin routers then require only require_min_role('admin'), which checks those JWT roles without tenant scope. The later tenant access fallback checks only whether the actor has any app.user_tenant_roles row for the target tenant and does not test utr.role. Privileged endpoints then set app.tenant_id to the path tenant and perform updates/inserts. The validation PoC exercised normal application functions and demonstrated a JWT with roles=['admin'] plus a viewer membership in the victim tenant updating tenant settings. Severity remains high because the impact is cross-tenant privilege escalation to admin-level writes, though exploitation requires a valid admin-capable JWT and some membership in the victim tenant, so it is not critical.
+## Controls
+- JWT signature, issuer, audience, expiry, and algorithm validation are present for user tokens.
+- Router-level RBAC exists but is not tenant-scoped for this path.
+- PostgreSQL RLS and app.tenant_id are present, but the endpoint sets app.tenant_id to the victim tenant after the flawed application-level authorization succeeds.
+- Audit logging is present for modified tenant settings and channel upserts, but it is detective only and does not prevent exploitation.
+- No checked-in test coverage was found that rejects low-privilege tenant membership combined with unscoped/global admin JWT roles.
+## Blindspots
+- Static-only review did not confirm the production ingress or whether port 8000 is internet-facing in the real deployment.
+- Static-only review did not confirm real Auth0/custom-claim semantics, especially how often unscoped/global admin JWTs occur in production.
+- No live database was queried, so the prevalence of multi-tenant users with low-privilege memberships is unknown.
+- Only repository artifacts were reviewed; external IdP rules, API gateway policies, and production network controls could add constraints not visible here.

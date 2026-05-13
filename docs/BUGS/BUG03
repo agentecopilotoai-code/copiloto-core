@@ -1,0 +1,354 @@
+Cross-tenant admin access to media and promotions
+Informar
+Ajuste
+
+Chat
+Nivel de gravedad
+High
+Ajustar para mejorar la precisión en futuros análisis
+
+Confirmar
+7ca68ea
+9:36 AM May 12, 2026
+por Claude
+
+Repositorio
+vmantilla/CopilotoIA
+Resumen
+
+Introduced for the media/promotions feature: the newly added CRUD endpoints rely on the existing global role check plus any-membership tenant check instead of verifying that the caller has admin or owner role for the specific tenant in the URL.
+
+The new media and promotion endpoints are registered on tenant_admin_router, whose admin check is based only on request.state.roles from the JWT. Those roles are not tied to the {tenant_id} path parameter. The later tenant access check allows access to a different path tenant if has_user_tenant_role finds any role for that tenant, without requiring admin/owner for that tenant. As a result, a user who is admin in tenant A and merely viewer/agent/member in tenant B can call /tenants/{tenant_b}/media and /tenants/{tenant_b}/promotions, after which the handlers explicitly set app.tenant_id to tenant B and perform reads/writes/deletes. This lets a lower-privileged tenant member list media metadata, upload/delete media assets, and create/update/delete promotions that the bot may send to tenant B's customers.
+
+Validación
+
+ Confirm new media/promotions endpoints are mounted on tenant_admin_router and inherit only the global require_min_role('admin') router dependency.
+ Confirm authentication stores roles in request.state.roles without binding those roles to the {tenant_id} path parameter.
+ Confirm ensure_tenant_access accepts a database membership row for the path tenant and has_user_tenant_role does not require admin/owner role for that tenant.
+ Confirm affected handlers set app.tenant_id to the path tenant and then read or mutate tenant-scoped media/promotion data.
+ Dynamically reproduce with controls: tenant A admin + victim tenant membership succeeds, no victim membership fails, and no global admin fails.
+Artefacto de validación
+Pruebas
+
+app/api/v1/routes.py
+app/api/v1/routes.py
+tenant_admin_router = APIRouter(
+The new endpoints inherit this router dependency, which requires an admin role but does not prove that role applies to the route tenant.
+    tags=['tenant-admin'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+)
+async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenant_id: UUID) -> bool:
+ensure_tenant_access falls back to has_user_tenant_role, which accepts any role in the path tenant rather than requiring an admin/owner role.
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        return False
+    return bool(
+        await conn.fetchval(
+            """
+            select exists(
+              select 1
+              from app.users u
+              join app.user_tenant_roles utr on utr.user_id = u.id
+              where u.auth_subject=$1 and utr.tenant_id=$2
+            )
+            """,
+            actor_id,
+            tenant_id,
+        )
+    )
+
+
+async def ensure_tenant_access(
+    request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
+) -> None:
+    if is_service_or_support(request):
+        return
+    request_tenant_id = getattr(request.state, 'tenant_id', None)
+    if request_tenant_id == tenant_id:
+        return
+    if conn and await has_user_tenant_role(conn, request, tenant_id):
+        return
+@tenant_admin_router.get('/tenants/{tenant_id}/media')
+New media list/upload endpoints call ensure_tenant_access and then set app.tenant_id to the path tenant, enabling access after the weak any-role membership check.
+async def list_media_assets(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    kind: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    if kind is not None and kind not in MEDIA_KINDS:
+        raise HTTPException(status_code=422, detail='Unsupported media kind')
+    rows = await conn.fetch(
+        f"""
+        select {MEDIA_ASSET_COLUMNS}
+        from app.media_assets
+        where tenant_id = $1
+          and ($2::text is null or kind = $2)
+          and ($3::text is null or $3 = any(tags))
+        order by created_at desc
+        """,
+        tenant_id,
+        kind,
+        tag,
+    )
+    return [normalize_media_asset(row) for row in rows]
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/media', status_code=201)
+async def upload_media_asset(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+@tenant_admin_router.patch('/tenants/{tenant_id}/media/{asset_id}')
+New media update/delete endpoints use the same authorization pattern, allowing cross-tenant media modification/deletion.
+async def update_media_asset(
+    tenant_id: UUID,
+    asset_id: UUID,
+    payload: MediaAssetUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        row = await conn.fetchrow(
+            f'select {MEDIA_ASSET_COLUMNS} from app.media_assets where tenant_id=$1 and id=$2',
+            tenant_id,
+            asset_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Media asset not found')
+        return normalize_media_asset(row)
+    row = await conn.fetchrow(
+        f"""
+        update app.media_assets
+        set label=coalesce($3, label),
+            description=coalesce($4, description),
+            tags=coalesce($5::text[], tags)
+        where tenant_id=$1 and id=$2
+        returning {MEDIA_ASSET_COLUMNS}
+        """,
+        tenant_id,
+        asset_id,
+        updates.get('label'),
+        updates.get('description'),
+        updates.get('tags'),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Media asset not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='media_asset.updated',
+        entity_type='media_asset',
+        entity_id=str(asset_id),
+    )
+    return normalize_media_asset(row)
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/media/{asset_id}', status_code=204)
+async def delete_media_asset(
+    tenant_id: UUID,
+    asset_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+@tenant_admin_router.get('/tenants/{tenant_id}/promotions')
+New promotion list/create endpoints use the same authorization pattern for tenant-scoped promotional content.
+async def list_promotions(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    include_inactive: bool = Query(default=True),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {PROMOTION_COLUMNS}
+        from app.promotions
+        where tenant_id=$1
+          and ($2::boolean is true or is_active is true)
+        order by sort_order asc, created_at desc
+        """,
+        tenant_id,
+        include_inactive,
+    )
+    return [normalize_promotion(row) for row in rows]
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/promotions', status_code=201)
+async def create_promotion(
+    tenant_id: UUID,
+    payload: PromotionCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+@tenant_admin_router.patch('/tenants/{tenant_id}/promotions/{promotion_id}')
+New promotion update/delete endpoints also rely on the weak tenant access check before mutating path-tenant data.
+async def update_promotion(
+    tenant_id: UUID,
+    promotion_id: UUID,
+    payload: PromotionUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        row = await conn.fetchrow(
+            f'select {PROMOTION_COLUMNS} from app.promotions where tenant_id=$1 and id=$2',
+            tenant_id,
+            promotion_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Promotion not found')
+        return normalize_promotion(row)
+    if 'media_asset_id' in updates and updates['media_asset_id']:
+        owns = await conn.fetchval(
+            'select 1 from app.media_assets where tenant_id=$1 and id=$2',
+            tenant_id,
+            updates['media_asset_id'],
+        )
+        if not owns:
+            raise HTTPException(status_code=422, detail='media_asset_id does not belong to this tenant')
+    applies = (
+        [str(sid) for sid in payload.applies_to_service_ids]
+        if payload.applies_to_service_ids is not None
+        else None
+    )
+    row = await conn.fetchrow(
+        f"""
+        update app.promotions
+        set name=coalesce($3, name),
+            description=coalesce($4, description),
+            media_asset_id=coalesce($5, media_asset_id),
+            valid_from=coalesce($6, valid_from),
+            valid_until=coalesce($7, valid_until),
+            applies_to_service_ids=coalesce($8::uuid[], applies_to_service_ids),
+            coupon_code=coalesce($9, coupon_code),
+            discount_percent=coalesce($10, discount_percent),
+            is_active=coalesce($11, is_active),
+            sort_order=coalesce($12, sort_order)
+        where tenant_id=$1 and id=$2
+        returning {PROMOTION_COLUMNS}
+        """,
+        tenant_id,
+        promotion_id,
+        updates.get('name'),
+        updates.get('description'),
+        updates.get('media_asset_id'),
+        updates.get('valid_from'),
+        updates.get('valid_until'),
+        applies,
+        updates.get('coupon_code'),
+        updates.get('discount_percent'),
+        updates.get('is_active'),
+        updates.get('sort_order'),
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Promotion not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='promotion.updated',
+        entity_type='promotion',
+        entity_id=str(promotion_id),
+    )
+    return normalize_promotion(row)
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/promotions/{promotion_id}', status_code=204)
+async def delete_promotion(
+    tenant_id: UUID,
+    promotion_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+app/core/security.py
+app/core/security.py
+    support_mode = _coerce_bool(_claim(payload, namespace, 'support_mode'))
+JWT roles are copied into request.state.roles without being bound to the tenant_id path parameter used by the new endpoints.
+    roles = _claim(payload, namespace, 'roles') or []
+    if isinstance(roles, str):
+        roles = [roles]
+
+    if token_tenant_id and x_tenant_id and x_tenant_id != token_tenant_id and not support_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='X-Tenant-Id does not match token tenant_id',
+        )
+    request.state.actor_type = 'user'
+    request.state.actor_id = payload.get('sub')
+    request.state.roles = roles
+    request.state.support_mode = support_mode
+    request.state.mfa_verified = _extract_mfa_verified(payload)
+    request.state.email = payload.get('email')
+    request.state.name = payload.get('name') or payload.get('nickname')
+    request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
+def require_min_role(minimum_role: str, *, allow_service: bool = False):
+require_min_role checks only the unscoped roles list, so an admin role from another tenant satisfies tenant_admin_router.
+    async def dependency(request: Request) -> None:
+        actor_type = getattr(request.state, 'actor_type', 'anonymous')
+        if actor_type == 'anonymous':
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required'
+            )
+        if actor_type == 'service':
+            if allow_service:
+                return
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User role required')
+        if _has_role(getattr(request.state, 'roles', []), minimum_role):
+            return
+Análisis de la ruta de ataque
+
+The original high severity is supported and retained. The vulnerability is in the main runtime API, is reachable through normal authenticated HTTP routes, has executable PoC evidence from validation, and crosses a central SaaS tenant boundary. The impact is significant because it enables unauthorized reads and writes/deletes of another tenant's media and promotional content, including content later used in outbound bot messaging. It is not raised to critical because it is not unauthenticated, requires the attacker to already be an admin in some tenant and at least a member of the victim tenant, and appears limited to media/promotions rather than full tenant data, platform control, identity compromise, or secret disclosure.
+
+Ruta
+Attacker with valid JWT: admin role in tenant A --admin role satisfies router dependency--> tenant_admin_router require_min_role('admin') checks unscoped request.state.roles --request reaches handler authz--> ensure_tenant_access accepts has_user_tenant_role for tenant B without role threshold --path tenant accepted--> Handler executes set_config('app.tenant_id', tenant B) --RLS context is set to victim tenant--> Tenant B media/promotions read/write/delete --active promotions are consumed by booking flow--> Promotion content can be queued into outbound bot messages
+The finding is a real, in-scope authorization vulnerability. The JWT processing stores roles as a flat request.state.roles list and separately stores request.state.tenant_id. tenant_admin_router then accepts any admin role in that flat list. For media and promotion endpoints, the handler calls ensure_tenant_access, whose fallback query only checks whether the user has any user_tenant_roles row for the path tenant and does not require admin/owner there. Once that weak check passes, the handlers set app.tenant_id to the path tenant and perform tenant-scoped SQL reads and mutations. PostgreSQL RLS exists, but it is not an effective mitigation here because the application itself sets the RLS tenant context to the victim tenant after the weak any-membership check. The impact is cross-tenant modification of media assets and promotional content, including content that the booking flow can queue for outbound bot messages to the victim tenant's customers.
+
+Probabilidad
+High - Exploitation is straightforward once the attacker has the dual-tenant role condition: send normal authenticated HTTP requests with a different tenant_id path parameter. The required condition is plausible in a SaaS with tenant switching and shared users, but it is not unauthenticated and does require admin privilege somewhere plus membership in the victim tenant, so likelihood is medium rather than high. | Remote network vector
+Impacto
+High - This breaks tenant isolation for meaningful tenant-admin functionality. An attacker cannot act anonymously, but a user with admin in one tenant and low privilege in another can read media and promotions and perform create/update/delete operations in the other tenant. Promotion tampering can affect customer-facing bot messages, and media deletion/upload affects tenant content integrity and metadata confidentiality.
+Suposiciones
+Tenant admins are trusted only for their own tenant and not for tenants where they hold a lower role.
+The JWT roles claim can contain an admin-equivalent role for one tenant while the same user has only a non-admin membership row for another tenant, as described by the tenant-switching and user_tenant_roles model.
+The FastAPI API service is deployed as the main runtime product service; production ingress was not present in the checkout, so public exposure is inferred from the application and Docker configuration rather than cloud manifests.
+Valid authenticated user JWT
+JWT roles list contains admin or higher for some tenant or context
+Attacker has any app.user_tenant_roles membership row in the target tenant, even if not admin/owner
+Attacker knows or can select the target tenant_id path value; targeted update/delete also requires object IDs
+Controles
+JWT/OIDC authentication is required for tenant_admin_router
+tenant_admin_router requires admin role, but the role check is unscoped
+ensure_tenant_access checks tenant membership, but not the minimum role for the path tenant
+PostgreSQL RLS is enabled on media_assets and promotions
+Handlers set app.tenant_id to the path tenant before SQL access
+Audit calls exist for successful create/update/delete operations but do not prevent unauthorized actions
+Puntos ciegos
+No production cloud ingress or load balancer manifests were present, so internet exposure is inferred from app/Docker configuration and the project threat model.
+The exact production IdP role-claim format was not externally verified; assessment relies on checked-in JWT role handling and user_tenant_roles authorization logic.
+Static review did not enumerate every tenant_admin_router endpoint for the same pattern beyond the reported media/promotions paths.
+Object storage ACLs and signed URL behavior for stored media were not fully assessed; the core issue is authorization before media metadata/object operations.
+
+

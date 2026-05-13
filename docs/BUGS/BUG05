@@ -1,0 +1,448 @@
+Web widget permits phone-based customer impersonation
+Link: https://chatgpt.com/codex/cloud/security/findings/8995648cfab08191a291e72b1e0132c7?repo=https%3A%2F%2Fgithub.com%2Fvmantilla%2FCopilotoIA&sev=high
+Criticality: high (attack path: high)
+Status: new
+
+# Metadata
+Repo: vmantilla/CopilotoIA
+Commit: eb786e8
+Author: noreply@anthropic.com
+Created: 5/11/2026, 10:58:02 PM
+Assignee: Unassigned
+Signals: Security, Validated, Patch generated, Attack-path
+
+# Summary
+Introduced by the new web widget channel. The vulnerable behavior is the contact lookup/reuse in web_chat_start based only on payload.phone, followed by orchestration of the attacker-controlled message as that existing contact.
+The web widget accepts an arbitrary optional phone number from an anonymous browser session. If that phone number matches an existing contact for the tenant, the endpoint reuses the existing contact record without any proof that the web user controls that phone number. It then creates a new conversation and inbound message for that contact and immediately passes the message to the normal orchestrator. Existing orchestrator flows treat messages from the contact as authoritative; for example, a message such as "no" can update the latest scheduled/confirmed appointment confirmation status for that contact, and a numeric message can record appointment feedback. Because widget tokens are embedded in public website snippets and the UI itself allows arbitrary phone entry, an attacker who knows or guesses a customer's phone number can impersonate that customer inside a tenant, inject conversations, and affect appointment-related state.
+
+# Validation
+## Rubric
+- [x] Confirm the web-widget start surface is public/anonymous apart from the embeddable widget_token and accepts arbitrary phone/message input.
+- [x] Confirm web_chat_start performs contact lookup/reuse solely by tenant_id and unverified payload.phone.
+- [x] Confirm the reused contact_id is used when creating the conversation and inbound contact message.
+- [x] Confirm the orchestrator processes that inbound message as authoritative for contact-scoped appointment flows.
+- [x] Dynamically demonstrate that message 'no' from a forged web start updates the reused contact's latest scheduled appointment confirmation_status to declined.
+## Report
+Validated the suspected logic flaw. Code review found the public widget includes data-widget-token in the snippet (admin-panel/public/widget.js:4-7), renders an arbitrary optional phone field (admin-panel/public/widget.js:119-123), and submits that phone plus the initial message to /v1/web/chat/start (admin-panel/public/widget.js:191-207). The schema accepts phone and message from the anonymous web payload (app/api/v1/schemas.py:370-380). In web_chat_start, after only widget token/origin checks, the endpoint looks up an existing contact by tenant_id and payload.phone.strip() (app/api/v1/routes.py:5552-5562), reuses it if present, creates a conversation and inbound message under that contact (app/api/v1/routes.py:5588-5616), then passes the reused contact and attacker-controlled inbound message to orchestrate_inbound_message (app/api/v1/routes.py:5626-5635). The orchestrator calls maybe_record_confirmation with contact['id'] (app/services/rag_orchestrator.py:416-421), and that function selects the latest appointment by tenant_id/contact_id and updates confirmation_status based on the message text (app/services/feedback_flow.py:127-155).
+
+Dynamic PoC: I called the real web_chat_start coroutine with a fake asyncpg connection seeded with an existing victim contact phone +573001234567 and a scheduled appointment. The anonymous payload used the public widget token, victim phone, and message 'no'. Output showed: returned contact_id: 33333333-3333-3333-3333-333333333333, victim contact_id: 33333333-3333-3333-3333-333333333333, and appointment confirmation_status: declined. Event trace included LOOKUP existing contact by phone=+573001234567, CREATE conversation contact_id=33333333-3333-3333-3333-333333333333, CREATE inbound message as contact body='no', SELECT latest appointment for contact_id=33333333-3333-3333-3333-333333333333, and UPDATE appointments id=66666666-6666-6666-6666-666666666666 confirmation_status=declined.
+
+Debugger evidence: non-interactive pdb stopped at app/services/feedback_flow.py:146, just before the appointment update. The stack was web_widget_impersonation_poc.py main -> routes.py:5627 web_chat_start -> rag_orchestrator.py:416 orchestrate_inbound_message -> feedback_flow.py:146 maybe_record_confirmation. Printed locals were tenant_id UUID('11111111-1111-1111-1111-111111111111'), contact_id UUID('33333333-3333-3333-3333-333333333333'), decision 'declined'. This confirms the attacker-controlled web-widget message is processed as the existing victim contact and causes appointment state mutation.
+
+Crash/valgrind attempts: a direct crash run produced no process crash and all PoC assertions passed; valgrind was not installed and is not applicable to this Python authorization/identity logic flaw.
+
+# Evidence
+app/api/v1/routes.py (L5552 to 5562)
+  Note: The endpoint looks up and reuses an existing contact by the unverified user-supplied phone number.
+```
+    # Look up existing contact by phone or email if provided, otherwise create new.
+    existing_contact = None
+    if payload.phone:
+        existing_contact = await conn.fetchrow(
+            'select * from app.contacts where tenant_id=$1 and phone_e164=$2',
+            tenant_id,
+            payload.phone.strip(),
+        )
+
+    if existing_contact:
+        contact = existing_contact
+```
+
+app/api/v1/routes.py (L5588 to 5635)
+  Note: A conversation and inbound message are created under that reused contact and then passed to the orchestrator as if they came from the legitimate contact.
+```
+    conversation = await conn.fetchrow(
+        """
+        insert into app.conversations (tenant_id, contact_id, channel_id, status, opened_by, handoff_required)
+        values ($1, $2, $3, 'open', 'user', false)
+        returning *
+        """,
+        tenant_id,
+        contact['id'],
+        channel['id'],
+    )
+
+    inbound_message = await conn.fetchrow(
+        """
+        insert into app.messages (
+          tenant_id, conversation_id, direction, sender_actor_type,
+          body_text, message_type, status, received_at, payload
+        )
+        values ($1, $2, 'inbound', 'contact', $3, 'text', 'received', now(), $4::jsonb)
+        returning *
+        """,
+        tenant_id,
+        conversation['id'],
+        payload.message.strip(),
+        json.dumps({
+            'channel': 'web',
+            'origin': origin,
+            'lead_source': lead_source,
+        }),
+    )
+
+    await notify_operations_change(
+        conn,
+        tenant_id,
+        'conversation.changed',
+        conversation_id=conversation['id'],
+        message_id=inbound_message['id'],
+    )
+
+    try:
+        await orchestrate_inbound_message(
+            conn,
+            tenant_id=tenant_id,
+            channel_id=channel['id'],
+            channel_account_mode=channel['account_mode'] or 'live',
+            conversation=conversation,
+            contact=contact,
+            inbound_message=inbound_message,
+        )
+```
+
+app/api/v1/schemas.py (L370 to 376)
+  Note: The public web chat start payload accepts an arbitrary optional phone number and initial message from an anonymous widget user.
+```
+class WebChatStart(BaseModel):
+    tenant_slug: str = Field(min_length=1, max_length=160)
+    widget_token: str = Field(min_length=8, max_length=512)
+    name: str = Field(min_length=1, max_length=160)
+    phone: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=320)
+    message: str = Field(min_length=1, max_length=4000)
+```
+
+app/services/feedback_flow.py (L127 to 155)
+  Note: A simple affirmative or negative message updates the selected appointment confirmation_status for the impersonated contact.
+```
+async def maybe_record_confirmation(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    contact_id: UUID,
+    inbound_message: Any,
+) -> dict[str, Any] | None:
+    """Apply confirmation_status updates from a 'sí'/'no' reply."""
+    decision = parse_confirmation(inbound_message.get('body_text'))
+    if decision is None:
+        return None
+    appt = await _latest_appointment_for_contact(
+        conn,
+        tenant_id,
+        contact_id,
+        statuses=('scheduled', 'confirmed'),
+    )
+    if not appt:
+        return None
+    await conn.execute(
+        """
+        update app.appointments
+        set confirmation_status=$3, updated_at=now()
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        appt['id'],
+        decision,
+    )
+```
+
+app/services/feedback_flow.py (L59 to 77)
+  Note: Appointment selection is based on tenant_id and contact_id, so a reused contact lets the attacker target that customer's latest appointment.
+```
+async def _latest_appointment_for_contact(
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    contact_id: UUID,
+    statuses: tuple[str, ...],
+) -> dict[str, Any] | None:
+    row = await conn.fetchrow(
+        """
+        select id, starts_at, ends_at, status, confirmation_status
+        from app.appointments
+        where tenant_id=$1 and contact_id=$2 and status = any($3::text[])
+        order by starts_at desc
+        limit 1
+        """,
+        tenant_id,
+        contact_id,
+        list(statuses),
+    )
+    return dict(row) if row else None
+```
+
+app/services/rag_orchestrator.py (L398 to 429)
+  Note: The orchestrator treats the message as a contact reply and invokes feedback/confirmation handlers that can perform state changes.
+```
+    # TASK-0036: capture explicit rating replies (1-5) and confirmation
+    # replies (sí/no) before falling into the booking flow or the RAG cascade.
+    # These run cheaply on every inbound and short-circuit only when they match.
+    feedback_result = await maybe_record_feedback(
+        conn,
+        tenant_id=tenant_id,
+        contact_id=contact['id'],
+        inbound_message=inbound_message,
+    )
+    if feedback_result is not None:
+        log.info(
+            'orchestrator.feedback_recorded',
+            conversation_id=conversation_id,
+            appointment_id=feedback_result.get('appointment_id'),
+            rating=feedback_result.get('rating'),
+        )
+        return feedback_result
+
+    confirmation_result = await maybe_record_confirmation(
+        conn,
+        tenant_id=tenant_id,
+        contact_id=contact['id'],
+        inbound_message=inbound_message,
+    )
+    if confirmation_result is not None:
+        log.info(
+            'orchestrator.confirmation_recorded',
+            conversation_id=conversation_id,
+            appointment_id=confirmation_result.get('appointment_id'),
+            decision=confirmation_result.get('confirmation_status'),
+        )
+```
+
+Proposed patch:
+diff --git a/app/api/v1/routes.py b/app/api/v1/routes.py
+index 27dbbf17a00c0645d59193fa404be1cc0a6d4dc6..2fb1af3a264a8659c5a7cf2303ef9df81eba0270 100644
+--- a/app/api/v1/routes.py
++++ b/app/api/v1/routes.py
+@@ -6018,85 +6018,76 @@ async def web_chat_start(
+     channel = await conn.fetchrow(
+         f"select {WEB_CHANNEL_PROJECTION} from app.tenant_channels where tenant_id=$1 and provider='web'",
+         tenant_id,
+     )
+     if not channel or channel['status'] != 'active':
+         raise HTTPException(status_code=404, detail='Web channel is not active for this tenant')
+ 
+     expected_token = resolve_secret_ref(channel['token_ref'])
+     if not constant_time_equals(payload.widget_token, expected_token):
+         raise HTTPException(status_code=401, detail='Invalid widget token')
+ 
+     origin = request.headers.get('origin') or request.headers.get('referer')
+     allowed = list(channel['allowed_origins'] or [])
+     if allowed and not origin_is_allowed(origin, allowed):
+         raise HTTPException(status_code=403, detail='Origin not allowed for this widget')
+ 
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+ 
+     lead_source = build_lead_source(
+         utm_source=payload.utm_source,
+         utm_medium=payload.utm_medium,
+         utm_campaign=payload.utm_campaign,
+         referrer=payload.referrer,
+     )
+ 
+-    # Look up existing contact by phone or email if provided, otherwise create new.
+-    existing_contact = None
++    # Anonymous widget users may type any phone number, so never use it as
++    # authoritative contact identity. Always create an isolated web-only contact
++    # and preserve submitted details as unverified lead metadata.
++    seed = f'{tenant_id}:{payload.email or ""}:{payload.phone or ""}:{secrets.token_hex(8)}'
++    wa_id, phone_e164 = synthesize_web_identity(seed)
++    contact_metadata = {}
++    if payload.email:
++        contact_metadata['email'] = payload.email
+     if payload.phone:
+-        existing_contact = await conn.fetchrow(
+-            'select * from app.contacts where tenant_id=$1 and phone_e164=$2',
+-            tenant_id,
+-            payload.phone.strip(),
+-        )
+-
+-    if existing_contact:
+-        contact = existing_contact
+-    else:
+-        if payload.phone:
+-            wa_id = payload.phone.strip()
+-            phone_e164 = payload.phone.strip()
+-        else:
+-            seed = f'{tenant_id}:{payload.email or ""}:{secrets.token_hex(8)}'
+-            wa_id, phone_e164 = synthesize_web_identity(seed)
+-        contact_metadata = {'email': payload.email} if payload.email else {}
+-        contact = await conn.fetchrow(
+-            """
+-            insert into app.contacts (
+-              tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source
+-            )
+-            values ($1, $2, $3, $4, $5, 'web_widget', $6::jsonb, $7::jsonb)
+-            returning *
+-            """,
+-            tenant_id,
+-            wa_id,
+-            phone_e164,
+-            hash_phone(phone_e164),
+-            payload.name.strip(),
+-            json.dumps(contact_metadata),
+-            json.dumps(lead_source),
++        contact_metadata['unverified_phone'] = payload.phone.strip()
++    contact = await conn.fetchrow(
++        """
++        insert into app.contacts (
++          tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source
+         )
++        values ($1, $2, $3, $4, $5, 'web_widget', $6::jsonb, $7::jsonb)
++        returning *
++        """,
++        tenant_id,
++        wa_id,
++        phone_e164,
++        hash_phone(phone_e164),
++        payload.name.strip(),
++        json.dumps(contact_metadata),
++        json.dumps(lead_source),
++    )
+ 
+     conversation = await conn.fetchrow(
+         """
+         insert into app.conversations (tenant_id, contact_id, channel_id, status, opened_by, handoff_required)
+         values ($1, $2, $3, 'open', 'user', false)
+         returning *
+         """,
+         tenant_id,
+         contact['id'],
+         channel['id'],
+     )
+ 
+     inbound_message = await conn.fetchrow(
+         """
+         insert into app.messages (
+           tenant_id, conversation_id, direction, sender_actor_type,
+           body_text, message_type, status, received_at, payload
+         )
+         values ($1, $2, 'inbound', 'contact', $3, 'text', 'received', now(), $4::jsonb)
+         returning *
+         """,
+         tenant_id,
+         conversation['id'],
+         payload.message.strip(),
+         json.dumps({
+
+
+diff --git a/tests/test_web_widget_static.py b/tests/test_web_widget_static.py
+index 2582cca72ab32cf42a59faab48d5ae9ccb851012..1eed68f61b40f347ddbcbc424654e819ded9a8c3 100644
+--- a/tests/test_web_widget_static.py
++++ b/tests/test_web_widget_static.py
+@@ -67,50 +67,62 @@ def test_schemas_define_web_channel_models():
+ 
+ 
+ def test_routes_register_web_router_and_endpoints():
+     text = ROUTES.read_text()
+     assert "web_router = APIRouter(prefix='/web'" in text
+     assert "@web_router.post('/chat/start'" in text
+     assert "@web_router.post('/chat/{conversation_id}/messages'" in text
+     assert "@web_router.get('/chat/{conversation_id}/messages'" in text
+     assert 'router.include_router(web_router)' in text
+ 
+ 
+ def test_routes_admin_endpoints_for_web_channel():
+     text = ROUTES.read_text()
+     assert "@tenant_admin_router.get('/tenants/{tenant_id}/channels/web')" in text
+     assert "@tenant_admin_router.put('/tenants/{tenant_id}/channels/web')" in text
+     assert '_build_widget_snippet' in text
+ 
+ 
+ def test_routes_persist_lead_source_on_web_contact():
+     text = ROUTES.read_text()
+     # Web start endpoint must insert into contacts with lead_source column.
+     assert 'lead_source' in text
+     assert "source, metadata, lead_source" in text
+ 
+ 
++def test_routes_do_not_reuse_contacts_by_unverified_web_phone():
++    text = ROUTES.read_text()
++    start = text.index("@web_router.post('/chat/start'")
++    end = text.index("@web_router.post('/chat/{conversation_id}/messages'")
++    web_chat_start = text[start:end]
++
++    assert 'unverified_phone' in web_chat_start
++    assert 'synthesize_web_identity(seed)' in web_chat_start
++    assert 'phone_e164=$2' not in web_chat_start
++    assert 'existing_contact' not in web_chat_start
++
++
+ def test_routes_analytics_overview_returns_lead_sources():
+     text = ROUTES.read_text()
+     assert "lead_source->>'channel'" in text
+     assert "'lead_sources'" in text
+ 
+ 
+ def test_event_worker_skips_non_whatsapp_providers():
+     text = WORKER.read_text()
+     assert "c.provider = 'whatsapp_cloud_api'" in text
+ 
+ 
+ def test_main_adds_cors_middleware_for_web_widget():
+     text = MAIN.read_text()
+     assert 'web_widget_cors' in text
+     assert 'Access-Control-Allow-Origin' in text
+ 
+ 
+ # ───── Admin panel wiring ─────
+ 
+ 
+ def test_core_api_exposes_web_channel_helpers():
+     text = ADMIN_API.read_text()
+     assert 'export function getWebChannel(' in text
+     assert 'export function upsertWebChannel(' in text
+
+# Attack-path analysis
+Final: high | Decider: model_decided | Matrix severity: high | Policy adjusted: high
+## Rationale
+Kept as high. Static evidence and the validation PoC support a direct remote attack path from the public web widget to unauthorized identity binding and appointment-state mutation. The affected component is part of the main runtime, not tests or docs. Exploitation requires only public widget credentials plus a victim phone number, and the backend makes the security decision solely from that unverified phone. The impact is significant integrity compromise and customer impersonation inside a tenant, but the reviewed path does not show cross-tenant data access, account takeover, RCE, broad secret compromise, or major confidentiality loss; therefore high is appropriate and critical would be overstated.
+## Likelihood
+high - The route is public and intended for internet-facing embedded widgets. The widget token and tenant slug are embedded in website snippets by design. The only additional attacker knowledge is a customer's phone number, which is commonly known, guessable, or obtainable in the target business context. Origin checks and widget tokens reduce casual abuse but do not prove customer identity. | Remote network vector
+## Impact
+high - An unauthenticated external actor can impersonate a known customer within a tenant, inject conversations/messages as that customer, and trigger appointment confirmation or feedback state changes. The demonstrated effect is unauthorized integrity modification of appointment state. Confidentiality impact is not strongly demonstrated and the attack remains tenant-scoped, so it does not rise to critical.
+## Assumptions
+- The web widget API is deployed as part of the main FastAPI product service.
+- Tenant websites embed the widget snippet containing tenant_slug and widget_token as designed.
+- An attacker can learn or guess a victim customer's phone number, which is realistic for appointment-driven WhatsApp/contact workflows.
+- At least one tenant has an active web channel and an existing contact with an appointment or feedback-eligible appointment state.
+- active tenant web channel
+- tenant_slug and widget_token obtainable from embedded widget snippet or page source
+- victim phone number matching app.contacts.phone_e164 for that tenant
+- target contact has a scheduled or confirmed appointment for the demonstrated confirmation-status mutation
+- origin allowed by configuration or a non-browser client that can set/spoof the Origin header
+## Path
+Public widget snippet
+  -> POST /v1/web/chat/start {tenant_slug, widget_token, victim_phone, message:'no'}
+  -> token/origin checks only
+  -> SELECT existing contact by phone_e164
+  -> INSERT conversation + inbound message as contact
+  -> orchestrator confirmation handler
+  -> UPDATE app.appointments confirmation_status
+## Path evidence
+- `app/api/v1/routes.py:5434` - web_router is declared as a public-web-widget router without tenant-user authentication dependencies.
+- `app/api/v1/routes.py:5512-5543` - Public /chat/start endpoint validates tenant slug, active web channel, widget token, and optional origin before setting tenant context; no customer identity proof is required.
+- `app/api/v1/schemas.py:370-380` - Anonymous WebChatStart payload accepts arbitrary optional phone and initial message.
+- `admin-panel/public/widget.js:119-123` - The public widget renders an optional phone field to untrusted web users.
+- `admin-panel/public/widget.js:191-207` - The frontend sends tenant_slug, widget_token, phone, and attacker-controlled message to /v1/web/chat/start.
+- `app/api/v1/routes.py:5552-5562` - Backend reuses an existing contact when attacker-supplied phone matches app.contacts.phone_e164.
+- `app/api/v1/routes.py:5588-5635` - The endpoint creates a conversation and inbound contact message for the reused contact and passes it to the normal orchestrator.
+- `app/services/rag_orchestrator.py:398-421` - The orchestrator treats inbound messages as contact replies and calls feedback and confirmation handlers with contact['id'].
+- `app/services/feedback_flow.py:59-77` - Appointment selection is based on tenant_id and contact_id, so the reused contact targets the victim contact's appointment.
+- `app/services/feedback_flow.py:127-155` - A simple confirmation reply updates app.appointments.confirmation_status for the selected appointment.
+- `app/main.py:21-50` - The main app identifies /v1/web/* as web-widget paths and adds permissive CORS headers so public browser clients can reach these endpoints.
+- `docker-compose.yml:19-21` - The API service is bound to 0.0.0.0:8000 and mapped to host port 8000 in the checked-in deployment config.
+## Narrative
+This is a real in-scope security vulnerability. The main FastAPI app exposes /v1/web/chat/start under the public web widget router. The widget snippet intentionally embeds data-tenant and data-widget-token, and the frontend form accepts an optional arbitrary phone number. The backend validates only the tenant widget token and optional origin, then looks up app.contacts by tenant_id and the supplied phone_e164. If a contact exists, it reuses that contact without proving the web user controls the phone number, inserts an inbound message as sender_actor_type='contact', and immediately calls the normal orchestrator. The orchestrator's confirmation and feedback handlers use the reused contact id to find the latest appointment and update confirmation_status from simple replies such as 'no'. Validation evidence included an executable coroutine PoC with a fake asyncpg connection showing an anonymous payload using victim phone +573001234567 and message 'no' returned the victim contact id and changed the appointment confirmation_status to declined. The impact is unauthorized customer impersonation and integrity modification inside a tenant; it does not demonstrate cross-tenant takeover or code execution, so high rather than critical is appropriate.
+## Controls
+- Widget token is generated with high entropy and compared using constant_time_equals
+- Optional per-tenant allowed_origins check exists, but Origin is not customer authentication and can be set by non-browser clients
+- Subsequent web chat messages require a 24h web session JWT
+- RLS and tenant_id filters exist for database access
+- Audit event web_widget.chat_started is emitted
+- No phone/email ownership verification before contact reuse
+- No explicit rate limiter found for /v1/web/chat/start
+- No orchestrator guard distinguishing unverified web leads from verified contact-channel messages
+## Blindspots
+- Static review did not call live cloud APIs or inspect production ingress/WAF/rate-limit configuration.
+- Production tenants may configure strict allowed_origins, but server-side Origin headers remain spoofable by non-browser clients and do not establish phone ownership.
+- The validation PoC used a fake asyncpg connection rather than a full deployed stack, although it exercised the real coroutine and orchestrator path.
+- The full set of orchestrator actions reachable from a web-impersonated contact was not exhaustively reviewed; impact may be broader than the demonstrated confirmation/feedback updates.

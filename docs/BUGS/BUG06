@@ -1,0 +1,676 @@
+Tenant invites expose Auth0 password reset tickets
+Link: https://chatgpt.com/codex/cloud/security/findings/a410c92855fc8191af4adf2604d8a182?repo=https%3A%2F%2Fgithub.com%2Fvmantilla%2FCopilotoIA&sev=high
+Criticality: high (attack path: high)
+Status: new
+
+# Metadata
+Repo: vmantilla/CopilotoIA
+Commit: 500953d
+Author: noreply@anthropic.com
+Created: 5/11/2026, 10:57:06 PM
+Assignee: Unassigned
+Signals: Security, Validated, Patch generated, Attack-path
+
+# Summary
+Introduced bug: the invitation helper uses a password-change ticket as an invitation mechanism without first creating/binding a new Auth0 user by user_id and without ensuring the ticket is delivered only to the intended email owner. The returned ticket is exposed to the inviting tenant admin.
+A tenant admin can call the new member invite endpoint with any email address. When that email is not found in the local app.users table, the backend creates a pending local user and calls Auth0's /tickets/password-change endpoint using the attacker-supplied email. Auth0 password-change tickets are password reset links; if the email belongs to an existing Auth0 user that has not yet been recorded in app.users, Auth0 returns a reset ticket for that real account. The backend then returns this ticket URL and the frontend displays it for copying. This turns tenant member invitation into an Auth0 account takeover primitive for users outside the attacker's tenant, potentially including platform/support/admin accounts or pre-provisioned Auth0 users.
+
+# Validation
+## Rubric
+- [x] Confirm the tenant member invite endpoint is reachable by a tenant admin and accepts an arbitrary email payload.
+- [x] Confirm that when the email is absent from local `app.users`, the route creates only a local `pending|...` user and does not create/bind an Auth0 user.
+- [x] Confirm the Auth0 helper uses `/tickets/password-change` with the supplied `email` rather than a verified/bound `user_id`.
+- [x] Confirm the ticket URL returned by Auth0 is propagated in the API response.
+- [x] Confirm the admin frontend renders/copies the returned ticket URL for the inviting tenant admin.
+## Report
+Validated the finding as a real authorization/account-takeover primitive in the invitation flow. Direct crash reproduction is not applicable because this is Python business-logic/authentication code, not memory-corruption code. Valgrind was attempted but unavailable in the container (`VALGRIND_NOT_INSTALLED`). I then used a dynamic PoC plus non-interactive pdb tracing.
+
+Key code evidence:
+- `app/api/v1/routes.py:901-923`: the invite endpoint normalizes the tenant-admin supplied email, queries only local `app.users`, and if absent creates a local invited user with `auth_subject = pending|...`; it does not create or bind an Auth0 user.
+- `app/api/v1/routes.py:964-973`: for absent/local-pending users it calls `auth0_invite_user(email=email, ...)`.
+- `app/services/auth0_admin.py:155-187`: `invite_user()` builds a request body containing `email`, posts to `/tickets/password-change`, and returns `{'ticket_url': response.get('ticket')}`.
+- `admin-panel/src/components/modules/team/TeamModule.jsx:117-123` and `204-214`: the frontend treats `result.auth0.ticket_url` as an invitation link and renders/copies it for the tenant admin.
+
+Dynamic PoC evidence:
+- Command: `PYTHONPATH=/workspace/CopilotoIA python /workspace/validation_artifacts/copilotoia-auth0-invite-ticket/poc_auth0_invite_ticket.py`
+- The PoC exercised the real `auth0_admin.invite_user()` helper with the HTTP transport stubbed and showed the management call was `POST /tickets/password-change` with JSON body containing `"email": "victim-platform-admin@example.com"`, no `user_id`, and returned `"ticket_url": "https://tenant.auth0.com/lo/reset?ticket=RESET_FOR_victim-platform-admin@example.com"`.
+- The PoC also exercised the real `invite_tenant_member()` route with DB/auth dependencies stubbed. For a locally unknown victim email, it created `created_local_auth_subject: "pending|0760c404963a5e46807fe5626147358b"`, called Auth0 invite with that victim email, and returned an API response containing `auth0.ticket_url` and `auth0_skipped: false`.
+
+Debugger evidence:
+- Command: `printf 'c\np body\nc\nq\n' | PYTHONPATH=/workspace/CopilotoIA python -m pdb -c "b /workspace/CopilotoIA/app/services/auth0_admin.py:183" /workspace/validation_artifacts/copilotoia-auth0-invite-ticket/poc_auth0_invite_ticket.py`
+- pdb stopped at `app/services/auth0_admin.py:183` just before `_mgmt_request('POST', '/tickets/password-change', json_body=body)`. Inspecting `body` printed: `{'email': 'victim-platform-admin@example.com', 'result_url': 'https://admin.example/callback', 'mark_email_as_verified': False, 'includeEmailInRedirect': True, 'ttl_sec': 604800, 'user_metadata': {'display_name': 'Victim Outside Tenant'}}`.
+
+Targeted tests: `pytest -q tests/test_tenant_team_static.py` completed with `16 passed`, confirming the committed TASK-0041 code is present and wired as expected.
+
+Conclusion: the suspected issue is validated. An authenticated tenant admin can cause the backend to request an Auth0 password-change ticket for an arbitrary email not present in local `app.users`, and the resulting ticket URL is returned to and displayed for the tenant admin. In a real Auth0-enabled deployment, if that email belongs to an existing Auth0 account outside the tenant/local user table, this exposes a usable password reset link to the inviter.
+
+# Evidence
+admin-panel/src/components/modules/team/TeamModule.jsx (L117 to 123)
+  Note: The frontend treats the returned Auth0 ticket URL as an invitation link and stores it for display to the tenant admin.
+```
+      const ticketUrl = result?.auth0?.ticket_url;
+      if (ticketUrl) {
+        setPendingTicket({ email: result.email, ticket_url: ticketUrl });
+        setNotice({
+          type: 'success',
+          text: 'Invitación creada. Copia el enlace para que el usuario configure su contraseña.',
+        });
+```
+
+admin-panel/src/components/modules/team/TeamModule.jsx (L204 to 214)
+  Note: The password-change ticket URL is rendered and can be copied by the inviting tenant admin, exposing a usable reset link.
+```
+      {pendingTicket ? (
+        <div className="info-banner" style={{ wordBreak: 'break-all' }}>
+          <strong>Enlace para {pendingTicket.email}:</strong>
+          <br />
+          <code>{pendingTicket.ticket_url}</code>{' '}
+          <button
+            type="button"
+            className="secondary-action"
+            onClick={() => navigator.clipboard?.writeText(pendingTicket.ticket_url)}
+          >
+            Copiar
+```
+
+app/api/v1/routes.py (L919 to 973)
+  Note: For any email not found in local app.users, the endpoint creates only a pending local user and then calls auth0_invite_user with the attacker-supplied email.
+```
+    else:
+        # No Auth0 subject yet — use a stable placeholder so the schema's
+        # NOT NULL/UNIQUE constraints on auth_subject are satisfied.
+        pending_subject = f'pending|{uuid5(NAMESPACE_URL, email).hex}'
+        row = await conn.fetchrow(
+            """
+            insert into app.users (auth_subject, email, display_name, status)
+            values ($1, $2, $3, 'invited')
+            returning id, auth_subject
+            """,
+            pending_subject,
+            email,
+            payload.display_name or email.split('@', 1)[0],
+        )
+        user_id = row['id']
+        auth_subject = row['auth_subject']
+
+    already_member = await conn.fetchval(
+        'select 1 from app.user_tenant_roles where user_id=$1 and tenant_id=$2 limit 1',
+        user_id,
+        tenant_id,
+    )
+    if already_member:
+        raise HTTPException(
+            status_code=409,
+            detail='This user already belongs to the tenant; update their role instead.',
+        )
+
+    is_default = not bool(
+        await conn.fetchval(
+            'select 1 from app.user_tenant_roles where user_id=$1 limit 1', user_id
+        )
+    )
+    await conn.execute(
+        """
+        insert into app.user_tenant_roles (user_id, tenant_id, role, is_default)
+        values ($1, $2, $3, $4)
+        on conflict (user_id, tenant_id, role) do update set is_default=excluded.is_default
+        """,
+        user_id,
+        tenant_id,
+        payload.role,
+        is_default,
+    )
+
+    auth0_result: dict[str, Any] = {'disabled': True}
+    if not existing or (auth_subject and auth_subject.startswith('pending|')):
+        # New user — try to send invitation ticket through Auth0.
+        try:
+            auth0_result = await auth0_invite_user(
+                email=email,
+                role=payload.role,
+                tenant_id=tenant_id,
+                display_name=payload.display_name,
+            )
+```
+
+app/services/auth0_admin.py (L155 to 187)
+  Note: auth0_invite_user uses Auth0's password-change ticket endpoint with the supplied email and returns the resulting ticket URL instead of creating a new Auth0 user and binding the ticket to that user.
+```
+async def invite_user(
+    *, email: str, role: str, tenant_id: UUID, display_name: str | None = None
+) -> dict[str, Any]:
+    """Create a password-change ticket so the new user can set their password.
+
+    Auth0 docs:
+      POST /api/v2/tickets/password-change
+
+    Returns a dict with either ``ticket_url`` or ``disabled=True`` when
+    management credentials are missing.  Caller is responsible for
+    showing the URL to the operator and/or sending the email.
+    """
+    if not auth0_management_enabled():
+        return {'disabled': True}
+    settings = get_settings()
+    body = {
+        'email': email,
+        'result_url': _admin_panel_result_url(settings),
+        'mark_email_as_verified': False,
+        'includeEmailInRedirect': True,
+        'ttl_sec': 60 * 60 * 24 * 7,
+        'connection_id': None,
+    }
+    if display_name:
+        body['user_metadata'] = {'display_name': display_name}
+    # Auth0 rejects null connection_id; drop it when not specified.
+    body.pop('connection_id', None)
+    try:
+        response = await _mgmt_request('POST', '/tickets/password-change', json_body=body)
+    except httpx.HTTPError as exc:
+        log.warning('auth0_admin.invite_user_failed', error=str(exc), email=email)
+        return {'disabled': False, 'error': str(exc)}
+    return {'disabled': False, 'ticket_url': response.get('ticket')}
+```
+
+Proposed patch:
+diff --git a/admin-panel/src/components/modules/team/TeamModule.jsx b/admin-panel/src/components/modules/team/TeamModule.jsx
+index 47f18b52801bc6595b27408e3c31fc76c7345cdc..eb85ee846926094ad5455584db6a6cbcd06dfbca 100644
+--- a/admin-panel/src/components/modules/team/TeamModule.jsx
++++ b/admin-panel/src/components/modules/team/TeamModule.jsx
+@@ -47,106 +47,102 @@ function RoleBadge({ role }) {
+         padding: '2px 8px',
+         borderRadius: 12,
+         fontSize: 12,
+         fontWeight: 600,
+         textTransform: 'uppercase',
+         letterSpacing: 0.4,
+       }}
+     >
+       {role}
+     </span>
+   );
+ }
+ 
+ function Notice({ notice }) {
+   if (!notice) return null;
+   return <p className={`notice ${notice.type}`}>{notice.text}</p>;
+ }
+ 
+ export function TeamModule({ module, session, tenant }) {
+   const [members, setMembers] = useState([]);
+   const [auth0Enabled, setAuth0Enabled] = useState(false);
+   const [notice, setNotice] = useState(null);
+   const [isLoading, setIsLoading] = useState(false);
+   const [isBusy, setIsBusy] = useState(false);
+   const [inviteForm, setInviteForm] = useState({ email: '', display_name: '', role: 'agent' });
+-  const [pendingTicket, setPendingTicket] = useState(null);
+ 
+   const profileRoles = useMemo(() => {
+     const fromProfile = session?.profile?.roles || [];
+     const fromTenant = tenant?.roles || [];
+     return new Set([...fromProfile, ...fromTenant]);
+   }, [session?.profile?.roles, tenant?.roles]);
+   const callerIsOwner = profileRoles.has('owner') || profileRoles.has('platform_owner');
+ 
+   const refresh = useCallback(async () => {
+     if (!tenant?.id) return;
+     setIsLoading(true);
+     setNotice(null);
+     try {
+       const result = await listTenantMembers(session, tenant.id);
+       setMembers(result?.members || []);
+       setAuth0Enabled(Boolean(result?.auth0_management_enabled));
+     } catch (error) {
+       setNotice({ type: 'error', text: error.message || 'No se pudo cargar el equipo del tenant.' });
+     } finally {
+       setIsLoading(false);
+     }
+   }, [session, tenant?.id]);
+ 
+   useEffect(() => {
+     refresh();
+   }, [refresh]);
+ 
+   async function handleInvite(event) {
+     event.preventDefault();
+     if (!tenant?.id) return;
+     if (!inviteForm.email.trim()) {
+       setNotice({ type: 'error', text: 'Ingresa el email del nuevo miembro.' });
+       return;
+     }
+     setIsBusy(true);
+     setNotice(null);
+-    setPendingTicket(null);
+     try {
+       const result = await inviteTenantMember(session, tenant.id, {
+         email: inviteForm.email.trim(),
+         display_name: inviteForm.display_name.trim() || undefined,
+         role: inviteForm.role,
+       });
+       setInviteForm({ email: '', display_name: '', role: 'agent' });
+-      const ticketUrl = result?.auth0?.ticket_url;
+-      if (ticketUrl) {
+-        setPendingTicket({ email: result.email, ticket_url: ticketUrl });
++      if (result?.auth0_skipped) {
+         setNotice({
+           type: 'success',
+-          text: 'Invitación creada. Copia el enlace para que el usuario configure su contraseña.',
++          text: 'Miembro agregado. Auth0 Management API no está habilitado: sincroniza manualmente desde el dashboard.',
+         });
+-      } else if (result?.auth0_skipped) {
++      } else if (result?.auth0?.skipped === 'manual_auth0_invite_required') {
+         setNotice({
+           type: 'success',
+-          text: 'Miembro agregado. Auth0 Management API no está habilitado: sincroniza manualmente desde el dashboard.',
++          text: 'Miembro agregado. Completa la invitación de Auth0 desde un canal autorizado.',
+         });
+       } else {
+         setNotice({ type: 'success', text: 'Miembro agregado.' });
+       }
+       await refresh();
+     } catch (error) {
+       setNotice({ type: 'error', text: error.message || 'No se pudo invitar al miembro.' });
+     } finally {
+       setIsBusy(false);
+     }
+   }
+ 
+   async function handleRoleChange(member, nextRole) {
+     if (!tenant?.id) return;
+     if (nextRole === 'owner' && !callerIsOwner) {
+       setNotice({ type: 'error', text: 'Solo un owner puede asignar el rol owner.' });
+       return;
+     }
+     const confirmed = window.confirm(
+       `¿Cambiar el rol de ${member.email} de "${highestRole(member.roles)}" a "${nextRole}"?`,
+     );
+     if (!confirmed) return;
+     setIsBusy(true);
+     setNotice(null);
+     try {
+@@ -179,65 +175,50 @@ export function TeamModule({ module, session, tenant }) {
+     }
+   }
+ 
+   const ownerCount = members.filter((m) => m.roles?.includes('owner')).length;
+ 
+   return (
+     <section className="module-card team-module">
+       <header className="module-header">
+         <p className="eyebrow">{module?.label || 'Equipo'}</p>
+         <h2>Miembros del tenant</h2>
+         <p className="hint">
+           Invita, asigna roles y revoca acceso. El rol <strong>owner</strong> tiene acceso total; el resto
+           se rige por la jerarquía admin → manager → agent → viewer.
+         </p>
+       </header>
+ 
+       {!auth0Enabled ? (
+         <div className="warn-banner" role="status">
+           Auth0 Management API no está habilitada. Los cambios se reflejarán en el próximo login del usuario;
+           sincroniza manualmente desde el dashboard de Auth0 si es necesario.
+         </div>
+       ) : null}
+ 
+       <Notice notice={notice} />
+ 
+-      {pendingTicket ? (
+-        <div className="info-banner" style={{ wordBreak: 'break-all' }}>
+-          <strong>Enlace para {pendingTicket.email}:</strong>
+-          <br />
+-          <code>{pendingTicket.ticket_url}</code>{' '}
+-          <button
+-            type="button"
+-            className="secondary-action"
+-            onClick={() => navigator.clipboard?.writeText(pendingTicket.ticket_url)}
+-          >
+-            Copiar
+-          </button>
+-        </div>
+-      ) : null}
+-
+       <form className="form-grid" onSubmit={handleInvite}>
+         <h3>Invitar miembro</h3>
+         <div className="form-row">
+           <label>
+             Email
+             <input
+               type="email"
+               required
+               value={inviteForm.email}
+               onChange={(event) => setInviteForm((f) => ({ ...f, email: event.target.value }))}
+               placeholder="usuario@dominio.com"
+             />
+           </label>
+           <label>
+             Nombre (opcional)
+             <input
+               type="text"
+               value={inviteForm.display_name}
+               onChange={(event) => setInviteForm((f) => ({ ...f, display_name: event.target.value }))}
+               placeholder="María Pérez"
+             />
+           </label>
+           <label>
+             Rol
+             <select
+
+
+diff --git a/app/api/v1/routes.py b/app/api/v1/routes.py
+index 27dbbf17a00c0645d59193fa404be1cc0a6d4dc6..0335592cbf4f9729f3c42a5c319b9824126898a5 100644
+--- a/app/api/v1/routes.py
++++ b/app/api/v1/routes.py
+@@ -978,51 +978,51 @@ async def invite_tenant_member(
+     if already_member:
+         raise HTTPException(
+             status_code=409,
+             detail='This user already belongs to the tenant; update their role instead.',
+         )
+ 
+     is_default = not bool(
+         await conn.fetchval(
+             'select 1 from app.user_tenant_roles where user_id=$1 limit 1', user_id
+         )
+     )
+     await conn.execute(
+         """
+         insert into app.user_tenant_roles (user_id, tenant_id, role, is_default)
+         values ($1, $2, $3, $4)
+         on conflict (user_id, tenant_id, role) do update set is_default=excluded.is_default
+         """,
+         user_id,
+         tenant_id,
+         payload.role,
+         is_default,
+     )
+ 
+     auth0_result: dict[str, Any] = {'disabled': True}
+     if not existing or (auth_subject and auth_subject.startswith('pending|')):
+-        # New user — try to send invitation ticket through Auth0.
++        # New/pending local user — never request email-bound Auth0 reset tickets.
+         try:
+             auth0_result = await auth0_invite_user(
+                 email=email,
+                 role=payload.role,
+                 tenant_id=tenant_id,
+                 display_name=payload.display_name,
+             )
+         except Exception as exc:  # noqa: BLE001 - log and continue without Auth0
+             log.warning('tenant_member.auth0_invite_failed', error=str(exc))
+             auth0_result = {'disabled': False, 'error': str(exc)}
+     else:
+         # Existing Auth0 user — keep their tenant_roles claim in sync.
+         try:
+             roles_payload = await conn.fetch(
+                 """
+                 select utr.tenant_id::text as tenant_id, utr.role
+                 from app.user_tenant_roles utr
+                 where utr.user_id=$1
+                 """,
+                 user_id,
+             )
+             roles_list = [
+                 {'tenant_id': r['tenant_id'], 'role': r['role']} for r in roles_payload
+             ]
+             auth0_result = await auth0_assign_roles(
+
+
+diff --git a/app/services/auth0_admin.py b/app/services/auth0_admin.py
+index 58b47505d63abaf798f6b839614e71fe26d8e442..842e326c259f6c9da8c6e57e23022d5b8476c32d 100644
+--- a/app/services/auth0_admin.py
++++ b/app/services/auth0_admin.py
+@@ -133,80 +133,71 @@ async def _mgmt_request(
+     if not token:
+         return {'disabled': True}
+     settings = get_settings()
+     domain = settings.auth0_domain.removeprefix('https://').rstrip('/')
+     url = f'https://{domain}/api/v2{path}'
+     headers = {'authorization': f'Bearer {token}', 'accept': 'application/json'}
+     async with httpx.AsyncClient(timeout=10.0) as client:
+         response = await client.request(method, url, headers=headers, json=json_body)
+     if response.status_code >= 400:
+         log.warning(
+             'auth0_admin.request_failed',
+             method=method,
+             path=path,
+             status=response.status_code,
+             detail=response.text[:512],
+         )
+         response.raise_for_status()
+     if response.status_code == 204 or not response.content:
+         return {}
+     return response.json()
+ 
+ 
+ async def invite_user(
+     *, email: str, role: str, tenant_id: UUID, display_name: str | None = None
+ ) -> dict[str, Any]:
+-    """Create a password-change ticket so the new user can set their password.
+-
+-    Auth0 docs:
+-      POST /api/v2/tickets/password-change
+-
+-    Returns a dict with either ``ticket_url`` or ``disabled=True`` when
+-    management credentials are missing.  Caller is responsible for
+-    showing the URL to the operator and/or sending the email.
++    """Record that an Auth0 invite must be completed outside this helper.
++
++    The tenant invite flow only knows the invitee's email address for new local
++    users.  Auth0 password-change tickets created by email can reset an
++    already-existing Auth0 account that is not yet linked in ``app.users``, and
++    returning such a ticket to the inviting tenant admin would expose an account
++    takeover primitive.  Until this service can create and bind a brand-new
++    Auth0 user by ``user_id``, invitations remain local and operators must send
++    Auth0 onboarding messages through a trusted channel.
+     """
+     if not auth0_management_enabled():
+         return {'disabled': True}
+-    settings = get_settings()
+-    body = {
+-        'email': email,
+-        'result_url': _admin_panel_result_url(settings),
+-        'mark_email_as_verified': False,
+-        'includeEmailInRedirect': True,
+-        'ttl_sec': 60 * 60 * 24 * 7,
+-        'connection_id': None,
+-    }
+-    if display_name:
+-        body['user_metadata'] = {'display_name': display_name}
+-    # Auth0 rejects null connection_id; drop it when not specified.
+-    body.pop('connection_id', None)
+-    try:
+-        response = await _mgmt_request('POST', '/tickets/password-change', json_body=body)
+-    except httpx.HTTPError as exc:
+-        log.warning('auth0_admin.invite_user_failed', error=str(exc), email=email)
+-        return {'disabled': False, 'error': str(exc)}
+-    return {'disabled': False, 'ticket_url': response.get('ticket')}
++
++    log.info(
++        'auth0_admin.invite_user_manual_sync_required',
++        email=email,
++        role=role,
++        tenant_id=str(tenant_id),
++        display_name=display_name,
++    )
++    return {'disabled': False, 'skipped': 'manual_auth0_invite_required'}
+ 
+ 
+ async def assign_roles(*, auth_subject: str | None, roles: list[str]) -> dict[str, Any]:
+     """Persist the user's tenant role into Auth0 user_metadata.
+ 
+     The actual role injection into the JWT is performed by the post-login
+     Action that reads ``user_metadata.tenant_roles`` and emits the
+     ``{namespace}/roles`` claim.  Storing a list of ``{tenant_id, role}``
+     entries keeps multi-tenant assignments coherent.
+     """
+     if not auth0_management_enabled():
+         return {'disabled': True}
+     if not auth_subject:
+         return {'disabled': False, 'skipped': 'no_auth_subject'}
+     try:
+         await _mgmt_request(
+             'PATCH',
+             f'/users/{auth_subject}',
+             json_body={'user_metadata': {'tenant_roles': roles}},
+         )
+     except httpx.HTTPError as exc:
+         log.warning('auth0_admin.assign_roles_failed', error=str(exc))
+         return {'disabled': False, 'error': str(exc)}
+     return {'disabled': False, 'synced': True}
+ 
+
+
+diff --git a/tests/test_tenant_team_static.py b/tests/test_tenant_team_static.py
+index d9d1b23456f3fbf53a47eb63ff99bf29cbc7228f..611119e7722ba6d0da141ad35370ce4373f5ad86 100644
+--- a/tests/test_tenant_team_static.py
++++ b/tests/test_tenant_team_static.py
+@@ -77,92 +77,96 @@ def test_member_routes_emit_audit_actions():
+ 
+ 
+ def test_last_owner_cannot_be_demoted_or_removed():
+     source = ROUTES.read_text()
+     assert 'Cannot demote the last owner of the tenant' in source
+     assert 'Cannot remove the last owner of the tenant' in source
+ 
+ 
+ def test_owner_role_can_only_be_assigned_by_owner():
+     source = ROUTES.read_text()
+     assert '_ensure_caller_can_target_role' in source
+     assert "Only an owner can manage the owner role" in source
+ 
+ 
+ def test_auth0_admin_service_exposes_required_helpers():
+     source = AUTH0_ADMIN.read_text()
+     assert 'async def get_management_token' in source
+     assert 'async def invite_user' in source
+     assert 'async def assign_roles' in source
+     assert 'async def revoke_tenant_roles' in source
+     # Must short-circuit (no-op) when management credentials are missing.
+     assert "auth0_management_enabled" in source
+     assert "return {'disabled': True}" in source
+ 
+ 
+-def test_auth0_admin_uses_management_api_endpoints():
++def test_auth0_admin_does_not_expose_password_reset_tickets_for_invites():
+     source = AUTH0_ADMIN.read_text()
+-    # Password-change ticket for invitations.
+-    assert "'/tickets/password-change'" in source
+-    # PATCH /users/{id} keeps user_metadata in sync.
++    # Tenant invites must not create email-bound Auth0 password reset tickets.
++    assert "'/tickets/password-change'" not in source
++    assert 'ticket_url' not in source
++    assert 'manual_auth0_invite_required' in source
++    # PATCH /users/{id} keeps user_metadata in sync for already linked users.
+     assert "'/users/" in source
+ 
+ 
+ def test_invite_endpoint_marks_skip_when_auth0_disabled():
+     source = ROUTES.read_text()
+     assert 'auth0_skipped' in source
+     assert 'auth0_management_enabled()' in source
+ 
+ 
+ def test_admin_panel_exposes_team_module():
+     modules = MODULES.read_text()
+     assert "id: 'team'" in modules
+     assert "minRole: 'admin'" in modules
+ 
+     layout = ADMIN_LAYOUT.read_text()
+     assert "TeamModule" in layout
+     assert "activeModuleId === 'team'" in layout
+     assert 'hasMinRole' in layout
+ 
+     api = CORE_API.read_text()
+     for helper in (
+         'listTenantMembers',
+         'inviteTenantMember',
+         'updateTenantMemberRole',
+         'removeTenantMember',
+     ):
+         assert helper in api
+ 
+ 
+ def test_team_ui_supports_invite_and_role_change():
+     ui = TEAM_UI.read_text()
+     assert 'Invitar miembro' in ui
+     assert 'inviteTenantMember' in ui
+     assert 'updateTenantMemberRole' in ui
+     assert 'removeTenantMember' in ui
+-    # Auth0 not-configured warning.
++    # Auth0 not-configured warning and secure manual invite follow-up.
+     assert 'Auth0 Management API no está habilitada' in ui
++    assert 'Completa la invitación de Auth0 desde un canal autorizado' in ui
++    assert 'ticket_url' not in ui
+ 
+ 
+ def test_sidebar_shows_slack_style_switcher():
+     sidebar = SIDEBAR.read_text()
+     assert 'tenant-switcher' in sidebar
+     assert 'tenantOptions.map' in sidebar
+     # Per-tenant role shown in the dropdown subtitle.
+     assert 'tenant.role' in sidebar or 'tenant?.role' in sidebar
+ 
+ 
+ def test_admin_layout_persists_active_tenant_for_switching():
+     layout = ADMIN_LAYOUT.read_text()
+     assert "localStorage" in layout
+     assert "copilotoia.activeTenantId" in layout
+     # canSwitchTenants triggers whenever the user belongs to more than one tenant.
+     assert 'tenantOptions.length > 1' in layout
+ 
+ 
+ def test_me_tenants_aggregates_roles_per_tenant():
+     """The endpoint must return ``roles`` (plural) so the switcher can show
+     multi-role memberships and the team module can pick the highest role."""
+     source = ROUTES.read_text()
+     # Snippet of the SQL aggregation that turns the join into one row per tenant.
+     assert "array_agg(utr.role" in source
+     assert "as roles" in source
+
+# Attack-path analysis
+Final: high | Decider: model_decided | Matrix severity: high | Policy adjusted: high
+## Rationale
+Severity is kept at high. The code evidence and validation PoC show a credible account-takeover path: the tenant-admin invite endpoint accepts arbitrary email input, creates only a local pending user, calls Auth0 /tickets/password-change with that email, returns the resulting ticket_url, and the frontend displays it for copying. This is main runtime code and the tenant-admin actor is in scope under the threat model. The issue is not raised to critical because exploitation requires authenticated tenant-admin privileges, Auth0 Management API configuration, and a target account that exists in Auth0 but not in the local app.users table; it is not unauthenticated or universally mass-exploitable from the public internet.
+## Likelihood
+high - The exploit uses normal tenant member invitation functionality over the network and the attacker controls the invite email. However, it requires an authenticated tenant admin or owner, Auth0 Management API to be enabled, and a target Auth0 user that is not already represented as a normal local app.users row. Those preconditions make exploitation plausible but not as broadly likely as an unauthenticated issue. | Remote network vector
+## Impact
+high - Successful exploitation exposes an Auth0 password-change ticket for an account outside the attacker's tenant/local app.users set. A usable ticket allows the tenant admin to set the victim's password and take over that Auth0 identity, potentially including platform/support/admin or pre-provisioned accounts. This crosses the tenant boundary and compromises identity confidentiality and integrity.
+## Assumptions
+- Production deployments using Auth0 configure AUTH0_DOMAIN, AUTH0_ADMIN_CLIENT_ID, and an Auth0 management client secret or secret file.
+- Auth0 password-change tickets generated by email are usable reset links for matching database-connection users, consistent with the code comments and validation PoC.
+- A tenant admin is an in-scope attacker role: trusted only inside their own tenant, not for platform or other-tenant identities.
+- The target account exists in Auth0 but is not yet present in the local app.users table, or is represented locally by a pending| placeholder.
+- Authenticated tenant user with admin-or-higher role reaching the tenant-admin router
+- Tenant access for the tenant_id used in POST /v1/tenants/{tenant_id}/members
+- Auth0 Management API enabled through configured Auth0 domain, client id, and client secret/secret file
+- Attacker supplies an arbitrary victim email that is absent from local app.users or mapped to a pending local user
+- Victim email corresponds to an existing Auth0 account for which Auth0 returns a password-change ticket
+## Path
+Tenant admin -> POST /v1/tenants/{tenant_id}/members(email=victim) -> local app.users miss -> pending| user -> Auth0 /tickets/password-change(email=victim) -> API returns ticket_url -> UI displays/copies link -> victim Auth0 password reset
+## Path evidence
+- `app/api/v1/routes.py:282-285` - The affected endpoints are in the tenant-admin router protected by authenticate_request and require_min_role('admin'), establishing authenticated tenant-admin reachability rather than developer-only code.
+- `app/api/v1/routes.py:888-899` - Defines POST /tenants/{tenant_id}/members and performs tenant access checks before processing the invite.
+- `app/api/v1/routes.py:901-934` - The attacker-controlled email is normalized, looked up only in local app.users, and if absent a pending local user is created without creating or binding an Auth0 user.
+- `app/api/v1/routes.py:964-973` - For missing or pending local users, the route calls auth0_invite_user with the attacker-supplied email.
+- `app/api/v1/routes.py:1009-1012` - The route returns the Auth0 result, including any ticket_url, in the API response.
+- `app/services/auth0_admin.py:56-62` - Auth0 Management API behavior is enabled when Auth0 domain, admin client id, and client secret/secret file are configured.
+- `app/services/auth0_admin.py:155-187` - invite_user builds a password-change ticket request containing email, posts to /tickets/password-change, and returns response.ticket as ticket_url.
+- `admin-panel/src/components/modules/team/TeamModule.jsx:110-123` - The frontend extracts result.auth0.ticket_url and stores it as a pending invitation ticket.
+- `admin-panel/src/components/modules/team/TeamModule.jsx:204-215` - The frontend renders the ticket URL and provides a copy button, exposing the reset link to the inviting tenant admin.
+- `docker-compose.yml:19-21` - The API service is configured to listen on 0.0.0.0:8000 and publish host port 8000.
+- `docker-compose.yml:48-50` - The admin panel is configured to listen on 0.0.0.0:3000 and publish host port 3000.
+- `app/core/config.py:24-32` - Auth0 domain, audience, management client id, management client secret, secret file, and callback URL are first-class runtime settings.
+## Narrative
+The finding is real and reachable in the main product. The API service exposes a FastAPI v1 tenant-admin router and docker-compose maps the API/admin panel to 0.0.0.0 ports 8000 and 3000. The member invite endpoint requires authentication and an admin role, but it accepts an arbitrary email, checks only the local app.users table, creates a pending local user for a miss, calls auth0_invite_user with that email, and returns auth0.ticket_url in the API response. auth0_invite_user explicitly calls Auth0 /tickets/password-change and returns response.ticket. The React Team module then stores and renders that ticket URL for copying by the tenant admin. Existing controls such as tenant access, role checks, and audit logging do not bind the ticket to a newly created Auth0 user or prevent exposing a password reset URL to the inviter. Severity remains high because this is an in-scope tenant-admin-to-external-identity account takeover primitive, but not critical due to requiring tenant-admin privileges, Auth0 Management API configuration, and a target Auth0 account absent from the local user table.
+## Controls
+- FastAPI authenticate_request dependency on tenant_admin_router
+- require_min_role('admin') for tenant-admin endpoints
+- ensure_tenant_access check against requested tenant_id/local membership
+- Database tenant context set with set_config('app.tenant_id', ...)
+- Member invite audit event tenant_member.invited
+- Auth0 Management API no-op mode when management credentials are missing
+- Frontend Team module restricted to admin/owner-visible team management in normal UI
+## Blindspots
+- Static-only repository review did not call live Auth0 APIs, so real tenant connection behavior and whether all target account types receive password-change tickets were not directly verified here.
+- Repository artifacts show docker-compose host port exposure but no production ingress or load balancer manifests, so exact internet exposure is inferred from the SaaS/admin API context and local deployment config.
+- The size of the vulnerable target population depends on operational Auth0/local user synchronization practices.
+- Self-service tenant creation was not fully reviewed here; if any user can become a tenant admin, practical likelihood increases.

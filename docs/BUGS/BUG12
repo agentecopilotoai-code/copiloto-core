@@ -1,0 +1,916 @@
+RAG replies can leak agents-only knowledge chunks
+Link: https://chatgpt.com/codex/cloud/security/findings/514c25e92988819194e66d52fb975ded?repo=https%3A%2F%2Fgithub.com%2Fvmantilla%2FCopilotoIA&sev=high
+Criticality: high (attack path: high)
+Status: new
+
+# Metadata
+Repo: vmantilla/CopilotoIA
+Commit: c8e7238
+Author: noreply@anthropic.com
+Created: 5/11/2026, 9:55:59 PM
+Assignee: Unassigned
+Signals: Security, Validated, Patch generated, Attack-path
+
+# Summary
+Introduced: the commit expands the customer-facing answer/context from a single best chunk to all matching chunks and adds an LLM context builder, both without filtering out `agents_only` documents.
+Knowledge documents support a visibility value of `agents_only`, but the inbound WhatsApp RAG path retrieves all active chunks for the tenant regardless of visibility. This commit makes the default template answer concatenate all matching chunk excerpts instead of only the best chunk, so a lower-ranked `agents_only` chunk can now be directly included in the outbound customer message. The new `local_llm` engine also builds LLM context from all matches without checking visibility, allowing the model to answer from internal-only material. An unauthenticated WhatsApp contact can ask a question with terms overlapping both public and internal documents and receive sensitive internal policy, pricing, discount, escalation, or operational content intended only for agents.
+
+# Validation
+## Rubric
+- [x] Confirm the data model has an internal-only visibility state (`agents_only`) distinct from customer-safe visibility.
+- [x] Confirm the WhatsApp RAG retrieval query only filters tenant/status and does not exclude `agents_only` documents before ranking.
+- [x] Confirm ranking preserves visibility but does not use it as an authorization/customer-safety filter.
+- [x] Confirm template answer generation concatenates all sufficiently scored matches, allowing a lower-ranked `agents_only` chunk into the outbound answer.
+- [x] Confirm local_llm context construction and /api/chat request include all sufficiently scored matches, including `agents_only` content.
+## Report
+Validated the information-disclosure finding with a targeted functional PoC and a non-interactive pdb trace. Code evidence: app/api/v1/schemas.py:183-193 allows visibility='agents_only'; app/services/rag_orchestrator.py:121-149 retrieves active tenant chunks with kd.status='active' but no kd.visibility filter before passing matches to template or LLM engines; app/services/rag_retrieval.py:111-137 preserves visibility but does not filter, and app/services/rag_retrieval.py:147-162 concatenates every match above min_score into the customer-facing template answer; app/services/llm_answer.py:28-37 builds LLM context from every match above min_score and app/services/llm_answer.py:62-75 sends that unfiltered context to /api/chat. The PoC created one tenant-visible chunk and one agents_only internal chunk with overlapping terms. Running `python /workspace/validation_artifacts/poc-agents-only-leak/poc_agents_only_leak.py` showed both chunks ranked: tenant score=0.89 and agents_only score=0.4981. The template answer included the internal string `SOLO_AGENTES: descuento VIP interno del 80% usando código SECRETO-AGENTES`. The fake Ollama server captured the real build_llm_answer /api/chat payload and the user message also contained the agents_only secret. The LLM decision returned an answered customer response containing `SECRETO-AGENTES`. A non-interactive pdb trace confirmed locals at app/services/rag_retrieval.py:160 contained both ('tenant', 0.89, ...) and ('agents_only', 0.4981, ...), and at app/services/llm_answer.py:62 the context variable contained the agents_only secret. Crash testing is not meaningful for this Python logic information disclosure; the faulthandler run exited 0 while reproducing the leak. Valgrind was attempted but unavailable in the container and is not applicable to this Python authorization/filtering flaw. Relevant tests `pytest -q tests/test_rag_retrieval.py tests/test_answer_engine_static.py -q` passed.
+
+# Evidence
+app/api/v1/schemas.py (L183 to 193)
+  Note: Knowledge documents explicitly support an `agents_only` visibility value, indicating some active knowledge is not intended for end-user replies.
+```
+class KnowledgeDocumentCreate(BaseModel):
+    tenant_id: UUID
+    title: str
+    source_type: str = Field(default='manual', pattern='^(upload|url|manual|integration)$')
+    document_type: str = Field(default='reference', pattern='^(faq|policy|reference)$')
+    source_uri: str | None = None
+    checksum: str | None = None
+    mime_type: str | None = None
+    content: str | None = None
+    visibility: str = Field(default='tenant', pattern='^(tenant|agents_only|public)$')
+    status: str = Field(default='draft', pattern='^(draft|indexing|active|failed)$')
+```
+
+app/services/llm_answer.py (L28 to 37)
+  Note: The new local LLM context builder includes all matching chunks above the score threshold without checking document visibility.
+```
+def _build_context(matches: list[RetrievalMatch], *, min_score: float) -> str:
+    parts = []
+    for m in matches:
+        if m.score < min_score:
+            continue
+        header = f'[{m.document_title}]'
+        if m.section_path:
+            header += f' › {m.section_path}'
+        parts.append(f'{header}\n{m.chunk_text}')
+    return '\n\n'.join(parts)
+```
+
+app/services/llm_answer.py (L62 to 75)
+  Note: The unfiltered RAG context is sent to the LLM as the basis for a customer answer, enabling internal-only content to influence or appear in the response.
+```
+    user_message = _USER_TEMPLATE.format(context=context, question=question)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(
+                f'{base_url.rstrip("/")}/api/chat',
+                json={
+                    'model': model,
+                    'stream': False,
+                    'options': {'temperature': 0.2, 'num_predict': 400},
+                    'messages': [
+                        {'role': 'system', 'content': _SYSTEM_PROMPT},
+                        {'role': 'user', 'content': user_message},
+                    ],
+```
+
+app/services/rag_orchestrator.py (L121 to 147)
+  Note: Inbound WhatsApp RAG retrieves all active chunks for the tenant and passes them to template or LLM answer generation without filtering `kd.visibility` to customer-safe values.
+```
+    # Retrieve active knowledge chunks and run RAG
+    rows = await conn.fetch(
+        """
+        select kc.id, kc.document_id,
+               kd.title as document_title, kd.source_uri, kd.source_type,
+               kd.document_type, kd.visibility,
+               kc.chunk_index, kc.section_path, kc.chunk_text, kc.token_count, kc.metadata
+        from app.knowledge_chunks kc
+        join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
+        where kc.tenant_id=$1
+          and kd.status='active'
+        order by kd.updated_at desc, kc.chunk_index asc
+        """,
+        tenant_id,
+    )
+    chunks = [dict(row) for row in rows]
+    matches = rank_chunks(body_text, chunks)
+
+    settings = get_settings()
+    if settings.answer_engine == 'local_llm' and matches:
+        decision = await build_llm_answer(
+            body_text,
+            matches,
+            base_url=settings.local_llm_base_url,
+            model=settings.local_llm_model,
+            timeout_seconds=settings.local_llm_timeout_seconds,
+        )
+```
+
+app/services/rag_retrieval.py (L147 to 162)
+  Note: The commit changed the template answer to concatenate every matching chunk above `min_score`; this can directly include lower-ranked `agents_only` chunks in the customer-facing answer.
+```
+def build_grounded_answer(question: str, matches: list[RetrievalMatch], *, min_score: float = DEFAULT_MIN_SCORE) -> dict[str, Any]:
+    sufficient_context = bool(matches) and matches[0].score >= min_score
+    if not sufficient_context:
+        return {
+            'status': 'escalate_to_human',
+            'sufficient_context': False,
+            'answer': None,
+            'reason': 'No hay evidencia activa suficiente en la base de conocimiento para responder con trazabilidad.',
+            'handoff': {'required': True, 'reason': 'knowledge_context_insufficient'},
+        }
+
+    best = matches[0]
+    source_label = best.source_uri or best.document_title
+    excerpts = [chunk_excerpt(m.chunk_text) for m in matches if m.score >= min_score]
+    combined = '\n'.join(excerpts)
+    answer = f"{combined}\n\n_(Fuente: {source_label})_"
+```
+
+Proposed patch:
+diff --git a/app/services/cloud_llm_answer.py b/app/services/cloud_llm_answer.py
+index a9dbbee24ad356a9dd61220e153baa60fd4c7d12..10d5ce1befe45bb20ff84239acacde8d8496a53e 100644
+--- a/app/services/cloud_llm_answer.py
++++ b/app/services/cloud_llm_answer.py
+@@ -1,62 +1,63 @@
+ """Cloud LLM answer generation via Anthropic (Claude) or OpenAI APIs.
+ 
+ Two modes:
+   build_cloud_llm_answer()              — Q&A simple (answer_engine=cloud_llm / cascade tier-3)
+   build_conversational_cloud_llm_answer() — Flujo de booking multi-turno con estado
+ 
+ Reutiliza el mismo contrato de retorno que llm_answer.py para drop-in compatibility.
+ En modo Anthropic, el bloque de contexto RAG se marca con cache_control ephemeral para
+ reducir costos en preguntas frecuentes contra el mismo conjunto de chunks.
+ """
+ from __future__ import annotations
+ 
+ from typing import TYPE_CHECKING, Any
+ 
+ import structlog
+ 
++from app.services.rag_retrieval import filter_customer_visible_matches
+ from app.services.conversation_flow import (
+     ConversationContext,
+     build_system_prompt,
+     parse_llm_response,
+ )
+ 
+ if TYPE_CHECKING:
+     from app.services.rag_retrieval import RetrievalMatch
+ 
+ log = structlog.get_logger()
+ 
+ _SYSTEM_PROMPT = """Eres un asistente de atención al cliente amable, claro y conciso.
+ Responde la pregunta del cliente basándote ÚNICAMENTE en el contexto proporcionado.
+ No inventes información. Si el contexto no contiene la respuesta, responde exactamente:
+ "No tengo esa información disponible por el momento."
+ Responde siempre en español, de forma natural y conversacional."""
+ 
+ 
+ def _build_context(matches: list[RetrievalMatch], *, min_score: float) -> str:
+     parts = []
+-    for m in matches:
++    for m in filter_customer_visible_matches(matches):
+         if m.score < min_score:
+             continue
+         header = f'[{m.document_title}]'
+         if m.section_path:
+             header += f' › {m.section_path}'
+         parts.append(f'{header}\n{m.chunk_text}')
+     return '\n\n'.join(parts)
+ 
+ 
+ def _extract_token_usage(usage: Any, provider: str) -> dict[str, int]:
+     """Normaliza el uso de tokens de Anthropic u OpenAI a un dict uniforme."""
+     if provider == 'claude':
+         return {
+             'input_tokens': getattr(usage, 'input_tokens', 0),
+             'output_tokens': getattr(usage, 'output_tokens', 0),
+             'cache_creation_tokens': getattr(usage, 'cache_creation_input_tokens', 0),
+             'cache_read_tokens': getattr(usage, 'cache_read_input_tokens', 0),
+         }
+     return {
+         'input_tokens': getattr(usage, 'prompt_tokens', 0),
+         'output_tokens': getattr(usage, 'completion_tokens', 0),
+         'cache_creation_tokens': 0,
+         'cache_read_tokens': 0,
+     }
+ 
+@@ -156,51 +157,52 @@ async def _call_provider(
+     if provider == 'openai':
+         return await _call_openai(
+             system_text=system_text,
+             context_text=context_text,
+             messages=messages,
+             model=model,
+             api_key=api_key,
+             timeout_seconds=timeout_seconds,
+             max_tokens=max_tokens,
+             temperature=temperature,
+         )
+     raise ValueError(f'Proveedor cloud LLM desconocido: {provider!r}. Usa "claude" o "openai".')
+ 
+ 
+ async def build_cloud_llm_answer(
+     question: str,
+     matches: list[RetrievalMatch],
+     *,
+     provider: str,
+     model: str,
+     api_key: str,
+     timeout_seconds: int = 30,
+     min_score: float = 0.12,
+ ) -> dict[str, Any]:
+     """Llama a un LLM cloud (Claude o OpenAI) para generar respuesta conversacional desde chunks RAG."""
+-    context = _build_context(matches, min_score=min_score)
++    safe_matches = filter_customer_visible_matches(matches)
++    context = _build_context(safe_matches, min_score=min_score)
+     if not context:
+         return {
+             'status': 'escalate_to_human',
+             'sufficient_context': False,
+             'answer': None,
+             'reason': 'No hay evidencia activa suficiente en la base de conocimiento.',
+             'handoff': {'required': True, 'reason': 'knowledge_context_insufficient'},
+             'llm_used': True,
+             'cloud_llm_used': True,
+             'llm_model': model,
+             'token_usage': None,
+         }
+ 
+     try:
+         answer_text, token_usage = await _call_provider(
+             system_text=_SYSTEM_PROMPT,
+             context_text=context,
+             messages=[{'role': 'user', 'content': f'Pregunta del cliente: {question}'}],
+             provider=provider,
+             model=model,
+             api_key=api_key,
+             timeout_seconds=timeout_seconds,
+             max_tokens=400,
+             temperature=0.2,
+         )
+@@ -214,75 +216,75 @@ async def build_cloud_llm_answer(
+         model=model,
+         input_tokens=token_usage['input_tokens'],
+         output_tokens=token_usage['output_tokens'],
+         cache_creation_tokens=token_usage['cache_creation_tokens'],
+         cache_read_tokens=token_usage['cache_read_tokens'],
+     )
+ 
+     no_info_signal = 'no tengo esa información' in answer_text.lower()
+     if not answer_text or no_info_signal:
+         return {
+             'status': 'escalate_to_human',
+             'sufficient_context': False,
+             'answer': None,
+             'reason': 'El LLM cloud indicó que no tiene información suficiente.',
+             'handoff': {'required': True, 'reason': 'llm_no_information'},
+             'llm_used': True,
+             'cloud_llm_used': True,
+             'llm_model': model,
+             'token_usage': token_usage,
+         }
+ 
+     return {
+         'status': 'answered',
+         'sufficient_context': True,
+         'answer': answer_text,
+-        '_source_document': matches[0].source_uri or matches[0].document_title,
++        '_source_document': safe_matches[0].source_uri or safe_matches[0].document_title,
+         'reason': f'Respuesta generada por cloud LLM ({provider}/{model}) con chunks activos.',
+         'handoff': {'required': False, 'reason': None},
+         'llm_used': True,
+         'cloud_llm_used': True,
+         'llm_model': model,
+         'token_usage': token_usage,
+     }
+ 
+ 
+ async def build_conversational_cloud_llm_answer(
+     question: str,
+     matches: list[RetrievalMatch],
+     *,
+     ctx: ConversationContext,
+     history: str,
+     provider: str,
+     model: str,
+     api_key: str,
+     timeout_seconds: int = 30,
+     min_score: float = 0.12,
+     business_name: str = 'nuestro negocio',
+ ) -> dict[str, Any]:
+     """Flujo de booking multi-turno vía LLM cloud (Claude o OpenAI)."""
+-    services_context = _build_context(matches, min_score=min_score)
++    services_context = _build_context(filter_customer_visible_matches(matches), min_score=min_score)
+     # build_system_prompt embeds context internally; se pasa como system_text completo
+     # para que Anthropic lo cachee como bloque único (estable por stage).
+     system = build_system_prompt(ctx, services_context, business_name=business_name)
+ 
+     messages: list[dict[str, str]] = []
+     if history:
+         messages.append({'role': 'user', 'content': f'== HISTORIAL ==\n{history}'})
+         messages.append({'role': 'assistant', 'content': 'Entendido, continúo.'})
+     messages.append({'role': 'user', 'content': question})
+ 
+     try:
+         raw_text, token_usage = await _call_provider(
+             system_text=system,
+             context_text='',  # ya incluido en system via build_system_prompt
+             messages=messages,
+             provider=provider,
+             model=model,
+             api_key=api_key,
+             timeout_seconds=timeout_seconds,
+             max_tokens=500,
+             temperature=0.3,
+         )
+     except Exception:
+         log.exception('cloud_llm_conv.error', provider=provider, model=model)
+         raise
+
+
+diff --git a/app/services/llm_answer.py b/app/services/llm_answer.py
+index 2e224f86598573f48c9f6a9db78285a31faf352c..496258de436846133e7a263588025ba2962604bd 100644
+--- a/app/services/llm_answer.py
++++ b/app/services/llm_answer.py
+@@ -1,86 +1,88 @@
+ """Local LLM answer generation via Ollama.
+ 
+ Two modes:
+   build_llm_answer()              — Q&A simple (answer_engine=local_llm / cascade tier-2)
+   build_conversational_llm_answer() — Flujo de booking multi-turno con estado
+ """
+ from __future__ import annotations
+ 
+ from typing import TYPE_CHECKING, Any
+ 
+ import httpx
+ import structlog
+ 
++from app.services.rag_retrieval import filter_customer_visible_matches
+ from app.services.conversation_flow import (
+     ConversationContext,
+     build_system_prompt,
+     parse_llm_response,
+ )
+ 
+ if TYPE_CHECKING:
+     from app.services.rag_retrieval import RetrievalMatch
+ 
+ log = structlog.get_logger()
+ 
+ _SYSTEM_PROMPT = """Eres un asistente de atención al cliente amable, claro y conciso.
+ Responde la pregunta del cliente basándote ÚNICAMENTE en el contexto proporcionado.
+ No inventes información. Si el contexto no contiene la respuesta, responde exactamente:
+ "No tengo esa información disponible por el momento."
+ Responde siempre en español, de forma natural y conversacional."""
+ 
+ _USER_TEMPLATE = """Contexto de conocimiento:
+ {context}
+ 
+ Pregunta del cliente: {question}
+ 
+ Respuesta:"""
+ 
+ 
+ def _build_context(matches: list[RetrievalMatch], *, min_score: float) -> str:
+     parts = []
+-    for m in matches:
++    for m in filter_customer_visible_matches(matches):
+         if m.score < min_score:
+             continue
+         header = f'[{m.document_title}]'
+         if m.section_path:
+             header += f' › {m.section_path}'
+         parts.append(f'{header}\n{m.chunk_text}')
+     return '\n\n'.join(parts)
+ 
+ 
+ async def build_llm_answer(
+     question: str,
+     matches: list[RetrievalMatch],
+     *,
+     base_url: str,
+     model: str,
+     timeout_seconds: int = 30,
+     min_score: float = 0.12,
+ ) -> dict[str, Any]:
+     """Call a local Ollama instance to generate a conversational answer from retrieved chunks."""
+-    context = _build_context(matches, min_score=min_score)
++    safe_matches = filter_customer_visible_matches(matches)
++    context = _build_context(safe_matches, min_score=min_score)
+     if not context:
+         return {
+             'status': 'escalate_to_human',
+             'sufficient_context': False,
+             'answer': None,
+             'reason': 'No hay evidencia activa suficiente en la base de conocimiento.',
+             'handoff': {'required': True, 'reason': 'knowledge_context_insufficient'},
+             'llm_used': True,
+             'llm_model': model,
+         }
+ 
+     user_message = _USER_TEMPLATE.format(context=context, question=question)
+ 
+     try:
+         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+             response = await client.post(
+                 f'{base_url.rstrip("/")}/api/chat',
+                 json={
+                     'model': model,
+                     'stream': False,
+                     'options': {'temperature': 0.2, 'num_predict': 400},
+                     'messages': [
+                         {'role': 'system', 'content': _SYSTEM_PROMPT},
+                         {'role': 'user', 'content': user_message},
+                     ],
+@@ -93,76 +95,76 @@ async def build_llm_answer(
+         log.warning('llm_answer.timeout', model=model, base_url=base_url)
+         raise
+     except httpx.HTTPStatusError as exc:
+         log.warning('llm_answer.http_error', status=exc.response.status_code, model=model)
+         raise
+     except Exception:
+         log.exception('llm_answer.error', model=model)
+         raise
+ 
+     no_info_signal = 'no tengo esa información' in answer_text.lower()
+     if not answer_text or no_info_signal:
+         return {
+             'status': 'escalate_to_human',
+             'sufficient_context': False,
+             'answer': None,
+             'reason': 'El LLM indicó que no tiene información suficiente.',
+             'handoff': {'required': True, 'reason': 'llm_no_information'},
+             'llm_used': True,
+             'llm_model': model,
+         }
+ 
+     return {
+         'status': 'answered',
+         'sufficient_context': True,
+         'answer': answer_text,
+-        '_source_document': matches[0].source_uri or matches[0].document_title,
++        '_source_document': safe_matches[0].source_uri or safe_matches[0].document_title,
+         'reason': 'Respuesta generada por LLM local con chunks activos como contexto.',
+         'handoff': {'required': False, 'reason': None},
+         'llm_used': True,
+         'llm_model': model,
+     }
+ 
+ 
+ async def build_conversational_llm_answer(
+     question: str,
+     matches: list[RetrievalMatch],
+     *,
+     ctx: ConversationContext,
+     history: str,
+     base_url: str,
+     model: str,
+     timeout_seconds: int = 30,
+     min_score: float = 0.12,
+     business_name: str = 'nuestro negocio',
+ ) -> dict[str, Any]:
+     """Multi-turn booking flow response via Ollama.
+ 
+     Returns the standard orchestrator decision dict, extended with:
+       next_stage, action, collected — for the orchestrator to persist in DB.
+     """
+-    services_context = _build_context(matches, min_score=min_score)
++    services_context = _build_context(filter_customer_visible_matches(matches), min_score=min_score)
+     system = build_system_prompt(ctx, services_context, business_name=business_name)
+ 
+     messages_payload: list[dict[str, str]] = [
+         {'role': 'system', 'content': system},
+     ]
+     if history:
+         messages_payload.append({'role': 'user', 'content': f'== HISTORIAL ==\n{history}'})
+         messages_payload.append({'role': 'assistant', 'content': 'Entendido, continúo.'})
+     messages_payload.append({'role': 'user', 'content': question})
+ 
+     try:
+         async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+             response = await client.post(
+                 f'{base_url.rstrip("/")}/api/chat',
+                 json={
+                     'model': model,
+                     'stream': False,
+                     'options': {'temperature': 0.3, 'num_predict': 500},
+                     'messages': messages_payload,
+                 },
+             )
+             response.raise_for_status()
+             data = response.json()
+             raw_text: str = data.get('message', {}).get('content', '').strip()
+     except httpx.TimeoutException:
+
+
+diff --git a/app/services/rag_orchestrator.py b/app/services/rag_orchestrator.py
+index 1c467ed701e737843198030c81ec9b0ea461e496..59fedfe297c695ce86b32bd09852f87888ece3c8 100644
+--- a/app/services/rag_orchestrator.py
++++ b/app/services/rag_orchestrator.py
+@@ -1,50 +1,55 @@
+ """Orchestrates automatic bot replies and human handoffs for inbound WhatsApp messages."""
+ from __future__ import annotations
+ 
+ import json
+ from typing import TYPE_CHECKING, Any
+ from uuid import UUID
+ 
+ import structlog
+ 
+ from app.core.config import get_settings
+ from app.services.audit import audit
+ from app.services.conversation_flow import (
+     STAGE_START,
+     ConversationContext,
+     format_history,
+     get_context,
+     has_booking_intent,
+     stage_followup_prompt,
+ )
+ from app.services.cloud_llm_answer import (
+     build_cloud_llm_answer,
+     build_conversational_cloud_llm_answer,
+ )
+ from app.services.llm_answer import build_conversational_llm_answer, build_llm_answer
+-from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
++from app.services.rag_retrieval import (
++    build_grounded_answer,
++    filter_customer_visible_matches,
++    rank_chunks,
++    retrieval_match_to_dict,
++)
+ 
+ if TYPE_CHECKING:
+     import asyncpg
+ 
+ log = structlog.get_logger()
+ 
+ _DEFAULT_HUMAN_KEYWORDS = {'humano', 'asesor', 'agente', 'reclamo', 'persona'}
+ 
+ 
+ def _is_cloud_llm_configured(settings: Any) -> bool:
+     """Devuelve True si el cloud LLM tiene proveedor y API key configurados."""
+     return bool(settings.cloud_llm_provider and settings.cloud_llm_api_key)
+ 
+ 
+ def _parse_escalation_policy(raw: Any) -> dict[str, Any]:
+     if isinstance(raw, str):
+         try:
+             raw = json.loads(raw)
+         except (json.JSONDecodeError, TypeError):
+             raw = {}
+     return raw if isinstance(raw, dict) else {}
+ 
+ 
+ def _keyword_triggers(policy: dict[str, Any]) -> set[str]:
+     triggers = policy.get('triggers') or {}
+@@ -272,56 +277,57 @@ async def orchestrate_inbound_message(
+             policy=policy,
+             reason='max_bot_turns_exceeded',
+             reason_detail=f'count={bot_turn_count},limit={max_bot_turns}',
+         )
+ 
+     # Idempotency check (deduplication)
+     idempotency_key = f'bot_reply:{inbound_message["id"]}'
+     if await conn.fetchval(
+         'select id from app.domain_events where tenant_id=$1 and idempotency_key=$2',
+         tenant_id, idempotency_key,
+     ):
+         log.info('orchestrator.skip', reason='already_processed', idempotency_key=idempotency_key)
+         return {'action': 'skipped', 'reason': 'already_processed'}
+ 
+     # Retrieve active knowledge chunks and run RAG ranking
+     rows = await conn.fetch(
+         """
+         select kc.id, kc.document_id,
+                kd.title as document_title, kd.source_uri, kd.source_type,
+                kd.document_type, kd.visibility,
+                kc.chunk_index, kc.section_path, kc.chunk_text, kc.token_count, kc.metadata
+         from app.knowledge_chunks kc
+         join app.knowledge_documents kd on kd.id = kc.document_id and kd.tenant_id = kc.tenant_id
+         where kc.tenant_id=$1
+           and kd.status='active'
++          and kd.visibility in ('tenant', 'public')
+         order by kd.updated_at desc, kc.chunk_index asc
+         """,
+         tenant_id,
+     )
+     chunks = [dict(row) for row in rows]
+-    matches = rank_chunks(body_text, chunks)
++    matches = filter_customer_visible_matches(rank_chunks(body_text, chunks))
+ 
+     settings = get_settings()
+     engine = settings.answer_engine
+ 
+     log.info(
+         'orchestrator.rag_ranked',
+         conversation_id=conversation_id,
+         total_chunks=len(chunks),
+         matches_above_llm_threshold=sum(1 for m in matches if m.score >= settings.cascade_llm_min_score),
+         top_score=round(matches[0].score, 4) if matches else None,
+         top_document=matches[0].document_title if matches else None,
+         answer_engine=engine,
+     )
+ 
+     # ── Conversational booking flow ───────────────────────────────────────────
+     ctx = get_context(conversation.get('metadata'))
+     use_conversational = engine != 'template' and (
+         ctx.stage == STAGE_START
+         or ctx.is_conversational
+         or has_booking_intent(body_text)
+     )
+ 
+     log.info(
+         'orchestrator.routing',
+         conversation_id=conversation_id,
+
+
+diff --git a/app/services/rag_retrieval.py b/app/services/rag_retrieval.py
+index fe7e5ef35bc9c15efef7520d9445476626a367ed..8a10e14a6cc9ec66f3405c270bf4e99c647cec4f 100644
+--- a/app/services/rag_retrieval.py
++++ b/app/services/rag_retrieval.py
+@@ -1,42 +1,43 @@
+ import re
+ import unicodedata
+ from dataclasses import dataclass
+ from typing import Any
+ from uuid import UUID
+ 
+ WORD_RE = re.compile(r"[\wÁÉÍÓÚÜÑáéíóúüñ]+", re.UNICODE)
+ SPANISH_STOPWORDS = {
+     'a', 'al', 'algo', 'ante', 'como', 'con', 'contra', 'cual', 'cuando', 'de', 'del',
+     'desde', 'donde', 'dos', 'el', 'ella', 'ellos', 'en', 'entre', 'es', 'esa', 'ese',
+     'eso', 'esta', 'este', 'esto', 'hay', 'la', 'las', 'le', 'lo', 'los', 'mas', 'me',
+     'mi', 'mis', 'no', 'o', 'para', 'pero', 'por', 'porque', 'que', 'se', 'si', 'sin',
+     'sobre', 'son', 'su', 'sus', 'te', 'tu', 'un', 'una', 'uno', 'y', 'ya', 'qué',
+     'cuál', 'cuándo', 'dónde', 'cómo', 'tiene', 'tienen', 'puedo', 'puede', 'hacer',
+ }
+ DEFAULT_MIN_SCORE = 0.12
+ DEFAULT_MAX_CHUNKS = 5
++CUSTOMER_VISIBLE_VISIBILITIES = {'tenant', 'public'}
+ 
+ 
+ @dataclass(frozen=True)
+ class RetrievalMatch:
+     id: UUID | str
+     document_id: UUID | str
+     document_title: str
+     source_uri: str | None
+     source_type: str
+     document_type: str
+     visibility: str
+     chunk_index: int
+     section_path: str | None
+     chunk_text: str
+     token_count: int
+     score: float
+     matched_terms: list[str]
+     metadata: dict[str, Any]
+ 
+ 
+ 
+ def strip_accents(value: str) -> str:
+     return ''.join(
+         character
+         for character in unicodedata.normalize('NFKD', value)
+@@ -122,51 +123,60 @@ def rank_chunks(question: str, chunks: list[dict[str, Any]], *, max_chunks: int
+                 document_title=chunk.get('document_title') or 'Documento sin título',
+                 source_uri=chunk.get('source_uri'),
+                 source_type=chunk.get('source_type') or 'manual',
+                 document_type=chunk.get('document_type') or 'reference',
+                 visibility=chunk.get('visibility') or 'tenant',
+                 chunk_index=chunk.get('chunk_index') or 0,
+                 section_path=chunk.get('section_path'),
+                 chunk_text=chunk.get('chunk_text') or '',
+                 token_count=chunk.get('token_count') or 0,
+                 score=score,
+                 matched_terms=matched_terms,
+                 metadata=chunk.get('metadata') or {},
+             )
+         )
+ 
+     return sorted(scored, key=lambda match: (-match.score, match.document_title, match.chunk_index))[:max_chunks]
+ 
+ 
+ def chunk_excerpt(text: str, *, limit: int = 520) -> str:
+     normalized = re.sub(r'\s+', ' ', text).strip()
+     if len(normalized) <= limit:
+         return normalized
+     return f'{normalized[: limit - 1].rstrip()}…'
+ 
+ 
++def is_customer_visible_match(match: RetrievalMatch) -> bool:
++    return match.visibility in CUSTOMER_VISIBLE_VISIBILITIES
++
++
++def filter_customer_visible_matches(matches: list[RetrievalMatch]) -> list[RetrievalMatch]:
++    return [match for match in matches if is_customer_visible_match(match)]
++
++
+ def build_grounded_answer(question: str, matches: list[RetrievalMatch], *, min_score: float = DEFAULT_MIN_SCORE) -> dict[str, Any]:
++    matches = filter_customer_visible_matches(matches)
+     sufficient_context = bool(matches) and matches[0].score >= min_score
+     if not sufficient_context:
+         return {
+             'status': 'escalate_to_human',
+             'sufficient_context': False,
+             'answer': None,
+             'reason': 'No hay evidencia activa suficiente en la base de conocimiento para responder con trazabilidad.',
+             'handoff': {'required': True, 'reason': 'knowledge_context_insufficient'},
+         }
+ 
+     best = matches[0]
+     # Use only the highest-scoring chunk. Multiple chunks concatenated produce
+     # walls of text that look like document dumps on WhatsApp.
+     text = re.sub(r'\s+', ' ', best.chunk_text).strip()
+     if len(text) > 480:
+         text = text[:477].rstrip() + '…'
+ 
+     return {
+         'status': 'answered',
+         'sufficient_context': True,
+         'answer': text,
+         '_source_document': best.source_uri or best.document_title,
+         'reason': 'Respuesta generada con el chunk más relevante de la base de conocimiento.',
+         'handoff': {'required': False, 'reason': None},
+     }
+
+
+diff --git a/tests/test_rag_retrieval.py b/tests/test_rag_retrieval.py
+index 1e93de49dc20a6bc29a2a4d568cceb300d7b53fc..2b726232e7fe10c6dfa61a1b455b501f74be6103 100644
+--- a/tests/test_rag_retrieval.py
++++ b/tests/test_rag_retrieval.py
+@@ -1,27 +1,28 @@
+ from uuid import uuid4
+ 
++from app.services.llm_answer import _build_context
+ from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
+ 
+ 
+ def chunk(text, **overrides):
+     document_id = uuid4()
+     data = {
+         'id': uuid4(),
+         'document_id': document_id,
+         'document_title': 'FAQ garantías',
+         'source_uri': 'https://example.test/faq',
+         'source_type': 'url',
+         'document_type': 'faq',
+         'visibility': 'tenant',
+         'chunk_index': 0,
+         'section_path': 'Garantías',
+         'chunk_text': text,
+         'token_count': 20,
+         'metadata': {'category': 'postventa'},
+     }
+     data.update(overrides)
+     return data
+ 
+ 
+ def test_rank_chunks_returns_traceable_sources_ordered_by_score():
+     matches = rank_chunks(
+@@ -43,50 +44,82 @@ def test_rank_chunks_returns_traceable_sources_ordered_by_score():
+ def test_build_grounded_answer_requires_minimum_evidence_before_answering():
+     matches = rank_chunks('precio de instalación', [chunk('La garantía dura 30 días.')])
+ 
+     answer = build_grounded_answer('precio de instalación', matches)
+ 
+     assert answer['status'] == 'escalate_to_human'
+     assert answer['sufficient_context'] is False
+     assert answer['answer'] is None
+     assert answer['handoff']['required'] is True
+ 
+ 
+ def test_build_grounded_answer_uses_best_chunk_when_context_is_sufficient():
+     matches = rank_chunks('garantía servicio', [chunk('La garantía del servicio dura 30 días calendario.')])
+ 
+     answer = build_grounded_answer('garantía servicio', matches)
+     serialized_chunk = retrieval_match_to_dict(matches[0])
+ 
+     assert answer['status'] == 'answered'
+     assert answer['sufficient_context'] is True
+     assert '30 días' in answer['answer']
+     assert '_source_document' in answer
+     assert serialized_chunk['score'] == matches[0].score
+     assert serialized_chunk['excerpt']
+ 
+ 
++def test_build_grounded_answer_ignores_agents_only_matches_for_customer_replies():
++    matches = rank_chunks(
++        'descuento vip interno',
++        [
++            chunk('SOLO_AGENTES: descuento VIP interno del 80% con código SECRETO.', visibility='agents_only'),
++            chunk('Tenemos descuentos públicos de temporada para clientes.', document_title='Promociones públicas'),
++        ],
++    )
++
++    answer = build_grounded_answer('descuento vip interno', matches)
++
++    assert answer['status'] == 'answered'
++    assert 'SOLO_AGENTES' not in answer['answer']
++    assert 'SECRETO' not in answer['answer']
++    assert 'descuentos públicos' in answer['answer']
++
++
++def test_llm_context_ignores_agents_only_matches_for_customer_replies():
++    matches = rank_chunks(
++        'descuento vip interno',
++        [
++            chunk('SOLO_AGENTES: descuento VIP interno del 80% con código SECRETO.', visibility='agents_only'),
++            chunk('Tenemos descuentos públicos de temporada para clientes.', document_title='Promociones públicas'),
++        ],
++    )
++
++    context = _build_context(matches, min_score=0.12)
++
++    assert 'SOLO_AGENTES' not in context
++    assert 'SECRETO' not in context
++    assert 'descuentos públicos' in context
++
+ 
+ def test_rank_chunks_matches_singular_query_against_plural_section_title():
+     matches = rank_chunks(
+         '¿Cuál es la garantía?',
+         [
+             chunk(
+                 '30 días calendario.',
+                 document_title='FAQ postventa',
+                 section_path='Garantías',
+             )
+         ],
+     )
+ 
+     assert len(matches) == 1
+     assert matches[0].section_path == 'Garantías'
+     assert 'garantia' in matches[0].matched_terms
+ 
+ 
+ def test_rank_chunks_matches_common_spanish_plural_variants():
+     matches = rank_chunks(
+         'Necesito información de instalación',
+         [
+             chunk(
+                 'El técnico confirma requisitos eléctricos antes de iniciar.',
+                 document_title='Servicios',
+
+# Attack-path analysis
+Final: high | Decider: model_decided | Matrix severity: high | Policy adjusted: high
+## Rationale
+Kept as high. The finding is in-scope runtime code and is reachable through the product's public WhatsApp surface. Static evidence shows no visibility filter in the RAG SQL or answer builders, and executable validation evidence demonstrated an agents_only secret appearing in both the template answer and the local LLM `/api/chat` prompt/response. The impact is major confidentiality loss of same-tenant internal-only knowledge to unauthenticated customers. It is not critical because the evidence does not show cross-tenant disclosure, platform compromise, credential disclosure, arbitrary code execution, or broad control-plane impact.
+## Likelihood
+high - The vulnerable path is the normal inbound WhatsApp auto-reply path. The default template engine is affected, and the local_llm engine is also affected when enabled. Exploitation only requires asking questions with overlapping terms once a tenant has active agents_only material; no tenant app credentials are required, though a real Meta channel and relevant documents must exist. | Remote network vector
+## Impact
+high - The leak crosses the customer/agent boundary and can disclose sensitive tenant-internal operational knowledge, discount codes, escalation policies, pricing rules, or procedures directly to an external WhatsApp contact. It is limited to the current tenant's active indexed documents and does not show cross-tenant access, integrity loss, or code execution.
+## Assumptions
+- The API service is deployed as the product webhook endpoint for WhatsApp Business messages.
+- At least one tenant uses the documented agents_only knowledge-document visibility for internal material and indexes those documents as active.
+- A customer can send ordinary WhatsApp messages to the tenant's WhatsApp channel; the attacker does not need direct access to the internal FastAPI webhook because Meta forwards legitimate customer messages with a valid signature.
+- active WhatsApp channel for the tenant
+- active indexed knowledge chunks including at least one agents_only document
+- bot conversation not already human_active and contact not opted out
+- attacker question overlaps terms with the agents_only chunk enough to meet the RAG score threshold
+## Path
+External WhatsApp contact
+  -> Meta-signed /v1/webhooks/whatsapp
+  -> inbound app.messages row
+  -> orchestrate_inbound_message()
+  -> SELECT all active chunks, including kd.visibility='agents_only'
+  -> rank_chunks()
+  -> build_grounded_answer() or build_llm_answer()
+  -> queued outbound bot message / LLM-derived response
+  -> customer receives internal-only content
+## Path evidence
+- `app/api/v1/schemas.py:183-193` - KnowledgeDocumentCreate explicitly accepts `visibility` values including `agents_only`, establishing an intended internal-only data class.
+- `infra/postgres/01-schema.sql:288-299` - The database schema persists `visibility` with a check constraint allowing `tenant`, `agents_only`, and `public`.
+- `app/api/v1/routes.py:3092-3122` - The public WhatsApp webhook endpoint resolves the tenant by phone_number_id and validates the Meta signature, making real customer WhatsApp messages the normal remote entry point.
+- `app/api/v1/routes.py:3214-3260` - The webhook extracts attacker-controlled message body text, stores it as an inbound contact message, and invokes `orchestrate_inbound_message`.
+- `app/services/rag_orchestrator.py:121-149` - The customer-facing RAG path selects all active chunks for the tenant and includes `kd.visibility`, but only filters `kd.status='active'`; no visibility predicate excludes agents_only before template or LLM generation.
+- `app/services/rag_retrieval.py:111-137` - `rank_chunks` carries the visibility field into RetrievalMatch but does not use it to remove agents_only chunks.
+- `app/services/rag_retrieval.py:147-162` - `build_grounded_answer` concatenates every matching chunk above the score threshold into the answer returned to the customer.
+- `app/services/llm_answer.py:28-37` - `_build_context` includes every matching chunk above min_score without checking visibility.
+- `app/services/llm_answer.py:62-75` - The unfiltered context is sent to the local LLM `/api/chat` request as the basis for the customer answer.
+- `app/services/rag_orchestrator.py:209-235` - A successful RAG decision inserts `answer_text` as an outbound bot message and creates a `message.queued` event.
+- `app/workers/event_worker.py:34-70` - The worker consumes queued outbound messages and sends their body text through the WhatsApp delivery path.
+- `docker-compose.yml:19-21` - The API service listens on 0.0.0.0:8000 and maps port 8000, consistent with an exposed webhook service in deployment.
+## Narrative
+This is a real, reachable product vulnerability. The schema and API explicitly support `visibility='agents_only'` knowledge documents. The public WhatsApp webhook receives customer-controlled message text and calls the RAG orchestrator. The orchestrator fetches all active tenant chunks and includes `kd.visibility` in the selected columns, but it never filters out `agents_only`. The ranking function preserves visibility but does not enforce it. The template engine concatenates every match above the score threshold into the customer-facing answer, and the local_llm engine builds the LLM context from every match above the threshold. Validation PoC output showed an agents_only string reaching both the template answer and the captured `/api/chat` user message. Severity remains high because a remote unauthenticated customer can disclose tenant-internal agent-only operational knowledge with low complexity, although impact is bounded to the tenant and data confidentiality rather than cross-tenant compromise or code execution.
+## Controls
+- X-Hub-Signature-256 validation with per-channel app_secret_ref
+- phone_number_id tenant/channel binding
+- tenant_id scoping and PostgreSQL RLS policies
+- kd.status='active' retrieval filter
+- DEFAULT_MIN_SCORE threshold for answers
+- max_chunks limit in ranking
+- human_active, opt-out, max bot turns, and handoff keyword checks
+- domain event idempotency for bot replies
+## Blindspots
+- Static review did not inspect a production load balancer or cloud ingress because no cloud APIs were called.
+- Actual exploitability in a given deployment depends on tenants having sensitive agents_only documents indexed as active.
+- The exact sensitivity of agents_only content is tenant-specific and not knowable from source alone.
+- Webhook signature validation prevents arbitrary direct POSTs, but does not mitigate legitimate customer messages forwarded by Meta.

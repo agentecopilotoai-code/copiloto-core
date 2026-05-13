@@ -1,0 +1,644 @@
+Blocking cloud LLM classifier enables webhook DoS
+Link: https://chatgpt.com/codex/cloud/security/findings/ddce83b1e3048191a890a0ee5c08adf4?repo=https%3A%2F%2Fgithub.com%2Fvmantilla%2FCopilotoIA&sev=high
+Criticality: high (attack path: high)
+Status: new
+
+# Metadata
+Repo: vmantilla/CopilotoIA
+Commit: bced236
+Author: noreply@anthropic.com
+Created: 5/11/2026, 10:53:42 PM
+Assignee: Unassigned
+Signals: Security, Validated, Patch generated, Attack-path
+
+# Summary
+Introduced bug: the new intent-classification path uses blocking cloud SDK calls in async webhook processing. The fix should use AsyncAnthropic/AsyncOpenAI with explicit timeout_seconds, run synchronous clients in a bounded executor if async clients are unavailable, and preferably classify after cheap dedup/idempotency/rate-limit checks.
+The commit adds classify_intent() to the inbound RAG orchestrator, so every text WhatsApp message that reaches bot orchestration is classified before normal routing. If a message does not match a high-confidence rule and cloud_llm_provider/cloud_llm_api_key are configured, _llm_classify() creates synchronous Anthropic/OpenAI clients and calls their blocking create() methods from inside an async function. These calls also do not pass the configured timeout. Because the webhook handler awaits orchestrate_inbound_message() before returning, an unauthenticated WhatsApp sender can send messages that avoid the regex rules and force blocking third-party LLM calls on the event loop. Slow or hanging provider calls, or many such messages, can tie up API workers, delay webhook acknowledgements, trigger retries, and degrade availability for other tenants handled by the same service.
+
+# Validation
+## Rubric
+- [x] Confirm unmatched inbound text can bypass high-confidence regex rules and reach the LLM classification layer when cloud provider credentials are configured.
+- [x] Confirm the async classifier calls synchronous Anthropic/OpenAI SDK methods directly without `await`, executor offload, or async clients.
+- [x] Confirm the configured cloud LLM timeout exists but is not passed to the intent-classifier SDK constructor or create call.
+- [x] Confirm the vulnerable classifier is awaited in the inbound orchestration path and the webhook awaits that orchestration before responding.
+- [x] Obtain dynamic evidence that the event loop is blocked/serialized; attempt crash and valgrind first where possible, then capture a debugger trace of the blocking call chain.
+## Report
+Validated the finding. Code inspection shows `app/services/intent_classifier.py:159` declares async `_llm_classify`, but the cloud-provider branch instantiates synchronous SDK clients and calls blocking methods directly: `anthropic.Anthropic(...).messages.create(...)` at lines 170-177 and `openai.OpenAI(...).chat.completions.create(...)` at lines 180-189. Neither path passes `settings.cloud_llm_timeout_seconds`, defined in `app/core/config.py:77`. The existing cloud answer service demonstrates the intended async pattern by using `anthropic.AsyncAnthropic(..., timeout=timeout_seconds)` and `AsyncOpenAI(..., timeout=timeout_seconds)` in `app/services/cloud_llm_answer.py:78` and `app/services/cloud_llm_answer.py:114`. The vulnerable classifier is awaited from inbound orchestration at `app/services/rag_orchestrator.py:240`, and the WhatsApp webhook awaits `orchestrate_inbound_message(...)` before returning at `app/api/v1/routes.py:3527-3535`.
+
+Dynamic PoC: I monkeypatched the `openai` module with a fake synchronous SDK whose `create()` sleeps for 0.4s, then launched three concurrent `classify_intent()` calls with unmatched text so rule routing is bypassed. Output: `tasks=3 fake_sdk_sleep_seconds=0.4 elapsed_seconds=1.202`, `heartbeat_ticks_during_classification=0`, `timeout_in_constructor=False`, `timeout_in_create=False`. The elapsed time is approximately 3 * 0.4s rather than ~0.4s, and the heartbeat coroutine did not run, proving the event loop was blocked and calls serialized. A non-interactive pdb trace captured the call chain: `classify_intent()` at `intent_classifier.py:268` -> `_llm_classify()` at `intent_classifier.py:182` -> fake `create()` sleeping at the PoC line 34. Direct crash was attempted via the PoC; no process crash is expected because this is an availability/event-loop blocking issue. Valgrind was attempted but unavailable in the container (`bash: valgrind: command not found`). LLDB was also attempted but did not produce a useful stopped process stack for this Python-level blocking issue; pdb did.
+
+# Evidence
+app/api/v1/routes.py (L3518 to 3535)
+  Note: The WhatsApp webhook path awaits orchestrate_inbound_message(), so blocking classifier calls delay the webhook response and can occupy API workers.
+```
+                if inbound_message:
+                    await notify_operations_change(
+                        conn,
+                        channel['tenant_id'],
+                        'conversation.changed',
+                        conversation_id=conversation['id'],
+                        message_id=inbound_message['id'],
+                    )
+                    try:
+                        await orchestrate_inbound_message(
+                            conn,
+                            tenant_id=channel['tenant_id'],
+                            channel_id=channel['id'],
+                            channel_account_mode=channel['account_mode'] or 'mock',
+                            conversation=conversation,
+                            contact=contact,
+                            inbound_message=inbound_message,
+                        )
+```
+
+app/services/intent_classifier.py (L167 to 190)
+  Note: When cloud LLM credentials are configured, this async function instantiates synchronous Anthropic/OpenAI clients and calls blocking create() methods without an explicit timeout.
+```
+    if provider and api_key:
+        try:
+            if provider == 'claude':
+                import anthropic  # type: ignore[import]
+                client = anthropic.Anthropic(api_key=api_key)
+                msg = client.messages.create(
+                    model=model,
+                    max_tokens=20,
+                    system=_LLM_SYSTEM,
+                    messages=[{'role': 'user', 'content': text}],
+                )
+                intent_raw = msg.content[0].text.strip().lower()
+            elif provider == 'openai':
+                import openai  # type: ignore[import]
+                client = openai.OpenAI(api_key=api_key)
+                resp = client.chat.completions.create(
+                    model=model,
+                    max_tokens=20,
+                    messages=[
+                        {'role': 'system', 'content': _LLM_SYSTEM},
+                        {'role': 'user', 'content': text},
+                    ],
+                )
+                intent_raw = resp.choices[0].message.content.strip().lower()
+```
+
+app/services/rag_orchestrator.py (L229 to 240)
+  Note: The new classifier is invoked for every inbound text message during orchestration, before normal RAG routing.
+```
+    # ── Intent classification ─────────────────────────────────────────────────
+    # Build tenant_config from the intent_settings column (jsonb) if present.
+    intent_settings_raw = policy.get('intent_settings') or {}
+    if isinstance(intent_settings_raw, str):
+        try:
+            import json as _json
+            intent_settings_raw = _json.loads(intent_settings_raw)
+        except Exception:
+            intent_settings_raw = {}
+    intent_cfg = intent_settings_raw if isinstance(intent_settings_raw, dict) else {}
+
+    intent_result = await classify_intent(body_text, settings=get_settings(), tenant_config=intent_cfg)
+```
+
+Proposed patch:
+diff --git a/app/services/intent_classifier.py b/app/services/intent_classifier.py
+index e02bc9f849ceb9d7c2105b8c5e06714954cb0227..4ff2a74c8febb52bb4931009aa4de99b3657ee0b 100644
+--- a/app/services/intent_classifier.py
++++ b/app/services/intent_classifier.py
+@@ -1,44 +1,48 @@
+ """Clasificador de intenciones genérico orientado al journey de agendamiento.
+ 
+ Tres capas en cascada:
+   1. rule-router — keywords/regex configurables por tenant, O(1), confianza alta.
+   2. intent-llm  — LLM ligero cuando confianza < CONF_LLM_THRESHOLD (0.78).
+   3. fallback    — si confianza sigue < CONF_FALLBACK_THRESHOLD (0.70) devuelve
+                    faq como neutral seguro. Solo fuerza complaint_or_risk si el LLM
+                    detectó queja explícita o la capa-1 detectó riesgo con conf >= 0.85.
+ """
+ from __future__ import annotations
+ 
++import asyncio
+ import re
++from concurrent.futures import ThreadPoolExecutor
+ from dataclasses import dataclass
+-from typing import Any
++from typing import Any, Callable
+ 
+ import structlog
+ 
+ log = structlog.get_logger()
+ 
++_INTENT_LLM_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix='intent-llm')
++
+ # ── Catálogo de intenciones ───────────────────────────────────────────────────
+ 
+ INTENT_GREETING = 'greeting'
+ INTENT_FAQ = 'faq'
+ INTENT_BOOK_APPOINTMENT = 'book_appointment'
+ INTENT_CONFIRM_APPOINTMENT = 'confirm_appointment'
+ INTENT_RESCHEDULE_APPOINTMENT = 'reschedule_appointment'
+ INTENT_CANCEL_APPOINTMENT = 'cancel_appointment'
+ INTENT_CHECK_AVAILABILITY = 'check_availability'
+ INTENT_COMPLAINT_OR_RISK = 'complaint_or_risk'
+ INTENT_OUT_OF_SCOPE = 'out_of_scope'
+ INTENT_OPT_OUT = 'opt_out'
+ 
+ ALL_INTENTS = [
+     INTENT_GREETING,
+     INTENT_FAQ,
+     INTENT_BOOK_APPOINTMENT,
+     INTENT_CONFIRM_APPOINTMENT,
+     INTENT_RESCHEDULE_APPOINTMENT,
+     INTENT_CANCEL_APPOINTMENT,
+     INTENT_CHECK_AVAILABILITY,
+     INTENT_COMPLAINT_OR_RISK,
+     INTENT_OUT_OF_SCOPE,
+     INTENT_OPT_OUT,
+ ]
+@@ -135,91 +139,169 @@ def _rule_classify(
+         return None
+ 
+     conf, intent, detail = best
+     return IntentResult(intent=intent, confidence=conf, resolved_by='rule', layer_detail=detail)
+ 
+ 
+ # ── Capa 2: LLM ──────────────────────────────────────────────────────────────
+ 
+ _LLM_SYSTEM = """\
+ Eres un clasificador de intenciones para un asistente de atención al cliente.
+ Dado el mensaje del usuario, devuelve ÚNICAMENTE el nombre de la intención más probable.
+ No incluyas explicación ni texto adicional. Solo responde con UNO de estos valores exactos:
+ 
+ greeting
+ faq
+ book_appointment
+ confirm_appointment
+ reschedule_appointment
+ cancel_appointment
+ check_availability
+ complaint_or_risk
+ out_of_scope
+ opt_out"""
+ 
+ 
++def _llm_timeout_seconds(settings: Any) -> float:
++    """Devuelve el timeout configurado para llamadas LLM de clasificación."""
++    return float(getattr(settings, 'cloud_llm_timeout_seconds', 30) or 30)
++
++
++async def _run_sync_provider_call(call: Callable[[], str], timeout_seconds: float) -> str:
++    """Ejecuta SDKs síncronos fuera del event loop y limita su espera."""
++    loop = asyncio.get_running_loop()
++    return await asyncio.wait_for(
++        loop.run_in_executor(_INTENT_LLM_EXECUTOR, call),
++        timeout=timeout_seconds,
++    )
++
++
++async def _classify_with_claude(
++    *,
++    text: str,
++    model: str,
++    api_key: str,
++    timeout_seconds: float,
++) -> str:
++    import anthropic  # type: ignore[import]  # noqa: PLC0415
++
++    async_client_cls = getattr(anthropic, 'AsyncAnthropic', None)
++    if async_client_cls is not None:
++        client = async_client_cls(api_key=api_key, timeout=timeout_seconds)
++        msg = await client.messages.create(
++            model=model,
++            max_tokens=20,
++            system=_LLM_SYSTEM,
++            messages=[{'role': 'user', 'content': text}],
++        )
++        return msg.content[0].text.strip().lower()
++
++    def _sync_call() -> str:
++        client = anthropic.Anthropic(api_key=api_key, timeout=timeout_seconds)
++        msg = client.messages.create(
++            model=model,
++            max_tokens=20,
++            system=_LLM_SYSTEM,
++            messages=[{'role': 'user', 'content': text}],
++        )
++        return msg.content[0].text.strip().lower()
++
++    return await _run_sync_provider_call(_sync_call, timeout_seconds)
++
++
++async def _classify_with_openai(
++    *,
++    text: str,
++    model: str,
++    api_key: str,
++    timeout_seconds: float,
++) -> str:
++    import openai  # type: ignore[import]  # noqa: PLC0415
++
++    async_client_cls = getattr(openai, 'AsyncOpenAI', None)
++    if async_client_cls is not None:
++        client = async_client_cls(api_key=api_key, timeout=timeout_seconds)
++        resp = await client.chat.completions.create(
++            model=model,
++            max_tokens=20,
++            messages=[
++                {'role': 'system', 'content': _LLM_SYSTEM},
++                {'role': 'user', 'content': text},
++            ],
++        )
++        return resp.choices[0].message.content.strip().lower()
++
++    def _sync_call() -> str:
++        client = openai.OpenAI(api_key=api_key, timeout=timeout_seconds)
++        resp = client.chat.completions.create(
++            model=model,
++            max_tokens=20,
++            messages=[
++                {'role': 'system', 'content': _LLM_SYSTEM},
++                {'role': 'user', 'content': text},
++            ],
++        )
++        return resp.choices[0].message.content.strip().lower()
++
++    return await _run_sync_provider_call(_sync_call, timeout_seconds)
++
++
+ async def _llm_classify(text: str, enabled_intents: set[str], settings: Any) -> IntentResult | None:
+     """Llama al LLM de la cascada y devuelve una IntentResult o None si falla."""
+     provider = getattr(settings, 'cloud_llm_provider', None)
+     api_key = getattr(settings, 'cloud_llm_api_key', None)
+     model = getattr(settings, 'cloud_llm_model', 'claude-sonnet-4-6')
+ 
+     intent_raw: str | None = None
+ 
+     if provider and api_key:
++        timeout_seconds = _llm_timeout_seconds(settings)
+         try:
+             if provider == 'claude':
+-                import anthropic  # type: ignore[import]
+-                client = anthropic.Anthropic(api_key=api_key)
+-                msg = client.messages.create(
++                intent_raw = await _classify_with_claude(
++                    text=text,
+                     model=model,
+-                    max_tokens=20,
+-                    system=_LLM_SYSTEM,
+-                    messages=[{'role': 'user', 'content': text}],
++                    api_key=api_key,
++                    timeout_seconds=timeout_seconds,
+                 )
+-                intent_raw = msg.content[0].text.strip().lower()
+             elif provider == 'openai':
+-                import openai  # type: ignore[import]
+-                client = openai.OpenAI(api_key=api_key)
+-                resp = client.chat.completions.create(
++                intent_raw = await _classify_with_openai(
++                    text=text,
+                     model=model,
+-                    max_tokens=20,
+-                    messages=[
+-                        {'role': 'system', 'content': _LLM_SYSTEM},
+-                        {'role': 'user', 'content': text},
+-                    ],
++                    api_key=api_key,
++                    timeout_seconds=timeout_seconds,
+                 )
+-                intent_raw = resp.choices[0].message.content.strip().lower()
+         except Exception as exc:
+             log.warning('intent_classifier.llm_error', provider=provider, error=str(exc))
+             return None
+     else:
+         # Intentar con Ollama local
+         ollama_url = getattr(settings, 'local_llm_base_url', None) or 'http://host.docker.internal:11434'
+         ollama_model = getattr(settings, 'local_llm_model', None) or 'llama3.2:3b'
++        import httpx
++
+         try:
+-            import httpx
+             payload = {
+                 'model': ollama_model,
+                 'messages': [
+                     {'role': 'system', 'content': _LLM_SYSTEM},
+                     {'role': 'user', 'content': text},
+                 ],
+                 'stream': False,
+             }
+             async with httpx.AsyncClient(timeout=8.0) as client:
+                 resp = await client.post(f'{ollama_url}/api/chat', json=payload)
+                 data = resp.json()
+                 intent_raw = (data.get('message') or {}).get('content', '').strip().lower()
+         except Exception as exc:
+             log.warning('intent_classifier.ollama_error', error=str(exc))
+             return None
+ 
+     if intent_raw and intent_raw in ALL_INTENTS and intent_raw in enabled_intents:
+         return IntentResult(
+             intent=intent_raw,
+             confidence=0.75,
+             resolved_by='llm',
+             layer_detail=f'provider={provider or "ollama"}',
+         )
+     return None
+ 
+
+
+diff --git a/pyproject.toml b/pyproject.toml
+index 70aa3926d8e3816d9a16f6ad3064ff44d88274d0..9770785a83e0e4ca41e7c606082a01911d4d2896 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,39 +1,39 @@
+ [project]
+ name = "copilotoia-core"
+ version = "0.1.0"
+ description = "Core multitenant event-driven para Copiloto IA"
+ requires-python = ">=3.12"
+ dependencies = [
+   "fastapi==0.115.6",
+   "uvicorn[standard]==0.34.0",
+   "asyncpg==0.30.0",
+   "pydantic-settings==2.7.1",
+   "python-jose[cryptography]==3.3.0",
+   "passlib[bcrypt]==1.7.4",
+   "redis==5.2.1",
+   "httpx==0.28.1",
+   "boto3==1.35.90",
+   "python-multipart==0.0.20",
+   "structlog==24.4.0",
+   "pypdf==4.3.1",
+   "python-docx==1.1.2",
+   "anthropic>=0.40.0",
+   "openai>=1.50.0",
+ ]
+ 
+ [project.optional-dependencies]
+-dev = ["pytest==8.3.4", "ruff==0.8.4"]
++dev = ["pytest==8.3.4", "pytest-asyncio==0.25.0", "ruff==0.8.4"]
+ 
+ [tool.ruff]
+ line-length = 100
+ target-version = "py312"
+ 
+ [tool.setuptools.packages.find]
+ include = ["app*"]
+ 
+ [tool.pytest.ini_options]
+ pythonpath = ["."]
+ testpaths = ["tests"]
+ markers = [
+   "requires_db: tests that need a live PostgreSQL connection (skipped in CI with -m 'not requires_db')",
+ ]
+
+
+diff --git a/tests/test_intent_classifier_static.py b/tests/test_intent_classifier_static.py
+index 31b1212b0a2c56474f87512fed0cfc02af5d455f..22dba7c4a82d4a9bdb6844f4d9ed32cf8c886f43 100644
+--- a/tests/test_intent_classifier_static.py
++++ b/tests/test_intent_classifier_static.py
+@@ -1,33 +1,37 @@
+ """Tests estáticos del clasificador de intenciones (TASK-0026).
+ 
+ Valida las 10 intenciones, los tres niveles de resolución (rule / llm / fallback)
+ y los umbrales de confianza sin levantar ningún servicio externo.
+ """
+ from __future__ import annotations
+ 
++import asyncio
++import sys
++import time
+ import types
++
+ import pytest
+ 
+ from app.services.intent_classifier import (
+     INTENT_BOOK_APPOINTMENT,
+     INTENT_CANCEL_APPOINTMENT,
+     INTENT_CHECK_AVAILABILITY,
+     INTENT_COMPLAINT_OR_RISK,
+     INTENT_CONFIRM_APPOINTMENT,
+     INTENT_FAQ,
+     INTENT_GREETING,
+     INTENT_OPT_OUT,
+     INTENT_RESCHEDULE_APPOINTMENT,
+     ALL_INTENTS,
+     CONF_LLM_THRESHOLD,
+     CONF_FALLBACK_THRESHOLD,
+     _rule_classify,
+     _compile_tenant_rules,
+     classify_intent,
+ )
+ 
+ 
+ # ---------------------------------------------------------------------------
+ # Helpers
+ # ---------------------------------------------------------------------------
+ 
+@@ -222,25 +226,158 @@ async def test_classify_custom_keyword_tenant():
+     settings = _fake_settings()
+     cfg = {
+         'enabled_intents': ALL_INTENTS,
+         'custom_keywords': {'book_appointment': ['turno urgente']},
+         'min_confidence': 0.70,
+     }
+     result = await classify_intent('necesito un turno urgente para hoy', settings=settings, tenant_config=cfg)
+     assert result.intent == INTENT_BOOK_APPOINTMENT
+ 
+ 
+ # ---------------------------------------------------------------------------
+ # Catálogo de intenciones
+ # ---------------------------------------------------------------------------
+ 
+ def test_all_intents_catalog_has_10():
+     assert len(ALL_INTENTS) == 10
+ 
+ 
+ def test_all_intents_are_strings():
+     for intent in ALL_INTENTS:
+         assert isinstance(intent, str) and len(intent) > 0
+ 
+ 
+ def test_confidence_thresholds_order():
+     assert CONF_FALLBACK_THRESHOLD < CONF_LLM_THRESHOLD
++
++# ---------------------------------------------------------------------------
++# Cloud LLM classification must not block the event loop
++# ---------------------------------------------------------------------------
++
++@pytest.mark.asyncio
++async def test_cloud_openai_classifier_uses_async_client_with_timeout(monkeypatch):
++    seen = {}
++
++    class FakeAsyncOpenAI:
++        def __init__(self, *, api_key, timeout):
++            seen['api_key'] = api_key
++            seen['timeout'] = timeout
++            self.chat = types.SimpleNamespace(
++                completions=types.SimpleNamespace(create=self._create),
++            )
++
++        async def _create(self, **kwargs):
++            seen['create_kwargs'] = kwargs
++            return types.SimpleNamespace(
++                choices=[
++                    types.SimpleNamespace(
++                        message=types.SimpleNamespace(content=INTENT_FAQ),
++                    ),
++                ],
++            )
++
++    monkeypatch.setitem(sys.modules, 'openai', types.SimpleNamespace(AsyncOpenAI=FakeAsyncOpenAI))
++
++    settings = _fake_settings(
++        cloud_llm_provider='openai',
++        cloud_llm_api_key='test-key',
++        cloud_llm_model='test-model',
++        cloud_llm_timeout_seconds=4,
++    )
++
++    result = await classify_intent('asdfgh zxcvbn qwerty', settings=settings)
++
++    assert result.intent == INTENT_FAQ
++    assert result.resolved_by == 'llm'
++    assert seen['api_key'] == 'test-key'
++    assert seen['timeout'] == 4.0
++    assert seen['create_kwargs']['model'] == 'test-model'
++
++
++@pytest.mark.asyncio
++async def test_cloud_claude_classifier_uses_async_client_with_timeout(monkeypatch):
++    seen = {}
++
++    class FakeAsyncAnthropic:
++        def __init__(self, *, api_key, timeout):
++            seen['api_key'] = api_key
++            seen['timeout'] = timeout
++            self.messages = types.SimpleNamespace(create=self._create)
++
++        async def _create(self, **kwargs):
++            seen['create_kwargs'] = kwargs
++            return types.SimpleNamespace(
++                content=[types.SimpleNamespace(text=INTENT_CHECK_AVAILABILITY)],
++            )
++
++    monkeypatch.setitem(
++        sys.modules,
++        'anthropic',
++        types.SimpleNamespace(AsyncAnthropic=FakeAsyncAnthropic),
++    )
++
++    settings = _fake_settings(
++        cloud_llm_provider='claude',
++        cloud_llm_api_key='test-key',
++        cloud_llm_model='test-model',
++        cloud_llm_timeout_seconds=5,
++    )
++
++    result = await classify_intent('asdfgh zxcvbn qwerty', settings=settings)
++
++    assert result.intent == INTENT_CHECK_AVAILABILITY
++    assert result.resolved_by == 'llm'
++    assert seen['api_key'] == 'test-key'
++    assert seen['timeout'] == 5.0
++    assert seen['create_kwargs']['model'] == 'test-model'
++
++
++@pytest.mark.asyncio
++async def test_cloud_openai_sync_fallback_runs_off_event_loop(monkeypatch):
++    class FakeOpenAI:
++        def __init__(self, *, api_key, timeout):
++            self.chat = types.SimpleNamespace(
++                completions=types.SimpleNamespace(create=self._create),
++            )
++
++        def _create(self, **kwargs):
++            time.sleep(0.2)
++            return types.SimpleNamespace(
++                choices=[
++                    types.SimpleNamespace(
++                        message=types.SimpleNamespace(content=INTENT_FAQ),
++                    ),
++                ],
++            )
++
++    monkeypatch.setitem(sys.modules, 'openai', types.SimpleNamespace(OpenAI=FakeOpenAI))
++
++    settings = _fake_settings(
++        cloud_llm_provider='openai',
++        cloud_llm_api_key='test-key',
++        cloud_llm_timeout_seconds=1,
++    )
++    done = False
++    heartbeat_ticks = 0
++
++    async def heartbeat():
++        nonlocal heartbeat_ticks
++        while not done:
++            heartbeat_ticks += 1
++            await asyncio.sleep(0.01)
++
++    heartbeat_task = asyncio.create_task(heartbeat())
++    started = time.perf_counter()
++    try:
++        results = await asyncio.gather(
++            classify_intent('asdfgh zxcvbn one', settings=settings),
++            classify_intent('asdfgh zxcvbn two', settings=settings),
++            classify_intent('asdfgh zxcvbn three', settings=settings),
++        )
++    finally:
++        done = True
++        await heartbeat_task
++
++    elapsed = time.perf_counter() - started
++    assert [r.intent for r in results] == [INTENT_FAQ, INTENT_FAQ, INTENT_FAQ]
++    assert heartbeat_ticks > 0
++    assert elapsed < 0.5
+
+# Attack-path analysis
+Final: high | Decider: model_decided | Matrix severity: high | Policy adjusted: high
+## Rationale
+Kept at high. The finding is in-scope product runtime code and is reachable through the normal external WhatsApp attack surface described in the threat model. Repository evidence shows the webhook awaits orchestration before responding, orchestration awaits classify_intent, and classify_intent invokes blocking synchronous Anthropic/OpenAI SDK calls inside async code without the configured timeout. The provided validation PoC further demonstrated event-loop serialization and no heartbeat progress for concurrent classification calls. The issue is availability-only and requires cloud LLM configuration, so it is not critical; however, low-privilege remote senders can plausibly degrade a shared API service and webhook acknowledgements, supporting high availability severity.
+## Likelihood
+high - The vulnerable code is on the main public WhatsApp message path, and attackers control message text through normal WhatsApp usage. Exploitation does not require application credentials, but it does require a valid tenant WhatsApp channel, Meta delivery/signature, and cloud LLM credentials being configured, so likelihood is medium rather than unconditional high. | Remote network vector
+## Impact
+high - Availability impact can extend beyond the attacking sender because the blocking synchronous cloud SDK call runs on the API event loop while the webhook request is in progress. In a shared SaaS API process, this can delay webhook acknowledgements and unrelated tenant/API work. No data disclosure, privilege escalation, or integrity compromise is evidenced.
+## Assumptions
+- The API service is deployed with the WhatsApp webhook reachable by Meta and with at least one active tenant WhatsApp channel.
+- At least one deployment has CLOUD_LLM_PROVIDER and CLOUD_LLM_API_KEY configured, which is an opt-in but documented production feature.
+- A public WhatsApp sender can send messages to a tenant business number; direct unsigned POSTs to the webhook are rejected.
+- Production worker count and external load-balancer behavior are not visible in the repository; Docker defaults show a single uvicorn process without explicit workers.
+- active WhatsApp Cloud API tenant channel
+- valid Meta-signed webhook generated by sending messages to the tenant WhatsApp number
+- cloud_llm_provider and cloud_llm_api_key configured
+- message text that does not match a high-confidence rule or forced complaint rule
+- slow provider response or enough concurrent/serial messages to occupy workers
+## Path
+WhatsApp sender
+  -> Meta signed webhook
+  -> POST /v1/webhooks/whatsapp
+  -> await orchestrate_inbound_message()
+  -> await classify_intent()
+  -> sync Anthropic/OpenAI create()
+  -> blocked API event loop / delayed webhook ACKs
+## Path evidence
+- `app/api/v1/routes.py:249-251` - Defines the v1 router and public webhook router, placing WhatsApp webhooks under the main API route tree.
+- `app/api/v1/routes.py:3356-3384` - POST /webhooks/whatsapp accepts webhook payloads, resolves active channel by phone_number_id, and validates X-Hub-Signature-256 with the per-channel app secret before processing.
+- `app/api/v1/routes.py:3518-3542` - For each newly inserted inbound message, the webhook handler awaits orchestrate_inbound_message before returning the 202 response.
+- `app/services/rag_orchestrator.py:229-240` - Inbound orchestration builds tenant intent config and immediately awaits classify_intent on the attacker-controlled body_text.
+- `app/services/intent_classifier.py:249-268` - Texts that do not reach high-confidence rule or complaint handling fall through to the LLM classification layer.
+- `app/services/intent_classifier.py:159-190` - _llm_classify is async but instantiates synchronous Anthropic/OpenAI clients and calls blocking create methods directly, with no explicit timeout argument.
+- `app/core/config.py:72-77` - Cloud LLM provider, model, API key, and cloud_llm_timeout_seconds are configured settings; the timeout exists but is not used by the classifier cloud-provider branch.
+- `app/services/cloud_llm_answer.py:78-114` - Existing cloud LLM answer code demonstrates the intended safer async client pattern with explicit timeout for Anthropic and OpenAI.
+- `Dockerfile:19` - Default API runtime starts uvicorn on 0.0.0.0:8000 without an explicit multi-worker setting, so a blocking call can freeze the process event loop.
+- `docker-compose.yml:19-21` - Compose maps API port 8000 and runs uvicorn on 0.0.0.0:8000, confirming the API service exposure in repository deployment artifacts.
+- `.env.example:96-105` - Documents CLOUD_LLM_PROVIDER, CLOUD_LLM_API_KEY, and CLOUD_LLM_TIMEOUT_SECONDS as opt-in cloud LLM configuration.
+## Narrative
+This is a real, reachable product vulnerability for deployments using the documented cloud LLM configuration. The webhook route is public to Meta and in normal use processes attacker-controlled WhatsApp message text. Although direct unsigned HTTP requests are rejected by X-Hub-Signature-256 validation, any WhatsApp sender can cause Meta to deliver a valid webhook to a tenant number. The handler awaits orchestration before responding, orchestration immediately awaits intent classification, and the classifier calls synchronous Anthropic/OpenAI SDK methods inside an async function without the configured timeout. The repository also shows a single uvicorn API process by default. The impact is availability-only, not data compromise, but it can block API workers and delay acknowledgements for other tenants; high severity is justified when cloud LLM is enabled, with medium likelihood due to that configuration precondition.
+## Controls
+- Webhook signature verification is present: X-Hub-Signature-256 is validated with the per-channel app_secret_ref before processing.
+- Webhook channel binding is present: phone_number_id must match an active whatsapp_cloud_api tenant channel.
+- Idempotency is partially present: messages use on conflict (tenant_id, external_message_id) do nothing and raw webhook payloads use payload_sha256 conflict handling.
+- No application rate limiter or throttling control was found for this path.
+- The configured CLOUD_LLM_TIMEOUT_SECONDS control is not applied by the intent classifier's cloud-provider branch.
+- The existing cloud_llm_answer service uses async clients and explicit timeouts, showing an available mitigation pattern already used elsewhere in the codebase.
+## Blindspots
+- No production Kubernetes, ingress, autoscaling, uvicorn/gunicorn worker count, or load-balancer configuration was present in the checked files.
+- Static review cannot measure actual Anthropic/OpenAI SDK default timeouts, provider latency, Meta anti-spam limits, or tenant message-rate limits outside the repository.
+- The direct HTTP webhook is protected by signatures; reachability depends on normal Meta webhook delivery from attacker-sent WhatsApp messages rather than direct unsigned POSTs.
+- No cloud IAM or managed identity manifests were available, so identity privileges are limited to repository-inferred application behavior.

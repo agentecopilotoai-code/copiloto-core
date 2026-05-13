@@ -1,0 +1,568 @@
+Tenant export uses global role and any membership
+Link: https://chatgpt.com/codex/cloud/security/findings/d4645f90e3408191a707a239aa014ad1?repo=https%3A%2F%2Fgithub.com%2Fvmantilla%2FCopilotoIA&sev=high
+Criticality: high (attack path: high)
+Status: new
+
+# Metadata
+Repo: vmantilla/CopilotoIA
+Commit: fffccbb
+Author: noreply@anthropic.com
+Created: 5/11/2026, 10:00:28 PM
+Assignee: Unassigned
+Signals: Security, Validated, Patch generated, Attack-path
+
+# Summary
+Introduced: the new data-export route was added in this commit and uses existing authorization helpers in an unsafe combination. The underlying helper behavior is pre-existing, but this commit introduces a new owner-only export action that is vulnerable because it does not verify the caller is owner of the requested tenant.
+The commit adds GET /tenants/{tenant_id}/data-export and protects it with require_min_role('owner') followed by ensure_tenant_access(request, tenant_id, conn). require_min_role only checks the role list on the current token and does not bind that owner role to the path tenant_id. ensure_tenant_access then accepts access to the path tenant if has_user_tenant_role returns true, but that helper only checks that the user has any role for the tenant, not owner. As a result, a user whose token contains owner for tenant A and who has a lower-privileged membership, such as viewer or agent, in tenant B can call /tenants/{tenantB}/data-export without X-Tenant-Id and pass authorization. The endpoint then returns tenant B's tenant record, settings, channel metadata, and operational counts. Tenant export is a high-risk privacy/admin operation and should require owner authorization specifically for the requested tenant, not a global token role plus arbitrary membership.
+
+# Validation
+## Rubric
+- [x] Confirm the new `/tenants/{tenant_id}/data-export` route exists and returns tenant-scoped sensitive export data.
+- [x] Confirm `require_min_role('owner')` checks only token-level roles and does not bind ownership to the path tenant.
+- [x] Confirm `ensure_tenant_access` delegates cross-tenant access to `has_user_tenant_role`, and that helper accepts any role for the requested tenant.
+- [x] Reproduce an allowed export for tenant B when the caller has token role `owner` for tenant A/global roles but only viewer membership on tenant B.
+- [x] Run controls showing owner with no tenant B membership is denied and non-owner token role with tenant B membership is denied, isolating the vulnerable role/membership combination.
+## Report
+Validated the authorization bypass. This is a Python/FastAPI authorization logic issue, so crash/ASan-style validation is not applicable; `which valgrind` produced no valgrind path in the container. I used direct handler execution, an HTTP-level FastAPI TestClient PoC, and a non-interactive pdb trace.
+
+Code evidence:
+- `app/api/v1/routes.py:2457-2503` defines `GET /tenants/{tenant_id}/data-export`, calls `await require_min_role('owner')(request)`, then `await ensure_tenant_access(request, tenant_id, conn)`, and exports tenant record, settings, channels, counts, and privacy fields for the path tenant.
+- `app/core/security.py:218-230` implements `require_min_role`; it checks only `request.state.roles` and does not bind the role to `tenant_id`.
+- `app/api/v1/routes.py:309-326` implements `has_user_tenant_role`; the SQL only checks that the actor has any `user_tenant_roles` row for the requested tenant and has no `utr.role = 'owner'` or minimum-role predicate.
+- `app/api/v1/routes.py:329-338` implements `ensure_tenant_access`; if the token tenant differs from the path tenant, it returns successfully when `has_user_tenant_role` is true.
+- `infra/postgres/01-schema.sql:88-96` confirms `user_tenant_roles.role` can be `viewer`, `agent`, etc., so non-owner membership is a real state.
+
+Dynamic evidence:
+- Direct PoC command: `PYTHONPATH=/workspace/CopilotoIA python /workspace/validation_pocs/poc_tenant_export_authz_bypass.py`.
+- Vulnerable case output: `owner-token+viewer-on-B: ALLOWED status=200 tenant=22222222-2222-2222-2222-222222222222 role_on_B=viewer contacts=7`.
+- Controls showed the unsafe combination is required: owner token without membership on B was denied with 403; agent token with viewer membership on B was denied with 403.
+- HTTP-level TestClient PoC command: `PYTHONPATH=/workspace/CopilotoIA:/workspace/validation_pocs python /workspace/validation_pocs/poc_http_tenant_export_authz_bypass.py` returned `HTTP status: 200` and exported tenant B.
+- Non-interactive pdb trace command: `PYTHONPATH=/workspace/CopilotoIA:/workspace/validation_pocs python /workspace/validation_pocs/poc_tenant_export_debugger_trace.py` showed execution at `security.py:229` with `roles=['owner']`, then `routes.py:337` comparing token tenant A to path tenant B and accepting via membership helper, then `routes.py:2465` after authorization completed for tenant B.
+
+Conclusion: a user with an owner role in the token for tenant A and only viewer/member access to tenant B can obtain tenant B's data export. The suspected finding is valid.
+
+# Evidence
+app/api/v1/routes.py (L2457 to 2489)
+  Note: The newly added owner-only tenant data export route checks a token-level owner role, then exports the path tenant's tenant record, settings, channels, and counts.
+```
+@tenant_admin_router.get('/tenants/{tenant_id}/data-export')
+async def export_tenant_data(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await require_min_role('owner')(request)
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    tenant = await conn.fetchrow('select * from app.tenants where id=$1', tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+    settings = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
+    channels = await conn.fetch("select id, provider, status, account_mode, created_at from app.tenant_channels where tenant_id=$1", tenant_id)
+    counts = await conn.fetchrow(
+        """
+        select
+          (select count(*) from app.contacts where tenant_id=$1) as contacts,
+          (select count(*) from app.conversations where tenant_id=$1) as conversations,
+          (select count(*) from app.messages where tenant_id=$1) as messages,
+          (select count(*) from app.service_requests where tenant_id=$1) as service_requests,
+          (select count(*) from app.quotes where tenant_id=$1) as quotes,
+          (select count(*) from app.knowledge_documents where tenant_id=$1) as knowledge_documents,
+          (select count(*) from app.audit_logs where tenant_id=$1) as audit_log_entries
+        """,
+        tenant_id,
+    )
+    bundle = {
+        'exported_at': datetime.now(UTC).isoformat(),
+        'tenant': record_to_dict(tenant),
+        'settings': record_to_dict(settings) if settings else {},
+        'channels': [record_to_dict(ch) for ch in channels],
+        'data_counts': dict(counts),
+```
+
+app/api/v1/routes.py (L309 to 321)
+  Note: has_user_tenant_role only verifies that the user has some role for the requested tenant; it does not require owner for owner-only actions.
+```
+async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenant_id: UUID) -> bool:
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        return False
+    return bool(
+        await conn.fetchval(
+            """
+            select exists(
+              select 1
+              from app.users u
+              join app.user_tenant_roles utr on utr.user_id = u.id
+              where u.auth_subject=$1 and utr.tenant_id=$2
+            )
+```
+
+app/api/v1/routes.py (L329 to 338)
+  Note: ensure_tenant_access grants access when has_user_tenant_role is true, even when the token tenant_id does not match the requested path tenant.
+```
+async def ensure_tenant_access(
+    request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
+) -> None:
+    if is_service_or_support(request):
+        return
+    request_tenant_id = getattr(request.state, 'tenant_id', None)
+    if request_tenant_id == tenant_id:
+        return
+    if conn and await has_user_tenant_role(conn, request, tenant_id):
+        return
+```
+
+app/core/security.py (L218 to 230)
+  Note: require_min_role checks roles from the token without binding them to the target tenant_id used by the route.
+```
+def require_min_role(minimum_role: str, *, allow_service: bool = False):
+    async def dependency(request: Request) -> None:
+        actor_type = getattr(request.state, 'actor_type', 'anonymous')
+        if actor_type == 'anonymous':
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required'
+            )
+        if actor_type == 'service':
+            if allow_service:
+                return
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User role required')
+        if _has_role(getattr(request.state, 'roles', []), minimum_role):
+            return
+```
+
+Proposed patch:
+diff --git a/app/api/v1/routes.py b/app/api/v1/routes.py
+index 96cb5703341ef1373c2e01888843c90ea498284f..79487d0d14530d2bfaabb6b791819855dfd8cbcf 100644
+--- a/app/api/v1/routes.py
++++ b/app/api/v1/routes.py
+@@ -35,50 +35,52 @@ from app.api.v1.schemas import (
+     ServiceRequestCreate,
+     ServiceRequestPatch,
+     TenantCreate,
+     TenantStatusTransition,
+     TenantUpdate,
+ )
+ from app.core.config import get_settings
+ from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
+ from app.db.pool import get_db, record_to_dict
+ from app.services.audit import audit
+ from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
+ from app.services.rag_indexing import build_indexing_result, vector_literal
+ from app.services.rag_orchestrator import orchestrate_inbound_message
+ from app.services.rag_retrieval import build_grounded_answer, rank_chunks, retrieval_match_to_dict
+ from app.services.whatsapp import (
+     download_whatsapp_media,
+     normalize_meta_app_secret,
+     resolve_secret_ref,
+     secret_ref_is_configured,
+     token_ref_is_configured,
+     verify_signature_with_secret,
+ )
+ 
+ log = structlog.get_logger()
+ 
++ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
++
+ 
+ def tenant_secret_ref(tenant_id: UUID, secret_name: str) -> str:
+     return f'secrets/tenants/{tenant_id}/{secret_name}'
+ 
+ 
+ def write_tenant_secret(secret_ref: str, value: str) -> None:
+     relative_name = secret_ref.removeprefix('secrets/').strip('/')
+     if not relative_name or '..' in Path(relative_name).parts:
+         raise HTTPException(status_code=400, detail='Invalid tenant secret ref')
+     path = Path('/app/.secrets') / relative_name
+     if not path.parent.exists() and not Path('/app/.secrets').exists():
+         path = Path.cwd() / '.secrets' / relative_name
+     path.parent.mkdir(parents=True, exist_ok=True)
+     path.write_text(value.strip(), encoding='utf-8')
+     path.chmod(0o600)
+ 
+ 
+ def tenant_knowledge_s3_secret_ref(tenant_id: UUID) -> str:
+     return tenant_secret_ref(tenant_id, 'knowledge_s3_secret_access_key')
+ 
+ 
+ def default_knowledge_storage_config(tenant_id: UUID) -> dict[str, Any]:
+     return {
+         'backend': 'local',
+         'bucket': None,
+@@ -345,79 +347,98 @@ def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
+     if not document:
+         return None
+     for column, default in KNOWLEDGE_DOCUMENT_COMPAT_DEFAULTS.items():
+         if document.get(column) is None:
+             document[column] = default.copy() if isinstance(default, dict) else default
+     document['metadata'] = parse_json_object(document.get('metadata'), default={})
+     return document
+ 
+ 
+ def normalize_knowledge_documents(rows: list[asyncpg.Record]) -> list[dict]:
+     return [normalize_knowledge_document(row) for row in rows]
+ 
+ 
+ def metadata_extracted_text(value: Any) -> str | None:
+     metadata = parse_json_object(value, default={})
+     extracted_text = metadata.get('extracted_text')
+     return extracted_text if isinstance(extracted_text, str) else None
+ 
+ 
+ def is_service_or_support(request: Request) -> bool:
+     return getattr(request.state, 'actor_type', None) == 'service' or getattr(
+         request.state, 'support_mode', False
+     )
+ 
+ 
+-async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenant_id: UUID) -> bool:
++async def has_user_tenant_role(
++    conn: asyncpg.Connection,
++    request: Request,
++    tenant_id: UUID,
++    minimum_role: str | None = None,
++) -> bool:
+     actor_id = getattr(request.state, 'actor_id', None)
+     if not actor_id:
+         return False
++    role_threshold = ROLE_LEVELS.get(minimum_role, 0) if minimum_role else 0
+     return bool(
+         await conn.fetchval(
+             """
+             select exists(
+               select 1
+               from app.users u
+               join app.user_tenant_roles utr on utr.user_id = u.id
+-              where u.auth_subject=$1 and utr.tenant_id=$2
++              where u.auth_subject=$1
++                and utr.tenant_id=$2
++                and case utr.role
++                  when 'agent' then 10
++                  when 'manager' then 20
++                  when 'admin' then 30
++                  when 'owner' then 40
++                  when 'support' then 50
++                  else 0
++                end >= $3
+             )
+             """,
+             actor_id,
+             tenant_id,
++            role_threshold,
+         )
+     )
+ 
+ 
+ async def ensure_tenant_access(
+-    request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
++    request: Request,
++    tenant_id: UUID,
++    conn: asyncpg.Connection | None = None,
++    minimum_role: str | None = None,
+ ) -> None:
+-    if is_service_or_support(request):
++    if is_service_or_support(request) and not minimum_role:
+         return
+     request_tenant_id = getattr(request.state, 'tenant_id', None)
+-    if request_tenant_id == tenant_id:
++    if request_tenant_id == tenant_id and not minimum_role:
+         return
+-    if conn and await has_user_tenant_role(conn, request, tenant_id):
++    if conn and await has_user_tenant_role(conn, request, tenant_id, minimum_role):
+         return
+     if not request_tenant_id:
+         raise HTTPException(
+             status_code=400, detail='X-Tenant-Id header or tenant_id claim is required'
+         )
+     raise HTTPException(status_code=403, detail='Tenant scope does not match request')
+ 
+ 
+ async def require_tenant(request: Request) -> UUID:
+     if not getattr(request.state, 'tenant_id', None):
+         raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
+     return request.state.tenant_id
+ 
+ 
+ async def tenant_id_from_request(request: Request, conn: asyncpg.Connection) -> UUID:
+     tenant_id = getattr(request.state, 'tenant_id', None) or getattr(
+         request.state, 'requested_tenant_id', None
+     )
+     if not tenant_id:
+         raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
+     await ensure_tenant_access(request, tenant_id, conn)
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     return tenant_id
+ 
+ 
+@@ -3145,51 +3166,51 @@ async def suppress_contact(
+         update app.contacts set
+           display_name = null,
+           phone_e164 = $3,
+           wa_id = $3,
+           phone_hash = decode(encode(sha256($3::bytea), 'hex'), 'hex'),
+           opt_in_status = 'suppressed',
+           opt_out_at = now(),
+           tags = '{}',
+           metadata = '{}'::jsonb
+         where tenant_id=$1 and id=$2
+         returning id, tenant_id, opt_in_status, updated_at
+         """,
+         tenant_id, contact_id, pseudo,
+     )
+     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='contact.suppressed', entity_type='contact', entity_id=str(contact_id))
+     return record_to_dict(row)
+ 
+ 
+ @tenant_admin_router.get('/tenants/{tenant_id}/data-export')
+ async def export_tenant_data(
+     tenant_id: UUID,
+     request: Request,
+     conn: asyncpg.Connection = Depends(get_db),
+ ):
+     await require_min_role('owner')(request)
+-    await ensure_tenant_access(request, tenant_id, conn)
++    await ensure_tenant_access(request, tenant_id, conn, minimum_role='owner')
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     tenant = await conn.fetchrow('select * from app.tenants where id=$1', tenant_id)
+     if not tenant:
+         raise HTTPException(status_code=404, detail='Tenant not found')
+     settings = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
+     channels = await conn.fetch("select id, provider, status, account_mode, created_at from app.tenant_channels where tenant_id=$1", tenant_id)
+     counts = await conn.fetchrow(
+         """
+         select
+           (select count(*) from app.contacts where tenant_id=$1) as contacts,
+           (select count(*) from app.conversations where tenant_id=$1) as conversations,
+           (select count(*) from app.messages where tenant_id=$1) as messages,
+           (select count(*) from app.service_requests where tenant_id=$1) as service_requests,
+           (select count(*) from app.quotes where tenant_id=$1) as quotes,
+           (select count(*) from app.knowledge_documents where tenant_id=$1) as knowledge_documents,
+           (select count(*) from app.audit_logs where tenant_id=$1) as audit_log_entries
+         """,
+         tenant_id,
+     )
+     bundle = {
+         'exported_at': datetime.now(UTC).isoformat(),
+         'tenant': record_to_dict(tenant),
+         'settings': record_to_dict(settings) if settings else {},
+         'channels': [record_to_dict(ch) for ch in channels],
+         'data_counts': dict(counts),
+
+
+diff --git a/tests/test_audit_privacy_static.py b/tests/test_audit_privacy_static.py
+index 291f2f78346feb390f078d85ec8dfcb586f05919..3f253b81874af32562f0e005b232c4481bb8cb86 100644
+--- a/tests/test_audit_privacy_static.py
++++ b/tests/test_audit_privacy_static.py
+@@ -74,50 +74,51 @@ def test_suppress_contact_endpoint_exists():
+ def test_suppress_contact_requires_admin_role():
+     source = API_ROUTES.read_text()
+     assert "require_min_role('admin')(request)" in source
+ 
+ 
+ def test_suppress_contact_pseudonymizes_fields():
+     source = API_ROUTES.read_text()
+     assert 'pseudo' in source
+     assert 'suppressed+' in source
+     assert 'phone_hash' in source
+ 
+ 
+ def test_tenant_data_export_endpoint_exists():
+     source = API_ROUTES.read_text()
+     assert "'/tenants/{tenant_id}/data-export'" in source
+     assert 'async def export_tenant_data' in source
+     assert 'application/json' in source
+     assert "action='tenant.data_exported'" in source
+     assert 'no_train' in source
+     assert 'pii_policy' in source
+ 
+ 
+ def test_tenant_data_export_requires_owner():
+     source = API_ROUTES.read_text()
+     assert "require_min_role('owner')(request)" in source
++    assert "ensure_tenant_access(request, tenant_id, conn, minimum_role='owner')" in source
+ 
+ 
+ # --- coreApi.js ---
+ 
+ def test_core_api_has_audit_functions():
+     source = CORE_API.read_text()
+     assert 'export function listAuditLogsFiltered' in source
+     assert 'export function exportAuditLogs' in source
+     assert 'export function suppressContact' in source
+     assert 'export function exportTenantData' in source
+ 
+ 
+ def test_core_api_suppress_uses_post():
+     source = CORE_API.read_text()
+     assert "suppress', {" in source or '/suppress' in source
+ 
+ 
+ # --- AuditPanel.jsx ---
+ 
+ def test_audit_panel_component_exists():
+     assert AUDIT_PANEL.exists()
+     source = AUDIT_PANEL.read_text()
+     assert 'export function AuditPanel' in source
+ 
+ 
+
+
+diff --git a/tests/test_tenant_access.py b/tests/test_tenant_access.py
+index 704a4614a359a3f17e32aeb9ba16804bda31972e..115ba9df3e4be4378fb3476fdf1d49f57f661b4f 100644
+--- a/tests/test_tenant_access.py
++++ b/tests/test_tenant_access.py
+@@ -1,33 +1,33 @@
+ import asyncio
+ from uuid import uuid4
+ 
+ import pytest
+ from fastapi import HTTPException
+ from starlette.requests import Request
+ 
+-from app.api.v1.routes import ensure_tenant_access, tenant_id_from_request
++from app.api.v1.routes import ensure_tenant_access, has_user_tenant_role, tenant_id_from_request
+ 
+ 
+ def make_request() -> Request:
+     return Request({'type': 'http', 'method': 'GET', 'path': '/', 'headers': []})
+ 
+ 
+ class FakeTenantRoleConnection:
+     def __init__(self, has_role: bool) -> None:
+         self.has_role = has_role
+         self.configured_tenant_id = None
+ 
+     async def fetchval(self, *_args, **_kwargs):
+         return self.has_role
+ 
+     async def execute(self, _query, tenant_id):
+         self.configured_tenant_id = tenant_id
+ 
+ 
+ def test_unscoped_user_with_requested_tenant_still_requires_database_tenant_role():
+     async def run_test():
+         request = make_request()
+         request.state.actor_type = 'user'
+         request.state.actor_id = 'auth0|platform-user'
+         request.state.support_mode = False
+         request.state.tenant_id = None
+@@ -37,25 +37,74 @@ def test_unscoped_user_with_requested_tenant_still_requires_database_tenant_role
+             await ensure_tenant_access(request, request.state.requested_tenant_id, FakeTenantRoleConnection(False))
+ 
+         assert exc_info.value.status_code == 400
+         assert exc_info.value.detail == 'X-Tenant-Id header or tenant_id claim is required'
+ 
+     asyncio.run(run_test())
+ 
+ 
+ def test_unscoped_user_with_database_tenant_role_can_use_requested_tenant_context():
+     async def run_test():
+         tenant_id = uuid4()
+         request = make_request()
+         request.state.actor_type = 'user'
+         request.state.actor_id = 'auth0|platform-user'
+         request.state.support_mode = False
+         request.state.tenant_id = None
+         request.state.requested_tenant_id = tenant_id
+         conn = FakeTenantRoleConnection(True)
+ 
+         resolved_tenant_id = await tenant_id_from_request(request, conn)
+ 
+         assert resolved_tenant_id == tenant_id
+         assert conn.configured_tenant_id == str(tenant_id)
+ 
+     asyncio.run(run_test())
++
++
++class FakeTenantRoleThresholdConnection:
++    def __init__(self, role_level: int) -> None:
++        self.role_level = role_level
++        self.last_threshold = None
++
++    async def fetchval(self, _query, _actor_id, _tenant_id, role_threshold):
++        self.last_threshold = role_threshold
++        return self.role_level >= role_threshold
++
++
++def test_tenant_role_helper_can_require_owner_membership():
++    async def run_test():
++        tenant_id = uuid4()
++        request = make_request()
++        request.state.actor_id = 'auth0|cross-tenant-user'
++        viewer_conn = FakeTenantRoleThresholdConnection(0)
++        owner_conn = FakeTenantRoleThresholdConnection(40)
++
++        assert not await has_user_tenant_role(viewer_conn, request, tenant_id, minimum_role='owner')
++        assert viewer_conn.last_threshold == 40
++        assert await has_user_tenant_role(owner_conn, request, tenant_id, minimum_role='owner')
++        assert owner_conn.last_threshold == 40
++
++    asyncio.run(run_test())
++
++
++def test_owner_only_tenant_access_rejects_lower_privileged_membership():
++    async def run_test():
++        tenant_id = uuid4()
++        request = make_request()
++        request.state.actor_type = 'user'
++        request.state.actor_id = 'auth0|owner-in-a-viewer-in-b'
++        request.state.support_mode = False
++        request.state.tenant_id = uuid4()
++
++        with pytest.raises(HTTPException) as exc_info:
++            await ensure_tenant_access(
++                request,
++                tenant_id,
++                FakeTenantRoleThresholdConnection(10),
++                minimum_role='owner',
++            )
++
++        assert exc_info.value.status_code == 403
++        assert exc_info.value.detail == 'Tenant scope does not match request'
++
++    asyncio.run(run_test())
+
+# Attack-path analysis
+Final: high | Decider: model_decided | Matrix severity: high | Policy adjusted: high
+## Rationale
+The original high severity is appropriate. Static code and validation evidence support a concrete cross-tenant authorization bypass in an in-scope runtime API. The exploit path is clear: a token-level owner role from tenant A is combined with arbitrary membership on tenant B, because require_min_role is not tenant-bound and has_user_tenant_role does not check the role value. The impact is high confidentiality loss for tenant export/admin data across a tenant boundary. It is not raised to critical because the attacker must already be authenticated and privileged as owner in at least one tenant plus have some membership in the victim tenant, and the demonstrated export contains configuration/metadata/counts rather than full database contents, credentials, or account takeover.
+## Likelihood
+high - The endpoint is part of the remote core API and exploitation is a simple GET with a chosen path tenant ID. However, it requires an authenticated user with owner role in some tenant and at least any membership in the target tenant, so exploitation is plausible but not unauthenticated or universal. | Remote network vector
+## Impact
+high - The issue crosses tenant boundaries and exposes a tenant data export to a user who is not owner of that tenant. The returned bundle includes tenant record data, settings, channel metadata, privacy/DPA fields, and operational counts. This is materially sensitive administrative and privacy information, though not full message/contact body export and not code execution or platform takeover.
+## Assumptions
+- The FastAPI core API is deployed as intended from Dockerfile/docker-compose on port 8000 and is reachable by authenticated tenant users.
+- A legitimate or compromised user can hold an owner/admin role for one tenant and a lower role such as viewer/agent in another tenant, which the schema explicitly permits.
+- JWT role claims represent tenant-scoped application roles in practice, but require_min_role treats them as token-global roles.
+- Authenticated user bearer token whose roles include owner for tenant A
+- The same actor has any user_tenant_roles row for target tenant B, including viewer or agent
+- Attacker can choose tenant B UUID in GET /v1/tenants/{tenant_id}/data-export
+- Request is made without an X-Tenant-Id that would conflict with the token tenant claim
+## Path
+Owner token for Tenant A + viewer membership in Tenant B -> GET /v1/tenants/B/data-export -> token-level owner passes -> any tenantB membership passes -> Tenant B export disclosed
+## Path evidence
+- `app/api/v1/routes.py:2457-2503` - Defines GET /tenants/{tenant_id}/data-export; checks require_min_role('owner'), then ensure_tenant_access, then exports tenant record, settings, channels, privacy fields, and counts for the path tenant.
+- `app/core/security.py:218-230` - require_min_role accepts any sufficient role in request.state.roles and has no requested-tenant parameter or tenant binding.
+- `app/api/v1/routes.py:309-326` - has_user_tenant_role only checks that the actor has some row in app.user_tenant_roles for the requested tenant; it does not require role='owner' or a minimum role.
+- `app/api/v1/routes.py:329-342` - ensure_tenant_access grants cross-tenant access when has_user_tenant_role returns true, after only comparing request.state.tenant_id to the path tenant.
+- `infra/postgres/01-schema.sql:88-96` - The user_tenant_roles.role check constraint permits low-privileged roles such as viewer and agent, confirming that any-membership is not equivalent to owner.
+- `app/api/v1/routes.py:193-205` - The affected tenant_admin_router is part of the /v1 API router and depends on authenticate_request plus a general admin role check.
+- `app/main.py:21-27` - The main application includes the v1 router, placing the route in the core runtime service.
+- `Dockerfile:19` - The core API is launched by uvicorn on 0.0.0.0:8000.
+- `docker-compose.yml:17-22` - The api service maps host port 8000 to container port 8000, supporting network reachability in the checked-in deployment config.
+## Narrative
+This is a real, reachable product vulnerability. The main FastAPI app includes the v1 router and serves on 0.0.0.0:8000. The tenant data export route first checks require_min_role('owner'), which only inspects request.state.roles from the bearer token and does not bind that owner role to the path tenant. It then calls ensure_tenant_access, which allows access to a different tenant if has_user_tenant_role returns true. That helper only checks for any user_tenant_roles row for the requested tenant, and the schema allows low-privileged roles such as viewer and agent. Therefore a user who is owner in tenant A and only viewer/agent in tenant B can request tenant B's data export. The export returns tenant settings, channel metadata, privacy fields, and operational counts. The provided validation evidence includes direct handler, HTTP TestClient, and debugger PoCs showing HTTP 200 for tenant B in this exact condition.
+## Controls
+- Bearer authentication via authenticate_request
+- Auth0 RS256 or local HS256 JWT validation
+- tenant_admin_router dependency require_min_role('admin')
+- Route-level require_min_role('owner')
+- X-Tenant-Id mismatch rejection in authenticate_request
+- ensure_tenant_access tenant comparison and membership fallback
+- PostgreSQL app.tenant_id set_config before export queries
+- Audit event tenant.data_exported after successful export
+## Blindspots
+- Static review cannot confirm production ingress, LB exposure, or whether port 8000 is internet-facing in all deployments.
+- Static review cannot confirm real IdP claim semantics or whether production tokens can contain global owner roles across tenants.
+- Static review cannot verify production database RLS role privileges or whether additional reverse-proxy authorization exists outside the repository.
+- Frontend download behavior may rely on admin proxy/session mechanics not fully analyzed, but direct API reachability with bearer auth is sufficient for the attack path.

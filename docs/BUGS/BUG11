@@ -1,0 +1,389 @@
+Tenant admins can change tenant lifecycle status
+Link: https://chatgpt.com/codex/cloud/security/findings/474d4f89eb448191a29d8bd334f5d2e5?repo=https%3A%2F%2Fgithub.com%2Fvmantilla%2FCopilotoIA&sev=high
+Criticality: high (attack path: high)
+Status: new
+
+# Metadata
+Repo: vmantilla/CopilotoIA
+Commit: 562fa70
+Author: noreply@anthropic.com
+Created: 5/11/2026, 9:57:18 PM
+Assignee: Unassigned
+Signals: Security, Validated, Patch generated, Attack-path
+
+# Summary
+Introduced authorization flaw: the commit added the `status` field to `TenantUpdate` and persisted it in `update_tenant_record`, but reused the existing tenant-admin endpoint rather than a platform-owner-only route or separate privileged transition workflow.
+Before this commit, `TenantUpdate` did not accept `status` and `update_tenant_record` did not write it. The commit adds `status` to the tenant update schema and updates `app.tenants.status` from the tenant-admin route `PATCH /v1/tenants/{tenant_id}`. That route is protected only by `require_min_role('admin')` plus `ensure_tenant_access`, not by the platform-owner gate used for platform administration. As a result, any user with admin-level access to their tenant can send a crafted PATCH body such as `{ "status": "active" }` to promote a trial tenant, or `{ "status": "active" }` to undo a suspension/churn state if their token remains valid. Tenant lifecycle state is a platform control and is used by readiness/go-live checks, so letting tenant-scoped admins mutate it creates an authorization bypass.
+
+# Validation
+## Rubric
+- [x] Confirm the tenant update schema accepts `status` from client PATCH bodies.
+- [x] Confirm the PATCH endpoint is mounted on the tenant-admin router and lacks `require_platform_owner`.
+- [x] Confirm the update helper persists the merged `status` value into `app.tenants.status`.
+- [x] Confirm `status` has platform lifecycle significance, e.g. active/readiness checks.
+- [x] Dynamically prove a tenant-scoped `admin` token can set `status=active` while the same token is rejected by a platform-admin route.
+## Report
+Validated the authorization flaw. Code evidence: `TenantUpdate` accepts client-controlled `status` at `app/api/v1/schemas.py:17-24`; `tenant_admin_router` is protected only by `authenticate_request` and `require_min_role('admin')` at `app/api/v1/routes.py:254-257`, while platform administration uses `require_platform_owner` at `app/api/v1/routes.py:250-253` and `app/core/security.py:213-225`; `PATCH /v1/tenants/{tenant_id}` calls only `ensure_tenant_access` then `update_tenant_record` at `app/api/v1/routes.py:662-681`; `update_tenant_record` writes `status=$8` from the merged payload at `app/api/v1/routes.py:513-540`; readiness treats `status == 'active'` as lifecycle/go-live state at `app/api/v1/routes.py:2755-2768`. Dynamic PoC used FastAPI's real router and auth dependencies with a tenant-scoped JWT containing only `roles=['admin']`. The same token was rejected by platform-admin `POST /v1/tenants` with 403 `Platform administration requires an unscoped token`, but succeeded on `PATCH /v1/tenants/{tenant_id}` with `{'status':'active'}` and caused the fake DB update argument `$8` to be `active`. PDB trace confirmed the execution chain reached `patch_tenant()` and then `update_tenant_record()` with `debug_update_status_arg= active`. Crash was attempted by bounded normal PoC execution and exited 0; no crash is expected for an authorization bypass. Valgrind was attempted but unavailable and not applicable to this Python authorization issue.
+
+# Evidence
+app/api/v1/routes.py (L250 to 257)
+  Note: The tenant admin router only requires an authenticated user with admin-or-higher role, not platform-owner authorization.
+```
+platform_admin_router = APIRouter(
+    tags=['platform-admin'],
+    dependencies=[Depends(authenticate_request), Depends(require_platform_owner)],
+)
+tenant_admin_router = APIRouter(
+    tags=['tenant-admin'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin'))],
+)
+```
+
+app/api/v1/routes.py (L2755 to 2768)
+  Note: Tenant `status == 'active'` is used as the tenant active/go-live readiness condition, showing this field has platform lifecycle significance.
+```
+    tenant = await conn.fetchrow(
+        'select id, slug, display_name, status, deleted_at from app.tenants where id=$1',
+        tenant_id,
+    )
+    checks: list[dict[str, Any]] = []
+
+    tenant_ready = bool(tenant and tenant['status'] == 'active' and tenant['deleted_at'] is None)
+    checks.append(
+        readiness_check(
+            'tenant_active',
+            'Tenant activo',
+            tenant_ready,
+            'Tenant activo y disponible.' if tenant_ready else 'El tenant no existe, no está activo o fue eliminado.',
+            record_to_dict(tenant) if tenant else {},
+```
+
+app/api/v1/routes.py (L519 to 540)
+  Note: The update SQL now writes `status=$8` using the merged request payload, allowing the newly accepted field to change `app.tenants.status`.
+```
+    row = await conn.fetchrow(
+        """
+        update app.tenants
+        set slug=$2,
+            legal_name=$3,
+            display_name=$4,
+            vertical_code=$5,
+            country_code=$6,
+            timezone=$7,
+            status=$8,
+            updated_at=now()
+        where id=$1 and deleted_at is null
+        returning *
+        """,
+        tenant_id,
+        merged['slug'],
+        merged['legal_name'],
+        merged['display_name'],
+        merged['vertical_code'],
+        merged['country_code'],
+        merged['timezone'],
+        merged['status'],
+```
+
+app/api/v1/routes.py (L662 to 671)
+  Note: `PATCH /tenants/{tenant_id}` is mounted on the tenant-admin router and only checks tenant access before calling the status-writing update helper.
+```
+@tenant_admin_router.patch('/tenants/{tenant_id}')
+async def patch_tenant(
+    tenant_id: UUID,
+    payload: TenantUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await update_tenant_record(conn, tenant_id, payload)
+```
+
+app/api/v1/schemas.py (L17 to 24)
+  Note: The commit adds `status` to the tenant-scoped update schema, making lifecycle state client-controllable through existing tenant update APIs.
+```
+class TenantUpdate(BaseModel):
+    slug: str | None = None
+    legal_name: str | None = None
+    display_name: str | None = None
+    vertical_code: str | None = Field(default=None, pattern='^(field_service|beauty|pet_grooming)$')
+    country_code: str | None = None
+    timezone: str | None = None
+    status: str | None = Field(default=None, pattern='^(trial|active|suspended|churned)$')
+```
+
+Proposed patch:
+diff --git a/app/api/v1/routes.py b/app/api/v1/routes.py
+index 96cb5703341ef1373c2e01888843c90ea498284f..9d56329a9068a8cf56486dd7f904c50a164c3707 100644
+--- a/app/api/v1/routes.py
++++ b/app/api/v1/routes.py
+@@ -504,63 +504,61 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
+     )
+     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.created', entity_type='tenant', entity_id=str(tenant_id))
+     return record_to_dict(row)
+ 
+ 
+ async def update_tenant_record(
+     conn: asyncpg.Connection,
+     tenant_id: UUID,
+     payload: TenantUpdate,
+ ) -> asyncpg.Record:
+     allowed = payload.model_dump(exclude_unset=True, exclude_none=True)
+     current = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
+     if not current:
+         raise HTTPException(status_code=404, detail='Tenant not found')
+     merged = dict(current)
+     merged.update(allowed)
+     row = await conn.fetchrow(
+         """
+         update app.tenants
+         set slug=$2,
+             legal_name=$3,
+             display_name=$4,
+             vertical_code=$5,
+             country_code=$6,
+             timezone=$7,
+-            status=$8,
+             updated_at=now()
+         where id=$1 and deleted_at is null
+         returning *
+         """,
+         tenant_id,
+         merged['slug'],
+         merged['legal_name'],
+         merged['display_name'],
+         merged['vertical_code'],
+         merged['country_code'],
+         merged['timezone'],
+-        merged['status'],
+     )
+     if not row:
+         raise HTTPException(status_code=404, detail='Tenant not found')
+     return row
+ 
+ 
+ @tenant_signup_router.get('/me/tenants')
+ async def list_my_tenants(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+     actor_id = getattr(request.state, 'actor_id', None)
+     if not actor_id:
+         raise HTTPException(status_code=401, detail='Authentication required')
+     rows = await conn.fetch(
+         """
+         select t.id, t.slug, t.legal_name, t.display_name, t.vertical_code, t.country_code, t.timezone, t.status, utr.role, utr.is_default
+         from app.users u
+         join app.user_tenant_roles utr on utr.user_id = u.id
+         join app.tenants t on t.id = utr.tenant_id
+         where u.auth_subject=$1 and t.deleted_at is null
+         order by utr.is_default desc, utr.created_at asc
+         """,
+         actor_id,
+     )
+     return [record_to_dict(row) for row in rows]
+ 
+ 
+@@ -668,58 +666,57 @@ async def patch_tenant(
+     conn: asyncpg.Connection = Depends(get_db),
+ ):
+     await ensure_tenant_access(request, tenant_id, conn)
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     row = await update_tenant_record(conn, tenant_id, payload)
+     await audit(
+         conn,
+         tenant_id=tenant_id,
+         actor_type=request.state.actor_type,
+         actor_id=request.state.actor_id,
+         action='tenant.updated',
+         entity_type='tenant',
+         entity_id=str(tenant_id),
+     )
+     return record_to_dict(row)
+ 
+ 
+ _VALID_STATUS_TRANSITIONS: dict[str, set[str]] = {
+     'trial': {'active', 'suspended', 'churned'},
+     'active': {'suspended', 'churned'},
+     'suspended': {'active', 'churned'},
+     'churned': set(),
+ }
+ 
+ 
+-@tenant_admin_router.patch('/tenants/{tenant_id}/status')
++@platform_admin_router.patch('/tenants/{tenant_id}/status')
+ async def patch_tenant_status(
+     tenant_id: UUID,
+     payload: TenantStatusTransition,
+     request: Request,
+     conn: asyncpg.Connection = Depends(get_db),
+ ):
+-    await ensure_tenant_access(request, tenant_id, conn)
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     row = await conn.fetchrow('select * from app.tenants where id=$1 and deleted_at is null', tenant_id)
+     if not row:
+         raise HTTPException(status_code=404, detail='Tenant not found')
+     current_status = row['status']
+     allowed = _VALID_STATUS_TRANSITIONS.get(current_status, set())
+     if payload.status not in allowed:
+         raise HTTPException(
+             status_code=422,
+             detail=f"Transición inválida: {current_status!r} → {payload.status!r}. "
+                    f"Transiciones permitidas desde '{current_status}': {sorted(allowed) or 'ninguna'}.",
+         )
+     updated = await conn.fetchrow(
+         'update app.tenants set status=$2, updated_at=now() where id=$1 and deleted_at is null returning *',
+         tenant_id,
+         payload.status,
+     )
+     await audit(
+         conn,
+         tenant_id=tenant_id,
+         actor_type=request.state.actor_type,
+         actor_id=request.state.actor_id,
+         action='tenant.status_changed',
+         entity_type='tenant',
+         entity_id=str(tenant_id),
+
+
+diff --git a/app/api/v1/schemas.py b/app/api/v1/schemas.py
+index a52ec3369f858727eddd1cc7fa768691c894c573..9d730481c842b9a8806d67a06e09e9b28095959b 100644
+--- a/app/api/v1/schemas.py
++++ b/app/api/v1/schemas.py
+@@ -1,49 +1,48 @@
+ from datetime import datetime
+ from typing import Any
+ from uuid import UUID
+ 
+ from pydantic import BaseModel, Field
+ 
+ 
+ class TenantCreate(BaseModel):
+     slug: str
+     legal_name: str
+     display_name: str
+     vertical_code: str = Field(pattern='^(field_service|beauty|pet_grooming)$')
+     country_code: str = 'CO'
+     timezone: str = 'America/Bogota'
+ 
+ 
+ class TenantUpdate(BaseModel):
+     slug: str | None = None
+     legal_name: str | None = None
+     display_name: str | None = None
+     vertical_code: str | None = Field(default=None, pattern='^(field_service|beauty|pet_grooming)$')
+     country_code: str | None = None
+     timezone: str | None = None
+-    status: str | None = Field(default=None, pattern='^(trial|active|suspended|churned)$')
+ 
+ 
+ class KnowledgeStorageUpdate(BaseModel):
+     backend: str = Field(default='local', pattern='^(local|s3)$')
+     bucket: str | None = Field(default=None, min_length=3, max_length=255)
+     region: str | None = Field(default=None, max_length=64)
+     endpoint_url: str | None = Field(default=None, max_length=512)
+     prefix: str | None = Field(default=None, max_length=512)
+     access_key_id: str | None = Field(default=None, min_length=1, max_length=255)
+     secret_access_key: str | None = Field(default=None, min_length=1)
+ 
+ 
+ class ChannelCreate(BaseModel):
+     business_id: str | None = None
+     waba_id: str | None = None
+     phone_number_id: str
+     meta_access_token: str | None = Field(default=None, min_length=1)
+     app_secret: str | None = Field(default=None, min_length=1)
+     verify_token: str | None = Field(default=None, min_length=16)
+     account_mode: str = Field(default='mock', pattern='^(mock|live)$')
+ 
+ 
+ class TenantStatusTransition(BaseModel):
+     status: str = Field(pattern='^(active|suspended|churned)$')
+     reason: str = Field(min_length=3, max_length=500)
+
+
+diff --git a/tests/test_tenant_lifecycle_security_static.py b/tests/test_tenant_lifecycle_security_static.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..0b286bc9b6917c3c3ce070d0ea394a5388ffb138
+--- /dev/null
++++ b/tests/test_tenant_lifecycle_security_static.py
+@@ -0,0 +1,32 @@
++from pathlib import Path
++
++from app.api.v1.schemas import TenantUpdate
++
++ROUTES = Path('app/api/v1/routes.py')
++
++
++def test_tenant_update_schema_does_not_accept_lifecycle_status():
++    assert 'status' not in TenantUpdate.model_fields
++
++
++def test_generic_tenant_patch_does_not_write_lifecycle_status():
++    source = ROUTES.read_text()
++    start = source.index('async def update_tenant_record(')
++    end = source.index("@tenant_signup_router.get('/me/tenants')", start)
++    update_tenant_record = source[start:end]
++
++    assert 'status=$' not in update_tenant_record
++    assert "merged['status']" not in update_tenant_record
++
++
++def test_tenant_status_transition_is_platform_admin_only():
++    source = ROUTES.read_text()
++    assert "@platform_admin_router.patch('/tenants/{tenant_id}/status')" in source
++    assert "@tenant_admin_router.patch('/tenants/{tenant_id}/status')" not in source
++
++    start = source.index('async def patch_tenant_status(')
++    end = source.index("@tenant_admin_router.get('/tenants/{tenant_id}/settings')", start)
++    patch_tenant_status = source[start:end]
++
++    assert 'ensure_tenant_access(' not in patch_tenant_status
++    assert 'tenant.status_changed' in patch_tenant_status
+
+# Attack-path analysis
+Final: high | Decider: model_decided | Matrix severity: high | Policy adjusted: high
+## Rationale
+Kept as high. The finding is in-scope main-product runtime code, reachable over the API service, and validated by static evidence plus the provided dynamic PoC: a tenant-scoped admin token that is rejected from platform-admin tenant creation can still PATCH /v1/tenants/{tenant_id} with status='active' and drive update_tenant_record's status argument. The privilege delta is meaningful because require_platform_owner is the platform control-plane gate and tenant status is used as lifecycle/readiness state. It is not critical because exploitation requires an authenticated tenant admin, appears limited to the attacker's own tenant, and no evidence shows cross-tenant data exposure, secrets access, RCE, or platform-wide compromise.
+## Likelihood
+high - The exploit is a simple remote API PATCH with attacker-controlled JSON and no user interaction once the attacker has a tenant-admin token. Likelihood is medium rather than high because it requires authenticated tenant admin privileges, but that actor is explicitly in scope. | Remote network vector
+## Impact
+high - A tenant admin can modify a platform lifecycle field for their tenant, including promoting trial to active or reverting suspended/churned to active. This is a high-integrity platform-control bypass and affects readiness/go-live decisions, but repository evidence does not show cross-tenant data access, credential compromise, or full platform takeover.
+## Assumptions
+- The FastAPI API service is deployed as indicated by Dockerfile/docker-compose on port 8000 and is reachable by tenant users.
+- A malicious or compromised tenant-scoped user with role admin is an in-scope attacker, consistent with the threat model's tenant-user trust boundary.
+- Tenant lifecycle status is intended to be a platform-controlled state; the repository shows platform-owner-only tenant creation and readiness/go-live checks using status, but production billing or suspension enforcement outside this checkout was not inspected.
+- Valid authenticated user token
+- Tenant-scoped role at least admin
+- Access to the target tenant via tenant_id claim or tenant membership
+## Path
+Tenant admin JWT
+  -> PATCH /v1/tenants/{tenant_id} {status:"active"}
+  -> tenant_admin_router: authenticate_request + require_min_role('admin')
+  -> ensure_tenant_access confirms same tenant only
+  -> update_tenant_record merges payload and writes app.tenants.status=$8
+  -> tenant lifecycle/readiness status changed without platform-owner authorization
+## Path evidence
+- `app/api/v1/schemas.py:17-24` - TenantUpdate accepts client-provided status with lifecycle values trial, active, suspended, and churned.
+- `app/api/v1/routes.py:250-257` - platform_admin_router uses require_platform_owner, while tenant_admin_router only requires authenticate_request and require_min_role('admin').
+- `app/core/security.py:213-225` - require_platform_owner requires a platform user, rejects tenant-scoped tokens, and requires owner role.
+- `app/api/v1/routes.py:389-403` - ensure_tenant_access permits requests whose token tenant_id matches the path tenant_id or whose user has tenant role membership; it is not a platform-owner check.
+- `app/api/v1/routes.py:513-540` - update_tenant_record merges payload fields and writes status=$8 into app.tenants.
+- `app/api/v1/routes.py:662-681` - PATCH /tenants/{tenant_id} calls ensure_tenant_access and update_tenant_record under the tenant-admin router.
+- `app/api/v1/routes.py:2755-2768` - Readiness/go-live report treats tenant status == 'active' as the tenant_active lifecycle condition.
+- `app/main.py:21-25` - The v1 API router containing the vulnerable route is included in the main FastAPI app.
+- `Dockerfile:19` - The API is run with uvicorn bound to 0.0.0.0 on port 8000.
+- `docker-compose.yml:19-21` - The API service publishes host port 8000 to container port 8000.
+## Narrative
+This is a real, reachable authorization flaw in the main API. TenantUpdate accepts a client-controlled status field, PATCH /v1/tenants/{tenant_id} is mounted on the tenant-admin router requiring only authenticated admin role plus same-tenant access, and update_tenant_record persists the merged status into app.tenants. Platform administration elsewhere requires require_platform_owner, which rejects tenant-scoped tokens, but that gate is absent here. The field has lifecycle significance because readiness/go-live logic treats status == 'active' as the tenant-active condition. The issue does not show cross-tenant data access or secret compromise, but it lets a tenant admin cross the tenant-admin/platform-control boundary for their own tenant, so high severity is justified rather than critical.
+## Controls
+- authenticate_request
+- require_min_role('admin')
+- ensure_tenant_access
+- set_config('app.tenant_id')
+- audit(action='tenant.updated')
+- Missing require_platform_owner for lifecycle status mutation
+- Missing field-level authorization excluding status from tenant-admin PATCH
+## Blindspots
+- Static repository review cannot confirm the production ingress/LB exposure beyond Dockerfile and docker-compose.
+- The repository evidence shows readiness/go-live use of tenant status, but not whether production billing, suspension enforcement, or WhatsApp traffic gating also depends on this field.
+- Cloud IAM, deployed secrets manager policies, and external IdP role issuance were not inspected because cloud API access is out of scope.
+- Validation PoC evidence was provided from an earlier stage; this attack-path pass did not re-run the dynamic PoC.

@@ -1,0 +1,179 @@
+Tenant alert webhooks allow server-side request forgery
+Informar
+Ajuste
+
+Chat
+Nivel de gravedad
+High
+Ajustar para mejorar la precisión en futuros análisis
+
+Confirmar
+517add2
+8:06 PM May 12, 2026
+por Claude
+
+Repositorio
+vmantilla/CopilotoIA
+Resumen
+
+Introduced: the commit added the operator alert webhook feature without backend URL validation or network egress restrictions.
+
+TASK-0057 adds complaint alert webhooks under tenant notification settings. The tenant settings PATCH endpoint blindly accepts arbitrary `notification_settings` JSON, `normalize_alert_channels` keeps any non-empty `webhook_url` string, and the alert worker later calls `httpx.AsyncClient.post(url, ...)` directly from the backend. There is no enforcement of HTTPS, no allowlist, no DNS/IP resolution checks, and no blocking of localhost, RFC1918, link-local, or cloud metadata addresses. A malicious tenant admin can set `complaint_alert_channels.webhook_url` to an internal URL such as `http://127.0.0.1:...`, `http://169.254.169.254/...`, or another private service, then trigger a negative-feedback alert and cause the scheduler/alerts worker to send a server-side POST from the application network. This is a new SSRF sink and can be used for blind internal service interaction, potential state-changing requests to internal HTTP services, egress probing, and disclosure of alert payload data to attacker-controlled endpoints.
+
+Validación
+
+ Confirm tenant-admin settings update accepts and persists arbitrary notification_settings including complaint_alert_channels.webhook_url without backend URL validation.
+ Confirm normalize_alert_channels preserves arbitrary non-empty webhook strings, including loopback/private-style HTTP URLs.
+ Confirm alert enqueue copies the configured webhook URL into app.operator_alerts.payload.channels when a negative-feedback/complaint alert is created.
+ Confirm the dispatcher/scheduler path sends from backend code to the configured URL using real HTTP client code and no URL/IP/redirect safety gate.
+ Dynamically demonstrate a POST from the application process to 127.0.0.1 and capture the request and payload; corroborate with a debugger stack trace at the sink.
+Artefacto de validación
+Pruebas
+
+app/api/v1/routes.py
+app/api/v1/routes.py
+@tenant_admin_router.patch('/tenants/{tenant_id}/settings')
+The tenant settings PATCH endpoint accepts and persists arbitrary `notification_settings`, including the new webhook URL, without server-side validation.
+async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    allowed = {
+        k: payload[k]
+        for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train', 'notification_settings')
+        if k in payload
+    }
+    current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
+    if not current:
+        raise HTTPException(status_code=404, detail='Settings not found')
+    merged = dict(current)
+    merged.update(allowed)
+
+    # Normalize jsonb fields: accept both raw dicts and JSON strings from clients
+    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy', 'notification_settings'):
+        merged[jsonb_key] = _coerce_jsonb(merged[jsonb_key]) or {}
+
+    row = await conn.fetchrow(
+        """
+        update app.tenant_settings
+        set locale=$2, business_hours=$3::jsonb, escalation_policy=$4::jsonb, pii_policy=$5::jsonb,
+            no_train=$6, notification_settings=$7::jsonb
+        where tenant_id=$1 returning *
+        """,
+        tenant_id,
+        merged['locale'],
+        json.dumps(merged['business_hours']),
+        json.dumps(merged['escalation_policy']),
+        json.dumps(merged['pii_policy']),
+        merged['no_train'],
+        json.dumps(merged['notification_settings']),
+app/services/operator_alerts.py
+app/services/operator_alerts.py
+def normalize_alert_channels(value: Any) -> dict[str, Any]:
+`normalize_alert_channels` preserves any string as `webhook_url`; it does not require HTTPS or reject private, loopback, link-local, or metadata addresses.
+    """Return ``complaint_alert_channels`` with all three keys present."""
+    raw = _coerce_dict(value)
+    email = raw.get('email') if isinstance(raw.get('email'), list) else []
+    whatsapp = raw.get('whatsapp') if isinstance(raw.get('whatsapp'), list) else []
+    webhook = raw.get('webhook_url') if isinstance(raw.get('webhook_url'), str) else ''
+    return {
+        'email': [str(e).strip() for e in email if isinstance(e, str) and e.strip()],
+        'whatsapp': [str(w).strip() for w in whatsapp if isinstance(w, str) and w.strip()],
+        'webhook_url': webhook.strip(),
+    settings_row = await conn.fetchval(
+The configured webhook URL is copied into the alert payload when an operator alert is enqueued, making it available to the background dispatcher.
+        'select notification_settings from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    channels = normalize_alert_channels(
+        _coerce_dict(settings_row).get('complaint_alert_channels')
+    )
+    if not channels_configured(channels):
+        log.info(
+            'operator_alert.skipped_no_channels',
+            tenant_id=str(tenant_id),
+            kind=kind,
+        )
+        return None
+    payload_with_channels = {**payload, 'channels': channels}
+    row = await conn.fetchrow(
+        """
+        insert into app.operator_alerts (tenant_id, kind, payload)
+        values ($1, $2, $3::jsonb)
+        returning id
+        """,
+        tenant_id,
+        kind,
+        json.dumps(payload_with_channels),
+    )
+async def _send_webhook_channel(
+The dispatcher directly POSTs to the tenant-controlled URL with `httpx.AsyncClient` and no URL, DNS, IP-range, or redirect-safety checks, creating the SSRF sink.
+    *,
+    tenant_id: UUID,
+    url: str,
+    payload: dict[str, Any],
+    http_client: Any | None = None,
+) -> None:
+    if not url:
+        return
+    body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    secret = read_webhook_secret(tenant_id)
+    headers = {'Content-Type': 'application/json'}
+    signature = sign_webhook_payload(secret, body)
+    if signature:
+        headers['X-CopilotoIA-Signature'] = signature
+    if http_client is None:  # pragma: no cover - real network
+        import httpx
+
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(url, content=body, headers=headers)
+            response.raise_for_status()
+app/workers/scheduler.py
+app/workers/scheduler.py
+async def main() -> None:
+The scheduler runs in backend support mode and processes pending operator alerts, so the outbound request is made from the trusted server environment rather than the tenant's browser.
+    configure_logging(get_settings().log_level)
+    settings = get_settings()
+    conn = await asyncpg.connect(settings.database_url)
+    await conn.execute("select set_config('app.support_mode', 'true', false)")
+    try:
+        while True:
+            await _process_pending_reminder_jobs(conn)
+            await process_due_campaigns(conn)
+            await refresh_due_segments(conn)
+            await process_pending_operator_alerts(conn)
+Análisis de la ruta de ataque
+
+Kept the original high severity. The evidence supports a real, in-scope SSRF: tenant-admin-controlled notification_settings are persisted without validation, the webhook_url is preserved unchanged, queued into operator_alerts, and later POSTed by httpx from the scheduler/alerts worker running in the backend environment. The validation evidence further proves loopback reachability. Severity is high because this crosses a trust boundary into server-side network egress and can target private/metadata/internal services. It is not raised to critical because exploitation requires tenant-admin privileges and the demonstrated sink is blind POST-only without proven response exfiltration, cloud credential theft, code execution, or tenant-wide/platform-wide compromise.
+
+Ruta
+Authenticated tenant admin --PATCHes tenant settings--> Tenant settings PATCH accepts notification_settings --persists arbitrary JSON--> Unvalidated complaint_alert_channels.webhook_url --copied into alert channels--> Negative feedback enqueues app.operator_alerts row --pending alert is polled--> Scheduler/alerts worker in backend support mode --dispatches webhook--> httpx POST to attacker-selected URL --server-side network request--> Internal service, loopback, RFC1918, link-local, or metadata endpoint
+The finding is real and reachable. The tenant-admin settings route is part of the main /v1 FastAPI API and accepts notification_settings in an arbitrary dict payload, then stores it as JSONB without URL validation. normalize_alert_channels only strips any string webhook_url. When negative feedback is processed, enqueue_operator_alert copies those channels into a pending operator_alerts row. The scheduler is a deployed backend service and processes pending alerts in support mode; dispatch_operator_alert passes channels['webhook_url'] to _send_webhook_channel, which directly calls httpx.AsyncClient.post(url, ...). Repository evidence shows API/admin ports are exposed in docker-compose and internal services such as postgres, redis, and minio exist on the deployment network. The validation PoC reportedly used the real enqueue and dispatch functions and proved a backend POST to 127.0.0.1. Severity remains high, not critical: exploitation requires tenant-admin privileges and the SSRF is blind POST-only with no response body returned to the attacker, but it crosses the tenant/application trust boundary into backend network egress and can target loopback/private/link-local/metadata services.
+
+Probabilidad
+High - Likelihood is medium: the exploit path is straightforward after obtaining tenant-admin access and uses normal product features, and validation demonstrated a loopback POST through real enqueue/dispatch functions. However, it is not public/unauthenticated; it requires an authenticated tenant admin and an alert-triggering condition, and actual internal impact depends on deployment egress and reachable services. | Remote network vector
+Impacto
+High - Impact is high because a tenant admin can cause a trusted backend worker to initiate HTTP POSTs to arbitrary internal, loopback, link-local, or metadata-network URLs. This crosses the tenant-to-backend-network boundary and can enable blind internal service interaction, egress probing, state-changing POSTs against unauthenticated internal HTTP services, and attempted metadata access. It is not rated critical because the route requires tenant-admin privileges, the sink uses POST and does not return response bodies to the attacker, and direct credential disclosure or code execution is not proven from repository artifacts.
+Suposiciones
+Production exposes the FastAPI tenant-admin API to authenticated tenant users, as the compose and application entrypoint expose uvicorn on 0.0.0.0:8000.
+Tenant administrators are not fully trusted to control backend egress, consistent with the provided threat model.
+The scheduler or dedicated alerts worker is deployed in the same backend network as internal services or cloud metadata endpoints.
+No external network policy, proxy, or egress firewall outside the repository blocks loopback, RFC1918, link-local, or metadata addresses.
+Authenticated user token with tenant admin role or higher
+Access to the target tenant settings endpoint
+Ability to configure complaint_alert_channels.webhook_url
+A negative-feedback or complaint alert event to enqueue an operator alert
+Scheduler or alerts worker processing pending operator alerts
+Controles
+Authentication required for tenant_admin_router
+Admin role required for tenant settings update
+ensure_tenant_access enforces tenant scope/membership before persisting settings
+PostgreSQL RLS exists for tenant tables including operator_alerts
+Scheduler sets app.support_mode=true for backend worker processing
+Outbound webhook HMAC signature is supported if .secrets/tenants/<tenant_id>/alerts_webhook_secret exists
+No repository evidence of webhook URL allowlist, HTTPS enforcement, DNS/IP validation, metadata address block, or egress network policy for this path
+Puntos ciegos
+Static repository review cannot confirm production ingress, public load balancer exposure, or external WAF/API gateway controls.
+Static repository review cannot confirm production cloud provider, metadata-service availability, or whether IMDSv2/metadata headers block credential theft.
+Static repository review cannot verify runtime network policies, egress proxies, service mesh restrictions, or firewall rules outside the repository.
+The repository shows docker-compose internal services, but their exact production equivalents and authentication posture are unknown.
+No API route was found that returns operator_alerts last_error/status to the tenant, so internal probing feedback may be more limited than the ability to send the request.

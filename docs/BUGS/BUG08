@@ -1,0 +1,952 @@
+Service catalog admin role is not tenant-scoped
+Link: https://chatgpt.com/codex/cloud/security/findings/e09ed9d89c308191a0bdd52d7c1a1e65?repo=https%3A%2F%2Fgithub.com%2Fvmantilla%2FCopilotoIA&sev=high
+Criticality: high (attack path: high)
+Status: new
+
+# Metadata
+Repo: vmantilla/CopilotoIA
+Commit: 39f5c49
+Author: noreply@anthropic.com
+Created: 5/11/2026, 10:55:12 PM
+Assignee: Unassigned
+Signals: Security, Validated, Patch generated, Attack-path
+
+# Summary
+Introduced for the new service catalog API: the added endpoints rely on pre-existing role and tenant helper behavior that does not bind the required admin role to the target tenant.
+The new service catalog routes require `require_min_role('admin')` or `require_min_role('admin', allow_service=True)`, but that dependency checks only the unqualified roles from the JWT. The later `ensure_tenant_access()` call does not verify that the user has an admin role for the path tenant; if the JWT tenant does not match, it calls `has_user_tenant_role()`, which returns true for any `user_tenant_roles` row in the target tenant regardless of role. An attacker with an admin token for tenant A and a viewer/agent membership in tenant B can omit `X-Tenant-Id` or keep it scoped to tenant A, call `/v1/tenants/{tenantB}/services`, pass the global admin role check, pass the membership-only tenant check, and then the endpoint sets `app.tenant_id` to tenant B and performs reads/writes under tenant B's RLS context. This permits unauthorized cross-tenant catalog reads, creation, updates, deactivation, and reordering.
+
+# Validation
+## Rubric
+- [x] Confirm authentication keeps JWT roles unqualified and separate from tenant scope.
+- [x] Confirm require_min_role('admin') checks only request.state.roles and not the path tenant.
+- [x] Confirm ensure_tenant_access() accepts any user_tenant_roles row in the target tenant without checking role/admin level.
+- [x] Confirm service catalog endpoints set app.tenant_id to the path tenant after the weak tenant access check and then read/write service_catalog.
+- [x] Reproduce with an actual FastAPI route request: tenant-A admin token + tenant-B agent membership results in a tenant-B service creation.
+## Report
+Validated the cross-tenant authorization bypass against the real FastAPI route with only the DB dependency mocked. Code evidence: app/core/security.py:188-205 stores JWT tenant_id and roles separately; app/core/security.py:233-245 require_min_role() authorizes solely from request.state.roles; app/api/v1/routes.py:344-373 ensure_tenant_access() accepts any user_tenant_roles membership in the target tenant because has_user_tenant_role() has no role predicate; app/api/v1/routes.py:1779-1817 and 1851-1959 apply the admin dependency before calling ensure_tenant_access(), then set app.tenant_id to the path tenant and perform service_catalog reads/writes. Schema evidence: infra/postgres/01-schema.sql:89-98 permits non-admin roles such as agent/viewer in user_tenant_roles, and infra/postgres/01-schema.sql:480,501-504 show service_catalog RLS depends on current app.tenant_id, which the route sets to the victim tenant. Dynamic PoC: /workspace/poc_service_catalog_cross_tenant.py creates a local JWT scoped to tenant A with roles ['admin'], omits X-Tenant-Id, targets /v1/tenants/{tenantB}/services, and mocks the DB membership check as an agent row for tenant B. Command output showed status=201 and response tenant_id equal to tenant B. Logged fake DB events showed {'op': 'membership_check', 'victim_role': 'agent', 'query_requires_admin_role': False}, then {'op': 'set_rls_tenant_context', 'tenant': tenantB}, then a service_catalog insert with tenant_arg tenantB and audit action service_catalog.created. This confirms an admin role from tenant A plus only non-admin membership in tenant B can create a service under tenant B. Crash testing is not applicable to this Python authorization flaw; the direct PoC intentionally returns 201 rather than crashing. Valgrind was attempted but unavailable: 'bash: command not found: valgrind'. The PoC was also run under pdb non-interactively and reproduced the same vulnerable 201 result.
+
+# Evidence
+app/api/v1/routes.py (L1779 to 1817)
+  Note: The new service list/create routes apply the global admin dependency and then call `ensure_tenant_access`; after that they set the database tenant context to the path tenant.
+```
+tenant_catalog_router = APIRouter(
+    tags=['tenant-catalog'],
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('admin', allow_service=True))],
+)
+
+
+@tenant_catalog_router.get('/tenants/{tenant_id}/services')
+async def list_services(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    include_inactive: bool = Query(default=False),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    rows = await conn.fetch(
+        f"""
+        select {SERVICE_CATALOG_PROJECTION}
+        from app.service_catalog
+        where tenant_id=$1
+          and ($2::boolean is true or is_active is true)
+        order by sort_order asc, name asc
+        """,
+        tenant_id,
+        include_inactive,
+    )
+    return [normalize_service_catalog_row(row) for row in rows]
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/services', status_code=201)
+async def create_service(
+    tenant_id: UUID,
+    payload: ServiceCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+```
+
+app/api/v1/routes.py (L1851 to 1959)
+  Note: The new update, deactivate, and reorder routes use the same authorization pattern, enabling unauthorized modification of another tenant's service catalog when the attacker has only non-admin membership there.
+```
+@tenant_admin_router.patch('/tenants/{tenant_id}/services/{service_id}')
+async def update_service(
+    tenant_id: UUID,
+    service_id: UUID,
+    payload: ServiceUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await conn.fetchrow(
+            f'select {SERVICE_CATALOG_PROJECTION} from app.service_catalog where tenant_id=$1 and id=$2',
+            tenant_id,
+            service_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Service not found')
+        return normalize_service_catalog_row(row)
+    if 'price_currency' in update_data and update_data['price_currency']:
+        update_data['price_currency'] = update_data['price_currency'].upper()
+    row = await conn.fetchrow(
+        f"""
+        update app.service_catalog
+        set name=coalesce($3, name),
+            category=coalesce($4, category),
+            description=coalesce($5, description),
+            price_amount=coalesce($6, price_amount),
+            price_currency=coalesce($7, price_currency),
+            duration_minutes=coalesce($8, duration_minutes),
+            preparation_notes=coalesce($9, preparation_notes),
+            post_service_notes=coalesce($10, post_service_notes),
+            is_active=coalesce($11, is_active),
+            sort_order=coalesce($12, sort_order),
+            metadata=coalesce($13::jsonb, metadata)
+        where tenant_id=$1 and id=$2
+        returning {SERVICE_CATALOG_PROJECTION}
+        """,
+        tenant_id,
+        service_id,
+        update_data.get('name'),
+        update_data.get('category'),
+        update_data.get('description'),
+        update_data.get('price_amount'),
+        update_data.get('price_currency'),
+        update_data.get('duration_minutes'),
+        update_data.get('preparation_notes'),
+        update_data.get('post_service_notes'),
+        update_data.get('is_active'),
+        update_data.get('sort_order'),
+        json.dumps(update_data['metadata']) if 'metadata' in update_data else None,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Service not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.updated',
+        entity_type='service_catalog',
+        entity_id=str(service_id),
+    )
+    return normalize_service_catalog_row(row)
+
+
+@tenant_admin_router.delete('/tenants/{tenant_id}/services/{service_id}', status_code=204)
+async def deactivate_service(
+    tenant_id: UUID,
+    service_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    row = await conn.fetchrow(
+        """
+        update app.service_catalog
+        set is_active=false
+        where tenant_id=$1 and id=$2
+        returning id
+        """,
+        tenant_id,
+        service_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Service not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='service_catalog.deactivated',
+        entity_type='service_catalog',
+        entity_id=str(service_id),
+    )
+    return Response(status_code=204)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/services/reorder')
+async def reorder_services(
+    tenant_id: UUID,
+    payload: ServiceReorderRequest,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+```
+
+app/api/v1/routes.py (L344 to 373)
+  Note: `has_user_tenant_role` checks only that the actor has some role in the target tenant, and `ensure_tenant_access` accepts that membership without verifying it meets the endpoint's required role.
+```
+async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenant_id: UUID) -> bool:
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        return False
+    return bool(
+        await conn.fetchval(
+            """
+            select exists(
+              select 1
+              from app.users u
+              join app.user_tenant_roles utr on utr.user_id = u.id
+              where u.auth_subject=$1 and utr.tenant_id=$2
+            )
+            """,
+            actor_id,
+            tenant_id,
+        )
+    )
+
+
+async def ensure_tenant_access(
+    request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
+) -> None:
+    if is_service_or_support(request):
+        return
+    request_tenant_id = getattr(request.state, 'tenant_id', None)
+    if request_tenant_id == tenant_id:
+        return
+    if conn and await has_user_tenant_role(conn, request, tenant_id):
+        return
+```
+
+app/core/security.py (L188 to 205)
+  Note: Authentication stores JWT roles and the token tenant separately; the roles are not bound here to the requested/path tenant.
+```
+    support_mode = _coerce_bool(_claim(payload, namespace, 'support_mode'))
+    roles = _claim(payload, namespace, 'roles') or []
+    if isinstance(roles, str):
+        roles = [roles]
+
+    if token_tenant_id and x_tenant_id and x_tenant_id != token_tenant_id and not support_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='X-Tenant-Id does not match token tenant_id',
+        )
+    request.state.actor_type = 'user'
+    request.state.actor_id = payload.get('sub')
+    request.state.roles = roles
+    request.state.support_mode = support_mode
+    request.state.mfa_verified = _extract_mfa_verified(payload)
+    request.state.email = payload.get('email')
+    request.state.name = payload.get('name') or payload.get('nickname')
+    request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
+```
+
+app/core/security.py (L233 to 245)
+  Note: `require_min_role` authorizes using only `request.state.roles`, so an admin role from one tenant can satisfy admin requirements before tenant-specific role validation occurs.
+```
+def require_min_role(minimum_role: str, *, allow_service: bool = False):
+    async def dependency(request: Request) -> None:
+        actor_type = getattr(request.state, 'actor_type', 'anonymous')
+        if actor_type == 'anonymous':
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required'
+            )
+        if actor_type == 'service':
+            if allow_service:
+                return
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='User role required')
+        if _has_role(getattr(request.state, 'roles', []), minimum_role):
+            return
+```
+
+Proposed patch:
+diff --git a/app/api/v1/routes.py b/app/api/v1/routes.py
+index 27dbbf17a00c0645d59193fa404be1cc0a6d4dc6..032732b701d343d51568884c61c5b26c45036a1c 100644
+--- a/app/api/v1/routes.py
++++ b/app/api/v1/routes.py
+@@ -38,51 +38,57 @@ from app.api.v1.schemas import (
+     KnowledgeStorageUpdate,
+     MemberInvite,
+     MemberRoleUpdate,
+     MessageCreate,
+     PromptCreate,
+     QuoteCreate,
+     QuotePatch,
+     ResourceCreate,
+     ResourceUpdate,
+     ServiceCreate,
+     ServiceReorderRequest,
+     ServiceRequestCreate,
+     ServiceRequestPatch,
+     ServiceUpdate,
+     TenantCreate,
+     TenantPaymentSettingsUpdate,
+     TenantStatusTransition,
+     TenantUpdate,
+     WebChannelUpsert,
+     WebChatMessage,
+     WebChatStart,
+     WhatsAppTemplateCreate,
+     WhatsAppTemplateUpdate,
+ )
+ from app.core.config import get_settings
+-from app.core.security import authenticate_request, require_min_role, require_platform_owner, require_service
++from app.core.security import (
++    authenticate_request,
++    require_min_role,
++    require_platform_owner,
++    require_service,
++    role_meets_minimum,
++)
+ from app.db.pool import get_db, record_to_dict
+ from app.services.audit import audit
+ from app.services.auth0_admin import (
+     assign_roles as auth0_assign_roles,
+     auth0_management_enabled,
+     invite_user as auth0_invite_user,
+     revoke_tenant_roles as auth0_revoke_tenant_roles,
+ )
+ from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, store_knowledge_file
+ from app.services.campaigns import (
+     count_recipients as count_campaign_recipients,
+     evaluate_segment,
+     normalize_segment_filter,
+     refresh_campaign_counters,
+ )
+ from app.services.payment_provider import (
+     PaymentProviderError,
+     extract_external_ref,
+     extract_payment_status,
+     generate_payment_link as provider_generate_payment_link,
+     normalize_provider as normalize_payment_provider,
+     verify_mercadopago_signature,
+     verify_stripe_signature,
+ )
+ from app.services.notifications import (
+@@ -394,68 +400,72 @@ def parse_json_object(value: Any, default: dict[str, Any] | None = None) -> dict
+ 
+ def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
+     document = record_to_dict(row)
+     if not document:
+         return None
+     document['metadata'] = parse_json_object(document.get('metadata'), default={})
+     return document
+ 
+ 
+ def normalize_knowledge_documents(rows: list[asyncpg.Record]) -> list[dict]:
+     return [normalize_knowledge_document(row) for row in rows]
+ 
+ 
+ def metadata_extracted_text(value: Any) -> str | None:
+     metadata = parse_json_object(value, default={})
+     extracted_text = metadata.get('extracted_text')
+     return extracted_text if isinstance(extracted_text, str) else None
+ 
+ 
+ def is_service_or_support(request: Request) -> bool:
+     return getattr(request.state, 'actor_type', None) == 'service' or getattr(
+         request.state, 'support_mode', False
+     )
+ 
+ 
+-async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenant_id: UUID) -> bool:
++async def has_user_tenant_role(
++    conn: asyncpg.Connection,
++    request: Request,
++    tenant_id: UUID,
++    minimum_role: str | None = None,
++) -> bool:
+     actor_id = getattr(request.state, 'actor_id', None)
+     if not actor_id:
+         return False
+-    return bool(
+-        await conn.fetchval(
+-            """
+-            select exists(
+-              select 1
+-              from app.users u
+-              join app.user_tenant_roles utr on utr.user_id = u.id
+-              where u.auth_subject=$1 and utr.tenant_id=$2
+-            )
+-            """,
+-            actor_id,
+-            tenant_id,
+-        )
++    rows = await conn.fetch(
++        """
++        select utr.role
++        from app.users u
++        join app.user_tenant_roles utr on utr.user_id = u.id
++        where u.auth_subject=$1 and utr.tenant_id=$2
++        """,
++        actor_id,
++        tenant_id,
+     )
++    if minimum_role is None:
++        return bool(rows)
++    return any(role_meets_minimum(row['role'], minimum_role) for row in rows)
+ 
+ 
+ async def ensure_tenant_access(
+     request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
+ ) -> None:
+     if is_service_or_support(request):
+         return
+     request_tenant_id = getattr(request.state, 'tenant_id', None)
+     if request_tenant_id == tenant_id:
+         return
+     if conn and await has_user_tenant_role(conn, request, tenant_id):
+         return
+     if not request_tenant_id:
+         raise HTTPException(
+             status_code=400, detail='X-Tenant-Id header or tenant_id claim is required'
+         )
+     raise HTTPException(status_code=403, detail='Tenant scope does not match request')
+ 
+ 
+ async def require_tenant(request: Request) -> UUID:
+     if not getattr(request.state, 'tenant_id', None):
+         raise HTTPException(status_code=400, detail='X-Tenant-Id header or tenant_id claim is required')
+     return request.state.tenant_id
+ 
+ 
+@@ -3513,135 +3523,156 @@ async def tenant_availability(
+         'service_duration_minutes': duration,
+         'resources': resources_result,
+     }
+ 
+ 
+ SERVICE_CATALOG_COLUMNS = (
+     'id',
+     'tenant_id',
+     'name',
+     'category',
+     'description',
+     'price_amount',
+     'price_currency',
+     'duration_minutes',
+     'preparation_notes',
+     'post_service_notes',
+     'is_active',
+     'sort_order',
+     'metadata',
+     'created_at',
+     'updated_at',
+ )
+ SERVICE_CATALOG_PROJECTION = ', '.join(SERVICE_CATALOG_COLUMNS)
+ 
+ 
++async def ensure_tenant_role(
++    request: Request,
++    tenant_id: UUID,
++    minimum_role: str,
++    conn: asyncpg.Connection | None = None,
++) -> None:
++    if is_service_or_support(request):
++        return
++    request_tenant_id = getattr(request.state, 'tenant_id', None)
++    if request_tenant_id == tenant_id:
++        roles = getattr(request.state, 'roles', [])
++        if any(role_meets_minimum(role, minimum_role) for role in roles):
++            return
++    if conn and await has_user_tenant_role(conn, request, tenant_id, minimum_role):
++        return
++    raise HTTPException(
++        status_code=403,
++        detail=f'{minimum_role} role or higher is required for tenant',
++    )
++
++
+ def normalize_service_catalog_row(row: asyncpg.Record | None) -> dict | None:
+     service = record_to_dict(row)
+     if not service:
+         return None
+     service['metadata'] = parse_json_object(service.get('metadata'), default={})
+     if service.get('price_amount') is not None:
+         service['price_amount'] = float(service['price_amount'])
+     return service
+ 
+ 
+ @tenant_catalog_router.get('/tenants/{tenant_id}/services')
+ async def list_services(
+     tenant_id: UUID,
+     request: Request,
+     conn: asyncpg.Connection = Depends(get_db),
+     include_inactive: bool = Query(default=False),
+ ):
+-    await ensure_tenant_access(request, tenant_id, conn)
++    await ensure_tenant_role(request, tenant_id, 'admin', conn)
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     rows = await conn.fetch(
+         f"""
+         select {SERVICE_CATALOG_PROJECTION}
+         from app.service_catalog
+         where tenant_id=$1
+           and ($2::boolean is true or is_active is true)
+         order by sort_order asc, name asc
+         """,
+         tenant_id,
+         include_inactive,
+     )
+     return [normalize_service_catalog_row(row) for row in rows]
+ 
+ 
+ @tenant_admin_router.post('/tenants/{tenant_id}/services', status_code=201)
+ async def create_service(
+     tenant_id: UUID,
+     payload: ServiceCreate,
+     request: Request,
+     conn: asyncpg.Connection = Depends(get_db),
+ ):
+-    await ensure_tenant_access(request, tenant_id, conn)
++    await ensure_tenant_role(request, tenant_id, 'admin', conn)
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     row = await conn.fetchrow(
+         f"""
+         insert into app.service_catalog (
+           tenant_id, name, category, description, price_amount, price_currency,
+           duration_minutes, preparation_notes, post_service_notes, is_active, sort_order, metadata
+         )
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+         returning {SERVICE_CATALOG_PROJECTION}
+         """,
+         tenant_id,
+         payload.name,
+         payload.category,
+         payload.description,
+         payload.price_amount,
+         payload.price_currency.upper(),
+         payload.duration_minutes,
+         payload.preparation_notes,
+         payload.post_service_notes,
+         payload.is_active,
+         payload.sort_order,
+         json.dumps(payload.metadata),
+     )
+     await audit(
+         conn,
+         tenant_id=tenant_id,
+         actor_type=request.state.actor_type,
+         actor_id=request.state.actor_id,
+         action='service_catalog.created',
+         entity_type='service_catalog',
+         entity_id=str(row['id']),
+     )
+     return normalize_service_catalog_row(row)
+ 
+ 
+ @tenant_admin_router.patch('/tenants/{tenant_id}/services/{service_id}')
+ async def update_service(
+     tenant_id: UUID,
+     service_id: UUID,
+     payload: ServiceUpdate,
+     request: Request,
+     conn: asyncpg.Connection = Depends(get_db),
+ ):
+-    await ensure_tenant_access(request, tenant_id, conn)
++    await ensure_tenant_role(request, tenant_id, 'admin', conn)
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     update_data = payload.model_dump(exclude_unset=True)
+     if not update_data:
+         row = await conn.fetchrow(
+             f'select {SERVICE_CATALOG_PROJECTION} from app.service_catalog where tenant_id=$1 and id=$2',
+             tenant_id,
+             service_id,
+         )
+         if not row:
+             raise HTTPException(status_code=404, detail='Service not found')
+         return normalize_service_catalog_row(row)
+     if 'price_currency' in update_data and update_data['price_currency']:
+         update_data['price_currency'] = update_data['price_currency'].upper()
+     row = await conn.fetchrow(
+         f"""
+         update app.service_catalog
+         set name=coalesce($3, name),
+             category=coalesce($4, category),
+             description=coalesce($5, description),
+             price_amount=coalesce($6, price_amount),
+             price_currency=coalesce($7, price_currency),
+             duration_minutes=coalesce($8, duration_minutes),
+             preparation_notes=coalesce($9, preparation_notes),
+             post_service_notes=coalesce($10, post_service_notes),
+             is_active=coalesce($11, is_active),
+@@ -3663,84 +3694,84 @@ async def update_service(
+         update_data.get('is_active'),
+         update_data.get('sort_order'),
+         json.dumps(update_data['metadata']) if 'metadata' in update_data else None,
+     )
+     if not row:
+         raise HTTPException(status_code=404, detail='Service not found')
+     await audit(
+         conn,
+         tenant_id=tenant_id,
+         actor_type=request.state.actor_type,
+         actor_id=request.state.actor_id,
+         action='service_catalog.updated',
+         entity_type='service_catalog',
+         entity_id=str(service_id),
+     )
+     return normalize_service_catalog_row(row)
+ 
+ 
+ @tenant_admin_router.delete('/tenants/{tenant_id}/services/{service_id}', status_code=204)
+ async def deactivate_service(
+     tenant_id: UUID,
+     service_id: UUID,
+     request: Request,
+     conn: asyncpg.Connection = Depends(get_db),
+ ):
+-    await ensure_tenant_access(request, tenant_id, conn)
++    await ensure_tenant_role(request, tenant_id, 'admin', conn)
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     row = await conn.fetchrow(
+         """
+         update app.service_catalog
+         set is_active=false
+         where tenant_id=$1 and id=$2
+         returning id
+         """,
+         tenant_id,
+         service_id,
+     )
+     if not row:
+         raise HTTPException(status_code=404, detail='Service not found')
+     await audit(
+         conn,
+         tenant_id=tenant_id,
+         actor_type=request.state.actor_type,
+         actor_id=request.state.actor_id,
+         action='service_catalog.deactivated',
+         entity_type='service_catalog',
+         entity_id=str(service_id),
+     )
+     return Response(status_code=204)
+ 
+ 
+ @tenant_admin_router.post('/tenants/{tenant_id}/services/reorder')
+ async def reorder_services(
+     tenant_id: UUID,
+     payload: ServiceReorderRequest,
+     request: Request,
+     conn: asyncpg.Connection = Depends(get_db),
+ ):
+-    await ensure_tenant_access(request, tenant_id, conn)
++    await ensure_tenant_role(request, tenant_id, 'admin', conn)
+     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+     if not payload.order:
+         return {'updated': 0}
+     async with conn.transaction():
+         for item in payload.order:
+             await conn.execute(
+                 """
+                 update app.service_catalog
+                 set sort_order=$3
+                 where tenant_id=$1 and id=$2
+                 """,
+                 tenant_id,
+                 item.id,
+                 item.sort_order,
+             )
+     await audit(
+         conn,
+         tenant_id=tenant_id,
+         actor_type=request.state.actor_type,
+         actor_id=request.state.actor_id,
+         action='service_catalog.reordered',
+         entity_type='service_catalog',
+         entity_id=str(tenant_id),
+     )
+     return {'updated': len(payload.order)}
+
+
+diff --git a/app/core/security.py b/app/core/security.py
+index ceb3e34a17946cf4cfc62fab985708e18de93b83..150128217ec63611f25b551bd8dd90ed050a993f 100644
+--- a/app/core/security.py
++++ b/app/core/security.py
+@@ -183,53 +183,57 @@ async def authenticate_request(
+         token_tenant_id = UUID(token_tenant_claim) if token_tenant_claim else None
+     except (TypeError, ValueError) as exc:
+         raise HTTPException(
+             status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid token tenant_id'
+         ) from exc
+     support_mode = _coerce_bool(_claim(payload, namespace, 'support_mode'))
+     roles = _claim(payload, namespace, 'roles') or []
+     if isinstance(roles, str):
+         roles = [roles]
+ 
+     if token_tenant_id and x_tenant_id and x_tenant_id != token_tenant_id and not support_mode:
+         raise HTTPException(
+             status_code=status.HTTP_403_FORBIDDEN,
+             detail='X-Tenant-Id does not match token tenant_id',
+         )
+     request.state.actor_type = 'user'
+     request.state.actor_id = payload.get('sub')
+     request.state.roles = roles
+     request.state.support_mode = support_mode
+     request.state.mfa_verified = _extract_mfa_verified(payload)
+     request.state.email = payload.get('email')
+     request.state.name = payload.get('name') or payload.get('nickname')
+     request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
+ 
+ 
+-def _has_role(roles: list[str], minimum_role: str) -> bool:
++def role_meets_minimum(role: str, minimum_role: str) -> bool:
+     required = _ROLE_LEVELS[minimum_role]
+-    return any(_ROLE_LEVELS.get(role, 0) >= required for role in roles)
++    return _ROLE_LEVELS.get(role, 0) >= required
++
++
++def _has_role(roles: list[str], minimum_role: str) -> bool:
++    return any(role_meets_minimum(role, minimum_role) for role in roles)
+ 
+ 
+ async def require_platform_owner(request: Request) -> None:
+     actor_type = getattr(request.state, 'actor_type', 'anonymous')
+     if actor_type == 'anonymous':
+         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required')
+     if actor_type != 'user':
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Platform user required')
+     if getattr(request.state, 'tenant_id', None):
+         raise HTTPException(
+             status_code=status.HTTP_403_FORBIDDEN,
+             detail='Platform administration requires an unscoped token',
+         )
+     if 'owner' not in getattr(request.state, 'roles', []):
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='owner role is required')
+ 
+ 
+ async def require_service(request: Request) -> None:
+     if getattr(request.state, 'actor_type', None) != 'service':
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Service token required')
+ 
+ 
+ def require_min_role(minimum_role: str, *, allow_service: bool = False):
+     async def dependency(request: Request) -> None:
+         actor_type = getattr(request.state, 'actor_type', 'anonymous')
+
+
+diff --git a/tests/test_service_catalog_static.py b/tests/test_service_catalog_static.py
+index 0fd1a8b651e407e2cd30397f73a378d7903c40b1..c3c0c240553e67cef55183edc273e80d4a13375d 100644
+--- a/tests/test_service_catalog_static.py
++++ b/tests/test_service_catalog_static.py
+@@ -23,50 +23,51 @@ def test_service_catalog_table_defined_with_rls():
+     assert 'duration_minutes int not null default 60' in schema
+     assert 'preparation_notes text' in schema
+     assert 'post_service_notes text' in schema
+     assert 'is_active boolean not null default true' in schema
+     assert 'sort_order int not null default 0' in schema
+     assert 'alter table app.service_catalog enable row level security' in schema
+     assert "'service_catalog'" in schema
+     assert 'trg_service_catalog_touch' in schema
+     assert 'uq_service_catalog_tenant_id_id' in schema
+ 
+ 
+ def test_service_catalog_endpoints_registered():
+     source = API_ROUTES.read_text()
+     assert "tenant_catalog_router = APIRouter(" in source
+     assert "@tenant_catalog_router.get('/tenants/{tenant_id}/services')" in source
+     assert "@tenant_admin_router.post('/tenants/{tenant_id}/services', status_code=201)" in source
+     assert "@tenant_admin_router.patch('/tenants/{tenant_id}/services/{service_id}')" in source
+     assert "@tenant_admin_router.delete('/tenants/{tenant_id}/services/{service_id}', status_code=204)" in source
+     assert "@tenant_admin_router.post('/tenants/{tenant_id}/services/reorder')" in source
+     assert "action='service_catalog.created'" in source
+     assert "action='service_catalog.updated'" in source
+     assert "action='service_catalog.deactivated'" in source
+     assert "action='service_catalog.reordered'" in source
+     assert "router.include_router(tenant_catalog_router)" in source
+     assert "require_min_role('admin', allow_service=True)" in source
++    assert "await ensure_tenant_role(request, tenant_id, 'admin', conn)" in source
+ 
+ 
+ def test_service_catalog_schemas_and_admin_client_wired():
+     schemas = SCHEMAS.read_text()
+     api = CORE_API.read_text()
+     assert 'class ServiceCreate(BaseModel):' in schemas
+     assert 'class ServiceUpdate(BaseModel):' in schemas
+     assert 'class ServiceReorderRequest(BaseModel):' in schemas
+     assert 'class ServiceReorderItem(BaseModel):' in schemas
+     assert 'export function listServices' in api
+     assert 'export function createService' in api
+     assert 'export function updateService' in api
+     assert 'export function deactivateService' in api
+     assert 'export function reorderServices' in api
+ 
+ 
+ def test_service_catalog_admin_module_exists_and_registered():
+     assert SERVICE_CATALOG_MODULE.exists(), 'ServiceCatalog.jsx must exist'
+     component = SERVICE_CATALOG_MODULE.read_text()
+     assert 'export function ServiceCatalog' in component
+     assert 'listServices' in component
+     assert 'createService' in component
+     assert 'updateService' in component
+     assert 'deactivateService' in component
+     assert 'reorderServices' in component
+
+
+diff --git a/tests/test_tenant_access.py b/tests/test_tenant_access.py
+index 704a4614a359a3f17e32aeb9ba16804bda31972e..e944cef3d3df7b7f88036ea557c0e7675dc4c6fb 100644
+--- a/tests/test_tenant_access.py
++++ b/tests/test_tenant_access.py
+@@ -1,61 +1,98 @@
+ import asyncio
+ from uuid import uuid4
+ 
+ import pytest
+ from fastapi import HTTPException
+ from starlette.requests import Request
+ 
+-from app.api.v1.routes import ensure_tenant_access, tenant_id_from_request
++from app.api.v1.routes import ensure_tenant_access, ensure_tenant_role, tenant_id_from_request
+ 
+ 
+ def make_request() -> Request:
+     return Request({'type': 'http', 'method': 'GET', 'path': '/', 'headers': []})
+ 
+ 
+ class FakeTenantRoleConnection:
+-    def __init__(self, has_role: bool) -> None:
++    def __init__(self, has_role: bool, role: str = 'viewer') -> None:
+         self.has_role = has_role
++        self.role = role
+         self.configured_tenant_id = None
+ 
+-    async def fetchval(self, *_args, **_kwargs):
+-        return self.has_role
++    async def fetch(self, *_args, **_kwargs):
++        return [{'role': self.role}] if self.has_role else []
+ 
+     async def execute(self, _query, tenant_id):
+         self.configured_tenant_id = tenant_id
+ 
+ 
+ def test_unscoped_user_with_requested_tenant_still_requires_database_tenant_role():
+     async def run_test():
+         request = make_request()
+         request.state.actor_type = 'user'
+         request.state.actor_id = 'auth0|platform-user'
+         request.state.support_mode = False
+         request.state.tenant_id = None
+         request.state.requested_tenant_id = uuid4()
+ 
+         with pytest.raises(HTTPException) as exc_info:
+             await ensure_tenant_access(request, request.state.requested_tenant_id, FakeTenantRoleConnection(False))
+ 
+         assert exc_info.value.status_code == 400
+         assert exc_info.value.detail == 'X-Tenant-Id header or tenant_id claim is required'
+ 
+     asyncio.run(run_test())
+ 
+ 
+ def test_unscoped_user_with_database_tenant_role_can_use_requested_tenant_context():
+     async def run_test():
+         tenant_id = uuid4()
+         request = make_request()
+         request.state.actor_type = 'user'
+         request.state.actor_id = 'auth0|platform-user'
+         request.state.support_mode = False
+         request.state.tenant_id = None
+         request.state.requested_tenant_id = tenant_id
+         conn = FakeTenantRoleConnection(True)
+ 
+         resolved_tenant_id = await tenant_id_from_request(request, conn)
+ 
+         assert resolved_tenant_id == tenant_id
+         assert conn.configured_tenant_id == str(tenant_id)
+ 
+     asyncio.run(run_test())
++
++
++def test_cross_tenant_admin_requirement_rejects_non_admin_membership():
++    async def run_test():
++        tenant_a = uuid4()
++        tenant_b = uuid4()
++        request = make_request()
++        request.state.actor_type = 'user'
++        request.state.actor_id = 'auth0|tenant-a-admin'
++        request.state.support_mode = False
++        request.state.tenant_id = tenant_a
++        request.state.roles = ['admin']
++
++        with pytest.raises(HTTPException) as exc_info:
++            await ensure_tenant_role(request, tenant_b, 'admin', FakeTenantRoleConnection(True, 'viewer'))
++
++        assert exc_info.value.status_code == 403
++        assert exc_info.value.detail == 'admin role or higher is required for tenant'
++
++    asyncio.run(run_test())
++
++
++def test_cross_tenant_admin_requirement_accepts_target_tenant_admin_role():
++    async def run_test():
++        tenant_a = uuid4()
++        tenant_b = uuid4()
++        request = make_request()
++        request.state.actor_type = 'user'
++        request.state.actor_id = 'auth0|multi-tenant-admin'
++        request.state.support_mode = False
++        request.state.tenant_id = tenant_a
++        request.state.roles = ['admin']
++
++        await ensure_tenant_role(request, tenant_b, 'admin', FakeTenantRoleConnection(True, 'admin'))
++
++    asyncio.run(run_test())
+
+# Attack-path analysis
+Final: high | Decider: model_decided | Matrix severity: high | Policy adjusted: high
+## Rationale
+Kept at high. Static evidence and the provided executable PoC support the vulnerability: unqualified JWT roles pass require_min_role('admin'), membership-only tenant access accepts viewer/agent membership in the victim tenant, and the route then sets app.tenant_id to the victim tenant before service_catalog operations. This is in-scope runtime API code and breaks a core cross-tenant boundary. It is not escalated to critical because the attacker must already be authenticated and admin in another tenant, must have some membership in the target tenant, and the demonstrated impact is limited to the service catalog rather than broad tenant data, identity control, secrets, or code execution.
+## Likelihood
+high - The vulnerable API is remotely reachable in the product service and exploitation is straightforward once the attacker has a valid admin token for any tenant plus any membership in the victim tenant. The need for authenticated admin status somewhere and victim-tenant membership makes likelihood medium rather than high. | Remote network vector
+## Impact
+high - The flaw allows unauthorized cross-tenant reads and writes of the victim tenant's service catalog, including prices, durations, instructions, active status, and ordering. This can alter customer-facing offerings and business operations and violates the product's primary tenant-isolation boundary, although the affected object class is narrower than full tenant PII or platform administration.
+## Assumptions
+- The FastAPI API service is deployed in a way equivalent to the checked-in Dockerfile/docker-compose configuration, where app.main:app exposes /v1 routes on port 8000.
+- JWT role claims are tenant-scoped operationally by the IdP or business logic, but the checked-in API code receives them as an unqualified roles list.
+- A realistic multi-tenant user can be admin in one tenant and viewer/agent/member in another tenant, consistent with the user_tenant_roles schema.
+- Valid authenticated user JWT containing an admin-or-higher role for some tenant A
+- Attacker has any user_tenant_roles membership in target tenant B, including viewer or agent
+- Attacker can call /v1/tenants/{tenantB}/services endpoints and knows or can obtain tenant B UUID; service IDs for update/delete can be obtained through the vulnerable list endpoint
+## Path
+Tenant A admin JWT
+        |
+        v
+/v1/tenants/{tenantB}/services
+        |
+        v
+require_min_role('admin') passes on unqualified JWT role
+        |
+        v
+ensure_tenant_access() accepts any tenantB membership
+        |
+        v
+set_config('app.tenant_id', tenantB)
+        |
+        v
+RLS allows tenantB service_catalog reads/writes
+## Path evidence
+- `app/main.py:21-26` - The main FastAPI application includes the /v1 router, making the affected routes part of the runtime API service.
+- `docker-compose.yml:14-22` - The API service runs uvicorn app.main:app on 0.0.0.0:8000 and maps host port 8000 to container port 8000.
+- `app/core/security.py:188-205` - Authentication stores JWT roles separately from token_tenant_id; roles are not bound to the path tenant.
+- `app/core/security.py:233-249` - require_min_role authorizes solely from request.state.roles, so an admin role from another tenant satisfies the route dependency.
+- `app/api/v1/routes.py:344-378` - has_user_tenant_role checks only for any user_tenant_roles row in the target tenant, and ensure_tenant_access accepts that membership without verifying the required role.
+- `app/api/v1/routes.py:259-262` - tenant_admin_router applies authenticate_request and require_min_role('admin') as a global, non-tenant-specific admin gate.
+- `app/api/v1/routes.py:1779-1817` - Service catalog list/create routes call ensure_tenant_access and then set app.tenant_id to the path tenant before querying or inserting service_catalog rows.
+- `app/api/v1/routes.py:1851-1959` - Service update, deactivate, and reorder routes use the same authorization pattern and set app.tenant_id to the target tenant.
+- `infra/postgres/01-schema.sql:89-98` - The schema allows non-admin roles such as agent and viewer in user_tenant_roles, so membership in a tenant is not equivalent to admin authorization.
+- `infra/postgres/01-schema.sql:480-504` - service_catalog RLS is enabled and policies depend on app.current_tenant_id(), which the vulnerable route sets to the victim tenant after flawed authz.
+## Narrative
+The finding is real and reachable. The API service exposes app.main:app on 0.0.0.0:8000, and app.main includes the /v1 router. The service catalog routes are registered in the runtime API and use route dependencies requiring authenticate_request plus require_min_role('admin') or require_min_role('admin', allow_service=True). Authentication stores token tenant_id and roles separately, and require_min_role only evaluates the unqualified request.state.roles list. When the path tenant differs from the token tenant, ensure_tenant_access calls has_user_tenant_role, whose SQL only checks that any user_tenant_roles row exists for the actor and target tenant, with no role predicate. The route then sets app.tenant_id to the target tenant and performs service_catalog reads/writes, so the service_catalog RLS policy follows the attacker-selected tenant context. The provided executable validation PoC exercised the real FastAPI route with a mocked DB dependency and received 201 creating a service for tenant B while the mocked membership in tenant B was only agent. Severity remains high because this breaks a core multi-tenant boundary and permits unauthorized cross-tenant integrity changes, but it is not critical because exploitation requires an authenticated user with admin privileges in some tenant plus membership in the victim tenant and is limited to the service catalog feature rather than full tenant data or platform compromise.
+## Controls
+- JWT bearer authentication via authenticate_request
+- X-Tenant-Id mismatch guard for non-support user tokens
+- Route-level require_min_role RBAC
+- ensure_tenant_access tenant membership check
+- PostgreSQL RLS using app.tenant_id
+- Audit events for service_catalog created/updated/deactivated
+- Control gap: no tenant-qualified admin role check for the path tenant
+## Blindspots
+- Static scope cannot confirm production ingress, load balancer exposure, or whether port 8000 is internet-facing outside docker-compose.
+- Static scope cannot inspect the real IdP/Auth0 tenant-role claim model; if JWT roles are globally intended rather than tenant-specific, the authorization semantics would need reassessment, but this conflicts with the multitenant schema and threat model.
+- The validation PoC used a mocked database dependency, though it exercised the real FastAPI route and matched the SQL/schema behavior visible in the repository.
+- Only checked-in artifacts were reviewed; runtime database role attributes such as BYPASSRLS could not be verified.
