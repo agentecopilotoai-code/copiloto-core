@@ -61,6 +61,8 @@ async def _fetch_due_subscriptions(
     para cada tenant; lo hacemos en Python (``is_due``) porque la cardinalidad
     es baja (una fila por destinatario × cadencia).
     """
+    # TASK-0073: `currency` ya vive como columna first-class de tenant_settings;
+    # el digest la lee directo sin derivarla del locale.
     return await conn.fetch(
         """
         select
@@ -71,32 +73,15 @@ async def _fetch_due_subscriptions(
           s.cadence,
           s.last_sent_at,
           t.timezone as tz_name,
-          coalesce(ts.locale, 'es-CO') as locale
+          ts.locale,
+          ts.currency
         from app.digest_subscriptions s
         join app.tenants t on t.id = s.tenant_id
-        left join app.tenant_settings ts on ts.tenant_id = s.tenant_id
+        join app.tenant_settings ts on ts.tenant_id = s.tenant_id
         where s.enabled = true
         order by s.tenant_id, s.cadence
         """,
     )
-
-
-def _currency_for_locale(locale: str) -> str:
-    """Mapeo simple locale→moneda hasta que TASK-0073 lo haga first-class.
-
-    El digest no es transaccional; un default razonable basta para no
-    bloquear el rollout multi-país. El símbolo se concatena con miles.
-    """
-    locale_norm = (locale or '').lower()
-    if locale_norm.startswith('es-mx'):
-        return 'MXN'
-    if locale_norm.startswith('es-ar'):
-        return 'ARS'
-    if locale_norm.startswith('es-cl'):
-        return 'CLP'
-    if locale_norm.startswith('es-pe'):
-        return 'PEN'
-    return 'COP'
 
 
 def _wa_id_from_phone(phone_e164: str) -> str:
@@ -247,7 +232,7 @@ async def _dispatch_one(
             conn,
             tenant_id=tenant_id,
             tz_name=tz_name,
-            currency=_currency_for_locale(row['locale']),
+            currency=row['currency'],
         )
     else:
         payload = await build_daily_digest(

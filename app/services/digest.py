@@ -106,8 +106,10 @@ def is_due(
 
 
 def _format_money(value: float | int | None, currency: str = 'COP') -> str:
-    amount = float(value or 0.0)
-    return f'{currency} {amount:,.0f}'.replace(',', '.')
+    # TASK-0073: delega en el formateador del país emisor de la moneda.
+    from app.services.locale import format_money as _format_by_currency
+
+    return _format_by_currency(value or 0.0, currency)
 
 
 def _range_for_day(local_day: date, zone: ZoneInfo) -> tuple[datetime, datetime]:

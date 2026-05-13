@@ -658,8 +658,11 @@ def _format_price(amount: Any, currency: str | None) -> str:
         value = float(amount)
     except (TypeError, ValueError):
         return ''
-    code = (currency or 'COP').upper()
-    return f'{value:,.0f} {code}'
+    # TASK-0073: delega el formato a `app.services.locale.format_money` para
+    # respetar separadores y símbolo del país emisor.
+    from app.services.locale import format_money  # noqa: PLC0415
+
+    return format_money(value, (currency or 'COP'))
 
 
 async def _present_services(

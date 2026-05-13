@@ -30,7 +30,7 @@ create table app.tenants (
   display_name text not null,
   vertical_code text not null,
   business_type_label text,
-  country_code char(2) not null default 'CO',
+  country_code char(2) not null default 'CO' check (country_code in ('CO','MX','AR','CL','PE','EC','UY')),
   timezone text not null default 'America/Bogota',
   status text not null default 'trial' check (status in ('trial','active','suspended','churned')),
   created_at timestamptz not null default now(),
@@ -41,6 +41,7 @@ create table app.tenants (
 create table app.tenant_settings (
   tenant_id uuid primary key references app.tenants(id) on delete cascade,
   locale text not null default 'es-CO',
+  currency char(3) not null default 'COP',
   business_hours jsonb not null default '{}'::jsonb,
   escalation_policy jsonb not null default '{}'::jsonb,
   pii_policy jsonb not null default '{"no_train":true}'::jsonb,

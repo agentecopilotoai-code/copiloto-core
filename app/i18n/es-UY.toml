@@ -1,0 +1,22 @@
+# TASK-0073 — Locale es-UY. Tono y vocabulario uruguayo (voseo).
+
+[greetings]
+hello = "¡Hola! ¿En qué te puedo ayudar?"
+farewell = "Gracias por escribirnos. ¡Que tengas un buen día!"
+welcome_back = "¡Hola de nuevo! ¿Cómo te puedo ayudar hoy?"
+
+[booking]
+ask_service = "¿Qué servicio querés reservar?"
+ask_date = "¿Qué día te viene bien?"
+ask_time = "¿A qué hora te queda mejor?"
+confirmation = "Listo, tu reserva quedó hecha."
+cancellation = "Tu reserva fue cancelada."
+reschedule_prompt = "¿Para cuándo querés reprogramar?"
+
+[fallback]
+out_of_scope = "Disculpá, eso no lo puedo atender por acá. Te paso con un asesor."
+not_understood = "No te entendí, ¿lo podés repetir?"
+
+[currency]
+symbol = "$"
+suffix = "UYU"

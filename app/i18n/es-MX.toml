@@ -1,0 +1,22 @@
+# TASK-0073 — Locale es-MX. Tono y vocabulario mexicano.
+
+[greetings]
+hello = "¡Hola! ¿En qué te puedo apoyar?"
+farewell = "Gracias por escribirnos. ¡Que tengas excelente día!"
+welcome_back = "¡Hola de nuevo! ¿Cómo te puedo apoyar hoy?"
+
+[booking]
+ask_service = "¿Qué servicio te gustaría reservar?"
+ask_date = "¿Qué día te queda bien?"
+ask_time = "¿A qué hora te acomoda?"
+confirmation = "Listo, tu cita quedó reservada."
+cancellation = "Tu cita fue cancelada."
+reschedule_prompt = "¿Para cuándo quieres reagendar?"
+
+[fallback]
+out_of_scope = "Disculpa, eso no lo puedo atender por aquí. Te paso con un asesor."
+not_understood = "No te entendí, ¿podrías repetirme?"
+
+[currency]
+symbol = "$"
+suffix = "MXN"

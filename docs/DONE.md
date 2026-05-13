@@ -15,6 +15,52 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0073 — i18n multi-país: locale, currency, timezone y validación de teléfono
+
+- **Fecha:** 2026-05-13
+- **Resumen:** el MVP deja de tener `es-CO`/`COP`/`America/Bogota` cableado y pasa a derivar locale, moneda y timezone del `tenants.country_code` (catálogo cerrado a 7 países LatAm: CO, MX, AR, CL, PE, EC, UY). La validación de teléfono migra de regex CO a la librería `phonenumbers` con el `country_code` del tenant como hint. Las cadenas del bot viven en `app/i18n/<locale>.toml` y se resuelven por clave jerárquica.
+- **Implementación:**
+  - **Servicio central (`app/services/locale.py`):** catálogo `_COUNTRY_PROFILES` con `locale/currency/timezone/currency_symbol/thousands_sep/decimal_sep/decimals` por país. Funciones públicas:
+    - `profile_for(country)` (lanza `ValueError` si no está soportado — sin fallback silencioso).
+    - `default_locale / default_currency / default_timezone`.
+    - `format_money(amount, currency)` que ajusta separadores y símbolo por moneda (ej. `$ 1.500 COP` vs `$ 1,500.00 MXN` vs `$ 1.500,00 ARS` vs `S/ 1,500.00 PEN`).
+    - `validate_phone(raw, country_hint)` que devuelve el E.164 normalizado o levanta `PhoneValidationError`.
+  - **Paquete `app/i18n/`:** loader con `tomllib`, cache LRU y `translate(locale, 'section.field')`. Un TOML por locale (`es-CO`, `es-MX`, `es-AR`, `es-CL`, `es-PE`, `es-EC`, `es-UY`) con secciones `greetings`, `booking`, `fallback`, `currency`. Las cadenas usan tuteo / vos según el país (AR/UY usan voseo, CO/MX/CL/PE/EC tuteo).
+  - **Schemas (`app/api/v1/schemas.py`):** `TenantCreate.country_code` y `TenantUpdate.country_code` ahora validan contra el patrón derivado de `SUPPORTED_COUNTRIES` y `timezone` se vuelve opcional en `TenantCreate` (el route lo deriva). Se exporta `SUPPORTED_COUNTRY_PATTERN` reusando el mismo catálogo, evitando drift entre código y validación.
+  - **Routes (`app/api/v1/routes.py`):** `create_tenant` y el endpoint self-service derivan `timezone/locale/currency` del país antes del insert y los pasan al `insert into app.tenant_settings`.
+  - **Schema SQL (`infra/postgres/01-schema.sql`):** se agrega `currency char(3) not null default 'COP'` en `tenant_settings`; `tenants.country_code` adquiere `check (country_code in ('CO','MX','AR','CL','PE','EC','UY'))` para enforce-en-DB.
+  - **Digest (`app/workers/digest_worker.py` + `app/services/digest.py`):** deja de derivar moneda del locale (`_currency_for_locale` removido). La query lee `ts.currency` directo y la pasa al builder. `_format_money` ahora delega en `app.services.locale.format_money`, lo que automáticamente da el formato correcto al manager según la moneda del tenant.
+  - **Booking flow (`app/services/booking_flow.py`):** `_format_price_with_currency` delega en `format_money` para que los WhatsApp messages cotizados muestren el formato del país emisor de la moneda.
+  - **Admin Panel (`admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`):** se reemplaza el input libre de país por un `<select>` cerrado a los 7 países; al cambiar el país se preselecciona `timezone` (formulario del tenant) y `locale` (pestaña Settings). El input libre de locale se reemplaza por un dropdown con los 7 locales soportados.
+  - **Dependencia:** `phonenumbers==9.0.30` agregada a `pyproject.toml`.
+- **Archivos creados:**
+  - `app/services/locale.py`
+  - `app/i18n/__init__.py`
+  - `app/i18n/es-CO.toml`, `app/i18n/es-MX.toml`, `app/i18n/es-AR.toml`, `app/i18n/es-CL.toml`, `app/i18n/es-PE.toml`, `app/i18n/es-EC.toml`, `app/i18n/es-UY.toml`
+  - `tests/test_i18n_static.py`
+- **Archivos modificados:**
+  - `pyproject.toml`
+  - `app/api/v1/schemas.py`
+  - `app/api/v1/routes.py`
+  - `app/services/digest.py`
+  - `app/services/booking_flow.py`
+  - `app/workers/digest_worker.py`
+  - `infra/postgres/01-schema.sql`
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`
+- **Validaciones:**
+  - `pytest -m "not requires_db and not e2e"` → 1296 passed.
+  - `pytest tests/test_i18n_static.py -v` → 41 passed (≥10 asserts por cada uno de los 7 países: locale, currency, timezone, formato monetario, parsing de teléfono, rechazo de inválidos, presencia del TOML, claves jerárquicas, aceptación por el schema Pydantic).
+  - `ruff check app/ tests/test_i18n_static.py` → All checks passed.
+- **Criterios de aceptación verificados:**
+  - Un tenant MX configurado con `currency=MXN` formatea `format_money(1500, 'MXN') == "$ 1,500.00 MXN"`; un tenant CO mantiene `format_money(1500, 'COP') == "$ 1.500 COP"`.
+  - `validate_phone('+52 55 1234 5678', 'MX')` devuelve `'+525512345678'` y el inverso `'5512345678'` con hint `'AR'` se rechaza.
+  - 41 tests estáticos cubren las 7 regiones soportadas con al menos 12 asserts por país (locale, currency, timezone, perfil, formato, TOML, traducción jerárquica, claves mínimas, teléfono válido, rechazo inválido, schema Pydantic).
+- **Notas / limitaciones:**
+  - Por el mandato sin-legacy, `_currency_for_locale` se eliminó del digest worker en lugar de mantenerse como fallback — la única fuente de la moneda del tenant es `tenant_settings.currency`, alimentada por `country_code` al crear el tenant.
+  - El TOML por locale alcanza para las secciones críticas (saludos, booking, fallback, currency). Cuando otros módulos del bot demanden más cadenas, se extenderá `translate()` sin tocar la API pública.
+
+---
+
 ### TASK-0072 — Pruebas de carga + SLA documentado
 
 - **Fecha:** 2026-05-13

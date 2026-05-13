@@ -1,0 +1,22 @@
+# TASK-0073 — Locale es-CL. Tono y vocabulario chileno.
+
+[greetings]
+hello = "¡Hola! ¿En qué te puedo ayudar?"
+farewell = "Gracias por escribirnos. ¡Que tengas un buen día!"
+welcome_back = "¡Hola de nuevo! ¿Cómo te puedo ayudar hoy?"
+
+[booking]
+ask_service = "¿Qué servicio te gustaría agendar?"
+ask_date = "¿Qué día te acomoda?"
+ask_time = "¿A qué hora te queda mejor?"
+confirmation = "Listo, tu hora quedó agendada."
+cancellation = "Tu hora fue cancelada."
+reschedule_prompt = "¿Para cuándo quieres reagendar?"
+
+[fallback]
+out_of_scope = "Disculpa, eso no lo puedo atender por acá. Te derivo con un asesor."
+not_understood = "No te entendí, ¿lo puedes repetir?"
+
+[currency]
+symbol = "$"
+suffix = "CLP"
