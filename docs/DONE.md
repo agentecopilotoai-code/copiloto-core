@@ -15,6 +15,57 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0057 — Alerta operativa activa en feedback negativo y quejas
+
+- **Fecha:** 2026-05-13
+- **Resumen:** una queja o feedback de 1–2★ ya no depende de que un agente esté mirando el Operations Desk. Cuando `_escalate_negative_feedback` se dispara (TASK-0045), además de etiquetar al contacto y abrir el handoff, se encola un `operator_alerts` con el payload (`contact_name`, `rating`, `comment_preview`, `conversation_url`, IDs de feedback/cita) y los canales que el tenant configuró en `notification_settings.complaint_alert_channels`. El scheduler procesa la cola en cada tick, dispara cada canal y, si alguno falla, reagenda con backoff exponencial (`alerts_retry_base_seconds * 2**attempts`) hasta `alerts_max_attempts` intentos antes de marcar la fila como `failed`. Si el tenant no tiene canales configurados, el enqueue se descarta silenciosamente (sin filas `pending` sucias). Los canales son combinables y se envían en paralelo lógico: cada uno acumula su error en `trace.errors[]` sin tirar abajo a los otros.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):**
+    - Nueva tabla `app.operator_alerts(id, tenant_id, kind check in ('negative_feedback','complaint'), payload jsonb, status check in ('pending','sent','failed'), attempts int, last_error, scheduled_for, sent_at, created_at, updated_at)`. Índice `ix_operator_alerts_due(scheduled_for, status)` para el polling, índice `ix_operator_alerts_tenant(tenant_id, created_at desc)` para el panel. RLS habilitado y agregado al loop genérico de policies por tenant. Trigger `trg_operator_alerts_touch` para `updated_at`.
+  - **`app/services/notifications.py`:**
+    - `DEFAULT_NOTIFICATION_SETTINGS` incluye `complaint_alert_channels: {email:[], whatsapp:[], webhook_url:''}`. La pestaña Notificaciones del wizard normaliza siempre las tres claves.
+  - **`app/services/operator_alerts.py` (nuevo):**
+    - `normalize_alert_channels(value)` — defensivo, limpia tipos sueltos y siempre devuelve las tres claves; `channels_configured(channels)` indica si hay al menos uno.
+    - `build_comment_preview(comment, limit=160)` — recorta a 160 chars con `…`.
+    - `build_desk_link(public_url, tenant_id, conversation_id)` — arma `https://<panel>/admin?tenant=<id>#operations/<conv_id>` o devuelve `''` si no hay panel público configurado.
+    - `sign_webhook_payload(secret, body) -> 'sha256=<hex>'` (HMAC SHA256), lee `.secrets/tenants/<id>/alerts_webhook_secret` con `read_webhook_secret(tenant_id)`.
+    - `build_email_body(payload) -> (subject, body)`, `build_email_message(...)`, `build_whatsapp_template_components(payload)` (variables 1–4 del template `complaint_alert_v1`).
+    - `enqueue_operator_alert(conn, *, tenant_id, kind, payload)` lee `tenant_settings.notification_settings`, descarta si no hay canales, inserta la fila y mete los canales en el payload (para que el worker no tenga que releer ajustes en cada intento).
+    - `dispatch_operator_alert(conn, *, alert_row, config, email_sender, whatsapp_sender, webhook_sender)` invoca cada canal de forma independiente (los tests inyectan callables fake). El callable real `_send_email_channel` usa `aiosmtplib`; `_send_whatsapp_channel` cola un `messages` con `message_type='template'`, `payload.operator_alert=true`, `template_name='complaint_alert_v1'` y los componentes generados; `_send_webhook_channel` usa `httpx.AsyncClient`. Errores se acumulan en `trace.errors`.
+    - `process_pending_operator_alerts(conn, batch_size=25)` hace `update ... returning *` con `for update skip locked`, despacha y luego: sin errores → `status='sent', sent_at=now()`; con errores y `attempts < alerts_max_attempts` → reagenda con `scheduled_for = now() + base * 2**attempts`; alcanzó el cap → `status='failed'`.
+  - **`app/workers/scheduler.py`:** importa `process_pending_operator_alerts` y lo agrega al loop después de campaigns/segments.
+  - **`app/workers/alerts_worker.py` (nuevo):** entrypoint dedicado para escalar a un proceso aparte si el latency de SMTP/webhook ahogara el scheduler de recordatorios. Reaprovecha `process_pending_operator_alerts`.
+  - **`app/services/feedback_flow.py`:** `_escalate_negative_feedback` ahora resuelve `contact_name` (consulta a `app.contacts`) y `admin_panel_public_url` (lectura tolerante a fallos de Settings con try/except), construye el payload y llama a `enqueue_operator_alert`. Si el alert se persiste, `trace['operator_alert_id']` se incluye en la respuesta.
+  - **`app/core/config.py`:** nuevos settings `admin_panel_public_url`, `alerts_smtp_host/port/username/password/from/use_tls`, `alerts_max_attempts=5`, `alerts_retry_base_seconds=60`.
+  - **`pyproject.toml`:** dependencia nueva `aiosmtplib==3.0.2` (import perezoso, no afecta a entornos sin SMTP).
+  - **Admin Panel — `TenantSetupWizard.jsx` (pestaña Notificaciones):**
+    - `DEFAULT_NOTIFICATION_SETTINGS` extendido con `complaint_alert_channels` y normalizado por `normalizeComplaintAlertChannels` (defensivo contra payloads viejos sin la clave).
+    - Nuevo fieldset "Alertas al equipo (TASK-0057)" con inputs para emails (CSV), WhatsApp (E.164 CSV) y webhook URL. Cada input persiste como array/string al normalizar al guardar.
+    - Copy operativa: explica que el webhook se firma con HMAC SHA256 si existe `.secrets/tenants/<id>/alerts_webhook_secret` y que el template de WhatsApp `complaint_alert_v1` debe estar aprobado en Meta.
+- **Archivos tocados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/core/config.py`
+  - `app/services/notifications.py`
+  - `app/services/operator_alerts.py` (nuevo)
+  - `app/services/feedback_flow.py`
+  - `app/workers/scheduler.py`
+  - `app/workers/alerts_worker.py` (nuevo)
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`
+  - `pyproject.toml`
+  - `tests/test_operator_alerts_static.py` (nuevo, 21 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `pytest tests/ -m "not requires_db" -q` → 992 passed, 11 skipped (los 21 nuevos verifican: schema + RLS + check, scheduler tick, defaults de settings, normalización de canales, HMAC, preview de comentario, desk link con/sin conversation, email/WhatsApp builders, enqueue salta o persiste según canales, dispatch invoca cada sender y agrupa errores, worker reagenda con backoff y falla al cap, worker marca `sent` al éxito, integración `maybe_record_feedback → enqueue_operator_alert` con/sin canales, admin panel renderiza el bloque y constantes del template).
+  - `ruff check .` → All checks passed.
+  - `python -m compileall app -q` → OK.
+  - `npm run lint && npm run build` (admin-panel) → bundle generado 441.68 KB / 120.14 KB gzip.
+- **Notas:**
+  - Si SMTP no está configurado (env `ALERTS_SMTP_HOST` vacío) y hay emails en la lista, el sender lanza `smtp_not_configured` que se acumula en `trace.errors` y dispara el retry. Esto evita que un email mal configurado bloquee silenciosamente la alerta y deja un `last_error` legible.
+  - El template `complaint_alert_v1` debe registrarse en `app.whatsapp_templates` con `status='approved'` para el tenant. Sin él, el cola de `messages` queda en `queued` pero el delivery worker existente fallará en el envío con el motivo habitual.
+  - El payload almacenado en `operator_alerts.payload` incluye los `channels` ya resueltos en el momento del enqueue, así que si el admin cambia los emails entre el enqueue y el dispatch, el alert sale a los destinatarios originales (auditable). El próximo enqueue ya leerá los nuevos.
+
+---
+
 ### TASK-0056 — Timeout y escalado del flujo auto-rebook tras decline silencioso
 
 - **Fecha:** 2026-05-12

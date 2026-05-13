@@ -49,6 +49,14 @@ DEFAULT_NOTIFICATION_SETTINGS: dict[str, Any] = {
     'auto_rebook_on_decline': True,
     # TASK-0055: ask "¿quién te recomendó?" during the booking flow. Opt-in.
     'ask_referrer': False,
+    # TASK-0057: outbound channels for the negative-feedback / complaint alerts
+    # sent to the operator team. Each entry is an opt-in list — empty means the
+    # channel is disabled.
+    'complaint_alert_channels': {
+        'email': [],
+        'whatsapp': [],
+        'webhook_url': '',
+    },
 }
 
 # Locale used for templates; tenants who need extra locales can register them

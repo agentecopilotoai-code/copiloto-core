@@ -78,6 +78,18 @@ class Settings(BaseSettings):
     # Tiempo en horas que puede estar un handoff abierto sin agente antes de
     # que el bot retome la conversación automáticamente. 0 = desactivado.
     bot_reopen_after_hours: float = 2.0
+    # TASK-0057: operator alerts. URL pública del panel para construir el link
+    # al Operations Desk en los avisos enviados al equipo. Si está vacío, los
+    # canales que usan link (email/webhook) caen al texto sin URL.
+    admin_panel_public_url: str = 'http://localhost:3000'
+    alerts_smtp_host: str | None = None
+    alerts_smtp_port: int = 587
+    alerts_smtp_username: str | None = None
+    alerts_smtp_password: str | None = None
+    alerts_smtp_from: str | None = None
+    alerts_smtp_use_tls: bool = True
+    alerts_max_attempts: int = 5
+    alerts_retry_base_seconds: int = 60
 
     @property
     def knowledge_storage_bucket(self) -> str:
