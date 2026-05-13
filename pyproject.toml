@@ -38,4 +38,5 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
   "requires_db: tests that need a live PostgreSQL connection (skipped in CI with -m 'not requires_db')",
+  "e2e: TASK-0063 journey suite — needs RUN_E2E=1 + TEST_DATABASE_URL (run in CI job 'tests-e2e')",
 ]
