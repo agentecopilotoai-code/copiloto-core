@@ -49,6 +49,9 @@ create table app.tenant_settings (
   notification_settings jsonb not null default '{}'::jsonb,
   payment_settings jsonb not null default '{}'::jsonb,
   onboarding_progress jsonb not null default '{"last_completed_step":0,"steps":{}}'::jsonb,
+  -- TASK-0071: voz/personalidad configurable por tenant. tone ∈ {neutral,formal,friendly,playful},
+  -- formality ∈ {tu,usted}, emoji_level ∈ {none,low,moderate,high}, custom_persona texto libre.
+  bot_personality jsonb not null default '{"tone":"neutral","formality":"tu","emoji_level":"moderate","custom_persona":""}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

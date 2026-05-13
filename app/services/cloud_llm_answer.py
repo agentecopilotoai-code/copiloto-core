@@ -281,6 +281,7 @@ async def build_conversational_cloud_llm_answer(
     current_datetime_label: str = 'no disponible',
     timezone: str = 'America/Bogota',
     resources_context: str = 'No hay profesionales activos configurados todavía.',
+    bot_personality: Any = None,
 ) -> dict[str, Any]:
     """Flujo de booking multi-turno vía LLM cloud (Claude o OpenAI)."""
     services_context = _build_context(matches, min_score=min_score)
@@ -293,6 +294,7 @@ async def build_conversational_cloud_llm_answer(
         current_datetime_label=current_datetime_label,
         timezone=timezone,
         resources_context=resources_context,
+        bot_personality=bot_personality,
     )
 
     messages: list[dict[str, str]] = []

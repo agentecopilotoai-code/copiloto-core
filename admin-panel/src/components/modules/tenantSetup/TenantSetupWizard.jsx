@@ -44,9 +44,101 @@ const wizardTabs = [
   { id: 'notificaciones', label: 'Notificaciones' },
   { id: 'pagos', label: 'Pagos' },
   { id: 'privacy', label: 'Privacidad' },
+  { id: 'voz', label: 'Voz del bot' },
   { id: 'ia_rag', label: 'IA y RAG' },
   { id: 'audit', label: 'Auditoría' },
 ];
+
+// TASK-0071: voz/personalidad del bot.
+const DEFAULT_BOT_PERSONALITY = {
+  tone: 'neutral',
+  formality: 'tu',
+  emoji_level: 'moderate',
+  custom_persona: '',
+};
+
+const BOT_TONE_OPTIONS = [
+  { value: 'neutral', label: 'Neutral', hint: 'Profesional, equilibrado, sin exageraciones.' },
+  { value: 'formal', label: 'Formal', hint: 'Corporativo, pulido, sin coloquialismos.' },
+  { value: 'friendly', label: 'Amigable', hint: 'Cálido, empático, conversacional.' },
+  { value: 'playful', label: 'Divertido', hint: 'Desenfadado, con chispa moderada.' },
+];
+
+const BOT_FORMALITY_OPTIONS = [
+  { value: 'tu', label: 'Tú (informal)', hint: '"¿quieres agendar?"' },
+  { value: 'usted', label: 'Usted (formal)', hint: '"¿desea agendar?"' },
+  { value: 'vos', label: 'Vos (rioplatense)', hint: '"¿querés agendar?"' },
+];
+
+const BOT_EMOJI_OPTIONS = [
+  { value: 'none', label: 'Ninguno', hint: 'Sin emojis.' },
+  { value: 'low', label: 'Bajo', hint: 'Máx 1 cada 3 mensajes.' },
+  { value: 'moderate', label: 'Moderado', hint: '1-2 emojis por mensaje.' },
+  { value: 'high', label: 'Alto', hint: '2-3 emojis por mensaje.' },
+];
+
+const PERSONALITY_PREVIEW_SAMPLES = [
+  {
+    id: 'greeting',
+    title: 'Saludo inicial',
+    base: '¡Hola! Soy el asistente de {business_name}. ¿En qué te puedo ayudar?',
+  },
+  {
+    id: 'availability',
+    title: 'Consulta de disponibilidad',
+    base: 'Tenemos disponibilidad el martes a las 10:00 o el jueves a las 16:00. ¿Cuál te conviene?',
+  },
+  {
+    id: 'objection',
+    title: 'Manejo de objeción de precio',
+    base: 'Entiendo que el precio es importante. Tenemos una versión más económica que también funciona excelente.',
+  },
+];
+
+function hydrateBotPersonality(raw) {
+  let data = raw;
+  if (typeof raw === 'string') {
+    try { data = JSON.parse(raw); } catch { data = null; }
+  }
+  if (!data || typeof data !== 'object') return { ...DEFAULT_BOT_PERSONALITY };
+  const merged = { ...DEFAULT_BOT_PERSONALITY, ...data };
+  if (!BOT_TONE_OPTIONS.some((o) => o.value === merged.tone)) merged.tone = 'neutral';
+  if (!BOT_FORMALITY_OPTIONS.some((o) => o.value === merged.formality)) merged.formality = 'tu';
+  if (!BOT_EMOJI_OPTIONS.some((o) => o.value === merged.emoji_level)) merged.emoji_level = 'moderate';
+  merged.custom_persona = String(merged.custom_persona || '').slice(0, 600);
+  return merged;
+}
+
+function renderPersonalityPreview(sample, personality, businessName) {
+  let text = sample.base.replace('{business_name}', businessName || 'tu negocio');
+  if (personality.formality === 'usted') {
+    text = text
+      .replace(/\bte\b/gi, 'le')
+      .replace(/¿quieres\b/gi, '¿desea')
+      .replace(/\bquieres\b/gi, 'desea')
+      .replace(/\btu conviene\b/gi, 'le conviene')
+      .replace(/\bte conviene\b/gi, 'le conviene')
+      .replace(/\b(t|T)u\b/g, (m) => (m === 'tu' ? 'su' : 'Su'));
+  } else if (personality.formality === 'vos') {
+    text = text
+      .replace(/¿quieres\b/gi, '¿querés')
+      .replace(/\bquieres\b/gi, 'querés')
+      .replace(/\btienes\b/gi, 'tenés');
+  }
+  if (personality.tone === 'formal') {
+    text = text.replace(/^¡Hola!\s*/i, 'Buen día. ').replace(/excelente/gi, 'óptimamente');
+  } else if (personality.tone === 'playful') {
+    text = text.replace(/^¡Hola!/, '¡Holaaa!');
+  }
+  const emojiMap = {
+    none: { greeting: '', availability: '', objection: '' },
+    low: { greeting: ' 👋', availability: '', objection: '' },
+    moderate: { greeting: ' 👋😊', availability: ' 📅', objection: ' 💡' },
+    high: { greeting: ' 👋😊✨', availability: ' 📅✨', objection: ' 💡✨🙌' },
+  };
+  const suffix = emojiMap[personality.emoji_level]?.[sample.id] ?? '';
+  return `${text}${suffix}`;
+}
 
 const DEFAULT_NOTIFICATION_SETTINGS = {
   confirmation_enabled: true,
@@ -301,6 +393,7 @@ function hydrateSettings(settings) {
     privacyForm: formFromPiiPolicy(settings.pii_policy, settings),
     intentSettings: hydrateIntentSettings((settings.escalation_policy || {}).intent_settings),
     notificationSettings: hydrateNotificationSettings(settings.notification_settings),
+    botPersonality: hydrateBotPersonality(settings.bot_personality),
   };
 }
 
@@ -377,6 +470,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
   });
   const [intentSettings, setIntentSettings] = useState(defaultIntentSettings);
   const [notificationSettings, setNotificationSettings] = useState(() => ({ ...DEFAULT_NOTIFICATION_SETTINGS }));
+  const [botPersonality, setBotPersonality] = useState(() => ({ ...DEFAULT_BOT_PERSONALITY }));
   const [privacyForm, setPrivacyForm] = useState({
     mode: 'balanced',
     retentionDays: 180,
@@ -424,8 +518,9 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
       pii_policy: toPiiPolicy(privacyForm),
       no_train: privacyForm.noTrain,
       notification_settings: notificationSettings,
+      bot_personality: botPersonality,
     }),
-    [escalationForm, hoursForm, intentSettings, notificationSettings, privacyForm, settingsForm.locale],
+    [botPersonality, escalationForm, hoursForm, intentSettings, notificationSettings, privacyForm, settingsForm.locale],
   );
 
   const currentTenantId = tenant?.id;
@@ -456,6 +551,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
         setPrivacyForm(hydrated.privacyForm);
         setIntentSettings(hydrated.intentSettings);
         setNotificationSettings(hydrated.notificationSettings);
+        setBotPersonality(hydrated.botPersonality);
         setLastSettings(loadedSettings);
       })
       .catch(() => {
@@ -1644,6 +1740,136 @@ Tu cita de {servicio} quedó agendada para el {fecha} a las {hora}` + (notificat
             </button>
           </div>
         </form>
+      ) : null}
+
+      {activeTab === 'voz' ? (
+        <div className="wizard-panel voz-bot-panel">
+          <div className="voz-bot-header">
+            <h3>Voz del bot</h3>
+            <p className="hint">
+              Configura cómo suena tu bot: tono, trato y nivel de emojis. Esto se inyecta
+              como bloque dedicado antes del template RAG; las respuestas cambian sin tocar
+              el contenido del catálogo. Los cambios aplican al guardar Settings.
+            </p>
+          </div>
+
+          <form
+            className="voz-bot-form form-grid"
+            onSubmit={(event) => { event.preventDefault(); handleSaveSettings(event); }}
+          >
+            <fieldset className="wide">
+              <legend>Tono</legend>
+              <div className="option-grid">
+                {BOT_TONE_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={`option-card ${botPersonality.tone === opt.value ? 'selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="bot-tone"
+                      value={opt.value}
+                      checked={botPersonality.tone === opt.value}
+                      onChange={() => setBotPersonality((prev) => ({ ...prev, tone: opt.value }))}
+                    />
+                    <strong>{opt.label}</strong>
+                    <small>{opt.hint}</small>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="wide">
+              <legend>Trato</legend>
+              <div className="option-grid">
+                {BOT_FORMALITY_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={`option-card ${botPersonality.formality === opt.value ? 'selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="bot-formality"
+                      value={opt.value}
+                      checked={botPersonality.formality === opt.value}
+                      onChange={() => setBotPersonality((prev) => ({ ...prev, formality: opt.value }))}
+                    />
+                    <strong>{opt.label}</strong>
+                    <small>{opt.hint}</small>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="wide">
+              <legend>Emojis</legend>
+              <div className="option-grid">
+                {BOT_EMOJI_OPTIONS.map((opt) => (
+                  <label
+                    key={opt.value}
+                    className={`option-card ${botPersonality.emoji_level === opt.value ? 'selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="bot-emoji"
+                      value={opt.value}
+                      checked={botPersonality.emoji_level === opt.value}
+                      onChange={() => setBotPersonality((prev) => ({ ...prev, emoji_level: opt.value }))}
+                    />
+                    <strong>{opt.label}</strong>
+                    <small>{opt.hint}</small>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <label className="wide">
+              <span>Persona personalizada (opcional, máx 600 caracteres)</span>
+              <textarea
+                rows={3}
+                maxLength={600}
+                placeholder="Ej: Eres una recepcionista experta en spa de lujo; cuidas cada detalle y das opciones premium primero."
+                value={botPersonality.custom_persona}
+                onChange={(e) => setBotPersonality((prev) => ({ ...prev, custom_persona: e.target.value }))}
+              />
+              <small className="hint">
+                {botPersonality.custom_persona.length}/600
+              </small>
+            </label>
+
+            <div className="voz-bot-preview wide">
+              <h4>Vista previa</h4>
+              <p className="hint">
+                Estos ejemplos se renderizan con tu configuración actual. Son aproximaciones del
+                cliente — el modelo final puede variar pero respeta el bloque de voz inyectado.
+              </p>
+              <ul className="preview-list">
+                {PERSONALITY_PREVIEW_SAMPLES.map((sample) => (
+                  <li key={sample.id} className="preview-item">
+                    <strong>{sample.title}</strong>
+                    <div className="preview-bubble">
+                      {renderPersonalityPreview(sample, botPersonality, tenantForm.display_name)}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="form-actions wide">
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={() => setBotPersonality({ ...DEFAULT_BOT_PERSONALITY })}
+                disabled={isBusy}
+              >
+                Restablecer
+              </button>
+              <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">
+                {isBusy ? 'Guardando…' : 'Guardar voz del bot'}
+              </button>
+            </div>
+          </form>
+        </div>
       ) : null}
 
       {activeTab === 'ia_rag' ? (

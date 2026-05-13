@@ -596,7 +596,7 @@ _TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso: 
 
 ### TASK-0071 — Tono / personalidad del bot configurable por tenant
 
-- **Estado:** PENDING
+- **Estado:** COMPLETADA (ver `docs/DONE.md`).
 - **Depende de:** TASK-0024 (cloud LLM).
 - **Por qué bloquea:** un spa premium y un taller de motos no pueden sonar igual. Hoy todos los tenants comparten el mismo system prompt base. Esto daña la percepción de marca y la conversión en tenants premium.
 - **Alcance:**

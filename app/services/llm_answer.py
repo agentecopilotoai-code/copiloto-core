@@ -142,6 +142,7 @@ async def build_conversational_llm_answer(
     current_datetime_label: str = 'no disponible',
     timezone: str = 'America/Bogota',
     resources_context: str = 'No hay profesionales activos configurados todavía.',
+    bot_personality: Any = None,
 ) -> dict[str, Any]:
     """Multi-turn booking flow response via Ollama.
 
@@ -156,6 +157,7 @@ async def build_conversational_llm_answer(
         current_datetime_label=current_datetime_label,
         timezone=timezone,
         resources_context=resources_context,
+        bot_personality=bot_personality,
     )
 
     messages_payload: list[dict[str, str]] = [

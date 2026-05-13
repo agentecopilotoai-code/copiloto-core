@@ -314,7 +314,7 @@ async def _orchestrate_inbound_message_impl(
     # real business name).
     settings_row = await conn.fetchrow(
         """
-        select ts.escalation_policy,
+        select ts.escalation_policy, ts.bot_personality,
                t.display_name as business_name, t.vertical_code, t.timezone
         from app.tenant_settings ts
         join app.tenants t on t.id = ts.tenant_id
@@ -362,6 +362,16 @@ async def _orchestrate_inbound_message_impl(
     tenant_timezone: str = (settings_row['timezone'] if settings_row else None) or 'America/Bogota'
     current_datetime_label, tenant_timezone = _current_datetime_label(tenant_timezone)
     resources_context: str = await _load_active_resources_context(conn, tenant_id)
+    # TASK-0071: voz/personalidad del bot por tenant. Se inyecta como bloque dedicado
+    # antes del template RAG en build_system_prompt.
+    bot_personality_raw = (settings_row['bot_personality'] if settings_row else None) or {}
+    if isinstance(bot_personality_raw, str):
+        try:
+            import json as _json
+            bot_personality_raw = _json.loads(bot_personality_raw)
+        except Exception:
+            bot_personality_raw = {}
+    bot_personality: dict[str, Any] = bot_personality_raw if isinstance(bot_personality_raw, dict) else {}
 
     log.info(
         'orchestrator.settings_loaded',
@@ -818,6 +828,7 @@ async def _orchestrate_inbound_message_impl(
             current_datetime_label=current_datetime_label,
             timezone=tenant_timezone,
             resources_context=resources_context,
+            bot_personality=bot_personality,
         )
 
         new_stage = decision.get('next_stage', ctx.stage)
@@ -980,6 +991,7 @@ async def _resolve_conversational(
     current_datetime_label: str = 'no disponible',
     timezone: str = 'America/Bogota',
     resources_context: str = 'No hay profesionales activos configurados todavía.',
+    bot_personality: Any = None,
 ) -> dict[str, Any]:
     """Call the conversational LLM with booking state; fall back to Q&A cascade on failure."""
     try:
@@ -996,6 +1008,7 @@ async def _resolve_conversational(
             current_datetime_label=current_datetime_label,
             timezone=timezone,
             resources_context=resources_context,
+            bot_personality=bot_personality,
         )
     except Exception as exc:
         log.warning(
@@ -1032,6 +1045,7 @@ async def _resolve_conversational(
                 current_datetime_label=current_datetime_label,
                 timezone=timezone,
                 resources_context=resources_context,
+                bot_personality=bot_personality,
             )
         except Exception as exc:
             log.warning(

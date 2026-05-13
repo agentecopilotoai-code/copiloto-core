@@ -1347,7 +1347,10 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     allowed = {
         k: payload[k]
-        for k in ('locale', 'business_hours', 'escalation_policy', 'pii_policy', 'no_train', 'notification_settings')
+        for k in (
+            'locale', 'business_hours', 'escalation_policy', 'pii_policy',
+            'no_train', 'notification_settings', 'bot_personality',
+        )
         if k in payload
     }
     current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
@@ -1357,14 +1360,18 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     merged.update(allowed)
 
     # Normalize jsonb fields: accept both raw dicts and JSON strings from clients
-    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy', 'notification_settings'):
-        merged[jsonb_key] = _coerce_jsonb(merged[jsonb_key]) or {}
+    for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy', 'notification_settings', 'bot_personality'):
+        merged[jsonb_key] = _coerce_jsonb(merged.get(jsonb_key)) or {}
+
+    # TASK-0071: sanea la personalidad antes de persistir (rechaza valores fuera de catálogo).
+    from app.services.conversation_flow import _normalize_personality as _normalize_bot_personality  # noqa: PLC0415
+    merged['bot_personality'] = _normalize_bot_personality(merged['bot_personality'])
 
     row = await conn.fetchrow(
         """
         update app.tenant_settings
         set locale=$2, business_hours=$3::jsonb, escalation_policy=$4::jsonb, pii_policy=$5::jsonb,
-            no_train=$6, notification_settings=$7::jsonb
+            no_train=$6, notification_settings=$7::jsonb, bot_personality=$8::jsonb
         where tenant_id=$1 returning *
         """,
         tenant_id,
@@ -1374,6 +1381,7 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         json.dumps(merged['pii_policy']),
         merged['no_train'],
         json.dumps(merged['notification_settings']),
+        json.dumps(merged['bot_personality']),
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
     return record_to_dict(row)

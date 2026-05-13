@@ -213,6 +213,91 @@ _VALID_STAGES = ' | '.join([
 ])
 
 
+# ── TASK-0071: voz/personalidad del bot ─────────────────────────────────────
+
+DEFAULT_BOT_PERSONALITY: dict[str, Any] = {
+    'tone': 'neutral',
+    'formality': 'tu',
+    'emoji_level': 'moderate',
+    'custom_persona': '',
+}
+
+_TONE_DESCRIPTIONS = {
+    'neutral': 'Tono neutral y profesional: claro, equilibrado, sin exageraciones.',
+    'formal': 'Tono formal y corporativo: respetuoso, pulido, evita coloquialismos.',
+    'friendly': 'Tono amigable y cercano: cálido, empático, conversacional sin perder profesionalismo.',
+    'playful': 'Tono divertido y desenfadado: usa juegos de palabras moderados, evita sonar serio o frío.',
+}
+
+_FORMALITY_DESCRIPTIONS = {
+    'tu': 'Trata al cliente de "tú" (informal). Ej: "¿quieres agendar?" en lugar de "¿quiere agendar?".',
+    'usted': 'Trata al cliente de "usted" (formal). Ej: "¿desea agendar?" en lugar de "¿quieres agendar?".',
+    'vos': 'Trata al cliente de "vos" (rioplatense). Ej: "¿querés agendar?" en lugar de "¿quieres agendar?".',
+}
+
+_EMOJI_LEVEL_DESCRIPTIONS = {
+    'none': 'NO uses emojis bajo ninguna circunstancia.',
+    'low': 'Usa máximo 1 emoji por cada 3 mensajes, sólo cuando aporte calidez (👋 al saludar).',
+    'moderate': 'Usa 1-2 emojis por mensaje cuando ayuden a transmitir tono (👋😊✨📅).',
+    'high': 'Usa emojis con frecuencia (2-3 por mensaje) para mensajes muy expresivos. Evita saturar.',
+}
+
+
+def _normalize_personality(personality: Any) -> dict[str, Any]:
+    """Coerce arbitrary input to the personality dict with valid known values."""
+    if isinstance(personality, str):
+        try:
+            personality = json.loads(personality)
+        except (json.JSONDecodeError, TypeError):
+            personality = None
+    if not isinstance(personality, dict):
+        return dict(DEFAULT_BOT_PERSONALITY)
+    tone = str(personality.get('tone') or 'neutral').strip().lower()
+    if tone not in _TONE_DESCRIPTIONS:
+        tone = 'neutral'
+    formality = str(personality.get('formality') or 'tu').strip().lower()
+    if formality not in _FORMALITY_DESCRIPTIONS:
+        formality = 'tu'
+    emoji_level = str(personality.get('emoji_level') or 'moderate').strip().lower()
+    if emoji_level not in _EMOJI_LEVEL_DESCRIPTIONS:
+        emoji_level = 'moderate'
+    custom_persona = str(personality.get('custom_persona') or '').strip()
+    # Limit free-text to keep prompt budget bounded.
+    if len(custom_persona) > 600:
+        custom_persona = custom_persona[:600].rstrip() + '…'
+    return {
+        'tone': tone,
+        'formality': formality,
+        'emoji_level': emoji_level,
+        'custom_persona': custom_persona,
+    }
+
+
+def build_personality_block(personality: Any) -> str:
+    """Render the 'VOZ DEL BOT' section inyectada antes del template RAG.
+
+    Devuelve cadena vacía si la configuración es la default (sin custom_persona),
+    para no inflar el prompt en tenants que no la usan.
+    """
+    p = _normalize_personality(personality)
+    is_default = (
+        p['tone'] == 'neutral'
+        and p['formality'] == 'tu'
+        and p['emoji_level'] == 'moderate'
+        and not p['custom_persona']
+    )
+    if is_default:
+        return ''
+    lines = ['== VOZ DEL BOT (personalidad del tenant) ==']
+    lines.append(f"• Tono: {p['tone']} — {_TONE_DESCRIPTIONS[p['tone']]}")
+    lines.append(f"• Trato: {p['formality']} — {_FORMALITY_DESCRIPTIONS[p['formality']]}")
+    lines.append(f"• Emojis: {p['emoji_level']} — {_EMOJI_LEVEL_DESCRIPTIONS[p['emoji_level']]}")
+    if p['custom_persona']:
+        lines.append(f"• Persona personalizada del tenant: {p['custom_persona']}")
+    lines.append('Mantén esta voz en todas las respuestas; tiene prioridad sobre el estilo por defecto.')
+    return '\n'.join(lines)
+
+
 def build_system_prompt(
     ctx: ConversationContext,
     services_context: str,
@@ -221,8 +306,9 @@ def build_system_prompt(
     current_datetime_label: str = 'no disponible',
     timezone: str = 'America/Bogota',
     resources_context: str = 'No hay profesionales activos configurados todavía.',
+    bot_personality: Any = None,
 ) -> str:
-    return _SYSTEM_TEMPLATE.format(
+    base = _SYSTEM_TEMPLATE.format(
         business_name=business_name,
         services_context=services_context or 'No hay servicios indexados aún.',
         resources_context=resources_context or 'No hay profesionales activos configurados todavía.',
@@ -232,6 +318,11 @@ def build_system_prompt(
         collected_summary=ctx.collected_summary(),
         valid_stages=_VALID_STAGES,
     )
+    personality_block = build_personality_block(bot_personality)
+    if not personality_block:
+        return base
+    # Sección dedicada ANTES del template RAG (criterio TASK-0071).
+    return f'{personality_block}\n\n{base}'
 
 
 def format_history(messages: list[dict[str, Any]], *, max_turns: int = 8) -> str:
