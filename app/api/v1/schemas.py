@@ -38,6 +38,20 @@ class RetentionPoliciesUpdate(BaseModel):
     policies: list[RetentionPolicyEntry]
 
 
+class DigestSubscriptionCreate(BaseModel):
+    recipient_email: str | None = Field(default=None, max_length=320)
+    recipient_whatsapp: str | None = Field(default=None, max_length=32)
+    cadence: str = Field(pattern='^(daily|weekly)$')
+    enabled: bool = True
+
+
+class DigestSubscriptionUpdate(BaseModel):
+    recipient_email: str | None = Field(default=None, max_length=320)
+    recipient_whatsapp: str | None = Field(default=None, max_length=32)
+    cadence: str | None = Field(default=None, pattern='^(daily|weekly)$')
+    enabled: bool | None = None
+
+
 class KnowledgeStorageUpdate(BaseModel):
     backend: str = Field(default='local', pattern='^(local|s3)$')
     bucket: str | None = Field(default=None, min_length=3, max_length=255)

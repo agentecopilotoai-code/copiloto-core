@@ -563,25 +563,7 @@ _TASK-0066 — Runbooks operacionales por tipo de incidente: COMPLETADA. Ver `do
 
 ---
 
-### TASK-0067 — Digest periódico (diario y semanal) por email/WhatsApp al manager
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0048 (funnel), TASK-0057 (alerts SMTP infra reutilizable).
-- **Por qué bloquea:** el manager no entra al panel cada día. Sin un resumen empujado al canal del manager, los KPIs no se ven y las decisiones no se toman. Esto causa churn del SaaS aunque el producto funcione.
-- **Alcance:**
-  - Tabla `app.digest_subscriptions(id, tenant_id, recipient_email, recipient_whatsapp, cadence check in ('daily','weekly'), enabled, last_sent_at, created_at, updated_at)`.
-  - Worker dedicado `app/workers/digest_worker.py` que corre 1x al día a las 08:00 hora del tenant (`tenants.timezone`) y arma:
-    - **Daily:** citas confirmadas hoy, citas para mañana, no-shows de ayer, top 3 quejas abiertas, mensajes recibidos (24h), conversión funnel del día.
-    - **Weekly (lunes):** lo del daily + ingreso semanal, top campañas, top servicios, retención 90d, comparación vs semana anterior.
-  - Generador `app/services/digest.py` con `build_daily_digest(conn, tenant_id) -> {text, html, whatsapp_template_components}` que reusa los endpoints de analytics.
-  - Email vía SMTP (infra existente de TASK-0057); WhatsApp via template `digest_daily_v1` / `digest_weekly_v1`.
-  - **Admin Panel:** sección "Suscripciones a resúmenes" en pestaña Notificaciones del wizard, con input para emails y WhatsApp, toggle daily/weekly.
-- **Criterios de aceptación:**
-  - Manager configura email y recibe a las 08:00 del día siguiente un email con los 6 KPIs del daily.
-  - Lunes a las 08:00 recibe el weekly con la comparación vs semana anterior.
-  - Tests: ≥ 10 estáticos: schema de `digest_subscriptions`, builder del payload (snapshot test), wiring del worker en compose, idempotencia (`last_sent_at`).
-- **Notas:**
-  - Reusar `operator_alerts._send_email_channel` / `_send_whatsapp_channel` para no duplicar SMTP.
+_TASK-0067 — Digest periódico (diario y semanal) por email/WhatsApp al manager: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

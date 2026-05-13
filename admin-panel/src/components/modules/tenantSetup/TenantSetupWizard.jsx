@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import QualificationQuestionsPanel from './QualificationQuestionsPanel.jsx';
+import DigestSubscriptionsPanel from './DigestSubscriptionsPanel.jsx';
 import { BranchesModule } from '../branches/BranchesModule.jsx';
 import {
   createContactTag,
@@ -1375,6 +1376,14 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
               en Meta para que la alerta salga.
             </p>
           </fieldset>
+
+          {currentTenantId ? (
+            <DigestSubscriptionsPanel session={session} tenantId={currentTenantId} />
+          ) : (
+            <p className="hint">
+              Crea el tenant antes de configurar suscripciones al resumen periódico (TASK-0067).
+            </p>
+          )}
 
           <fieldset className="wide" style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '0.75rem 1rem' }}>
             <legend>Flujo post-cita (TASK-0036)</legend>

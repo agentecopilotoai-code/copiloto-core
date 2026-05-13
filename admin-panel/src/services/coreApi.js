@@ -144,6 +144,37 @@ export function getRetentionPreview(session, tenantId) {
   return request(`/tenants/${tenantId}/retention/preview`, { session, tenantId });
 }
 
+// TASK-0067: digest subscriptions (resumen periódico al manager).
+export function listDigestSubscriptions(session, tenantId) {
+  return request(`/tenants/${tenantId}/digest/subscriptions`, { session, tenantId });
+}
+
+export function createDigestSubscription(session, tenantId, payload) {
+  return request(`/tenants/${tenantId}/digest/subscriptions`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateDigestSubscription(session, tenantId, subscriptionId, payload) {
+  return request(`/tenants/${tenantId}/digest/subscriptions/${subscriptionId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function deleteDigestSubscription(session, tenantId, subscriptionId) {
+  return request(`/tenants/${tenantId}/digest/subscriptions/${subscriptionId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
 
 export function getTenantReadiness(session, tenantId, options = {}) {
   const params = new URLSearchParams();

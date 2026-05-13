@@ -15,6 +15,28 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0067 — Digest periódico (diario y semanal) al manager
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se cierra la brecha "el manager no entra al panel cada día y los KPIs se pierden". Ahora cada tenant puede suscribir 1..N destinatarios (email y/o WhatsApp) a un resumen diario (08:00 hora local) o semanal (lunes 08:00). El daily empaqueta los 6 KPIs del backlog (citas confirmadas hoy, citas mañana, no-shows de ayer, top quejas 1–2★, mensajes recibidos 24h, conversión funnel del día). El weekly extiende con ingreso semanal, top campañas, top servicios, retención 90d y delta vs semana anterior. El worker `digest-worker` corre dedicado, idempotente vía `digest_subscriptions.last_sent_at` (no doble envío aunque haya dos ticks en la ventana), y reutiliza el SMTP de TASK-0057 + cola de WhatsApp Cloud API en `messages` para que el `event_worker` entregue las plantillas `digest_daily_v1` / `digest_weekly_v1`.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** nueva tabla `app.digest_subscriptions(id, tenant_id, recipient_email, recipient_whatsapp, cadence in ('daily','weekly'), enabled, last_sent_at, created_at, updated_at)` con check `chk_digest_subscriptions_recipient` (al menos un canal), índices `ix_digest_subscriptions_tenant` y `ix_digest_subscriptions_due`, trigger `trg_digest_subscriptions_touch`, RLS habilitado y la entrada en el loop genérico de policies tenant-scoped.
+  - **`app/services/digest.py` (nuevo):** builders `build_daily_digest` y `build_weekly_digest` con SQL alineado al schema canónico (reutilizando los mismos joins que `/v1/analytics/*`), helper `is_due(cadence, now_utc, tz_name, last_sent_at)` que aplica zona horaria del tenant, ventana 08:00–08:59 y bloquea por fecha local (daily) o semana ISO (weekly). Constantes `WHATSAPP_DIGEST_DAILY_TEMPLATE='digest_daily_v1'`, `WHATSAPP_DIGEST_WEEKLY_TEMPLATE='digest_weekly_v1'`. Salida del builder: `{subject, text, html, whatsapp_components, kpis}`.
+  - **`app/workers/digest_worker.py` (nuevo):** entrypoint dedicado con tick de 10 min, reusa `operator_alerts._send_email_smtp` para no duplicar credenciales SMTP y encola WhatsApp como `messages.message_type='template'`. `last_sent_at` solo se actualiza tras un dispatch exitoso (un fallo de SMTP no marca el día como enviado y se reintenta en el próximo tick).
+  - **`docker-compose.yml`:** nuevo servicio `digest-worker` con el mismo env_file y `command: python3 -m app.workers.digest_worker`.
+  - **API REST (`app/api/v1/routes.py` + `app/api/v1/schemas.py`):** CRUD bajo `tenant_admin_router`: `GET/POST /v1/tenants/{id}/digest/subscriptions`, `PATCH/DELETE .../subscriptions/{subscription_id}`. Cada mutación emite `audit_logs` con la acción correspondiente. Validación servidor: al menos un destinatario obligatorio (HTTP 400 si ambos vacíos).
+  - **Admin Panel (`admin-panel/src/components/modules/tenantSetup/DigestSubscriptionsPanel.jsx` nuevo, integrado en `TenantSetupWizard.jsx` → pestaña *Notificaciones*):** tabla con email, WhatsApp, cadencia, toggle enabled/disabled, último envío y eliminar. Form de alta con cadencia y enabled-al-crear. Helpers en `admin-panel/src/services/coreApi.js`.
+  - **Tests (`tests/test_digest_static.py` nuevo, 15 estáticos):** schema (tabla + RLS + policy + trigger), `is_due` (fuera de ventana, lunes-only para weekly, idempotencia semana ISO, idempotencia día local), fallback de timezone inválido, snapshot de los builders daily/weekly (6 KPIs + delta + top servicios/campañas + components), template names, worker wireado en compose, idempotencia del worker (update `last_sent_at` tras delivered), reuso de `_send_email_smtp`, endpoints CRUD en routes, Pydantic schemas, helpers de coreApi.js, panel renderizado dentro de la pestaña Notificaciones.
+- **Comandos ejecutados:**
+  - `uv run pytest tests/test_digest_static.py -x` → **15 passed**.
+  - `uv run pytest -x --ignore=tests/test_journey_e2e.py -q` → **1160 passed, 12 skipped** (sin regresión).
+- **Limitaciones / notas:**
+  - El builder weekly toma la moneda del locale via mapeo simple (COP/MXN/ARS/CLP/PEN) hasta que TASK-0073 (i18n multi-país) la haga first-class; el `currency` también se puede pasar explícito como kwarg al builder.
+  - El cuerpo HTML del email es minimalista a propósito; el copy formateado vive en `text` para que cualquier cliente SMTP lo renderice sin caer al fallback. Si más adelante hace falta un template HTML rico, basta extender `_render_daily` / `_render_weekly` sin tocar la idempotencia.
+  - El WhatsApp template (`digest_daily_v1` / `digest_weekly_v1`) debe estar aprobado en Meta en cada tenant. Si no existe, el worker registra `digest.whatsapp_skipped_no_channel` y deja el email como único canal (no falla la suscripción completa).
+
+---
+
 ### TASK-0066 — Runbooks operacionales por tipo de incidente
 
 - **Fecha:** 2026-05-13
