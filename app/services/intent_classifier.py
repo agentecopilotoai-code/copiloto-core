@@ -9,6 +9,7 @@ Tres capas en cascada:
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -158,46 +159,78 @@ opt_out"""
 
 
 async def _llm_classify(text: str, enabled_intents: set[str], settings: Any) -> IntentResult | None:
-    """Llama al LLM de la cascada y devuelve una IntentResult o None si falla."""
+    """Clasifica con el LLM en cascada usando clientes async y timeout efectivo.
+
+    TASK-0086 / BUG09: la versión anterior instanciaba ``anthropic.Anthropic`` /
+    ``openai.OpenAI`` (clientes síncronos) y los llamaba sin ``await``, lo que
+    bloqueaba el event loop el tiempo entero que el proveedor tardara en
+    responder o colgarse. Cualquier flujo de mensajes WhatsApp que no
+    matcheara una regla regex de alta confianza encolaba esa espera serial
+    en el loop, abriendo la puerta a un DoS trivial sobre el webhook.
+
+    El fix usa ``AsyncAnthropic`` / ``AsyncOpenAI`` con ``timeout`` del SDK
+    (``settings.cloud_llm_timeout_seconds``) y envuelve la llamada en un
+    ``asyncio.wait_for`` con un timeout duro (timeout + 2s) para defendernos
+    de SDKs que ignoren el parámetro nativo (p.ej. cambios futuros). Cualquier
+    ``asyncio.TimeoutError`` o error del proveedor degrada al fallback sin
+    afectar otras tareas concurrentes.
+    """
     provider = getattr(settings, 'cloud_llm_provider', None)
     api_key = getattr(settings, 'cloud_llm_api_key', None)
     model = getattr(settings, 'cloud_llm_model', 'claude-sonnet-4-6')
+    timeout_seconds = int(getattr(settings, 'cloud_llm_timeout_seconds', 30) or 30)
+    hard_deadline = max(timeout_seconds + 2, 5)
 
     intent_raw: str | None = None
 
     if provider and api_key:
         try:
             if provider == 'claude':
-                import anthropic  # type: ignore[import]
-                client = anthropic.Anthropic(api_key=api_key)
-                msg = client.messages.create(
-                    model=model,
-                    max_tokens=20,
-                    system=_LLM_SYSTEM,
-                    messages=[{'role': 'user', 'content': text}],
+                import anthropic  # type: ignore[import]  # noqa: PLC0415
+                client = anthropic.AsyncAnthropic(api_key=api_key, timeout=float(timeout_seconds))
+                msg = await asyncio.wait_for(
+                    client.messages.create(
+                        model=model,
+                        max_tokens=20,
+                        system=_LLM_SYSTEM,
+                        messages=[{'role': 'user', 'content': text}],
+                    ),
+                    timeout=hard_deadline,
                 )
                 intent_raw = msg.content[0].text.strip().lower()
             elif provider == 'openai':
-                import openai  # type: ignore[import]
-                client = openai.OpenAI(api_key=api_key)
-                resp = client.chat.completions.create(
-                    model=model,
-                    max_tokens=20,
-                    messages=[
-                        {'role': 'system', 'content': _LLM_SYSTEM},
-                        {'role': 'user', 'content': text},
-                    ],
+                import openai  # type: ignore[import]  # noqa: PLC0415
+                client = openai.AsyncOpenAI(api_key=api_key, timeout=float(timeout_seconds))
+                resp = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=model,
+                        max_tokens=20,
+                        messages=[
+                            {'role': 'system', 'content': _LLM_SYSTEM},
+                            {'role': 'user', 'content': text},
+                        ],
+                    ),
+                    timeout=hard_deadline,
                 )
                 intent_raw = resp.choices[0].message.content.strip().lower()
-        except Exception as exc:
+        except asyncio.TimeoutError:
+            log.warning(
+                'intent_classifier.llm_timeout',
+                provider=provider,
+                hard_deadline=hard_deadline,
+                sdk_timeout=timeout_seconds,
+            )
+            return None
+        except Exception as exc:  # noqa: BLE001
             log.warning('intent_classifier.llm_error', provider=provider, error=str(exc))
             return None
     else:
         # Intentar con Ollama local
         ollama_url = getattr(settings, 'local_llm_base_url', None) or 'http://host.docker.internal:11434'
         ollama_model = getattr(settings, 'local_llm_model', None) or 'llama3.2:3b'
+        local_timeout = float(getattr(settings, 'local_llm_timeout_seconds', 30) or 8)
         try:
-            import httpx
+            import httpx  # noqa: PLC0415
             payload = {
                 'model': ollama_model,
                 'messages': [
@@ -206,11 +239,17 @@ async def _llm_classify(text: str, enabled_intents: set[str], settings: Any) -> 
                 ],
                 'stream': False,
             }
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.post(f'{ollama_url}/api/chat', json=payload)
+            async with httpx.AsyncClient(timeout=local_timeout) as client:
+                resp = await asyncio.wait_for(
+                    client.post(f'{ollama_url}/api/chat', json=payload),
+                    timeout=local_timeout + 2,
+                )
                 data = resp.json()
                 intent_raw = (data.get('message') or {}).get('content', '').strip().lower()
-        except Exception as exc:
+        except asyncio.TimeoutError:
+            log.warning('intent_classifier.ollama_timeout', timeout=local_timeout)
+            return None
+        except Exception as exc:  # noqa: BLE001
             log.warning('intent_classifier.ollama_error', error=str(exc))
             return None
 

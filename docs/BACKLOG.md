@@ -934,9 +934,12 @@ _TASK-0085 — Invitación Auth0 por user_id en lugar de email: COMPLETADA. Ver 
 
 ---
 
-### TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo
+_TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** `app/services/intent_classifier.py::_llm_classify` instancia clientes **síncronos** Anthropic/OpenAI y llama `create()` desde dentro de una función `async`, sin pasar `timeout`. Cada mensaje WhatsApp que no matchea regla regex de alta confianza bloquea el event loop hasta que el proveedor responde o cuelga. Un attacker puede inundar el webhook con mensajes ambiguos y tumbar el servicio.
 - **Bugs cubiertos (1):**
   - **BUG09** (`docs/BUGS/BUG09`, commit `bced236`): blocking cloud LLM classifier enables webhook DoS.
@@ -951,5 +954,6 @@ _TASK-0085 — Invitación Auth0 por user_id en lugar de email: COMPLETADA. Ver 
 - **Criterios de aceptación:**
   - Test estático que confirma uso de `AsyncAnthropic`/`AsyncOpenAI` y `timeout` parametrizado.
   - Test que un proveedor mock que `raise asyncio.TimeoutError` cae en `fallback` sin colgar el event loop (medido con event loop monitor: latencia P99 de otras tareas concurrentes < 200ms).
+-->
 
 ---

@@ -15,6 +15,37 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG09 — `intent_classifier._llm_classify` instanciaba `anthropic.Anthropic` / `openai.OpenAI` (clientes **síncronos**) y llamaba `.create()` sin `await` y sin `timeout`. Cada mensaje WhatsApp que no matcheara una regla regex de alta confianza bloqueaba el event loop el tiempo entero que el proveedor tardara o se colgara. Vector de DoS sobre el webhook: inundar con mensajes ambiguos serializa cada respuesta en el loop.
+- **Fase 1 — verificación en HEAD:** reproducible. Las dos ramas (Claude y OpenAI) usaban clientes sync; la rama de Ollama ya estaba sobre `httpx.AsyncClient` pero sin `wait_for` defensivo. Ningún cliente recibía `timeout`. `settings.cloud_llm_timeout_seconds` existía (`30` default) pero nunca llegaba al SDK.
+- **Fase 2 — remediación:**
+  - **`app/services/intent_classifier.py`:**
+    - Migrado a `anthropic.AsyncAnthropic(api_key=..., timeout=float(timeout_seconds))` y `openai.AsyncOpenAI(api_key=..., timeout=float(timeout_seconds))` con `await client.messages.create(...)` / `await client.chat.completions.create(...)`.
+    - El SDK timeout se lee de `settings.cloud_llm_timeout_seconds` (default 30) y se pasa explícitamente al constructor del cliente.
+    - Cada llamada al proveedor (Anthropic, OpenAI y la rama Ollama vía `httpx.AsyncClient.post`) se envuelve adicionalmente en `asyncio.wait_for(..., timeout=hard_deadline)` con `hard_deadline = max(timeout_seconds + 2, 5)`. Esta defensa garantiza que aun si el SDK ignora su `timeout` nativo (regresión futura, bug en el cliente), el `asyncio.TimeoutError` libera el event loop.
+    - Manejo de errores granular: `except asyncio.TimeoutError` registra `intent_classifier.llm_timeout` (cloud) / `intent_classifier.ollama_timeout` (local) y retorna `None`, degradando al fallback. `except Exception` separado para otros errores de proveedor.
+- **Archivos modificados:**
+  - `app/services/intent_classifier.py` (rewrite de `_llm_classify` + import de `asyncio`)
+  - `tests/test_intent_classifier_async.py` (nuevo, 12 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check app/services/intent_classifier.py tests/test_intent_classifier_async.py` → all checks passed.
+  - `uv run pytest tests/test_intent_classifier_async.py -q` → 12 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1538 passed, 22 skipped (regresión cero contra HEAD).
+- **Cobertura por bug:**
+  - **BUG09 source invariants:** `test_llm_classify_uses_async_anthropic_not_sync_client`, `test_llm_classify_uses_async_openai_not_sync_client`, `test_llm_classify_passes_timeout_to_both_sdks`, `test_llm_classify_awaits_provider_calls`, `test_llm_classify_uses_hard_deadline_above_sdk_timeout`, `test_llm_classify_distinguishes_timeout_from_other_errors`, `test_llm_classify_reads_timeout_from_settings_with_default`.
+  - **BUG09 runtime behaviour:** `test_llm_classify_returns_intent_when_provider_responds_promptly`, `test_llm_classify_returns_none_on_provider_timeout_without_hanging` (event-loop monitor: ticker latency `max < 200ms` aún con el LLM colgado 5s), `test_llm_classify_propagates_timeout_to_anthropic_sdk`, `test_classify_intent_falls_back_to_faq_when_llm_times_out` (cascade end-to-end).
+  - **Ollama branch:** `test_ollama_branch_also_uses_wait_for_for_event_loop_safety`.
+- **Notas:**
+  - El test del event-loop monitor mide latencia real de un `asyncio.sleep(0.05)` ticker corriendo concurrente con un LLM stub colgado. Antes del fix, ese ticker se bloqueaba hasta que el LLM respondiera. Después del fix, las 5 latencias medidas se mantienen <200ms aun cuando el stub `asyncio.sleep(60)` está vivo, hasta que `hard_deadline=5s` lo aborta.
+  - La constante `hard_deadline = max(timeout_seconds + 2, 5)` deja un mínimo absoluto de 5s para no abortar respuestas legítimas que estén llegando justo en el límite del SDK timeout, pero acota a `timeout_seconds + 2` para cualquier proveedor configurado con timeouts más altos.
+  - El criterio del backlog ("classifier corre después del dedup/idempotency/rate-limit gate") ya se cumplía en HEAD: `receive_whatsapp_webhook` ejecuta dedup (`webhook_events_raw.payload_sha256` ON CONFLICT) y verificación de firma antes de llamar a `orchestrate_inbound_message` → `classify_intent`. No requiere cambio.
+  - El rewrite es backend puro: no toca admin panel ni endpoints públicos. Cierra el último bug del backlog activo (TASK-0077..0086 completados).
+
+---
+
 ### TASK-0085 — Invitación Auth0 por `user_id` en lugar de email (cierra BUG06)
 
 - **Fecha:** 2026-05-13
