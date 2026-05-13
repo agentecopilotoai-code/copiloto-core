@@ -848,6 +848,29 @@ create index ix_backup_runs_started on app.backup_runs(started_at desc);
 create index ix_backup_runs_kind_status on app.backup_runs(kind, status, started_at desc);
 
 
+-- TASK-0067: digest_subscriptions — destinatarios del resumen periódico
+-- (diario / semanal) que un worker dedicado entrega vía email y/o WhatsApp
+-- a las 08:00 hora del tenant. ``last_sent_at`` es la garantía de
+-- idempotencia: el worker solo despacha si la última corrida fue en un día
+-- (daily) o lunes (weekly) distinto al actual en la zona horaria del tenant.
+create table app.digest_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  recipient_email text,
+  recipient_whatsapp text,
+  cadence text not null check (cadence in ('daily','weekly')),
+  enabled boolean not null default true,
+  last_sent_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint chk_digest_subscriptions_recipient check (
+    coalesce(nullif(recipient_email, ''), nullif(recipient_whatsapp, '')) is not null
+  )
+);
+create index ix_digest_subscriptions_tenant on app.digest_subscriptions(tenant_id, cadence);
+create index ix_digest_subscriptions_due on app.digest_subscriptions(enabled, cadence, last_sent_at);
+
+
 -- Tenant consistency guards for operational rows. RLS limits each statement to the
 -- current tenant, while these composite foreign keys prevent same-tenant writes
 -- from linking to records that belong to another tenant.
@@ -990,6 +1013,7 @@ create trigger trg_appointments_touch before update on app.appointments for each
 create trigger trg_reminder_jobs_touch before update on app.reminder_jobs for each row execute function app.touch_updated_at();
 create trigger trg_operator_alerts_touch before update on app.operator_alerts for each row execute function app.touch_updated_at();
 create trigger trg_data_retention_policies_touch before update on app.data_retention_policies for each row execute function app.touch_updated_at();
+create trigger trg_digest_subscriptions_touch before update on app.digest_subscriptions for each row execute function app.touch_updated_at();
 create trigger trg_knowledge_documents_touch before update on app.knowledge_documents for each row execute function app.touch_updated_at();
 create trigger trg_prompt_templates_touch before update on app.prompt_templates for each row execute function app.touch_updated_at();
 create trigger trg_handoffs_touch before update on app.handoffs for each row execute function app.touch_updated_at();
@@ -1219,6 +1243,7 @@ alter table app.audit_logs enable row level security;
 alter table app.operator_alerts enable row level security;
 alter table app.data_retention_policies enable row level security;
 alter table app.consent_ledger enable row level security;
+alter table app.digest_subscriptions enable row level security;
 
 do $$
 declare t text;
@@ -1234,7 +1259,7 @@ begin
     'branches',
     'treatment_packages','contact_packages','appointment_package_links',
     'webhook_events_raw','domain_events','audit_logs','operator_alerts','data_retention_policies',
-    'consent_ledger'
+    'consent_ledger','digest_subscriptions'
   ] loop
     execute format('create policy %I_tenant_select on app.%I for select using (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);
     execute format('create policy %I_tenant_insert on app.%I for insert with check (tenant_id = app.current_tenant_id() or app.support_mode())', t, t);

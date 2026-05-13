@@ -84,6 +84,20 @@ services:
     expose:
       - "9100"
 
+  # TASK-0067: digest worker (resumen diario/semanal por email + WhatsApp).
+  # Tick cada 10 min; despacha 08:00 hora local del tenant. La idempotencia
+  # vive en `digest_subscriptions.last_sent_at`.
+  digest-worker:
+    build: .
+    env_file: *app-env-files
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python3 -m app.workers.digest_worker
+    volumes:
+      - ./.secrets:/app/.secrets:ro
+
   # TASK-0064: backup automatizado a cloud (perfil opt-in `backups`).
   # Arranca con:
   #   docker compose --profile backups up -d backup-worker
