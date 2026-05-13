@@ -377,6 +377,7 @@ create table app.whatsapp_templates (
     'appointment_reminder_custom','no_show_confirmation_request','no_show_followup',
     'post_appointment_instructions','post_appointment_feedback','post_appointment_rebooking',
     'reschedule_offer','campaign_promo','payment_request','service_recall',
+    'subscription_payment_failed',
     'consent_request','consent_reaffirm','custom'
   )),
   components jsonb not null default '{}'::jsonb,
@@ -564,7 +565,7 @@ create index ix_contact_segment_members_tenant on app.contact_segment_members(te
 create table app.reminder_jobs (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
-  target_type text not null check (target_type in ('appointment','quote','service_request','conversation')),
+  target_type text not null check (target_type in ('appointment','quote','service_request','conversation','contact_subscription')),
   target_id uuid not null,
   channel_id uuid references app.tenant_channels(id) on delete set null,
   template_name text not null,
@@ -627,6 +628,51 @@ create index ix_contact_packages_contact_active
   on app.contact_packages(tenant_id, contact_id, status);
 create index ix_contact_packages_expiry
   on app.contact_packages(expires_at) where status='active' and expires_at is not null;
+
+-- TASK-0075: recurring subscriptions / memberships.
+create table app.subscription_plans (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  name text not null,
+  description text,
+  billing_period text not null check (billing_period in ('monthly','quarterly','yearly')),
+  price_amount numeric(10,2) not null check (price_amount >= 0),
+  currency char(3) not null default 'COP',
+  included_services jsonb not null default '[]'::jsonb,
+  status text not null default 'active' check (status in ('active','archived')),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_subscription_plans_tenant_status
+  on app.subscription_plans(tenant_id, status, name);
+
+create table app.contact_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  contact_id uuid not null references app.contacts(id) on delete restrict,
+  plan_id uuid not null references app.subscription_plans(id) on delete restrict,
+  status text not null default 'active' check (status in ('active','past_due','cancelled')),
+  started_at timestamptz not null default now(),
+  next_billing_at timestamptz,
+  cancelled_at timestamptz,
+  payment_provider text not null check (payment_provider in ('mercadopago','stripe')),
+  payment_provider_subscription_id text,
+  payment_method_id text,
+  last_invoice_status text,
+  last_invoice_at timestamptz,
+  retry_payment_link text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index ix_contact_subscriptions_tenant_status
+  on app.contact_subscriptions(tenant_id, status, next_billing_at);
+create index ix_contact_subscriptions_contact
+  on app.contact_subscriptions(tenant_id, contact_id, status);
+create unique index ux_contact_subscriptions_provider_ref
+  on app.contact_subscriptions(payment_provider, payment_provider_subscription_id)
+  where payment_provider_subscription_id is not null;
 
 create table app.appointment_package_links (
   appointment_id uuid not null,
@@ -1012,6 +1058,13 @@ alter table app.appointment_package_links
     references app.appointments(tenant_id, id) on delete cascade,
   add constraint fk_appointment_package_links_tenant_contact_package foreign key (tenant_id, contact_package_id)
     references app.contact_packages(tenant_id, id);
+alter table app.subscription_plans add constraint uq_subscription_plans_tenant_id_id unique (tenant_id, id);
+alter table app.contact_subscriptions add constraint uq_contact_subscriptions_tenant_id_id unique (tenant_id, id);
+alter table app.contact_subscriptions
+  add constraint fk_contact_subscriptions_tenant_contact foreign key (tenant_id, contact_id)
+    references app.contacts(tenant_id, id),
+  add constraint fk_contact_subscriptions_tenant_plan foreign key (tenant_id, plan_id)
+    references app.subscription_plans(tenant_id, id);
 alter table app.knowledge_chunks
   add constraint fk_knowledge_chunks_tenant_document foreign key (tenant_id, document_id) references app.knowledge_documents(tenant_id, id);
 alter table app.handoffs
@@ -1045,6 +1098,8 @@ create trigger trg_contact_segments_touch before update on app.contact_segments 
 create trigger trg_branches_touch before update on app.branches for each row execute function app.touch_updated_at();
 create trigger trg_treatment_packages_touch before update on app.treatment_packages for each row execute function app.touch_updated_at();
 create trigger trg_contact_packages_touch before update on app.contact_packages for each row execute function app.touch_updated_at();
+create trigger trg_subscription_plans_touch before update on app.subscription_plans for each row execute function app.touch_updated_at();
+create trigger trg_contact_subscriptions_touch before update on app.contact_subscriptions for each row execute function app.touch_updated_at();
 
 -- TASK-0051: consume one session from the linked package when an appointment
 -- is closed as completed. Idempotent: the appointment row is updated only
@@ -1255,6 +1310,8 @@ alter table app.branches enable row level security;
 alter table app.treatment_packages enable row level security;
 alter table app.contact_packages enable row level security;
 alter table app.appointment_package_links enable row level security;
+alter table app.subscription_plans enable row level security;
+alter table app.contact_subscriptions enable row level security;
 alter table app.webhook_events_raw enable row level security;
 alter table app.domain_events enable row level security;
 alter table app.audit_logs enable row level security;
@@ -1276,6 +1333,7 @@ begin
     'contact_segments','contact_segment_members',
     'branches',
     'treatment_packages','contact_packages','appointment_package_links',
+    'subscription_plans','contact_subscriptions',
     'webhook_events_raw','domain_events','audit_logs','operator_alerts','data_retention_policies',
     'consent_ledger','digest_subscriptions'
   ] loop

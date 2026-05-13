@@ -33,6 +33,13 @@ export const adminModules = [
     minRole: 'admin',
   },
   {
+    id: 'subscriptions',
+    label: 'Suscripciones',
+    summary: 'Membresías con cobro recurrente vía Stripe o MercadoPago. TASK-0075.',
+    scope: ['Crear planes mensuales/trimestrales/anuales', 'Listar suscriptores activos', 'Reintento automático en cobro fallido', 'Cancelación auditada'],
+    minRole: 'admin',
+  },
+  {
     id: 'whatsapp',
     label: 'WhatsApp',
     summary: 'Onboarding y salud del canal WhatsApp/WABA.',

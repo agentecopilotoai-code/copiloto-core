@@ -31,6 +31,8 @@ from app.api.v1.schemas import (
     ContactPackageAssign,
     ContactPackagePatch,
     ContactSegmentCreate,
+    ContactSubscriptionCreate,
+    ContactSubscriptionPatch,
     ContactSegmentMembersAssign,
     ContactSegmentUpdate,
     ContactTagAssign,
@@ -66,6 +68,8 @@ from app.api.v1.schemas import (
     ServiceRequestCreate,
     ServiceRequestPatch,
     ServiceUpdate,
+    SubscriptionPlanCreate,
+    SubscriptionPlanUpdate,
     TenantCreate,
     TenantPaymentSettingsUpdate,
     TenantStatusTransition,
@@ -118,6 +122,10 @@ from app.services.payment_provider import (
     normalize_provider as normalize_payment_provider,
     verify_mercadopago_signature,
     verify_stripe_signature,
+)
+from app.services.subscriptions import (
+    INVOICE_FAILED_TEMPLATE,
+    extract_subscription_event,
 )
 from app.services.maps import build_maps_url
 from app.services.retention import (
@@ -4404,6 +4412,321 @@ async def refund_contact_package(
     return Response(status_code=204)
 
 
+# ───── Subscription plans (TASK-0075) ──────────────────────────────────────
+
+
+@tenant_ops_router.get('/subscription-plans')
+async def list_subscription_plans(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    status_filter: str | None = Query(default=None, alias='status'),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select *
+        from app.subscription_plans
+        where tenant_id=$1
+          and ($2::text is null or status=$2)
+        order by status asc, name asc
+        limit 250
+        """,
+        tenant_id,
+        status_filter,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_admin_router.post('/subscription-plans', status_code=201)
+async def create_subscription_plan(
+    payload: SubscriptionPlanCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        insert into app.subscription_plans (
+            tenant_id, name, description, billing_period, price_amount, currency,
+            included_services, status, metadata
+        )
+        values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb)
+        returning *
+        """,
+        tenant_id,
+        payload.name,
+        payload.description,
+        payload.billing_period,
+        payload.price_amount,
+        payload.currency,
+        json.dumps(payload.included_services),
+        payload.status,
+        json.dumps(payload.metadata),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='subscription_plan.created',
+        entity_type='subscription_plan',
+        entity_id=str(row['id']),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.patch('/subscription-plans/{plan_id}')
+async def update_subscription_plan(
+    plan_id: UUID,
+    payload: SubscriptionPlanUpdate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        row = await conn.fetchrow(
+            'select * from app.subscription_plans where tenant_id=$1 and id=$2',
+            tenant_id,
+            plan_id,
+        )
+        if not row:
+            raise HTTPException(status_code=404, detail='Plan not found')
+        return record_to_dict(row)
+    row = await conn.fetchrow(
+        """
+        update app.subscription_plans
+        set name=coalesce($3, name),
+            description=case when $11::boolean then $4 else description end,
+            billing_period=coalesce($5, billing_period),
+            price_amount=coalesce($6, price_amount),
+            currency=coalesce($7, currency),
+            included_services=coalesce($8::jsonb, included_services),
+            status=coalesce($9, status),
+            metadata=coalesce($10::jsonb, metadata)
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        plan_id,
+        update_data.get('name'),
+        update_data.get('description'),
+        update_data.get('billing_period'),
+        update_data.get('price_amount'),
+        update_data.get('currency'),
+        json.dumps(update_data['included_services']) if 'included_services' in update_data else None,
+        update_data.get('status'),
+        json.dumps(update_data['metadata']) if 'metadata' in update_data else None,
+        'description' in update_data,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Plan not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='subscription_plan.updated',
+        entity_type='subscription_plan',
+        entity_id=str(plan_id),
+    )
+    return record_to_dict(row)
+
+
+@tenant_admin_router.delete('/subscription-plans/{plan_id}', status_code=204)
+async def archive_subscription_plan(
+    plan_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        update app.subscription_plans
+        set status='archived'
+        where tenant_id=$1 and id=$2
+        returning id
+        """,
+        tenant_id,
+        plan_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Plan not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='subscription_plan.archived',
+        entity_type='subscription_plan',
+        entity_id=str(plan_id),
+    )
+    return Response(status_code=204)
+
+
+@tenant_ops_router.get('/subscriptions')
+async def list_contact_subscriptions(
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    status_filter: str | None = Query(default=None, alias='status'),
+    plan_id: UUID | None = Query(default=None),
+    contact_id: UUID | None = Query(default=None),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    rows = await conn.fetch(
+        """
+        select cs.*, sp.name as plan_name, sp.billing_period as plan_billing_period,
+               sp.price_amount as plan_price_amount, sp.currency as plan_currency,
+               c.display_name as contact_display_name, c.phone_e164 as contact_phone_e164
+        from app.contact_subscriptions cs
+        join app.subscription_plans sp on sp.id=cs.plan_id and sp.tenant_id=cs.tenant_id
+        join app.contacts c on c.id=cs.contact_id and c.tenant_id=cs.tenant_id
+        where cs.tenant_id=$1
+          and ($2::text is null or cs.status=$2)
+          and ($3::uuid is null or cs.plan_id=$3)
+          and ($4::uuid is null or cs.contact_id=$4)
+        order by cs.started_at desc
+        limit 250
+        """,
+        tenant_id,
+        status_filter,
+        plan_id,
+        contact_id,
+    )
+    return [record_to_dict(row) for row in rows]
+
+
+@tenant_ops_router.post('/subscriptions', status_code=201)
+async def create_contact_subscription(
+    payload: ContactSubscriptionCreate,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    plan = await conn.fetchrow(
+        'select id from app.subscription_plans where tenant_id=$1 and id=$2 and status=$3',
+        tenant_id,
+        payload.plan_id,
+        'active',
+    )
+    if not plan:
+        raise HTTPException(status_code=400, detail='Plan not found or archived')
+    contact = await conn.fetchval(
+        'select 1 from app.contacts where tenant_id=$1 and id=$2',
+        tenant_id,
+        payload.contact_id,
+    )
+    if not contact:
+        raise HTTPException(status_code=400, detail='Contact not found for tenant')
+    row = await conn.fetchrow(
+        """
+        insert into app.contact_subscriptions (
+            tenant_id, contact_id, plan_id, payment_provider,
+            payment_provider_subscription_id, payment_method_id,
+            next_billing_at, metadata
+        )
+        values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+        returning *
+        """,
+        tenant_id,
+        payload.contact_id,
+        payload.plan_id,
+        payload.payment_provider,
+        payload.payment_provider_subscription_id,
+        payload.payment_method_id,
+        payload.next_billing_at,
+        json.dumps(payload.metadata),
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_subscription.created',
+        entity_type='contact_subscription',
+        entity_id=str(row['id']),
+    )
+    return record_to_dict(row)
+
+
+@tenant_ops_router.patch('/subscriptions/{subscription_id}')
+async def update_contact_subscription(
+    subscription_id: UUID,
+    payload: ContactSubscriptionPatch,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    update_data = payload.model_dump(exclude_unset=True)
+    cancel_now = update_data.get('status') == 'cancelled'
+    row = await conn.fetchrow(
+        """
+        update app.contact_subscriptions
+        set status=coalesce($3, status),
+            next_billing_at=coalesce($4, next_billing_at),
+            payment_provider_subscription_id=coalesce($5, payment_provider_subscription_id),
+            payment_method_id=coalesce($6, payment_method_id),
+            retry_payment_link=coalesce($7, retry_payment_link),
+            metadata=coalesce($8::jsonb, metadata),
+            cancelled_at=case when $9::boolean then now() else cancelled_at end
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        subscription_id,
+        update_data.get('status'),
+        update_data.get('next_billing_at'),
+        update_data.get('payment_provider_subscription_id'),
+        update_data.get('payment_method_id'),
+        update_data.get('retry_payment_link'),
+        json.dumps(update_data['metadata']) if 'metadata' in update_data else None,
+        cancel_now,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Subscription not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_subscription.updated',
+        entity_type='contact_subscription',
+        entity_id=str(subscription_id),
+    )
+    return record_to_dict(row)
+
+
+@tenant_ops_router.delete('/subscriptions/{subscription_id}', status_code=204)
+async def cancel_contact_subscription(
+    subscription_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    tenant_id = await tenant_id_from_request(request, conn)
+    row = await conn.fetchrow(
+        """
+        update app.contact_subscriptions
+        set status='cancelled', cancelled_at=now()
+        where tenant_id=$1 and id=$2
+        returning id
+        """,
+        tenant_id,
+        subscription_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Subscription not found')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact_subscription.cancelled',
+        entity_type='contact_subscription',
+        entity_id=str(subscription_id),
+    )
+    return Response(status_code=204)
+
+
 @tenant_ops_router.get('/resources')
 async def list_resources(
     request: Request,
@@ -6807,6 +7130,154 @@ async def receive_payment_webhook(
         )
 
     return _appointment_payment_summary(row)
+
+
+@webhook_router.post('/subscriptions/{provider}', status_code=202)
+async def receive_subscription_webhook(
+    provider: str,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Handle recurring-billing webhooks for ``contact_subscriptions``.
+
+    Stripe sends ``invoice.payment_succeeded`` / ``invoice.payment_failed``
+    with the provider subscription id in ``data.object.subscription``.
+    MercadoPago emits ``subscription_authorized_payment`` updates with the
+    preapproval id. We translate both into our ``active`` / ``past_due``
+    states and queue a WhatsApp template on failure so the customer can
+    retry the charge with a fresh card.
+    """
+    try:
+        normalized_provider = normalize_payment_provider(provider)
+    except PaymentProviderError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if normalized_provider == 'none':
+        raise HTTPException(status_code=404, detail='Unknown payment provider')
+    body = await request.body()
+    try:
+        payload = json.loads(body or b'{}')
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail='Invalid subscription webhook payload') from exc
+
+    event = extract_subscription_event(normalized_provider, payload)
+    if not event:
+        return {'status': 'ignored', 'reason': 'not_a_subscription_event'}
+
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+    subscription = await conn.fetchrow(
+        """
+        select cs.*, c.phone_e164 as contact_phone_e164, sp.name as plan_name
+        from app.contact_subscriptions cs
+        join app.contacts c on c.id=cs.contact_id and c.tenant_id=cs.tenant_id
+        join app.subscription_plans sp on sp.id=cs.plan_id and sp.tenant_id=cs.tenant_id
+        where cs.payment_provider=$1
+          and cs.payment_provider_subscription_id=$2
+        limit 1
+        """,
+        normalized_provider,
+        event.provider_subscription_id,
+    )
+    if not subscription:
+        raise HTTPException(status_code=404, detail='Subscription not found for webhook')
+    tenant_id = subscription['tenant_id']
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    payment_settings = await _fetch_tenant_payment_settings(conn, tenant_id)
+    secret = resolve_secret_ref(payment_settings.get('webhook_secret_ref'))
+    if not secret:
+        raise HTTPException(
+            status_code=401,
+            detail='Payment webhook signing secret is not configured for this tenant',
+        )
+    if normalized_provider == 'mercadopago':
+        sig_header = request.headers.get('x-signature')
+        request_id = request.headers.get('x-request-id')
+        data_id = None
+        data = payload.get('data') if isinstance(payload, dict) else None
+        if isinstance(data, dict):
+            data_id = data.get('id')
+        signature_ok = verify_mercadopago_signature(
+            body, sig_header, secret, request_id=request_id, data_id=str(data_id) if data_id else None,
+        )
+    else:
+        sig_header = request.headers.get('stripe-signature')
+        signature_ok = verify_stripe_signature(body, sig_header, secret)
+    if not signature_ok:
+        raise HTTPException(status_code=401, detail='Invalid subscription webhook signature')
+
+    sha = hashlib.sha256(body).hexdigest()
+    await conn.execute(
+        """
+        insert into app.webhook_events_raw (tenant_id, provider, event_type, headers, payload, payload_sha256)
+        values ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
+        on conflict (payload_sha256) do nothing
+        """,
+        tenant_id,
+        normalized_provider,
+        event.event_kind,
+        json.dumps(dict(request.headers)),
+        json.dumps(payload),
+        sha,
+    )
+
+    await conn.fetchrow(
+        """
+        update app.contact_subscriptions
+        set status=$3,
+            retry_payment_link=case when $3='past_due' then $4 else null end,
+            last_invoice_status=$5,
+            last_invoice_at=now()
+        where tenant_id=$1 and id=$2
+        returning *
+        """,
+        tenant_id,
+        subscription['id'],
+        event.new_status,
+        event.retry_url,
+        event.event_kind,
+    )
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type='service',
+        actor_id=f'payment_provider:{normalized_provider}',
+        action='contact_subscription.invoice_webhook',
+        entity_type='contact_subscription',
+        entity_id=str(subscription['id']),
+        metadata={'status': event.new_status, 'event': event.event_kind, 'provider': normalized_provider},
+    )
+
+    if event.new_status == 'past_due':
+        retry_url = event.retry_url or ''
+        reminder_payload = {
+            'subscription_id': str(subscription['id']),
+            'contact_id': str(subscription['contact_id']),
+            'contact_phone_e164': subscription['contact_phone_e164'],
+            'plan_name': subscription['plan_name'],
+            'retry_payment_link': retry_url,
+            'purpose': INVOICE_FAILED_TEMPLATE,
+        }
+        await conn.execute(
+            """
+            insert into app.reminder_jobs
+              (tenant_id, target_type, target_id, template_name, template_locale, payload, scheduled_for, status)
+            values ($1, 'contact_subscription', $2, $3, 'es_CO', $4::jsonb, now(), 'pending')
+            on conflict do nothing
+            """,
+            tenant_id,
+            subscription['id'],
+            INVOICE_FAILED_TEMPLATE,
+            json.dumps(reminder_payload),
+        )
+        await conn.execute(
+            "insert into app.domain_events (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload) values ($1,'contact_subscription',$2,'subscription.payment_failed',$3,$4::jsonb) on conflict do nothing",
+            tenant_id,
+            subscription['id'],
+            f'subscription-payment-failed-{subscription["id"]}-{sha[:12]}',
+            json.dumps(reminder_payload),
+        )
+
+    return {'status': 'ok', 'new_status': event.new_status, 'subscription_id': str(subscription['id'])}
 
 
 @tenant_admin_router.get('/knowledge/documents')

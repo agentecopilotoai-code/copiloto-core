@@ -16,6 +16,7 @@ import { OperationsDesk } from '../modules/operations/OperationsDesk.jsx';
 import { OutboundDLQ } from '../modules/outbound/OutboundDLQ.jsx';
 import { BranchesModule } from '../modules/branches/BranchesModule.jsx';
 import { PackagesModule } from '../modules/packages/PackagesModule.jsx';
+import { SubscriptionsModule } from '../modules/subscriptions/SubscriptionsModule.jsx';
 import { SegmentsModule } from '../modules/segments/SegmentsModule.jsx';
 import { ServiceCatalog } from '../modules/services/ServiceCatalog.jsx';
 import { TeamModule } from '../modules/team/TeamModule.jsx';
@@ -269,6 +270,20 @@ export function AdminLayout({ session }) {
       );
     } else {
       activeContent = <PackagesModule module={activeModule} session={session} tenant={activeTenant} />;
+    }
+  } else if (activeModuleId === 'subscriptions') {
+    if (!hasMinRole(activeRoles, 'admin')) {
+      activeContent = (
+        <section className="module-card">
+          <h2>Acceso restringido</h2>
+          <p className="hint">
+            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
+            las suscripciones recurrentes.
+          </p>
+        </section>
+      );
+    } else {
+      activeContent = <SubscriptionsModule module={activeModule} session={session} tenant={activeTenant} />;
     }
   } else if (activeModuleId === 'whatsapp') {
     activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
