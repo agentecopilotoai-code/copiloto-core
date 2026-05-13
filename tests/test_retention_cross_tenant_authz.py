@@ -77,12 +77,14 @@ def test_agent_in_target_tenant_cannot_satisfy_admin_check():
 
 
 def test_admin_in_target_tenant_passes_admin_check():
+    """TASK-0077: both halves must agree.  When the JWT carries admin and the
+    DB also confirms admin in the target tenant, the call succeeds."""
     async def run_test():
         request = _make_request()
         request.state.actor_type = 'user'
         request.state.actor_id = 'auth0|user'
         request.state.support_mode = False
-        request.state.roles = ['viewer']  # session role is irrelevant here
+        request.state.roles = ['admin']
         request.state.tenant_id = uuid4()
 
         conn = _FakeRolesConn(['admin'])
@@ -98,12 +100,34 @@ def test_owner_in_target_tenant_passes_admin_check():
         request.state.actor_type = 'user'
         request.state.actor_id = 'auth0|user'
         request.state.support_mode = False
-        request.state.roles = []
+        request.state.roles = ['owner']
         request.state.tenant_id = uuid4()
 
         conn = _FakeRolesConn(['owner'])
 
         await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+    asyncio.run(run_test())
+
+
+def test_db_admin_without_jwt_admin_is_rejected():
+    """TASK-0077: defense-in-depth — a DB admin row without a JWT carrying the
+    required role must still fail.  The JWT half is the token-portability
+    invariant the bot review flagged in PR #111."""
+    async def run_test():
+        request = _make_request()
+        request.state.actor_type = 'user'
+        request.state.actor_id = 'auth0|user'
+        request.state.support_mode = False
+        request.state.roles = ['viewer']
+        request.state.tenant_id = uuid4()
+
+        conn = _FakeRolesConn(['admin'])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+        assert exc_info.value.status_code == 403
 
     asyncio.run(run_test())
 
@@ -127,13 +151,14 @@ def test_support_mode_bypasses_tenant_role_check():
 def test_support_role_in_target_tenant_passes_admin_check():
     """A ``support`` membership row in the target tenant outranks admin in
     the shared role hierarchy (see ``_ROLE_LEVELS`` in ``app.core.security``),
-    so the per-tenant check must accept it."""
+    so the per-tenant check must accept it — provided the JWT also carries a
+    sufficient role (TASK-0077 double-check)."""
     async def run_test():
         request = _make_request()
         request.state.actor_type = 'user'
         request.state.actor_id = 'auth0|support'
         request.state.support_mode = False
-        request.state.roles = []
+        request.state.roles = ['support']
         request.state.tenant_id = uuid4()
 
         conn = _FakeRolesConn(['support'])

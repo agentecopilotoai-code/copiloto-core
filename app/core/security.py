@@ -9,7 +9,19 @@ from jose import JWTError, jwt
 from app.core.config import get_settings
 
 _jwks_cache: dict[str, tuple[float, dict]] = {}
-_ROLE_LEVELS = {'viewer': 5, 'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
+# TASK-0077: shared role ranking used by both JWT-session checks
+# (``require_min_role``) and per-tenant DB checks (``ensure_tenant_role``).  The
+# ``platform_owner`` rank tops the ladder so that the same helper can express
+# "this endpoint requires platform_owner" without a separate code path.
+_ROLE_LEVELS = {
+    'viewer': 5,
+    'agent': 10,
+    'manager': 20,
+    'admin': 30,
+    'owner': 40,
+    'support': 50,
+    'platform_owner': 60,
+}
 _PRIVILEGED_ROLES = {'admin', 'owner', 'platform_owner'}
 
 
@@ -237,6 +249,12 @@ def require_min_role(minimum_role: str, *, allow_service: bool = False):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required'
             )
+        # TASK-0077: propagate the router's required role so that
+        # ``ensure_tenant_access`` (and ``ensure_tenant_role``) can apply the
+        # same threshold to the per-tenant DB membership row.  Without this the
+        # router-level JWT check and the tenant DB check disagree on what
+        # "admin" means and allow JWT-admin + DB-viewer combinations through.
+        request.state.required_tenant_role = minimum_role
         if actor_type == 'service':
             if allow_service:
                 return
@@ -249,6 +267,15 @@ def require_min_role(minimum_role: str, *, allow_service: bool = False):
         )
 
     return dependency
+
+
+def has_jwt_role(roles: list[str], minimum_role: str) -> bool:
+    """Public wrapper around the internal role-ranking helper.
+
+    ``ensure_tenant_role`` in ``app.api.v1.routes`` uses this to apply the JWT
+    half of the double-check (JWT AND DB) without duplicating the role table.
+    """
+    return _has_role(roles, minimum_role)
 
 
 def _session_has_privileged_role(roles: list[str]) -> bool:

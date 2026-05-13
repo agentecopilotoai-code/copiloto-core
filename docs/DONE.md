@@ -15,6 +15,51 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0077 — Fix estructural: autorización tenant-scoped con doble chequeo JWT + DB role
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se elimina la familia de escalamientos cross-tenant (BUG03/07/08/11/16/17/23/24/25) consolidando la autorización en dos helpers que aplican el invariante "JWT debe portar el rol que el endpoint exige" **además** del nuevo "la DB del tenant target debe confirmarlo". `require_min_role` ahora publica el mínimo declarado en `request.state.required_tenant_role`; `ensure_tenant_access` lo lee y rechaza JWT-admin + DB-viewer; `ensure_tenant_role` aplica el doble chequeo explícito para endpoints owner-only. `has_user_tenant_role` (existencia) desapareció; lo reemplaza `get_user_tenant_role` (rol más alto o `None`). El status del tenant se mueve a `PlatformTenantUpdate` y solo `platform_admin_router` lo persiste. `tenant-signup` rechaza con 409 si el actor ya tiene membership previa, eliminando el hijack documentado en BUG24.
+- **Implementación:**
+  - **`app/core/security.py`:** ranking compartido extendido con `platform_owner=60`; `require_min_role` deja `request.state.required_tenant_role` para que el handler-level helper reaplique el mismo umbral contra la DB; helper público `has_jwt_role` reutilizable por `ensure_tenant_role`.
+  - **`app/api/v1/routes.py`:**
+    - `get_user_tenant_role(conn, request, tenant_id) -> str | None` reemplaza la chequeo de existencia (BUG25).
+    - `ensure_tenant_access` toma `required_tenant_role` desde `request.state`; cuando está fijado consulta la DB y rechaza si el rol del tenant target no alcanza (BUG16). Mantiene la semántica legacy para `tenant_user_router` que no declara `require_min_role`. Reconoce `platform_owner` unscoped como bypass.
+    - `ensure_tenant_role(request, conn, tenant_id, min_role)` ahora hace JWT + DB AND (BUG03/07/08/11/17/23/25). Service y support_mode bypass; `platform_owner` unscoped bypass; el resto emite 403 con razón distinta (`insufficient_token_role` vs `insufficient_tenant_role`).
+    - `_audit_authz_denied` registra `audit_logs(action='authz.denied', detail={reason, path, tenant_id})` (best-effort, no enmascara la 403).
+    - `update_tenant_record` recibe `actor_is_platform_owner` y rechaza modificaciones de `status` si False (BUG11).
+    - `patch_tenant_status` migra de `tenant_admin_router` a `platform_admin_router` (BUG11).
+    - `export_tenant_data` pasa a `ensure_tenant_role(request, conn, tenant_id, 'owner')` (BUG17).
+    - `create_own_tenant` devuelve 409 si el actor ya tiene membership previa (BUG24 hijack).
+  - **`app/api/v1/schemas.py`:** `TenantUpdate` pierde el campo `status`; `PlatformTenantUpdate(TenantUpdate)` lo añade y solo platform-admin endpoints lo aceptan (BUG11).
+- **Archivos modificados:**
+  - `app/core/security.py`
+  - `app/api/v1/routes.py`
+  - `app/api/v1/schemas.py`
+  - `tests/test_tenant_role_authz.py` (nuevo, suite de regresión por BUG)
+  - `tests/test_tenant_access.py` (fake conn adapta a la nueva firma `fetch`)
+  - `tests/test_retention_cross_tenant_authz.py` (legacy tests actualizados al doble chequeo)
+  - `tests/test_audit_privacy_static.py` (guard de export_tenant_data → `ensure_tenant_role('owner')`)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validaciones:**
+  - `pytest tests/test_tenant_role_authz.py tests/test_tenant_access.py tests/test_retention_cross_tenant_authz.py tests/test_security.py` → 71 passed
+  - `pytest tests/` (sin `load/`) → 1407 passed, 10 skipped (sin regresiones).
+- **Cobertura rubric por BUG:**
+  - BUG03 (media/promotions): handlers afectados pasan por `ensure_tenant_access` con `required_tenant_role='admin'` → JWT-admin + DB-viewer → 403. Suite paramétrica cubre GET/POST/PATCH/DELETE.
+  - BUG07 (WhatsApp templates): igual + cobertura del `delete` y `sync` que tocan Meta.
+  - BUG08 (service catalog): igual + reorder.
+  - BUG11 (status mutation): static guard verifica que `patch_tenant_status` vive bajo `platform_admin_router` y que `TenantUpdate` no expone `status`; `update_tenant_record` rechaza `status` sin platform-owner.
+  - BUG16 (unscoped JWT + DB low role): `ensure_tenant_access` con `required_tenant_role` rechaza explícitamente; tests `test_ensure_tenant_access_enforces_required_tenant_role_from_state`.
+  - BUG17 (data-export owner): tests cubren owner JWT A + viewer DB B → 403, admin JWT + owner DB → 403, owner+owner → 200.
+  - BUG23 (Knowledge Studio): static guard verifica que list/get/patch/delete enrutan vía `tenant_id_from_request` (que aplica `ensure_tenant_access`).
+  - BUG24 (tenant-signup hijack): test `test_tenant_signup_returns_409_when_actor_has_membership`.
+  - BUG25 (`has_user_tenant_role` semántica existence): test estático verifica que el símbolo desapareció y que `get_user_tenant_role` es su reemplazo.
+- **Notas:**
+  - La UI del Admin Panel no requirió cambios: el flujo de tenant admin/operations sigue usando los mismos endpoints REST, ahora con el gate endurecido en el servidor. Si en el futuro se quiere mostrar el rol DB en el switcher, ya está disponible vía `get_user_tenant_role`.
+  - Se preserva el bypass `platform_owner` (solo cuando el token es unscoped) para no romper el panel de plataforma.
+  - El audit log "authz.denied" es best-effort: no enmascara 403s si el INSERT falla (eg. conexión cerrada o RLS bloqueando).
+
+---
+
 ### TASK-0076 — Páginas legales por tenant: Términos y Privacidad
 
 - **Fecha:** 2026-05-13
