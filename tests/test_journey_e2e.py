@@ -650,6 +650,25 @@ def test_scenario_negative_feedback_escalates(tenant_factory):
         handle = await tenant_factory(label='journey-4', opt_in_status='granted')
         url = os.environ.get('TEST_DATABASE_URL') or os.environ['DATABASE_URL']
         async with tenant_connection(url, handle.tenant_id, support_mode=True) as conn:
+            # `enqueue_operator_alert` short-circuits when the tenant has no
+            # complaint_alert_channels configured. Production tenants set them
+            # via the admin panel; for the test we wire an email recipient.
+            await conn.execute(
+                """
+                update app.tenant_settings
+                set notification_settings=$2::jsonb
+                where tenant_id=$1
+                """,
+                handle.tenant_id,
+                json.dumps({
+                    'complaint_alert_channels': {
+                        'email': ['ops@example.com'],
+                        'whatsapp': [],
+                        'webhook_url': '',
+                    },
+                }),
+            )
+
             starts = _now_utc() - timedelta(hours=2)
             appointment_id = await conn.fetchval(
                 """
@@ -826,9 +845,11 @@ def test_scenario_booking_flow_presents_services(tenant_factory):
             )
             if isinstance(meta, str):
                 meta = json.loads(meta)
-            booking_state = (meta or {}).get('booking') or {}
+            booking_state = (meta or {}).get('booking_flow') or {}
             assert booking_state, \
                 f'booking_flow must persist state on the conversation, got metadata={meta}'
+            assert booking_state.get('step'), \
+                f'booking_flow state must include a step, got {booking_state}'
 
             # At least one outbound interactive message must have been queued
             # with both service IDs available for selection.
