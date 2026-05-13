@@ -102,8 +102,37 @@ def _s3_client(
     secret_access_key: str | None = None,
     region_name: str | None = None,
 ) -> BaseClient:
+    # TASK-0079 / BUG18: when a tenant-controlled endpoint_url is provided, it
+    # must pass the outbound URL guard (HTTPS, no loopback/RFC1918/metadata) and
+    # MUST be paired with tenant-supplied credentials. We refuse to sign
+    # requests against a tenant endpoint using platform-wide access keys.
+    effective_endpoint = endpoint_url or settings.s3_endpoint_url or None
+    tenant_endpoint_provided = bool(endpoint_url)
+    if tenant_endpoint_provided:
+        from app.services.url_guard import (  # noqa: PLC0415
+            S3_ENDPOINT_HOST_ALLOWLIST,
+            UnsafeOutboundURLError,
+            validate_outbound_url,
+        )
+
+        try:
+            validate_outbound_url(
+                endpoint_url,
+                allowed_schemes=('https',),
+                host_allowlist=S3_ENDPOINT_HOST_ALLOWLIST,
+                allow_http_for_local_dev=True,
+            )
+        except UnsafeOutboundURLError as exc:
+            raise ValueError(f'Tenant S3 endpoint_url rejected: {exc}') from exc
+        if not (access_key_id and secret_access_key):
+            raise ValueError(
+                'Tenant S3 endpoint_url requires tenant-supplied access_key_id '
+                'and secret_access_key; platform credentials are never used '
+                'against a tenant-controlled endpoint.'
+            )
+
     client_kwargs = {
-        'endpoint_url': endpoint_url or settings.s3_endpoint_url or None,
+        'endpoint_url': effective_endpoint,
         'aws_access_key_id': access_key_id or settings.s3_access_key_id,
         'aws_secret_access_key': secret_access_key or settings.s3_secret_access_key,
     }

@@ -1511,6 +1511,9 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
               />
             </label>
             <p className="hint" style={{ marginTop: '0.25rem' }}>
+              Solo URLs HTTPS públicas. Loopback, RFC1918, link-local y
+              metadata cloud (169.254.169.254, metadata.google.internal) son
+              rechazados con 422.
               El webhook se firma con HMAC SHA256 si existe el archivo
               <code> .secrets/tenants/&lt;tenant_id&gt;/alerts_webhook_secret</code>.
               El template de WhatsApp <code>complaint_alert_v1</code> debe estar aprobado

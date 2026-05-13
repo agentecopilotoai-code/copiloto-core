@@ -334,6 +334,19 @@ def validate_outbound_message_content(
         raise HTTPException(status_code=400, detail='Text messages require body_text')
     if message_type in MEDIA_MESSAGE_TYPES and not ((media_id or '').strip() or (media_url or '').strip()):
         raise HTTPException(status_code=400, detail=f'{message_type} messages require media_id or payload.media_url')
+    # TASK-0079 / BUG19: reject crafted media_id values BEFORE they reach the
+    # Graph URL interpolation path. The validator accepts numeric Meta IDs
+    # only; anything else (path traversal, query string, NUL bytes) is dropped.
+    cleaned_media_id = (media_id or '').strip() if media_id else ''
+    if cleaned_media_id:
+        from app.services.url_guard import (  # noqa: PLC0415
+            UnsafeOutboundURLError,
+            assert_whatsapp_media_id,
+        )
+        try:
+            assert_whatsapp_media_id(cleaned_media_id)
+        except UnsafeOutboundURLError as exc:
+            raise HTTPException(status_code=422, detail=f'media_id rejected: {exc}')
 
 async def upsert_whatsapp_contact(
     conn: asyncpg.Connection,
@@ -1611,6 +1624,25 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
     for jsonb_key in ('business_hours', 'escalation_policy', 'pii_policy', 'notification_settings', 'bot_personality'):
         merged[jsonb_key] = _coerce_jsonb(merged.get(jsonb_key)) or {}
 
+    # TASK-0079: validate the webhook URL inside notification_settings BEFORE
+    # persisting. The webhook is invoked from the alerts worker with a HMAC
+    # signature; accepting an unvalidated URL allows SSRF + secret leak.
+    notification_settings_value = merged.get('notification_settings') or {}
+    if isinstance(notification_settings_value, dict):
+        channels_value = notification_settings_value.get('complaint_alert_channels')
+        if channels_value is not None:
+            from app.services.operator_alerts import normalize_alert_channels  # noqa: PLC0415
+            from app.services.url_guard import UnsafeOutboundURLError  # noqa: PLC0415
+            try:
+                normalized_channels = normalize_alert_channels(channels_value, strict=True)
+            except UnsafeOutboundURLError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f'complaint_alert_channels.webhook_url rejected: {exc}',
+                )
+            notification_settings_value['complaint_alert_channels'] = normalized_channels
+            merged['notification_settings'] = notification_settings_value
+
     # TASK-0071: sanea la personalidad antes de persistir (rechaza valores fuera de catálogo).
     from app.services.conversation_flow import _normalize_personality as _normalize_bot_personality  # noqa: PLC0415
     merged['bot_personality'] = _normalize_bot_personality(merged['bot_personality'])
@@ -1921,6 +1953,42 @@ async def patch_knowledge_storage_settings(
     if next_config['backend'] == 's3':
         if not next_config.get('bucket'):
             raise HTTPException(status_code=400, detail='S3 bucket is required for tenant knowledge storage')
+        # TASK-0079 / BUG18: validate the tenant-supplied endpoint_url BEFORE
+        # persisting. The validator enforces HTTPS, an AWS/MinIO allowlist, and
+        # blocks loopback / RFC1918 / metadata hosts. Local dev mode (APP_ENV
+        # in {'local','test'}) is the only context where MinIO HTTP is allowed.
+        if next_config.get('endpoint_url'):
+            from app.services.url_guard import (  # noqa: PLC0415
+                S3_ENDPOINT_HOST_ALLOWLIST,
+                UnsafeOutboundURLError,
+                validate_outbound_url,
+            )
+            try:
+                validate_outbound_url(
+                    next_config['endpoint_url'],
+                    allowed_schemes=('https',),
+                    host_allowlist=S3_ENDPOINT_HOST_ALLOWLIST,
+                    allow_http_for_local_dev=True,
+                )
+            except UnsafeOutboundURLError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f'S3 endpoint_url rejected: {exc}',
+                )
+            # When the tenant points to a custom endpoint, tenant credentials
+            # are mandatory — we never sign against an attacker-supplied host
+            # with platform-wide access keys.
+            has_tenant_creds = bool(
+                next_config.get('access_key_id')
+                and (secret_access_key or secret_ref_is_configured(next_config.get('secret_ref')))
+            )
+            if not has_tenant_creds:
+                raise HTTPException(
+                    status_code=422,
+                    detail='Tenant S3 endpoint_url requires tenant-supplied '
+                           'access_key_id + secret_access_key (no fallback to '
+                           'platform credentials).',
+                )
         if secret_access_key and not next_config.get('access_key_id'):
             raise HTTPException(
                 status_code=400,

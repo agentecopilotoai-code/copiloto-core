@@ -15,6 +15,57 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant
+
+- **Fecha:** 2026-05-13
+- **Bugs cubiertos:** BUG01 (webhook alert SSRF → loopback/metadata con HMAC firmado), BUG18 (tenant S3 `endpoint_url` apuntando a host atacante con fallback a credenciales plataforma), BUG19 (`media_id` interpolado sin URL-encode + `media_info['url']` reenviado con token Meta sin allowlist).
+- **Fase 1 — verificación en HEAD:** los 3 BUGs siguen reproducibles. `_send_webhook_channel` invoca `httpx.AsyncClient.post(url, ...)` sin validar, y `patch_settings` acepta `notification_settings` como `dict` libre (`webhook_url` no validado). `_s3_client` cae silenciosamente a `settings.s3_access_key_id/s3_secret_access_key` cuando faltan credenciales tenant, y `patch_knowledge_storage_settings` no valida `endpoint_url`. `get_whatsapp_media_info` interpola `media_id` directamente y `download_whatsapp_media` sigue `media_info['url']` con `follow_redirects=True` sin chequear host.
+- **Fase 2 — remediación (causa raíz, un único módulo y dos defensas):**
+  - **Nuevo módulo** `app/services/url_guard.py`:
+    - `validate_outbound_url(url, *, allowed_schemes, host_allowlist, allow_http_for_local_dev) -> ValidatedURL`. Rechaza scheme no permitido; bloquea `127.0.0.0/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`, `100.64/10`, `0/8`, `::1/128`, `fc00::/7`, `fe80::/10`, IPv4-mapped loopback (`::ffff:127.0.0.0/104`), addresses unspecified/reserved/multicast; hostnames `localhost`, `metadata.google.internal`, `metadata`, `ip6-localhost`; URLs con credenciales `user:pass@host`. Resuelve DNS y exige que **todas** las direcciones devueltas sean públicas. Soporta allowlist con wildcards (`*.example.com`, `s3.*.amazonaws.com`).
+    - Constantes `META_MEDIA_HOST_ALLOWLIST` (`*.fbcdn.net`, `*.fbsbx.com`, `lookaside.fbsbx.com`, `*.cdninstagram.com`, `*.facebook.com`, `graph.facebook.com`) y `S3_ENDPOINT_HOST_ALLOWLIST` (regional AWS + Cloudflare R2 + DigitalOcean Spaces).
+    - `assert_whatsapp_media_id(media_id)` valida regex `^\d{6,30}$` antes de cualquier interpolación.
+    - `_is_local_dev_env()` solo permite HTTP cuando `APP_ENV in {'local','test'}` y el caller pasa explícitamente `allow_http_for_local_dev=True`.
+  - **BUG01 — webhook alerts:**
+    - `normalize_alert_channels(value, *, strict=False)` en `app/services/operator_alerts.py`. En modo `strict=True` (write path) valida con `validate_outbound_url` y propaga `UnsafeOutboundURLError`; modo lenient (dispatch) solo hace shape-check y delega la validación final al sender.
+    - `patch_settings` (`app/api/v1/routes.py`) llama `normalize_alert_channels(..., strict=True)` antes de persistir `complaint_alert_channels` y mapea el fallo a 422 con detalle.
+    - `_send_webhook_channel` re-valida con `validate_outbound_url` antes del POST. Si la URL es legacy peligrosa (DB sucia), emite `alert_channel.webhook_blocked` y retorna sin tocar la red. `httpx.AsyncClient` usa `follow_redirects=False` para evitar redirect-to-private.
+  - **BUG18 — tenant S3 endpoint:**
+    - `_s3_client` en `app/services/knowledge_storage.py`: si el caller provee `endpoint_url`, valida con HTTPS + `S3_ENDPOINT_HOST_ALLOWLIST` + `allow_http_for_local_dev=True`; exige `access_key_id` + `secret_access_key` tenant. Nunca firma con credenciales plataforma contra un endpoint tenant.
+    - `patch_knowledge_storage_settings` valida y rechaza con 422 al persistir: scheme/host inválido o falta de credenciales tenant.
+  - **BUG19 — WhatsApp media:**
+    - `get_whatsapp_media_info` valida `media_id` con `assert_whatsapp_media_id`, lo URL-encodea (`quote(..., safe='')`), construye la URL Graph y la pasa por `validate_outbound_url` con `META_MEDIA_HOST_ALLOWLIST`. `httpx.AsyncClient` usa `follow_redirects=False`.
+    - `download_whatsapp_media` re-valida `media_info['url']` contra `META_MEDIA_HOST_ALLOWLIST` antes del segundo GET con el Bearer token. Si Meta devuelve una URL fuera de la allowlist (proveedor comprometido / DNS rebinding), levanta `RuntimeError` y nunca exfiltra el token. `follow_redirects=False`.
+    - `validate_outbound_message_content` rechaza POST de mensajes outbound con `media_id` crafted con 422.
+  - **UI hints (cambios mínimos, no se altera comportamiento de formularios):**
+    - `admin-panel/src/components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx`: placeholder del endpoint cambia a `https://s3.us-east-1.amazonaws.com` y se añade nota indicando los proveedores admitidos y la obligatoriedad de credenciales tenant.
+    - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`: la nota del webhook explicita que loopback / RFC1918 / link-local / metadata son rechazados con 422.
+- **Archivos modificados:**
+  - `app/services/url_guard.py` (nuevo)
+  - `app/services/operator_alerts.py`
+  - `app/services/knowledge_storage.py`
+  - `app/services/whatsapp.py`
+  - `app/api/v1/routes.py`
+  - `admin-panel/src/components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx`
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx`
+  - `tests/test_url_guard.py` (nuevo, 37 tests)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Validación:**
+  - `uv run ruff check ...` → all checks passed.
+  - `uv run pytest tests/test_url_guard.py -q` → 37 passed.
+  - `uv run pytest -q --ignore=tests/load` → 1448 passed, 22 skipped.
+- **Cobertura por bug:**
+  - **BUG01:** `test_normalize_alert_channels_strict_rejects_loopback_webhook`, `test_normalize_alert_channels_lenient_preserves_url_for_send_time_check`, `test_send_webhook_channel_drops_legacy_loopback_url`, `test_patch_settings_blocks_loopback_webhook_at_source_handler`.
+  - **BUG18:** `test_s3_client_rejects_tenant_endpoint_without_tenant_creds`, `test_s3_client_rejects_loopback_endpoint`, `test_s3_client_rejects_endpoint_outside_allowlist`, `test_patch_knowledge_storage_validates_endpoint_at_source_handler`.
+  - **BUG19:** `test_validate_outbound_message_content_rejects_crafted_media_id`, `test_validate_outbound_message_content_accepts_numeric_media_id`, `test_meta_media_allowlist_blocks_non_meta_host`, `test_meta_media_allowlist_accepts_lookaside_and_fbcdn`, `test_download_media_source_uses_url_guard_and_no_redirects`, `test_get_media_info_source_quotes_media_id_and_validates_graph_host`, `test_media_id_accepts_numeric_meta_id`, `test_media_id_rejects_path_traversal`, `test_media_id_rejects_query_string_injection`, `test_media_id_rejects_letters_or_dashes`, `test_media_id_rejects_non_string`.
+  - **Guard genérico:** 18 tests cubren scheme/loopback/metadata/RFC1918/IPv6/DNS-rebinding/allowlist/local-dev/credentials-in-URL.
+- **Notas:**
+  - El guard usa `socket.getaddrinfo` por defecto; los tests inyectan un resolver fake para evitar tocar red. Tres tests no hacen `monkeypatch` del resolver porque chequean parseo puro (sin DNS).
+  - `_is_local_dev_env` se determina por `APP_ENV in {'local','test'}` para que MinIO en docker-compose siga funcionando sin tocar producción. Cualquier prod (`APP_ENV='production'`) rechaza HTTP y loopback aunque el caller pase `allow_http_for_local_dev=True`.
+  - `follow_redirects=False` queda como invariante en los 3 sinks (alerts, WhatsApp media-info, WhatsApp media-download). Los redirects no eran necesarios para el flujo legítimo (Meta y los webhooks responden directamente) y eran el vector de bypass más fácil.
+
+---
+
 ### TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG
 
 - **Fecha:** 2026-05-13

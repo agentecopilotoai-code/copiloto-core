@@ -740,9 +740,12 @@ _TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG: COMPLETAD
 
 ---
 
-### TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant
+_TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant: COMPLETADA. Ver `docs/DONE.md`._
 
-- **Estado:** PENDING
+<!--
+### TASK-0079 — Fix estructural: bloqueo de SSRF en URLs/endpoints controlados por tenant (archivado)
+
+- **Estado:** DONE (2026-05-13)
 - **Causa raíz:** el backend hace requests HTTP outbound a URLs cuyos componentes (host, scheme) están bajo control del tenant — sin enforce HTTPS, sin allowlist, sin bloqueo de loopback / RFC1918 / link-local / metadata. El proceso adjunta credenciales sensibles (token Meta del tenant, credenciales S3 plataforma) a esas requests, generando SSRF + leak de secretos.
 - **Bugs cubiertos (3):**
   - **BUG01** (`docs/BUGS/BUG01`, commit `517add2`): `complaint_alert_channels.webhook_url` aceptado sin validar → POST desde `_send_webhook_channel` a 127.0.0.1, 169.254.169.254, etc.
@@ -774,6 +777,7 @@ _TASK-0078 — Fix estructural: filtro `agents_only` en retrieval RAG: COMPLETAD
     - S3 sin credenciales tenant → 422 (no fallback).
     - Media proxy: `media_id='../foo'` → 422 en POST de mensaje; `media_info['url']='http://attacker.com'` → 502 sin segundo GET.
   - PoC dinámico documentado en `DONE.md` para cada uno de los 3 BUGs.
+-->
 
 ---
 

@@ -54,16 +54,30 @@ def _coerce_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def normalize_alert_channels(value: Any) -> dict[str, Any]:
-    """Return ``complaint_alert_channels`` with all three keys present."""
+def normalize_alert_channels(value: Any, *, strict: bool = False) -> dict[str, Any]:
+    """Return ``complaint_alert_channels`` with all three keys present.
+
+    When ``strict`` is True (write path), the webhook URL must pass the
+    full SSRF guard (HTTPS, no loopback/RFC1918/metadata/credentials, host
+    must resolve to a public IP). The read/dispatch path is tolerant: it
+    only shape-checks the URL and trusts ``_send_webhook_channel`` to
+    re-validate (with DNS) at send time.
+    """
     raw = _coerce_dict(value)
     email = raw.get('email') if isinstance(raw.get('email'), list) else []
     whatsapp = raw.get('whatsapp') if isinstance(raw.get('whatsapp'), list) else []
     webhook = raw.get('webhook_url') if isinstance(raw.get('webhook_url'), str) else ''
+    webhook_clean = webhook.strip()
+    if webhook_clean and strict:
+        from app.services.url_guard import validate_outbound_url  # noqa: PLC0415
+
+        # Strict mode raises ``UnsafeOutboundURLError`` to the caller; the
+        # PATCH handler maps it to a 422 response.
+        validate_outbound_url(webhook_clean)
     return {
         'email': [str(e).strip() for e in email if isinstance(e, str) and e.strip()],
         'whatsapp': [str(w).strip() for w in whatsapp if isinstance(w, str) and w.strip()],
-        'webhook_url': webhook.strip(),
+        'webhook_url': webhook_clean,
     }
 
 
@@ -423,6 +437,18 @@ async def _send_webhook_channel(
 ) -> None:
     if not url:
         return
+    # BUG01 defense-in-depth: re-validate even if the DB carries a legacy bad
+    # URL (e.g. row predates the strict write-time validator).
+    from app.services.url_guard import UnsafeOutboundURLError, validate_outbound_url  # noqa: PLC0415
+    try:
+        validated = validate_outbound_url(url)
+    except UnsafeOutboundURLError as exc:
+        log.warning(
+            'alert_channel.webhook_blocked',
+            tenant_id=str(tenant_id),
+            error=str(exc),
+        )
+        return
     body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
     secret = read_webhook_secret(tenant_id)
     headers = {'Content-Type': 'application/json'}
@@ -432,11 +458,11 @@ async def _send_webhook_channel(
     if http_client is None:  # pragma: no cover - real network
         import httpx
 
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(url, content=body, headers=headers)
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            response = await client.post(validated.canonical, content=body, headers=headers)
             response.raise_for_status()
         return
-    response = await http_client.post(url, content=body, headers=headers)
+    response = await http_client.post(validated.canonical, content=body, headers=headers)
     if hasattr(response, 'raise_for_status'):
         response.raise_for_status()
 

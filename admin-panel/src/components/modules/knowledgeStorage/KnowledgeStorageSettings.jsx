@@ -143,9 +143,15 @@ export function KnowledgeStorageSettings({ module, session, tenant }) {
             <input
               disabled={form.backend !== 's3'}
               onChange={(event) => updateField('endpoint_url', event.target.value)}
-              placeholder="https://s3.amazonaws.com o http://minio:9000"
+              placeholder="https://s3.us-east-1.amazonaws.com"
               value={form.endpoint_url}
             />
+            <small className="hint">
+              Solo HTTPS y endpoints AWS / Cloudflare R2 / DigitalOcean Spaces.
+              MinIO (HTTP) solo en entornos locales. Si configuras un endpoint
+              propio debes proveer Access Key + Secret del tenant; nunca se
+              usan credenciales de plataforma contra endpoints de tenant.
+            </small>
           </label>
 
           <label className="wide">
