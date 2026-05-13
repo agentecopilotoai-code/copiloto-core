@@ -513,6 +513,28 @@ async def has_user_tenant_role(conn: asyncpg.Connection, request: Request, tenan
     )
 
 
+_TENANT_ROLE_LEVELS = {'viewer': 5, 'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40}
+
+
+async def user_tenant_roles_for(
+    conn: asyncpg.Connection, request: Request, tenant_id: UUID
+) -> list[str]:
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        return []
+    rows = await conn.fetch(
+        """
+        select utr.role
+        from app.users u
+        join app.user_tenant_roles utr on utr.user_id = u.id
+        where u.auth_subject=$1 and utr.tenant_id=$2
+        """,
+        actor_id,
+        tenant_id,
+    )
+    return [row['role'] for row in rows]
+
+
 async def ensure_tenant_access(
     request: Request, tenant_id: UUID, conn: asyncpg.Connection | None = None
 ) -> None:
@@ -528,6 +550,31 @@ async def ensure_tenant_access(
             status_code=400, detail='X-Tenant-Id header or tenant_id claim is required'
         )
     raise HTTPException(status_code=403, detail='Tenant scope does not match request')
+
+
+async def ensure_tenant_role(
+    request: Request,
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    minimum_role: str,
+) -> None:
+    """Verify the actor holds at least ``minimum_role`` *for the target tenant*.
+
+    The router-level ``require_min_role`` only inspects the JWT's session
+    roles, which are issued in the context of the actor's home tenant.  For
+    destructive endpoints that mutate another tenant's state we must instead
+    consult ``user_tenant_roles`` for the path tenant.
+    """
+    if is_service_or_support(request):
+        return
+    required = _TENANT_ROLE_LEVELS[minimum_role]
+    roles = await user_tenant_roles_for(conn, request, tenant_id)
+    if any(_TENANT_ROLE_LEVELS.get(role, 0) >= required for role in roles):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=f'{minimum_role} role or higher is required for this tenant',
+    )
 
 
 async def require_tenant(request: Request) -> UUID:
@@ -1457,6 +1504,7 @@ async def put_retention_policies(
     conn: asyncpg.Connection = Depends(get_db),
 ):
     await ensure_tenant_access(request, tenant_id, conn)
+    await ensure_tenant_role(request, conn, tenant_id, 'admin')
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     for entry in payload.policies:
         try:
