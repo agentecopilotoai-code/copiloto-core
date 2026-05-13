@@ -8,6 +8,9 @@ function defaultForm() {
     allowed_origins: '',
     primary_color: '#1f7ae0',
     greeting: 'Hola 👋, ¿en qué te podemos ayudar?',
+    logo_url: '',
+    welcome_copy: '',
+    button_position: 'right',
   };
 }
 
@@ -48,6 +51,9 @@ export function WebWidgetPanel({ session, tenant }) {
             allowed_origins: originsToText(data.channel.allowed_origins || []),
             primary_color: widgetConfig.primary_color || '#1f7ae0',
             greeting: widgetConfig.greeting || 'Hola 👋, ¿en qué te podemos ayudar?',
+            logo_url: widgetConfig.logo_url || '',
+            welcome_copy: widgetConfig.welcome_copy || '',
+            button_position: widgetConfig.button_position === 'left' ? 'left' : 'right',
           });
         }
       })
@@ -77,6 +83,9 @@ export function WebWidgetPanel({ session, tenant }) {
         allowed_origins: originsToList(form.allowed_origins),
         primary_color: form.primary_color || null,
         greeting: form.greeting || null,
+        logo_url: form.logo_url ? form.logo_url.trim() : null,
+        welcome_copy: form.welcome_copy ? form.welcome_copy.trim() : null,
+        button_position: form.button_position === 'left' ? 'left' : 'right',
         rotate_widget_token: Boolean(rotateToken),
       };
       const data = await upsertWebChannel(session, tenantId, payload);
@@ -168,6 +177,40 @@ export function WebWidgetPanel({ session, tenant }) {
           type="text"
           value={form.greeting}
         />
+      </label>
+
+      <label className="wide">
+        Logo (URL pública)
+        <input
+          maxLength={2048}
+          onChange={(event) => updateField('logo_url', event.target.value)}
+          placeholder="https://cdn.tu-negocio.com/logo.png"
+          type="url"
+          value={form.logo_url}
+        />
+        <small>Opcional. Se muestra en la cabecera del panel del chat.</small>
+      </label>
+
+      <label className="wide">
+        Copy secundario (subtítulo de bienvenida)
+        <input
+          maxLength={500}
+          onChange={(event) => updateField('welcome_copy', event.target.value)}
+          placeholder="Atendemos de lunes a viernes 9 a 18."
+          type="text"
+          value={form.welcome_copy}
+        />
+      </label>
+
+      <label>
+        Posición del botón
+        <select
+          onChange={(event) => updateField('button_position', event.target.value)}
+          value={form.button_position}
+        >
+          <option value="right">Inferior derecha</option>
+          <option value="left">Inferior izquierda</option>
+        </select>
       </label>
 
       <div className="form-actions split-actions">

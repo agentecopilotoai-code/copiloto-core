@@ -1,0 +1,23 @@
+{
+  "name": "copilotoia-web-widget",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Embeddable chat widget distributed via CDN (TASK-0070).",
+  "type": "module",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5174",
+    "build": "vite build",
+    "lint": "eslint src",
+    "size": "node scripts/check-size.mjs",
+    "test": "node --test tests/",
+    "ci": "npm run lint && npm run build && npm run size && npm test"
+  },
+  "devDependencies": {
+    "vite": "5.4.11",
+    "eslint": "9.17.0",
+    "@eslint/js": "9.17.0",
+    "globals": "15.14.0",
+    "jsdom": "25.0.1"
+  }
+}

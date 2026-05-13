@@ -1869,9 +1869,25 @@ def _normalize_web_channel(row: asyncpg.Record | None) -> dict[str, Any] | None:
     return channel
 
 
-def _build_widget_snippet(*, tenant_slug: str, widget_token: str, color: str | None, greeting: str | None) -> str:
+WEB_WIDGET_CDN_URL = 'https://cdn.copilotoia.com/widget/v1/widget.js'
+
+
+def _build_widget_snippet(
+    *,
+    tenant_slug: str,
+    widget_token: str,
+    color: str | None,
+    greeting: str | None,
+    logo_url: str | None = None,
+    welcome_copy: str | None = None,
+    button_position: str | None = None,
+) -> str:
+    # TASK-0070: snippet now points at the CDN-hosted bundle and carries the
+    # full per-tenant customisation set (color, greeting, logo, welcome copy,
+    # button position) as data-* attributes so the widget can render without
+    # an extra round-trip.
     attrs = [
-        'src="/admin/widget.js"',
+        f'src="{WEB_WIDGET_CDN_URL}"',
         f'data-tenant="{tenant_slug}"',
         f'data-widget-token="{widget_token}"',
     ]
@@ -1880,6 +1896,13 @@ def _build_widget_snippet(*, tenant_slug: str, widget_token: str, color: str | N
     if greeting:
         safe = greeting.replace('"', '&quot;')
         attrs.append(f'data-greeting="{safe}"')
+    if logo_url:
+        attrs.append(f'data-logo="{logo_url}"')
+    if welcome_copy:
+        safe = welcome_copy.replace('"', '&quot;')
+        attrs.append(f'data-welcome="{safe}"')
+    if button_position in ('left', 'right'):
+        attrs.append(f'data-position="{button_position}"')
     return '<script async ' + ' '.join(attrs) + '></script>'
 
 
@@ -1902,11 +1925,15 @@ async def get_web_channel(
     token_ref = channel.get('token_ref') if channel else None
     widget_token = resolve_secret_ref(token_ref) if token_ref else None
     tenant_slug = await conn.fetchval('select slug from app.tenants where id=$1', tenant_id)
+    widget_config = (channel or {}).get('widget_config', {}) or {}
     snippet = _build_widget_snippet(
         tenant_slug=tenant_slug or str(tenant_id),
         widget_token=widget_token or '<missing-widget-token>',
-        color=(channel or {}).get('widget_config', {}).get('primary_color'),
-        greeting=(channel or {}).get('widget_config', {}).get('greeting'),
+        color=widget_config.get('primary_color'),
+        greeting=widget_config.get('greeting'),
+        logo_url=widget_config.get('logo_url'),
+        welcome_copy=widget_config.get('welcome_copy'),
+        button_position=widget_config.get('button_position'),
     )
     return {
         'channel': channel,
@@ -1935,6 +1962,10 @@ async def upsert_web_channel(
     widget_config = {
         'primary_color': payload.primary_color,
         'greeting': payload.greeting,
+        # TASK-0070: extra per-tenant customisation for the CDN widget.
+        'logo_url': payload.logo_url,
+        'welcome_copy': payload.welcome_copy,
+        'button_position': payload.button_position,
     }
     next_status = 'active' if payload.enabled else 'suspended'
     cleaned_origins = [origin.strip().rstrip('/') for origin in payload.allowed_origins if origin and origin.strip()]

@@ -577,7 +577,7 @@ _TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso: 
 
 ### TASK-0070 — Widget JS embebible distribuido por CDN
 
-- **Estado:** PENDING
+- **Estado:** COMPLETADA (ver `docs/DONE.md`).
 - **Depende de:** TASK-0039 (web widget backend).
 - **Por qué bloquea:** el backend del widget está listo, pero el cliente pyme recibe solo endpoints. No sabe programar React. Sin un `<script>` que se pegue y renderice un chat, el widget queda inservible para 80% del mercado.
 - **Alcance:**
