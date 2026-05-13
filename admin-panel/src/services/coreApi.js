@@ -893,6 +893,58 @@ export function refundContactPackage(session, tenantId, contactId, contactPackag
   });
 }
 
+export function listSubscriptionPlans(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/subscription-plans${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+export function createSubscriptionPlan(session, tenantId, payload) {
+  return request('/subscription-plans', {
+    method: 'POST',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function updateSubscriptionPlan(session, tenantId, planId, payload) {
+  return request(`/subscription-plans/${planId}`, {
+    method: 'PATCH',
+    session,
+    tenantId,
+    body: payload,
+  });
+}
+
+export function archiveSubscriptionPlan(session, tenantId, planId) {
+  return request(`/subscription-plans/${planId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
+export function listContactSubscriptions(session, tenantId, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const query = params.toString();
+  return request(`/subscriptions${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+export function cancelContactSubscription(session, tenantId, subscriptionId) {
+  return request(`/subscriptions/${subscriptionId}`, {
+    method: 'DELETE',
+    session,
+    tenantId,
+  });
+}
+
 export function listResources(session, tenantId, filters = {}) {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {

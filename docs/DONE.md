@@ -15,6 +15,42 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0075 — Suscripciones / membresías con cobro recurrente
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se agrega el modelo de planes recurrentes (`subscription_plans`) y suscriptores (`contact_subscriptions`) con CRUD admin/ops, integración con webhooks de Stripe y MercadoPago para eventos de facturación (`invoice.payment_succeeded` / `invoice.payment_failed` y `subscription_authorized_payment` de MP) y disparo automático del template `subscription_payment_failed_v1` cuando un cobro falla, encolado vía `reminder_jobs` para que el worker outbound existente lo entregue.
+- **Implementación:**
+  - **Schema (`infra/postgres/01-schema.sql`):** tablas nuevas `app.subscription_plans` (tenant, nombre, `billing_period in ('monthly','quarterly','yearly')`, precio, moneda, `included_services jsonb`, `status in ('active','archived')`) y `app.contact_subscriptions` (tenant, contact, plan, `status in ('active','past_due','cancelled')`, `started_at`, `next_billing_at`, `cancelled_at`, `payment_provider in ('mercadopago','stripe')`, `payment_provider_subscription_id`, `payment_method_id`, `last_invoice_status`, `last_invoice_at`, `retry_payment_link`, `metadata`). FKs compuestas por `(tenant_id, id)`, índice único parcial `ux_contact_subscriptions_provider_ref` para evitar duplicados de referencia, RLS habilitado y políticas tenant-scoped registradas en el loop genérico, triggers `touch_updated_at`. El check de `whatsapp_templates.purpose` se extiende con `subscription_payment_failed` y el de `reminder_jobs.target_type` con `contact_subscription` para que el worker entregue la notificación.
+  - **Servicio (`app/services/subscriptions.py`):** módulo nuevo con constantes `BILLING_PERIODS`, `SUBSCRIPTION_STATUSES`, `INVOICE_FAILED_TEMPLATE='subscription_payment_failed_v1'` y `extract_subscription_event(provider, payload) -> SubscriptionInvoiceEvent | None` que traduce `invoice.payment_succeeded`/`invoice.payment_failed` de Stripe (con `hosted_invoice_url` como `retry_url`) y `subscription_authorized_payment` de MercadoPago (con `init_point`/`payment_url` como `retry_url`) a un evento provider-agnóstico. Ignora pagos one-shot y eventos no relacionados a suscripciones.
+  - **Pydantic (`app/api/v1/schemas.py`):** `SubscriptionPlanCreate/Update`, `ContactSubscriptionCreate/Patch` con regex para los enums (`monthly|quarterly|yearly`, `active|past_due|cancelled`, `mercadopago|stripe`).
+  - **Rutas (`app/api/v1/routes.py`):**
+    - `GET /v1/subscription-plans` (ops), `POST /v1/subscription-plans` (admin), `PATCH /v1/subscription-plans/{plan_id}` (admin), `DELETE /v1/subscription-plans/{plan_id}` (admin, archiva).
+    - `GET /v1/subscriptions` (ops, con join a `plan` y `contact`), `POST /v1/subscriptions` (ops, valida que el plan esté activo y el contacto pertenezca al tenant), `PATCH /v1/subscriptions/{id}`, `DELETE /v1/subscriptions/{id}` (cancela y setea `cancelled_at`).
+    - `POST /v1/webhooks/subscriptions/{provider}` (public): parsea el body, llama al traductor del servicio, busca la suscripción por `(payment_provider, payment_provider_subscription_id)` con `support_mode=true`, valida la firma con el secret del tenant (`verify_stripe_signature` / `verify_mercadopago_signature`), persiste el evento en `webhook_events_raw`, actualiza el `status` (`active` o `past_due`) + `retry_payment_link` + `last_invoice_status` y, si quedó `past_due`, inserta una fila en `reminder_jobs` (`target_type='contact_subscription'`, `template_name='subscription_payment_failed_v1'`, `scheduled_for=now()`) más un `domain_events` idempotente.
+    - Todas las acciones auditadas (`subscription_plan.created/updated/archived`, `contact_subscription.created/updated/cancelled/invoice_webhook`).
+  - **Admin Panel:**
+    - Nuevo módulo `subscriptions` en `admin-panel/src/data/modules.js` con `minRole: 'admin'`.
+    - Componente `admin-panel/src/components/modules/subscriptions/SubscriptionsModule.jsx`: formulario de creación/edición de planes con frecuencia, precio y moneda; lista de planes activos y archivados con acciones inline; tabla de suscriptores activos con `next_billing_at`, tabla aparte de cuentas en cobro fallido que expone el `retry_payment_link` para que el equipo de ops valide manualmente, y conteo de cancelados.
+    - Cableado en `admin-panel/src/components/layout/AdminLayout.jsx` con gate `hasMinRole('admin')`.
+    - Cliente `admin-panel/src/services/coreApi.js`: `listSubscriptionPlans`, `createSubscriptionPlan`, `updateSubscriptionPlan`, `archiveSubscriptionPlan`, `listContactSubscriptions`, `cancelContactSubscription`.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`
+  - `app/api/v1/schemas.py`
+  - `app/api/v1/routes.py`
+  - `app/services/subscriptions.py` (nuevo)
+  - `admin-panel/src/data/modules.js`
+  - `admin-panel/src/components/layout/AdminLayout.jsx`
+  - `admin-panel/src/components/modules/subscriptions/SubscriptionsModule.jsx` (nuevo)
+  - `admin-panel/src/services/coreApi.js`
+  - `tests/test_subscriptions_static.py` (nuevo, 24 tests)
+- **Validaciones:**
+  - `uv run pytest tests/test_subscriptions_static.py -q` → 24 passed
+  - `uv run pytest -q` → 1326 passed, 22 skipped (suite completa sin regresiones)
+  - `uv run ruff check app/ tests/test_subscriptions_static.py` → All checks passed
+- **Notas:**
+  - El alta del lado del proveedor (crear la `subscription` en Stripe o el `preapproval` en MercadoPago con la tarjeta del cliente) se hace fuera del admin: en este sprint el admin/ops captura el `payment_provider_subscription_id` devuelto por el proveedor al crear la suscripción y nuestro webhook lo correlaciona contra `contact_subscriptions`. Eso evita guardar datos de tarjeta y mantiene PCI fuera de scope.
+  - El reintento del cobro lo dispara el proveedor; nuestra responsabilidad es entregar el link al cliente vía el template `subscription_payment_failed_v1`. El worker de `reminder_jobs` existente (TASK-0036) procesa la fila encolada y la entrega por el canal correspondiente.
+
 ### TASK-0074 — Canal Instagram DM / Facebook Messenger
 
 - **Fecha:** 2026-05-13

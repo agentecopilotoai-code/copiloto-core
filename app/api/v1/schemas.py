@@ -340,6 +340,52 @@ class ContactPackagePatch(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
 
 
+SUBSCRIPTION_BILLING_PERIOD_PATTERN = '^(monthly|quarterly|yearly)$'
+SUBSCRIPTION_STATUS_PATTERN = '^(active|past_due|cancelled)$'
+SUBSCRIPTION_PROVIDER_PATTERN = '^(mercadopago|stripe)$'
+
+
+class SubscriptionPlanCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    billing_period: str = Field(pattern=SUBSCRIPTION_BILLING_PERIOD_PATTERN)
+    price_amount: float = Field(ge=0)
+    currency: str = Field(default='COP', min_length=3, max_length=3)
+    included_services: list[dict[str, Any]] = Field(default_factory=list)
+    status: str = Field(default='active', pattern='^(active|archived)$')
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SubscriptionPlanUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+    billing_period: str | None = Field(default=None, pattern=SUBSCRIPTION_BILLING_PERIOD_PATTERN)
+    price_amount: float | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    included_services: list[dict[str, Any]] | None = None
+    status: str | None = Field(default=None, pattern='^(active|archived)$')
+    metadata: dict[str, Any] | None = None
+
+
+class ContactSubscriptionCreate(BaseModel):
+    contact_id: UUID
+    plan_id: UUID
+    payment_provider: str = Field(pattern=SUBSCRIPTION_PROVIDER_PATTERN)
+    payment_provider_subscription_id: str | None = Field(default=None, max_length=200)
+    payment_method_id: str | None = Field(default=None, max_length=200)
+    next_billing_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ContactSubscriptionPatch(BaseModel):
+    status: str | None = Field(default=None, pattern=SUBSCRIPTION_STATUS_PATTERN)
+    next_billing_at: datetime | None = None
+    payment_provider_subscription_id: str | None = Field(default=None, max_length=200)
+    payment_method_id: str | None = Field(default=None, max_length=200)
+    retry_payment_link: str | None = Field(default=None, max_length=2000)
+    metadata: dict[str, Any] | None = None
+
+
 class ResourceCreate(BaseModel):
     tenant_id: UUID
     vertical_code: str | None = Field(default=None, max_length=64)

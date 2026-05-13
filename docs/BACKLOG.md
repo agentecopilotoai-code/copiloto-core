@@ -621,20 +621,7 @@ _TASK-0074 — Canal Instagram DM / Facebook Messenger: COMPLETADA. Ver `docs/DO
 
 ---
 
-### TASK-0075 — Suscripciones / membresías con cobro recurrente
-
-- **Estado:** PENDING
-- **Depende de:** TASK-0040 (payment links), TASK-0051 (packages).
-- **Por qué bloquea:** `treatment_packages` cubre paquetes finitos (5 sesiones). Gimnasios, dental anual, spa mensual necesitan **cobro recurrente** con notificación al cliente cuando el cobro falla. Hoy no es vendible a esos verticales.
-- **Alcance:**
-  - Nueva tabla `app.subscription_plans(id, tenant_id, name, billing_period check in ('monthly','quarterly','yearly'), price_amount, currency, included_services jsonb, status)`.
-  - `app.contact_subscriptions(id, tenant_id, contact_id, plan_id, status check in ('active','past_due','cancelled'), started_at, next_billing_at, payment_provider_subscription_id, payment_method_id)`.
-  - Webhook de Stripe/MercadoPago para eventos `invoice.payment_succeeded` / `invoice.payment_failed` actualiza el status y, en `payment_failed`, dispara WhatsApp template `subscription_payment_failed_v1`.
-  - **Admin Panel:** módulo `subscriptions/SubscriptionsModule.jsx` con CRUD de planes + lista de suscriptores activos.
-- **Criterios de aceptación:**
-  - Cliente compra plan mensual, se cobra automáticamente cada 30 días.
-  - Si falla el cobro, el cliente recibe WhatsApp con el link de reintentar pago.
-  - Tests: ≥ 14 estáticos: schemas, webhook handlers Stripe y MercadoPago, template de fallo, módulo en panel.
+_TASK-0075 — Suscripciones / membresías con cobro recurrente: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 
