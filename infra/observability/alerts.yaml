@@ -17,6 +17,7 @@ groups:
           description: |
             La tasa de fallo en envíos a Meta superó 5% durante 5 minutos. Revisa
             credenciales del canal, ventana de 24h y el estado del circuit breaker.
+          runbook_url: docs/runbooks/rate-limit-meta-hit.md
 
       - alert: BotResponseLatencyP95High
         expr: |
@@ -33,6 +34,7 @@ groups:
           description: |
             Más del 5% de las respuestas tarda más de 5 segundos. Posible
             saturación del LLM, RAG lento o presión sobre la base.
+          runbook_url: docs/runbooks/postgres-down.md
 
       - alert: WorkerQueueBacklog
         expr: max by (worker) (cpi_worker_queue_depth) > 1000
@@ -45,6 +47,7 @@ groups:
           description: |
             El worker no está drenando la cola. Verifica si el proceso está vivo
             y si Meta está aceptando los envíos.
+          runbook_url: docs/runbooks/worker-queue-backlog.md
 
       - alert: CircuitBreakerOpenSustained
         expr: max by (provider) (cpi_circuit_breaker_state) >= 2
@@ -58,6 +61,7 @@ groups:
             El proveedor {{ $labels.provider }} acumuló suficientes fallos para
             abrir el circuito y no se ha recuperado en 2 minutos. Considera
             failover manual o degradación a template.
+          runbook_url: docs/runbooks/circuit-breaker-open-sustained.md
 
       - alert: SchedulerBehind
         expr: max(cpi_worker_queue_depth{worker="scheduler"}) > 100
@@ -70,6 +74,7 @@ groups:
           description: |
             La cola del scheduler superó 100 jobs sin procesar durante 5
             minutos. Recordatorios y timeouts pueden estarse retrasando.
+          runbook_url: docs/runbooks/worker-queue-backlog.md
 
       # TASK-0064: dos guardias para la salud del backup cloud.
       # La métrica `cpi_backup_last_success_age_seconds` la expone el endpoint
@@ -122,6 +127,7 @@ groups:
             terminaron en la DLQ. Revisa el panel Outbound DLQ por
             ``error_code`` para identificar la causa (131026 = recipient
             unreachable, 190 = token vencido, 80007 = rate limit).
+          runbook_url: docs/runbooks/meta-token-expired.md
 
       - alert: MetricsEndpointSilent
         expr: absent(up{job="copilotoia-core"}) or (max(up{job="copilotoia-core"}) == 0)
@@ -134,3 +140,4 @@ groups:
           description: |
             Prometheus dejó de raspar /metrics durante 3 minutos. Verifica que la
             API esté arriba y que la IP del scraper siga en OBSERVABILITY_ALLOWED_IPS.
+          runbook_url: docs/runbooks/postgres-down.md
