@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -256,21 +256,35 @@ async def requeue_message(
         message_id,
     )
     # Emit a fresh ``message.queued`` so the event_worker picks it up. The
-    # idempotency key includes a monotonic suffix to avoid collisions with the
-    # original event (which is already ``published_at``).
-    idem = f'message-retry:{message_id}:{int(datetime.now(UTC).timestamp())}'
-    await conn.execute(
+    # idempotency key embeds a UUID suffix so two retries within the same
+    # second cannot collide on ``on conflict do nothing`` (which would leave
+    # the message stuck in ``queued`` with no event to drain it). We verify
+    # the insert actually produced a row before reporting success.
+    idem = f'message-retry:{message_id}:{uuid4().hex}'
+    inserted = await conn.fetchval(
         """
         insert into app.domain_events
           (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload)
         values ($1,'message',$2,'message.queued',$3,$4::jsonb)
         on conflict do nothing
+        returning id
         """,
         tenant_id,
         message_id,
         idem,
         json.dumps({'retry': True, 'requested_by': requested_by or 'operator'}),
     )
+    if inserted is None:
+        # Defensive: with a UUID suffix this is essentially unreachable, but
+        # if a duplicate ever sneaks past we surface it instead of leaving
+        # the message in ``queued`` with no event for the worker.
+        log.error(
+            'outbound_dlq.requeue_event_collision',
+            tenant_id=str(tenant_id),
+            message_id=str(message_id),
+            idempotency_key=idem,
+        )
+        raise RuntimeError('requeue_event_collision')
     log.info(
         'outbound_dlq.requeued',
         tenant_id=str(tenant_id),

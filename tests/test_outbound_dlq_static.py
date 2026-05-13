@@ -250,11 +250,13 @@ def test_count_recent_failures_returns_total_and_preview():
 
 
 class _RequeueConn:
-    def __init__(self, *, status='failed', direction='outbound', found=True):
+    def __init__(self, *, status='failed', direction='outbound', found=True, insert_returns_id=True):
         self.status = status
         self.direction = direction
         self.found = found
+        self.insert_returns_id = insert_returns_id
         self.executes: list[tuple[str, tuple]] = []
+        self.fetchvals: list[tuple[str, tuple]] = []
 
     async def fetchrow(self, query, *args):
         if not self.found:
@@ -268,6 +270,10 @@ class _RequeueConn:
     async def execute(self, query, *args):
         self.executes.append((query, args))
         return None
+
+    async def fetchval(self, query, *args):
+        self.fetchvals.append((query, args))
+        return uuid4() if self.insert_returns_id else None
 
 
 def test_requeue_message_resets_status_and_emits_domain_event():
@@ -283,17 +289,43 @@ def test_requeue_message_resets_status_and_emits_domain_event():
         )
     )
     assert result['requeued'] is True
-    # First execute resets the row; second inserts the domain event.
+    # ``execute`` resets the row; ``fetchval`` inserts the domain event with
+    # ``returning id`` so the helper can verify the insert actually happened.
     update_query, update_args = conn.executes[0]
-    insert_query, insert_args = conn.executes[1]
+    insert_query, insert_args = conn.fetchvals[0]
     assert "update app.messages" in update_query
     assert "set status='queued'" in update_query
     assert 'error_code=null' in update_query
     assert 'error_message=null' in update_query
     assert "insert into app.domain_events" in insert_query
     assert "'message.queued'" in insert_query
-    # The idempotency key carries the message id so reattempts collide cleanly.
-    assert insert_args[2].startswith(f'message-retry:{message_id}:')
+    assert 'returning id' in insert_query
+    # Idempotency key embeds a UUID hex suffix so two retries within the same
+    # second cannot collide on ``on conflict do nothing``.
+    idem = insert_args[2]
+    assert idem.startswith(f'message-retry:{message_id}:')
+    suffix = idem.split(':')[-1]
+    assert len(suffix) == 32  # uuid4().hex
+
+
+def test_requeue_message_uses_unique_idem_per_call():
+    """Two consecutive retries must produce distinct idempotency keys even
+    when invoked back-to-back within the same second."""
+    conn_a = _RequeueConn()
+    conn_b = _RequeueConn()
+    asyncio.run(requeue_message(conn_a, tenant_id=uuid4(), message_id=uuid4()))
+    asyncio.run(requeue_message(conn_b, tenant_id=uuid4(), message_id=uuid4()))
+    assert conn_a.fetchvals[0][1][2] != conn_b.fetchvals[0][1][2]
+
+
+def test_requeue_message_raises_when_event_insert_collides():
+    """Defensive: if the ``on conflict do nothing`` ever no-ops we must
+    surface it instead of leaving the message in ``queued`` with no event."""
+    conn = _RequeueConn(insert_returns_id=False)
+    with pytest.raises(RuntimeError, match='requeue_event_collision'):
+        asyncio.run(
+            requeue_message(conn, tenant_id=uuid4(), message_id=uuid4())
+        )
 
 
 def test_requeue_message_is_idempotent_for_already_queued():
@@ -457,3 +489,182 @@ def test_core_api_exposes_dlq_helpers():
     assert 'export function listOutboundDlq(' in core
     assert 'export function retryOutboundDlqMessage(' in core
     assert '/outbound/dlq' in core
+
+
+# ───── Kind-aware operator alert formatting (codex review P2) ──────────────
+
+
+def test_build_email_body_renders_dlq_payload_when_kind_is_dlq():
+    from app.services.operator_alerts import build_email_body
+
+    subject, body = build_email_body({
+        '_kind': 'outbound_dlq_threshold',
+        'total': 12,
+        'threshold': 10,
+        'window_minutes': 60,
+        'by_error_code': [
+            {'error_code': '131026', 'count': 12},
+            {'error_code': '190', 'count': 1},
+        ],
+        'preview': [
+            {
+                'error_code': '131026',
+                'error_message': 'Recipient unreachable',
+                'at': '2026-05-13T10:00:00+00:00',
+            }
+        ],
+    })
+    assert 'DLQ outbound' in subject
+    assert '12 fallos' in subject
+    assert 'umbral 10' in subject
+    # The complaint formatter MUST NOT be used: no rating / contact_name leak.
+    assert 'feedback negativo' not in body
+    assert 'Calificación' not in body
+    assert '131026: 12' in body
+    assert 'Recipient unreachable' in body
+    assert 'Outbound DLQ' in body  # CTA al panel
+
+
+def test_build_email_body_falls_back_to_negative_feedback_for_default_kind():
+    from app.services.operator_alerts import build_email_body
+
+    subject, body = build_email_body({
+        'contact_name': 'Ana',
+        'rating': 1,
+        'comment_preview': 'pésimo',
+    })
+    assert 'Ana' in subject
+    assert '1/5' in subject
+    assert 'feedback negativo' in body
+
+
+def test_build_whatsapp_template_components_dispatches_by_kind():
+    from app.services.operator_alerts import (
+        build_whatsapp_template_components,
+        whatsapp_template_for_kind,
+    )
+
+    components = build_whatsapp_template_components({
+        '_kind': 'outbound_dlq_threshold',
+        'total': 25,
+        'window_minutes': 60,
+        'by_error_code': [{'error_code': '131026', 'count': 25}],
+        'panel_url': 'https://panel/x',
+    })
+    params = [p['text'] for p in components[0]['parameters']]
+    # Variables del template DLQ: total, ventana, top error_code (count), link.
+    assert params[0] == '25'
+    assert params[1] == '60'
+    assert '131026' in params[2]
+    assert params[3] == 'https://panel/x'
+
+    name, locale = whatsapp_template_for_kind('outbound_dlq_threshold')
+    assert name == 'operator_dlq_alert_v1'
+    assert locale == 'es'
+
+    # Default kind keeps the legacy complaint template.
+    legacy_name, _ = whatsapp_template_for_kind('negative_feedback')
+    assert legacy_name == 'complaint_alert_v1'
+
+
+def test_dispatch_operator_alert_stamps_kind_and_panel_url_for_dlq():
+    """The dispatcher must thread ``alert_row['kind']`` into the payload so
+    channel builders can switch format. For DLQ alerts it also injects
+    ``panel_url`` so both the email body and the WhatsApp template variable
+    point at the Outbound DLQ tab without leaking SMTP config to the
+    builder."""
+    from app.core.config import Settings
+    from app.services.operator_alerts import dispatch_operator_alert
+
+    captured = {}
+
+    async def email_sender(_cfg, *, recipients, payload):
+        captured['email_payload'] = payload
+
+    async def whatsapp_sender(_conn, *, tenant_id, recipients, payload):
+        captured['whatsapp_payload'] = payload
+        return len(recipients)
+
+    async def webhook_sender(*, tenant_id, url, payload):
+        captured['webhook_payload'] = payload
+
+    cfg = Settings(
+        database_url='postgres://x',
+        jwt_secret='x' * 16,
+        service_token='y' * 16,
+        s3_secret_access_key='z',
+        admin_panel_public_url='https://panel.example.com',
+    )
+    tenant_id = uuid4()
+    alert_row = {
+        'id': uuid4(),
+        'tenant_id': tenant_id,
+        'kind': 'outbound_dlq_threshold',
+        'attempts': 1,
+        'payload': {
+            'channels': {
+                'email': ['ops@example.com'],
+                'whatsapp': ['+5730099991234'],
+                'webhook_url': 'https://hook',
+            },
+            'total': 12,
+            'threshold': 10,
+            'window_minutes': 60,
+            'by_error_code': [{'error_code': '131026', 'count': 12}],
+        },
+    }
+    trace = asyncio.run(
+        dispatch_operator_alert(
+            None,
+            alert_row=alert_row,
+            config=cfg,
+            email_sender=email_sender,
+            whatsapp_sender=whatsapp_sender,
+            webhook_sender=webhook_sender,
+        )
+    )
+    assert trace['errors'] == []
+    for channel in ('email_payload', 'whatsapp_payload', 'webhook_payload'):
+        payload = captured[channel]
+        assert payload['_kind'] == 'outbound_dlq_threshold'
+        assert payload['panel_url'].endswith('#outbound-dlq')
+        assert str(tenant_id) in payload['panel_url']
+
+
+def test_dispatch_operator_alert_does_not_stamp_kind_for_legacy_payloads():
+    """Alert rows without a ``kind`` field (older test fixtures, manual
+    inserts) keep working — no exception, no payload mutation that breaks
+    the legacy negative-feedback formatter."""
+    from app.core.config import Settings
+    from app.services.operator_alerts import dispatch_operator_alert
+
+    captured = {}
+
+    async def email_sender(_cfg, *, recipients, payload):
+        captured['payload'] = payload
+
+    cfg = Settings(
+        database_url='postgres://x',
+        jwt_secret='x' * 16,
+        service_token='y' * 16,
+        s3_secret_access_key='z',
+    )
+    alert_row = {
+        'id': uuid4(),
+        'tenant_id': uuid4(),
+        'attempts': 1,
+        'payload': {
+            'channels': {'email': ['x@y.com'], 'whatsapp': [], 'webhook_url': ''},
+            'rating': 1,
+        },
+    }
+    asyncio.run(
+        dispatch_operator_alert(
+            None,
+            alert_row=alert_row,
+            config=cfg,
+            email_sender=email_sender,
+        )
+    )
+    assert '_kind' not in captured['payload']
+    assert 'panel_url' not in captured['payload']
