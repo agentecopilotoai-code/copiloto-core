@@ -525,28 +525,7 @@ TASK-0076 (páginas legales por tenant: T&C + privacidad)          # P3
 
 ---
 
-### TASK-0063 — Tests E2E con DB efímera para el journey completo del paciente
-
-- **Estado:** PENDING
-- **Depende de:** Ninguno.
-- **Por qué bloquea:** de 60 archivos de test, 48 son `*_static` (parsean código, no ejercen DB). Solo `test_rls_multitenant_e2e.py`, `test_extraction_worker.py`, `test_audit.py` y un puñado tocan Postgres. No hay un journey end-to-end real con efectos secundarios (mensaje outbound, scheduler, evento dominio). Regresiones pasan silenciosas a producción.
-- **Alcance:**
-  - Fixture `tests/conftest_e2e.py` que levanta un Postgres en testcontainers (o usa la instancia local), aplica `infra/postgres/01-schema.sql` + seed, expone una connection pool con `app.tenant_id` ya seteado y retorna URLs de la API en modo `httpx.AsyncClient(app=create_app())`.
-  - Suite `tests/test_journey_e2e.py` con 5 escenarios secuenciales:
-    1. **Captación → consentimiento → calificación → booking:** webhook inbound → opt-in template → respuesta a botón → 3 preguntas de calificación → presentación de servicios → selección de slot → cita confirmada.
-    2. **Recordatorio + confirmación activa + no-show:** avanza el reloj 24h, despacha `reminder_jobs`, simula cliente responde "Sí", avanza 2h post-fecha sin cliente, verifica `status='no_show'` y handoff con etiqueta "Atención prioritaria".
-    3. **Cancel self-service + recall:** cliente envía "CANCELAR", verifica `confirmation_status='cancelled'`, dispara recall a `recall_interval_days`, verifica template enviado.
-    4. **Feedback negativo + escalamiento:** completa cita → cliente envía "1 estrella, mal servicio" → verifica handoff abierto, etiqueta asignada, `operator_alerts` insertado.
-    5. **Campaña a segmento + atribución:** crea segmento "sin visita >90 días", lanza campaña, simula respuesta de un contacto → verifica `campaign_attributions` con la cita atribuida.
-  - Marcadores: `pytest -m e2e` para ejecutar solo este subset; en CI corre como job separado tras los estáticos.
-- **Criterios de aceptación:**
-  - Cada escenario corre <60s en CI con Postgres en container.
-  - Los tests fallan si rompemos el contrato (p.ej. cambiar el nombre del template o el campo `confirmation_status`).
-  - CI nuevo job `tests-e2e` agregado a `.github/workflows/ci.yml`.
-  - Tests: 5 escenarios + ≥ 3 helpers de fixture probados.
-- **Notas:**
-  - `testcontainers-python` + `pgvector/pgvector:pg16` ya está documentado en docker-compose.
-  - Reusar `infra/postgres/01-schema.sql` evita duplicación.
+_TASK-0063 — Tests E2E con DB efímera para el journey completo del paciente: COMPLETADA. Ver `docs/DONE.md`._
 
 ---
 

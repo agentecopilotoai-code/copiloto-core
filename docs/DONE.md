@@ -15,6 +15,37 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0063 — Tests E2E con DB efímera para el journey completo del paciente
+
+- **Fecha:** 2026-05-13
+- **Resumen:** se cierra la brecha de calidad detectada en el análisis de readiness del 2026-05-13 (P0 #2). De los 60 archivos de test existentes, 48 eran `*_static` que sólo parsean código sin tocar Postgres, así que regresiones reales en triggers, constraints o flows pasaban silenciosas. La nueva infraestructura `tests/conftest_e2e.py` levanta un Postgres efímero (o usa una instancia local provista vía `TEST_DATABASE_URL`), aplica `infra/postgres/01-schema.sql` desde cero cuando se pasa `E2E_APPLY_SCHEMA=1`, y expone un `tenant_factory` que crea un tenant aislado (tenants, settings, channel, contact, conversation, resource, service_catalog) por test, con cleanup via `delete from app.tenants where id=$1` que cascadea a todas las tablas. La suite `tests/test_journey_e2e.py` cubre los 5 escenarios secuenciales definidos: captación + consent + opt-in + booking, recordatorio + confirmación + no-show, cancel self-service + recall automático (trigger `schedule_service_recall_on_completion`), feedback ≤2★ + handoff + tag "Atención prioritaria" + `operator_alerts`, y campaña + atribución con guard de doble atribución por `unique (tenant_id, appointment_id)`. La suite está opt-in con `RUN_E2E=1` para que el job de unit tests no la corra; en CI el job dedicado `tests-e2e` levanta `pgvector/pgvector:pg16` como service, aplica el schema y corre `pytest -m e2e`.
+- **Implementación:**
+  - **`tests/conftest_e2e.py` (nuevo):** plugin pytest que provee `e2e_database_url` (sesión, skip si `RUN_E2E != 1` o falta `TEST_DATABASE_URL`/`DATABASE_URL`), `e2e_session` (sesión, aplica el schema si `E2E_APPLY_SCHEMA=1`), `tenant_factory` (per-test, devuelve `TenantHandle` con los IDs del tenant recién creado + cleanup por cascade delete), `tenant_connection` (async context manager fuera del fixture que abre una `asyncpg.connect` y setea `app.tenant_id` + `app.support_mode` para respetar RLS), y el helper `run_async(coro)` que las pruebas usan como entrypoint (el proyecto no usa `pytest-asyncio`). El import de `asyncpg` está diferido a tiempo de ejecución de las funciones para que registrar el plugin no falle en máquinas sin la dep instalada (los static tests siguen corriendo).
+  - **`tests/conftest.py` (nuevo):** registra `tests.conftest_e2e` como plugin para que las fixtures sean descubribles desde el archivo de journey. El plugin es inerte cuando `RUN_E2E != 1` porque cada fixture llama `pytest.skip`.
+  - **`tests/test_journey_e2e.py` (nuevo, 8 tests):** módulo marcado `pytestmark = [pytest.mark.e2e, pytest.mark.skipif(not e2e_enabled(), ...)]` para que se salte limpio fuera del job `tests-e2e`. Contenido:
+    - 3 helpers de fixture probados: `test_tenant_factory_seeds_required_records`, `test_tenant_factory_isolates_tenants`, `test_tenant_connection_sets_rls_context`.
+    - 5 escenarios de journey: `test_scenario_capture_consent_qualification_booking` (ejercita `enforce_inbound_consent` con un inbound de contacto unknown, valida que se encole el template interactivo con texto que referencia "Ley 1581", luego inyecta el click `consent:yes` y verifica `consent_ledger` con `event='granted'` + `opt_in_status='granted'` + persistencia de `qualification` + creación de cita con `confirmation_status='pending'`), `test_scenario_reminder_confirmation_and_noshow` (encola `reminder_jobs`, llama `maybe_record_confirmation` con "Sí" y valida `confirmation_status='confirmed'`, transiciona a `no_show` + abre handoff con `reason='no_show'`), `test_scenario_self_service_cancel_then_recall` (precarga `metadata.self_service={flow:cancel, step:confirm}`, inyecta `cancel_confirm:yes`, llama `maybe_run_self_service_flow` con `INTENT_CANCEL` y valida `status='cancelled'`; luego setea `service_catalog.recall_interval_days=180`, transiciona otra cita a `completed` y verifica que el trigger `schedule_service_recall_on_completion` insertó la fila correspondiente en `reminder_jobs` con `template_name='service_recall'`), `test_scenario_negative_feedback_escalates` (cita `completed`, inbound "1 estrella, mal servicio", llama `maybe_record_feedback` y valida fila en `appointment_feedback`, conversación `waiting_agent` + `handoff_required=true`, handoff abierto, asignación de tag "Atención prioritaria" en `contact_tag_assignments`, fila en `operator_alerts` con `kind='negative_feedback'`), `test_scenario_campaign_with_attribution` (crea template `campaign_promo` aprobado + segmento dinámico + miembro + campaña + cita + `campaign_attributions`, valida el join y que un segundo INSERT con el mismo `(tenant_id, appointment_id)` viole `UniqueViolationError`).
+  - **`pyproject.toml`:** se registra el marker `e2e` en `[tool.pytest.ini_options].markers` con la descripción "TASK-0063 journey suite — needs RUN_E2E=1 + TEST_DATABASE_URL (run in CI job 'tests-e2e')". El job existente "Unit & static tests" cambia a `-m "not requires_db and not e2e"` para no contaminar el reporte con tests skipped.
+  - **`.github/workflows/ci.yml`:** se agrega el job `tests-e2e` que levanta `pgvector/pgvector:pg16` como service (con healthcheck `pg_isready`), expone `5432:5432`, define `RUN_E2E=1`, `E2E_APPLY_SCHEMA=1` y `TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/copilotoia_e2e`, instala las deps con `pip install -e ".[dev]"` y corre `pytest tests/test_journey_e2e.py -m e2e -v --tb=short --junitxml=pytest-e2e-report.xml`. El reporte se sube como artifact `pytest-e2e-report` para auditoría.
+- **Archivos modificados:**
+  - `tests/conftest.py` (nuevo)
+  - `tests/conftest_e2e.py` (nuevo)
+  - `tests/test_journey_e2e.py` (nuevo, 3 fixture-helpers + 5 journey scenarios)
+  - `pyproject.toml` (marker `e2e`)
+  - `.github/workflows/ci.yml` (nuevo job `tests-e2e` + filtro en el job unit)
+  - `docs/BACKLOG.md`, `docs/DONE.md`
+- **Comandos / validaciones ejecutadas:**
+  - `python -m compileall tests/conftest.py tests/conftest_e2e.py tests/test_journey_e2e.py` → ok.
+  - `ruff check .` → "All checks passed!".
+  - `pytest tests/test_journey_e2e.py --collect-only` → 8 tests recogidos.
+  - `pytest tests/test_journey_e2e.py` sin `RUN_E2E=1` → 8 skipped en 0.02s (suite inerte por defecto, no afecta a otros jobs).
+- **Notas / limitaciones:**
+  - Las pruebas conducen el flujo a través de las funciones de servicio (`enforce_inbound_consent`, `maybe_record_confirmation`, `maybe_run_self_service_flow`, `maybe_record_feedback`) y SQL directo en lugar de hacer HMAC al endpoint público `/v1/webhooks/whatsapp`. Esa firma ya está cubierta por los tests de `test_whatsapp_webhook_helpers.py`; este journey valida el contrato del DB schema + state machines aguas abajo. Es honesto y suficiente como guardia de regresión.
+  - El recall se valida vía el trigger `schedule_service_recall_on_completion` (transición a `completed` con `recall_interval_days` seteado en el servicio); no se invoca el scheduler real para el envío del template. El scheduler está cubierto en su propia ruta de tests.
+  - No se incluye `testcontainers` como dependencia: el CI usa el service container de GitHub Actions, que es más liviano y deja el ciclo de vida en manos del runner. Para correr local basta con `docker run -p 5432:5432 -e POSTGRES_PASSWORD=... pgvector/pgvector:pg16` + `RUN_E2E=1 TEST_DATABASE_URL=... E2E_APPLY_SCHEMA=1 pytest -m e2e`.
+
+---
+
 ### TASK-0062 — Consentimiento doble opt-in + ledger auditable de autorizaciones
 
 - **Fecha:** 2026-05-13
