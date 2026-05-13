@@ -34,6 +34,12 @@ Cada entrada debe incluir:
   - El builder weekly toma la moneda del locale via mapeo simple (COP/MXN/ARS/CLP/PEN) hasta que TASK-0073 (i18n multi-país) la haga first-class; el `currency` también se puede pasar explícito como kwarg al builder.
   - El cuerpo HTML del email es minimalista a propósito; el copy formateado vive en `text` para que cualquier cliente SMTP lo renderice sin caer al fallback. Si más adelante hace falta un template HTML rico, basta extender `_render_daily` / `_render_weekly` sin tocar la idempotencia.
   - El WhatsApp template (`digest_daily_v1` / `digest_weekly_v1`) debe estar aprobado en Meta en cada tenant. Si no existe, el worker registra `digest.whatsapp_skipped_no_channel` y deja el email como único canal (no falla la suscripción completa).
+- **Fixes aplicados tras review del PR #97:**
+  - **P1 — `messages.conversation_id` es NOT NULL:** el worker ahora llama a `_ensure_internal_digest_conversation`, que upsertea el contacto del manager (`contacts.source='internal_digest'`, único por `(tenant_id, wa_id)`) y reutiliza una conversación marcada con `metadata.kind='internal_digest'` para que el insert en `messages` cumpla el constraint y los analíticos no confundan las entregas internas con conversaciones de clientes.
+  - **P2 — semana resumida:** `build_weekly_digest()` ahora defaultea `monday_local` al lunes de la **semana completada** (no a la semana que apenas inicia). El worker que dispara el lunes 08:00 ahora envía el resumen Lun..Dom anterior, que es lo que necesita el manager.
+  - **P2 — estados de cita inválidos:** el conteo de citas para mañana usaba `('confirmed','pending','rescheduled')`, pero el check del schema sólo permite `scheduled|confirmed|completed|cancelled|no_show`; pasa a `('scheduled','confirmed')` (que es lo que aún no ha pasado).
+  - **Lints (`ruff check .`):** se removieron imports y variables no usadas (`json`, `EmailMessage`, `CADENCE_DAILY`, `UUID` en tests, variable `daily` en `_whatsapp_components_weekly`).
+  - 3 tests estáticos adicionales cubren los tres fixes (18 totales para el módulo; suite global 1163 passed).
 
 ---
 

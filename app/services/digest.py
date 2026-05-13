@@ -23,7 +23,6 @@ el worker la salta.
 from __future__ import annotations
 
 import html
-import json
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -384,11 +383,15 @@ async def build_daily_digest(
         starts_in_utc=today_range,
         statuses=('confirmed', 'completed'),
     )
+    # Estados válidos del check de `appointments.status` (schema 01-schema.sql)
+    # son scheduled|confirmed|completed|cancelled|no_show. Para citas de mañana
+    # contamos lo que aún tiene que ocurrir: ``scheduled`` (recién creada,
+    # pendiente de confirmación activa) y ``confirmed`` (cliente ya confirmó).
     appts_tomorrow = await _appointments_for_day(
         conn,
         tenant_id=tenant_id,
         starts_in_utc=tomorrow_range,
-        statuses=('confirmed', 'pending', 'rescheduled'),
+        statuses=('scheduled', 'confirmed'),
     )
     no_shows_yesterday = await _appointments_for_day(
         conn,
@@ -434,10 +437,25 @@ async def build_weekly_digest(
     monday_local: date | None = None,
     currency: str = 'COP',
 ) -> dict[str, Any]:
+    """Arma el digest semanal sobre la semana **completada**.
+
+    El worker dispara los lunes a las 08:00 hora local: lo que el manager
+    necesita es el resumen de la semana que acaba de cerrar (Lun..Dom),
+    no la que está empezando (que sería casi vacía). Si ``monday_local``
+    no se pasa, lo defaulteamos al lunes anterior al lunes de la semana en
+    curso para garantizar que el rango sea Lun..Dom completos.
+
+    ``monday_local`` explícito (los tests usan esta vía) sigue refiriéndose
+    al lunes de la semana **que se quiere resumir**, así que el rango es
+    [monday_local, monday_local + 7 días).
+    """
     zone = safe_zone(tz_name)
     if monday_local is None:
         today = datetime.now(zone).date()
-        monday_local = today - timedelta(days=today.weekday())
+        # Lunes de la semana actual:
+        current_monday = today - timedelta(days=today.weekday())
+        # Semana completada = Lunes pasado (Lun..Dom de hace 7 días):
+        monday_local = current_monday - timedelta(days=7)
     prev_monday = monday_local - timedelta(days=7)
     this_week = _range_for_week(monday_local, zone)
     last_week = _range_for_week(prev_monday, zone)
@@ -606,7 +624,6 @@ def _whatsapp_components_weekly(kpis: dict[str, Any]) -> list[dict[str, Any]]:
     {{1}} semana, {{2}} ingreso formateado, {{3}} delta %, {{4}} retención %,
     {{5}} top servicio "name (count)".
     """
-    daily = kpis['daily']
     top_services = kpis['top_services']
     if top_services:
         top = top_services[0]

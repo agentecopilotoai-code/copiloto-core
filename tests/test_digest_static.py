@@ -18,10 +18,9 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -199,14 +198,20 @@ class _DigestConn:
     async def fetchrow(self, query, *args):
         self.calls.append((query, args))
         q = query.lower()
-        # _appointments_for_day variants devuelven {'count': N}
+        # _appointments_for_day variants devuelven {'count': N}.
+        # Discriminamos por el set de estados:
+        #   - ('no_show',) → no-shows de ayer
+        #   - ('scheduled','confirmed') → citas para mañana
+        #   - ('confirmed','completed') → citas confirmadas hoy
         if 'count(*)::int as count' in q and 'app.appointments' in q and 'status = any' in q:
             statuses = args[3]
             if 'no_show' in statuses:
                 return {'count': 1}
-            if 'pending' in statuses or 'rescheduled' in statuses:
+            if 'scheduled' in statuses:
                 return {'count': 4}
-            return {'count': 6}
+            if 'completed' in statuses:
+                return {'count': 6}
+            return {'count': 0}
         if 'app.messages' in q and 'direction = \'inbound\'' in q:
             return {'count': 42}
         if 'with leads as' in q and 'engaged as' in q:
@@ -364,6 +369,66 @@ def test_core_api_helpers_for_digest_subscriptions_exist():
         'deleteDigestSubscription',
     ):
         assert f'export function {name}' in source
+
+
+def test_tomorrow_appointments_uses_schema_compliant_statuses():
+    """El check de ``appointments.status`` solo admite scheduled|confirmed|
+    completed|cancelled|no_show; el digest no debe pedir estados inexistentes
+    (``pending`` / ``rescheduled``) o se pierde la cobertura de mañana."""
+    src = Path('app/services/digest.py').read_text()
+    # La call a tomorrow_range usa el statuses tupla bien tipado.
+    assert "starts_in_utc=tomorrow_range" in src
+    snippet = src.split('starts_in_utc=tomorrow_range', 1)[1].split(')', 1)[0]
+    assert "'scheduled'" in snippet
+    assert "'confirmed'" in snippet
+    # Sin estados inválidos.
+    assert "'pending'" not in snippet
+    assert "'rescheduled'" not in snippet
+
+
+def test_weekly_digest_default_window_summarizes_completed_week():
+    """Cuando el worker dispara el lunes y monday_local viene en None, el
+    digest debe resumir la semana **completada** (Lun..Dom anterior), no la
+    que recién empieza. Verificamos con un stub de fecha controlada."""
+    from unittest.mock import patch
+
+    conn = _DigestConn(weekly=True)
+    # Lunes 18-may-2026 08:30 hora Bogotá. La semana completada es la del
+    # 11–17 de mayo.
+    fake_now_local = datetime(2026, 5, 18, 8, 30, tzinfo=ZoneInfo('America/Bogota'))
+
+    class _FakeDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            return fake_now_local.astimezone(tz) if tz else fake_now_local
+
+    with patch('app.services.digest.datetime', _FakeDateTime):
+        result = asyncio.run(
+            build_weekly_digest(
+                conn,
+                tenant_id=uuid4(),
+                tz_name='America/Bogota',
+                currency='COP',
+            )
+        )
+    assert result['kpis']['week_start_local'] == '2026-05-11'
+
+
+def test_worker_ensures_internal_conversation_for_whatsapp_digest():
+    """Bug P1 del review: `messages.conversation_id` es NOT NULL, así que el
+    worker debe garantizar (contact, conversation) interna antes de encolar
+    la plantilla — si inserta NULL, Postgres explota y la entrega se pierde."""
+    src = Path('app/workers/digest_worker.py').read_text()
+    assert '_ensure_internal_digest_conversation' in src
+    # El insert ahora pasa ``conversation_id`` como parámetro, no `null`.
+    assert "values ($1, $2, 'outbound'" in src
+    # La conversación se marca con metadata.kind='internal_digest' para no
+    # mezclar con conversaciones de clientes reales.
+    assert "'kind': 'internal_digest'" in src
+    # El contacto upsertea por la unique (tenant_id, wa_id) y se marca
+    # ``source='internal_digest'``.
+    assert "'internal_digest'" in src
+    assert 'on conflict (tenant_id, wa_id)' in src
 
 
 def test_wizard_renders_digest_subscriptions_panel():

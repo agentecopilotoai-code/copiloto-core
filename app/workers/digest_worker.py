@@ -18,9 +18,9 @@ como enviado.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from datetime import UTC, datetime
-from email.message import EmailMessage
 from typing import Any
 from uuid import UUID
 
@@ -30,7 +30,6 @@ import structlog
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.services.digest import (
-    CADENCE_DAILY,
     CADENCE_WEEKLY,
     WHATSAPP_DIGEST_TEMPLATE_LOCALE,
     build_daily_digest,
@@ -100,6 +99,75 @@ def _currency_for_locale(locale: str) -> str:
     return 'COP'
 
 
+def _wa_id_from_phone(phone_e164: str) -> str:
+    """Derive Meta `wa_id` (E.164 sin `+`) del teléfono del manager."""
+    return phone_e164.lstrip('+')
+
+
+async def _ensure_internal_digest_conversation(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    channel_id: UUID,
+    recipient_phone: str,
+) -> UUID:
+    """Garantiza (contacto, conversación) interna para entregas de digest.
+
+    `messages.conversation_id` es NOT NULL — los digests se entregan al
+    teléfono del manager, que normalmente ya existe como contacto. Si no
+    existe, lo creamos marcado con `source='internal_digest'` y un metadata
+    flag para que el funnel/analytics no lo confunda con un cliente. Luego
+    upsertamos una conversación dedicada con `metadata.kind='internal_digest'`
+    y la reutilizamos en ticks subsiguientes (lookup por kind, no creamos una
+    nueva cada vez).
+    """
+    wa_id = _wa_id_from_phone(recipient_phone)
+    phone_hash = hashlib.sha256(recipient_phone.encode('utf-8')).digest()
+    contact_id = await conn.fetchval(
+        """
+        insert into app.contacts (
+          tenant_id, wa_id, phone_e164, phone_hash, source, metadata
+        )
+        values ($1, $2, $3, $4, 'internal_digest', $5::jsonb)
+        on conflict (tenant_id, wa_id) do update
+          set updated_at = now()
+        returning id
+        """,
+        tenant_id,
+        wa_id,
+        recipient_phone,
+        phone_hash,
+        json.dumps({'internal_digest': True}),
+    )
+    conversation_id = await conn.fetchval(
+        """
+        select id from app.conversations
+        where tenant_id = $1
+          and contact_id = $2
+          and channel_id = $3
+          and metadata->>'kind' = 'internal_digest'
+        order by created_at desc
+        limit 1
+        """,
+        tenant_id, contact_id, channel_id,
+    )
+    if conversation_id is not None:
+        return conversation_id
+    return await conn.fetchval(
+        """
+        insert into app.conversations (
+          tenant_id, contact_id, channel_id, status, opened_by, metadata
+        )
+        values ($1, $2, $3, 'open', 'system', $4::jsonb)
+        returning id
+        """,
+        tenant_id,
+        contact_id,
+        channel_id,
+        json.dumps({'kind': 'internal_digest'}),
+    )
+
+
 async def _queue_whatsapp_template(
     conn: asyncpg.Connection,
     *,
@@ -124,6 +192,12 @@ async def _queue_whatsapp_template(
             cadence=cadence,
         )
         return False
+    conversation_id = await _ensure_internal_digest_conversation(
+        conn,
+        tenant_id=tenant_id,
+        channel_id=channel_id,
+        recipient_phone=recipient,
+    )
     template_name = whatsapp_template_for_cadence(cadence)
     await conn.execute(
         """
@@ -131,9 +205,10 @@ async def _queue_whatsapp_template(
           tenant_id, conversation_id, direction, sender_actor_type,
           message_type, status, payload, body_text
         )
-        values ($1, null, 'outbound', 'system', 'template', 'queued', $2::jsonb, $3)
+        values ($1, $2, 'outbound', 'system', 'template', 'queued', $3::jsonb, $4)
         """,
         tenant_id,
+        conversation_id,
         json.dumps({
             'digest': True,
             'digest_cadence': cadence,
