@@ -20,6 +20,7 @@ npm test
         src="https://cdn.copilotoia.com/widget/v1/widget.js"
         data-tenant="<tenant_slug>"
         data-widget-token="<widget_token>"
+        data-api-base="https://api.copilotoia.com"
         data-color="#1f7ae0"
         data-greeting="¿En qué te ayudamos?"
         data-logo="https://cdn.copilotoia.com/tenants/<slug>/logo.png"
@@ -27,7 +28,7 @@ npm test
         data-position="right"></script>
 ```
 
-Los valores de `data-*` los devuelve `GET /v1/tenants/{tenant_id}/channels/web` (ya existe) y los inserta el snippet builder del backend.
+Los valores de `data-*` los devuelve `GET /v1/tenants/{tenant_id}/channels/web` (ya existe) y los inserta el snippet builder del backend. `data-api-base` es **obligatorio**: el host del CDN sólo sirve assets estáticos (no proxy de `/v1/web/chat/*`), así que el widget debe saber cuál es el origen real del API; el backend lo lee de la setting `web_widget_api_base`. El widget también carga su propia hoja de estilos (`widget.css`) desde el mismo path del script, inyectando un `<link rel="stylesheet">` en runtime — no hace falta pegarla aparte.
 
 ## Endpoints consumidos
 

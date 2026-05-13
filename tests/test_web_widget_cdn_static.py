@@ -139,6 +139,25 @@ def test_main_entry_imports_css_and_arms_poller():
     assert 'mountUi' in text
 
 
+def test_main_entry_injects_stylesheet_link_at_runtime():
+    # Vite extracts widget.css into a separate artefact; without a runtime
+    # <link rel="stylesheet"> the FAB renders unstyled on customer pages.
+    text = (SRC / 'main.js').read_text()
+    assert 'injectStylesheet' in text
+    assert "rel = 'stylesheet'" in text
+    assert "'/widget.css'" in text
+
+
+def test_config_reads_data_api_base_not_script_origin():
+    text = (SRC / 'config.js').read_text()
+    # apiBase must come from data-api-base; deriving it from el.src would
+    # send POSTs to the CDN host (which doesn't proxy the API).
+    assert "getAttribute('data-api-base')" in text
+    # We still derive an assetBase from el.src so the runtime can sideload
+    # widget.css next to widget.js.
+    assert 'assetBase' in text
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tests directory in web-widget/ must hit the ≥ 6 acceptance criterion
 # (lint, size, smoke) plus per-module unit coverage.
@@ -172,20 +191,32 @@ def test_web_widget_has_smoke_test_under_jsdom():
 
 def test_snippet_builder_points_at_cdn_and_emits_new_data_attrs():
     text = ROUTES.read_text()
-    assert "WEB_WIDGET_CDN_URL = 'https://cdn.copilotoia.com/widget/v1/widget.js'" in text
+    # CDN URL + API origin both come from settings so prod/dev can override.
+    assert 'settings.web_widget_cdn_url' in text
+    assert 'settings.web_widget_api_base' in text
     # New customisation surfaces on the snippet builder signature.
     assert 'logo_url: str | None = None' in text
     assert 'welcome_copy: str | None = None' in text
     assert 'button_position: str | None = None' in text
     # Data attribute names emitted in the snippet itself.
+    assert 'data-api-base=' in text
     assert 'data-logo=' in text
     assert 'data-welcome=' in text
     assert 'data-position=' in text
 
 
-def test_build_widget_snippet_uses_cdn_and_all_attrs():
+def test_build_widget_snippet_uses_cdn_and_all_attrs(monkeypatch):
     # Direct call: validates we don't regress the attribute order or escaping.
+    from app.core import config as core_config
+    from app.api.v1 import routes as routes_module
     from app.api.v1.routes import _build_widget_snippet
+
+    class FakeSettings:
+        web_widget_cdn_url = 'https://cdn.copilotoia.com/widget/v1/widget.js'
+        web_widget_api_base = 'https://api.copilotoia.com'
+
+    monkeypatch.setattr(routes_module, 'get_settings', lambda: FakeSettings())
+    monkeypatch.setattr(core_config, 'get_settings', lambda: FakeSettings())
 
     snippet = _build_widget_snippet(
         tenant_slug='demo-tenant',
@@ -199,6 +230,8 @@ def test_build_widget_snippet_uses_cdn_and_all_attrs():
     assert 'src="https://cdn.copilotoia.com/widget/v1/widget.js"' in snippet
     assert 'data-tenant="demo-tenant"' in snippet
     assert 'data-widget-token="wtok"' in snippet
+    # The widget hits the API origin, not the CDN host that serves the JS.
+    assert 'data-api-base="https://api.copilotoia.com"' in snippet
     assert 'data-color="#abcdef"' in snippet
     # Greeting double-quotes must be HTML-escaped to keep the attribute valid.
     assert 'data-greeting="Hola &quot;amig@&quot;"' in snippet
@@ -207,8 +240,35 @@ def test_build_widget_snippet_uses_cdn_and_all_attrs():
     assert 'data-position="left"' in snippet
 
 
-def test_build_widget_snippet_rejects_unknown_position():
+def test_settings_expose_widget_cdn_and_api_base():
+    from app.core.config import Settings
+
+    fields = Settings.model_fields
+    assert 'web_widget_api_base' in fields
+    assert 'web_widget_cdn_url' in fields
+
+
+def test_upsert_response_passes_all_customisation_to_snippet():
+    # The PUT /channels/web response builds its own snippet inline; it must
+    # forward the new logo/welcome/button_position fields just like the GET
+    # endpoint does, otherwise admins who copy the snippet immediately after
+    # saving lose the customisation until they reload.
+    text = ROUTES.read_text()
+    upsert_block = text.split('async def upsert_web_channel')[1].split('async def ')[0]
+    assert 'logo_url=widget_config.get(' in upsert_block
+    assert 'welcome_copy=widget_config.get(' in upsert_block
+    assert 'button_position=widget_config.get(' in upsert_block
+
+
+def test_build_widget_snippet_rejects_unknown_position(monkeypatch):
+    from app.api.v1 import routes as routes_module
     from app.api.v1.routes import _build_widget_snippet
+
+    class FakeSettings:
+        web_widget_cdn_url = 'https://cdn.copilotoia.com/widget/v1/widget.js'
+        web_widget_api_base = 'https://api.copilotoia.com'
+
+    monkeypatch.setattr(routes_module, 'get_settings', lambda: FakeSettings())
 
     snippet = _build_widget_snippet(
         tenant_slug='demo',

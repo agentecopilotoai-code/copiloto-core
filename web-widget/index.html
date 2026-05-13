@@ -13,13 +13,15 @@
     <h1>CopilotoIA Web Widget</h1>
     <p>Pega este snippet en cualquier HTML estático para renderizar el chat:</p>
     <pre>&lt;script async src="https://cdn.copilotoia.com/widget/v1/widget.js"
-        data-tenant="demo-tenant" data-widget-token="REPLACE_ME"&gt;&lt;/script&gt;</pre>
+        data-tenant="demo-tenant" data-widget-token="REPLACE_ME"
+        data-api-base="https://api.copilotoia.com"&gt;&lt;/script&gt;</pre>
     <p>Preview local (usa Vite dev server con un tenant fake):</p>
     <script
       type="module"
       src="/src/main.js"
       data-tenant="demo-tenant"
       data-widget-token="dev-only"
+      data-api-base="http://localhost:8000"
       data-color="#1f7ae0"
       data-greeting="¡Hola! ¿En qué te ayudamos?"
       data-position="right"

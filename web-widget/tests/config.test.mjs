@@ -26,6 +26,7 @@ test('readConfig captures all data-* attributes with defaults', () => {
   const { script } = setup({
     'data-tenant': 'demo',
     'data-widget-token': 'abc',
+    'data-api-base': 'https://api.copilotoia.com',
   });
   const cfg = readConfig(script);
   assert.equal(cfg.tenant, 'demo');
@@ -34,6 +35,31 @@ test('readConfig captures all data-* attributes with defaults', () => {
   assert.equal(cfg.greeting, DEFAULT_GREETING);
   assert.equal(cfg.position, 'right');
   assert.equal(cfg.pollIntervalMs, POLL_INTERVAL_MS);
+  // apiBase comes from data-api-base, not the CDN script origin.
+  assert.equal(cfg.apiBase, 'https://api.copilotoia.com');
+  // assetBase points at the directory the script was served from so the
+  // runtime can sideload widget.css.
+  assert.equal(cfg.assetBase, 'https://cdn.copilotoia.com/widget/v1');
+});
+
+test('readConfig strips trailing slash from data-api-base', () => {
+  const { script } = setup({
+    'data-tenant': 'demo',
+    'data-widget-token': 'abc',
+    'data-api-base': 'https://api.copilotoia.com/',
+  });
+  assert.equal(readConfig(script).apiBase, 'https://api.copilotoia.com');
+});
+
+test('readConfig falls back to page origin when data-api-base is missing', () => {
+  const { script } = setup({
+    'data-tenant': 'demo',
+    'data-widget-token': 'abc',
+  });
+  const cfg = readConfig(script);
+  // Page is https://cdn.copilotoia.com/widget/v1/widget.js, so origin is
+  // the CDN host. In production the backend snippet always emits
+  // data-api-base, so this only kicks in for custom embeds.
   assert.equal(cfg.apiBase, 'https://cdn.copilotoia.com');
 });
 

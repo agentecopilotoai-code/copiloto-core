@@ -29,16 +29,28 @@ export function readConfig(scriptEl) {
   const tenant = el.getAttribute('data-tenant');
   const widgetToken = el.getAttribute('data-widget-token');
   if (!tenant || !widgetToken) return null;
-  let apiBase = '';
-  try {
-    apiBase = new URL(el.src || '', window.location.href).origin;
-  } catch (_e) {
+  // The script is served from the CDN host, but /v1/web/chat/* lives on the
+  // API origin (the CDN bucket only holds static assets). The backend snippet
+  // builder always emits ``data-api-base``; if it's missing (custom embed),
+  // log a warning and fall back to the embedding page's origin so dev/preview
+  // pages on the same host still work.
+  let apiBase = (el.getAttribute('data-api-base') || '').trim().replace(/\/$/, '');
+  if (!apiBase) {
+    // eslint-disable-next-line no-console
+    console.warn('[copilotoia] data-api-base missing on widget snippet; falling back to page origin');
     apiBase = window.location.origin;
+  }
+  let assetBase = '';
+  try {
+    assetBase = new URL('.', el.src || window.location.href).href.replace(/\/$/, '');
+  } catch (_e) {
+    assetBase = '';
   }
   return {
     tenant,
     widgetToken,
     apiBase,
+    assetBase,
     color: el.getAttribute('data-color') || DEFAULT_COLOR,
     greeting: el.getAttribute('data-greeting') || DEFAULT_GREETING,
     logoUrl: el.getAttribute('data-logo') || null,

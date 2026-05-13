@@ -1869,9 +1869,6 @@ def _normalize_web_channel(row: asyncpg.Record | None) -> dict[str, Any] | None:
     return channel
 
 
-WEB_WIDGET_CDN_URL = 'https://cdn.copilotoia.com/widget/v1/widget.js'
-
-
 def _build_widget_snippet(
     *,
     tenant_slug: str,
@@ -1882,14 +1879,17 @@ def _build_widget_snippet(
     welcome_copy: str | None = None,
     button_position: str | None = None,
 ) -> str:
-    # TASK-0070: snippet now points at the CDN-hosted bundle and carries the
-    # full per-tenant customisation set (color, greeting, logo, welcome copy,
-    # button position) as data-* attributes so the widget can render without
-    # an extra round-trip.
+    # TASK-0070: snippet points at the CDN-hosted bundle and carries the full
+    # per-tenant customisation as data-* attributes so the widget renders
+    # without an extra round-trip. ``data-api-base`` is required: the CDN host
+    # only serves static assets, so the widget must know the real API origin
+    # to call /v1/web/chat/*.
+    settings = get_settings()
     attrs = [
-        f'src="{WEB_WIDGET_CDN_URL}"',
+        f'src="{settings.web_widget_cdn_url}"',
         f'data-tenant="{tenant_slug}"',
         f'data-widget-token="{widget_token}"',
+        f'data-api-base="{settings.web_widget_api_base.rstrip("/")}"',
     ]
     if color:
         attrs.append(f'data-color="{color}"')
@@ -2010,6 +2010,9 @@ async def upsert_web_channel(
         widget_token=widget_token or '',
         color=widget_config.get('primary_color'),
         greeting=widget_config.get('greeting'),
+        logo_url=widget_config.get('logo_url'),
+        welcome_copy=widget_config.get('welcome_copy'),
+        button_position=widget_config.get('button_position'),
     )
     return {
         'channel': channel,
