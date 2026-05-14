@@ -2,7 +2,14 @@ from pathlib import Path
 
 EVENT_WORKER = Path('app/workers/event_worker.py')
 WHATSAPP = Path('app/services/whatsapp.py')
-WHATSAPP_ONBOARDING = Path('admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx')
+# UI-007.8: the WhatsApp module was redesigned into a feature directory.
+WHATSAPP_FEATURE = Path('admin-panel/src/features/owner-admin/whatsapp')
+
+
+def _whatsapp_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(WHATSAPP_FEATURE.rglob('*.js*'))
+    )
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
@@ -73,7 +80,7 @@ def test_whatsapp_delivery_mode_controls_mocking_per_tenant_channel():
 
 
 def test_whatsapp_onboarding_exposes_delivery_mode_toggle():
-    source = WHATSAPP_ONBOARDING.read_text()
+    source = _whatsapp_feature_source()
 
     assert 'defaultFormForTenant' in source
     assert 'token_ref' not in source
