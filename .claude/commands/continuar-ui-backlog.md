@@ -42,6 +42,17 @@ backlog de UI de principio a fin siguiendo este procedimiento. No te saltes paso
   subtarea en el backlog). Front: `vitest` + `@testing-library/react` en
   `admin-panel/`. Backend: `pytest` en `tests/`.
 
+## 3.bis. Actualización de docs (en el MISMO PR, antes del merge)
+
+Las actualizaciones de documentación van en este PR, NUNCA después del merge —
+si no, los commits de docs caen en una rama ya mergeada y `develop` sigue
+mostrando la tarea como `PENDING`, provocando que la próxima corrida la repita.
+
+- Actualiza `docs/UI_BACKLOG.md`: estado de la tarea → `DONE`.
+- Agrega la entrada en `docs/DONE.md` siguiendo el "Protocolo de registro"
+  (consecutivo, fecha, resumen, archivos, validaciones, notas/limitaciones y la
+  nota de seguridad).
+
 ## 4. Validación local (debe pasar TODO antes de continuar)
 
 ```
@@ -55,7 +66,9 @@ Si algo falla, arréglalo. No avances con validación en rojo.
 
 ## 5. Commit y PR
 
-- Commit con mensaje claro y descriptivo (`UI-XXX — <resumen>`).
+- Commit con mensaje claro y descriptivo (`UI-XXX — <resumen>`). Incluye en el
+  PR tanto los cambios de código/tests como las actualizaciones de docs del
+  paso 3.bis — todo en la misma rama y el mismo PR.
 - `git push -u origin claude/implement-ui-backlog-kuv9g` (reintenta con backoff
   2s/4s/8s/16s solo ante errores de red).
 - Crea el PR hacia `develop` con las tools de GitHub MCP
@@ -68,17 +81,12 @@ Si algo falla, arréglalo. No avances con validación en rojo.
 - Espera y verifica el estado de CI del PR (`mcp__github__pull_request_read` con
   los checks).
 - **Si CI pasa en verde:** mergea el PR a `develop`
-  (`mcp__github__merge_pull_request`).
+  (`mcp__github__merge_pull_request`). Como las actualizaciones de
+  `docs/UI_BACKLOG.md` y `docs/DONE.md` ya van en este PR (paso 3.bis), al
+  mergear, `develop` queda con la tarea marcada `DONE` — la próxima corrida no
+  la repite.
 - **Si CI falla:** investiga, corrige, vuelve a pushear (commit NUEVO, nunca
   `--amend`) y re-verifica. No mergees con CI en rojo.
-
-## 7. Cierre de la tarea
-
-- Actualiza `docs/UI_BACKLOG.md`: estado de la tarea → `DONE`.
-- Agrega la entrada en `docs/DONE.md` siguiendo el "Protocolo de registro"
-  (consecutivo, fecha, resumen, archivos, validaciones, notas/limitaciones y la
-  nota de seguridad).
-- Commitea y pushea esa actualización de docs.
 
 Cuando termines, reporta en 2-3 frases: qué tarea quedó `DONE`, si se mergeó, y
 cuál es la siguiente tarea `PENDING` del backlog.
