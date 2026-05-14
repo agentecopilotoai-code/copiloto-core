@@ -15,7 +15,7 @@
 
 // Owner / Admin / Manager / Agent — shell tenant-scoped.
 export const TENANT_NAV = Object.freeze([
-  { section: 'Inicio', items: ['dashboard', 'onboarding-wizard'] },
+  { section: 'Inicio', items: ['dashboard', 'manager-analytics', 'onboarding-wizard'] },
   {
     section: 'Conversaciones',
     items: ['operations-desk', 'contacts', 'campaigns', 'segments'],

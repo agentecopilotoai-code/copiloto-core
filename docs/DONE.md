@@ -15,6 +15,49 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-008.1 — Manager · Analítica (Cómo va el negocio)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** crear la home dedicada del rol Manager bajo `src/features/manager/analytics/`, aplicando el mockup `24 _ Analítica _ cómo va el negocio.html`. Vista **nueva** (no refactor de un legacy). **Tarea frontend-only** — no se toca el backend; los endpoints de analítica ya existían.
+- **Cambios realizados:**
+  - **Frontend — `src/features/manager/analytics/` (nuevo, 10 archivos):**
+    - `managerAnalyticsData.js` (helper puro): formatters (`formatNumber`/`formatCurrency`/`formatPercent`/`formatSeconds`/`formatRating`, portados de `AgentPerformance.jsx`), `AGENT_SORT_OPTIONS` + `sortAgents`, `buildManagerKpis` (KPIs derivados de `analytics_overview`), `buildFunnelSegments` (segmentos del embudo desde `analytics_funnel.by_channel`), `buildCampaignRows` + `channelLabel`.
+    - `hooks/useManagerAnalyticsData.js`: capa de datos — estado de rango (`14d/30d/90d`) + fetch en paralelo (`Promise.all`) de `getAnalyticsOverview` (ventana actual + previa para deltas), `getAnalyticsFunnel`, `getAnalyticsAgents`, `getAnalyticsCampaigns`; cada fetch tolera su fallo individual (`.catch → null`); estado loading/error; devuelve `{ state, actions }`.
+    - `ManagerAnalytics.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="analytics.tenant.read" mode="R">` + `PageHeader` (selector de rango + botón Actualizar) + estados vacío/error/loading + composición de los componentes.
+    - `components/ManagerKpis.jsx`: fila de KPIs reusando `KpiCardWithDelta` (dominio).
+    - `components/ConversionFunnel.jsx`: tarjeta "Conversión por canal" envolviendo el nuevo `FunnelChart`.
+    - `components/AgentPerformanceTable.jsx`: tabla per-agente, **extraída** del markup + lógica de orden del legacy `AgentPerformance.jsx` como componente presentacional driven by props.
+    - `components/CampaignsSummary.jsx`: lista compacta de campañas recientes desde `getAnalyticsCampaigns`.
+    - `ManagerAnalytics.module.css` (~190 LOC) — 100% `var(--...)`.
+    - `index.js` (barrel) + `managerAnalyticsData.test.js` (6 tests) + `ManagerAnalytics.test.jsx` (4 tests).
+  - **Frontend — nuevo componente de dominio:**
+    - `components/domain/FunnelChart.jsx` (+ `.module.css` + `FunnelChart.test.jsx`, 3 tests): embudo/desglose de conversión presentacional y genérico (driven por un array `segments` de `{ label, value, percent, count, hint }`), barras horizontales con tokens. Exportado desde `components/domain/index.js`.
+  - **Frontend — routing wiring:**
+    - `app/moduleRegistry.js`: nuevo id `'manager-analytics': { Component: ManagerAnalytics, capability: 'analytics.tenant.read' }`. El id `analytics` + `AnalyticsPanel` quedan intactos (Owner/Admin/Viewer).
+    - `data/modules.js`: nueva entrada `manager-analytics` (label "Analítica", summary, scope, capability `analytics.tenant.read`) — esto auto-crea la ruta tenant-scoped vía `TENANT_MODULE_IDS`.
+    - `app/nav.js`: `'manager-analytics'` agregado a la sección `Inicio` de `TENANT_NAV`.
+    - `permissions/matrix.js`: `ROLE_HOME.manager` repuntado de `'analytics'` a `'manager-analytics'` (home dedicada del Manager).
+  - **Tests de routing:** ningún test asertaba `ROLE_HOME.manager === 'analytics'` (`matrix.test.js` solo verifica que `ROLE_HOME[role]` sea truthy y chequea `agent`/`platform_owner` explícitamente; `router.test.jsx`/`resolveNav.test.js`/`usePermissions.test.jsx` no tienen aserción de home del manager). El cambio de `ROLE_HOME` no rompió ninguna aserción previamente verde — no se modificó ningún archivo de test existente.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/manager/analytics/{ManagerAnalytics.jsx,ManagerAnalytics.module.css,ManagerAnalytics.test.jsx,managerAnalyticsData.js,managerAnalyticsData.test.js,index.js,hooks/useManagerAnalyticsData.js,components/{ManagerKpis,ConversionFunnel,AgentPerformanceTable,CampaignsSummary}.jsx}` (todos nuevos).
+  - `admin-panel/src/components/domain/{FunnelChart.jsx,FunnelChart.module.css,FunnelChart.test.jsx}` (nuevos) + `components/domain/index.js` (export añadido).
+  - `admin-panel/src/app/moduleRegistry.js`, `admin-panel/src/data/modules.js`, `admin-panel/src/app/nav.js`, `admin-panel/src/permissions/matrix.js` (wiring del module id + `ROLE_HOME`).
+  - `docs/UI_BACKLOG.md` (UI-008.1 marcado `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (2 warnings pre-existentes ajenos en `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → 341 tests pasan, incluidos los 13 nuevos (6 `managerAnalyticsData` + 4 `ManagerAnalytics` + 3 `FunnelChart`). Sigue fallando `src/app/router.test.jsx` (7 fallos) por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.* — **no es regresión** (CI corre Node 20 y solo ejecuta lint + build para el front).
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. No se modificó ni se requiere pytest/ruff.
+  - La entrada de módulo se gateó con `<RequirePermission capability="analytics.tenant.read" mode="R">`; los fetches pegan a `/v1/analytics/{overview,funnel,agents,campaigns}`, autenticados y tenant-scoped server-side — el backend reverifica.
+  - `ROLE_HOME.manager` ahora apunta a la home dedicada del Manager (`manager-analytics`) en vez del `AnalyticsPanel` compartido.
+- **Limitaciones / próximos pasos:**
+  - **Diferencia intencional declarada:** el HTML muestra una gráfica de ingreso diario apilado por canal, KPIs "Ingreso atribuido" y "CAC por canal", y una lista "Top servicios" — ninguno está expuesto por los endpoints de analítica disponibles. Se difieren; los KPIs renderizados (ingreso estimado, citas asistidas, retención 90d, tasa de no-show) usan campos reales de `analytics_overview`. No se fabrican datos.
+  - **`AgentPerformance.jsx` legacy intacto:** sigue usado por el `AnalyticsPanel` de Owner/Admin. `AgentPerformanceTable` es un componente feature-local nuevo, no un reemplazo del legacy — repuntar `AnalyticsPanel` queda como follow-up fuera de alcance de UI-008.1 (vista nueva, no refactor de `AnalyticsPanel`).
+  - Próxima tarea `PENDING`: **UI-008.2 — Campañas** (refactor de `CampaignsModule.jsx`).
+
+---
+
 ### UI-007.15 — Config · Auditoría (Owner / Admin)
 
 - **Fecha:** 2026-05-14

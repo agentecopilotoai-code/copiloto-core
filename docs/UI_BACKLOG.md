@@ -567,8 +567,9 @@ src/
 >
 > **Aplica receta 0.bis.1 + mapping 0.bis.3 + criterio 0.bis.4** para cada subtarea.
 
-#### UI-008.1 — Analítica · cómo va el negocio (24)
-- Home del manager. Reusa todos los KPIs de UI-007.1 pero con foco en conversión + funnel + rendimiento por agente. Reusa `KpiCardWithDelta`, `FunnelChart` (nuevo, en `domain/`), `AgentPerformanceTable` (extraer de `AgentPerformance.jsx`).
+#### UI-008.1 — Analítica · cómo va el negocio (24) — DONE (2026-05-14)
+- **Alcance:** home dedicada del Manager en `src/features/manager/analytics/` (orquestador `ManagerAnalytics.jsx` + `hooks/useManagerAnalyticsData.js` + `managerAnalyticsData.js` puro + `components/{ManagerKpis,ConversionFunnel,AgentPerformanceTable,CampaignsSummary}.jsx` + `.module.css` + `index.js`). Nuevo componente de dominio `FunnelChart` en `components/domain/`. `AgentPerformanceTable` extraída como componente presentacional feature-local desde el markup + lógica de orden del legacy `AgentPerformance.jsx` (el legacy queda intacto: sigue usado por el `AnalyticsPanel` de Owner/Admin). Routing: nuevo module id `manager-analytics` (registry + `data/modules.js` + `nav.js` sección Inicio) y `ROLE_HOME.manager` repuntado de `analytics` a `manager-analytics`. Reusa `KpiCardWithDelta`. **Diferencia intencional declarada:** el HTML muestra una gráfica de ingreso diario apilado por canal, KPIs "Ingreso atribuido" y "CAC por canal", y una lista "Top servicios"; ninguno está expuesto por los endpoints de analítica — se difieren, no se fabrican datos. Los KPIs renderizados (ingreso estimado, citas asistidas, retención 90d, tasa de no-show) usan campos reales de `analytics_overview`.
+- **Tests:** `managerAnalyticsData.test.js` (6 — formatters, `sortAgents`, `buildManagerKpis`, `buildFunnelSegments`, `buildCampaignRows`), `ManagerAnalytics.test.jsx` (4 — render + fetch de los 4 endpoints, KPIs/tabla/funnel, resumen de campañas, `AccessDenied` sin `analytics.tenant.read`), `FunnelChart.test.jsx` (3 — render de segmentos, empty state, aria-label).
 
 #### UI-008.2 — Campañas (25)
 - Refactor de `CampaignsModule.jsx` (686 LOC) split en `CampaignsTable` + `CampaignFormDrawer` + `CampaignDeliveryPanel`.
