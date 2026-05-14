@@ -15,6 +15,7 @@ import { Subscriptions } from '../features/owner-admin/subscriptions/index.js';
 import { Branches } from '../features/owner-admin/branches/index.js';
 import { WhatsAppOnboarding } from '../features/owner-admin/whatsapp/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
+import { ManagerAnalytics } from '../features/manager/analytics/index.js';
 import { AuditPanel } from '../features/owner-admin/audit/index.js';
 import { CampaignsModule } from '../components/modules/campaigns/CampaignsModule.jsx';
 import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
@@ -84,6 +85,10 @@ export const MODULE_REGISTRY = Object.freeze({
   'outbound-dlq': { Component: OutboundDLQ, capability: 'outbound_dlq.retry', mode: 'RW' },
   'go-live-readiness': { Component: GoLiveReadiness, capability: 'go_live_readiness.read' },
   analytics: { Component: AnalyticsPanel, capability: 'analytics.tenant.read' },
+  'manager-analytics': {
+    Component: ManagerAnalytics,
+    capability: 'analytics.tenant.read',
+  },
   audit: { Component: AuditPanel, capability: 'audit.read' },
   team: { Component: TeamModule, capability: 'team.write', mode: 'RW' },
   legal: { Component: LegalModule, capability: 'legal.write', mode: 'RW' },

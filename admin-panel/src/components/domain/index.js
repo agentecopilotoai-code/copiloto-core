@@ -7,5 +7,6 @@ export { AppointmentCard, appointmentStatusTone } from './AppointmentCard.jsx';
 export { HandoffBanner } from './HandoffBanner.jsx';
 export { TimelineEntry } from './TimelineEntry.jsx';
 export { KpiCardWithDelta, computeDelta } from './KpiCardWithDelta.jsx';
+export { FunnelChart } from './FunnelChart.jsx';
 export { MfaRequiredBlocker } from './MfaRequiredBlocker.jsx';
 export { NoTenantOnboarding } from './NoTenantOnboarding.jsx';

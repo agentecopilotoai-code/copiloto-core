@@ -188,6 +188,13 @@ export const adminModules = [
     capability: 'analytics.tenant.read',
   },
   {
+    id: 'manager-analytics',
+    label: 'Analítica',
+    summary: 'Home del Manager: cómo va el negocio — KPIs, embudo de conversión por canal, rendimiento por agente y campañas recientes.',
+    scope: ['KPIs con variación de período', 'Embudo de conversión por canal', 'Rendimiento por agente', 'Resumen de campañas'],
+    capability: 'analytics.tenant.read',
+  },
+  {
     id: 'audit',
     label: 'Audit',
     summary: 'Trazabilidad de cambios y acciones administrativas.',
