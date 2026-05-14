@@ -35,6 +35,13 @@ export const adminModules = [
     capability: 'platform.outbound_dlq.read',
   },
   {
+    id: 'platform-runbooks',
+    label: 'Runbooks',
+    summary: 'Catálogo de runbooks operacionales de docs/runbooks/ con búsqueda, filtro por categoría y visor de Markdown renderizado a HTML seguro. UI-006.6.',
+    scope: ['Catálogo de runbooks', 'Búsqueda por título/slug', 'Filtro por categoría', 'Visor de Markdown a HTML seguro (TASK-0076)'],
+    capability: 'platform.runbooks.read',
+  },
+  {
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',

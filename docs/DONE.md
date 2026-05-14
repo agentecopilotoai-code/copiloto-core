@@ -15,6 +15,63 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-006.6 — Runbooks (Platform Owner)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** sexta vista del rol Platform Owner. Catálogo de runbooks operacionales en `/platform/platform-runbooks` consumiendo dos endpoints nuevos en `platform_admin_router` (mismas dependencias de seguridad que el resto del router: `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`): `GET /v1/platform/runbooks` (listado) y `GET /v1/platform/runbooks/{slug}` (detalle renderizado a HTML seguro). Los runbooks viven como archivos Markdown estáticos en `docs/runbooks/`. El renderizado reusa `render_markdown_to_safe_html` de TASK-0076 — el mismo subconjunto de Markdown totalmente escapado de las páginas legales públicas. La vista respeta la referencia visual del panel "Runbooks disponibles" del HTML de Incidentes y reusa primitivas/tokens de UI-001..UI-005.
+- **Cambios realizados:**
+  - **Backend — `app/services/platform_runbooks.py` (nuevo):**
+    - `categorize_runbook(slug)` — deriva una categoría coarse del slug por reglas de keyword (`meta-` → "Meta · WhatsApp", `llm`/`circuit-breaker` → "LLM · Breakers", `postgres`/`worker` → "Infraestructura", `webhook`/`rate-limit` → "Tráfico · Rate limit", `consent` → "Compliance"); fallback "General". Los archivos no traen metadata de categoría, así que las reglas mantienen la derivación honesta y testeable.
+    - `extract_title(content_md)` — primer heading `# ` del runbook, o fallback "Runbook".
+    - `is_valid_slug(slug)` — rechaza `..`, separadores, puntos y cualquier cosa fuera de `^[a-z0-9][a-z0-9-]*$`.
+    - `runbook_path(slug)` — resuelve un slug a una ruta **dentro** de `docs/runbooks/`, devolviendo None si el slug es inválido, la ruta resuelta escapa el directorio, o el archivo no existe — nunca lanza. Defensa de path-traversal en profundidad (validación de patrón + verificación de que el parent resuelto es el directorio de runbooks).
+    - `list_runbooks()` — lista los `.md` del directorio (README excluido), con slug/filename/título/categoría/tamaño, ordenados por título.
+    - `read_runbook(slug)` — devuelve `{slug, filename, title, category, content_md}` o None.
+  - **Backend — `app/api/v1/routes.py`:**
+    - `platform_runbooks_list` (`@platform_admin_router.get('/platform/runbooks')`) — devuelve `{runbooks, categories}`.
+    - `platform_runbook_detail` (`@platform_admin_router.get('/platform/runbooks/{slug}')`) — devuelve un runbook con `html` renderizado vía `render_markdown_to_safe_html`, o 404 cuando el slug es inválido / el archivo no existe.
+    - Ninguno de los dos handlers usa `Depends(get_db)` — leen del filesystem; las tres dependencias del router siguen aplicando. **Sin cambio en el bloque `platform_admin_router = APIRouter(...)`** — los handlers no declaran `dependencies=[]` propio (tests estáticos que lo verifican). Import añadido: `from app.services import platform_runbooks`.
+  - **Frontend — `admin-panel/src/`:**
+    - `services/coreApi.js`: nuevas funciones `getPlatformRunbooks(session)` y `getPlatformRunbook(session, slug)` (esta última con `encodeURIComponent` sobre el slug).
+    - `features/platform/runbooks/` (nuevo, 9 archivos):
+      - `Runbooks.jsx` (107 LOC) — orquesta el catálogo, el filtrado client-side (búsqueda + categoría) y la selección, y envuelve todo en `<RequirePermission capability="platform.runbooks.read" mode="R">`.
+      - `components/RunbookFilters.jsx` (40 LOC) — input de búsqueda + select de categoría; componente tonto.
+      - `components/RunbookList.jsx` (60 LOC) — grid de tarjetas de runbook con navegación por teclado (Enter/Espacio).
+      - `components/RunbookViewer.jsx` (56 LOC) — `<Modal>` que renderiza el HTML server-sanitizado vía `dangerouslySetInnerHTML` (con comentario explicando por qué es seguro: viene de `render_markdown_to_safe_html`).
+      - `hooks/useRunbooks.js` (54 LOC) — fetch del catálogo, cancellation en unmount, `refresh()`.
+      - `hooks/useRunbookDetail.js` (49 LOC) — fetch del detalle por slug; un slug null limpia el estado sin disparar request.
+      - `Runbooks.module.css` (175 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/platform/runbooks/` → 0 resultados (criterio 0.bis.4 del backlog).
+      - `index.js` (barrel) + `Runbooks.test.jsx` (130 LOC, 5 tests).
+    - `app/moduleRegistry.js`: `'platform-runbooks'` deja de caer al placeholder y ahora apunta a `Runbooks` con capability `platform.runbooks.read`.
+    - `data/modules.js`: nuevo módulo `platform-runbooks` (el `PLATFORM_NAV` ya lo referenciaba en la sección "Audit global").
+- **Archivos modificados / creados:**
+  - `app/services/platform_runbooks.py` (nuevo).
+  - `app/api/v1/routes.py` (handlers `platform_runbooks_list` + `platform_runbook_detail`, import `platform_runbooks`).
+  - `tests/test_platform_runbooks_static.py` (nuevo — 9 tests estáticos + funcionales).
+  - `admin-panel/src/services/coreApi.js` (exports `getPlatformRunbooks`, `getPlatformRunbook`).
+  - `admin-panel/src/features/platform/runbooks/{Runbooks.jsx,Runbooks.module.css,Runbooks.test.jsx,index.js,components/{RunbookFilters,RunbookList,RunbookViewer}.jsx,hooks/{useRunbooks,useRunbookDetail}.js}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `platform-runbooks → Runbooks`).
+  - `admin-panel/src/data/modules.js` (módulo `platform-runbooks`).
+  - `docs/UI_BACKLOG.md` (UI-006.6 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **34 suites, 149 tests pasan** (5 nuevos de Runbooks). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.1..5: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y no ejecuta vitest.
+  - `python -m pytest tests/test_platform_runbooks_static.py tests/test_platform_dlq_static.py tests/test_platform_incidents_static.py tests/test_platform_billing_static.py tests/test_system_health_static.py tests/test_fleet_tenants_static.py tests/test_runbooks_static.py` → **84 passed**.
+  - `python -m compileall app -q` → OK. `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Ambos endpoints heredan las tres dependencias del router (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`) — los handlers **no** declaran su propio `dependencies=` override, y tests estáticos lo verifican como contrato. Otros tests verifican que los paths no aparecen en `tenant_admin_router` / `tenant_ops_router` / `tenant_user_router`.
+  - **Path-traversal defendido en profundidad:** el `{slug}` se valida contra `^[a-z0-9][a-z0-9-]*$` (sin puntos, sin separadores, sin `..`), y la ruta resuelta se verifica con `candidate.resolve().parent == RUNBOOKS_DIR.resolve()` antes de cualquier `read_text`. Tests funcionales ejercitan `../etc/passwd`, `a/b`, `a.b`, `../README` y slugs inexistentes — todos devuelven None. Un slug malicioso nunca llega a leer un archivo fuera de `docs/runbooks/`.
+  - **El HTML servido es seguro por construcción:** `render_markdown_to_safe_html` (TASK-0076) hace `html.escape` sobre todo el input y solo emite un subconjunto de Markdown con tags fijos (headings, listas, párrafos, code/bold/italic inline, links con esquema verificado) — ningún `<script>`, `<style>` ni HTML crudo sobrevive. El frontend usa `dangerouslySetInnerHTML` sobre ese HTML ya sanitizado en el servidor; no se sanitiza markup arbitrario del cliente.
+  - El frontend espeja el gate vía `<RequirePermission capability="platform.runbooks.read" mode="R">`. La matriz UI-005 ya deniega `platform.runbooks.read` a todos los roles de tenant.
+- **Limitaciones / próximos pasos:**
+  - **Fidelidad de bloques de código degradada.** `render_markdown_to_safe_html` (reusado tal cual de TASK-0076, como pide el backlog) no soporta fenced code blocks (```` ``` ````) ni tablas — los runbooks tienen bloques SQL/bash y alguna tabla que se renderizan como párrafos escapados con los backticks visibles. Es **seguro** (todo escapado) y **completo** (no se pierde contenido), pero no es bonito. Extender el renderer compartido se difiere a su propia tarea para no tocar una función crítica usada por las páginas legales públicas bajo la corrida desatendida.
+  - **Categorías derivadas, no almacenadas.** Los archivos `.md` no traen metadata de categoría; `categorize_runbook` la deriva por keyword del slug. Si en el futuro se agrega front-matter a los runbooks, la derivación se reemplaza por el dato real.
+  - **README.md excluido del catálogo.** El `docs/runbooks/README.md` es el índice del directorio, no un runbook operacional — se excluye del listado (pero `runbook_path` lo resolvería como archivo; la exclusión es a nivel de `list_runbooks`).
+  - Próxima tarea `PENDING` real: **UI-006.7 — Roles · ACL** (vista read-only de la matriz `permissions/matrix.js` como tabla capacidad × rol; el toggle de modo edición que graba en `app.permission_overrides` requiere una tabla nueva — ticket de backend si no existe).
+
+---
+
 ### UI-006.5 — Outbound DLQ · fleet (Platform Owner)
 
 - **Fecha:** 2026-05-14

@@ -104,6 +104,7 @@ from app.services import metrics
 from app.services import platform_billing
 from app.services import platform_dlq
 from app.services import platform_incidents
+from app.services import platform_runbooks
 from app.services.locale import SUPPORTED_COUNTRIES
 from app.services.audit import audit
 from app.services.campaign_attribution import attribute_appointment
@@ -1584,6 +1585,42 @@ async def platform_outbound_dlq_retry(
         entity_id=str(payload.tenant_id),
     )
     return result
+
+
+# UI-006.6: Platform runbooks catalogue.
+#
+# Drives the platform-owner "Runbooks" view. Same router-level security as the
+# rest of `platform_admin_router` (`authenticate_request` +
+# `require_platform_owner` + `require_mfa_for_privileged`) — never relaxed.
+#
+# The runbooks are static Markdown files under `docs/runbooks/`. The detail
+# endpoint renders them through `render_markdown_to_safe_html` (TASK-0076) —
+# the same fully-escaped Markdown subset used for public legal pages — so the
+# returned HTML carries no script/style/raw-HTML. Slugs are validated against a
+# strict pattern and the resolved path is verified to live inside the runbooks
+# directory (path-traversal defense lives in `platform_runbooks`).
+@platform_admin_router.get('/platform/runbooks')
+async def platform_runbooks_list():
+    """Return the runbook catalogue for the platform owner (UI-006.6)."""
+    items = platform_runbooks.list_runbooks()
+    categories = sorted({item['category'] for item in items})
+    return {'runbooks': items, 'categories': categories}
+
+
+@platform_admin_router.get('/platform/runbooks/{slug}')
+async def platform_runbook_detail(slug: str):
+    """Return one runbook rendered to safe HTML, or 404 when the slug is
+    invalid / the file does not exist."""
+    runbook = platform_runbooks.read_runbook(slug)
+    if runbook is None:
+        raise HTTPException(status_code=404, detail='Runbook not found')
+    return {
+        'slug': runbook['slug'],
+        'filename': runbook['filename'],
+        'title': runbook['title'],
+        'category': runbook['category'],
+        'html': render_markdown_to_safe_html(runbook['content_md']),
+    }
 
 
 async def update_tenant_record(
