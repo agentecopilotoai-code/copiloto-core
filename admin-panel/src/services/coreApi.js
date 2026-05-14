@@ -116,6 +116,15 @@ export function getPlatformBillingMrr(session) {
   return request('/platform/billing/mrr', { session });
 }
 
+export function getPlatformIncidents(session, { status, kind, limit } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (kind) params.set('kind', kind);
+  if (limit !== undefined && limit !== null) params.set('limit', String(limit));
+  const qs = params.toString();
+  return request(`/platform/incidents${qs ? `?${qs}` : ''}`, { session });
+}
+
 export function updateTenant(session, tenantId, payload) {
   return request(`/tenants/${tenantId}`, {
     method: 'PATCH',

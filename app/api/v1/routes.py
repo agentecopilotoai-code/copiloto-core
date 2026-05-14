@@ -101,6 +101,7 @@ from app.db.pool import get_db, record_to_dict
 from app.services import locale as locale_service
 from app.services import metrics
 from app.services import platform_billing
+from app.services import platform_incidents
 from app.services.locale import SUPPORTED_COUNTRIES
 from app.services.audit import audit
 from app.services.campaign_attribution import attribute_appointment
@@ -1349,6 +1350,120 @@ async def platform_billing_mrr(
             'tenant→contacto de TASK-0075 (app.contact_subscriptions + '
             'app.subscription_plans). Expansión y retención requieren snapshots '
             'históricos de MRR que el schema no almacena — se difieren.'
+        ),
+    }
+
+
+# UI-006.4: Platform incidents feed.
+#
+# Drives the platform-owner "Incidentes" view. Same router-level security as the
+# rest of `platform_admin_router` (`authenticate_request` +
+# `require_platform_owner` + `require_mfa_for_privileged`) — never relaxed.
+#
+# The "incidents" feed is the cross-tenant view of `app.operator_alerts`
+# (TASK-0057 / TASK-0064 / TASK-0065). The cross-tenant read goes through
+# `app.support_mode` — operator_alerts has RLS and a nullable `tenant_id` for
+# system-level alerts; the schema comment notes that surfacing NULL-tenant rows
+# under `app.support_mode()` is the expected operator path (TASK-0064).
+_INCIDENT_STATUS_PATTERN = re.compile(r'^(pending|sent|failed)$')
+_INCIDENT_KIND_PATTERN = re.compile(
+    r'^(negative_feedback|complaint|backup_failure|outbound_dlq_threshold)$'
+)
+
+
+@platform_admin_router.get('/platform/incidents')
+async def platform_incidents_feed(
+    status_filter: str | None = Query(default=None, alias='status', max_length=16),
+    kind: str | None = Query(default=None, max_length=32),
+    limit: int = Query(default=100, ge=1, le=500),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Return the cross-tenant incidents feed for the platform owner (UI-006.4).
+
+    Reads `app.operator_alerts` joined to `app.tenants`, deriving a severity and
+    a runbook reference per alert `kind`. Supports `status` and `kind` filters.
+    No contact PII — only the alert payload, tenant identity and delivery
+    timeline fields the alert row already carries.
+    """
+    if status_filter is not None and not _INCIDENT_STATUS_PATTERN.match(status_filter):
+        raise HTTPException(status_code=422, detail='invalid status filter')
+    if kind is not None and not _INCIDENT_KIND_PATTERN.match(kind):
+        raise HTTPException(status_code=422, detail='invalid kind filter')
+
+    # Cross-tenant read. The router already enforces require_platform_owner +
+    # require_mfa_for_privileged; `support_mode` is set transaction-locally and
+    # is the documented operator path for system-level (NULL-tenant) alerts.
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+
+    rows = await conn.fetch(
+        """
+        select
+            oa.id,
+            oa.tenant_id,
+            t.slug as tenant_slug,
+            t.display_name as tenant_display_name,
+            t.legal_name as tenant_legal_name,
+            oa.kind,
+            oa.status,
+            oa.payload,
+            oa.attempts,
+            oa.last_error,
+            oa.scheduled_for,
+            oa.created_at,
+            oa.sent_at,
+            oa.updated_at
+        from app.operator_alerts oa
+        left join app.tenants t on t.id = oa.tenant_id
+        where ($1::text is null or oa.status = $1)
+          and ($2::text is null or oa.kind = $2)
+        order by oa.created_at desc
+        limit $3
+        """,
+        status_filter,
+        kind,
+        limit,
+    )
+
+    incidents = []
+    for row in rows:
+        payload = row['payload']
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+        incidents.append({
+            'id': str(row['id']),
+            'kind': row['kind'],
+            'severity': platform_incidents.severity_for_kind(row['kind']),
+            'runbook': platform_incidents.runbook_for_kind(row['kind']),
+            'status': row['status'],
+            'is_open': platform_incidents.is_open(row['status']),
+            'tenant_id': str(row['tenant_id']) if row['tenant_id'] else None,
+            'tenant_name': (
+                row['tenant_display_name']
+                or row['tenant_legal_name']
+                or row['tenant_slug']
+            ),
+            'tenant_slug': row['tenant_slug'],
+            'payload': payload if isinstance(payload, dict) else {},
+            'attempts': int(row['attempts'] or 0),
+            'last_error': row['last_error'],
+            'scheduled_for': row['scheduled_for'],
+            'created_at': row['created_at'],
+            'sent_at': row['sent_at'],
+            'updated_at': row['updated_at'],
+        })
+
+    return {
+        'generated_at': datetime.now(UTC).isoformat(),
+        'incidents': incidents,
+        'summary': platform_incidents.summarize_incidents(incidents),
+        'note': (
+            'Feed de incidentes derivado de app.operator_alerts (TASK-0057 / '
+            'TASK-0064 / TASK-0065). Asignación, MTTR, postmortem y comentarios '
+            'requieren un modelo de gestión de incidentes que el schema no '
+            'tiene — se difieren a un ticket de backend.'
         ),
     }
 

@@ -15,6 +15,65 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-006.4 — Incidentes (Platform Owner)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** cuarta vista del rol Platform Owner. Feed cross-tenant de incidentes en `/platform/platform-incidents` consumiendo un nuevo endpoint `GET /v1/platform/incidents` (montado en `platform_admin_router`, con las mismas dependencias de seguridad que el resto del router: `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`). Es la vista cross-tenant de `app.operator_alerts` (TASK-0057 / TASK-0064 / TASK-0065): las alertas de operador que dispararon a lo largo de la flota, con una severidad y un runbook derivados por tipo. La vista respeta la referencia visual `docs/HTML DESIGN/Platform Owner/04 _ Incidentes.html` y reusa primitivas/tokens de UI-001..UI-005.
+- **Cambios realizados:**
+  - **Backend — `app/services/platform_incidents.py` (nuevo):**
+    - `SEVERITY_BY_KIND` / `severity_for_kind(kind)` — deriva la severidad del `kind` de la alerta: `backup_failure` → P1 (integridad de datos a nivel sistema), `outbound_dlq_threshold` / `complaint` → P2, `negative_feedback` → P3. Tipos desconocidos caen a P3 en vez de lanzar.
+    - `RUNBOOK_BY_KIND` / `runbook_for_kind(kind)` — mapea solo los `kind` con un runbook publicado en `docs/runbooks/` (`outbound_dlq_threshold` → `rate-limit-meta-hit.md`); el resto devuelve None en vez de adivinar.
+    - `is_open(status)` — `pending` y `failed` cuentan como abiertos (necesitan atención); `sent` significa que el operador fue notificado.
+    - `summarize_incidents(incidents)` — agrega contadores KPI: total, abiertos, resueltos, desglose por severidad y por estado, y conteo de tenants distintos afectados (las alertas de sistema con `tenant_id` NULL no cuentan).
+    - Helpers puros — la lectura SQL vive en la ruta y entrega aquí las filas para derivar y resumir.
+  - **Backend — `app/api/v1/routes.py`:**
+    - Nuevo handler `platform_incidents_feed` decorado con `@platform_admin_router.get('/platform/incidents')`. Valida los filtros `status` (`pending|sent|failed`) y `kind` (los 4 kinds del CHECK del schema) con regex anclada, hace una query a `app.operator_alerts` con `left join app.tenants`, mapea cada fila a un incidente con `severity`/`runbook`/`is_open`/identidad de tenant/payload/timeline de entrega, y devuelve `{generated_at, incidents, summary, note}`.
+    - La lectura cross-tenant pasa por `set_config('app.support_mode', 'true', true)` — `operator_alerts` tiene RLS y un `tenant_id` nullable para alertas de sistema (`backup_failure`); el comentario del schema documenta que surfacing de filas NULL-tenant bajo `app.support_mode()` es el path de operador previsto (TASK-0064). Se setea transaction-local.
+    - **Sin cambio en el bloque `platform_admin_router = APIRouter(...)`** — las tres dependencias siguen ahí; el handler no declara `dependencies=[]` propio (test estático que lo verifica). Import añadido: `from app.services import platform_incidents`.
+  - **Frontend — `admin-panel/src/`:**
+    - `services/coreApi.js`: nueva función `getPlatformIncidents(session, {status, kind, limit})` que serializa los filtros como query string. No envía `X-Tenant-Id` (la vista es cross-tenant).
+    - `features/platform/incidents/` (nuevo, 10 archivos):
+      - `Incidents.jsx` (90 LOC) — orquesta filtros, estado de seleccionado y envuelve todo en `<RequirePermission capability="platform.incidents.read" mode="R">`.
+      - `meta.js` (43 LOC) — label/tone maps compartidos (`SEVERITY_TONE`, `STATUS_TONE`, `STATUS_LABEL`, `KIND_LABEL`, `formatDateTime`) para que la tabla y el drawer no los re-implementen (mandato: cero duplicación).
+      - `components/IncidentKpis.jsx` (43 LOC) — 4 KPI tiles desde el `summary` del endpoint.
+      - `components/IncidentFilters.jsx` (52 LOC) — selects de estado y tipo; componente tonto, el hook hace el refetch.
+      - `components/IncidentsTable.jsx` (90 LOC) — `<DataTable>` con severidad/tipo/tenant/estado/detectado/runbook; click de fila abre el drawer.
+      - `components/IncidentDrawer.jsx` (88 LOC) — `<Modal>` con el payload de la alerta y el timeline de entrega (detectado → programado → intentos/último error → notificado).
+      - `hooks/usePlatformIncidents.js` (66 LOC) — fetch encapsulado con filtros, cancellation en unmount, `refresh()`.
+      - `Incidents.module.css` (152 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/platform/incidents/` → 0 resultados (criterio 0.bis.4 del backlog).
+      - `index.js` (barrel) + `Incidents.test.jsx` (160 LOC, 5 tests).
+    - `app/moduleRegistry.js`: `'platform-incidents'` deja de caer al placeholder y ahora apunta a `Incidents` con capability `platform.incidents.read`.
+    - `data/modules.js`: nuevo módulo `platform-incidents` (el `PLATFORM_NAV` ya lo referenciaba en la sección "Operaciones").
+- **Archivos modificados / creados:**
+  - `app/services/platform_incidents.py` (nuevo).
+  - `app/api/v1/routes.py` (handler `platform_incidents_feed`, import `platform_incidents`).
+  - `tests/test_platform_incidents_static.py` (nuevo — 7 tests estáticos + funcionales).
+  - `admin-panel/src/services/coreApi.js` (export `getPlatformIncidents`).
+  - `admin-panel/src/features/platform/incidents/{Incidents.jsx,Incidents.module.css,Incidents.test.jsx,meta.js,index.js,components/{IncidentKpis,IncidentFilters,IncidentsTable,IncidentDrawer}.jsx,hooks/usePlatformIncidents.js}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `platform-incidents → Incidents`).
+  - `admin-panel/src/data/modules.js` (módulo `platform-incidents`).
+  - `docs/UI_BACKLOG.md` (UI-006.4 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **32 suites, 139 tests pasan** (5 nuevos de Incidents). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.1..3: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y no ejecuta vitest.
+  - `python -m pytest tests/test_platform_incidents_static.py tests/test_platform_billing_static.py tests/test_system_health_static.py tests/test_fleet_tenants_static.py` → **33 passed**.
+  - `python -m compileall app -q` → OK. `ruff check .` → All checks passed!
+- **Seguridad:**
+  - `GET /v1/platform/incidents` hereda las tres dependencias del router (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`) — el handler **no** declara su propio `dependencies=` override, y un test estático lo verifica como contrato. Otros tests verifican que el path no aparece en `tenant_admin_router` / `tenant_ops_router` / `tenant_user_router`.
+  - La lectura cross-tenant usa `support_mode` transaction-local — `operator_alerts` tiene RLS con `tenant_id` nullable, y el comentario del schema (TASK-0064) documenta explícitamente que surfacing de filas NULL-tenant bajo `app.support_mode()` es el path de operador previsto. No es una relajación de seguridad: el router exige platform_owner + MFA verificada antes del handler.
+  - Los filtros `status` y `kind` se validan server-side con regex anclada a los CHECK constraints del schema (rechazo 422 fuera del whitelist).
+  - El payload no expone PII de contacto: la query devuelve el `payload jsonb` de la alerta (que TASK-0057/0064/0065 ya construyen sin `phone_e164` ni contenidos de mensaje), identidad de tenant y campos de timeline de entrega. Nunca `contact_id` ni datos de contacto.
+  - El frontend espeja el gate vía `<RequirePermission capability="platform.incidents.read" mode="R">`. La matriz UI-005 ya deniega `platform.incidents.read` a todos los roles de tenant.
+- **Limitaciones / próximos pasos:**
+  - **Feed read-only, no gestión de incidentes.** El HTML de referencia muestra asignación de operador, MTTR, links de postmortem, comentarios y acciones de escritura ("Marcar resuelto", "Reasignar", "Nuevo incidente"). Nada de eso está modelado: `app.operator_alerts` es una cola de notificación, no un modelo de gestión de incidentes. Un sistema completo (tablas `incidents` / `incident_events`, asignados, MTTR, postmortems) es un ticket de backend nuevo fuera del alcance de UI-006.4. La vista renderiza el feed read-only honesto y lo declara en una nota al pie y como diferencia intencional en el PR.
+  - **Severidad y runbook derivados, no almacenados.** La severidad P1/P2/P3 se deriva del `kind` de la alerta (no hay columna `severity` en `operator_alerts`); el runbook se mapea solo para `outbound_dlq_threshold` que tiene un runbook publicado claro. Si en el futuro se modela severidad/runbook por incidente, la derivación se reemplaza por el dato real.
+  - **El "timeline" es el timeline de entrega de la alerta**, no un timeline de incidente: `created_at → scheduled_for → attempts/last_error → sent_at`. Es lo que `operator_alerts` realmente almacena; un timeline de incidente con eventos/comentarios llega con el modelo de gestión de incidentes.
+  - El panel "Runbooks disponibles" del HTML es la vista UI-006.6 — Runbooks; no se incluye aquí para no duplicar alcance.
+  - Próxima tarea `PENDING` real: **UI-006.5 — Outbound DLQ · fleet** (vista cross-tenant del DLQ de TASK-0065, filtros por tenant/error_code/ventana de tiempo, reintentar masivo con confirmación).
+
+---
+
 ### UI-006.3 — Billing · MRR (Platform Owner)
 
 - **Fecha:** 2026-05-14

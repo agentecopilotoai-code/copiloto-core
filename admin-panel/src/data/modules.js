@@ -21,6 +21,13 @@ export const adminModules = [
     capability: 'platform.billing.read',
   },
   {
+    id: 'platform-incidents',
+    label: 'Incidentes',
+    summary: 'Feed cross-tenant de alertas de operador (TASK-0057/0064/0065) con severidad y runbook derivados por tipo. UI-006.4.',
+    scope: ['Lista de incidentes con severidad y tenant', 'Filtros por estado y tipo', 'KPIs de incidentes abiertos', 'Drawer con payload y timeline de entrega'],
+    capability: 'platform.incidents.read',
+  },
+  {
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',
