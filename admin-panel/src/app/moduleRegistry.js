@@ -23,7 +23,7 @@ import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage
 import { KnowledgeStudio } from '../features/owner-admin/knowledge-studio/index.js';
 import { LegalModule } from '../features/owner-admin/legal/index.js';
 import { MediaLibraryModule } from '../features/owner-admin/media-library/index.js';
-import { OperationsDesk } from '../components/modules/operations/OperationsDesk.jsx';
+import { OperationsDesk } from '../features/agente/inbox/index.js';
 import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
 import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness.jsx';
 import { SegmentsModule } from '../features/manager/segments/index.js';

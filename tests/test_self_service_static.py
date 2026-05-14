@@ -30,7 +30,16 @@ from app.services.appointment_self_service import (
 
 SELF_SERVICE = Path('app/services/appointment_self_service.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
-OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
 def _tenant_setup_source() -> str:
@@ -118,7 +127,7 @@ def test_escalation_form_exposes_self_service_min_hours():
 
 
 def test_operations_desk_renders_self_service_badge():
-    source = OPERATIONS_DESK.read_text()
+    source = _operations_desk_source()
     assert 'self-service' in source
     assert 'self_service' in source
 

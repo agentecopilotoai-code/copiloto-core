@@ -29,7 +29,16 @@ TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 def _tenant_setup_source() -> str:
     return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
-OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 
 
 # ───── Pure helpers ─────
@@ -384,7 +393,7 @@ def test_tenant_wizard_has_notificaciones_tab():
 
 
 def test_operations_desk_renders_confirmation_and_rating_badges():
-    source = OPERATIONS_DESK.read_text()
+    source = _operations_desk_source()
     assert 'appointment-badges' in source
     assert 'confirmation-' in source
     assert 'feedback-rating' in source

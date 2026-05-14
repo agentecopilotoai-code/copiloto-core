@@ -593,9 +593,9 @@ src/
 >
 > **Aplica receta 0.bis.1 + mapping 0.bis.3 + criterio 0.bis.4** para cada subtarea.
 
-#### UI-009.1 — Operación · Inbox (28)
-- Lista de conversaciones con filtros (no asignadas, mías, con handoff, urgentes), composer integrado, panel lateral del contacto activo.
-- Split de `OperationsDesk.jsx` en: `InboxList` + `ConversationView` + `MessageComposer` + `ContactSidePanel`.
+#### UI-009.1 — Operación · Inbox (28) — DONE (2026-05-14)
+- **Alcance:** split estructural del monolito `OperationsDesk.jsx` (2088 LOC) a la feature `src/features/agente/inbox/` — orquestador `OperationsDesk.jsx` (`export function OperationsDesk`, gateado con `<RequirePermission capability="conversations.view">`) + `inboxData.js` puro + 4 hooks (`useInboxData` lista/filtros/stream SSE/composer/handoff, `useContactPanelData` etiquetas+notas, `useScheduleData` recursos/agenda/citas/pagos, `useServiceRequestsData` SR+cotizaciones) + componentes `InboxList` + `ConversationView` + `MessageComposer` + `ContactSidePanel` (este último compuesto por `contact-panel/{ContactTagsSection,ContactScheduleSection,ContactResourceForm,ContactServiceRequestsSection}`) + `MessageContent`. Toda la lógica se preserva verbatim: ~38 llamadas a `coreApi`, el stream WebSocket con reconexión backoff exponencial, la máquina de estados de handoff, el append optimista del detalle y todos los `data-*`. El id de módulo sigue siendo `operations-desk` por estabilidad de routing (la carpeta es `inbox/`); el home del agente `operations-desk` ahora renderiza este Inbox, satisfaciendo «el landing del agente es inbox». Todos los archivos ≤ 400 LOC.
+- **Tests:** `inboxData.test.js` (10 tests de helpers puros) + `OperationsDesk.test.jsx` (5 tests: render del inbox para un agente, apertura del stream WebSocket, detalle de conversación al seleccionar, cambio de filtro Quejas, `AccessDenied` sin `conversations.view`). 13 tests estáticos de pytest repuntados al feature dir vía un helper `_operations_desk_source()` que concatena el `*.js*` de la carpeta.
 
 #### UI-009.2 — Operación · Mis handoffs (29)
 - Filtro pre-aplicado: `assignee_id = current_user`. Reusa `InboxList`.
