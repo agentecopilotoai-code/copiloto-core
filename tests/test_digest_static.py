@@ -47,10 +47,15 @@ COMPOSE = Path('docker-compose.yml')
 WORKER = Path('app/workers/digest_worker.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+DIGEST_REPORTS_FEATURE = Path('admin-panel/src/features/manager/digest-reports')
 
 
 def _tenant_setup_source() -> str:
     return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
+
+
+def _digest_reports_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(DIGEST_REPORTS_FEATURE.rglob('*.js*')))
 SCHEMAS = Path('app/api/v1/schemas.py')
 
 
@@ -436,8 +441,13 @@ def test_worker_ensures_internal_conversation_for_whatsapp_digest():
 
 def test_wizard_renders_digest_subscriptions_panel():
     wizard = _tenant_setup_source()
-    panel = _tenant_setup_source()
-    assert "import DigestSubscriptionsPanel from './DigestSubscriptionsPanel.jsx'" in wizard
+    # El panel se relocó a features/manager/digest-reports/ en UI-008.4; el
+    # wizard lo sigue embebiendo desde su nueva ubicación.
+    panel = _digest_reports_source()
+    assert (
+        "import DigestSubscriptionsPanel from "
+        "'../../../manager/digest-reports/components/DigestSubscriptionsPanel.jsx'"
+    ) in wizard
     assert '<DigestSubscriptionsPanel' in wizard
     # El panel vive bajo la pestaña Notificaciones (activeTab='notificaciones').
     notif_index = wizard.find("activeTab === 'notificaciones'")

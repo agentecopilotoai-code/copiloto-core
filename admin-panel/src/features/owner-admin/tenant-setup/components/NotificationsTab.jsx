@@ -1,5 +1,5 @@
 import { ComplaintAlertChannelsFieldset } from './ComplaintAlertChannelsFieldset.jsx';
-import DigestSubscriptionsPanel from './DigestSubscriptionsPanel.jsx';
+import DigestSubscriptionsPanel from '../../../manager/digest-reports/components/DigestSubscriptionsPanel.jsx';
 
 export function NotificationsTab({ state, actions, session }) {
   const { notificationSettings, isBusy, currentTenantId } = state;

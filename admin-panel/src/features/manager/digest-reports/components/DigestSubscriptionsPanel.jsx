@@ -6,21 +6,29 @@ import {
   listDigestSubscriptions,
   updateDigestSubscription,
 } from '../../../../services/coreApi.js';
+import {
+  CADENCE_OPTIONS,
+  cadenceLabel,
+  emptyForm,
+  formatLastSent,
+} from '../digestReportsData.js';
+import styles from '../DigestReports.module.css';
 
-const CADENCE_OPTIONS = [
-  { value: 'daily', label: 'Diario (todos los días a las 08:00 del tenant)' },
-  { value: 'weekly', label: 'Semanal (lunes 08:00)' },
-];
-
-function emptyForm() {
-  return {
-    recipient_email: '',
-    recipient_whatsapp: '',
-    cadence: 'daily',
-    enabled: true,
-  };
-}
-
+/**
+ * UI-008.4 — Suscripciones a resúmenes (TASK-0067).
+ *
+ * Relocated verbatim from `features/owner-admin/tenant-setup/components/` into
+ * the Manager `digest-reports` feature. The component still self-manages its
+ * subscriptions state and every `coreApi` call site, business rule (the "al
+ * menos un email o whatsapp" validation, the native delete `window.confirm`,
+ * the cadence options, the enabled toggle) and `data-*` attribute is preserved.
+ * The only changes from the legacy file: the `coreApi` import path for the new
+ * location, and the legacy global classNames / inline styles swapped for the
+ * feature CSS module with 100% `var(--...)` tokens.
+ *
+ * Still consumed as a default export by the tenant-setup wizard's
+ * `NotificationsTab` from its new location.
+ */
 export default function DigestSubscriptionsPanel({ session, tenantId }) {
   const [subscriptions, setSubscriptions] = useState([]);
   const [form, setForm] = useState(emptyForm());
@@ -98,13 +106,9 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
   }
 
   return (
-    <fieldset
-      className="wide"
-      data-wizard-field="digest_subscriptions"
-      style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '0.75rem 1rem' }}
-    >
-      <legend>Suscripciones a resúmenes (TASK-0067)</legend>
-      <p className="hint" style={{ marginTop: 0 }}>
+    <fieldset className={styles.panel} data-wizard-field="digest_subscriptions">
+      <legend className={styles.panelLegend}>Suscripciones a resúmenes (TASK-0067)</legend>
+      <p className={styles.hint}>
         Configura emails y WhatsApps del manager para recibir el resumen diario
         (08:00) o semanal (lunes 08:00). Reutiliza el SMTP de Alertas al equipo
         y la plantilla aprobada <code>digest_daily_v1</code> /{' '}
@@ -112,13 +116,13 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
       </p>
 
       {error ? (
-        <p className="error" role="alert" style={{ color: 'var(--danger, #b00020)' }}>
+        <p className={styles.error} role="alert">
           {error}
         </p>
       ) : null}
 
-      <form className="form-grid" onSubmit={handleCreate} data-digest-form>
-        <label className="wide">
+      <form className={styles.form} onSubmit={handleCreate} data-digest-form>
+        <label className={styles.field}>
           Email del destinatario
           <input
             type="email"
@@ -127,7 +131,7 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
             onChange={(e) => setForm({ ...form, recipient_email: e.target.value })}
           />
         </label>
-        <label className="wide">
+        <label className={styles.field}>
           WhatsApp (E.164)
           <input
             type="text"
@@ -136,7 +140,7 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
             onChange={(e) => setForm({ ...form, recipient_whatsapp: e.target.value })}
           />
         </label>
-        <label className="wide">
+        <label className={styles.field}>
           Cadencia
           <select
             value={form.cadence}
@@ -149,7 +153,7 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
             ))}
           </select>
         </label>
-        <label className="inline-check wide">
+        <label className={styles.checkField}>
           <input
             type="checkbox"
             checked={form.enabled}
@@ -157,60 +161,62 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
           />
           Activar al crear
         </label>
-        <button type="submit" disabled={saving || !tenantId}>
-          {saving ? 'Guardando…' : 'Agregar suscripción'}
+        <button type="submit" className={styles.submitButton} disabled={saving || !tenantId}>
+          {saving ? 'Guardando…' : 'Suscribir destinatario'}
         </button>
       </form>
 
-      <hr style={{ margin: '1rem 0' }} />
+      <hr className={styles.divider} />
 
-      {loading ? <p>Cargando…</p> : null}
+      {loading ? <p className={styles.hint}>Cargando…</p> : null}
       {!loading && subscriptions.length === 0 ? (
-        <p className="hint">Aún no hay suscripciones configuradas.</p>
+        <p className={styles.hint}>Aún no hay suscripciones configuradas.</p>
       ) : null}
 
       {subscriptions.length > 0 ? (
-        <table className="data-table" style={{ width: '100%' }}>
-          <thead>
-            <tr>
-              <th>Email</th>
-              <th>WhatsApp</th>
-              <th>Cadencia</th>
-              <th>Estado</th>
-              <th>Último envío</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {subscriptions.map((sub) => (
-              <tr key={sub.id} data-digest-row={sub.id}>
-                <td>{sub.recipient_email || '—'}</td>
-                <td>{sub.recipient_whatsapp || '—'}</td>
-                <td>{sub.cadence}</td>
-                <td>
-                  <label className="inline-check">
-                    <input
-                      type="checkbox"
-                      checked={sub.enabled}
-                      onChange={() => handleToggle(sub)}
-                    />
-                    {sub.enabled ? 'Activa' : 'Pausada'}
-                  </label>
-                </td>
-                <td>{sub.last_sent_at ? new Date(sub.last_sent_at).toLocaleString() : 'Nunca'}</td>
-                <td>
-                  <button
-                    type="button"
-                    className="button-link"
-                    onClick={() => handleDelete(sub)}
-                  >
-                    Eliminar
-                  </button>
-                </td>
+        <div className={styles.tableWrap}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>WhatsApp</th>
+                <th>Cadencia</th>
+                <th>Estado</th>
+                <th>Último envío</th>
+                <th aria-label="Acciones" />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {subscriptions.map((sub) => (
+                <tr key={sub.id} data-digest-row={sub.id}>
+                  <td>{sub.recipient_email || '—'}</td>
+                  <td>{sub.recipient_whatsapp || '—'}</td>
+                  <td>{cadenceLabel(sub.cadence)}</td>
+                  <td>
+                    <label className={styles.checkField}>
+                      <input
+                        type="checkbox"
+                        checked={sub.enabled}
+                        onChange={() => handleToggle(sub)}
+                      />
+                      {sub.enabled ? 'Activa' : 'Pausada'}
+                    </label>
+                  </td>
+                  <td>{formatLastSent(sub.last_sent_at)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className={styles.linkButton}
+                      onClick={() => handleDelete(sub)}
+                    >
+                      Eliminar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : null}
     </fieldset>
   );
