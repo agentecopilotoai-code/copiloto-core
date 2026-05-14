@@ -96,6 +96,18 @@ def test_extract_mfa_verified_string_amr_pwd():
     assert _extract_mfa_verified({'amr': 'pwd'}) is False
 
 
+def test_extract_mfa_verified_true_from_namespaced_claim():
+    # Access tokens never carry ``amr``; the post-login Action forwards the
+    # evidence as the namespaced ``mfa_verified`` claim instead.
+    ns = 'https://copilotoia.example'
+    assert _extract_mfa_verified({f'{ns}/mfa_verified': True}, ns) is True
+
+
+def test_extract_mfa_verified_false_from_namespaced_claim():
+    ns = 'https://copilotoia.example'
+    assert _extract_mfa_verified({f'{ns}/mfa_verified': False}, ns) is False
+
+
 # ── authenticate_request: mfa_verified in state ────────────────────────────
 
 def test_authenticate_sets_mfa_verified_true():
