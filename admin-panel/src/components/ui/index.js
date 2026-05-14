@@ -9,5 +9,6 @@ export { Modal } from './Modal.jsx';
 export { PageHeader } from './PageHeader.jsx';
 export { Pagination } from './Pagination.jsx';
 export { StatusBadge } from './StatusBadge.jsx';
+export { Stepper } from './Stepper.jsx';
 export { Tabs } from './Tabs.jsx';
 export { ToastProvider, useToast } from './Toast.jsx';

@@ -496,9 +496,10 @@ src/
 - **Frontend:** nueva primitiva `components/ui/AlertBanner.jsx` (+ css + test) exportada en `components/ui/index.js`; `src/features/owner-admin/dashboard/` (Dashboard.jsx + componentes DashboardKpis/DashboardAlerts/DashboardQuickLinks + hook useDashboardData + helper puro dashboardData.js). Reusa `KpiCardWithDelta`, `AlertBanner`, `Card`, `PageHeader`, `EmptyState`, `<RequirePermission>`. Wiring: `dashboard` en `data/modules.js` + `moduleRegistry.js` + `nav.js` (sección "Inicio"); `matrix.js` `ROLE_HOME` owner/admin → `dashboard`.
 - **Tests:** 12 frontend — `AlertBanner.test.jsx` (3), `dashboardData.test.js` (5), `Dashboard.test.jsx` (4). Actualizados `router.test.jsx` y `usePermissions.test.jsx` por el nuevo `ROLE_HOME`.
 
-#### UI-007.2 — Inicio · Onboarding self-service (10) — rediseño
-- Refactor de `OnboardingWizard.jsx` (261 LOC actual): mantener lógica, aplicar nuevo stepper visual del mockup.
-- Reusa `Stepper`, `FormField`, `Card`.
+#### UI-007.2 — Inicio · Onboarding self-service (10) — DONE (2026-05-14)
+- **Alcance:** rediseño del `OnboardingWizard.jsx` legacy (261 LOC) — se mantiene íntegra la lógica de TASK-0069 (wizard de 7 pasos con verificación server-side: `verify`/`complete`/test E2E del bot) y se aplica el stepper visual del mockup. Migrado a `src/features/owner-admin/onboarding/`; el archivo legacy `components/modules/onboarding/OnboardingWizard.jsx` se borró en el mismo commit. **Tarea frontend-only** — no toca el backend; los endpoints de onboarding ya existían.
+- **Frontend:** nueva primitiva `components/ui/Stepper.jsx` (+ css + test) exportada en `components/ui/index.js` — stepper vertical con marcadores de estado, línea conectora y slots `badge`/`children` por paso. `src/features/owner-admin/onboarding/` (Onboarding.jsx + componente OnboardingStep + helper puro onboardingSteps.js). Reusa `Stepper`, `FormField`, `Card`, `PageHeader`, `StatusBadge`, `AlertBanner`, `EmptyState`, `<RequirePermission>`. Wiring: `moduleRegistry.js` `'onboarding-wizard'` → `Onboarding` (mismo id de módulo, misma capability `onboarding.run` mode RW).
+- **Tests:** 10 frontend — `Stepper.test.jsx` (4), `onboardingSteps.test.js` (3), `Onboarding.test.jsx` (3: render + progreso + 7 pasos, verificación server-side, AccessDenied para rol sin `onboarding.run`).
 
 #### UI-007.3 — Conversaciones · Contactos (11) — split de `ContactsModule.jsx` (750 LOC)
 - Trocear en: `ContactsList`, `ContactDrawer`, `ContactTimeline`, `ContactTagsPanel`, `ContactNotesPanel`. Cada uno < 200 LOC.

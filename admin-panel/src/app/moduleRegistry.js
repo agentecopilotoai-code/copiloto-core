@@ -7,6 +7,7 @@ import { RolesAcl } from '../features/platform/roles-acl/index.js';
 import { Runbooks } from '../features/platform/runbooks/index.js';
 import { SystemHealth } from '../features/platform/system-health/index.js';
 import { Dashboard } from '../features/owner-admin/dashboard/index.js';
+import { Onboarding } from '../features/owner-admin/onboarding/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
 import { BranchesModule } from '../components/modules/branches/BranchesModule.jsx';
@@ -16,7 +17,6 @@ import { KnowledgeStudio } from '../components/modules/knowledge/KnowledgeStudio
 import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
 import { LegalModule } from '../components/modules/legal/LegalModule.jsx';
 import { MediaLibraryModule } from '../components/modules/media/MediaLibraryModule.jsx';
-import { OnboardingWizard } from '../components/modules/onboarding/OnboardingWizard.jsx';
 import { OperationsDesk } from '../components/modules/operations/OperationsDesk.jsx';
 import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
 import { PackagesModule } from '../components/modules/packages/PackagesModule.jsx';
@@ -59,7 +59,7 @@ export const MODULE_REGISTRY = Object.freeze({
   },
   dashboard: { Component: Dashboard, capability: 'analytics.tenant.read' },
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
-  'onboarding-wizard': { Component: OnboardingWizard, capability: 'onboarding.run', mode: 'RW' },
+  'onboarding-wizard': { Component: Onboarding, capability: 'onboarding.run', mode: 'RW' },
   services: { Component: ServiceCatalog, capability: 'services.read' },
   branches: { Component: BranchesModule, capability: 'branches.write', mode: 'RW' },
   packages: { Component: PackagesModule, capability: 'packages.write', mode: 'RW' },

@@ -15,6 +15,43 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.2 — Inicio · Onboarding self-service (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** rediseño del wizard de onboarding self-service (TASK-0069). Se mantiene íntegra la lógica de los 7 pasos verificados contra el servidor y se aplica el stepper visual del mockup, migrando el módulo de `components/modules/onboarding/` a `src/features/owner-admin/onboarding/`. **Tarea frontend-only** — los endpoints de onboarding (`getTenantOnboarding`/`verifyOnboardingStep`/`completeOnboardingStep`/`recordOnboardingTestMessageSent`) ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — nueva primitiva `components/ui/Stepper.jsx`** (+ `.module.css` + `.test.jsx`): stepper vertical con marcadores de estado (`done` con check, `current`/`blocked`/`pending` con índice), línea conectora entre pasos, y slots `badge` (header) y `children` (cuerpo del paso). Exportada en `components/ui/index.js`. Es la primitiva `Stepper` que el backlog de UI-007.2 pedía reusar.
+  - **Frontend — `src/features/owner-admin/onboarding/` (nuevo, 7 archivos):**
+    - `onboardingSteps.js` (helper puro): `ONBOARDING_STEPS` (catálogo de 7 pasos de TASK-0069, antes inline en el componente legacy), `ONBOARDING_TOTAL_STEPS`, y `stepStatus(stepNumber, lastCompleted)` — deriva `'done'`/`'current'`/`'blocked'` por paso. Pure — testeable sin React.
+    - `Onboarding.jsx` — orquesta toda la lógica del wizard (`progress`/`verifications`/`busy`/`notice`/`testWaId`, `refresh`, `handleVerify`, `handleComplete`, `handleSendTest`), idéntica a la del `OnboardingWizard` legacy; renderiza con `PageHeader` + `AlertBanner` (notices) + `Card` + `Stepper`. Envuelto en `<RequirePermission capability="onboarding.run" mode="RW">`.
+    - `components/OnboardingStep.jsx` — cuerpo por paso (botones Verificar/Completar/Ir al módulo, el formulario de test E2E del paso 7 con `FormField`, y la línea de resultado de verificación). Componente tonto guiado por props.
+    - `Onboarding.module.css` (118 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/onboarding/` → 0 resultados.
+    - `index.js` (barrel) + `onboardingSteps.test.js` (3 tests) + `Onboarding.test.jsx` (3 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'onboarding-wizard'` ahora apunta a `Onboarding` (misma capability `onboarding.run` mode RW; el router sigue inyectando `onNavigateToModule`). Eliminados el import legacy y su uso.
+    - **Borrado** `admin-panel/src/components/modules/onboarding/OnboardingWizard.jsx` (261 LOC) y su carpeta — sin código legacy en paralelo (mandato de UI sección 11).
+- **Archivos modificados / creados:**
+  - `admin-panel/src/components/ui/{Stepper.jsx,Stepper.module.css,Stepper.test.jsx}` (nuevos), `components/ui/index.js` (export).
+  - `admin-panel/src/features/owner-admin/onboarding/{Onboarding.jsx,Onboarding.module.css,Onboarding.test.jsx,onboardingSteps.js,onboardingSteps.test.js,index.js,components/OnboardingStep.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `onboarding-wizard → Onboarding`, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/onboarding/OnboardingWizard.jsx`.
+  - `docs/UI_BACKLOG.md` (UI-007.2 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **43 suites, 184 tests pasan** (10 nuevos: 4 Stepper + 3 onboardingSteps + 3 Onboarding). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.*/UI-007.1: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front (no vitest).
+  - **Sin cambios de backend** — no se ejecutan `ruff` ni `pytest` (no aplican).
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor**, schema ni dependencia. La lógica de verificación sigue siendo idéntica: el servidor es la autoridad de cada paso (TASK-0069 rechaza saltar con 409); el `stepStatus` del frontend solo espeja `progress.last_completed_step`.
+  - La vista está gateada vía `<RequirePermission capability="onboarding.run" mode="RW">` — la matriz UI-005 concede `onboarding.run` solo a admin/owner. Un manager/agent/viewer que llegue a la URL recibe `<AccessDenied/>` (test que lo verifica); el backend reverifica de todas formas.
+  - El formulario de test E2E (paso 7) sigue enviando solo el `wa_id` del admin a `recordOnboardingTestMessageSent` — sin cambios respecto al wizard legacy.
+- **Limitaciones / próximos pasos:**
+  - **El `stepsCatalog` del backend ya no se renderiza.** El wizard legacy mostraba un `<small>Backend key</small>` de debug cuando la `key` del catálogo del servidor difería de la local; el rediseño lo omite (los catálogos están alineados, era ruido para el usuario). La lógica de verificación/completado no depende de ese catálogo.
+  - **El panel "¿Qué pasa cuando termines?" del HTML no se incluye.** Es copy estático informativo (go-live readiness verde, badge "live", digest diario); se difiere — el dato accionable ya tiene su vista en `go-live-readiness`.
+  - Próxima tarea `PENDING` real: **UI-007.3 — Conversaciones · Contactos** (split de `ContactsModule.jsx`, 750 LOC, en `ContactsList` + `ContactDrawer` + `ContactTimeline` + `ContactTagsPanel` + `ContactNotesPanel`, cada uno < 200 LOC).
+
+---
+
 ### UI-007.1 — Inicio · Dashboard (Owner / Admin)
 
 - **Fecha:** 2026-05-14
