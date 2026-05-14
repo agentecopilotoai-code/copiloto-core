@@ -294,6 +294,76 @@ async def requeue_message(
     return {'requeued': True, 'message_id': str(message_id), 'idempotency_key': idem}
 
 
+async def requeue_tenant_dlq(
+    conn: Any,
+    *,
+    tenant_id: UUID,
+    error_code: str | None = None,
+    since: datetime | None = None,
+    limit: int = 500,
+    requested_by: str | None = None,
+) -> dict[str, Any]:
+    """Bulk-requeue the failed outbound messages of a single tenant.
+
+    Drives the platform-owner "retry masivo" action (UI-006.5). Selects up to
+    ``limit`` matching ``status='failed'`` outbound messages — optionally
+    narrowed by ``error_code`` and a ``since`` window — and requeues each one
+    through :func:`requeue_message`, so the idempotency-key / domain-event
+    guarantees are identical to a single manual retry.
+
+    Returns ``{matched, requeued, message_ids, capped}``: ``matched`` is how
+    many rows were selected, ``requeued`` how many actually transitioned, and
+    ``capped`` is True when the selection hit ``limit`` (more may remain).
+    """
+    bounded_limit = max(1, min(int(limit), 1000))
+    where_parts = ['tenant_id = $1', "status = 'failed'", "direction = 'outbound'"]
+    params: list[Any] = [tenant_id]
+    if error_code:
+        params.append(error_code)
+        where_parts.append(
+            f"coalesce(nullif(error_code, ''), 'transport_error') = ${len(params)}"
+        )
+    if since is not None:
+        params.append(since)
+        where_parts.append(f'coalesce(failed_at, created_at) >= ${len(params)}')
+    params.append(bounded_limit)
+    rows = await conn.fetch(
+        f"""
+        select id
+        from app.messages
+        where {' and '.join(where_parts)}
+        order by coalesce(failed_at, created_at) desc
+        limit ${len(params)}
+        """,
+        *params,
+    )
+    message_ids = [row['id'] for row in rows]
+    requeued: list[str] = []
+    for message_id in message_ids:
+        result = await requeue_message(
+            conn,
+            tenant_id=tenant_id,
+            message_id=message_id,
+            requested_by=requested_by,
+        )
+        if result.get('requeued'):
+            requeued.append(str(message_id))
+    log.info(
+        'outbound_dlq.bulk_requeued',
+        tenant_id=str(tenant_id),
+        matched=len(message_ids),
+        requeued=len(requeued),
+        error_code=error_code,
+        requested_by=requested_by,
+    )
+    return {
+        'matched': len(message_ids),
+        'requeued': len(requeued),
+        'message_ids': requeued,
+        'capped': len(message_ids) >= bounded_limit,
+    }
+
+
 async def maybe_emit_dlq_threshold_alerts(
     conn: Any,
     *,
@@ -367,4 +437,5 @@ __all__ = [
     'maybe_emit_dlq_threshold_alerts',
     'normalize_error_code',
     'requeue_message',
+    'requeue_tenant_dlq',
 ]

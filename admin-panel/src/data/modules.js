@@ -28,6 +28,13 @@ export const adminModules = [
     capability: 'platform.incidents.read',
   },
   {
+    id: 'platform-fleet-dlq',
+    label: 'Outbound DLQ',
+    summary: 'Vista cross-tenant del DLQ outbound (TASK-0065): fallos agregados por tenant y error code, con reintento masivo por tenant. UI-006.5.',
+    scope: ['Fallos agregados por tenant', 'Distribución por error code', 'Filtros por ventana y error code', 'Reintento masivo por tenant con confirmación'],
+    capability: 'platform.outbound_dlq.read',
+  },
+  {
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',

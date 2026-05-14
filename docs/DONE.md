@@ -15,6 +15,71 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-006.5 — Outbound DLQ · fleet (Platform Owner)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** quinta vista del rol Platform Owner. Vista cross-tenant del DLQ outbound en `/platform/platform-fleet-dlq` consumiendo dos endpoints nuevos en `platform_admin_router` (mismas dependencias de seguridad que el resto del router: `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`): `GET /v1/platform/outbound-dlq` (agregado de fallos) y `POST /v1/platform/outbound-dlq/retry` (reintento masivo por tenant). Es la vista cross-tenant de `app.messages` con `status=failed` / `direction=outbound` de TASK-0065. La vista respeta la referencia visual `docs/HTML DESIGN/Platform Owner/05 _ Outbound DLQ _ fleet.html` y reusa primitivas/tokens de UI-001..UI-005.
+- **Cambios realizados:**
+  - **Backend — `app/services/platform_dlq.py` (nuevo):**
+    - `RUNBOOK_BY_ERROR_CODE` / `runbook_for_error_code(code)` — mapea solo los error codes con un runbook publicado claro (`190` → `meta-token-expired.md`, `80007` → `rate-limit-meta-hit.md`); el resto devuelve None en vez de adivinar.
+    - `fold_dlq_by_tenant(rows)` — pliega las filas agregadas por `(tenant, error_code)` en una entrada por tenant con el total de fallos y el error code dominante, ordenadas por total descendente.
+    - `summarize_by_error_code(rows)` — suma conteos por error code across la flota, adjuntando el runbook; ordenado por conteo descendente.
+    - `summarize_fleet_dlq(rows)` — contadores KPI top-level: total de fallos, tenants afectados, error code dominante.
+    - Helpers puros — la agregación SQL vive en la ruta y entrega aquí las filas granulares para plegar.
+  - **Backend — `app/services/outbound_dlq.py`:**
+    - Nueva función `requeue_tenant_dlq(conn, tenant_id, error_code=None, since=None, limit=500, requested_by=None)` — selecciona hasta `limit` mensajes outbound `status='failed'` de un tenant (opcionalmente acotados por `error_code` y ventana `since`) y re-encola cada uno vía `requeue_message`, así que las garantías de idempotency-key / domain-event son idénticas a un reintento manual individual. Devuelve `{matched, requeued, message_ids, capped}`. Añadida a `__all__`.
+  - **Backend — `app/api/v1/schemas.py`:**
+    - Nuevo modelo `PlatformDlqRetryRequest` (`tenant_id` requerido, `error_code`/`window_minutes`/`limit` opcionales con validación) — el reintento masivo siempre es de **un** tenant explícito, no hay "reintentar todo" fleet-wide.
+  - **Backend — `app/api/v1/routes.py`:**
+    - `platform_outbound_dlq` (`@platform_admin_router.get('/platform/outbound-dlq')`) — agrega `app.messages` cross-tenant dentro de la ventana, agrupado por `(tenant, error_code)`; pliega con los helpers de `platform_dlq` y devuelve `{generated_at, window_minutes, since, summary, by_tenant, by_error_code, note}`. El query **nunca** selecciona `body_text` ni teléfono de contacto — solo conteos.
+    - `platform_outbound_dlq_retry` (`@platform_admin_router.post('/platform/outbound-dlq/retry')`) — verifica que el tenant exista, delega en `requeue_tenant_dlq` y audita la acción (`platform.outbound_dlq.bulk_retried`).
+    - Ambos handlers hacen `set_config('app.support_mode', 'true', true)` para la lectura/escritura cross-tenant de `app.messages` (que tiene RLS). Se setea transaction-local.
+    - **Sin cambio en el bloque `platform_admin_router = APIRouter(...)`** — las tres dependencias siguen ahí; los handlers no declaran `dependencies=[]` propio (tests estáticos que lo verifican). Imports añadidos: `from app.services import platform_dlq` y `PlatformDlqRetryRequest`.
+  - **Frontend — `admin-panel/src/`:**
+    - `services/coreApi.js`: nuevas funciones `getPlatformOutboundDlq(session, {windowMinutes, tenantId, errorCode})` y `retryPlatformOutboundDlq(session, payload)`. No envían `X-Tenant-Id` (la vista es cross-tenant).
+    - `features/platform/fleet-dlq/` (nuevo, 10 archivos):
+      - `FleetDlq.jsx` (130 LOC) — orquesta filtros, estado de reintento, y envuelve todo en `<RequirePermission capability="platform.outbound_dlq.read" mode="R">`. El "Entrar al tenant" usa support_mode (TASK-0077).
+      - `components/DlqKpis.jsx` (47 LOC) — 4 KPI tiles desde el `summary` del endpoint.
+      - `components/DlqFilters.jsx` (52 LOC) — select de ventana + input de error code; componente tonto, el hook hace el refetch.
+      - `components/DlqByTenantTable.jsx` (101 LOC) — `<DataTable>` "Por tenant" con el botón "Reintentar" gateado tras `<RequirePermission capability="platform.outbound_dlq.retry" mode="RW" hidden>`.
+      - `components/DlqByErrorCodePanel.jsx` (45 LOC) — lista "Distribución por error code" con runbook.
+      - `components/DlqRetryConfirm.jsx` (84 LOC) — `<Modal>` de confirmación del reintento masivo; tras resolver muestra el resultado en vez del botón (la acción nunca es fire-and-forget silencioso).
+      - `hooks/usePlatformDlq.js` (52 LOC) — fetch encapsulado con filtros, cancellation en unmount, `refresh()`.
+      - `FleetDlq.module.css` (165 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/platform/fleet-dlq/` → 0 resultados (criterio 0.bis.4 del backlog).
+      - `index.js` (barrel) + `FleetDlq.test.jsx` (130 LOC, 5 tests).
+    - `app/moduleRegistry.js`: `'platform-fleet-dlq'` deja de caer al placeholder y ahora apunta a `FleetDlq` con capability `platform.outbound_dlq.read`.
+    - `data/modules.js`: nuevo módulo `platform-fleet-dlq` (el `PLATFORM_NAV` ya lo referenciaba en la sección "Operaciones").
+- **Archivos modificados / creados:**
+  - `app/services/platform_dlq.py` (nuevo).
+  - `app/services/outbound_dlq.py` (`requeue_tenant_dlq` + `__all__`).
+  - `app/api/v1/schemas.py` (`PlatformDlqRetryRequest`).
+  - `app/api/v1/routes.py` (handlers `platform_outbound_dlq` + `platform_outbound_dlq_retry`, imports `platform_dlq` + `PlatformDlqRetryRequest`).
+  - `tests/test_platform_dlq_static.py` (nuevo — 8 tests estáticos + funcionales).
+  - `admin-panel/src/services/coreApi.js` (exports `getPlatformOutboundDlq`, `retryPlatformOutboundDlq`).
+  - `admin-panel/src/features/platform/fleet-dlq/{FleetDlq.jsx,FleetDlq.module.css,FleetDlq.test.jsx,index.js,components/{DlqKpis,DlqFilters,DlqByTenantTable,DlqByErrorCodePanel,DlqRetryConfirm}.jsx,hooks/usePlatformDlq.js}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `platform-fleet-dlq → FleetDlq`).
+  - `admin-panel/src/data/modules.js` (módulo `platform-fleet-dlq`).
+  - `docs/UI_BACKLOG.md` (UI-006.5 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **33 suites, 144 tests pasan** (5 nuevos de FleetDlq). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.1..4: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y no ejecuta vitest.
+  - `python -m pytest tests/test_platform_dlq_static.py tests/test_platform_incidents_static.py tests/test_platform_billing_static.py tests/test_system_health_static.py tests/test_fleet_tenants_static.py tests/test_metrics_observability_static.py` → **59 passed**.
+  - `python -m compileall app -q` → OK. `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Ambos endpoints heredan las tres dependencias del router (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`) — los handlers **no** declaran su propio `dependencies=` override, y tests estáticos lo verifican como contrato. Otros tests verifican que los paths no aparecen en `tenant_admin_router` / `tenant_ops_router` / `tenant_user_router`.
+  - La lectura/escritura cross-tenant usa `support_mode` transaction-local — `app.messages` tiene RLS; `support_mode` es el bypass que TASK-0077 diseñó para operaciones de plataforma autorizadas. No es una relajación: el router exige platform_owner + MFA verificada antes del handler.
+  - **Privacidad reforzada vs. el panel tenant-scoped:** el `GET` cross-tenant agrega únicamente conteos (`count(*) group by tenant, error_code`) — a diferencia del panel tenant-scoped (`/tenants/{id}/outbound/dlq`), nunca devuelve `body_text` ni `contact_phone_last4`. Un platform owner ve qué tenants tienen fallos y de qué tipo, no el contenido de los mensajes de los contactos de otros tenants.
+  - El reintento masivo es de **un tenant explícito** (`PlatformDlqRetryRequest.tenant_id` requerido) — no hay "reintentar todo" fleet-wide que pudiera re-encolar miles de mensajes de golpe. Cada mensaje pasa por `requeue_message`, que valida `tenant_id` + `id` + `status`. La acción se audita.
+  - El frontend espeja los gates: la vista tras `<RequirePermission capability="platform.outbound_dlq.read">` y el botón "Reintentar" tras `<RequirePermission capability="platform.outbound_dlq.retry" mode="RW" hidden>`. La matriz UI-005 ya deniega ambas capabilities a todos los roles de tenant.
+- **Limitaciones / próximos pasos:**
+  - **Reintento acotado a `limit` (default 500, máx 1000) por llamada.** Si un tenant tiene más fallos que el límite en la ventana, `requeue_tenant_dlq` devuelve `capped: true` y el modal lo indica ("límite alcanzado — pueden quedar más"). El operador puede reintentar de nuevo. No se hace un reintento ilimitado en una sola request para no bloquear la conexión ni el worker.
+  - **El tile "Auto-recuperados" del HTML se omite.** La auto-recuperación por retry exponencial del `event_worker` no se persiste como métrica consultable; mostrar un número inventado sería deshonesto. El KPI se reemplaza por "Códigos de error" (códigos distintos en la ventana), que sí es derivable.
+  - **Filtro por tenant vía API, no en la UI.** El endpoint `GET` acepta `tenant_id`, pero la UI no expone un select de tenant (requeriría cargar la lista de tenants); en su lugar la tabla "Por tenant" ya desglosa por tenant y el reintento es per-tenant. El filtro `tenant_id` queda disponible para integraciones/deep-links.
+  - Próxima tarea `PENDING` real: **UI-006.6 — Runbooks** (listado de runbooks de `docs/runbooks/` con búsqueda y filtros por categoría, renderizado de Markdown a HTML seguro reusando la lógica de TASK-0076).
+
+---
+
 ### UI-006.4 — Incidentes (Platform Owner)
 
 - **Fecha:** 2026-05-14

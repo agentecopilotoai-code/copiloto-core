@@ -54,6 +54,7 @@ from app.api.v1.schemas import (
     MemberRoleUpdate,
     MessageCreate,
     MessengerChannelUpsert,
+    PlatformDlqRetryRequest,
     PromotionCreate,
     PromotionUpdate,
     PromptCreate,
@@ -101,6 +102,7 @@ from app.db.pool import get_db, record_to_dict
 from app.services import locale as locale_service
 from app.services import metrics
 from app.services import platform_billing
+from app.services import platform_dlq
 from app.services import platform_incidents
 from app.services.locale import SUPPORTED_COUNTRIES
 from app.services.audit import audit
@@ -1466,6 +1468,122 @@ async def platform_incidents_feed(
             'tiene — se difieren a un ticket de backend.'
         ),
     }
+
+
+# UI-006.5: Platform-wide Outbound DLQ.
+#
+# Drives the platform-owner "Outbound DLQ · fleet" view. Same router-level
+# security as the rest of `platform_admin_router` (`authenticate_request` +
+# `require_platform_owner` + `require_mfa_for_privileged`) — never relaxed.
+#
+# The fleet DLQ is the cross-tenant aggregate of `app.messages` rows that ended
+# `status='failed'` / `direction='outbound'` (TASK-0065). `app.messages` has
+# RLS, so the cross-tenant read goes through `app.support_mode`, set
+# transaction-locally. The aggregate query never selects message bodies or
+# contact identifiers — only counts grouped by tenant and error_code.
+@platform_admin_router.get('/platform/outbound-dlq')
+async def platform_outbound_dlq(
+    window_minutes: int = Query(default=60, ge=1, le=10080),
+    tenant_id: UUID | None = Query(default=None),
+    error_code: str | None = Query(default=None, max_length=64),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Return the cross-tenant Outbound DLQ aggregate for the platform owner.
+
+    Counts failed outbound messages within the `window_minutes` window grouped
+    by tenant and by error_code. Optional `tenant_id` / `error_code` filters
+    narrow the aggregate. No message bodies or contact PII — only counts.
+    """
+    # Cross-tenant read. The router already enforces require_platform_owner +
+    # require_mfa_for_privileged; `support_mode` is set transaction-locally.
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+
+    since = datetime.now(UTC) - timedelta(minutes=window_minutes)
+    rows = await conn.fetch(
+        """
+        select
+            m.tenant_id,
+            t.slug,
+            t.display_name,
+            coalesce(nullif(m.error_code, ''), 'transport_error') as error_code,
+            count(*) as count
+        from app.messages m
+        join app.tenants t on t.id = m.tenant_id
+        where m.status = 'failed'
+          and m.direction = 'outbound'
+          and coalesce(m.failed_at, m.created_at) >= $1
+          and ($2::uuid is null or m.tenant_id = $2)
+          and (
+            $3::text is null
+            or coalesce(nullif(m.error_code, ''), 'transport_error') = $3
+          )
+        group by m.tenant_id, t.slug, t.display_name,
+                 coalesce(nullif(m.error_code, ''), 'transport_error')
+        """,
+        since,
+        tenant_id,
+        error_code,
+    )
+    row_dicts = [record_to_dict(row) for row in rows]
+
+    return {
+        'generated_at': datetime.now(UTC).isoformat(),
+        'window_minutes': window_minutes,
+        'since': since.isoformat(),
+        'summary': platform_dlq.summarize_fleet_dlq(row_dicts),
+        'by_tenant': platform_dlq.fold_dlq_by_tenant(row_dicts),
+        'by_error_code': platform_dlq.summarize_by_error_code(row_dicts),
+        'note': (
+            'Agregado cross-tenant de app.messages (status=failed, '
+            'direction=outbound) de TASK-0065. Cada tenant ve el detalle de '
+            'sus propios mensajes en su panel; esta vista solo agrega conteos.'
+        ),
+    }
+
+
+@platform_admin_router.post('/platform/outbound-dlq/retry')
+async def platform_outbound_dlq_retry(
+    payload: PlatformDlqRetryRequest,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Bulk-requeue the failed outbound messages of one tenant (UI-006.5).
+
+    The platform owner always retries a single tenant's DLQ explicitly — there
+    is no fleet-wide "retry everything". Each message is requeued through the
+    same `requeue_message` path as a single manual retry, so the idempotency
+    and domain-event guarantees are identical. The action is audited.
+    """
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+
+    tenant = await conn.fetchrow(
+        'select id from app.tenants where id = $1 and deleted_at is null',
+        payload.tenant_id,
+    )
+    if tenant is None:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+
+    since = datetime.now(UTC) - timedelta(minutes=payload.window_minutes)
+    from app.services.outbound_dlq import requeue_tenant_dlq
+
+    result = await requeue_tenant_dlq(
+        conn,
+        tenant_id=payload.tenant_id,
+        error_code=payload.error_code,
+        since=since,
+        limit=payload.limit,
+        requested_by=getattr(request.state, 'actor_id', None),
+    )
+    await audit(
+        conn,
+        tenant_id=payload.tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='platform.outbound_dlq.bulk_retried',
+        entity_type='tenant',
+        entity_id=str(payload.tenant_id),
+    )
+    return result
 
 
 async def update_tenant_record(

@@ -117,6 +117,20 @@ class ChannelModeUpdate(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class PlatformDlqRetryRequest(BaseModel):
+    """UI-006.5: bulk-retry the failed outbound messages of one tenant.
+
+    `tenant_id` is required so the platform owner always retries a single
+    tenant's DLQ explicitly — there is no fleet-wide "retry everything". The
+    optional `error_code` / `window_minutes` narrow the selection.
+    """
+
+    tenant_id: UUID
+    error_code: str | None = Field(default=None, max_length=64)
+    window_minutes: int = Field(default=60, ge=1, le=10080)
+    limit: int = Field(default=500, ge=1, le=1000)
+
+
 MESSENGER_PROVIDER_PATTERN = '^(instagram_messenger|facebook_messenger)$'
 
 
