@@ -382,7 +382,7 @@ src/
 
 ### UI-004 — Capa de componentes de dominio reutilizables
 
-- **Estado:** PENDING
+- **Estado:** DONE (`src/components/domain/`: `TagPill`, `ChannelBadge`, `PaymentBadge`, `ContactCard`, `ConversationListItem`, `AppointmentCard`, `HandoffBanner`, `TimelineEntry`, `KpiCardWithDelta` + `index.js`; 30 tests vitest; `ContactsModule` y `OperationsDesk` consumen los componentes y eliminan su markup inline duplicado. `AvatarStack` y `ServiceTile` se difieren a sus tareas de feature — no aparecen duplicados en los módulos auditados.)
 - **Por qué bloquea:** `ContactsModule`, `OperationsDesk`, `CampaignsModule` repiten layout de ficha de contacto, lista de conversaciones, badges de cita.
 - **Alcance:**
   - Identificar y extraer a `src/components/domain/`: `ContactCard`, `ConversationListItem`, `AppointmentCard`, `HandoffBanner`, `PaymentBadge`, `ChannelBadge`, `TagPill`, `AvatarStack`, `TimelineEntry`, `ServiceTile`, `KpiCardWithDelta`.
