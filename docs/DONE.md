@@ -15,6 +15,50 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.7 — Negocio · Sedes (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** rediseño del módulo `BranchesModule.jsx` (480 LOC) en una feature bajo `src/features/owner-admin/branches/`, aplicando el mockup `15 _ Negocio _ Sedes.html`: la lista pasa de `<ul>` a grid de cards y el form de alta/edición de inline a `Modal`. **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/branches/` (nuevo, 11 archivos):**
+    - `branchesData.js` (helper puro): `WEEKDAYS`, `TIMEZONE_OPTIONS`, `MAPS_BASE_URL`, `emptyForm`, `toForm`, `buildPayload` (con validación: nombre y código requeridos), `buildMapsUrlFromInputs` (espejo verbatim de `app/services/maps.py`, TASK-0058), `formatLocation`, `summarizeHours` (resumen compacto agrupando días adyacentes con el mismo horario) — extraídos del monolito, testeables sin React.
+    - `hooks/useBranchesData.js`: capa de datos — estado de sedes + drawer/form + helpers de franjas (`addFranja`/`removeFranja`/`updateFranja`/`generateMapsUrl`) + handlers (`refresh`/`save`/`deactivate`/`openCreate`/`openEdit`), portados verbatim del legacy.
+    - `BranchesManager.jsx`: vista completa (PageHeader + lista + drawer), **ungated a propósito** — el `TenantSetupWizard` la embebe en su pestaña "Sedes" igual que reusaba el módulo legacy.
+    - `Branches.jsx`: orquestador / entrada de módulo — envuelve a `BranchesManager` en `<RequirePermission capability="branches.write" mode="RW">`.
+    - `components/BranchesList.jsx`: grid de cards (avatar + nombre + badge "Principal" + ubicación/teléfono + acciones + stats reales: horario, zona horaria, código).
+    - `components/BranchFormDrawer.jsx`: `<Modal>` con el form de alta/edición (nombre, código, dirección, ciudad, estado, país, lat/lng, zona horaria, teléfono, Maps URL con generador, orden, activa) que compone `OpeningHoursEditor`.
+    - `components/OpeningHoursEditor.jsx`: editor de franjas horarias por día (`data-testid="branches-hours"`).
+    - `Branches.module.css` (~230 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/branches/` → 0 resultados.
+    - `index.js` (barrel, exporta `Branches` + `BranchesManager`) + `branchesData.test.js` (8 tests) + `Branches.test.jsx` (5 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'branches'` ahora apunta a `Branches`; import legacy eliminado.
+    - `components/modules/tenantSetup/TenantSetupWizard.jsx`: la pestaña "Sedes" ahora importa y renderiza `BranchesManager` (ungated) en lugar del módulo legacy.
+    - **Borrado** `admin-panel/src/components/modules/branches/BranchesModule.jsx` (480 LOC) y su carpeta.
+  - **Backend — tests estáticos legacy actualizados:** `test_branches_static.py` y `test_maps_static.py` tenían hardcodeada la ruta `components/modules/branches/BranchesModule.jsx`. Se actualizaron para leer el feature dir nuevo combinando todos sus `.js*`, verificar el import nuevo en registry y wizard y que la ruta legacy ya no aparece. Los `data-testid` (`branches-hours`/`branches-maps-generate`/`branches-maps-url`) y la clase `branches-maps-preview` se preservaron en los componentes nuevos.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/branches/{Branches.jsx,BranchesManager.jsx,Branches.module.css,Branches.test.jsx,branchesData.js,branchesData.test.js,index.js,hooks/useBranchesData.js,components/{BranchesList,BranchFormDrawer,OpeningHoursEditor}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `branches → Branches`, import legacy eliminado).
+  - `admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx` (import + render de `BranchesManager`).
+  - **Eliminado:** `admin-panel/src/components/modules/branches/BranchesModule.jsx`.
+  - `tests/test_branches_static.py`, `tests/test_maps_static.py` (rutas actualizadas al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.7 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (13 nuevos: 8 branchesData + 5 Branches). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.1-6. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_branches_static.py tests/test_maps_static.py` → passed.
+  - `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizaron rutas en dos tests estáticos de backend.
+  - La lógica de las mutaciones se portó verbatim: `createBranch`/`updateBranch`/`deactivateBranch` siguen requiriendo rol admin/owner server-side (`tenant_admin_router`). La entrada de módulo está gateada vía `<RequirePermission capability="branches.write" mode="RW">` como defensa en profundidad; el backend reverifica. `BranchesManager` se exporta sin gate sólo para el wizard de Tenant Setup, contexto en el que el usuario ya está configurando su propio tenant — el backend sigue siendo la autoridad en cada request.
+  - `buildMapsUrlFromInputs` se portó verbatim del legacy: sigue siendo un espejo de presentación de `app/services/maps.py`; la URL canónica la persiste el backend al guardar si el campo queda vacío.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` en la desactivación.** El legacy usaba `window.confirm` antes de desactivar una sede; el rediseño lo preservó (mantener lógica). UI-011 (`ConfirmDialog`) lo barrerá.
+  - **Diferencia intencional declarada: las mini-stats por sede del HTML (Equipo, Citas 30d, Ocupación), el panel de mapa y el bar chart "Citas por sede" no se incluyen.** Dependen de joins de `resources`/`appointments` que el endpoint `/branches` no expone; se difieren. La card muestra los datos reales del endpoint (horario derivado de `opening_hours`, zona horaria, código) — no se fabrican datos.
+  - Próxima tarea `PENDING` real: **UI-007.8 — Canales · WhatsApp Cloud API** (refactor de `WhatsAppOnboarding.jsx`, 801 LOC — split en `WhatsAppWizardSteps` + `WhatsAppHealthPanel` + `TemplatesPanel`).
+
+---
+
 ### UI-007.6 — Negocio · Suscripciones (Owner / Admin)
 
 - **Fecha:** 2026-05-14

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import QualificationQuestionsPanel from './QualificationQuestionsPanel.jsx';
 import DigestSubscriptionsPanel from './DigestSubscriptionsPanel.jsx';
-import { BranchesModule } from '../branches/BranchesModule.jsx';
+import { BranchesManager } from '../../../features/owner-admin/branches/index.js';
 import {
   createContactTag,
   createTenant,
@@ -1172,7 +1172,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
             selección de sede al cliente cuando exista más de una activa.
           </p>
           {currentTenantId ? (
-            <BranchesModule
+            <BranchesManager
               module={{ label: 'Sedes', summary: 'Configura las ubicaciones físicas del tenant.' }}
               session={session}
               tenant={{ id: currentTenantId }}

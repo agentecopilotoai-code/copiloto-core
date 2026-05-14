@@ -11,7 +11,8 @@ Coverage:
   ``tenant_settings.notification_settings.location_*``.
 - Admin API: CRUD routes for branches, analytics + list filters by branch,
   audit actions ``branch.created/updated/deleted``.
-- Admin Panel: BranchesModule registered, wizard tab "Sedes", coreApi client.
+- Admin Panel: the redesigned ``branches`` feature module registered, wizard
+  tab "Sedes" embeds ``BranchesManager``, coreApi client.
 """
 from __future__ import annotations
 
@@ -29,9 +30,16 @@ BOOKING_FLOW = Path('app/services/booking_flow.py')
 NOTIFICATIONS = Path('app/services/notifications.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
-BRANCHES_MODULE = Path('admin-panel/src/components/modules/branches/BranchesModule.jsx')
+# UI-007.7: the branches module was redesigned into a feature directory.
+BRANCHES_FEATURE = Path('admin-panel/src/features/owner-admin/branches')
 WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
+
+
+def _branches_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(BRANCHES_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Schema ──────────────────────────────────────────────────────────────
@@ -271,8 +279,11 @@ def test_create_resource_persists_branch_id():
 
 def test_admin_panel_registers_branches_module():
     layout = ADMIN_LAYOUT.read_text()
-    assert "import { BranchesModule } from '../components/modules/branches/BranchesModule.jsx'" in layout
+    # UI-007.7: the registry now points at the redesigned feature module.
+    assert "import { Branches } from '../features/owner-admin/branches/index.js'" in layout
     assert 'branches: {' in layout
+    # The legacy module path must be fully gone (no parallel implementation).
+    assert 'components/modules/branches/BranchesModule' not in layout
     catalog = ADMIN_MODULES.read_text()
     assert "id: 'branches'" in catalog
     # UI-005: el gate ad-hoc minRole se reemplazó por la capability de la
@@ -281,7 +292,7 @@ def test_admin_panel_registers_branches_module():
 
 
 def test_branches_module_has_form_and_listing():
-    source = BRANCHES_MODULE.read_text()
+    source = _branches_feature_source()
     assert 'createBranch' in source
     assert 'updateBranch' in source
     assert 'deactivateBranch' in source
@@ -293,7 +304,11 @@ def test_wizard_adds_branches_tab():
     source = WIZARD.read_text()
     assert "{ id: 'branches', label: 'Sedes' }" in source
     assert 'data-wizard-tab="branches"' in source
-    assert "import { BranchesModule } from '../branches/BranchesModule.jsx'" in source
+    # UI-007.7: the wizard embeds the redesigned ungated manager component.
+    assert (
+        "import { BranchesManager } from '../../../features/owner-admin/branches/index.js'"
+        in source
+    )
 
 
 def test_core_api_exposes_branch_endpoints():
