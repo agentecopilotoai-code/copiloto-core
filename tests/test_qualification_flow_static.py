@@ -40,8 +40,15 @@ TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetup
 QUALIFICATION_PANEL = Path(
     'admin-panel/src/components/modules/tenantSetup/QualificationQuestionsPanel.jsx'
 )
-CONTACTS_MODULE = Path('admin-panel/src/components/modules/contacts/ContactsModule.jsx')
+# UI-007.3: the contacts module was split into a feature directory.
+CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+
+
+def _contacts_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(CONTACTS_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Schema additions ────────────────────────────────────────────────────
@@ -492,7 +499,7 @@ def test_qualification_panel_component_exists_and_uses_drag_handles():
 
 
 def test_contacts_module_renders_qualification_answers():
-    source = CONTACTS_MODULE.read_text()
+    source = _contacts_feature_source()
     assert 'qualification_questions' in source
     assert 'qualification_answers' in source
 

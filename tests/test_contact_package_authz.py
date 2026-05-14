@@ -143,7 +143,10 @@ def test_refund_contact_package_emits_audit():
 
 
 def test_contacts_module_documents_admin_only_packages_and_webhook_status():
-    ui = Path('admin-panel/src/components/modules/contacts/ContactsModule.jsx').read_text()
+    # UI-007.3: the contacts module was split — the packages panel now lives in
+    # the conversations-contacts feature directory.
+    feature_dir = Path('admin-panel/src/features/owner-admin/conversations-contacts')
+    ui = '\n'.join(path.read_text() for path in sorted(feature_dir.rglob('*.js*')))
     assert 'admin' in ui.lower()
     assert 'webhook' in ui.lower()
     # The hint must mention that payment_status is server-only by listing the

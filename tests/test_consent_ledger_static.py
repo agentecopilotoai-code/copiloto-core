@@ -64,7 +64,14 @@ ROUTES = Path('app/api/v1/routes.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-CONTACTS_UI = Path('admin-panel/src/components/modules/contacts/ContactsModule.jsx')
+# UI-007.3: the contacts module was split into a feature directory.
+CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
+
+
+def _contacts_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(CONTACTS_FEATURE.rglob('*.js*'))
+    )
 
 
 # ─── Fake asyncpg connection ────────────────────────────────────────────────
@@ -376,7 +383,7 @@ def test_16_admin_panel_exposes_consent_tab():
     api = CORE_API.read_text()
     assert 'export function listContactConsent' in api
     assert '/contacts/${contactId}/consent' in api
-    ui = CONTACTS_UI.read_text()
+    ui = _contacts_feature_source()
     assert 'listContactConsent' in ui
     assert 'contact-consent-panel' in ui
     assert 'Consentimiento' in ui

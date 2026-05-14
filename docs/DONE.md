@@ -15,6 +15,50 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.3 — Conversaciones · Contactos (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** split del monolito `ContactsModule.jsx` (685 LOC) en una feature troceada bajo `src/features/owner-admin/conversations-contacts/`, con cada componente < 200 LOC. **Tarea frontend-only** — la lógica CRM se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/conversations-contacts/` (nuevo, 11 archivos):**
+    - `contactsFormat.js` (helper puro): `formatDate`, `formatDateShort` y `renderQualificationAnswer(question, raw)` — extraídos del monolito, testeables sin React.
+    - `hooks/useContactsData.js` (214 LOC): capa de datos — owns los ~12 estados CRM y todos los handlers de fetch/mutación (`refreshContacts`/`refreshProfile`/`refreshContactPackages`/`refreshConsent`/`refreshTags`/`refreshAvailablePackages` + `assignTag`/`removeTag`/`assignPackage`/`refundPackage`/`updatePhone`/`createNote`), portados verbatim del legacy. Los componentes quedan presentacionales.
+    - `ConversationsContacts.jsx` (91 LOC): orquestador — `useContactsData` + layout lista/drawer, envuelto en `<RequirePermission capability="contacts.view" mode="R">`.
+    - `components/ContactsList.jsx` (89 LOC): columna izquierda — form de búsqueda/filtro + lista de `ContactCard`.
+    - `components/ContactDrawer.jsx` (184 LOC): columna derecha — header con nombre/teléfono + form de cambio de teléfono + resumen + calificación, y compone los 4 paneles.
+    - `components/ContactTagsPanel.jsx` (61 LOC): etiquetas asignadas + form de asignación.
+    - `components/ContactPackagesPanel.jsx` (100 LOC): paquetes — form de asignación + lista + reembolso. Conserva `data-testid="contact-packages-panel"`.
+    - `components/ContactTimeline.jsx` (118 LOC): historial read-only — citas + conversaciones + referidos + consentimiento. Conserva `data-testid="contact-referrals-panel"` y `data-testid="contact-consent-panel"`.
+    - `components/ContactNotesPanel.jsx` (64 LOC): form de nota + lista de notas internas.
+    - `ConversationsContacts.module.css` (~270 LOC): migración de las clases de `global.css` (`module-card`, `operations-layout`, `conversation-list`, `schedule-panel`...) a CSS module con tokens 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/conversations-contacts/` → 0 resultados.
+    - `index.js` (barrel) + `contactsFormat.test.js` (5 tests) + `ConversationsContacts.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'contacts'` ahora apunta a `ConversationsContacts`; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/contacts/ContactsModule.jsx` (685 LOC) y su carpeta — sin código legacy en paralelo (mandato de UI sección 11).
+  - **Backend — tests estáticos legacy actualizados:** 6 tests estáticos (`test_crm_contacts_static.py`, `test_packages_static.py`, `test_consent_ledger_static.py`, `test_referrer_tracking_static.py`, `test_qualification_flow_static.py`, `test_contact_package_authz.py`) tenían hardcodeada la ruta `components/modules/contacts/ContactsModule.jsx`. Se actualizaron para leer el feature dir nuevo combinando todos sus `.js*` (la lógica está repartida ahora entre hook + componentes), y `test_crm_contacts_static` además verifica que la ruta legacy ya no aparece en el registry. Los `data-testid` que esos tests verifican (`contact-packages-panel`/`contact-consent-panel`/`contact-referrals-panel`) se preservaron en los componentes nuevos.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/conversations-contacts/{ConversationsContacts.jsx,ConversationsContacts.module.css,ConversationsContacts.test.jsx,contactsFormat.js,contactsFormat.test.js,index.js,hooks/useContactsData.js,components/{ContactsList,ContactDrawer,ContactTagsPanel,ContactPackagesPanel,ContactTimeline,ContactNotesPanel}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `contacts → ConversationsContacts`, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/contacts/ContactsModule.jsx`.
+  - `tests/{test_crm_contacts_static,test_packages_static,test_consent_ledger_static,test_referrer_tracking_static,test_qualification_flow_static,test_contact_package_authz}.py` (rutas actualizadas al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.3 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **45 suites, 193 tests pasan** (9 nuevos: 5 contactsFormat + 4 ConversationsContacts). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.*/UI-007.1-2: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_crm_contacts_static.py tests/test_packages_static.py tests/test_consent_ledger_static.py tests/test_referrer_tracking_static.py tests/test_qualification_flow_static.py tests/test_contact_package_authz.py` → **110 passed**.
+  - `python -m compileall app -q` → OK. `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizaron rutas en tests estáticos de backend (assertions de estructura del front).
+  - La lógica de las mutaciones CRM se portó verbatim: `updateContactPhone` sigue mandando `phone_e164` + `reason` (queda en `audit_logs` como `contact.phone_changed`); `assignContactPackage`/`refundContactPackage` siguen requiriendo rol admin/owner server-side; el `payment_status` lo sigue escribiendo solo el webhook firmado del proveedor. El frontend no es la autoridad.
+  - La vista está gateada vía `<RequirePermission capability="contacts.view" mode="R">` — la matriz UI-005 concede `contacts.view` a viewer/agent/manager/admin/owner; el backend reverifica cada endpoint con su `require_min_role`.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` en el reembolso.** El legacy usaba `window.confirm` antes de reembolsar un paquete; el split lo preservó (mantener lógica). UI-011 (cross-cutting: `ConfirmDialog`) barrerá todos los `window.confirm`/`window.alert` del repo — esta vista se alineará entonces.
+  - **El HTML de referencia muestra una tabla densa + KPIs de CRM** (contactos totales, con consentimiento, VIPs, opt-out 30d); el split conserva el layout lista/drawer del módulo funcional (mandato "mantener lógica") y reusa el styling/tokens del HTML. Los KPIs de CRM agregados no están en ningún endpoint actual — se difieren; el dato accionable por contacto ya vive en el drawer.
+  - Próxima tarea `PENDING` real: **UI-007.4 — Negocio · Servicios** (split de `ServiceCatalog.jsx`, 868 LOC, en `ServicesTable` + `ServiceFormDrawer` + `ServiceReorder` + `RecallSettingsPanel`).
+
+---
+
 ### UI-007.2 — Inicio · Onboarding self-service (Owner / Admin)
 
 - **Fecha:** 2026-05-14

@@ -4,9 +4,18 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-CONTACTS_MODULE = Path('admin-panel/src/components/modules/contacts/ContactsModule.jsx')
+# UI-007.3: the contacts module was split into a feature directory.
+CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
 MODULES = Path('admin-panel/src/data/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
+
+
+def _contacts_feature_source() -> str:
+    """Concatenate every JS/JSX file of the conversations-contacts feature so
+    assertions survive the UI-007.3 split into list / drawer / panels / hook."""
+    return '\n'.join(
+        path.read_text() for path in sorted(CONTACTS_FEATURE.rglob('*.js*'))
+    )
 TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
 
@@ -97,9 +106,9 @@ def test_core_api_exposes_contact_crm_helpers():
 
 
 def test_contacts_module_exists_and_registered():
-    assert CONTACTS_MODULE.exists(), 'ContactsModule.jsx must exist'
-    component = CONTACTS_MODULE.read_text()
-    assert 'export function ContactsModule' in component
+    assert CONTACTS_FEATURE.is_dir(), 'conversations-contacts feature dir must exist'
+    component = _contacts_feature_source()
+    assert 'export function ConversationsContacts' in component
     assert 'listContacts' in component
     assert 'getContactProfile' in component
     assert 'createContactNote' in component
@@ -111,8 +120,10 @@ def test_contacts_module_exists_and_registered():
     assert 'Contactos' in modules
 
     layout = ADMIN_LAYOUT.read_text()
-    assert 'ContactsModule' in layout
+    assert 'ConversationsContacts' in layout
     assert 'contacts: {' in layout
+    # The legacy module must be fully gone (no parallel implementation).
+    assert 'components/modules/contacts/ContactsModule' not in layout
 
 
 def test_tenant_wizard_manages_contact_tags():

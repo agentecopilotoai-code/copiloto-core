@@ -8,11 +8,11 @@ import { Runbooks } from '../features/platform/runbooks/index.js';
 import { SystemHealth } from '../features/platform/system-health/index.js';
 import { Dashboard } from '../features/owner-admin/dashboard/index.js';
 import { Onboarding } from '../features/owner-admin/onboarding/index.js';
+import { ConversationsContacts } from '../features/owner-admin/conversations-contacts/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
 import { BranchesModule } from '../components/modules/branches/BranchesModule.jsx';
 import { CampaignsModule } from '../components/modules/campaigns/CampaignsModule.jsx';
-import { ContactsModule } from '../components/modules/contacts/ContactsModule.jsx';
 import { KnowledgeStudio } from '../components/modules/knowledge/KnowledgeStudio.jsx';
 import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
 import { LegalModule } from '../components/modules/legal/LegalModule.jsx';
@@ -77,7 +77,7 @@ export const MODULE_REGISTRY = Object.freeze({
   },
   'knowledge-studio': { Component: KnowledgeStudio, capability: 'knowledge.read' },
   'media-library': { Component: MediaLibraryModule, capability: 'media.write', mode: 'RW' },
-  contacts: { Component: ContactsModule, capability: 'contacts.view' },
+  contacts: { Component: ConversationsContacts, capability: 'contacts.view' },
   segments: { Component: SegmentsModule, capability: 'segments.write', mode: 'RW' },
   campaigns: { Component: CampaignsModule, capability: 'campaigns.write', mode: 'RW' },
   'operations-desk': { Component: OperationsDesk, capability: 'conversations.view' },

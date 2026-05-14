@@ -1,0 +1,293 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── list column ─────────────────────────────────────────────────────────── */
+
+.listCard {
+  position: sticky;
+  top: var(--space-4);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+  margin-bottom: var(--space-4);
+}
+
+.filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 140px;
+}
+
+.filterLabel {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.filter input,
+.filter select {
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-body);
+  transition: border-color var(--transition-base);
+}
+
+.filter input:focus,
+.filter select:focus,
+.inlineForm select:focus,
+.noteTextarea:focus,
+.phoneForm input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.contactList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+/* ── drawer column ───────────────────────────────────────────────────────── */
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.drawerHead {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.eyebrow {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.contactName {
+  margin: 2px 0;
+  font-size: var(--fs-h3);
+  color: var(--ink);
+}
+
+.contactPhone {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.phoneForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.formActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+}
+
+.summaryGrid div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.summaryGrid dt {
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.summaryGrid dd {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.sectionTitle {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.tagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.inlineForm {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.inlineForm select {
+  flex: 1;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-body);
+}
+
+.noteForm {
+  display: flex;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  align-items: flex-start;
+}
+
+.noteTextarea {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-body);
+  resize: vertical;
+}
+
+.appointmentList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.timelineList {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+/* ── buttons ─────────────────────────────────────────────────────────────── */
+
+.primaryButton {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--panel);
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--accent-ink);
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--bg-deep);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.linkButton {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.linkButton:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.linkButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
