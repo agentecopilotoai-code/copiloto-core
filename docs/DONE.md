@@ -15,6 +15,44 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.9 — Canales · Instagram / Messenger (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** refactor del módulo `SocialChannelsModule.jsx` (265 LOC) en una feature bajo `src/features/owner-admin/social-channels/`, aplicando el mockup `17 _ Canales _ Instagram _ Messenger.html` y reusando las primitivas del rediseño WhatsApp (UI-007.8). **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/social-channels/` (nuevo, 8 archivos):**
+    - `socialChannelsData.js` (helper puro): `PROVIDER_OPTIONS` (Instagram DM / Facebook Messenger), `emptyForm`, `providerMeta`, `channelForProvider`, `statusLabel`/`statusTone`, `channelRecipientId`, `buildPayload` (con validación: identificador de cuenta requerido; secretos solo se envían si el usuario los escribe).
+    - `hooks/useSocialChannelsData.js`: capa de datos — lista de canales + provider activo + form upsert + handler `submit` (con ordenamiento de canales por provider), portados verbatim del legacy.
+    - `SocialChannelsModule.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="social_channels.write" mode="RW">` + tabs de proveedor + `AlertBanner` para error/feedback + composición de status + form.
+    - `components/SocialChannelStatus.jsx`: panel de identificadores Meta + checks de secretos configurados (`Card` + `StatusBadge` + grid key-value); `EmptyState` cuando el canal no está configurado.
+    - `components/SocialChannelForm.jsx`: form de alta/edición del canal (identificador, business id, page access token, app secret, verify token `minLength={16}`, modo, ventana de servicio) reusando `Card`+`FormField`.
+    - `SocialChannelsModule.module.css` (~110 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/social-channels/` → 0 resultados.
+    - `index.js` (barrel) + `socialChannelsData.test.js` (6 tests) + `SocialChannelsModule.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'social-channels'` ahora importa la `SocialChannelsModule` de la feature; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/socialChannels/SocialChannelsModule.jsx` (265 LOC) y su carpeta.
+  - **Backend — test estático legacy actualizado:** `test_meta_messenger_static.py` tenía hardcodeada la ruta `components/modules/socialChannels/SocialChannelsModule.jsx`. Se actualizó para leer el feature dir nuevo combinando todos sus `.js*`. Los literales que verifica (`id: 'instagram_messenger'`, `id: 'facebook_messenger'`, `service_window_hours`, `recipient_account_id`, `app_secret`, `verify_token`, `account_mode`, `minLength={16}`, `upsertMessengerChannel`) se preservaron en los archivos nuevos. El otro test (`test_admin_panel_registers_social_channels_module_with_admin_role`) sigue verde: el componente conserva el nombre `SocialChannelsModule` en el registry.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/social-channels/{SocialChannelsModule.jsx,SocialChannelsModule.module.css,SocialChannelsModule.test.jsx,socialChannelsData.js,socialChannelsData.test.js,index.js,hooks/useSocialChannelsData.js,components/{SocialChannelStatus,SocialChannelForm}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `social-channels → SocialChannelsModule` de la feature, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/socialChannels/SocialChannelsModule.jsx`.
+  - `tests/test_meta_messenger_static.py` (ruta actualizada al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.9 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (10 nuevos: 6 socialChannelsData + 4 SocialChannelsModule). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.1-8. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_meta_messenger_static.py` → passed.
+  - `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizó una ruta en un test estático de backend.
+  - La lógica de la mutación se portó verbatim: `upsertMessengerChannel` sigue pegando al mismo endpoint `tenant_admin_router`, autenticado y tenant-scoped server-side. Los secretos (`meta_access_token`, `app_secret`, `verify_token`) siguen siendo campos `type="password"`, nunca se pre-cargan desde el canal y solo se envían cuando el usuario los escribe (`buildPayload` los deja `undefined` si vienen vacíos). La validación HMAC de firma y la ventana de servicio de 24 h se siguen aplicando server-side / en el outbound worker. La entrada de módulo se gateó con `<RequirePermission capability="social_channels.write" mode="RW">` como defensa en profundidad; el backend reverifica.
+- **Limitaciones / próximos pasos:**
+  - **Diferencia intencional declarada: los KPIs de tráfico 24 h del HTML (DMs entrantes, respuestas bot, fuera de ventana, handoffs, citas agendadas, conversión), la lista de eventos suscritos del webhook y el feed de mensajes recientes no se incluyen.** `listMessengerChannels` no expone esos datos; se difieren. El `SocialChannelStatus` muestra los identificadores + checks reales del endpoint (estado, recipient id, business id, modo, ventana, secretos configurados) — no se fabrican datos.
+  - Próxima tarea `PENDING` real: **UI-007.10 — IA · Knowledge Studio** (refactor de 486 LOC).
+
+---
+
 ### UI-007.8 — Canales · WhatsApp Cloud API (Owner / Admin)
 
 - **Fecha:** 2026-05-14

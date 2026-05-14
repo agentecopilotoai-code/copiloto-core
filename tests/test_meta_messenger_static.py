@@ -30,9 +30,14 @@ EVENT_WORKER = Path('app/workers/event_worker.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES_REGISTRY = Path('admin-panel/src/data/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-SOCIAL_MODULE = Path(
-    'admin-panel/src/components/modules/socialChannels/SocialChannelsModule.jsx'
-)
+# UI-007.9: the social-channels module was redesigned into a feature directory.
+SOCIAL_FEATURE = Path('admin-panel/src/features/owner-admin/social-channels')
+
+
+def _social_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(SOCIAL_FEATURE.rglob('*.js*'))
+    )
 
 
 # ─── schema ──────────────────────────────────────────────────────────────────
@@ -344,7 +349,7 @@ def test_admin_panel_registers_social_channels_module_with_admin_role():
 
 
 def test_social_channels_module_renders_both_providers_and_window_input():
-    module = SOCIAL_MODULE.read_text()
+    module = _social_feature_source()
     assert "id: 'instagram_messenger'" in module
     assert "id: 'facebook_messenger'" in module
     assert 'service_window_hours' in module

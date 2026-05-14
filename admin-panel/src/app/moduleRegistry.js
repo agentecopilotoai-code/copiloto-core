@@ -25,7 +25,7 @@ import { OperationsDesk } from '../components/modules/operations/OperationsDesk.
 import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
 import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness.jsx';
 import { SegmentsModule } from '../components/modules/segments/SegmentsModule.jsx';
-import { SocialChannelsModule } from '../components/modules/socialChannels/SocialChannelsModule.jsx';
+import { SocialChannelsModule } from '../features/owner-admin/social-channels/index.js';
 import { TeamModule } from '../components/modules/team/TeamModule.jsx';
 import { TenantSetupWizard } from '../components/modules/tenantSetup/TenantSetupWizard.jsx';
 
