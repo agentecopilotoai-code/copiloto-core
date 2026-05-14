@@ -327,7 +327,7 @@ src/
 
 ### UI-001 — Design system: tokens, primitivas y migración de `global.css`
 
-- **Estado:** PENDING
+- **Estado:** DONE (tokens + primitivas + tests; `global.css` se limpia incrementalmente a medida que UI-006..UI-010 reemplacen los módulos legacy)
 - **Por qué bloquea:** sin primitivas reutilizables las pantallas nuevas duplican markup y CSS. `global.css` con 2462 líneas es invertible para el equipo.
 - **Fuente de los tokens:** la sección **0.bis.2** de este documento contiene el bloque exacto a copiar a `src/styles/tokens.css`. Esos valores se extrajeron de `docs/HTML DESIGN/Platform Owner/01 _ Fleet _ Tenants.html` y son consistentes con el resto de las 36 pantallas. **No inventar paleta nueva.** Si una pantalla introduce un token adicional (sombra, radio, color), se agrega aquí — no se declara local.
 - **Alcance:**

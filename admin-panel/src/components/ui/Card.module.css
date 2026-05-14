@@ -1,0 +1,94 @@
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+}
+
+.card--flat {
+  box-shadow: var(--shadow-sm);
+}
+
+.card--raised {
+  box-shadow: var(--shadow-md);
+}
+
+.card--alt {
+  background: var(--panel-alt);
+  border-color: var(--line);
+}
+
+.card--interactive {
+  cursor: pointer;
+  transition: box-shadow var(--transition-base), transform var(--transition-base);
+}
+
+.card--interactive:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.card--p-sm {
+  padding: var(--space-3);
+  gap: var(--space-3);
+}
+
+.card--p-md {
+  padding: var(--space-5);
+  gap: var(--space-4);
+}
+
+.card--p-lg {
+  padding: var(--space-6);
+  gap: var(--space-5);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.headerText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+  line-height: var(--lh-snug);
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-small);
+  line-height: var(--lh-snug);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-3);
+}
