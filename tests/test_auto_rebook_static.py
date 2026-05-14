@@ -36,8 +36,10 @@ from app.services.feedback_flow import (
 FEEDBACK_FLOW = Path('app/services/feedback_flow.py')
 SELF_SERVICE = Path('app/services/appointment_self_service.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
-TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 # ───── Toggle parsing ──────────────────────────────────────────────────────
 
@@ -97,7 +99,7 @@ def test_orchestrator_short_circuits_on_auto_rebook_step():
 
 
 def test_tenant_wizard_exposes_auto_rebook_toggle():
-    source = TENANT_WIZARD.read_text()
+    source = _tenant_setup_source()
     assert 'auto_rebook_on_decline' in source
     assert 'Ofrecer reprogramar al declinar la confirmación' in source
 

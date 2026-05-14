@@ -37,6 +37,11 @@ from app.services.locale import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+TENANT_SETUP_FEATURE = REPO_ROOT / 'admin-panel' / 'src' / 'features' / 'owner-admin' / 'tenant-setup'
+
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 
 # ── Catálogos -----------------------------------------------------------------
@@ -308,15 +313,14 @@ def test_digest_worker_reads_currency_from_settings():
 # ── Admin Panel --------------------------------------------------------------
 
 def test_admin_panel_wizard_exposes_country_catalog():
-    wizard_src = (REPO_ROOT / 'admin-panel' / 'src' / 'components' / 'modules'
-                  / 'tenantSetup' / 'TenantSetupWizard.jsx').read_text()
+    wizard_src = _tenant_setup_source()
     # Catálogo definido en el componente.
     for code in SUPPORTED_COUNTRIES:
         assert f"{code}: {{" in wizard_src
     assert 'COUNTRY_PROFILES' in wizard_src
     assert "SUPPORTED_COUNTRIES = ['CO'," in wizard_src
     # Selector reemplazó al input libre.
-    assert '<select\n              value={tenantForm.country_code}' in wizard_src
+    assert '<select\n            value={tenantForm.country_code}' in wizard_src
 
 
 # ── pyproject -----------------------------------------------------------------

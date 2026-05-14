@@ -14,7 +14,7 @@ import { MfaRequiredBlocker } from '../components/domain/MfaRequiredBlocker.jsx'
 import { NoTenantOnboarding } from '../components/domain/NoTenantOnboarding.jsx';
 import { LoadingScreen } from '../components/layout/LoadingScreen.jsx';
 import { ModulePlaceholder } from '../components/modules/ModulePlaceholder.jsx';
-import { TenantSetupWizard } from '../components/modules/tenantSetup/TenantSetupWizard.jsx';
+import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { adminModules } from '../data/modules.js';
 import { AccessDenied, RequirePermission, ROLE_HOME, usePermissions } from '../permissions/index.js';

@@ -58,7 +58,11 @@ from app.workers.retention_worker import _seconds_until_next_run
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
-WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
+
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 
 
@@ -473,7 +477,7 @@ def test_policies_crud_endpoints_validate_before_writing():
 
 
 def test_wizard_renders_retention_block_and_disables_anonymize_for_non_pii():
-    source = WIZARD.read_text()
+    source = _tenant_setup_source()
     assert 'data-testid="retention-policies-table"' in source
     assert 'data-testid="retention-save"' in source
     assert 'Guardar política de retención' in source

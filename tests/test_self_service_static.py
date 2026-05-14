@@ -31,8 +31,10 @@ from app.services.appointment_self_service import (
 SELF_SERVICE = Path('app/services/appointment_self_service.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
-TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 # ───── Public API & constants ──────────────────────────────────────────────
 
@@ -109,7 +111,7 @@ def test_orchestrator_escalates_self_service_result():
 
 
 def test_escalation_form_exposes_self_service_min_hours():
-    source = TENANT_WIZARD.read_text()
+    source = _tenant_setup_source()
     assert 'selfServiceMinHoursBeforeStart' in source
     assert 'min_hours_before_start' in source
     assert 'Self-service: horas mínimas antes de la cita' in source

@@ -15,6 +15,47 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.12 — Config · Tenant Setup (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** split crítico del monolito `TenantSetupWizard.jsx` (2023 LOC, 13 pestañas) en una feature bajo `src/features/owner-admin/tenant-setup/`. **Refactor estructural puro frontend-only** — markup, classNames, estilos inline, atributos `data-*` y lógica se preservan verbatim; sin rediseño visual, sin migración a CSS module, sin tocar el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/tenant-setup/` (nuevo, 20 archivos):**
+    - `tenantSetupData.js` (constantes puras): `COUNTRY_PROFILES`, `SUPPORTED_COUNTRIES`, `wizardTabs`, `DEFAULT_BOT_PERSONALITY`, `BOT_TONE_OPTIONS`, `BOT_FORMALITY_OPTIONS`, `BOT_EMOJI_OPTIONS`, `PERSONALITY_PREVIEW_SAMPLES`, `DEFAULT_NOTIFICATION_SETTINGS`, `ALL_INTENTS_META`, `DEFAULT_INTENT_KEYWORDS`, `embeddingProviderOptions`, `weekdays`, `initialHours`, `defaultPiiRules`, `RETENTION_ENTITIES`, `RETENTION_ANONYMIZABLE`, `availableStatusTransitions` — movidas verbatim.
+    - `tenantSetupTransforms.js` (funciones puras): `hydrateBotPersonality`, `renderPersonalityPreview`, `normalizeComplaintAlertChannels`, `hydrateNotificationSettings`, `defaultIntentSettings`, `hydrateIntentSettings`, `slugifyVertical`, `cloneInitialHours`, `jsonObject`, `formFromBusinessHours`, `formFromEscalationPolicy`, `formFromPiiPolicy`, `hydrateSettings`, `toBusinessHours`, `toEscalationPolicy`, `toPiiPolicy`, `formatJson` — movidas verbatim.
+    - `hooks/useTenantSetupData.js`: estado del tenant/settings/escalation/intents/notifications/personality/privacy + el `useEffect` de carga + `runAction` + `handleSaveTenant`/`handleSaveSettings`/`handleChangeStatus`/`handleProviderChange`/`handleReindexAll`/`refreshAuditLogs` — portados verbatim.
+    - `hooks/useTenantSetupSidePanels.js`: etiquetas de contacto + configuración de pagos + políticas de retención (estado, efectos y handlers) — extraído para mantener cada hook ≤ 400 LOC; compuesto desde `useTenantSetupData`.
+    - `TenantSetupWizard.jsx`: orquestador — shell `module-card wizard-card` + `module-heading` + nav `.tabs` verbatim + `notice` + render del componente de pestaña activa. **Sin `<RequirePermission>`** — la entrada del registry `tenant-setup` tiene `capability: null`; se mantiene sin gate.
+    - `components/` — 13 componentes de pestaña (uno por tab): `GeneralTab` (form de negocio + etiquetas de contacto + estado del tenant), `QualificationTab`, `SettingsTab`, `ScheduleTab`, `BranchesTab` (embebe `BranchesManager`), `EscalationTab`, `IntentsTab`, `NotificationsTab` (+ `ComplaintAlertChannelsFieldset` extraído), `PaymentsTab`, `PrivacyTab` (form PII + tabla de retención), `BotPersonalityTab`, `RagTab`, `AuditTab` — JSX preservado verbatim incluyendo `data-wizard-tab`/`data-wizard-field`/`data-testid`.
+    - `components/QualificationQuestionsPanel.jsx` y `components/DigestSubscriptionsPanel.jsx`: movidos verbatim a la feature, solo se ajustó la ruta relativa del import de `coreApi.js`.
+    - `index.js` (barrel) + `tenantSetupTransforms.test.js` (10 tests) + `TenantSetupWizard.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js` y `app/router.jsx`: el import de `TenantSetupWizard` ahora apunta al feature dir nuevo; imports legacy eliminados.
+    - **Borrado** `admin-panel/src/components/modules/tenantSetup/` (los tres archivos: el wizard reemplazado, los dos paneles movidos).
+  - **Backend — ~18 tests estáticos repuntados:** los tests que tenían hardcodeada la ruta `components/modules/tenantSetup/TenantSetupWizard.jsx` (y los dos paneles) se actualizaron para leer el feature dir nuevo combinando todos sus `.js*` vía un helper `_tenant_setup_source()`: `test_bot_personality_static.py`, `test_auto_rebook_static.py`, `test_notifications_static.py`, `test_auto_rebook_timeout_static.py`, `test_payment_provider_static.py`, `test_payment_webhook_fail_closed.py`, `test_referrer_tracking_static.py`, `test_qualification_flow_static.py`, `test_service_catalog_static.py`, `test_self_service_static.py`, `test_retention_static.py`, `test_branches_static.py`, `test_operator_alerts_static.py`, `test_digest_static.py`, `test_i18n_static.py`, `test_qualification_triage_static.py`, `test_crm_contacts_static.py`, `test_tenant_readiness_static.py`, `test_service_applies_when_static.py`. Como el markup se preserva verbatim, los literales que verifican siguen existiendo en la fuente combinada; 2 aserciones se ajustaron a la nueva estructura (la ruta de import de `BranchesManager` y la indentación del `<select>` de país), preservando su intención.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/tenant-setup/{TenantSetupWizard.jsx,TenantSetupWizard.test.jsx,tenantSetupData.js,tenantSetupTransforms.js,tenantSetupTransforms.test.js,index.js,hooks/{useTenantSetupData,useTenantSetupSidePanels}.js,components/{GeneralTab,QualificationTab,SettingsTab,ScheduleTab,BranchesTab,EscalationTab,IntentsTab,NotificationsTab,ComplaintAlertChannelsFieldset,PaymentsTab,PrivacyTab,BotPersonalityTab,RagTab,AuditTab,QualificationQuestionsPanel,DigestSubscriptionsPanel}.jsx}` (todos nuevos; los dos paneles movidos vía `git mv`).
+  - `admin-panel/src/app/moduleRegistry.js` y `admin-panel/src/app/router.jsx` (import de `TenantSetupWizard` repuntado al feature dir).
+  - **Eliminado:** `admin-panel/src/components/modules/tenantSetup/{TenantSetupWizard,QualificationQuestionsPanel,DigestSubscriptionsPanel}.jsx`.
+  - ~19 `tests/test_*_static.py` (rutas repuntadas al feature dir vía lectura combinada).
+  - `docs/UI_BACKLOG.md` (UI-007.12 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (solo warnings `react-hooks/exhaustive-deps` preexistentes, preservados verbatim del legacy).
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (14 nuevos: 10 tenantSetupTransforms + 4 TenantSetupWizard). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.1-11. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_bot_personality_static.py … tests/test_service_applies_when_static.py` → 385 passed.
+  - `ruff check tests/` → All checks passed!
+- **Seguridad:**
+  - Refactor estructural frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizaron rutas en tests estáticos de backend.
+  - Lógica preservada verbatim: las mutaciones (`createTenant`/`updateTenant`/`updateTenantSettings`/`patchTenantStatus`/`reindexAllKnowledgeDocuments`/`*ContactTag`/`*RetentionPolicies`/`updateTenantPaymentSettings` + las de los paneles) siguen pegando a los mismos endpoints, autenticados y tenant-scoped server-side.
+  - `tenant-setup` se mantiene **sin gate** porque la entrada del registry tiene `capability: null` — exactamente como estaba antes; no se añadió ni quitó ningún `<RequirePermission>`.
+- **Limitaciones / próximos pasos:**
+  - Split estructural puro — **sin rediseño visual**; se conservan las clases CSS globales de `global.css` verbatim (no se creó `.module.css`).
+  - `QualificationQuestionsPanel.jsx` (505 LOC) se movió verbatim según el brief y excede el límite de 400 LOC; era preexistente y no se refactorizó para no alterar lógica.
+  - Próxima tarea `PENDING` real: **UI-007.13 — Config · Equipo** (rediseño de `TeamModule.jsx`).
+
+---
+
 ### UI-007.11 — IA · Medios y promociones (Owner / Admin)
 
 - **Fecha:** 2026-05-14

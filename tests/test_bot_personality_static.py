@@ -18,9 +18,13 @@ CONV_FLOW = Path('app/services/conversation_flow.py')
 ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 ORCH = Path('app/services/rag_orchestrator.py')
-WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 LLM_ANSWER = Path('app/services/llm_answer.py')
 CLOUD_LLM = Path('app/services/cloud_llm_answer.py')
+
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 
 # 1 ── Schema
@@ -134,7 +138,7 @@ def test_patch_settings_accepts_bot_personality_key():
 
 # 9 ── Wizard UI: existe tab "Voz del bot" y opciones de tono
 def test_wizard_registers_voz_tab():
-    src = WIZARD.read_text()
+    src = _tenant_setup_source()
     assert "id: 'voz'" in src
     assert "label: 'Voz del bot'" in src
     # Las cuatro opciones de tono deben existir.

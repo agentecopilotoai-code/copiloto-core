@@ -49,8 +49,10 @@ from app.services.feedback_flow import maybe_record_feedback
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
 SCHEDULER = Path('app/workers/scheduler.py')
-ADMIN_PANEL = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 @pytest.fixture(autouse=True)
 def _settings_env(monkeypatch):
@@ -571,7 +573,7 @@ def test_negative_feedback_no_alert_when_no_channels():
 
 
 def test_admin_panel_renders_alerts_block():
-    source = ADMIN_PANEL.read_text()
+    source = _tenant_setup_source()
     assert 'Alertas al equipo (TASK-0057)' in source
     assert 'complaint_alert_channels' in source
     assert 'normalizeComplaintAlertChannels' in source

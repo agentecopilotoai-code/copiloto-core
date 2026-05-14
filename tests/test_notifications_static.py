@@ -24,7 +24,11 @@ NOTIFICATIONS = Path('app/services/notifications.py')
 FEEDBACK = Path('app/services/feedback_flow.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
+
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
 
 
@@ -370,7 +374,7 @@ def test_admin_client_exposes_feedback_helpers():
 
 
 def test_tenant_wizard_has_notificaciones_tab():
-    source = TENANT_WIZARD.read_text()
+    source = _tenant_setup_source()
     assert "id: 'notificaciones'" in source
     assert "label: 'Notificaciones'" in source
     assert 'DEFAULT_NOTIFICATION_SETTINGS' in source

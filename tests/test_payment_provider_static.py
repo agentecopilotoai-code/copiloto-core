@@ -31,7 +31,11 @@ API_ROUTES = Path('app/api/v1/routes.py')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
 PAYMENT_SERVICE = Path('app/services/payment_provider.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
+
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
 
 
@@ -285,7 +289,7 @@ def test_admin_panel_exposes_payment_calls():
 
 
 def test_tenant_wizard_renders_payments_tab():
-    text = TENANT_WIZARD.read_text(encoding='utf-8')
+    text = _tenant_setup_source()
     assert "{ id: 'pagos', label: 'Pagos' }" in text
     assert "activeTab === 'pagos'" in text
     assert 'updateTenantPaymentSettings' in text

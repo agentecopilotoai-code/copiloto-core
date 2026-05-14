@@ -16,9 +16,11 @@ def _services_feature_source() -> str:
         path.read_text() for path in sorted(SERVICES_FEATURE.rglob('*.js*'))
     )
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-TENANT_WIZARD = Path(
-    'admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx'
-)
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 
 def test_service_catalog_table_defined_with_rls():
@@ -90,7 +92,7 @@ def test_service_catalog_admin_module_exists_and_registered():
 
 
 def test_tenant_wizard_renamed_to_negocio_with_free_business_type():
-    wizard = TENANT_WIZARD.read_text()
+    wizard = _tenant_setup_source()
     assert "label: 'Negocio'" in wizard
     assert 'business_type_label' in wizard
     # The dropdown of fixed verticals must be gone — only free text input remains.
