@@ -7,7 +7,7 @@ import {
   listServices,
   reorderQualificationQuestions,
   updateQualificationQuestion,
-} from '../../../services/coreApi.js';
+} from '../../../../services/coreApi.js';
 
 const KIND_OPTIONS = [
   { value: 'yes_no', label: 'Sí / No' },

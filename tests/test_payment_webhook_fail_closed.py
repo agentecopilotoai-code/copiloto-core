@@ -19,8 +19,10 @@ import re
 from pathlib import Path
 
 ROUTES = Path('app/api/v1/routes.py')
-WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 def _payments_webhook_block() -> str:
     source = ROUTES.read_text()
@@ -138,6 +140,6 @@ def test_admin_payments_settings_refuses_provider_without_secret():
 
 
 def test_wizard_payments_hint_mentions_503_and_audit():
-    source = WIZARD.read_text()
+    source = _tenant_setup_source()
     assert '503 payment.webhook_unconfigured' in source.replace('<code>', '').replace('</code>', '')
     assert 'payment.webhook_rejected' in source

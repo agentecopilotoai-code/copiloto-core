@@ -4,6 +4,11 @@ ROUTES = Path('app/api/v1/routes.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 READINESS_UI = Path('admin-panel/src/components/modules/readiness/GoLiveReadiness.jsx')
 MODULES = Path('admin-panel/src/data/modules.js')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 
 def test_readiness_endpoint_returns_ready_or_not_ready_report():
@@ -380,5 +385,5 @@ def test_readiness_ui_has_escalation_navigation():
 
 
 def test_tenant_setup_wizard_accepts_initial_tab():
-    source = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx').read_text()
+    source = _tenant_setup_source()
     assert 'initialTab' in source

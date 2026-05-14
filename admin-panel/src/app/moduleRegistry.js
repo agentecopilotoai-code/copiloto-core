@@ -27,7 +27,7 @@ import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness
 import { SegmentsModule } from '../components/modules/segments/SegmentsModule.jsx';
 import { SocialChannelsModule } from '../features/owner-admin/social-channels/index.js';
 import { TeamModule } from '../components/modules/team/TeamModule.jsx';
-import { TenantSetupWizard } from '../components/modules/tenantSetup/TenantSetupWizard.jsx';
+import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 
 /**
  * Registro `module id → { Component, capability, mode }`.

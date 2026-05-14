@@ -16,7 +16,11 @@ def _contacts_feature_source() -> str:
     return '\n'.join(
         path.read_text() for path in sorted(CONTACTS_FEATURE.rglob('*.js*'))
     )
-TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
 
 
@@ -127,7 +131,7 @@ def test_contacts_module_exists_and_registered():
 
 
 def test_tenant_wizard_manages_contact_tags():
-    wizard = TENANT_WIZARD.read_text()
+    wizard = _tenant_setup_source()
     assert 'listContactTags' in wizard
     assert 'createContactTag' in wizard
     assert 'updateContactTag' in wizard

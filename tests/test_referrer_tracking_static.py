@@ -30,7 +30,11 @@ WIDGET_JS = Path('admin-panel/public/widget.js')
 ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx')
 # UI-007.3: the contacts module was split into a feature directory.
 CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
-WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
+
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 
 
@@ -225,7 +229,7 @@ def test_contacts_module_renders_referrals_panel():
 
 
 def test_wizard_exposes_ask_referrer_toggle():
-    source = WIZARD.read_text()
+    source = _tenant_setup_source()
     assert 'ask_referrer: false' in source
     assert 'data-wizard-field="ask_referrer"' in source
     assert 'notificationSettings.ask_referrer === true' in source

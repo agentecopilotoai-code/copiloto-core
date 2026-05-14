@@ -5,7 +5,7 @@ import {
   deleteDigestSubscription,
   listDigestSubscriptions,
   updateDigestSubscription,
-} from '../../../services/coreApi.js';
+} from '../../../../services/coreApi.js';
 
 const CADENCE_OPTIONS = [
   { value: 'daily', label: 'Diario (todos los días a las 08:00 del tenant)' },

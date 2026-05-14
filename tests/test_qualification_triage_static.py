@@ -37,10 +37,11 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 SCHEMAS = Path('app/api/v1/schemas.py')
 ROUTES = Path('app/api/v1/routes.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
-QUALIFICATION_PANEL = Path(
-    'admin-panel/src/components/modules/tenantSetup/QualificationQuestionsPanel.jsx'
-)
-TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
 
 
@@ -495,7 +496,7 @@ def test_qualification_flow_does_not_queue_urgency_wait_message():
 
 
 def test_qualification_panel_exposes_preset_buttons_and_normalized_fields():
-    src = QUALIFICATION_PANEL.read_text()
+    src = _tenant_setup_source()
     assert 'Insertar pregunta de presupuesto' in src
     assert 'Insertar pregunta de urgencia' in src
     assert "PRESET_BUDGET_TIER = 'budget_tier'" in src
@@ -505,7 +506,7 @@ def test_qualification_panel_exposes_preset_buttons_and_normalized_fields():
 
 
 def test_tenant_wizard_adds_vip_budget_threshold_input():
-    src = TENANT_WIZARD.read_text()
+    src = _tenant_setup_source()
     assert 'vip_budget_threshold' in src
     assert 'Umbral VIP' in src
 

@@ -35,15 +35,17 @@ BOOKING_FLOW = Path('app/services/booking_flow.py')
 QUALIFICATION_FLOW = Path('app/services/qualification_flow.py')
 # UI-007.4: the ServiceCatalog monolith was split into a feature directory.
 SERVICES_FEATURE = Path('admin-panel/src/features/owner-admin/services')
-QUALIFICATION_PANEL_JSX = Path(
-    'admin-panel/src/components/modules/tenantSetup/QualificationQuestionsPanel.jsx'
-)
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
 
 def _services_feature_source() -> str:
     return '\n'.join(
         path.read_text() for path in sorted(SERVICES_FEATURE.rglob('*.js*'))
     )
+
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 
 # ───── Schema ─────
@@ -309,7 +311,7 @@ def test_service_catalog_jsx_has_applies_when_builder():
 
 
 def test_qualification_panel_jsx_has_key_input():
-    source = QUALIFICATION_PANEL_JSX.read_text()
+    source = _tenant_setup_source()
     assert 'Clave (opcional)' in source
     assert "key: question.key || ''" in source
     assert 'KEY_PATTERN' in source

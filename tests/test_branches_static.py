@@ -32,7 +32,11 @@ ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
 # UI-007.7: the branches module was redesigned into a feature directory.
 BRANCHES_FEATURE = Path('admin-panel/src/features/owner-admin/branches')
-WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
+
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 
 
@@ -301,12 +305,13 @@ def test_branches_module_has_form_and_listing():
 
 
 def test_wizard_adds_branches_tab():
-    source = WIZARD.read_text()
+    source = _tenant_setup_source()
     assert "{ id: 'branches', label: 'Sedes' }" in source
     assert 'data-wizard-tab="branches"' in source
     # UI-007.7: the wizard embeds the redesigned ungated manager component.
+    # UI-007.12: import path is relative to the tenant-setup feature components/ dir.
     assert (
-        "import { BranchesManager } from '../../../features/owner-admin/branches/index.js'"
+        "import { BranchesManager } from '../../branches/index.js'"
         in source
     )
 

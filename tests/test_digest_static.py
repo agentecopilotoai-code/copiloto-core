@@ -46,8 +46,11 @@ ROUTES = Path('app/api/v1/routes.py')
 COMPOSE = Path('docker-compose.yml')
 WORKER = Path('app/workers/digest_worker.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
-PANEL = Path('admin-panel/src/components/modules/tenantSetup/DigestSubscriptionsPanel.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 SCHEMAS = Path('app/api/v1/schemas.py')
 
 
@@ -432,8 +435,8 @@ def test_worker_ensures_internal_conversation_for_whatsapp_digest():
 
 
 def test_wizard_renders_digest_subscriptions_panel():
-    wizard = WIZARD.read_text()
-    panel = PANEL.read_text()
+    wizard = _tenant_setup_source()
+    panel = _tenant_setup_source()
     assert "import DigestSubscriptionsPanel from './DigestSubscriptionsPanel.jsx'" in wizard
     assert '<DigestSubscriptionsPanel' in wizard
     # El panel vive bajo la pestaña Notificaciones (activeTab='notificaciones').

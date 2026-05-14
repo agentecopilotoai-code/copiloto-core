@@ -44,8 +44,10 @@ from app.services.appointment_self_service import (
 SCHEMA_SQL = Path('infra/postgres/01-schema.sql')
 SCHEDULER = Path('app/workers/scheduler.py')
 SELF_SERVICE = Path('app/services/appointment_self_service.py')
-TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 # ───── Configuration helpers ────────────────────────────────────────────────
 
@@ -100,7 +102,7 @@ def test_self_service_module_exposes_timeout_helpers():
 
 
 def test_tenant_wizard_exposes_timeout_input():
-    text = TENANT_WIZARD.read_text()
+    text = _tenant_setup_source()
     assert 'auto_rebook_timeout_minutes' in text
     assert 'Tiempo máximo del auto-rebook' in text
     # The min/max attributes match the documented window.

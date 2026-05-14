@@ -36,10 +36,11 @@ SCHEMAS = Path('app/api/v1/schemas.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
-QUALIFICATION_PANEL = Path(
-    'admin-panel/src/components/modules/tenantSetup/QualificationQuestionsPanel.jsx'
-)
+TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
+
+
+def _tenant_setup_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 # UI-007.3: the contacts module was split into a feature directory.
 CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
@@ -477,14 +478,14 @@ def test_core_api_exposes_qualification_helpers():
 
 
 def test_tenant_setup_wizard_registers_calificacion_tab():
-    source = TENANT_WIZARD.read_text()
+    source = _tenant_setup_source()
     assert "{ id: 'calificacion', label: 'Calificación' }," in source
     assert "activeTab === 'calificacion'" in source
     assert 'QualificationQuestionsPanel' in source
 
 
 def test_qualification_panel_component_exists_and_uses_drag_handles():
-    source = QUALIFICATION_PANEL.read_text()
+    source = _tenant_setup_source()
     assert 'export default function QualificationQuestionsPanel' in source
     for fn in (
         'createQualificationQuestion',
