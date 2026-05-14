@@ -2,6 +2,7 @@ import { BillingMrr } from '../features/platform/billing-mrr/index.js';
 import { FleetDlq } from '../features/platform/fleet-dlq/index.js';
 import { FleetTenants } from '../features/platform/fleet-tenants/index.js';
 import { Incidents } from '../features/platform/incidents/index.js';
+import { RolesAcl } from '../features/platform/roles-acl/index.js';
 import { Runbooks } from '../features/platform/runbooks/index.js';
 import { SystemHealth } from '../features/platform/system-health/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
@@ -49,6 +50,7 @@ export const MODULE_REGISTRY = Object.freeze({
   'platform-incidents': { Component: Incidents, capability: 'platform.incidents.read' },
   'platform-fleet-dlq': { Component: FleetDlq, capability: 'platform.outbound_dlq.read' },
   'platform-runbooks': { Component: Runbooks, capability: 'platform.runbooks.read' },
+  'platform-roles-acl': { Component: RolesAcl, capability: 'platform.roles_acl.read' },
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
   'onboarding-wizard': { Component: OnboardingWizard, capability: 'onboarding.run', mode: 'RW' },
   services: { Component: ServiceCatalog, capability: 'services.read' },
