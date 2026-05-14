@@ -56,6 +56,13 @@ export const adminModules = [
     capability: 'platform.feature_flags.read',
   },
   {
+    id: 'dashboard',
+    label: 'Dashboard',
+    summary: 'Página de entrada Owner/Admin: KPIs con variación semanal, alertas operativas y accesos rápidos. UI-007.1.',
+    scope: ['KPIs con delta semanal', 'Alertas (handoffs, feedback, no-show)', 'Accesos rápidos a módulos'],
+    capability: 'analytics.tenant.read',
+  },
+  {
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',

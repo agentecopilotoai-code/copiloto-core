@@ -15,6 +15,50 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.1 — Inicio · Dashboard (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** primera vista del rol Owner/Admin. Página de entrada en `/t/:slug/dashboard` con KPIs de variación semanal, alertas operativas y accesos rápidos. **Tarea frontend-only** — el endpoint `GET /v1/analytics/overview` ya existía (`tenant_analytics_router`), no se tocó el backend. Es ahora el home de los roles Owner y Admin.
+- **Cambios realizados:**
+  - **Frontend — nueva primitiva `components/ui/AlertBanner.jsx`** (+ `.module.css` + `.test.jsx`): banner inline con tono `info`/`warning`/`danger`/`success`, título, descripción y slot de acción. Exportada en `components/ui/index.js`. Es la primitiva `AlertBanner` que el backlog de UI-007.1 pedía crear.
+  - **Frontend — `src/features/owner-admin/dashboard/` (nuevo, 9 archivos):**
+    - `dashboardData.js` (helper puro): `formatMoney`, `buildKpis(current, previous)` — shapea las dos ventanas de `analytics_overview` en 5 descriptores de KPI con `current`/`previous` para el delta semana-a-semana; `buildAlerts(overview)` — deriva la lista de alertas (handoffs pendientes desde `conversations.handoff`, feedback negativo desde `feedback.average_rating < 4`, no-show alto desde `appointments.no_show_rate_pct > 10`), devuelve `[]` cuando todo está sano. Pure — testeable sin React ni red.
+    - `Dashboard.jsx` — orquesta el saludo contextual, el fetch y los estados de carga/error; envuelve todo en `<RequirePermission capability="analytics.tenant.read" mode="R">`. Recibe `{ session, tenant }` como props (patrón de módulo tenant-scoped) y `profile` de `useTenantContext()`.
+    - `hooks/useDashboardData.js` — hace `Promise.all` de `getAnalyticsOverview` para la ventana actual (7d) y la previa (7d); cancellation en unmount; `refresh()`.
+    - `components/DashboardKpis.jsx` — grid de `KpiCardWithDelta` (reusa UI-004) desde `buildKpis`.
+    - `components/DashboardAlerts.jsx` — lista de `AlertBanner` desde `buildAlerts`; banner `success` "Sin alertas" cuando la lista está vacía.
+    - `components/DashboardQuickLinks.jsx` — grid de accesos rápidos a operations-desk/contacts/services/analytics/outbound-dlq/campaigns.
+    - `Dashboard.module.css` (110 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/dashboard/` → 0 resultados.
+    - `index.js` (barrel).
+  - **Frontend — wiring:**
+    - `data/modules.js`: nuevo módulo `dashboard` (capability `analytics.tenant.read`).
+    - `app/moduleRegistry.js`: registro `dashboard → Dashboard`.
+    - `app/nav.js`: `dashboard` añadido a la sección "Inicio" del `TENANT_NAV` (antes de `onboarding-wizard`).
+    - `permissions/matrix.js`: `ROLE_HOME.owner` y `ROLE_HOME.admin` pasan de `analytics` a `dashboard` (mandato de UI sección 6: "Owner/Admin → Dashboard"). Manager sigue en `analytics`.
+    - `app/router.test.jsx` y `permissions/usePermissions.test.jsx`: actualizadas las aserciones de home de owner (`/t/acme/analytics` → `/t/acme/dashboard`, `home` → `'dashboard'`); el mock de `MODULE_REGISTRY` del router test gana una entrada `dashboard`.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/components/ui/{AlertBanner.jsx,AlertBanner.module.css,AlertBanner.test.jsx}` (nuevos), `components/ui/index.js` (export).
+  - `admin-panel/src/features/owner-admin/dashboard/{Dashboard.jsx,Dashboard.module.css,Dashboard.test.jsx,dashboardData.js,dashboardData.test.js,index.js,components/{DashboardKpis,DashboardAlerts,DashboardQuickLinks}.jsx,hooks/useDashboardData.js}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js`, `admin-panel/src/app/nav.js`, `admin-panel/src/data/modules.js`, `admin-panel/src/permissions/matrix.js` (wiring + ROLE_HOME).
+  - `admin-panel/src/app/router.test.jsx`, `admin-panel/src/permissions/usePermissions.test.jsx` (aserciones de ROLE_HOME).
+  - `docs/UI_BACKLOG.md` (UI-007.1 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **40 suites, 174 tests pasan** (12 nuevos: 3 AlertBanner + 5 dashboardData + 4 Dashboard). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.1..8: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión** — el fallo es al renderizar el router, no en las aserciones; CI corre Node 20, ejecuta esos tests y pasan (las aserciones actualizadas a `dashboard` son correctas para el nuevo `ROLE_HOME`).
+  - **Sin cambios de backend** — no se ejecutan `ruff` ni `pytest` (no aplican).
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema, ni dependencia. El endpoint `analytics_overview` consumido ya existía con sus dependencias (`authenticate_request` + `require_min_role('manager')` en `tenant_analytics_router`) — sin cambios.
+  - La vista está gateada vía `<RequirePermission capability="analytics.tenant.read" mode="R">`. La matriz UI-005 concede `analytics.tenant.read` a viewer/agent/manager/admin/owner; el dashboard es el home de owner/admin y los demás roles lo alcanzan por nav si tienen el permiso. `analytics_overview` enforce server-side `require_min_role('manager')` — un agent/viewer que llegue a la URL recibe la vista pero el fetch falla con 403 y se muestra el error state (defensa en profundidad correcta: el frontend no es la autoridad).
+  - El cambio de `ROLE_HOME` solo afecta el landing del frontend; no cambia ningún enforcement de permisos.
+- **Limitaciones / próximos pasos:**
+  - **El dashboard se enfoca en KPIs + alertas + quick links.** El HTML de referencia muestra además una lista de "citas de hoy", un funnel de 7 días y un panel de canales activos. Esos bloques tienen vistas dedicadas (Analítica para el funnel, Citas del día para las citas) y se difieren a sus tareas; el dashboard enlaza a ellas desde los accesos rápidos para no duplicar.
+  - **"MRR" / "top servicios" → "Ingresos estimados".** El backlog lista "MRR" y "top servicios" como KPIs; `analytics_overview` no expone MRR de tenant ni top servicios. Se usa `revenue.estimated_amount` (citas completadas × precio) etiquetado honestamente como "Ingresos estimados (7d)" en vez de fabricar una métrica no modelada. Top servicios se difiere a la vista de Analítica.
+  - **La alerta "DLQ con backlog" del backlog no se incluye.** Las 3 alertas (handoffs, feedback, no-show) se derivan de `analytics_overview` con un solo fetch. La señal de DLQ vive en `analytics_overview`... no — no está; surfacer el DLQ requeriría un 2º endpoint. Se deja el acceso rápido a "Outbound DLQ" en el grid de quick links en lugar de un 3er fetch; cuando UI-009.4 rediseñe esa vista, el enlace queda alineado.
+  - Próxima tarea `PENDING` real: **UI-007.2 — Inicio · Onboarding self-service** (refactor de `OnboardingWizard.jsx` aplicando el nuevo stepper visual del mockup, reusando `Stepper`/`FormField`/`Card`).
+
+---
+
 ### UI-006.8 — Feature flags (Platform Owner)
 
 - **Fecha:** 2026-05-14

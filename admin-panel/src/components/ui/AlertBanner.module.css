@@ -1,0 +1,64 @@
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--r-sm);
+  background: var(--panel);
+}
+
+.banner--info {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.banner--warning {
+  border-left-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.banner--danger {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.banner--success {
+  border-left-color: var(--ok);
+  background: var(--ok-soft);
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs-body-lg);
+  line-height: 1;
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.description {
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.action {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}

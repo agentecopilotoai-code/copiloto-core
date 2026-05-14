@@ -83,7 +83,7 @@ describe('usePermissions()', () => {
     const owner = renderHook(() =>
       usePermissions({ profile: {}, tenant: { roles: ['owner'] } }),
     );
-    expect(owner.result.current.home).toBe('analytics');
+    expect(owner.result.current.home).toBe('dashboard');
 
     const agent = renderHook(() =>
       usePermissions({ profile: {}, tenant: { roles: ['agent'] } }),

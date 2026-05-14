@@ -18,6 +18,10 @@ vi.mock('./moduleRegistry.js', () => ({
       Component: () => <div>ANALYTICS VIEW</div>,
       capability: 'analytics.tenant.read',
     },
+    dashboard: {
+      Component: () => <div>DASHBOARD VIEW</div>,
+      capability: 'analytics.tenant.read',
+    },
     team: { Component: () => <div>TEAM VIEW</div>, capability: 'team.write', mode: 'RW' },
     'operations-desk': {
       Component: () => <div>INBOX VIEW</div>,
@@ -87,10 +91,10 @@ describe('router por rol', () => {
     expect(router.state.location.pathname).toBe('/t/acme/team');
   });
 
-  it('redirect raíz: un owner aterriza en su home de rol (analítica)', async () => {
+  it('redirect raíz: un owner aterriza en su home de rol (dashboard)', async () => {
     const router = renderAt('/', { tenants: [ACME(['owner'])] });
-    expect(await screen.findByText('ANALYTICS VIEW')).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe('/t/acme/analytics');
+    expect(await screen.findByText('DASHBOARD VIEW')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/t/acme/dashboard');
   });
 
   it('redirect raíz: un viewer entra al shell de solo lectura', async () => {
@@ -143,7 +147,7 @@ describe('router por rol', () => {
   it('un slug de tenant desconocido vuelve al redirect raíz', async () => {
     const router = renderAt('/t/desconocido/services', { tenants: [ACME(['owner'])] });
     // /t/desconocido no existe → Navigate('/') → home del owner.
-    await screen.findByText('ANALYTICS VIEW');
-    expect(router.state.location.pathname).toBe('/t/acme/analytics');
+    await screen.findByText('DASHBOARD VIEW');
+    expect(router.state.location.pathname).toBe('/t/acme/dashboard');
   });
 });

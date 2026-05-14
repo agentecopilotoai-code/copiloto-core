@@ -173,8 +173,8 @@ export function highestRole(roles) {
  */
 export const ROLE_HOME = Object.freeze({
   platform_owner: 'platform-fleet',
-  owner: 'analytics',
-  admin: 'analytics',
+  owner: 'dashboard',
+  admin: 'dashboard',
   manager: 'analytics',
   agent: 'operations-desk',
   viewer: 'analytics',
