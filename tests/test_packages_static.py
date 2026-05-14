@@ -37,8 +37,15 @@ BOOKING_FLOW = Path('app/services/booking_flow.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
 PACKAGES_MODULE = Path('admin-panel/src/components/modules/packages/PackagesModule.jsx')
-CONTACTS_MODULE = Path('admin-panel/src/components/modules/contacts/ContactsModule.jsx')
+# UI-007.3: the contacts module was split into a feature directory.
+CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
+
+
+def _contacts_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(CONTACTS_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Schema ──────────────────────────────────────────────────────────────
@@ -329,7 +336,7 @@ def test_packages_module_has_form_and_service_picker():
 
 
 def test_contacts_module_exposes_packages_block_and_actions():
-    source = CONTACTS_MODULE.read_text()
+    source = _contacts_feature_source()
     assert "listContactPackages" in source
     assert 'assignContactPackage' in source
     assert 'refundContactPackage' in source

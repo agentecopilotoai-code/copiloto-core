@@ -28,9 +28,16 @@ ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 WIDGET_JS = Path('admin-panel/public/widget.js')
 ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx')
-CONTACTS_MODULE = Path('admin-panel/src/components/modules/contacts/ContactsModule.jsx')
+# UI-007.3: the contacts module was split into a feature directory.
+CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
 WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
+
+
+def _contacts_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(CONTACTS_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Schema ──────────────────────────────────────────────────────────────
@@ -209,10 +216,12 @@ def test_analytics_panel_renders_top_referrers_card():
 
 
 def test_contacts_module_renders_referrals_panel():
-    source = CONTACTS_MODULE.read_text()
+    source = _contacts_feature_source()
     assert 'data-testid="contact-referrals-panel"' in source
-    assert 'profile.referrals?.referred_by' in source
-    assert 'profile.referrals?.referred_contacts' in source
+    # UI-007.3 split: ContactTimeline destructures `profile.referrals` before
+    # reading `referred_by` / `referred_contacts`.
+    assert 'referred_by' in source
+    assert 'referred_contacts' in source
 
 
 def test_wizard_exposes_ask_referrer_toggle():
