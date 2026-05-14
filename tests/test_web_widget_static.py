@@ -26,8 +26,16 @@ MAIN = Path('app/main.py')
 WORKER = Path('app/workers/event_worker.py')
 WIDGET_JS = Path('admin-panel/public/widget.js')
 ADMIN_API = Path('admin-panel/src/services/coreApi.js')
-ONBOARDING = Path('admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx')
+# UI-007.8: the WhatsApp module was redesigned into a feature directory; the
+# WebWidgetPanel stays at its current path until its own UI task.
+WHATSAPP_FEATURE = Path('admin-panel/src/features/owner-admin/whatsapp')
 WEB_PANEL = Path('admin-panel/src/components/modules/whatsapp/WebWidgetPanel.jsx')
+
+
+def _whatsapp_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(WHATSAPP_FEATURE.rglob('*.js*'))
+    )
 ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx')
 
 
@@ -129,7 +137,7 @@ def test_core_api_exposes_web_channel_helpers():
 
 
 def test_onboarding_renders_web_widget_tab():
-    text = ONBOARDING.read_text()
+    text = _whatsapp_feature_source()
     assert "import { WebWidgetPanel }" in text
     assert "id: 'web', label: 'Widget Web'" in text
     assert 'activeTab' in text

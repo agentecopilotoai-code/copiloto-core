@@ -13,6 +13,7 @@ import { Services } from '../features/owner-admin/services/index.js';
 import { Packages } from '../features/owner-admin/packages/index.js';
 import { Subscriptions } from '../features/owner-admin/subscriptions/index.js';
 import { Branches } from '../features/owner-admin/branches/index.js';
+import { WhatsAppOnboarding } from '../features/owner-admin/whatsapp/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
 import { CampaignsModule } from '../components/modules/campaigns/CampaignsModule.jsx';
@@ -27,7 +28,6 @@ import { SegmentsModule } from '../components/modules/segments/SegmentsModule.js
 import { SocialChannelsModule } from '../components/modules/socialChannels/SocialChannelsModule.jsx';
 import { TeamModule } from '../components/modules/team/TeamModule.jsx';
 import { TenantSetupWizard } from '../components/modules/tenantSetup/TenantSetupWizard.jsx';
-import { WhatsAppOnboarding } from '../components/modules/whatsapp/WhatsAppOnboarding.jsx';
 
 /**
  * Registro `module id → { Component, capability, mode }`.

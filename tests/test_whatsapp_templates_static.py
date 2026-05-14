@@ -23,9 +23,14 @@ WHATSAPP = Path('app/services/whatsapp.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-WHATSAPP_ONBOARDING = Path(
-    'admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx'
-)
+# UI-007.8: the WhatsApp module was redesigned into a feature directory.
+WHATSAPP_FEATURE = Path('admin-panel/src/features/owner-admin/whatsapp')
+
+
+def _whatsapp_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(WHATSAPP_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Pure helpers (template payload + Meta normalization) ─────
@@ -249,7 +254,7 @@ def test_admin_client_exposes_template_helpers():
 
 
 def test_whatsapp_onboarding_renders_templates_section():
-    source = WHATSAPP_ONBOARDING.read_text()
+    source = _whatsapp_feature_source()
     assert 'TEMPLATE_PURPOSES' in source
     assert 'TEMPLATE_STATUS_LABEL' in source
     assert 'Plantillas de mensajes' in source

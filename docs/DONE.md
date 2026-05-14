@@ -15,6 +15,47 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.8 — Canales · WhatsApp Cloud API (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** refactor del módulo `WhatsAppOnboarding.jsx` (801 LOC) en una feature bajo `src/features/owner-admin/whatsapp/`, aplicando el mockup `16 _ Canales _ WhatsApp Cloud API.html` y el split pedido por el backlog (`WhatsAppWizardSteps` + `WhatsAppHealthPanel` + `TemplatesPanel`). **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/whatsapp/` (nuevo, 9 archivos):**
+    - `whatsappData.js` (helper puro): `CHANNEL_TABS`, `TEMPLATE_PURPOSES`, `TEMPLATE_STATUS_LABEL`/`TEMPLATE_STATUS_TONE`, `ONBOARDING_STEPS`, `emptyTemplateForm`, `defaultFormForTenant`, `formFromChannel` (nunca arrastra secretos), `templateComponentsFromForm`, `hasValue`, `channelFromHealth`, `validateTemplateForm`, `groupTemplatesByPurpose`, `buildChecklist` (lógica verbatim del monolito), `buildRequiredSemaphore`.
+    - `hooks/useWhatsAppData.js`: capa de datos — estado de canal/health/templates + handlers (`submitChannel`, `refreshHealth` con manejo de 404, `createTemplate`, `syncTemplates`, `deleteTemplate`, `updateField`), portados verbatim del legacy.
+    - `WhatsAppOnboarding.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="whatsapp.read">` + tabs WhatsApp/Widget Web + composición de los tres paneles.
+    - `components/WhatsAppWizardSteps.jsx`: form de configuración del canal (Business/WABA/Phone IDs, modo de entrega, 3 secretos) + checklist de onboarding con el primitivo `Stepper` + bloque de ayuda de secretos.
+    - `components/WhatsAppHealthPanel.jsx`: snapshot de salud del canal + identificadores de Meta + `AlertBanner` cuando `delivery_ready === false`.
+    - `components/TemplatesPanel.jsx`: semáforo de plantillas requeridas + form de alta + `DataTable` de plantillas registradas con `StatusBadge` por estado.
+    - `WhatsAppOnboarding.module.css` (~190 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/whatsapp/` → 0 resultados.
+    - `index.js` (barrel) + `whatsappData.test.js` (8 tests) + `WhatsAppOnboarding.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'whatsapp'` ahora apunta a la `WhatsAppOnboarding` de la feature; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx` (801 LOC). `WebWidgetPanel.jsx` se mantiene en `components/modules/whatsapp/` (es otro canal, sin tarea UI propia) y el orquestador nuevo lo importa desde ahí.
+  - **Backend — tests estáticos legacy actualizados:** `test_whatsapp_delivery_static.py`, `test_whatsapp_templates_static.py` y `test_web_widget_static.py` tenían hardcodeada la ruta `components/modules/whatsapp/WhatsAppOnboarding.jsx`. Se actualizaron para leer el feature dir nuevo combinando todos sus `.js*`. Los literales que verifican (`Modo de entrega`, `APP_ID|APP_SECRET`, `templates-semaphore`, `handleCreateTemplate`/`handleSyncTemplates`/`handleDeleteTemplate`, `templateComponentsFromForm`, el bloque de ayuda de secretos, etc.) se preservaron en los componentes nuevos.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/whatsapp/{WhatsAppOnboarding.jsx,WhatsAppOnboarding.module.css,WhatsAppOnboarding.test.jsx,whatsappData.js,whatsappData.test.js,index.js,hooks/useWhatsAppData.js,components/{WhatsAppWizardSteps,WhatsAppHealthPanel,TemplatesPanel}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `whatsapp → WhatsAppOnboarding` de la feature, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx`.
+  - `tests/test_whatsapp_delivery_static.py`, `tests/test_whatsapp_templates_static.py`, `tests/test_web_widget_static.py` (rutas actualizadas al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.8 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (12 nuevos: 8 whatsappData + 4 WhatsAppOnboarding). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.1-7. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_whatsapp_delivery_static.py tests/test_whatsapp_templates_static.py tests/test_web_widget_static.py` → passed.
+  - `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizaron rutas en tres tests estáticos de backend.
+  - La lógica de las mutaciones se portó verbatim: `upsertWhatsAppChannel`/`createWhatsappTemplate`/`deleteWhatsappTemplate`/`syncWhatsappTemplates` siguen pegando a los mismos endpoints, autenticados y tenant-scoped server-side. Los secretos (`meta_access_token`, `app_secret`, `verify_token`) siguen siendo campos `type="password"`, nunca se pre-cargan desde el canal (`formFromChannel` los deja en blanco) y solo se envían cuando el usuario los escribe. La entrada de módulo se gateó con `<RequirePermission capability="whatsapp.read">` como defensa en profundidad; el backend reverifica.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` en el borrado de plantillas.** El legacy usaba `window.confirm` antes de eliminar una plantilla; el rediseño lo preservó (mantener lógica). UI-011 (`ConfirmDialog`) lo barrerá.
+  - **Diferencia intencional declarada: los KPIs de volumen 24 h del HTML (mensajes enviados, tasa de entrega/lectura, fallos outbound, ventana 24 h activa) y el feed de últimas entregas del webhook no se incluyen.** `getWhatsAppChannelHealth` no expone esos datos; se difieren. El `WhatsAppHealthPanel` muestra los checks reales del endpoint (estado, identificadores, secretos configurados, calidad, tier) — no se fabrican datos.
+  - **`WebWidgetPanel.jsx` no migrado.** Es el otro canal del módulo (Widget Web) y no tiene tarea UI propia en el backlog; se mantiene en su ruta legacy y el orquestador nuevo lo importa desde ahí. Cuando exista su tarea se moverá a la feature.
+  - Próxima tarea `PENDING` real: **UI-007.9 — Canales · Instagram / Messenger** (refactor de `SocialChannelsModule.jsx` reusando componentes de UI-007.8).
+
+---
+
 ### UI-007.7 — Negocio · Sedes (Owner / Admin)
 
 - **Fecha:** 2026-05-14
