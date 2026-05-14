@@ -15,6 +15,37 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-005 — Matriz de permisos formalizada y `usePermissions`
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** reemplazar el helper ad-hoc `hasMinRole(...)` (repetido 7 veces en `AdminLayout.jsx`) por una matriz de permisos estructurada que codifica los matices del documento de acceso (`R`, `R/W`, `Parcial`, `Solo propio`, `—`). Es el espejo defensivo en la UI del enforcement que el servidor ya hace en cada endpoint (JWT + role + RLS); no reemplaza ningún chequeo del backend — sólo evita pintar controles que el API rechazará con 403.
+- **Cambios realizados:**
+  - **`admin-panel/src/permissions/matrix.js`** (nuevo): `PERMISSIONS` con 47 capability keys (`conversations.view`, `handoff.take`, `campaigns.write`, `services.write`, `platform.tenants.write`, `platform.feature_flags.write`, etc.), cada una con columna para los 6 roles (`viewer`/`agent`/`manager`/`admin`/`owner`/`platform_owner`) y nivel `RW`/`R`/`partial`/`own_only`/`null`. Documentación inline referencia `docs/HTML DESIGN/00 _ Documentaci_n de acceso.png` y la sección 2 del `UI_BACKLOG.md`. Utilidades: `can(roles, cap, mode)` (fail-closed ante roles/capabilities desconocidas), `levelFor(roles, cap)` (nivel más fuerte en multi-rol), `highestRole(roles)`, `resolveActiveRoles({profile, tenant})` (encapsula la lógica `support_mode` de TASK-0077: platform_owner/owner conservan privilegios cross-tenant sólo si `support_mode === true`), y `ROLE_HOME` (landing por rol — sección 6 del backlog).
+  - **`admin-panel/src/permissions/usePermissions.js`** (nuevo): hook que recibe `{profile, tenant}`, deriva los roles efectivos del tenant activo y expone `{roles, role, home, isSystemOwner, can(cap, mode), level(cap)}`. Memoizado por `profile`+`tenant`.
+  - **`admin-panel/src/permissions/RequirePermission.jsx`** (nuevo): componente declarativo `<RequirePermission permissions capability mode fallback hidden>` — renderiza children si hay permiso, si no `<AccessDenied/>` (default), un `fallback` custom, o `null` (`hidden`).
+  - **`admin-panel/src/permissions/AccessDenied.jsx`** (nuevo): tarjeta amigable de acceso restringido que nombra la capability y el modo faltante.
+  - **`admin-panel/src/permissions/index.js`** (nuevo): barrel.
+  - **`admin-panel/src/data/modules.js`:** `minRole: 'admin'|'manager'|...` reemplazado por `capability: '<key>'`. Cada módulo del sidebar declara la capability que lo habilita; los módulos sin capability quedan visibles para todos (ej. `tenant-setup`, necesario para usuarios sin tenant).
+  - **`admin-panel/src/components/layout/AdminLayout.jsx`:** eliminados `PRIVILEGED_ROLES`, `ROLE_LEVELS`, `hasMinRole`, `isPrivilegedProfile`, `highestRole` local e `isSystemOwner` local. El filtrado del sidebar y los 9 bloques `if (!hasMinRole(...)) { acceso restringido } else { módulo }` se reemplazaron por `usePermissions()` + `<RequirePermission>`. `highestRole` ahora se importa de `permissions/`.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/permissions/{matrix.js,usePermissions.js,RequirePermission.jsx,AccessDenied.jsx,index.js}` (nuevos).
+  - `admin-panel/src/permissions/{matrix.test.js,usePermissions.test.jsx,RequirePermission.test.jsx}` (nuevos — 43 tests).
+  - `admin-panel/src/data/modules.js` (`minRole` → `capability`).
+  - `admin-panel/src/components/layout/AdminLayout.jsx` (refactor a la nueva API).
+  - `docs/UI_BACKLOG.md` (status UI-005 → DONE), `docs/DONE.md` (esta entrada).
+- **Validación:**
+  - `npm run lint` → sin errores.
+  - `npm test` → **15 suites, 75 tests pasan** (43 nuevos: 28 matrix + 9 usePermissions + 6 RequirePermission).
+  - `npm run build` → vite build OK.
+  - `grep -rn "ROLE_LEVELS\|hasMinRole\|PRIVILEGED_ROLES" admin-panel/src` → 0 resultados.
+- **Seguridad:** la matriz es **fail-closed** — roles vacíos/`null`, roles desconocidos y capabilities inexistentes devuelven `false`. `resolveActiveRoles` sólo hereda los roles del `profile` cuando `support_mode === true` Y el profile tiene rol `owner`/`platform_owner`, espejo exacto de la regla del servidor (TASK-0077). Las capabilities `platform.*` están negadas (`null`) para todos los roles de tenant, y las capabilities de tenant están negadas para `platform_owner` — un platform owner sólo ve la flota, nunca datos de un tenant salvo en `support_mode`. Ningún parámetro de seguridad del servidor se tocó: este cambio es 100% admin-panel.
+- **Limitaciones / próximos pasos:**
+  - El `home` por rol (`ROLE_HOME`) queda declarado pero aún no se consume — eso es UI-002 (shells) + UI-003 (router), que reemplazarán por completo `AdminLayout`. Mientras tanto el landing sigue siendo `defaultModuleId`.
+  - La matriz cubre las capabilities derivables del documento de acceso y de las 36 pantallas mapeadas. Capabilities nuevas (ej. `permission_overrides` editables de UI-006.7) se agregan cuando la feature las necesite.
+  - `AdminLayout.jsx` sigue siendo un `if/else` por `activeModuleId` — su eliminación total es UI-002/UI-003. UI-005 sólo erradicó la lógica de roles ad-hoc.
+
+---
+
 ### UI-001 — Design system: tokens y primitivas UI
 
 - **Fecha:** 2026-05-14

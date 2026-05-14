@@ -397,7 +397,7 @@ src/
 
 ### UI-005 — Matriz de permisos formalizada y `usePermissions`
 
-- **Estado:** PENDING
+- **Estado:** DONE (matriz + hook + `<RequirePermission>` + refactor de `AdminLayout`; 43 tests)
 - **Por qué bloquea:** la regla `hasMinRole(...)` está repetida 7 veces en `AdminLayout` y no codifica los matices del documento (`Parcial`, `Solo propio`, `R` vs `R/W`).
 - **Alcance:**
   - Crear `src/permissions/matrix.js` con la matriz completa de la imagen `00 _ Documentación de acceso.png`. Una fila por **capability key** (ej. `conversations.view`, `handoff.take`, `agent.performance.read`, `services.write`, `tenants.fleet.read`, `feature_flags.write`).

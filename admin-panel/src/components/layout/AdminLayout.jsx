@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useActiveModule } from '../../hooks/useActiveModule.js';
 import { useTenantOptions } from '../../hooks/useTenantOptions.js';
+import {
+  RequirePermission,
+  highestRole,
+  usePermissions,
+} from '../../permissions/index.js';
 import { listMyTenants } from '../../services/coreApi.js';
 import { AnalyticsPanel } from '../modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../modules/audit/AuditPanel.jsx';
@@ -27,31 +32,6 @@ import { WhatsAppOnboarding } from '../modules/whatsapp/WhatsAppOnboarding.jsx';
 import { SocialChannelsModule } from '../modules/socialChannels/SocialChannelsModule.jsx';
 import { Sidebar } from './Sidebar.jsx';
 import { Topbar } from './Topbar.jsx';
-
-const PRIVILEGED_ROLES = new Set(['admin', 'owner', 'platform_owner']);
-const ROLE_LEVELS = { viewer: 5, agent: 10, manager: 20, admin: 30, owner: 40, platform_owner: 50, support: 50 };
-
-function isSystemOwner(profile) {
-  return Boolean(profile?.support_mode && profile?.roles?.includes('owner'));
-}
-
-function isPrivilegedProfile(profile) {
-  return (profile?.roles || []).some((r) => PRIVILEGED_ROLES.has(r));
-}
-
-function highestRole(roles) {
-  const order = ['owner', 'admin', 'manager', 'agent', 'viewer'];
-  for (const role of order) {
-    if (roles?.includes(role)) return role;
-  }
-  return roles?.[0] || 'viewer';
-}
-
-function hasMinRole(roles, minRole) {
-  if (!minRole) return true;
-  const required = ROLE_LEVELS[minRole] ?? 0;
-  return (roles || []).some((r) => (ROLE_LEVELS[r] ?? 0) >= required);
-}
 
 function MfaRequiredBlocker() {
   return (
@@ -112,11 +92,6 @@ export function AdminLayout({ session }) {
   const initialTenantOptions = useTenantOptions(profile);
   const [tenantOptions, setTenantOptions] = useState(initialTenantOptions);
   const [activeTenantId, setActiveTenantId] = useState(initialTenantOptions[0]?.id);
-  // Multi-tenant switcher (Slack-style): show whenever the user belongs to
-  // more than one tenant, regardless of support mode.
-  const canSwitchTenants = tenantOptions.length > 1 || isSystemOwner(profile);
-  const hasTenant = tenantOptions.length > 0;
-
 
   useEffect(() => {
     let mounted = true;
@@ -167,16 +142,21 @@ export function AdminLayout({ session }) {
     [activeTenantId, tenantOptions],
   );
 
-  const activeRoles = useMemo(() => {
-    const fromTenant = activeTenant?.roles || (activeTenant?.role ? [activeTenant.role] : []);
-    // Platform owners with support_mode keep their privileges across tenants.
-    const fromProfile = isSystemOwner(profile) ? profile?.roles || [] : [];
-    return Array.from(new Set([...fromTenant, ...fromProfile]));
-  }, [activeTenant, profile]);
+  const permissions = usePermissions({ profile, tenant: activeTenant });
+  const { isSystemOwner } = permissions;
+
+  // Multi-tenant switcher (Slack-style): show whenever the user belongs to
+  // more than one tenant, regardless of support mode.
+  const canSwitchTenants = tenantOptions.length > 1 || isSystemOwner;
+  const hasTenant = tenantOptions.length > 0;
 
   const visibleModules = useMemo(
-    () => modules.filter((module) => hasMinRole(activeRoles, module.minRole)),
-    [modules, activeRoles],
+    () =>
+      modules.filter((module) => {
+        if (!module.capability) return true;
+        return permissions.can(module.capability, 'R');
+      }),
+    [modules, permissions],
   );
 
   function handleTenantCreated(createdTenant) {
@@ -217,18 +197,8 @@ export function AdminLayout({ session }) {
   } else if (!hasTenant) {
     activeContent = <NoTenantOnboarding onCreateTenant={openTenantCreation} />;
   } else if (activeModuleId === 'onboarding-wizard') {
-    if (!hasMinRole(activeRoles, 'admin')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para correr
-            el wizard de onboarding.
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = (
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="onboarding.run" mode="RW">
         <OnboardingWizard
           module={activeModule}
           session={session}
@@ -238,164 +208,130 @@ export function AdminLayout({ session }) {
             selectModule(targetModuleId);
           }}
         />
-      );
-    }
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'services') {
-    activeContent = <ServiceCatalog module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="services.read">
+        <ServiceCatalog module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'branches') {
-    if (!hasMinRole(activeRoles, 'admin')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
-            las sedes.
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = <BranchesModule module={activeModule} session={session} tenant={activeTenant} />;
-    }
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="branches.write" mode="RW">
+        <BranchesModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'packages') {
-    if (!hasMinRole(activeRoles, 'admin')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
-            los paquetes y planes de tratamiento.
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = <PackagesModule module={activeModule} session={session} tenant={activeTenant} />;
-    }
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="packages.write" mode="RW">
+        <PackagesModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'subscriptions') {
-    if (!hasMinRole(activeRoles, 'admin')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
-            las suscripciones recurrentes.
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = <SubscriptionsModule module={activeModule} session={session} tenant={activeTenant} />;
-    }
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="subscriptions.write" mode="RW">
+        <SubscriptionsModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'whatsapp') {
-    activeContent = <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="whatsapp.read">
+        <WhatsAppOnboarding module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'social-channels') {
-    if (!hasMinRole(activeRoles, 'admin')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
-            los canales sociales (Instagram DM y Facebook Messenger).
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = <SocialChannelsModule module={activeModule} session={session} tenant={activeTenant} />;
-    }
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="social_channels.write" mode="RW">
+        <SocialChannelsModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'knowledge-storage') {
-    activeContent = <KnowledgeStorageSettings module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="knowledge_storage.write" mode="RW">
+        <KnowledgeStorageSettings module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'knowledge-studio') {
-    activeContent = <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="knowledge.read">
+        <KnowledgeStudio module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'media-library') {
-    if (!hasMinRole(activeRoles, 'admin')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
-            la biblioteca de medios y promociones.
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = <MediaLibraryModule module={activeModule} session={session} tenant={activeTenant} />;
-    }
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="media.write" mode="RW">
+        <MediaLibraryModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'contacts') {
-    activeContent = <ContactsModule module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="contacts.view">
+        <ContactsModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'segments') {
-    if (!hasMinRole(activeRoles, 'manager')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>manager</strong>, <strong>admin</strong> u <strong>owner</strong> en este
-            tenant para gestionar segmentos.
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = <SegmentsModule module={activeModule} session={session} tenant={activeTenant} />;
-    }
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="segments.write" mode="RW">
+        <SegmentsModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'campaigns') {
-    if (!hasMinRole(activeRoles, 'admin')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar
-            campañas masivas. Cambia al tenant donde tengas permisos o pide a un admin que te promocione.
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = <CampaignsModule module={activeModule} session={session} tenant={activeTenant} />;
-    }
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="campaigns.write" mode="RW">
+        <CampaignsModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'operations-desk') {
-    activeContent = <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="conversations.view">
+        <OperationsDesk module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'outbound-dlq') {
-    activeContent = <OutboundDLQ module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="outbound_dlq.retry" mode="RW">
+        <OutboundDLQ module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'go-live-readiness') {
     activeContent = (
-      <GoLiveReadiness
-        module={activeModule}
-        onGoToEscalation={() => {
-          setTenantSetupInitialTab('escalation');
-          selectModule('tenant-setup');
-        }}
-        session={session}
-        tenant={activeTenant}
-      />
+      <RequirePermission permissions={permissions} capability="go_live_readiness.read">
+        <GoLiveReadiness
+          module={activeModule}
+          onGoToEscalation={() => {
+            setTenantSetupInitialTab('escalation');
+            selectModule('tenant-setup');
+          }}
+          session={session}
+          tenant={activeTenant}
+        />
+      </RequirePermission>
     );
   } else if (activeModuleId === 'analytics') {
-    activeContent = <AnalyticsPanel module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="analytics.tenant.read">
+        <AnalyticsPanel module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'audit') {
-    activeContent = <AuditPanel module={activeModule} session={session} tenant={activeTenant} />;
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="audit.read">
+        <AuditPanel module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'team') {
-    if (!hasMinRole(activeRoles, 'admin')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar el
-            equipo. Cambia al tenant donde tengas permisos o pide a un admin que te promocione.
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = <TeamModule module={activeModule} session={session} tenant={activeTenant} />;
-    }
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="team.write" mode="RW">
+        <TeamModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else if (activeModuleId === 'legal') {
-    if (!hasMinRole(activeRoles, 'admin')) {
-      activeContent = (
-        <section className="module-card">
-          <h2>Acceso restringido</h2>
-          <p className="hint">
-            Necesitas rol <strong>admin</strong> u <strong>owner</strong> en este tenant para gestionar las
-            páginas legales y los avisos de privacidad.
-          </p>
-        </section>
-      );
-    } else {
-      activeContent = <LegalModule module={activeModule} session={session} tenant={activeTenant} />;
-    }
+    activeContent = (
+      <RequirePermission permissions={permissions} capability="legal.write" mode="RW">
+        <LegalModule module={activeModule} session={session} tenant={activeTenant} />
+      </RequirePermission>
+    );
   } else {
     activeContent = <ModulePlaceholder module={activeModule} tenant={activeTenant} />;
   }
@@ -422,3 +358,4 @@ export function AdminLayout({ session }) {
     </main>
   );
 }
+
