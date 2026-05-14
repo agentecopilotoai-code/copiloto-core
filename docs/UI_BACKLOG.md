@@ -38,6 +38,132 @@ Por eso este backlog: **levantar un design system, una capa de routing por rol y
 
 ---
 
+## 0.bis Cómo el agente extrae el diseño desde `HTML DESIGN/`
+
+> Esta sección es **obligatoria** para toda tarea `UI-####`. Sin ella el rediseño no quedará "casi igual" al HTML.
+
+Cada archivo en `docs/HTML DESIGN/<Rol>/<NN _ Titulo>.html` es **self-contained**: lleva la fuente embebida en base64, todo el `<style>` inline, y declara los tokens del design system en el `:root` con OKLCH + variables CSS. **El HTML es la fuente de verdad visual.** No hay Figma adicional ni guía de marca paralela; lo que está en el HTML es lo que se debe reproducir.
+
+### 0.bis.1 — Receta de extracción para CADA pantalla
+
+Antes de codear una vista `UI-006.x`, `UI-007.x`, `UI-008.x`, `UI-009.x` o `UI-010.x`, el agente DEBE:
+
+1. **Abrir el HTML correspondiente** (ruta exacta en la sección 5 de este documento).
+2. **Renderizarlo** con `python -m http.server` desde `docs/HTML DESIGN/` y abrir en navegador para tomar screenshot de referencia (guardar en `docs/HTML DESIGN/.screenshots/NN.png` para el PR).
+3. **Extraer los tokens** del `:root` o `<style>` raíz del HTML:
+   ```bash
+   grep -oE '--[a-z0-9-]+ ?:[^;]+;' "docs/HTML DESIGN/<Rol>/<NN _ Titulo>.html" \
+     | sort -u > /tmp/tokens-NN.css
+   ```
+   Estos tokens DEBEN coincidir con `src/styles/tokens.css` (UI-001). Si la pantalla declara un token que no está en `tokens.css`, **añadirlo a `tokens.css` antes de usarlo**, jamás declararlo local.
+4. **Inventariar los bloques visuales** del HTML: header, sidebar, KPI grid, tabla, drawer, modal, badge, etc. Cada bloque visual recurrente que aparezca en ≥ 2 pantallas se vuelve un componente en `components/ui/` o `components/domain/`. Si ya existe, se reusa.
+5. **Identificar layout/grid**: copiar valores `grid-template-columns`, `gap`, `padding` y `max-width` del contenedor principal del HTML hacia el componente React.
+6. **Copiar el markup semántico** (etiquetas `<section>`, `<header>`, roles ARIA, jerarquía de `<h1>`/`<h2>`) — no inventar estructuras propias.
+7. **Mapear data mock → API real**: el HTML trae datos hardcodeados. Reemplazarlos por las props/endpoints reales. La lista de endpoints está en cada subtarea.
+8. **Comparar pixel-cercano** al final: screenshot del componente React lado a lado con el HTML, adjuntar al PR. Diferencias aceptables: contenido dinámico, microcopy en español; **inaceptables**: paleta distinta, radio distinto, tipografía distinta, jerarquía visual distinta.
+
+### 0.bis.2 — Tokens raíz observados en los HTMLs (referencia inicial para UI-001)
+
+Verificado en `Platform Owner/01 _ Fleet _ Tenants.html` (idénticos al resto de pantallas auditadas):
+
+```css
+:root {
+  /* Colores */
+  --bg:          #f6f5f1;
+  --bg-deep:     #ecebe5;
+  --panel:       #ffffff;
+  --panel-alt:   #fbfaf6;
+  --ink:         #0e0f0c;
+  --ink-2:       #2a2b27;
+  --muted:       #6b6f6a;
+  --muted-2:     #9aa09a;
+  --line:        #e6e4dc;
+  --line-strong: #d6d3c8;
+
+  --accent:      oklch(0.46 0.13 264);
+  --accent-ink:  oklch(0.32 0.12 264);
+  --accent-soft: oklch(0.94 0.03 264);
+  --ok:          oklch(0.55 0.12 165);
+  --ok-soft:     oklch(0.94 0.04 165);
+  --warn:        oklch(0.70 0.14 70);
+  --warn-soft:   oklch(0.95 0.06 75);
+  --danger:      oklch(0.55 0.18 25);
+  --danger-soft: oklch(0.94 0.05 25);
+
+  /* Radios */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+
+  /* Sombras */
+  --shadow-sm: 0 1px 0 rgba(14,15,12,.04), 0 1px 2px rgba(14,15,12,.04);
+  --shadow-md: 0 1px 0 rgba(14,15,12,.04), 0 6px 18px -8px rgba(14,15,12,.12);
+
+  /* Tipografía */
+  --font-sans:    'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: 'Inter', sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+```
+
+**UI-001 copia este bloque tal cual** como punto de partida de `src/styles/tokens.css`. Si una pantalla específica trae tokens distintos (ej. variantes oscuras o por sección), se agregan como tokens semánticos adicionales, **nunca se sobreescriben** los base.
+
+### 0.bis.3 — Mapping tarea ↔ archivo HTML (única fuente)
+
+| Tarea | Archivo HTML (ruta relativa al repo) |
+|---|---|
+| UI-006.1 | `docs/HTML DESIGN/Platform Owner/01 _ Fleet _ Tenants.html` |
+| UI-006.2 | `docs/HTML DESIGN/Platform Owner/02 _ System Health.html` |
+| UI-006.3 | `docs/HTML DESIGN/Platform Owner/03 _ Billing _ MRR.html` |
+| UI-006.4 | `docs/HTML DESIGN/Platform Owner/04 _ Incidentes.html` |
+| UI-006.5 | `docs/HTML DESIGN/Platform Owner/05 _ Outbound DLQ _ fleet.html` |
+| UI-006.6 | `docs/HTML DESIGN/Platform Owner/06 _ Runbooks.html` |
+| UI-006.7 | `docs/HTML DESIGN/Platform Owner/07 _ Roles _ ACL.html` |
+| UI-006.8 | `docs/HTML DESIGN/Platform Owner/08 _ Feature flags.html` |
+| UI-007.1 | `docs/HTML DESIGN/OWNER : Admin/09 _ Inicio _ Dashboard.html` |
+| UI-007.2 | `docs/HTML DESIGN/OWNER : Admin/10 _ Inicio _ Onboarding self-service.html` |
+| UI-007.3 | `docs/HTML DESIGN/OWNER : Admin/11 _ Conversaciones _ Contactos.html` |
+| UI-007.4 | `docs/HTML DESIGN/OWNER : Admin/12 _ Negocio _ Servicios.html` |
+| UI-007.5 | `docs/HTML DESIGN/OWNER : Admin/13 _ Negocio _ Paquetes.html` |
+| UI-007.6 | `docs/HTML DESIGN/OWNER : Admin/14 _ Negocio _ Suscripciones.html` |
+| UI-007.7 | `docs/HTML DESIGN/OWNER : Admin/15 _ Negocio _ Sedes.html` |
+| UI-007.8 | `docs/HTML DESIGN/OWNER : Admin/16 _ Canales _ WhatsApp Cloud API.html` |
+| UI-007.9 | `docs/HTML DESIGN/OWNER : Admin/17 _ Canales _ Instagram _ Messenger.html` |
+| UI-007.10 | `docs/HTML DESIGN/OWNER : Admin/18 _ IA _ Knowledge Studio.html` |
+| UI-007.11 | `docs/HTML DESIGN/OWNER : Admin/19 _ IA _ Medios y promociones.html` |
+| UI-007.12 | `docs/HTML DESIGN/OWNER : Admin/20 _ Config _ Tenant Setup _ Voz del bot.html` |
+| UI-007.13 | `docs/HTML DESIGN/OWNER : Admin/21 _ Config _ Equipo.html` |
+| UI-007.14 | `docs/HTML DESIGN/OWNER : Admin/22 _ Config _ Legal.html` |
+| UI-007.15 | `docs/HTML DESIGN/OWNER : Admin/23 _ Config _ Auditoría.html` |
+| UI-008.1 | `docs/HTML DESIGN/Manager/24 _ Analítica _ cómo va el negocio.html` |
+| UI-008.2 | `docs/HTML DESIGN/Manager/25 _ Campañas.html` |
+| UI-008.3 | `docs/HTML DESIGN/Manager/26 _ Segmentos.html` |
+| UI-008.4 | `docs/HTML DESIGN/Manager/27 _ Reportes _ Digest.html` |
+| UI-009.1 | `docs/HTML DESIGN/Agente/28 _ Operación _ Inbox.html` |
+| UI-009.2 | `docs/HTML DESIGN/Agente/29 _ Operación _ Mis handoffs.html` |
+| UI-009.3 | `docs/HTML DESIGN/Agente/30 _ Operación _ Ficha de contacto.html` |
+| UI-009.4 | `docs/HTML DESIGN/Agente/31 _ Operación _ Outbound DLQ.html` |
+| UI-009.5 | `docs/HTML DESIGN/Agente/32 _ Hoy _ Citas del día.html` |
+| UI-010.1 | `docs/HTML DESIGN/Viewer/33 _ Lectura _ Resumen.html` |
+| UI-010.2 | `docs/HTML DESIGN/Viewer/34 _ Lectura _ Analítica.html` |
+| UI-010.3 | `docs/HTML DESIGN/Viewer/35 _ Lectura _ Citas.html` |
+| UI-010.4 | `docs/HTML DESIGN/Viewer/36 _ Lectura _ Conversaciones.html` |
+
+> Los nombres reales del filesystem usan guiones bajos por acentos (`Operaci_n`, `Anal_tica`, `Citas del d_a`, `Auditor_a`, `Campa_as`). La tabla los muestra con acento correcto para legibilidad; el agente abre el archivo real con `ls "docs/HTML DESIGN/<carpeta>/"` antes de leerlo.
+
+### 0.bis.4 — Criterio de fidelidad visual (Definition of Done por vista)
+
+Cada PR de tarea `UI-006.x`, `UI-007.x`, `UI-008.x`, `UI-009.x`, `UI-010.x` debe incluir:
+
+1. **Screenshot del HTML de referencia** (renderizado en Chrome, viewport 1440×900).
+2. **Screenshot del componente React** en el mismo viewport con datos equivalentes.
+3. **Lista explícita de diferencias intencionales** (ej. "el HTML muestra 12 filas, el React pagina a 25"). Si no hay lista, se asume fidelidad 1:1.
+4. **Verificación de tokens**: `grep -E "color: #|background: #|border-radius: [0-9]" src/features/<feature>/` no debe encontrar literales hardcodeados; todo viene de `var(--...)`.
+
+---
+
 ## 1. Mandato de UI (vigente para toda tarea `UI-####`)
 
 Este mandato extiende el de `docs/BACKLOG.md` y aplica únicamente a tareas UI:
@@ -203,8 +329,9 @@ src/
 
 - **Estado:** PENDING
 - **Por qué bloquea:** sin primitivas reutilizables las pantallas nuevas duplican markup y CSS. `global.css` con 2462 líneas es invertible para el equipo.
+- **Fuente de los tokens:** la sección **0.bis.2** de este documento contiene el bloque exacto a copiar a `src/styles/tokens.css`. Esos valores se extrajeron de `docs/HTML DESIGN/Platform Owner/01 _ Fleet _ Tenants.html` y son consistentes con el resto de las 36 pantallas. **No inventar paleta nueva.** Si una pantalla introduce un token adicional (sombra, radio, color), se agrega aquí — no se declara local.
 - **Alcance:**
-  - Crear `src/styles/tokens.css` con variables: paleta (brand, ink, muted, success, danger, warning, info, surface, line), espaciado (`--space-1` ... `--space-8`), radios, sombras, tipografía (`--font-size-xs` ... `--font-size-2xl`), z-index.
+  - Crear `src/styles/tokens.css` con el bloque `:root { ... }` de la sección 0.bis.2 + espaciado (`--space-1: 4px` ... `--space-8: 64px` derivados del HTML), tamaños de fuente (extraídos midiendo `font-size` del HTML por jerarquía: display, h1, h2, h3, body, small, caption) y z-index.
   - Crear `src/components/ui/` con primitivas: `Button`, `Card`, `DataTable`, `EmptyState`, `FormField`, `KpiTile`, `Modal`, `PageHeader`, `Pagination`, `StatusBadge`, `Tabs`, `Toast`. Cada primitiva en su archivo + `.module.css` (CSS Modules, no `global.css` nuevo).
   - Borrar de `global.css` todo lo que se factorizó; dejar solo reset, tipografía base y layout shell.
   - Documentar la API de cada primitiva en JSDoc.
@@ -289,6 +416,8 @@ src/
 ### UI-006 — Vistas del rol **Platform Owner** (8 pantallas, no existen hoy)
 
 > Carpeta `docs/HTML DESIGN/Platform Owner/`. Cada subtarea entrega una sola feature dentro de `src/features/platform/`. Reusa `DataTable`, `KpiTile`, `PageHeader`, `StatusBadge` (UI-001).
+>
+> **Antes de empezar cada subtarea, aplicar la receta de 0.bis.1**: abrir el HTML mapeado en 0.bis.3, capturar screenshot de referencia, inventariar bloques visuales, y validar fidelidad al final (criterio 0.bis.4). Sin estos pasos la tarea no se considera DONE.
 
 #### UI-006.1 — Fleet · Tenants (01)
 - **Alcance:** tabla de tenants con filtros (status, plan, país, churn risk); columnas: slug, nombre, plan, MRR, last activity, owner email. CTA "Crear tenant" (platform_owner only). Drawer con detalle: settings overview, health, billing snapshot, link a "Ver como tenant".
@@ -331,6 +460,8 @@ src/
 ### UI-007 — Vistas **Owner / Admin** (15 pantallas, mayoría hoy son monolitos)
 
 > Carpeta `docs/HTML DESIGN/OWNER : Admin/`. La estrategia es **rediseñar reusando** las primitivas y componentes de dominio. Ningún módulo nuevo > 400 LOC.
+>
+> **Aplica receta 0.bis.1 + mapping 0.bis.3 + criterio 0.bis.4** para cada subtarea: abrir el HTML correspondiente, screenshot de referencia, comparación lado a lado en el PR.
 
 #### UI-007.1 — Inicio · Dashboard (09)
 - **Alcance nuevo:** página de entrada para Owner/Admin con KPIs del día (citas hoy, mensajes pendientes, no-show rate semana, MRR, top servicios), alertas (handoffs sin tomar, DLQ con backlog, feedback negativo), quick links.
@@ -391,6 +522,8 @@ src/
 ### UI-008 — Vistas **Manager** (4 pantallas dedicadas)
 
 > Carpeta `docs/HTML DESIGN/Manager/`. Hoy comparten panel con admin; la diferencia es la home + Digest.
+>
+> **Aplica receta 0.bis.1 + mapping 0.bis.3 + criterio 0.bis.4** para cada subtarea.
 
 #### UI-008.1 — Analítica · cómo va el negocio (24)
 - Home del manager. Reusa todos los KPIs de UI-007.1 pero con foco en conversión + funnel + rendimiento por agente. Reusa `KpiCardWithDelta`, `FunnelChart` (nuevo, en `domain/`), `AgentPerformanceTable` (extraer de `AgentPerformance.jsx`).
@@ -411,6 +544,8 @@ src/
 ### UI-009 — Vistas **Agente** (5 pantallas dedicadas)
 
 > Carpeta `docs/HTML DESIGN/Agente/`. `OperationsDesk.jsx` (2158 LOC) se trocea por completo.
+>
+> **Aplica receta 0.bis.1 + mapping 0.bis.3 + criterio 0.bis.4** para cada subtarea.
 
 #### UI-009.1 — Operación · Inbox (28)
 - Lista de conversaciones con filtros (no asignadas, mías, con handoff, urgentes), composer integrado, panel lateral del contacto activo.
@@ -438,6 +573,8 @@ src/
 ### UI-010 — Vistas **Viewer** (4 pantallas read-only, no existen hoy)
 
 > Carpeta `docs/HTML DESIGN/Viewer/`. El shell es `ReadOnlyShell` (UI-002) — banner permanente "Modo lectura", oculta CTAs.
+>
+> **Aplica receta 0.bis.1 + mapping 0.bis.3 + criterio 0.bis.4** para cada subtarea.
 
 #### UI-010.1 — Lectura · Resumen (33)
 - Versión read-only de UI-007.1 (dashboard). Reusa `KpiCardWithDelta`.
@@ -551,7 +688,8 @@ Antes de mover una tarea a `docs/DONE.md`:
 3. Permisos visibles: cada CTA write está envuelta en `<RequirePermission>` o `usePermissions().can(...)`.
 4. Tests ≥ los exigidos por la tarea.
 5. `pnpm lint && pnpm build && pnpm test` en `admin-panel/` pasan en local y CI.
-6. Captura/GIF de la vista nueva contra el mockup correspondiente en `HTML DESIGN/` agregada al PR description.
-7. Sin código legacy: si la tarea reemplaza una vista vieja, el archivo viejo se borra en el mismo commit.
+6. **Fidelidad visual al HTML de referencia (sección 0.bis.4):** screenshots lado a lado del HTML mapeado en 0.bis.3 y del componente React, en el mismo viewport (1440×900). Diferencias declaradas explícitamente en el PR. Sin esto el PR no se mergea.
+7. **Tokens 100% extraídos del HTML:** `grep -rE "color: #|background: #[0-9a-f]|border-radius: [0-9]" src/features/<feature>/` → 0 resultados. Todo viene de `var(--...)` (sección 0.bis.2).
+8. Sin código legacy: si la tarea reemplaza una vista vieja, el archivo viejo se borra en el mismo commit.
 
 ---
