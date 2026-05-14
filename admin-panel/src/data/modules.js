@@ -1,5 +1,12 @@
 export const adminModules = [
   {
+    id: 'platform-fleet',
+    label: 'Fleet · Tenants',
+    summary: 'Vista de flota cross-tenant para Platform Owner: tenants, plan, MRR y salud. La implementación completa llega en UI-006.1; por ahora rinde el placeholder.',
+    scope: ['Listado de tenants', 'Filtros por status/plan/país', 'Crear tenant', 'Drawer de detalle y "ver como tenant"'],
+    capability: 'platform.tenants.read',
+  },
+  {
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',
@@ -147,4 +154,9 @@ export const adminModules = [
   },
 ];
 
-export const defaultModuleId = adminModules[0].id;
+// Landing por defecto cuando no hay módulo en el hash. Explícito (no posicional)
+// para no depender del orden del array: `platform-fleet` está primero para el
+// sidebar de Platform Owner, pero el default universal sigue siendo el wizard
+// de tenant (único módulo sin capability, visible para usuarios sin tenant).
+// UI-002/UI-003 reemplazarán esto por el landing por rol (ROLE_HOME).
+export const defaultModuleId = 'tenant-setup';

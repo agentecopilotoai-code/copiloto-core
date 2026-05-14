@@ -407,7 +407,9 @@ def test_modules_register_segments_entry():
     source = MODULES.read_text()
     assert "id: 'segments'" in source
     assert "label: 'Segmentos'" in source
-    assert "minRole: 'manager'" in source
+    # UI-005: minRole → capability de la matriz de permisos (manager/admin/owner
+    # tienen segments.write=RW).
+    assert "capability: 'segments.write'" in source
 
 
 def test_admin_layout_renders_segments_module():

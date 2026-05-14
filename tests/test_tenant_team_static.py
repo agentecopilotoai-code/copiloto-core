@@ -116,12 +116,14 @@ def test_invite_endpoint_marks_skip_when_auth0_disabled():
 def test_admin_panel_exposes_team_module():
     modules = MODULES.read_text()
     assert "id: 'team'" in modules
-    assert "minRole: 'admin'" in modules
+    # UI-005: minRole → capability de la matriz de permisos.
+    assert "capability: 'team.write'" in modules
 
     layout = ADMIN_LAYOUT.read_text()
     assert "TeamModule" in layout
     assert "activeModuleId === 'team'" in layout
-    assert 'hasMinRole' in layout
+    # UI-005: el gate hasMinRole se reemplazó por <RequirePermission>.
+    assert 'capability="team.write" mode="RW"' in layout
 
     api = CORE_API.read_text()
     for helper in (

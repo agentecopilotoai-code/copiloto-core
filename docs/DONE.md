@@ -25,14 +25,16 @@ Cada entrada debe incluir:
   - **`admin-panel/src/permissions/RequirePermission.jsx`** (nuevo): componente declarativo `<RequirePermission permissions capability mode fallback hidden>` — renderiza children si hay permiso, si no `<AccessDenied/>` (default), un `fallback` custom, o `null` (`hidden`).
   - **`admin-panel/src/permissions/AccessDenied.jsx`** (nuevo): tarjeta amigable de acceso restringido que nombra la capability y el modo faltante.
   - **`admin-panel/src/permissions/index.js`** (nuevo): barrel.
-  - **`admin-panel/src/data/modules.js`:** `minRole: 'admin'|'manager'|...` reemplazado por `capability: '<key>'`. Cada módulo del sidebar declara la capability que lo habilita; los módulos sin capability quedan visibles para todos (ej. `tenant-setup`, necesario para usuarios sin tenant).
+  - **`admin-panel/src/data/modules.js`:** `minRole: 'admin'|'manager'|...` reemplazado por `capability: '<key>'`. Cada módulo del sidebar declara la capability que lo habilita; los módulos sin capability quedan visibles para todos (ej. `tenant-setup`, necesario para usuarios sin tenant). Se registró el módulo `platform-fleet` (capability `platform.tenants.read`, solo visible a platform_owner) para que `ROLE_HOME.platform_owner` apunte a un id real — hasta UI-006.1 rinde `ModulePlaceholder`. `defaultModuleId` pasó a ser explícito (`'tenant-setup'`) en vez de posicional `adminModules[0].id`, para no depender del orden del array.
   - **`admin-panel/src/components/layout/AdminLayout.jsx`:** eliminados `PRIVILEGED_ROLES`, `ROLE_LEVELS`, `hasMinRole`, `isPrivilegedProfile`, `highestRole` local e `isSystemOwner` local. El filtrado del sidebar y los 9 bloques `if (!hasMinRole(...)) { acceso restringido } else { módulo }` se reemplazaron por `usePermissions()` + `<RequirePermission>`. `highestRole` ahora se importa de `permissions/`.
 - **Archivos modificados / creados:**
   - `admin-panel/src/permissions/{matrix.js,usePermissions.js,RequirePermission.jsx,AccessDenied.jsx,index.js}` (nuevos).
   - `admin-panel/src/permissions/{matrix.test.js,usePermissions.test.jsx,RequirePermission.test.jsx}` (nuevos — 43 tests).
-  - `admin-panel/src/data/modules.js` (`minRole` → `capability`).
+  - `admin-panel/src/data/modules.js` (`minRole` → `capability`, módulo `platform-fleet`, `defaultModuleId` explícito).
   - `admin-panel/src/components/layout/AdminLayout.jsx` (refactor a la nueva API).
-  - `docs/UI_BACKLOG.md` (status UI-005 → DONE), `docs/DONE.md` (esta entrada).
+  - `tests/test_{branches,campaigns,media_promotions,meta_messenger,segments,subscriptions,tenant_team}_static.py` (assertions actualizadas: `minRole`/`hasMinRole` → `capability`/`<RequirePermission>`).
+  - `admin-panel/src/main.jsx` y `admin-panel/src/styles/global.css` (fix de review: `tokens.css` queda como fuente única de los tokens compartidos).
+  - `docs/UI_BACKLOG.md` (status UI-005 → DONE; corrección de endpoints en UI-006.1), `docs/DONE.md` (esta entrada).
 - **Validación:**
   - `npm run lint` → sin errores.
   - `npm test` → **15 suites, 75 tests pasan** (43 nuevos: 28 matrix + 9 usePermissions + 6 RequirePermission).

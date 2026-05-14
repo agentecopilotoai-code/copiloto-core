@@ -275,7 +275,9 @@ def test_admin_panel_registers_branches_module():
     assert "activeModuleId === 'branches'" in layout
     catalog = ADMIN_MODULES.read_text()
     assert "id: 'branches'" in catalog
-    assert "minRole: 'admin'" in catalog
+    # UI-005: el gate ad-hoc minRole se reemplazó por la capability de la
+    # matriz de permisos (admin/owner tienen branches.write=RW).
+    assert "capability: 'branches.write'" in catalog
 
 
 def test_branches_module_has_form_and_listing():

@@ -305,7 +305,8 @@ def test_admin_modules_register_media_library():
     source = MODULES.read_text()
     assert "id: 'media-library'" in source
     assert "Medios y promociones" in source
-    assert "minRole: 'admin'" in source
+    # UI-005: minRole → capability de la matriz de permisos.
+    assert "capability: 'media.write'" in source
 
 
 def test_admin_layout_routes_media_library():
