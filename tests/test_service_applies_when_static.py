@@ -33,12 +33,17 @@ API_SCHEMAS = Path('app/api/v1/schemas.py')
 SEGMENTS = Path('app/services/segments.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 QUALIFICATION_FLOW = Path('app/services/qualification_flow.py')
-SERVICE_CATALOG_JSX = Path(
-    'admin-panel/src/components/modules/services/ServiceCatalog.jsx'
-)
+# UI-007.4: the ServiceCatalog monolith was split into a feature directory.
+SERVICES_FEATURE = Path('admin-panel/src/features/owner-admin/services')
 QUALIFICATION_PANEL_JSX = Path(
     'admin-panel/src/components/modules/tenantSetup/QualificationQuestionsPanel.jsx'
 )
+
+
+def _services_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(SERVICES_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Schema ─────
@@ -293,7 +298,7 @@ def test_qualification_flow_snapshots_keyed_facts():
 
 
 def test_service_catalog_jsx_has_applies_when_builder():
-    source = SERVICE_CATALOG_JSX.read_text()
+    source = _services_feature_source()
     assert 'applies_when_rules' in source
     assert 'data-testid="applies-when-builder"' in source
     assert 'data-testid="applies-when-rule"' in source

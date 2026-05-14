@@ -9,6 +9,7 @@ import { SystemHealth } from '../features/platform/system-health/index.js';
 import { Dashboard } from '../features/owner-admin/dashboard/index.js';
 import { Onboarding } from '../features/owner-admin/onboarding/index.js';
 import { ConversationsContacts } from '../features/owner-admin/conversations-contacts/index.js';
+import { Services } from '../features/owner-admin/services/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
 import { BranchesModule } from '../components/modules/branches/BranchesModule.jsx';
@@ -22,7 +23,6 @@ import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
 import { PackagesModule } from '../components/modules/packages/PackagesModule.jsx';
 import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness.jsx';
 import { SegmentsModule } from '../components/modules/segments/SegmentsModule.jsx';
-import { ServiceCatalog } from '../components/modules/services/ServiceCatalog.jsx';
 import { SocialChannelsModule } from '../components/modules/socialChannels/SocialChannelsModule.jsx';
 import { SubscriptionsModule } from '../components/modules/subscriptions/SubscriptionsModule.jsx';
 import { TeamModule } from '../components/modules/team/TeamModule.jsx';
@@ -60,7 +60,7 @@ export const MODULE_REGISTRY = Object.freeze({
   dashboard: { Component: Dashboard, capability: 'analytics.tenant.read' },
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
   'onboarding-wizard': { Component: Onboarding, capability: 'onboarding.run', mode: 'RW' },
-  services: { Component: ServiceCatalog, capability: 'services.read' },
+  services: { Component: Services, capability: 'services.read' },
   branches: { Component: BranchesModule, capability: 'branches.write', mode: 'RW' },
   packages: { Component: PackagesModule, capability: 'packages.write', mode: 'RW' },
   subscriptions: { Component: SubscriptionsModule, capability: 'subscriptions.write', mode: 'RW' },

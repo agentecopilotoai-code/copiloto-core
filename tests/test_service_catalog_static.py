@@ -4,10 +4,17 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-SERVICE_CATALOG_MODULE = Path(
-    'admin-panel/src/components/modules/services/ServiceCatalog.jsx'
-)
+# UI-007.4: the ServiceCatalog monolith was split into a feature directory.
+SERVICES_FEATURE = Path('admin-panel/src/features/owner-admin/services')
 MODULES = Path('admin-panel/src/data/modules.js')
+
+
+def _services_feature_source() -> str:
+    """Concatenate every JS/JSX file of the services feature so assertions
+    survive the UI-007.4 split into table / form / panels / hook."""
+    return '\n'.join(
+        path.read_text() for path in sorted(SERVICES_FEATURE.rglob('*.js*'))
+    )
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 TENANT_WIZARD = Path(
     'admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx'
@@ -62,9 +69,9 @@ def test_service_catalog_schemas_and_admin_client_wired():
 
 
 def test_service_catalog_admin_module_exists_and_registered():
-    assert SERVICE_CATALOG_MODULE.exists(), 'ServiceCatalog.jsx must exist'
-    component = SERVICE_CATALOG_MODULE.read_text()
-    assert 'export function ServiceCatalog' in component
+    assert SERVICES_FEATURE.is_dir(), 'services feature dir must exist'
+    component = _services_feature_source()
+    assert 'export function Services' in component
     assert 'listServices' in component
     assert 'createService' in component
     assert 'updateService' in component
@@ -76,8 +83,10 @@ def test_service_catalog_admin_module_exists_and_registered():
     assert 'Servicios' in modules
 
     layout = ADMIN_LAYOUT.read_text()
-    assert 'ServiceCatalog' in layout
+    assert "from '../features/owner-admin/services/index.js'" in layout
     assert 'services: {' in layout
+    # The legacy module must be fully gone (no parallel implementation).
+    assert 'components/modules/services/ServiceCatalog' not in layout
 
 
 def test_tenant_wizard_renamed_to_negocio_with_free_business_type():
