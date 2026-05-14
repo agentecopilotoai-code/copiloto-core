@@ -1,0 +1,115 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ── filters ──────────────────────────────────────────────────────────────── */
+
+.filterForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.filterGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+
+.filterActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ── table ────────────────────────────────────────────────────────────────── */
+
+.entityId {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+/* ── privacy tools ────────────────────────────────────────────────────────── */
+
+.privacyForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.dpaList {
+  margin: var(--space-3) 0 0;
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+}
+
+/* ── buttons ──────────────────────────────────────────────────────────────── */
+
+.primaryButton {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--panel);
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--accent-ink);
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--bg-deep);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dangerButton {
+  background: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--panel);
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: opacity var(--transition-base);
+}
+
+.dangerButton:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.dangerButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

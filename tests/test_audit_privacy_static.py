@@ -5,7 +5,14 @@ LOGGING = Path('app/core/logging.py')
 SCHEMA_SQL = Path('infra/postgres/01-schema.sql')
 BOOTSTRAP = Path('scripts/bootstrap.sh')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-AUDIT_PANEL = Path('admin-panel/src/components/modules/audit/AuditPanel.jsx')
+# UI-007.15: the AuditPanel was redesigned into a feature directory.
+AUDIT_FEATURE = Path('admin-panel/src/features/owner-admin/audit')
+
+
+def _audit_feature_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(AUDIT_FEATURE.rglob('*.js*')))
+
+
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 GLOBAL_CSS = Path('admin-panel/src/styles/global.css')
 DPA = Path('docs/DPA.md')
@@ -121,20 +128,20 @@ def test_core_api_suppress_uses_post():
 # --- AuditPanel.jsx ---
 
 def test_audit_panel_component_exists():
-    assert AUDIT_PANEL.exists()
-    source = AUDIT_PANEL.read_text()
+    assert AUDIT_FEATURE.exists()
+    source = _audit_feature_source()
     assert 'export function AuditPanel' in source
 
 
 def test_audit_panel_has_log_table():
-    source = AUDIT_PANEL.read_text()
+    source = _audit_feature_source()
     assert 'audit-table' in source
     assert 'listAuditLogsFiltered' in source
     assert 'exportAuditLogs' in source
 
 
 def test_audit_panel_has_suppression_form():
-    source = AUDIT_PANEL.read_text()
+    source = _audit_feature_source()
     assert 'suppressContact' in source
     assert 'handleSuppressContact' in source
     assert 'danger-action' in source
@@ -142,13 +149,13 @@ def test_audit_panel_has_suppression_form():
 
 
 def test_audit_panel_has_tenant_export():
-    source = AUDIT_PANEL.read_text()
+    source = _audit_feature_source()
     assert 'exportTenantData' in source
     assert 'handleExportTenantData' in source
 
 
 def test_audit_panel_shows_dpa_summary():
-    source = AUDIT_PANEL.read_text()
+    source = _audit_feature_source()
     assert 'no_train' in source or 'no entrenamiento' in source.lower()
     assert 'DPA' in source or 'dpa' in source.lower()
 

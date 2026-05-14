@@ -15,7 +15,7 @@ import { Subscriptions } from '../features/owner-admin/subscriptions/index.js';
 import { Branches } from '../features/owner-admin/branches/index.js';
 import { WhatsAppOnboarding } from '../features/owner-admin/whatsapp/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
-import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
+import { AuditPanel } from '../features/owner-admin/audit/index.js';
 import { CampaignsModule } from '../components/modules/campaigns/CampaignsModule.jsx';
 import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
 import { KnowledgeStudio } from '../features/owner-admin/knowledge-studio/index.js';
