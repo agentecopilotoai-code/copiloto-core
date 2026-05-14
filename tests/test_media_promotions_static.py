@@ -47,12 +47,19 @@ ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 MODULES = Path('admin-panel/src/data/modules.js')
 # UI-007.4: the ServiceCatalog monolith was split into a feature directory.
 SERVICES_FEATURE = Path('admin-panel/src/features/owner-admin/services')
-MEDIA_MODULE = Path('admin-panel/src/components/modules/media/MediaLibraryModule.jsx')
+# UI-007.11: the MediaLibraryModule monolith was split into a feature directory.
+MEDIA_FEATURE = Path('admin-panel/src/features/owner-admin/media-library')
 
 
 def _services_feature_source() -> str:
     return '\n'.join(
         path.read_text() for path in sorted(SERVICES_FEATURE.rglob('*.js*'))
+    )
+
+
+def _media_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(MEDIA_FEATURE.rglob('*.js*'))
     )
 
 
@@ -339,7 +346,7 @@ def test_core_api_exposes_media_and_promotion_helpers():
 
 
 def test_media_library_module_renders_uploader_and_promotions():
-    source = MEDIA_MODULE.read_text()
+    source = _media_feature_source()
     assert 'uploadMediaAsset' in source
     assert 'createPromotion' in source
     assert 'updatePromotion' in source
