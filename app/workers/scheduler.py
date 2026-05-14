@@ -260,7 +260,7 @@ async def _update_scheduler_queue_depth(conn: asyncpg.Connection) -> None:
     pending = await conn.fetchval(
         """
         select count(*) from app.reminder_jobs
-        where status = 'pending' and run_at <= now()
+        where status = 'pending' and scheduled_for <= now()
         """
     )
     set_worker_queue_depth(worker='scheduler', depth=int(pending or 0))
