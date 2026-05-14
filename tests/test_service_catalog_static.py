@@ -8,7 +8,7 @@ SERVICE_CATALOG_MODULE = Path(
     'admin-panel/src/components/modules/services/ServiceCatalog.jsx'
 )
 MODULES = Path('admin-panel/src/data/modules.js')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 TENANT_WIZARD = Path(
     'admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx'
 )
@@ -77,7 +77,7 @@ def test_service_catalog_admin_module_exists_and_registered():
 
     layout = ADMIN_LAYOUT.read_text()
     assert 'ServiceCatalog' in layout
-    assert "activeModuleId === 'services'" in layout
+    assert "case 'services'" in layout
 
 
 def test_tenant_wizard_renamed_to_negocio_with_free_business_type():

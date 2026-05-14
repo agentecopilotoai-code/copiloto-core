@@ -35,7 +35,7 @@ from app.services import subscriptions as subscriptions_service
 SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
 SERVICE = Path('app/services/subscriptions.py')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
 SUBS_MODULE = Path(
     'admin-panel/src/components/modules/subscriptions/SubscriptionsModule.jsx'
@@ -324,7 +324,7 @@ def test_admin_modules_registers_subscriptions_entry():
 def test_admin_layout_wires_subscriptions_module_with_admin_gate():
     src = ADMIN_LAYOUT.read_text()
     assert 'SubscriptionsModule' in src
-    assert "activeModuleId === 'subscriptions'" in src
+    assert "case 'subscriptions'" in src
     # UI-005: el gate hasMinRole se reemplazó por <RequirePermission> contra la
     # capability subscriptions.write (mode RW = solo admin/owner).
     assert 'capability="subscriptions.write" mode="RW"' in src

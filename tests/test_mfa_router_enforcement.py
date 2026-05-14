@@ -14,7 +14,8 @@ import pytest
 
 ROUTES_FILE = Path('app/api/v1/routes.py')
 ADMIN_ROUTES_FILE = Path('app/admin/routes.py')
-ADMIN_LAYOUT_FILE = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT_FILE = Path('admin-panel/src/app/AdminLayout.jsx')
+MFA_BLOCKER_FILE = Path('admin-panel/src/components/domain/MfaRequiredBlocker.jsx')
 
 
 # ── BUG15: require_mfa_for_privileged attached to privileged routers ─────────
@@ -101,7 +102,7 @@ def test_admin_proxy_blocks_before_relaying_request_body():
 
 
 def test_admin_layout_overlay_has_no_continue_without_mfa_button():
-    source = ADMIN_LAYOUT_FILE.read_text()
+    source = MFA_BLOCKER_FILE.read_text()
     assert 'Continuar sin MFA' not in source
 
 
@@ -118,12 +119,12 @@ def test_admin_layout_overlay_is_blocking_not_dismissable():
 
 
 def test_admin_layout_overlay_offers_only_logout_action():
-    source = ADMIN_LAYOUT_FILE.read_text()
+    source = MFA_BLOCKER_FILE.read_text()
     block_start = source.index('function MfaRequiredBlocker(')
     block_end = source.index('\n}\n', block_start)
     block = source[block_start:block_end]
     # The only action button is Cerrar sesión, the form posts to /admin/logout.
-    assert "action=\"/admin/logout\"" in block
+    assert "adminPath('/admin/logout')" in block
     assert 'Cerrar sesión' in block
     # No "skip", "continuar", or "dismiss" verbs in the markup
     lowered = block.lower()

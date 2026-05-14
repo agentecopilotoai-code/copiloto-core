@@ -1,4 +1,4 @@
-import { AdminLayout } from './components/layout/AdminLayout.jsx';
+import { AdminLayout } from './app/AdminLayout.jsx';
 import { LoginScreen } from './components/layout/LoginScreen.jsx';
 import { LoadingScreen } from './components/layout/LoadingScreen.jsx';
 import { useAuth } from './context/AuthContext.jsx';

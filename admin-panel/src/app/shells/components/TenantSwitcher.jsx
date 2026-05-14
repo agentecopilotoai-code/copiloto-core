@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
+import styles from '../shell.module.css';
+
 function tenantInitials(tenant) {
   const source = tenant?.slug || tenant?.display_name || tenant?.label || 't';
   return source.replace(/[^a-zA-Z0-9]/g, '').slice(0, 2).toUpperCase() || 'T';
@@ -15,22 +17,35 @@ function tenantSubtitle(tenant) {
   return tenant?.id ? tenant.id.slice(0, 8) : '';
 }
 
-function TenantSwitcher({ activeTenantId, canSwitchTenants, onTenantChange, tenantOptions }) {
+/**
+ * Selector de tenant estilo Slack. Solo abre el menú cuando el usuario
+ * pertenece a más de un tenant (`canSwitchTenants`).
+ *
+ * @param {{
+ *   activeTenantId?: string,
+ *   canSwitchTenants?: boolean,
+ *   onTenantChange: (tenantId: string) => void,
+ *   tenantOptions: Array<object>,
+ * }} props
+ */
+export function TenantSwitcher({
+  activeTenantId,
+  canSwitchTenants,
+  onTenantChange,
+  tenantOptions,
+}) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef(null);
 
   useEffect(() => {
+    if (!open) return undefined;
     function onDocClick(event) {
-      if (!wrapperRef.current) return;
-      if (!wrapperRef.current.contains(event.target)) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
         setOpen(false);
       }
     }
-    if (open) {
-      document.addEventListener('mousedown', onDocClick);
-      return () => document.removeEventListener('mousedown', onDocClick);
-    }
-    return undefined;
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
   }, [open]);
 
   const activeTenant =
@@ -38,40 +53,44 @@ function TenantSwitcher({ activeTenantId, canSwitchTenants, onTenantChange, tena
   if (!activeTenant) return null;
 
   return (
-    <div className="tenant-switcher" ref={wrapperRef}>
+    <div className={styles.tenantSwitcher} ref={wrapperRef}>
       <button
         type="button"
-        className="tenant-switcher-trigger"
+        className={styles.tenantSwitcherTrigger}
         onClick={() => canSwitchTenants && setOpen((value) => !value)}
         disabled={!canSwitchTenants}
         aria-haspopup="listbox"
         aria-expanded={open}
         title={canSwitchTenants ? 'Cambiar de tenant' : 'Tenant único'}
       >
-        <span className="tenant-switcher-avatar" aria-hidden="true">
+        <span className={styles.tenantAvatar} aria-hidden="true">
           {tenantInitials(activeTenant)}
         </span>
-        <span className="tenant-switcher-meta">
+        <span className={styles.tenantMeta}>
           <strong>{tenantTitle(activeTenant)}</strong>
           <small>{tenantSubtitle(activeTenant)}</small>
         </span>
         {canSwitchTenants ? (
-          <span className="tenant-switcher-caret" aria-hidden="true">
+          <span className={styles.tenantCaret} aria-hidden="true">
             ▾
           </span>
         ) : null}
       </button>
 
       {open && canSwitchTenants ? (
-        <ul className="tenant-switcher-menu" role="listbox">
-          <li className="tenant-switcher-menu-header">Tus tenants</li>
+        <ul className={styles.tenantMenu} role="listbox">
+          <li className={styles.tenantMenuHeader}>Tus tenants</li>
           {tenantOptions.map((tenant) => {
             const isActive = tenant.id === activeTenant.id;
             return (
               <li key={tenant.id}>
                 <button
                   type="button"
-                  className={`tenant-switcher-option${isActive ? ' active' : ''}`}
+                  className={
+                    isActive
+                      ? `${styles.tenantOption} ${styles.tenantOptionActive}`
+                      : styles.tenantOption
+                  }
                   onClick={() => {
                     onTenantChange(tenant.id);
                     setOpen(false);
@@ -79,15 +98,18 @@ function TenantSwitcher({ activeTenantId, canSwitchTenants, onTenantChange, tena
                   role="option"
                   aria-selected={isActive}
                 >
-                  <span className="tenant-switcher-avatar small" aria-hidden="true">
+                  <span
+                    className={`${styles.tenantAvatar} ${styles.tenantAvatarSmall}`}
+                    aria-hidden="true"
+                  >
                     {tenantInitials(tenant)}
                   </span>
-                  <span className="tenant-switcher-meta">
+                  <span className={styles.tenantMeta}>
                     <strong>{tenantTitle(tenant)}</strong>
                     <small>{tenantSubtitle(tenant)}</small>
                   </span>
                   {isActive ? (
-                    <span className="tenant-switcher-check" aria-hidden="true">
+                    <span className={styles.tenantCheck} aria-hidden="true">
                       ✓
                     </span>
                   ) : null}
@@ -98,47 +120,5 @@ function TenantSwitcher({ activeTenantId, canSwitchTenants, onTenantChange, tena
         </ul>
       ) : null}
     </div>
-  );
-}
-
-export function Sidebar({
-  activeModuleId,
-  activeTenantId,
-  canSwitchTenants,
-  modules,
-  onModuleSelect,
-  onTenantChange,
-  tenantOptions,
-}) {
-  return (
-    <aside className="sidebar">
-      <div className="brand">
-        <span className="brand-mark">IA</span>
-        <div>
-          <strong>CopilotoIA</strong>
-          <small>Admin Panel</small>
-        </div>
-      </div>
-
-      <TenantSwitcher
-        activeTenantId={activeTenantId}
-        canSwitchTenants={canSwitchTenants}
-        onTenantChange={onTenantChange}
-        tenantOptions={tenantOptions}
-      />
-
-      <nav aria-label="Módulos de administración">
-        {modules.map((module) => (
-          <button
-            className={module.id === activeModuleId ? 'nav-item active' : 'nav-item'}
-            key={module.id}
-            onClick={() => onModuleSelect(module.id)}
-            type="button"
-          >
-            {module.label}
-          </button>
-        ))}
-      </nav>
-    </aside>
   );
 }

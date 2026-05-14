@@ -34,7 +34,7 @@ SCHEDULER = Path('app/workers/scheduler.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 CAMPAIGNS_MODULE = Path('admin-panel/src/components/modules/campaigns/CampaignsModule.jsx')
 MODULES = Path('admin-panel/src/data/modules.js')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 
 
 # ───── Schema ─────
@@ -505,7 +505,7 @@ def test_modules_register_campaigns_entry():
 def test_admin_layout_renders_campaigns_module():
     source = ADMIN_LAYOUT.read_text()
     assert 'CampaignsModule' in source
-    assert "activeModuleId === 'campaigns'" in source
+    assert "case 'campaigns'" in source
 
 
 def test_campaigns_module_exists():
