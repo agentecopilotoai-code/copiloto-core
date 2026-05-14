@@ -2,7 +2,6 @@
 node_modules/
 admin-panel/node_modules/
 admin-panel/dist/
-admin-panel/package-lock.json
 
 # Python
 __pycache__/
