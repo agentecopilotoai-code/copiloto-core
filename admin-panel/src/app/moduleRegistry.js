@@ -19,7 +19,7 @@ import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
 import { CampaignsModule } from '../components/modules/campaigns/CampaignsModule.jsx';
 import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
 import { KnowledgeStudio } from '../features/owner-admin/knowledge-studio/index.js';
-import { LegalModule } from '../components/modules/legal/LegalModule.jsx';
+import { LegalModule } from '../features/owner-admin/legal/index.js';
 import { MediaLibraryModule } from '../features/owner-admin/media-library/index.js';
 import { OperationsDesk } from '../components/modules/operations/OperationsDesk.jsx';
 import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
