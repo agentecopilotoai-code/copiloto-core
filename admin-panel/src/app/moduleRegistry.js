@@ -26,7 +26,7 @@ import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
 import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness.jsx';
 import { SegmentsModule } from '../components/modules/segments/SegmentsModule.jsx';
 import { SocialChannelsModule } from '../features/owner-admin/social-channels/index.js';
-import { TeamModule } from '../components/modules/team/TeamModule.jsx';
+import { TeamModule } from '../features/owner-admin/team/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 
 /**

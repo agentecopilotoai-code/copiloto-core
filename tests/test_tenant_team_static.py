@@ -19,7 +19,14 @@ AUTH0_ADMIN = Path('app/services/auth0_admin.py')
 
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES = Path('admin-panel/src/data/modules.js')
-TEAM_UI = Path('admin-panel/src/components/modules/team/TeamModule.jsx')
+# UI-007.13: the TeamModule was redesigned into a feature directory.
+TEAM_FEATURE = Path('admin-panel/src/features/owner-admin/team')
+
+
+def _team_feature_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TEAM_FEATURE.rglob('*.js*')))
+
+
 ROUTER = Path('admin-panel/src/app/router.jsx')
 TENANT_PROVIDER = Path('admin-panel/src/app/TenantProvider.jsx')
 MODULE_REGISTRY = Path('admin-panel/src/app/moduleRegistry.js')
@@ -140,7 +147,7 @@ def test_admin_panel_exposes_team_module():
 
 
 def test_team_ui_supports_invite_and_role_change():
-    ui = TEAM_UI.read_text()
+    ui = _team_feature_source()
     assert 'Invitar miembro' in ui
     assert 'inviteTenantMember' in ui
     assert 'updateTenantMemberRole' in ui

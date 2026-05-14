@@ -15,6 +15,45 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.13 — Config · Equipo (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** rediseño del módulo `TeamModule.jsx` (325 LOC) en una feature bajo `src/features/owner-admin/team/`, aplicando el mockup `21 _ Config _ Equipo.html`. **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/team/` (nuevo, 8 archivos):**
+    - `teamData.js` (helper puro): `ROLE_OPTIONS`, `ROLE_ORDER`, `ROLE_TONE`, `emptyInviteForm`, `highestRole`, `formatDate`, `memberInitials`, `callerIsOwner`, `roleCounts`.
+    - `hooks/useTeamData.js`: capa de datos — miembros + flag `auth0_management_enabled` + form de invitación + handlers (`invite`, `changeRole`, `removeMember`, `openInvite`/`closeInvite`), portados verbatim del legacy incluyendo los guards de owner y los `window.confirm` nativos.
+    - `TeamModule.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="team.write" mode="RW">` + `PageHeader` con CTA «Invitar miembro» + `AlertBanner` para el aviso de Auth0 y para notices + tiles de conteo por rol + composición de tabla y modal.
+    - `components/TeamTable.jsx`: tabla de miembros (reusa `DataTable`) con avatar + nombre/email, badge de rol + select de cambio de rol, estado, botón revocar y buscador client-side por nombre/email. Los guards (último owner no se revoca, solo un owner edita a un owner) se preservan.
+    - `components/InviteMemberForm.jsx`: `Modal` de invitación (email, nombre opcional, rol; la opción `owner` queda deshabilitada si el caller no es owner).
+    - `TeamModule.module.css` (~190 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/team/` → 0 resultados.
+    - `index.js` (barrel) + `teamData.test.js` (5 tests) + `TeamModule.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'team'` ahora importa la `TeamModule` de la feature; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/team/TeamModule.jsx` (325 LOC) y su carpeta.
+  - **Backend — tests estáticos legacy actualizados:** `test_tenant_team_static.py` y `test_auth0_invite.py` tenían hardcodeada la ruta `components/modules/team/TeamModule.jsx`. Se actualizaron para leer el feature dir nuevo combinando todos sus `.js*`. Los literales que verifican (`Invitar miembro`, `inviteTenantMember`/`updateTenantMemberRole`/`removeTenantMember`, `Auth0 Management API no está habilitada`, `recibirá un email de Auth0`, y la ausencia de `ticket_url`/`pendingTicket`) se preservaron en los archivos nuevos. El otro test (`test_admin_panel_exposes_team_module`) sigue verde: el componente conserva el nombre `TeamModule` en el registry.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/team/{TeamModule.jsx,TeamModule.module.css,TeamModule.test.jsx,teamData.js,teamData.test.js,index.js,hooks/useTeamData.js,components/{TeamTable,InviteMemberForm}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `team → TeamModule` de la feature, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/team/TeamModule.jsx`.
+  - `tests/test_tenant_team_static.py`, `tests/test_auth0_invite.py` (rutas actualizadas al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.13 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (9 nuevos: 5 teamData + 4 TeamModule). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.1-12. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_tenant_team_static.py tests/test_auth0_invite.py` → passed.
+  - `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizaron rutas en dos tests estáticos de backend.
+  - La lógica de las mutaciones se portó verbatim: `inviteTenantMember`/`updateTenantMemberRole`/`removeTenantMember` siguen pegando a los mismos endpoints `tenant_admin_router`, autenticados y tenant-scoped server-side. Los guards de owner del cliente (solo un owner asigna/edita el rol owner, no se puede revocar al último owner) son defensa en profundidad — el backend los reaplica. Se mantiene la invariante de TASK-0085/BUG06: el panel **no** muestra, copia ni persiste ningún ticket de cambio de contraseña; Auth0 entrega la invitación por email. La entrada de módulo se gateó con `<RequirePermission capability="team.write" mode="RW">`; el backend reverifica.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` preservado.** El legacy usaba `window.confirm` antes de cambiar un rol o revocar acceso; el rediseño lo preservó (mantener lógica). UI-011 (`ConfirmDialog`) lo barrerá.
+  - **Diferencia intencional declarada: la columna «MFA» por miembro y el badge «N sin MFA» del HTML no se incluyen.** `listTenantMembers` no expone el estado de MFA por usuario; se difiere. La tabla muestra los datos reales del endpoint (nombre, email, rol, estado, último acceso) — no se fabrican datos.
+  - Próxima tarea `PENDING` real: **UI-007.14 — Config · Legal** (rediseño de `LegalModule.jsx`).
+
+---
+
 ### UI-007.12 — Config · Tenant Setup (Owner / Admin)
 
 - **Fecha:** 2026-05-14

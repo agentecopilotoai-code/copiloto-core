@@ -35,7 +35,12 @@ from app.services.auth0_admin import (
 
 ROUTES = Path('app/api/v1/routes.py')
 AUTH0 = Path('app/services/auth0_admin.py')
-TEAM_UI = Path('admin-panel/src/components/modules/team/TeamModule.jsx')
+# UI-007.13: the TeamModule was redesigned into a feature directory.
+TEAM_FEATURE = Path('admin-panel/src/features/owner-admin/team')
+
+
+def _team_feature_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(TEAM_FEATURE.rglob('*.js*')))
 
 
 # ── Source-level invariants on invite_user ─────────────────────────────────
@@ -270,12 +275,12 @@ def test_route_binds_auth_subject_when_invite_returns_user_id():
 
 
 def test_team_ui_removes_ticket_url_banner():
-    source = TEAM_UI.read_text()
+    source = _team_feature_source()
     assert 'ticket_url' not in source
     assert 'pendingTicket' not in source
     assert 'Copiar' not in source or 'ticket' not in source.lower().split('copiar')[0][-200:]
 
 
 def test_team_ui_success_message_mentions_auth0_email_flow():
-    source = TEAM_UI.read_text()
+    source = _team_feature_source()
     assert 'recibirá un email de Auth0' in source

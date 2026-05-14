@@ -1,0 +1,179 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+/* ── role-count tiles ─────────────────────────────────────────────────────── */
+
+.tileGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-3);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.tileLabel {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.tileValue {
+  font-size: var(--fs-h3);
+  color: var(--ink);
+}
+
+/* ── table cells ──────────────────────────────────────────────────────────── */
+
+.search {
+  font: inherit;
+  font-size: var(--fs-small);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink-2);
+  min-width: 220px;
+}
+
+.memberCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.avatar {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memberText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.memberEmail {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.pending {
+  font-size: var(--fs-small);
+  font-weight: var(--fw-regular);
+  color: var(--muted);
+}
+
+.roleCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.roleSelect {
+  font: inherit;
+  font-size: var(--fs-small);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink-2);
+}
+
+/* ── forms / modal ────────────────────────────────────────────────────────── */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ── buttons ──────────────────────────────────────────────────────────────── */
+
+.primaryButton {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--panel);
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--accent-ink);
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--bg-deep);
+}
+
+.dangerButton {
+  background: transparent;
+  border: 1px solid var(--danger);
+  border-radius: var(--r-sm);
+  padding: var(--space-1) var(--space-3);
+  color: var(--danger);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.dangerButton:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.dangerButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
