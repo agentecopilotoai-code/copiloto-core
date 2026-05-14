@@ -15,6 +15,47 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.5 — Negocio · Paquetes (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** rediseño del módulo `PackagesModule.jsx` (346 LOC) en una feature bajo `src/features/owner-admin/packages/`, aplicando el mockup: el catálogo pasa de lista a `DataTable` y el form de alta/edición de inline a `Modal`. **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/packages/` (nuevo, 8 archivos):**
+    - `packagesData.js` (helper puro): `emptyForm`, `toForm`, `buildPayload` (con validación: nombre requerido, `total_sessions > 0`), `describeServices`, `formatPrice` — extraídos del monolito, testeables sin React.
+    - `hooks/usePackagesData.js`: capa de datos — estado del catálogo + servicios + serviceMap + modal/form + handlers (`refresh`/`save`/`deactivate`/`openCreate`/`openEdit`/`toggleService`), portados verbatim del legacy.
+    - `Packages.jsx`: orquestador — `PageHeader` + `PackagesTable` + `PackageFormModal`, envuelto en `<RequirePermission capability="packages.write" mode="RW">`.
+    - `components/PackagesTable.jsx`: `<DataTable>` con paquete (nombre + servicios incluidos + descripción) / precio / sesiones / vigencia / estado / acciones.
+    - `components/PackageFormModal.jsx`: `<Modal>` con el form de alta/edición (nombre, descripción, sesiones, vencimiento, precio, moneda, orden, checkboxes de servicios incluidos, activo).
+    - `Packages.module.css` (~135 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/packages/` → 0 resultados.
+    - `index.js` (barrel) + `packagesData.test.js` (6 tests) + `Packages.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'packages'` ahora apunta a `Packages`; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/packages/PackagesModule.jsx` (346 LOC) y su carpeta.
+  - **Backend — test estático legacy actualizado:** `test_packages_static.py` tenía hardcodeada la ruta `components/modules/packages/PackagesModule.jsx`. Se actualizó para leer el feature dir nuevo combinando todos sus `.js*`, verificar el import nuevo en el registry y que la ruta legacy ya no aparece.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/packages/{Packages.jsx,Packages.module.css,Packages.test.jsx,packagesData.js,packagesData.test.js,index.js,hooks/usePackagesData.js,components/{PackagesTable,PackageFormModal}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `packages → Packages`, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/packages/PackagesModule.jsx`.
+  - `tests/test_packages_static.py` (rutas actualizadas al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.5 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **49 suites, 216 tests pasan** (10 nuevos: 6 packagesData + 4 Packages). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.*/UI-007.1-4: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_packages_static.py` → **25 passed**.
+  - `python -m compileall app -q` → OK. `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizó una ruta en un test estático de backend.
+  - La lógica de las mutaciones se portó verbatim: `createTreatmentPackage`/`updateTreatmentPackage`/`deactivateTreatmentPackage` siguen requiriendo rol admin/owner server-side (`tenant_admin_router`). La vista está gateada vía `<RequirePermission capability="packages.write" mode="RW">` como defensa en profundidad; el backend reverifica.
+  - El estado de pago de un paquete asignado a un contacto lo sigue escribiendo solo el webhook firmado del proveedor (TASK-0051) — esta vista solo gestiona el catálogo de plantillas de paquete, no las asignaciones a contactos.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` en la desactivación.** El legacy usaba `window.confirm` antes de desactivar un paquete; el rediseño lo preservó (mantener lógica). UI-011 (`ConfirmDialog`) lo barrerá.
+  - **Los KPIs del HTML (paquetes activos, clientes con saldo, sesiones pendientes, ingreso 30d) no se incluyen.** Dependen de datos agregados de `contact_packages` que ningún endpoint actual expone a nivel catálogo; se difieren. El rediseño entrega el catálogo + form, que es el núcleo del módulo.
+  - **El campo "Asignados / Usados" del HTML** (saldo agregado por paquete) tampoco se modela en el endpoint del catálogo — se difiere junto con los KPIs.
+  - Próxima tarea `PENDING` real: **UI-007.6 — Negocio · Suscripciones** (rediseño de `SubscriptionsModule.jsx`).
+
+---
+
 ### UI-007.4 — Negocio · Servicios (Owner / Admin)
 
 - **Fecha:** 2026-05-14
