@@ -10,7 +10,16 @@ def _whatsapp_feature_source() -> str:
     return '\n'.join(
         path.read_text() for path in sorted(WHATSAPP_FEATURE.rglob('*.js*'))
     )
-OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
 API_ROUTES = Path('app/api/v1/routes.py')
@@ -100,7 +109,7 @@ def test_whatsapp_onboarding_exposes_delivery_mode_toggle():
 
 
 def test_operations_desk_explains_queued_sent_failed_statuses():
-    source = OPERATIONS_DESK.read_text()
+    source = _operations_desk_source()
 
     assert 'queued/sent/failed' in source
     assert 'Simulado local: no salió a WhatsApp' in source
@@ -126,7 +135,7 @@ def test_whatsapp_media_messages_supported_in_both_agent_flows_and_worker():
     service_source = WHATSAPP.read_text()
     schema_source = API_SCHEMAS.read_text()
     routes_source = API_ROUTES.read_text()
-    operations_source = OPERATIONS_DESK.read_text()
+    operations_source = _operations_desk_source()
 
     assert 'send_whatsapp_message' in service_source
     assert "MEDIA_MESSAGE_TYPES = {'image', 'audio', 'video'}" in service_source
@@ -149,7 +158,11 @@ def test_whatsapp_media_messages_supported_in_both_agent_flows_and_worker():
     assert '<option value="image">Imagen</option>' in operations_source
     assert '<option value="video">Video</option>' in operations_source
     assert '<option value="audio">Audio</option>' in operations_source
-    assert 'renderMessageContent(renderableMessage)' in operations_source
+    # UI-009.1 split: the legacy `renderMessageContent(renderableMessage)` call
+    # is now the `<MessageContent>` component rendered with the enriched
+    # `renderableMessage` (carrying session/tenant for media URLs).
+    assert '<MessageContent message={renderableMessage} />' in operations_source
+    assert 'const renderableMessage = { ...message' in operations_source
 
 
 def test_whatsapp_webhook_persists_inbound_media_metadata():

@@ -23,7 +23,16 @@ SCHEMAS = Path('app/api/v1/schemas.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 # UI-007.4: the ServiceCatalog monolith was split into a feature directory.
 SERVICES_FEATURE = Path('admin-panel/src/features/owner-admin/services')
 
@@ -153,7 +162,7 @@ def test_admin_client_exposes_availability_helpers():
 
 
 def test_operations_desk_supports_working_hours_and_calendar():
-    source = OPERATIONS_DESK.read_text()
+    source = _operations_desk_source()
     assert 'WORKING_DAYS' in source
     assert 'workingHoursToJson' in source
     assert 'workingHoursFromCapabilities' in source

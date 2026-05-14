@@ -1,0 +1,73 @@
+/*
+ * UI-009.1 — Operación · Inbox.
+ *
+ * Structural styles for the feature split of the legacy `OperationsDesk`. The
+ * legacy global classes (`operations-layout`, `module-card`, `handoff-panel`,
+ * `schedule-form`, …) still live in `styles/global.css` and are reused
+ * verbatim; this module only adds the few new layout helpers introduced by the
+ * split. Tokens 100% `var(--…)`.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.inboxList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.startForm {
+  margin-bottom: var(--space-2);
+}
+
+.inboxTabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.detailHeaderBadges {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.intentPill {
+  background: var(--accent);
+  color: var(--panel);
+  font-size: var(--fs-small);
+}
+
+.qualificationList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.qualificationItem {
+  font-size: var(--fs-body);
+  padding: 2px 0;
+}
+
+.qualificationCode {
+  opacity: 0.6;
+}
+
+.tagRow {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.quickNoteRow {
+  margin-top: var(--space-2);
+}
+
+.cancelEditButton {
+  margin-left: var(--space-2);
+}

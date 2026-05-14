@@ -43,7 +43,16 @@ def _tenant_setup_source() -> str:
     return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 # UI-007.3: the contacts module was split into a feature directory.
 CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
-OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 
 
 def _contacts_feature_source() -> str:
@@ -506,7 +515,7 @@ def test_contacts_module_renders_qualification_answers():
 
 
 def test_operations_desk_shows_qualification_metadata():
-    source = OPERATIONS_DESK.read_text()
+    source = _operations_desk_source()
     assert 'Calificación previa' in source
     assert 'qualification' in source
 

@@ -3,7 +3,16 @@ from pathlib import Path
 API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 
 
 def test_resource_crud_and_appointment_routes_exist_with_conflict_checks():
@@ -26,7 +35,7 @@ def test_resource_crud_and_appointment_routes_exist_with_conflict_checks():
 def test_scheduling_schemas_and_admin_panel_client_are_wired():
     schemas = SCHEMAS.read_text()
     api = CORE_API.read_text()
-    component = OPERATIONS_DESK.read_text()
+    component = _operations_desk_source()
 
     assert 'class ResourceCreate(BaseModel):' in schemas
     assert 'class ResourceUpdate(BaseModel):' in schemas

@@ -14,7 +14,16 @@ from app.services.whatsapp import (
 WHATSAPP = Path('app/services/whatsapp.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 API_ROUTES = Path('app/api/v1/routes.py')
-OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 
 
 def test_build_interactive_button_payload_meets_meta_contract():
@@ -173,7 +182,7 @@ def test_webhook_parses_interactive_reply_into_body_text():
 
 
 def test_operations_desk_renders_interactive_messages():
-    source = OPERATIONS_DESK.read_text()
+    source = _operations_desk_source()
     assert 'interactivePayload' in source
     assert 'interactiveSelection' in source
     assert 'renderInteractiveOutbound' in source

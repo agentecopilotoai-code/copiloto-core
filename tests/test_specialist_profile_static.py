@@ -27,9 +27,16 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
-OPERATIONS_DESK = Path(
-    'admin-panel/src/components/modules/operations/OperationsDesk.jsx'
-)
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 
 
 # ───── Schema ──────────────────────────────────────────────────────────────
@@ -176,7 +183,7 @@ def test_queue_specialist_photo_falls_back_to_text_without_photo():
 
 
 def test_operations_desk_registers_specialist_profile_inputs():
-    source = OPERATIONS_DESK.read_text()
+    source = _operations_desk_source()
     assert 'specialist-profile-fields' in source
     assert 'Perfil público del especialista' in source
     assert 'resourceForm.bio' in source

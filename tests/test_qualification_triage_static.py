@@ -42,7 +42,16 @@ TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
 def _tenant_setup_source() -> str:
     return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
-OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 
 
 # ───── Schema additions ────────────────────────────────────────────────────
@@ -512,7 +521,7 @@ def test_tenant_wizard_adds_vip_budget_threshold_input():
 
 
 def test_operations_desk_shows_urgent_badge_and_sorts_to_top():
-    src = OPERATIONS_DESK.read_text()
+    src = _operations_desk_source()
     assert '🚨 Urgente' in src
     assert 'urgency_level' in src
     assert 'data-urgent' in src

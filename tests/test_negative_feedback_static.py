@@ -35,7 +35,16 @@ FEEDBACK_FLOW = Path('app/services/feedback_flow.py')
 ROUTES = Path('app/api/v1/routes.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
+OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
+
+
+def _operations_desk_source() -> str:
+    """Combined source of the Operación · Inbox feature dir (UI-009.1 split).
+
+    OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
+    static assertions below run against the concatenated feature source.
+    """
+    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 
 
 # ───── Constants and helpers ───────────────────────────────────────────────
@@ -119,7 +128,7 @@ def test_core_api_exposes_complaints_helper():
 
 
 def test_operations_desk_renders_complaints_filter_tab():
-    source = OPERATIONS_DESK.read_text()
+    source = _operations_desk_source()
     assert "inboxFilter === 'complaints'" in source
     assert 'Quejas' in source
     assert 'data-complaint="negative_feedback"' in source

@@ -15,6 +15,49 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-009.1 — Operación · Inbox (Agente)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** split estructural del monolito `admin-panel/src/components/modules/operations/OperationsDesk.jsx` (2088 LOC) a la feature `src/features/agente/inbox/`, aplicando el mockup `28 _ Operación _ Inbox.html`. **Tarea frontend-only** — toda la lógica, las ~38 llamadas a `coreApi`, el stream WebSocket, la máquina de estados de handoff y todos los `data-*` se preservan verbatim; ningún archivo de servidor se tocó.
+- **Cambios realizados:**
+  - **Frontend — `src/features/agente/inbox/` (nuevo, 17 archivos):**
+    - `inboxData.js` (helper puro): `WORKING_DAYS`, `PAYMENT_LABELS`, formatters de fecha/estado/mensaje (`formatDate`, `statusLabel`, `messageLabel`, `deliveryLabel`), `parseMeta`/`isUrgentConversation`/`sortConversations`, `interactivePayload`/`interactiveSelection`/`mediaSource`, `computeQuoteTotals`, `mergeAppointmentPayment`, los builders de form/payload (`emptyResourceForm`, `resourceFormFromRecord`, `buildResourcePayload`, `emptyStartForm`, `emptyMessageMedia`) — puros, unit-testables, sin React.
+    - `hooks/useInboxData.js`: lista de conversaciones + quejas, filtro de inbox, conversación activa + detalle, ciclo de vida del stream WebSocket (`openConversationStream` con reconexión backoff exponencial, subscribe/cleanup verbatim), form «iniciar conversación», estado del composer + envío, máquina de handoff (crear/aceptar/liberar).
+    - `hooks/useContactPanelData.js`: etiquetas del contacto + notas internas.
+    - `hooks/useScheduleData.js`: recursos + builder, calendario diario, citas (crear/reprogramar/cancelar), workflow de link de pago.
+    - `hooks/useServiceRequestsData.js`: solicitudes de servicio + cotizaciones (crear/calificar/enviar/estado). Se usaron cuatro hooks (no dos) para mantener cada archivo ≤ 400 LOC sin perder ninguna regla de negocio.
+    - `OperationsDesk.jsx`: orquestador — **mantiene `export function OperationsDesk`** (varios tests estáticos lo afirman), `<RequirePermission permissions={...} capability="conversations.view">` (vía `usePermissions` + `useTenantContext`), header de tiempo real + `Notice`, compone `InboxList` + `ConversationView` (con slots `contactPanel` + `composer`). Props `{ module, session, tenant }`.
+    - `components/InboxList.jsx`: lista de conversaciones + tabs de filtro (`Todas` / `Quejas`) + form «iniciar conversación», reusa `ConversationListItem` + `StatusBadge`. `components/ConversationView.jsx`: header del detalle, respuestas de calificación del bot, panel de handoff y el hilo de mensajes. `components/MessageComposer.jsx`: el form de respuesta outbound. `components/MessageContent.jsx`: renderer verbatim de media + interactivo (button/list) inbound/outbound.
+    - `components/ContactSidePanel.jsx`: compone las sub-secciones bajo `components/contact-panel/`: `ContactTagsSection` (etiquetas + nota interna), `ContactScheduleSection` + `ContactResourceForm` (recursos, calendario, citas, pagos), `ContactServiceRequestsSection` (SR + cotizaciones) — cada una ≤ 400 LOC.
+    - `OperationsDesk.module.css` (tokens 100% `var(--...)`; las clases globales legacy de `styles/global.css` se reusan verbatim) + `index.js` (barrel) + `inboxData.test.js` (10 tests) + `OperationsDesk.test.jsx` (5 tests).
+  - **Frontend — wiring + borrado legacy:**
+    - `app/moduleRegistry.js`: import de `OperationsDesk` repuntado a `'../features/agente/inbox/index.js'`. El id de módulo `operations-desk` y su entrada `{ Component: OperationsDesk, capability: 'conversations.view' }` **no cambian** — el id de routing se mantiene por estabilidad (la carpeta de la feature es `inbox/`); `nav.js`, `data/modules.js`, `ROLE_HOME` y `router.jsx` no se tocaron.
+    - **Borrado** `admin-panel/src/components/modules/operations/OperationsDesk.jsx` y el directorio `components/modules/operations/` quedó vacío.
+  - **Backend — 13 tests estáticos repuntados:** `tests/test_notifications_static.py`, `test_payment_provider_static.py`, `test_whatsapp_delivery_static.py`, `test_qualification_flow_static.py`, `test_whatsapp_interactive_static.py`, `test_operations_desk_static.py`, `test_self_service_static.py`, `test_booking_flow_static.py`, `test_negative_feedback_static.py`, `test_qualification_triage_static.py`, `test_scheduling_static.py`, `test_crm_contacts_static.py`, `test_specialist_profile_static.py`. En cada uno, `OPERATIONS_DESK` ahora apunta al feature dir `admin-panel/src/features/agente/inbox` y se agregó un helper `_operations_desk_source()` que concatena su `*.js*`; cada `OPERATIONS_DESK.read_text()` se cambió por la llamada al helper. Como toda la lógica/literales se preservan verbatim, las aserciones siguen pasando; la única que se ajustó es la de `test_whatsapp_delivery_static.py` (`renderMessageContent(renderableMessage)` → `<MessageContent message={renderableMessage} />` + `const renderableMessage = { ...message`), manteniendo su intención.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/agente/inbox/{OperationsDesk.jsx,OperationsDesk.module.css,OperationsDesk.test.jsx,inboxData.js,inboxData.test.js,index.js,hooks/{useInboxData,useContactPanelData,useScheduleData,useServiceRequestsData}.js,components/{InboxList,ConversationView,MessageComposer,MessageContent,ContactSidePanel}.jsx,components/contact-panel/{ContactTagsSection,ContactScheduleSection,ContactResourceForm,ContactServiceRequestsSection}.jsx}` (todos nuevos).
+  - **Borrado:** `admin-panel/src/components/modules/operations/OperationsDesk.jsx`.
+  - `admin-panel/src/app/moduleRegistry.js` (import repuntado).
+  - Los 13 tests estáticos de pytest listados arriba (repuntados al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-009.1 marcado `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (2 warnings pre-existentes ajenos en `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → 385 tests pasan, incluidos los 15 nuevos (10 `inboxData` + 5 `OperationsDesk`). Sigue fallando `src/app/router.test.jsx` (7 fallos) por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.*/UI-008.* — **no es regresión** (CI corre Node 20 y solo ejecuta lint + build para el front).
+  - `.venv-ci/bin/python -m pytest` sobre los 13 archivos estáticos → 200 passed.
+  - `.venv-ci/bin/ruff check tests/` → All checks passed.
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Es un refactor estructural — sin cambio de comportamiento.
+  - Toda la lógica se preserva verbatim: cada llamada a `coreApi` (las ~38 del monolito), el stream WebSocket + reconexión backoff, la máquina de estados de handoff, el append optimista del detalle y las mutaciones del panel de contacto quedan idénticas y tenant-scoped server-side — el backend reverifica.
+  - La entrada de módulo se gateó con `<RequirePermission capability="conversations.view">` (modo R) vía `usePermissions` + `useTenantContext`.
+  - El id de módulo `operations-desk` se mantiene por estabilidad de routing; la carpeta de la feature es `inbox/`.
+- **Limitaciones / próximos pasos:**
+  - Esta fue un split estructural — sin cambio de comportamiento. El HTML de referencia (`28 _ Operación _ Inbox.html`) es un volcado del diseño con estilos inline; la estructura visual (lista lateral + hilo de conversación + composer + panel de contacto) ya la implementaba el `OperationsDesk` legacy y se preserva. No se difirieron elementos HTML con endpoint backing — todo lo que el monolito renderizaba se mantiene.
+  - El `OperationsDesk.module.css` solo añade los pocos helpers de layout nuevos del split; las clases globales legacy (`operations-layout`, `module-card`, `handoff-panel`, `schedule-form`, …) siguen viviendo en `styles/global.css` — su modernización con CSS modules queda para una pasada futura.
+  - Próxima tarea `PENDING`: **UI-009.2 — Operación · Mis handoffs**, que reusará `InboxList`.
+
+---
+
 ### UI-008.4 — Reportes · Digest (Manager)
 
 - **Fecha:** 2026-05-14
