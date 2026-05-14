@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { StatusBadge } from '../../ui/StatusBadge.jsx';
+import { ConversationListItem, TagPill } from '../../domain/index.js';
 import {
   acceptConversationHandoff,
   assignContactTags,
@@ -1185,37 +1187,17 @@ export function OperationsDesk({ module, session, tenant }) {
                 <p className="hint">No hay quejas activas en este tenant.</p>
               ) : null}
               {complaints.map((complaint) => (
-                <button
+                <ConversationListItem
                   key={complaint.id}
-                  type="button"
-                  className={`conversation-card ${complaint.id === selectedConversationId ? 'active' : ''}`}
-                  onClick={() => setSelectedConversationId(complaint.id)}
                   data-complaint="negative_feedback"
-                >
-                  <span>{complaint.contact_label || complaint.contact_id}</span>
-                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <strong>
-                      {complaint.feedback_rating != null
-                        ? `${complaint.feedback_rating} ★`
-                        : 'Queja'}
-                    </strong>
-                    <span
-                      className="status-pill"
-                      style={{
-                        background: '#dc2626',
-                        color: '#fff',
-                        fontSize: '0.7rem',
-                        padding: '0.1rem 0.4rem',
-                      }}
-                    >
-                      Atención prioritaria
-                    </span>
-                  </div>
-                  <small style={{ fontStyle: 'italic' }}>
-                    {complaint.feedback_comment || 'Sin comentario'}
-                  </small>
-                  <time>{formatDate(complaint.handoff_created_at || complaint.updated_at)}</time>
-                </button>
+                  selected={complaint.id === selectedConversationId}
+                  onSelect={() => setSelectedConversationId(complaint.id)}
+                  title={complaint.contact_label || complaint.contact_id}
+                  statusText={complaint.feedback_rating != null ? `${complaint.feedback_rating} ★` : 'Queja'}
+                  badges={<StatusBadge tone="danger">Atención prioritaria</StatusBadge>}
+                  preview={complaint.feedback_comment || 'Sin comentario'}
+                  timestamp={formatDate(complaint.handoff_created_at || complaint.updated_at)}
+                />
               ))}
             </>
           ) : null}
@@ -1237,78 +1219,44 @@ export function OperationsDesk({ module, session, tenant }) {
               return ub - ua;
             });
             return sorted.map((conversation) => {
-            const rawMeta = conversation.metadata;
-            const meta = parseMeta(rawMeta);
-            const selfService = meta?.self_service;
-            const selfServiceFlow = selfService?.flow;
+            const meta = parseMeta(conversation.metadata);
+            const selfServiceFlow = meta?.self_service?.flow;
             const urgencyLevel = meta?.qualification?.urgency_level;
             const isUrgent = ['emergency', 'high'].includes(urgencyLevel);
             return (
-            <button
-              className={`conversation-card ${conversation.id === selectedConversationId ? 'active' : ''}`}
+            <ConversationListItem
               key={conversation.id}
-              onClick={() => setSelectedConversationId(conversation.id)}
-              type="button"
               data-urgent={isUrgent ? urgencyLevel : undefined}
-            >
-              <span>{conversation.contact_label || conversation.contact_id}</span>
-              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                <strong>{statusLabel(conversation.status)}</strong>
-                {isUrgent ? (
-                  <span
-                    className="status-pill"
-                    style={{
-                      background: '#dc2626',
-                      color: '#fff',
-                      fontSize: '0.7rem',
-                      padding: '0.1rem 0.4rem',
-                    }}
-                    title={`Caso urgente (${urgencyLevel}) — atender primero`}
-                  >
-                    🚨 Urgente
-                  </span>
-                ) : null}
-                {conversation.current_intent && (
-                  <span className="status-pill" style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem' }} title="Intención detectada">
-                    {conversation.current_intent}
-                  </span>
-                )}
-                {selfServiceFlow ? (
-                  <span
-                    className="status-pill"
-                    style={{
-                      fontSize: '0.65rem',
-                      padding: '0.05rem 0.4rem',
-                      background: '#0ea5e9',
-                      color: '#fff',
-                    }}
-                    title={`Cita ${selfServiceFlow === 'cancel' ? 'cancelada' : 'reagendada'} por el bot (self-service)`}
-                  >
-                    self-service
-                  </span>
-                ) : null}
-              </div>
-              {(conversation.contact_tags || []).length > 0 ? (
-                <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
-                  {(conversation.contact_tags || []).map((tag) => (
-                    <span
-                      key={tag.id}
-                      className="status-pill"
-                      style={{
-                        background: tag.color || '#4f6ef7',
-                        color: '#fff',
-                        fontSize: '0.65rem',
-                        padding: '0.05rem 0.4rem',
-                      }}
+              selected={conversation.id === selectedConversationId}
+              onSelect={() => setSelectedConversationId(conversation.id)}
+              title={conversation.contact_label || conversation.contact_id}
+              statusText={statusLabel(conversation.status)}
+              tags={conversation.contact_tags || []}
+              preview={conversation.latest_message_text || 'Sin mensajes aún'}
+              timestamp={formatDate(conversation.latest_message_at || conversation.updated_at)}
+              badges={(
+                <>
+                  {isUrgent ? (
+                    <StatusBadge tone="danger" title={`Caso urgente (${urgencyLevel}) — atender primero`}>
+                      🚨 Urgente
+                    </StatusBadge>
+                  ) : null}
+                  {conversation.current_intent ? (
+                    <StatusBadge tone="neutral" title="Intención detectada">
+                      {conversation.current_intent}
+                    </StatusBadge>
+                  ) : null}
+                  {selfServiceFlow ? (
+                    <StatusBadge
+                      tone="accent"
+                      title={`Cita ${selfServiceFlow === 'cancel' ? 'cancelada' : 'reagendada'} por el bot (self-service)`}
                     >
-                      {tag.name}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              <small>{conversation.latest_message_text || 'Sin mensajes aún'}</small>
-              <time>{formatDate(conversation.latest_message_at || conversation.updated_at)}</time>
-            </button>
+                      self-service
+                    </StatusBadge>
+                  ) : null}
+                </>
+              )}
+            />
             );
             });
           })()}
@@ -1380,30 +1328,12 @@ export function OperationsDesk({ module, session, tenant }) {
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                   {(conversationDetail?.contact_tags || selectedConversation.contact_tags || []).map((tag) => (
-                    <span
+                    <TagPill
                       key={tag.id}
-                      className="status-pill"
-                      style={{
-                        background: tag.color || '#4f6ef7',
-                        color: '#fff',
-                        fontSize: '0.75rem',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.3rem',
-                        padding: '0.15rem 0.5rem',
-                      }}
-                    >
-                      {tag.name}
-                      <button
-                        type="button"
-                        aria-label={`Quitar ${tag.name}`}
-                        onClick={() => handleRemoveTagFromContact(tag.id)}
-                        disabled={isBusy}
-                        style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 0 }}
-                      >
-                        ×
-                      </button>
-                    </span>
+                      tag={tag}
+                      onRemove={() => handleRemoveTagFromContact(tag.id)}
+                      disabled={isBusy}
+                    />
                   ))}
                 </div>
                 <form className="action-row" onSubmit={handleAssignTagToContact}>
