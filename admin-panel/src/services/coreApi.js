@@ -140,6 +140,14 @@ export function retryPlatformOutboundDlq(session, payload) {
   return request('/platform/outbound-dlq/retry', { method: 'POST', session, body: payload });
 }
 
+export function getPlatformRunbooks(session) {
+  return request('/platform/runbooks', { session });
+}
+
+export function getPlatformRunbook(session, slug) {
+  return request(`/platform/runbooks/${encodeURIComponent(slug)}`, { session });
+}
+
 export function updateTenant(session, tenantId, payload) {
   return request(`/tenants/${tenantId}`, {
     method: 'PATCH',
