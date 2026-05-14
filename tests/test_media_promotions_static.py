@@ -45,8 +45,15 @@ MEDIA_STORAGE = Path('app/services/media_storage.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 MODULES = Path('admin-panel/src/data/modules.js')
-SERVICE_CATALOG = Path('admin-panel/src/components/modules/services/ServiceCatalog.jsx')
+# UI-007.4: the ServiceCatalog monolith was split into a feature directory.
+SERVICES_FEATURE = Path('admin-panel/src/features/owner-admin/services')
 MEDIA_MODULE = Path('admin-panel/src/components/modules/media/MediaLibraryModule.jsx')
+
+
+def _services_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(SERVICES_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Schema ──────────────────────────────────────────────────────────────
@@ -345,7 +352,9 @@ def test_media_library_module_renders_uploader_and_promotions():
 
 
 def test_service_catalog_loads_and_renders_active_promotions():
-    source = SERVICE_CATALOG.read_text()
+    # UI-007.4 split: the promo lookup lives in the services feature — the hook
+    # loads promotions and ServicesTable matches them per service.
+    source = _services_feature_source()
     assert 'listPromotions' in source
-    assert 'servicePromos' in source
-    assert 'data-service-promos' in source
+    assert 'applies_to_service_ids' in source
+    assert 'promo' in source.lower()

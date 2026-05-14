@@ -49,8 +49,15 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
-SERVICE_CATALOG_UI = Path('admin-panel/src/components/modules/services/ServiceCatalog.jsx')
+# UI-007.4: the ServiceCatalog monolith was split into a feature directory.
+SERVICES_FEATURE = Path('admin-panel/src/features/owner-admin/services')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
+
+
+def _services_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(SERVICES_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Schema ─────
@@ -273,14 +280,14 @@ def test_orchestrator_clear_pending_recall_drops_jsonb_key():
 
 
 def test_admin_panel_service_catalog_imports_template_listing():
-    src = SERVICE_CATALOG_UI.read_text()
+    src = _services_feature_source()
     assert 'listWhatsappTemplates' in src
     assert "purpose: 'service_recall'" in src
     assert "status: 'approved'" in src
 
 
 def test_admin_panel_service_catalog_renders_recall_inputs():
-    src = SERVICE_CATALOG_UI.read_text()
+    src = _services_feature_source()
     assert 'Recordatorio de control cada N días' in src
     assert 'Plantilla del recordatorio' in src
     assert 'formatRecallPreview' in src
@@ -289,14 +296,14 @@ def test_admin_panel_service_catalog_renders_recall_inputs():
 
 
 def test_admin_panel_service_catalog_payload_handles_empty_recall():
-    src = SERVICE_CATALOG_UI.read_text()
+    src = _services_feature_source()
     # Empty string or non-positive numbers must clear the recall.
     assert 'recall_interval_days: recallDays' in src
     assert 'recall_template_id: form.recall_template_id || null' in src
 
 
 def test_admin_panel_service_catalog_disables_template_picker_without_interval():
-    src = SERVICE_CATALOG_UI.read_text()
+    src = _services_feature_source()
     assert 'disabled={!form.recall_interval_days}' in src
 
 

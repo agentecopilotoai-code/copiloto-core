@@ -15,6 +15,50 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.4 — Negocio · Servicios (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** split del monolito `ServiceCatalog.jsx` (868 LOC) en una feature troceada bajo `src/features/owner-admin/services/`, cada archivo < 400 LOC. **Tarea frontend-only** — la lógica del catálogo se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/services/` (nuevo, 12 archivos):**
+    - `servicesData.js` (helper puro): `CURRENCIES`/`emptyForm`/`APPLIES_WHEN_OPS` + `parsePolicy`, `normalizeRuleValue`, `rulesToPayload`, `rulesFromService`, `formatPrice`, `formatDuration`, `buildPreview`, `buildPayload`, `formatRecallPreview`, `formFromService` — extraídos verbatim del monolito, testeables sin React.
+    - `hooks/useServicesData.js` (~245 LOC): capa de datos — estado del catálogo + los 4 effects de carga + handlers de mutación (`submit`/`deactivate`/`move`/`saveDefaultDuration` + rule builders), portados verbatim del legacy.
+    - `Services.jsx`: orquestador — `useServicesData` + layout, envuelto en `<RequirePermission capability="services.read" mode="R">`; el form de creación/edición y el panel de duración por defecto van dentro de `<RequirePermission capability="services.write" mode="RW" hidden>`.
+    - `components/ServicesTable.jsx`: `<DataTable>` con servicio/categoría/precio/duración/recall/estado/acciones; badges de promoción activa por servicio.
+    - `components/ServiceReorder.jsx`: control ↑↓ de reorden por fila.
+    - `components/ServiceFormDrawer.jsx`: form de alta/edición; compone `RecallSettingsPanel` y `AppliesWhenBuilder`.
+    - `components/RecallSettingsPanel.jsx`: bloque de recall (TASK-0052) — intervalo + plantilla + preview de fecha.
+    - `components/AppliesWhenBuilder.jsx`: constructor de reglas de elegibilidad (TASK-0054); conserva `data-testid="applies-when-builder"` y `data-testid="applies-when-rule"`.
+    - `components/DefaultDurationPanel.jsx`: panel de duración por defecto del tenant (escribe `escalation_policy.service_durations.default`).
+    - `Services.module.css` (~225 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/services/` → 0 resultados.
+    - `index.js` (barrel) + `servicesData.test.js` (8 tests) + `Services.test.jsx` (5 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'services'` ahora apunta a `Services`; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/services/ServiceCatalog.jsx` (868 LOC) y su carpeta.
+  - **Backend — tests estáticos legacy actualizados:** 5 tests (`test_service_catalog_static.py`, `test_media_promotions_static.py`, `test_service_applies_when_static.py`, `test_service_recall_static.py`, `test_booking_flow_static.py`) tenían hardcodeada la ruta `components/modules/services/ServiceCatalog.jsx`. Se actualizaron para leer el feature dir nuevo combinando todos sus `.js*`; `test_service_catalog_static` además verifica que la ruta legacy ya no aparece en el registry. Dos assertions de detalle de implementación que el split cambió legítimamente (`servicePromos`/`data-service-promos` → `listPromotions`/`applies_to_service_ids`; `handleSaveDefaultDuration` → `saveDefaultDuration`) se reajustaron al nuevo código.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/services/{Services.jsx,Services.module.css,Services.test.jsx,servicesData.js,servicesData.test.js,index.js,hooks/useServicesData.js,components/{ServicesTable,ServiceReorder,ServiceFormDrawer,RecallSettingsPanel,AppliesWhenBuilder,DefaultDurationPanel}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `services → Services`, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/services/ServiceCatalog.jsx`.
+  - `tests/{test_service_catalog_static,test_media_promotions_static,test_service_applies_when_static,test_service_recall_static,test_booking_flow_static}.py` (rutas actualizadas al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.4 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **47 suites, 206 tests pasan** (13 nuevos: 8 servicesData + 5 Services). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.*/UI-007.1-3: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_service_catalog_static.py tests/test_media_promotions_static.py tests/test_service_applies_when_static.py tests/test_service_recall_static.py tests/test_booking_flow_static.py` → **94 passed**.
+  - `python -m compileall app -q` → OK. `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizaron rutas en tests estáticos de backend.
+  - La lógica de las mutaciones se portó verbatim: `createService`/`updateService` siguen requiriendo rol admin/owner server-side (`tenant_admin_router`); `reorderServices`/`deactivateService` igual. El frontend gatea el form de escritura con `<RequirePermission capability="services.write">` como defensa en profundidad — un agent/viewer ve la tabla read-only pero no el form.
+  - `buildPayload` mantiene la normalización de `applies_when` (TASK-0054) y de la config de recall (TASK-0052) idéntica al legacy; el servidor revalida con su normalizer.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` en la desactivación.** El legacy usaba `window.confirm` antes de desactivar un servicio; el split lo preservó (mantener lógica). UI-011 (`ConfirmDialog`) lo barrerá junto con el resto del repo.
+  - **Los KPIs del HTML (servicios activos, precio/duración promedio, con recall) no se incluyen.** El split conserva la tabla + form del módulo funcional; los KPIs agregados se derivarían client-side del listado — se difieren para no inflar el alcance del split, que es estructural.
+  - Próxima tarea `PENDING` real: **UI-007.5 — Negocio · Paquetes** (rediseño de `PackagesModule.jsx` siguiendo el mockup; reusa `DataTable`, `Modal`).
+
+---
+
 ### UI-007.3 — Conversaciones · Contactos (Owner / Admin)
 
 - **Fecha:** 2026-05-14

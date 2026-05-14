@@ -24,7 +24,14 @@ ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
-SERVICE_CATALOG = Path('admin-panel/src/components/modules/services/ServiceCatalog.jsx')
+# UI-007.4: the ServiceCatalog monolith was split into a feature directory.
+SERVICES_FEATURE = Path('admin-panel/src/features/owner-admin/services')
+
+
+def _services_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(SERVICES_FEATURE.rglob('*.js*'))
+    )
 
 
 def test_compute_free_slots_subtracts_busy_intervals():
@@ -157,7 +164,9 @@ def test_operations_desk_supports_working_hours_and_calendar():
 
 
 def test_service_catalog_exposes_default_duration_fallback():
-    source = SERVICE_CATALOG.read_text()
-    assert 'handleSaveDefaultDuration' in source
+    # UI-007.4 split: the fallback-duration logic lives in the services feature
+    # (DefaultDurationPanel + the useServicesData hook).
+    source = _services_feature_source()
+    assert 'saveDefaultDuration' in source
     assert 'service_durations' in source
     assert 'Duración por defecto' in source
