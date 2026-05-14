@@ -169,12 +169,12 @@ def test_service_token_still_authenticates_internal_workloads():
     asyncio.run(run_test())
 
 
-def test_platform_owner_rejects_tenant_scoped_owner_token():
+def test_platform_owner_rejects_tenant_scoped_token():
     async def run_test():
         request = make_request()
         request.state.actor_type = 'user'
         request.state.tenant_id = uuid4()
-        request.state.roles = ['owner']
+        request.state.roles = ['platform_owner']
 
         with pytest.raises(HTTPException) as exc_info:
             await require_platform_owner(request)
@@ -185,14 +185,30 @@ def test_platform_owner_rejects_tenant_scoped_owner_token():
     asyncio.run(run_test())
 
 
-def test_platform_owner_accepts_unscoped_owner_token():
+def test_platform_owner_accepts_unscoped_platform_owner_token():
+    async def run_test():
+        request = make_request()
+        request.state.actor_type = 'user'
+        request.state.tenant_id = None
+        request.state.roles = ['platform_owner']
+
+        await require_platform_owner(request)
+
+    asyncio.run(run_test())
+
+
+def test_platform_owner_rejects_unscoped_tenant_owner_token():
     async def run_test():
         request = make_request()
         request.state.actor_type = 'user'
         request.state.tenant_id = None
         request.state.roles = ['owner']
 
-        await require_platform_owner(request)
+        with pytest.raises(HTTPException) as exc_info:
+            await require_platform_owner(request)
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == 'platform_owner role is required'
 
     asyncio.run(run_test())
 
@@ -213,7 +229,7 @@ def test_platform_owner_rejects_service_token():
     asyncio.run(run_test())
 
 
-def test_platform_owner_rejects_support_role_without_owner():
+def test_platform_owner_rejects_support_role_without_platform_owner():
     async def run_test():
         request = make_request()
         request.state.actor_type = 'user'
@@ -224,6 +240,6 @@ def test_platform_owner_rejects_support_role_without_owner():
             await require_platform_owner(request)
 
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == 'owner role is required'
+        assert exc_info.value.detail == 'platform_owner role is required'
 
     asyncio.run(run_test())

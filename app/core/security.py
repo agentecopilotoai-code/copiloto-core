@@ -237,8 +237,10 @@ async def require_platform_owner(request: Request) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail='Platform administration requires an unscoped token',
         )
-    if 'owner' not in getattr(request.state, 'roles', []):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='owner role is required')
+    if 'platform_owner' not in getattr(request.state, 'roles', []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail='platform_owner role is required'
+        )
 
 
 async def require_service(request: Request) -> None:
