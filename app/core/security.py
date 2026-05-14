@@ -44,12 +44,16 @@ def _coerce_bool(value) -> bool:
     return bool(value)
 
 
-def _extract_mfa_verified(payload: dict) -> bool:
+def _extract_mfa_verified(payload: dict, namespace: str = '') -> bool:
     """Return True if the token includes evidence of completed MFA.
 
-    Auth0 sets amr=['mfa'] in the id_token when MFA was used.  The access
-    token may also carry a custom claim forwarded by the post-login Action.
+    Auth0 sets ``amr=['mfa']`` in the id_token when MFA was used, but access
+    tokens never carry ``amr``.  The post-login Action forwards the evidence
+    into the access token as the namespaced ``mfa_verified`` custom claim, so
+    that claim is the authoritative source for API requests.
     """
+    if _coerce_bool(_claim(payload, namespace, 'mfa_verified')):
+        return True
     amr = payload.get('amr') or []
     if isinstance(amr, str):
         amr = [amr]
@@ -211,7 +215,7 @@ async def authenticate_request(
     request.state.actor_id = payload.get('sub')
     request.state.roles = roles
     request.state.support_mode = support_mode
-    request.state.mfa_verified = _extract_mfa_verified(payload)
+    request.state.mfa_verified = _extract_mfa_verified(payload, namespace)
     request.state.email = payload.get('email')
     request.state.name = payload.get('name') or payload.get('nickname')
     request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
