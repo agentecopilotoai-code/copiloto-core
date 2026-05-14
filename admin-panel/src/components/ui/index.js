@@ -1,3 +1,4 @@
+export { AlertBanner } from './AlertBanner.jsx';
 export { Button } from './Button.jsx';
 export { Card, CardHeader, CardBody, CardFooter } from './Card.jsx';
 export { DataTable } from './DataTable.jsx';

@@ -490,10 +490,11 @@ src/
 >
 > **Aplica receta 0.bis.1 + mapping 0.bis.3 + criterio 0.bis.4** para cada subtarea: abrir el HTML correspondiente, screenshot de referencia, comparación lado a lado en el PR.
 
-#### UI-007.1 — Inicio · Dashboard (09)
-- **Alcance nuevo:** página de entrada para Owner/Admin con KPIs del día (citas hoy, mensajes pendientes, no-show rate semana, MRR, top servicios), alertas (handoffs sin tomar, DLQ con backlog, feedback negativo), quick links.
-- **API:** ya existente (`analytics_overview`, `operations_summary`).
-- **Reusa:** `KpiCardWithDelta`, `AlertBanner` (nuevo en `components/ui/`), `Card`.
+#### UI-007.1 — Inicio · Dashboard (09) — DONE (2026-05-14)
+- **Alcance:** página de entrada Owner/Admin en `/t/:slug/dashboard`: saludo contextual + KPIs con variación semana-a-semana (citas confirmadas, no-show rate, conversaciones abiertas, mensajes recibidos, ingresos estimados), sección de alertas operativas derivadas de la analítica (handoffs pendientes, feedback negativo, no-show alto) y grid de accesos rápidos. Es ahora el **home de los roles Owner y Admin** (`ROLE_HOME.owner`/`admin` → `dashboard`; Manager sigue en `analytics`). Respeta el styling del HTML `09 _ Inicio _ Dashboard.html`. **Diferencia intencional declarada:** el HTML muestra además una lista de "citas de hoy", un funnel a 7 días y un panel de canales; esta vista se enfoca en el alcance de UI-007.1 (KPIs + alertas + quick links) — funnel y citas tienen sus vistas dedicadas enlazadas desde los accesos rápidos. La "MRR" / "top servicios" del backlog se mapean honestamente a "Ingresos estimados" (lo que `analytics_overview` provee); no se fabrican datos no modelados.
+- **API:** `GET /v1/analytics/overview` — endpoint **ya existente** (`tenant_analytics_router`, sin cambios de backend). El dashboard lo consume dos veces (ventana actual 7d + previa 7d) para los deltas de `KpiCardWithDelta`.
+- **Frontend:** nueva primitiva `components/ui/AlertBanner.jsx` (+ css + test) exportada en `components/ui/index.js`; `src/features/owner-admin/dashboard/` (Dashboard.jsx + componentes DashboardKpis/DashboardAlerts/DashboardQuickLinks + hook useDashboardData + helper puro dashboardData.js). Reusa `KpiCardWithDelta`, `AlertBanner`, `Card`, `PageHeader`, `EmptyState`, `<RequirePermission>`. Wiring: `dashboard` en `data/modules.js` + `moduleRegistry.js` + `nav.js` (sección "Inicio"); `matrix.js` `ROLE_HOME` owner/admin → `dashboard`.
+- **Tests:** 12 frontend — `AlertBanner.test.jsx` (3), `dashboardData.test.js` (5), `Dashboard.test.jsx` (4). Actualizados `router.test.jsx` y `usePermissions.test.jsx` por el nuevo `ROLE_HOME`.
 
 #### UI-007.2 — Inicio · Onboarding self-service (10) — rediseño
 - Refactor de `OnboardingWizard.jsx` (261 LOC actual): mantener lógica, aplicar nuevo stepper visual del mockup.

@@ -6,6 +6,7 @@ import { Incidents } from '../features/platform/incidents/index.js';
 import { RolesAcl } from '../features/platform/roles-acl/index.js';
 import { Runbooks } from '../features/platform/runbooks/index.js';
 import { SystemHealth } from '../features/platform/system-health/index.js';
+import { Dashboard } from '../features/owner-admin/dashboard/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
 import { BranchesModule } from '../components/modules/branches/BranchesModule.jsx';
@@ -56,6 +57,7 @@ export const MODULE_REGISTRY = Object.freeze({
     Component: FeatureFlags,
     capability: 'platform.feature_flags.read',
   },
+  dashboard: { Component: Dashboard, capability: 'analytics.tenant.read' },
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
   'onboarding-wizard': { Component: OnboardingWizard, capability: 'onboarding.run', mode: 'RW' },
   services: { Component: ServiceCatalog, capability: 'services.read' },
