@@ -43,7 +43,17 @@ CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES = Path('admin-panel/src/data/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 SEGMENTS_MODULE = Path('admin-panel/src/components/modules/segments/SegmentsModule.jsx')
-CAMPAIGNS_MODULE = Path('admin-panel/src/components/modules/campaigns/CampaignsModule.jsx')
+CAMPAIGNS_FEATURE = Path('admin-panel/src/features/manager/campaigns')
+
+
+def _campaigns_feature_source() -> str:
+    """Combined source of the Manager · Campañas feature directory.
+
+    UI-008.2 split the legacy ``CampaignsModule.jsx`` into a feature dir;
+    the segment-picker literals are spread across the hook + the form
+    drawer component, so we read them as one blob.
+    """
+    return '\n'.join(p.read_text() for p in sorted(CAMPAIGNS_FEATURE.rglob('*.js*')))
 
 
 # ───── Schema ─────
@@ -427,7 +437,7 @@ def test_segments_module_exists():
 
 
 def test_campaigns_module_uses_segment_picker():
-    source = CAMPAIGNS_MODULE.read_text()
+    source = _campaigns_feature_source()
     assert 'listContactSegments' in source
     assert 'segment_id' in source
     assert 'Segmento guardado' in source

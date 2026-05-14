@@ -15,6 +15,47 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-008.2 — Campañas (Manager)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** refactor del módulo `CampaignsModule.jsx` (686 LOC) en una feature bajo `src/features/manager/campaigns/`, aplicando el mockup `25 _ Campañas.html`. **Tarea frontend-only** — toda la lógica, las llamadas a `coreApi` y las reglas de negocio se preservan verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/manager/campaigns/` (nuevo, 9 archivos):**
+    - `campaignsData.js` (helper puro): `STATUS_LABELS`/`STATUS_TONES` + `statusLabel`/`statusTone`, `EMPTY_FILTER`, `formatDate`, `parseVariables`/`serializeVariables` (round-trip de `clave=valor`), `buildSegmentPayload`, `emptyCampaignForm`, `formFromCampaign`, `buildPayload` (con validación de nombre + template), `deliveryPercent`/`buildDeliveryMetrics` — extraídos verbatim del legacy.
+    - `hooks/useCampaignsData.js`: capa de datos — lista de campañas + selección + lookups (`listWhatsappTemplates`/`listContactTags`/`listContactSegments`) + form de creación/edición + estado de preview; handlers `refreshCampaigns`/`submit`/`preview`/`launch`/`cancel` portados verbatim, incluidos los `window.confirm` nativos de lanzar/cancelar; devuelve `{ state, actions }`.
+    - `CampaignsModule.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="campaigns.write" mode="RW">` + `PageHeader` (CTA «Nueva campaña») + `AlertBanner` para notices + composición de los tres componentes + el drawer. Conserva `export function CampaignsModule` y props `{ module, session, tenant }`.
+    - `components/CampaignsTable.jsx`: lista de campañas reusando `DataTable` (estado vía `StatusBadge`, segmento/envío programado, métricas enviados, acciones por fila editar/destinatarios/programar/cancelar gateadas por estado igual que el legacy).
+    - `components/CampaignFormDrawer.jsx`: form de creación/edición en un `Modal` (nombre, template aprobado, variables, fecha de envío, picker de `Segmento guardado` vía `listContactSegments` + fieldset de filtros de segmento alternativos con etiquetas).
+    - `components/CampaignDeliveryPanel.jsx`: panel de resumen + barras de métricas de entrega (enviados/entregados/leídos/fallidos) + preview de destinatarios estimados.
+    - `CampaignsModule.module.css` (~286 LOC) — 100% `var(--...)`.
+    - `index.js` (barrel) + `campaignsData.test.js` (6 tests) + `CampaignsModule.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'campaigns'` ahora importa la `CampaignsModule` de la feature; import legacy eliminado. La entrada `campaigns: { Component: CampaignsModule, capability: 'campaigns.write', mode: 'RW' }` no cambia.
+    - **Borrado** `admin-panel/src/components/modules/campaigns/CampaignsModule.jsx` (686 LOC) y su carpeta.
+  - **Backend — tests estáticos legacy actualizados:** `test_campaigns_static.py` y `test_segments_static.py` tenían hardcodeada la ruta `components/modules/campaigns/CampaignsModule.jsx`. Se actualizaron para leer el feature dir nuevo combinando todos sus `.js*` (`_campaigns_feature_source()`). Los literales que verifican (`export function CampaignsModule`, `listCampaigns`, `createCampaign`, `previewCampaign`, `launchCampaign`, `listContactSegments`, `segment_id`, `Segmento guardado`) se preservaron en los archivos nuevos. `test_admin_layout_renders_campaigns_module` sigue verde: el componente conserva el nombre `CampaignsModule`.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/manager/campaigns/{CampaignsModule.jsx,CampaignsModule.module.css,CampaignsModule.test.jsx,campaignsData.js,campaignsData.test.js,index.js,hooks/useCampaignsData.js,components/{CampaignsTable,CampaignFormDrawer,CampaignDeliveryPanel}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (import repuntado al feature dir).
+  - **Borrado:** `admin-panel/src/components/modules/campaigns/CampaignsModule.jsx`.
+  - `tests/test_campaigns_static.py`, `tests/test_segments_static.py` (repuntados al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-008.2 marcado `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (2 warnings pre-existentes ajenos en `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → 351 tests pasan, incluidos los 10 nuevos (6 `campaignsData` + 4 `CampaignsModule`). Sigue fallando `src/app/router.test.jsx` (7 fallos) por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.*/UI-008.1 — **no es regresión** (CI corre Node 20 y solo ejecuta lint + build para el front).
+  - `.venv-ci/bin/python -m pytest tests/test_campaigns_static.py tests/test_segments_static.py -q` → 63 passed.
+  - `.venv-ci/bin/ruff check tests/test_campaigns_static.py tests/test_segments_static.py` → All checks passed.
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia.
+  - La lógica se preserva verbatim: todas las mutaciones de `coreApi` (`createCampaign`/`updateCampaign`/`previewCampaign`/`launchCampaign`/`cancelCampaign`) quedan sin cambios y tenant-scoped server-side — el backend reverifica.
+  - La entrada de módulo se gateó con `<RequirePermission capability="campaigns.write" mode="RW">`; sólo `manager`/`admin`/`owner` tienen `campaigns.write: RW` en la matriz de permisos.
+- **Limitaciones / próximos pasos:**
+  - Sin diferencias intencionales declaradas: todos los campos del HTML que el endpoint expone (estado, destinatarios, métricas de entrega, preview) se renderizan; no se difirió ningún elemento ni se fabricaron datos.
+  - Los `window.confirm` nativos de lanzar/cancelar se preservan verbatim — quedan pendientes del barrido de UI-011.
+  - Próxima tarea `PENDING`: **UI-008.3 — Segmentos** (refactor de `SegmentsModule.jsx`).
+
+---
+
 ### UI-008.1 — Manager · Analítica (Cómo va el negocio)
 
 - **Fecha:** 2026-05-14
