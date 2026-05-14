@@ -1,16 +1,7 @@
 /*
- * Variables legacy exclusivas de los módulos antiguos (`components/modules/`).
- * Los tokens compartidos (--bg, --panel, --ink, --muted, --line, color-scheme)
- * viven SOLO en `tokens.css`, que es la fuente de verdad — no se redeclaran
- * aquí para que las primitivas de `components/ui/` no hereden la paleta vieja.
- * `--brand` / `--brand-dark` se mantienen hasta que UI-006..UI-010 migren los
- * módulos legacy a `var(--accent)`.
+ * Estilos base de la app. NO declara tokens: la fuente de verdad es
+ * `tokens.css` (design system). Todo color/espaciado se consume vía `var(--*)`.
  */
-:root {
-  --brand: #2557d6;
-  --brand-dark: #173a9d;
-}
-
 * {
   box-sizing: border-box;
 }
@@ -56,7 +47,7 @@ a {
 
 .eyebrow {
   margin: 0 0 0.5rem;
-  color: var(--brand);
+  color: var(--accent);
   font-size: 0.75rem;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -67,7 +58,7 @@ a {
 .profile button {
   border: 0;
   border-radius: 999px;
-  background: var(--brand);
+  background: var(--accent);
   color: white;
   cursor: pointer;
   display: inline-flex;
@@ -78,7 +69,7 @@ a {
 
 .primary-action:hover,
 .profile button:hover {
-  background: var(--brand-dark);
+  background: var(--accent-ink);
 }
 
 .hint,
@@ -107,7 +98,7 @@ small {
 }
 
 .brand-mark {
-  background: var(--brand);
+  background: var(--accent);
   border-radius: 16px;
   color: white;
   display: grid;
@@ -334,7 +325,7 @@ nav {
 .nav-item.active,
 .nav-item:hover {
   background: #e9efff;
-  color: var(--brand-dark);
+  color: var(--accent-ink);
 }
 
 .workspace {
@@ -499,7 +490,7 @@ fieldset {
 .tab.active,
 .tab:hover {
   background: #e9efff;
-  color: var(--brand-dark);
+  color: var(--accent-ink);
 }
 
 .wizard-panel {
@@ -624,7 +615,7 @@ fieldset {
 
 .notice.info {
   background: #e9efff;
-  color: var(--brand-dark);
+  color: var(--accent-ink);
 }
 
 .audit-actions {
@@ -683,7 +674,7 @@ fieldset {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: #f7f9fc;
-  color: var(--brand-dark);
+  color: var(--accent-ink);
   cursor: pointer;
   display: inline-flex;
   font-weight: 800;
@@ -744,7 +735,7 @@ fieldset {
 .checklist li > span {
   background: #e9efff;
   border-radius: 999px;
-  color: var(--brand-dark);
+  color: var(--accent-ink);
   display: grid;
   flex: 0 0 1.5rem;
   font-weight: 900;
@@ -924,7 +915,7 @@ fieldset {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 999px;
-  color: var(--brand-dark);
+  color: var(--accent-ink);
   cursor: pointer;
   font-weight: 900;
   padding: 0.48rem 0.75rem;
@@ -1073,7 +1064,7 @@ fieldset {
 
 .conversation-card:hover,
 .conversation-card.active {
-  border-color: var(--brand);
+  border-color: var(--accent);
   box-shadow: 0 12px 30px rgba(37, 87, 214, 0.12);
 }
 
@@ -1117,7 +1108,7 @@ fieldset {
 .status-pill {
   background: #e9efff;
   border-radius: 999px;
-  color: var(--brand-dark);
+  color: var(--accent-ink);
   font-size: 0.8rem;
   font-weight: 900;
   padding: 0.45rem 0.75rem;
@@ -1665,12 +1656,12 @@ fieldset {
 }
 
 .sr-card:hover {
-  border-color: var(--brand);
+  border-color: var(--accent);
 }
 
 .sr-card.active {
   background: #eef3ff;
-  border-color: var(--brand);
+  border-color: var(--accent);
 }
 
 .sr-card span {
@@ -2078,7 +2069,7 @@ button.danger-action:disabled {
 
 .mfa-required-action {
   display: inline-block;
-  background: var(--brand);
+  background: var(--accent);
   color: #fff;
   border: none;
   border-radius: 6px;

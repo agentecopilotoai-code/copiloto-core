@@ -33,7 +33,7 @@ Cada entrada debe incluir:
   - `admin-panel/src/data/modules.js` (`minRole` → `capability`, módulo `platform-fleet`, `defaultModuleId` explícito).
   - `admin-panel/src/components/layout/AdminLayout.jsx` (refactor a la nueva API).
   - `tests/test_{branches,campaigns,media_promotions,meta_messenger,segments,subscriptions,tenant_team}_static.py` (assertions actualizadas: `minRole`/`hasMinRole` → `capability`/`<RequirePermission>`).
-  - `admin-panel/src/main.jsx` y `admin-panel/src/styles/global.css` (fix de review: `tokens.css` queda como fuente única de los tokens compartidos).
+  - `admin-panel/src/styles/global.css` (fix de review: se eliminó por completo el bloque `:root` — `global.css` ya no declara ningún token. `tokens.css` es la única fuente. Las variables legacy `--brand`/`--brand-dark` se borraron y sus 15 usos se migraron a `var(--accent)`/`var(--accent-ink)` del design system — sin código legacy en paralelo).
   - `docs/UI_BACKLOG.md` (status UI-005 → DONE; corrección de endpoints en UI-006.1), `docs/DONE.md` (esta entrada).
 - **Validación:**
   - `npm run lint` → sin errores.
