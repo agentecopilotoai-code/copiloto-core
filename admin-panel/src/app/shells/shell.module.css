@@ -1,0 +1,351 @@
+/*
+ * Chrome compartido de los shells por rol (UI-002).
+ * Todo color/espaciado/radio se consume de `tokens.css` — cero literales.
+ */
+
+.shell {
+  display: grid;
+  grid-template-columns: 19rem 1fr;
+  gap: var(--space-3);
+  min-height: 100vh;
+  padding: var(--space-3);
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-4);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.brandMark {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: var(--r-lg);
+  background: var(--accent);
+  color: var(--panel);
+  font-weight: 900;
+}
+
+.brandText {
+  display: grid;
+  line-height: 1.2;
+}
+
+.brandText small {
+  color: var(--muted);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  overflow-y: auto;
+}
+
+.navSectionTitle {
+  margin: 0 0 var(--space-2);
+  color: var(--muted-2);
+  font-size: var(--fs-caption);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.navItem {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-weight: 700;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.navItem:hover,
+.navItemActive {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.navItemDisabled {
+  color: var(--muted-2);
+  cursor: not-allowed;
+}
+
+.navItemDisabled:hover {
+  background: transparent;
+  color: var(--muted-2);
+}
+
+.userCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-3);
+}
+
+.userAvatar {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 800;
+}
+
+.userAvatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.userMeta {
+  display: grid;
+  line-height: 1.2;
+  min-width: 0;
+}
+
+.userMeta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userMeta small {
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.logoutForm {
+  margin-left: auto;
+}
+
+.logoutButton {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-alt);
+  color: var(--ink-2);
+  cursor: pointer;
+  font-weight: 700;
+  padding: var(--space-1) var(--space-3);
+}
+
+.logoutButton:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-3) var(--space-4);
+}
+
+.topbarTitle {
+  display: grid;
+  line-height: 1.2;
+}
+
+.topbarTitle p {
+  margin: 0;
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.topbarTitle h1 {
+  margin: 0;
+  font-size: var(--fs-h2);
+}
+
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.readOnlyBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: flex-start;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  font-weight: 800;
+  padding: var(--space-1) var(--space-2);
+}
+
+.readOnlyBanner {
+  border-radius: 999px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  font-weight: 700;
+  padding: var(--space-1) var(--space-3);
+}
+
+/* ── Tenant switcher ──────────────────────────────────────────────────── */
+.tenantSwitcher {
+  position: relative;
+}
+
+.tenantSwitcherTrigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel-alt);
+  color: inherit;
+  cursor: pointer;
+  padding: var(--space-2);
+  text-align: left;
+}
+
+.tenantSwitcherTrigger:disabled {
+  cursor: default;
+}
+
+.tenantSwitcherTrigger:not(:disabled):hover {
+  background: var(--accent-soft);
+}
+
+.tenantAvatar {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--panel);
+  font-size: var(--fs-caption);
+  font-weight: 800;
+}
+
+.tenantAvatarSmall {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
+.tenantMeta {
+  display: grid;
+  flex: 1;
+  line-height: 1.15;
+  min-width: 0;
+}
+
+.tenantMeta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tenantMeta small {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+}
+
+.tenantCaret {
+  color: var(--muted);
+}
+
+.tenantMenu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: var(--z-dropdown);
+  list-style: none;
+  margin: var(--space-1) 0 0;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-1);
+}
+
+.tenantMenuHeader {
+  color: var(--muted-2);
+  font-size: var(--fs-caption);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: var(--space-1) var(--space-2);
+  text-transform: uppercase;
+}
+
+.tenantOption {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: var(--space-2);
+  text-align: left;
+}
+
+.tenantOption:hover,
+.tenantOptionActive {
+  background: var(--accent-soft);
+}
+
+.tenantCheck {
+  color: var(--ok);
+  font-weight: 800;
+}
+
+@media (max-width: 800px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
