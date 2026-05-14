@@ -294,7 +294,9 @@ async def require_mfa_for_privileged(request: Request) -> None:
     Service tokens are exempt (they never go through MFA flows).
     Unprivileged roles (agent, manager) are also exempt.
     Privileged roles (admin, owner, platform_owner) must have mfa_verified=True
-    when Auth0 is active; in local-HS256 mode the check is skipped.
+    when Auth0 is active; in local-HS256 mode the check is skipped.  The check
+    is also skipped when ``mfa_enforcement_enabled`` is False (Auth0 plans
+    without the MFA add-on cannot serve the challenge flow).
     """
     actor_type = getattr(request.state, 'actor_type', 'anonymous')
     if actor_type == 'anonymous':
@@ -305,6 +307,8 @@ async def require_mfa_for_privileged(request: Request) -> None:
     if not _session_has_privileged_role(roles):
         return
     settings = get_settings()
+    if not settings.mfa_enforcement_enabled:
+        return
     if not settings.auth0_domain:
         return
     if not getattr(request.state, 'mfa_verified', False):
