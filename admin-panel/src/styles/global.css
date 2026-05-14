@@ -1,12 +1,14 @@
+/*
+ * Variables legacy exclusivas de los módulos antiguos (`components/modules/`).
+ * Los tokens compartidos (--bg, --panel, --ink, --muted, --line, color-scheme)
+ * viven SOLO en `tokens.css`, que es la fuente de verdad — no se redeclaran
+ * aquí para que las primitivas de `components/ui/` no hereden la paleta vieja.
+ * `--brand` / `--brand-dark` se mantienen hasta que UI-006..UI-010 migren los
+ * módulos legacy a `var(--accent)`.
+ */
 :root {
-  color-scheme: light;
-  --bg: #eef3f8;
-  --panel: #ffffff;
-  --ink: #132238;
-  --muted: #61708a;
   --brand: #2557d6;
   --brand-dark: #173a9d;
-  --line: #dbe4f0;
 }
 
 * {
