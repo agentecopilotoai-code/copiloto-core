@@ -22,7 +22,11 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES = Path('admin-panel/src/data/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-WIZARD = Path('admin-panel/src/components/modules/onboarding/OnboardingWizard.jsx')
+# UI-007.2: the wizard was redesigned and moved to features/owner-admin/onboarding/.
+ONBOARDING_DIR = Path('admin-panel/src/features/owner-admin/onboarding')
+WIZARD = ONBOARDING_DIR / 'Onboarding.jsx'
+WIZARD_STEPS = ONBOARDING_DIR / 'onboardingSteps.js'
+WIZARD_STEP_COMPONENT = ONBOARDING_DIR / 'components' / 'OnboardingStep.jsx'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -442,16 +446,21 @@ def test_core_api_exposes_onboarding_helpers():
 
 
 def test_admin_layout_renders_onboarding_module():
+    # UI-007.2: the registry now points at the redesigned feature module.
     src = ADMIN_LAYOUT.read_text()
-    assert "from '../components/modules/onboarding/OnboardingWizard.jsx'" in src
+    assert "from '../features/owner-admin/onboarding/index.js'" in src
     assert "'onboarding-wizard': {" in src
-    assert 'OnboardingWizard' in src
+    assert 'Onboarding' in src
+    # The legacy module path must be fully gone (no parallel implementation).
+    assert 'components/modules/onboarding/OnboardingWizard' not in src
 
 
 def test_wizard_component_declares_seven_step_flow():
-    src = WIZARD.read_text()
-    assert 'ONBOARDING_STEPS' in src
-    # 7 distinct backend keys present in the component metadata.
+    # UI-007.2: the 7-step catalogue moved to the pure `onboardingSteps.js`
+    # helper; the API wiring lives in `Onboarding.jsx`; the blocked-state copy
+    # lives in the per-step component.
+    steps_src = WIZARD_STEPS.read_text()
+    assert 'ONBOARDING_STEPS' in steps_src
     for key in (
         "key: 'business_details'",
         "key: 'locale_currency'",
@@ -461,10 +470,14 @@ def test_wizard_component_declares_seven_step_flow():
         "key: 'business_hours'",
         "key: 'end_to_end_test'",
     ):
-        assert key in src
-    assert 'getTenantOnboarding' in src
-    assert 'verifyOnboardingStep' in src
-    assert 'completeOnboardingStep' in src
-    assert 'recordOnboardingTestMessageSent' in src
+        assert key in steps_src
+
+    wizard_src = WIZARD.read_text()
+    assert 'getTenantOnboarding' in wizard_src
+    assert 'verifyOnboardingStep' in wizard_src
+    assert 'completeOnboardingStep' in wizard_src
+    assert 'recordOnboardingTestMessageSent' in wizard_src
+
     # Mensaje claro de bloqueo cuando un paso anterior no está completo.
-    assert 'Bloqueado' in src
+    assert 'Bloqueado' in wizard_src
+    assert 'Bloqueado' in WIZARD_STEP_COMPONENT.read_text()
