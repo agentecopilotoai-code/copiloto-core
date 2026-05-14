@@ -15,6 +15,60 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-006.8 — Feature flags (Platform Owner)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** octava y última subtarea del rol Platform Owner. Catálogo read-only de feature flags en `/platform/platform-feature-flags` consumiendo un nuevo endpoint `GET /v1/platform/feature-flags` (montado en `platform_admin_router`, con las mismas dependencias de seguridad que el resto del router). Con esta tarea, las 8 vistas de Platform Owner (UI-006.1..UI-006.8) quedan `DONE`.
+- **Decisión de alcance:** el backlog marca UI-006.8 como "Requiere endpoint backend si no existe — confirmar con el equipo antes de cablear", y la investigación confirmó que **no existe ningún sistema de feature flags en el backend** (sin tabla de schema, sin motor de rollout, sin store de overrides por tenant, sin referencias en config). Construir un subsistema escribible completo (tabla + RLS + endpoints CRUD + lógica de rollout + overrides + auditoría) sin confirmación del equipo iría en contra de la instrucción explícita del backlog y sería un cambio grande de schema bajo operación desatendida. Se entrega el **catálogo read-only honesto**: un registro estático de los flags reales del producto, cada uno mapeado a su TASK de origen — mismo patrón que `platform_runbooks` (catálogo estático servido read-only, sin DB, sin migración, sin escrituras). El sistema escribible (toggle en vivo, rollout gradual, overrides por tenant) queda diferido al ticket de backend.
+- **Cambios realizados:**
+  - **Backend — `app/services/feature_flags.py` (nuevo):**
+    - `FEATURE_FLAGS` — registro estático (tupla de dicts) de los 10 feature flags reales del producto: `cloud_llm_primary`, `instagram_messenger`, `web_widget`, `subscriptions_billing`, `multilang_i18n`, `payments_fail_closed`, `observability_metrics`, `outbound_dlq`, `branches_multisite`, `treatment_packages`. Cada entrada mapea a la(s) TASK(s) que lo introdujo — no hay filas de experimento fabricadas; `default` refleja la realidad shipped (todos GA → `on`).
+    - `FLAG_TYPES` — `('feature', 'kill', 'rollout', 'experiment')`, espejo de los tipos del HTML.
+    - `list_feature_flags()` — devuelve el catálogo como lista de dicts (copias frescas, para que el caller no pueda mutar el registro).
+    - `summarize_feature_flags(flags)` — agrega contadores: total, `on`/`off`, desglose por tipo.
+  - **Backend — `app/api/v1/routes.py`:**
+    - `platform_feature_flags` (`@platform_admin_router.get('/platform/feature-flags')`) — read-only, sin `Depends(get_db)`: sirve `{flags, flag_types, summary, note}` desde el registro estático. **No se añadió ningún handler POST/PATCH/PUT/DELETE** — un test estático verifica que no exista (el sistema escribible está diferido). Import añadido: `from app.services import feature_flags as feature_flags_service`.
+  - **Frontend — `admin-panel/src/`:**
+    - `services/coreApi.js`: nueva función `getPlatformFeatureFlags(session)`.
+    - `features/platform/feature-flags/` (nuevo, 9 archivos):
+      - `FeatureFlags.jsx` (104 LOC) — orquesta el fetch, el filtrado client-side (búsqueda + tipo) y envuelve todo en `<RequirePermission capability="platform.feature_flags.read" mode="R">`.
+      - `meta.js` (37 LOC) — label/tone maps compartidos (`TYPE_TONE`, `TYPE_LABEL`, `STATE_TONE`, `STATE_LABEL`) para que KPIs/filtros/tabla no los re-implementen.
+      - `components/FeatureFlagKpis.jsx` (44 LOC) — 4 KPI tiles desde el `summary`.
+      - `components/FeatureFlagFilters.jsx` (42 LOC) — input de búsqueda + select de tipo.
+      - `components/FeatureFlagsTable.jsx` (78 LOC) — `<DataTable>` con flag/default/rollout/tipo/origen. **Sin columna de toggle** — la vista es honestamente read-only.
+      - `hooks/useFeatureFlags.js` (56 LOC) — fetch encapsulado, cancellation en unmount, `refresh()`.
+      - `FeatureFlags.module.css` (110 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/platform/feature-flags/` → 0 resultados (criterio 0.bis.4 del backlog).
+      - `index.js` (barrel) + `FeatureFlags.test.jsx` (130 LOC, 5 tests).
+    - `app/moduleRegistry.js`: `'platform-feature-flags'` deja de caer al placeholder y ahora apunta a `FeatureFlags` con capability `platform.feature_flags.read`.
+    - `data/modules.js`: nuevo módulo `platform-feature-flags` (el `PLATFORM_NAV` ya lo referenciaba en la sección "Acceso").
+- **Archivos modificados / creados:**
+  - `app/services/feature_flags.py` (nuevo).
+  - `app/api/v1/routes.py` (handler `platform_feature_flags`, import `feature_flags_service`).
+  - `tests/test_feature_flags_static.py` (nuevo — 6 tests estáticos + funcionales).
+  - `admin-panel/src/services/coreApi.js` (export `getPlatformFeatureFlags`).
+  - `admin-panel/src/features/platform/feature-flags/{FeatureFlags.jsx,FeatureFlags.module.css,FeatureFlags.test.jsx,meta.js,index.js,components/{FeatureFlagKpis,FeatureFlagFilters,FeatureFlagsTable}.jsx,hooks/useFeatureFlags.js}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `platform-feature-flags → FeatureFlags`).
+  - `admin-panel/src/data/modules.js` (módulo `platform-feature-flags`).
+  - `docs/UI_BACKLOG.md` (UI-006.8 marcado `DONE` + nota de UI-006 completo).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **37 suites, 162 tests pasan** (5 nuevos de FeatureFlags). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.1..7: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y no ejecuta vitest.
+  - `python -m pytest tests/test_feature_flags_static.py tests/test_platform_runbooks_static.py tests/test_platform_dlq_static.py tests/test_platform_incidents_static.py tests/test_platform_billing_static.py tests/test_system_health_static.py tests/test_fleet_tenants_static.py` → **56 passed**.
+  - `python -m compileall app -q` → OK. `ruff check .` → All checks passed!
+- **Seguridad:**
+  - `GET /v1/platform/feature-flags` hereda las tres dependencias del router (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`) — el handler **no** declara su propio `dependencies=` override, y un test estático lo verifica. Otros tests verifican que el path no aparece en routers de tenant.
+  - **La superficie es estrictamente read-only.** Un test estático verifica que **no exista** ningún handler `post`/`patch`/`put`/`delete` para `/platform/feature-flags` — el sistema escribible (que cambiaría comportamiento de producción) está deliberadamente diferido. No hay nueva superficie de escritura que asegurar.
+  - El endpoint sirve un registro estático en código — no toca la DB, no hay schema nuevo, no hay migración, no hay datos de tenant. El registro es metadata pública del producto (qué features existen y de qué TASK vienen), no información sensible.
+  - El frontend espeja el gate vía `<RequirePermission capability="platform.feature_flags.read" mode="R">`. La matriz UI-005 ya deniega `platform.feature_flags.read` a todos los roles de tenant.
+- **Limitaciones / próximos pasos:**
+  - **Sistema escribible diferido — ticket de backend.** El HTML de referencia muestra toggles en vivo, sliders de rollout gradual (10/25/50/80/100%) y overrides por tenant con motivo y autor. Nada de eso está modelado. Construirlo requiere: una tabla `app.feature_flags` (+ `app.feature_flag_overrides` por tenant), RLS, endpoints CRUD auditados, lógica de resolución rollout/override, y probablemente integración con el cliente de flags en runtime. El backlog explícitamente pide "confirmar con el equipo antes de cablear" — esta tarea entrega el catálogo read-only y deja el sistema escribible como ticket de backend separado.
+  - **`rollout_pct` es informativo.** El campo existe en el registro y se muestra en la tabla (todos los flags GA están a 100%), pero no hay motor de rollout que lo consuma — es metadata, no comportamiento.
+  - **El registro es estático en código.** Agregar/quitar un flag hoy es un cambio de código en `app/services/feature_flags.py`. Cuando exista el sistema escribible, el registro se reemplaza por la tabla; el endpoint y la vista ya tienen la forma del contrato (`{flags, flag_types, summary}`).
+  - **UI-006 completo:** con UI-006.8 las 8 vistas del rol Platform Owner están `DONE`. Próxima tarea `PENDING` real: **UI-007.1 — Inicio · Dashboard** (página de entrada Owner/Admin con KPIs del día, alertas y quick links; reusa `KpiCardWithDelta` y un `AlertBanner` nuevo).
+
+---
+
 ### UI-006.7 — Roles · ACL (Platform Owner)
 
 - **Fecha:** 2026-05-14

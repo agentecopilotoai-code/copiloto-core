@@ -1,0 +1,104 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  align-items: flex-end;
+}
+
+.filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 200px;
+}
+
+.filterGrow {
+  flex: 1;
+  min-width: 260px;
+}
+
+.filterLabel {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.filter select,
+.filter input {
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-body);
+  transition: border-color var(--transition-base);
+}
+
+.filter select:focus,
+.filter input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.flagCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.flagKey {
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.flagDesc {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.flagTask {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--accent-ink);
+}
+
+.refreshButton {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.refreshButton:hover {
+  background: var(--bg-deep);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}
