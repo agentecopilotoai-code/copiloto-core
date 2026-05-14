@@ -112,6 +112,10 @@ export function getSystemHealth(session) {
   return request('/platform/metrics/health', { session });
 }
 
+export function getPlatformBillingMrr(session) {
+  return request('/platform/billing/mrr', { session });
+}
+
 export function updateTenant(session, tenantId, payload) {
   return request(`/tenants/${tenantId}`, {
     method: 'PATCH',

@@ -14,6 +14,13 @@ export const adminModules = [
     capability: 'platform.system_health.read',
   },
   {
+    id: 'platform-billing',
+    label: 'Billing & MRR',
+    summary: 'Ingreso recurrente del fleet agregado desde las suscripciones de TASK-0075: MRR por moneda/plan/tenant/país, churn 30d y cobros fallidos. UI-006.3.',
+    scope: ['MRR consolidado por moneda', 'Composición del MRR por plan', 'Tenants por plan', 'Churn 30d', 'Cobros fallidos por tenant'],
+    capability: 'platform.billing.read',
+  },
+  {
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',

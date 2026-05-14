@@ -100,6 +100,7 @@ from app.core.security import (
 from app.db.pool import get_db, record_to_dict
 from app.services import locale as locale_service
 from app.services import metrics
+from app.services import platform_billing
 from app.services.locale import SUPPORTED_COUNTRIES
 from app.services.audit import audit
 from app.services.campaign_attribution import attribute_appointment
@@ -1134,6 +1135,220 @@ async def platform_system_health(
             'Snapshot vivo del registry Prometheus in-process (TASK-0060). '
             'Las series históricas 24h/7d/30d requieren la query API de '
             'Prometheus y se difieren.'
+        ),
+    }
+
+
+# UI-006.3: Platform-level Billing / MRR snapshot.
+#
+# Drives the platform-owner "Billing & MRR" view. Same router-level security as
+# the rest of `platform_admin_router` (`authenticate_request` +
+# `require_platform_owner` + `require_mfa_for_privileged`) — never relaxed.
+#
+# The "MRR" here is the recurring revenue flowing through the fleet, aggregated
+# from the per-tenant subscription model of TASK-0075 across every tenant. The
+# cross-tenant read goes through `app.support_mode` — the codebase's intended
+# RLS bypass for authorized platform operations (TASK-0077) — set
+# transaction-locally so it never leaks past this request.
+@platform_admin_router.get('/platform/billing/mrr')
+async def platform_billing_mrr(
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Return a platform-level Billing / MRR snapshot for the platform owner.
+
+    Aggregates `app.contact_subscriptions` + `app.subscription_plans` across all
+    tenants: monthly-normalised MRR by currency / plan / tenant / country, 30-day
+    churn, and a per-(tenant, provider) breakdown of failed payments. No contact
+    PII is returned — only tenant identities and aggregates.
+    """
+    # Cross-tenant read. The router already enforces require_platform_owner +
+    # require_mfa_for_privileged; `support_mode` is set transaction-locally.
+    await conn.execute("select set_config('app.support_mode', 'true', true)")
+
+    tenant_rows = await conn.fetch(
+        """
+        select
+            t.id as tenant_id,
+            t.slug,
+            t.display_name,
+            t.legal_name,
+            t.country_code,
+            sp.currency,
+            sp.billing_period,
+            sum(sp.price_amount) filter (where cs.status = 'active') as price_sum,
+            count(*) filter (where cs.status = 'active') as active_subscriptions,
+            count(*) filter (where cs.status = 'past_due') as past_due_subscriptions,
+            min(cs.next_billing_at) filter (where cs.status = 'active') as next_billing_at
+        from app.tenants t
+        join app.contact_subscriptions cs on cs.tenant_id = t.id
+        join app.subscription_plans sp on sp.id = cs.plan_id
+        where t.deleted_at is null
+        group by t.id, t.slug, t.display_name, t.legal_name, t.country_code,
+                 sp.currency, sp.billing_period
+        """
+    )
+    plan_rows = await conn.fetch(
+        """
+        select
+            sp.name as plan_name,
+            sp.billing_period,
+            sp.currency,
+            count(cs.id) filter (where cs.status = 'active') as active_subscriptions,
+            count(cs.id) filter (where cs.status = 'past_due') as past_due_subscriptions,
+            sum(sp.price_amount) filter (where cs.status = 'active') as price_sum
+        from app.subscription_plans sp
+        left join app.contact_subscriptions cs on cs.plan_id = sp.id
+        where sp.status = 'active'
+        group by sp.name, sp.billing_period, sp.currency
+        """
+    )
+    country_rows = await conn.fetch(
+        """
+        select
+            t.country_code,
+            sp.currency,
+            sp.billing_period,
+            count(*) filter (where cs.status = 'active') as active_subscriptions,
+            sum(sp.price_amount) filter (where cs.status = 'active') as price_sum
+        from app.tenants t
+        join app.contact_subscriptions cs on cs.tenant_id = t.id
+        join app.subscription_plans sp on sp.id = cs.plan_id
+        where t.deleted_at is null
+        group by t.country_code, sp.currency, sp.billing_period
+        """
+    )
+    country_tenant_rows = await conn.fetch(
+        """
+        select t.country_code, count(distinct t.id) as tenant_count
+        from app.tenants t
+        join app.contact_subscriptions cs on cs.tenant_id = t.id
+        where t.deleted_at is null
+        group by t.country_code
+        """
+    )
+    failed_rows = await conn.fetch(
+        """
+        select
+            t.id as tenant_id,
+            t.slug,
+            t.display_name,
+            t.legal_name,
+            cs.payment_provider,
+            sp.currency,
+            count(*) as failed_count,
+            sum(sp.price_amount) as amount_pending
+        from app.tenants t
+        join app.contact_subscriptions cs on cs.tenant_id = t.id
+        join app.subscription_plans sp on sp.id = cs.plan_id
+        where t.deleted_at is null and cs.status = 'past_due'
+        group by t.id, t.slug, t.display_name, t.legal_name, cs.payment_provider, sp.currency
+        order by amount_pending desc nulls last
+        """
+    )
+    churn_row = await conn.fetchrow(
+        """
+        select
+            count(*) filter (where cs.status = 'active') as active_total,
+            count(*) filter (where cs.status = 'past_due') as past_due_total,
+            count(*) filter (
+                where cs.status = 'cancelled'
+                  and cs.cancelled_at >= now() - interval '30 days'
+            ) as cancelled_30d
+        from app.contact_subscriptions cs
+        join app.tenants t on t.id = cs.tenant_id
+        where t.deleted_at is null
+        """
+    )
+
+    tenant_dicts = [record_to_dict(row) for row in tenant_rows]
+    tenants = platform_billing.fold_tenant_rows(tenant_dicts)
+    mrr_by_currency = platform_billing.summarize_mrr_by_currency(tenant_dicts)
+
+    mrr_by_plan = []
+    for row in plan_rows:
+        mrr_by_plan.append({
+            'plan_name': row['plan_name'],
+            'billing_period': row['billing_period'],
+            'currency': row['currency'],
+            'active_subscriptions': int(row['active_subscriptions'] or 0),
+            'past_due_subscriptions': int(row['past_due_subscriptions'] or 0),
+            'mrr': platform_billing.normalize_mrr(row['billing_period'], row['price_sum']),
+        })
+    mrr_by_plan.sort(key=lambda item: item['mrr'], reverse=True)
+
+    tenant_count_by_country = {
+        (row['country_code'] or 'UNK'): int(row['tenant_count'] or 0)
+        for row in country_tenant_rows
+    }
+    countries: dict[str, dict] = {}
+    for row in country_rows:
+        code = row['country_code'] or 'UNK'
+        entry = countries.setdefault(
+            code,
+            {'country_code': code, 'active_subscriptions': 0, '_by_currency': {}},
+        )
+        entry['active_subscriptions'] += int(row['active_subscriptions'] or 0)
+        currency = row['currency'] or 'UNK'
+        mrr = platform_billing.normalize_mrr(row['billing_period'], row['price_sum'])
+        entry['_by_currency'][currency] = round(
+            entry['_by_currency'].get(currency, 0.0) + mrr, 2
+        )
+    by_country = [
+        {
+            'country_code': code,
+            'tenant_count': tenant_count_by_country.get(code, 0),
+            'active_subscriptions': entry['active_subscriptions'],
+            'mrr_by_currency': [
+                {'currency': currency, 'mrr': mrr}
+                for currency, mrr in sorted(entry['_by_currency'].items())
+            ],
+        }
+        for code, entry in countries.items()
+    ]
+    by_country.sort(
+        key=lambda item: sum(c['mrr'] for c in item['mrr_by_currency']), reverse=True
+    )
+
+    failed_items = []
+    for row in failed_rows:
+        failed_items.append({
+            'tenant_id': str(row['tenant_id']),
+            'slug': row['slug'],
+            'display_name': row['display_name'] or row['legal_name'],
+            'payment_provider': row['payment_provider'],
+            'currency': row['currency'],
+            'failed_count': int(row['failed_count'] or 0),
+            'amount_pending': float(row['amount_pending'] or 0),
+        })
+
+    active_total = int(churn_row['active_total'] or 0) if churn_row else 0
+    past_due_total = int(churn_row['past_due_total'] or 0) if churn_row else 0
+    cancelled_30d = int(churn_row['cancelled_30d'] or 0) if churn_row else 0
+    churn_denominator = active_total + cancelled_30d
+    churn_rate = (cancelled_30d / churn_denominator) if churn_denominator else 0.0
+
+    return {
+        'generated_at': datetime.now(UTC).isoformat(),
+        'mrr_by_currency': mrr_by_currency,
+        'mrr_by_plan': mrr_by_plan,
+        'churn': {
+            'window_days': 30,
+            'active_subscriptions': active_total,
+            'past_due_subscriptions': past_due_total,
+            'cancelled': cancelled_30d,
+            'churn_rate': round(churn_rate, 4),
+        },
+        'failed_payments': {
+            'count': sum(item['failed_count'] for item in failed_items),
+            'items': failed_items,
+        },
+        'tenants': tenants,
+        'by_country': by_country,
+        'note': (
+            'MRR mensual-normalizada agregada desde las suscripciones '
+            'tenant→contacto de TASK-0075 (app.contact_subscriptions + '
+            'app.subscription_plans). Expansión y retención requieren snapshots '
+            'históricos de MRR que el schema no almacena — se difieren.'
         ),
     }
 

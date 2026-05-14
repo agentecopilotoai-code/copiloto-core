@@ -15,6 +15,62 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-006.3 — Billing · MRR (Platform Owner)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** tercera vista del rol Platform Owner. Vista del ingreso recurrente del fleet en `/platform/platform-billing` consumiendo un nuevo endpoint `GET /v1/platform/billing/mrr` (montado en `platform_admin_router`, con las mismas dependencias de seguridad que el resto del router: `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`). Agrega el modelo de suscripciones tenant→contacto de TASK-0075 (`app.contact_subscriptions` + `app.subscription_plans`) a nivel plataforma. La vista respeta la referencia visual `docs/HTML DESIGN/Platform Owner/03 _ Billing _ MRR.html` y reusa primitivas/tokens de UI-001..UI-005.
+- **Cambios realizados:**
+  - **Backend — `app/services/platform_billing.py` (nuevo):**
+    - `normalize_mrr(billing_period, amount)` — normaliza un precio de plan a una cifra mensual (`quarterly` /3, `yearly` /12, `monthly` igual). Nunca lanza: período desconocido o `amount` nulo → `0.0`, porque el caller agrega muchas filas y una mala fila no debe romper el snapshot.
+    - `summarize_mrr_by_currency(rows)` — suma la MRR mensual-normalizada + conteo de suscripciones activas por moneda. No suma entre monedas (COP + USD sería incorrecto): devuelve una entrada por moneda.
+    - `fold_tenant_rows(rows)` — pliega las filas agregadas por `(tenant, currency, billing_period)` en una entrada por tenant con desglose `mrr_by_currency`, conteos `active`/`past_due`, el `next_billing_at` más próximo y `mrr_total`, ordenadas por MRR descendente. Helpers puros — la agregación SQL vive en la ruta y entrega aquí las filas para normalizar y plegar.
+  - **Backend — `app/api/v1/routes.py`:**
+    - Nuevo handler `platform_billing_mrr` decorado con `@platform_admin_router.get('/platform/billing/mrr')`. Ejecuta 5 queries de agregación (por tenant, por plan, por país, cobros fallidos por tenant/proveedor, y churn 30d) sobre `app.contact_subscriptions` + `app.subscription_plans` + `app.tenants`, pliega los resultados con los helpers de `platform_billing` y devuelve `{generated_at, mrr_by_currency, mrr_by_plan, churn, failed_payments, tenants, by_country, note}`. Sin PII de contacto — solo identidades de tenant y agregados.
+    - La lectura cross-tenant pasa por `set_config('app.support_mode', 'true', true)` — `app.contact_subscriptions` y `app.subscription_plans` tienen RLS con policy `tenant_id = app.current_tenant_id() or app.support_mode()`; `support_mode` es el bypass de RLS previsto por TASK-0077 para operaciones de plataforma autorizadas, y se setea transaction-local (`true` como tercer argumento) para que no se filtre fuera del request. Es el mismo patrón ya usado por los webhooks de suscripciones de TASK-0075.
+    - **Sin cambio en el bloque `platform_admin_router = APIRouter(...)`** — las tres dependencias siguen ahí; el handler no declara `dependencies=[]` propio (test estático que lo verifica). Import añadido: `from app.services import platform_billing`.
+  - **Frontend — `admin-panel/src/`:**
+    - `services/coreApi.js`: nueva función `getPlatformBillingMrr(session)` que llama `request('/platform/billing/mrr', ...)`. No envía `X-Tenant-Id` (la vista es cross-tenant).
+    - `features/platform/billing-mrr/` (nuevo, 11 archivos):
+      - `BillingMrr.jsx` (97 LOC) — orquesta el fetch, estados de carga/error y envuelve todo en `<RequirePermission capability="platform.billing.read" mode="R">`.
+      - `format.js` (57 LOC) — helpers compartidos `formatMoney`/`formatPercent`/`sortByMrrDesc`/`formatMrrByCurrency` para que KPIs, tablas y paneles no re-implementen el formateo de moneda (mandato: cero duplicación).
+      - `components/BillingKpis.jsx` (56 LOC) — 4 KPI tiles; la MRR se reporta por moneda (la mayor lidera, el resto va de footnote).
+      - `components/BillingTenantsTable.jsx` (79 LOC) — `<DataTable>` "Tenants por plan" con MRR por moneda, próximo cobro y badge de mora.
+      - `components/MrrByPlanTable.jsx` (56 LOC) — `<DataTable>` "Composición del MRR" por plan.
+      - `components/FailedPaymentsPanel.jsx` (57 LOC) — lista de cobros fallidos agregada por (tenant, proveedor).
+      - `components/MrrByCountryPanel.jsx` (44 LOC) — lista "Países · MRR por geografía".
+      - `hooks/usePlatformBilling.js` (51 LOC) — fetch encapsulado, cancellation en unmount, `refresh()`.
+      - `BillingMrr.module.css` (96 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/platform/billing-mrr/` → 0 resultados (criterio 0.bis.4 del backlog).
+      - `index.js` (barrel) + `BillingMrr.test.jsx` (188 LOC, 4 tests).
+    - `app/moduleRegistry.js`: `'platform-billing'` deja de caer al placeholder y ahora apunta a `BillingMrr` con capability `platform.billing.read`.
+    - `data/modules.js`: nuevo módulo `platform-billing` (el `PLATFORM_NAV` ya lo referenciaba en la sección "Observability").
+- **Archivos modificados / creados:**
+  - `app/services/platform_billing.py` (nuevo).
+  - `app/api/v1/routes.py` (handler `platform_billing_mrr`, import `platform_billing`).
+  - `tests/test_platform_billing_static.py` (nuevo — 7 tests estáticos + funcionales).
+  - `admin-panel/src/services/coreApi.js` (export `getPlatformBillingMrr`).
+  - `admin-panel/src/features/platform/billing-mrr/{BillingMrr.jsx,BillingMrr.module.css,BillingMrr.test.jsx,format.js,index.js,components/{BillingKpis,BillingTenantsTable,MrrByPlanTable,FailedPaymentsPanel,MrrByCountryPanel}.jsx,hooks/usePlatformBilling.js}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `platform-billing → BillingMrr`).
+  - `admin-panel/src/data/modules.js` (módulo `platform-billing`).
+  - `docs/UI_BACKLOG.md` (UI-006.3 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **31 suites, 134 tests pasan** (4 nuevos de BillingMrr). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.1/UI-006.2: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y no ejecuta vitest.
+  - `python -m pytest tests/test_platform_billing_static.py tests/test_system_health_static.py tests/test_fleet_tenants_static.py tests/test_subscriptions_static.py` → **50 passed**.
+  - `python -m compileall app -q` → OK. `ruff check .` → All checks passed!
+- **Seguridad:**
+  - `GET /v1/platform/billing/mrr` hereda las tres dependencias del router (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`) — el handler **no** declara su propio `dependencies=` override, y un test estático lo verifica como contrato. Otros tests verifican que el path no aparece en `tenant_admin_router` / `tenant_ops_router` / `tenant_user_router`.
+  - La lectura cross-tenant usa `support_mode` transaction-local — el mecanismo de RLS-bypass que TASK-0077 diseñó para operaciones de plataforma autorizadas, no una relajación de seguridad. La autoridad sigue siendo el backend (el router exige platform_owner + MFA verificada antes de llegar al handler).
+  - El payload no expone PII de contacto: todas las queries agregan (`count`/`sum`/`group by`) y solo devuelven identidades de tenant (id/slug/display_name), proveedores de pago y montos agregados. Nunca se devuelve `contact_id`, nombre de contacto ni `retry_payment_link` (el flujo de reintento vive en el módulo tenant-scoped de TASK-0075).
+  - El frontend espeja el gate vía `<RequirePermission capability="platform.billing.read" mode="R">`. La matriz UI-005 ya deniega `platform.billing.read` a todos los roles de tenant. El frontend es defensa en profundidad.
+- **Limitaciones / próximos pasos:**
+  - **Snapshot puntual, sin serie histórica.** El HTML de referencia muestra una gráfica de evolución de MRR a 12 meses y métricas de expansión/retención; eso requiere snapshots históricos de MRR que el schema no almacena. Se difiere — la vista lo declara en una nota al pie y como diferencia intencional en el PR.
+  - **MRR del fleet, no SaaS billing tenant→plataforma.** El schema modela suscripciones tenant→contacto (TASK-0075), no la facturación de cada tenant a CopilotoIA. La "MRR" de esta vista es el ingreso recurrente que fluye por la flota, agregado — que es exactamente lo que pide la línea de API del backlog ("consume datos de TASK-0075 agregados a nivel plataforma"). Un ledger SaaS tenant→plataforma sería un modelo de datos nuevo (ticket backend) fuera del alcance de UI-006.3.
+  - **Multi-moneda sin conversión.** Los planes declaran `currency` (default COP); la vista agrega y reporta MRR **por moneda** en vez de convertir a una moneda de reporte — convertir requeriría tasas de cambio que el sistema no modela. Es honesto pero implica que el KPI "MRR consolidado" muestra la moneda dominante con el resto de footnote.
+  - Próxima tarea `PENDING` real: **UI-006.4 — Incidentes** (lista de incidentes con severidad, tenant afectado, status, runbook asociado; detalle con timeline, comentarios, postmortem link).
+
+---
+
 ### UI-006.2 — System Health (Platform Owner)
 
 - **Fecha:** 2026-05-14

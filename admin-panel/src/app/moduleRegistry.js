@@ -1,3 +1,4 @@
+import { BillingMrr } from '../features/platform/billing-mrr/index.js';
 import { FleetTenants } from '../features/platform/fleet-tenants/index.js';
 import { SystemHealth } from '../features/platform/system-health/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
@@ -41,6 +42,7 @@ export const MODULE_REGISTRY = Object.freeze({
     Component: SystemHealth,
     capability: 'platform.system_health.read',
   },
+  'platform-billing': { Component: BillingMrr, capability: 'platform.billing.read' },
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
   'onboarding-wizard': { Component: OnboardingWizard, capability: 'onboarding.run', mode: 'RW' },
   services: { Component: ServiceCatalog, capability: 'services.read' },
