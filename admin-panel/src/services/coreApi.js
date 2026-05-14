@@ -148,6 +148,10 @@ export function getPlatformRunbook(session, slug) {
   return request(`/platform/runbooks/${encodeURIComponent(slug)}`, { session });
 }
 
+export function getPlatformFeatureFlags(session) {
+  return request('/platform/feature-flags', { session });
+}
+
 export function updateTenant(session, tenantId, payload) {
   return request(`/tenants/${tenantId}`, {
     method: 'PATCH',

@@ -1,4 +1,5 @@
 import { BillingMrr } from '../features/platform/billing-mrr/index.js';
+import { FeatureFlags } from '../features/platform/feature-flags/index.js';
 import { FleetDlq } from '../features/platform/fleet-dlq/index.js';
 import { FleetTenants } from '../features/platform/fleet-tenants/index.js';
 import { Incidents } from '../features/platform/incidents/index.js';
@@ -51,6 +52,10 @@ export const MODULE_REGISTRY = Object.freeze({
   'platform-fleet-dlq': { Component: FleetDlq, capability: 'platform.outbound_dlq.read' },
   'platform-runbooks': { Component: Runbooks, capability: 'platform.runbooks.read' },
   'platform-roles-acl': { Component: RolesAcl, capability: 'platform.roles_acl.read' },
+  'platform-feature-flags': {
+    Component: FeatureFlags,
+    capability: 'platform.feature_flags.read',
+  },
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
   'onboarding-wizard': { Component: OnboardingWizard, capability: 'onboarding.run', mode: 'RW' },
   services: { Component: ServiceCatalog, capability: 'services.read' },

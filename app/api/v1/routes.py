@@ -99,6 +99,7 @@ from app.core.security import (
     require_service,
 )
 from app.db.pool import get_db, record_to_dict
+from app.services import feature_flags as feature_flags_service
 from app.services import locale as locale_service
 from app.services import metrics
 from app.services import platform_billing
@@ -1620,6 +1621,33 @@ async def platform_runbook_detail(slug: str):
         'title': runbook['title'],
         'category': runbook['category'],
         'html': render_markdown_to_safe_html(runbook['content_md']),
+    }
+
+
+# UI-006.8: Platform feature-flags catalogue (read-only).
+#
+# Same router-level security as the rest of `platform_admin_router`
+# (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`).
+#
+# This is a READ-ONLY catalogue of the product's feature flags — a static
+# registry (`app.services.feature_flags`), no DB, no writes. Live toggling,
+# gradual rollout and per-tenant overrides are deferred to a separate backend
+# ticket (the UI backlog flags UI-006.8 as "confirmar con el equipo antes de
+# cablear" precisely because the writable system does not exist yet).
+@platform_admin_router.get('/platform/feature-flags')
+async def platform_feature_flags():
+    """Return the read-only feature-flag catalogue for the platform owner."""
+    flags = feature_flags_service.list_feature_flags()
+    return {
+        'flags': flags,
+        'flag_types': list(feature_flags_service.FLAG_TYPES),
+        'summary': feature_flags_service.summarize_feature_flags(flags),
+        'note': (
+            'Catálogo de solo lectura del registro estático de feature flags. '
+            'El toggle en vivo, el rollout gradual y los overrides por tenant '
+            'requieren un sistema de feature flags persistido y auditado — un '
+            'ticket de backend aparte que aún no existe.'
+        ),
     }
 
 

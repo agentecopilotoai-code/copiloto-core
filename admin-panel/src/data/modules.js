@@ -49,6 +49,13 @@ export const adminModules = [
     capability: 'platform.roles_acl.read',
   },
   {
+    id: 'platform-feature-flags',
+    label: 'Feature flags',
+    summary: 'Catálogo read-only de los feature flags del producto, cada uno mapeado a su TASK de origen, con búsqueda y filtro por tipo. UI-006.8.',
+    scope: ['Catálogo de feature flags', 'Búsqueda por key/descripción', 'Filtro por tipo de flag', 'Estado default y rollout % informativo'],
+    capability: 'platform.feature_flags.read',
+  },
+  {
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',
