@@ -153,10 +153,3 @@ export const adminModules = [
     capability: 'team.write',
   },
 ];
-
-// Landing por defecto cuando no hay módulo en el hash. Explícito (no posicional)
-// para no depender del orden del array: `platform-fleet` está primero para el
-// sidebar de Platform Owner, pero el default universal sigue siendo el wizard
-// de tenant (único módulo sin capability, visible para usuarios sin tenant).
-// UI-002/UI-003 reemplazarán esto por el landing por rol (ROLE_HOME).
-export const defaultModuleId = 'tenant-setup';

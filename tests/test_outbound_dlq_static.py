@@ -46,7 +46,7 @@ ROUTES = Path('app/api/v1/routes.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 METRICS = Path('app/services/metrics.py')
-ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
 DLQ_PANEL = Path('admin-panel/src/components/modules/outbound/OutboundDLQ.jsx')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
@@ -471,7 +471,7 @@ def test_admin_panel_registers_outbound_dlq_module():
 
     layout = ADMIN_LAYOUT.read_text()
     assert "from '../components/modules/outbound/OutboundDLQ.jsx'" in layout
-    assert "case 'outbound-dlq'" in layout
+    assert "'outbound-dlq': {" in layout
 
 
 def test_outbound_dlq_panel_renders_filter_and_retry_action():

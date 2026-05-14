@@ -361,7 +361,7 @@ src/
 
 ### UI-003 — Router declarativo con `react-router-dom` y rutas por rol
 
-- **Estado:** PENDING
+- **Estado:** DONE (`react-router-dom@6` + `app/router.jsx` con rutas por rol + `TenantProvider` + `moduleRegistry` + 10 tests; `AdminLayout`/`ModuleContent`/`useActiveModule`/`defaultModuleId` eliminados)
 - **Por qué bloquea:** hoy no hay deep-link a `tenants/X/inbox/<conv_id>`; todo es estado interno. Imposible bookmarkear o compartir.
 - **Alcance:**
   - Agregar `react-router-dom@6` a `admin-panel/package.json`.

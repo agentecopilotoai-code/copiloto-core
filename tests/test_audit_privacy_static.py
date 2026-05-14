@@ -6,7 +6,7 @@ SCHEMA_SQL = Path('infra/postgres/01-schema.sql')
 BOOTSTRAP = Path('scripts/bootstrap.sh')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 AUDIT_PANEL = Path('admin-panel/src/components/modules/audit/AuditPanel.jsx')
-ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 GLOBAL_CSS = Path('admin-panel/src/styles/global.css')
 DPA = Path('docs/DPA.md')
 
@@ -153,7 +153,7 @@ def test_audit_panel_shows_dpa_summary():
     assert 'DPA' in source or 'dpa' in source.lower()
 
 
-# --- AdminLayout.jsx ---
+# --- moduleRegistry.js ---
 
 def test_admin_layout_imports_audit_panel():
     source = ADMIN_LAYOUT.read_text()
@@ -162,8 +162,8 @@ def test_admin_layout_imports_audit_panel():
 
 def test_admin_layout_mounts_audit_panel():
     source = ADMIN_LAYOUT.read_text()
-    assert "case 'audit'" in source
-    assert '<AuditPanel' in source
+    assert 'audit: {' in source
+    assert 'Component: AuditPanel' in source
 
 
 # --- CSS ---

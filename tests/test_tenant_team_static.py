@@ -20,8 +20,9 @@ AUTH0_ADMIN = Path('app/services/auth0_admin.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES = Path('admin-panel/src/data/modules.js')
 TEAM_UI = Path('admin-panel/src/components/modules/team/TeamModule.jsx')
-ADMIN_LAYOUT = Path('admin-panel/src/app/AdminLayout.jsx')
-MODULE_CONTENT = Path('admin-panel/src/app/ModuleContent.jsx')
+ROUTER = Path('admin-panel/src/app/router.jsx')
+TENANT_PROVIDER = Path('admin-panel/src/app/TenantProvider.jsx')
+MODULE_REGISTRY = Path('admin-panel/src/app/moduleRegistry.js')
 TENANT_SWITCHER = Path('admin-panel/src/app/shells/components/TenantSwitcher.jsx')
 
 
@@ -120,11 +121,13 @@ def test_admin_panel_exposes_team_module():
     # UI-005: minRole → capability de la matriz de permisos.
     assert "capability: 'team.write'" in modules
 
-    layout = MODULE_CONTENT.read_text()
+    layout = MODULE_REGISTRY.read_text()
     assert "TeamModule" in layout
-    assert "case 'team'" in layout
-    # UI-005: el gate hasMinRole se reemplazó por <RequirePermission>.
-    assert 'capability="team.write" mode="RW"' in layout
+    assert "team: {" in layout
+    # UI-003: el switch de ModuleContent se reemplazó por MODULE_REGISTRY; el
+    # gate de capability vive en la entrada del registro (mode RW = admin/owner).
+    assert "capability: 'team.write'" in layout
+    assert "mode: 'RW'" in layout
 
     api = CORE_API.read_text()
     for helper in (
@@ -155,11 +158,14 @@ def test_sidebar_shows_slack_style_switcher():
 
 
 def test_admin_layout_persists_active_tenant_for_switching():
-    layout = ADMIN_LAYOUT.read_text()
-    assert "localStorage" in layout
-    assert "copilotoia.activeTenantId" in layout
+    # UI-003: la persistencia del tenant activo vive en TenantProvider
+    # (clave de storage) + router.jsx (escritura en TenantScope y selector).
+    provider = TENANT_PROVIDER.read_text()
+    router = ROUTER.read_text()
+    assert "copilotoia.activeTenantId" in provider
+    assert "localStorage" in router
     # canSwitchTenants triggers whenever the user belongs to more than one tenant.
-    assert 'tenantOptions.length > 1' in layout
+    assert 'tenantOptions.length > 1' in router
 
 
 def test_me_tenants_aggregates_roles_per_tenant():
