@@ -6,6 +6,7 @@ import io
 import json
 import re
 import secrets
+import time
 from pathlib import Path
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -98,6 +99,7 @@ from app.core.security import (
 )
 from app.db.pool import get_db, record_to_dict
 from app.services import locale as locale_service
+from app.services import metrics
 from app.services.locale import SUPPORTED_COUNTRIES
 from app.services.audit import audit
 from app.services.campaign_attribution import attribute_appointment
@@ -1026,6 +1028,113 @@ async def list_tenants_fleet(
         'total': int(total or 0),
         'limit': limit,
         'offset': offset,
+    }
+
+
+# UI-006.2: Platform System Health snapshot.
+#
+# Drives the platform-owner "System Health" view. Same router-level security as
+# the rest of `platform_admin_router` (`authenticate_request` +
+# `require_platform_owner` + `require_mfa_for_privileged`) — never relaxed at
+# the handler level.
+#
+# Reads the in-process Prometheus `REGISTRY` (the same one `/metrics` exposes
+# and Prometheus scrapes — TASK-0060) plus a live DB connectivity probe. It is a
+# point-in-time snapshot; historical time-series (24h/7d/30d) require the
+# Prometheus query API and are out of scope for UI-006.2.
+def _derive_health_services(
+    snapshot: dict, *, db_ok: bool, db_latency_ms: float | None
+) -> list[dict]:
+    """Synthesise the per-service health rows from the metrics snapshot.
+
+    Status vocabulary: ``ok`` / ``warn`` / ``down``. The API row is always
+    ``ok`` — if this handler runs, the API process is serving requests.
+    """
+    services: list[dict] = [
+        {
+            'key': 'api',
+            'label': 'API · FastAPI',
+            'status': 'ok',
+            'detail': 'Atendiendo requests',
+        },
+        {
+            'key': 'postgres',
+            'label': 'Postgres · primary',
+            'status': 'ok' if db_ok else 'down',
+            'detail': (
+                f'select 1 · {db_latency_ms}ms'
+                if db_ok and db_latency_ms is not None
+                else 'sin conexión'
+            ),
+        },
+    ]
+    for worker in snapshot['workers']:
+        depth = worker['queue_depth']
+        if depth > 1000:
+            worker_status = 'down'
+        elif depth > 100:
+            worker_status = 'warn'
+        else:
+            worker_status = 'ok'
+        services.append({
+            'key': f"worker:{worker['worker']}",
+            'label': f"Worker · {worker['worker']}",
+            'status': worker_status,
+            'detail': f"queue {depth}",
+        })
+    for breaker in snapshot['circuit_breakers']:
+        state = breaker['state']
+        if state == 'open':
+            breaker_status = 'down'
+        elif state == 'half_open':
+            breaker_status = 'warn'
+        else:
+            breaker_status = 'ok'
+        services.append({
+            'key': f"provider:{breaker['provider']}",
+            'label': f"Proveedor · {breaker['provider']}",
+            'status': breaker_status,
+            'detail': f"breaker {state}",
+        })
+    return services
+
+
+@platform_admin_router.get('/platform/metrics/health')
+async def platform_system_health(
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Return a live System Health snapshot for the platform owner (UI-006.2).
+
+    The payload carries the metrics snapshot (`collect_health_snapshot`),
+    derived point-in-time alerts (`evaluate_health_alerts`), a synthesised
+    per-service status list, and a live DB connectivity probe. No PII — only
+    aggregates and provider/worker identifiers.
+    """
+    snapshot = metrics.collect_health_snapshot()
+    alerts = metrics.evaluate_health_alerts(snapshot)
+
+    db_ok = False
+    db_latency_ms: float | None = None
+    try:
+        started = time.perf_counter()
+        await conn.fetchval('select 1')
+        db_latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        db_ok = True
+    except Exception:  # noqa: BLE001 — any failure means the DB probe is unhealthy
+        db_ok = False
+
+    services = _derive_health_services(snapshot, db_ok=db_ok, db_latency_ms=db_latency_ms)
+
+    return {
+        'generated_at': datetime.now(UTC).isoformat(),
+        'snapshot': snapshot,
+        'alerts': alerts,
+        'services': services,
+        'note': (
+            'Snapshot vivo del registry Prometheus in-process (TASK-0060). '
+            'Las series históricas 24h/7d/30d requieren la query API de '
+            'Prometheus y se difieren.'
+        ),
     }
 
 

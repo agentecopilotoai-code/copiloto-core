@@ -108,6 +108,10 @@ export function getTenant(session, tenantId) {
   return request(`/tenants/${tenantId}`, { session, tenantId });
 }
 
+export function getSystemHealth(session) {
+  return request('/platform/metrics/health', { session });
+}
+
 export function updateTenant(session, tenantId, payload) {
   return request(`/tenants/${tenantId}`, {
     method: 'PATCH',

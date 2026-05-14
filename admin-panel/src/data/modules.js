@@ -7,6 +7,13 @@ export const adminModules = [
     capability: 'platform.tenants.read',
   },
   {
+    id: 'platform-system-health',
+    label: 'System Health',
+    summary: 'Snapshot vivo de la plataforma para Platform Owner: latencia del bot, mensajes, workers, breakers de proveedores y alertas derivadas. UI-006.2.',
+    scope: ['KPIs de salud', 'Latencia p50/p95/p99', 'Estado por servicio', 'Circuit breakers', 'Alertas derivadas'],
+    capability: 'platform.system_health.read',
+  },
+  {
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',
