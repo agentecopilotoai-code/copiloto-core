@@ -42,7 +42,7 @@ SCHEDULER = Path('app/workers/scheduler.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES = Path('admin-panel/src/data/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-SEGMENTS_MODULE = Path('admin-panel/src/components/modules/segments/SegmentsModule.jsx')
+SEGMENTS_FEATURE = Path('admin-panel/src/features/manager/segments')
 CAMPAIGNS_FEATURE = Path('admin-panel/src/features/manager/campaigns')
 
 
@@ -54,6 +54,18 @@ def _campaigns_feature_source() -> str:
     drawer component, so we read them as one blob.
     """
     return '\n'.join(p.read_text() for p in sorted(CAMPAIGNS_FEATURE.rglob('*.js*')))
+
+
+def _segments_feature_source() -> str:
+    """Combined source of the Manager · Segmentos feature directory.
+
+    UI-008.3 split the legacy ``SegmentsModule.jsx`` into a feature dir;
+    the ``listContactSegments`` / ``previewContactSegment`` /
+    ``refreshContactSegment`` literals live in the hook while
+    ``export function SegmentsModule`` lives in the orchestrator, so we
+    read them as one blob.
+    """
+    return '\n'.join(p.read_text() for p in sorted(SEGMENTS_FEATURE.rglob('*.js*')))
 
 
 # ───── Schema ─────
@@ -429,7 +441,7 @@ def test_admin_layout_renders_segments_module():
 
 
 def test_segments_module_exists():
-    source = SEGMENTS_MODULE.read_text()
+    source = _segments_feature_source()
     assert 'export function SegmentsModule' in source
     assert 'listContactSegments' in source
     assert 'previewContactSegment' in source

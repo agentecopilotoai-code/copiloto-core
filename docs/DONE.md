@@ -15,6 +15,48 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-008.3 — Segmentos (Manager)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** refactor del módulo `SegmentsModule.jsx` (489 LOC) en una feature bajo `src/features/manager/segments/`, aplicando el mockup `26 _ Segmentos.html` y el split mandado `SegmentsList` + `SegmentRuleBuilder` + `SegmentPreviewPanel`. **Tarea frontend-only** — toda la lógica, las llamadas a `coreApi` y las reglas de negocio se preservan verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/manager/segments/` (nuevo, 10 archivos):**
+    - `segmentsData.js` (helper puro): `KIND_LABELS`/`KIND_TONES`, `FIELD_OPTIONS`/`OPERATORS_BY_KIND` (catálogos del rule-builder) + `fieldKind`/`operatorsForField`, `defaultRule`/`ruleNeedsValue`, las funciones puras `updateRuleField`/`updateRuleOp`/`updateRuleValue`/`parseListValue`/`addRule`/`replaceRule`/`removeRule`, `rulesToConditions`/`conditionsToRules`, `formatDate`, `emptySegmentForm`, `formFromSegment`, `buildPayload` (con validación de nombre) — extraídos verbatim del legacy.
+    - `hooks/useSegmentsData.js`: capa de datos — lista de segmentos + selección + form de creación/edición con el array dinámico de reglas + estado de preview; handlers `refreshSegments`/`submit`/`preview`/`refresh`/`remove` y los del rule-builder portados verbatim, incluido el `window.confirm` nativo de borrado; devuelve `{ state, actions }`.
+    - `SegmentsModule.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="segments.write" mode="RW">` + `PageHeader` (CTA «Nuevo segmento») + `AlertBanner` para notices + composición de los componentes + el drawer. Conserva `export function SegmentsModule` y props `{ module, session, tenant }`.
+    - `components/SegmentsList.jsx`: lista de segmentos reusando `DataTable` (tipo vía `StatusBadge`, contactos, refrescado, acciones por fila editar/previsualizar/refrescar/eliminar gateadas igual que el legacy — los segmentos del sistema no se eliminan, solo los dinámicos se refrescan).
+    - `components/SegmentRuleBuilder.jsx`: constructor dinámico de reglas — combinador AND/OR + filas campo+operador+valor con añadir/quitar, el casteo de valores numéricos y el parseo de listas separadas por coma preservados verbatim.
+    - `components/SegmentFormDrawer.jsx`: form de creación/edición en un `Modal` (nombre, descripción, tipo) que compone `SegmentRuleBuilder` cuando `kind === 'dynamic'`.
+    - `components/SegmentPreviewPanel.jsx`: panel de resumen del segmento + muestra en vivo de contactos vía `previewContactSegment`.
+    - `SegmentsModule.module.css` (~233 LOC) — 100% `var(--...)`.
+    - `index.js` (barrel) + `segmentsData.test.js` (7 tests) + `SegmentsModule.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'segments'` ahora importa la `SegmentsModule` de la feature; import legacy eliminado. La entrada `segments: { Component: SegmentsModule, capability: 'segments.write', mode: 'RW' }` no cambia.
+    - **Borrado** `admin-panel/src/components/modules/segments/SegmentsModule.jsx` (489 LOC) y su carpeta.
+  - **Backend — test estático legacy actualizado:** `test_segments_static.py` tenía hardcodeada la ruta `components/modules/segments/SegmentsModule.jsx`. Se agregó un helper `_segments_feature_source()` (hermano del `_campaigns_feature_source()` de UI-008.2) que lee el feature dir combinando todos sus `.js*`, y se repuntó `test_segments_module_exists` a usarlo. Los literales que verifica (`export function SegmentsModule`, `listContactSegments`, `previewContactSegment`, `refreshContactSegment`) se preservaron en los archivos nuevos. `test_admin_layout_renders_segments_module` sigue verde: el componente conserva el nombre `SegmentsModule`.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/manager/segments/{SegmentsModule.jsx,SegmentsModule.module.css,SegmentsModule.test.jsx,segmentsData.js,segmentsData.test.js,index.js,hooks/useSegmentsData.js,components/{SegmentsList,SegmentRuleBuilder,SegmentFormDrawer,SegmentPreviewPanel}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (import repuntado al feature dir).
+  - **Borrado:** `admin-panel/src/components/modules/segments/SegmentsModule.jsx`.
+  - `tests/test_segments_static.py` (repuntado al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-008.3 marcado `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (2 warnings pre-existentes ajenos en `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → 362 tests pasan, incluidos los 11 nuevos (7 `segmentsData` + 4 `SegmentsModule`). Sigue fallando `src/app/router.test.jsx` (7 fallos) por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.*/UI-008.* — **no es regresión** (CI corre Node 20 y solo ejecuta lint + build para el front).
+  - `.venv-ci/bin/python -m pytest tests/test_segments_static.py -q` → 34 passed.
+  - `.venv-ci/bin/ruff check tests/test_segments_static.py` → All checks passed.
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia.
+  - La lógica se preserva verbatim: todas las mutaciones de `coreApi` (`createContactSegment`/`updateContactSegment`/`deleteContactSegment`/`previewContactSegment`/`refreshContactSegment`) quedan sin cambios y tenant-scoped server-side — el backend reverifica.
+  - La entrada de módulo se gateó con `<RequirePermission capability="segments.write" mode="RW">`; sólo `manager`/`admin`/`owner` tienen `segments.write: RW` en la matriz de permisos.
+- **Limitaciones / próximos pasos:**
+  - Sin diferencias intencionales declaradas: todos los campos del HTML que los endpoints exponen (tipo, contactos, refrescado, reglas, preview) se renderizan; no se difirió ningún elemento ni se fabricaron datos.
+  - El `window.confirm` nativo de borrado se preserva verbatim — queda pendiente del barrido de UI-011.
+  - Próxima tarea `PENDING`: **UI-008.4 — Reportes · Digest** (migración de `DigestSubscriptionsPanel.jsx` a `features/manager/digest-reports/`).
+
+---
+
 ### UI-008.2 — Campañas (Manager)
 
 - **Fecha:** 2026-05-14
