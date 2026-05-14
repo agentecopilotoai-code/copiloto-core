@@ -27,7 +27,7 @@ SEED = Path('infra/postgres/02-seed.sql')
 ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 NOTIFICATIONS = Path('app/services/notifications.py')
-ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
 BRANCHES_MODULE = Path('admin-panel/src/components/modules/branches/BranchesModule.jsx')
 WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
@@ -272,7 +272,7 @@ def test_create_resource_persists_branch_id():
 def test_admin_panel_registers_branches_module():
     layout = ADMIN_LAYOUT.read_text()
     assert "import { BranchesModule } from '../components/modules/branches/BranchesModule.jsx'" in layout
-    assert "case 'branches'" in layout
+    assert 'branches: {' in layout
     catalog = ADMIN_MODULES.read_text()
     assert "id: 'branches'" in catalog
     # UI-005: el gate ad-hoc minRole se reemplazó por la capability de la

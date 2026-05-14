@@ -34,7 +34,7 @@ from app.services import booking_flow
 SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
-ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
 PACKAGES_MODULE = Path('admin-panel/src/components/modules/packages/PackagesModule.jsx')
 CONTACTS_MODULE = Path('admin-panel/src/components/modules/contacts/ContactsModule.jsx')
@@ -312,7 +312,7 @@ def test_create_appointment_links_contact_package_when_chosen():
 def test_admin_panel_registers_packages_module():
     layout = ADMIN_LAYOUT.read_text()
     assert "import { PackagesModule } from '../components/modules/packages/PackagesModule.jsx'" in layout
-    assert "case 'packages'" in layout
+    assert 'packages: {' in layout
     catalog = ADMIN_MODULES.read_text()
     assert "id: 'packages'" in catalog
     assert "label: 'Paquetes'" in catalog

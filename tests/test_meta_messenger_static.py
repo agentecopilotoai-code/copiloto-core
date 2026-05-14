@@ -29,7 +29,7 @@ API_SCHEMAS = Path('app/api/v1/schemas.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES_REGISTRY = Path('admin-panel/src/data/modules.js')
-ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 SOCIAL_MODULE = Path(
     'admin-panel/src/components/modules/socialChannels/SocialChannelsModule.jsx'
 )
@@ -337,7 +337,7 @@ def test_admin_panel_registers_social_channels_module_with_admin_role():
     # UI-005: minRole → capability de la matriz de permisos.
     assert "capability: 'social_channels.write'" in registry
     assert 'SocialChannelsModule' in layout
-    assert "case 'social-channels'" in layout
+    assert "'social-channels': {" in layout
     assert 'listMessengerChannels' in core_api
     assert 'upsertMessengerChannel' in core_api
     assert '/channels/messenger' in core_api

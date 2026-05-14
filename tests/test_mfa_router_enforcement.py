@@ -14,7 +14,7 @@ import pytest
 
 ROUTES_FILE = Path('app/api/v1/routes.py')
 ADMIN_ROUTES_FILE = Path('app/admin/routes.py')
-ADMIN_LAYOUT_FILE = Path('admin-panel/src/app/AdminLayout.jsx')
+ROUTER_FILE = Path('admin-panel/src/app/router.jsx')
 MFA_BLOCKER_FILE = Path('admin-panel/src/components/domain/MfaRequiredBlocker.jsx')
 
 
@@ -107,11 +107,11 @@ def test_admin_layout_overlay_has_no_continue_without_mfa_button():
 
 
 def test_admin_layout_overlay_is_blocking_not_dismissable():
-    """When mfa_required, the layout returns ONLY the overlay — no Sidebar/
-    Topbar/workspace renders. That is how we hard-stop the user from clicking
-    through to anything privileged."""
-    source = ADMIN_LAYOUT_FILE.read_text()
-    assert 'if (mfaRequired) {' in source
+    """When mfa_required, the router root (RootLayout) returns ONLY the overlay
+    — no shell/sidebar/workspace renders. That is how we hard-stop the user from
+    clicking through to anything privileged (UI-003 moved the gate here)."""
+    source = ROUTER_FILE.read_text()
+    assert 'if (session?.mfa_required === true) {' in source
     assert 'return <MfaRequiredBlocker />' in source
     # No dismissable state should remain
     assert 'setMfaDismissed' not in source
