@@ -15,6 +15,48 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.6 — Negocio · Suscripciones (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** rediseño del módulo `SubscriptionsModule.jsx` (366 LOC) en una feature bajo `src/features/owner-admin/subscriptions/`, aplicando el mockup `14 _ Negocio _ Suscripciones.html`: grid de KPIs derivados, panel de planes y tabla de suscriptores con tabs. **Tarea frontend-only** — la lógica de mutación se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/subscriptions/` (nuevo, 10 archivos):**
+    - `subscriptionsData.js` (helper puro): `emptyPlanForm`, `toPlanForm`, `buildPlanPayload` (validación: nombre requerido, precio ≥ 0), `billingPeriodLabel`, `subscriptionStatusLabel`/`subscriptionStatusTone`, `formatPrice`, `formatBillingDate`, `monthlyAmount` (normaliza trimestral/anual a mes), `computeKpis` (deriva MRR + conteos), `filterSubscribers` — extraídos del monolito, testeables sin React.
+    - `hooks/useSubscriptionsData.js`: capa de datos — estado planes/suscriptores + KPIs derivados + modal/form + tab de suscriptores + handlers (`refresh`/`save`/`archivePlan`/`cancelSubscription`/`openCreate`/`openEdit`), portados verbatim del legacy.
+    - `Subscriptions.jsx`: orquestador — `PageHeader` + `SubscriptionsKpis` + `PlansPanel` + `SubscribersTable` + `PlanFormModal`, envuelto en `<RequirePermission capability="subscriptions.write" mode="RW">`.
+    - `components/SubscriptionsKpis.jsx`: grid de `<KpiTile>` (MRR derivado, suscriptores activos, past-due, cancelados).
+    - `components/PlansPanel.jsx`: `<Card>` con la lista de planes (nombre + precio + frecuencia + badge de estado + acciones editar/archivar).
+    - `components/SubscribersTable.jsx`: `<Tabs>` (Todos/Activos/Past-due/Cancelados) + `<DataTable>` con cliente / plan / próximo cobro / estado / último intento (link de reintento) / acciones.
+    - `components/PlanFormModal.jsx`: `<Modal>` con el form de alta/edición (nombre, descripción, frecuencia, precio, moneda, activo).
+    - `Subscriptions.module.css` (~165 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/subscriptions/` → 0 resultados.
+    - `index.js` (barrel) + `subscriptionsData.test.js` (8 tests) + `Subscriptions.test.jsx` (5 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'subscriptions'` ahora apunta a `Subscriptions`; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/subscriptions/SubscriptionsModule.jsx` (366 LOC) y su carpeta.
+  - **Backend — test estático legacy actualizado:** `test_subscriptions_static.py` tenía hardcodeada la ruta `components/modules/subscriptions/SubscriptionsModule.jsx`. Se actualizó para leer el feature dir nuevo combinando todos sus `.js*`, verificar el import nuevo en el registry y que la ruta legacy ya no aparece.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/subscriptions/{Subscriptions.jsx,Subscriptions.module.css,Subscriptions.test.jsx,subscriptionsData.js,subscriptionsData.test.js,index.js,hooks/useSubscriptionsData.js,components/{SubscriptionsKpis,PlansPanel,SubscribersTable,PlanFormModal}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `subscriptions → Subscriptions`, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/subscriptions/SubscriptionsModule.jsx`.
+  - `tests/test_subscriptions_static.py` (rutas actualizadas al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.6 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (13 nuevos: 8 subscriptionsData + 5 Subscriptions). Sigue fallando `src/app/router.test.jsx` por el problema ambiental documentado en UI-002/UI-006.*/UI-007.1-5: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_subscriptions_static.py` → passed.
+  - `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizó una ruta en un test estático de backend.
+  - La lógica de las mutaciones se portó verbatim: `createSubscriptionPlan`/`updateSubscriptionPlan`/`archiveSubscriptionPlan` siguen requiriendo rol admin/owner server-side (`tenant_admin_router`); `cancelContactSubscription` corre en `tenant_ops_router`. La vista está gateada vía `<RequirePermission capability="subscriptions.write" mode="RW">` como defensa en profundidad; el backend reverifica.
+  - El estado de cobro de una suscripción (active/past_due) lo sigue escribiendo solo el webhook firmado del proveedor (TASK-0075) — esta vista solo gestiona el catálogo de planes y la cancelación administrativa.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` en archivar plan y cancelar suscripción.** El legacy usaba `window.confirm`; el rediseño lo preservó (mantener lógica). UI-011 (`ConfirmDialog`) lo barrerá.
+  - **Diferencia intencional declarada: el KPI "Churn 30d" del HTML se reemplaza por "Cancelados".** No hay snapshot de churn modelado en los endpoints `/subscription-plans` ni `/subscriptions`; en vez de fabricar el dato se muestra "Cancelados" (derivable del listado) y el MRR se deriva honestamente de los suscriptores activos × precio del plan normalizado a mes. El churn real queda diferido a un ticket de backend que exponga el agregado.
+  - Próxima tarea `PENDING` real: **UI-007.7 — Negocio · Sedes** (rediseño de `BranchesModule.jsx`, 480 LOC — split en `BranchesList` + `BranchFormDrawer`).
+
+---
+
 ### UI-007.5 — Negocio · Paquetes (Owner / Admin)
 
 - **Fecha:** 2026-05-14

@@ -14,8 +14,8 @@ Coverage (≥ 14 tests):
   subscribers + cancels; the public webhook router accepts
   ``/webhooks/subscriptions/{provider}``; the failed-invoice branch queues a
   reminder_jobs entry with the ``subscription_payment_failed_v1`` template.
-- Admin panel: ``SubscriptionsModule`` registered, modules.js entry,
-  coreApi client exposes the endpoints.
+- Admin panel: the redesigned ``Subscriptions`` feature module registered,
+  modules.js entry, coreApi client exposes the endpoints.
 """
 
 from __future__ import annotations
@@ -37,10 +37,15 @@ ROUTES = Path('app/api/v1/routes.py')
 SERVICE = Path('app/services/subscriptions.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
-SUBS_MODULE = Path(
-    'admin-panel/src/components/modules/subscriptions/SubscriptionsModule.jsx'
-)
+# UI-007.6: the subscriptions module was redesigned into a feature directory.
+SUBS_FEATURE = Path('admin-panel/src/features/owner-admin/subscriptions')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
+
+
+def _subscriptions_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(SUBS_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Schema ──────────────────────────────────────────────────────────────
@@ -323,8 +328,14 @@ def test_admin_modules_registers_subscriptions_entry():
 
 def test_admin_layout_wires_subscriptions_module_with_admin_gate():
     src = ADMIN_LAYOUT.read_text()
-    assert 'SubscriptionsModule' in src
+    # UI-007.6: the registry now points at the redesigned feature module.
+    assert (
+        "import { Subscriptions } from '../features/owner-admin/subscriptions/index.js'"
+        in src
+    )
     assert 'subscriptions: {' in src
+    # The legacy module path must be fully gone (no parallel implementation).
+    assert 'components/modules/subscriptions/SubscriptionsModule' not in src
     # UI-003: el switch de ModuleContent se reemplazó por MODULE_REGISTRY; el
     # gate de capability vive en la entrada del registro (mode RW = admin/owner).
     assert "capability: 'subscriptions.write'" in src
@@ -332,7 +343,7 @@ def test_admin_layout_wires_subscriptions_module_with_admin_gate():
 
 
 def test_subscriptions_module_renders_plan_form_and_subscriber_lists():
-    src = SUBS_MODULE.read_text()
+    src = _subscriptions_feature_source()
     assert 'listSubscriptionPlans' in src
     assert 'listContactSubscriptions' in src
     assert 'createSubscriptionPlan' in src

@@ -11,6 +11,7 @@ import { Onboarding } from '../features/owner-admin/onboarding/index.js';
 import { ConversationsContacts } from '../features/owner-admin/conversations-contacts/index.js';
 import { Services } from '../features/owner-admin/services/index.js';
 import { Packages } from '../features/owner-admin/packages/index.js';
+import { Subscriptions } from '../features/owner-admin/subscriptions/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
 import { BranchesModule } from '../components/modules/branches/BranchesModule.jsx';
@@ -24,7 +25,6 @@ import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
 import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness.jsx';
 import { SegmentsModule } from '../components/modules/segments/SegmentsModule.jsx';
 import { SocialChannelsModule } from '../components/modules/socialChannels/SocialChannelsModule.jsx';
-import { SubscriptionsModule } from '../components/modules/subscriptions/SubscriptionsModule.jsx';
 import { TeamModule } from '../components/modules/team/TeamModule.jsx';
 import { TenantSetupWizard } from '../components/modules/tenantSetup/TenantSetupWizard.jsx';
 import { WhatsAppOnboarding } from '../components/modules/whatsapp/WhatsAppOnboarding.jsx';
@@ -63,7 +63,7 @@ export const MODULE_REGISTRY = Object.freeze({
   services: { Component: Services, capability: 'services.read' },
   branches: { Component: BranchesModule, capability: 'branches.write', mode: 'RW' },
   packages: { Component: Packages, capability: 'packages.write', mode: 'RW' },
-  subscriptions: { Component: SubscriptionsModule, capability: 'subscriptions.write', mode: 'RW' },
+  subscriptions: { Component: Subscriptions, capability: 'subscriptions.write', mode: 'RW' },
   whatsapp: { Component: WhatsAppOnboarding, capability: 'whatsapp.read' },
   'social-channels': {
     Component: SocialChannelsModule,
