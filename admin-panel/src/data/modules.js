@@ -195,6 +195,13 @@ export const adminModules = [
     capability: 'analytics.tenant.read',
   },
   {
+    id: 'digest-reports',
+    label: 'Reportes · Digest',
+    summary: 'Vista del Manager para los digests programados (diario / semanal): suscriptores por persona, cadencia y canal. UI-008.4.',
+    scope: ['Suscriptores del digest', 'Cadencia diaria / semanal', 'Suscribir destinatario por email o WhatsApp', 'Activar / pausar suscripción'],
+    capability: 'digest.write',
+  },
+  {
     id: 'audit',
     label: 'Audit',
     summary: 'Trazabilidad de cambios y acciones administrativas.',

@@ -15,6 +15,51 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-008.4 — Reportes · Digest (Manager)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** nueva vista del rol Manager en `src/features/manager/digest-reports/` que lista los digests programados (diario / semanal) y sus suscriptores, aplicando el mockup `27 _ Reportes _ Digest.html`. Reutiliza y **reloca** el `DigestSubscriptionsPanel.jsx` (217 LOC) desde `features/owner-admin/tenant-setup/components/` a la nueva feature. **Tarea frontend-only** — toda la lógica, las llamadas a `coreApi` y las reglas de negocio del panel se preservan verbatim; los 4 endpoints CRUD de digest ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/manager/digest-reports/` (nuevo, 8 archivos):**
+    - `digestReportsData.js` (helper puro): `CADENCE_OPTIONS`, `cadenceLabel`, `emptyForm`, `recipientLabel`/`recipientInitials`, `formatLastSent`, `summarizeSubscriptions` (conteos por cadencia y enabled/paused) — puros, unit-testables.
+    - `hooks/useDigestReportsData.js`: capa de datos fina — carga la lista de suscripciones una vez para el header de resumen del orquestador (el panel relocado sigue auto-gestionando su propio CRUD).
+    - `DigestReports.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="digest.write" mode="RW">` (vía `usePermissions` + `useTenantContext`) + `PageHeader` ("Digest periódico") + `DigestSubscribersSummary` + el `DigestSubscriptionsPanel`. Props `{ module, session, tenant }`.
+    - `components/DigestSubscribersSummary.jsx`: header de resumen (N destinos, X diarios / Y semanales, activos / pausados) sobre `Card`.
+    - `components/DigestSubscriptionsPanel.jsx`: el panel **relocado verbatim** desde tenant-setup. Únicos cambios: el path de import de `coreApi` para la nueva ubicación y los classNames/estilos inline legacy cambiados por el CSS module con tokens 100% `var(--...)`. Se preservaron las 4 llamadas a `coreApi` (`listDigestSubscriptions`/`createDigestSubscription`/`updateDigestSubscription`/`deleteDigestSubscription`), las reglas de negocio (validación «al menos un email o whatsapp», `window.confirm` de borrado, opciones de cadencia, toggle) y todos los `data-*` (`data-wizard-field="digest_subscriptions"`, `data-digest-form`, `data-digest-row`). Sigue siendo `default export`.
+    - `DigestReports.module.css` (~181 LOC) — 100% `var(--...)`.
+    - `index.js` (barrel) + `digestReportsData.test.js` (5 tests) + `DigestReports.test.jsx` (4 tests).
+  - **Frontend — relocación + wiring:**
+    - `features/owner-admin/tenant-setup/components/NotificationsTab.jsx`: import de `DigestSubscriptionsPanel` repuntado a `'../../../manager/digest-reports/components/DigestSubscriptionsPanel.jsx'`. El uso `<DigestSubscriptionsPanel session={...} tenantId={...} />` no cambia.
+    - **Borrado** `admin-panel/src/features/owner-admin/tenant-setup/components/DigestSubscriptionsPanel.jsx` (el archivo se movió, no se duplicó).
+    - `app/moduleRegistry.js`: import `DigestReports` + entrada `'digest-reports': { Component: DigestReports, capability: 'digest.write', mode: 'RW' }`.
+    - `data/modules.js`: entrada nueva `digest-reports` (label "Reportes · Digest", summary, scope, capability `digest.write`).
+    - `app/nav.js`: `'digest-reports'` añadido a la sección `Conversaciones` de `TENANT_NAV`. `ROLE_HOME` sin cambios.
+  - **Backend — test estático repuntado:** `tests/test_digest_static.py` tenía `test_wizard_renders_digest_subscriptions_panel` leyendo el panel desde el feature dir de tenant-setup. Se agregó un helper `_digest_reports_source()` (hermano de `_tenant_setup_source()`) que lee el feature dir nuevo combinando sus `.js*`; el test ahora verifica el import-line a la nueva ruta relativa y usa `_digest_reports_source()` para el loop de nombres `coreApi`. Las aserciones del lado wizard (`<DigestSubscriptionsPanel`, orden tras `activeTab === 'notificaciones'`) siguen leyendo `_tenant_setup_source()` — siguen válidas: el `NotificationsTab` sigue embebiendo el panel.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/manager/digest-reports/{DigestReports.jsx,DigestReports.module.css,DigestReports.test.jsx,digestReportsData.js,digestReportsData.test.js,index.js,hooks/useDigestReportsData.js,components/{DigestSubscribersSummary,DigestSubscriptionsPanel}.jsx}` (todos nuevos).
+  - `admin-panel/src/features/owner-admin/tenant-setup/components/NotificationsTab.jsx` (import repuntado).
+  - **Borrado:** `admin-panel/src/features/owner-admin/tenant-setup/components/DigestSubscriptionsPanel.jsx` (relocado).
+  - `admin-panel/src/app/moduleRegistry.js`, `admin-panel/src/app/nav.js`, `admin-panel/src/data/modules.js` (wiring del module id `digest-reports`).
+  - `tests/test_digest_static.py` (repuntado al feature dir nuevo).
+  - `docs/UI_BACKLOG.md` (UI-008.4 marcado `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (2 warnings pre-existentes ajenos en `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → 371 tests pasan, incluidos los 8 nuevos (5 `digestReportsData` + 4 `DigestReports`). Sigue fallando `src/app/router.test.jsx` (7 fallos) por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.*/UI-008.* — **no es regresión** (CI corre Node 20 y solo ejecuta lint + build para el front).
+  - `.venv-ci/bin/python -m pytest tests/test_digest_static.py -q` → 18 passed.
+  - `.venv-ci/bin/ruff check tests/test_digest_static.py` → All checks passed.
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia.
+  - La lógica del panel se preserva verbatim: todas las llamadas a `coreApi` (`listDigestSubscriptions`/`createDigestSubscription`/`updateDigestSubscription`/`deleteDigestSubscription`) quedan sin cambios y tenant-scoped server-side — el backend reverifica.
+  - La entrada de módulo se gateó con `<RequirePermission capability="digest.write" mode="RW">`; sólo `manager`/`admin`/`owner` tienen `digest.write: RW` en la matriz de permisos.
+  - El wizard tenant-setup sigue embebiendo el **mismo** panel desde su nueva ubicación — no hay duplicación de lógica.
+- **Limitaciones / próximos pasos:**
+  - **Diferencia intencional declarada:** el HTML muestra un botón «Enviar ahora» y un panel rico de «Preview · digest diario» con KPIs — ninguno tiene endpoint backing (los únicos endpoints de digest son los 4 CRUD de suscripciones), así que se difieren — no se fabrican datos ni se cablea un botón a nada. Se renderiza la UI real de gestión de suscriptores + el affordance «Suscribir destinatario» (el form de creación existente).
+  - El `window.confirm` nativo de borrado se preserva verbatim — queda pendiente del barrido de UI-011.
+  - Esta es la última subtarea de UI-008. Próxima tarea `PENDING`: **UI-009.1 — Operación · Inbox**.
+
+---
+
 ### UI-008.3 — Segmentos (Manager)
 
 - **Fecha:** 2026-05-14

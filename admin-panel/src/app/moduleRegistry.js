@@ -18,6 +18,7 @@ import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.j
 import { ManagerAnalytics } from '../features/manager/analytics/index.js';
 import { AuditPanel } from '../features/owner-admin/audit/index.js';
 import { CampaignsModule } from '../features/manager/campaigns/index.js';
+import { DigestReports } from '../features/manager/digest-reports/index.js';
 import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
 import { KnowledgeStudio } from '../features/owner-admin/knowledge-studio/index.js';
 import { LegalModule } from '../features/owner-admin/legal/index.js';
@@ -89,6 +90,7 @@ export const MODULE_REGISTRY = Object.freeze({
     Component: ManagerAnalytics,
     capability: 'analytics.tenant.read',
   },
+  'digest-reports': { Component: DigestReports, capability: 'digest.write', mode: 'RW' },
   audit: { Component: AuditPanel, capability: 'audit.read' },
   team: { Component: TeamModule, capability: 'team.write', mode: 'RW' },
   legal: { Component: LegalModule, capability: 'legal.write', mode: 'RW' },
