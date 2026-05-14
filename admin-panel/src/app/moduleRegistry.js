@@ -12,9 +12,9 @@ import { ConversationsContacts } from '../features/owner-admin/conversations-con
 import { Services } from '../features/owner-admin/services/index.js';
 import { Packages } from '../features/owner-admin/packages/index.js';
 import { Subscriptions } from '../features/owner-admin/subscriptions/index.js';
+import { Branches } from '../features/owner-admin/branches/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
-import { BranchesModule } from '../components/modules/branches/BranchesModule.jsx';
 import { CampaignsModule } from '../components/modules/campaigns/CampaignsModule.jsx';
 import { KnowledgeStudio } from '../components/modules/knowledge/KnowledgeStudio.jsx';
 import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
@@ -61,7 +61,7 @@ export const MODULE_REGISTRY = Object.freeze({
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
   'onboarding-wizard': { Component: Onboarding, capability: 'onboarding.run', mode: 'RW' },
   services: { Component: Services, capability: 'services.read' },
-  branches: { Component: BranchesModule, capability: 'branches.write', mode: 'RW' },
+  branches: { Component: Branches, capability: 'branches.write', mode: 'RW' },
   packages: { Component: Packages, capability: 'packages.write', mode: 'RW' },
   subscriptions: { Component: Subscriptions, capability: 'subscriptions.write', mode: 'RW' },
   whatsapp: { Component: WhatsAppOnboarding, capability: 'whatsapp.read' },

@@ -18,7 +18,14 @@ from urllib.parse import urlparse, parse_qs
 from app.api.v1 import routes as routes_module
 from app.services.maps import MAPS_BASE_URL, build_maps_url
 
-BRANCHES_MODULE = Path('admin-panel/src/components/modules/branches/BranchesModule.jsx')
+# UI-007.7: the branches module was redesigned into a feature directory.
+BRANCHES_FEATURE = Path('admin-panel/src/features/owner-admin/branches')
+
+
+def _branches_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(BRANCHES_FEATURE.rglob('*.js*'))
+    )
 
 
 # ───── Builder ─────────────────────────────────────────────────────────────
@@ -106,7 +113,7 @@ def test_update_branch_regenerates_maps_url_when_cleared():
 
 
 def test_branches_module_exposes_generate_button_and_preview():
-    source = BRANCHES_MODULE.read_text()
+    source = _branches_feature_source()
     assert 'buildMapsUrlFromInputs' in source
     assert 'Generar desde la dirección' in source
     assert 'data-testid="branches-maps-generate"' in source
