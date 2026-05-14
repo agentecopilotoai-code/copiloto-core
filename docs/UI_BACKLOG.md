@@ -419,15 +419,14 @@ src/
 >
 > **Antes de empezar cada subtarea, aplicar la receta de 0.bis.1**: abrir el HTML mapeado en 0.bis.3, capturar screenshot de referencia, inventariar bloques visuales, y validar fidelidad al final (criterio 0.bis.4). Sin estos pasos la tarea no se considera DONE.
 
-#### UI-006.1 — Fleet · Tenants (01)
-- **Alcance:** tabla de tenants con filtros (status, plan, país, churn risk); columnas: slug, nombre, plan, MRR, last activity, owner email. CTA "Crear tenant" (platform_owner only). Drawer con detalle: settings overview, health, billing snapshot, link a "Ver como tenant".
+#### UI-006.1 — Fleet · Tenants (01) — DONE (2026-05-14)
+- **Alcance:** tabla de tenants con filtros (status, país, vertical, búsqueda); columnas: tenant (avatar+slug+país), status, vertical, miembros, última actividad y owner email. KPIs agregados (tenants activos, países cubiertos) y placeholders honestos para MRR/Incidentes (UI-006.3 / UI-006.4). CTA "Nuevo tenant" → wizard de onboarding existente. Drawer con detalle del tenant y CTA "Ver como tenant" que entra al shell tenant-scoped vía `support_mode` (TASK-0077).
 - **API:**
-  - `POST /v1/tenants` — crear tenant. **Ya existe** (`platform_admin_router`, `app/api/v1/routes.py:867`; protegido con `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`).
-  - `PATCH /v1/tenants/{tenant_id}/status` — activar/suspender tenant. **Ya existe** (`app/api/v1/routes.py:1151`, mismas dependencias).
-  - `GET /v1/tenants` — listar la flota completa con filtros (status, plan, país, MRR, last activity, owner email). **NO existe todavía** — la UI-006.1 incluye crearlo en `platform_admin_router` con las **mismas dependencias de seguridad** que el resto del router (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`). `GET /v1/me/tenants` (`routes.py:970`) solo devuelve los tenants del usuario autenticado, no sirve para la vista fleet.
-- **Nota:** el backlog original citaba `GET/POST /v1/platform/tenants`; esos paths **no existen** — `platform_admin_router` no lleva prefijo `/platform`, cuelga directo de `/v1`.
-- **Reusa:** `DataTable`, `PageHeader`, `StatusBadge`, `TenantSwitcher`.
-- **Tests:** lista filtros aplican y URL refleja `?status=active&plan=premium`.
+  - `POST /v1/tenants` — crear tenant. **Existe** (`platform_admin_router`, `app/api/v1/routes.py:867`; `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`).
+  - `PATCH /v1/tenants/{tenant_id}/status` — activar/suspender tenant. **Existe** (`app/api/v1/routes.py:1151`, mismas dependencias).
+  - `GET /v1/tenants` — listar la flota completa con filtros (`status`, `country`, `vertical`, `search`) + paginación (`limit`, `offset`). **Implementado en UI-006.1** sobre `platform_admin_router` (`app/api/v1/routes.py:list_tenants_fleet`) con las **mismas dependencias de seguridad** que el resto del router. Cada fila incluye `member_count`, `owner_count`, `owner_email` y `last_activity_at` (este último es alias de `updated_at`; la derivación a partir de "último mensaje" llega con UI-006.2).
+- **Frontend:** `src/features/platform/fleet-tenants/` (FleetTenants.jsx + componentes FleetKpis/FleetFilters/FleetTable/FleetDrawer + hook useFleetTenants). Reusa primitivas `DataTable`, `PageHeader`, `KpiTile`, `Modal`, `StatusBadge`, `EmptyState`, `Card`. `MODULE_REGISTRY['platform-fleet']` apunta a la nueva vista; el `<ModulePlaceholder>` deja de servir esta ruta.
+- **Tests:** 10 backend (`tests/test_fleet_tenants_static.py`) + 5 frontend (`FleetTenants.test.jsx`: render + filtros propagados al endpoint + drawer + retry de error + AccessDenied para no-platform-owner).
 
 #### UI-006.2 — System Health (02)
 - **Alcance:** grid de KPI tiles (uptime, latencia P95 webhook inbound, latencia P95 outbound, error rate, queue depth, embedding throughput). Gráficos de series temporales (24h, 7d, 30d). Sección de incidentes activos.

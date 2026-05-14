@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import io
 import json
+import re
 import secrets
 from pathlib import Path
 from datetime import UTC, date, datetime, timedelta
@@ -97,6 +98,7 @@ from app.core.security import (
 )
 from app.db.pool import get_db, record_to_dict
 from app.services import locale as locale_service
+from app.services.locale import SUPPORTED_COUNTRIES
 from app.services.audit import audit
 from app.services.campaign_attribution import attribute_appointment
 from app.services.auth0_admin import (
@@ -908,6 +910,123 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
     await seed_default_retention_policies(conn, tenant_id)
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant.created', entity_type='tenant', entity_id=str(tenant_id))
     return record_to_dict(row)
+
+
+# UI-006.1: Fleet · Tenants list endpoint.
+#
+# Drives the platform-owner "Fleet · Tenants" view. The router-level
+# `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`
+# dependencies already enforce that ONLY a platform_owner with verified MFA can
+# read across tenants — never relaxed at the handler level.
+_FLEET_LIST_STATUS_PATTERN = re.compile(r'^(trial|active|suspended|churned)$')
+
+
+@platform_admin_router.get('/tenants')
+async def list_tenants_fleet(
+    status_filter: str | None = Query(default=None, alias='status', max_length=16),
+    country: str | None = Query(default=None, max_length=2, min_length=2),
+    vertical: str | None = Query(default=None, max_length=64),
+    search: str | None = Query(default=None, max_length=160),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Return a paginated fleet view of tenants for the platform owner.
+
+    Supports the filters declared in `docs/UI_BACKLOG.md` UI-006.1:
+    `status`, `country` (ISO-2), `vertical` and free-text `search` over slug or
+    display_name. Soft-deleted tenants (`deleted_at IS NOT NULL`) are excluded.
+
+    Each row carries the tenant profile plus aggregated metadata required by
+    the UI: total member count, count of owners, the primary owner's email,
+    and a `last_activity_at` timestamp (currently `tenants.updated_at` — see
+    UI_BACKLOG note; a richer "last message" derivation lives in UI-006.2).
+    """
+    if status_filter is not None and not _FLEET_LIST_STATUS_PATTERN.match(status_filter):
+        raise HTTPException(status_code=422, detail='invalid status filter')
+    if country is not None and country.upper() not in set(SUPPORTED_COUNTRIES):
+        raise HTTPException(status_code=422, detail='unsupported country code')
+
+    rows = await conn.fetch(
+        """
+        select
+            t.id,
+            t.slug,
+            t.legal_name,
+            t.display_name,
+            t.vertical_code,
+            t.business_type_label,
+            t.country_code,
+            t.timezone,
+            t.status,
+            t.created_at,
+            t.updated_at,
+            coalesce(member_counts.total, 0) as member_count,
+            coalesce(member_counts.owner_count, 0) as owner_count,
+            owner_email_pick.owner_email as owner_email,
+            t.updated_at as last_activity_at
+        from app.tenants t
+        left join (
+            select
+                tenant_id,
+                count(distinct user_id) as total,
+                count(distinct user_id) filter (where role = 'owner') as owner_count
+            from app.user_tenant_roles
+            group by tenant_id
+        ) as member_counts on member_counts.tenant_id = t.id
+        left join lateral (
+            select u.email as owner_email
+            from app.user_tenant_roles utr
+            join app.users u on u.id = utr.user_id
+            where utr.tenant_id = t.id and utr.role = 'owner'
+            order by utr.created_at asc
+            limit 1
+        ) as owner_email_pick on true
+        where t.deleted_at is null
+          and ($1::text is null or t.status = $1)
+          and ($2::text is null or t.country_code = $2)
+          and ($3::text is null or t.vertical_code = $3)
+          and (
+            $4::text is null
+            or t.slug ilike '%' || $4 || '%'
+            or t.display_name ilike '%' || $4 || '%'
+            or t.legal_name ilike '%' || $4 || '%'
+          )
+        order by t.created_at desc
+        limit $5 offset $6
+        """,
+        status_filter,
+        country.upper() if country else None,
+        vertical,
+        search,
+        limit,
+        offset,
+    )
+    total = await conn.fetchval(
+        """
+        select count(*) from app.tenants t
+        where t.deleted_at is null
+          and ($1::text is null or t.status = $1)
+          and ($2::text is null or t.country_code = $2)
+          and ($3::text is null or t.vertical_code = $3)
+          and (
+            $4::text is null
+            or t.slug ilike '%' || $4 || '%'
+            or t.display_name ilike '%' || $4 || '%'
+            or t.legal_name ilike '%' || $4 || '%'
+          )
+        """,
+        status_filter,
+        country.upper() if country else None,
+        vertical,
+        search,
+    )
+    return {
+        'items': [record_to_dict(row) for row in rows],
+        'total': int(total or 0),
+        'limit': limit,
+        'offset': offset,
+    }
 
 
 async def update_tenant_record(

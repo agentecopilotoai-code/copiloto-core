@@ -2,8 +2,8 @@ export const adminModules = [
   {
     id: 'platform-fleet',
     label: 'Fleet · Tenants',
-    summary: 'Vista de flota cross-tenant para Platform Owner: tenants, plan, MRR y salud. La implementación completa llega en UI-006.1; por ahora rinde el placeholder.',
-    scope: ['Listado de tenants', 'Filtros por status/plan/país', 'Crear tenant', 'Drawer de detalle y "ver como tenant"'],
+    summary: 'Vista de flota cross-tenant para Platform Owner: listado, filtros y drawer de detalle. UI-006.1.',
+    scope: ['Listado de tenants', 'Filtros por status/país/vertical/búsqueda', 'KPIs agregados', 'Drawer de detalle y "Ver como tenant"'],
     capability: 'platform.tenants.read',
   },
   {

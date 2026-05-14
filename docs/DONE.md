@@ -15,6 +15,57 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-006.1 — Fleet · Tenants (Platform Owner)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** primera vista del rol Platform Owner. Render del listado cross-tenant en `/platform/platform-fleet` consumiendo un nuevo endpoint `GET /v1/tenants` (montado en `platform_admin_router`, con las mismas dependencias de seguridad que el resto del router: `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`). La vista respeta la referencia visual `docs/HTML DESIGN/Platform Owner/01 _ Fleet _ Tenants.html` y reusa primitivas/tokens introducidos en UI-001..UI-005 — sin código nuevo de estilos hardcodeados.
+- **Cambios realizados:**
+  - **Backend — `app/api/v1/routes.py`:**
+    - Nuevo handler `list_tenants_fleet` decorado con `@platform_admin_router.get('/tenants')`. Acepta `status` (validado contra el `re.compile(r'^(trial|active|suspended|churned)$')` — espejo del CHECK constraint en `app.tenants.status`), `country` (validado contra `SUPPORTED_COUNTRIES` de `app.services.locale`; TASK-0073), `vertical` (free-form ≤64), `search` (ILIKE sobre slug + display_name + legal_name) y paginación `limit`/`offset`.
+    - Construye una sola query SQL con dos `left join` para `member_count`/`owner_count` (agg sobre `app.user_tenant_roles`) y `owner_email` (lateral pick del owner más antiguo). Excluye explícitamente `deleted_at is null`. Devuelve un envelope `{items, total, limit, offset}` — listo para paginar desde la UI sin cambiar el contrato.
+    - Imports añadidos: `re` (módulo top-level, ya usado por otros chequeos) y `from app.services.locale import SUPPORTED_COUNTRIES` (single source of truth para el catálogo de países).
+    - **Sin cambio en el bloque `platform_admin_router = APIRouter(...)`** — las tres dependencias siguen ahí y se aplican uniformemente al nuevo path. El handler no declara su propio `dependencies=[]` (test estático que lo verifica).
+  - **Frontend — `admin-panel/src/`:**
+    - `services/coreApi.js`: nueva función `listFleetTenants(session, filters)` que serializa los filtros como query string y llama `request('/tenants', ...)`. No envía `X-Tenant-Id` (la vista es cross-tenant).
+    - `features/platform/fleet-tenants/` (nuevo, 9 archivos):
+      - `FleetTenants.jsx` (95 LOC) — orquesta filtros, estado de seleccionado, y wraps todo en `<RequirePermission capability="platform.tenants.read" mode="R">`. El CTA "Nuevo tenant" se oculta para no-write y enruta a `/onboarding` (no se fork el flujo de creación — reusa `OnboardingRoute`).
+      - `components/FleetKpis.jsx` (50 LOC) — 4 KPI tiles. Aggregados (`active`, `trials`, `countries`) se computan client-side desde el snapshot; MRR/Incidentes muestran `—` con footnote que apunta a UI-006.3 / UI-006.4 para mantener el grid del HTML sin inventar datos.
+      - `components/FleetFilters.jsx` (79 LOC) — selects de status/país (catálogo LatAm de TASK-0073) + inputs de vertical/búsqueda. Componente "tonto", el hook se encarga del refetch.
+      - `components/FleetTable.jsx` (134 LOC) — wrapper sobre `<DataTable>` con columnas tenant/status/vertical/miembros/última actividad/owner. Avatar derivado de iniciales (sin librería) y `<StatusBadge>` por status.
+      - `components/FleetDrawer.jsx` (93 LOC) — `<Modal>` con detalle del tenant + CTA "Ver como tenant" que invoca `handleTenantCreated(...)` del `TenantProvider` y navega a `/t/:slug`. Aprovecha la lógica de `support_mode` ya existente en `usePermissions` (TASK-0077).
+      - `hooks/useFleetTenants.js` (57 LOC) — fetch encapsulado, cancellation en unmount, `refresh()` para reintentar.
+      - `FleetTenants.module.css` (169 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/platform/fleet-tenants/` → 0 resultados (criterio 0.bis.4 del backlog).
+      - `index.js` (barrel) + `FleetTenants.test.jsx` (172 LOC, 5 tests).
+    - `app/moduleRegistry.js`: `'platform-fleet'` deja de caer al placeholder y ahora apunta a `FleetTenants` con capability `platform.tenants.read`.
+    - `data/modules.js`: summary del módulo actualizado (deja de decir "por ahora rinde el placeholder").
+- **Archivos modificados / creados:**
+  - `app/api/v1/routes.py` (handler `list_tenants_fleet`, imports `re` + `SUPPORTED_COUNTRIES`).
+  - `tests/test_fleet_tenants_static.py` (nuevo — 10 tests estáticos).
+  - `admin-panel/src/services/coreApi.js` (export `listFleetTenants`).
+  - `admin-panel/src/features/platform/fleet-tenants/{FleetTenants.jsx,FleetTenants.module.css,FleetTenants.test.jsx,index.js,components/{FleetKpis,FleetFilters,FleetTable,FleetDrawer}.jsx,hooks/useFleetTenants.js}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `platform-fleet → FleetTenants`).
+  - `admin-panel/src/data/modules.js` (summary del módulo).
+  - `docs/UI_BACKLOG.md` (UI-006.1 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK (`136 modules`, `dist/assets/index-*.js 596.67 kB / gzip 167.84 kB`, `0.60s`).
+  - `npm --prefix admin-panel test -- --run` → **29 suites, 126 tests pasan** (5 nuevos de FleetTenants). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión** (mismo failure mode que en `develop`); CI corre Node 20 y no ejecuta vitest.
+  - `python3 -m pytest tests/test_fleet_tenants_static.py -v` → **10 passed**.
+  - `python3 -m ruff check app/` → All checks passed!
+- **Seguridad:**
+  - `GET /v1/tenants` hereda las tres dependencias del router (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`) — el handler **no** declara su propio `dependencies=` override, y un test estático (`test_handler_does_not_override_security_dependencies`) lo verifica como contrato.
+  - Filtros validados server-side: `status` con regex anclada al CHECK del schema; `country` confrontado contra `SUPPORTED_COUNTRIES` (rechazo 422 fuera del whitelist).
+  - El frontend espeja el gate vía `<RequirePermission capability="platform.tenants.read" mode="R">` y `<RequirePermission capability="platform.tenants.write" mode="RW" hidden>` para el CTA "Nuevo tenant". La matriz UI-005 ya tiene `platform.tenants.*` denegado para todos los roles de tenant — un admin tenant-scoped no ve la vista. El frontend es defensa en profundidad; el backend sigue siendo la autoridad.
+  - `last_activity_at` se devuelve sobre `t.updated_at` (no leak adicional de datos sensibles). El email del owner sale de `app.users` filtrando por rol `owner` — un platform_owner con MFA verificada ya tiene autorización para ver esa información.
+- **Limitaciones / próximos pasos:**
+  - El HTML de referencia muestra columnas adicionales — Plan, MRR, "Conv. agendamiento %", sparkline "Salud 10d" y "Alertas" — que dependen de datos que el schema actual no modela como SaaS metadata del tenant (`app.subscription_plans` modela suscripciones DEL tenant a sus contactos, no del tenant a la plataforma). Se difieren a **UI-006.3 (Billing · MRR)** y **UI-006.2 (System Health)**, que tienen su propio backlog de datos. Los 4 KPI tiles del header dejan dos placeholders honestos (`—` con footnote) para no fingir datos que no existen.
+  - `last_activity_at` apunta hoy a `tenants.updated_at`. Una derivación más rica (último mensaje recibido, último login del owner) llega con UI-006.2 cuando la vista de System Health montore el cross-tenant.
+  - El CTA "Nuevo tenant" enruta al wizard de onboarding existente (`/onboarding`, que ya admite a un platform_owner). No se construye un wizard fleet-side para no duplicar la lógica de creación; cuando UI-007.2 rediseñe el onboarding, este CTA queda alineado automáticamente.
+  - El feature deja preparada la paginación en el contrato del endpoint (`limit`/`offset` + `total`); la UI carga 100 filas y deja el paginador para cuando un tenant operacional supere ese umbral (no es bloqueante para go-live; las flotas iniciales caben en una página).
+  - Próxima tarea `PENDING` real: **UI-006.2 — System Health** (KPIs cross-tenant + series temporales sobre las métricas Prometheus de TASK-0060).
+
+---
+
 ### UI-002 — Layout shells por rol y refactor del `AdminLayout`
 
 - **Fecha:** 2026-05-14
