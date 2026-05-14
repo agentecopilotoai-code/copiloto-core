@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { StatusBadge } from '../../ui/StatusBadge.jsx';
+import {
+  AppointmentCard,
+  ContactCard,
+  TagPill,
+  TimelineEntry,
+} from '../../domain/index.js';
 import {
   assignContactPackage,
   assignContactTags,
@@ -31,44 +38,6 @@ function formatDateShort(value) {
   } catch {
     return value;
   }
-}
-
-function TagChip({ tag, onRemove }) {
-  const background = tag.color || '#4f6ef7';
-  return (
-    <span
-      className="status-pill"
-      style={{
-        background,
-        color: '#fff',
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '0.35rem',
-        padding: '0.15rem 0.6rem',
-        fontSize: '0.75rem',
-      }}
-    >
-      {tag.name}
-      {onRemove ? (
-        <button
-          type="button"
-          aria-label={`Quitar etiqueta ${tag.name}`}
-          onClick={onRemove}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: '#fff',
-            cursor: 'pointer',
-            fontSize: '0.9rem',
-            padding: 0,
-            lineHeight: 1,
-          }}
-        >
-          ×
-        </button>
-      ) : null}
-    </span>
-  );
 }
 
 export function ContactsModule({ module, session, tenant }) {
@@ -344,21 +313,12 @@ export function ContactsModule({ module, session, tenant }) {
             <p className="hint">No hay contactos para este filtro.</p>
           ) : null}
           {contacts.map((contact) => (
-            <button
-              className={`conversation-card ${contact.id === selectedContactId ? 'active' : ''}`}
+            <ContactCard
               key={contact.id}
-              onClick={() => setSelectedContactId(contact.id)}
-              type="button"
-            >
-              <span>{contact.display_name || contact.phone_e164 || contact.wa_id}</span>
-              <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
-                {(contact.tags || []).map((tag) => (
-                  <TagChip tag={tag} key={tag.id} />
-                ))}
-              </div>
-              <small>{contact.phone_e164}</small>
-              <small>{contact.appointments_count || 0} citas</small>
-            </button>
+              contact={contact}
+              selected={contact.id === selectedContactId}
+              onSelect={() => setSelectedContactId(contact.id)}
+            />
           ))}
         </aside>
 
@@ -392,7 +352,7 @@ export function ContactsModule({ module, session, tenant }) {
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
                   {(profile.tags || []).map((tag) => (
-                    <TagChip tag={tag} key={tag.id} onRemove={() => handleRemoveTag(tag.id)} />
+                    <TagPill tag={tag} key={tag.id} onRemove={() => handleRemoveTag(tag.id)} disabled={isBusy} />
                   ))}
                 </div>
               </div>
@@ -517,19 +477,15 @@ export function ContactsModule({ module, session, tenant }) {
                 <div>
                   <strong>Últimas citas</strong>
                   {profile.appointments?.length ? (
-                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    <div>
                       {profile.appointments.map((appointment) => (
-                        <li key={appointment.id} style={{ padding: '0.4rem 0', borderBottom: '1px solid var(--border, #e2e8f0)' }}>
-                          <strong>{appointment.service_name || appointment.service_code}</strong>
-                          <span className={`status-pill status-${appointment.status}`} style={{ marginLeft: '0.4rem' }}>
-                            {appointment.status}
-                          </span>
-                          <div className="hint" style={{ fontSize: '0.8rem' }}>
-                            {formatDate(appointment.starts_at)} · {appointment.resource_name || '—'}
-                          </div>
-                        </li>
+                        <AppointmentCard
+                          key={appointment.id}
+                          appointment={appointment}
+                          dateText={formatDate(appointment.starts_at)}
+                        />
                       ))}
-                    </ul>
+                    </div>
                   ) : (
                     <p className="hint">Sin citas registradas.</p>
                   )}
@@ -542,13 +498,11 @@ export function ContactsModule({ module, session, tenant }) {
                   {profile.conversations?.length ? (
                     <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                       {profile.conversations.map((conversation) => (
-                        <li key={conversation.id} style={{ padding: '0.35rem 0', borderBottom: '1px solid var(--border, #e2e8f0)' }}>
-                          <strong>{conversation.status}</strong> · {conversation.message_count || 0} mensajes
-                          <div className="hint" style={{ fontSize: '0.8rem' }}>
-                            {formatDate(conversation.updated_at)}
-                            {conversation.current_intent ? ` · ${conversation.current_intent}` : null}
-                          </div>
-                        </li>
+                        <TimelineEntry
+                          key={conversation.id}
+                          title={`${conversation.status} · ${conversation.message_count || 0} mensajes`}
+                          meta={`${formatDate(conversation.updated_at)}${conversation.current_intent ? ` · ${conversation.current_intent}` : ''}`}
+                        />
                       ))}
                     </ul>
                   ) : (
@@ -584,19 +538,11 @@ export function ContactsModule({ module, session, tenant }) {
                       </p>
                       <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                         {profile.referrals.referred_contacts.map((ref) => (
-                          <li
+                          <TimelineEntry
                             key={ref.contact_id}
-                            style={{
-                              padding: '0.3rem 0',
-                              borderBottom: '1px solid var(--border, #e2e8f0)',
-                            }}
-                          >
-                            <strong>{ref.display_name || ref.phone_e164 || '—'}</strong>
-                            <div className="hint" style={{ fontSize: '0.75rem' }}>
-                              {formatDateShort(ref.created_at)}
-                              {ref.phone_e164 ? ` · ${ref.phone_e164}` : ''}
-                            </div>
-                          </li>
+                            title={ref.display_name || ref.phone_e164 || '—'}
+                            meta={`${formatDateShort(ref.created_at)}${ref.phone_e164 ? ` · ${ref.phone_e164}` : ''}`}
+                          />
                         ))}
                       </ul>
                     </>
@@ -634,16 +580,16 @@ export function ContactsModule({ module, session, tenant }) {
                   {contactPackages.length ? (
                     <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem' }}>
                       {contactPackages.map((pkg) => (
-                        <li key={pkg.id} style={{ padding: '0.4rem 0', borderBottom: '1px solid var(--border, #e2e8f0)' }}>
-                          <div>
-                            <strong>{pkg.package_name || pkg.name}</strong>{' '}
-                            <span className={`status-pill status-${pkg.status}`}>{pkg.status}</span>
-                          </div>
-                          <div className="hint" style={{ fontSize: '0.8rem' }}>
-                            {pkg.remaining_sessions} / {pkg.total_sessions} sesiones restantes ·
-                            pago: {pkg.payment_status}
-                            {pkg.expires_at ? ` · vence ${formatDateShort(pkg.expires_at)}` : ''}
-                          </div>
+                        <TimelineEntry
+                          key={pkg.id}
+                          title={pkg.package_name || pkg.name}
+                          badge={(
+                            <StatusBadge tone={pkg.status === 'active' ? 'success' : 'neutral'}>
+                              {pkg.status}
+                            </StatusBadge>
+                          )}
+                          meta={`${pkg.remaining_sessions} / ${pkg.total_sessions} sesiones restantes · pago: ${pkg.payment_status}${pkg.expires_at ? ` · vence ${formatDateShort(pkg.expires_at)}` : ''}`}
+                        >
                           {pkg.status === 'active' ? (
                             <button
                               type="button"
@@ -654,7 +600,7 @@ export function ContactsModule({ module, session, tenant }) {
                               Reembolsar
                             </button>
                           ) : null}
-                        </li>
+                        </TimelineEntry>
                       ))}
                     </ul>
                   ) : (
@@ -679,29 +625,18 @@ export function ContactsModule({ module, session, tenant }) {
                   {consent?.items?.length ? (
                     <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem' }}>
                       {consent.items.map((evt) => (
-                        <li
+                        <TimelineEntry
                           key={evt.id}
-                          style={{
-                            padding: '0.4rem 0',
-                            borderBottom: '1px solid var(--border, #e2e8f0)',
-                          }}
+                          badge={(
+                            <StatusBadge tone={evt.event === 'opt_out' ? 'danger' : 'success'}>
+                              {evt.event}
+                            </StatusBadge>
+                          )}
+                          title={`canal: ${evt.channel}`}
+                          meta={`${formatDate(evt.occurred_at)}${evt.legal_basis ? ` · ${evt.legal_basis}` : ''}`}
                         >
-                          <div>
-                            <span className={`status-pill status-${evt.event}`}>{evt.event}</span>
-                            <span style={{ marginLeft: '0.4rem' }}>
-                              canal: <strong>{evt.channel}</strong>
-                            </span>
-                          </div>
-                          <div className="hint" style={{ fontSize: '0.8rem' }}>
-                            {formatDate(evt.occurred_at)}
-                            {evt.legal_basis ? ` · ${evt.legal_basis}` : ''}
-                          </div>
-                          {evt.copy_shown ? (
-                            <div className="hint" style={{ fontSize: '0.75rem', marginTop: '0.2rem' }}>
-                              «{evt.copy_shown.slice(0, 240)}»
-                            </div>
-                          ) : null}
-                        </li>
+                          {evt.copy_shown ? <span>«{evt.copy_shown.slice(0, 240)}»</span> : null}
+                        </TimelineEntry>
                       ))}
                     </ul>
                   ) : (
@@ -728,12 +663,12 @@ export function ContactsModule({ module, session, tenant }) {
                   {profile.notes?.length ? (
                     <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem' }}>
                       {profile.notes.map((note) => (
-                        <li key={note.id} style={{ padding: '0.4rem 0', borderBottom: '1px solid var(--border, #e2e8f0)' }}>
-                          <div>{note.body}</div>
-                          <div className="hint" style={{ fontSize: '0.75rem' }}>
-                            {note.created_by_name || 'Equipo'} · {formatDate(note.created_at)}
-                          </div>
-                        </li>
+                        <TimelineEntry
+                          key={note.id}
+                          meta={`${note.created_by_name || 'Equipo'} · ${formatDate(note.created_at)}`}
+                        >
+                          {note.body}
+                        </TimelineEntry>
                       ))}
                     </ul>
                   ) : (
