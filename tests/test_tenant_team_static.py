@@ -20,8 +20,9 @@ AUTH0_ADMIN = Path('app/services/auth0_admin.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES = Path('admin-panel/src/data/modules.js')
 TEAM_UI = Path('admin-panel/src/components/modules/team/TeamModule.jsx')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
-SIDEBAR = Path('admin-panel/src/components/layout/Sidebar.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/AdminLayout.jsx')
+MODULE_CONTENT = Path('admin-panel/src/app/ModuleContent.jsx')
+TENANT_SWITCHER = Path('admin-panel/src/app/shells/components/TenantSwitcher.jsx')
 
 
 def test_member_endpoints_are_registered_under_admin_router():
@@ -119,9 +120,9 @@ def test_admin_panel_exposes_team_module():
     # UI-005: minRole → capability de la matriz de permisos.
     assert "capability: 'team.write'" in modules
 
-    layout = ADMIN_LAYOUT.read_text()
+    layout = MODULE_CONTENT.read_text()
     assert "TeamModule" in layout
-    assert "activeModuleId === 'team'" in layout
+    assert "case 'team'" in layout
     # UI-005: el gate hasMinRole se reemplazó por <RequirePermission>.
     assert 'capability="team.write" mode="RW"' in layout
 
@@ -146,11 +147,11 @@ def test_team_ui_supports_invite_and_role_change():
 
 
 def test_sidebar_shows_slack_style_switcher():
-    sidebar = SIDEBAR.read_text()
-    assert 'tenant-switcher' in sidebar
-    assert 'tenantOptions.map' in sidebar
+    switcher = TENANT_SWITCHER.read_text()
+    assert 'tenantSwitcher' in switcher
+    assert 'tenantOptions.map' in switcher
     # Per-tenant role shown in the dropdown subtitle.
-    assert 'tenant.role' in sidebar or 'tenant?.role' in sidebar
+    assert 'tenant.role' in switcher or 'tenant?.role' in switcher
 
 
 def test_admin_layout_persists_active_tenant_for_switching():

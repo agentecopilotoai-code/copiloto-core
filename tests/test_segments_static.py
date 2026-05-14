@@ -41,7 +41,7 @@ CAMPAIGNS_SERVICE = Path('app/services/campaigns.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES = Path('admin-panel/src/data/modules.js')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 SEGMENTS_MODULE = Path('admin-panel/src/components/modules/segments/SegmentsModule.jsx')
 CAMPAIGNS_MODULE = Path('admin-panel/src/components/modules/campaigns/CampaignsModule.jsx')
 
@@ -415,7 +415,7 @@ def test_modules_register_segments_entry():
 def test_admin_layout_renders_segments_module():
     source = ADMIN_LAYOUT.read_text()
     assert 'SegmentsModule' in source
-    assert "activeModuleId === 'segments'" in source
+    assert "case 'segments'" in source
 
 
 def test_segments_module_exists():

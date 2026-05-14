@@ -33,7 +33,7 @@ from app.services.legal import (
 SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
 CONSENT = Path('app/services/consent.py')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
 LEGAL_MODULE = Path('admin-panel/src/components/modules/legal/LegalModule.jsx')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
@@ -229,7 +229,7 @@ def test_admin_panel_registers_legal_module():
     assert 'TASK-0076' in modules
     layout = ADMIN_LAYOUT.read_text()
     assert "import { LegalModule }" in layout
-    assert "activeModuleId === 'legal'" in layout
+    assert "case 'legal'" in layout
 
 
 def test_core_api_exposes_legal_client_functions():

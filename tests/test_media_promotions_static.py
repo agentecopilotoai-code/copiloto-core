@@ -43,7 +43,7 @@ BOOKING_FLOW = Path('app/services/booking_flow.py')
 PROMOTIONS = Path('app/services/promotions.py')
 MEDIA_STORAGE = Path('app/services/media_storage.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 MODULES = Path('admin-panel/src/data/modules.js')
 SERVICE_CATALOG = Path('admin-panel/src/components/modules/services/ServiceCatalog.jsx')
 MEDIA_MODULE = Path('admin-panel/src/components/modules/media/MediaLibraryModule.jsx')
@@ -312,7 +312,7 @@ def test_admin_modules_register_media_library():
 def test_admin_layout_routes_media_library():
     source = ADMIN_LAYOUT.read_text()
     assert "import { MediaLibraryModule }" in source
-    assert "activeModuleId === 'media-library'" in source
+    assert "case 'media-library'" in source
     assert '<MediaLibraryModule' in source
 
 

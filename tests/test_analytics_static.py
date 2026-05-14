@@ -4,7 +4,7 @@ API_ROUTES = Path('app/api/v1/routes.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx')
 MODULES = Path('admin-panel/src/data/modules.js')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 
 
 def test_analytics_router_requires_manager_role():
@@ -116,4 +116,4 @@ def test_analytics_module_registered_in_sidebar():
 
     layout = ADMIN_LAYOUT.read_text()
     assert 'AnalyticsPanel' in layout
-    assert "activeModuleId === 'analytics'" in layout
+    assert "case 'analytics'" in layout

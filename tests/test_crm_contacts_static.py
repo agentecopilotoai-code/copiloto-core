@@ -6,7 +6,7 @@ SCHEMAS = Path('app/api/v1/schemas.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 CONTACTS_MODULE = Path('admin-panel/src/components/modules/contacts/ContactsModule.jsx')
 MODULES = Path('admin-panel/src/data/modules.js')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 TENANT_WIZARD = Path('admin-panel/src/components/modules/tenantSetup/TenantSetupWizard.jsx')
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
 
@@ -112,7 +112,7 @@ def test_contacts_module_exists_and_registered():
 
     layout = ADMIN_LAYOUT.read_text()
     assert 'ContactsModule' in layout
-    assert "activeModuleId === 'contacts'" in layout
+    assert "case 'contacts'" in layout
 
 
 def test_tenant_wizard_manages_contact_tags():

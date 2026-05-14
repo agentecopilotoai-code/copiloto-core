@@ -21,7 +21,7 @@ ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES = Path('admin-panel/src/data/modules.js')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 WIZARD = Path('admin-panel/src/components/modules/onboarding/OnboardingWizard.jsx')
 
 
@@ -443,8 +443,8 @@ def test_core_api_exposes_onboarding_helpers():
 
 def test_admin_layout_renders_onboarding_module():
     src = ADMIN_LAYOUT.read_text()
-    assert "from '../modules/onboarding/OnboardingWizard.jsx'" in src
-    assert "activeModuleId === 'onboarding-wizard'" in src
+    assert "from '../components/modules/onboarding/OnboardingWizard.jsx'" in src
+    assert "case 'onboarding-wizard'" in src
     assert 'OnboardingWizard' in src
 
 

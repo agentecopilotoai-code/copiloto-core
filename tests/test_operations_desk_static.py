@@ -1,7 +1,7 @@
 from pathlib import Path
 
 API_ROUTES = Path('app/api/v1/routes.py')
-ADMIN_LAYOUT = Path('admin-panel/src/components/layout/AdminLayout.jsx')
+ADMIN_LAYOUT = Path('admin-panel/src/app/ModuleContent.jsx')
 OPERATIONS_DESK = Path('admin-panel/src/components/modules/operations/OperationsDesk.jsx')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 ADMIN_ROUTES = Path('app/admin/routes.py')
@@ -30,7 +30,7 @@ def test_admin_panel_mounts_operations_desk_module():
     api_source = CORE_API.read_text()
 
     assert "import { OperationsDesk }" in layout_source
-    assert "activeModuleId === 'operations-desk'" in layout_source
+    assert "case 'operations-desk'" in layout_source
     assert 'Iniciar conversación' in component_source
     assert 'setConversationDetail(conversation)' in component_source
     assert 'conversationDetail?.id === selectedConversationId' in component_source
