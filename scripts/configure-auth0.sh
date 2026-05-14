@@ -255,10 +255,11 @@ else
 fi
 
 echo "▶ Upsert roles y permisos"
-role_names=(owner admin manager agent viewer support)
+role_names=(platform_owner owner admin manager agent viewer support)
 
 role_description() {
   case "$1" in
+    platform_owner) echo 'Staff de plataforma: operación cross-tenant (fleet, system health, billing). Token unscoped.' ;;
     owner) echo 'Owner del tenant: administración total, usuarios, exportes y privacidad' ;;
     admin) echo 'Administrador del tenant: canales, documentos, prompts y settings' ;;
     manager) echo 'Manager operacional: analítica, agenda y operación' ;;
@@ -271,6 +272,9 @@ role_description() {
 
 role_permissions_for() {
   case "$1" in
+    platform_owner)
+      echo "$all_permission_names"
+      ;;
     owner)
       echo "$all_permission_names"
       ;;

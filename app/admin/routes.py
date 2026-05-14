@@ -384,9 +384,13 @@ async def admin_logout(request: Request) -> RedirectResponse:
 def _session_mfa_required(session: dict[str, Any]) -> bool:
     """Return True only when Auth0 is active, the session has a privileged role
     and MFA was not completed.  In local/dev mode (no AUTH0_DOMAIN) the check
-    is always skipped so the panel remains accessible without MFA.
+    is always skipped so the panel remains accessible without MFA.  It is also
+    skipped when ``mfa_enforcement_enabled`` is False (Auth0 plans without the
+    MFA add-on cannot serve the challenge flow).
     """
     settings = get_admin_settings()
+    if not settings.mfa_enforcement_enabled:
+        return False
     if not settings.auth0_domain:
         return False
     profile = session.get('profile') or {}

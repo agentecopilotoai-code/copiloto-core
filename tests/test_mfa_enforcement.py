@@ -174,6 +174,17 @@ def test_require_mfa_privileged_raises_with_auth0_no_mfa(monkeypatch):
     assert 'MFA' in exc_info.value.detail
 
 
+def test_require_mfa_privileged_skipped_when_enforcement_disabled(monkeypatch):
+    """With AUTH0_DOMAIN active but MFA_ENFORCEMENT_ENABLED=false the gate is
+    skipped — Auth0 plans without the MFA add-on cannot serve the challenge."""
+    monkeypatch.setenv('AUTH0_DOMAIN', 'test.auth0.com')
+    monkeypatch.setenv('AUTH0_AUDIENCE', 'https://test-api')
+    monkeypatch.setenv('MFA_ENFORCEMENT_ENABLED', 'false')
+    get_settings.cache_clear()
+    req = _make_state(roles=['admin'], mfa_verified=False)
+    asyncio.run(require_mfa_for_privileged(req))
+
+
 def test_require_mfa_privileged_passes_owner_with_mfa(monkeypatch):
     """With AUTH0_DOMAIN active, owner + mfa_verified=True passes."""
     monkeypatch.setenv('AUTH0_DOMAIN', 'test.auth0.com')
@@ -222,6 +233,23 @@ def test_session_mfa_required_privileged_no_mfa(monkeypatch):
             'expires_at': time.time() + 3600,
         }
         assert _session_mfa_required(session) is True
+    finally:
+        get_admin_settings.cache_clear()
+
+
+def test_session_mfa_required_skipped_when_enforcement_disabled(monkeypatch):
+    from app.admin.config import get_admin_settings
+    from app.admin.routes import _session_mfa_required
+
+    monkeypatch.setenv('AUTH0_DOMAIN', 'test.auth0.com')
+    monkeypatch.setenv('MFA_ENFORCEMENT_ENABLED', 'false')
+    get_admin_settings.cache_clear()
+    try:
+        session = {
+            'profile': {'roles': ['admin'], 'mfa_verified': False},
+            'expires_at': time.time() + 3600,
+        }
+        assert _session_mfa_required(session) is False
     finally:
         get_admin_settings.cache_clear()
 

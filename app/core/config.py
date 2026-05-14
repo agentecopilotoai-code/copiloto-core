@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     auth0_web_origins: str = 'http://localhost:3000'
     auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
     auth0_jwks_cache_ttl_seconds: int = 300
+    # Enforce MFA for privileged roles (admin/owner/platform_owner) when Auth0
+    # is active.  Defaults to True so production stays protected.  Set to False
+    # only in environments whose Auth0 plan lacks the MFA add-on (the factor
+    # toggle and ``challengeWith`` Action are unavailable), so local/dev work
+    # is not blocked by an MFA flow Auth0 cannot serve.
+    mfa_enforcement_enabled: bool = True
     service_token: str = Field(min_length=16)
     meta_graph_version: str = 'v23.0'
     s3_endpoint_url: str = 'http://minio:9000'

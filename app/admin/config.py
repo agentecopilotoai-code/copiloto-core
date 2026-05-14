@@ -27,6 +27,10 @@ class AdminSettings(BaseSettings):
     auth0_web_origins: str = 'http://localhost:3000'
     auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
     admin_core_api_base_url: str = 'http://127.0.0.1:8000'
+    # Mirrors ``Settings.mfa_enforcement_enabled``: when False the BFF stops
+    # gating privileged sessions on MFA.  Keep both in sync via the shared
+    # ``MFA_ENFORCEMENT_ENABLED`` env var.
+    mfa_enforcement_enabled: bool = True
 
     @property
     def state_secret(self) -> str:
