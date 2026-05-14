@@ -32,9 +32,19 @@ SCHEMAS = Path('app/api/v1/schemas.py')
 CAMPAIGNS_SERVICE = Path('app/services/campaigns.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-CAMPAIGNS_MODULE = Path('admin-panel/src/components/modules/campaigns/CampaignsModule.jsx')
+CAMPAIGNS_FEATURE = Path('admin-panel/src/features/manager/campaigns')
 MODULES = Path('admin-panel/src/data/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
+
+
+def _campaigns_feature_source() -> str:
+    """Combined source of the Manager · Campañas feature directory.
+
+    UI-008.2 split the legacy ``CampaignsModule.jsx`` into a feature dir;
+    the static literals below are spread across the orchestrator, the hook
+    and the components, so we read them as one blob.
+    """
+    return '\n'.join(p.read_text() for p in sorted(CAMPAIGNS_FEATURE.rglob('*.js*')))
 
 
 # ───── Schema ─────
@@ -509,7 +519,7 @@ def test_admin_layout_renders_campaigns_module():
 
 
 def test_campaigns_module_exists():
-    source = CAMPAIGNS_MODULE.read_text()
+    source = _campaigns_feature_source()
     assert 'export function CampaignsModule' in source
     assert 'listCampaigns' in source
     assert 'createCampaign' in source
