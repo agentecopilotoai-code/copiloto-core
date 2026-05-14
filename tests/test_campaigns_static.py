@@ -498,7 +498,8 @@ def test_modules_register_campaigns_entry():
     source = MODULES.read_text()
     assert "id: 'campaigns'" in source
     assert "label: 'Campañas'" in source
-    assert "minRole: 'admin'" in source
+    # UI-005: minRole → capability de la matriz de permisos.
+    assert "capability: 'campaigns.write'" in source
 
 
 def test_admin_layout_renders_campaigns_module():

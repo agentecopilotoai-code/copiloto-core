@@ -397,7 +397,7 @@ src/
 
 ### UI-005 — Matriz de permisos formalizada y `usePermissions`
 
-- **Estado:** PENDING
+- **Estado:** DONE (matriz + hook + `<RequirePermission>` + refactor de `AdminLayout`; 43 tests)
 - **Por qué bloquea:** la regla `hasMinRole(...)` está repetida 7 veces en `AdminLayout` y no codifica los matices del documento (`Parcial`, `Solo propio`, `R` vs `R/W`).
 - **Alcance:**
   - Crear `src/permissions/matrix.js` con la matriz completa de la imagen `00 _ Documentación de acceso.png`. Una fila por **capability key** (ej. `conversations.view`, `handoff.take`, `agent.performance.read`, `services.write`, `tenants.fleet.read`, `feature_flags.write`).
@@ -421,7 +421,11 @@ src/
 
 #### UI-006.1 — Fleet · Tenants (01)
 - **Alcance:** tabla de tenants con filtros (status, plan, país, churn risk); columnas: slug, nombre, plan, MRR, last activity, owner email. CTA "Crear tenant" (platform_owner only). Drawer con detalle: settings overview, health, billing snapshot, link a "Ver como tenant".
-- **API:** `GET /v1/platform/tenants`, `POST /v1/platform/tenants` (ya existe per TASK-0077/0011).
+- **API:**
+  - `POST /v1/tenants` — crear tenant. **Ya existe** (`platform_admin_router`, `app/api/v1/routes.py:867`; protegido con `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`).
+  - `PATCH /v1/tenants/{tenant_id}/status` — activar/suspender tenant. **Ya existe** (`app/api/v1/routes.py:1151`, mismas dependencias).
+  - `GET /v1/tenants` — listar la flota completa con filtros (status, plan, país, MRR, last activity, owner email). **NO existe todavía** — la UI-006.1 incluye crearlo en `platform_admin_router` con las **mismas dependencias de seguridad** que el resto del router (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`). `GET /v1/me/tenants` (`routes.py:970`) solo devuelve los tenants del usuario autenticado, no sirve para la vista fleet.
+- **Nota:** el backlog original citaba `GET/POST /v1/platform/tenants`; esos paths **no existen** — `platform_admin_router` no lleva prefijo `/platform`, cuelga directo de `/v1`.
 - **Reusa:** `DataTable`, `PageHeader`, `StatusBadge`, `TenantSwitcher`.
 - **Tests:** lista filtros aplican y URL refleja `?status=active&plan=premium`.
 

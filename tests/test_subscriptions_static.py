@@ -325,7 +325,9 @@ def test_admin_layout_wires_subscriptions_module_with_admin_gate():
     src = ADMIN_LAYOUT.read_text()
     assert 'SubscriptionsModule' in src
     assert "activeModuleId === 'subscriptions'" in src
-    assert "hasMinRole(activeRoles, 'admin')" in src
+    # UI-005: el gate hasMinRole se reemplazó por <RequirePermission> contra la
+    # capability subscriptions.write (mode RW = solo admin/owner).
+    assert 'capability="subscriptions.write" mode="RW"' in src
 
 
 def test_subscriptions_module_renders_plan_form_and_subscriber_lists():

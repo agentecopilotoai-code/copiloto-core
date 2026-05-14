@@ -334,7 +334,8 @@ def test_admin_panel_registers_social_channels_module_with_admin_role():
     layout = ADMIN_LAYOUT.read_text()
     core_api = CORE_API.read_text()
     assert "id: 'social-channels'" in registry
-    assert "minRole: 'admin'" in registry
+    # UI-005: minRole → capability de la matriz de permisos.
+    assert "capability: 'social_channels.write'" in registry
     assert 'SocialChannelsModule' in layout
     assert "activeModuleId === 'social-channels'" in layout
     assert 'listMessengerChannels' in core_api
