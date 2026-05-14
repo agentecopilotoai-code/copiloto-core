@@ -15,6 +15,35 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-002 — Layout shells por rol y refactor del `AdminLayout`
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** reemplazar el monolito `AdminLayout.jsx` (425 LOC con `if/else` por `activeModuleId` y `hasMinRole` repetido 7 veces) por shells declarativos por rol (`TenantShell` para Owner/Admin/Manager/Agent, `PlatformOwnerShell` para platform_owner, `ReadOnlyShell` para Viewer), cada uno bajo 200 LOC y con sidebar/topbar consumiendo la matriz de permisos (UI-005) y los tokens del design system (UI-001). `App.jsx` queda en sólo `<RouterProvider router={appRouter} />`.
+- **Estado a la apertura de la tarea:** el trabajo material ya estaba en `develop` — los shells, la migración de `MfaRequiredBlocker`/`NoTenantOnboarding` a `components/domain/` y la eliminación total de `AdminLayout.jsx`/`ModuleContent.jsx`/`useActiveModule.js` se habían absorbido en los PRs de UI-005 y UI-003 (que reescribieron el árbol de routing por completo). Sin embargo el backlog seguía marcando UI-002 como `PENDING`, por lo que la rutina desatendida lo elegía y no había nada que implementar. Esta entrada cierra el ciclo administrativo: verifica que cada criterio del DoD se cumple en el código actual y registra UI-002 como `DONE` para que la siguiente corrida tome la real próxima `PENDING` (UI-006.1).
+- **Verificación de los criterios de aceptación de UI-002 contra el código en `develop`:**
+  - `admin-panel/src/App.jsx` → **15 LOC** (DoD: ≤ 30). Sólo monta `<RouterProvider router={appRouter} />` tras pasar el gate de `useAuth` (`LoadingScreen` / `LoginScreen`).
+  - `admin-panel/src/app/shells/TenantShell.jsx` → **66 LOC** (DoD: ≤ 200). Sidebar agrupada por `TENANT_NAV` filtrada con `resolveNav(...)` + `TenantSwitcher` + workspace con `ShellTopbar`. Recibe el contenido del módulo activo por `children` (lo provee `<Outlet/>` del router declarado en `src/app/router.jsx`).
+  - `admin-panel/src/app/shells/PlatformOwnerShell.jsx` → **48 LOC** (DoD: ≤ 200). Sin selector de tenant; navegación cross-tenant (`PLATFORM_NAV`).
+  - `admin-panel/src/app/shells/ReadOnlyShell.jsx` → **76 LOC** (DoD: ≤ 200). Igual que `TenantShell` pero con badge "Acceso de solo lectura" en el sidebar, banner "Modo solo lectura" en el topbar y `resolveNav(..., { includeDenied: true })` para listar los módulos sin permiso como deshabilitados (criterio del diseño Viewer).
+  - `admin-panel/src/components/domain/MfaRequiredBlocker.jsx` y `admin-panel/src/components/domain/NoTenantOnboarding.jsx` ya existen en `domain/` (ya no son ad-hoc del layout). El gate de MFA se aplica en `RootLayout` del router antes de montar cualquier shell.
+  - `admin-panel/src/components/layout/AdminLayout.jsx`, `ModuleContent.jsx`, `useActiveModule.js`, `selectModule.js` y `defaultModuleId` ya están eliminados de `develop`. `App.jsx` no contiene ningún `switch` por `activeModuleId`.
+  - **Tests por rol** (DoD: viewer ve `ReadOnlyShell`; platform_owner en `support_mode` ve `PlatformOwnerShell`):
+    - `admin-panel/src/app/router.test.jsx` cubre `redirect raíz: un viewer entra al shell de solo lectura`, `un viewer con deep-link al shell de escritura es redirigido a /read`, y `redirect raíz: un platform owner en support_mode entra a la flota`.
+    - `admin-panel/src/app/shells/TenantShell.test.jsx`, `PlatformOwnerShell.test.jsx`, `ReadOnlyShell.test.jsx` cubren el chrome (sidebar/topbar/banner read-only) de cada shell de forma aislada.
+- **Archivos modificados:**
+  - `docs/UI_BACKLOG.md` (UI-002 → `DONE`; nota explicando que el trabajo material ya estaba en `develop` vía UI-003 / UI-005).
+  - `docs/DONE.md` (esta entrada).
+- **Validación local (Node 24.12.0 / npm 11.6.2):**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK (`107 modules`, `dist/assets/index-*.js 579.47 kB gzip 162.23 kB`, `0.60s`).
+  - `npm --prefix admin-panel test -- --run` → **28 suites, 117 tests pasan** excluyendo `src/app/router.test.jsx`. Ese archivo está OK semánticamente y pasa en CI (Node 20); con Node 24 instalado en el host local fallan los 7 tests porque `@remix-run/router` v6 colide con el cambio de `AbortSignal` en `undici`/Node 24 (`TypeError: RequestInit: Expected signal ... to be an instance of AbortSignal`). Es un problema **ambiental preexistente en `develop`**, no introducido por esta entrada. El CI del repo (`.github/workflows/ci.yml`, job `admin-panel`) corre Node 20 y sólo invoca `npm run lint` + `npm run build` — no ejecuta vitest — por lo que el verde de CI no se ve afectado. Cuando UI-014 cablee vitest en CI deberá fijarse Node 20 en el job (o subir `react-router-dom` a v7) para evitar este modo de fallo.
+- **Seguridad:** sólo cambios documentales. Ningún archivo de servidor (`app/...`) ni dependencia se tocó. La matriz de permisos (UI-005) sigue siendo el único punto donde la UI defiende controles; el enforcement real vive en el backend (JWT + role + RLS), idéntico a antes.
+- **Limitaciones / próximos pasos:**
+  - Próxima tarea `PENDING` real: **UI-006.1 — Fleet · Tenants (Platform Owner)**. Requiere crear `features/platform/fleet-tenants/`, el endpoint `GET /v1/tenants` en `platform_admin_router` (con `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`) y la vista lado-a-lado con `docs/HTML DESIGN/Platform Owner/01 _ Fleet _ Tenants.html`.
+  - Las entradas administrativas equivalentes para UI-003 y UI-004 (también marcadas `DONE` en el backlog pero sin registro en `DONE.md`) no se añaden en esta corrida porque exceden el alcance de la tarea elegida; quedan como deuda menor de documentación. La auditoría rápida confirma que el código respeta su DoD: `react-router-dom@6` instalado, `src/app/router.jsx` con rutas por rol y `TenantProvider`, `src/components/domain/` con los 9 componentes documentados y 30 tests, y `ContactsModule` / `OperationsDesk` consumiendo `ContactCard` / `ConversationListItem` / `AppointmentCard` (sin duplicación de markup).
+
+---
+
 ### UI-005 — Matriz de permisos formalizada y `usePermissions`
 
 - **Fecha:** 2026-05-14

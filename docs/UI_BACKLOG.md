@@ -345,7 +345,7 @@ src/
 
 ### UI-002 — Layout shells por rol y refactor del `AdminLayout`
 
-- **Estado:** PENDING
+- **Estado:** DONE (shells por rol `TenantShell` / `PlatformOwnerShell` / `ReadOnlyShell` en `src/app/shells/`; `MfaRequiredBlocker` y `NoTenantOnboarding` migrados a `components/domain/`; `AdminLayout.jsx` eliminado por completo; `App.jsx` reducido a 15 LOC. Implementado materialmente como parte de UI-003 / UI-005; esta entrada cierra el ciclo administrativo.)
 - **Por qué bloquea:** la home y la navegación deben cambiar por rol; hoy `AdminLayout.jsx` (425 LOC) es un switch monolítico.
 - **Alcance:**
   - Crear `src/app/shells/TenantShell.jsx` (Topbar + Sidebar + `<Outlet/>`), `PlatformOwnerShell.jsx` (sin selector de tenant; navegación fleet), `ReadOnlyShell.jsx` (banner read-only, hide CTAs).

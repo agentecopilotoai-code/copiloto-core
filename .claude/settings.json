@@ -1,5 +1,6 @@
 {
   "permissions": {
+    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(docker compose ps *)",
       "Bash(docker compose logs *)",
@@ -14,13 +15,7 @@
       "Bash(curl -s *)",
       "Bash(npm --prefix admin-panel *)",
       "Bash(pytest *)",
-      "Bash(git add *)",
-      "Bash(git commit *)",
-      "Bash(git fetch *)",
-      "Bash(git push *)",
-      "Bash(git status *)",
-      "Bash(git diff *)",
-      "Bash(git log *)",
+      "Bash(git *)",
       "mcp__github__create_pull_request",
       "mcp__github__merge_pull_request",
       "mcp__github__pull_request_read"
