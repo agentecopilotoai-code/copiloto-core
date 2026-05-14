@@ -36,7 +36,8 @@ ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
-PACKAGES_MODULE = Path('admin-panel/src/components/modules/packages/PackagesModule.jsx')
+# UI-007.5: the packages module was redesigned into a feature directory.
+PACKAGES_FEATURE = Path('admin-panel/src/features/owner-admin/packages')
 # UI-007.3: the contacts module was split into a feature directory.
 CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
@@ -45,6 +46,12 @@ CORE_API = Path('admin-panel/src/services/coreApi.js')
 def _contacts_feature_source() -> str:
     return '\n'.join(
         path.read_text() for path in sorted(CONTACTS_FEATURE.rglob('*.js*'))
+    )
+
+
+def _packages_feature_source() -> str:
+    return '\n'.join(
+        path.read_text() for path in sorted(PACKAGES_FEATURE.rglob('*.js*'))
     )
 
 
@@ -317,9 +324,12 @@ def test_create_appointment_links_contact_package_when_chosen():
 
 
 def test_admin_panel_registers_packages_module():
+    # UI-007.5: the registry now points at the redesigned feature module.
     layout = ADMIN_LAYOUT.read_text()
-    assert "import { PackagesModule } from '../components/modules/packages/PackagesModule.jsx'" in layout
+    assert "import { Packages } from '../features/owner-admin/packages/index.js'" in layout
     assert 'packages: {' in layout
+    # The legacy module path must be fully gone (no parallel implementation).
+    assert 'components/modules/packages/PackagesModule' not in layout
     catalog = ADMIN_MODULES.read_text()
     assert "id: 'packages'" in catalog
     assert "label: 'Paquetes'" in catalog
@@ -327,7 +337,7 @@ def test_admin_panel_registers_packages_module():
 
 
 def test_packages_module_has_form_and_service_picker():
-    source = PACKAGES_MODULE.read_text()
+    source = _packages_feature_source()
     assert 'createTreatmentPackage' in source
     assert 'updateTreatmentPackage' in source
     assert 'deactivateTreatmentPackage' in source
