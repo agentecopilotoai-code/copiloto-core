@@ -15,6 +15,60 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-006.2 — System Health (Platform Owner)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** segunda vista del rol Platform Owner. Snapshot vivo de la salud de la plataforma en `/platform/platform-system-health` consumiendo un nuevo endpoint `GET /v1/platform/metrics/health` (montado en `platform_admin_router`, con las mismas dependencias de seguridad que el resto del router: `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`). El endpoint materializa el registry Prometheus in-process de TASK-0060 — la misma fuente que raspa Prometheus desde `/metrics` — así que los números son consistentes con el pipeline de alertas. La vista respeta la referencia visual `docs/HTML DESIGN/Platform Owner/02 _ System Health.html` y reusa primitivas/tokens de UI-001..UI-005.
+- **Cambios realizados:**
+  - **Backend — `app/services/metrics.py`:**
+    - `collect_health_snapshot()` recorre `REGISTRY.collect()` y agrega los samples en un dict estructurado: `messages` (inbound/outbound/outbound_failed/outbound_error_rate desde `cpi_messages_total`), `response_latency` (p50/p95/p99 derivados del histograma `cpi_response_latency_seconds` + count + avg), `llm_calls` (total/success/success_rate desde `cpi_llm_calls_total`), `circuit_breakers` (estado por proveedor desde el gauge `cpi_circuit_breaker_state`), `workers` (queue depth por worker desde `cpi_worker_queue_depth`) y `outbound_dlq` (total + by_error_code desde `cpi_outbound_dlq_total`). Sin PII — solo agregados e IDs de proveedor/worker.
+    - `_histogram_quantile(buckets, q)` calcula cuantiles por interpolación lineal sobre buckets acumulativos — reproduce de cerca el `histogram_quantile` de Prometheus para un snapshot puntual. `_le_value` mapea el label `le` (incluido `+Inf`).
+    - `evaluate_health_alerts(snapshot)` deriva alertas activas puntuales con los umbrales de `infra/observability/alerts.yaml` (`BotResponseLatencyP95High` > 5s, `HighOutboundErrorRate` > 5%, `WorkerQueueBacklog` > 1000, `CircuitBreakerOpenSustained`). Es una aproximación para la UI; la SLA real de alertas sigue viviendo en Prometheus + Alertmanager.
+  - **Backend — `app/api/v1/routes.py`:**
+    - Nuevo handler `platform_system_health` decorado con `@platform_admin_router.get('/platform/metrics/health')`. Ensambla `collect_health_snapshot()` + `evaluate_health_alerts()` + un probe de conectividad de DB (`select 1` cronometrado) + `_derive_health_services(...)` (sintetiza filas de estado por servicio: API siempre `ok` si el handler corre, Postgres según el probe, workers según queue depth, proveedores según el breaker). Devuelve `{generated_at, snapshot, alerts, services, note}`.
+    - **Sin cambio en el bloque `platform_admin_router = APIRouter(...)`** — las tres dependencias siguen ahí; el handler no declara `dependencies=[]` propio (test estático que lo verifica). Imports añadidos: `time` (top-level) y `from app.services import metrics`.
+  - **Frontend — `admin-panel/src/`:**
+    - `services/coreApi.js`: nueva función `getSystemHealth(session)` que llama `request('/platform/metrics/health', ...)`. No envía `X-Tenant-Id` (la vista es cross-tenant).
+    - `features/platform/system-health/` (nuevo, 9 archivos):
+      - `SystemHealth.jsx` (113 LOC) — orquesta el fetch, estados de carga/error, y envuelve todo en `<RequirePermission capability="platform.system_health.read" mode="R">`. PageHeader con badge de alertas + timestamp del snapshot y CTA "Actualizar".
+      - `components/HealthKpis.jsx` (52 LOC) — 4 KPI tiles desde el snapshot puntual, sin tasas fabricadas.
+      - `components/HealthLatencyCard.jsx` (70 LOC) — barras p50/p95/p99 escaladas contra el umbral de 5s + alerta de latencia inline.
+      - `components/HealthServicesTable.jsx` (60 LOC) — wrapper sobre `<DataTable>` con columnas servicio/estado/detalle y `<StatusBadge>` por estado (`ok`/`warn`/`down`).
+      - `components/HealthBreakers.jsx` (54 LOC) — tarjetas por proveedor con el estado del breaker; el éxito LLM agregado va de footnote (la métrica no modela éxito por proveedor — no se inventa).
+      - `components/HealthAlerts.jsx` (47 LOC) — lista de alertas derivadas con badge de severidad y referencia a runbook.
+      - `hooks/useSystemHealth.js` (53 LOC) — fetch encapsulado, cancellation en unmount, `refresh()`.
+      - `SystemHealth.module.css` (179 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/platform/system-health/` → 0 resultados (criterio 0.bis.4 del backlog).
+      - `index.js` (barrel) + `SystemHealth.test.jsx` (140 LOC, 4 tests).
+    - `app/moduleRegistry.js`: `'platform-system-health'` deja de caer al placeholder y ahora apunta a `SystemHealth` con capability `platform.system_health.read`.
+    - `data/modules.js`: nuevo módulo `platform-system-health` (el `PLATFORM_NAV` ya lo referenciaba; `resolveNav` lo omitía por no estar registrado).
+- **Archivos modificados / creados:**
+  - `app/services/metrics.py` (`collect_health_snapshot`, `evaluate_health_alerts`, `_histogram_quantile`, `_le_value`, `_CB_STATE_LABELS`).
+  - `app/api/v1/routes.py` (handler `platform_system_health` + `_derive_health_services`, imports `time` + `metrics`).
+  - `tests/test_system_health_static.py` (nuevo — 9 tests estáticos + funcionales).
+  - `admin-panel/src/services/coreApi.js` (export `getSystemHealth`).
+  - `admin-panel/src/features/platform/system-health/{SystemHealth.jsx,SystemHealth.module.css,SystemHealth.test.jsx,index.js,components/{HealthKpis,HealthLatencyCard,HealthServicesTable,HealthBreakers,HealthAlerts}.jsx,hooks/useSystemHealth.js}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `platform-system-health → SystemHealth`).
+  - `admin-panel/src/data/modules.js` (módulo `platform-system-health`).
+  - `docs/UI_BACKLOG.md` (UI-006.2 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK (`145 modules`, `dist/assets/index-*.js 604.98 kB / gzip 170.26 kB`, `0.55s`).
+  - `npm --prefix admin-panel test` → **30 suites, 130 tests pasan** (4 nuevos de SystemHealth). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.1: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión** (mismo failure mode que en `develop`); CI corre Node 20 y no ejecuta vitest.
+  - `python -m pytest tests/test_system_health_static.py tests/test_metrics_observability_static.py tests/test_fleet_tenants_static.py` → **37 passed**.
+  - `python -m compileall app -q` → OK. `ruff check .` → All checks passed!
+- **Seguridad:**
+  - `GET /v1/platform/metrics/health` hereda las tres dependencias del router (`authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`) — el handler **no** declara su propio `dependencies=` override, y un test estático lo verifica como contrato. Otros tests verifican que el path no aparece en `tenant_admin_router` / `tenant_ops_router` / `tenant_user_router`.
+  - El payload no expone PII: el snapshot agrega counters/gauges/histogramas de Prometheus (que ya excluyen `phone_e164` y contenidos de mensaje por diseño de TASK-0060) y solo añade IDs de proveedor/worker y un probe `select 1`.
+  - El frontend espeja el gate vía `<RequirePermission capability="platform.system_health.read" mode="R">`. La matriz UI-005 ya tiene `platform.system_health.read` denegado para todos los roles de tenant — un admin tenant-scoped no ve la vista. El frontend es defensa en profundidad; el backend sigue siendo la autoridad.
+- **Limitaciones / próximos pasos:**
+  - **Snapshot puntual, no series temporales.** El HTML de referencia muestra gráficos 24h/7d/30d; el endpoint lee el registry Prometheus in-process, que es punto-en-tiempo. Las series históricas requieren la query API de Prometheus (HTTP a un Prometheus desplegado) y se difieren — declarado como diferencia intencional en el PR. La vista lo dice explícitamente en una nota al pie.
+  - **Métricas in-process del proceso API.** Los workers (`event_worker`, `scheduler`) corren en procesos separados con su propio `REGISTRY`; sus métricas no son visibles para el proceso API salvo que se agreguen vía un Pushgateway o un scrape agregado. El endpoint refleja lo que el proceso API conoce — honesto sobre su alcance, igual que los placeholders de UI-006.1.
+  - Las alertas derivadas (`evaluate_health_alerts`) se evalúan contra el snapshot puntual, NO contra una ventana `rate()[5m]` como `alerts.yaml`. Es una aproximación para la UI; el alerting con SLA sigue siendo responsabilidad de Prometheus + Alertmanager (TASK-0060).
+  - `_derive_health_services` no incluye Redis ni "embedding throughput" del HTML — la primera no tiene un probe barato en el proceso API y la segunda no tiene métrica declarada en el contrato de TASK-0060. Se omiten en vez de fingir datos; pueden añadirse cuando exista la métrica/probe.
+  - Próxima tarea `PENDING` real: **UI-006.3 — Billing · MRR** (MRR total/por plan, churn, expansión, retención sobre los datos de suscripciones de TASK-0075 agregados a nivel plataforma).
+
+---
+
 ### UI-006.1 — Fleet · Tenants (Platform Owner)
 
 - **Fecha:** 2026-05-14

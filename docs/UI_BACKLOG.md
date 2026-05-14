@@ -428,10 +428,11 @@ src/
 - **Frontend:** `src/features/platform/fleet-tenants/` (FleetTenants.jsx + componentes FleetKpis/FleetFilters/FleetTable/FleetDrawer + hook useFleetTenants). Reusa primitivas `DataTable`, `PageHeader`, `KpiTile`, `Modal`, `StatusBadge`, `EmptyState`, `Card`. `MODULE_REGISTRY['platform-fleet']` apunta a la nueva vista; el `<ModulePlaceholder>` deja de servir esta ruta.
 - **Tests:** 10 backend (`tests/test_fleet_tenants_static.py`) + 5 frontend (`FleetTenants.test.jsx`: render + filtros propagados al endpoint + drawer + retry de error + AccessDenied para no-platform-owner).
 
-#### UI-006.2 — System Health (02)
-- **Alcance:** grid de KPI tiles (uptime, latencia P95 webhook inbound, latencia P95 outbound, error rate, queue depth, embedding throughput). Gráficos de series temporales (24h, 7d, 30d). Sección de incidentes activos.
-- **API:** `/v1/platform/metrics/health` (consume Prometheus de TASK-0060).
-- **Reusa:** `KpiTile`, `KpiCardWithDelta`, `Card`, `Tabs`.
+#### UI-006.2 — System Health (02) — DONE (2026-05-14)
+- **Alcance:** snapshot vivo de la plataforma para Platform Owner en `/platform/platform-system-health`: grid de KPI tiles (latencia respuesta P95, mensajes procesados, outbound DLQ acumulado, worker queue depth), panel de latencia p50/p95/p99 con la alerta `BotResponseLatencyP95High` inline, tabla de estado por servicio (API, Postgres, workers, breakers de proveedores), panel de circuit breakers y lista de alertas derivadas. Respeta la referencia visual `docs/HTML DESIGN/Platform Owner/02 _ System Health.html`. **Diferencia intencional declarada:** el HTML muestra gráficos de series temporales 24h/7d/30d; la vista renderiza un snapshot puntual — las series históricas requieren la query API de Prometheus y se difieren.
+- **API:** `GET /v1/platform/metrics/health` — montado en `platform_admin_router` (mismas dependencias de seguridad: `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`). Materializa el registry Prometheus in-process de TASK-0060 (`metrics.collect_health_snapshot`) + alertas derivadas (`metrics.evaluate_health_alerts`) + un probe de conectividad de DB. Sin PII — solo agregados e IDs de proveedor/worker.
+- **Frontend:** `src/features/platform/system-health/` (SystemHealth.jsx + componentes HealthKpis/HealthLatencyCard/HealthServicesTable/HealthBreakers/HealthAlerts + hook useSystemHealth). Reusa primitivas `PageHeader`, `KpiTile`, `Card`, `DataTable`, `StatusBadge`, `EmptyState`. `MODULE_REGISTRY['platform-system-health']` apunta a la nueva vista; el `<ModulePlaceholder>` deja de servir esa ruta del `PLATFORM_NAV`.
+- **Tests:** 9 backend (`tests/test_system_health_static.py`: endpoint en el router correcto, no en routers de tenant, shape del snapshot, alertas derivadas, `_histogram_quantile`) + 4 frontend (`SystemHealth.test.jsx`: render con datos + alertas derivadas + retry de error + AccessDenied para no-platform-owner).
 
 #### UI-006.3 — Billing · MRR (03)
 - **Alcance:** MRR total, MRR por plan, churn, expansión, retención. Tabla de tenants con plan, MRR, ciclo, próximo cobro, estado de cobro.

@@ -224,6 +224,199 @@ def record_outbound_dlq(*, tenant_id: object, error_code: object) -> None:
     ).inc()
 
 
+_CB_STATE_LABELS = {0: 'closed', 1: 'half_open', 2: 'open'}
+
+
+def _le_value(le: str) -> float:
+    """Convierte el label `le` de un bucket de histograma a float (`+Inf` → inf)."""
+    if le in ('+Inf', 'Inf'):
+        return float('inf')
+    try:
+        return float(le)
+    except (TypeError, ValueError):
+        return float('inf')
+
+
+def _histogram_quantile(buckets: list[tuple[float, float]], quantile: float) -> float | None:
+    """Cuantil por interpolación lineal sobre buckets acumulativos de histograma.
+
+    `buckets` es una lista ordenada `(upper_bound, cumulative_count)` que incluye
+    el bucket `+Inf`. Reproduce de cerca el `histogram_quantile` de Prometheus,
+    suficiente para un snapshot puntual (no es la SLA — esa vive en Prometheus).
+    """
+    if not buckets:
+        return None
+    total = buckets[-1][1]
+    if total <= 0:
+        return None
+    rank = quantile * total
+    prev_bound = 0.0
+    prev_count = 0.0
+    for upper, cum in buckets:
+        if cum >= rank:
+            if upper == float('inf'):
+                return prev_bound or None
+            if cum == prev_count:
+                return upper
+            ratio = (rank - prev_count) / (cum - prev_count)
+            return prev_bound + (upper - prev_bound) * ratio
+        if upper != float('inf'):
+            prev_bound = upper
+        prev_count = cum
+    return prev_bound or None
+
+
+def collect_health_snapshot() -> dict:
+    """Materializa el registry Prometheus in-process en un snapshot estructurado.
+
+    Alimenta la vista de Platform Owner "System Health" (UI-006.2). Lee el MISMO
+    `REGISTRY` que Prometheus raspa desde `/metrics`, así que los números son
+    consistentes con el pipeline de alertas de TASK-0060.
+
+    Es un snapshot puntual: las series históricas (24h/7d/30d) requieren la query
+    API de Prometheus y quedan fuera de alcance aquí (ver `docs/UI_BACKLOG.md`,
+    UI-006.2). No expone PII — solo agregados e IDs de proveedor/worker.
+    """
+    messages: dict[tuple[str, str], float] = {}
+    llm: dict[str, float] = {}
+    dlq_total = 0.0
+    dlq_by_code: dict[str, float] = {}
+    breakers: dict[str, float] = {}
+    workers: dict[str, float] = {}
+    latency_buckets: dict[str, float] = {}
+    latency_sum = 0.0
+    latency_count = 0.0
+
+    for metric in REGISTRY.collect():
+        for sample in metric.samples:
+            name = sample.name
+            labels = sample.labels
+            value = sample.value
+            if name == 'cpi_messages_total':
+                key = (labels.get('direction', 'unknown'), labels.get('status', 'unknown'))
+                messages[key] = messages.get(key, 0.0) + value
+            elif name == 'cpi_llm_calls_total':
+                status = labels.get('status', 'unknown')
+                llm[status] = llm.get(status, 0.0) + value
+            elif name == 'cpi_outbound_dlq_total':
+                dlq_total += value
+                code = labels.get('error_code', 'unknown')
+                dlq_by_code[code] = dlq_by_code.get(code, 0.0) + value
+            elif name == 'cpi_circuit_breaker_state':
+                breakers[labels.get('provider', 'unknown')] = value
+            elif name == 'cpi_worker_queue_depth':
+                workers[labels.get('worker', 'unknown')] = value
+            elif name == 'cpi_response_latency_seconds_bucket':
+                le = labels.get('le', '+Inf')
+                latency_buckets[le] = latency_buckets.get(le, 0.0) + value
+            elif name == 'cpi_response_latency_seconds_sum':
+                latency_sum += value
+            elif name == 'cpi_response_latency_seconds_count':
+                latency_count += value
+
+    cumulative = sorted(
+        ((_le_value(le), count) for le, count in latency_buckets.items()),
+        key=lambda kv: kv[0],
+    )
+
+    inbound = sum(v for (direction, _s), v in messages.items() if direction == 'inbound')
+    outbound = sum(v for (direction, _s), v in messages.items() if direction == 'outbound')
+    outbound_failed = sum(
+        v for (direction, status), v in messages.items()
+        if direction == 'outbound' and status in ('failed', 'rejected')
+    )
+
+    llm_total = sum(llm.values())
+    llm_success = llm.get('success', 0.0)
+
+    return {
+        'messages': {
+            'inbound': int(inbound),
+            'outbound': int(outbound),
+            'outbound_failed': int(outbound_failed),
+            'outbound_error_rate': (outbound_failed / outbound) if outbound else 0.0,
+        },
+        'response_latency': {
+            'p50': _histogram_quantile(cumulative, 0.50),
+            'p95': _histogram_quantile(cumulative, 0.95),
+            'p99': _histogram_quantile(cumulative, 0.99),
+            'count': int(latency_count),
+            'avg': (latency_sum / latency_count) if latency_count else None,
+        },
+        'llm_calls': {
+            'total': int(llm_total),
+            'success': int(llm_success),
+            'success_rate': (llm_success / llm_total) if llm_total else None,
+            'by_status': {k: int(v) for k, v in sorted(llm.items())},
+        },
+        'circuit_breakers': [
+            {
+                'provider': provider,
+                'state': _CB_STATE_LABELS.get(int(value), 'unknown'),
+                'state_value': int(value),
+            }
+            for provider, value in sorted(breakers.items())
+        ],
+        'workers': [
+            {'worker': worker, 'queue_depth': int(value)}
+            for worker, value in sorted(workers.items())
+        ],
+        'outbound_dlq': {
+            'total': int(dlq_total),
+            'by_error_code': {k: int(v) for k, v in sorted(dlq_by_code.items())},
+        },
+    }
+
+
+def evaluate_health_alerts(snapshot: dict) -> list[dict]:
+    """Deriva alertas activas puntuales desde el snapshot de salud.
+
+    Los umbrales reproducen `infra/observability/alerts.yaml`, pero se evalúan
+    contra el snapshot puntual — NO contra una ventana `rate()[5m]`. Es una
+    aproximación para mostrar estado obviamente degradado en la UI; la SLA real
+    de alertas vive en Prometheus + Alertmanager (TASK-0060).
+    """
+    alerts: list[dict] = []
+
+    latency_p95 = snapshot['response_latency']['p95']
+    if latency_p95 is not None and latency_p95 > 5.0:
+        alerts.append({
+            'name': 'BotResponseLatencyP95High',
+            'severity': 'page',
+            'summary': 'Latencia P95 del bot > 5s sostenida.',
+            'runbook_url': 'docs/runbooks/postgres-down.md',
+        })
+
+    error_rate = snapshot['messages']['outbound_error_rate']
+    if error_rate > 0.05:
+        alerts.append({
+            'name': 'HighOutboundErrorRate',
+            'severity': 'page',
+            'summary': 'Más del 5% de mensajes outbound están fallando.',
+            'runbook_url': 'docs/runbooks/rate-limit-meta-hit.md',
+        })
+
+    for worker in snapshot['workers']:
+        if worker['queue_depth'] > 1000:
+            alerts.append({
+                'name': 'WorkerQueueBacklog',
+                'severity': 'page',
+                'summary': f"Cola del worker {worker['worker']} > 1000 elementos.",
+                'runbook_url': 'docs/runbooks/worker-queue-backlog.md',
+            })
+
+    for breaker in snapshot['circuit_breakers']:
+        if breaker['state_value'] >= 2:
+            alerts.append({
+                'name': 'CircuitBreakerOpenSustained',
+                'severity': 'page',
+                'summary': f"Circuit breaker {breaker['provider']} OPEN.",
+                'runbook_url': 'docs/runbooks/circuit-breaker-open-sustained.md',
+            })
+
+    return alerts
+
+
 def render_latest() -> tuple[bytes, str]:
     """Devuelve (payload, content_type) listo para servir desde el endpoint /metrics."""
     return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
