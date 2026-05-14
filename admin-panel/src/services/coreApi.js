@@ -92,6 +92,18 @@ export function createTenant(session, payload) {
   return request('/tenant-signup', { method: 'POST', session, body: payload });
 }
 
+export function listFleetTenants(session, { status, country, vertical, search, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (country) params.set('country', country);
+  if (vertical) params.set('vertical', vertical);
+  if (search) params.set('search', search);
+  if (limit !== undefined && limit !== null) params.set('limit', String(limit));
+  if (offset !== undefined && offset !== null) params.set('offset', String(offset));
+  const qs = params.toString();
+  return request(`/tenants${qs ? `?${qs}` : ''}`, { session });
+}
+
 export function getTenant(session, tenantId) {
   return request(`/tenants/${tenantId}`, { session, tenantId });
 }

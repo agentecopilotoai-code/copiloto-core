@@ -1,3 +1,4 @@
+import { FleetTenants } from '../features/platform/fleet-tenants/index.js';
 import { AnalyticsPanel } from '../components/modules/analytics/AnalyticsPanel.jsx';
 import { AuditPanel } from '../components/modules/audit/AuditPanel.jsx';
 import { BranchesModule } from '../components/modules/branches/BranchesModule.jsx';
@@ -34,6 +35,7 @@ import { WhatsAppOnboarding } from '../components/modules/whatsapp/WhatsAppOnboa
  * @type {Record<string, { Component: Function, capability: string|null, mode?: 'R'|'RW' }>}
  */
 export const MODULE_REGISTRY = Object.freeze({
+  'platform-fleet': { Component: FleetTenants, capability: 'platform.tenants.read' },
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
   'onboarding-wizard': { Component: OnboardingWizard, capability: 'onboarding.run', mode: 'RW' },
   services: { Component: ServiceCatalog, capability: 'services.read' },
