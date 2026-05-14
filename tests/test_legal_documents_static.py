@@ -35,7 +35,12 @@ ROUTES = Path('app/api/v1/routes.py')
 CONSENT = Path('app/services/consent.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
-LEGAL_MODULE = Path('admin-panel/src/components/modules/legal/LegalModule.jsx')
+# UI-007.14: the LegalModule was redesigned into a feature directory.
+LEGAL_FEATURE = Path('admin-panel/src/features/owner-admin/legal')
+
+
+def _legal_feature_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(LEGAL_FEATURE.rglob('*.js*')))
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 
 
@@ -244,7 +249,7 @@ def test_core_api_exposes_legal_client_functions():
 
 
 def test_legal_module_renders_preview_with_safe_html_helper():
-    src = LEGAL_MODULE.read_text()
+    src = _legal_feature_source()
     # The preview uses a local Markdown subset renderer; ensure it escapes HTML
     # before applying transformations (mirrors the backend renderer).
     assert 'function escapeHtml' in src

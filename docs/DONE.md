@@ -15,6 +15,45 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.14 — Config · Legal (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** rediseño del módulo `LegalModule.jsx` (356 LOC) en una feature bajo `src/features/owner-admin/legal/`, aplicando el mockup `22 _ Config _ Legal.html`. **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/legal/` (nuevo, 8 archivos):**
+    - `legalData.js` (helper puro): `KIND_LABELS`, `KIND_ORDER`, `emptyDraft`, `escapeHtml`, `renderInline`, `renderPreview` (renderer de subset Markdown seguro, espejo del backend), `groupByKind`, `publishedByKind`, `docStatusLabel`/`docStatusTone`.
+    - `hooks/useLegalData.js`: capa de datos — documentos + form de borrador + agrupación por kind + versión publicada vigente + handlers (`saveDraft`, `publish` con `window.confirm` nativo, `refresh`), portados verbatim del legacy.
+    - `LegalModule.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="legal.write" mode="RW">` + `PageHeader` + `AlertBanner` para error/info + composición de los tres paneles.
+    - `components/PublishedDocuments.jsx`: versión publicada vigente por kind + badge de versión + enlace a la URL pública.
+    - `components/MarkdownEditor.jsx`: editor side-by-side (campos kind/idioma/título + textarea Markdown + preview en vivo). El preview usa `dangerouslySetInnerHTML` **solo** sobre HTML escapado por `renderPreview`.
+    - `components/VersionHistory.jsx`: historial append-only por kind (reusa `DataTable`) con badge de estado y acción Publicar en versiones no publicadas.
+    - `LegalModule.module.css` (~190 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/legal/` → 0 resultados.
+    - `index.js` (barrel) + `legalData.test.js` (6 tests) + `LegalModule.test.jsx` (3 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'legal'` ahora importa la `LegalModule` de la feature; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/legal/LegalModule.jsx` (356 LOC) y su carpeta.
+  - **Backend — test estático legacy actualizado:** `test_legal_documents_static.py` tenía hardcodeada la ruta `components/modules/legal/LegalModule.jsx`. Se actualizó para leer el feature dir nuevo combinando todos sus `.js*`. Los literales que verifica (`function escapeHtml`, `function renderPreview`, `dangerouslySetInnerHTML`, las regex de esquemas `https?:\/\/` y `mailto:`) se preservaron en los archivos nuevos. El otro test (`test_admin_panel_registers_legal_module`) sigue verde: el componente conserva el nombre `LegalModule` en el registry.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/legal/{LegalModule.jsx,LegalModule.module.css,LegalModule.test.jsx,legalData.js,legalData.test.js,index.js,hooks/useLegalData.js,components/{PublishedDocuments,MarkdownEditor,VersionHistory}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `legal → LegalModule` de la feature, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/legal/LegalModule.jsx`.
+  - `tests/test_legal_documents_static.py` (ruta actualizada al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.14 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (9 nuevos: 6 legalData + 3 LegalModule). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.1-13. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_legal_documents_static.py` → passed.
+  - `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizó una ruta en un test estático de backend.
+  - La lógica de las mutaciones se portó verbatim: `createLegalDocumentDraft`/`publishLegalDocument` siguen pegando a los mismos endpoints `tenant_admin_router`, autenticados y tenant-scoped server-side; el versionado append-only y el archivado de la versión anterior los hace el backend. **El preview de Markdown mantiene la sanitización defensiva**: `escapeHtml` escapa todo el input antes de aplicar el subset Markdown, y `renderInline` solo acepta esquemas `http(s)`/`mailto` en los enlaces — `dangerouslySetInnerHTML` nunca recibe HTML del usuario sin escapar. La entrada de módulo se gateó con `<RequirePermission capability="legal.write" mode="RW">`; el backend reverifica.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` preservado.** El legacy usaba `window.confirm` antes de publicar una versión; el rediseño lo preservó (mantener lógica). UI-011 (`ConfirmDialog`) lo barrerá.
+  - Próxima tarea `PENDING` real: **UI-007.15 — Config · Auditoría** (rediseño de `AuditPanel.jsx`).
+
+---
+
 ### UI-007.13 — Config · Equipo (Owner / Admin)
 
 - **Fecha:** 2026-05-14

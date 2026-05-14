@@ -1,0 +1,184 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+/* ── published documents ──────────────────────────────────────────────────── */
+
+.publishedList {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.publishedRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.publishedRow:last-child {
+  border-bottom: none;
+}
+
+.publishedMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.publishedMeta {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.publishedSide {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.publicLink {
+  color: var(--accent);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  text-decoration: none;
+}
+
+.publicLink:hover {
+  text-decoration: underline;
+}
+
+/* ── editor ───────────────────────────────────────────────────────────────── */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.editorGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+@media (max-width: 900px) {
+  .editorGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.previewPane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.previewLabel {
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  color: var(--ink-2);
+}
+
+.preview {
+  flex: 1;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-alt);
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  overflow-y: auto;
+}
+
+.preview :global(h1),
+.preview :global(h2),
+.preview :global(h3),
+.preview :global(h4) {
+  color: var(--ink);
+  margin: var(--space-3) 0 var(--space-2);
+}
+
+.preview :global(a) {
+  color: var(--accent);
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ── version history ──────────────────────────────────────────────────────── */
+
+.historyGroup {
+  margin-top: var(--space-4);
+}
+
+.historyTitle {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-body);
+  color: var(--ink);
+}
+
+/* ── buttons ──────────────────────────────────────────────────────────────── */
+
+.primaryButton {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--panel);
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--accent-ink);
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--bg-deep);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
