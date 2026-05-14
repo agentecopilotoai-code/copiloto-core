@@ -15,6 +15,44 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.10 — IA · Knowledge Studio (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** refactor del módulo `KnowledgeStudio.jsx` (486 LOC) en una feature bajo `src/features/owner-admin/knowledge-studio/`, aplicando el mockup `18 _ IA _ Knowledge Studio.html` y el split pedido por el backlog (`DocumentsTable` + `DocumentUploader` + `DocumentDetailDrawer` + `RagSmokeTest`). **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/knowledge-studio/` (nuevo, 10 archivos):**
+    - `knowledgeStudioData.js` (helper puro): `EMPTY_FORM`/`EMPTY_UPLOAD_FORM`, `STATUS_LABELS`/`STATUS_TONE`, catálogos de opciones (tipo/fuente/visibilidad/estado), `formFromDocument`, `buildPayload`, `embeddingProviderBadge`, `extractionStatusBadge`, `isAwaitingExtraction`, `formatDate`, `documentSummary`, `hasLocalHashActive` — extraídos del monolito, testeables sin React.
+    - `hooks/useKnowledgeStudioData.js`: capa de datos — documentos + filtros estado/visibilidad + form editor + form upload + estado del RAG tester + handlers (`submit`, `changeStatus`, `runIndexing`, `removeDocument`, `upload`, `evaluateRetrieval`, `open*/close*`), portados verbatim del legacy.
+    - `KnowledgeStudio.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="knowledge.read">` + `PageHeader` con CTAs «Test RAG» / «Subir documento» + `AlertBanner` para el aviso `local_hash` y para notices + composición de la tabla y los tres `Modal`.
+    - `components/DocumentsTable.jsx`: tabla de documentos (reusa `DataTable`) con filtros estado/visibilidad, badges de estado/extracción/embedding y acciones por fila (cambiar estado, indexar, editar, eliminar).
+    - `components/DocumentUploader.jsx`: `Modal` de carga de archivos (TXT/MD/CSV/JSON extraen al instante; PDF/DOCX en background).
+    - `components/DocumentDetailDrawer.jsx`: `Modal` de alta/edición de documento (título, tipo, fuente, visibilidad, estado, contenido, URI, MIME, checksum); `active` no es seleccionable (solo se llega por indexado).
+    - `components/RagSmokeTest.jsx`: `Modal` que consume `POST /v1/intents/evaluate` y muestra intención + confianza + capa + respuesta + chunks recuperados.
+    - `KnowledgeStudio.module.css` (~210 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/knowledge-studio/` → 0 resultados.
+    - `index.js` (barrel) + `knowledgeStudioData.test.js` (6 tests) + `KnowledgeStudio.test.jsx` (5 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'knowledge-studio'` ahora importa la `KnowledgeStudio` de la feature; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx` (486 LOC) y su carpeta.
+  - **Backend:** sin cambios — ningún test estático apuntaba al módulo legacy.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/knowledge-studio/{KnowledgeStudio.jsx,KnowledgeStudio.module.css,KnowledgeStudio.test.jsx,knowledgeStudioData.js,knowledgeStudioData.test.js,index.js,hooks/useKnowledgeStudioData.js,components/{DocumentsTable,DocumentUploader,DocumentDetailDrawer,RagSmokeTest}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `knowledge-studio → KnowledgeStudio` de la feature, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/knowledge/KnowledgeStudio.jsx`.
+  - `docs/UI_BACKLOG.md` (UI-007.10 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (11 nuevos: 6 knowledgeStudioData + 5 KnowledgeStudio). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.1-9. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia, ni ningún test de backend.
+  - La lógica de las mutaciones se portó verbatim: `createKnowledgeDocument`/`updateKnowledgeDocument`/`deleteKnowledgeDocument`/`indexKnowledgeDocument`/`uploadKnowledgeDocument`/`evaluateIntent` siguen pegando a los mismos endpoints, autenticados y tenant-scoped server-side con RLS. El toggle «Solo agentes» del RAG tester sigue siendo una vista interna que nunca se envía al cliente final. La entrada de módulo se gateó con `<RequirePermission capability="knowledge.read">` como defensa en profundidad; el backend reverifica.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` en el borrado de documentos.** El rediseño añadió un `window.confirm` antes de eliminar un documento (el legacy borraba sin confirmar); se mantiene la dependencia nativa hasta que UI-011 (`ConfirmDialog`) la barra.
+  - **Diferencia intencional declarada: la card «Storage» del HTML (backend S3, bucket/prefix, nº de documentos, tamaño) no se incluye** — pertenece al módulo separado `knowledge-storage` (UI ya existente) y no se duplica aquí.
+  - Próxima tarea `PENDING` real: **UI-007.11 — IA · Medios y promociones** (refactor de `MediaLibraryModule.jsx`, 546 LOC — split en `MediaGrid` + `MediaUploader` + `PromotionFormDrawer`).
+
+---
+
 ### UI-007.9 — Canales · Instagram / Messenger (Owner / Admin)
 
 - **Fecha:** 2026-05-14
