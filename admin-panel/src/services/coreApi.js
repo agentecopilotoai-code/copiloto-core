@@ -125,6 +125,21 @@ export function getPlatformIncidents(session, { status, kind, limit } = {}) {
   return request(`/platform/incidents${qs ? `?${qs}` : ''}`, { session });
 }
 
+export function getPlatformOutboundDlq(session, { windowMinutes, tenantId, errorCode } = {}) {
+  const params = new URLSearchParams();
+  if (windowMinutes !== undefined && windowMinutes !== null) {
+    params.set('window_minutes', String(windowMinutes));
+  }
+  if (tenantId) params.set('tenant_id', tenantId);
+  if (errorCode) params.set('error_code', errorCode);
+  const qs = params.toString();
+  return request(`/platform/outbound-dlq${qs ? `?${qs}` : ''}`, { session });
+}
+
+export function retryPlatformOutboundDlq(session, payload) {
+  return request('/platform/outbound-dlq/retry', { method: 'POST', session, body: payload });
+}
+
 export function updateTenant(session, tenantId, payload) {
   return request(`/tenants/${tenantId}`, {
     method: 'PATCH',
