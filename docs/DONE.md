@@ -15,6 +15,46 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.15 — Config · Auditoría (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** rediseño del módulo `AuditPanel.jsx` (255 LOC) en una feature bajo `src/features/owner-admin/audit/`, aplicando el mockup `23 _ Config _ Auditoría.html`. **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/audit/` (nuevo, 8 archivos):**
+    - `auditData.js` (helper puro): `ACTOR_TYPE_OPTIONS`, `emptyFilters`, `buildFilterPayload` (mapeo filtros → payload del API, con/sin límite), `formatDate`, `DPA_POLICY` (resumen estático del DPA).
+    - `hooks/useAuditData.js`: capa de datos — query de logs + filtros densos + UUID de supresión + handlers (`loadLogs`, `exportCsv`, `suppressContact` con `window.confirm` nativo, `exportTenantData`), portados verbatim del legacy.
+    - `AuditPanel.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="audit.read">` + `PageHeader` + `AlertBanner` para notices + composición de los tres paneles.
+    - `components/AuditFilters.jsx`: form denso de filtros (acción, tipo de actor, tipo de entidad, rango de fechas, límite) + acciones Consultar / Exportar CSV.
+    - `components/AuditTable.jsx`: tabla de resultados (reusa `DataTable`); no se renderiza hasta la primera query (`data-testid="audit-table"`).
+    - `components/PrivacyTools.jsx`: supresión de contacto GDPR (`data-testid="danger-action"`) + export de datos del tenant + resumen read-only del DPA.
+    - `AuditPanel.module.css` (~140 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/audit/` → 0 resultados.
+    - `index.js` (barrel) + `auditData.test.js` (5 tests) + `AuditPanel.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'audit'` ahora importa la `AuditPanel` de la feature; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/audit/AuditPanel.jsx` (255 LOC) y su carpeta.
+  - **Backend — test estático legacy actualizado:** `test_audit_privacy_static.py` tenía hardcodeada la ruta `components/modules/audit/AuditPanel.jsx`. Se actualizó para leer el feature dir nuevo combinando todos sus `.js*` (y `AUDIT_FEATURE.exists()` reemplaza el `.exists()` del archivo). Los literales que verifica (`export function AuditPanel`, `audit-table`, `listAuditLogsFiltered`, `exportAuditLogs`, `suppressContact`, `handleSuppressContact`, `danger-action`, `confirm`, `exportTenantData`, `handleExportTenantData`, `no_train`, `DPA`) se preservaron en los archivos nuevos. Los tests de `moduleRegistry` siguen verdes: el componente conserva el nombre `AuditPanel`.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/audit/{AuditPanel.jsx,AuditPanel.module.css,AuditPanel.test.jsx,auditData.js,auditData.test.js,index.js,hooks/useAuditData.js,components/{AuditFilters,AuditTable,PrivacyTools}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `audit → AuditPanel` de la feature, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/audit/AuditPanel.jsx`.
+  - `tests/test_audit_privacy_static.py` (ruta actualizada al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.15 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (9 nuevos: 5 auditData + 4 AuditPanel). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.1-14. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_audit_privacy_static.py` → passed.
+  - `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizó una ruta en un test estático de backend.
+  - La lógica de las mutaciones se portó verbatim: `listAuditLogsFiltered`/`exportAuditLogs`/`exportTenantData`/`suppressContact` siguen pegando a los mismos endpoints, autenticados y tenant-scoped server-side. La supresión de contacto sigue siendo irreversible y exige `window.confirm` antes de ejecutar; el evento queda en el registro inmutable de auditoría. La entrada de módulo se gateó con `<RequirePermission capability="audit.read">`; el backend reverifica.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` preservado.** El legacy usaba `window.confirm` antes de suprimir un contacto; el rediseño lo preservó (mantener lógica). UI-011 (`ConfirmDialog`) lo barrerá.
+  - **Diferencia intencional declarada: el sidebar de conteos por categoría y las columnas «Cambio» / «IP/SDK» del HTML no se incluyen.** `listAuditLogsFiltered` no expone esos agregados/campos; se difieren. La tabla muestra los campos reales del endpoint (fecha, actor, acción, entidad, ID de entidad) — no se fabrican datos.
+  - **UI-007 (Owner/Admin) completo.** Con UI-007.15 cierran las 15 subtareas de UI-007. Próxima tarea `PENDING` real: **UI-008.1 — Manager · Analítica** (primera subtarea del bloque Manager).
+
+---
+
 ### UI-007.14 — Config · Legal (Owner / Admin)
 
 - **Fecha:** 2026-05-14
