@@ -15,6 +15,47 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-007.11 — IA · Medios y promociones (Owner / Admin)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** refactor del módulo `MediaLibraryModule.jsx` (546 LOC) en una feature bajo `src/features/owner-admin/media-library/`, aplicando el mockup `19 _ IA _ Medios y promociones.html` y el split pedido por el backlog (`MediaGrid` + `MediaUploader` + `PromotionFormDrawer`, más `PromotionsList` para el listado). **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/owner-admin/media-library/` (nuevo, 10 archivos):**
+    - `mediaLibraryData.js` (helper puro): `MEDIA_KIND_LABELS`, `SIZE_LIMITS_MB`, `MEDIA_ACCEPT`, `PROMO_MEDIA_KINDS`, `inferKindFromFile`, `validateUploadFile` (límite de tamaño por tipo), `labelFromFileName`, `emptyUploadForm`/`emptyPromoForm`, `promoFormFromPromotion`, `parseTags`, `buildPromoPayload` (con validación: nombre requerido), `formatBytes`.
+    - `hooks/useMediaLibraryData.js`: capa de datos — assets + promociones + servicios + mapas de lookup + form upload + form promo + handlers (`upload`, `deleteAsset`, `editAssetTags`, `submitPromo`, `removePromo`, `pickFile`, `open*/close*`), portados verbatim del legacy.
+    - `MediaLibraryModule.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="media.write" mode="RW">` + `PageHeader` con CTAs «Nueva promoción» / «Subir medio» + composición del grid, la lista y los dos `Modal`.
+    - `components/MediaGrid.jsx`: grid de assets (`Card` por archivo) con buscador client-side por etiqueta/descripción/tag.
+    - `components/MediaUploader.jsx`: `Modal` de carga (inferencia de `kind` por mime + validación de tamaño en el hook al elegir archivo).
+    - `components/PromotionFormDrawer.jsx`: `Modal` de alta/edición de promoción (nombre, descripción, medio asociado, servicios, vigencia, cupón, descuento, activa).
+    - `components/PromotionsList.jsx`: lista de promociones con badge de estado, medio asociado y servicios.
+    - `MediaLibraryModule.module.css` (~240 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/owner-admin/media-library/` → 0 resultados.
+    - `index.js` (barrel) + `mediaLibraryData.test.js` (7 tests) + `MediaLibraryModule.test.jsx` (5 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'media-library'` ahora importa la `MediaLibraryModule` de la feature; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/media/MediaLibraryModule.jsx` (546 LOC) y su carpeta.
+  - **Backend — test estático legacy actualizado:** `test_media_promotions_static.py` tenía hardcodeada la ruta `components/modules/media/MediaLibraryModule.jsx`. Se actualizó para leer el feature dir nuevo combinando todos sus `.js*`. Los literales que verifica (`uploadMediaAsset`, `createPromotion`, `updatePromotion`, `applies_to_service_ids`, `Imagen 5MB`, `image/jpeg`, `video/mp4`) se preservaron en los archivos nuevos. El otro test (`test_admin_layout_routes_media_library`) sigue verde: el componente conserva el nombre `MediaLibraryModule` en el registry.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/owner-admin/media-library/{MediaLibraryModule.jsx,MediaLibraryModule.module.css,MediaLibraryModule.test.jsx,mediaLibraryData.js,mediaLibraryData.test.js,index.js,hooks/useMediaLibraryData.js,components/{MediaGrid,MediaUploader,PromotionFormDrawer,PromotionsList}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `media-library → MediaLibraryModule` de la feature, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/media/MediaLibraryModule.jsx`.
+  - `tests/test_media_promotions_static.py` (ruta actualizada al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-007.11 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (12 nuevos: 7 mediaLibraryData + 5 MediaLibraryModule). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.1-10. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_media_promotions_static.py` → passed.
+  - `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizó una ruta en un test estático de backend.
+  - La lógica de las mutaciones se portó verbatim: `uploadMediaAsset`/`updateMediaAsset`/`deleteMediaAsset`/`createPromotion`/`updatePromotion`/`deletePromotion` siguen pegando a los mismos endpoints `tenant_admin_router`, autenticados y tenant-scoped server-side con RLS. La validación de mime/tamaño del cliente es solo UX; el backend reaplica `MEDIA_MIME_ALLOWLIST` y `MEDIA_SIZE_LIMITS_BYTES`. La entrada de módulo se gateó con `<RequirePermission capability="media.write" mode="RW">` como defensa en profundidad; el backend reverifica.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` / `window.prompt` preservados.** El legacy usaba `window.confirm` antes de borrar un asset/promoción y `window.prompt` para editar tags; el rediseño los preservó (mantener lógica). UI-011 (`ConfirmDialog`) los barrerá.
+  - **Diferencia intencional declarada: la card «Resumen del bucket» del HTML (nº de archivos, tamaño total, envíos 30 d, más usado) y el contador «usos» por asset no se incluyen.** Los endpoints de medios no exponen esos agregados; se difieren. El grid muestra los datos reales del endpoint (etiqueta, tipo, tamaño, tags, descripción) — no se fabrican datos.
+  - Próxima tarea `PENDING` real: **UI-007.12 — CRM · Contactos** (refactor de `ConversationsContacts` / `ContactsModule`, ver backlog).
+
+---
+
 ### UI-007.10 — IA · Knowledge Studio (Owner / Admin)
 
 - **Fecha:** 2026-05-14

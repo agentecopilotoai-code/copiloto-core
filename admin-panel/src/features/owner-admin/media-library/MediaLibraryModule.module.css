@@ -1,0 +1,238 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.search {
+  font: inherit;
+  font-size: var(--fs-small);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--ink-2);
+  min-width: 220px;
+}
+
+/* ── media grid ───────────────────────────────────────────────────────────── */
+
+.mediaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.mediaCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel-alt);
+}
+
+.mediaCardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.mediaMeta {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.mediaDesc {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted-2);
+}
+
+.tagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.cardActions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* ── promotions list ──────────────────────────────────────────────────────── */
+
+.promoList {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.promoItem {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.promoItem:last-child {
+  border-bottom: none;
+}
+
+.promoMain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.promoTitleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.promoDiscount {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.promoMeta {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ── forms / modals ───────────────────────────────────────────────────────── */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+}
+
+.multiSelect {
+  min-height: 6rem;
+}
+
+/* ── buttons ──────────────────────────────────────────────────────────────── */
+
+.primaryButton {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--panel);
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--accent-ink);
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--bg-deep);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dangerButton {
+  background: transparent;
+  border: 1px solid var(--danger);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--danger);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.dangerButton:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.dangerButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

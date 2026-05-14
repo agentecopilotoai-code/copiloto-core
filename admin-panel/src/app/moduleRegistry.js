@@ -20,7 +20,7 @@ import { CampaignsModule } from '../components/modules/campaigns/CampaignsModule
 import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage/KnowledgeStorageSettings.jsx';
 import { KnowledgeStudio } from '../features/owner-admin/knowledge-studio/index.js';
 import { LegalModule } from '../components/modules/legal/LegalModule.jsx';
-import { MediaLibraryModule } from '../components/modules/media/MediaLibraryModule.jsx';
+import { MediaLibraryModule } from '../features/owner-admin/media-library/index.js';
 import { OperationsDesk } from '../components/modules/operations/OperationsDesk.jsx';
 import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
 import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness.jsx';
