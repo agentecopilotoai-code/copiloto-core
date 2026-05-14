@@ -1,0 +1,71 @@
+.tile {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-4);
+}
+
+.head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.label {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.icon {
+  color: var(--muted-2);
+  display: inline-flex;
+}
+
+.value {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+  line-height: var(--lh-tight);
+}
+
+.delta {
+  align-items: center;
+  display: inline-flex;
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  gap: var(--space-1);
+}
+
+.delta--up {
+  color: var(--ok);
+}
+
+.delta--down {
+  color: var(--danger);
+}
+
+.delta--flat {
+  color: var(--muted);
+}
+
+.deltaArrow {
+  font-size: 10px;
+}
+
+.footnote {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  line-height: var(--lh-snug);
+  margin: 0;
+}

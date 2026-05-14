@@ -15,6 +15,49 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-001 — Design system: tokens y primitivas UI
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** levantar la capa base de UI (tokens + primitivas reutilizables + tests) que será consumida por las features `UI-006..UI-010`. Sin esta capa los rediseños duplican markup y CSS, y el `global.css` legacy (2462 líneas) sigue sin un reemplazo válido.
+- **Cambios realizados:**
+  - **`admin-panel/src/styles/tokens.css`** (nuevo): bloque `:root` completo extraído de `docs/HTML DESIGN/Platform Owner/01 _ Fleet _ Tenants.html` (sección 0.bis.2 del backlog). Incluye paleta beige + OKLCH (accent / ok / warn / danger), radios `--r-xs..--r-xl`, sombras `--shadow-sm/md`, fuentes Inter / JetBrains Mono, escala tipográfica (`--fs-caption`..`--fs-h1`), escala de espaciado `--space-0..--space-9`, z-index, y transiciones. Es la fuente de verdad — ningún componente declara `#hex` u `oklch()` literal.
+  - **`admin-panel/src/components/ui/`** (nuevo): 12 primitivas, cada una con su `*.module.css` y JSDoc:
+    - `Button` (variants primary/secondary/ghost/danger, sizes sm/md/lg, loading, leading/trailing icon, focus ring).
+    - `Card` + `CardHeader` + `CardBody` + `CardFooter` (tones flat/raised/alt, padding sm/md/lg, interactive).
+    - `DataTable` (columnas con `sortable`/`align`/`accessor`, `aria-sort`, fila clickeable con teclado, empty state integrado, modo `dense`, scroll horizontal).
+    - `EmptyState` (icon + título + descripción + acción).
+    - `FormField` (label asociada por `id`, hint/error con `aria-describedby`, `aria-invalid`, soporte de control custom o input nativo).
+    - `KpiTile` (label / value / delta con trend up/down/flat, footnote, icon).
+    - `Modal` (backdrop dismiss, cierre con `Esc`, bloquea scroll del body, `role="dialog"` + `aria-modal`).
+    - `PageHeader` (eyebrow + title + description + actions + meta; layout responsive a < 720 px).
+    - `Pagination` (ventana con elipsis, `aria-current`, `aria-label` por botón).
+    - `StatusBadge` (tones neutral/accent/success/warning/danger, variants soft/solid/outline, fallback a neutral si la tone es inválida).
+    - `Tabs` (uncontrolled + controlled, variants underline/pill, `role="tablist"`/`role="tab"`/`role="tabpanel"` con `aria-controls`/`aria-selected`).
+    - `Toast` + `ToastProvider` + `useToast` (queue con timeout configurable, tones neutral/success/warning/danger, dismiss manual, `aria-live="polite"`).
+    - `index.js` barrel exporta todas las primitivas.
+  - **`admin-panel/src/main.jsx`:** importa `tokens.css` antes de `global.css` para que las variables estén disponibles en toda la app. El `global.css` legacy se conserva para los módulos viejos hasta que migren en UI-006..UI-010.
+  - **Testing (`vitest` + `@testing-library/react` + `jsdom`):**
+    - `admin-panel/vitest.config.js` + `admin-panel/vitest.setup.js` (carga `@testing-library/jest-dom`).
+    - `admin-panel/package.json`: nuevos scripts `test` (vitest run) y `test:watch`; dev-deps `vitest`, `@testing-library/react`, `@testing-library/user-event`, `@testing-library/jest-dom`, `jsdom`.
+    - Un archivo `*.test.jsx` por primitiva en `src/components/ui/` (12 suites, 32 tests). Cubren: render, interacción (click, keyboard, sort, dismiss), comportamiento accesible (`aria-invalid`, `aria-sort`, `role="dialog"`, `aria-current`).
+- **Archivos modificados / creados:**
+  - `admin-panel/package.json` (deps + scripts).
+  - `admin-panel/vitest.config.js`, `admin-panel/vitest.setup.js` (nuevos).
+  - `admin-panel/src/main.jsx` (import de `tokens.css`).
+  - `admin-panel/src/styles/tokens.css` (nuevo).
+  - `admin-panel/src/components/ui/{Button,Card,DataTable,EmptyState,FormField,KpiTile,Modal,PageHeader,Pagination,StatusBadge,Tabs,Toast}.{jsx,module.css,test.jsx}` (36 archivos nuevos) + `index.js`.
+  - `docs/UI_BACKLOG.md` (status UI-001 → DONE), `docs/DONE.md` (esta entrada).
+- **Validación:**
+  - `npm run lint` → sin errores.
+  - `npm test` → **12 suites, 32 tests pasan** (Button, Card, DataTable, EmptyState, FormField, KpiTile, Modal, PageHeader, Pagination, StatusBadge, Tabs, Toast).
+  - `npm run build` → vite build OK (1.20s, 502 kB JS / 33.88 kB CSS).
+- **Limitaciones / próximos pasos:**
+  - **`global.css` permanece en 2462 líneas** por ahora. La limpieza completa exige que los módulos legacy (`admin-panel/src/components/modules/`) migren a las primitivas; eso ocurre en UI-006 (Platform Owner), UI-007 (Owner/Admin), UI-008 (Manager), UI-009 (Agent) y UI-010 (Viewer). UI-015 borrará lo que quede.
+  - Las primitivas exponen API mínima pero suficiente para las 36 pantallas auditadas. Cualquier extensión (DataTable con resize de columnas, Toast con acciones, etc.) se introduce en la feature que lo necesite, no antes.
+  - **No se introdujo `react-router-dom`** (eso es UI-003). El layout actual (`AdminLayout`) sigue intacto.
+
+---
+
 ### TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo
 
 - **Fecha:** 2026-05-13
