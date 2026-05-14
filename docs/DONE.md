@@ -15,6 +15,44 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-006.7 — Roles · ACL (Platform Owner)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** séptima vista del rol Platform Owner. Vista read-only en `/platform/platform-roles-acl` de la matriz de permisos de UI-005 (`src/permissions/matrix.js`) renderizada como tabla capacidad × rol, agrupada por dominio. **Tarea frontend-only** — no toca el backend: la matriz ya existe como dato estructurado. La vista respeta el styling del HTML de referencia y reusa primitivas/tokens de UI-001..UI-005.
+- **Cambios realizados:**
+  - **Frontend — `admin-panel/src/features/platform/roles-acl/` (nuevo, 8 archivos):**
+    - `rolesAclData.js` (140 LOC) — helper puro: `categorizeCapability(key)` mapea el dominio de la capability a un grupo (Operación diaria, Análisis y crecimiento, Configuración del negocio, Canales e IA, Administración del tenant, Platform Owner · fleet); `buildMatrixGroups(search)` convierte `PERMISSIONS` en una estructura agrupada y ordenada lista para tabla, con filtro de búsqueda case-insensitive; `countCapabilitiesPerRole()` cuenta capacidades con algún acceso por rol; expone `ACCESS_LABEL`/`ACCESS_TONE`/`ROLE_LABEL`/`GROUP_ORDER`. Pure — testeable sin React.
+    - `RolesAcl.jsx` (62 LOC) — orquesta el estado de búsqueda, memoiza los grupos y los conteos, y envuelve todo en `<RequirePermission capability="platform.roles_acl.read" mode="R">`.
+    - `components/RolesAclMatrix.jsx` (62 LOC) — un `<DataTable>` por grupo con columnas capacidad + 6 roles; cada celda renderiza un `<StatusBadge>` por nivel de acceso (RW/R/parcial/own_only) o `—` cuando es null.
+    - `components/RolesAclFilters.jsx` (40 LOC) — input de búsqueda de capacidad + leyenda de niveles de acceso.
+    - `components/AccessPolicyPanel.jsx` (45 LOC) — panel estático "Política de roles" con las notas del modelo de acceso del servidor (doble chequeo, platform unscoped, anti-hijack, defensa en profundidad) — espejo del panel del HTML.
+    - `RolesAcl.module.css` (118 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/platform/roles-acl/` → 0 resultados (criterio 0.bis.4 del backlog).
+    - `index.js` (barrel) + `rolesAclData.test.js` (4 tests) + `RolesAcl.test.jsx` (4 tests).
+  - **Frontend — wiring:**
+    - `app/moduleRegistry.js`: `'platform-roles-acl'` deja de caer al placeholder y ahora apunta a `RolesAcl` con capability `platform.roles_acl.read`.
+    - `data/modules.js`: nuevo módulo `platform-roles-acl` (el `PLATFORM_NAV` ya lo referenciaba en la sección "Acceso").
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/platform/roles-acl/{RolesAcl.jsx,RolesAcl.module.css,RolesAcl.test.jsx,rolesAclData.js,rolesAclData.test.js,index.js,components/{RolesAclMatrix,RolesAclFilters,AccessPolicyPanel}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `platform-roles-acl → RolesAcl`).
+  - `admin-panel/src/data/modules.js` (módulo `platform-roles-acl`).
+  - `docs/UI_BACKLOG.md` (UI-006.7 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → **36 suites, 157 tests pasan** (8 nuevos de roles-acl). Sigue fallando `src/app/router.test.jsx` (7 tests) por el problema ambiental documentado en UI-002/UI-006.1..6: Node 24 + `undici`/`AbortSignal` choca con `@remix-run/router` v6. **No es regresión**; CI corre Node 20 y no ejecuta vitest.
+  - **Sin cambios de backend** — no se ejecutan `ruff` ni `pytest` (no aplican).
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema, ni dependencia. La autoridad de permisos sigue siendo el backend (JWT + role + RLS por endpoint); esta vista es solo el espejo en UI de la matriz, igual que el resto de los consumidores de `permissions/matrix.js`.
+  - La vista está gateada vía `<RequirePermission capability="platform.roles_acl.read" mode="R">` — la matriz UI-005 ya deniega `platform.roles_acl.read` a todos los roles de tenant, así que un admin tenant-scoped no la ve.
+  - La vista es **estrictamente read-only**: no hay ningún control de escritura. El modo edición que escribiría overrides se difiere explícitamente (ver limitaciones), así que no hay superficie de escritura nueva que asegurar.
+- **Limitaciones / próximos pasos:**
+  - **Modo edición diferido.** El backlog contempla un toggle "modo edición" solo para platform_owner que grabaría en `app.permission_overrides`. Esa tabla no existe en el schema y su creación (tabla + RLS + endpoints + lógica de resolución de overrides sobre la matriz base) es un ticket de backend aparte — el propio backlog lo marca como "requiere ticket backend si no existe". Esta tarea entrega la vista read-only, que es el núcleo del deliverable.
+  - **Divergencia HTML ↔ backlog.** El mockup `07 _ Roles _ ACL.html` muestra asignaciones de rol *por usuario* (usuarios × tenants × MFA × último acceso), que necesitaría un endpoint cross-tenant de usuarios. El texto del backlog (UI-006.7) pide explícitamente "la matriz `permissions/matrix.js` renderizada como tabla por capacidad × rol" — eso es lo que se construyó. Se reusó el styling del HTML (header, paneles, tabla) pero el contenido sigue la definición de la tarea. El panel "Política de roles" del HTML sí se incorporó como contexto compartido.
+  - **Conteos = capacidades, no usuarios.** Los tiles del HTML muestran conteos de *usuarios* por rol (Platform Owner 3, Owner 47…); como no hay endpoint de usuarios cross-tenant, los tiles de esta vista muestran "capacidades con algún acceso por rol" — un dato derivable de la matriz, honesto sobre su fuente.
+  - Próxima tarea `PENDING` real: **UI-006.8 — Feature flags** (lista de flags con estado por tenant, toggle inline con confirmación, auditoría visible — el backlog marca que requiere endpoint backend si no existe, a confirmar con el equipo antes de cablear).
+
+---
+
 ### UI-006.6 — Runbooks (Platform Owner)
 
 - **Fecha:** 2026-05-14

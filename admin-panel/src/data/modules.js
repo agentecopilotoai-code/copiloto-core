@@ -42,6 +42,13 @@ export const adminModules = [
     capability: 'platform.runbooks.read',
   },
   {
+    id: 'platform-roles-acl',
+    label: 'Roles & ACL',
+    summary: 'Vista read-only de la matriz de permisos (UI-005) por capacidad × rol, agrupada por dominio, con búsqueda y panel de política de acceso. UI-006.7.',
+    scope: ['Matriz capacidad × rol', 'Agrupación por dominio', 'Búsqueda de capacidades', 'Panel de política de roles'],
+    capability: 'platform.roles_acl.read',
+  },
+  {
     id: 'tenant-setup',
     label: 'Tenant Setup',
     summary: 'Wizard de configuración general del tenant.',
