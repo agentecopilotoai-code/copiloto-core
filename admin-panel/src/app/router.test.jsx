@@ -99,6 +99,14 @@ describe('router por rol', () => {
     expect(router.state.location.pathname).toBe('/t/acme/read/analytics');
   });
 
+  it('un viewer con deep-link al shell de escritura es redirigido a /read', async () => {
+    // El módulo permite lectura al viewer, pero el shell con CTAs de escritura
+    // no: debe aterrizar en el subárbol read-only conservando el módulo.
+    const router = renderAt('/t/acme/analytics', { tenants: [ACME(['viewer'])] });
+    await screen.findByText('ANALYTICS VIEW');
+    expect(router.state.location.pathname).toBe('/t/acme/read/analytics');
+  });
+
   it('redirect raíz: un platform owner en support_mode entra a la flota', async () => {
     const router = renderAt('/', {
       session: { profile: { sub: 'po', support_mode: true, roles: ['platform_owner'] } },

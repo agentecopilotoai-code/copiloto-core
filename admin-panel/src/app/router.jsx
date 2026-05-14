@@ -228,6 +228,14 @@ function TenantShellRoute() {
 
   const segments = location.pathname.split('/').filter(Boolean); // ['t', slug, moduleId]
   const activeModuleId = segments[2] || permissions.home;
+
+  // Un viewer nunca entra al shell con CTAs de escritura: aunque el módulo
+  // permita lectura (ej. analytics, contacts), se redirige al subárbol
+  // read-only que aplica el chrome de solo lectura y oculta las acciones.
+  if (permissions.role === 'viewer') {
+    return <Navigate to={`/t/${activeTenant.slug}/read/${activeModuleId}`} replace />;
+  }
+
   const activeModule =
     adminModules.find((item) => item.id === activeModuleId) ?? adminModules[0];
 
