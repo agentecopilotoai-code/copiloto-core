@@ -41,6 +41,8 @@ export function TenantShell({
   children,
 }) {
   const navGroups = resolveNav(TENANT_NAV, modules, permissions);
+  const activeTenant =
+    tenantOptions?.find((tenant) => tenant.id === activeTenantId) ?? tenantOptions?.[0] ?? null;
 
   return (
     <div className={styles.shell}>
@@ -62,7 +64,11 @@ export function TenantShell({
         }
       />
       <main className={styles.workspace} id="main-content" tabIndex={-1}>
-        <ShellTopbar eyebrow="Tenant operations" title={activeModule.label} />
+        <ShellTopbar
+          eyebrow="Tenant operations"
+          title={activeModule.label}
+          tenant={activeTenant}
+        />
         <ErrorBoundary>{children}</ErrorBoundary>
       </main>
     </div>

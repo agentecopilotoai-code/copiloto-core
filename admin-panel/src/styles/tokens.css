@@ -4,6 +4,20 @@
  * Fuente de verdad visual: `docs/HTML DESIGN/Platform Owner/01 _ Fleet _ Tenants.html`
  * y consistente con las 36 pantallas auditadas. Ver `docs/UI_BACKLOG.md` sección
  * 0.bis.2. No declarar literales hex / oklch fuera de este archivo.
+ *
+ * UI-012 — Dark mode:
+ *   - `:root` define la paleta light por defecto.
+ *   - `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }`
+ *     respeta el setting del SO cuando el usuario no ha forzado un tema.
+ *   - `:root[data-theme="dark"]` aplica el tema dark explícito (toggle manual,
+ *     `ThemeToggle` lo escribe en `<html data-theme="dark">`).
+ *   - `:root[data-theme="light"]` no necesita reglas extra: hereda el `:root`
+ *     base, y la negación `not([data-theme="light"])` del media query lo deja
+ *     intacto aunque el SO esté en dark.
+ *
+ * Los nombres de tokens son los mismos en light y dark; solo cambian los valores.
+ * Todos los pares fueron escogidos para mantener contraste ≥ AA del texto sobre
+ * fondo (`--ink` sobre `--bg`, `--ink-2` sobre `--panel`, `--muted` sobre `--bg`).
  */
 
 :root {
@@ -103,4 +117,83 @@
   --focus-ring-width:  2px;
   --focus-ring-offset: 2px;
   --focus-ring:        var(--focus-ring-width) solid var(--focus-ring-color);
+}
+
+/* ── Dark mode — modo "auto" (UI-012) ──────────────────────────────────────
+ * Se aplica cuando el SO está en dark y el usuario NO forzó light.
+ * La negación `:not([data-theme="light"])` permite al `ThemeToggle` ganar la
+ * decisión escribiendo `data-theme="light"` en `<html>`.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    /* Colores base — invertidos manteniendo jerarquía: bg < panel < line. */
+    --bg:           #0f1115;
+    --bg-deep:      #181b21;
+    --panel:        #1c1f26;
+    --panel-alt:    #242832;
+    --ink:          #f3f3ef;
+    --ink-2:        #d7d8d1;
+    --muted:        #a0a39c;
+    --muted-2:      #6f736c;
+    --line:         #2f333d;
+    --line-strong:  #3f4450;
+
+    /* Acentos — mismo hue, levantamos lightness para visibilidad sobre fondo
+       oscuro; los `*-soft` se oscurecen para usarse como background. */
+    --accent:       oklch(0.72 0.13 264);
+    --accent-ink:   oklch(0.86 0.10 264);
+    --accent-soft:  oklch(0.30 0.06 264);
+
+    --ok:           oklch(0.72 0.12 165);
+    --ok-soft:      oklch(0.30 0.05 165);
+
+    --warn:         oklch(0.78 0.14 70);
+    --warn-soft:    oklch(0.32 0.06 70);
+
+    --danger:       oklch(0.72 0.18 25);
+    --danger-soft:  oklch(0.32 0.08 25);
+
+    /* Sombras — en dark las sombras casi no se ven; reforzamos con un halo
+       más opaco para preservar profundidad de los paneles. */
+    --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 1px 0 rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* ── Dark mode — modo "explícito" (UI-012) ─────────────────────────────────
+ * El usuario forzó dark vía `ThemeToggle`. Override absoluto, gana sobre el SO.
+ * Valores idénticos al bloque del media query (DRY: copiar es preferible a
+ * `@import` o cascade hackery para no acoplar la decisión a un orden de reglas).
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:           #0f1115;
+  --bg-deep:      #181b21;
+  --panel:        #1c1f26;
+  --panel-alt:    #242832;
+  --ink:          #f3f3ef;
+  --ink-2:        #d7d8d1;
+  --muted:        #a0a39c;
+  --muted-2:      #6f736c;
+  --line:         #2f333d;
+  --line-strong:  #3f4450;
+
+  --accent:       oklch(0.72 0.13 264);
+  --accent-ink:   oklch(0.86 0.10 264);
+  --accent-soft:  oklch(0.30 0.06 264);
+
+  --ok:           oklch(0.72 0.12 165);
+  --ok-soft:      oklch(0.30 0.05 165);
+
+  --warn:         oklch(0.78 0.14 70);
+  --warn-soft:    oklch(0.32 0.06 70);
+
+  --danger:       oklch(0.72 0.18 25);
+  --danger-soft:  oklch(0.32 0.08 25);
+
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 1px 0 rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.55);
 }

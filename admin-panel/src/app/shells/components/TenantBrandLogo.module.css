@@ -1,0 +1,32 @@
+/*
+ * UI-012 — TenantBrandLogo. Versión `<img>` (con `brand_logo_url`) y versión
+ * fallback (iniciales). Ambas mantienen el mismo footprint para no producir
+ * layout shift al pasar de uno al otro.
+ */
+
+.logo,
+.fallback {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--r-md);
+  background: var(--panel-alt);
+  color: var(--accent-ink);
+  font-weight: 800;
+  font-size: var(--fs-caption);
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.logo {
+  object-fit: contain;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 2px;
+}
+
+.fallback {
+  border: 1px solid var(--line);
+  text-transform: uppercase;
+}

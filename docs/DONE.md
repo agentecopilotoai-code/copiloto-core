@@ -15,6 +15,58 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-012 — Theming + dark mode + branding por tenant (opcional)
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar la tarea opcional UI-012 — añadir soporte de **dark mode** y **slot de logo personalizado por tenant** al admin panel, sin bloquear el go-live (el roadmap crítico UI-006..UI-015 ya está cerrado desde UI-015 hoy). Alcance acotado a **frontend-only**: el backend NO se toca en este PR (la columna `brand_logo_url` en `app.tenant_settings` y su allowlist en el PATCH `/tenants/{id}/settings` quedan como follow-up explícito).
+- **Cambios realizados:**
+  - **Tokens dark-mode (`admin-panel/src/styles/tokens.css`):** el archivo solo declaraba la paleta light en `:root`. Se añadieron **dos bloques** que cubren los **18 tokens de color** existentes (10 base — `--bg`, `--bg-deep`, `--panel`, `--panel-alt`, `--ink`, `--ink-2`, `--muted`, `--muted-2`, `--line`, `--line-strong` — más 8 acentos — `--accent`, `--accent-ink`, `--accent-soft`, `--ok`, `--ok-soft`, `--warn`, `--warn-soft`, `--danger`, `--danger-soft`) y **2 tokens de sombra** (`--shadow-sm`, `--shadow-md` con más opacidad para preservar profundidad sobre fondo oscuro):
+    1. `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { ... } }` — modo **auto**: aplica si el SO está en dark y el usuario NO forzó light vía toggle. La negación permite que el setting explícito gane sobre el SO.
+    2. `:root[data-theme="dark"] { ... }` — modo **explícito**: gana en cualquier SO. Los valores son idénticos al bloque anterior (DRY copy en vez de hackery de cascada — el comentario explica por qué).
+    Adicionalmente: `color-scheme: dark` se setea en ambos bloques para que los scrollbars nativos y los form controls del navegador se alineen al tema. La elección de literales hex/oklch se justificó por contraste AA: `--ink` (`#f3f3ef`) sobre `--bg` (`#0f1115`) cumple, `--muted` (`#a0a39c`) sobre `--bg` también, y `--accent` se subió de L=0.46 a L=0.72 para visibilidad sobre dark.
+  - **`ThemeToggle.jsx` + `ThemeToggle.module.css` (`admin-panel/src/app/shells/components/`):** botón compacto tri-estado que vive en el topbar. Contrato:
+    - Estado interno ∈ `{auto, light, dark}` con persistencia en `localStorage[copilotoia:theme]` (constante exportada `THEME_STORAGE_KEY` para tests).
+    - Click cicla `auto → light → dark → auto` (módulo `nextTheme` puro).
+    - En cada cambio: `useEffect` aplica `document.documentElement.dataset.theme = next` (o `delete` si `auto`) y un `persistTheme` escribe en localStorage. Ambos accesos están guardados con `try/catch` para no romper en modo privado / quota exceeded.
+    - SSR-safe: `typeof window === 'undefined'` short-circuit en lecturas y escrituras (no esperamos SSR ahora, pero el guard es trivial).
+    - `aria-label` describe el estado actual y la acción del click ("Tema: claro — clic para cambiar a oscuro").
+  - **`TenantBrandLogo.jsx` + `TenantBrandLogo.module.css` (`admin-panel/src/app/shells/components/`):** lee `tenant?.brand_logo_url`:
+    - Si existe → `<img src={...} alt="Logo de {label}" />`.
+    - Si no → `<span role="img" aria-label="Logo de {label}">{iniciales}</span>` con fallback `display_name || name || slug || "CopilotoIA"`; iniciales generadas strippeando no-alfanuméricos y tomando las 2 primeras letras (igual algoritmo que `TenantSwitcher.tenantInitials`).
+    - Footprint visual idéntico en ambas ramas (2rem × 2rem, border-radius `--r-md`) → no hay layout shift cuando el backend empiece a poblar `brand_logo_url`.
+  - **`ShellTopbar.jsx` (modificado, `admin-panel/src/app/shells/components/`):** ahora recibe `tenant` opcional y renderiza `<TenantBrandLogo tenant={tenant}>` a la izquierda del eyebrow/título; siempre monta `<ThemeToggle/>` al final del slot de acciones (con o sin `actions` extra del shell). El layout del topbar pasa de `space-between` simple a `.topbarLeft` (logo + título) ↔ `.topbarActions` (CTAs + toggle). Compatible con todos los consumidores existentes: el prop `tenant` es opcional, los tests previos del topbar/heading siguen pasando.
+  - **`TenantShell.jsx` / `ReadOnlyShell.jsx` (modificados):** ambos shells ya recibían `tenantOptions` + `activeTenantId`; ahora calculan `activeTenant` (mismo helper que `TenantSwitcher`) y lo pasan a `<ShellTopbar tenant={activeTenant}>`. `PlatformOwnerShell.jsx` queda sin tocar — sus vistas son cross-tenant (Fleet, System Health, etc.), no hay tenant activo para mostrar logo; el `ThemeToggle` aparece igualmente en su topbar via la lógica always-on de `ShellTopbar`.
+  - **`shell.module.css` (modificado):** se añadió `.topbarLeft` (flex row con gap) que envuelve `<TenantBrandLogo>` + `.topbarTitle`; `.topbarTitle` recibe `min-width: 0` para que ellipsis del título funcione con un sibling flex. El layout responsive (`max-width: 800px` y `max-width: 480px`) sigue funcionando porque `.topbar` ya plega a columna en ese viewport.
+  - **`docs/UI_BACKLOG.md`:** UI-012 → `DONE`, con nota explícita del scope (frontend-only) y del follow-up backend.
+- **Archivos modificados / creados:**
+  - **Nuevos (6):** `admin-panel/src/app/shells/components/ThemeToggle.jsx`, `ThemeToggle.module.css`, `ThemeToggle.test.jsx`, `TenantBrandLogo.jsx`, `TenantBrandLogo.module.css`, `TenantBrandLogo.test.jsx`.
+  - **Modificados (6):** `admin-panel/src/styles/tokens.css`, `admin-panel/src/app/shells/components/ShellTopbar.jsx`, `admin-panel/src/app/shells/shell.module.css`, `admin-panel/src/app/shells/TenantShell.jsx`, `admin-panel/src/app/shells/ReadOnlyShell.jsx`, `docs/UI_BACKLOG.md`.
+  - **Docs:** esta entrada en `docs/DONE.md`.
+- **Validación local (Node 24):**
+  - `npm --prefix admin-panel run lint` → 0 errores; sólo los 2 warnings preexistentes de `tenant-setup/hooks/useTenantSetupSidePanels.js` (sin cambios).
+  - `npm --prefix admin-panel test` → **106 archivos / 489 tests pasan, 0 fallos** (UI-015 dejó 478; +11 nuevos: 6 de `ThemeToggle` + 5 de `TenantBrandLogo`). Los 4 tests previos de `TenantShell`, 2 de `ReadOnlyShell` y 2 de `PlatformOwnerShell` siguen verdes con el wiring nuevo (no rompí ninguno).
+  - `npm --prefix admin-panel run test:a11y` → 6/6 verdes.
+  - `npm --prefix admin-panel run test:coverage` → exit 0, thresholds en verde. Totales: 72.84% lines / 74.42% branches / 54.48% functions / 72.84% statements. `components/ui` y `permissions` siguen ≥ 60%; `features` ≥ 40%. La superficie nueva (`shells/components/ThemeToggle.jsx`, `TenantBrandLogo.jsx`) está cubierta por sus tests dedicados.
+  - `npm --prefix admin-panel run build` → vite build OK (`✓ 423 modules transformed`, 768 kB JS / 146 kB CSS — el bump de CSS viene del bloque dark-mode duplicado).
+  - **Verificación dark-mode dual-track:** los tests del toggle ejercitan el lado `data-theme` (atributo explícito); el `@media (prefers-color-scheme: dark)` no se puede simular en jsdom de manera limpia (no expone `matchMedia` ni reescritura de prefs), pero el CSS está estructurado para que ambos tracks apliquen los mismos overrides — confirmado por inspección directa del archivo y por la build de vite (las dos reglas quedan en el bundle).
+- **Seguridad:**
+  - **Backend untouched.** Ningún archivo `app/...`, schema, migración, dependency, endpoint, policy de permisos, o auth surface fue modificado. La feature es **100% frontend cosmetic + localStorage**; no toca cookies, no toca `sessionStorage`, no envía nuevas requests, no muta el `coreApi`.
+  - **`localStorage[copilotoia:theme]`** es no-PII (un enum `auto|light|dark`). No se loguea, no se envía al backend. El `try/catch` alrededor del setItem evita explosiones en modo privado del navegador.
+  - **`tenant?.brand_logo_url`** se renderiza como `<img src={url}>` sin sanitización extra: hoy la URL **no proviene del backend** (el campo no está persistido, así que siempre es `undefined` y el fallback se dispara). Cuando el follow-up backend lo añada, deberá validar el `url` (whitelist de hosts CDN propios + content-type image/* en el upload), porque un `src` arbitrario abre una superficie de SSRF-via-img / phishing-via-image. Documentado abajo como guard rail del follow-up.
+  - **Toggle UI:** el `aria-label` es estático i18n-friendly, el botón no acepta input arbitrario, no es vulnerable a click-jacking más allá del riesgo general del frame.
+- **Limitaciones / próximos pasos:**
+  - **`brand_logo_url` no está persistido en backend.** La columna no existe en `app.tenant_settings` y el PATCH `/tenants/{id}/settings` (archivo `app/api/v1/routes.py` ~línea 2386) NO la incluye en su allowlist (`allowed` dict). El componente `TenantBrandLogo` por lo tanto siempre cae al fallback de iniciales en producción a hoy. **Follow-up sugerido como tarea separada** (no incluido en UI-012, para mantener el PR pequeño y backend-untouched):
+    1. Migración SQL: `ALTER TABLE app.tenant_settings ADD COLUMN brand_logo_url TEXT NULL`.
+    2. Extender `allowed` en `routes.py:update_tenant_settings` para aceptar `brand_logo_url` (string, max 2048 chars, validar como URL https con host en whitelist o storage propio).
+    3. Endpoint de upload (S3-presigned o multipart) que valide `Content-Type: image/*`, tamaño ≤ 1 MB, devuelva `brand_logo_url` para guardar en la fila.
+    4. Form en `OwnerTenantSettings` para subir/borrar el logo.
+    5. Test E2E que valide el round-trip y el rendering del logo en topbar.
+    Etiqueta sugerida en el backlog: `UI-012-FU — Backend support for tenant brand_logo_url`.
+  - **Dark-mode con `prefers-color-scheme`:** ejercitado por inspección del CSS bundled; no se añadió un test JSDOM que mockee `matchMedia` porque (a) el bloque media-query no es código JS sino CSS estático, (b) `jsdom` no resuelve `prefers-color-scheme` y simular `matchMedia` introduce más superficie de bug que valor — el efecto es visible en navegador real al togglear el setting del SO.
+  - **No se añadieron screenshots side-by-side** (gate del backlog en sección 7 punto 6): UI-012 no remapea pantallas a un HTML de referencia (no existe HTML "dark" en `docs/HTML DESIGN/`). El cambio es aditivo en chrome (sidebar + topbar) y los tokens preservan la jerarquía visual del light mode. Si CI introduce un visual-regression step en el futuro, la baseline se actualizará entonces.
+
+---
+
 ### UI-015 — Limpieza final: borrar `admin-panel/src/components/modules/`
 
 - **Fecha:** 2026-05-15

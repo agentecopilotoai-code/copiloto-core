@@ -1,0 +1,47 @@
+/*
+ * UI-012 — ThemeToggle. Botón compacto que vive en el topbar de cada shell.
+ * Cero literales: hereda paleta de `tokens.css`. Funciona en light y dark.
+ */
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-alt);
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: var(--fs-small);
+  font-weight: 700;
+  line-height: 1;
+  padding: var(--space-1) var(--space-3);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.toggle:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.toggle:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--accent-ink);
+  font-weight: 800;
+}
+
+.label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--fs-caption);
+}

@@ -668,8 +668,9 @@ src/
 
 ### UI-012 — Theming + dark mode + branding por tenant (opcional)
 
-- **Estado:** PENDING (opcional, no bloqueante para go-live UI)
-- **Alcance:** los tokens (UI-001) ya están preparados para dark mode (`@media (prefers-color-scheme: dark)`). Añadir toggle manual en topbar + persistencia local. Agregar slot de logo personalizado del tenant (lee `tenant_settings.brand_logo_url`).
+- **Estado:** DONE (2026-05-15)
+- **Alcance entregado (frontend-only):** dark-mode tokens en `tokens.css` (bloque `@media (prefers-color-scheme: dark)` + override explícito `:root[data-theme="dark"]`); `ThemeToggle` tri-estado (`auto/light/dark`) con persistencia `localStorage[copilotoia:theme]`; `TenantBrandLogo` que lee `tenant?.brand_logo_url` con fallback a iniciales; toggle + logo wireados al topbar vía `ShellTopbar`. Detalles en `docs/DONE.md`.
+- **Follow-up backend (NO incluido en UI-012, pendiente):** añadir columna `brand_logo_url` a `app.tenant_settings`, extender el allowlist del PATCH `/tenants/{id}/settings`, agregar endpoint/form de upload. El backlog del backend lo recogerá como entrada separada (sugerido: `UI-012-FU`).
 - **Dependencias:** UI-001.
 
 ---

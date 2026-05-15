@@ -44,6 +44,8 @@ export function ReadOnlyShell({
   children,
 }) {
   const navGroups = resolveNav(VIEWER_NAV, modules, permissions, { includeDenied: true });
+  const activeTenant =
+    tenantOptions?.find((tenant) => tenant.id === activeTenantId) ?? tenantOptions?.[0] ?? null;
 
   return (
     <div className={styles.shell}>
@@ -71,6 +73,7 @@ export function ReadOnlyShell({
         <ShellTopbar
           eyebrow="Lectura"
           title={activeModule.label}
+          tenant={activeTenant}
           actions={<span className={styles.readOnlyBanner}>Modo solo lectura</span>}
         />
         <ErrorBoundary>{children}</ErrorBoundary>

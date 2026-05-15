@@ -183,9 +183,17 @@
   padding: var(--space-3) var(--space-4);
 }
 
+.topbarLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
 .topbarTitle {
   display: grid;
   line-height: 1.2;
+  min-width: 0;
 }
 
 .topbarTitle p {
