@@ -1,0 +1,129 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.refreshButton {
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.refreshButton:hover {
+  background: var(--panel-alt);
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.backRow {
+  margin-bottom: var(--space-4);
+}
+
+.backLink {
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.backLink:hover {
+  text-decoration: underline;
+}
+
+.identity {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-xl);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-body-lg);
+  flex-shrink: 0;
+}
+
+.identityBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.identityName {
+  margin: 0;
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-bold);
+  color: var(--ink);
+}
+
+.identityMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.tagRow {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-4);
+  margin: 0 0 var(--space-5);
+}
+
+.fieldGrid div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.fieldGrid dt {
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted-2);
+}
+
+.fieldGrid dd {
+  margin: 0;
+  font-size: var(--fs-body);
+  color: var(--ink);
+  font-weight: var(--fw-medium);
+}
+
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.contactCardWrap {
+  margin-top: var(--space-3);
+}

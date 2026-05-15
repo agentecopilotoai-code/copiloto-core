@@ -15,6 +15,39 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-009.3 — Operación · Ficha de contacto (Agente)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** nueva vista enfocada del contacto en `admin-panel/src/features/agente/contact-profile/`, accesible vía el deep-link `/t/:tenantSlug/contacts/:contactId`, aplicando el mockup `30 _ Operación _ Ficha de contacto.html`. Reutiliza los componentes de dominio `ContactCard` + `AppointmentCard` y el panel `ContactTimeline` de la feature `conversations-contacts`. **Tarea frontend-only** — sólo lectura, ningún archivo de servidor se tocó.
+- **Cambios realizados:**
+  - **Frontend — `src/features/agente/contact-profile/` (nuevo, 8 archivos):**
+    - `contactProfileData.js` (helper puro): `contactDisplayName`, `contactInitials`, `summaryStats` (deriva los KPIs de cabecera del bloque `stats`), `notesCount`, `consentStatusLabel` — puros, unit-testables, sin React. Reutiliza `formatDate` / `formatDateShort` de `conversations-contacts/contactsFormat.js` (cero duplicación).
+    - `hooks/useContactProfileData.js`: lee en paralelo (`Promise.all`) `getContactProfile` + `listContactConsent` para el `contactId`; el ledger de consentimiento tolera fallo con `.catch(() => null)` como el código existente. Estados loading/error/not-found. Devuelve `{ state, actions }` con `actions.refresh`. Vista de sólo lectura — sin handlers de mutación.
+    - `components/ContactProfileHeader.jsx`: cabecera de identidad enfocada — link «Volver a Contactos», avatar/iniciales, campos de identidad, los KPIs «Valor del cliente» derivados de `stats`, y la fila de identidad canónica reusando el componente de dominio `ContactCard`.
+    - `ContactProfile.jsx`: orquestador / elemento de ruta (sin props) — resuelve `activeTenant` desde `useOutletContext()`, `contactId`/`tenantSlug` desde `useParams()` y `{ profile, session }` desde `useTenantContext()`. Gateado con `<RequirePermission capability="contacts.view" mode="R">`. Renderiza `PageHeader` + `ContactProfileHeader` + el `ContactTimeline` reusado (que a su vez reusa `AppointmentCard` + `TimelineEntry`), con `EmptyState` para tenant ausente / contacto no encontrado / error / cargando.
+    - `ContactProfile.module.css` (tokens 100% `var(--...)`) + `index.js` (barrel) + `contactProfileData.test.js` (5 tests) + `ContactProfile.test.jsx` (4 tests).
+  - **Frontend — barrel de `conversations-contacts` ampliado:** `src/features/owner-admin/conversations-contacts/index.js` ahora exporta también `ContactTimeline`, `formatDate`, `formatDateShort` y `renderQualificationAnswer` (además de `ConversationsContacts`) para que la nueva vista los reutilice sin imports profundos. Es puramente ampliar el barrel — el comportamiento de `ContactTimeline` / `contactsFormat` no cambia.
+  - **Frontend — ruta deep-link en `router.jsx`:** se importa `ContactProfile` desde `'../features/agente/contact-profile/index.js'` y se añade `{ path: 'contacts/:contactId', element: <ContactProfile /> }` como hermana de `...TENANT_MODULE_IDS.map(moduleRoute)` dentro del subárbol `TenantShellRoute`. `contacts/:contactId` es más profunda que el módulo `contacts` exacto, así que react-router no las confunde. No es un módulo (no aparece en la nav) y no se envuelve en `<ModuleScreen>` — `ContactProfile` aplica su propio `<RequirePermission>`. Sólo se cableó en el shell principal (no en el subárbol `read` de Viewer): el rol objetivo es el Agente, que usa ese shell; el Viewer es redirigido fuera del shell principal.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/agente/contact-profile/{ContactProfile.jsx,ContactProfile.module.css,ContactProfile.test.jsx,contactProfileData.js,contactProfileData.test.js,index.js,hooks/useContactProfileData.js,components/ContactProfileHeader.jsx}` (todos nuevos).
+  - `admin-panel/src/features/owner-admin/conversations-contacts/index.js` (barrel ampliado con `ContactTimeline` + helpers de `contactsFormat`).
+  - `admin-panel/src/app/router.jsx` (ruta deep-link `contacts/:contactId`).
+  - `docs/UI_BACKLOG.md` (UI-009.3 marcado `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (2 warnings pre-existentes ajenos en `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → 406 tests pasan, incluidos los 9 nuevos (5 `contactProfileData` + 4 `ContactProfile`) y los suites de `conversations-contacts` (sin regresión al ampliar el barrel). Sigue fallando `src/app/router.test.jsx` (exactamente 7 fallos) por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.*/UI-008.*/UI-009.{1,2} — **no es regresión**: se modificó `router.jsx` y el conteo se mantiene en 7, sin nuevos fallos por la ruta añadida (CI corre Node 20 y solo ejecuta lint + build para el front).
+  - No se tocó ningún archivo de servidor — no se ejecutó pytest/ruff (no aplica).
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia.
+  - Vista de **sólo lectura** — sin CTAs de mutación; `useContactProfileData` sólo invoca `getContactProfile` + `listContactConsent`, ambos endpoints tenant-scoped en el servidor (resuelven el `tenant_id` del request y filtran por él).
+  - La ruta se gateó con `<RequirePermission capability="contacts.view" mode="R">` vía `usePermissions` + `useTenantContext`; el backend reverifica.
+- **Limitaciones / próximos pasos:**
+  - **Diferencia intencional declarada:** el HTML de referencia muestra KPIs "LTV", "NPS", "No-shows", "Referidos" como métricas, campos "Cumpleaños", "Sede preferida", "Canal preferido", "Próxima cita", paneles "Productos activos" / "Sin suscripciones activas" y un buscador `⌘K` — ninguno está expuesto por `getContactProfile` ni `listContactConsent`, así que se difieren (no se inventan datos). Se renderiza sólo lo que las dos respuestas realmente traen: identidad, etiquetas, `stats`, conteo de notas, estado de consentimiento y el historial de citas/conversaciones/referidos/consentimiento del `ContactTimeline`.
+  - Próxima tarea `PENDING`: **UI-009.4 — Operación · Outbound DLQ**, rediseño de `OutboundDLQ.jsx` con filtros y acción "Reintentar".
+
+---
+
 ### UI-009.2 — Operación · Mis handoffs (Agente)
 
 - **Fecha:** 2026-05-14

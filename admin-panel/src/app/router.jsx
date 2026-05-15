@@ -14,6 +14,7 @@ import { MfaRequiredBlocker } from '../components/domain/MfaRequiredBlocker.jsx'
 import { NoTenantOnboarding } from '../components/domain/NoTenantOnboarding.jsx';
 import { LoadingScreen } from '../components/layout/LoadingScreen.jsx';
 import { ModulePlaceholder } from '../components/modules/ModulePlaceholder.jsx';
+import { ContactProfile } from '../features/agente/contact-profile/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { adminModules } from '../data/modules.js';
@@ -331,7 +332,16 @@ export const routes = [
           },
           {
             element: <TenantShellRoute />,
-            children: TENANT_MODULE_IDS.map(moduleRoute),
+            children: [
+              ...TENANT_MODULE_IDS.map(moduleRoute),
+              // UI-009.3 — deep-link a la ficha enfocada de un contacto. No es
+              // un módulo (no aparece en la nav); `contacts/:contactId` es una
+              // ruta más profunda que el módulo `contacts` exacto, así que no
+              // colisiona. `ContactProfile` aplica su propio `<RequirePermission
+              // capability="contacts.view">`, por eso no se envuelve en
+              // `<ModuleScreen>`.
+              { path: 'contacts/:contactId', element: <ContactProfile /> },
+            ],
           },
         ],
       },
