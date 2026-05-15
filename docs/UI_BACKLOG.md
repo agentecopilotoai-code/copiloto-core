@@ -711,6 +711,64 @@ src/
 
 ---
 
+### UI-012-FU — Backend support para `brand_logo_url`
+
+- **Estado:** PENDING
+- **Origen:** follow-up declarado en `docs/DONE.md` durante UI-012 (frontend-only). El frontend ya pinta `tenant.brand_logo_url` cuando viene del backend con fallback a iniciales; falta toda la cadena server-side para persistirlo y devolverlo.
+- **Alcance:**
+  - Migración SQL: agregar columna `brand_logo_url text null` a `app.tenant_settings` (con check de longitud razonable, p. ej. ≤ 1024 chars).
+  - Endpoint `PATCH /v1/tenants/{tenant_id}/settings`: añadir `brand_logo_url` al diccionario `allowed` (línea ~2412 de `app/api/v1/routes.py`).
+  - Endpoint `POST /v1/tenants/{tenant_id}/branding/logo` (nuevo): upload del archivo, valida MIME (`image/png`, `image/jpeg`, `image/svg+xml`), tamaño máximo (p. ej. 512 KB), retorna la URL pública (S3/CDN o `/static/tenant-logos/{tenant_id}.{ext}`).
+  - **Seguridad obligatoria:** mantener `authenticate_request` + `ensure_tenant_access` + RLS por tenant. SVG sanitizado (sin `<script>`, sin `xlink:href` a externos) — usar `defusedxml` o equivalente. URL whitelist si la imagen vive en CDN externo (anti-SSRF).
+  - Auditoría: emitir `tenant_settings.branding_updated` por cada PATCH/upload (acción + actor + entity_id, como las otras mutaciones de settings).
+  - UI admin: agregar el input/uploader en `TenantSetupWizard` (sección "Voz del bot / Branding") o en una pestaña dedicada de Config. Devuelve el `brand_logo_url` al `tenant_settings` actual; el shell lo recoge sin cambios.
+- **Tests:**
+  - Backend: pytest cubriendo (1) PATCH acepta `brand_logo_url` válido, (2) PATCH rechaza URL con SSRF / fuera del whitelist, (3) upload rechaza MIME inválido, (4) upload rechaza SVG con `<script>`, (5) audit log emitido. Mantener el patrón static-test del proyecto si aplica.
+  - Frontend: actualizar el test de `TenantBrandLogo` para cubrir el caso `brand_logo_url` devuelto por el endpoint real (mockear `coreApi.getTenantSettings`).
+- **Dependencias:** UI-012.
+
+---
+
+### UI-016 — Pantallas y componentes pendientes de diseño
+
+- **Estado:** PENDING (bloqueado por entrega del diseñador)
+- **Motivación:** la auditoría post-UI-015/UI-012 detectó vistas y estados implementados en código que no aparecen en los 36 HTML de `docs/HTML DESIGN/`. Sin diseño, se quedaron con look improvisado (defaults técnicos, EmptyState genérico, sin variantes mobile/dark). Esta tarea consolida la lista para pedírsela al diseñador y, una vez entregada, se trocea en subtareas `UI-016.x`.
+- **Alcance — pantallas faltantes que el diseñador debe entregar:**
+  1. **Vistas implementadas sin HTML asociado:**
+     - `GoLiveReadiness` (Owner-Admin · checklist "listo para producción") — no aparece en 01-36.
+     - `KnowledgeStorageSettings` (Owner-Admin · settings de almacenamiento del knowledge studio) — probablemente sección embebida del #18 pero sin layout propio definido.
+     - `AnalyticsPanel` para Owner-Admin (módulo `analytics`) — se reusa el #24 del Manager; confirmar si Owner-Admin debe tener variante propia o compartir.
+     - `AgentPerformance` (`owner-admin/analytics/AgentPerformance.jsx`) — tabla de performance por agente; sin layout en 01-36.
+  2. **Rutas y estados intermedios sin diseño:**
+     - `/no-tenant` (`NoTenantRoute`) — usuario autenticado sin tenant.
+     - `/onboarding` (`OnboardingRoute`) — primer login antes de elegir tenant.
+     - `MfaRequiredBlocker` — pantalla de bloqueo cuando el rol exige MFA y el usuario no la tiene inscrita.
+     - `AccessDenied` — fallback cuando el rol no tiene la capability requerida.
+     - 404 / ruta desconocida — hoy es `<Navigate to="/" replace />`; el diseñador debe decidir si hay vista propia "Página no encontrada" con CTA de regreso.
+  3. **Flujos de cuenta de usuario totalmente ausentes:**
+     - Perfil del usuario (nombre, foto, idioma personal).
+     - Preferencias (notificaciones, idioma de UI, dark mode override por usuario en lugar de OS — relacionado a UI-012).
+     - Logout / confirmación de cierre de sesión.
+     - Selector inicial multi-tenant cuando el usuario tiene >1 tenant (hoy solo existe el switcher compacto del sidebar).
+     - Cambio de contraseña / setup de MFA: hoy va por flujo externo de Auth0; confirmar si se quiere espejar en la UI.
+  4. **Primitivas UI-011 / UI-012 sin diseño visual:**
+     - `Toast` (notifications stack) — se shippeó con defaults técnicos.
+     - `ConfirmDialog` — modal de confirmación; falta variante visual definida.
+     - `ErrorBoundary` fallback — pantalla cuando un componente revienta.
+     - `ThemeToggle` (icono sun/moon/auto) — diseño del control y posición fina en el topbar.
+     - `TenantBrandLogo` slot — placement, sizing y estilo del fallback de iniciales.
+  5. **Responsive (UI-013):**
+     - Mockups explícitos para los viewports 360px y 768px por cada vista crítica. UI-013 cerró con un smoke de axe + collapse genérico a una columna; falta el diseño formal de la versión mobile de cada pantalla.
+  6. **Documentación in-app:**
+     - El archivo `docs/HTML DESIGN/00 _ Documentaci_n de acceso.png` parece un diagrama de roles/accesos. Confirmar con el diseñador si debe convertirse en una vista de ayuda/docs in-app o queda como referencia interna.
+- **Procedimiento al recibir los diseños:**
+  - Por cada HTML nuevo, agregarlo a `docs/HTML DESIGN/` siguiendo la convención `NN _ <area> _ <pantalla>.html`.
+  - Crear subtareas `UI-016.1`, `UI-016.2`... cada una mapeada al HTML correspondiente, siguiendo la receta 0.bis.1 (tokens + bloques + primitivas reusadas).
+  - Actualizar este UI-016 marcando cada subtarea cuando se cierre.
+- **Dependencias:** UI-001 ... UI-015 (necesita el design system y las primitivas finales para reusar).
+
+---
+
 ## 6. Orden recomendado de ejecución
 
 ```
@@ -735,6 +793,14 @@ UI-015 (limpieza)
 ```
 
 UI-012 (theming/dark mode) es opcional y puede intercalarse después de UI-001.
+
+Después del cierre del roadmap principal (UI-001..UI-015 + UI-012) entran las
+tareas de seguimiento:
+
+- **UI-012-FU** — backend para `brand_logo_url`. Frontend-only de UI-012 ya está;
+  esta tarea cierra la cadena server-side (migración + endpoint + upload).
+- **UI-016** — pantallas pendientes de diseño. Bloqueada hasta que el diseñador
+  entregue los HTMLs faltantes (lista detallada en la sección de la tarea).
 
 ---
 
