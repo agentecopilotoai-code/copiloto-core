@@ -793,7 +793,7 @@ src/
 
 #### UI-016.6 — Estados de error y bloqueos
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **HTML:** `docs/HTML DESIGN/Transversales/T2 _ Estados de error y bloqueos.html` (319 LOC).
 - **Alcance:** 4 pantallas de estado:
   - `/no-tenant` (`NoTenantRoute` en `app/router.jsx`): "Aún no estás asignada a un negocio".
@@ -802,6 +802,7 @@ src/
   - 404 (`/*` en router): "Esta página no existe (o se mudó)" + CTAs "Reportar enlace roto" / "Ir al dashboard". Reemplazar el `<Navigate to="/" replace />` actual.
   - `ErrorBoundary` fallback (`components/ui/ErrorBoundary.jsx`): pantalla cuando un componente revienta.
 - **Criterios:** layout consistente entre las 5 pantallas (mismo header, ilustración minimal, una sola acción primaria). Tests por cada pantalla.
+- **Cierre:** ver `docs/DONE.md` (entrada UI-016.6).
 
 #### UI-016.7 — Cuenta del usuario
 

@@ -38,16 +38,33 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('hola')).toBeInTheDocument();
   });
 
-  it('renders the fallback card when a child throws', () => {
+  it('renders the StateScreen fallback when a child throws (UI-016.6)', () => {
     render(
       <ErrorBoundary>
         <Boom />
       </ErrorBoundary>,
     );
-    expect(screen.getByText('Algo salió mal')).toBeInTheDocument();
+    // El heading nuevo del HTML T2.
+    expect(
+      screen.getByRole('heading', {
+        level: 1,
+        name: 'Algo se rompió mientras se cargaba este módulo',
+      }),
+    ).toBeInTheDocument();
+    // Microcopy legacy "Algo salió mal" sigue presente para compatibilidad.
+    expect(screen.getByText(/Algo salió mal/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reintentar' })).toBeInTheDocument();
     // Without onReport, the report button is not rendered.
     expect(screen.queryByRole('button', { name: 'Reportar al equipo' })).toBeNull();
+  });
+
+  it('muestra el mensaje del error capturado en un bloque <pre>', () => {
+    render(
+      <ErrorBoundary>
+        <Boom />
+      </ErrorBoundary>,
+    );
+    expect(screen.getByText('boom-test')).toBeInTheDocument();
   });
 
   it('clears the error state when Reintentar is clicked', async () => {
@@ -56,7 +73,12 @@ describe('ErrorBoundary', () => {
         <ToggleBoom />
       </ErrorBoundary>,
     );
-    expect(screen.getByText('Algo salió mal')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', {
+        level: 1,
+        name: 'Algo se rompió mientras se cargaba este módulo',
+      }),
+    ).toBeInTheDocument();
 
     // Flip the module-level switch so the child renders successfully next time.
     shouldCrash = false;

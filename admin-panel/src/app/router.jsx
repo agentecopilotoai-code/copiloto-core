@@ -13,6 +13,7 @@ import {
 import { MfaRequiredBlocker } from '../components/domain/MfaRequiredBlocker.jsx';
 import { NoTenantOnboarding } from '../components/domain/NoTenantOnboarding.jsx';
 import { LoadingScreen } from '../components/layout/LoadingScreen.jsx';
+import { Button, StateScreen } from '../components/ui/index.js';
 import { ContactProfile } from '../features/agente/contact-profile/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 import { Landing } from '../features/public/landing/index.js';
@@ -304,6 +305,70 @@ function ReadOnlyShellRoute() {
   );
 }
 
+/**
+ * UI-016.6 — pantalla 404 para el catch-all `path: '*'`. Reemplaza el
+ * `<Navigate to="/" replace />` silencioso anterior: ahora una URL inválida
+ * muestra el mensaje "Esta página no existe (o se mudó)" del HTML T2, con
+ * dos CTAs claros ("Ir al dashboard" + "Reportar enlace roto") en lugar de
+ * un redirect invisible.
+ */
+function NotFoundRoute() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const subject = encodeURIComponent(`Enlace roto en ${location.pathname}`);
+  const reportHref = `mailto:soporte@copilotoia.co?subject=${subject}`;
+  return (
+    <StateScreen
+      tone="neutral"
+      icon={<NotFoundIcon />}
+      heading="Esta página no existe (o se mudó)"
+      body={
+        <p>
+          La URL que abriste (<code>{location.pathname}</code>) no apunta a
+          ningún módulo del panel. Revisa el link o vuelve al dashboard de tu
+          tenant.
+        </p>
+      }
+      primary={
+        <Button variant="primary" onClick={() => navigate('/')}>
+          Ir al dashboard
+        </Button>
+      }
+      secondary={
+        <Button
+          variant="ghost"
+          onClick={() => {
+            if (typeof window !== 'undefined') {
+              window.location.href = reportHref;
+            }
+          }}
+        >
+          Reportar enlace roto
+        </Button>
+      }
+    />
+  );
+}
+
+function NotFoundIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="28"
+      height="28"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3-3" />
+    </svg>
+  );
+}
+
 const moduleRoute = (id) => ({ path: id, element: <ModuleScreen moduleId={id} /> });
 
 /**
@@ -354,7 +419,7 @@ export const routes = [
           },
         ],
       },
-      { path: '*', element: <Navigate to="/" replace /> },
+      { path: '*', element: <NotFoundRoute /> },
     ],
   },
 ];

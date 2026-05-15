@@ -10,6 +10,7 @@ export { KpiTile } from './KpiTile.jsx';
 export { Modal } from './Modal.jsx';
 export { PageHeader } from './PageHeader.jsx';
 export { Pagination } from './Pagination.jsx';
+export { StateScreen } from './StateScreen.jsx';
 export { StatusBadge } from './StatusBadge.jsx';
 export { Stepper } from './Stepper.jsx';
 export { Tabs } from './Tabs.jsx';

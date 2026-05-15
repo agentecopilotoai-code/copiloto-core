@@ -1,21 +1,25 @@
 import { Component } from 'react';
 
 import { Button } from './Button.jsx';
-import { Card, CardBody, CardFooter, CardHeader } from './Card.jsx';
+import { StateScreen } from './StateScreen.jsx';
+import styles from './ErrorBoundary.module.css';
 
 /**
  * ErrorBoundary — catches render-time exceptions in its subtree and renders a
- * friendly fallback card so the rest of the shell (topbar, sidebar) stays
- * usable. Mount one boundary per shell, wrapping only the page outlet.
+ * friendly fallback aligned to UI-016.6 (`StateScreen` con tono `danger`).
  *
- * The `onReport` prop is an optional hook for wiring sentry/audit later; the
- * primitive itself stays dependency-free and does NOT auto-report anything
- * (no PII is leaked in the fallback).
+ * Mantiene "Algo salió mal" como microcopy accesible para que los tests
+ * existentes sigan resolviendo, mientras el heading principal usa el copy
+ * del HTML `T2 _ Estados de error y bloqueos`.
+ *
+ * Mount one boundary per shell, wrapping only the page outlet. El primitive
+ * sigue siendo dependency-free (sin Sentry/audit) — `onReport` es opcional
+ * y no se llama automáticamente para no filtrar PII en el fallback.
  *
  * @typedef {Object} Props
  * @property {React.ReactNode} children
  * @property {React.ReactNode} [fallback] Optional custom fallback. When omitted
- *   the built-in `<Card>` is used.
+ *   the built-in `<StateScreen>` is used.
  * @property {(error: Error, info: { componentStack: string }) => void} [onReport]
  *   Called from the "Reportar al equipo" button. Receives the captured error
  *   and the React component stack.
@@ -59,27 +63,55 @@ export class ErrorBoundary extends Component {
     if (fallback) return fallback;
 
     return (
-      <Card tone="raised" padding="lg" data-error-boundary="true">
-        <CardHeader
-          title="Algo salió mal"
-          subtitle="Esta sección no pudo cargarse. Puedes reintentar o volver más tarde."
-        />
-        <CardBody>
-          <p>
-            Si el problema persiste, contacta al equipo con la hora aproximada en que ocurrió.
-          </p>
-        </CardBody>
-        <CardFooter>
-          <Button variant="ghost" onClick={this.handleRetry}>
+      <StateScreen
+        tone="danger"
+        role="alert"
+        icon={<AlertIcon />}
+        heading="Algo se rompió mientras se cargaba este módulo"
+        body={
+          <>
+            <p>
+              <strong>Algo salió mal.</strong> Capturamos el error y, si nos
+              das permiso, lo enviamos a nuestro equipo. Mientras lo
+              arreglamos, puedes reintentar o volver al panel.
+            </p>
+            {error?.message ? (
+              <pre className={styles.details}>{error.message}</pre>
+            ) : null}
+          </>
+        }
+        primary={
+          <Button variant="primary" onClick={this.handleRetry}>
             Reintentar
           </Button>
-          {onReport ? (
-            <Button variant="secondary" onClick={this.handleReport}>
+        }
+        secondary={
+          onReport ? (
+            <Button variant="ghost" onClick={this.handleReport}>
               Reportar al equipo
             </Button>
-          ) : null}
-        </CardFooter>
-      </Card>
+          ) : null
+        }
+      />
     );
   }
+}
+
+function AlertIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="28"
+      height="28"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M5 21V4" />
+      <path d="M5 5h11l-2 4 2 4H5" />
+    </svg>
+  );
 }

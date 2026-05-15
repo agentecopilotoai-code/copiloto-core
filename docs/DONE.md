@@ -15,6 +15,46 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-016.6 — Estados de error y bloqueos (StateScreen + 5 vistas)
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** entregar las 5 pantallas de estado del HTML `docs/HTML DESIGN/Transversales/T2 _ Estados de error y bloqueos.html` (`/no-tenant`, `AccessDenied`, `MfaRequiredBlocker`, 404, `ErrorBoundary` fallback) con layout consistente — el diseño manda mismo header, ilustración minimal, una sola acción primaria. Hasta UI-016.6 cada pantalla vivía con su propio markup (`.empty-tenant-card`, `.mfa-required-*`, etc.) en `global.css`, sin tokens del design system y sin coordinación visual. El 404 además era un `<Navigate to="/" replace />` silencioso que llevaba al usuario a `/` sin ningún feedback.
+- **Cambios realizados:**
+  - **Nuevo primitive** `admin-panel/src/components/ui/StateScreen.jsx` (77 LOC) + `StateScreen.module.css` (118 LOC): factoriza el layout del HTML T2 — card centrado con icon chip + heading H1 + body opcional + slot de acciones (primary + secondary). Tres tonos (`neutral` / `warning` / `danger`) que pintan un acento de 3px arriba del card más un gradient suave del color soft. Variante `modal` para overlays full-screen (MFA). Roles ARIA configurables (`status` con `aria-live=polite` por defecto, `alertdialog` con `aria-modal` para el MFA). Exportado por el barrel `components/ui/index.js`.
+  - **`admin-panel/src/components/domain/NoTenantOnboarding.jsx`** refactor: usa `StateScreen` tone="neutral", heading "Aún no estás asignada a un negocio", primary "Crear nuevo tenant", secondary "Refrescar". Mantiene el microcopy legacy "Crea tu tenant para empezar" dentro del body envuelto en `<strong>` para que la lógica de `router.test` (que afirma esa rama) siga resolviendo. Nueva prop `onRefresh` con default `window.location.reload()`.
+  - **`admin-panel/src/permissions/AccessDenied.jsx`** + `AccessDenied.module.css` refactor: `StateScreen` tone="warning", heading "No tienes acceso a este módulo", body que pinta la `capability` en `<code>` y el modo (`lectura` / `edición`). Pequeño pill "Acceso restringido" arriba del cuerpo — es el literal que ~40 tests por módulo afirman con regex `/Acceso restringido/i`; conservarlo evita una migración masiva. Primary "Volver al inicio" con prop `onGoHome` (default `window.location.assign('/admin/')`).
+  - **`admin-panel/src/components/domain/MfaRequiredBlocker.jsx`** refactor: `StateScreen` tone="warning", modal=true, role="alertdialog". Heading "Activa autenticación de dos factores", body con countdown estático de "7 días" + recordatorio del 403 `mfa_required`. Primary "Configurar MFA →" y secondary "Cerrar sesión" disparan el mismo `<form method="post" action={adminPath('/admin/logout')}>` (que vuelve a Auth0; el flow de enrollment se inicia automáticamente para roles privilegiados). Cumple los static tests `tests/test_mfa_router_enforcement.py`: `function MfaRequiredBlocker(` sigue siendo la forma del declaración, el bloque contiene `adminPath('/admin/logout')` y "Cerrar sesión" y NINGUNO de los verbos prohibidos (`Continuar sin MFA` / `omitir` / `descartar` / `skip-mfa`).
+  - **`admin-panel/src/components/ui/ErrorBoundary.jsx`** + `ErrorBoundary.module.css` refactor: render fallback ahora es `StateScreen` tone="danger", role="alert". Heading "Algo se rompió mientras se cargaba este módulo"; body conserva el microcopy legacy "Algo salió mal" (tests previos lo afirman) y muestra el mensaje del error capturado en un `<pre className={styles.details}>`. Primary "Reintentar" + secondary opcional "Reportar al equipo" cuando se pasa `onReport`.
+  - **`admin-panel/src/app/router.jsx`**: nuevo `NotFoundRoute` que reemplaza `{ path: '*', element: <Navigate to="/" replace /> }`. Usa `StateScreen` tone="neutral", heading "Esta página no existe (o se mudó)", body con la URL ofensiva en `<code>`, primary "Ir al dashboard" (`navigate('/')`) y secondary "Reportar enlace roto" (`mailto:soporte@copilotoia.co?subject=Enlace+roto+en+<pathname>`). Confirmado vía `git diff origin/develop HEAD -- admin-panel/src/app/router.jsx`.
+  - **`admin-panel/src/styles/global.css`**: borrado dead code de UI-016.6: `.empty-tenant-card` (10 LOC) y bloque completo `.mfa-required-*` (88 LOC). Los reemplaza `StateScreen.module.css`. Las clases `.module-card`, `.secondary-action`, etc. permanecen porque las usan otros features.
+  - **Tests nuevos / actualizados:**
+    - `admin-panel/src/components/ui/StateScreen.test.jsx` (5 tests): heading + body + actions, defaults ARIA, variante modal/alertdialog, icon aria-hidden, sin acciones no se renderiza el bloque.
+    - `admin-panel/src/permissions/AccessDenied.test.jsx` (5 tests): heading del HTML, capability + modo (R/RW), microcopy "Acceso restringido" legacy, `onGoHome` handler, children slot.
+    - `admin-panel/src/components/domain/NoTenantOnboarding.test.jsx` (4 tests): heading + body, microcopy legacy "Crea tu tenant para empezar", handlers de "Crear nuevo tenant" y "Refrescar".
+    - `admin-panel/src/components/domain/MfaRequiredBlocker.test.jsx` (6 tests): heading nuevo, role `alertdialog`, "7 días" estático, form oculto POST a `/admin/logout`, ambos botones disparan submit (vía `vi.spyOn(HTMLFormElement.prototype, 'submit')`).
+    - `admin-panel/src/components/ui/ErrorBoundary.test.jsx` actualizado: ahora pinta `<StateScreen tone="danger">` con heading nuevo, microcopy "Algo salió mal" conservado, message del error visible en el `<pre>`. Los tests de retry y onReport siguen verdes.
+    - `admin-panel/src/app/router.test.jsx`: el assert del MFA usa `/Activa autenticación de dos factores/`; el assert de `/no-tenant` usa `getByRole('heading', { name: /Aún no estás asignada a un negocio/ })` (microcopy "Crea tu tenant para empezar" sigue presente pero quedó fragmentado entre nodos por el `<strong>`); nuevo test UI-016.6 verifica que `/some/unknown/path` pinta el 404 (en lugar del redirect silencioso).
+- **Decisiones de implementación:**
+  - **Microcopy legacy:** los literales "Acceso restringido", "Crea tu tenant para empezar" y "Algo salió mal" se mantienen dentro del body de cada pantalla (en pills, `<strong>` o `<p>`) porque ~50 tests del repo los afirman con regex. Migrar todos esos tests está fuera de scope para UI-016.6; la próxima limpieza (UI-015) puede consolidar literales si se decide.
+  - **MFA "Configurar MFA" y "Cerrar sesión" disparan el mismo submit:** Auth0 inicia el flow de enrollment automáticamente cuando un usuario con rol privilegiado reabre sesión sin MFA. No hay endpoint dedicado de enrollment expuesto al cliente; reenviar al logout es el patrón actual y los static tests de UI-003 lo respaldan.
+  - **404 con `mailto:`:** "Reportar enlace roto" hace `window.location.href = 'mailto:soporte@copilotoia.co?subject=Enlace+roto+en+<path>'`. Igual que UI-016.4 (landing), no hay endpoint de bug-report; el `mailto:` es el patrón sin stub.
+  - **Tokens 100% `var(--...)`:** grep gate `grep -rE "color: #|background: #[0-9a-f]"` sobre `admin-panel/src/permissions/`, `components/domain/{MfaRequiredBlocker,NoTenantOnboarding}.jsx`, `components/ui/{ErrorBoundary,StateScreen}.{jsx,module.css}` → 0 matches.
+- **Archivos modificados / creados:**
+  - **Nuevos (8):** `admin-panel/src/components/ui/StateScreen.jsx`, `StateScreen.module.css`, `StateScreen.test.jsx`, `ErrorBoundary.module.css`, `admin-panel/src/permissions/AccessDenied.module.css`, `AccessDenied.test.jsx`, `admin-panel/src/components/domain/NoTenantOnboarding.test.jsx`, `MfaRequiredBlocker.test.jsx`.
+  - **Modificados (8):** `admin-panel/src/components/ui/index.js` (export StateScreen), `ErrorBoundary.jsx`, `admin-panel/src/permissions/AccessDenied.jsx`, `admin-panel/src/components/domain/NoTenantOnboarding.jsx`, `MfaRequiredBlocker.jsx`, `admin-panel/src/app/router.jsx` (NotFoundRoute + import), `admin-panel/src/app/router.test.jsx`, `admin-panel/src/components/ui/ErrorBoundary.test.jsx`, `admin-panel/src/styles/global.css` (dead code purge).
+  - **Docs:** `docs/UI_BACKLOG.md` (UI-016.6 DONE), `docs/DONE.md` (esta entrada).
+- **Validaciones ejecutadas:**
+  - `npm run lint` ✓ (0 errors, 2 warnings preexistentes en `tenant-setup/hooks/useTenantSetupSidePanels.js`).
+  - `npm test -- --run` ✓ (590 tests, 118 archivos, 0 failures).
+  - `npm run test:a11y` ✓ (6/6 a11y suites verdes).
+  - `npm run test:coverage` ✓ (thresholds verdes, sin regresiones).
+  - `npm run build` ✓ (453 modules, 795.96 kB JS / 166.63 kB CSS).
+  - Grep gate de colors hardcoded sobre los archivos tocados: 0 matches.
+  - `python3 -m pytest tests/test_mfa_router_enforcement.py` → 14 passed, 3 failed (los 3 fallos son por `ModuleNotFoundError: phonenumbers` del entorno local, no por el código).
+- **Notas / limitaciones:**
+  - El "countdown 7 días" es estático (texto literal). Una cuenta regresiva en vivo requeriría el timestamp de cuándo se detectó el enrollment pendiente — no expuesto por la sesión actual; queda como follow-up cuando ops publique ese metadato.
+  - El catch-all 404 captura cualquier URL **dentro de `/admin/*`** que no matchee otra ruta del SPA. URLs externas al `basename` siguen siendo responsabilidad del backend (404 nginx/FastAPI), no del cliente.
+
 ### UI-016.4 — Landing comercial pre-login (público)
 
 - **Fecha:** 2026-05-15

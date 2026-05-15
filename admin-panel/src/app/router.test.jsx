@@ -142,7 +142,16 @@ describe('router por rol', () => {
 
   it('sin tenant: el redirect raíz lleva a /no-tenant', async () => {
     const router = renderAt('/', { tenants: [] });
-    expect(await screen.findByText('Crea tu tenant para empezar')).toBeInTheDocument();
+    // UI-016.6: el copy del HTML T2 ahora es "Aún no estás asignada a un
+    // negocio"; el literal legacy "Crea tu tenant para empezar" se conserva
+    // como microcopy dentro del body (envuelto en <strong>), así que se
+    // busca con regex (texto fraccionado entre nodos).
+    expect(
+      await screen.findByRole('heading', {
+        level: 1,
+        name: /Aún no estás asignada a un negocio/,
+      }),
+    ).toBeInTheDocument();
     // Same race-resilience as the platform-owner redirect above: the DOM can
     // settle before the IndexRedirect <Navigate> finishes propagating into
     // `router.state.location.pathname` under coverage instrumentation.
@@ -166,10 +175,24 @@ describe('router por rol', () => {
       session: { mfa_required: true, profile: { sub: 'u1', roles: ['owner'] } },
       tenants: [ACME(['owner'])],
     });
+    // UI-016.6: el heading pasó del literal "Verificación en dos pasos
+    // obligatoria" al copy del HTML T2 "Activa autenticación de dos factores".
     expect(
-      await screen.findByRole('heading', { name: /Verificación en dos pasos obligatoria/ }),
+      await screen.findByRole('heading', { name: /Activa autenticación de dos factores/ }),
     ).toBeInTheDocument();
     expect(screen.queryByText('SERVICES VIEW')).toBeNull();
+  });
+
+  it('UI-016.6 — una URL desconocida pinta la pantalla 404 (sin redirect silencioso)', async () => {
+    const router = renderAt('/some/unknown/path', { tenants: [ACME(['owner'])] });
+    // Antes el catch-all hacía Navigate('/'); ahora muestra el StateScreen 404
+    // con el copy del HTML T2 y la URL inválida en el body.
+    expect(
+      await screen.findByRole('heading', { name: 'Esta página no existe (o se mudó)' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ir al dashboard' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reportar enlace roto' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/some/unknown/path');
   });
 
   it('un slug de tenant desconocido vuelve al redirect raíz', async () => {

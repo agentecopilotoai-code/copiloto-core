@@ -1,0 +1,15 @@
+/* UI-016.6 — pequeño eyebrow label sobre el body de AccessDenied. Mantiene
+   el literal "Acceso restringido" como microcopy accesible (los tests por
+   módulo lo consultan con regex) además del heading nuevo del diseño. */
+
+.eyebrow {
+  background: var(--warn-soft);
+  border-radius: 999px;
+  color: var(--warn);
+  display: inline-block;
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  text-transform: uppercase;
+}

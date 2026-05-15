@@ -1,19 +1,74 @@
+import { Button, StateScreen } from '../components/ui/index.js';
+import styles from './AccessDenied.module.css';
+
 /**
- * Tarjeta genérica para mostrar cuando un usuario no tiene la capability
- * requerida en el tenant activo. No reemplaza el 403 del servidor — sólo
+ * UI-016.6 — AccessDenied refactor al diseño `T2 _ Estados de error y
+ * bloqueos`. Pantalla mostrada cuando el usuario no tiene la capability
+ * requerida en el tenant activo. NO reemplaza el 403 del servidor — sólo
  * evita que la UI pinte controles que el backend rechazará.
+ *
+ * Reutiliza el primitive `StateScreen` (tono "warning") para garantizar
+ * layout consistente con `/no-tenant`, `MfaRequiredBlocker`, 404 y
+ * `ErrorBoundary`.
+ *
+ * @param {Object} props
+ * @param {string} props.capability Capability code (`services.write`, etc.).
+ * @param {'R'|'RW'} [props.mode='R'] Modo de acceso evaluado.
+ * @param {() => void} [props.onGoHome] Click handler para "Volver al inicio".
+ *   Si se omite, el botón hace `window.location.assign('/admin/')`.
+ * @param {React.ReactNode} [props.children] Slot opcional bajo el cuerpo.
  */
-export function AccessDenied({ capability, mode = 'R', children }) {
+export function AccessDenied({ capability, mode = 'R', onGoHome, children }) {
+  const goHome = onGoHome ?? (() => {
+    if (typeof window !== 'undefined') {
+      window.location.assign('/admin/');
+    }
+  });
+
   return (
-    <section className="module-card" role="status" aria-live="polite">
-      <h2>Acceso restringido</h2>
-      <p className="hint">
-        Tu rol en este tenant no permite{' '}
-        <strong>{mode === 'RW' ? 'editar' : 'ver'}</strong>{' '}
-        <code>{capability}</code>. Cambia de tenant o pide a un admin del
-        tenant que te promocione.
-      </p>
-      {children}
-    </section>
+    <StateScreen
+      tone="warning"
+      icon={<LockIcon />}
+      heading="No tienes acceso a este módulo"
+      body={
+        <>
+          <p>
+            <span className={styles.eyebrow}>Acceso restringido</span>
+          </p>
+          <p>
+            Tu rol actual no incluye la capability{' '}
+            <code>{capability}</code> en modo{' '}
+            <strong>{mode === 'RW' ? 'edición' : 'lectura'}</strong>. Pide a la
+            owner que te promueva si necesitas {mode === 'RW' ? 'editar' : 'ver'}{' '}
+            esta sección.
+          </p>
+          {children}
+        </>
+      }
+      primary={
+        <Button variant="primary" onClick={goHome}>
+          Volver al inicio
+        </Button>
+      }
+    />
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="28"
+      height="28"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+    </svg>
   );
 }
