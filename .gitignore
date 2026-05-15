@@ -2,6 +2,7 @@
 node_modules/
 admin-panel/node_modules/
 admin-panel/dist/
+admin-panel/coverage/
 
 # Python
 __pycache__/

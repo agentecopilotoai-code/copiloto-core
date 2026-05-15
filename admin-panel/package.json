@@ -10,7 +10,8 @@
     "lint": "eslint src",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:a11y": "vitest run src/__tests__/a11y --testNamePattern \"^a11y\""
+    "test:a11y": "vitest run src/__tests__/a11y --testNamePattern \"^a11y\"",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@vitejs/plugin-react": "4.3.4",
@@ -24,6 +25,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@vitest/coverage-v8": "^2.1.9",
     "axe-core": "^4.11.4",
     "eslint": "9.17.0",
     "eslint-plugin-react-hooks": "5.1.0",

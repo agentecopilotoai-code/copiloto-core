@@ -688,7 +688,7 @@ src/
 
 ### UI-014 — Tests y CI
 
-- **Estado:** PENDING
+- **Estado:** DONE
 - **Alcance:**
   - Añadir `vitest` + `@testing-library/react` + `@testing-library/user-event` a `admin-panel/`.
   - Pipeline `pnpm test` corre antes del `vite build` en CI.

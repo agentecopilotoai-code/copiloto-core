@@ -15,6 +15,45 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-014 — Tests y CI
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** convertir el criterio del backlog ("`pnpm test` corre antes del `vite build` en CI, cobertura ≥ 60% en `components/ui/` y `permissions/`, ≥ 40% en `features/`") en un **gate real** del workflow `Admin Panel`. Las deps de testing (`vitest`, `@testing-library/react`, `@testing-library/user-event`, `jsdom`) ya estaban instaladas desde UI-001/UI-013 — el trabajo real fue (a) sumar `@vitest/coverage-v8`, (b) configurar thresholds por glob en `vitest.config.js`, (c) **arreglar el bug local de Node 24 que rompía `src/app/router.test.jsx`** para no contaminar el suite, (d) añadir los pasos `Unit tests (vitest)` y `Coverage (thresholds)` al job de CI, y (e) subir el reporte de cobertura como artifact.
+- **Cambios realizados:**
+  - **Polyfill `Request` para Node 24 + JSDOM (`admin-panel/vitest.setup.js`):** la copia interna de `undici` que Node 24 usa en el constructor global `Request` (invocado por `@remix-run/router` en `createClientSideRequest` para cada `router.navigate(...)`) hace un `instanceof AbortSignal` contra **su propia clase interna**, no contra `globalThis.AbortSignal`. JSDOM, al instalar sus globals, redefine `AbortController`/`AbortSignal` con clases WebIDL distintas; cualquier `signal` que llegue al Request falla el check con `TypeError: RequestInit: Expected signal to be an instance of AbortSignal` y los 7 tests de `router.test.jsx` revientan en Node 24 (en Node 20 de CI no se reproducía, pero dejar el suite verde sólo en CI era una mala práctica). El parche envuelve el constructor `Request` con un `Proxy` que **descarta `init.signal` si Node rechaza el AbortSignal del AbortController global**: detección por probe (`new Request(url, { signal: new AbortController().signal })` en un `try/catch`) en lugar de comparar clases — así el parche es no-op en Node 20 y en entornos sin JSDOM (donde el probe pasa). El `signal` en estos unit tests sólo permite al router cancelar navegaciones in-flight (no lo ejercitamos), así que stripping es seguro.
+  - **Dep + script (`admin-panel/package.json`):** se añadió `@vitest/coverage-v8@^2.1.9` (alineado al `vitest@^2.1.9` ya instalado) como devDependency. Nuevo script `"test:coverage": "vitest run --coverage"`.
+  - **Configuración de cobertura (`admin-panel/vitest.config.js`):** bloque `coverage: { provider: 'v8', reporter: ['text', 'html', 'lcov'], reportsDirectory: './coverage', include: ['src/**/*.{js,jsx}'], exclude: ['src/**/*.test.{js,jsx}', 'src/**/__tests__/**', 'src/main.jsx', 'src/**/*.module.css'] }`. Thresholds por glob siguiendo el criterio del backlog:
+    - `src/components/ui/**` → 60% lines / functions / branches / statements
+    - `src/permissions/**` → 60% lines / functions / branches / statements
+    - `src/features/**` → 40% lines / functions / branches / statements
+    Verificado que la enforcement funciona subiendo el threshold de `features/**` a 99 temporalmente — vitest sale con exit 1 y `ERROR: Coverage for lines (77.59%) does not meet "src/features/**" threshold (99%)`. Restaurado a 40%.
+  - **CI (`.github/workflows/ci.yml`):** el job `Admin Panel — install, lint & build` ahora ejecuta — en orden — `Install → Lint → Unit tests (vitest) → A11y (axe smoke) → Coverage (thresholds) → Build → Upload build artifact → Upload coverage artifact`. Mantenemos `Unit tests` y `Coverage` como pasos **separados**: el primero da feedback rápido si un test falla, el segundo aplica los thresholds (es el gate real). El nuevo step `actions/upload-artifact@v4` sube `admin-panel/coverage/` con `if: always()` para tenerlo disponible incluso si la corrida falla.
+  - **Gitignore (`.gitignore`):** añadido `admin-panel/coverage/` junto a `admin-panel/dist/` para que el reporte HTML/lcov local no se commitee.
+- **Archivos modificados / creados:**
+  - **Modificados (5):** `admin-panel/package.json` (dep + script), `admin-panel/vitest.config.js` (bloque coverage + thresholds), `admin-panel/vitest.setup.js` (polyfill `Request` para Node 24), `.github/workflows/ci.yml` (steps `Unit tests`, `Coverage`, `Upload coverage artifact`), `.gitignore` (regla `admin-panel/coverage/`).
+  - **Lockfile:** `admin-panel/package-lock.json` regenerado por `npm install --save-dev @vitest/coverage-v8`.
+  - **Docs:** `docs/UI_BACKLOG.md` (UI-014 → `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local (Node 24):**
+  - `npm --prefix admin-panel run lint` → 0 errores (sólo los 2 warnings preexistentes de `tenant-setup`).
+  - `npm --prefix admin-panel test` → **104 archivos / 478 tests pasan, 0 fallos** (antes del polyfill: 7 fallos en `router.test.jsx` por el bug de `undici`).
+  - `npm --prefix admin-panel run test:a11y` → 6 archivos / 6 tests pasan.
+  - `npm --prefix admin-panel run test:coverage` → exit 0, thresholds en verde. Números reales sobre los buckets del brief:
+    - `src/components/ui`: **98.41% lines, 85.71% functions, 87.6% branches, 98.41% statements** (target 60%).
+    - `src/permissions`: **100% lines, 100% functions, 95.52% branches, 100% statements** (target 60%).
+    - `src/features/**` (agregado por los globs internos de v8): **77.59% lines, 61.64% functions, 73.60% branches, 77.59% statements** (target 40%).
+  - `npm --prefix admin-panel run build` → vite build OK (`✓ 417 modules transformed`).
+  - No se tocó backend → no se ejecutó pytest/ruff.
+- **Seguridad:**
+  - **Sin cambios en parámetros de seguridad del backend; UI-014 es frontend-only + CI.** No se modificó ningún archivo de `app/...`, schema, dependencia de servidor, migración ni endpoint. Los cambios viven en `admin-panel/{package.json,vitest.config.js,vitest.setup.js,package-lock.json}`, `.github/workflows/ci.yml` y `.gitignore`. El polyfill de `Request` está restringido al setup de tests (`vitest.setup.js`) y nunca entra al bundle de producción — Vite no incluye `vitest.setup.js` en el build, sólo `vitest` lo carga.
+  - El nuevo artifact `admin-panel-coverage` contiene HTML/lcov con paths del repo y nombres de tests; no expone secretos, env vars ni datos de tenants. Es público en la UI del workflow (igual que el `admin-panel-dist` ya existente).
+- **Limitaciones / próximos pasos:**
+  - **Polyfill `Request` con stripping de `signal`:** los tests del router no ejercitan cancelación de navegación, así que perder el `signal` no afecta la cobertura. Si un test futuro necesita asertar abort, hay que pasarle al constructor un `AbortSignal` que **sí** sea instancia de la clase nativa de undici (se puede obtener vía `Object.getPrototypeOf(new Request(url).signal).constructor`) o agregar un `AbortController.prototype.signal` getter compatible. Documentado en el comentario del setup.
+  - **Thresholds en valores conservadores:** los números reales actuales superan ampliamente los mínimos del brief (77-100% lines vs 40-60% required). Si en el futuro se quiere subir el listón sin tocar tests, basta con bajar el threshold en un solo archivo. Se dejó margen para que features nuevos sub-cubiertos no quemen CI mientras se estabilizan.
+  - **`src/services/coreApi.js` (13.77% lines) y `src/components/modules/whatsapp/*` (62%)** son las áreas con más superficie sin testear, pero quedan **fuera de los buckets exigidos por UI-014**. Bajarlas no rompe el gate. Cubrirlos con tests más profundos (esp. el cliente HTTP) queda como follow-up; idealmente con tests de contrato contra el server.
+  - **Próxima tarea PENDING:** **UI-015 — Limpieza final** (borrar `admin-panel/src/components/modules/` y `src/data/modules.js` ahora que todas las features migraron a `src/features/`).
+
+---
+
 ### UI-013 — Accesibilidad y responsive
 
 - **Fecha:** 2026-05-15

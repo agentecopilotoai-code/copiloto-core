@@ -121,8 +121,14 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Unit tests (vitest)
+        run: npm test
+
       - name: A11y (axe smoke)
         run: npm run test:a11y
+
+      - name: Coverage (thresholds)
+        run: npm run test:coverage
 
       - name: Build
         run: npm run build
@@ -132,3 +138,10 @@ jobs:
         with:
           name: admin-panel-dist
           path: admin-panel/dist/
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-panel-coverage
+          path: admin-panel/coverage/
