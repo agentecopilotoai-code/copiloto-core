@@ -25,7 +25,7 @@ import { LegalModule } from '../features/owner-admin/legal/index.js';
 import { MediaLibraryModule } from '../features/owner-admin/media-library/index.js';
 import { MyHandoffs } from '../features/agente/my-handoffs/index.js';
 import { OperationsDesk } from '../features/agente/inbox/index.js';
-import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
+import { OutboundDLQ } from '../features/agente/outbound-dlq/index.js';
 import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness.jsx';
 import { SegmentsModule } from '../features/manager/segments/index.js';
 import { SocialChannelsModule } from '../features/owner-admin/social-channels/index.js';

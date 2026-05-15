@@ -15,6 +15,46 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-009.4 — Operación · Outbound DLQ (Agente)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** rediseño del módulo `OutboundDLQ.jsx` (198 LOC) en una feature bajo `src/features/agente/outbound-dlq/`, aplicando el mockup `31 _ Operación _ Outbound DLQ.html`. **Tarea frontend-only** — la lógica se preserva verbatim; los endpoints ya existían, no se tocó el backend.
+- **Cambios realizados:**
+  - **Frontend — `src/features/agente/outbound-dlq/` (nuevo, 8 archivos):**
+    - `outboundDlqData.js` (helper puro): `ERROR_CODE_LABELS` + `errorCodeLabel` (catálogo de códigos de error de Meta), `formatDate`, `shortId`, `totalFailures`.
+    - `hooks/useOutboundDlqData.js`: capa de datos — lista de mensajes fallidos + totales por error code + filtro activo + selección de detalle + estado de retry + handlers (`loadDlq`, `toggleFilter`, `retry` con `window.confirm` nativo, `openDetail`/`closeDetail`, `refresh`), portados verbatim del legacy.
+    - `OutboundDLQ.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="outbound_dlq.retry" mode="RW">` + `PageHeader` con CTA «Refrescar» + `AlertBanner` para notices + composición de chips, tabla y modal de detalle. Conserva `data-module="outbound-dlq"`.
+    - `components/DlqErrorChips.jsx`: chips de filtro por código de error (conserva `data-error-code`).
+    - `components/DlqTable.jsx`: tabla de mensajes fallidos (reusa `DataTable`) con acciones «Ver» / «Reintentar» (conserva `data-action="retry"`).
+    - `components/DlqDetailModal.jsx`: `Modal` con el detalle del mensaje (error code/message, timestamps, payload crudo).
+    - `OutboundDLQ.module.css` (~190 LOC) — 100% `var(--...)`. `grep -rE "color: #|background: #|border-radius: [0-9]" src/features/agente/outbound-dlq/` → 0 resultados.
+    - `index.js` (barrel) + `outboundDlqData.test.js` (4 tests) + `OutboundDLQ.test.jsx` (4 tests).
+  - **Frontend — wiring + limpieza de legacy:**
+    - `app/moduleRegistry.js`: el id `'outbound-dlq'` ahora importa la `OutboundDLQ` de la feature; import legacy eliminado.
+    - **Borrado** `admin-panel/src/components/modules/outbound/OutboundDLQ.jsx` (198 LOC) y su carpeta.
+  - **Backend — test estático legacy actualizado:** `test_outbound_dlq_static.py` tenía hardcodeada la ruta `components/modules/outbound/OutboundDLQ.jsx`. Se actualizó para leer el feature dir nuevo combinando todos sus `.js*` y para verificar el import nuevo en el registry (`from '../features/agente/outbound-dlq/index.js'`). Los literales que verifica (`listOutboundDlq`, `retryOutboundDlqMessage`, `data-error-code`, `data-action="retry"`, `data-module="outbound-dlq"`) se preservaron en los archivos nuevos.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/agente/outbound-dlq/{OutboundDLQ.jsx,OutboundDLQ.module.css,OutboundDLQ.test.jsx,outboundDlqData.js,outboundDlqData.test.js,index.js,hooks/useOutboundDlqData.js,components/{DlqErrorChips,DlqTable,DlqDetailModal}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (registro `outbound-dlq → OutboundDLQ` de la feature, import legacy eliminado).
+  - **Eliminado:** `admin-panel/src/components/modules/outbound/OutboundDLQ.jsx`.
+  - `tests/test_outbound_dlq_static.py` (ruta + import actualizado al feature dir).
+  - `docs/UI_BACKLOG.md` (UI-009.4 marcado `DONE`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores.
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → suites/tests pasan (8 nuevos: 4 outboundDlqData + 4 OutboundDLQ). Sigue fallando `src/app/router.test.jsx` por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.*/UI-008.*/UI-009.1-3. **No es regresión**; CI corre Node 20 y solo ejecuta lint + build para el front.
+  - `python -m pytest tests/test_outbound_dlq_static.py` → passed.
+  - `ruff check .` → All checks passed!
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia. Solo se actualizó una ruta en un test estático de backend.
+  - La lógica de la mutación se portó verbatim: `retryOutboundDlqMessage` sigue pegando al mismo endpoint, autenticado y tenant-scoped server-side, y el reintento sigue exigiendo `window.confirm` antes de reencolar; el servidor audita la operación como `outbound.dlq.retried`. La entrada de módulo se gateó con `<RequirePermission capability="outbound_dlq.retry" mode="RW">`; el backend reverifica.
+- **Limitaciones / próximos pasos:**
+  - **`window.confirm` preservado.** El legacy usaba `window.confirm` antes de reintentar un mensaje; el rediseño lo preservó (mantener lógica). UI-011 (`ConfirmDialog`) lo barrerá.
+  - **Diferencia intencional declarada: el botón «Reintentar todos» del HTML no se incluye** — no existe un endpoint de reintento masivo por tenant para el agente (el reintento masivo cross-tenant es de Platform Owner, UI-006.5). Se difiere; el reintento es por-mensaje, como en el legacy. No se fabrican datos.
+  - Próxima tarea `PENDING` real: **UI-009.5 — Hoy · Citas del día**.
+
+---
+
 ### UI-009.3 — Operación · Ficha de contacto (Agente)
 
 - **Fecha:** 2026-05-14
