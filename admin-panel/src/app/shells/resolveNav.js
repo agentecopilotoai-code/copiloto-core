@@ -10,7 +10,7 @@
  *   - secciones que quedan sin items visibles → se descartan.
  *
  * @param {Array<{section: string, items: string[]}>} navGroups
- * @param {Array<object>} modules  - `adminModules` de `data/modules.js`.
+ * @param {Array<object>} modules  - `adminModules` de `app/modules.js`.
  * @param {{ can: (cap: string, mode?: 'R'|'RW') => boolean }} permissions
  * @param {{ includeDenied?: boolean }} [options]
  * @returns {Array<{section: string, items: Array<{id, label, capability, disabled}>}>}

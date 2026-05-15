@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { getKnowledgeStorageSettings, updateKnowledgeStorageSettings } from '../../../services/coreApi.js';
+import { getKnowledgeStorageSettings, updateKnowledgeStorageSettings } from '../../../../services/coreApi.js';
 
 const emptyForm = {
   backend: 'local',

@@ -11,7 +11,7 @@ import styles from '../ManagerAnalytics.module.css';
 
 /**
  * Tabla de rendimiento por agente (feature-local). Extraída del markup +
- * lógica de orden del legacy `components/modules/analytics/AgentPerformance.jsx`,
+ * lógica de orden de `features/owner-admin/analytics/AgentPerformance.jsx`,
  * pero como componente presentacional: recibe `agents` (respuesta de
  * `analytics_agents`), `sortBy` y `onSortChange` desde el hook orquestador.
  *

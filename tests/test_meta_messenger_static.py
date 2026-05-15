@@ -28,7 +28,7 @@ API_ROUTES = Path('app/api/v1/routes.py')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-MODULES_REGISTRY = Path('admin-panel/src/data/modules.js')
+MODULES_REGISTRY = Path('admin-panel/src/app/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 # UI-007.9: the social-channels module was redesigned into a feature directory.
 SOCIAL_FEATURE = Path('admin-panel/src/features/owner-admin/social-channels')

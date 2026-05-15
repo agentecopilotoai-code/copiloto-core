@@ -13,11 +13,11 @@ import {
 import { MfaRequiredBlocker } from '../components/domain/MfaRequiredBlocker.jsx';
 import { NoTenantOnboarding } from '../components/domain/NoTenantOnboarding.jsx';
 import { LoadingScreen } from '../components/layout/LoadingScreen.jsx';
-import { ModulePlaceholder } from '../components/modules/ModulePlaceholder.jsx';
 import { ContactProfile } from '../features/agente/contact-profile/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import { adminModules } from '../data/modules.js';
+import { adminModules } from './modules.js';
+import { ModulePlaceholder } from './ModulePlaceholder.jsx';
 import { AccessDenied, RequirePermission, ROLE_HOME, usePermissions } from '../permissions/index.js';
 import { MODULE_REGISTRY } from './moduleRegistry.js';
 import { PlatformOwnerShell } from './shells/PlatformOwnerShell.jsx';

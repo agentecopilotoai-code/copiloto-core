@@ -29,14 +29,14 @@ ADMIN_API = Path('admin-panel/src/services/coreApi.js')
 # UI-007.8: the WhatsApp module was redesigned into a feature directory; the
 # WebWidgetPanel stays at its current path until its own UI task.
 WHATSAPP_FEATURE = Path('admin-panel/src/features/owner-admin/whatsapp')
-WEB_PANEL = Path('admin-panel/src/components/modules/whatsapp/WebWidgetPanel.jsx')
+WEB_PANEL = Path('admin-panel/src/features/owner-admin/whatsapp/components/WebWidgetPanel.jsx')
 
 
 def _whatsapp_feature_source() -> str:
     return '\n'.join(
         path.read_text() for path in sorted(WHATSAPP_FEATURE.rglob('*.js*'))
     )
-ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx')
+ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')
 
 
 # ───── Schema changes ─────

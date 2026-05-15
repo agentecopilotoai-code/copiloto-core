@@ -15,6 +15,57 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-015 — Limpieza final: borrar `admin-panel/src/components/modules/`
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el roadmap de rediseño UI eliminando físicamente el legacy `admin-panel/src/components/modules/` y `admin-panel/src/data/modules.js`, después de que UI-006..UI-010 migraron todas las features a `src/features/`. El criterio del backlog se materializa en tres gates de grep: `grep -rn "components/modules" admin-panel/src` → 0, `grep -rn "data/modules" admin-panel/src` → 0, `grep -rn "useActiveModule" admin-panel/src` → 0. El hook `useActiveModule` no existía ya (UI-002 limpió el AdminLayout antiguo que lo consumía); la verificación con `ls admin-panel/src/hooks/` confirmó que el dir sólo contiene `useTenantOptions.js`. La estrategia fue **migrar archivos con `git mv`** (preservando historia) hacia su feature natural, no borrar por la fuerza. Backend untouched salvo los **paths estáticos** que verifican existencia de los archivos del frontend en `tests/test_*_static.py`.
+- **Cambios realizados:**
+  - **Migración de los 5 entries de `components/modules/`:**
+    1. `ModulePlaceholder.jsx` → `src/app/ModulePlaceholder.jsx`. No es una primitiva genérica de UI (es un fallback específico del router para `module ids` aún sin entrada en `moduleRegistry`), así que va al lado del router que la consume.
+    2. `analytics/AnalyticsPanel.jsx` + `analytics/AgentPerformance.jsx` → `src/features/owner-admin/analytics/` (nuevo feature dir, con `index.js` que reexporta `AnalyticsPanel`). El panel sirve dos consumidores: el módulo `analytics` (vía `moduleRegistry`) usado por Owner/Admin/Manager en la sección Negocio, y el wrapper read-only `ViewerAnalytics` (UI-010.2). Ambos importan desde el barrel del feature.
+    3. `knowledgeStorage/KnowledgeStorageSettings.jsx` → `src/features/owner-admin/knowledge-studio/components/KnowledgeStorageSettings.jsx`. Colocado dentro del feature `knowledge-studio` porque es un componente accesorio del módulo `knowledge-storage` (settings del bucket S3) y conceptualmente complementa a Knowledge Studio.
+    4. `readiness/GoLiveReadiness.jsx` → `src/features/owner-admin/readiness/GoLiveReadiness.jsx` (nuevo feature dir + `index.js`).
+    5. `whatsapp/WebWidgetPanel.jsx` → `src/features/owner-admin/whatsapp/components/WebWidgetPanel.jsx`. Es un sub-panel del módulo WhatsApp (UI-007.8) consumido por `WhatsAppOnboarding`; va junto a sus hermanos `TemplatesPanel`/`WhatsAppHealthPanel`/`WhatsAppWizardSteps`.
+  - **Migración de `data/modules.js` → `app/modules.js`:** el archivo es la fuente de verdad de la metadata de cada módulo (`id`, `label`, `summary`, `scope`, `capability`) y está acoplado a `moduleRegistry.js`, `router.jsx` y `nav.js`. Lo natural es colocarlo bajo `src/app/` junto al registry. `src/data/` queda vacío y se borró.
+  - **Imports de los consumidores actualizados (6 archivos):**
+    - `src/app/router.jsx` — repunta `ModulePlaceholder` a `./ModulePlaceholder.jsx` y `adminModules` a `./modules.js`.
+    - `src/app/moduleRegistry.js` — repunta `AnalyticsPanel`, `KnowledgeStorageSettings`, `GoLiveReadiness` a sus nuevos paths.
+    - `src/features/viewer/analytics/ViewerAnalytics.jsx` — repunta el wrapper a `../../owner-admin/analytics/index.js` (y se corrigió el JSDoc, que aún citaba el path legacy).
+    - `src/features/owner-admin/whatsapp/WhatsAppOnboarding.jsx` — repunta `WebWidgetPanel` a `./components/WebWidgetPanel.jsx` (eliminado el comentario "stays at its current path until its own UI task", obsoleto).
+    - `src/app/shells/{ReadOnlyShell,TenantShell,PlatformOwnerShell}.test.jsx` — los 3 tests de shell que importaban `adminModules` desde `../../data/modules.js` ahora lo hacen desde `../modules.js`. Los tests están alive y validan el wiring del shell; ni había que borrarlos ni rewritearlos.
+    - `src/app/nav.js` y `src/app/shells/resolveNav.js` — JSDoc actualizado para citar `app/modules.js` en vez de `data/modules.js`.
+    - `src/features/manager/analytics/components/AgentPerformanceTable.jsx` — comentario actualizado para citar `features/owner-admin/analytics/AgentPerformance.jsx` en lugar del path legacy.
+  - **Imports relativos dentro de los archivos movidos:** los dos archivos que cambiaron de profundidad (`WebWidgetPanel.jsx` y `KnowledgeStorageSettings.jsx`, ahora bajo `feature/components/`, 4 niveles desde `src/`) recibieron `../../../services/coreApi.js` → `../../../../services/coreApi.js`. Los demás (`AnalyticsPanel`, `AgentPerformance`, `GoLiveReadiness`) mantuvieron la misma profundidad relativa, así que sus imports quedaron sin tocar.
+  - **Backend — paths estáticos actualizados en 21 tests `tests/test_*_static.py`:** todos los archivos que constanteaban un `Path('admin-panel/src/components/modules/...')` o `Path('admin-panel/src/data/modules.js')` se repuntaron a los nuevos paths bajo `src/features/...` / `src/app/modules.js`. Bulk-replace por script: `analytics/AnalyticsPanel.jsx`, `analytics/AgentPerformance.jsx`, `whatsapp/WebWidgetPanel.jsx`, `readiness/GoLiveReadiness.jsx`, `knowledgeStorage/KnowledgeStorageSettings.jsx`, `data/modules.js`. Los `assert 'components/modules/<feature>/<X>' not in src` (negative assertions de varios tests verificando que el legacy NO está enlazado en `moduleRegistry`/`router`) **se dejaron tal cual** — siguen pasando porque el legacy está físicamente borrado y nada lo importa.
+  - **Directorios físicos borrados:** `admin-panel/src/components/modules/` (5 subdirs vacíos colapsados con `rmdir`) y `admin-panel/src/data/` (vacío, también borrado).
+- **Archivos modificados / creados:**
+  - **Movidos con `git mv` (6):** `ModulePlaceholder.jsx`, `analytics/{AnalyticsPanel,AgentPerformance}.jsx`, `knowledgeStorage/KnowledgeStorageSettings.jsx`, `readiness/GoLiveReadiness.jsx`, `whatsapp/WebWidgetPanel.jsx`, `data/modules.js` → nuevos paths bajo `src/app/` y `src/features/owner-admin/`.
+  - **Nuevos (2):** `src/features/owner-admin/analytics/index.js`, `src/features/owner-admin/readiness/index.js` (barrels).
+  - **Modificados — frontend (10):** `src/app/router.jsx`, `src/app/moduleRegistry.js`, `src/app/nav.js`, `src/app/shells/resolveNav.js`, `src/app/shells/{TenantShell,ReadOnlyShell,PlatformOwnerShell}.test.jsx`, `src/features/viewer/analytics/ViewerAnalytics.jsx`, `src/features/owner-admin/whatsapp/WhatsAppOnboarding.jsx`, `src/features/manager/analytics/components/AgentPerformanceTable.jsx`, `src/features/owner-admin/whatsapp/components/WebWidgetPanel.jsx` (ajuste de import), `src/features/owner-admin/knowledge-studio/components/KnowledgeStorageSettings.jsx` (ajuste de import).
+  - **Modificados — tests backend (21):** todos los `tests/test_*_static.py` listados arriba.
+  - **Borrados:** los dirs `src/components/modules/` (entero) y `src/data/`. El archivo `admin-panel/src/components/modules/whatsapp/WhatsAppOnboarding.jsx` ya había sido marcado como deleted por UI-007.8 — el merge final dejó esa eliminación lista para commit (`D` en `git status`).
+  - **Docs:** `docs/UI_BACKLOG.md` (UI-015 → `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local (Node 24):**
+  - **Gates de cierre del backlog:**
+    - `grep -rn "components/modules" admin-panel/src` → **0 matches**.
+    - `grep -rn "data/modules" admin-panel/src` → **0 matches**.
+    - `grep -rn "useActiveModule" admin-panel/src` → **0 matches** (ya era 0; el hook no existía).
+  - `npm --prefix admin-panel run lint` → 0 errores (sólo los 2 warnings preexistentes de `tenant-setup`, sin cambios).
+  - `npm --prefix admin-panel test` → **104 archivos / 478 tests pasan, 0 fallos**.
+  - `npm --prefix admin-panel run test:a11y` → 6 archivos / 6 tests pasan.
+  - `npm --prefix admin-panel run test:coverage` → exit 0, thresholds en verde. Totales agregados: 72.73% lines / 74.4% branches / 54.21% functions / 72.73% statements; `components/ui` y `permissions` siguen muy por encima del 60% requerido; `features` agregado por sobre 40%.
+  - `npm --prefix admin-panel run build` → vite build OK (`✓ 419 modules transformed`, 766 kB JS / 143 kB CSS).
+  - **Backend:** los 21 `tests/test_*_static.py` con paths repuntados se cargan correctamente. No se ejecutó pytest completo localmente porque las deps Python (`phonenumbers`, etc.) no están instaladas en este worktree — el job de CI corre el suite completo y validará paths.
+- **Seguridad:**
+  - **Sin cambios en parámetros de seguridad del backend.** Esta tarea es **frontend-only + path-fixups en tests estáticos del backend**. No se modificó ningún archivo de `app/...`, schema, dependencia de servidor, migración, endpoint, política de permisos (`permissions/matrix.js` intacta), ni superficie de auth. Las migraciones son `git mv` puros: el código de los componentes (lógica, gating con `<RequirePermission>`, llamadas a `coreApi`) se preservó verbatim — sólo cambió su ubicación física y los paths relativos a `coreApi`/al feature padre. Los tests `test_*_static.py` siguen verificando exactamente lo mismo (la presencia de strings/imports en el componente frontend), sólo apuntando a la nueva ruta.
+  - El moduleRegistry mantiene el mapeo `module id → { Component, capability, mode }` sin cambios funcionales: cada componente sigue gateado por su capability original. `analytics` → `AnalyticsPanel` (`analytics.tenant.read`), `knowledge-storage` → `KnowledgeStorageSettings` (`knowledge_storage.write`, RW), `go-live-readiness` → `GoLiveReadiness` (`go_live_readiness.read`), `whatsapp` → `WhatsAppOnboarding` (que ahora importa `WebWidgetPanel` desde el feature interno).
+- **Limitaciones / próximos pasos:**
+  - **UI-012 (theming/dark mode/branding por tenant) sigue `PENDING`** en `docs/UI_BACKLOG.md`. Está declarado en el backlog como **opcional y no bloqueante para go-live** de la UI: el design system actual (UI-001 + tokens) ya da una capa unificada de espaciado/tipografía/sombras/radii sin tema dark, y los tenants no requirieron color override por marca para el MVP. Queda como follow-up cuando haya pedido de cliente concreto que lo justifique (típicamente trae un brief de branding propio).
+  - **UI-015 es la última tarea del roadmap UI-006..UI-015.** Con su cierre, el legacy tree `components/modules/` queda eliminado, las features están todas bajo `src/features/<role>/<feature>/`, y los 3 gates de grep dan 0. El backlog UI no tiene más tareas `PENDING` salvo la opcional UI-012.
+  - **Coverage de `src/services/coreApi.js` (13.77% lines)** sigue siendo el área con más superficie sin testear, igual que tras UI-014. No bloquea el gate; es candidato a tests de contrato server-driven, no a UI tasks.
+
+---
+
 ### UI-014 — Tests y CI
 
 - **Fecha:** 2026-05-15

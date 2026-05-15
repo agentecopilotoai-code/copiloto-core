@@ -35,7 +35,7 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
+ADMIN_MODULES = Path('admin-panel/src/app/modules.js')
 # UI-007.5: the packages module was redesigned into a feature directory.
 PACKAGES_FEATURE = Path('admin-panel/src/features/owner-admin/packages')
 # UI-007.3: the contacts module was split into a feature directory.

@@ -700,7 +700,7 @@ src/
 
 ### UI-015 — Limpieza final: borrar `admin-panel/src/components/modules/`
 
-- **Estado:** PENDING (última)
+- **Estado:** DONE (2026-05-15)
 - **Alcance:**
   - Una vez todas las features migradas a `src/features/`, borrar `src/components/modules/` y `src/data/modules.js`.
   - Borrar `src/hooks/useActiveModule.js`.

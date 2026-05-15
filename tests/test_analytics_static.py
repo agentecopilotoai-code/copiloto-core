@@ -2,8 +2,8 @@ from pathlib import Path
 
 API_ROUTES = Path('app/api/v1/routes.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx')
-MODULES = Path('admin-panel/src/data/modules.js')
+ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')
+MODULES = Path('admin-panel/src/app/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 
 

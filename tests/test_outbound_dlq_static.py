@@ -47,7 +47,7 @@ EVENT_WORKER = Path('app/workers/event_worker.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 METRICS = Path('app/services/metrics.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
+ADMIN_MODULES = Path('admin-panel/src/app/modules.js')
 # UI-009.4: the OutboundDLQ module was redesigned into a feature directory.
 DLQ_FEATURE = Path('admin-panel/src/features/agente/outbound-dlq')
 

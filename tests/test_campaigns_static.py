@@ -33,7 +33,7 @@ CAMPAIGNS_SERVICE = Path('app/services/campaigns.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 CAMPAIGNS_FEATURE = Path('admin-panel/src/features/manager/campaigns')
-MODULES = Path('admin-panel/src/data/modules.js')
+MODULES = Path('admin-panel/src/app/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 
 

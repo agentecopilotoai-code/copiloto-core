@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { getWebChannel, upsertWebChannel } from '../../../services/coreApi.js';
+import { getWebChannel, upsertWebChannel } from '../../../../services/coreApi.js';
 
 function defaultForm() {
   return {

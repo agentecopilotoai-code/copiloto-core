@@ -36,7 +36,7 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
 SERVICE = Path('app/services/subscriptions.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
+ADMIN_MODULES = Path('admin-panel/src/app/modules.js')
 # UI-007.6: the subscriptions module was redesigned into a feature directory.
 SUBS_FEATURE = Path('admin-panel/src/features/owner-admin/subscriptions')
 CORE_API = Path('admin-panel/src/services/coreApi.js')

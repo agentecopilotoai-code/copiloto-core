@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { adminModules } from '../../data/modules.js';
+import { adminModules } from '../modules.js';
 import { TenantShell } from './TenantShell.jsx';
 
 const baseProps = {

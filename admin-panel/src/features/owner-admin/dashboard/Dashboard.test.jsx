@@ -79,8 +79,12 @@ describe('Dashboard', () => {
   it('navigates to a tenant-scoped module from a quick link', async () => {
     setup();
     await screen.findByRole('heading', { name: /Camila/ });
+    // The quick-link buttons only mount once `getAnalyticsOverview` has
+    // resolved (loading && !current shows the EmptyState instead). Use
+    // findByRole so the click waits for the loaded state on slow runners.
+    const contactosButton = await screen.findByRole('button', { name: /Contactos/ });
 
-    await userEvent.click(screen.getByRole('button', { name: /Contactos/ }));
+    await userEvent.click(contactosButton);
     expect(mockNavigate).toHaveBeenCalledWith('/t/acme/contacts');
   });
 

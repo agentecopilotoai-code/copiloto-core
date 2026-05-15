@@ -5,8 +5,8 @@ from pathlib import Path
 API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx')
-AGENT_PERF = Path('admin-panel/src/components/modules/analytics/AgentPerformance.jsx')
+ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')
+AGENT_PERF = Path('admin-panel/src/features/owner-admin/analytics/AgentPerformance.jsx')
 
 
 def test_appointments_table_has_metadata_jsonb_column():

@@ -62,6 +62,11 @@ describe('Onboarding', () => {
   it('verifies a step through the server', async () => {
     setup();
     await screen.findByRole('heading', { name: 'Onboarding self-service' });
+    // Wait for the getTenantOnboarding mock to resolve before reading the
+    // Verificar buttons — on slow runners (CI Node 20) the heading renders
+    // before progress=null becomes {last_completed_step:3}, which would leave
+    // only step 1's button visible and make the test click the wrong step.
+    await screen.findByText('Progreso: 3/7');
 
     // step 4 is the current step (3 completed) — its Verificar button is live.
     const verifyButtons = screen.getAllByRole('button', { name: 'Verificar' });

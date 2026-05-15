@@ -2,7 +2,7 @@
  * Configuración de navegación por shell de rol.
  *
  * Cada entrada es una sección con un título y una lista ordenada de `module id`
- * (definidos en `data/modules.js`). El label y la `capability` de cada item se
+ * (definidos en `app/modules.js`). El label y la `capability` de cada item se
  * resuelven contra `adminModules` — esto evita duplicar metadata.
  *
  * El shell filtra los items por `usePermissions().can(capability, 'R')` y omite

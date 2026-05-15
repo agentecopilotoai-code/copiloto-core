@@ -4,9 +4,7 @@ import { AlertBanner, Card, EmptyState, PageHeader, Tabs } from '../../../compon
 import { RequirePermission } from '../../../permissions/index.js';
 import { usePermissions } from '../../../permissions/usePermissions.js';
 import { useTenantContext } from '../../../app/TenantProvider.jsx';
-// WebWidgetPanel is a separate channel component (not part of the UI-007.8
-// WhatsApp redesign); it stays at its current path until its own UI task.
-import { WebWidgetPanel } from '../../../components/modules/whatsapp/WebWidgetPanel.jsx';
+import { WebWidgetPanel } from './components/WebWidgetPanel.jsx';
 import { TemplatesPanel } from './components/TemplatesPanel.jsx';
 import { WhatsAppHealthPanel } from './components/WhatsAppHealthPanel.jsx';
 import { WhatsAppWizardSteps } from './components/WhatsAppWizardSteps.jsx';

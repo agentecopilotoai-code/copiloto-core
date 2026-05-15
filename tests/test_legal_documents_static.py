@@ -34,7 +34,7 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
 CONSENT = Path('app/services/consent.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
+ADMIN_MODULES = Path('admin-panel/src/app/modules.js')
 # UI-007.14: the LegalModule was redesigned into a feature directory.
 LEGAL_FEATURE = Path('admin-panel/src/features/owner-admin/legal')
 

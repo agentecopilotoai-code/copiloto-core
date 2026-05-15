@@ -2,8 +2,8 @@ from pathlib import Path
 
 ROUTES = Path('app/api/v1/routes.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-READINESS_UI = Path('admin-panel/src/components/modules/readiness/GoLiveReadiness.jsx')
-MODULES = Path('admin-panel/src/data/modules.js')
+READINESS_UI = Path('admin-panel/src/features/owner-admin/readiness/GoLiveReadiness.jsx')
+MODULES = Path('admin-panel/src/app/modules.js')
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
 

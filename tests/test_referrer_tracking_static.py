@@ -27,7 +27,7 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 WIDGET_JS = Path('admin-panel/public/widget.js')
-ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx')
+ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')
 # UI-007.3: the contacts module was split into a feature directory.
 CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')

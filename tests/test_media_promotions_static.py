@@ -44,7 +44,7 @@ PROMOTIONS = Path('app/services/promotions.py')
 MEDIA_STORAGE = Path('app/services/media_storage.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-MODULES = Path('admin-panel/src/data/modules.js')
+MODULES = Path('admin-panel/src/app/modules.js')
 # UI-007.4: the ServiceCatalog monolith was split into a feature directory.
 SERVICES_FEATURE = Path('admin-panel/src/features/owner-admin/services')
 # UI-007.11: the MediaLibraryModule monolith was split into a feature directory.

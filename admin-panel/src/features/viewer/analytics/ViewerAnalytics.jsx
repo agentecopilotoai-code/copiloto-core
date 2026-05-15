@@ -1,4 +1,4 @@
-import { AnalyticsPanel } from '../../../components/modules/analytics/AnalyticsPanel.jsx';
+import { AnalyticsPanel } from '../../owner-admin/analytics/index.js';
 import { RequirePermission } from '../../../permissions/index.js';
 import { usePermissions } from '../../../permissions/usePermissions.js';
 import { useTenantContext } from '../../../app/TenantProvider.jsx';
@@ -7,8 +7,8 @@ import { useTenantContext } from '../../../app/TenantProvider.jsx';
  * UI-010.2 — Viewer · Lectura · Analítica.
  *
  * Versión read-only de la analítica del tenant. Es un **wrapper fino** sobre el
- * `AnalyticsPanel` ya existente (`src/components/modules/analytics/`) — el panel
- * legacy se reusa **verbatim** porque ya es read-only por naturaleza (no expone
+ * `AnalyticsPanel` (`src/features/owner-admin/analytics/`) — el panel se reusa
+ * **verbatim** porque ya es read-only por naturaleza (no expone
  * ningún CTA de export, edit ni descarga; sus únicos controles son selectores
  * de rango/tab/refresh). Reutilizarlo intacto evita duplicar lógica de fetch y
  * deja al legacy en su path actual, donde 5 tests estáticos del backend

@@ -29,7 +29,7 @@ ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 NOTIFICATIONS = Path('app/services/notifications.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
-ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
+ADMIN_MODULES = Path('admin-panel/src/app/modules.js')
 # UI-007.7: the branches module was redesigned into a feature directory.
 BRANCHES_FEATURE = Path('admin-panel/src/features/owner-admin/branches')
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')

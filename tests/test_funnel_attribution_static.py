@@ -4,7 +4,7 @@ from pathlib import Path
 
 API_ROUTES = Path('app/api/v1/routes.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-ANALYTICS_PANEL = Path('admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx')
+ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 ATTRIBUTION_SERVICE = Path('app/services/campaign_attribution.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')

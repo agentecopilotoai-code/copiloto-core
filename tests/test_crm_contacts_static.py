@@ -6,7 +6,7 @@ SCHEMAS = Path('app/api/v1/schemas.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 # UI-007.3: the contacts module was split into a feature directory.
 CONTACTS_FEATURE = Path('admin-panel/src/features/owner-admin/conversations-contacts')
-MODULES = Path('admin-panel/src/data/modules.js')
+MODULES = Path('admin-panel/src/app/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 
 

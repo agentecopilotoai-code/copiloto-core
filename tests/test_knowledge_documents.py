@@ -102,7 +102,7 @@ def test_normalize_knowledge_document_recovers_invalid_metadata_as_empty_object(
 
 def test_knowledge_storage_routes_and_admin_module_are_registered():
     routes_source = Path('app/api/v1/routes.py').read_text()
-    modules_source = Path('admin-panel/src/data/modules.js').read_text()
+    modules_source = Path('admin-panel/src/app/modules.js').read_text()
     layout_source = Path('admin-panel/src/app/moduleRegistry.js').read_text()
 
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/knowledge/storage')" in routes_source

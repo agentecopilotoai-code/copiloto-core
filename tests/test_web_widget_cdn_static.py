@@ -21,7 +21,7 @@ SRC = WIDGET_DIR / 'src'
 TESTS = WIDGET_DIR / 'tests'
 SCRIPTS = WIDGET_DIR / 'scripts'
 WORKFLOW = Path('.github/workflows/web-widget.yml')
-WEB_PANEL = Path('admin-panel/src/components/modules/whatsapp/WebWidgetPanel.jsx')
+WEB_PANEL = Path('admin-panel/src/features/owner-admin/whatsapp/components/WebWidgetPanel.jsx')
 
 
 # ─────────────────────────────────────────────────────────────────────────────

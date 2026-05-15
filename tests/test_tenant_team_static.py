@@ -18,7 +18,7 @@ SECURITY = Path('app/core/security.py')
 AUTH0_ADMIN = Path('app/services/auth0_admin.py')
 
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-MODULES = Path('admin-panel/src/data/modules.js')
+MODULES = Path('admin-panel/src/app/modules.js')
 # UI-007.13: the TeamModule was redesigned into a feature directory.
 TEAM_FEATURE = Path('admin-panel/src/features/owner-admin/team')
 

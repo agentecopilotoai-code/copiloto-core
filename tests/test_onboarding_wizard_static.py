@@ -20,7 +20,7 @@ from uuid import uuid4
 ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
-MODULES = Path('admin-panel/src/data/modules.js')
+MODULES = Path('admin-panel/src/app/modules.js')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 # UI-007.2: the wizard was redesigned and moved to features/owner-admin/onboarding/.
 ONBOARDING_DIR = Path('admin-panel/src/features/owner-admin/onboarding')
