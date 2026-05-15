@@ -167,6 +167,13 @@ export const adminModules = [
     capability: 'conversations.view',
   },
   {
+    id: 'my-handoffs',
+    label: 'Mis handoffs',
+    summary: 'Cola de conversaciones escaladas a humano con filtro pre-aplicado al agente actual.',
+    scope: ['Cola de handoffs', 'Filtros Sin asignar / Mías', 'Tomar handoff', 'Liberar al bot'],
+    capability: 'conversations.view',
+  },
+  {
     id: 'outbound-dlq',
     label: 'Outbound DLQ',
     summary: 'Mensajes outbound que el worker no pudo entregar a Meta. TASK-0065.',
