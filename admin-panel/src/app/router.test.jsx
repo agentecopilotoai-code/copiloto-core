@@ -151,6 +151,16 @@ describe('router por rol', () => {
     });
   });
 
+  it('UI-016.4 — usuario anónimo en `/` ve la landing pública (no redirect)', async () => {
+    // Sin sesión activa → IndexRedirect renderiza <Landing /> en lugar de
+    // hacer Navigate a /no-tenant o /platform. La ruta permanece en `/`.
+    const router = renderAt('/', { session: null, tenants: [] });
+    const heading = await screen.findByRole('heading', { level: 1 });
+    expect(heading.textContent).toMatch(/Responde, califica y agenda/);
+    expect(heading.textContent).toMatch(/en segundos/);
+    expect(router.state.location.pathname).toBe('/');
+  });
+
   it('mfa_required bloquea cualquier ruta con el gate de MFA', async () => {
     renderAt('/t/acme/services', {
       session: { mfa_required: true, profile: { sub: 'u1', roles: ['owner'] } },

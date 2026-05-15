@@ -1,0 +1,198 @@
+/*
+ * UI-016.4 — Landing comercial (estilos compartidos: page wrapper, container,
+ * brand, header, button-styled anchors).
+ *
+ * Cada subcomponente declara sus propios estilos en `components/<Name>.module.css`
+ * y consume estos shared via import desde `Landing.module.css`. Tokens 100%
+ * desde `var(--*)` (ver `styles/tokens.css`).
+ */
+
+.page {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+}
+
+.container {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+}
+
+/* === Header / nav ======================================================= */
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: color-mix(in oklch, var(--bg) 92%, transparent);
+  backdrop-filter: saturate(140%) blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+.headerInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-4) 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-decoration: none;
+  color: inherit;
+}
+
+.brandMark {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-md);
+  background: var(--ink);
+  color: var(--bg);
+  display: grid;
+  place-items: center;
+  font-weight: var(--fw-black);
+  font-size: var(--fs-body-lg);
+}
+
+.brandName {
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-tight);
+}
+
+.brandTagline {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.navLink {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.navLink:hover {
+  color: var(--accent-ink);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@media (max-width: 880px) {
+  .nav {
+    display: none;
+  }
+}
+
+/* === Section header (compartido por features, pricing y otras secciones) === */
+
+.sectionHeader {
+  text-align: center;
+  margin-bottom: var(--space-8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sectionTag {
+  display: inline-block;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--r-xl);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(28px, 3.4vw, 40px);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.01em;
+  font-weight: var(--fw-bold);
+  max-width: 30ch;
+}
+
+.sectionBody {
+  margin: 0;
+  max-width: 64ch;
+  font-size: var(--fs-body-lg);
+  color: var(--ink-2);
+  line-height: var(--lh-relaxed);
+}
+
+/* === Button-styled anchors (landing only) ============================== */
+
+.btnLink {
+  align-items: center;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  display: inline-flex;
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semibold);
+  gap: var(--space-2);
+  justify-content: center;
+  line-height: var(--lh-tight);
+  padding: var(--space-2) var(--space-4);
+  text-decoration: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+  white-space: nowrap;
+  font-size: var(--fs-body);
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.btnLink:hover {
+  background: var(--bg-deep);
+}
+
+.btnLink:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.btnLinkLg {
+  font-size: var(--fs-body-lg);
+  padding: var(--space-3) var(--space-5);
+}
+
+.btnLinkPrimary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--panel);
+}
+
+.btnLinkPrimary:hover {
+  background: var(--ink-2);
+  border-color: var(--ink-2);
+}
+
+.btnLinkGhost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-2);
+}
+
+.btnLinkGhost:hover {
+  background: var(--bg-deep);
+}

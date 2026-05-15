@@ -15,6 +15,7 @@ import { NoTenantOnboarding } from '../components/domain/NoTenantOnboarding.jsx'
 import { LoadingScreen } from '../components/layout/LoadingScreen.jsx';
 import { ContactProfile } from '../features/agente/contact-profile/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
+import { Landing } from '../features/public/landing/index.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { adminModules } from './modules.js';
 import { ModulePlaceholder } from './ModulePlaceholder.jsx';
@@ -102,17 +103,25 @@ function RootLayout() {
 }
 
 /**
- * Redirect raíz `/` → home por rol:
+ * Resuelve `/`:
+ *   - sin sesión (anónimo)          → `<Landing />` (UI-016.4),
  *   - platform owner (support_mode) → `/platform`,
  *   - sin tenant                    → `/no-tenant`,
  *   - viewer                        → `/t/:slug/read`,
  *   - resto                         → `/t/:slug/:roleHome`.
+ *
+ * Cuando `session === null` (usuario no autenticado) la app muestra la landing
+ * comercial pública en lugar de redirigir a Auth0. La landing tiene su propio
+ * CTA "Iniciar sesión" que dispara el flow Auth0 existente.
  */
 function IndexRedirect() {
-  const { profile, tenantOptions, tenantsLoading } = useTenantContext();
+  const { session, profile, tenantOptions, tenantsLoading } = useTenantContext();
   const platformPermissions = usePermissions({ profile, tenant: null });
   const defaultTenant = pickDefaultTenant(tenantOptions);
   const tenantPermissions = usePermissions({ profile, tenant: defaultTenant });
+
+  // Usuario anónimo → landing pública. Sin RequirePermission (es público).
+  if (!session) return <Landing />;
 
   if (tenantsLoading) return <LoadingScreen />;
   if (platformPermissions.role === 'platform_owner') {

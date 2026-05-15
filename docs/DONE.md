@@ -15,6 +15,51 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-016.4 — Landing comercial pre-login (público)
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** entregar la vista pública pre-login del HTML `docs/HTML DESIGN/Transversales/L1 _ Home _ Landing comercial.html`. Hasta UI-016.4, `/admin/` con sesión nula caía directo al flow de Auth0 (universal login) sin que el visitante anónimo viera nada del producto. La landing añade el escaparate comercial que el diseñador definió: hero ("Responde, califica y agenda en segundos, no en horas."), demo de conversación con la confirmación de cita ✅, strip de social proof, 9 features, pricing (Starter/Pro/Enterprise) y banner final pre-footer + footer multicolumna.
+- **Cambios realizados:**
+  - **Nueva feature dir `admin-panel/src/features/public/landing/`** (16 archivos, 1606 LOC en total — ningún archivo individual > 200 LOC):
+    - `Landing.jsx` (70 LOC, orquestador): defaults para `demoMailto` (`mailto:ventas@copilotoia.com?subject=Solicito%20demo%20CopilotoIA`), `salesMailto` (`mailto:ventas@copilotoia.com?subject=Contacto%20ventas%20CopilotoIA`) y `loginHref` (`/admin/login`). `useEffect` que escribe `document.title = 'CopilotoIA — Agendamiento por IA · WhatsApp, Instagram y Messenger'` al montar y lo restaura al desmontar (para que cuando el usuario haga login y el SPA siga corriendo, el `<title>` vuelva al original del Admin Panel).
+    - `Landing.module.css` (198 LOC, shared): `.page`, `.container` (1120px max-width), header sticky + brand mark, `.sectionHeader/.sectionTag/.sectionTitle/.sectionBody` (compartidos por Features y Pricing), `.btnLink` + variantes (`btnLinkPrimary`, `btnLinkGhost`, `btnLinkLg`) — link anchors estilados como botones, distintos del `Button` primitive del Admin (que es `<button>`, sin soporte de `href`). El landing es 100% `<a>` por SEO + accesibilidad de mailto/anchor links.
+    - `components/LandingHeader.jsx` (62 LOC) — sticky nav con logo + 5 anchors + 3 CTAs (Iniciar sesión / Contactar ventas / Solicitar demo).
+    - `components/LandingHero.jsx` (86 LOC) + `LandingHero.module.css` (100 LOC) — pill row, H1 con clamp `36-56px`, body, 2 CTAs primarios, subline de garantías. Aria-labelledby el H1.
+    - `components/LandingChatDemo.jsx` (63 LOC) + `LandingChatDemo.module.css` (146 LOC) — card con avatar, 4 burbujas (2 user + 2 bot, la última de confirmación con tono `--ok-soft`), footnote y stats grid de 2 columnas. `role="log"` en el contenedor del chat para que lectores de pantalla anuncien los mensajes en orden.
+    - `components/LandingSocialProof.jsx` (39 LOC) + `LandingSocialProof.module.css` (31 LOC) — copy + 7 wordmarks textuales (`role="list"`).
+    - `components/LandingFeatures.jsx` (97 LOC) + `LandingFeatures.module.css` (52 LOC) — 9 features (extraídas del HTML del diseñador) en grid 3x3 que colapsa a 1 col bajo 880px. Cada card lleva el glyph numérico `01..09` que vio el diseñador como tag visual. Section anchored en `#features` para que el CTA "Ver cómo funciona" del hero scrollee.
+    - `components/LandingPricing.jsx` (119 LOC) + `LandingPricing.module.css` (100 LOC) — 3 planes con badge "Más elegido" en Pro; el CTA del Enterprise apunta a `salesMailto`, los demás a `demoMailto`.
+    - `components/LandingFinalCta.jsx` (42 LOC) + `LandingFinalCta.module.css` (45 LOC) — banner final pre-footer con fondo `--ink` (oscuro) y dos CTAs apilados.
+    - `components/LandingFooter.jsx` (64 LOC) + `LandingFooter.module.css` (68 LOC) — 4 columnas de links + brand block + legal strip.
+    - `index.js` — barrel `{ Landing }`.
+    - `Landing.test.jsx` (112 LOC, 10 tests): hero H1 con todo el copy, burbujas del demo, "Iniciar sesión" href configurable, mailto del demo + sales, social proof copy + logos, pricing con 3 planes + badge "Más elegido", `#features` anchor, `document.title` se aplica al montar y se restaura al desmontar, banner final con ambos CTAs.
+  - **`admin-panel/src/app/router.jsx`**: `IndexRedirect` ahora devuelve `<Landing />` cuando `session === null` antes de cualquier otra rama. El flujo autenticado queda intacto (`platform_owner → /platform`, `sin tenant → /no-tenant`, `viewer → /t/:slug/read`, resto → `/t/:slug/:home`). SIN `RequirePermission` — la landing es pública por definición.
+  - **`admin-panel/src/app/router.test.jsx`**: nuevo test "UI-016.4 — usuario anónimo en `/` ve la landing pública (no redirect)" que monta con `session: null, tenants: []` y verifica que el H1 aparece y `router.state.location.pathname === '/'` (sin Navigate). Los 11 tests existentes (platform owner redirect, sin tenant, deep-links, MFA, etc.) siguen verdes.
+- **Decisiones de implementación:**
+  - **Botones vs. anchors:** el `Button` primitive de `components/ui` renderiza `<button>` (no acepta `href`). Como la landing necesita anchors reales (`mailto:`, `#features`, `/admin/login`) — por SEO, por keyboard right-click "open in new tab", por accesibilidad — declaré la clase `.btnLink` + variantes en el CSS module compartido y los apliqué a `<a>` tags. Es la única excepción al UI Mandate "reusar primitives": la landing es la única vista 100% pre-login y la única donde un botón conceptual debe ser anchor.
+  - **CTAs:**
+    - "Solicitar demo" / "Solicitar demo gratuita" / "Solicitar demo →" → `mailto:ventas@copilotoia.com?subject=Solicito%20demo%20CopilotoIA`. No hay endpoint público de lead capture y el HTML del diseñador usa `href="#"` placeholders; mailto es el patrón sin stub.
+    - "Contactar ventas" → `mailto:ventas@copilotoia.com?subject=Contacto%20ventas%20CopilotoIA`.
+    - "Iniciar sesión" → `/admin/login`. El SPA está montado con `basename: '/admin'` (vite); la ruta `/login` está declarada como `<Navigate to="/" replace />` en `router.jsx`. Cualquier visita a `/admin/login` reactiva `IndexRedirect`, que ahora ve el `session` real del `AuthProvider` (post-mount): si el visitante ya está autenticado, redirect a su home; si no, Auth0 se encarga vía la lógica existente del SPA. Props del componente expone los tres hrefs (`loginHref`, `demoMailto`, `salesMailto`) por si se cambian en otro entorno.
+  - **`document.title`:** la landing escribe el título "CopilotoIA — Agendamiento por IA · WhatsApp, Instagram y Messenger" al montar y restaura el original ("CopilotoIA Admin Panel") al desmontar. Esto evita pisar el título del admin para usuarios autenticados que sigan en el mismo SPA.
+  - **HTML duplicado:** la auditoría inicial del backlog mencionaba un `(1).html`, pero en el worktree actual solo existe `L1 _ Home _ Landing comercial.html` (el diseñador entregó la versión actualizada en `a23b289` sobreescribiendo la anterior). No hubo nada que borrar; el backlog se actualiza para reflejar la realidad.
+  - **No backend tocado:** la landing es 100% cliente — copy estática, listas hardcoded (LOGOS, FEATURES, PLANS, FOOTER_COLUMNS). El día que existan páginas reales para los anchors del footer (`#`), se reemplazan; entretanto, el placeholder es preferible a un fetch a un endpoint que aún no existe.
+- **Archivos modificados / creados:**
+  - **Nuevos (16):** `admin-panel/src/features/public/landing/Landing.jsx`, `Landing.module.css`, `Landing.test.jsx`, `index.js`, `components/LandingHeader.jsx`, `components/LandingHero.jsx`, `components/LandingHero.module.css`, `components/LandingChatDemo.jsx`, `components/LandingChatDemo.module.css`, `components/LandingSocialProof.jsx`, `components/LandingSocialProof.module.css`, `components/LandingFeatures.jsx`, `components/LandingFeatures.module.css`, `components/LandingPricing.jsx`, `components/LandingPricing.module.css`, `components/LandingFinalCta.jsx`, `components/LandingFinalCta.module.css`, `components/LandingFooter.jsx`, `components/LandingFooter.module.css`.
+  - **Modificados (2):** `admin-panel/src/app/router.jsx` (`IndexRedirect` rama anónima), `admin-panel/src/app/router.test.jsx` (test de la rama anónima).
+  - **Docs:** `docs/UI_BACKLOG.md` (UI-016.4 DONE), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → **0 errores**, 2 warnings preexistentes (`useTenantSetupSidePanels.js`).
+  - `npm --prefix admin-panel test` → **568/568 verdes** (10 nuevos en `Landing.test.jsx` + 1 nuevo en `router.test.jsx` + 557 preexistentes).
+  - `npm --prefix admin-panel run test:a11y` → **6/6 verdes**.
+  - `npm --prefix admin-panel run test:coverage` → exit 0, thresholds verdes. La nueva feature dir `src/features/public/landing/` reporta **100%** statements / branches / functions / lines.
+  - `npm --prefix admin-panel run build` → vite OK.
+  - **Grep gate** (UI Mandate criterio 7): `grep -rE "color: #|background: #[0-9a-f]|rgb\(" admin-panel/src/features/public/landing/` → **0 matches**. Tokens 100% desde `var(--*)`.
+- **Notas y limitaciones reales:**
+  - Los static tests Python (`tests/test_*.py`) no son ejercitables en este worktree por falta del módulo `phonenumbers` en el entorno local (problema preexistente al stash — confirmado contra HEAD pre-cambios). CI los corre normalmente.
+  - Los links del footer apuntan a `#` por ahora. Cuando se entreguen las páginas reales (`/funciones`, `/api`, `/blog`, `/legal/terminos`, etc.), se reemplazan en `LandingFooter.jsx`.
+  - La landing no tiene tracking analytics todavía. Si se requiere medir CTR de los CTAs, agregar follow-up.
+
 ### UI-016.3 — Rendimiento del equipo (Owner / Admin)
 
 - **Fecha:** 2026-05-15

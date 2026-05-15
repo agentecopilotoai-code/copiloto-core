@@ -1,0 +1,100 @@
+/* UI-016.4 — Pricing teaser (3 planes). */
+
+.pricing {
+  padding: var(--space-9) 0;
+  background: var(--panel-alt);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.pricingGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+  align-items: stretch;
+}
+
+@media (max-width: 960px) {
+  .pricingGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.planCard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  position: relative;
+}
+
+.planCardHighlight {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-md);
+}
+
+.planBadge {
+  position: absolute;
+  top: calc(-1 * var(--space-3));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-3);
+  background: var(--accent);
+  color: var(--bg);
+  border-radius: var(--r-xl);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+
+.planName {
+  margin: 0;
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-bold);
+}
+
+.planPrice {
+  font-size: var(--fs-h1);
+  font-weight: var(--fw-black);
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.planMeta {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.planDescription {
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+  line-height: var(--lh-normal);
+}
+
+.planFeatures {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.planFeatureItem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--fs-body);
+}
+
+.planCheck {
+  color: var(--ok);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.planCta {
+  margin-top: auto;
+}

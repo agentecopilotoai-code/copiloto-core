@@ -1,0 +1,100 @@
+/* UI-016.4 — Hero block (titular + body + CTAs + subline) y demo card. */
+
+.hero {
+  padding: var(--space-9) 0 var(--space-8);
+}
+
+.heroGrid {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  gap: var(--space-9);
+  align-items: center;
+}
+
+@media (max-width: 960px) {
+  .heroGrid {
+    grid-template-columns: 1fr;
+    gap: var(--space-8);
+  }
+}
+
+.heroPillRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.pillAccent {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--r-xl);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+
+.pillDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.pillMuted {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.heroTitle {
+  margin: 0 0 var(--space-5);
+  font-family: var(--font-display);
+  font-size: clamp(36px, 5vw, 56px);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.02em;
+  font-weight: var(--fw-black);
+}
+
+.heroAccent {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  padding: 0 var(--space-2);
+  border-radius: var(--r-xs);
+}
+
+.heroBody {
+  margin: 0 0 var(--space-6);
+  font-size: var(--fs-body-lg);
+  line-height: var(--lh-relaxed);
+  color: var(--ink-2);
+  max-width: 56ch;
+}
+
+.heroCtas {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+}
+
+.heroSubline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.heroSublineItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.heroCheck {
+  color: var(--ok);
+}

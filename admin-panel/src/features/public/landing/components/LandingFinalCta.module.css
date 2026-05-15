@@ -1,0 +1,45 @@
+/* UI-016.4 — Banner final pre-footer (CTA card oscura). */
+
+.finalCta {
+  padding: var(--space-9) 0;
+}
+
+.finalCtaCard {
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: var(--r-lg);
+  padding: var(--space-9) var(--space-7);
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: var(--space-7);
+  align-items: center;
+}
+
+@media (max-width: 880px) {
+  .finalCtaCard {
+    grid-template-columns: 1fr;
+    padding: var(--space-7) var(--space-5);
+  }
+}
+
+.finalCtaTitle {
+  margin: 0 0 var(--space-3);
+  font-family: var(--font-display);
+  font-size: clamp(26px, 3.2vw, 36px);
+  line-height: var(--lh-tight);
+  font-weight: var(--fw-bold);
+  letter-spacing: -0.01em;
+}
+
+.finalCtaBody {
+  margin: 0;
+  font-size: var(--fs-body-lg);
+  color: var(--muted-2);
+  line-height: var(--lh-relaxed);
+}
+
+.finalCtaActions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}

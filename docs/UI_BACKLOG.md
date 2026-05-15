@@ -775,10 +775,11 @@ src/
 
 #### UI-016.4 — Landing comercial pre-login (público)
 
-- **Estado:** PENDING
-- **HTML:** `docs/HTML DESIGN/Transversales/L1 _ Home _ Landing comercial.html` (+ duplicado `(1).html`, tomar el más reciente — son idénticos).
+- **Estado:** DONE (2026-05-15)
+- **HTML:** `docs/HTML DESIGN/Transversales/L1 _ Home _ Landing comercial.html` (el duplicado `(1).html` ya no existe en repo — la copia actualizada por el diseñador en `a23b289` reemplazó al original; no hubo duplicado que borrar).
 - **Alcance:** vista PÚBLICA pre-login. Nueva en el código. Hero "Responde, califica y agenda en segundos", demo de conversación, social proof (logos), pricing teaser, CTAs "Solicitar demo" + "Contactar ventas" + "Iniciar sesión" (este último al flow Auth0 existente).
-- **Criterios:** ruta `/` cuando NO hay sesión activa → renderiza Landing en lugar de redirect. Sesión activa sigue al `IndexRedirect`. SIN `RequirePermission` (es público). Borrar el HTML duplicado `(1).html` para mantener un solo source-of-truth. Decidir si crea `src/features/public/landing/` o vive en `src/app/public/Landing.jsx` — preferir `src/features/public/landing/` para consistencia.
+- **Criterios:** ruta `/` cuando NO hay sesión activa → renderiza Landing en lugar de redirect. Sesión activa sigue al `IndexRedirect`. SIN `RequirePermission` (es público). Decidir si crea `src/features/public/landing/` o vive en `src/app/public/Landing.jsx` — preferir `src/features/public/landing/` para consistencia.
+- **Cierre:** ver `docs/DONE.md` (entrada UI-016.4).
 
 #### UI-016.5 — Toasts y modales (visual spec)
 

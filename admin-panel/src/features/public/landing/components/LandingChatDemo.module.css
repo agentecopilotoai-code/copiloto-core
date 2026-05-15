@@ -1,0 +1,146 @@
+/* UI-016.4 — Chat demo card (hero right pane). */
+
+.demoCard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.demoHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.demoAvatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  display: grid;
+  place-items: center;
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-body);
+}
+
+.demoHeaderText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.demoTitle {
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body);
+}
+
+.demoStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.demoStatusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.demoChat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.bubble {
+  max-width: 80%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-md);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+}
+
+.bubbleUser {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--bg);
+  border-bottom-right-radius: var(--r-xs);
+}
+
+.bubbleBot {
+  align-self: flex-start;
+  background: var(--panel-alt);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: var(--r-xs);
+}
+
+.bubbleConfirmation {
+  align-self: flex-start;
+  background: var(--ok-soft);
+  color: var(--ink);
+  border: 1px solid var(--ok);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--r-md);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+  max-width: 80%;
+}
+
+.bubbleConfirmationTitle {
+  font-weight: var(--fw-bold);
+  margin-bottom: var(--space-1);
+}
+
+.demoFootnote {
+  font-size: var(--fs-caption);
+  color: var(--muted);
+  text-align: center;
+}
+
+.demoStats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.demoStat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.demoStatLabel {
+  font-size: var(--fs-caption);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.demoStatValue {
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-bold);
+  font-family: var(--font-mono);
+}
+
+.demoStatDelta {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.demoStatDeltaUp {
+  color: var(--ok);
+}

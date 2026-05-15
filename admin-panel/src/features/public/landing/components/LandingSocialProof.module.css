@@ -1,0 +1,31 @@
+/* UI-016.4 — Social proof strip (logos textuales). */
+
+.socialProof {
+  padding: var(--space-7) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-deep);
+}
+
+.socialProofLabel {
+  text-align: center;
+  font-size: var(--fs-small);
+  color: var(--muted);
+  margin-bottom: var(--space-5);
+}
+
+.socialProofLogos {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-7);
+}
+
+.socialProofLogo {
+  font-family: var(--font-display);
+  font-size: var(--fs-body-lg);
+  font-weight: var(--fw-bold);
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
