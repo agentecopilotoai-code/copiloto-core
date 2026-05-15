@@ -1,11 +1,13 @@
+import { Card } from '../../../../components/ui/index.js';
 import { BranchesManager } from '../../branches/index.js';
+import styles from '../TenantSetupWizard.module.css';
 
 export function BranchesTab({ state, session }) {
   const { currentTenantId } = state;
 
   return (
-    <section className="wizard-panel" data-wizard-tab="branches">
-      <p className="hint">
+    <Card padding="md" data-wizard-tab="branches">
+      <p className={styles.hint}>
         Configura una sede para empezar. Si tu negocio opera en varias ubicaciones, agrega más
         desde el módulo <strong>Sedes</strong> en el menú principal. El bot ofrecerá la
         selección de sede al cliente cuando exista más de una activa.
@@ -17,8 +19,8 @@ export function BranchesTab({ state, session }) {
           tenant={{ id: currentTenantId }}
         />
       ) : (
-        <p>Primero guarda los datos del negocio para configurar sedes.</p>
+        <p className={styles.hint}>Primero guarda los datos del negocio para configurar sedes.</p>
       )}
-    </section>
+    </Card>
   );
 }

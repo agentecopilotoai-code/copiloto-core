@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 
+import { Button, Card, FormField } from '../../../../components/ui/index.js';
 import {
   BOT_EMOJI_OPTIONS,
   BOT_FORMALITY_OPTIONS,
@@ -8,6 +9,7 @@ import {
   PERSONALITY_PREVIEW_SAMPLES,
 } from '../tenantSetupData.js';
 import { renderPersonalityPreview } from '../tenantSetupTransforms.js';
+import styles from '../TenantSetupWizard.module.css';
 
 const LOGO_ACCEPT_MIME = 'image/png,image/jpeg,image/webp';
 
@@ -33,169 +35,166 @@ export function BotPersonalityTab({ state, actions }) {
   }
 
   return (
-    <div className="wizard-panel voz-bot-panel">
-      <div className="voz-bot-header">
-        <h3>Voz del bot</h3>
-        <p className="hint">
+    <>
+      <Card padding="md">
+        <h3 className={styles.sectionTitle}>Voz del bot</h3>
+        <p className={styles.hint}>
           Configura cómo suena tu bot: tono, trato y nivel de emojis. Esto se inyecta
           como bloque dedicado antes del template RAG; las respuestas cambian sin tocar
           el contenido del catálogo. Los cambios aplican al guardar Settings.
         </p>
-      </div>
 
-      <form
-        className="voz-bot-form form-grid"
-        onSubmit={(event) => { event.preventDefault(); handleSaveSettings(event); }}
-      >
-        <fieldset className="wide">
-          <legend>Tono</legend>
-          <div className="option-grid">
-            {BOT_TONE_OPTIONS.map((opt) => (
-              <label
-                key={opt.value}
-                className={`option-card ${botPersonality.tone === opt.value ? 'selected' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="bot-tone"
-                  value={opt.value}
-                  checked={botPersonality.tone === opt.value}
-                  onChange={() => setBotPersonality((prev) => ({ ...prev, tone: opt.value }))}
-                />
-                <strong>{opt.label}</strong>
-                <small>{opt.hint}</small>
-              </label>
-            ))}
-          </div>
-        </fieldset>
+        <form
+          className={styles.formGrid}
+          onSubmit={(event) => { event.preventDefault(); handleSaveSettings(event); }}
+        >
+          <fieldset className={`${styles.fieldset} ${styles.wide}`}>
+            <legend>Tono</legend>
+            <div className={styles.optionGrid}>
+              {BOT_TONE_OPTIONS.map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`${styles.providerCard} ${botPersonality.tone === opt.value ? styles.selected : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="bot-tone"
+                    value={opt.value}
+                    checked={botPersonality.tone === opt.value}
+                    onChange={() => setBotPersonality((prev) => ({ ...prev, tone: opt.value }))}
+                  />
+                  <strong>{opt.label}</strong>
+                  <small className={styles.hint}>{opt.hint}</small>
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
-        <fieldset className="wide">
-          <legend>Trato</legend>
-          <div className="option-grid">
-            {BOT_FORMALITY_OPTIONS.map((opt) => (
-              <label
-                key={opt.value}
-                className={`option-card ${botPersonality.formality === opt.value ? 'selected' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="bot-formality"
-                  value={opt.value}
-                  checked={botPersonality.formality === opt.value}
-                  onChange={() => setBotPersonality((prev) => ({ ...prev, formality: opt.value }))}
-                />
-                <strong>{opt.label}</strong>
-                <small>{opt.hint}</small>
-              </label>
-            ))}
-          </div>
-        </fieldset>
+          <fieldset className={`${styles.fieldset} ${styles.wide}`}>
+            <legend>Trato</legend>
+            <div className={styles.optionGrid}>
+              {BOT_FORMALITY_OPTIONS.map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`${styles.providerCard} ${botPersonality.formality === opt.value ? styles.selected : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="bot-formality"
+                    value={opt.value}
+                    checked={botPersonality.formality === opt.value}
+                    onChange={() => setBotPersonality((prev) => ({ ...prev, formality: opt.value }))}
+                  />
+                  <strong>{opt.label}</strong>
+                  <small className={styles.hint}>{opt.hint}</small>
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
-        <fieldset className="wide">
-          <legend>Emojis</legend>
-          <div className="option-grid">
-            {BOT_EMOJI_OPTIONS.map((opt) => (
-              <label
-                key={opt.value}
-                className={`option-card ${botPersonality.emoji_level === opt.value ? 'selected' : ''}`}
-              >
-                <input
-                  type="radio"
-                  name="bot-emoji"
-                  value={opt.value}
-                  checked={botPersonality.emoji_level === opt.value}
-                  onChange={() => setBotPersonality((prev) => ({ ...prev, emoji_level: opt.value }))}
-                />
-                <strong>{opt.label}</strong>
-                <small>{opt.hint}</small>
-              </label>
-            ))}
-          </div>
-        </fieldset>
+          <fieldset className={`${styles.fieldset} ${styles.wide}`}>
+            <legend>Emojis</legend>
+            <div className={styles.optionGrid}>
+              {BOT_EMOJI_OPTIONS.map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`${styles.providerCard} ${botPersonality.emoji_level === opt.value ? styles.selected : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="bot-emoji"
+                    value={opt.value}
+                    checked={botPersonality.emoji_level === opt.value}
+                    onChange={() => setBotPersonality((prev) => ({ ...prev, emoji_level: opt.value }))}
+                  />
+                  <strong>{opt.label}</strong>
+                  <small className={styles.hint}>{opt.hint}</small>
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
-        <label className="wide">
-          <span>Persona personalizada (opcional, máx 600 caracteres)</span>
-          <textarea
-            rows={3}
-            maxLength={600}
-            placeholder="Ej: Eres una recepcionista experta en spa de lujo; cuidas cada detalle y das opciones premium primero."
-            value={botPersonality.custom_persona}
-            onChange={(e) => setBotPersonality((prev) => ({ ...prev, custom_persona: e.target.value }))}
-          />
-          <small className="hint">
-            {botPersonality.custom_persona.length}/600
-          </small>
-        </label>
-
-        <div className="voz-bot-preview wide">
-          <h4>Vista previa</h4>
-          <p className="hint">
-            Estos ejemplos se renderizan con tu configuración actual. Son aproximaciones del
-            cliente — el modelo final puede variar pero respeta el bloque de voz inyectado.
-          </p>
-          <ul className="preview-list">
-            {PERSONALITY_PREVIEW_SAMPLES.map((sample) => (
-              <li key={sample.id} className="preview-item">
-                <strong>{sample.title}</strong>
-                <div className="preview-bubble">
-                  {renderPersonalityPreview(sample, botPersonality, tenantForm.display_name)}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="form-actions wide">
-          <button
-            className="secondary-action"
-            type="button"
-            onClick={() => setBotPersonality({ ...DEFAULT_BOT_PERSONALITY })}
-            disabled={isBusy}
+          <FormField
+            label="Persona personalizada (opcional, máx 600 caracteres)"
+            hint={`${botPersonality.custom_persona.length}/600`}
+            className={styles.wide}
           >
-            Restablecer
-          </button>
-          <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">
-            {isBusy ? 'Guardando…' : 'Guardar voz del bot'}
-          </button>
-        </div>
-      </form>
+            <textarea
+              rows={3}
+              maxLength={600}
+              placeholder="Ej: Eres una recepcionista experta en spa de lujo; cuidas cada detalle y das opciones premium primero."
+              value={botPersonality.custom_persona}
+              onChange={(e) => setBotPersonality((prev) => ({ ...prev, custom_persona: e.target.value }))}
+            />
+          </FormField>
+
+          <div className={`${styles.builderPreview} ${styles.wide}`}>
+            <strong>Vista previa</strong>
+            <p className={styles.hint}>
+              Estos ejemplos se renderizan con tu configuración actual. Son aproximaciones del
+              cliente — el modelo final puede variar pero respeta el bloque de voz inyectado.
+            </p>
+            <ul className={styles.previewList}>
+              {PERSONALITY_PREVIEW_SAMPLES.map((sample) => (
+                <li key={sample.id} className={styles.previewItem}>
+                  <strong>{sample.title}</strong>
+                  <div className={styles.previewBubble}>
+                    {renderPersonalityPreview(sample, botPersonality, tenantForm.display_name)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className={`${styles.actions} ${styles.wide}`}>
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => setBotPersonality({ ...DEFAULT_BOT_PERSONALITY })}
+              disabled={isBusy}
+            >
+              Restablecer
+            </Button>
+            <Button variant="primary" disabled={isBusy || !currentTenantId} type="submit">
+              {isBusy ? 'Guardando…' : 'Guardar voz del bot'}
+            </Button>
+          </div>
+        </form>
+      </Card>
 
       {/* UI-012-FU: branding logo uploader. Lives next to the bot voice
           because both shape how the tenant presents itself in the admin
           shell. Behind the same tenant_setup.write boundary as the rest
-          of the wizard via moduleRegistry. */}
-      <section className="wizard-panel brand-logo-panel" aria-labelledby="brand-logo-heading">
-        <header className="voz-bot-header">
-          <h3 id="brand-logo-heading">Logo de marca</h3>
-          <p className="hint">
-            Sube el logo del tenant (PNG, JPEG o WEBP, máx. 5 MB). Aparecerá en el
-            topbar del panel admin y en cualquier vista que ya use el slot de
-            branding. SVG no se acepta por seguridad — usa PNG con fondo
-            transparente para el mismo efecto visual.
-          </p>
-        </header>
+          of the wizard via the wrapper in TenantSetupWizard.jsx. */}
+      <Card padding="md" aria-labelledby="brand-logo-heading">
+        <h3 id="brand-logo-heading" className={styles.sectionTitle}>Logo de marca</h3>
+        <p className={styles.hint}>
+          Sube el logo del tenant (PNG, JPEG o WEBP, máx. 5 MB). Aparecerá en el
+          topbar del panel admin y en cualquier vista que ya use el slot de
+          branding. SVG no se acepta por seguridad — usa PNG con fondo
+          transparente para el mismo efecto visual.
+        </p>
 
-        <div className="brand-logo-preview" aria-live="polite">
+        <div className={styles.brandLogoPreview} aria-live="polite">
           {brandLogoUrl ? (
             <img
               src={brandLogoUrl}
               alt={`Logo actual de ${tenantForm.display_name || 'el tenant'}`}
-              style={{ maxWidth: 120, maxHeight: 120, borderRadius: 8 }}
+              className={styles.brandLogoImg}
             />
           ) : (
-            <p className="hint" data-testid="brand-logo-empty">
+            <p className={styles.hint} data-testid="brand-logo-empty">
               No hay logo cargado todavía. Se mostrarán las iniciales del tenant.
             </p>
           )}
         </div>
 
         <form
-          className="form-grid"
+          className={styles.formGrid}
           onSubmit={onUploadLogo}
           aria-label="Subir logo de marca del tenant"
         >
-          <label className="wide">
-            <span>Archivo de imagen</span>
+          <FormField label="Archivo de imagen" hint="PNG, JPEG o WEBP. Máx 5 MB." className={styles.wide}>
             <input
               ref={fileInputRef}
               type="file"
@@ -203,30 +202,29 @@ export function BotPersonalityTab({ state, actions }) {
               onChange={(e) => setPendingLogoFile(e.target.files?.[0] || null)}
               data-testid="brand-logo-file-input"
             />
-            <small className="hint">PNG, JPEG o WEBP. Máx 5 MB.</small>
-          </label>
+          </FormField>
 
-          <div className="form-actions wide">
-            <button
-              className="primary-action"
+          <div className={`${styles.actions} ${styles.wide}`}>
+            <Button
+              variant="primary"
               type="submit"
               disabled={isBusy || !currentTenantId || !pendingLogoFile}
             >
               {isBusy ? 'Subiendo…' : 'Subir logo'}
-            </button>
+            </Button>
             {brandLogoUrl ? (
-              <button
-                className="secondary-action"
+              <Button
+                variant="secondary"
                 type="button"
                 onClick={() => handleClearBrandLogo?.()}
                 disabled={isBusy || !currentTenantId}
               >
                 Quitar logo
-              </button>
+              </Button>
             ) : null}
           </div>
         </form>
-      </section>
-    </div>
+      </Card>
+    </>
   );
 }

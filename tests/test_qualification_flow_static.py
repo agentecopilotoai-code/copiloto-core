@@ -489,7 +489,9 @@ def test_core_api_exposes_qualification_helpers():
 def test_tenant_setup_wizard_registers_calificacion_tab():
     source = _tenant_setup_source()
     assert "{ id: 'calificacion', label: 'Calificación' }," in source
-    assert "activeTab === 'calificacion'" in source
+    # UI-021: the orchestrator switched from ternary blocks to a `switch` over
+    # `activeTab`. The pin is the case label, not the ternary syntax.
+    assert "case 'calificacion':" in source
     assert 'QualificationQuestionsPanel' in source
 
 

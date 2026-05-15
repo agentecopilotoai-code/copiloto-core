@@ -15,6 +15,34 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-021 — Tenant Setup Wizard: alineamiento visual al sistema de diseño
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** alinear `TenantSetupWizard.jsx` (Owner-Admin · Config · Tenant Setup) con el resto del panel. Tras el split de UI-007.12 el wizard había quedado con look "MVP": copy *"Wizard MVP · Wizard de configuración general del tenant"*, botones ad-hoc `.primary-action`/`.secondary-action`, containers `.wizard-panel`, fieldsets con `border: 1px solid var(--border)` inline y zero uso de primitivas del UI kit. Visual reference: `docs/HTML DESIGN/OWNER : Admin/20 _ Config _ Tenant Setup _ Voz del bot.html`.
+- **Cambios:**
+  - **`admin-panel/src/features/owner-admin/tenant-setup/TenantSetupWizard.jsx`** (reescrito, 110 LOC): elimina el header *"Wizard MVP"* y `<section className="module-card wizard-card">`. Ahora usa `<PageHeader eyebrow="Configuración" title={module.label}>` con el tenant activo como `actions={...}`, el primitive `<Tabs variant="underline">` (en vez del `<button className="tab">` ad-hoc) y el panel activo se renderiza vía un `switch (activeTab)` para mantener el árbol legible. El wizard está envuelto en `<RequirePermission permissions={permissions} capability="tenant_setup.write" mode="RW">` — la capability existía ya en `permissions/matrix.js` (owner/admin → RW) pero el moduleRegistry tenía `capability: null` para dejar la decisión al feature; este PR la materializa en el componente raíz.
+  - **`admin-panel/src/features/owner-admin/tenant-setup/TenantSetupWizard.module.css`** (nuevo, 270 LOC): tokens 100% desde `var(--...)`. Helpers compartidos (`.formGrid`, `.actions`, `.fieldset`, `.inlineCheck`, `.builderPreview`, `.providerCard`, `.previewBubble`, `.tagList`/`.tagRow`/`.tagPill`, `.daysGrid`/`.dayCard`, `.auditList`/`.auditItem`, `.retentionTable`, `.brandLogoPreview`/`.brandLogoImg`, `.notice` con variants info/success/error). Cero literales hex/rgb/oklch.
+  - **Subcomponentes restilados** (los 13 archivos de `tenant-setup/components/`): cada uno migró `<button className="primary-action">` → `<Button variant="primary">`, `<button className="secondary-action">` → `<Button variant="secondary">`, `<div className="wizard-panel">` → `<Card padding="md">`, y `<label>label<input/></label>` → `<FormField label hint>{<input/>}</FormField>`. Archivos tocados: `GeneralTab.jsx`, `QualificationTab.jsx`, `SettingsTab.jsx`, `ScheduleTab.jsx`, `BranchesTab.jsx`, `EscalationTab.jsx`, `IntentsTab.jsx`, `NotificationsTab.jsx`, `PaymentsTab.jsx`, `PrivacyTab.jsx`, `BotPersonalityTab.jsx`, `RagTab.jsx`, `AuditTab.jsx`, `ComplaintAlertChannelsFieldset.jsx`.
+  - **`admin-panel/src/app/modules.js`** (1 LOC): summary actualizado de *"Wizard de configuración general del tenant."* a *"Configuración general del tenant: negocio, horarios, escalamiento, voz del bot y privacidad."* — coincide con el `description` del nuevo `<PageHeader>`.
+  - **`admin-panel/src/features/owner-admin/tenant-setup/TenantSetupWizard.test.jsx`** (+10 / -7 LOC): assert `heading: 'Tenant Setup', level: 1` (era `level: 2` con `<h2>`; ahora `<PageHeader>` renderiza `<h1>`). Nuevo assert que verifica que la copy *"Wizard MVP"* desapareció. Mock de `TenantProvider` con `profile.support_mode + roles:['owner']` para que el gate `tenant_setup.write` resuelva en tests.
+  - **`tests/test_qualification_flow_static.py`, `tests/test_payment_provider_static.py`, `tests/test_digest_static.py`** (pytest backend, 3 archivos, ±3 LOC c/u): los tests `_static.py` pineaban el patrón ternario `"activeTab === 'calificacion'"` / `"activeTab === 'pagos'"` / `"activeTab === 'notificaciones'"`. El nuevo orchestrator usa `case 'calificacion':` (switch), así que las assertions cambiaron al case label. La intención del test (verificar que la tab está cableada) se preserva.
+- **Capability que gatea el submit:** `tenant_setup.write` en modo `RW`. La matriz de permisos (`admin-panel/src/permissions/matrix.js`) la asigna a owner/admin → RW; manager/agent/viewer/platform_owner no tienen acceso. El gate es el wrapper `<RequirePermission>` en el root del `TenantSetupWizard`, así que TODOS los botones de submit del wizard heredan la protección automáticamente (no hay que envolver botón por botón). Backend sigue siendo la autoridad.
+- **Stepper primitive:** no se usa. El Tenant Setup es un editor multi-pestaña no-secuencial — sus 13 tabs son secciones independientes, no pasos consecutivos — así que el primitive correcto es `<Tabs variant="underline">`, no `<Stepper>` (reservado para flujos lineales tipo onboarding self-service). El HTML #20 también muestra una barra de tabs horizontal, no un stepper vertical.
+- **UI-016.4 / UI-012-FU follow-up:** el brand-logo uploader (que UI-012-FU añadió dentro del tab "Voz del bot") sigue renderizando correctamente. Sus tests en `BotPersonalityTab.test.jsx` (6 tests) pasan sin modificación.
+- **Tokens usados:** `var(--accent)`, `var(--accent-ink)`, `var(--ink)`, `var(--ink-2)`, `var(--muted)`, `var(--line)`, `var(--panel)`, `var(--panel-alt)`, `var(--danger)`, `var(--space-{1..6})`, `var(--r-sm)`, `var(--r-lg)`, `var(--fs-small)`, `var(--fs-h3)`, `var(--fw-semibold)`, `var(--transition-base)`. Cero literales hex/rgb/oklch en el feature dir.
+- **Grep gate:** `grep -rE "color: #|background: #[0-9a-f]" admin-panel/src/features/owner-admin/tenant-setup/` → **0 matches**.
+- **LOC:** archivo más grande tras el refactor es `NotificationsTab.jsx` con 243 LOC. Todos los demás subcomponentes < 200 LOC. Por debajo del límite de 400 LOC por archivo.
+- **Validaciones ejecutadas:**
+  - `npm run lint` ✓ — 0 errors, 2 warnings pre-existentes en `useTenantSetupSidePanels.js` (no modificado).
+  - `npm test` ✓ — 127 test files, **660 tests passed** (mismo total que antes; los tests del wizard se actualizaron en sitio).
+  - `npm run test:a11y` ✓ — 6/6 suites verdes.
+  - `npm run test:coverage` ✓ — thresholds preservados.
+  - `npm run build` ✓ — vite 5.4.11, 467 módulos, `dist/assets/index-*.css` 188.35 kB.
+  - Grep gate del feature dir: 0 matches.
+- **Limitaciones / notas:**
+  - El refactor es visual-only — la data flow del hook `useTenantSetupData`, las validaciones y la integración con onboarding/branches/digest se preservaron verbatim. No se tocó backend.
+  - Las clases globales `status-badge active|trial|suspended` (definidas en `styles/global.css`) se siguen usando en `IntentsTab` y `RagTab` porque son tokens del sistema más amplio — fuera del scope de UI-021.
+
 ### UI-023 — PageHeader sticky con scroll del contenido
 
 - **Fecha:** 2026-05-15

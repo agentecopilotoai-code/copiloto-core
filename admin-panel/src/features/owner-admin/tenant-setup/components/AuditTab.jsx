@@ -1,25 +1,41 @@
+import { Button, Card } from '../../../../components/ui/index.js';
 import { formatJson } from '../tenantSetupTransforms.js';
+import styles from '../TenantSetupWizard.module.css';
 
 export function AuditTab({ state, actions }) {
   const { auditLogs, lastSettings, isBusy, currentTenantId } = state;
   const { refreshAuditLogs } = actions;
 
   return (
-    <div className="wizard-panel">
-      <div className="audit-actions">
-        <button className="primary-action" disabled={isBusy || !currentTenantId} onClick={() => refreshAuditLogs()} type="button">Refrescar auditoría</button>
+    <Card padding="md">
+      <div className={styles.actions}>
+        <Button
+          variant="primary"
+          disabled={isBusy || !currentTenantId}
+          onClick={() => refreshAuditLogs()}
+          type="button"
+        >
+          Refrescar auditoría
+        </Button>
       </div>
-      {lastSettings ? <div className="builder-preview"><strong>Últimos settings guardados</strong><pre>{formatJson(lastSettings)}</pre></div> : null}
-      <div className="audit-list">
-        {auditLogs.length === 0 ? <p className="hint">Aún no hay logs cargados. Guarda settings o refresca la auditoría.</p> : null}
+      {lastSettings ? (
+        <div className={styles.builderPreview}>
+          <strong>Últimos settings guardados</strong>
+          <pre>{formatJson(lastSettings)}</pre>
+        </div>
+      ) : null}
+      <div className={styles.auditList}>
+        {auditLogs.length === 0 ? (
+          <p className={styles.hint}>Aún no hay logs cargados. Guarda settings o refresca la auditoría.</p>
+        ) : null}
         {auditLogs.map((log) => (
-          <article className="audit-item" key={log.id}>
+          <article className={styles.auditItem} key={log.id}>
             <strong>{log.action}</strong>
             <span>{log.actor_type} · {log.entity_type}</span>
             <small>{log.created_at}</small>
           </article>
         ))}
       </div>
-    </div>
+    </Card>
   );
 }

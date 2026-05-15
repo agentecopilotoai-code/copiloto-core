@@ -38,12 +38,23 @@ vi.mock('../../../services/coreApi.js', () => ({
   uploadTenantBrandLogo: vi.fn(),
 }));
 
+// Mock TenantProvider so `usePermissions` resolves with an owner role via
+// `profile.support_mode` (no tenant required). Owner gets RW on
+// `tenant_setup.write`, which is the gate UI-021 added at the wizard root.
+vi.mock('../../../app/TenantProvider.jsx', () => ({
+  useTenantContext: () => ({
+    profile: { sub: 'u-owner', support_mode: true, roles: ['owner'] },
+  }),
+}));
+
 // eslint-disable-next-line import/first
 import { TenantSetupWizard } from './TenantSetupWizard.jsx';
 
-const MODULE = { label: 'Tenant Setup', summary: 'x' };
+const MODULE = { label: 'Tenant Setup', summary: 'Configuración general del tenant.' };
 
 function setup() {
+  // No tenant: keeps `currentTenantId` null so the side-panel fetch effects
+  // (payments / retention) early-return — same shape as the original test.
   return render(<TenantSetupWizard module={MODULE} session={{}} tenant={undefined} />);
 }
 
@@ -52,9 +63,13 @@ beforeEach(() => {
 });
 
 describe('TenantSetupWizard', () => {
-  it('renders the wizard heading and the full tab nav', () => {
+  it('renders the page header and the full tab nav using design-system primitives', () => {
     setup();
-    expect(screen.getByRole('heading', { name: 'Tenant Setup', level: 2 })).toBeInTheDocument();
+    // PageHeader renders an <h1>, replacing the legacy "Wizard MVP" eyebrow.
+    expect(screen.getByRole('heading', { name: 'Tenant Setup', level: 1 })).toBeInTheDocument();
+    // No more MVP copy — UI-021 alignment.
+    expect(screen.queryByText('Wizard MVP')).toBeNull();
+    // Tab nav from the `<Tabs>` primitive.
     expect(screen.getByRole('tab', { name: 'Negocio' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Horarios' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Voz del bot' })).toBeInTheDocument();

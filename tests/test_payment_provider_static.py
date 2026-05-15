@@ -300,7 +300,8 @@ def test_admin_panel_exposes_payment_calls():
 def test_tenant_wizard_renders_payments_tab():
     text = _tenant_setup_source()
     assert "{ id: 'pagos', label: 'Pagos' }" in text
-    assert "activeTab === 'pagos'" in text
+    # UI-021: orchestrator now uses a `switch (activeTab)` to render panels.
+    assert "case 'pagos':" in text
     assert 'updateTenantPaymentSettings' in text
     assert 'getTenantPaymentSettings' in text
 

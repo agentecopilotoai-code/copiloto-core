@@ -1,5 +1,10 @@
 import { useState } from 'react';
 
+import { Card, PageHeader, Tabs } from '../../../components/ui/index.js';
+import { RequirePermission } from '../../../permissions/index.js';
+import { usePermissions } from '../../../permissions/usePermissions.js';
+import { useTenantContext } from '../../../app/TenantProvider.jsx';
+
 import { wizardTabs } from './tenantSetupData.js';
 import { useTenantSetupData } from './hooks/useTenantSetupData.js';
 import { GeneralTab } from './components/GeneralTab.jsx';
@@ -15,56 +20,108 @@ import { PrivacyTab } from './components/PrivacyTab.jsx';
 import { BotPersonalityTab } from './components/BotPersonalityTab.jsx';
 import { RagTab } from './components/RagTab.jsx';
 import { AuditTab } from './components/AuditTab.jsx';
+import styles from './TenantSetupWizard.module.css';
 
+/**
+ * UI-021 — Tenant Setup Wizard (Owner / Admin · Config).
+ *
+ * Visual reference: `docs/HTML DESIGN/OWNER : Admin/20 _ Config _ Tenant Setup
+ * _ Voz del bot.html`. Replaces the legacy "Wizard MVP" header + ad-hoc
+ * `<button className="primary-action">` blocks with the design-system
+ * primitives (`<PageHeader>`, `<Card>`, `<Tabs>`, `<Button>`, `<FormField>`).
+ * Behaviour and data flow (the `useTenantSetupData` hook, every subtab from
+ * UI-007.12) are preserved verbatim — this PR is visual-only.
+ *
+ * The wizard is gated by `tenant_setup.write` (RW) at the entry point; the
+ * registry has `capability: null` so the wrapper here is the authority on the
+ * client. The backend remains the source of truth.
+ *
+ * @param {{ module: object, session: object, tenant?: object, initialTab?: string,
+ *           onTenantCreated?: Function }} props
+ */
 export function TenantSetupWizard({ module, onTenantCreated, session, tenant, initialTab }) {
+  const { profile } = useTenantContext();
+  const permissions = usePermissions({ profile, tenant });
   const [activeTab, setActiveTab] = useState(initialTab || 'tenant');
   const { state, actions } = useTenantSetupData({ session, tenant, onTenantCreated, setActiveTab });
   const { notice } = state;
 
+  const noticeClass = notice
+    ? [
+        styles.notice,
+        notice.type === 'success' ? styles['notice--success'] : '',
+        notice.type === 'error' ? styles['notice--error'] : '',
+        notice.type !== 'success' && notice.type !== 'error' ? styles['notice--info'] : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : '';
+
+  const panel = renderPanel({ activeTab, state, actions, session });
+
   return (
-    <section className="module-card wizard-card">
-      <div className="module-heading">
-        <div>
-          <p className="eyebrow">Wizard MVP</p>
-          <h2>{module.label}</h2>
-          <p>{module.summary}</p>
-        </div>
-        <div className="wizard-selected-tenant">
-          <span>Tenant activo</span>
-          <strong>{tenant?.label || 'Sin tenant seleccionado'}</strong>
-        </div>
-      </div>
+    <RequirePermission permissions={permissions} capability="tenant_setup.write" mode="RW">
+      <section className={styles.page}>
+        <PageHeader
+          eyebrow="Configuración"
+          title={module?.label || 'Tenant Setup'}
+          description={module?.summary || 'Configuración general del tenant.'}
+          actions={
+            <div className={styles.tenantMeta}>
+              <span>Tenant activo</span>
+              <strong>{tenant?.label || 'Sin tenant seleccionado'}</strong>
+            </div>
+          }
+        />
 
-      <div className="tabs" role="tablist" aria-label="Secciones del wizard">
-        {wizardTabs.map((tab) => (
-          <button
-            aria-selected={activeTab === tab.id}
-            className={`tab ${activeTab === tab.id ? 'active' : ''}`}
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            role="tab"
-            type="button"
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+        <Tabs
+          items={wizardTabs.map((tab) => ({ value: tab.id, label: tab.label }))}
+          value={activeTab}
+          onChange={setActiveTab}
+          variant="underline"
+        />
 
-      {notice ? <p className={`notice ${notice.type}`}>{notice.text}</p> : null}
+        {notice ? (
+          <p className={noticeClass} role="status">
+            {notice.text}
+          </p>
+        ) : null}
 
-      {activeTab === 'tenant' ? <GeneralTab state={state} actions={actions} /> : null}
-      {activeTab === 'calificacion' ? <QualificationTab state={state} actions={actions} session={session} /> : null}
-      {activeTab === 'settings' ? <SettingsTab state={state} actions={actions} /> : null}
-      {activeTab === 'hours' ? <ScheduleTab state={state} actions={actions} /> : null}
-      {activeTab === 'branches' ? <BranchesTab state={state} session={session} /> : null}
-      {activeTab === 'escalation' ? <EscalationTab state={state} actions={actions} /> : null}
-      {activeTab === 'intenciones' ? <IntentsTab state={state} actions={actions} /> : null}
-      {activeTab === 'notificaciones' ? <NotificationsTab state={state} actions={actions} session={session} /> : null}
-      {activeTab === 'pagos' ? <PaymentsTab state={state} actions={actions} /> : null}
-      {activeTab === 'privacy' ? <PrivacyTab state={state} actions={actions} /> : null}
-      {activeTab === 'voz' ? <BotPersonalityTab state={state} actions={actions} /> : null}
-      {activeTab === 'ia_rag' ? <RagTab state={state} actions={actions} /> : null}
-      {activeTab === 'audit' ? <AuditTab state={state} actions={actions} /> : null}
-    </section>
+        {panel}
+      </section>
+    </RequirePermission>
   );
+}
+
+function renderPanel({ activeTab, state, actions, session }) {
+  switch (activeTab) {
+    case 'tenant':
+      return <GeneralTab state={state} actions={actions} />;
+    case 'calificacion':
+      return <QualificationTab state={state} actions={actions} session={session} />;
+    case 'settings':
+      return <SettingsTab state={state} actions={actions} />;
+    case 'hours':
+      return <ScheduleTab state={state} actions={actions} />;
+    case 'branches':
+      return <BranchesTab state={state} session={session} />;
+    case 'escalation':
+      return <EscalationTab state={state} actions={actions} />;
+    case 'intenciones':
+      return <IntentsTab state={state} actions={actions} />;
+    case 'notificaciones':
+      return <NotificationsTab state={state} actions={actions} session={session} />;
+    case 'pagos':
+      return <PaymentsTab state={state} actions={actions} />;
+    case 'privacy':
+      return <PrivacyTab state={state} actions={actions} />;
+    case 'voz':
+      return <BotPersonalityTab state={state} actions={actions} />;
+    case 'ia_rag':
+      return <RagTab state={state} actions={actions} />;
+    case 'audit':
+      return <AuditTab state={state} actions={actions} />;
+    default:
+      return null;
+  }
 }

@@ -65,7 +65,7 @@ export const adminModules = [
   {
     id: 'tenant-setup',
     label: 'Tenant Setup',
-    summary: 'Wizard de configuración general del tenant.',
+    summary: 'Configuración general del tenant: negocio, horarios, escalamiento, voz del bot y privacidad.',
     scope: ['Crear tenant', 'Editar settings', 'Horarios y escalamiento', 'PII policy y no_train'],
   },
   {

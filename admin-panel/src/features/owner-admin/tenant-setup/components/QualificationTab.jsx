@@ -1,14 +1,18 @@
+import { Button, Card, FormField } from '../../../../components/ui/index.js';
 import QualificationQuestionsPanel from './QualificationQuestionsPanel.jsx';
+import styles from '../TenantSetupWizard.module.css';
 
 export function QualificationTab({ state, actions, session }) {
   const { currentTenantId, isBusy, notificationSettings } = state;
   const { handleSaveSettings, setNotificationSettings, setNotice } = actions;
 
   return (
-    <div className="wizard-panel">
-      <form className="form-grid" onSubmit={handleSaveSettings}>
-        <label>
-          Umbral VIP (presupuesto)
+    <Card padding="md">
+      <form className={styles.formGrid} onSubmit={handleSaveSettings}>
+        <FormField
+          label="Umbral VIP (presupuesto)"
+          hint='Cuando el cliente elige un rango de presupuesto con valor numérico ≥ este umbral, recibe la etiqueta automática "VIP". Deja en 0 para desactivar.'
+        >
           <input
             type="number"
             min="0"
@@ -21,16 +25,11 @@ export function QualificationTab({ state, actions, session }) {
               })
             }
           />
-          <small className="hint">
-            Cuando el cliente elige un rango de presupuesto con valor numérico
-            ≥ este umbral, recibe la etiqueta automática "VIP". Deja en 0 para
-            desactivar.
-          </small>
-        </label>
-        <div className="form-actions">
-          <button className="primary-action" disabled={isBusy || !currentTenantId} type="submit">
+        </FormField>
+        <div className={styles.actions}>
+          <Button variant="primary" disabled={isBusy || !currentTenantId} type="submit">
             Guardar umbral VIP
-          </button>
+          </Button>
         </div>
       </form>
       <QualificationQuestionsPanel
@@ -38,6 +37,6 @@ export function QualificationTab({ state, actions, session }) {
         tenantId={currentTenantId}
         onNotice={setNotice}
       />
-    </div>
+    </Card>
   );
 }

@@ -975,7 +975,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### UI-021 — Tenant Setup Wizard: alineamiento visual al sistema de diseño
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **Síntoma actual:** `TenantSetupWizard.jsx` (Owner-Admin · Config · Tenant Setup) muestra copy *"Wizard MVP · Wizard de configuración general del tenant"* y los containers/botones no matchean el estilo del resto del panel — quedaron con look MVP / improvisado tras el split de UI-007.12.
 - **Alcance:**
   - Auditar cada subcomponente del wizard (`tenant-setup/components/*`) contra el HTML #20.

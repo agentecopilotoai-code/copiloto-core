@@ -1,14 +1,19 @@
+import { FormField } from '../../../../components/ui/index.js';
+import styles from '../TenantSetupWizard.module.css';
+
 export function ComplaintAlertChannelsFieldset({ notificationSettings, setNotificationSettings }) {
   return (
-    <fieldset className="wide" data-wizard-field="complaint_alert_channels" style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '0.75rem 1rem' }}>
+    <fieldset
+      className={`${styles.fieldset} ${styles.wide}`}
+      data-wizard-field="complaint_alert_channels"
+    >
       <legend>Alertas al equipo (TASK-0057)</legend>
-      <p className="hint" style={{ marginTop: 0 }}>
+      <p className={styles.hint}>
         Cuando un cliente deja 1–2★ o una queja, avisamos al equipo por estos canales.
         Configura al menos uno para no depender de que alguien esté mirando el Desk.
         WhatsApp al manager es el más rápido.
       </p>
-      <label className="wide">
-        Emails (separados por coma)
+      <FormField label="Emails (separados por coma)">
         <input
           type="text"
           placeholder="manager@empresa.com, dueno@empresa.com"
@@ -24,9 +29,8 @@ export function ComplaintAlertChannelsFieldset({ notificationSettings, setNotifi
             },
           })}
         />
-      </label>
-      <label className="wide">
-        WhatsApps (E.164, separados por coma)
+      </FormField>
+      <FormField label="WhatsApps (E.164, separados por coma)">
         <input
           type="text"
           placeholder="+573001234567, +573009876543"
@@ -42,9 +46,8 @@ export function ComplaintAlertChannelsFieldset({ notificationSettings, setNotifi
             },
           })}
         />
-      </label>
-      <label className="wide">
-        Webhook (URL HTTPS, opcional)
+      </FormField>
+      <FormField label="Webhook (URL HTTPS, opcional)">
         <input
           type="url"
           placeholder="https://hooks.empresa.com/alerts/copilotoia"
@@ -57,8 +60,8 @@ export function ComplaintAlertChannelsFieldset({ notificationSettings, setNotifi
             },
           })}
         />
-      </label>
-      <p className="hint" style={{ marginTop: '0.25rem' }}>
+      </FormField>
+      <p className={styles.hint}>
         Solo URLs HTTPS públicas. Loopback, RFC1918, link-local y
         metadata cloud (169.254.169.254, metadata.google.internal) son
         rechazados con 422.

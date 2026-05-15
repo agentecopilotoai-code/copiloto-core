@@ -319,8 +319,10 @@ def test_admin_panel_wizard_exposes_country_catalog():
         assert f"{code}: {{" in wizard_src
     assert 'COUNTRY_PROFILES' in wizard_src
     assert "SUPPORTED_COUNTRIES = ['CO'," in wizard_src
-    # Selector reemplazó al input libre.
-    assert '<select\n            value={tenantForm.country_code}' in wizard_src
+    # Selector reemplazó al input libre. UI-021 movió el <select> a
+    # GeneralTab.jsx envuelto en <FormField>, sumando 2 niveles de
+    # indentación respecto del wizard original.
+    assert '<select\n              value={tenantForm.country_code}' in wizard_src
 
 
 # ── pyproject -----------------------------------------------------------------

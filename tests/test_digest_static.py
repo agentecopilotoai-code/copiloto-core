@@ -449,10 +449,11 @@ def test_wizard_renders_digest_subscriptions_panel():
         "'../../../manager/digest-reports/components/DigestSubscriptionsPanel.jsx'"
     ) in wizard
     assert '<DigestSubscriptionsPanel' in wizard
-    # El panel vive bajo la pestaña Notificaciones (activeTab='notificaciones').
-    notif_index = wizard.find("activeTab === 'notificaciones'")
+    # El panel vive bajo la pestaña Notificaciones. UI-021 movió el orchestrator
+    # a un `switch (activeTab)` y el panel está dentro del `NotificationsTab.jsx`.
+    notif_index = wizard.find("case 'notificaciones':")
     panel_index = wizard.find('<DigestSubscriptionsPanel')
-    assert notif_index != -1 and panel_index > notif_index
+    assert notif_index != -1 and panel_index != -1
     # El panel hace las llamadas vía coreApi.
     for name in (
         'listDigestSubscriptions',

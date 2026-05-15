@@ -1,5 +1,7 @@
+import { Button, Card, FormField } from '../../../../components/ui/index.js';
 import { COUNTRY_PROFILES, SUPPORTED_COUNTRIES, availableStatusTransitions } from '../tenantSetupData.js';
 import { slugifyVertical } from '../tenantSetupTransforms.js';
+import styles from '../TenantSetupWizard.module.css';
 
 export function GeneralTab({ state, actions }) {
   const {
@@ -30,89 +32,100 @@ export function GeneralTab({ state, actions }) {
 
   return (
     <>
-      <form className="wizard-panel form-grid" onSubmit={handleSaveTenant}>
-        <label>
-          Slug
-          <input value={tenantForm.slug} onChange={(event) => setTenantForm({ ...tenantForm, slug: event.target.value })} required />
-        </label>
-        <label>
-          Razón social
-          <input value={tenantForm.legal_name} onChange={(event) => setTenantForm({ ...tenantForm, legal_name: event.target.value })} required />
-        </label>
-        <label>
-          Nombre visible
-          <input value={tenantForm.display_name} onChange={(event) => setTenantForm({ ...tenantForm, display_name: event.target.value })} required />
-        </label>
-        <label>
-          Tipo de negocio
-          <input
-            placeholder="Ej. Clínica dental, Spa, Taller mecánico"
-            value={tenantForm.business_type_label}
-            onChange={(event) => {
-              const label = event.target.value;
-              setTenantForm({
-                ...tenantForm,
-                business_type_label: label,
-                vertical_code: tenantForm.vertical_code || slugifyVertical(label),
-              });
-            }}
-            maxLength={160}
-            required
-          />
-        </label>
-        <label>
-          Clave técnica (vertical_code)
-          <input
-            placeholder="Ej. dental, spa, taller"
-            value={tenantForm.vertical_code}
-            onChange={(event) => setTenantForm({ ...tenantForm, vertical_code: event.target.value })}
-            maxLength={64}
-            required
-          />
-        </label>
-        <label>
-          País
-          {/* TASK-0073: selector cerrado al catálogo soportado.  Cambiar el
-              país preselecciona timezone y locale por defecto. */}
-          <select
-            value={tenantForm.country_code}
-            onChange={(event) => {
-              const next = event.target.value;
-              const profile = COUNTRY_PROFILES[next] || COUNTRY_PROFILES.CO;
-              setTenantForm({
-                ...tenantForm,
-                country_code: next,
-                timezone: profile.timezone,
-              });
-              setSettingsForm({ ...settingsForm, locale: profile.locale });
-            }}
-            required
-          >
-            {SUPPORTED_COUNTRIES.map((code) => (
-              <option key={code} value={code}>
-                {COUNTRY_PROFILES[code].label} ({COUNTRY_PROFILES[code].currency})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Zona horaria
-          <input value={tenantForm.timezone} onChange={(event) => setTenantForm({ ...tenantForm, timezone: event.target.value })} required />
-        </label>
-        <div className="form-actions">
-          <button className="primary-action" disabled={isBusy} type="submit">{currentTenantId ? 'Actualizar tenant' : 'Crear tenant'}</button>
-        </div>
-      </form>
+      <Card padding="md">
+        <form className={styles.formGrid} onSubmit={handleSaveTenant}>
+          <FormField label="Slug">
+            <input
+              value={tenantForm.slug}
+              onChange={(event) => setTenantForm({ ...tenantForm, slug: event.target.value })}
+              required
+            />
+          </FormField>
+          <FormField label="Razón social">
+            <input
+              value={tenantForm.legal_name}
+              onChange={(event) => setTenantForm({ ...tenantForm, legal_name: event.target.value })}
+              required
+            />
+          </FormField>
+          <FormField label="Nombre visible">
+            <input
+              value={tenantForm.display_name}
+              onChange={(event) => setTenantForm({ ...tenantForm, display_name: event.target.value })}
+              required
+            />
+          </FormField>
+          <FormField label="Tipo de negocio">
+            <input
+              placeholder="Ej. Clínica dental, Spa, Taller mecánico"
+              value={tenantForm.business_type_label}
+              onChange={(event) => {
+                const label = event.target.value;
+                setTenantForm({
+                  ...tenantForm,
+                  business_type_label: label,
+                  vertical_code: tenantForm.vertical_code || slugifyVertical(label),
+                });
+              }}
+              maxLength={160}
+              required
+            />
+          </FormField>
+          <FormField label="Clave técnica (vertical_code)">
+            <input
+              placeholder="Ej. dental, spa, taller"
+              value={tenantForm.vertical_code}
+              onChange={(event) => setTenantForm({ ...tenantForm, vertical_code: event.target.value })}
+              maxLength={64}
+              required
+            />
+          </FormField>
+          {/* TASK-0073: selector cerrado al catálogo soportado. */}
+          <FormField label="País">
+            <select
+              value={tenantForm.country_code}
+              onChange={(event) => {
+                const next = event.target.value;
+                const profile = COUNTRY_PROFILES[next] || COUNTRY_PROFILES.CO;
+                setTenantForm({
+                  ...tenantForm,
+                  country_code: next,
+                  timezone: profile.timezone,
+                });
+                setSettingsForm({ ...settingsForm, locale: profile.locale });
+              }}
+              required
+            >
+              {SUPPORTED_COUNTRIES.map((code) => (
+                <option key={code} value={code}>
+                  {COUNTRY_PROFILES[code].label} ({COUNTRY_PROFILES[code].currency})
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Zona horaria">
+            <input
+              value={tenantForm.timezone}
+              onChange={(event) => setTenantForm({ ...tenantForm, timezone: event.target.value })}
+              required
+            />
+          </FormField>
+          <div className={styles.actions}>
+            <Button variant="primary" type="submit" disabled={isBusy}>
+              {currentTenantId ? 'Actualizar tenant' : 'Crear tenant'}
+            </Button>
+          </div>
+        </form>
+      </Card>
 
       {currentTenantId ? (
-        <div className="wizard-panel">
-          <h3>Etiquetas de contacto</h3>
-          <p className="hint">
+        <Card padding="md">
+          <h3 className={styles.sectionTitle}>Etiquetas de contacto</h3>
+          <p className={styles.hint}>
             Define las etiquetas disponibles para clasificar contactos del CRM (ej. VIP, Nuevo, En tratamiento).
           </p>
-          <form className="form-grid" onSubmit={handleSaveTag}>
-            <label>
-              Nombre
+          <form className={styles.formGrid} onSubmit={handleSaveTag}>
+            <FormField label="Nombre">
               <input
                 value={tagForm.name}
                 onChange={(event) => setTagForm({ ...tagForm, name: event.target.value })}
@@ -120,109 +133,98 @@ export function GeneralTab({ state, actions }) {
                 placeholder="Ej. VIP"
                 required
               />
-            </label>
-            <label>
-              Color
+            </FormField>
+            <FormField label="Color">
               <input
                 type="color"
                 value={tagForm.color}
                 onChange={(event) => setTagForm({ ...tagForm, color: event.target.value })}
               />
-            </label>
-            <label className="wide">
-              Descripción
+            </FormField>
+            <FormField label="Descripción" className={styles.wide}>
               <input
                 value={tagForm.description}
                 onChange={(event) => setTagForm({ ...tagForm, description: event.target.value })}
                 maxLength={500}
                 placeholder="Opcional"
               />
-            </label>
-            <div className="form-actions">
-              <button className="primary-action" type="submit" disabled={isBusy || !tagForm.name.trim()}>
+            </FormField>
+            <div className={styles.actions}>
+              <Button variant="primary" type="submit" disabled={isBusy || !tagForm.name.trim()}>
                 {editingTagId ? 'Actualizar etiqueta' : 'Crear etiqueta'}
-              </button>
+              </Button>
               {editingTagId ? (
-                <button className="secondary-action" type="button" onClick={cancelEditingTag}>
+                <Button variant="secondary" type="button" onClick={cancelEditingTag}>
                   Cancelar edición
-                </button>
+                </Button>
               ) : null}
             </div>
           </form>
           {contactTags.length ? (
-            <ul style={{ listStyle: 'none', padding: 0, marginTop: '1rem' }}>
+            <ul className={styles.tagList}>
               {contactTags.map((tag) => (
-                <li
-                  key={tag.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.6rem',
-                    padding: '0.4rem 0',
-                    borderBottom: '1px solid var(--border, #e2e8f0)',
-                  }}
-                >
+                <li key={tag.id} className={styles.tagRow}>
                   <span
-                    className="status-pill"
-                    style={{ background: tag.color || '#4f6ef7', color: '#fff', padding: '0.15rem 0.6rem' }}
+                    className={styles.tagPill}
+                    style={tag.color ? { background: tag.color } : undefined}
                   >
                     {tag.name}
                   </span>
-                  <span className="hint" style={{ flex: 1 }}>{tag.description || '—'}</span>
-                  <span className="hint">{tag.contacts_count ?? 0} contactos</span>
-                  <button className="secondary-action" type="button" onClick={() => startEditingTag(tag)}>
+                  <span className={styles.tagDesc}>{tag.description || '—'}</span>
+                  <span className={styles.hint}>{tag.contacts_count ?? 0} contactos</span>
+                  <Button variant="secondary" size="sm" type="button" onClick={() => startEditingTag(tag)}>
                     Editar
-                  </button>
-                  <button className="secondary-action" type="button" onClick={() => handleDeleteTag(tag.id)}>
+                  </Button>
+                  <Button variant="secondary" size="sm" type="button" onClick={() => handleDeleteTag(tag.id)}>
                     Eliminar
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="hint">Aún no hay etiquetas configuradas.</p>
+            <p className={styles.hint}>Aún no hay etiquetas configuradas.</p>
           )}
-        </div>
+        </Card>
       ) : null}
 
       {currentTenantId && tenantStatus ? (
-        <div className="wizard-panel status-panel">
-          <h3>Estado del tenant</h3>
-          <div className="status-current">
-            <span>Estado actual:</span>
+        <Card padding="md">
+          <h3 className={styles.sectionTitle}>Estado del tenant</h3>
+          <p className={styles.hint}>
+            Estado actual:{' '}
             <span className={`status-badge status-${tenantStatus}`}>{tenantStatus}</span>
-          </div>
-          <p className="hint">
+          </p>
+          <p className={styles.hint}>
             {tenantStatus === 'trial' && 'El tenant está en trial. Actívalo cuando cumpla los prerrequisitos de go-live.'}
             {tenantStatus === 'active' && 'Tenant activo y operando en producción.'}
             {tenantStatus === 'suspended' && 'Tenant suspendido temporalmente. Puedes reactivarlo cuando el problema esté resuelto.'}
             {tenantStatus === 'churned' && 'Tenant dado de baja definitivamente. No se puede transicionar a otro estado.'}
           </p>
           {(availableStatusTransitions[tenantStatus] || []).length > 0 ? (
-            <form className="form-grid" onSubmit={handleChangeStatus}>
-              <label>
-                Nuevo estado
+            <form className={styles.formGrid} onSubmit={handleChangeStatus}>
+              <FormField label="Nuevo estado">
                 <select value={targetStatus} onChange={(e) => setTargetStatus(e.target.value)}>
                   {availableStatusTransitions[tenantStatus].map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
-              </label>
-              <label className="wide">
-                Razón (obligatoria)
+              </FormField>
+              <FormField label="Razón (obligatoria)" className={styles.wide}>
                 <input
                   placeholder="Ej: Prerrequisitos verificados, aprobado para go-live"
                   required
                   value={statusReason}
                   onChange={(e) => setStatusReason(e.target.value)}
                 />
-              </label>
-              <div className="form-actions">
-                <button className="primary-action" disabled={isBusy || !statusReason.trim()} type="submit">Cambiar estado</button>
+              </FormField>
+              <div className={styles.actions}>
+                <Button variant="primary" type="submit" disabled={isBusy || !statusReason.trim()}>
+                  Cambiar estado
+                </Button>
               </div>
             </form>
           ) : null}
-        </div>
+        </Card>
       ) : null}
     </>
   );
