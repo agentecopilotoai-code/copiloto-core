@@ -36,6 +36,12 @@
   opacity: 0.5;
 }
 
+.tab:focus-visible {
+  border-radius: var(--r-sm);
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
 .tabs--underline .tab {
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;

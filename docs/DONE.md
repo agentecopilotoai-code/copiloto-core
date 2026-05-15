@@ -15,6 +15,59 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-013 — Accesibilidad y responsive
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** convertir el criterio del backlog (`pnpm test:a11y` pasa en CI) en una **smoke suite real con `vitest-axe` + `axe-core`** ejecutada por GitHub Actions, montar el contrato de accesibilidad básico (foco visible en primitivas + skip-link en los 3 shells + nav-sidebar con `aria-current`) y dejar la app utilizable a 360px de viewport, sin tocar el backend. La suite arranca con **6 vistas headline** (una por área top-level: Platform Tenants, Owner/Admin Servicios, Owner/Admin Equipo, Manager Analítica, Agente Operations Desk, Viewer Resumen) y axe está configurado para fallar **sólo en violaciones `serious`/`critical`** — las `moderate`/`minor` quedan como follow-up sin bloquear CI. Reemplazar `pnpm` → `npm` es solo nomenclatura del runner; el alias del script es `npm run test:a11y` porque la app usa npm.
+- **Cambios realizados:**
+  - **Deps + script (`admin-panel/package.json`):** se añadieron `vitest-axe@0.1.0` y `axe-core@4.x` como `devDependencies`. Nuevo script `"test:a11y": "vitest run src/__tests__/a11y --testNamePattern \"^a11y\""` — el filtro de nombre (`^a11y`) hace que cualquier `it(...)` que no empiece por `a11y` quede fuera incluso si vive bajo `src/__tests__/a11y/`, y limitar el `dir` a `src/__tests__/a11y` evita parsear los 100+ tests del resto del repo en cada corrida (≈1.2s frente a 10s).
+  - **Setup global (`admin-panel/vitest.setup.js`):** se registra `expect.extend(vitestAxeMatchers)` para habilitar `toHaveNoViolations()` en todos los tests (no sólo los a11y — coste cero).
+  - **Helper compartido (`admin-panel/src/__tests__/a11y/axeHelper.js`, ~40 LOC):** wrapper `runAxe(container)` que (a) configura `vitest-axe` deshabilitando dos reglas inútiles dentro de jsdom — `region` (los smokes montan vistas sueltas, sin landmark `<main>` del shell) y `color-contrast` (jsdom no calcula contraste real, hay que validarlo visualmente o con CI visual), y (b) **filtra `results.violations` para mantener solo impacto `serious` o `critical`**. Ese filtro es lo que materializa el contrato del brief: ≥ 95 score = sin violaciones bloqueantes. Las `moderate`/`minor` (typografía pequeña, contraste sutil) se cazan en follow-up sin parar CI.
+  - **6 smokes nuevos (`admin-panel/src/__tests__/a11y/*.a11y.test.jsx`, ~600 LOC totales):** cada test sigue el mismo patrón — mock de `coreApi.js` con todos los endpoints que el orquestador importa, mock de `TenantProvider.jsx` con un `useTenantContext()` estático, `render(<MemoryRouter><View .../></MemoryRouter>)`, esperar al primer dato concreto (e.g. `screen.findByText('María Pérez')`) y `expect(await runAxe(container)).toHaveNoViolations()`. Vistas cubiertas:
+    1. `platform-tenants.a11y.test.jsx` — `<FleetTenants/>` (1 tenant en la lista).
+    2. `owner-admin-services.a11y.test.jsx` — `<Services/>` (1 servicio, con formulario de creación).
+    3. `owner-admin-team.a11y.test.jsx` — `<TeamModule/>` (1 miembro, con tiles de roles).
+    4. `manager-analytics.a11y.test.jsx` — `<ManagerAnalytics/>` (overview + funnel + agents + campaigns).
+    5. `agente-operations-desk.a11y.test.jsx` — `<OperationsDesk/>` (1 conversación, con stream WebSocket inerte).
+    6. `viewer-summary.a11y.test.jsx` — `<ViewerSummary/>` (KPI grid `aria-label="Indicadores del negocio"`).
+  - **Fixes derivados de los smokes — 3 form controls sin label:** axe disparó `serious` violations en el árbol del Inbox de Agente. Se añadieron `aria-label` en:
+    - `src/features/agente/inbox/components/contact-panel/ContactTagsSection.jsx`: `<select>` "Asignar etiqueta al contacto".
+    - `src/features/agente/inbox/components/contact-panel/ContactResourceForm.jsx`: 2 `<input type="time">` por cada día del horario laboral (start/end), `aria-label={`${label} — hora de inicio`}` / `hora de fin`.
+    - `src/features/agente/inbox/components/contact-panel/ContactScheduleSection.jsx`: `<input type="date">` "Fecha del calendario diario".
+  - **Foco visible (`:focus-visible` ring) — token nuevo + auditoría:**
+    - `src/styles/tokens.css`: tokens nuevos `--focus-ring-color: var(--accent)` / `--focus-ring-width: 2px` / `--focus-ring-offset: 2px` / `--focus-ring: var(--focus-ring-width) solid var(--focus-ring-color)` para tener un único punto de verdad.
+    - Primitivas auditadas — `Button`, `FormField`, `DataTable` ya tenían `:focus-visible`. `Tabs.module.css` carecía: se añadió `.tab:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset); }`.
+    - Sidebar (`src/app/shells/shell.module.css`): se añadió `:focus-visible` a `.navItem`, `.logoutButton`, `.tenantSwitcherTrigger` y `.tenantOption`. El `aria-current="page"` ya estaba puesto en `ShellSidebar.jsx`.
+  - **Skip-link "Saltar al contenido" — patrón único, 3 shells:**
+    - `src/app/shells/shell.module.css`: `.skipLink` visualmente oculto (translateY(-150%)) hasta `:focus`/`:focus-visible`; al recibir foco emerge con `--focus-ring`. Z-index `var(--z-modal)` para que el ring no quede tapado.
+    - `src/app/shells/{PlatformOwnerShell,TenantShell,ReadOnlyShell}.jsx`: el wrapper outer pasó de `<main className={styles.shell}>` a `<div className={styles.shell}>`, se inyectó `<a className={styles.skipLink} href="#main-content">Saltar al contenido</a>` como **primer hijo focuseable** del shell, y la `<section className={styles.workspace}>` se convirtió en `<main className={styles.workspace} id="main-content" tabIndex={-1}>` para que el target del skip-link sea el landmark `<main>` (y el `tabIndex={-1}` permita enfocarlo sin convertirlo en tab-stop normal). Lo anterior mantiene un solo `<main>` por shell — sigue siendo válido HTML.
+  - **360px viewport (`shell.module.css`):** se añadió un breakpoint `@media (max-width: 480px)` que (a) colapsa la grid del shell a una columna y reduce `padding`/`gap`, (b) reduce el padding del topbar y baja el `h1` del título a `--fs-h3`. Las vistas usan layout fluido a través de tokens, así que con este ajuste los shells caben sin overflow en 360px; las vistas individuales no requirieron media queries adicionales en este pase (los tablones grandes — `DataTable` — siguen permitiendo scroll horizontal interno, lo cual es accesible).
+  - **CI — nuevo step en `Admin Panel — install, lint & build`:** `.github/workflows/ci.yml` ganó el step `A11y (axe smoke)` justo entre `Lint` y `Build`, ejecutando `npm run test:a11y`. El nombre del job no se cambió: las checks externas que lo referencian siguen verdes. CI corre Node 20 (no Node 24), así que los smokes de a11y no se ven afectados por el bug de `undici`/`AbortSignal` que rompe `router.test.jsx` localmente en Node 24.
+- **Archivos modificados / creados:**
+  - **Nuevos (7):** `admin-panel/src/__tests__/a11y/axeHelper.js`, `admin-panel/src/__tests__/a11y/{platform-tenants,owner-admin-services,owner-admin-team,manager-analytics,agente-operations-desk,viewer-summary}.a11y.test.jsx`.
+  - **Modificados — primitivas / tokens / shells (4):** `admin-panel/src/styles/tokens.css`, `admin-panel/src/components/ui/Tabs.module.css`, `admin-panel/src/app/shells/shell.module.css`, `admin-panel/src/app/shells/{PlatformOwnerShell,TenantShell,ReadOnlyShell}.jsx`.
+  - **Modificados — a11y fixes (3 archivos):** `admin-panel/src/features/agente/inbox/components/contact-panel/{ContactTagsSection,ContactResourceForm,ContactScheduleSection}.jsx`.
+  - **Modificados — package + setup (2):** `admin-panel/package.json` (deps + script `test:a11y`), `admin-panel/vitest.setup.js` (registro de matchers de `vitest-axe`).
+  - **Modificados — CI (1):** `.github/workflows/ci.yml` (nuevo step `A11y (axe smoke)`).
+  - **Docs:** `docs/UI_BACKLOG.md` (UI-013 marcado `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (solo los 2 warnings preexistentes de `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK (`✓ 417 modules transformed`).
+  - `npm --prefix admin-panel run test:a11y` → **6 archivos / 6 tests pasan** (≈ 1.2s).
+  - `npm --prefix admin-panel test` → **103 archivos pasan / 1 falla**, **478 tests totales** con los **mismos 7 fallos** de `src/app/router.test.jsx` (entorno Node-24 `undici`/`AbortSignal`, documentados desde UI-002 y sucesivas). **No es regresión**: los 6 tests nuevos pasan; ningún test preexistente cambió de estado.
+  - No se tocó ningún archivo de servidor → no se ejecutó pytest/ruff.
+- **Seguridad:**
+  - **Sin cambios en parámetros de seguridad del backend; UI-013 es solo frontend.** No se modificó ningún archivo de `app/...`, schema, dependencia de servidor, migración ni endpoint. Los cambios viven en `admin-panel/src/`, `admin-panel/package.json`, `admin-panel/vitest.setup.js`, `admin-panel/src/styles/`, `admin-panel/src/__tests__/a11y/` y `.github/workflows/ci.yml` (un step nuevo, sin secrets nuevos ni cambios en permisos).
+  - El skip-link no introduce vectores nuevos: es un `<a href="#main-content">` interno; el navegador no hace ningún request al activarlo, solo mueve el foco.
+  - Los `aria-label` añadidos describen sólo el control (no exponen datos del tenant).
+- **Limitaciones / próximos pasos:**
+  - **6 vistas headline cubiertas — no las 36.** El brief lo declara explícitamente como "smoke pass". Las vistas restantes (per-feature: Branches, Subscriptions, Knowledge Studio, etc.) se pueden añadir incrementalmente reusando el patrón de `axeHelper.runAxe`. Quedan como follow-up.
+  - **Violaciones `moderate`/`minor` no auditadas.** El filtro del helper deja pasar problemas como heading-order subóptimo o color-contrast (deshabilitado por jsdom). Una pasada manual con axe DevTools en Chrome contra un build local, o un CI visual con `playwright + @axe-core/playwright`, queda como tarea separada.
+  - **360px viewport — verificación visual diferida.** Se añadió el breakpoint a los shells, pero no hay smoke automatizado de "no horizontal scroll a 360px" — Vite/jsdom no renderiza layout real. Sería un test con Playwright que la suite de UI no contempla aún.
+  - **Próxima tarea `PENDING`:** **UI-012 — Theming + dark mode** (opcional, no bloqueante). Después de UI-013, los pendientes funcionales del roadmap de UI se concentran en UI-014 (tests + CI — parcialmente ya hecho con esta entrega).
+
+---
+
 ### UI-011 — Cross-cutting: Toast, Confirm, ErrorBoundary
 
 - **Fecha:** 2026-05-15

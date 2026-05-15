@@ -46,7 +46,10 @@ export function ReadOnlyShell({
   const navGroups = resolveNav(VIEWER_NAV, modules, permissions, { includeDenied: true });
 
   return (
-    <main className={styles.shell}>
+    <div className={styles.shell}>
+      <a className={styles.skipLink} href="#main-content">
+        Saltar al contenido
+      </a>
       <ShellSidebar
         navGroups={navGroups}
         activeModuleId={activeModuleId}
@@ -64,14 +67,14 @@ export function ReadOnlyShell({
           <span className={styles.readOnlyBadge}>Acceso de solo lectura</span>
         }
       />
-      <section className={styles.workspace}>
+      <main className={styles.workspace} id="main-content" tabIndex={-1}>
         <ShellTopbar
           eyebrow="Lectura"
           title={activeModule.label}
           actions={<span className={styles.readOnlyBanner}>Modo solo lectura</span>}
         />
         <ErrorBoundary>{children}</ErrorBoundary>
-      </section>
-    </main>
+      </main>
+    </div>
   );
 }

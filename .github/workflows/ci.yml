@@ -121,6 +121,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: A11y (axe smoke)
+        run: npm run test:a11y
+
       - name: Build
         run: npm run build
 

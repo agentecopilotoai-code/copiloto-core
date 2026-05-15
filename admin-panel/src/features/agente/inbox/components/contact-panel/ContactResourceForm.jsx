@@ -154,6 +154,7 @@ export function ContactResourceForm({
                   {label}
                 </label>
                 <input
+                  aria-label={`${label} — hora de inicio`}
                   type="time"
                   value={day.start}
                   disabled={!day.enabled}
@@ -168,6 +169,7 @@ export function ContactResourceForm({
                 />
                 <span> – </span>
                 <input
+                  aria-label={`${label} — hora de fin`}
                   type="time"
                   value={day.end}
                   disabled={!day.enabled}

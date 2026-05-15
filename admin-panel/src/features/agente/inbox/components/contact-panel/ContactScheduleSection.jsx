@@ -67,6 +67,7 @@ export function ContactScheduleSection({
         <div className="calendar-header">
           <strong>Calendario diario</strong>
           <input
+            aria-label="Fecha del calendario diario"
             type="date"
             value={calendarDate}
             onChange={(event) => onCalendarDateChange(event.target.value)}

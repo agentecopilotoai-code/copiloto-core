@@ -50,6 +50,7 @@ export function ContactTagsSection({
       </div>
       <form className="action-row" onSubmit={onAssignTag}>
         <select
+          aria-label="Asignar etiqueta al contacto"
           value={pendingTagAssign}
           onChange={(event) => onPendingTagChange(event.target.value)}
         >

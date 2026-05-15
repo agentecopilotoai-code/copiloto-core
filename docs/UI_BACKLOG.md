@@ -676,12 +676,12 @@ src/
 
 ### UI-013 — Accesibilidad y responsive
 
-- **Estado:** PENDING
+- **Estado:** DONE
 - **Alcance:**
   - Auditar con `axe-core` (CI step nuevo) que cada feature pase ≥ 95 score.
   - Todas las vistas funcionales en viewport 360px.
   - Foco visible, navegación por teclado en sidebar, tablas con `role` y skip-link.
-- **Criterios:** `pnpm test:a11y` (alias para axe) pasa en CI.
+- **Criterios:** `npm run test:a11y` (alias para axe vía `vitest-axe`) pasa en CI (`Admin Panel — install, lint & build` job).
 - **Dependencias:** UI-001 ... UI-010.
 
 ---

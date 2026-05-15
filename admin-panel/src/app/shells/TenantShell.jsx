@@ -43,7 +43,10 @@ export function TenantShell({
   const navGroups = resolveNav(TENANT_NAV, modules, permissions);
 
   return (
-    <main className={styles.shell}>
+    <div className={styles.shell}>
+      <a className={styles.skipLink} href="#main-content">
+        Saltar al contenido
+      </a>
       <ShellSidebar
         navGroups={navGroups}
         activeModuleId={activeModuleId}
@@ -58,10 +61,10 @@ export function TenantShell({
           />
         }
       />
-      <section className={styles.workspace}>
+      <main className={styles.workspace} id="main-content" tabIndex={-1}>
         <ShellTopbar eyebrow="Tenant operations" title={activeModule.label} />
         <ErrorBoundary>{children}</ErrorBoundary>
-      </section>
-    </main>
+      </main>
+    </div>
   );
 }

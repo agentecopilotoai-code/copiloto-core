@@ -93,4 +93,14 @@
   /* === Transiciones === */
   --transition-fast:  120ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base:  180ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* === Focus ring (UI-013) ===
+   * Ring visible para `:focus-visible` en todos los elementos interactivos.
+   * Usamos `outline` (accesible, respeta forced-colors) + `outline-offset`
+   * para que no se solape con bordes de los componentes.
+   */
+  --focus-ring-color:  var(--accent);
+  --focus-ring-width:  2px;
+  --focus-ring-offset: 2px;
+  --focus-ring:        var(--focus-ring-width) solid var(--focus-ring-color);
 }

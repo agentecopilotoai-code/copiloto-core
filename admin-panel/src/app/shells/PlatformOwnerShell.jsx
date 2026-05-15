@@ -33,17 +33,20 @@ export function PlatformOwnerShell({
   const navGroups = resolveNav(PLATFORM_NAV, modules, permissions);
 
   return (
-    <main className={styles.shell}>
+    <div className={styles.shell}>
+      <a className={styles.skipLink} href="#main-content">
+        Saltar al contenido
+      </a>
       <ShellSidebar
         navGroups={navGroups}
         activeModuleId={activeModuleId}
         onModuleSelect={onModuleSelect}
         profile={profile}
       />
-      <section className={styles.workspace}>
+      <main className={styles.workspace} id="main-content" tabIndex={-1}>
         <ShellTopbar eyebrow="Plataforma" title={activeModule.label} />
         <ErrorBoundary>{children}</ErrorBoundary>
-      </section>
-    </main>
+      </main>
+    </div>
   );
 }
