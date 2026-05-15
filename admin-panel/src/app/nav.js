@@ -61,9 +61,12 @@ export const PLATFORM_NAV = Object.freeze([
 // Viewer — shell read-only. Reusa los módulos de lectura del tenant; el shell
 // los filtra a mode 'R' y oculta cualquier CTA de escritura. `viewer-summary`
 // (UI-010.1) es la landing del Viewer, por eso encabeza la sección Lectura.
+// `viewer-analytics` (UI-010.2) es la versión read-only del panel de analítica
+// (wrapper fino sobre `AnalyticsPanel`); Owner/Admin/Manager/Agent siguen
+// usando `analytics` directamente vía `TENANT_NAV`.
 export const VIEWER_NAV = Object.freeze([
   {
     section: 'Lectura',
-    items: ['viewer-summary', 'analytics', 'appointments', 'operations-desk', 'contacts'],
+    items: ['viewer-summary', 'viewer-analytics', 'appointments', 'operations-desk', 'contacts'],
   },
 ]);

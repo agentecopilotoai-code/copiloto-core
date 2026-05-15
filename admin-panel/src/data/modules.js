@@ -243,4 +243,11 @@ export const adminModules = [
     scope: ['KPIs con delta semanal (read-only)', 'Chip de período (Últimos 7 días)', 'Sin acciones de edición', 'Banner permanente "Modo solo lectura"'],
     capability: 'analytics.tenant.read',
   },
+  {
+    id: 'viewer-analytics',
+    label: 'Analítica',
+    summary: 'Vista del Viewer: analítica del tenant en modo solo lectura — wrapper fino sobre `AnalyticsPanel` (read-only por construcción, sin CTAs de export/edit). UI-010.2.',
+    scope: ['KPIs por rango (7d/30d/90d/custom)', 'Tabs Resumen / Funnel / Campañas / Agentes', 'Sin acciones de escritura', 'Banner permanente "Modo solo lectura"'],
+    capability: 'analytics.tenant.read',
+  },
 ];

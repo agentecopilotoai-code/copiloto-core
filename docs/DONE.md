@@ -15,6 +15,42 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-010.2 — Lectura · Analítica (Viewer)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** segunda vista del rol Viewer en `admin-panel/src/features/viewer/analytics/`, aplicando el mockup `34 _ Lectura _ Analítica.html`. Es la **versión read-only del panel de analítica** del tenant, gateada con `<RequirePermission capability="analytics.tenant.read" mode="R">`. El principio rector vuelve a ser la **reutilización verbatim del legacy**: el panel `AnalyticsPanel` (`src/components/modules/analytics/AnalyticsPanel.jsx`, 786 LOC) ya es read-only por construcción — no expone CTAs de export, edit ni descarga; sus únicos controles son selectores de rango/tab/refresh — así que sólo necesita un wrapper fino que aplique el guard de permisos. Con esta entrega arranca la segunda de las 4 subtareas del bloque UI-010; la próxima `PENDING` es **UI-010.3 — Lectura · Citas (Viewer)**.
+- **Cambios realizados:**
+  - **Frontend — `src/features/viewer/analytics/` (nuevo, 4 archivos):**
+    - `ViewerAnalytics.jsx` (orquestador, 44 LOC): importa el `AnalyticsPanel` legacy y lo monta dentro de `<RequirePermission capability="analytics.tenant.read" mode="R">`. Toma `{ module, session, tenant }` por props y deriva `permissions` con `usePermissions({ profile, tenant })` + `useTenantContext()`. El panel ya maneja internamente el caso «no hay tenant activo» (renderiza `Selecciona un tenant para ver sus métricas.`), por lo que el wrapper no añade su propio `EmptyState`.
+    - `ViewerAnalytics.module.css` (~9 LOC, sin reglas): se conserva como placeholder por la convención del feature; el panel reusado trae su propio styling (`module-card analytics-panel`).
+    - `index.js` (barrel: `export { ViewerAnalytics }`).
+    - `ViewerAnalytics.test.jsx` (3 tests, 132 LOC): render del panel reusado con eyebrow / `<h2>Analítica del negocio</h2>` / los 4 tabs (`Resumen`, `Funnel`, `Campañas`, `Agentes`) + verificación de que los 7 endpoints de analítica (`getAnalyticsOverview`, `getAnalyticsConversations`, `getAnalyticsAppointments`, `getAnalyticsContacts`, `getAnalyticsFunnel`, `getAnalyticsCampaigns`, `getAnalyticsReferrals`) se disparan con el tenantId correcto; NO se renderiza ningún `<button>` con nombre `Exportar|Export|Descargar|Copiar|Guardar|Editar` (criterio UI-010 documentado como contrato); `AccessDenied` cuando el rol del tenant carece de `analytics.tenant.read` y los fetchs no se disparan. Mock de `coreApi.js` (los 7 endpoints + `getAnalyticsAgents` que importa `AgentPerformance` al mismo nivel del módulo aunque sólo se monte en tab `agents`) y de `TenantProvider.jsx`, siguiendo el patrón de `ViewerSummary.test.jsx` / `AuditPanel.test.jsx`.
+  - **Frontend — wiring del nuevo módulo `viewer-analytics`:**
+    - `app/moduleRegistry.js`: import de `ViewerAnalytics` + entrada `'viewer-analytics': { Component: ViewerAnalytics, capability: 'analytics.tenant.read' }`. La entrada legacy `analytics` se conserva: Owner/Admin/Manager/Agent siguen usándola via `TENANT_NAV`.
+    - `data/modules.js`: entrada nueva `viewer-analytics` (label «Analítica», summary, scope, capability `analytics.tenant.read`).
+    - `app/nav.js`: en `VIEWER_NAV` se reemplazó `'analytics'` por `'viewer-analytics'` en la sección «Lectura» (orden: `viewer-summary` → `viewer-analytics` → `appointments` → `operations-desk` → `contacts`). `TENANT_NAV` y `ROLE_HOME` **no** se tocaron — la landing del Viewer sigue siendo `viewer-summary` (UI-010.1).
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/viewer/analytics/{ViewerAnalytics.jsx,ViewerAnalytics.module.css,ViewerAnalytics.test.jsx,index.js}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (import + entrada `viewer-analytics`).
+  - `admin-panel/src/app/nav.js` (`'analytics'` → `'viewer-analytics'` en `VIEWER_NAV`).
+  - `admin-panel/src/data/modules.js` (entrada `viewer-analytics`).
+  - `docs/UI_BACKLOG.md` (UI-010.2 marcado `DONE` con bloques `Alcance` / `Diferencia intencional declarada` / `Tests`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (solo los 2 warnings preexistentes de `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK (`✓ 403 modules transformed`, sin warnings nuevos; 2 módulos más que la base — el feature nuevo).
+  - `npm --prefix admin-panel test` → 91 archivos pasan, 1 falla (`src/app/router.test.jsx` con **exactamente 7 fallos** de entorno Node-24 `undici`/`AbortSignal`, documentados desde UI-002 / UI-006.* / UI-007.* / UI-008.* / UI-009.* / UI-010.1). **No es regresión** — el conteo coincide con la línea base; CI corre Node 20 y solo ejecuta lint + build para el front. Se añadieron **3 tests nuevos** (`ViewerAnalytics.test.jsx`) y todos pasan; 438 tests totales OK.
+  - No se tocó ningún archivo de servidor → no se ejecutó pytest/ruff. Los 5 tests estáticos del backend que referencian `AnalyticsPanel.jsx` (`test_analytics_static.py`, `test_analytics_agents_static.py`, `test_funnel_attribution_static.py`, `test_referrer_tracking_static.py`, `test_web_widget_static.py`) siguen verdes — el archivo no se movió ni se editó.
+- **Seguridad:**
+  - **Frontend-only** — no se tocó ningún archivo de servidor (`app/...`), schema, dependencia ni endpoint. La vista es un **wrapper fino read-only** sobre `AnalyticsPanel`, que a su vez solo consume endpoints de lectura de analítica (`getAnalyticsOverview` y siblings) ya **tenant-scoped server-side** vía header `X-Tenant-Id`.
+  - La entrada de módulo se gateó con `<RequirePermission capability="analytics.tenant.read" mode="R">`; el backend reverifica con JWT + role + RLS. La capability `analytics.tenant.read` ya existía en `permissions/matrix.js` (viewer/agent/manager/admin/owner = R) — no se añadieron nuevos permisos.
+  - **No se renderiza ningún CTA de escritura**: el `AnalyticsPanel` legacy ya es read-only por construcción (verificado con grep — no aparece `Export|Exportar|Descargar|primary-action|copy` en el archivo). El criterio global UI-010 («100% de las acciones write deben estar ocultas o renderizar `<DisabledCTA reason="read_only"/>`») se cumple por construcción; los tests del wrapper documentan ese contrato (aserciones `queryByRole('button', { name: /Exportar|Export|Descargar|Copiar|Guardar|Editar/i })` deben ser `null`).
+- **Limitaciones / próximos pasos:**
+  - **Diferencia intencional declarada:** el HTML del mockup muestra botones de «Exportar PDF» y similares; ese chrome **no existe en `AnalyticsPanel`** y no se va a inventar — no hay endpoint backend que lo soporte y el criterio global UI-010 exige ocultar cualquier write action.
+  - **`AnalyticsPanel` permanece en su path legacy** (`admin-panel/src/components/modules/analytics/AnalyticsPanel.jsx`) porque 5 tests estáticos del backend lo referencian ahí (`test_analytics_static.py`, `test_analytics_agents_static.py`, `test_funnel_attribution_static.py`, `test_referrer_tracking_static.py`, `test_web_widget_static.py`). Migrarlo a `src/features/owner-admin/analytics/` queda fuera del alcance de UI-010.2 (rompe el contrato estático del backend).
+  - **Próxima `PENDING` real:** **UI-010.3 — Lectura · Citas (Viewer)**.
+
+---
+
 ### UI-010.1 — Lectura · Resumen (Viewer)
 
 - **Fecha:** 2026-05-14
