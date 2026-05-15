@@ -1,3 +1,4 @@
+import { ErrorBoundary } from '../../components/ui/index.js';
 import { PLATFORM_NAV } from '../nav.js';
 import { resolveNav } from './resolveNav.js';
 import { ShellSidebar } from './components/ShellSidebar.jsx';
@@ -41,7 +42,7 @@ export function PlatformOwnerShell({
       />
       <section className={styles.workspace}>
         <ShellTopbar eyebrow="Plataforma" title={activeModule.label} />
-        {children}
+        <ErrorBoundary>{children}</ErrorBoundary>
       </section>
     </main>
   );

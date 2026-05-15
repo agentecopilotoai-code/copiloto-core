@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createTreatmentPackage,
   deactivateTreatmentPackage,
@@ -20,6 +21,7 @@ import { buildPayload, emptyForm, toForm } from '../packagesData.js';
  */
 export function usePackagesData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [packages, setPackages] = useState([]);
   const [services, setServices] = useState([]);
@@ -107,8 +109,12 @@ export function usePackagesData({ session, tenant }) {
     },
     async deactivate(pkg) {
       if (!tenantId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm(`¿Desactivar el paquete "${pkg.name}"?`)) return;
+      const ok = await confirm({
+        title: 'Desactivar paquete',
+        body: `¿Desactivar el paquete "${pkg.name}"?`,
+        danger: true,
+      });
+      if (!ok) return;
       setSaving(true);
       setError(null);
       try {

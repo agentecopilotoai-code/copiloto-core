@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createKnowledgeDocument,
   deleteKnowledgeDocument,
@@ -29,6 +30,7 @@ import {
  */
 export function useKnowledgeStudioData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [documents, setDocuments] = useState([]);
   const [statusFilter, setStatusFilter] = useState('');
@@ -148,8 +150,12 @@ export function useKnowledgeStudioData({ session, tenant }) {
     },
     async removeDocument(document) {
       setNotice(null);
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm(`¿Eliminar el documento "${document.title}"?`)) return;
+      const ok = await confirm({
+        title: 'Eliminar documento',
+        body: `¿Eliminar el documento "${document.title}"?`,
+        danger: true,
+      });
+      if (!ok) return;
       try {
         await deleteKnowledgeDocument(session, tenantId, document.id);
         if (editingId === document.id) {

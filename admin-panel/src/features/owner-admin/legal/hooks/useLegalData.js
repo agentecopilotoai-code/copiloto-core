@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createLegalDocumentDraft,
   legalDocumentPublicUrl,
@@ -20,6 +21,7 @@ import { emptyDraft, groupByKind, publishedByKind } from '../legalData.js';
  */
 export function useLegalData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [documents, setDocuments] = useState([]);
   const [form, setForm] = useState(emptyDraft);
@@ -90,14 +92,11 @@ export function useLegalData({ session, tenant }) {
     },
     async publish(doc) {
       if (!tenantId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (
-        !window.confirm(
-          `¿Publicar v${doc.version} de "${doc.title}"? La versión anterior quedará archivada.`,
-        )
-      ) {
-        return;
-      }
+      const ok = await confirm({
+        title: 'Publicar documento legal',
+        body: `¿Publicar v${doc.version} de "${doc.title}"? La versión anterior quedará archivada.`,
+      });
+      if (!ok) return;
       setSaving(true);
       setError(null);
       setInfo(null);

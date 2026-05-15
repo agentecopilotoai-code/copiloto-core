@@ -14,6 +14,25 @@ vi.mock('../../../app/TenantProvider.jsx', () => ({
   useTenantContext: () => mockTenantContext,
 }));
 
+// UI-011 — useConfirm() replaces the native browser confirm at the retry call
+// site. Stub it inline (auto-confirms) so the retry path runs without mounting
+// the global <ConfirmProvider/> in the test tree.
+vi.mock('../../../components/ui/index.js', async () => {
+  const actual = await vi.importActual('../../../components/ui/index.js');
+  return {
+    ...actual,
+    useConfirm: () => async () => true,
+    useToast: () => ({
+      push: () => '',
+      dismiss: () => {},
+      success: () => '',
+      error: () => '',
+      info: () => '',
+      warning: () => '',
+    }),
+  };
+});
+
 // eslint-disable-next-line import/first
 import * as coreApi from '../../../services/coreApi.js';
 // eslint-disable-next-line import/first
@@ -54,7 +73,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
   coreApi.listOutboundDlq.mockResolvedValue(DLQ);
-  vi.spyOn(window, 'confirm').mockReturnValue(true);
 });
 
 describe('OutboundDLQ', () => {

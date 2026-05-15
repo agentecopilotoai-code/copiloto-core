@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import { listOutboundDlq, retryOutboundDlqMessage } from '../../../../services/coreApi.js';
 
 /**
@@ -14,6 +15,7 @@ import { listOutboundDlq, retryOutboundDlqMessage } from '../../../../services/c
  */
 export function useOutboundDlqData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [items, setItems] = useState([]);
   const [totals, setTotals] = useState([]);
@@ -67,14 +69,11 @@ export function useOutboundDlqData({ session, tenant }) {
     },
     async retry(item) {
       if (!tenantId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (
-        !window.confirm(
-          `¿Reintentar envío del mensaje ${String(item.id).slice(0, 8)}…? Volverá a la cola del worker.`,
-        )
-      ) {
-        return;
-      }
+      const ok = await confirm({
+        title: 'Reintentar envío',
+        body: `¿Reintentar envío del mensaje ${String(item.id).slice(0, 8)}…? Volverá a la cola del worker.`,
+      });
+      if (!ok) return;
       setRetryingId(item.id);
       setNotice(null);
       try {

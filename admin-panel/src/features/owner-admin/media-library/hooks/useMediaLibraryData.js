@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createPromotion,
   deleteMediaAsset,
@@ -32,6 +33,7 @@ import {
  */
 export function useMediaLibraryData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [assets, setAssets] = useState([]);
   const [promotions, setPromotions] = useState([]);
@@ -149,8 +151,12 @@ export function useMediaLibraryData({ session, tenant }) {
       }
     },
     async deleteAsset(asset) {
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm(`¿Eliminar el archivo "${asset.label}"?`)) return;
+      const ok = await confirm({
+        title: 'Eliminar archivo',
+        body: `¿Eliminar el archivo "${asset.label}"?`,
+        danger: true,
+      });
+      if (!ok) return;
       setIsBusy(true);
       try {
         await deleteMediaAsset(session, tenantId, asset.id);
@@ -163,7 +169,9 @@ export function useMediaLibraryData({ session, tenant }) {
       }
     },
     async editAssetTags(asset) {
-      // Native prompt is preserved from the legacy module; UI-011 sweeps it.
+      // UI-011 follow-up: the backlog criterio only covers the alert/confirm
+      // primitives; this `window.prompt` stays for now until a dedicated
+      // TagPromptDialog primitive ships in a separate task.
       const next = window.prompt('Tags (separados por coma):', (asset.tags || []).join(', '));
       if (next == null) return;
       setIsBusy(true);
@@ -203,8 +211,12 @@ export function useMediaLibraryData({ session, tenant }) {
       }
     },
     async removePromo(promo) {
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm(`¿Eliminar la promoción "${promo.name}"?`)) return;
+      const ok = await confirm({
+        title: 'Eliminar promoción',
+        body: `¿Eliminar la promoción "${promo.name}"?`,
+        danger: true,
+      });
+      if (!ok) return;
       setIsBusy(true);
       try {
         await deletePromotion(session, tenantId, promo.id);

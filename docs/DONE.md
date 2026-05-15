@@ -15,6 +15,48 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-011 — Cross-cutting: Toast, Confirm, ErrorBoundary
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el bloque transversal UI-006..UI-010 montando los tres primitivos transversales que faltaban — toast global con queue (`useToast()`), confirmación global reusable (`useConfirm({ title, body, danger })` que reusa la `<Modal>` existente, no inventa una nueva) y `<ErrorBoundary>` por shell con fallback amigable — y barriendo las **20 llamadas nativas de `window.confirm`** distribuidas en 15 archivos (managers/owner-admin/agente). Con esta entrega `grep -rn "window.alert\|window.confirm" admin-panel/src` → **0 matches**.
+- **Cambios realizados:**
+  - **Primitivas nuevas en `admin-panel/src/components/ui/`:**
+    - `ConfirmDialog.jsx` (99 LOC): `<ConfirmProvider>` + `useConfirm()`. La promesa se almacena en un `useRef` y se resuelve al pulsar Confirmar/Cancelar/Esc; el `Button` confirm cambia a `variant="danger"` cuando `danger: true`. **`useConfirm` cae a `async () => true` fuera del provider** para que test trees aislados (que no montan el shell) no exploten — en prod siempre hay provider (montado en `App.jsx`).
+    - `ErrorBoundary.jsx` (85 LOC): clase React con `getDerivedStateFromError` + `componentDidCatch`, render fallback (`<Card>` "Algo salió mal" + botón "Reintentar"); el prop `onReport` opcional invoca `onReport(error, info)` desde un botón "Reportar al equipo" — la primitiva **no** llama a sentry/audit por sí sola (sin PII, sin acoplamiento).
+    - Tests (8 nuevos): `ConfirmDialog.test.jsx` (3 tests — open + resolve true, resolve false, danger), `ErrorBoundary.test.jsx` (4 tests — happy path, fallback, retry, onReport), un test nuevo en `Toast.test.jsx` (auto-dismiss con fake timers).
+    - `Toast.jsx` / `ToastProvider` / `useToast` ya existían (UI-001) — se reutilizan sin cambios.
+    - `components/ui/index.js`: nuevas exports `ConfirmProvider`, `useConfirm`, `ErrorBoundary` (`ConfirmDialog` queda interno).
+  - **Wiring en el árbol de la app:**
+    - `App.jsx`: envuelve **todo** (incluido `LoadingScreen`/`LoginScreen`) en `<ToastProvider><ConfirmProvider>...</ConfirmProvider></ToastProvider>`. Montaje **único**, no per-shell.
+    - `app/shells/{TenantShell,PlatformOwnerShell,ReadOnlyShell}.jsx`: envuelven solo el `{children}` (la página renderizada por el `Outlet`) en `<ErrorBoundary>` — el sidebar + topbar quedan utilizables si una feature crashea.
+  - **Sweep — 20 llamadas en 15 archivos:** se reemplazó `if (!window.confirm("..."))` por `const ok = await confirm({ title, body, danger }); if (!ok) return;` y se eliminó el comentario `// Native confirm is preserved from the legacy module; UI-011 sweeps it.`. Cada hook/component ahora importa `useConfirm` desde `'../../../../components/ui/index.js'`.
+    - **Manager:** `manager/digest-reports/components/DigestSubscriptionsPanel.jsx` (1), `manager/campaigns/hooks/useCampaignsData.js` (2), `manager/segments/hooks/useSegmentsData.js` (1).
+    - **Owner / Admin:** `owner-admin/tenant-setup/components/QualificationQuestionsPanel.jsx` (1), `owner-admin/knowledge-studio/hooks/useKnowledgeStudioData.js` (1), `owner-admin/subscriptions/hooks/useSubscriptionsData.js` (2), `owner-admin/audit/hooks/useAuditData.js` (1), `owner-admin/team/hooks/useTeamData.js` (2), `owner-admin/media-library/hooks/useMediaLibraryData.js` (2), `owner-admin/packages/hooks/usePackagesData.js` (1), `owner-admin/legal/hooks/useLegalData.js` (1), `owner-admin/branches/hooks/useBranchesData.js` (1), `owner-admin/services/hooks/useServicesData.js` (1), `owner-admin/whatsapp/hooks/useWhatsAppData.js` (1).
+    - **Agente:** `agente/outbound-dlq/hooks/useOutboundDlqData.js` (1).
+  - **Tests existentes — adaptación:** `agente/outbound-dlq/OutboundDLQ.test.jsx` era el único que mockeaba `vi.spyOn(window, 'confirm').mockReturnValue(true)`; ahora `vi.mock('../../../components/ui/index.js', ...)` con `useConfirm: () => async () => true` (patrón documentado en el brief de UI-011). El resto de las suites no exercise paths que llaman `confirm()`, y el fallback `async () => true` del hook fuera de provider los deja verdes sin reescritura.
+- **Archivos modificados / creados:**
+  - **Nuevos (5):** `admin-panel/src/components/ui/ConfirmDialog.jsx`, `admin-panel/src/components/ui/ConfirmDialog.test.jsx`, `admin-panel/src/components/ui/ErrorBoundary.jsx`, `admin-panel/src/components/ui/ErrorBoundary.test.jsx`. (`Toast.test.jsx` actualizado, no creado.)
+  - **Modificados — barrel + shells (5):** `admin-panel/src/components/ui/index.js`, `admin-panel/src/App.jsx`, `admin-panel/src/app/shells/{TenantShell,PlatformOwnerShell,ReadOnlyShell}.jsx`.
+  - **Modificados — sweep (15 archivos):** los 15 listados arriba.
+  - **Modificados — tests adaptados:** `admin-panel/src/features/agente/outbound-dlq/OutboundDLQ.test.jsx`, `admin-panel/src/components/ui/Toast.test.jsx`.
+  - **Docs:** `docs/UI_BACKLOG.md` (UI-011 marcado `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `grep -rn "window.alert\|window.confirm" admin-panel/src` → **0 matches** (criterio cumplido).
+  - `npm --prefix admin-panel run lint` → sin errores (solo los 2 warnings preexistentes de `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK (`✓ 398 modules transformed`).
+  - `npm --prefix admin-panel test` → **90 archivos pasan / 1 falla** (`src/app/router.test.jsx` con **exactamente 7 fallos** de entorno Node-24 `undici`/`AbortSignal`, **idénticos** a los documentados desde UI-002/UI-006.*/UI-007.*/UI-008.*/UI-009.*/UI-010.*). **No es regresión.** 432 tests verdes en total — los 8 nuevos pasan; los suites de features (audit, branches, knowledge-studio, legal, media-library, packages, services, subscriptions, team, whatsapp, campaigns, segments, digest-reports, outbound-dlq, tenant-setup) siguen verdes sin reescritura gracias al fallback `async () => true` del hook fuera de provider.
+  - No se tocó ningún archivo de servidor → no se ejecutó pytest/ruff.
+- **Seguridad:**
+  - **Frontend-only** — no se tocó ningún archivo de servidor (`app/...`), schema, dependencia, ni migración. Las mutaciones reverificadas server-side (auditadas, capability-gated) **no cambian** — solo se cambió el chrome de confirmación cliente; el backend sigue siendo la fuente de verdad.
+  - **`ErrorBoundary` no llama a ningún reporter por sí solo.** El prop `onReport` queda como hook opcional para wiring posterior (sentry/audit en un PR separado). El fallback no leak-ea PII: muestra solo "Algo salió mal" + un párrafo genérico — el `error.message` se conserva en el state interno y se pasa al `onReport` solo si el caller lo opted-in.
+  - El criterio del backlog (`grep ... → 0`) cubre `window.alert`/`window.confirm`. El **`window.prompt` único de `useMediaLibraryData.js#editAssetTags` se preserva** (un `TagPromptDialog` queda como follow-up; ver Limitaciones).
+- **Limitaciones / próximos pasos:**
+  - **`window.prompt` diferido.** `editAssetTags` (`media-library/hooks/useMediaLibraryData.js`) sigue usando `window.prompt` nativo — está fuera del criterio del backlog (`alert`/`confirm` únicamente) y reemplazarlo requiere un primitivo nuevo (`TagPromptDialog` con campo de texto). Se difiere a un PR separado.
+  - **`onReport` no cableado.** El hook está expuesto pero ningún shell pasa el prop — el cableado a sentry/audit se reserva para un PR posterior (puede combinarse con el wiring de monitoring).
+  - **Próxima tarea `PENDING`:** **UI-012 — Theming + dark mode** (opcional, no bloqueante para go-live UI). Con UI-011 queda **cerrado el bloque UI-006..UI-011** de vistas + cross-cutting; UI-013 (accesibilidad + responsive) y UI-014 son opcionales / siguientes pasos.
+
+---
+
 ### UI-010.4 — Lectura · Conversaciones (Viewer)
 
 - **Fecha:** 2026-05-15

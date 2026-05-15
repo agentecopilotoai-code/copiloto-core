@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createDigestSubscription,
   deleteDigestSubscription,
@@ -20,8 +21,9 @@ import styles from '../DigestReports.module.css';
  * Relocated verbatim from `features/owner-admin/tenant-setup/components/` into
  * the Manager `digest-reports` feature. The component still self-manages its
  * subscriptions state and every `coreApi` call site, business rule (the "al
- * menos un email o whatsapp" validation, the native delete `window.confirm`,
- * the cadence options, the enabled toggle) and `data-*` attribute is preserved.
+ * menos un email o whatsapp" validation, the cadence options, the enabled
+ * toggle) and `data-*` attribute is preserved; UI-011 replaced the native
+ * browser delete confirm with the global `useConfirm()` dialog.
  * The only changes from the legacy file: the `coreApi` import path for the new
  * location, and the legacy global classNames / inline styles swapped for the
  * feature CSS module with 100% `var(--...)` tokens.
@@ -30,6 +32,7 @@ import styles from '../DigestReports.module.css';
  * `NotificationsTab` from its new location.
  */
 export default function DigestSubscriptionsPanel({ session, tenantId }) {
+  const confirm = useConfirm();
   const [subscriptions, setSubscriptions] = useState([]);
   const [form, setForm] = useState(emptyForm());
   const [error, setError] = useState('');
@@ -95,7 +98,12 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
   }
 
   async function handleDelete(sub) {
-    if (!window.confirm('¿Eliminar esta suscripción?')) return;
+    const ok = await confirm({
+      title: 'Eliminar suscripción',
+      body: '¿Eliminar esta suscripción?',
+      danger: true,
+    });
+    if (!ok) return;
     setError('');
     try {
       await deleteDigestSubscription(session, tenantId, sub.id);

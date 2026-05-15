@@ -1,3 +1,4 @@
+import { ErrorBoundary } from '../../components/ui/index.js';
 import { VIEWER_NAV } from '../nav.js';
 import { resolveNav } from './resolveNav.js';
 import { ShellSidebar } from './components/ShellSidebar.jsx';
@@ -69,7 +70,7 @@ export function ReadOnlyShell({
           title={activeModule.label}
           actions={<span className={styles.readOnlyBanner}>Modo solo lectura</span>}
         />
-        {children}
+        <ErrorBoundary>{children}</ErrorBoundary>
       </section>
     </main>
   );

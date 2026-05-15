@@ -658,13 +658,10 @@ src/
 
 ### UI-011 — Cross-cutting: Toast, Modal global, Confirmaciones, Error boundaries
 
-- **Estado:** PENDING
-- **Alcance:**
-  - `ToastProvider` global con queue (`useToast()`).
-  - `ConfirmDialog` (reusa `Modal`) con API `confirm({ title, body, danger })`.
-  - `<ErrorBoundary>` en cada shell con fallback amigable + report a sentry/audit.
-  - Reemplazar `alert()` / `confirm()` nativos donde aparezcan.
-- **Criterios:** `grep -rn "window.alert\|window.confirm" admin-panel/src` → 0.
+- **Estado:** DONE (2026-05-15)
+- **Alcance:** se montan en el árbol de `App.jsx` los providers globales `ToastProvider` (ya existente, ahora envolviendo toda la app incluso el `LoginScreen`) y un nuevo `ConfirmProvider` que expone `useConfirm()` → `async confirm({ title, body, danger })` resuelto en una `<Modal>` (reusa la primitiva existente, no se crea un modal nuevo). Se añade `<ErrorBoundary>` (clase con `getDerivedStateFromError` + `componentDidCatch`) que envuelve el `Outlet` dentro de cada shell (`TenantShell`, `PlatformOwnerShell`, `ReadOnlyShell`) — el sidebar y el topbar quedan utilizables si una feature crashea; el fallback es una `<Card>` con "Algo salió mal" + botón "Reintentar"; un prop `onReport` opcional queda hookeado para sentry/audit (no se cablea reporter en este PR, lo asume una entrega posterior). Se barrieron las **20 llamadas nativas** de `window.confirm` distribuidas en **15 archivos** (managers/owner-admin/agente) reemplazándolas por `useConfirm()`; los `// Native confirm is preserved from the legacy module; UI-011 sweeps it.` desaparecen. `useConfirm()` cae a un stub `async () => true` si se invoca fuera del provider (test-friendly; en prod siempre hay provider). El comentario de cabecera en `DigestSubscriptionsPanel.jsx` se actualizó. **Diferido:** el `window.prompt` único en `useMediaLibraryData.js#editAssetTags` se deja como follow-up (un `TagPromptDialog` ⇒ siguiente PR); el criterio del backlog cubre solo `alert`/`confirm`.
+- **Criterio:** `grep -rn "window.alert\|window.confirm" admin-panel/src` → **0 matches** (verificado).
+- **Tests:** 4 tests en `ErrorBoundary.test.jsx`, 3 en `ConfirmDialog.test.jsx`, +1 nuevo en `Toast.test.jsx` (auto-dismiss con fake timers) — total **8 tests nuevos**. La suite full pasa con 432 tests verdes y solo los 7 fallos pre-existentes de `src/app/router.test.jsx` (Node-24 `undici`/`AbortSignal`, documentados desde UI-002). `OutboundDLQ.test.jsx` se migró del `vi.spyOn(window, 'confirm')` a un `vi.mock` del barrel UI con `useConfirm: () => async () => true`.
 - **Dependencias:** UI-001.
 
 ---

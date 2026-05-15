@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   archiveSubscriptionPlan,
   cancelContactSubscription,
@@ -27,6 +28,7 @@ import {
  */
 export function useSubscriptionsData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [plans, setPlans] = useState([]);
   const [subscribers, setSubscribers] = useState([]);
@@ -106,8 +108,12 @@ export function useSubscriptionsData({ session, tenant }) {
     },
     async archivePlan(plan) {
       if (!tenantId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm(`¿Archivar el plan "${plan.name}"?`)) return;
+      const ok = await confirm({
+        title: 'Archivar plan',
+        body: `¿Archivar el plan "${plan.name}"?`,
+        danger: true,
+      });
+      if (!ok) return;
       setSaving(true);
       setError(null);
       try {
@@ -121,9 +127,13 @@ export function useSubscriptionsData({ session, tenant }) {
     },
     async cancelSubscription(sub) {
       if (!tenantId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
       const who = sub.contact_display_name || sub.contact_phone_e164 || 'este contacto';
-      if (!window.confirm(`¿Cancelar la suscripción de ${who}?`)) return;
+      const ok = await confirm({
+        title: 'Cancelar suscripción',
+        body: `¿Cancelar la suscripción de ${who}?`,
+        danger: true,
+      });
+      if (!ok) return;
       setSaving(true);
       setError(null);
       try {

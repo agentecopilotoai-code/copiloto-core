@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   inviteTenantMember,
   listTenantMembers,
@@ -20,6 +21,7 @@ import { callerIsOwner, emptyInviteForm, highestRole } from '../teamData.js';
  */
 export function useTeamData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [members, setMembers] = useState([]);
   const [auth0Enabled, setAuth0Enabled] = useState(false);
@@ -109,10 +111,10 @@ export function useTeamData({ session, tenant }) {
         setNotice({ type: 'error', text: 'Solo un owner puede asignar el rol owner.' });
         return;
       }
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      const confirmed = window.confirm(
-        `¿Cambiar el rol de ${member.email} de "${highestRole(member.roles)}" a "${nextRole}"?`,
-      );
+      const confirmed = await confirm({
+        title: 'Cambiar rol del miembro',
+        body: `¿Cambiar el rol de ${member.email} de "${highestRole(member.roles)}" a "${nextRole}"?`,
+      });
       if (!confirmed) return;
       setIsBusy(true);
       setNotice(null);
@@ -131,10 +133,11 @@ export function useTeamData({ session, tenant }) {
     },
     async removeMember(member) {
       if (!tenantId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      const confirmed = window.confirm(
-        `¿Revocar el acceso de ${member.email} a este tenant? Esta acción no se puede deshacer.`,
-      );
+      const confirmed = await confirm({
+        title: 'Revocar acceso',
+        body: `¿Revocar el acceso de ${member.email} a este tenant? Esta acción no se puede deshacer.`,
+        danger: true,
+      });
       if (!confirmed) return;
       setIsBusy(true);
       setNotice(null);

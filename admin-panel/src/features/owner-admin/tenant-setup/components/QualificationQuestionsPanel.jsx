@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createQualificationQuestion,
   deleteQualificationQuestion,
@@ -103,6 +104,7 @@ function previewQuestion(question) {
 }
 
 export default function QualificationQuestionsPanel({ session, tenantId, onNotice }) {
+  const confirm = useConfirm();
   const [questions, setQuestions] = useState([]);
   const [services, setServices] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -253,7 +255,12 @@ export default function QualificationQuestionsPanel({ session, tenantId, onNotic
   };
 
   const remove = async (question) => {
-    if (!window.confirm(`¿Eliminar la pregunta "${question.label}"?`)) return;
+    const ok = await confirm({
+      title: 'Eliminar pregunta',
+      body: `¿Eliminar la pregunta "${question.label}"?`,
+      danger: true,
+    });
+    if (!ok) return;
     setIsBusy(true);
     try {
       await deleteQualificationQuestion(session, tenantId, question.id);

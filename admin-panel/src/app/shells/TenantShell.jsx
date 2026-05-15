@@ -1,3 +1,4 @@
+import { ErrorBoundary } from '../../components/ui/index.js';
 import { TENANT_NAV } from '../nav.js';
 import { resolveNav } from './resolveNav.js';
 import { ShellSidebar } from './components/ShellSidebar.jsx';
@@ -59,7 +60,7 @@ export function TenantShell({
       />
       <section className={styles.workspace}>
         <ShellTopbar eyebrow="Tenant operations" title={activeModule.label} />
-        {children}
+        <ErrorBoundary>{children}</ErrorBoundary>
       </section>
     </main>
   );

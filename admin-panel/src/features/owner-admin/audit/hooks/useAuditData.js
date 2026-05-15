@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   exportAuditLogs,
   exportTenantData,
@@ -20,6 +21,7 @@ import { buildFilterPayload, emptyFilters } from '../auditData.js';
  */
 export function useAuditData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [logs, setLogs] = useState([]);
   const [filters, setFilters] = useState(emptyFilters);
@@ -63,14 +65,12 @@ export function useAuditData({ session, tenant }) {
         setNotice({ type: 'error', text: 'Ingresa el UUID del contacto a suprimir.' });
         return;
       }
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (
-        !window.confirm(
-          `¿Confirmas suprimir el contacto ${id}? Esta acción anonimiza datos personales y no es reversible.`,
-        )
-      ) {
-        return;
-      }
+      const ok = await confirm({
+        title: 'Suprimir contacto',
+        body: `¿Confirmas suprimir el contacto ${id}? Esta acción anonimiza datos personales y no es reversible.`,
+        danger: true,
+      });
+      if (!ok) return;
       setIsBusy(true);
       setNotice(null);
       try {

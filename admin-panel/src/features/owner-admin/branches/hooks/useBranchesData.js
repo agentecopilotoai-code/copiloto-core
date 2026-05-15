@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createBranch,
   deactivateBranch,
@@ -19,6 +20,7 @@ import { buildMapsUrlFromInputs, buildPayload, emptyForm, toForm } from '../bran
  */
 export function useBranchesData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [branches, setBranches] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -121,8 +123,12 @@ export function useBranchesData({ session, tenant }) {
     },
     async deactivate(branch) {
       if (!tenantId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm(`¿Desactivar la sede "${branch.name}"?`)) return;
+      const ok = await confirm({
+        title: 'Desactivar sede',
+        body: `¿Desactivar la sede "${branch.name}"?`,
+        danger: true,
+      });
+      if (!ok) return;
       setSaving(true);
       setError(null);
       try {

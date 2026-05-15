@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createContactSegment,
   deleteContactSegment,
@@ -35,6 +36,7 @@ import {
  */
 export function useSegmentsData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [segments, setSegments] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
@@ -179,8 +181,12 @@ export function useSegmentsData({ session, tenant }) {
         setNotice({ type: 'error', text: 'Los segmentos del sistema no se eliminan.' });
         return;
       }
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm(`¿Eliminar el segmento "${selectedSegment.name}"?`)) return;
+      const ok = await confirm({
+        title: 'Eliminar segmento',
+        body: `¿Eliminar el segmento "${selectedSegment.name}"?`,
+        danger: true,
+      });
+      if (!ok) return;
       setIsBusy(true);
       try {
         await deleteContactSegment(session, tenantId, selectedId);

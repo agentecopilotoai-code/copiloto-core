@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createWhatsappTemplate,
   deleteWhatsappTemplate,
@@ -30,6 +31,7 @@ import {
  */
 export function useWhatsAppData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [form, setForm] = useState(defaultFormForTenant);
   const [health, setHealth] = useState(null);
@@ -235,10 +237,12 @@ export function useWhatsAppData({ session, tenant }) {
     },
     async deleteTemplate(template) {
       if (!tenantId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm(`¿Eliminar la plantilla "${template.name}" (${template.locale})?`)) {
-        return;
-      }
+      const ok = await confirm({
+        title: 'Eliminar plantilla',
+        body: `¿Eliminar la plantilla "${template.name}" (${template.locale})?`,
+        danger: true,
+      });
+      if (!ok) return;
       setIsBusy(true);
       setNotice(null);
       try {

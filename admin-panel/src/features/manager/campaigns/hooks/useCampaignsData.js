@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   cancelCampaign,
   createCampaign,
@@ -26,6 +27,7 @@ import { buildPayload, emptyCampaignForm, formFromCampaign } from '../campaignsD
  */
 export function useCampaignsData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [campaigns, setCampaigns] = useState([]);
   const [templates, setTemplates] = useState([]);
@@ -157,14 +159,11 @@ export function useCampaignsData({ session, tenant }) {
     },
     async launch() {
       if (!selectedId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (
-        !window.confirm(
-          '¿Programar el envío de esta campaña? El worker procesará los destinatarios.',
-        )
-      ) {
-        return;
-      }
+      const ok = await confirm({
+        title: 'Programar envío',
+        body: '¿Programar el envío de esta campaña? El worker procesará los destinatarios.',
+      });
+      if (!ok) return;
       setIsBusy(true);
       try {
         const next = selectedCampaign?.scheduled_at;
@@ -179,9 +178,12 @@ export function useCampaignsData({ session, tenant }) {
     },
     async cancel() {
       if (!selectedId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm('¿Cancelar la campaña? Los destinatarios ya encolados aún se enviarán.'))
-        return;
+      const ok = await confirm({
+        title: 'Cancelar campaña',
+        body: '¿Cancelar la campaña? Los destinatarios ya encolados aún se enviarán.',
+        danger: true,
+      });
+      if (!ok) return;
       setIsBusy(true);
       try {
         await cancelCampaign(session, tenantId, selectedId);

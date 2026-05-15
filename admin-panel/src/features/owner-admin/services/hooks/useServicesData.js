@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createService,
   deactivateService,
@@ -30,6 +31,7 @@ const PRESET_KEYS = [
  */
 export function useServicesData({ session, tenant }) {
   const tenantId = tenant?.id;
+  const confirm = useConfirm();
 
   const [services, setServices] = useState([]);
   const [promotions, setPromotions] = useState([]);
@@ -199,8 +201,12 @@ export function useServicesData({ session, tenant }) {
     },
     async deactivate(service) {
       if (!tenantId) return;
-      // Native confirm is preserved from the legacy module; UI-011 sweeps it.
-      if (!window.confirm(`¿Desactivar el servicio "${service.name}"?`)) return;
+      const ok = await confirm({
+        title: 'Desactivar servicio',
+        body: `¿Desactivar el servicio "${service.name}"?`,
+        danger: true,
+      });
+      if (!ok) return;
       setIsBusy(true);
       setNotice(null);
       try {
