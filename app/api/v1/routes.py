@@ -12639,8 +12639,13 @@ async def analytics_agents(
           group by user_id
         ),
         appts_closed as (
-          select metadata->>'closed_by_user_id' as user_id,
-                 count(*) filter (where status = 'confirmed')::int as confirmed_count,
+          -- BUG-003 fix: qualify with `a.` — both `app.appointments` and the
+          -- joined `app.service_catalog` expose a `metadata` column, so an
+          -- unqualified `metadata->>...` raises AmbiguousColumnError before
+          -- the row even renders. The GROUP BY + WHERE already use `a.metadata`;
+          -- the SELECT was the only outlier.
+          select a.metadata->>'closed_by_user_id' as user_id,
+                 count(*) filter (where a.status = 'confirmed')::int as confirmed_count,
                  coalesce(
                    sum(s.price_amount) filter (where a.status = 'completed'),
                    0

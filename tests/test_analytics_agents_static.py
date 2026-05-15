@@ -174,3 +174,28 @@ def test_analytics_panel_registers_agents_subtab():
     assert "id: 'agents'" in panel
     assert 'AgentPerformance' in panel
     assert "activeTab === 'agents'" in panel
+
+
+def test_analytics_agents_appts_closed_qualifies_metadata_with_table_alias():
+    """BUG-003: the `appts_closed` CTE in `analytics_agents` joins
+    `app.appointments a` with `app.service_catalog s` (both expose a
+    `metadata` jsonb column). The SELECT used to read an unqualified
+    `metadata->>'closed_by_user_id'` → asyncpg raised AmbiguousColumnError
+    and every `GET /v1/analytics/agents` returned 500.
+
+    The fix qualifies the SELECT with `a.metadata` (matching the WHERE and
+    GROUP BY which already used the alias).
+    """
+    source = API_ROUTES.read_text()
+    # Locate the `appts_closed as (` CTE and read until the next CTE/SELECT.
+    cte_start = source.index('appts_closed as (')
+    cte_end = source.index('),', cte_start)
+    cte_block = source[cte_start:cte_end]
+    # The SELECT must be qualified.
+    assert "a.metadata->>'closed_by_user_id'" in cte_block
+    # Defensive: ensure no unqualified bare `select metadata->>` slipped back
+    # in. The 10-space indent comes from the CTE body's nesting.
+    assert "          select metadata->>'closed_by_user_id'" not in source, (
+        'analytics_agents `appts_closed` CTE must qualify metadata with `a.` '
+        'to avoid AmbiguousColumnError against the joined service_catalog row.'
+    )

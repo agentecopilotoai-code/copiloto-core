@@ -39,6 +39,23 @@ RETENTION_ENTITIES: tuple[str, ...] = (
 # Entities that may carry PII — eligible for anonymization instead of DELETE.
 ANONYMIZABLE_ENTITIES: frozenset[str] = frozenset({'messages', 'conversations'})
 
+# BUG-003 fix: each retention entity exposes its own "age" column. Most use
+# `created_at` (default in `touch_updated_at` triggers), but two predate it:
+#   - `domain_events.occurred_at` is the canonical event timestamp.
+#   - `webhook_events_raw.received_at` is when we first persisted the payload.
+# Hard-code the mapping so `preview_retention` + `run_retention_cycle` query
+# the correct column. Before this fix, those two entities raised
+# UndefinedColumnError on column "created_at" and `/v1/tenants/{id}/retention/preview`
+# returned 500 for every Owner that landed on Tenant Setup.
+ENTITY_AGE_COLUMN: dict[str, str] = {
+    'messages': 'created_at',
+    'conversations': 'created_at',
+    'audit_logs': 'created_at',
+    'domain_events': 'occurred_at',
+    'webhook_events_raw': 'received_at',
+    'reminder_jobs': 'created_at',
+}
+
 # Default retention windows seeded for every new tenant. Audit logs default to
 # 5 years (1825 days) for legal compliance; everything else is shorter.
 DEFAULT_RETENTION_DAYS: dict[str, int] = {
@@ -131,11 +148,12 @@ async def preview_retention(
     out: list[dict[str, Any]] = []
     for row in policies:
         entity = row['entity']
+        age_col = ENTITY_AGE_COLUMN.get(entity, 'created_at')
         candidate = await conn.fetchval(
             f"""
             select count(*) from app.{entity}
             where tenant_id = $1
-              and created_at < (now() + interval '1 day')
+              and {age_col} < (now() + interval '1 day')
                               - ($2::int * interval '1 day')
             """,
             tenant_id,
@@ -169,13 +187,14 @@ async def _delete_paginated(
     ``ctid`` is a Postgres system column. Returns the total rows deleted.
     """
     total = 0
+    age_col = ENTITY_AGE_COLUMN.get(entity, 'created_at')
     while True:
         result = await conn.execute(
             f"""
             with batch as (
               select ctid from app.{entity}
               where tenant_id = $1
-                and created_at < now() - ($2::int * interval '1 day')
+                and {age_col} < now() - ($2::int * interval '1 day')
               limit $3
             )
             delete from app.{entity} t

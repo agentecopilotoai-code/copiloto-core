@@ -456,6 +456,38 @@ def test_preview_helper_counts_candidates_against_one_extra_day():
     assert 'now() + interval' in source
 
 
+def test_retention_age_column_mapping_covers_every_entity():
+    """BUG-003: `domain_events` uses `occurred_at` and `webhook_events_raw`
+    uses `received_at`, NOT `created_at`. Without the ENTITY_AGE_COLUMN
+    mapping, `preview_retention` and `_delete_paginated` blew up with
+    UndefinedColumnError on column 'created_at' for those entities.
+    """
+    from app.services.retention import (  # noqa: PLC0415
+        ENTITY_AGE_COLUMN,
+        RETENTION_ENTITIES,
+    )
+
+    # Every retention-eligible entity must appear in the map; missing entries
+    # would silently fall back to 'created_at' (the bug we're guarding against).
+    for entity in RETENTION_ENTITIES:
+        assert entity in ENTITY_AGE_COLUMN, (
+            f'Entity {entity!r} missing from ENTITY_AGE_COLUMN — would default to '
+            'created_at which may not exist on that table.'
+        )
+
+    # Spot-check the two entities that DON'T have created_at in the schema.
+    assert ENTITY_AGE_COLUMN['domain_events'] == 'occurred_at'
+    assert ENTITY_AGE_COLUMN['webhook_events_raw'] == 'received_at'
+
+
+def test_preview_retention_uses_age_column_mapping():
+    """The actual SQL in `preview_retention` must read the age column from
+    `ENTITY_AGE_COLUMN.get(entity, 'created_at')`, not hard-code created_at."""
+    source = inspect.getsource(preview_retention)
+    assert 'ENTITY_AGE_COLUMN.get(entity' in source
+    assert '{age_col}' in source
+
+
 # ─── 12. CRUD endpoints + validation ──────────────────────────────────────
 
 
