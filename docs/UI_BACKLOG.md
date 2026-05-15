@@ -902,3 +902,313 @@ Antes de mover una tarea a `docs/DONE.md`:
 8. Sin código legacy: si la tarea reemplaza una vista vieja, el archivo viejo se borra en el mismo commit.
 
 ---
+
+## 8. Tickets post-roadmap (UI-017..UI-023, BUG-001, SEC-001..SEC-011)
+
+Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) que cubre tres frentes: cambios de UX/flow (UI-017..UI-023), un bug de producción confirmado (BUG-001), y la triage de los hallazgos del bot Codex Security (10 low + 27 high) clusterizados por root cause (SEC-001..SEC-011). Todos arrancan en `PENDING` y se enchufan al loop `/continuar-ui-backlog` por número.
+
+### UI-017 — Landing como ruta inicial y flujo Auth0 desde "Iniciar sesión"
+
+- **Estado:** PENDING
+- **Síntoma actual:** la ruta `/` muestra una vista intermedia tipo "Admin Panel MVP" con copy *"Ingresa con Auth0/OIDC para administrar tenants, canales, conocimiento y operación humana"* y un único botón `Iniciar sesión con Auth0`. El UI-016.4 ya creó la landing comercial en `src/features/public/landing/`, pero esa pantalla intermedia legacy bloquea el reemplazo.
+- **Alcance:**
+  - Borrar el placeholder MVP (probablemente en `admin-panel/src/app/router.jsx` o en un componente intermedio tipo `LoginSplash.jsx` — verificar con `grep -rn "Admin Panel MVP\|Ingresa con Auth0/OIDC" admin-panel/src`).
+  - Confirmar que `/` sin sesión renderiza `<Landing />` (UI-016.4 ya lo hizo en `IndexRedirect`; si el splash legacy se interpone, hay que limpiar el flow).
+  - El botón "Iniciar sesión" del header de la landing (`LandingHeader.jsx`) debe disparar el flujo Auth0 real — hoy linkea a `/admin/login` que redirige a `/`. Reemplazar por la acción que arranca el redirect a Auth0 (depende del wrapper Auth0 del proyecto; revisar `AuthContext.jsx` o equivalente).
+- **Criterios:**
+  - `/` anónimo → Landing comercial (UI-016.4) sin pasos intermedios.
+  - "Iniciar sesión" → Auth0 universal login → callback → `IndexRedirect` enruta al home del rol.
+  - El splash MVP queda 100% eliminado (`grep -rn "Admin Panel MVP" admin-panel/src` → 0).
+- **Tests:** actualizar `router.test.jsx` para confirmar que un usuario anónimo NO ve nada entre `/` y la Landing.
+
+---
+
+### UI-018 — Redirect post-login por rol (fix del crash de "no acceso al home")
+
+- **Estado:** PENDING (urgente, bloquea login para algunos roles)
+- **Síntoma actual:** después del login Auth0 el usuario cae sobre una vista sobre la que su rol no tiene acceso → error de autenticación / pantalla blanca.
+- **Causa probable:** el `IndexRedirect` (router.jsx ~111) calcula el home a partir de `tenantPermissions.role`, pero hay roles edge-case donde:
+  - El JWT trae roles globales que no coinciden con `tenant.roles` (TASK-0077).
+  - El home registrado en `ROLE_HOME[role]` apunta a un módulo cuya capability el usuario no tiene en ese tenant.
+  - El rol efectivo es `null` y el redirect cae al `else` por defecto sin guard.
+- **Alcance:**
+  - Reproducir con un usuario `admin`/`manager` en un tenant donde su rol efectivo difiere del JWT.
+  - Añadir defensa: si la capability del `ROLE_HOME[role]` no está accesible para el usuario en el tenant activo, redirigir al primer módulo accesible (orden de `nav.js`) o a un `StateScreen` "Sin acceso a ningún módulo" en lugar de mostrar el módulo y dejar que falle.
+- **Tests:**
+  - `router.test.jsx`: un manager sin `analytics.tenant.read` aterriza en el primer módulo accesible (NO crash).
+  - Edge: usuario con rol vacío `[]` → `/no-tenant` o `StateScreen` apropiado.
+
+---
+
+### UI-019 — Sidebar colapsable + scroll independiente + iconografía y tipografía del diseño
+
+- **Estado:** PENDING
+- **Síntoma actual:** el sidebar (`ShellSidebar.jsx`):
+  1. No usa la tipografía del diseño (debería matchear el HTML del designer).
+  2. No tiene los iconos por sección — cada item del menú debe llevar su icono del diseño.
+  3. Hace scroll JUNTO con la página en lugar de tener su propio scroll independiente.
+  4. Header (logo + tenant switcher) y footer (avatar/logout) deben quedar **anclados** mientras el cuerpo del menú scrollea.
+  5. Falta el botón colapsable estilo Grok: clic en un icono colapsa el sidebar dejando solo los iconos de cada opción; segundo clic expande.
+- **Alcance:**
+  - Refactor de `admin-panel/src/app/shells/components/ShellSidebar.jsx` y `shell.module.css`:
+    - `position: sticky` o `position: fixed` + `overflow-y: auto` interno.
+    - Estructura: `header` (sticky top) + `nav` (scroll) + `footer` (sticky bottom).
+    - Estado `collapsed` (boolean) persistido en `localStorage.copilotoia:sidebar-collapsed`. Cuando true, el sidebar pasa a 64px de ancho mostrando solo iconos con `aria-label`.
+  - Iconos: matchear los del HTML del designer por sección de nav (`Inicio`/`Conversaciones`/`Negocio`/`IA & Canales`/`Operación`/`Configuración`). Usar SVG inline (mismo patrón que `ShellBottomNav` de UI-016.8).
+  - Tipografía: confirmar que las fuentes del sidebar matchean los tokens `--font-...` actuales; si el HTML usa pesos/sizes distintos, ajustar tokens o agregar variantes.
+- **Tests:**
+  - `ShellSidebar.test.jsx`: cycle collapse/expand, persistencia localStorage, iconos por sección presentes.
+
+---
+
+### UI-020 — Operations Desk: whitespace excesivo en el top
+
+- **Estado:** PENDING
+- **Síntoma actual:** la vista Operations Desk (`OperationsDesk.jsx`) muestra el copy *"Inbox operativo · Inbox operativo para conversaciones y handoff humano"* con espacio en blanco grande arriba antes del contenido.
+- **Alcance:**
+  - Inspeccionar el header de la vista en `OperationsDesk.module.css` y `PageHeader.module.css`.
+  - Probablemente sobra padding-top en el contenedor del shell tras el merge de UI-016.6 (StateScreen agregó margenes a sección root) o el `PageHeader` doblóse con el del shell.
+  - Quitar el padding extra; matchear el spacing del HTML #28 (Operación · Inbox).
+- **Tests:** smoke visual + unit test si aplica.
+
+---
+
+### UI-021 — Tenant Setup Wizard: alineamiento visual al sistema de diseño
+
+- **Estado:** PENDING
+- **Síntoma actual:** `TenantSetupWizard.jsx` (Owner-Admin · Config · Tenant Setup) muestra copy *"Wizard MVP · Wizard de configuración general del tenant"* y los containers/botones no matchean el estilo del resto del panel — quedaron con look MVP / improvisado tras el split de UI-007.12.
+- **Alcance:**
+  - Auditar cada subcomponente del wizard (`tenant-setup/components/*`) contra el HTML #20.
+  - Reemplazar botones ad-hoc por `<Button>` del UI kit.
+  - Containers/cards por `<Card>` con tokens.
+  - Botones submit gated con `<RequirePermission>` correcto.
+- **Tests:** los existentes de `tenant-setup/` deben seguir verdes; añadir snapshot/render assertions del nuevo styling si necesario.
+
+---
+
+### UI-022 — Knowledge Storage: alineamiento visual al sistema de diseño
+
+- **Estado:** PENDING
+- **Síntoma actual:** la vista `KnowledgeStorageSettings` (módulo `knowledge-storage`) muestra copy *"Storage por tenant · Storage S3"* con styling distinto al resto del panel.
+- **Alcance:**
+  - Mismo procedimiento que UI-021: auditar componentes, reemplazar primitivas ad-hoc por `<Button>`/`<Card>`/`<FormField>`/tokens.
+  - Notar que UI-016.2 ya añadió `StorageSummary` (read-only) embebido en Knowledge Studio; este ticket es para el FORM editable del módulo separado.
+- **Tests:** existentes verdes + nuevos para el styling.
+
+---
+
+### UI-023 — PageHeader sticky con scroll del contenido
+
+- **Estado:** PENDING
+- **Síntoma actual:** en todas las vistas, los botones de acción del header (Refrescar, Exportar, etc.) scrollean junto con el contenido. El usuario quiere que el header de la vista (que contiene esas CTAs) quede `position: sticky` y solo el contenido scrollee.
+- **Alcance:**
+  - Modificar `components/ui/PageHeader.module.css`: `position: sticky; top: 0; z-index: var(--z-page-header)`.
+  - Asegurar que el padding del contenedor principal de cada feature deja espacio para el header sticky.
+  - Añadir `--z-page-header` a `tokens.css` (entre el sidebar y los modales).
+- **Tests:** smoke visual; verificar que ninguna vista existente rompe el layout por overlap.
+
+---
+
+### BUG-001 — Auth0 invite member devuelve 403 Forbidden en `/oauth/token`
+
+- **Estado:** PENDING (bloqueador de producción)
+- **Síntoma:** al invitar un miembro al tenant desde el módulo Equipo (`TeamModule`), el backend logea `auth0_admin.invite_user_create_failed` con `Client error '403 Forbidden' for url 'https://<tenant>.us.auth0.com/oauth/token'`. El POST `/v1/tenants/{id}/members` retorna 201 (el usuario queda creado localmente) pero Auth0 NO recibe la invitación → el usuario nunca recibe el email para configurar password.
+- **Root cause confirmada:**
+  - El backend (`app/services/auth0_admin.py:107`) hace `POST /oauth/token` con `grant_type='client_credentials'` usando `settings.auth0_admin_client_id` y `_management_client_secret(settings)`.
+  - El script `scripts/configure-auth0.sh:506` escribe `AUTH0_ADMIN_CLIENT_ID=$admin_client_id` al `.env`, pero `admin_client_id` es la **regular web app** del panel admin (creada en línea 219 con `app_type:"regular_web"`), que NO tiene `client_credentials` en sus `grant_types`.
+  - Resultado: Auth0 rechaza la solicitud con 403 porque la web app no está autorizada para client_credentials grant.
+- **Fix:**
+  - El backend debe usar la **app M2M** (`service_client_id`, línea 227+ del script) en lugar de la web app. Renombrar `auth0_admin_client_id` a `auth0_service_client_id` en `app/core/config.py` y ajustar el script para escribir esos valores con el nombre correcto, O extender el backend para leer `AUTH0_SERVICE_CLIENT_ID`/`AUTH0_SERVICE_CLIENT_SECRET` como fuente preferida y `AUTH0_ADMIN_CLIENT_ID` como fallback con un warning de deprecation.
+  - Bonus: validar al arranque del API que el client_id configurado tiene M2M-grant (`HEAD /api/v2/users` con el token y validar el response shape) y abortar arranque si no, para detectar el misconfig antes de que un usuario lo dispare.
+- **Tests:**
+  - Backend: test que mockea `httpx.AsyncClient.post` devolviendo 403 y verifica que el invite reporta error claro al usuario en lugar de 500.
+  - Backend: test del happy path con un mock que devuelve `access_token` válido.
+- **Nota de seguridad:** este ticket también roza con SEC-006 (el endpoint de invite hoy expone tickets de password change de Auth0 para emails ARBITRARIOS — ver SEC-006). Cuando se arregle BUG-001, NO se debe restaurar el comportamiento de exponer el ticket URL; mantener el patrón de UI-016.7 / TASK-0085 donde Auth0 envía el email directamente.
+
+---
+
+### SEC-001 — Cross-tenant authorization escalation (cluster de 9 findings high)
+
+- **Estado:** PENDING (alta prioridad)
+- **Findings consolidados:** los siguientes hallazgos comparten un único root cause:
+  - `Cross-tenant admin can alter legal documents`
+  - `Cross-tenant admin access to media and promotions`
+  - `Template endpoints allow cross-tenant admin escalation`
+  - `Service catalog admin role is not tenant-scoped`
+  - `Knowledge Studio lacks per-tenant admin role checks`
+  - `Tenant profile updates ignore tenant-specific roles`
+  - `Tenant DB membership bypasses per-tenant role checks`
+  - `Unscoped tenant selection bypasses tenant role levels`
+  - `Tenant export uses global role and any membership`
+- **Root cause:** `require_min_role('admin')` solo chequea `request.state.roles` del JWT (roles globales, no tenant-scoped). Luego `ensure_tenant_access(request, tenant_id, conn)` llama `has_user_tenant_role()` que retorna `True` ante CUALQUIER row de `app.user_tenant_roles` para ese tenant, sin importar si el rol es admin/owner o solo viewer/agent. Un atacante con `admin` en tenant A + membresía cualquiera en tenant B puede operar tenant B como admin.
+- **Fix:**
+  - Modificar `ensure_tenant_access` en `app/core/security.py` para aceptar un parámetro `required_tenant_role` (default 'admin' para los routers admin). Devolver 403 si el rol del usuario en `tenant_id` NO es ≥ `required_tenant_role`.
+  - O introducir un nuevo helper `require_tenant_role(min_role, tenant_id)` que combine ambas verificaciones y se monte como dependency en el router en lugar de `require_min_role + ensure_tenant_access`.
+  - Actualizar TODOS los routers `tenant_admin_router` para usar el nuevo guard.
+- **Tests backend:** matriz de roles cruzados — admin en A + viewer en B intenta endpoints de B → 403 en cada caso.
+- **Severidad:** alta — escalada cross-tenant directa.
+
+---
+
+### SEC-002 — RAG/LLM visibility leak: agents_only chunks llegan a customer answers
+
+- **Estado:** PENDING (alta prioridad)
+- **Findings consolidados:**
+  - `RAG replies can leak agents-only knowledge chunks`
+  - `WhatsApp RAG can leak agent-only knowledge`
+  - `Cloud LLM can receive agents-only RAG chunks`
+  - `RAG evaluation ignores document visibility` (low — `/intents/evaluate`)
+- **Root cause:** la query de retrieval (`app/services/rag_retrieval.py`) y `build_grounded_answer` no filtran por `kd.visibility != 'agents_only'`. La policy del proyecto define que `agents_only` no debe llegar a respuestas customer-facing.
+- **Fix:**
+  - Añadir `and kd.visibility != 'agents_only'` a la SQL de retrieval cuando el answer engine es customer-facing (todos excepto el evaluador interno de agentes).
+  - Agregar parámetro `caller_role` (default 'customer') al pipeline; solo `agent`/`admin`/`owner` ven `agents_only`.
+  - Doble check en `build_grounded_answer` antes de incluir un chunk: filtrar nuevamente por visibility por defensa en profundidad.
+- **Tests:** seed dos docs (tenant + agents_only), question que matchea el agents_only top score; assert que la respuesta NO incluye su contenido.
+- **Severidad:** alta — leak de info interna a WhatsApp customers.
+
+---
+
+### SEC-003 — Webhook routing por phone_number_id: duplicate / multi-change hijacking
+
+- **Estado:** PENDING (alta prioridad)
+- **Findings:**
+  - `Duplicate Meta page IDs can hijack webhook routing`
+  - `WhatsApp webhook batches can be written to the wrong tenant`
+  - `Webhook secret lookup can be shadowed by duplicate phone IDs`
+- **Root cause:** la lookup en `tenant_channels` se hace SOLO por `phone_number_id` sin tenant qualifier; los índices son non-unique. Un tenant malicioso puede configurar el `phone_number_id` de otra víctima, y el webhook handler usa la primera row que matchea (HMAC con el secret incorrecto → 401, o peor: hijack si el secret matchea).
+- **Fix:**
+  - Constraint UNIQUE en `(provider, phone_number_id)` global para WhatsApp y `(provider, page_id)` / `(provider, instagram_account_id)` para Meta.
+  - Validar al `upsertWhatsAppChannel` que ese phone_number_id no pertenece a OTRO tenant antes de aceptar el insert.
+  - Multi-change webhook: iterar cada `change` y re-resolver el channel por su propio `phone_number_id` en lugar de asumir el primero.
+- **Tests:** payload con 2 changes de phone_number_id distintos → cada mensaje aterriza en su tenant correcto.
+- **Severidad:** alta — denegación de servicio + hijacking de canal.
+
+---
+
+### SEC-004 — MFA enforcement: bypass por overlay dismissible + dep no atada a rutas
+
+- **Estado:** PENDING (alta prioridad)
+- **Findings:**
+  - `MFA warning can be dismissed for privileged admin sessions`
+  - `Privileged API MFA check is never enforced`
+- **Root cause:**
+  - El layout React (`AdminLayout` legacy ya removido, ahora `TenantShell`/`PlatformOwnerShell`) muestra un overlay "Continuar sin MFA" que el usuario puede cerrar para seguir usando la app sin completar MFA.
+  - El dependency `require_mfa_for_privileged` existe pero NO está conectado a los routers admin/platform en producción.
+- **Fix:**
+  - **Frontend:** remover el botón "Continuar sin MFA" del `MfaRequiredBlocker` (UI-016.6 ya rediseñó este blocker pero hay que verificar que no tenga escape). El bloqueo debe ser FORZADO sin dismiss.
+  - **Backend:** atar `Depends(require_mfa_for_privileged)` a `tenant_admin_router` y `platform_admin_router` para que las routes privilegiadas requieran MFA verificada en el JWT.
+- **Tests:** request a un endpoint admin con un token sin `amr=['mfa']` → 403; con MFA verificada → 200.
+- **Severidad:** alta — credenciales sin MFA pueden ejecutar acciones admin.
+
+---
+
+### SEC-005 — SSRF: webhooks, S3 endpoints, media proxy
+
+- **Estado:** PENDING (alta prioridad)
+- **Findings:**
+  - `Tenant alert webhooks allow server-side request forgery`
+  - `Tenant-controlled S3 endpoint enables SSRF`
+  - `Media proxy can leak tenant WhatsApp access tokens`
+- **Root cause:** tres sumideros aceptan URL controlada por tenant y la usan para HTTP outbound desde el backend, sin allowlist ni bloqueo de direcciones internas.
+- **Fix:**
+  - Crear/reusar un helper `app/services/url_guard.py` (UI-012-FU lo usó como referencia) con:
+    - Validación HTTPS-only (excepto modo dev).
+    - Resolución DNS + bloqueo de 127.0.0.0/8, 169.254.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7.
+    - Allowlist opcional de hosts por feature.
+  - Aplicar a:
+    - `normalize_alert_channels` (webhook URLs).
+    - `KnowledgeStorageUpdate.endpoint_url` (S3 endpoint).
+    - `download_whatsapp_media` (validar que `media_info['url']` apunta a host de Meta antes de hacer GET con el token).
+- **Tests:** intentar webhook a `http://127.0.0.1:5000`, S3 a `http://169.254.169.254` (AWS metadata), media URL a `http://attacker.example` → todos 422.
+- **Severidad:** alta — leak de tokens de WhatsApp + internal probing.
+
+---
+
+### SEC-006 — Auth0 invite expone password-change tickets de cuentas ajenas
+
+- **Estado:** PENDING (alta prioridad) — relacionado con BUG-001
+- **Finding:** `Tenant invites expose Auth0 password reset tickets`
+- **Root cause:** el endpoint de invite acepta email arbitrario; si el email NO está en `app.users` localmente pero SÍ existe en Auth0 (p.ej. un staff/platform_owner pre-provisionado), Auth0 devuelve un password-change ticket para esa cuenta REAL. El frontend lo muestra para copiar → account takeover.
+- **Fix:**
+  - **NO devolver NUNCA** el ticket URL en la response del endpoint de invite.
+  - Auth0 debe enviar el email directamente (TASK-0085 / BUG06 ya lo declaró; verificar que el backend lo respeta).
+  - Si el email existe en Auth0 pero NO en `app.users`, rechazar el invite con 409 "Este email ya tiene una cuenta — pídele que inicie sesión y luego invítalo desde su user_id".
+- **Tests:** intentar invite con un email Auth0-existente sin row local → 409.
+- **Severidad:** alta — account takeover primitive.
+
+---
+
+### SEC-007 — Tenant lifecycle (`status`) — gating insuficiente
+
+- **Estado:** PENDING (alta prioridad)
+- **Findings:**
+  - `Tenant status route trusts unscoped owner as platform admin`
+  - `Tenant admins can change tenant lifecycle status`
+- **Root cause:**
+  - `PATCH /tenants/{id}/status` está en `platform_admin_router` con `require_platform_owner`, pero ese helper acepta cualquier token unscoped con rol `owner` (sin distinguir `platform_owner` de `owner`).
+  - `PATCH /tenants/{id}` aceptó `status` en su schema (TenantUpdate), permitiendo a un tenant admin cambiar su propio status (escalada).
+- **Fix:**
+  - Endurecer `require_platform_owner` para exigir el rol específico `platform_owner` (no genérico `owner`).
+  - Remover `status` del `TenantUpdate` schema y del payload aceptado por el route admin (que solo platform_owner pueda mutarlo).
+- **Tests:** matriz de roles intentando PATCH status; solo `platform_owner` pasa.
+- **Severidad:** alta.
+
+---
+
+### SEC-008 — `tenant_ops_router` permite mutaciones de billing/packages al rol `agent`
+
+- **Estado:** PENDING (alta prioridad)
+- **Findings:**
+  - `Agent role can manage recurring subscriptions`
+  - `Agents can grant or refund paid treatment packages`
+  - `Agent can hijack contact phone via start conversation`
+- **Root cause:** `tenant_ops_router` requiere solo `agent`. Los endpoints de suscripciones, packages y `conversation start` permiten mutar campos sensibles que UX expone solo a admin/owner.
+- **Fix:**
+  - Mover endpoints de subscriptions/packages CRUD a `tenant_admin_router` con `require_min_role('admin')` (después de SEC-001).
+  - `conversation start`: NO sobreescribir `phone_e164` desde el payload si `wa_id` ya matchea un contacto existente. Validar contra el contacto persistido.
+- **Tests:** un agent intenta `POST /subscriptions` → 403. Un agent intenta `start conversation` con un `phone_e164` distinto al existente → ignora el phone update.
+- **Severidad:** alta — manipulación financiera + hijack de identidad de contacto.
+
+---
+
+### SEC-009 — Backup verification trust model
+
+- **Estado:** PENDING (alta prioridad pero opera fuera del API)
+- **Finding:** `Backup verification restores untrusted S3 dumps as postgres`
+- **Root cause:** el verifier confía en `Metadata.sha256` del propio objeto S3 (controlado por quien escribe el bucket); decrypta con GPG sin signature verification; restora con superuser `postgres` dentro del mismo cluster productivo.
+- **Fix:**
+  - Reemplazar la validación de hash por una signature detached (GPG `--verify` contra una pubkey almacenada FUERA del bucket).
+  - Restaurar a una instancia Postgres efímera ISOLATED del cluster productivo (container `postgres:16` desechable con red bridge separada).
+  - Usar un rol non-superuser para la restauración.
+- **Tests:** intento de restore con un dump no firmado → falla; restore con firma válida → ok.
+- **Severidad:** alta (operacional).
+
+---
+
+### SEC-010 — Hardening misceláneo (cluster de findings low)
+
+- **Estado:** PENDING (low priority, pero accionable)
+- **Findings agrupados:**
+  - `Rejected payment webhook audits are rolled back` — wrap `audit()` calls que preceden a `HTTPException` en una transacción independiente (autocommit) para preservar el audit log.
+  - `Runbook can leak tenant export to consent complainants` — corregir `docs/runbooks/consent-violation-claim.md` para usar el endpoint correcto (no `data-export?contact_id=...`); declarar que el operador debe redactar manualmente el contact-scoped export hasta que exista.
+  - `DLQ retry is not actually idempotent` — usar `UPDATE ... WHERE status='failed' RETURNING` con stable idempotency key derivada del `(message_id, attempt_count)` en lugar del epoch.
+  - `Hardcoded E2E database role password` — gating `RUN_E2E=1` debe verificar que el `DATABASE_URL` apunta a una DB efímera (host `localhost` o nombre `*_e2e`); abortar si no.
+  - `Malformed tenant timezone can disable bot replies` — validar timezone con `zoneinfo.ZoneInfo(value)` en el `TenantUpdate` schema (raise `ValidationError`); catch `ValueError` además de `ZoneInfoNotFoundError` en el runtime.
+  - `Claude allowlist permits unprompted curl data exfiltration` — restringir `.claude/settings.json` allowlist; quitar `Bash(curl -s *)` o limitar el patrón a dominios específicos.
+  - `Webhook status codes expose active WhatsApp channel IDs` — uniformar la respuesta del webhook (401 en lugar de 404 cuando no hay match de `phone_number_id`) y correr HMAC con un dummy secret para evitar el oracle.
+  - `Cross-tenant conversation metadata logged on 404` — la rama diagnóstica que loguea cross-tenant metadata debe estar gated por un env flag `DEBUG_CROSS_TENANT_DIAGNOSTICS=1`, default false.
+  - `DATABASE_URL password exposed in bootstrap process args` — usar `.pgpass` o `PGPASSWORD` env var en lugar de pasar `DATABASE_URL` como argv al `psql`.
+- **Fix:** un PR por sub-finding o un PR consolidado de "hardening misceláneo".
+- **Severidad:** low pero recomendable cerrar antes de auditoría externa.
+
+---
+
+### SEC-011 — Triaje y verificación de findings sobre paths legacy
+
+- **Estado:** PENDING (informativo)
+- **Motivación:** algunos findings de Codex referencian paths que UI-015 borró (`admin-panel/src/components/modules/...`, `admin-panel/src/components/layout/AdminLayout.jsx`) o módulos que se refactorizaron en el cluster UI-016. Antes de empezar cualquier fix de SEC-001..SEC-010, verificar caso por caso:
+  - Si el código vulnerable ya NO existe (p.ej. AdminLayout fue eliminado en UI-002/UI-015), el finding queda **resolved as fixed**.
+  - Si el código vulnerable persiste en `src/features/...` con la misma lógica, el finding sigue **válido** y entra en el ticket correspondiente.
+- **Procedimiento:** crear `docs/security-findings-triage-2026-05-15.md` con la tabla `finding_url | path actual | estado | ticket destino` para los 37 hallazgos. Esto deja trazabilidad para la próxima auditoría externa.
+
+---
