@@ -1,7 +1,7 @@
 /*
  * UI-016.8 — Bottom navigation rail (mobile-only).
  *
- * Oculto por completo en desktop; aparece a `@media (max-width: 480px)` como
+ * Oculto por completo en desktop; aparece a `@media (max-width: 1024px)` como
  * barra fija al borde inferior del viewport (igual que el HTML T4). Comparte
  * los mismos `navGroups` que `ShellSidebar` — el sidebar desaparece a < 480px,
  * el bottom-nav lo reemplaza como nav primaria mobile.
@@ -170,8 +170,14 @@
   cursor: not-allowed;
 }
 
-/* ── Mobile activation (≤ 480px) ────────────────────────────────────── */
-@media (max-width: 480px) {
+/* ── Mobile activation (≤ 1024px — BUG-004 fix) ─────────────────────── */
+/* Sincronizado con shell.module.css y ShellSidebar.module.css. Itera:
+   - 480px (UI-016.8): solo phones portrait estricto.
+   - 768px (BUG-004 v1): aún dejaba phones landscape >768px sin tabs
+     (iPhone Pro Max landscape = 932px, Pixel 7 = 915px).
+   - 1024px (BUG-004 v2 tras codex P2): cubre TODOS los phones (cualquier
+     orientación) + tablets en portrait. ≥ 1024px = sidebar desktop. */
+@media (max-width: 1024px) {
   .bottomNav {
     display: block;
     position: fixed;

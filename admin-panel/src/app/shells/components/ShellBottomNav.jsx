@@ -4,7 +4,9 @@ import styles from './ShellBottomNav.module.css';
 
 /**
  * UI-016.8 — Bottom navigation rail visible solo en viewports móviles
- * (`@media (max-width: 480px)`). En desktop está oculto con `display: none`
+ * (`@media (max-width: 1024px)`, bumped from 480px → 768px → 1024px en
+ * BUG-004 tras el feedback codex de que phones modernos en landscape
+ * llegan a 932px). En desktop (≥ 1024px) está oculto con `display: none`
  * para que el sidebar normal siga siendo la nav primaria.
  *
  * El HTML T4 dibuja una barra inferior con 5 íconos + labels —

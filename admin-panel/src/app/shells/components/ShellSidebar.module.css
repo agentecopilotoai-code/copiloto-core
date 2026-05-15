@@ -372,8 +372,13 @@
   display: none;
 }
 
-@media (max-width: 480px) {
-  /* En móvil el sidebar lo reemplaza ShellBottomNav (UI-016.8). */
+/* BUG-004 fix: bump 480px → 1024px (después de codex P2 feedback que
+   notó que phones modernos en landscape llegan a 932px y seguían sin
+   tabs). Sincronizado con shell.module.css y ShellBottomNav.module.css.
+   < 1024px = ShellBottomNav reemplaza el sidebar; ≥ 1024px = sidebar
+   normal (iPad landscape / laptop / desktop). */
+@media (max-width: 1024px) {
+  /* En móvil/tablet el sidebar lo reemplaza ShellBottomNav (UI-016.8). */
   .sidebar {
     display: none;
   }
