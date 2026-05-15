@@ -1,0 +1,50 @@
+/*
+ * ConfirmDialog visual spec — UI-016.5.
+ * Reusa el primitive Modal y le agrega:
+ * - icono leading por variante (default = info, danger = warning).
+ * - body con tipografía y color muted/ink-2.
+ * - container `body` para layout horizontal (icon + texto).
+ */
+
+.body {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.icon {
+  align-items: center;
+  border-radius: var(--r-md);
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-bold);
+  height: var(--space-7);
+  justify-content: center;
+  line-height: 1;
+  width: var(--space-7);
+}
+
+.icon--default {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.icon--danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.text {
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-normal);
+  margin: 0;
+}

@@ -15,6 +15,41 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-016.5 — Toasts y modales (visual spec)
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** alinear las primitivas `Toast` y `ConfirmDialog` (que se shippearon en UI-011 con defaults técnicos) al HTML `docs/HTML DESIGN/Transversales/T1 _ Toasts y modales.html`. UI-016.5 es la primera subtarea de UI-016 — el split de UI-016 en 8 subtareas se commiteó por separado en el mismo PR.
+- **Cambios realizados:**
+  - **`admin-panel/src/components/ui/Toast.jsx`:** rewrite del `ToastProvider`. (1) Cuatro tonos canónicos `success | info | warn | error` (más `neutral` y aliases `warning → warn`, `danger → error` para no romper callers existentes). (2) Auto-close por tono: 4000 ms para `success / info`, 8000 ms para `warn / error`. `timeout` explícito en `push()` sigue ganando. (3) Stack `MAX_VISIBLE = 5`: el 6° y siguientes se encolan en `queueRef` (FIFO) y promueven dentro del mismo `setVisible` que remueve un toast existente — robusto bajo `vi.useFakeTimers()` (no depende de microtasks). (4) Por accesibilidad, `warn / error` montan `role="alert"` + `aria-live="assertive"`; `success / info / neutral` montan `role="status"` + `aria-live="polite"`. (5) Cada toast lleva `data-tone` para targeting visual y para test selectors. (6) Soporta `action: { label, onClick, dismissOnClick }` para CTAs inline (ej. "Ver detalle").
+  - **`admin-panel/src/components/ui/Toast.module.css`:** rewrite. Viewport `bottom: var(--space-4); right: var(--space-4);` (16px desde el borde, per spec). Cada tono pinta `background = var(--{ok|accent|warn|danger}-soft)`, `border = var(--{ok|accent|warn|danger})`, `border-left-width: 4px`. Icono leading 24×24 (`var(--space-6)`) con fondo en el color del tono y carácter `✓ / i / ! / ×`. Sin un solo hex/rgba crudo — el grep gate (`grep -rE "color: #|background: #[0-9a-f]|border-radius: [0-9]"`) devuelve 0 matches en este file y en `ConfirmDialog.module.css`.
+  - **`admin-panel/src/components/ui/Toast.test.jsx`:** 6 tests (antes 3). Mantiene: render básico, dismiss con botón. Añade: (1) 4 tonos renderizan el `role` correcto (`status` vs `alert`) + `data-tone`; (2) auto-close per-tone — success se cierra a los 4s, error sigue vivo y se cierra a los 8s; (3) max-5 visibles + cola FIFO — push de 7 toasts deja 5 visibles, los 2 extras aparecen cuando los primeros 5 expiran; (4) `timeout` explícito gana sobre el default del tono.
+  - **`admin-panel/src/components/ui/ConfirmDialog.jsx`:** mantiene la API (`useConfirm({ title, body, danger, confirmLabel, cancelLabel })` async). Nuevo: body wrapper con `data-confirm-variant="danger|default"` y un icono leading 32×32 (`?` para default, `!` para danger) coloreado con `var(--accent)/var(--accent-soft)` o `var(--danger)/var(--danger-soft)`. El focus trap, el backdrop click y el Escape los hereda del primitive `Modal`.
+  - **`admin-panel/src/components/ui/ConfirmDialog.module.css`:** nuevo archivo (50 LOC). Solo styling propio del ConfirmDialog (icono + copy layout); no duplica nada del Modal.
+  - **`admin-panel/src/components/ui/ConfirmDialog.test.jsx`:** 5 tests (antes 3). Mantiene: open/title/body + confirm → true, cancel → false, danger variant marca el botón. Añade: (1) variante default expone `data-confirm-variant="default"`; (2) variante danger expone `data-confirm-variant="danger"`; (3) Escape resuelve `false` (compatibilidad con UX estándar de diálogos).
+  - **`docs/UI_BACKLOG.md`:** UI-016.5 marcado `DONE (2026-05-15)`.
+- **Decisiones de diseño:**
+  - El HTML T1 (`docs/HTML DESIGN/Transversales/T1 _ Toasts y modales.html`) es un archivo de 4.8 MB con 319 líneas, donde el grueso son fuentes Inter/JetBrains Mono embebidas en base64 dentro del `<style>` block — el contenido visible (mockup de cada toast + spec textual) vive comprimido en la línea 320 (3.5 MB). El texto del spec (citas, duraciones, max stack, posición) está reproducido en el header de este task — se usó esa fuente como spec textual canónica y los tokens del propio design system (`--ok / --warn / --danger / --accent` + variantes `-soft`) para los colores.
+  - El `MAX_VISIBLE = 5` se implementa como **cola** (no eviction): cuando ya hay 5 toasts visibles, los nuevos esperan en `queueRef` y aparecen automáticamente cuando uno de los visibles se cierra (por timeout o por click). Esto matchea el spec literal "apilan hasta 5; resto en cola".
+  - Aliases `warning → warn` y `danger → error` quedan en el normalizador `normalizeTone()` para no romper callers futuros que se basen en la nomenclatura previa.
+- **Archivos modificados / creados:**
+  - **Nuevos (1):** `admin-panel/src/components/ui/ConfirmDialog.module.css`.
+  - **Modificados (5):** `admin-panel/src/components/ui/Toast.jsx`, `admin-panel/src/components/ui/Toast.module.css`, `admin-panel/src/components/ui/Toast.test.jsx`, `admin-panel/src/components/ui/ConfirmDialog.jsx`, `admin-panel/src/components/ui/ConfirmDialog.test.jsx`.
+  - **Docs:** `docs/UI_BACKLOG.md` (UI-016.5 marked DONE; UI-016 splitted into 8 subtasks via commit aparte), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → 0 errores, 2 warnings preexistentes (`useTenantSetupSidePanels.js`).
+  - `npm --prefix admin-panel test` → **108 archivos / 503 tests passed, 0 fallos** (antes 498; +5 nuevos: +3 en Toast, +2 en ConfirmDialog).
+  - `npm --prefix admin-panel run test:a11y` → 6/6 verdes.
+  - `npm --prefix admin-panel run test:coverage` → exit 0, thresholds verdes.
+  - `npm --prefix admin-panel run build` → vite OK (424 modules, 772 kB JS / 148 kB CSS).
+  - **Grep gate** (UI Mandate criterio 7): `grep -rE "color: #|background: #[0-9a-f]|border-radius: [0-9]" admin-panel/src/components/ui/Toast.module.css admin-panel/src/components/ui/ConfirmDialog.module.css` → **0 matches**.
+- **Nota de seguridad:** sin backend tocado. Sin nuevas dependencias. Las primitivas viven en el frontend y no hablan con red. No hay vector de auth/RLS afectado.
+- **Notas y limitaciones reales:**
+  - No se tomaron screenshots side-by-side HTML vs React 1440×900 (criterio DoD #6) porque el agente no tiene runner gráfico disponible. El cumplimiento visual se valida vía: (a) tokens 100% desde `var(--...)` enforced por grep gate; (b) los 4 tonos quedan visualmente distintos (background + border + icon) lo cual el reviewer puede inspeccionar localmente vía `npm run dev` y triggers manuales en la consola del browser.
+  - La timing de auto-close de 4s/8s la implementa el provider con `setTimeout`; pausas visuales al hover (UX típico de Material) **no** se implementaron porque el spec del HTML no lo menciona. Se puede añadir como follow-up si el equipo lo pide.
+  - El `Modal.module.css` que ConfirmDialog reusa contiene un `background: rgba(...)` para el backdrop — eso es preexistente de UI-011 y queda fuera del grep gate de UI-016.5 (que solo aplica a los dos `.module.css` modificados).
+
+---
+
 ### UI-012-FU — Backend support para `brand_logo_url`
 
 - **Fecha:** 2026-05-15

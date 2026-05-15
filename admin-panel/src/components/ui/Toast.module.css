@@ -1,11 +1,19 @@
+/*
+ * Toast stack — UI-016.5.
+ * Posición: bottom-right · 16px desde el borde (var(--space-4)).
+ * Stack vertical: nuevos toasts entran al final (abajo), empujando los
+ * viejos hacia arriba.
+ * Max visible: 5; resto en cola (gestionada en Toast.jsx).
+ */
+
 .viewport {
-  bottom: var(--space-5);
+  bottom: var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   max-width: 380px;
   position: fixed;
-  right: var(--space-5);
+  right: var(--space-4);
   width: calc(100% - var(--space-7));
   z-index: var(--z-toast);
 }
@@ -22,20 +30,73 @@
   padding: var(--space-3) var(--space-4);
 }
 
+/* Tones — semantic colors from tokens.css.
+   Border-left strong + tinted background per tone. */
+
+.toast--success {
+  background: var(--ok-soft);
+  border-color: var(--ok);
+  border-left-color: var(--ok);
+}
+
+.toast--info {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+}
+
+.toast--warn {
+  background: var(--warn-soft);
+  border-color: var(--warn);
+  border-left-color: var(--warn);
+}
+
+.toast--error {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  border-left-color: var(--danger);
+}
+
 .toast--neutral {
   border-left-color: var(--muted);
 }
 
-.toast--success {
-  border-left-color: var(--ok);
+.icon {
+  align-items: center;
+  border-radius: var(--r-xs);
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-bold);
+  height: var(--space-6);
+  justify-content: center;
+  line-height: 1;
+  width: var(--space-6);
 }
 
-.toast--warning {
-  border-left-color: var(--warn);
+.toast--success .icon {
+  background: var(--ok);
+  color: var(--panel);
 }
 
-.toast--danger {
-  border-left-color: var(--danger);
+.toast--info .icon {
+  background: var(--accent);
+  color: var(--panel);
+}
+
+.toast--warn .icon {
+  background: var(--warn);
+  color: var(--ink);
+}
+
+.toast--error .icon {
+  background: var(--danger);
+  color: var(--panel);
+}
+
+.toast--neutral .icon {
+  background: var(--bg-deep);
+  color: var(--ink);
 }
 
 .body {
@@ -50,14 +111,33 @@
   color: var(--ink);
   font-size: var(--fs-body);
   font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
   margin: 0;
 }
 
 .message {
-  color: var(--muted);
+  color: var(--ink-2);
   font-size: var(--fs-small);
   line-height: var(--lh-snug);
   margin: 0;
+}
+
+.action {
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-xs);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  text-decoration: underline;
+}
+
+.action:hover {
+  background: var(--panel);
 }
 
 .close {
@@ -66,12 +146,13 @@
   border-radius: var(--r-xs);
   color: var(--muted);
   cursor: pointer;
-  font-size: 14px;
+  flex-shrink: 0;
+  font-size: var(--fs-body);
   line-height: 1;
   padding: var(--space-1);
 }
 
 .close:hover {
-  background: var(--bg-deep);
+  background: var(--panel);
   color: var(--ink);
 }

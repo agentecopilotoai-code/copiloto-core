@@ -729,43 +729,86 @@ src/
 
 ---
 
-### UI-016 — Pantallas y componentes pendientes de diseño
+### UI-016 — Pantallas transversales entregadas por el diseñador
 
-- **Estado:** PENDING (bloqueado por entrega del diseñador)
-- **Motivación:** la auditoría post-UI-015/UI-012 detectó vistas y estados implementados en código que no aparecen en los 36 HTML de `docs/HTML DESIGN/`. Sin diseño, se quedaron con look improvisado (defaults técnicos, EmptyState genérico, sin variantes mobile/dark). Esta tarea consolida la lista para pedírsela al diseñador y, una vez entregada, se trocea en subtareas `UI-016.x`.
-- **Alcance — pantallas faltantes que el diseñador debe entregar:**
-  1. **Vistas implementadas sin HTML asociado:**
-     - `GoLiveReadiness` (Owner-Admin · checklist "listo para producción") — no aparece en 01-36.
-     - `KnowledgeStorageSettings` (Owner-Admin · settings de almacenamiento del knowledge studio) — probablemente sección embebida del #18 pero sin layout propio definido.
-     - `AnalyticsPanel` para Owner-Admin (módulo `analytics`) — se reusa el #24 del Manager; confirmar si Owner-Admin debe tener variante propia o compartir.
-     - `AgentPerformance` (`owner-admin/analytics/AgentPerformance.jsx`) — tabla de performance por agente; sin layout en 01-36.
-  2. **Rutas y estados intermedios sin diseño:**
-     - `/no-tenant` (`NoTenantRoute`) — usuario autenticado sin tenant.
-     - `/onboarding` (`OnboardingRoute`) — primer login antes de elegir tenant.
-     - `MfaRequiredBlocker` — pantalla de bloqueo cuando el rol exige MFA y el usuario no la tiene inscrita.
-     - `AccessDenied` — fallback cuando el rol no tiene la capability requerida.
-     - 404 / ruta desconocida — hoy es `<Navigate to="/" replace />`; el diseñador debe decidir si hay vista propia "Página no encontrada" con CTA de regreso.
-  3. **Flujos de cuenta de usuario totalmente ausentes:**
-     - Perfil del usuario (nombre, foto, idioma personal).
-     - Preferencias (notificaciones, idioma de UI, dark mode override por usuario en lugar de OS — relacionado a UI-012).
-     - Logout / confirmación de cierre de sesión.
-     - Selector inicial multi-tenant cuando el usuario tiene >1 tenant (hoy solo existe el switcher compacto del sidebar).
-     - Cambio de contraseña / setup de MFA: hoy va por flujo externo de Auth0; confirmar si se quiere espejar en la UI.
-  4. **Primitivas UI-011 / UI-012 sin diseño visual:**
-     - `Toast` (notifications stack) — se shippeó con defaults técnicos.
-     - `ConfirmDialog` — modal de confirmación; falta variante visual definida.
-     - `ErrorBoundary` fallback — pantalla cuando un componente revienta.
-     - `ThemeToggle` (icono sun/moon/auto) — diseño del control y posición fina en el topbar.
-     - `TenantBrandLogo` slot — placement, sizing y estilo del fallback de iniciales.
-  5. **Responsive (UI-013):**
-     - Mockups explícitos para los viewports 360px y 768px por cada vista crítica. UI-013 cerró con un smoke de axe + collapse genérico a una columna; falta el diseño formal de la versión mobile de cada pantalla.
-  6. **Documentación in-app:**
-     - El archivo `docs/HTML DESIGN/00 _ Documentaci_n de acceso.png` parece un diagrama de roles/accesos. Confirmar con el diseñador si debe convertirse en una vista de ayuda/docs in-app o queda como referencia interna.
-- **Procedimiento al recibir los diseños:**
-  - Por cada HTML nuevo, agregarlo a `docs/HTML DESIGN/` siguiendo la convención `NN _ <area> _ <pantalla>.html`.
-  - Crear subtareas `UI-016.1`, `UI-016.2`... cada una mapeada al HTML correspondiente, siguiendo la receta 0.bis.1 (tokens + bloques + primitivas reusadas).
-  - Actualizar este UI-016 marcando cada subtarea cuando se cierre.
-- **Dependencias:** UI-001 ... UI-015 (necesita el design system y las primitivas finales para reusar).
+- **Estado:** IN PROGRESS (8 subtareas; HTMLs entregados en `docs/HTML DESIGN/Transversales/`)
+- **Motivación:** la auditoría post-UI-015/UI-012 detectó vistas y estados sin HTML asociado. El diseñador respondió entregando 9 HTMLs (8 únicos + 1 duplicado) en `docs/HTML DESIGN/Transversales/`. UI-016 se trocea en 8 subtareas, una por HTML, siguiendo la receta 0.bis.1.
+- **HTMLs entregados (mapeo a subtareas):**
+
+#### UI-016.1 — Go-live Readiness (Owner-Admin)
+
+- **Estado:** PENDING
+- **HTML:** `docs/HTML DESIGN/Transversales/10b _ Inicio _ Go-live Readiness.html` (319 LOC).
+- **Alcance:** refactorizar `src/features/owner-admin/readiness/GoLiveReadiness.jsx` al diseño entregado. El HTML muestra un checklist de 17 ítems agrupados en 5-6 secciones (Tenant activo, Canal WhatsApp y templates, Servicios y agenda, etc.), con contador "16 / 17 pasados", badges por sección "3 / 3", botón "Marcar live" deshabilitado hasta que todo pase, botón "Exportar checklist".
+- **Criterios:** capability `go_live_readiness.read`. CTA "Marcar live" requiere `RequirePermission mode="RW"` con `go_live_readiness.mark_live` (capability nueva si no existe). Tests: render del checklist, botón "Marcar live" deshabilitado con ítems pendientes, llamada al endpoint correcto cuando todo pasa.
+
+#### UI-016.2 — Knowledge Studio redesign
+
+- **Estado:** PENDING
+- **HTML:** `docs/HTML DESIGN/Transversales/18 _ IA _ Knowledge Studio.html` (319 LOC; reemplaza al `18 _ IA _ Knowledge Studio.html` original de OWNER:Admin).
+- **Alcance:** auditar `src/features/owner-admin/knowledge-studio/KnowledgeStudio.jsx` contra el nuevo HTML. El diseño muestra tabla de documentos con filtros (Todos / Activos / Indexando / Fallidos), columnas Documento / Tipo / Chunks / Origen / Estado / Actualizado, CTAs "Test RAG" + "Subir documento".
+- **Criterios:** comparar bloque-a-bloque, ajustar diferencias visuales (tokens / tipografía / spacing). Si la sección "Storage" del HTML está embebida aquí (no aparece como pantalla aparte), confirmar que `KnowledgeStorageSettings.jsx` ya está reuseado o decidir si se mergea aquí.
+
+#### UI-016.3 — Rendimiento del equipo (AgentPerformance)
+
+- **Estado:** PENDING
+- **HTML:** `docs/HTML DESIGN/Transversales/23b _ Negocio _ Rendimiento del equipo.html` (319 LOC).
+- **Alcance:** refactorizar `src/features/owner-admin/analytics/AgentPerformance.jsx` al diseño entregado. El HTML muestra KPIs superiores (Mensajes humanos, Handoffs cerrados, Ingreso atribuido, 1ª respuesta media), tabla "Por persona ordenado por ingreso atribuido" (Persona / Mensajes / Handoffs / Citas / Ingreso / Utilización / 1ª resp. / Rating), y gráfica "Distribución de carga".
+- **Criterios:** capability `analytics.tenant.read`. Datos vienen de `getAnalyticsAgents` (verificar contra el endpoint existente). Tests: render de KPIs + tabla + chart, sort por ingreso por defecto.
+
+#### UI-016.4 — Landing comercial pre-login (público)
+
+- **Estado:** PENDING
+- **HTML:** `docs/HTML DESIGN/Transversales/L1 _ Home _ Landing comercial.html` (+ duplicado `(1).html`, tomar el más reciente — son idénticos).
+- **Alcance:** vista PÚBLICA pre-login. Nueva en el código. Hero "Responde, califica y agenda en segundos", demo de conversación, social proof (logos), pricing teaser, CTAs "Solicitar demo" + "Contactar ventas" + "Iniciar sesión" (este último al flow Auth0 existente).
+- **Criterios:** ruta `/` cuando NO hay sesión activa → renderiza Landing en lugar de redirect. Sesión activa sigue al `IndexRedirect`. SIN `RequirePermission` (es público). Borrar el HTML duplicado `(1).html` para mantener un solo source-of-truth. Decidir si crea `src/features/public/landing/` o vive en `src/app/public/Landing.jsx` — preferir `src/features/public/landing/` para consistencia.
+
+#### UI-016.5 — Toasts y modales (visual spec)
+
+- **Estado:** DONE (2026-05-15)
+- **HTML:** `docs/HTML DESIGN/Transversales/T1 _ Toasts y modales.html` (319 LOC).
+- **Alcance:** refinar el visual de las primitivas que se shippearon con defaults en UI-011. El HTML especifica:
+  - Toast stack: bottom-right, max 5 visibles, auto-close 4s (success/info) / 8s (warn/error), apila empujando hacia arriba, 4 tonos visuales.
+  - Modal de confirmación: variante normal + variante `danger`.
+- **Criterios:** actualizar `Toast.jsx` + `Toast.module.css` + `ConfirmDialog.jsx` + `ConfirmDialog.module.css` matchear el HTML. Tests existentes deben seguir verdes; agregar tests visuales mínimos (posición del stack, tono según tipo, auto-close timing).
+- **Cierre:** ver `docs/DONE.md` (entrada UI-016.5).
+
+#### UI-016.6 — Estados de error y bloqueos
+
+- **Estado:** PENDING
+- **HTML:** `docs/HTML DESIGN/Transversales/T2 _ Estados de error y bloqueos.html` (319 LOC).
+- **Alcance:** 4 pantallas de estado:
+  - `/no-tenant` (`NoTenantRoute` en `app/router.jsx`): "Aún no estás asignada a un negocio".
+  - `AccessDenied` (`permissions/AccessDenied.jsx`): "No tienes acceso a este módulo" con capability + rol actual.
+  - `MfaRequiredBlocker` (`components/domain/MfaRequiredBlocker.jsx`): "Activa autenticación de dos factores" + countdown 7 días.
+  - 404 (`/*` en router): "Esta página no existe (o se mudó)" + CTAs "Reportar enlace roto" / "Ir al dashboard". Reemplazar el `<Navigate to="/" replace />` actual.
+  - `ErrorBoundary` fallback (`components/ui/ErrorBoundary.jsx`): pantalla cuando un componente revienta.
+- **Criterios:** layout consistente entre las 5 pantallas (mismo header, ilustración minimal, una sola acción primaria). Tests por cada pantalla.
+
+#### UI-016.7 — Cuenta del usuario
+
+- **Estado:** PENDING
+- **HTML:** `docs/HTML DESIGN/Transversales/T3 _ Cuenta del usuario.html` (319 LOC).
+- **Alcance:** rutas nuevas detrás del avatar del sidebar:
+  - Perfil: nombre, email (read-only — gestionado por Auth0), teléfono, idioma, timezone.
+  - Apariencia: override del ThemeToggle por usuario (auto / claro / oscuro) — relacionado a UI-012.
+  - Notificaciones: matriz por evento (digest diario, handoff SLA, cobro fallido, cita confirmada, quality rating, resumen semanal) × canal (email / wa / inapp).
+  - Sesiones y tokens (read-only / revocar).
+  - Logout.
+- **Criterios:** ruta nueva `/account` con sub-rutas `/profile`, `/preferences`, `/notifications`, `/sessions`. Backend ya tiene endpoints para preferencias del usuario? — investigar `coreApi.js`; si no, declarar follow-up `UI-016.7-FU` para el backend (igual que UI-012-FU).
+
+#### UI-016.8 — Responsive 360px
+
+- **Estado:** PENDING
+- **HTML:** `docs/HTML DESIGN/Transversales/T4 _ Responsive 360px.html` (319 LOC).
+- **Alcance:** mockups móviles formales para las vistas críticas:
+  - Owner dashboard a 360px.
+  - Agent chat a 360px.
+  - Toasts a 360px.
+- **Criterios:** media queries `@media (max-width: 480px)` específicas en `Dashboard.module.css`, `OperationsDesk.module.css` y `Toast.module.css` aplicando el diseño del HTML. Reemplaza el "collapse genérico" que UI-013 aplicó. Bottom-nav móvil ("Inicio | Inbox | Citas | Analítica | Más") es una mini-feature nueva — crear `ShellBottomNav.jsx` que se muestra solo en mobile (hidden en desktop).
+
+- **Procedimiento general:** cada subtarea sigue la receta 0.bis.1 (tokens 100% desde `var(--...)`, primitivas reusadas, screenshots HTML vs React en el PR, archivos ≤ 400 LOC, sin código legacy).
+- **Dependencias:** UI-001 ... UI-015.
 
 ---
 

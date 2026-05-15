@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 
 import { Button } from './Button.jsx';
 import { Modal } from './Modal.jsx';
+import styles from './ConfirmDialog.module.css';
 
 const ConfirmContext = createContext(null);
 
@@ -66,7 +67,10 @@ export function useConfirm() {
 
 /**
  * Internal dialog driven by the provider state — reuses the global `Modal`
- * primitive. Not exported from the public barrel; use `useConfirm` instead.
+ * primitive y le antepone un icono leading que cambia de tono según la
+ * variante (`danger` o default).
+ *
+ * No exportado del barrel; usa `useConfirm`.
  */
 function ConfirmDialog({ state, onResolve }) {
   const { open, opts } = state;
@@ -93,7 +97,17 @@ function ConfirmDialog({ state, onResolve }) {
         </>
       }
     >
-      {body ? <p>{body}</p> : null}
+      <div className={styles.body} data-confirm-variant={danger ? 'danger' : 'default'}>
+        <span
+          className={[styles.icon, danger ? styles['icon--danger'] : styles['icon--default']].join(' ')}
+          aria-hidden="true"
+        >
+          {danger ? '!' : '?'}
+        </span>
+        <div className={styles.copy}>
+          {body ? <p className={styles.text}>{body}</p> : null}
+        </div>
+      </div>
     </Modal>
   );
 }
