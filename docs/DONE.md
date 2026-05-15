@@ -15,6 +15,31 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-011 — Triaje y verificación de findings de Codex sobre paths legacy
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** revisar los 37 hallazgos del bot Codex Security (10 low + 27 high) a la luz del rewrite TASK-0077..TASK-0086, del cleanup UI-015, del rewrite UI-002/UI-016, y del fix BUG-001. Para cada finding documentar el path actual, el estado post-cleanup, y el ticket SEC-XXX que lo cierra. La salida es un documento de triage que los follow-ups SEC-001..SEC-010 consumirán; este ticket NO toca código.
+- **Cambios:**
+  - **`docs/security-findings-triage-2026-05-15.md`** (nuevo, 192 LOC): tabla `Codex ID | Title | Estado | Path actual | Ticket destino | Nota` para los 37 findings, dividido en HIGH (27) y LOW (10). Cada estado es uno de: `RESOLVED-TASK-XXXX`, `RESOLVED-UI-016.6`, `RESOLVED-BUG-001`, `VÁLIDO`. Incluye un resumen agregado por ticket SEC, una sección de "Spot-checks ejecutados" con 25 paths/funciones verificadas manualmente, y una conclusión con próximos pasos.
+  - **`docs/UI_BACKLOG.md`** (sección 8, SEC-011): estado cambiado `PENDING → DONE (2026-05-15)`; nueva línea `Cierre:` con referencia al triage doc + síntesis del resultado (27/37 RESOLVED, 9 VÁLIDO, 1 nuevo SEC-012 a crear).
+- **Resultado del triage:**
+  - **27 findings (73%) ya RESOLVED.** Los tickets **SEC-001, SEC-002, SEC-003, SEC-004, SEC-005, SEC-006, SEC-007** pueden cerrarse como DONE inmediatamente, referenciando TASK-0077 (RBAC tenant-scoped), TASK-0079 (RAG visibility), TASK-0080 (MFA enforcement), TASK-0081 (webhook routing), TASK-0083 (payment audit), TASK-0084 (DLQ idempotency), TASK-0085 (Auth0 invite), TASK-0086 (SSRF guard), UI-016.6 (MFA blocker no-descartable), y BUG-001 (Auth0 ticket leak).
+  - **9 findings (24%) siguen VÁLIDO:**
+    - SEC-008 parcial: `32bfc3bd` (subscriptions POST sigue en `tenant_ops_router` línea 6045), `0f07d1b8` (start conversation NO valida `phone_e164` contra contacto existente). El subset de packages mutations (`9028bf7f`) ya está en `tenant_admin_router` y se resuelve.
+    - SEC-009 completo: `0ebe3783` (`scripts/verify-backup.sh` sigue trust S3 metadata + restore con `postgres` superuser).
+    - SEC-010 reducido a 7 sub-findings VÁLIDO: `6317cdc8` (runbook data-export query param), `3052da6a` (E2E password hardcoded sin gate DSN), `4d4f9520` (timezone except no captura `ValueError`), `a425e6ed` (`Bash(curl -s *)` allowlist), `410c5af6` (webhook 404 oracle), `1a3c5c3d` (cross-tenant diagnostic log sin flag), `cc216794` (`scripts/bootstrap.sh` pasa DATABASE_URL via argv).
+    - SEC-012 nuevo: `ddce83b1` (classifier DoS) — no cubierto por cluster existente; el triage recomienda crear ticket nuevo.
+- **Spot-checks ejecutados (25 paths/funciones):** documentados en la sección "Spot-checks ejecutados" del triage doc — abarca `app/core/security.py`, `app/api/v1/routes.py`, `app/services/{rag_retrieval,rag_orchestrator,whatsapp,operator_alerts,knowledge_storage,auth0_admin,outbound_dlq,url_guard}.py`, `app/api/v1/schemas.py`, `infra/postgres/01-schema.sql`, `admin-panel/src/components/domain/MfaRequiredBlocker.jsx`, `scripts/verify-backup.sh`, `scripts/bootstrap.sh`, `tests/conftest_e2e.py`, `docs/runbooks/consent-violation-claim.md`, y `.claude/settings.json`.
+- **Paths frontend legacy verificados (informativos, no afectan severidad):**
+  - `admin-panel/src/components/layout/AdminLayout.jsx` → borrado en UI-002, reemplazado por `app/shells/{TenantShell,PlatformOwnerShell,ReadOnlyShell}.jsx`.
+  - `admin-panel/src/components/modules/team/TeamModule.jsx` → borrado en UI-015, reemplazado por `features/owner-admin/team/`.
+  - `admin-panel/src/data/modules.js` → borrado en UI-015, reemplazado por `app/modules.js` + `app/moduleRegistry.js`.
+- **Validaciones:** solo docs; no aplica lint/build/test.
+- **Limitaciones / notas:**
+  - El triage NO modifica los tickets SEC-001..SEC-010 en `docs/UI_BACKLOG.md` para marcarlos DONE — eso queda como acción del siguiente PR (los tickets necesitan su propio `Cierre:` con verificación de tests de regresión específicos del cluster, no solo el spot-check).
+  - El finding `1a3c5c3d` ("Cross-tenant conversation metadata logged on 404") quedó marcado como "VÁLIDO (posiblemente)" — no se localizó un env flag `DEBUG_CROSS_TENANT_DIAGNOSTICS` en el código, pero la rama diagnóstica específica que loguea metadata no se exploró exhaustivamente. Verificación detallada queda para SEC-010 dedicado.
+  - El finding `ddce83b1` requiere un ticket nuevo SEC-012 — el triage lo recomienda pero no lo crea (eso es responsabilidad del próximo `/continuar-ui-backlog`).
+
 ### UI-022 — Knowledge Storage: alineamiento visual al sistema de diseño
 
 - **Fecha:** 2026-05-15

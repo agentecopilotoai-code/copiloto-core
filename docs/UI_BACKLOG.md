@@ -1205,10 +1205,11 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-011 — Triaje y verificación de findings sobre paths legacy
 
-- **Estado:** PENDING (informativo)
+- **Estado:** DONE (2026-05-15)
 - **Motivación:** algunos findings de Codex referencian paths que UI-015 borró (`admin-panel/src/components/modules/...`, `admin-panel/src/components/layout/AdminLayout.jsx`) o módulos que se refactorizaron en el cluster UI-016. Antes de empezar cualquier fix de SEC-001..SEC-010, verificar caso por caso:
   - Si el código vulnerable ya NO existe (p.ej. AdminLayout fue eliminado en UI-002/UI-015), el finding queda **resolved as fixed**.
   - Si el código vulnerable persiste en `src/features/...` con la misma lógica, el finding sigue **válido** y entra en el ticket correspondiente.
 - **Procedimiento:** crear `docs/security-findings-triage-2026-05-15.md` con la tabla `finding_url | path actual | estado | ticket destino` para los 37 hallazgos. Esto deja trazabilidad para la próxima auditoría externa.
+- **Cierre:** ver `docs/security-findings-triage-2026-05-15.md`. Resultado: 27/37 findings ya RESOLVED por TASK-0077..0086 + BUG-001 + UI-016.6; 9 siguen VÁLIDO (distribuidos en SEC-008 parcial, SEC-009, SEC-010 con scope reducido, y un nuevo SEC-012 a crear para el classifier DoS — `ddce83b1`). Recomendación inline para marcar SEC-001..SEC-007 como DONE en sus propios tickets.
 
 ---
