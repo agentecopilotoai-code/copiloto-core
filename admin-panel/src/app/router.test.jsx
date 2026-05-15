@@ -213,4 +213,42 @@ describe('router por rol', () => {
     await screen.findByText('DASHBOARD VIEW');
     expect(router.state.location.pathname).toBe('/t/acme/dashboard');
   });
+
+  it('UI-018 — un usuario con rol manager pero caps sólo de agent aterriza en el primer módulo accesible', async () => {
+    // Escenario real de UI-018: el JWT trae `manager` pero `tenant.roles` sólo
+    // incluye `agent`. `ROLE_HOME.manager === 'manager-analytics'` exige
+    // `analytics.tenant.read` que sí la tiene el agent, pero queremos validar
+    // que cuando NO la tenga (caso extremo: tenant downgrade), el helper
+    // saltea al primer módulo accesible del TENANT_NAV.
+    //
+    // En esta prueba el usuario tiene rol efectivo `agent` (que en la matriz
+    // SÍ tiene `analytics.tenant.read`), así que el ROLE_HOME preferido para
+    // el rol más alto (agent) es `operations-desk`, NO `manager-analytics`.
+    // El test confirma que el redirect cae a `operations-desk` sin crash, NO
+    // a una vista de manager-only.
+    const router = renderAt('/', { tenants: [ACME(['agent'])] });
+    await screen.findByText('INBOX VIEW');
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/t/acme/operations-desk');
+    });
+  });
+
+  it('UI-018 — un usuario con rol vacío [] ve el StateScreen "Sin acceso a ningún módulo"', async () => {
+    // Edge case crítico: `tenant.roles = []` (rol efectivo vacío, p.ej. usuario
+    // recién invitado a quien aún no le asignaron rol). Antes el redirect
+    // calculaba `home = ROLE_HOME.viewer` y aterrizaba en `viewer-summary`
+    // donde el `RequirePermission` con `analytics.tenant.read` cortaba el
+    // render dejando pantalla en blanco (BUG-001 / UI-018).
+    //
+    // Ahora `resolveSafeHomeModule` devuelve null (ningún módulo del VIEWER_NAV
+    // es accesible para un rol vacío) y el router pinta el `StateScreen`
+    // "Sin acceso a ningún módulo" con CTA de logout.
+    const router = renderAt('/', { tenants: [ACME([])] });
+    expect(
+      await screen.findByRole('heading', { name: 'Sin acceso a ningún módulo' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cerrar sesión' })).toBeInTheDocument();
+    // No redirect: la ruta sigue en `/` mientras el StateScreen está visible.
+    expect(router.state.location.pathname).toBe('/');
+  });
 });

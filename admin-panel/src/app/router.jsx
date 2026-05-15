@@ -29,6 +29,8 @@ import { adminModules } from './modules.js';
 import { ModulePlaceholder } from './ModulePlaceholder.jsx';
 import { AccessDenied, RequirePermission, ROLE_HOME, usePermissions } from '../permissions/index.js';
 import { MODULE_REGISTRY } from './moduleRegistry.js';
+import { NoModuleAccessScreen } from './NoModuleAccessScreen.jsx';
+import { resolveSafeHomeModule } from './resolveSafeHomeModule.js';
 import { PlatformOwnerShell } from './shells/PlatformOwnerShell.jsx';
 import { ReadOnlyShell } from './shells/ReadOnlyShell.jsx';
 import { TenantShell } from './shells/TenantShell.jsx';
@@ -115,12 +117,25 @@ function RootLayout() {
  *   - sin sesión (anónimo)          → `<Landing />` (UI-016.4),
  *   - platform owner (support_mode) → `/platform`,
  *   - sin tenant                    → `/no-tenant`,
- *   - viewer                        → `/t/:slug/read`,
- *   - resto                         → `/t/:slug/:roleHome`.
+ *   - viewer                        → `/t/:slug/read/<safe-home>`,
+ *   - resto                         → `/t/:slug/<safe-home>`.
  *
  * Cuando `session === null` (usuario no autenticado) la app muestra la landing
  * comercial pública en lugar de redirigir a Auth0. La landing tiene su propio
  * CTA "Iniciar sesión" que dispara el flow Auth0 existente.
+ *
+ * **UI-018 — Fallback seguro de home:** antes calculábamos el home con
+ * `tenantPermissions.home` (= `ROLE_HOME[role]`), pero esa key apuntaba a un
+ * módulo cuya capability el usuario podía NO tener en su tenant activo (caso
+ * típico: roles globales vía JWT desincronizados con `tenant.roles` —
+ * TASK-0077). Resultado: post-login el usuario aterrizaba en una vista a la
+ * que su rol no tenía acceso → `RequirePermission` cortaba el render → pantalla
+ * en blanco / "error de autenticación". Ahora delegamos en
+ * `resolveSafeHomeModule(permissions)` que devuelve el ROLE_HOME preferido si
+ * la cap es accesible o, en su defecto, el primer módulo accesible del nav
+ * visual (`TENANT_NAV` / `VIEWER_NAV`). Si NADA es accesible (rol vacío),
+ * pintamos un `StateScreen` "Sin acceso a ningún módulo" con CTA de logout
+ * en lugar de hacer redirect a un módulo roto.
  */
 function IndexRedirect() {
   const { session, profile, tenantOptions, tenantsLoading } = useTenantContext();
@@ -138,10 +153,19 @@ function IndexRedirect() {
   if (!defaultTenant) return <Navigate to="/no-tenant" replace />;
 
   const base = `/t/${defaultTenant.slug}`;
-  if (tenantPermissions.role === 'viewer') {
-    return <Navigate to={`${base}/read`} replace />;
+  const safeHome = resolveSafeHomeModule(tenantPermissions);
+
+  if (!safeHome) {
+    // UI-018 — rol efectivo sin acceso a NINGÚN módulo en el tenant activo.
+    // En vez de redirigir a una vista que va a fallar el guard, mostramos un
+    // estado claro con CTA para cerrar sesión y reintentar con otra cuenta.
+    return <NoModuleAccessScreen />;
   }
-  return <Navigate to={`${base}/${tenantPermissions.home}`} replace />;
+
+  if (tenantPermissions.role === 'viewer') {
+    return <Navigate to={`${base}/read/${safeHome}`} replace />;
+  }
+  return <Navigate to={`${base}/${safeHome}`} replace />;
 }
 
 /** `/no-tenant`: tarjeta de bienvenida para usuarios sin tenant. */
@@ -239,13 +263,20 @@ function TenantScope() {
   return <Outlet context={{ activeTenant }} />;
 }
 
-/** Index de `/t/:tenantSlug` → home por rol dentro del tenant. */
+/**
+ * Index de `/t/:tenantSlug` → home por rol dentro del tenant. UI-018: aplica
+ * el mismo fallback seguro que `IndexRedirect` (vía `resolveSafeHomeModule`)
+ * para evitar redirigir a un módulo cuya capability el usuario no tenga en
+ * ESTE tenant en particular (puede diferir del default tenant).
+ */
 function TenantHomeRedirect() {
   const { activeTenant } = useOutletContext();
   const { profile } = useTenantContext();
   const permissions = usePermissions({ profile, tenant: activeTenant });
-  if (permissions.role === 'viewer') return <Navigate to="read" replace />;
-  return <Navigate to={permissions.home} replace />;
+  const safeHome = resolveSafeHomeModule(permissions);
+  if (!safeHome) return <NoModuleAccessScreen />;
+  if (permissions.role === 'viewer') return <Navigate to={`read/${safeHome}`} replace />;
+  return <Navigate to={safeHome} replace />;
 }
 
 /** Layout tenant-scoped (Owner / Admin / Manager / Agent). */
