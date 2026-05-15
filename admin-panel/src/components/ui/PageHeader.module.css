@@ -1,9 +1,26 @@
+/*
+ * UI-023: el header de la vista (eyebrow + título + CTAs) queda anclado al top
+ * del scroll-container más cercano (en la práctica, `<main class="workspace">`
+ * o el `<body>` cuando la vista no tiene overflow propio). De este modo las
+ * acciones del usuario (Refrescar / Exportar / Crear / etc.) permanecen
+ * accesibles aunque el contenido scrollee bajo el header.
+ *
+ * `background: var(--bg)` es crítico — sin un fondo opaco, el contenido
+ * scrolleando por debajo se transparenta sobre el texto del header. Usamos
+ * `--bg` (no `--panel`) para que coincida con el fondo del shell/workspace.
+ * El z-index `--z-page-header` (300) lo coloca por encima de elementos
+ * sticky internos (200) y debajo de overlays/modals (900/1000).
+ */
 .header {
   align-items: flex-start;
+  background: var(--bg);
   display: flex;
   gap: var(--space-5);
   justify-content: space-between;
   padding: var(--space-5) 0;
+  position: sticky;
+  top: 0;
+  z-index: var(--z-page-header);
 }
 
 .text {

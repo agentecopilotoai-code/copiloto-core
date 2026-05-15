@@ -999,7 +999,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### UI-023 — PageHeader sticky con scroll del contenido
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **Síntoma actual:** en todas las vistas, los botones de acción del header (Refrescar, Exportar, etc.) scrollean junto con el contenido. El usuario quiere que el header de la vista (que contiene esas CTAs) quede `position: sticky` y solo el contenido scrollee.
 - **Alcance:**
   - Modificar `components/ui/PageHeader.module.css`: `position: sticky; top: 0; z-index: var(--z-page-header)`.

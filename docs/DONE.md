@@ -15,6 +15,41 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-023 — PageHeader sticky con scroll del contenido
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** los botones de acción del header (Refrescar / Exportar / Crear / etc.) ya no deben scrollear con el contenido. El header de la vista queda anclado arriba (sticky) y solo el contenido scrollea por debajo. Aplica a las dos familias de headers que existen hoy en la app: el primitive `PageHeader` (vistas migradas) y el legacy `.module-heading` (4 vistas que aún no migraron).
+- **Cambios:**
+  - **`admin-panel/src/styles/tokens.css`** (+1 LOC): nuevo token `--z-page-header: 300` insertado entre `--z-sticky` (200) y `--z-overlay` (900). Coloca el header por encima de elementos sticky internos (ej. ribbons internos de tabla) pero debajo de overlays/modals/toasts. (En esta base no existía un `--z-sidebar`; el sidebar no fija z-index porque queda en su propia columna del grid del shell, así que el escalón natural quedó: `--z-dropdown` 100 → `--z-sticky` 200 → `--z-page-header` 300 → `--z-overlay` 900 → `--z-modal` 1000 → `--z-toast` 1100.)
+  - **`admin-panel/src/components/ui/PageHeader.module.css`** (+8 LOC sobre la regla `.header`): `position: sticky; top: 0; z-index: var(--z-page-header); background: var(--bg);`. El `background: var(--bg)` es indispensable — sin él, el contenido scrolleando por debajo se ve por transparencia sobre el texto del header. Usamos `--bg` (no `--panel`) porque el `<main class="workspace">` del shell usa `--bg` como fondo del grid; coincidir evita un cambio de tono visible al iniciar el scroll. Comentario inline documenta la decisión para futuros mantenedores.
+  - **`admin-panel/src/styles/global.css`** (+5 LOC sobre `.module-heading`): misma regla sticky (`position: sticky; top: 0; z-index: var(--z-page-header); background: var(--bg);`). Esto cubre las vistas legacy que aún no migraron al primitive: **OperationsDesk** (Agente · Inbox), **TenantSetupWizard** (Owner-Admin · Config), **KnowledgeStorageSettings** (Owner-Admin · Knowledge), **AnalyticsPanel** (Owner-Admin · Analytics).
+  - **`admin-panel/src/components/ui/PageHeader.test.jsx`** (+15 LOC, +1 test): nueva prueba que verifica que el primitive renderiza un `<header>` (el elemento que recibe la clase con `position: sticky`). jsdom no calcula layout real, así que la prueba se queda en la capa estructural; la regla CSS en sí se valida por inspección y por el build de Vite.
+- **Decisión de diseño — Opción B (ambos primitives sticky):**
+  - La spec de UI-023 menciona "en todas las vistas". El backlog acepta dos lecturas: (A) solo `PageHeader` ahora, dejar `.module-heading` para cuando se migre; o (B) ambos primitives sticky para consistencia inmediata.
+  - Elegimos **B** porque el síntoma reportado por el usuario es global (incluye OperationsDesk, que usa `.module-heading`). Aplicar sticky solo al primitive nuevo dejaría 4 vistas legacy con el comportamiento viejo, generando inconsistencia hasta su migración futura.
+- **Spot-check de vistas sin overlap:**
+  - **Dashboard** (`features/owner-admin/dashboard/Dashboard.jsx`) — usa `<PageHeader>` + `<section className={styles.page}>`. El `.page` no fija `overflow` ni z-index propio, así que el sticky del header se ancla al scroll-container del shell (`<main class="workspace">`). El contenido scrollea correctamente por debajo.
+  - **Services** (`features/owner-admin/services/Services.jsx`) — usa `<PageHeader>` + `AlertBanner` + tabla. Mismo patrón que Dashboard. La tabla (que es el bloque scrolleable principal) queda por debajo del header gracias al z-index `--z-page-header` (300) > z-index implícito de la tabla (auto = 0).
+  - **OperationsDesk** (`features/agente/inbox/OperationsDesk.jsx`) — usa `.module-heading` (legacy). Con la regla nueva, las CTAs del header (Refrescar, etc.) permanecen visibles al scrollear el inbox por debajo. UI-020 (merged 2026-05-15) ya había arreglado el whitespace interno; UI-023 lo complementa con el comportamiento sticky.
+  - **FleetDlq, FeatureFlags, RolesAcl, Runbooks, SystemHealth** (vistas platform) — todas usan `<PageHeader>`. Sticky aplica uniformemente.
+- **Tokens usados:** `var(--z-page-header)`, `var(--bg)`. Cero literales hex/rgb/oklch introducidos.
+- **Grep gate (líneas añadidas):**
+  - `git diff admin-panel/src/components/ui/PageHeader.module.css admin-panel/src/styles/tokens.css | grep "^+.*#[0-9a-fA-F]"` → 0 matches.
+  - `git diff admin-panel/src/styles/global.css | grep "^+.*#[0-9a-fA-F]"` → 0 matches.
+  - (Nota: `global.css` ya contenía literales hex pre-existentes en otras reglas — son deuda técnica fuera de scope de UI-023.)
+- **Validaciones ejecutadas:**
+  - `npm run lint` ✓ — 0 errors, 2 warnings pre-existentes en `useTenantSetupSidePanels.js`.
+  - `npm test` ✓ — 127 test files, **660 tests passed** (was 659, +1 nuevo test en `PageHeader.test.jsx`).
+  - `npm run test:a11y` ✓ — 6/6 suites verdes (incluye `agente-operations-desk.a11y.test.jsx`, que usa la regla `.module-heading` ahora sticky).
+  - `npm run test:coverage` ✓ — 660 tests bajo instrumentación Node 20, thresholds preservados.
+  - `npm run build` ✓ — vite 5.4.11, 466 módulos, `dist/assets/index-*.css` 183.32 kB (+0.17 kB vs UI-020 por las 14 LOC añadidas en CSS).
+- **Limitaciones / notas:**
+  - **jsdom no valida layout sticky.** No es posible verificar en unit tests que `position: sticky` "funciona" — solo se puede assertir la clase. La validación real es por inspección visual + e2e (no cubierto en este PR).
+  - **El scroll-container real depende del browser.** Si en el futuro alguien envuelve `<main>` con `overflow: auto`, el sticky se scopea a `<main>` (en lugar de al viewport). En la base actual, `shell.module.css` deja `<main class="workspace">` sin `overflow` propio → sticky se ancla al `<body>`/viewport. Comportamiento esperado en ambos casos.
+  - **Cluster cerrado.** Este ticket cierra el bloque shell/layout: UI-019 (sidebar colapsable + scroll independiente) → UI-020 (whitespace del module-heading) → UI-023 (sticky del header).
+
+---
+
 ### UI-020 — Operations Desk: whitespace excesivo en el top
 
 - **Fecha:** 2026-05-15

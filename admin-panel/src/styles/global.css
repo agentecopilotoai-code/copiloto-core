@@ -199,11 +199,20 @@ fieldset {
   padding: 0;
 }
 
+/* UI-023: las vistas legacy (OperationsDesk, TenantSetupWizard,
+ * KnowledgeStorageSettings, AnalyticsPanel) usan `.module-heading` en lugar
+ * del primitive `PageHeader`. Aplicamos la misma regla sticky para que las
+ * CTAs del header permanezcan accesibles al scrollear el contenido. El fondo
+ * opaco `var(--bg)` evita el "see-through" del contenido por debajo. */
 .module-heading {
   align-items: flex-start;
+  background: var(--bg);
   display: flex;
   gap: 1rem;
   justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: var(--z-page-header);
 }
 
 /* UI-020: los <h2>/<p> dentro del bloque de título heredaban los márgenes
