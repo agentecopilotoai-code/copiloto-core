@@ -1,0 +1,120 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.rangeLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.rangeSelect {
+  font: inherit;
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+.exportButton {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.exportButton:hover {
+  background: var(--bg-deep);
+}
+
+.exportButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ── KPI strip ────────────────────────────────────────────────────────────── */
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+/* ── load distribution chart ──────────────────────────────────────────────── */
+
+.loadList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.loadRow {
+  display: grid;
+  grid-template-columns: 160px 1fr 72px;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-small);
+}
+
+.loadLabel {
+  color: var(--ink-2);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loadBar {
+  display: block;
+  width: 100%;
+  height: 10px;
+  background: var(--bg-deep);
+  border-radius: var(--r-xs);
+  overflow: hidden;
+}
+
+.loadBarFill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--r-xs);
+}
+
+.loadValue {
+  text-align: right;
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  margin: 0;
+}
+
+@media (max-width: 600px) {
+  .loadRow {
+    grid-template-columns: 100px 1fr 60px;
+  }
+}

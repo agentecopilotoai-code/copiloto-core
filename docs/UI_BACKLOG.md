@@ -767,10 +767,11 @@ src/
 
 #### UI-016.3 — Rendimiento del equipo (AgentPerformance)
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **HTML:** `docs/HTML DESIGN/Transversales/23b _ Negocio _ Rendimiento del equipo.html` (319 LOC).
 - **Alcance:** refactorizar `src/features/owner-admin/analytics/AgentPerformance.jsx` al diseño entregado. El HTML muestra KPIs superiores (Mensajes humanos, Handoffs cerrados, Ingreso atribuido, 1ª respuesta media), tabla "Por persona ordenado por ingreso atribuido" (Persona / Mensajes / Handoffs / Citas / Ingreso / Utilización / 1ª resp. / Rating), y gráfica "Distribución de carga".
 - **Criterios:** capability `analytics.tenant.read`. Datos vienen de `getAnalyticsAgents` (verificar contra el endpoint existente). Tests: render de KPIs + tabla + chart, sort por ingreso por defecto.
+- **Cierre:** ver `docs/DONE.md` (entrada UI-016.3). La columna "Utilización" del mockup no se renderiza — `analytics_agents` no la expone, así que se omite en lugar de fabricar el dato; los deltas vs mes anterior tampoco (no hay ventana previa en este endpoint).
 
 #### UI-016.4 — Landing comercial pre-login (público)
 

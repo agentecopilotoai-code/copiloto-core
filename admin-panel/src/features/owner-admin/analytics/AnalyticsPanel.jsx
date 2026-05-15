@@ -268,10 +268,10 @@ export function AnalyticsPanel({ module, session, tenant }) {
 
       {tenantId && activeTab === 'agents' && (
         <AgentPerformance
-          isLoading={isLoading}
+          module={module}
           range={range}
           session={session}
-          tenantId={tenantId}
+          tenant={tenant}
         />
       )}
 

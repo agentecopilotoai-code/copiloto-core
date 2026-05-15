@@ -1,4 +1,12 @@
-"""Static checks for TASK-0068 — KPIs de rendimiento por agente."""
+"""Static checks for TASK-0068 — KPIs de rendimiento por agente.
+
+UI-016.3 refactorizó `AgentPerformance.jsx` al HTML del diseñador (`docs/HTML
+DESIGN/Transversales/23b _ Negocio _ Rendimiento del equipo.html`) y movió el
+markup de la tabla a la primitiva reutilizable
+`features/manager/analytics/components/AgentPerformanceTable.jsx`. Las
+aserciones que pinan las columnas ahora apuntan a esa primitiva, no al
+contenedor.
+"""
 
 from pathlib import Path
 
@@ -7,6 +15,7 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')
 AGENT_PERF = Path('admin-panel/src/features/owner-admin/analytics/AgentPerformance.jsx')
+AGENT_TABLE = Path('admin-panel/src/features/manager/analytics/components/AgentPerformanceTable.jsx')
 
 
 def test_appointments_table_has_metadata_jsonb_column():
@@ -119,23 +128,45 @@ def test_core_api_exposes_get_analytics_agents():
     assert '/analytics/agents' in api
 
 
-def test_agent_performance_module_renders_required_columns():
+def test_agent_performance_module_consumes_endpoint_and_table_primitive():
+    """The Owner/Admin "Rendimiento del equipo" container reads from
+    `getAnalyticsAgents` and reuses the shared `AgentPerformanceTable` primitive
+    (UI-016.3 — no duplicated markup with Manager analytics).
+    """
     assert AGENT_PERF.exists(), 'AgentPerformance.jsx must exist'
     component = AGENT_PERF.read_text()
     assert 'export function AgentPerformance' in component
     assert 'getAnalyticsAgents' in component
-    # Table columns + top performer badge.
+    # Gating + shared primitive.
+    assert 'RequirePermission' in component
+    assert "capability=\"analytics.tenant.read\"" in component
+    assert 'AgentPerformanceTable' in component
+    # KPI strip + load distribution chart (the 23b mockup sections).
+    assert 'AgentKpis' in component
+    assert 'LoadDistribution' in component
+    # Range selector + CSV export wiring.
+    assert 'buildAgentsCsv' in component
+    assert 'Exportar' in component
+
+
+def test_agent_performance_table_primitive_renders_required_columns():
+    """The shared `AgentPerformanceTable` (used by Manager analytics and by the
+    Owner/Admin "Rendimiento del equipo") exposes the canonical column set.
+    """
+    assert AGENT_TABLE.exists(), 'AgentPerformanceTable.jsx must exist'
+    table = AGENT_TABLE.read_text()
     for label in (
+        'Agente',
         'Mensajes',
-        'Handoffs aceptados',
-        'Handoffs resueltos',
-        'Tiempo medio respuesta',
-        'Citas confirmadas',
-        'Ingreso atribuido',
+        'Handoffs',
+        'Citas cerradas',
+        'Ingreso',
+        '1ª resp.',
         'Rating',
-        'top performer',
+        # Top performer badge (StatusBadge "Top" — UI-008.1 + UI-016.3).
+        'Top',
     ):
-        assert label in component, f'expected the agents table to expose "{label}"'
+        assert label in table, f'expected the shared agents table to expose "{label}"'
 
 
 def test_analytics_panel_registers_agents_subtab():
