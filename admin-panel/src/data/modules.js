@@ -250,4 +250,11 @@ export const adminModules = [
     scope: ['KPIs por rango (7d/30d/90d/custom)', 'Tabs Resumen / Funnel / Campañas / Agentes', 'Sin acciones de escritura', 'Banner permanente "Modo solo lectura"'],
     capability: 'analytics.tenant.read',
   },
+  {
+    id: 'viewer-appointments',
+    label: 'Citas',
+    summary: 'Vista del Viewer: listado paginado read-only de citas, con filtros por estado / rango de fechas / cliente y exportación CSV de la selección. Reusa el componente de dominio `AppointmentCard`. UI-010.3.',
+    scope: ['Listado paginado de citas', 'Filtros por estado, rango de fechas y cliente', 'Exportar selección a CSV', 'Sin acciones de fila ni edición', 'Banner permanente "Modo solo lectura"'],
+    capability: 'appointments.view',
+  },
 ];
