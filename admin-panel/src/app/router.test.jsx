@@ -124,7 +124,15 @@ describe('router por rol', () => {
     expect(
       await screen.findByRole('heading', { name: 'Fleet · Tenants', level: 1 }),
     ).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe('/platform/platform-fleet');
+    // The PlatformOwnerShell renders the heading from `activeModule.label` as
+    // soon as `/platform` mounts (the index route resolves `segments[1]` to
+    // ROLE_HOME.platform_owner = 'platform-fleet' synchronously). The actual
+    // pathname only settles after the index `<Navigate>` completes — under
+    // Node 20 + coverage instrumentation that second hop can lag behind the
+    // DOM render. Wait for it explicitly.
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/platform/platform-fleet');
+    });
   });
 
   it('un usuario de tenant que entra a /platform recibe acceso restringido', async () => {
@@ -135,7 +143,12 @@ describe('router por rol', () => {
   it('sin tenant: el redirect raíz lleva a /no-tenant', async () => {
     const router = renderAt('/', { tenants: [] });
     expect(await screen.findByText('Crea tu tenant para empezar')).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe('/no-tenant');
+    // Same race-resilience as the platform-owner redirect above: the DOM can
+    // settle before the IndexRedirect <Navigate> finishes propagating into
+    // `router.state.location.pathname` under coverage instrumentation.
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/no-tenant');
+    });
   });
 
   it('mfa_required bloquea cualquier ruta con el gate de MFA', async () => {

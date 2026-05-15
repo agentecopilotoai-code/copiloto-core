@@ -23,11 +23,23 @@
 
 /* ── documents table ──────────────────────────────────────────────────────── */
 
+.filterTabs {
+  margin-top: var(--space-3);
+  gap: var(--space-2);
+}
+
 .filters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: var(--space-3);
   margin: var(--space-3) 0;
+}
+
+.originCell {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  word-break: break-all;
 }
 
 .docCell {
@@ -221,4 +233,55 @@
 
 .dangerButton:hover:not(:disabled) {
   background: var(--danger-soft);
+}
+
+/* ── storage summary card ─────────────────────────────────────────────────── */
+
+.storageGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+}
+
+.storageItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  background: var(--panel-alt);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.storageItem dt {
+  font-size: var(--fs-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.storageItem dd {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  color: var(--ink);
+}
+
+.storageItem strong {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+}
+
+.storageHint {
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.storageBucket {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  word-break: break-all;
 }

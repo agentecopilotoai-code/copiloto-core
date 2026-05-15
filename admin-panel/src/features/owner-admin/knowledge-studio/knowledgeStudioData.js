@@ -27,12 +27,18 @@ export const EMPTY_UPLOAD_FORM = Object.freeze({
   file: null,
 });
 
-/** Spanish labels for a document's lifecycle status. */
+/**
+ * Spanish labels for a document's lifecycle status. Mirrors the HTML mockup
+ * (`docs/HTML DESIGN/Transversales/18 _ IA _ Knowledge Studio.html`): `active`,
+ * `indexing`, `failed` stay in English (canonical, lowercase) inside the
+ * Estado badges; `draft` becomes "Borrador" because that's how the designer
+ * surfaces the not-yet-published state.
+ */
 export const STATUS_LABELS = {
-  draft: 'Draft',
-  indexing: 'Indexing',
-  active: 'Active',
-  failed: 'Failed',
+  draft: 'Borrador',
+  indexing: 'indexing',
+  active: 'active',
+  failed: 'failed',
 };
 
 /** `StatusBadge` tone for a document's lifecycle status. */
@@ -66,7 +72,7 @@ export const VISIBILITY_OPTIONS = [
 ];
 
 export const STATUS_OPTIONS = [
-  { value: 'draft', label: 'Draft' },
+  { value: 'draft', label: 'Borrador' },
   { value: 'indexing', label: 'Indexing' },
   { value: 'failed', label: 'Failed' },
 ];
@@ -146,6 +152,72 @@ export function documentSummary(document) {
   if (document.content) return document.content.slice(0, 150);
   if (document.source_uri) return document.source_uri;
   return 'Documento sin contenido todavía.';
+}
+
+/**
+ * Tab definitions for the Documents filter — Todos / Activos / Indexando /
+ * Fallidos. Each tab carries the statuses it matches; `all` matches everything.
+ * Used to derive counts directly from the document list (no extra fetch).
+ */
+export const DOCUMENT_FILTER_TABS = [
+  { value: 'all', label: 'Todos', statuses: null },
+  { value: 'active', label: 'Activos', statuses: ['active'] },
+  { value: 'indexing', label: 'Indexando', statuses: ['indexing'] },
+  { value: 'failed', label: 'Fallidos', statuses: ['failed'] },
+];
+
+/** Map a `DOCUMENT_FILTER_TABS` value to a list of matching statuses (null → all). */
+export function statusesForFilterTab(tabValue) {
+  const tab = DOCUMENT_FILTER_TABS.find((entry) => entry.value === tabValue);
+  return tab ? tab.statuses : null;
+}
+
+/** Filter the documents list by the active filter-tab value. */
+export function filterDocumentsByTab(documents, tabValue) {
+  const statuses = statusesForFilterTab(tabValue);
+  if (!statuses) return documents;
+  return documents.filter((doc) => statuses.includes(doc.status));
+}
+
+/** Count documents matching each `DOCUMENT_FILTER_TABS` entry. */
+export function countDocumentsByTab(documents) {
+  const list = Array.isArray(documents) ? documents : [];
+  const counts = {};
+  for (const tab of DOCUMENT_FILTER_TABS) {
+    if (!tab.statuses) {
+      counts[tab.value] = list.length;
+    } else {
+      counts[tab.value] = list.filter((doc) => tab.statuses.includes(doc.status)).length;
+    }
+  }
+  return counts;
+}
+
+/**
+ * Best-effort chunk-count extraction for a document row. The backend exposes
+ * it as `metadata.chunk_count` (preferred) or `metadata.indexing.chunk_count`
+ * depending on the indexing pipeline version. Returns `null` when not present
+ * — the table renders that as the em-dash shown in the design.
+ */
+export function chunkCount(document) {
+  const meta = document?.metadata || {};
+  if (typeof meta.chunk_count === 'number') return meta.chunk_count;
+  if (typeof meta?.indexing?.chunk_count === 'number') return meta.indexing.chunk_count;
+  return null;
+}
+
+/**
+ * One-line origin label for the Origen column. Manual / integration sources
+ * render as the source_type label; upload / url sources surface the URI when
+ * available so the operator can recognize the bucket path at a glance.
+ */
+export function originLabel(document) {
+  if (!document) return '—';
+  const sourceType = document.source_type || 'manual';
+  if (sourceType === 'manual' || sourceType === 'integration') {
+    return sourceType;
+  }
+  return document.source_uri || sourceType;
 }
 
 /**

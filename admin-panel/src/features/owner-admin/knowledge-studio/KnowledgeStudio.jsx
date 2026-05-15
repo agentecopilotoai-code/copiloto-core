@@ -6,23 +6,30 @@ import { DocumentDetailDrawer } from './components/DocumentDetailDrawer.jsx';
 import { DocumentUploader } from './components/DocumentUploader.jsx';
 import { DocumentsTable } from './components/DocumentsTable.jsx';
 import { RagSmokeTest } from './components/RagSmokeTest.jsx';
+import { StorageSummary } from './components/StorageSummary.jsx';
 import { useKnowledgeStudioData } from './hooks/useKnowledgeStudioData.js';
 import { hasLocalHashActive } from './knowledgeStudioData.js';
 import styles from './KnowledgeStudio.module.css';
 
 /**
- * UI-007.10 — IA · Knowledge Studio.
+ * IA · Knowledge Studio.
  *
- * Refactor of the legacy `KnowledgeStudio` (486 LOC) into a feature with an
- * orchestrator + `useKnowledgeStudioData` hook + pure `knowledgeStudioData.js`
- * + the split components: `DocumentsTable`, `DocumentUploader`,
- * `DocumentDetailDrawer` and `RagSmokeTest`. Document CRUD, indexing, the file
- * upload flow and the RAG smoke test are preserved verbatim. Gated by
- * `knowledge.read`; the backend remains the authority.
+ * UI-007.10 split the legacy module into the orchestrator +
+ * `useKnowledgeStudioData` hook + pure `knowledgeStudioData.js` + the
+ * components `DocumentsTable`, `DocumentUploader`, `DocumentDetailDrawer` and
+ * `RagSmokeTest`. UI-016.2 aligns it visually with the redesign in
+ * `docs/HTML DESIGN/Transversales/18 _ IA _ Knowledge Studio.html`: filter tabs
+ * (Todos / Activos / Indexando / Fallidos) with derived counts, the canonical
+ * 6 columns (Documento / Tipo / Chunks / Origen / Estado / Actualizado), and a
+ * read-only Storage summary tile below the table.
  *
- * Visual reference: `docs/HTML DESIGN/OWNER : Admin/18 _ IA · Knowledge Studio.html`.
- * Declared difference: the HTML's "Storage" card (bucket / size) belongs to the
- * separate `knowledge-storage` module and is not duplicated here.
+ * Declared difference: the editable Storage form remains in the dedicated
+ * `knowledge-storage` module (capability `knowledge_storage.write`). This view
+ * surfaces the current effective configuration as a summary so the operator
+ * can see at a glance where the documents live, but never edits credentials
+ * from here.
+ *
+ * Gated by `knowledge.read`; the backend remains the authority.
  *
  * @param {{ module: object, session: object, tenant: object }} props
  */
@@ -110,16 +117,23 @@ export function KnowledgeStudio({ module, session, tenant }) {
             </div>
             <DocumentsTable
               documents={state.documents}
-              statusFilter={state.statusFilter}
+              filteredDocuments={state.filteredDocuments}
+              filterTab={state.filterTab}
               visibilityFilter={state.visibilityFilter}
               isLoading={state.isLoading}
-              onStatusFilterChange={actions.setStatusFilter}
+              onFilterTabChange={actions.setFilterTab}
               onVisibilityFilterChange={actions.setVisibilityFilter}
               onChangeStatus={actions.changeStatus}
               onIndex={actions.runIndexing}
               onEdit={actions.openEdit}
               onRemove={actions.removeDocument}
               onRefresh={actions.refresh}
+            />
+            <StorageSummary
+              storage={state.storage}
+              documentCount={state.documents.length}
+              isLoading={state.isStorageLoading}
+              error={state.storageError}
             />
           </>
         )}

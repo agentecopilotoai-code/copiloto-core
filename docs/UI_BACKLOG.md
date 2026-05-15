@@ -759,10 +759,11 @@ src/
 
 #### UI-016.2 — Knowledge Studio redesign
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **HTML:** `docs/HTML DESIGN/Transversales/18 _ IA _ Knowledge Studio.html` (319 LOC; reemplaza al `18 _ IA _ Knowledge Studio.html` original de OWNER:Admin).
 - **Alcance:** auditar `src/features/owner-admin/knowledge-studio/KnowledgeStudio.jsx` contra el nuevo HTML. El diseño muestra tabla de documentos con filtros (Todos / Activos / Indexando / Fallidos), columnas Documento / Tipo / Chunks / Origen / Estado / Actualizado, CTAs "Test RAG" + "Subir documento".
 - **Criterios:** comparar bloque-a-bloque, ajustar diferencias visuales (tokens / tipografía / spacing). Si la sección "Storage" del HTML está embebida aquí (no aparece como pantalla aparte), confirmar que `KnowledgeStorageSettings.jsx` ya está reuseado o decidir si se mergea aquí.
+- **Cierre:** ver `docs/DONE.md` (entrada UI-016.2). Decisión sobre Storage: el módulo editable `knowledge-storage` permanece como ruta aparte (capability `knowledge_storage.write`); UI-016.2 añade un **resumen de Storage de solo lectura** embebido en Knowledge Studio (`StorageSummary.jsx`) que lee `getKnowledgeStorageSettings` para mostrar backend, bucket/prefix, documentos y tamaño — los tres siguen siendo el mismo backend, y el operador solo edita desde el módulo dedicado.
 
 #### UI-016.3 — Rendimiento del equipo (AgentPerformance)
 

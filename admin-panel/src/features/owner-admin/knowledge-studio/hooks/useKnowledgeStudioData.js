@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useConfirm } from '../../../../components/ui/index.js';
 import {
   createKnowledgeDocument,
   deleteKnowledgeDocument,
   evaluateIntent,
+  getKnowledgeStorageSettings,
   indexKnowledgeDocument,
   listKnowledgeDocuments,
   updateKnowledgeDocument,
@@ -15,7 +16,9 @@ import {
   EMPTY_UPLOAD_FORM,
   STATUS_LABELS,
   buildPayload,
+  filterDocumentsByTab,
   formFromDocument,
+  statusesForFilterTab,
 } from '../knowledgeStudioData.js';
 
 /**
@@ -33,10 +36,14 @@ export function useKnowledgeStudioData({ session, tenant }) {
   const confirm = useConfirm();
 
   const [documents, setDocuments] = useState([]);
-  const [statusFilter, setStatusFilter] = useState('');
+  const [filterTab, setFilterTab] = useState('all');
   const [visibilityFilter, setVisibilityFilter] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [notice, setNotice] = useState(null);
+
+  const [storage, setStorage] = useState(null);
+  const [storageError, setStorageError] = useState(null);
+  const [isStorageLoading, setIsStorageLoading] = useState(false);
 
   const [form, setForm] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState(null);
@@ -56,26 +63,63 @@ export function useKnowledgeStudioData({ session, tenant }) {
   const loadDocuments = useCallback(() => {
     if (!tenantId) return;
     setIsLoading(true);
+    // codex P2 (UI-016.2 review): client-only tab filtering can hide matching
+    // rows when a tenant has > 250 documents, because the API applies its
+    // `limit 250` AFTER the status filter — so a missing `status` query
+    // returns the latest 250 across statuses, and the older rows with the
+    // status the user selected get truncated. Forward the active tab's
+    // status (when single-valued) to the API so each tab gets up to 250 of
+    // ITS status. The "all" tab keeps the cross-status latest 250.
+    const tabStatuses = statusesForFilterTab(filterTab);
+    const statusParam = tabStatuses && tabStatuses.length === 1 ? tabStatuses[0] : '';
     listKnowledgeDocuments(session, tenantId, {
-      status: statusFilter,
       visibility: visibilityFilter,
+      status: statusParam,
     })
       .then((rows) => setDocuments(Array.isArray(rows) ? rows : []))
       .catch((error) => setNotice({ type: 'error', text: error.message }))
       .finally(() => setIsLoading(false));
-  }, [session, tenantId, statusFilter, visibilityFilter]);
+  }, [session, tenantId, visibilityFilter, filterTab]);
 
   useEffect(() => {
     loadDocuments();
   }, [loadDocuments]);
 
+  const loadStorage = useCallback(() => {
+    if (!tenantId) return;
+    setIsStorageLoading(true);
+    setStorageError(null);
+    getKnowledgeStorageSettings(session, tenantId)
+      .then((response) => setStorage(response))
+      .catch((error) => {
+        // Storage may be 403 for some roles (read-only viewers without
+        // knowledge_storage.read); the table view should still render.
+        setStorage(null);
+        setStorageError(error.message);
+      })
+      .finally(() => setIsStorageLoading(false));
+  }, [session, tenantId]);
+
+  useEffect(() => {
+    loadStorage();
+  }, [loadStorage]);
+
+  const filteredDocuments = useMemo(
+    () => filterDocumentsByTab(documents, filterTab),
+    [documents, filterTab],
+  );
+
   const actions = {
-    setStatusFilter,
+    setFilterTab,
     setVisibilityFilter,
     setUploadForm,
     setRagQuestion,
     setRagIncludeAgentsOnly,
-    refresh: loadDocuments,
+    refresh: () => {
+      loadDocuments();
+      loadStorage();
+    },
+    refreshStorage: loadStorage,
     dismissNotice: () => setNotice(null),
     openCreate: () => {
       setEditingId(null);
@@ -222,10 +266,14 @@ export function useKnowledgeStudioData({ session, tenant }) {
     state: {
       tenantId,
       documents,
-      statusFilter,
+      filteredDocuments,
+      filterTab,
       visibilityFilter,
       isLoading,
       notice,
+      storage,
+      storageError,
+      isStorageLoading,
       form,
       editingId,
       editorOpen,

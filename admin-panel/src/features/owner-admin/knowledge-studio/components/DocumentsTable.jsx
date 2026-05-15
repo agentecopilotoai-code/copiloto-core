@@ -5,31 +5,43 @@ import {
   EmptyState,
   FormField,
   StatusBadge,
+  Tabs,
 } from '../../../../components/ui/index.js';
 import {
+  DOCUMENT_FILTER_TABS,
   STATUS_LABELS,
   STATUS_OPTIONS,
   STATUS_TONE,
   VISIBILITY_OPTIONS,
+  chunkCount,
+  countDocumentsByTab,
   documentSummary,
   embeddingProviderBadge,
   extractionStatusBadge,
   formatDate,
   isAwaitingExtraction,
+  originLabel,
 } from '../knowledgeStudioData.js';
 import styles from '../KnowledgeStudio.module.css';
 
 /**
  * Knowledge documents table with status / visibility filters. Reuses
- * `DataTable`; presentational — all state and the row actions come from the
- * `useKnowledgeStudioData` hook via props.
+ * `DataTable` + `Tabs`; presentational — all state and the row actions come
+ * from the `useKnowledgeStudioData` hook via props.
+ *
+ * UI-016.2: redesign aligned with
+ * `docs/HTML DESIGN/Transversales/18 _ IA _ Knowledge Studio.html` — filter
+ * tabs (Todos / Activos / Indexando / Fallidos) derived from the data, plus
+ * the canonical 6 columns Documento / Tipo / Chunks / Origen / Estado /
+ * Actualizado, followed by row actions.
  *
  * @param {{
  *   documents: Array<object>,
- *   statusFilter: string,
+ *   filteredDocuments: Array<object>,
+ *   filterTab: string,
  *   visibilityFilter: string,
  *   isLoading: boolean,
- *   onStatusFilterChange: (value: string) => void,
+ *   onFilterTabChange: (value: string) => void,
  *   onVisibilityFilterChange: (value: string) => void,
  *   onChangeStatus: (document: object, status: string) => void,
  *   onIndex: (document: object) => void,
@@ -40,10 +52,11 @@ import styles from '../KnowledgeStudio.module.css';
  */
 export function DocumentsTable({
   documents,
-  statusFilter,
+  filteredDocuments,
+  filterTab,
   visibilityFilter,
   isLoading,
-  onStatusFilterChange,
+  onFilterTabChange,
   onVisibilityFilterChange,
   onChangeStatus,
   onIndex,
@@ -51,6 +64,18 @@ export function DocumentsTable({
   onRemove,
   onRefresh,
 }) {
+  // codex P2 (UI-016.2 review): once the status filter is server-side, the
+  // loaded `documents` array only contains rows for the active tab. Showing
+  // per-tab counts derived from that list would be misleading for inactive
+  // tabs (they'd all show 0). Only badge the ACTIVE tab — its count is
+  // accurate against the API's `limit 250` for that status.
+  const counts = countDocumentsByTab(documents);
+  const tabItems = DOCUMENT_FILTER_TABS.map((tab) => ({
+    value: tab.value,
+    label: tab.label,
+    badge: tab.value === filterTab ? String(counts[tab.value] ?? 0) : null,
+  }));
+
   const columns = [
     {
       key: 'document',
@@ -68,7 +93,19 @@ export function DocumentsTable({
       ),
     },
     { key: 'document_type', header: 'Tipo', accessor: (row) => row.document_type },
-    { key: 'source_type', header: 'Origen', accessor: (row) => row.source_type },
+    {
+      key: 'chunks',
+      header: 'Chunks',
+      accessor: (row) => {
+        const count = chunkCount(row);
+        return count == null ? '—' : count;
+      },
+    },
+    {
+      key: 'origin',
+      header: 'Origen',
+      accessor: (row) => <span className={styles.originCell}>{originLabel(row)}</span>,
+    },
     {
       key: 'status',
       header: 'Estado',
@@ -146,7 +183,7 @@ export function DocumentsTable({
     <Card padding="md">
       <CardHeader
         title="Documentos"
-        subtitle={`${documents.length} visibles para este tenant.`}
+        subtitle={`${filteredDocuments.length} visibles para este tenant.`}
         actions={
           <button
             type="button"
@@ -159,16 +196,15 @@ export function DocumentsTable({
         }
       />
 
+      <Tabs
+        variant="pill"
+        items={tabItems}
+        value={filterTab}
+        onChange={onFilterTabChange}
+        className={styles.filterTabs}
+      />
+
       <div className={styles.filters}>
-        <FormField label="Estado">
-          <select value={statusFilter} onChange={(e) => onStatusFilterChange(e.target.value)}>
-            <option value="">Todos</option>
-            <option value="draft">Draft</option>
-            <option value="indexing">Indexing</option>
-            <option value="active">Active</option>
-            <option value="failed">Failed</option>
-          </select>
-        </FormField>
         <FormField label="Visibilidad">
           <select
             value={visibilityFilter}
@@ -186,7 +222,7 @@ export function DocumentsTable({
 
       {isLoading ? (
         <p className={styles.hint}>Cargando documentos…</p>
-      ) : documents.length === 0 ? (
+      ) : filteredDocuments.length === 0 ? (
         <EmptyState
           title="Sin documentos"
           description="No hay documentos con esos filtros. Sube un archivo o crea uno manualmente."
@@ -195,7 +231,7 @@ export function DocumentsTable({
         <DataTable
           caption="Documentos de conocimiento del tenant"
           columns={columns}
-          rows={documents}
+          rows={filteredDocuments}
           rowKey={(row) => row.id}
         />
       )}

@@ -2,12 +2,17 @@ import { describe, it, expect } from 'vitest';
 
 import {
   buildPayload,
+  chunkCount,
+  countDocumentsByTab,
   documentSummary,
   embeddingProviderBadge,
   extractionStatusBadge,
+  filterDocumentsByTab,
   formFromDocument,
   hasLocalHashActive,
   isAwaitingExtraction,
+  originLabel,
+  STATUS_LABELS,
 } from './knowledgeStudioData.js';
 
 describe('knowledgeStudioData', () => {
@@ -63,6 +68,62 @@ describe('knowledgeStudioData', () => {
     expect(documentSummary({ content: 'abc' })).toBe('abc');
     expect(documentSummary({ source_uri: 's3://k' })).toBe('s3://k');
     expect(documentSummary({})).toBe('Documento sin contenido todavía.');
+  });
+
+  it('chunkCount reads metadata.chunk_count or falls back to indexing.chunk_count', () => {
+    expect(chunkCount({ metadata: { chunk_count: 12 } })).toBe(12);
+    expect(chunkCount({ metadata: { indexing: { chunk_count: 7 } } })).toBe(7);
+    expect(chunkCount({ metadata: {} })).toBeNull();
+    expect(chunkCount(undefined)).toBeNull();
+  });
+
+  it('originLabel returns the source_type for manual/integration and the URI otherwise', () => {
+    expect(originLabel({ source_type: 'manual' })).toBe('manual');
+    expect(originLabel({ source_type: 'integration' })).toBe('integration');
+    expect(originLabel({ source_type: 'upload', source_uri: 's3://kb/x.pdf' })).toBe(
+      's3://kb/x.pdf',
+    );
+    expect(originLabel({ source_type: 'url' })).toBe('url');
+    expect(originLabel(null)).toBe('—');
+  });
+
+  it('countDocumentsByTab derives counts for Todos / Activos / Indexando / Fallidos', () => {
+    const docs = [
+      { status: 'active' },
+      { status: 'active' },
+      { status: 'indexing' },
+      { status: 'failed' },
+      { status: 'draft' },
+    ];
+    expect(countDocumentsByTab(docs)).toEqual({
+      all: 5,
+      active: 2,
+      indexing: 1,
+      failed: 1,
+    });
+    expect(countDocumentsByTab([])).toEqual({ all: 0, active: 0, indexing: 0, failed: 0 });
+  });
+
+  it('filterDocumentsByTab returns all docs for "all" and filters by status otherwise', () => {
+    const docs = [
+      { status: 'active', id: 'a' },
+      { status: 'indexing', id: 'b' },
+      { status: 'failed', id: 'c' },
+      { status: 'draft', id: 'd' },
+    ];
+    expect(filterDocumentsByTab(docs, 'all')).toHaveLength(4);
+    expect(filterDocumentsByTab(docs, 'active').map((d) => d.id)).toEqual(['a']);
+    expect(filterDocumentsByTab(docs, 'indexing').map((d) => d.id)).toEqual(['b']);
+    expect(filterDocumentsByTab(docs, 'failed').map((d) => d.id)).toEqual(['c']);
+    // unknown tabs degrade to "show all" rather than hiding rows
+    expect(filterDocumentsByTab(docs, 'unknown')).toHaveLength(4);
+  });
+
+  it('STATUS_LABELS uses "Borrador" for draft to match the designer HTML', () => {
+    expect(STATUS_LABELS.draft).toBe('Borrador');
+    expect(STATUS_LABELS.active).toBe('active');
+    expect(STATUS_LABELS.indexing).toBe('indexing');
+    expect(STATUS_LABELS.failed).toBe('failed');
   });
 
   it('hasLocalHashActive is true with local_hash docs or no active providers', () => {
