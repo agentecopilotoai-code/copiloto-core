@@ -963,7 +963,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### UI-020 — Operations Desk: whitespace excesivo en el top
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **Síntoma actual:** la vista Operations Desk (`OperationsDesk.jsx`) muestra el copy *"Inbox operativo · Inbox operativo para conversaciones y handoff humano"* con espacio en blanco grande arriba antes del contenido.
 - **Alcance:**
   - Inspeccionar el header de la vista en `OperationsDesk.module.css` y `PageHeader.module.css`.

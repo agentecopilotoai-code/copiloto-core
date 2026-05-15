@@ -206,6 +206,29 @@ fieldset {
   justify-content: space-between;
 }
 
+/* UI-020: los <h2>/<p> dentro del bloque de título heredaban los márgenes
+ * verticales por defecto del navegador (≈1.3rem en h2 y 1em en p), apilando
+ * un espacio en blanco grande arriba del contenido en `module-card`. La
+ * sección hija usa un column-stack con `gap` tokenizado para controlar el
+ * ritmo vertical, lo que hace que el header se sienta cohesionado con el
+ * topbar del shell (que ya muestra el nombre del módulo). Aplica a las 4
+ * vistas que usan `module-heading`: OperationsDesk, TenantSetupWizard,
+ * KnowledgeStorageSettings y AnalyticsPanel.
+ */
+.module-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.module-heading > div > .eyebrow,
+.module-heading > div > h2,
+.module-heading > div > h3,
+.module-heading > div > p {
+  margin: 0;
+}
+
 .wizard-selected-tenant {
   background: #f7f9fc;
   border: 1px solid var(--line);

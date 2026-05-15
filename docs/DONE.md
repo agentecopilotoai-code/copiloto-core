@@ -15,6 +15,36 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-020 — Operations Desk: whitespace excesivo en el top
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** eliminar el espacio en blanco grande que aparecía arriba del contenido en la vista `OperationsDesk` (entre el topbar del shell y el bloque "Inbox operativo · Inbox operativo para conversaciones y handoff humano").
+- **Culprit encontrado:** **`styles/global.css` — la regla `.module-heading`** no reseteaba los márgenes verticales por defecto del navegador en sus hijos. Dentro del wrapper `<div class="module-heading"><div><p class="eyebrow"/><h2/><p class="hint"/></div>…</div>` el `<h2>` heredaba el margin-top por defecto del user-agent (≈1.3rem para `h2`) y el `<p class="hint">` heredaba el margin-top por defecto de `<p>` (≈1em). Eso, sumado al `padding: 1.5rem` del `.module-card` que lo contiene y al `gap: var(--space-3)` del workspace del shell, apilaba 60-70 px de whitespace vertical encima del primer carácter visible. NO era el shell (`shell.module.css`), NO era `PageHeader.module.css` (esa vista no usa el primitive `<PageHeader>`), NO era StateScreen (`StateScreen.module.css` solo aplica a sus propias screens). El padding del `module-card` y el gap del workspace estaban bien tokenizados; el problema eran los márgenes implícitos del navegador en el contenido del header.
+- **Fix:**
+  - **`admin-panel/src/styles/global.css`** (`module-heading` ya existente, +20 LOC):
+    - Nueva regla `.module-heading > div { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }` — convierte el wrapper interno en un column-stack con `gap` tokenizado, eliminando la necesidad de los márgenes verticales del navegador para separar eyebrow/h2/hint.
+    - Nueva regla `.module-heading > div > .eyebrow, .module-heading > div > h2, .module-heading > div > h3, .module-heading > div > p { margin: 0; }` — reset explícito del margin-top/bottom heredado del user-agent stylesheet.
+    - El cambio es scoped al selector hijo directo `>` para no afectar otros bloques de la app que también usen `<h2>` o `<p>` en cards o paneles.
+- **Vistas impactadas (módulo-heading primitive, spot-check):**
+  - `OperationsDesk.jsx` (target original — Agente · Operación · Inbox).
+  - `TenantSetupWizard.jsx` (Owner-Admin · Config · Tenant Setup).
+  - `KnowledgeStorageSettings.jsx` (Owner-Admin · Knowledge Studio).
+  - `AnalyticsPanel.jsx` (Owner-Admin · Analytics).
+- **Tokens usados:** `var(--space-1)` (4 px) para el gap interno del column-stack. Sin valores raw (sin literales en `px` o `rem`); sin colores hex.
+- **Grep gate (PageHeader / OperationsDesk / shell):**
+  - `grep -rE "color: #|background: #[0-9a-f]" admin-panel/src/components/ui/PageHeader.module.css admin-panel/src/features/agente/inbox/OperationsDesk.module.css admin-panel/src/app/shells/shell.module.css` → 0 matches.
+- **Validaciones ejecutadas:**
+  - `npm run lint` ✓ (0 errors, 2 warnings pre-existentes en `useTenantSetupSidePanels.js`).
+  - `npm test` ✓ — 127 test files, 659 tests passed.
+  - `npm run test:a11y` ✓ — 6/6 suites a11y limpias (incluye `agente-operations-desk.a11y.test.jsx`).
+  - `npm run test:coverage` ✓ — corre las 659 pruebas bajo instrumentación Node 20, thresholds preservados.
+  - `npm run build` ✓ — vite 5.4.11, 466 módulos, dist/assets/index-\*.css 183.15 kB (+0.09 kB vs UI-019 por la regla nueva).
+- **Notas:**
+  - **No hay regresión visual** en las otras 3 vistas que comparten `module-heading`: el comportamiento "antes" era *implícito* (margin default del UA), y el "después" es *explícito* (column-stack con gap tokenizado), lo que estandariza el ritmo vertical sin reducir la legibilidad del header. Spot-check de los snapshots/tests de `TenantSetupWizard` (5 tests), `KnowledgeStudio` (9 tests) y `ViewerAnalytics` (4 tests) — todos verdes.
+  - **No se tocaron** `OperationsDesk.module.css` ni `PageHeader.module.css` (los archivos que la spec sugería como candidatos): se confirmó que ya estaban correctos y la causa raíz estaba en `global.css` (en el primitive compartido). El comentario inline en la regla deja rastro de UI-020 para futuros mantenedores.
+
+---
+
 ### UI-019 — Sidebar colapsable + scroll independiente + iconografía y tipografía del diseño
 
 - **Fecha:** 2026-05-15
