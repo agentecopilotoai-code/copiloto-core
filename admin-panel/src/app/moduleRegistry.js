@@ -34,6 +34,7 @@ import { TeamModule } from '../features/owner-admin/team/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 import { ViewerAnalytics } from '../features/viewer/analytics/index.js';
 import { ViewerAppointments } from '../features/viewer/appointments/index.js';
+import { ViewerConversations } from '../features/viewer/conversations/index.js';
 import { ViewerSummary } from '../features/viewer/summary/index.js';
 
 /**
@@ -104,4 +105,5 @@ export const MODULE_REGISTRY = Object.freeze({
   'viewer-summary': { Component: ViewerSummary, capability: 'analytics.tenant.read' },
   'viewer-analytics': { Component: ViewerAnalytics, capability: 'analytics.tenant.read' },
   'viewer-appointments': { Component: ViewerAppointments, capability: 'appointments.view' },
+  'viewer-conversations': { Component: ViewerConversations, capability: 'conversations.view' },
 });

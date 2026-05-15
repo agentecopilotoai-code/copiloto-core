@@ -39,8 +39,11 @@ describe('<ReadOnlyShell/>', () => {
       </ReadOnlyShell>,
     );
     // contacts.view sí permitido → botón; campaigns sin permiso no está en VIEWER_NAV.
+    // UI-010.4: el Viewer ahora ve `viewer-conversations` («Conversaciones»)
+    // en vez de `operations-desk` («Operations Desk») — la lista read-only que
+    // reusa `InboxList` con `showStartForm={false}`.
     expect(screen.getByRole('button', { name: 'Analítica' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Operations Desk' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Conversaciones' })).toBeInTheDocument();
     const contactos = screen.getByText('Contactos');
     expect(contactos.tagName).toBe('SPAN');
     expect(contactos).toHaveAttribute('aria-disabled', 'true');

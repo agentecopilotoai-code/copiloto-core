@@ -257,4 +257,11 @@ export const adminModules = [
     scope: ['Listado paginado de citas', 'Filtros por estado, rango de fechas y cliente', 'Exportar selección a CSV', 'Sin acciones de fila ni edición', 'Banner permanente "Modo solo lectura"'],
     capability: 'appointments.view',
   },
+  {
+    id: 'viewer-conversations',
+    label: 'Conversaciones',
+    summary: 'Vista del Viewer: lista read-only de conversaciones del tenant — reusa `InboxList` (UI-009.1) con `showStartForm={false}`. Sin composer, sin CTAs de handoff, sin formulario de iniciar conversación. UI-010.4.',
+    scope: ['Lista de conversaciones', 'Tabs «Todas» / «Quejas» (read-only)', 'Sin composer ni acciones de handoff', 'Sin formulario «Iniciar conversación»', 'Banner permanente "Modo solo lectura"'],
+    capability: 'conversations.view',
+  },
 ];

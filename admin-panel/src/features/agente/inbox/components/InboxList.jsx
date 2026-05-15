@@ -5,22 +5,30 @@ import styles from '../OperationsDesk.module.css';
 
 /**
  * InboxList — the conversation list with the `Todas` / `Quejas` filter tabs and
- * the "iniciar conversación" form. Reuses the shared `ConversationListItem`
- * domain component. Presentational: every list item, badge, the urgency-first
- * sort and the `data-urgent` / `data-complaint` attributes are ported verbatim
- * from the legacy `OperationsDesk`.
+ * (optionally) the "iniciar conversación" form. Reuses the shared
+ * `ConversationListItem` domain component. Presentational: every list item,
+ * badge, the urgency-first sort and the `data-urgent` / `data-complaint`
+ * attributes are ported verbatim from the legacy `OperationsDesk`.
  *
  * @param {object} props
  * @param {Array<object>} props.conversations
  * @param {Array<object>} props.complaints
  * @param {'all'|'complaints'} props.inboxFilter
  * @param {string|null} props.selectedConversationId
- * @param {object} props.startForm
- * @param {boolean} props.isBusy
+ * @param {object} [props.startForm] — required when `showStartForm` is true.
+ * @param {boolean} [props.isBusy]
+ * @param {boolean} [props.showStartForm=true] — render the "Iniciar conversación"
+ *   form at the top of the list. Default `true` preserves the legacy behavior
+ *   used by `OperationsDesk`. The Viewer read-only conversations view
+ *   (UI-010.4) passes `false` so the start-form (a write action) is omitted,
+ *   per the UI-010 criterio global («100% de las acciones write deben estar
+ *   ocultas»).
  * @param {(filter: string) => void} props.onFilterChange
  * @param {(id: string) => void} props.onSelectConversation
- * @param {(form: object) => void} props.onStartFormChange
- * @param {(event: Event) => void} props.onStartConversation
+ * @param {(form: object) => void} [props.onStartFormChange] — required when
+ *   `showStartForm` is true.
+ * @param {(event: Event) => void} [props.onStartConversation] — required when
+ *   `showStartForm` is true.
  */
 export function InboxList({
   conversations,
@@ -29,6 +37,7 @@ export function InboxList({
   selectedConversationId,
   startForm,
   isBusy,
+  showStartForm = true,
   onFilterChange,
   onSelectConversation,
   onStartFormChange,
@@ -36,6 +45,7 @@ export function InboxList({
 }) {
   return (
     <aside className={`conversation-list ${styles.inboxList}`} aria-label="Conversaciones">
+      {showStartForm ? (
       <form className={`start-conversation-panel ${styles.startForm}`} onSubmit={onStartConversation}>
         <div>
           <strong>Iniciar conversación</strong>
@@ -117,6 +127,7 @@ export function InboxList({
           Iniciar conversación
         </button>
       </form>
+      ) : null}
 
       <div
         role="tablist"

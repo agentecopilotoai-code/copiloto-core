@@ -64,11 +64,13 @@ export const PLATFORM_NAV = Object.freeze([
 // `viewer-analytics` (UI-010.2) es la versión read-only del panel de analítica
 // (wrapper fino sobre `AnalyticsPanel`). `viewer-appointments` (UI-010.3) es
 // el listado paginado read-only de citas (reusa `AppointmentCard`).
-// Owner/Admin/Manager/Agent siguen usando `analytics` / `appointments`
-// directamente vía `TENANT_NAV`.
+// `viewer-conversations` (UI-010.4) es la lista read-only de conversaciones
+// (reusa `InboxList` con `showStartForm={false}`, sin composer ni CTAs de
+// handoff). Owner/Admin/Manager/Agent siguen usando `operations-desk` /
+// `analytics` / `appointments` directamente vía `TENANT_NAV`.
 export const VIEWER_NAV = Object.freeze([
   {
     section: 'Lectura',
-    items: ['viewer-summary', 'viewer-analytics', 'viewer-appointments', 'operations-desk', 'contacts'],
+    items: ['viewer-summary', 'viewer-analytics', 'viewer-appointments', 'viewer-conversations', 'contacts'],
   },
 ]);
