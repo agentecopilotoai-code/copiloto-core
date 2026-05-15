@@ -53,8 +53,12 @@ describe('<ReadOnlyShell/>', () => {
     const sidebarNav = screen.getByRole('navigation', { name: 'Módulos de administración' });
     expect(within(sidebarNav).getByRole('button', { name: 'Analítica' })).toBeInTheDocument();
     expect(within(sidebarNav).getByRole('button', { name: 'Conversaciones' })).toBeInTheDocument();
-    const contactos = within(sidebarNav).getByText('Contactos');
-    expect(contactos.tagName).toBe('SPAN');
-    expect(contactos).toHaveAttribute('aria-disabled', 'true');
+    // UI-019: el item disabled ahora envuelve su texto en un <span> interno
+    // (label) dentro del span padre con aria-disabled. Subimos al ancestro
+    // con el atributo aria-disabled para la aserción.
+    const contactosLabel = within(sidebarNav).getByText('Contactos');
+    const disabledHost = contactosLabel.closest('[aria-disabled="true"]');
+    expect(disabledHost).not.toBeNull();
+    expect(disabledHost.tagName).toBe('SPAN');
   });
 });

@@ -1,193 +1,31 @@
 /*
  * Chrome compartido de los shells por rol (UI-002).
  * Todo color/espaciado/radio se consume de `tokens.css` — cero literales.
+ *
+ * UI-019:
+ *   - Las clases del sidebar (.sidebar, .brand*, .nav*, .userCard, etc.) se
+ *     movieron a `components/ShellSidebar.module.css` para que el sidebar sea
+ *     autocontenido y soporte estados (collapsed) sin acoplar al shell.
+ *   - Este módulo conserva: layout del shell, topbar, tenant-switcher (que
+ *     `TenantSwitcher.jsx` consume) y skip-link.
+ *   - El shell reacciona al estado `:root[data-sidebar-collapsed="true"]` que
+ *     `ShellSidebar` setea en `<html>` para que la columna del sidebar pase a
+ *     un rail compacto sin romper el grid del workspace.
  */
 
 .shell {
   display: grid;
-  grid-template-columns: 19rem 1fr;
+  grid-template-columns: var(--shell-sidebar-width, 19rem) 1fr;
   gap: var(--space-3);
   min-height: 100vh;
   padding: var(--space-3);
 }
 
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--r-xl);
-  box-shadow: var(--shadow-md);
-  padding: var(--space-4);
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.brandMark {
-  display: grid;
-  place-items: center;
-  width: 3rem;
-  height: 3rem;
-  border-radius: var(--r-lg);
-  background: var(--accent);
-  color: var(--panel);
-  font-weight: 900;
-}
-
-.brandText {
-  display: grid;
-  line-height: 1.2;
-}
-
-.brandText small {
-  color: var(--muted);
-}
-
-.nav {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  overflow-y: auto;
-}
-
-.navSectionTitle {
-  margin: 0 0 var(--space-2);
-  color: var(--muted-2);
-  font-size: var(--fs-caption);
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.navItem {
-  display: block;
-  width: 100%;
-  border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
-  color: var(--ink-2);
-  cursor: pointer;
-  font-weight: 700;
-  padding: var(--space-2) var(--space-3);
-  text-align: left;
-}
-
-.navItem:hover,
-.navItemActive {
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-}
-
-.navItem:focus-visible,
-.logoutButton:focus-visible,
-.tenantSwitcherTrigger:focus-visible,
-.tenantOption:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.navItemDisabled {
-  color: var(--muted-2);
-  cursor: not-allowed;
-}
-
-.navItemDisabled:hover {
-  background: transparent;
-  color: var(--muted-2);
-}
-
-.userCard {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: auto;
-  border-top: 1px solid var(--line);
-  padding-top: var(--space-3);
-}
-
-.userTrigger {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  flex: 1 1 auto;
-  background: transparent;
-  border: 0;
-  padding: var(--space-1);
-  border-radius: var(--r-md);
-  cursor: pointer;
-  color: inherit;
-  text-decoration: none;
-  font: inherit;
-  text-align: left;
-}
-
-.userTrigger:hover {
-  background: var(--accent-soft);
-}
-
-.userTrigger:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.userAvatar {
-  display: grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-  font-weight: 800;
-}
-
-.userAvatar img {
-  width: 100%;
-  height: 100%;
-  border-radius: 999px;
-  object-fit: cover;
-}
-
-.userMeta {
-  display: grid;
-  line-height: 1.2;
-  min-width: 0;
-}
-
-.userMeta strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.userMeta small {
-  color: var(--muted);
-  text-transform: capitalize;
-}
-
-.logoutForm {
-  margin-left: auto;
-}
-
-.logoutButton {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel-alt);
-  color: var(--ink-2);
-  cursor: pointer;
-  font-weight: 700;
-  padding: var(--space-1) var(--space-3);
-}
-
-.logoutButton:hover {
-  background: var(--accent-soft);
-  color: var(--accent-ink);
+/* UI-019: cuando el sidebar está colapsado, la columna se reduce a 64px
+   (rail). Variable atada al `<html>` para que el shell se entere sin tener
+   que cablear props a través de cada `*Shell.jsx`. */
+:global(:root[data-sidebar-collapsed='true']) .shell {
+  --shell-sidebar-width: 4rem;
 }
 
 .workspace {
@@ -290,6 +128,12 @@
 
 .tenantSwitcherTrigger:not(:disabled):hover {
   background: var(--accent-soft);
+}
+
+.tenantSwitcherTrigger:focus-visible,
+.tenantOption:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .tenantAvatar {
@@ -427,7 +271,6 @@ main:focus {
     padding-bottom: calc(var(--space-7) + var(--space-3));
     gap: var(--space-2);
   }
-  .sidebar { display: none; }
   .workspace { min-width: 0; }
   .topbar { padding: var(--space-2) var(--space-3); }
   .topbarTitle h1 { font-size: var(--fs-h3); }

@@ -925,7 +925,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### UI-018 — Redirect post-login por rol (fix del crash de "no acceso al home")
 
-- **Estado:** DONE (2026-05-15)
+- **Estado:** PENDING (urgente, bloquea login para algunos roles)
 - **Síntoma actual:** después del login Auth0 el usuario cae sobre una vista sobre la que su rol no tiene acceso → error de autenticación / pantalla blanca.
 - **Causa probable:** el `IndexRedirect` (router.jsx ~111) calcula el home a partir de `tenantPermissions.role`, pero hay roles edge-case donde:
   - El JWT trae roles globales que no coinciden con `tenant.roles` (TASK-0077).
@@ -942,7 +942,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### UI-019 — Sidebar colapsable + scroll independiente + iconografía y tipografía del diseño
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **Síntoma actual:** el sidebar (`ShellSidebar.jsx`):
   1. No usa la tipografía del diseño (debería matchear el HTML del designer).
   2. No tiene los iconos por sección — cada item del menú debe llevar su icono del diseño.

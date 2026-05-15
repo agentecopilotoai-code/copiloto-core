@@ -1,0 +1,380 @@
+/*
+ * UI-019 — Sidebar layout dedicated module.
+ *
+ * Estructura:
+ *   - `.sidebar` queda anclado con `position: sticky` + altura limitada por la
+ *     viewport, y se divide en 3 filas: header (top sticky) + nav (scroll
+ *     independiente) + footer (bottom sticky).
+ *   - `data-collapsed="true"` reduce el ancho a 64px (rail Grok-style) y
+ *     oculta texto + títulos de sección dejando solo iconos.
+ *
+ * Convivencia con `shell.module.css`:
+ *   - El layout del shell (`.shell` grid) sigue viviendo en `shell.module.css`.
+ *   - Las clases visuales del sidebar (`brand`, `nav`, `navItem`, `userCard`,
+ *     etc.) se importaron a este módulo para que el sidebar sea autocontenido.
+ *   - `shell.module.css` mantiene reglas que tenant-switcher / topbar / etc.
+ *     siguen usando.
+ */
+
+.sidebar {
+  position: sticky;
+  top: var(--space-3);
+  align-self: start;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--space-3);
+  max-height: calc(100vh - var(--space-3) * 2);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-4);
+  overflow: hidden;
+  transition: width var(--transition-base);
+  font-family: var(--font-sans);
+}
+
+.sidebarHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.sidebarBody {
+  /* El único bloque scrolleable. El header y el footer quedan anclados por
+     la grid 3-row. `min-height: 0` es necesario para que `overflow: auto`
+     funcione dentro de un grid-row `1fr`. */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.sidebarFooter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-3);
+  min-width: 0;
+}
+
+/* ── Brand ─────────────────────────────────────────────────────────────── */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.brandMark {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--r-lg);
+  background: var(--accent);
+  color: var(--panel);
+  font-family: var(--font-display);
+  font-weight: var(--fw-black);
+}
+
+.brandText {
+  display: grid;
+  line-height: var(--lh-tight);
+  min-width: 0;
+  font-family: var(--font-display);
+}
+
+.brandText strong {
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-body-lg);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.brandText small {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  letter-spacing: 0.04em;
+}
+
+/* ── Collapse toggle ───────────────────────────────────────────────────── */
+.collapseToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel-alt);
+  color: var(--ink-2);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition-fast);
+}
+
+.collapseToggle:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.collapseToggle:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ── Nav ───────────────────────────────────────────────────────────────── */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.navGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.navSectionHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  padding: 0 var(--space-1);
+  color: var(--muted-2);
+  font-family: var(--font-display);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-black);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: var(--lh-tight);
+}
+
+.navSectionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--muted);
+}
+
+.navSectionLabel {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  line-height: var(--lh-tight);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.navItemIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.125rem;
+  height: 1.125rem;
+  color: var(--muted);
+}
+
+.navItemLabel {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.navItem:hover,
+.navItemActive {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.navItem:hover .navItemIcon,
+.navItemActive .navItemIcon {
+  color: var(--accent-ink);
+}
+
+.navItem:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.navItemDisabled {
+  color: var(--muted-2);
+  cursor: not-allowed;
+}
+
+.navItemDisabled:hover {
+  background: transparent;
+  color: var(--muted-2);
+}
+
+/* ── User card ─────────────────────────────────────────────────────────── */
+.userTrigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1 1 auto;
+  background: transparent;
+  border: 0;
+  padding: var(--space-1);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  color: inherit;
+  text-decoration: none;
+  font: inherit;
+  text-align: left;
+}
+
+.userTrigger:hover {
+  background: var(--accent-soft);
+}
+
+.userTrigger:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.userAvatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-family: var(--font-display);
+  font-weight: var(--fw-black);
+  font-size: var(--fs-small);
+}
+
+.userAvatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.userMeta {
+  display: grid;
+  line-height: var(--lh-tight);
+  min-width: 0;
+  font-family: var(--font-sans);
+}
+
+.userMeta strong {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-bold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userMeta small {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  text-transform: capitalize;
+}
+
+.logoutForm {
+  margin-left: auto;
+}
+
+.logoutButton {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-alt);
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-bold);
+  padding: var(--space-1) var(--space-3);
+}
+
+.logoutButton:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.logoutButton:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ── Estado colapsado ─────────────────────────────────────────────────── */
+.sidebar[data-collapsed='true'] .brandText,
+.sidebar[data-collapsed='true'] .navSectionLabel,
+.sidebar[data-collapsed='true'] .navItemLabel,
+.sidebar[data-collapsed='true'] .userMeta,
+.sidebar[data-collapsed='true'] .logoutForm {
+  display: none;
+}
+
+.sidebar[data-collapsed='true'] .navSectionHeader {
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar[data-collapsed='true'] .navItem {
+  justify-content: center;
+  padding: var(--space-2);
+}
+
+.sidebar[data-collapsed='true'] .brand {
+  justify-content: center;
+}
+
+.sidebar[data-collapsed='true'] .sidebarHeader {
+  align-items: center;
+}
+
+.sidebar[data-collapsed='true'] .userTrigger {
+  justify-content: center;
+}
+
+.sidebar[data-collapsed='true'] .sidebarFooter {
+  justify-content: center;
+}
+
+/* Oculta tenant switcher / badges en colapsado: viven en slots adicionales
+   dentro del header pero su contenido (avatar + nombre) no encaja en 64px. */
+.sidebar[data-collapsed='true'] .extraSlot {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  /* En móvil el sidebar lo reemplaza ShellBottomNav (UI-016.8). */
+  .sidebar {
+    display: none;
+  }
+}

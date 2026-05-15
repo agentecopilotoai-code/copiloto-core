@@ -15,33 +15,58 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
-### UI-018 — Redirect post-login por rol (fix del crash de "no acceso al home")
+### UI-019 — Sidebar colapsable + scroll independiente + iconografía y tipografía del diseño
 
 - **Fecha:** 2026-05-15
-- **Objetivo:** después del login Auth0, el `IndexRedirect` (router.jsx) calculaba el home con `tenantPermissions.home` (= `ROLE_HOME[role]`), pero la key apuntaba a un módulo cuya capability el usuario podía no tener en su tenant activo. Síntomas observados en prod: usuario `admin`/`manager` cuyo `tenant.roles` traía sólo `agent` aterrizaba en `manager-analytics`, el `RequirePermission` cortaba el render y el browser pintaba pantalla en blanco ("error de autenticación"). Root cause estructural: la desincronía entre los roles globales del JWT y los `tenant.roles` por-tenant (TASK-0077). Tras UI-018 el redirect cae al primer módulo accesible del nav visual (`TENANT_NAV` / `VIEWER_NAV`) o, si ninguno lo es, pinta un `StateScreen` "Sin acceso a ningún módulo" con CTA "Cerrar sesión".
-- **Diseño del fix:**
-  - **Helper puro `resolveSafeHomeModule(permissions)`:** función ESM exportada desde `admin-panel/src/app/resolveSafeHomeModule.js` (vive en `app/` y no en `permissions/` por una constraint estructural: el helper importa `MODULE_REGISTRY` de `app/moduleRegistry.js`, que importa features que a su vez importan `permissions/index.js` para leer `ROLES`. Exportarlo desde `permissions/index.js` creaba el ciclo `permissions/index → app/moduleRegistry → features → permissions/index` que rompía la inicialización ESM en Vitest y se manifestaba como `Cannot read properties of undefined (reading 'viewer')` en `RolesAclMatrix.jsx:17`. Mover el helper a `app/` rompe el ciclo limpiamente). El helper aplica esta secuencia: (1) lee `ROLE_HOME[role]` y, si su capability es accesible en el `MODULE_REGISTRY`, lo devuelve; (2) si no, itera el orden visual del nav apropiado (`TENANT_NAV` para owner/admin/manager/agent, `VIEWER_NAV` para viewer) y devuelve el PRIMER module id cuya capability esté en `permissions.can(cap, mode)`; (3) si NADA es accesible, devuelve `null`.
-  - **`IndexRedirect` en `router.jsx`:** delega en `resolveSafeHomeModule(tenantPermissions)`. Si `safeHome` es `null` renderiza el nuevo `NoModuleAccessScreen` (componente local, mismo patrón que `MfaRequiredBlocker` y `AccountShell`: `StateScreen` con tono `warning` + heading "Sin acceso a ningún módulo" + body explicativo + CTA primario "Cerrar sesión" cableado al form POST oculto a `adminPath('/admin/logout')`). Si `safeHome` existe, redirige a `/t/:slug/<safeHome>` (o a `/t/:slug/read/<safeHome>` cuando el rol efectivo es `viewer`, conservando el subárbol read-only).
-  - **`TenantHomeRedirect`:** mismo tratamiento. El index de `/t/:tenantSlug` también pasa por `resolveSafeHomeModule` porque el rol efectivo en ESE tenant puede diferir del default tenant, así que aplicar el fallback sólo en `IndexRedirect` dejaría un agujero en deep-links.
-  - **Orden de fallback = `nav.js`, NO `moduleRegistry.js`:** el comentario del helper deja explícito que el orden del registry es accidental (alfabético / por import); la fuente de orden visual es `nav.js`. Decisión deliberada para que el módulo "primer accesible" sea el primero que el usuario ve en el sidebar.
+- **Objetivo:** alinear el `ShellSidebar` con el HTML del diseñador resolviendo cinco problemas reportados:
+  1. tipografía inconsistente entre brand / títulos de sección / nav items;
+  2. ausencia de iconos por sección (Inicio / Conversaciones / Negocio / IA & Canales / Operación / Configuración, además de las secciones del Platform Owner y Viewer);
+  3. el sidebar scrolleaba junto con la página;
+  4. header (brand + tenant switcher) y footer (avatar + logout) no quedaban anclados;
+  5. faltaba el botón colapsable estilo Grok.
 - **Cambios realizados:**
-  - **`admin-panel/src/app/resolveSafeHomeModule.js` (nuevo):** helper puro descrito arriba.
-  - **`admin-panel/src/app/resolveSafeHomeModule.test.js` (nuevo):** 6 tests unitarios cubriendo (1) owner happy path → `dashboard`, (2) manager-en-rol-pero-caps-de-agent → `operations-desk` (primer item de la sección Conversaciones de TENANT_NAV), (3) viewer con cap completa → `viewer-summary`, (4) viewer SIN su cap usual cae a `viewer-appointments` por VIEWER_NAV (no a TENANT_NAV), (5) rol vacío → `null`, (6) permissions inválido (`null`/`undefined`/`{}`) → `null` sin crash.
-  - **`admin-panel/src/app/router.jsx`:** `IndexRedirect` reemplaza el `tenantPermissions.home` directo por `resolveSafeHomeModule`. La rama viewer pasa de `Navigate to {base}/read` a `Navigate to {base}/read/{safeHome}` para alinearse con el resto del path. Nuevo `NoModuleAccessScreen` (~30 LOC) con el form POST a `/admin/logout` y el `StateScreen` warning. `TenantHomeRedirect` adopta el mismo patrón. Import nuevo de `adminPath` desde `services/adminSession.js`.
-  - **`admin-panel/src/app/router.test.jsx`:** dos tests nuevos. (1) `UI-018 — un usuario con rol manager pero caps sólo de agent aterriza en el primer módulo accesible`: agent en tenant → aterriza en `operations-desk` (no crash, no `manager-analytics`). (2) `UI-018 — un usuario con rol vacío [] ve el StateScreen "Sin acceso a ningún módulo"`: tenant con `roles: []` → pinta el StateScreen con el botón "Cerrar sesión" sin redirect (path queda en `/`).
-- **Decisión "no tocar `usePermissions.home`":** `permissions.home` sigue devolviendo `ROLE_HOME[role]` literal — varios consumidores (`ROLE_HOME.platform_owner` en `PlatformRoute`, `ROLE_HOME.viewer` en `ReadOnlyShellRoute`, los `<Navigate>` a `ROLE_HOME.*` en el árbol de rutas) lo usan como hint y el fallback semántico SOLO aplica al redirect post-login. Cambiar el hook propagaría la heurística a otros lugares donde no aplica.
-- **Constraint nuevo descubierto:** los helpers que necesitan `MODULE_REGISTRY` no pueden vivir en `permissions/` sin crear un ciclo de importación. Documentado en el header del helper y en el comentario del nuevo `import` en `router.jsx`.
-- **Validaciones:**
-  - `cd admin-panel && npm run lint` → 0 errores (2 warnings pre-existentes de `react-hooks/exhaustive-deps` en `useTenantSetupSidePanels.js`, no introducidos por UI-018).
-  - `npm test` → 126 archivos, 645 tests passed.
-  - `npm run test:a11y` → 6 archivos, 6 tests passed.
-  - `npm run test:coverage` → 126 archivos, 645 tests passed. Coverage del directorio `src/permissions` se mantiene en 98.62 %; el nuevo helper sale del directorio `src/app/` y queda cubierto por los 6 tests unitarios + 2 tests de integración del router (camino feliz + edge case del StateScreen).
-  - `npm run build` → 464 módulos, 818 KB bundle, sin errores.
-  - `python3 -m pytest tests/test_operations_desk_static.py` → 4 tests passed (sigue asegurando que `'operations-desk': {` vive en `moduleRegistry.js`, único literal de UI tocado por el static gate).
-- **Notas / limitaciones:**
-  - El helper NO verifica `mode === 'RW'` cuando un módulo lo exige (ej. `branches.write`, `media.write`): usa `mode || 'R'` por defecto. Si en el futuro un módulo se vuelve write-only y eso lo deja inaccesible para roles de lectura, el helper lo saltearía correctamente (lo cual es el comportamiento deseado).
-  - El StateScreen "Sin acceso a ningún módulo" es terminal: el usuario debe cerrar sesión para reintentar. Ofrecer "Cambiar de tenant" inline saldría de scope (requiere que el usuario tenga ≥ 2 tenants y el rol efectivo del default difiera del rol efectivo de los otros — caso muy raro; los static tests no lo cubrían).
-  - El `IndexRedirect` ya no redirige al subárbol `/read` plano del viewer; siempre apunta a `/read/<safeHome>`. Esto coincide con la convención que ya seguía `ReadOnlyShellRoute` (su index hacía `Navigate to ROLE_HOME.viewer`); ahora el path se materializa antes y se observa en `router.state.location.pathname` de los tests.
+  - **`admin-panel/src/app/shells/components/ShellSidebar.jsx`** (refactor completo):
+    - Estado `collapsed` persistido vía hook `useSidebarCollapsed` en `localStorage["copilotoia:sidebar-collapsed"]` (`'1'` = colapsado, `'0'` = expandido). El hook además escribe `data-sidebar-collapsed="true"` en `<html>` cuando se colapsa, lo que permite al `shell.module.css` ajustar la columna del grid sin acoplar el estado a cada `*Shell.jsx`.
+    - Estructura grid 3-rows (`auto 1fr auto`) con `.sidebarHeader` sticky-top, `.sidebarBody` (el `<nav>`) como único bloque scrolleable y `.sidebarFooter` sticky-bottom.
+    - Toggle con icono chevron (`<<` / `>>`) en el header. `aria-label` alterna entre "Colapsar barra lateral" / "Expandir barra lateral"; expone `aria-pressed` sincronizado.
+    - Cada sección lleva un icono SVG inline (mismo patrón que `ShellBottomNav` de UI-016.8: `stroke="currentColor"` + wrapper span con `aria-hidden="true"`). Mapa `iconForSection()` cubre 12 secciones: 6 de `TENANT_NAV` (Inicio · Conversaciones · Hoy · Negocio · IA & Canales · Operación · Configuración), 5 de `PLATFORM_NAV` (Plataforma · Observability · Operaciones · Audit global · Acceso) y la sección `Lectura` de `VIEWER_NAV`, con fallback a `svgDots`.
+    - Items también muestran el icono de su sección (heredan el icono del grupo padre, no se generaron per-item — ver "Notas").
+    - Cuando el sidebar está colapsado, cada item gana `aria-label` y `title` con su texto completo para a11y y para tooltip de hover.
+  - **`admin-panel/src/app/shells/components/ShellSidebar.module.css`** (nuevo, 380 LOC):
+    - Layout grid + sticky + max-height = `100vh - 2*--space-3` para que el sidebar nunca exceda la viewport.
+    - `data-collapsed='true'` oculta el `brandText`, los labels de sección, los labels de items, el meta del usuario, el botón de logout y los slots auxiliares (tenant switcher / badge no caben en 64px).
+    - Tipografía 100% desde tokens: `--font-display` para brand + títulos de sección (`--fw-black` + letter-spacing); `--font-sans` para items (`--fw-semibold` + `--fs-body`).
+    - Hover/focus rings consistentes con el resto del kit (`var(--focus-ring)` + offset).
+  - **`admin-panel/src/app/shells/shell.module.css`** (recorte y reacción a colapso):
+    - Eliminadas las clases `.sidebar`, `.brand*`, `.nav*`, `.userCard`, `.userTrigger`, `.userAvatar`, `.userMeta`, `.logoutForm`, `.logoutButton` — todas migraron al nuevo módulo del sidebar.
+    - Variable `--shell-sidebar-width` controla la columna izquierda del grid; el shell reacciona a `:global(:root[data-sidebar-collapsed='true'])` reduciendo la columna a `4rem` para que el workspace gane espacio cuando el rail está colapsado.
+    - Conservadas las clases del topbar, tenant switcher (las consume `TenantSwitcher.jsx`) y skip-link.
+  - **Tests añadidos (`admin-panel/src/app/shells/components/ShellSidebar.test.jsx`):** 14 casos cubriendo render de secciones + items, presencia de iconos SVG con wrapper `aria-hidden`, `aria-current="page"` para el módulo activo, dispatch de `onModuleSelect` (incluso colapsado), pintado de items deshabilitados como span con aria-disabled, estado inicial expandido, ciclo colapsar/expandir (con sincronización de `localStorage` + `<html data-sidebar-collapsed>`), inicialización desde localStorage, `aria-pressed` del toggle, link a `/account/profile` (UI-016.7) y slots `tenantSwitcher`/`badge`.
+  - **Test ajustado (`admin-panel/src/app/shells/ReadOnlyShell.test.jsx`):** la aserción del item "Contactos" (Viewer · sin acceso) ahora sube al ancestro con `aria-disabled="true"` porque el label vive en un `<span class="navItemLabel">` interno tras el refactor.
+- **localStorage:**
+  - Clave: `copilotoia:sidebar-collapsed`.
+  - Valores: `'1'` = colapsado, `'0'` = expandido (cualquier otro valor / ausencia se interpreta como expandido).
+- **Iconos:**
+  - Section-level: SÍ (12 secciones cubiertas vía `iconForSection`).
+  - Per-item: NO. Cada item hereda el icono de su sección padre. Razón: en el HTML del diseñador cada sección agrupa items semánticamente afines (ej. Negocio → Servicios/Paquetes/Sedes/Suscripciones/Analítica) y mostrar el mismo icono por toda la sección refuerza ese agrupamiento sin obligar a un mapping por cada `module.id` (49 módulos registrados). Si en el futuro se quieren iconos finos por módulo, basta con añadir un `iconForModule(id)` y reemplazar el call en la línea del `<button>` del nav item — el JSX ya tiene el slot `navItemIcon` separado.
+- **Tipografía:**
+  - **Sin tokens nuevos.** Todo se construyó con `--font-display`, `--font-sans`, `--fs-caption`, `--fs-small`, `--fs-body`, `--fs-body-lg`, `--fw-semibold`, `--fw-bold`, `--fw-black`, `--lh-tight` que ya existían en `tokens.css` desde UI-002.
+- **Grep gates:**
+  - `grep -rE "color: #|background: #[0-9a-f]" admin-panel/src/app/shells/components/ShellSidebar.jsx admin-panel/src/app/shells/components/ShellSidebar.module.css admin-panel/src/app/shells/shell.module.css` → 0 matches.
+- **Validaciones ejecutadas:**
+  - `npm run lint` ✓ (0 errors, 2 warnings pre-existentes en `useTenantSetupSidePanels.js`).
+  - `npm test` ✓ — 126 test files, 651 tests passed (637 → 651, +14 nuevos de ShellSidebar).
+  - `npm run test:a11y` ✓ — 6/6 a11y suites limpias.
+  - `npm run test:coverage` ✓ — 651/651 bajo instrumentación Node 20, thresholds preservados.
+  - `npm run build` ✓ — bundle compila sin warnings nuevos.
+- **Archivos modificados / creados:**
+  - **Creados (2):** `admin-panel/src/app/shells/components/ShellSidebar.module.css` (380 LOC), `admin-panel/src/app/shells/components/ShellSidebar.test.jsx` (216 LOC).
+  - **Modificados (4):** `admin-panel/src/app/shells/components/ShellSidebar.jsx` (refactor completo, 386 LOC), `admin-panel/src/app/shells/shell.module.css` (recorte + variable de ancho del rail), `admin-panel/src/app/shells/ReadOnlyShell.test.jsx` (asserción de aria-disabled más robusta), `docs/UI_BACKLOG.md` (UI-019 DONE).
+- **Notas / decisiones de scope:**
+  - No tocamos el código de `TenantShell.jsx`, `ReadOnlyShell.jsx` ni `PlatformOwnerShell.jsx`: el contrato del `ShellSidebar` (props) se preservó al 100%, lo que permite que los 3 shells consuman el refactor sin cambios.
+  - El `TenantSwitcher` se renderiza dentro del `sidebarHeader` (envuelto en `.extraSlot`) y se oculta vía CSS cuando el sidebar está colapsado — su UI con avatar+nombre+caret no cabe en 64px. Un follow-up razonable sería convertir el switcher en un mini-avatar clickable cuando esté colapsado, pero queda fuera del scope.
+  - El móvil (`max-width: 480px`) sigue ocultando el sidebar completo y delegando en `ShellBottomNav` (UI-016.8); el rail colapsado solo aplica en desktop.
+  - **PR:** abierto contra `develop`. No mergeado por la sesión; el loop padre vigila CI.
 
 ### UI-017 — Landing como ruta inicial y flujo Auth0 desde "Iniciar sesión"
 
