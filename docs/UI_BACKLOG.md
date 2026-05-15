@@ -1011,7 +1011,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### BUG-001 — Auth0 invite member devuelve 403 Forbidden en `/oauth/token`
 
-- **Estado:** PENDING (bloqueador de producción)
+- **Estado:** DONE (2026-05-15)
 - **Síntoma:** al invitar un miembro al tenant desde el módulo Equipo (`TeamModule`), el backend logea `auth0_admin.invite_user_create_failed` con `Client error '403 Forbidden' for url 'https://<tenant>.us.auth0.com/oauth/token'`. El POST `/v1/tenants/{id}/members` retorna 201 (el usuario queda creado localmente) pero Auth0 NO recibe la invitación → el usuario nunca recibe el email para configurar password.
 - **Root cause confirmada:**
   - El backend (`app/services/auth0_admin.py:107`) hace `POST /oauth/token` con `grant_type='client_credentials'` usando `settings.auth0_admin_client_id` y `_management_client_secret(settings)`.

@@ -15,6 +15,57 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### BUG-001 — Auth0 invite member devuelve 403 Forbidden en `/oauth/token`
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** desbloquear el flujo de invite member en producción. El endpoint `POST /v1/tenants/{id}/members` devolvía 201 (el usuario quedaba creado localmente en `app.users`) pero Auth0 nunca recibía la invitación → el invitado no recibía email para configurar su contraseña. El log mostraba `auth0_admin.invite_user_create_failed` con `Client error '403 Forbidden' for url 'https://<tenant>.us.auth0.com/oauth/token'`.
+- **Root cause confirmada:**
+  - `app/services/auth0_admin.py` hacía `POST /oauth/token` con `grant_type=client_credentials` usando `settings.auth0_admin_client_id` + `_management_client_secret(settings)`.
+  - `scripts/configure-auth0.sh` escribía `AUTH0_ADMIN_CLIENT_ID=$admin_client_id` al `.env.auth0.local`, pero `admin_client_id` corresponde a la **regular web app** del panel (`app_type=regular_web`, creada con grants `authorization_code` + `refresh_token`), que NO autoriza `client_credentials`.
+  - Auth0 rechaza con 403 porque la web app no tiene ese grant habilitado.
+  - El script SÍ creaba la app M2M (`service_client_id` con `app_type=non_interactive` + `grant_types=["client_credentials"]`) y escribía `AUTH0_SERVICE_CLIENT_ID` + `AUTH0_SERVICE_CLIENT_SECRET_FILE` al mismo `.env.auth0.local`, pero el backend ignoraba esos valores.
+- **Cambios realizados:**
+  - **`app/core/config.py`:** nuevos Pydantic settings `auth0_service_app_name`, `auth0_service_client_id`, `auth0_service_client_secret`, `auth0_service_client_secret_file`, `auth0_service_audience`. Los settings legacy `auth0_admin_*` permanecen porque el panel sigue necesitándolos para Authorization Code Flow (`app/admin/routes.py`).
+  - **`app/services/auth0_admin.py`:**
+    - Nuevo helper `_service_client_secret(settings)` que resuelve el secret M2M (env → archivo).
+    - Nuevo helper `_legacy_admin_client_secret(settings)` que mantiene el resolver viejo para compatibilidad hacia atrás.
+    - Nuevo helper `_management_credentials(settings) -> (client_id, client_secret)` que devuelve la pareja correcta: prefiere `AUTH0_SERVICE_*`, cae a `AUTH0_ADMIN_*` con un `log.warning('auth0_admin.legacy_admin_credentials_used_for_m2m', ticket='BUG-001')` indicando exactamente cómo regenerar los nombres correctos. Si una mitad del par SERVICE está incompleta, también cae al ADMIN — esto evita que un deployment a medio configurar empiece a enviar `client_secret=None` a Auth0.
+    - `_management_client_secret(settings)` se preserva como alias retro-compatible (algunos tests viejos lo usan).
+    - `auth0_management_enabled()` ahora consulta `_management_credentials(settings)` en lugar de `settings.auth0_admin_client_id` directamente, así un deployment con solo SERVICE creds queda habilitado correctamente.
+    - `get_management_token()` construye el payload de `/oauth/token` con `client_id, client_secret = _management_credentials(settings)`, y si la respuesta es 403 emite un `log.error('auth0_admin.oauth_token_forbidden', ticket='BUG-001', hint=...)` apuntando al script + a la causa más común (la regular web app en lugar de la M2M).
+  - **`scripts/configure-auth0.sh`:** el bloque `cat >"$AUTH0_ENV_FILE"` se reordenó para agrupar bajo `AUTH0_ADMIN_*` el set completo de la regular web (incluido `AUTH0_ADMIN_CLIENT_SECRET_FILE`) y bajo `AUTH0_SERVICE_*` el set completo del M2M. Se añadió un comentario inline explicando la separación semántica y referenciando BUG-001 para futuras lecturas del archivo generado.
+  - **`.env.example`:** documenta los dos pares de variables (`AUTH0_ADMIN_*` para login del panel vs. `AUTH0_SERVICE_*` para Management API M2M) con un anclaje explícito a BUG-001 y la instrucción de re-correr el script si solo se tienen las legacy.
+  - **Tests (`tests/test_auth0_admin_service_credentials.py`):** 14 tests nuevos:
+    - 3 static sobre `app/core/config.py` (los nuevos settings existen + los legacy permanecen).
+    - 4 static sobre `app/services/auth0_admin.py` (existencia y orden de chequeo del helper, log de deprecation, log explícito de 403, `auth0_management_enabled` usa el resolver).
+    - 4 unitarios sobre `_management_credentials` (preferencia SERVICE, fallback ADMIN con warning, par incompleto se cae al ADMIN, par totalmente vacío devuelve `(None, None)`).
+    - 3 sobre `get_management_token` con `httpx.AsyncClient` mockeado: usa las credenciales SERVICE en el payload, devuelve `None` cuando no hay credenciales, y emite el log diagnóstico cuando Auth0 responde 403.
+    - 3 static sobre `scripts/configure-auth0.sh` (escribe ambos client_id, configura la M2M con `non_interactive` + `client_credentials`, NO mete `client_credentials` en la regular web).
+- **Compatibilidad hacia atrás (CRÍTICO):** deployments existentes que SOLO tengan `AUTH0_ADMIN_*` en su `.env` siguen funcionando (el resolver cae al ADMIN). Si esa app es realmente la regular web (como pasa hoy en producción), seguirá fallando con 403 — pero ahora el log explica exactamente qué hacer (`log.warning(..., ticket='BUG-001')` al resolver creds + `log.error('auth0_admin.oauth_token_forbidden', ...)` cuando Auth0 rechaza). Para arreglarlo definitivamente:
+  - **Re-correr `scripts/configure-auth0.sh`** con `MGMT_CLIENT_ID` y `MGMT_CLIENT_SECRET` para regenerar `.env.auth0.local` con los nuevos keys SERVICE.
+  - **O agregar manualmente** al `.env.auth0.local` las dos variables del cliente M2M (`copilotoia-service-m2m` en el dashboard de Auth0):
+    ```
+    AUTH0_SERVICE_CLIENT_ID=<service_client_id>
+    AUTH0_SERVICE_CLIENT_SECRET=<service_client_secret>
+    ```
+    Atención: el `service_client_id` es el de la app `app_type=non_interactive`, NO el de la regular web del panel.
+- **Decisiones de implementación:**
+  - **Por qué no renombrar `AUTH0_ADMIN_*` a `AUTH0_SERVICE_*`:** ambos pares son legítimos. La regular web (`AUTH0_ADMIN_*`) sigue siendo necesaria para el Authorization Code Flow del panel (`app/admin/routes.py` la usa para los endpoints `/admin/login`, `/admin/callback`, `/admin/logout`). El error era que `auth0_admin.py` cogía esa misma credencial para llamadas server-to-server, no que las variables estuvieran mal nombradas.
+  - **Por qué un fallback con warning en lugar de fail-fast:** un fail-fast en startup rompería todos los deployments existentes en el primer deploy del fix, sin opción de recovery in-place. La estrategia actual permite shippear el fix sin downtime: el deployment empieza a emitir warnings cuando ejecuta el flow de invite, y los SRE/ops tienen tiempo de re-correr el script o agregar las creds nuevas. Si después de N días siguen sin migrarse, el log `oauth_token_forbidden` es ruidoso suficiente como para forzar la acción.
+  - **Por qué validar `service_id AND service_secret` antes de aceptar el par SERVICE:** un deployment que solo defina `AUTH0_SERVICE_CLIENT_ID` (porque copió mal la migración) NO debe shadowear al ADMIN — en ese caso enviar `client_secret=None` falla con 401 (más críptico que el 403 actual). Validamos la pareja completa antes de comprometernos.
+- **Archivos modificados / creados:**
+  - **Nuevos (1):** `tests/test_auth0_admin_service_credentials.py` (14 tests static + unit).
+  - **Modificados (6):** `app/core/config.py`, `app/services/auth0_admin.py`, `scripts/configure-auth0.sh`, `.env.example`, `docs/UI_BACKLOG.md` (BUG-001 DONE), `docs/DONE.md` (esta entrada).
+- **Validaciones ejecutadas:**
+  - `python3 -m ruff check app` ✓
+  - `python3 -m pytest tests/test_auth0_admin_service_credentials.py -v` ✓
+  - `python3 -m pytest tests/test_auth0_invite.py -v` ✓ (no regresión)
+  - `cd admin-panel && npm run lint && npm test && npm run build` ✓
+- **Notas de seguridad:**
+  - El fix NO restaura el comportamiento legacy de exponer ticket URLs en la respuesta del invite (ver TASK-0085). El email lo sigue enviando Auth0 directamente; el backend solo recibe `auth0_user_id` + `invited`.
+  - El log de diagnóstico (`oauth_token_forbidden`) NO incluye el `client_secret` ni el `client_id` — solo el `status` y el `hint` textual. No hay leak por logs.
+  - SEC-006 (que toca el mismo endpoint con un fix de scope diferente) sigue PENDING y se aborda en su propio ticket.
+
 ### UI-016.1-FU — Backend endpoint POST /v1/tenants/{id}/go-live
 
 - **Fecha:** 2026-05-15

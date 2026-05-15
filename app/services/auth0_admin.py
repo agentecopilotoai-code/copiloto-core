@@ -45,7 +45,17 @@ def _read_secret_file(path: str) -> str | None:
     return None
 
 
-def _management_client_secret(settings) -> str | None:
+def _service_client_secret(settings) -> str | None:
+    """M2M client secret (env first, then file). ``None`` if unconfigured."""
+    if settings.auth0_service_client_secret:
+        return settings.auth0_service_client_secret
+    if settings.auth0_service_client_secret_file:
+        return _read_secret_file(settings.auth0_service_client_secret_file)
+    return None
+
+
+def _legacy_admin_client_secret(settings) -> str | None:
+    """Pre-BUG-001 fallback: legacy ``AUTH0_ADMIN_CLIENT_SECRET[_FILE]``."""
     if settings.auth0_admin_client_secret:
         return settings.auth0_admin_client_secret
     if settings.auth0_admin_client_secret_file:
@@ -53,13 +63,45 @@ def _management_client_secret(settings) -> str | None:
     return None
 
 
+def _management_credentials(settings) -> tuple[str | None, str | None]:
+    """BUG-001: ``(client_id, client_secret)`` for ``client_credentials``.
+
+    Prefers ``AUTH0_SERVICE_*`` (M2M, ``app_type=non_interactive``).
+    Falls back to legacy ``AUTH0_ADMIN_*`` (regular_web) with a deprecation
+    warning. Returns ``(None, None)`` if neither pair is configured.
+    """
+    service_id = settings.auth0_service_client_id
+    service_secret = _service_client_secret(settings)
+    if service_id and service_secret:
+        return service_id, service_secret
+
+    admin_id = settings.auth0_admin_client_id
+    admin_secret = _legacy_admin_client_secret(settings)
+    if admin_id and admin_secret:
+        log.warning(
+            'auth0_admin.legacy_admin_credentials_used_for_m2m',
+            hint=(
+                'AUTH0_ADMIN_* normalmente NO autoriza grant_type=client_credentials. '
+                'Re-corre scripts/configure-auth0.sh para regenerar AUTH0_SERVICE_* '
+                '(app M2M non_interactive) o el flow devolverá 403 en /oauth/token.'
+            ),
+            ticket='BUG-001',
+        )
+        return admin_id, admin_secret
+
+    return None, None
+
+
+def _management_client_secret(settings) -> str | None:
+    """Backward-compatible accessor for older callers/tests."""
+    _, secret = _management_credentials(settings)
+    return secret
+
+
 def auth0_management_enabled() -> bool:
     settings = get_settings()
-    return bool(
-        settings.auth0_domain
-        and settings.auth0_admin_client_id
-        and _management_client_secret(settings)
-    )
+    client_id, secret = _management_credentials(settings)
+    return bool(settings.auth0_domain and client_id and secret)
 
 
 def _management_audience(settings) -> str:
@@ -102,14 +144,28 @@ async def get_management_token() -> str | None:
 
         domain = settings.auth0_domain.removeprefix('https://').rstrip('/')
         url = f'https://{domain}/oauth/token'
+        client_id, client_secret = _management_credentials(settings)
         payload = {
             'grant_type': 'client_credentials',
-            'client_id': settings.auth0_admin_client_id,
-            'client_secret': _management_client_secret(settings),
+            'client_id': client_id,
+            'client_secret': client_secret,
             'audience': _management_audience(settings),
         }
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(url, json=payload)
+            if response.status_code == 403:
+                # BUG-001: surface a diagnostic without leaking the secret.
+                log.error(
+                    'auth0_admin.oauth_token_forbidden',
+                    status=response.status_code,
+                    ticket='BUG-001',
+                    hint=(
+                        'Auth0 rechazó client_credentials. Verifica que '
+                        'AUTH0_SERVICE_CLIENT_ID apunta a la app M2M '
+                        '(app_type=non_interactive). Re-corre '
+                        'scripts/configure-auth0.sh si es necesario.'
+                    ),
+                )
             response.raise_for_status()
             data = response.json()
 

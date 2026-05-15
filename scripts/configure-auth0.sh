@@ -502,16 +502,21 @@ AUTH0_ISSUER=https://$AUTH0_DOMAIN/
 AUTH0_AUDIENCE=$AUTH0_API_IDENTIFIER
 AUTH0_API_IDENTIFIER=$AUTH0_API_IDENTIFIER
 AUTH0_CLAIMS_NAMESPACE=$CLAIMS_NAMESPACE
+# AUTH0_ADMIN_* corresponde a la regular web app del panel
+# (authorization_code + refresh_token). El backend la usa SOLO para el
+# login del Admin Panel; las llamadas a Management API (invitar miembros,
+# asignar roles, revocar acceso) usan AUTH0_SERVICE_* (app M2M
+# non_interactive con grant_type=client_credentials). Ver BUG-001.
 AUTH0_ADMIN_APP_NAME=$AUTH0_ADMIN_APP_NAME
 AUTH0_ADMIN_CLIENT_ID=$admin_client_id
+AUTH0_ADMIN_CLIENT_SECRET_FILE=$AUTH0_SECRETS_DIR/auth0-admin-client-secret
 AUTH0_SERVICE_APP_NAME=$AUTH0_SERVICE_APP_NAME
 AUTH0_SERVICE_CLIENT_ID=$service_client_id
+AUTH0_SERVICE_CLIENT_SECRET_FILE=$AUTH0_SECRETS_DIR/auth0-service-client-secret
 AUTH0_SERVICE_AUDIENCE=$AUTH0_API_IDENTIFIER
 AUTH0_CALLBACK_URLS=$(json_string_array_to_csv "$CALLBACKS_JSON")
 AUTH0_LOGOUT_URLS=$(json_string_array_to_csv "$LOGOUTS_JSON")
 AUTH0_WEB_ORIGINS=$(json_string_array_to_csv "$ORIGINS_JSON")
-AUTH0_ADMIN_CLIENT_SECRET_FILE=$AUTH0_SECRETS_DIR/auth0-admin-client-secret
-AUTH0_SERVICE_CLIENT_SECRET_FILE=$AUTH0_SECRETS_DIR/auth0-service-client-secret
 EOF_AUTH0_ENV
   chmod 600 "$AUTH0_ENV_FILE" 2>/dev/null || true
   write_secret_file "$AUTH0_SECRETS_DIR/auth0-admin-client-secret" "$admin_client_secret"

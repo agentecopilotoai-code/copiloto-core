@@ -29,6 +29,17 @@ class Settings(BaseSettings):
     auth0_admin_client_id: str | None = None
     auth0_admin_client_secret: str | None = None
     auth0_admin_client_secret_file: str | None = None
+    # BUG-001: las credenciales SERVICE (M2M, `app_type=non_interactive`) son
+    # las que autorizan `grant_type=client_credentials` contra Auth0 Management
+    # API. El panel sigue usando AUTH0_ADMIN_* (regular_web, authorization_code
+    # + refresh_token); el backend usa AUTH0_SERVICE_* para invitar miembros,
+    # asignar roles y revocar acceso. configure-auth0.sh las escribe en
+    # `.env.auth0.local` desde la app M2M `copilotoia-service-m2m`.
+    auth0_service_app_name: str | None = None
+    auth0_service_client_id: str | None = None
+    auth0_service_client_secret: str | None = None
+    auth0_service_client_secret_file: str | None = None
+    auth0_service_audience: str | None = None
     auth0_callback_urls: str = 'http://localhost:3000/callback'
     auth0_logout_urls: str = 'http://localhost:3000'
     auth0_web_origins: str = 'http://localhost:3000'
