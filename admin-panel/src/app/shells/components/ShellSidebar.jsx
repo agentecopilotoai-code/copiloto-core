@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+
 import { adminPath } from '../../../services/adminSession.js';
 import styles from '../shell.module.css';
 
@@ -8,18 +10,30 @@ function userInitials(profile) {
   return initials.toUpperCase();
 }
 
+/**
+ * Tarjeta de usuario del sidebar. El avatar + nombre son un `<Link>` a
+ * `/account/profile` (UI-016.7) — el HTML T3 deja claro que "estas pantallas
+ * viven detrás del avatar del sidebar". El botón "Salir" sigue siendo el
+ * submit del form POST a `/admin/logout` que Auth0 espera.
+ */
 function UserCard({ profile }) {
   const displayName = profile?.name || profile?.email || profile?.sub || 'Usuario';
   const role = profile?.roles?.length ? profile.roles[0] : 'sin rol';
   return (
     <div className={styles.userCard}>
-      <span className={styles.userAvatar} aria-hidden="true">
-        {profile?.picture ? <img alt="" src={profile.picture} /> : userInitials(profile)}
-      </span>
-      <span className={styles.userMeta}>
-        <strong>{displayName}</strong>
-        <small>{role}</small>
-      </span>
+      <Link
+        to="/account/profile"
+        className={styles.userTrigger}
+        aria-label={`Abrir mi cuenta (${displayName})`}
+      >
+        <span className={styles.userAvatar} aria-hidden="true">
+          {profile?.picture ? <img alt="" src={profile.picture} /> : userInitials(profile)}
+        </span>
+        <span className={styles.userMeta}>
+          <strong>{displayName}</strong>
+          <small>{role}</small>
+        </span>
+      </Link>
       <form className={styles.logoutForm} method="post" action={adminPath('/admin/logout')}>
         <button className={styles.logoutButton} type="submit">
           Salir

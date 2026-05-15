@@ -15,6 +15,47 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-016.7 — Cuenta del usuario (perfil / apariencia / notificaciones / sesiones)
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** entregar la pantalla transversal `T3 _ Cuenta del usuario.html`. El HTML define 4 secciones detrás del avatar del sidebar: Perfil (nombre, email read-only de Auth0, teléfono, idioma, timezone), Apariencia (override del tema con radio cards auto/claro/oscuro), Notificaciones (matriz 6 eventos × 3 canales) y Sesiones activas (read-only / revocar). Antes de UI-016.7 el avatar del sidebar solo tenía un botón "Salir" — no había forma de llegar a las preferencias del usuario desde el panel.
+- **Reconocimiento:** se inspeccionó `coreApi.js` y los endpoints del backend buscando `/me/profile`, `/me/preferences`, `/me/notifications`, `/me/sessions`. **Ninguno existe.** El backend tiene endpoints tenant-scoped (`tenant_settings`, `notification_settings`) pero no user-scoped. Auth0 gestiona el identity layer (name / email / phone). Decisión: scope frontend-only, declarando `UI-016.7-FU` como follow-up backend (mismo patrón que `UI-016.1-FU` con "Marcar live").
+- **Cambios realizados:**
+  - **Nueva feature dir `admin-panel/src/features/account/`** (14 archivos, ningún archivo > 323 LOC):
+    - `accountData.js` (182 LOC): catálogos puros (5 locales, 7 timezones, 3 canales, 6 eventos del HTML, 3 opciones de tema, 3 sesiones demo) + helpers (`deriveProfileForm`, `initialNotificationMatrix`, `toggleNotificationChannel`, `profileInitials`, `profileDisplayName`, `profileRoleLabel`). Cero React; tests con `vitest` sin render.
+    - `AccountShell.jsx` (86 LOC) + `AccountShell.module.css` (172 LOC): layout transversal `/account/*`. Header con brand "CopilotoIA · Cuenta del usuario" y back button. Aside con nav (`Perfil / Apariencia / Notificaciones / Sesiones`) más bloque "Cerrar sesión" (form POST a `/admin/logout`). Outlet del child.
+    - `AccountProfile.jsx` (149 LOC): hero con avatar + nombre + role badge derivados del `useAuth().session.profile`. Form con `FormField` (nombre, email read-only con hint "Lo gestiona Auth0 · cambia desde tu identity provider", teléfono, idioma `<select>`, timezone `<select>`). Submit pinta `AlertBanner tone="warning"` apuntando a `UI-016.7-FU`.
+    - `AccountPreferences.jsx` (98 LOC): 3 radio cards (Auto / Claro / Oscuro) con descripción del HTML ("Sigue al SO" / "Off-white" / "Ink + bone"). Comparte estado con `<ThemeToggle/>` del topbar (UI-012) vía la constante exportada `THEME_STORAGE_KEY = 'copilotoia:theme'`. Lee localStorage al montar, aplica `<html data-theme="...">` y persiste cada cambio.
+    - `AccountNotifications.jsx` (106 LOC): matriz 6×3 con `role="table"` + `role="row"`. Cada fila tiene título + descripción del HTML y un grupo de 3 checkboxes (email / WhatsApp / en la app). Submit dispara el mismo `AlertBanner UI-016.7-FU`.
+    - `AccountSessions.jsx` (90 LOC): lista demo de 3 sesiones (la primera marcada `current`, con chip "esta sesión"; botón "Revocar" deshabilitado en la sesión actual). CTA al final "Cerrar todas las demás sesiones". Ambas acciones disparan `AlertBanner UI-016.7-FU`.
+    - `Account.module.css` (323 LOC): estilos compartidos por las 4 sub-páginas (profile hero, form, theme cards, matrix, sessions). Todos los colores vía `var(--...)`.
+    - `index.js`: barrel con `AccountShell / AccountProfile / AccountPreferences / AccountNotifications / AccountSessions`.
+    - **Tests (6 archivos):** `accountData.test.js` (12 tests sobre catálogos, derivación, matriz); `AccountShell.test.jsx` (4 tests sobre nav + Outlet + logout form); `AccountProfile.test.jsx` (5 tests sobre hero, read-only email, AlertBanner FU, edición, fallback sin profile); `AccountPreferences.test.jsx` (5 tests sobre 3 radios, default Auto, lectura de localStorage compartido, persistencia + `data-theme`, reset a Auto); `AccountNotifications.test.jsx` (4 tests sobre 6 filas, 3 checkboxes/fila, toggle, banner FU); `AccountSessions.test.jsx` (5 tests sobre listado, chip esta sesión, revoke deshabilitado en current, banner FU).
+  - **`admin-panel/src/app/router.jsx`**: nuevo `AccountRoute` (redirige a `/` si no hay sesión) que envuelve `<AccountShell/>` y monta 4 sub-rutas (`profile / preferences / notifications / sessions`). El `index` redirige a `profile`. Path top-level `/account/*`, sin requerir tenant activo.
+  - **`admin-panel/src/app/shells/components/ShellSidebar.jsx`** + `shell.module.css`: el avatar + nombre del usuario en `UserCard` ahora son un `<Link to="/account/profile">` con `aria-label="Abrir mi cuenta (Camila Rojas)"`. El botón "Salir" sigue siendo el submit del form POST a `/admin/logout` (Auth0 lo espera). Nueva clase `.userTrigger` con hover (`var(--accent-soft)`) + `:focus-visible`.
+  - **Tests de shells actualizados (3):** `TenantShell.test.jsx` / `ReadOnlyShell.test.jsx` / `PlatformOwnerShell.test.jsx` ahora envuelven el render en `<MemoryRouter>` (la `Link` lo requiere). Añadido test en `TenantShell.test.jsx`: "UI-016.7 — la tarjeta de usuario expone un link a /account/profile" → afirma `href='/account/profile'`.
+- **Decisiones de implementación:**
+  - **Frontend-only, mutaciones stub:** Profile / Notifications / Sessions disparan un `AlertBanner tone="warning"` apuntando a `UI-016.7-FU` cuando el operador hace submit. No se inventa código de fetch ni se mockea persistencia — la matriz queda en estado local hasta que el backend exista. Este es el mismo patrón que UI-016.1 usó para "Marcar live".
+  - **Apariencia comparte localStorage con UI-012:** el componente reusa la constante `THEME_STORAGE_KEY = 'copilotoia:theme'` exportada por `ThemeToggle.jsx`. Cambiar el radio de la Apariencia actualiza el toggle del topbar (mismo valor leído al re-mount), y viceversa. No se duplica lógica.
+  - **Email read-only:** el input recibe `readOnly` + `aria-readonly="true"` + el hint "Lo gestiona Auth0 · cambia desde tu identity provider". Auth0 es la fuente de verdad para identity; cualquier "Cambiar email" debe pasar por su flow propio.
+  - **Avatar = atajo, no dropdown:** el HTML T3 dice "estas pantallas viven detrás del avatar del sidebar". En lugar de un dropdown popover (que sería un componente nuevo más complejo), el avatar es un `<Link>` directo a `/account/profile`. Una vez dentro, la nav lateral del AccountShell ofrece las 4 sub-rutas + logout — equivalente funcional con menos código.
+  - **Sesiones sin endpoint:** `DEFAULT_SESSIONS` declara 3 entries informativas (Chrome / iPhone WhatsApp Web / Firefox Ubuntu) con el primero marcado `current: true`. El botón "Revocar" está disabled en la fila current — solo otras sesiones se pueden revocar. Cuando exista `GET /v1/me/sessions` esta lista vendrá del backend.
+  - **Tokens 100% `var(--...)`:** `grep -rE "color: #|background: #[0-9a-f]"` sobre `admin-panel/src/features/account/` → 0 matches.
+- **Archivos modificados / creados:**
+  - **Nuevos (14):** `admin-panel/src/features/account/{Account.module.css, AccountShell.module.css, accountData.js, accountData.test.js, AccountShell.jsx, AccountShell.test.jsx, AccountProfile.jsx, AccountProfile.test.jsx, AccountPreferences.jsx, AccountPreferences.test.jsx, AccountNotifications.jsx, AccountNotifications.test.jsx, AccountSessions.jsx, AccountSessions.test.jsx, index.js}`.
+  - **Modificados (6):** `admin-panel/src/app/router.jsx` (imports + AccountRoute + 5 nuevas children), `admin-panel/src/app/shells/components/ShellSidebar.jsx` (`<Link>` en UserCard), `admin-panel/src/app/shells/shell.module.css` (`.userTrigger`), `admin-panel/src/app/shells/TenantShell.test.jsx` / `ReadOnlyShell.test.jsx` / `PlatformOwnerShell.test.jsx` (MemoryRouter wrap), `docs/UI_BACKLOG.md` (UI-016.7 DONE + UI-016.7-FU), `docs/DONE.md` (esta entrada).
+- **Validaciones ejecutadas:**
+  - `npm run lint` ✓
+  - `npm test -- --run` ✓
+  - `npm run test:a11y` ✓
+  - `npm run test:coverage` ✓
+  - `npm run build` ✓
+  - Grep gate sobre `admin-panel/src/features/account/`: 0 matches.
+- **Notas / limitaciones:**
+  - **Sin persistencia server-side:** declarado en `UI-016.7-FU`. Hasta que el backend exista, los cambios viven solo en estado React del componente; al refrescar la página vuelven al default. El operador ve un `AlertBanner` explicativo en cada submit.
+  - **Idiomas y timezones:** lista corta pensada para el mercado LATAM + España + Brasil. Al integrar el endpoint se puede mover a `coreApi.getSupportedLocales()` si ops decide curar la lista server-side.
+  - **No hay sub-ruta de "Seguridad y MFA":** el HTML T3 incluye una sección con 2FA, llaves físicas, códigos de respaldo. Auth0 gestiona MFA completamente — el frontend solo debe linkear al tenant de Auth0. Por ahora "Cerrar sesión" es la única acción de seguridad expuesta; configurar MFA queda en el flow de Auth0 al re-autenticarse (UI-016.6 / `MfaRequiredBlocker` ya cubre el bloqueo cuando falta).
+
 ### UI-016.6 — Estados de error y bloqueos (StateScreen + 5 vistas)
 
 - **Fecha:** 2026-05-15

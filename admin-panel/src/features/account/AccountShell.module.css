@@ -1,0 +1,172 @@
+/* UI-016.7 — Cuenta del usuario · layout shell. Tokens 100% desde var(--...). */
+
+.shell {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+}
+
+.shellHeader {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.shellHeaderInner {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-decoration: none;
+  color: inherit;
+}
+
+.brandMark {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--panel);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-small);
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.brandText strong {
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.brandText small {
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.shellBackBtn {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.shellBackBtn:hover {
+  background: var(--bg-deep);
+}
+
+.shellLayout {
+  flex: 1;
+  max-width: 1120px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-5);
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: var(--space-5);
+}
+
+@media (max-width: 720px) {
+  .shellLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sideNav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: start;
+  position: sticky;
+  top: var(--space-4);
+}
+
+.sideNavTitle {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-small);
+  color: var(--muted-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sideNavItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--r-sm);
+  text-decoration: none;
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  border: 1px solid transparent;
+}
+
+.sideNavItem:hover {
+  background: var(--bg-deep);
+}
+
+.sideNavItemActive {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-color: var(--accent-line, var(--line));
+  font-weight: var(--fw-semibold);
+}
+
+.sideNavLogout {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.logoutForm {
+  margin: 0;
+}
+
+.logoutButton {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+  text-align: left;
+}
+
+.logoutButton:hover {
+  background: var(--bg-deep);
+  color: var(--ink);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}

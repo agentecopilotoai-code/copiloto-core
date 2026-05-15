@@ -1,0 +1,323 @@
+/* UI-016.7 — Cuenta del usuario · contenido. Tokens 100% desde var(--...). */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ── profile header (avatar + name + role) ────────────────────────────────── */
+
+.profileHero {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.profileAvatar {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body);
+  overflow: hidden;
+}
+
+.profileAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profileMeta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profileName {
+  margin: 0;
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+  font-size: var(--fs-h2, var(--fs-body));
+}
+
+.profileSubmeta {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.profileBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  text-transform: capitalize;
+}
+
+/* ── form ─────────────────────────────────────────────────────────────────── */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.formRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.primaryButton {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-4);
+  color: var(--panel);
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background var(--transition-base);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--accent-ink);
+}
+
+.primaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dangerButton {
+  background: transparent;
+  border: 1px solid var(--err, var(--line));
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--err, var(--ink-2));
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.dangerButton:hover:not(:disabled) {
+  background: var(--err-soft, var(--bg-deep));
+}
+
+.dangerButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--bg-deep);
+}
+
+/* ── theme radio cards ────────────────────────────────────────────────────── */
+
+.themeCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.themeCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  cursor: pointer;
+  transition: border var(--transition-base);
+}
+
+.themeCard:hover {
+  border-color: var(--accent);
+}
+
+.themeCardActive {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.themeCardInput {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.themeCardLabel {
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.themeCardDescription {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+/* ── notifications matrix ─────────────────────────────────────────────────── */
+
+.matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.matrixRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.matrixRow:first-child {
+  border-top: 0;
+}
+
+.matrixRowText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.matrixRowTitle {
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+
+.matrixRowDescription {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.matrixChannels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.channelToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+/* ── sessions table ───────────────────────────────────────────────────────── */
+
+.sessionList {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.sessionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.sessionRow:first-child {
+  border-top: 0;
+}
+
+.sessionMeta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sessionDevice {
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sessionLocation {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.sessionCurrentChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  background: var(--ok-soft, var(--accent-soft));
+  color: var(--ok, var(--accent-ink));
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+
+.sessionsActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

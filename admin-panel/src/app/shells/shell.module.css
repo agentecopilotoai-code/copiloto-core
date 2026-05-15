@@ -110,6 +110,32 @@
   padding-top: var(--space-3);
 }
 
+.userTrigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1 1 auto;
+  background: transparent;
+  border: 0;
+  padding: var(--space-1);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  color: inherit;
+  text-decoration: none;
+  font: inherit;
+  text-align: left;
+}
+
+.userTrigger:hover {
+  background: var(--accent-soft);
+}
+
+.userTrigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .userAvatar {
   display: grid;
   place-items: center;

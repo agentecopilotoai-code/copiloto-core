@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 import { adminModules } from '../modules.js';
 import { PlatformOwnerShell } from './PlatformOwnerShell.jsx';
@@ -16,9 +17,11 @@ const baseProps = {
 describe('<PlatformOwnerShell/>', () => {
   it('pinta la navegación de flota y el contenido', () => {
     render(
-      <PlatformOwnerShell {...baseProps}>
-        <p>flota</p>
-      </PlatformOwnerShell>,
+      <MemoryRouter>
+        <PlatformOwnerShell {...baseProps}>
+          <p>flota</p>
+        </PlatformOwnerShell>
+      </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { name: 'Fleet · Tenants' })).toBeInTheDocument();
     expect(screen.getByText('flota')).toBeInTheDocument();
@@ -27,9 +30,11 @@ describe('<PlatformOwnerShell/>', () => {
 
   it('no renderiza selector de tenant', () => {
     render(
-      <PlatformOwnerShell {...baseProps}>
-        <p>x</p>
-      </PlatformOwnerShell>,
+      <MemoryRouter>
+        <PlatformOwnerShell {...baseProps}>
+          <p>x</p>
+        </PlatformOwnerShell>
+      </MemoryRouter>,
     );
     expect(screen.queryByRole('button', { name: /Cambiar de tenant|Tenant único/ })).toBeNull();
   });

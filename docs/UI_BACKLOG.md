@@ -806,7 +806,7 @@ src/
 
 #### UI-016.7 — Cuenta del usuario
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **HTML:** `docs/HTML DESIGN/Transversales/T3 _ Cuenta del usuario.html` (319 LOC).
 - **Alcance:** rutas nuevas detrás del avatar del sidebar:
   - Perfil: nombre, email (read-only — gestionado por Auth0), teléfono, idioma, timezone.
@@ -815,6 +815,20 @@ src/
   - Sesiones y tokens (read-only / revocar).
   - Logout.
 - **Criterios:** ruta nueva `/account` con sub-rutas `/profile`, `/preferences`, `/notifications`, `/sessions`. Backend ya tiene endpoints para preferencias del usuario? — investigar `coreApi.js`; si no, declarar follow-up `UI-016.7-FU` para el backend (igual que UI-012-FU).
+- **Cierre:** ver `docs/DONE.md` (entrada UI-016.7). Backend follow-up declarado en `UI-016.7-FU` (no existían endpoints `/me/profile`, `/me/preferences`, `/me/notifications`, `/me/sessions` en `coreApi.js`; las mutaciones del frontend pintan un `AlertBanner` con el ticket pendiente, mismo patrón que UI-016.1 "Marcar live").
+
+##### UI-016.7-FU — Backend para preferencias del usuario
+
+- **Estado:** PENDING (backlog backend)
+- **Origen:** follow-up declarado en UI-016.7 (frontend-only). El frontend ya muestra perfil, apariencia, notificaciones y sesiones; falta toda la cadena server-side para persistir.
+- **Alcance backend:**
+  - Tabla `app.user_preferences` con campos `display_name`, `phone`, `locale`, `timezone`, `theme_override`, `notification_matrix jsonb`, FK `auth0_user_id`.
+  - GET/PATCH `/v1/me/profile`, GET/PATCH `/v1/me/preferences`, GET/PATCH `/v1/me/notifications`.
+  - GET `/v1/me/sessions`, DELETE `/v1/me/sessions/{sid}` (revocar).
+  - Seguridad: `authenticate_request` + el `actor_id` debe matchear el path subject (no se permite editar otro usuario). Audit log `user.preferences_updated`.
+  - Auth0 fuente de verdad para name/email/phone — solo se cachean en `user_preferences` con timestamp.
+- **Frontend post-FU:** reemplazar los `AlertBanner` placeholder en `AccountProfile.jsx` / `AccountNotifications.jsx` / `AccountSessions.jsx` por llamadas reales a `getMyProfile / patchMyProfile / patchMyNotifications / listMySessions / revokeSession` en `coreApi.js`, manteniendo el toast pattern de UI-016.5 para feedback.
+- **Tests backend:** `tests/test_user_preferences_static.py` con casos: (1) endpoints registrados, (2) 403 al editar otro usuario, (3) audit `action='user.preferences_updated'`, (4) revocación de sesión inválida → 404.
 
 #### UI-016.8 — Responsive 360px
 

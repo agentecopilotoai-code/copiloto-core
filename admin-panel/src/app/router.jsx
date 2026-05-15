@@ -14,6 +14,13 @@ import { MfaRequiredBlocker } from '../components/domain/MfaRequiredBlocker.jsx'
 import { NoTenantOnboarding } from '../components/domain/NoTenantOnboarding.jsx';
 import { LoadingScreen } from '../components/layout/LoadingScreen.jsx';
 import { Button, StateScreen } from '../components/ui/index.js';
+import {
+  AccountNotifications,
+  AccountPreferences,
+  AccountProfile,
+  AccountSessions,
+  AccountShell,
+} from '../features/account/index.js';
 import { ContactProfile } from '../features/agente/contact-profile/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 import { Landing } from '../features/public/landing/index.js';
@@ -144,6 +151,18 @@ function NoTenantRoute() {
   if (tenantsLoading) return <LoadingScreen />;
   if (tenantOptions.length > 0) return <Navigate to="/" replace />;
   return <NoTenantOnboarding onCreateTenant={() => navigate('/onboarding')} />;
+}
+
+/**
+ * `/account/*` (UI-016.7): rutas transversales detrás del avatar del sidebar.
+ * No requieren tenant activo — solo sesión autenticada. Si el usuario es
+ * anónimo, el `IndexRedirect` ya cubre `/` con la landing pública; `/account`
+ * directo sin sesión reenvía a la raíz para que `IndexRedirect` decida.
+ */
+function AccountRoute() {
+  const { session } = useTenantContext();
+  if (!session) return <Navigate to="/" replace />;
+  return <AccountShell />;
 }
 
 /** `/onboarding`: wizard de creación del primer tenant (sin shell). */
@@ -383,6 +402,17 @@ export const routes = [
       { path: 'login', element: <Navigate to="/" replace /> },
       { path: 'no-tenant', element: <NoTenantRoute /> },
       { path: 'onboarding', element: <OnboardingRoute /> },
+      {
+        path: 'account',
+        element: <AccountRoute />,
+        children: [
+          { index: true, element: <Navigate to="profile" replace /> },
+          { path: 'profile', element: <AccountProfile /> },
+          { path: 'preferences', element: <AccountPreferences /> },
+          { path: 'notifications', element: <AccountNotifications /> },
+          { path: 'sessions', element: <AccountSessions /> },
+        ],
+      },
       {
         path: 'platform',
         element: <PlatformRoute />,

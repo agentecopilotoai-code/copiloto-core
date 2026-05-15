@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 import { adminModules } from '../modules.js';
 import { ReadOnlyShell } from './ReadOnlyShell.jsx';
@@ -23,9 +24,11 @@ const baseProps = {
 describe('<ReadOnlyShell/>', () => {
   it('muestra badge y banner de solo lectura', () => {
     render(
-      <ReadOnlyShell {...baseProps}>
-        <p>resumen</p>
-      </ReadOnlyShell>,
+      <MemoryRouter>
+        <ReadOnlyShell {...baseProps}>
+          <p>resumen</p>
+        </ReadOnlyShell>
+      </MemoryRouter>,
     );
     expect(screen.getByText('Acceso de solo lectura')).toBeInTheDocument();
     expect(screen.getByText('Modo solo lectura')).toBeInTheDocument();
@@ -34,9 +37,11 @@ describe('<ReadOnlyShell/>', () => {
 
   it('renderiza los módulos sin permiso como deshabilitados (sección "Sin acceso")', () => {
     render(
-      <ReadOnlyShell {...baseProps}>
-        <p>x</p>
-      </ReadOnlyShell>,
+      <MemoryRouter>
+        <ReadOnlyShell {...baseProps}>
+          <p>x</p>
+        </ReadOnlyShell>
+      </MemoryRouter>,
     );
     // contacts.view sí permitido → botón; campaigns sin permiso no está en VIEWER_NAV.
     // UI-010.4: el Viewer ahora ve `viewer-conversations` («Conversaciones»)

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 
 import { adminModules } from '../modules.js';
 import { TenantShell } from './TenantShell.jsx';
@@ -18,13 +19,19 @@ const baseProps = {
   canSwitchTenants: false,
 };
 
+function renderShell(children, props = {}) {
+  return render(
+    <MemoryRouter>
+      <TenantShell {...baseProps} {...props}>
+        {children}
+      </TenantShell>
+    </MemoryRouter>,
+  );
+}
+
 describe('<TenantShell/>', () => {
   it('pinta sidebar agrupada, topbar y children', () => {
-    render(
-      <TenantShell {...baseProps}>
-        <p>contenido del módulo</p>
-      </TenantShell>,
-    );
+    renderShell(<p>contenido del módulo</p>);
     expect(screen.getByRole('heading', { name: 'Servicios' })).toBeInTheDocument();
     expect(screen.getByText('contenido del módulo')).toBeInTheDocument();
     expect(screen.getByText('Negocio')).toBeInTheDocument();
@@ -32,11 +39,7 @@ describe('<TenantShell/>', () => {
   });
 
   it('marca el módulo activo con aria-current', () => {
-    render(
-      <TenantShell {...baseProps}>
-        <p>x</p>
-      </TenantShell>,
-    );
+    renderShell(<p>x</p>);
     expect(screen.getByRole('button', { name: 'Servicios' })).toHaveAttribute(
       'aria-current',
       'page',
@@ -45,21 +48,21 @@ describe('<TenantShell/>', () => {
 
   it('dispara onModuleSelect al click en un item de navegación', async () => {
     const onModuleSelect = vi.fn();
-    render(
-      <TenantShell {...baseProps} onModuleSelect={onModuleSelect}>
-        <p>x</p>
-      </TenantShell>,
-    );
+    renderShell(<p>x</p>, { onModuleSelect });
     await userEvent.click(screen.getByRole('button', { name: 'Contactos' }));
     expect(onModuleSelect).toHaveBeenCalledWith('contacts');
   });
 
   it('el tenant switcher queda deshabilitado con un solo tenant', () => {
-    render(
-      <TenantShell {...baseProps}>
-        <p>x</p>
-      </TenantShell>,
-    );
+    renderShell(<p>x</p>);
     expect(screen.getByRole('button', { name: /Acme/ })).toBeDisabled();
+  });
+
+  it('UI-016.7 — la tarjeta de usuario expone un link a /account/profile', () => {
+    renderShell(<p>x</p>);
+    const accountLink = screen.getByRole('link', {
+      name: /Abrir mi cuenta \(Camila Rojas\)/,
+    });
+    expect(accountLink).toHaveAttribute('href', '/account/profile');
   });
 });
