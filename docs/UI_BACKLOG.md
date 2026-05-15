@@ -1219,6 +1219,21 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
   - Si el código vulnerable ya NO existe (p.ej. AdminLayout fue eliminado en UI-002/UI-015), el finding queda **resolved as fixed**.
   - Si el código vulnerable persiste en `src/features/...` con la misma lógica, el finding sigue **válido** y entra en el ticket correspondiente.
 - **Procedimiento:** crear `docs/security-findings-triage-2026-05-15.md` con la tabla `finding_url | path actual | estado | ticket destino` para los 37 hallazgos. Esto deja trazabilidad para la próxima auditoría externa.
-- **Cierre:** ver `docs/security-findings-triage-2026-05-15.md`. Resultado: 27/37 findings ya RESOLVED por TASK-0077..0086 + BUG-001 + UI-016.6; 9 siguen VÁLIDO (distribuidos en SEC-008 parcial, SEC-009, SEC-010 con scope reducido, y un nuevo SEC-012 a crear para el classifier DoS — `ddce83b1`). Recomendación inline para marcar SEC-001..SEC-007 como DONE en sus propios tickets.
+- **Cierre:** ver `docs/security-findings-triage-2026-05-15.md`. Resultado: 28/37 findings ya RESOLVED por TASK-0077..0086 + BUG-001 + UI-016.6 (incluye `ddce83b1` cloud LLM DoS re-spot-checked tras el triage inicial); 6 siguen VÁLIDO (todos low, distribuidos en SEC-010 con scope reducido). SEC-001..SEC-007 marcables como DONE en sus propios tickets. SEC-012 (cloud LLM DoS) cerrado retroactivamente — el classifier ya usa `AsyncAnthropic`/`AsyncOpenAI` con SDK timeout + `asyncio.wait_for` hard deadline + fallback Ollama; ver entrada SEC-012 más abajo.
+
+---
+
+### SEC-012 — Cloud LLM classifier DoS (cerrado retroactivamente)
+
+- **Estado:** DONE (2026-05-15) — RESOLVED-TASK-0086 / BUG09 con re-verificación en este sprint.
+- **Origen:** finding Codex `ddce83b1` ("Blocking cloud LLM classifier enables webhook DoS"). El triage inicial SEC-011 lo marcó VÁLIDO y recomendó crear SEC-012 como ticket nuevo. Re-spot-check del classifier durante el dispatch de SEC-012 reveló que TASK-0086 / BUG09 ya había aterrizado el fix antes del triage; el SEC-011 agent no lo encontró.
+- **Síntoma original:** `classify_intent()` corría sync por cada mensaje WhatsApp; si no matcheaba regla regex de alta confianza Y `cloud_llm_provider/cloud_llm_api_key` estaban configurados, `_llm_classify()` instanciaba `anthropic.Anthropic` / `openai.OpenAI` SÍNCRONOS y llamaba sus métodos blocking `create()` sin `await` y sin timeout. El webhook handler awaiteaba `orchestrate_inbound_message()` antes de responder, así que un sender anónimo de WhatsApp podía mandar mensajes que evitaran las reglas regex y forzaran calls LLM bloqueantes en el event loop → tie-up de API workers, retries de webhook, degradación cross-tenant.
+- **Fix existente (TASK-0086 / BUG09)** en `app/services/intent_classifier.py:161-260`:
+  - `AsyncAnthropic` y `AsyncOpenAI` con `timeout=float(settings.cloud_llm_timeout_seconds)` del SDK.
+  - `await asyncio.wait_for(..., timeout=hard_deadline)` donde `hard_deadline = max(timeout_seconds + 2, 5)` — defensa en profundidad contra SDKs que ignoren el timeout nativo.
+  - `asyncio.TimeoutError` → fallback Ollama (también con `httpx.AsyncClient(timeout=local_timeout)` envuelto en `asyncio.wait_for`).
+  - Cualquier excepción del provider degrada a `None` con log `intent_classifier.llm_error`.
+- **Verificación 2026-05-15:** `grep -nE "anthropic\.Anthropic\(|openai\.OpenAI\(" app/services/intent_classifier.py` → 0 matches; solo `AsyncAnthropic` / `AsyncOpenAI` con timeouts. El classifier ya no bloquea el event loop.
+- **Acción:** marcar SEC-012 DONE retroactivamente; actualizar `docs/security-findings-triage-2026-05-15.md` cambiando `ddce83b1` de VÁLIDO a RESOLVED-TASK-0086.
 
 ---
