@@ -10513,19 +10513,25 @@ def _serialize_profile(prefs_row: asyncpg.Record, user_row: asyncpg.Record, user
     }
 
 
-def _validate_timezone(tz: str | None) -> None:
+def _validate_timezone(tz: Any) -> None:
     """Raise 422 if `tz` is not a valid IANA timezone.
 
     `ZoneInfo(...)` raises `ZoneInfoNotFoundError` for unknown zones; older
     inputs (e.g. trailing slashes) can surface `ValueError` — SEC-010 hardening
     asks us to catch both. None / empty → no-op (handled by the column default).
+
+    codex P2 (UI-016.7-FU review): a non-string JSON value (e.g. `123`) would
+    reach `ZoneInfo()` and raise `TypeError` — uncaught, leaking a 500 to the
+    caller. Reject non-strings up front with the expected 422.
     """
     if tz is None or tz == '':
         return
+    if not isinstance(tz, str):
+        raise HTTPException(status_code=422, detail='timezone must be a string')
     try:
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # noqa: PLC0415
         ZoneInfo(tz)
-    except (ZoneInfoNotFoundError, ValueError, KeyError) as exc:
+    except (ZoneInfoNotFoundError, ValueError, KeyError, TypeError) as exc:
         raise HTTPException(status_code=422, detail=f'Invalid timezone: {tz}') from exc
 
 
@@ -10622,9 +10628,13 @@ async def patch_my_profile(
     if 'locale' in updates and updates['locale'] is not None:
         if not isinstance(updates['locale'], str):
             raise HTTPException(status_code=422, detail='locale must be a string')
-        # SUPPORTED_COUNTRIES locale codes are full BCP-47 tags (es-CO, en-US, ...).
-        # Accept the catalog entries the frontend already shows.
-        known_locales = {profile['locale'] for profile in SUPPORTED_COUNTRIES.values()}
+        # codex P1 (UI-016.7-FU review): SUPPORTED_COUNTRIES is a tuple of
+        # country codes ('CO', 'MX', ...), NOT a dict of profiles. Calling
+        # .values() on it AttributeErrors and every PATCH /me/profile with
+        # `locale` returns 500 instead of persisting. Iterate the catalog and
+        # ask the public helper `default_locale(code)` for each BCP-47 tag.
+        from app.services.locale import default_locale  # noqa: PLC0415
+        known_locales = {default_locale(code) for code in SUPPORTED_COUNTRIES}
         if updates['locale'] not in known_locales:
             raise HTTPException(status_code=422, detail=f'Unsupported locale: {updates["locale"]}')
     if 'timezone' in updates:

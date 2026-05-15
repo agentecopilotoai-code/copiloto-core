@@ -195,11 +195,28 @@ def test_revoke_my_session_emits_audit_log():
 
 def test_patch_my_profile_validates_timezone_via_zoneinfo():
     # SEC-010 hardening — timezone validation must catch ZoneInfoNotFoundError
-    # AND ValueError so a malformed input does not 500.
+    # AND ValueError so a malformed input does not 500. codex P2 (UI-016.7-FU
+    # follow-up) — also catch TypeError + reject non-string up front so a JSON
+    # value like {"timezone": 123} returns 422 instead of leaking 500.
     helper_src = inspect.getsource(routes_module._validate_timezone)
     assert 'ZoneInfo' in helper_src
     assert 'ZoneInfoNotFoundError' in helper_src
     assert 'ValueError' in helper_src
+    assert 'TypeError' in helper_src  # codex P2: catch the non-string path
+    assert 'isinstance(tz, str)' in helper_src  # explicit string check up front
+
+
+def test_patch_my_profile_locale_validation_uses_helper_not_values_call():
+    """codex P1 (UI-016.7-FU follow-up): SUPPORTED_COUNTRIES is a tuple, not a
+    dict. The original code did `SUPPORTED_COUNTRIES.values()` which
+    AttributeError'd and turned every locale-bearing PATCH into a 500. The fix
+    iterates the tuple and calls `default_locale(code)` for each entry."""
+    source = inspect.getsource(routes_module.patch_my_profile)
+    # The buggy pattern MUST be gone.
+    assert 'SUPPORTED_COUNTRIES.values()' not in source
+    # The correct pattern uses default_locale + tuple iteration.
+    assert 'default_locale' in source
+    assert 'for code in SUPPORTED_COUNTRIES' in source
 
 
 def test_patch_my_profile_validates_string_length_bounds():
