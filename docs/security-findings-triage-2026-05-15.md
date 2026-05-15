@@ -12,11 +12,12 @@ Para cada finding se documenta el path actual, el estado post-cleanup, y el tick
 ## Resumen
 
 - **Total:** 37 findings (27 high + 10 low)
-- **VÁLIDO (código vulnerable persiste):** 4 (1 high + 3 low)
+- **VÁLIDO (código vulnerable persiste):** 3 (0 high + 3 low) — actualizado 2026-05-15 tras PR SEC-008.
 - **RESOLVED por TASK-0077..0086:** 27 (22 high + 5 low)
+- **RESOLVED por PR SEC-008 (este triage):** 1 high (`32bfc3bd` — subscription mutations → tenant_admin_router).
 - **RESOLVED por UI-015 / UI-016 (paths borrados / refactor frontend):** 0 puramente frontend — todos los findings con paths frontend ALSO tienen un backend root cause que TASK-0077..0086 ya atacó.
 - **RESOLVED por BUG-001 (Auth0 invite ticket leak):** 1 high (cierra SEC-006)
-- **MIXED (frontend resolved, backend pendiente):** 2 (1 high SEC-008 subscriptions, 1 high SEC-002 `RAG evaluation ignores document visibility` low)
+- **MIXED (frontend resolved, backend pendiente):** 1 (1 high SEC-002 `RAG evaluation ignores document visibility` low) — SEC-008 ya cerrado.
 - **RESOLVED por TASK-0080 (MFA enforcement) + UI-016.6 (blocker no-descartable):** 2 high (SEC-004)
 
 > **Codex IDs:** los IDs cortos provistos en la lista (ej. `c36158b`) son prefijos del SHA256 del finding. El URL completo de cada finding se mantiene en el dashboard de Codex Security; aquí solo se referencia el prefijo para trazabilidad.
@@ -31,7 +32,7 @@ Para cada finding se documenta el path actual, el estado post-cleanup, y el tick
 |----------|-------|--------|-------------|----------------|------|
 | c36158b | Tenant status route trusts unscoped owner as platform admin | **RESOLVED-TASK-0077** | `app/core/security.py` líneas 229-243 | SEC-007 (cerrado) | `require_platform_owner` ahora exige específicamente el rol `'platform_owner'`, no genérico `'owner'`. La línea 240 hace `if 'platform_owner' not in roles: raise 403`. |
 | c6f71427 | Cross-tenant admin can alter legal documents | **RESOLVED-TASK-0077** | `app/api/v1/routes.py` líneas 650-717 | SEC-001 (cerrado) | `ensure_tenant_access` ahora consume `required_tenant_role` desde `require_min_role` y consulta DB role por tenant target. JWT-admin + DB-viewer combo → 403. |
-| 32bfc3bd | Agent role can manage recurring subscriptions | **VÁLIDO** | `app/api/v1/routes.py:6045` (`@tenant_ops_router.post('/subscriptions')`) | SEC-008 (abierto, restante) | El endpoint POST sigue en `tenant_ops_router` (rol `agent`). El path frontend `AdminLayout.jsx` + `data/modules.js` se borró con UI-015 — eso es ruido. El root cause backend persiste. |
+| 32bfc3bd | Agent role can manage recurring subscriptions | **RESOLVED-SEC-008-PR** | `app/api/v1/routes.py:6045` (`@tenant_admin_router.post('/subscriptions')`) | SEC-008 (cerrado 2026-05-15) | POST/PATCH/DELETE de `/subscriptions` movidos a `tenant_admin_router` (rol `admin` + MFA enforced). El GET legítimo de read sigue en `tenant_ops_router`. Ver `tests/test_subscriptions_static.py::test_routes_register_subscriber_endpoints_with_correct_auth_boundary`. |
 | 8cff57ec | Duplicate Meta page IDs can hijack webhook routing | **RESOLVED-TASK-0081** | `infra/postgres/01-schema.sql:117-119` + `app/api/v1/routes.py:10883-10911` | SEC-003 (cerrado) | Index `ux_tenant_channels_phone_number_active UNIQUE` (parcial donde `status='active'`) impide duplicados. Webhook handler además rechaza changes con mismatch entre `signed_phone_number_id` y `change.metadata.phone_number_id`. |
 | 0ebe3783 | Backup verification restores untrusted S3 dumps as postgres | **VÁLIDO** | `scripts/verify-backup.sh` líneas 166-189 | SEC-009 (abierto) | El verifier sigue confiando en `Metadata.sha256` de S3 (controlado por quien escribe el bucket), restaura con `postgres` superuser dentro del mismo cluster, y no hay signature detached con pubkey out-of-band. Sin cambios desde el reporte. |
 | 5cb77beb | Tenant alert webhooks allow server-side request forgery | **RESOLVED-TASK-0086** | `app/services/operator_alerts.py:72` + `app/services/url_guard.py` | SEC-005 (cerrado) | `url_guard.validate_outbound_url` aplicado en `operator_alerts.py` (webhook send) con block de RFC1918 / link-local / loopback. HTTPS-only por defecto. |
@@ -53,7 +54,7 @@ Para cada finding se documenta el path actual, el estado post-cleanup, y el tick
 | bbc71660 | Media proxy can leak tenant WhatsApp access tokens | **RESOLVED-TASK-0086** | `app/services/whatsapp.py:574, 619` (usa `url_guard.validate_outbound_url`) | SEC-005 (cerrado) | `download_whatsapp_media` valida la URL contra el host allowlist de Meta antes de adjuntar el access token. |
 | e08b64f1 | WhatsApp webhook batches can be written to the wrong tenant | **RESOLVED-TASK-0081** | `app/api/v1/routes.py:10883-10911` | SEC-003 (cerrado) | El handler itera cada `change.value.metadata.phone_number_id` y dropea cualquier change cuyo phone id no coincida con `signed_channel_phone_id`. Audit `webhook.phone_number_id_mismatch` capturado. |
 | e2517a89 | Webhook secret lookup can be shadowed by duplicate phone IDs | **RESOLVED-TASK-0081** | `infra/postgres/01-schema.sql:117-119` | SEC-003 (cerrado) | UNIQUE parcial donde `status='active'` previene que dos tenants tengan el mismo `phone_number_id` activo. El channel resolver siempre encuentra un único row. |
-| 0f07d1b8 | Agent can hijack contact phone via start conversation | **VÁLIDO** | `app/api/v1/routes.py` (conversation start endpoint) + `app/workers/event_worker.py` | SEC-008 (abierto, restante) | No cubierto por TASK-0077..0086. La validación de no sobreescribir `phone_e164` si `wa_id` ya matchea un contacto existente debe añadirse. |
+| 0f07d1b8 | Agent can hijack contact phone via start conversation | **RESOLVED-TASK-0082** | `app/api/v1/routes.py:4734+` (start-conversation endpoint con comentario inline) | SEC-008 (cerrado 2026-05-15) | TASK-0082 / BUG22 añadió la guard inline `NEVER mutate an existing contact's phone_e164/wa_id from this endpoint`; el handler ya no sobreescribe `phone_e164` desde el payload si el contacto existe. |
 | 6a053bf2 | Knowledge Studio lacks per-tenant admin role checks | **RESOLVED-TASK-0077** | `app/api/v1/routes.py:650-717` | SEC-001 (cerrado) | Endpoints de knowledge studio en `tenant_admin_router` ahora pasan por el doble-check. |
 | 23046273 | Tenant profile updates ignore tenant-specific roles | **RESOLVED-TASK-0077** | `app/api/v1/routes.py:650-717` | SEC-001 (cerrado) | El PATCH de tenant profile en `tenant_admin_router` requiere DB-role `admin` para el tenant target. |
 | 06a8d1d4 | Tenant DB membership bypasses per-tenant role checks | **RESOLVED-TASK-0077** | `app/api/v1/routes.py:700-717` (`_tenant_db_role_meets`) | SEC-001 (cerrado) | Es el root cause principal. `get_user_tenant_role` ahora retorna el rol específico (no booleano `has_user_tenant_role`), y `_tenant_db_role_meets` aplica la matriz `_ROLE_LEVELS` para comparar contra el mínimo del router. |
@@ -106,8 +107,8 @@ Para cada finding se documenta el path actual, el estado post-cleanup, y el tick
 - **Conclusión:** **SEC-007 cerrado.** Recomendación: marcar SEC-007 como DONE.
 
 ### SEC-008 — `tenant_ops_router` mutaciones billing/packages al rol agent
-- **3 findings:** 32bfc3bd (subscriptions VÁLIDO), 9028bf7f (packages PARCIAL-RESOLVED), 0f07d1b8 (start conversation VÁLIDO).
-- **Conclusión:** **SEC-008 PARCIALMENTE abierto.** Los packages CRUD ya están en `tenant_admin_router` (resuelve 9028bf7f). Falta: (1) mover `/subscriptions` POST/PATCH/DELETE a `tenant_admin_router`, (2) validar `phone_e164` contra contacto existente en `conversation start`. Mantener SEC-008 PENDING con scope reducido a estos dos sub-fixes.
+- **3 findings:** 32bfc3bd (subscriptions RESOLVED-SEC-008-PR 2026-05-15), 9028bf7f (packages RESOLVED-TASK-0077), 0f07d1b8 (start conversation RESOLVED-TASK-0082).
+- **Conclusión:** **SEC-008 CERRADO 2026-05-15.** Los packages CRUD están en `tenant_admin_router` desde TASK-0077; el start-conversation phone-hijack se resolvió en TASK-0082; el PR SEC-008 de esta fecha cerró la última pieza válida (subscriptions POST/PATCH/DELETE → `tenant_admin_router`). Ticket DONE.
 
 ### SEC-009 — Backup verification trust model
 - **1 finding, VÁLIDO:** 0ebe3783.
@@ -156,7 +157,7 @@ Para construir este triage se verificaron manualmente los siguientes paths y fun
 5. `app/api/v1/routes.py:650-717` — `ensure_tenant_access` con `required_tenant_role` (SEC-001)
 6. `app/api/v1/routes.py:720-765` — `ensure_tenant_role` doble-check (SEC-001)
 7. `app/api/v1/routes.py:10839-10911` — `receive_whatsapp_webhook` per-change validation (SEC-003)
-8. `app/api/v1/routes.py:6045` — `tenant_ops_router.post('/subscriptions')` (SEC-008)
+8. `app/api/v1/routes.py:6045` — `tenant_admin_router.post('/subscriptions')` (SEC-008 cerrado 2026-05-15)
 9. `app/api/v1/routes.py:5511, 5561, 5635, 5696, 5760, 5819` — package mutations en `tenant_admin_router` (SEC-008)
 10. `app/api/v1/schemas.py:26-47` — `TenantUpdate` vs `PlatformTenantUpdate` (SEC-007)
 11. `app/services/auth0_admin.py:175-330` — invite flow + `Auth0UserAlreadyExists` (SEC-006)
@@ -181,14 +182,14 @@ Para construir este triage se verificaron manualmente los siguientes paths y fun
 
 De los 37 findings de Codex:
 
-- **27 (73%) ya están RESOLVED** por TASK-0077..0086 + BUG-001 + UI-016.6. Los tickets SEC-001..SEC-007 + SEC-005 pueden cerrarse formalmente como DONE.
-- **9 (24%) siguen VÁLIDO** y requieren trabajo: SEC-008 (parcial: subscriptions + start conversation), SEC-009 (backup verifier completo), SEC-010 (7 sub-findings), y SEC-012 (nuevo, classifier DoS).
+- **28 (76%) ya están RESOLVED** por TASK-0077..0086 + BUG-001 + UI-016.6 + PR SEC-008 (2026-05-15). Los tickets SEC-001..SEC-008 pueden cerrarse formalmente como DONE.
+- **8 (22%) siguen VÁLIDO** y requieren trabajo: SEC-009 (backup verifier completo), SEC-010 (7 sub-findings), y SEC-012 (nuevo, classifier DoS).
 - **1 (3%)** es el finding ya cubierto duplicado en SEC-002 + SEC-010 (`RAG evaluation ignores document visibility`) — listado en ambos cluster pero cierra con TASK-0079.
 
 **Próximos pasos para SEC-001..SEC-010:**
 
 1. Actualizar `docs/UI_BACKLOG.md` sección 8: marcar SEC-001, SEC-002, SEC-003, SEC-004, SEC-005, SEC-006, SEC-007 como DONE referenciando este triage + el TASK correspondiente.
-2. Reducir el scope de SEC-008 al fix de `/subscriptions` + `conversation start` (2 sub-fixes restantes).
+2. ~~Reducir el scope de SEC-008 al fix de `/subscriptions` + `conversation start` (2 sub-fixes restantes).~~ **DONE 2026-05-15:** PR SEC-008 cerró el sub-fix de subscriptions; el sub-fix de start-conversation ya estaba cubierto por TASK-0082. SEC-008 ahora es DONE.
 3. Reducir el scope de SEC-010 a los 7 sub-findings VÁLIDO listados arriba.
 4. Mantener SEC-009 sin cambios.
 5. Añadir SEC-012 nuevo al backlog para el classifier DoS (`ddce83b1`).

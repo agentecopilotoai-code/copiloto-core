@@ -15,6 +15,29 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-008 — Subscriptions: mutaciones billing/packages exclusivas de `admin`
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el cluster SEC-008 (3 sub-findings de Codex Security) que reportaba que el rol `agent` (`tenant_ops_router`) podía mutar suscripciones recurrentes, packages, e hijackear el `phone_e164` de un contacto vía `start conversation`. Tras la triage SEC-011 (PR #193) quedó solo 1 sub-finding válido (`32bfc3bd` — subscriptions); los otros 2 ya estaban resueltos por TASK-0077 (packages) y TASK-0082/BUG22 (start conversation).
+- **Threat model que cierra:** un agent podía (a) crear `contact_subscriptions` con `payment_status` arbitrario y un `payment_provider_subscription_id` falso para inyectar facturación inexistente, (b) PATCH-ear el `status`/`next_billing_at` de un subscriber legítimo, (c) DELETE-ear (cancelar) la suscripción de un cliente del tenant como sabotaje. Con `tenant_admin_router` los 3 verbos requieren ahora `admin` + MFA verified.
+- **Cambios:**
+  - **`app/api/v1/routes.py`** (3 decoradores, +9 / -2 LOC): los handlers `create_contact_subscription`, `update_contact_subscription` y `cancel_contact_subscription` pasaron de `@tenant_ops_router` (rol `agent` via `require_min_role('agent', allow_service=True)`) a `@tenant_admin_router` (rol `admin` via `require_min_role('admin')` + `require_mfa_for_privileged`). Las paths `/subscriptions`, `/subscriptions/{subscription_id}` no cambian — solo migra el boundary de auth a través de los router-level dependencies. El GET `list_contact_subscriptions` se queda en `tenant_ops_router` (lectura legítima para que el agent vea las suscripciones del contacto con el que está conversando). Comentario inline en el código referencia SEC-008 y el patrón sibling TASK-0077 (packages).
+  - **`tests/test_subscriptions_static.py`**: renombrado `test_routes_register_subscriber_endpoints_under_ops_router` → `test_routes_register_subscriber_endpoints_with_correct_auth_boundary`. La nueva aserción verifica (1) GET en `tenant_ops_router`, (2) POST/PATCH/DELETE en `tenant_admin_router`, (3) assertions **negativas** que garantizan que los mutadores NO aparecen en `tenant_ops_router` (regression gate).
+  - **`docs/UI_BACKLOG.md`**: SEC-008 marcado como DONE; documenta los 3 sub-findings con el TASK/PR que los cerró.
+  - **`docs/security-findings-triage-2026-05-15.md`**: row de `32bfc3bd` actualizado de `VÁLIDO` a `RESOLVED-SEC-008-PR`. Resumen del top del doc actualizado (8 válidos en lugar de 9; 28 resolved en lugar de 27).
+- **Audit log:** preservado verbatim. Las 3 acciones `contact_subscription.created`, `contact_subscription.updated`, `contact_subscription.cancelled` siguen emitiéndose con el mismo `entity_type='contact_subscription'`. La RLS (`set_config('app.tenant_id')`) sigue activa via `tenant_id_from_request`.
+- **Frontend / coreApi.js:** **0 cambios**. Las únicas funciones del admin panel que tocan estos endpoints son `listContactSubscriptions` (GET, sigue siendo `tenant_ops_router`) y `cancelContactSubscription` (DELETE). La path no cambia, así que los helpers y sus consumers (`useSubscriptionsData.js`, `Subscriptions.test.jsx`) no necesitan modificación. La protección frontend ya existe via el gate `capability: 'subscriptions.write'` en `moduleRegistry.js` (owner/admin → RW; agent → sin acceso al CTA).
+- **Migración:** clientes con tokens `agent` que intenten POST/PATCH/DELETE a `/subscriptions` recibirán ahora `403 Forbidden` (en vez del 201/200/204 previo). No hay clientes legítimos en esa categoría — el frontend ya gateaba en UI; este PR cierra el bypass por API directa. Si algún integration test fuera del repo asume el rol `agent` para mutar suscripciones, debe re-tokenizar como `admin`.
+- **Validaciones:**
+  - `ruff check app` ✓
+  - `pytest tests/test_subscriptions_static.py -v` → 24 passed.
+  - `pytest tests/ -k "static and not (whatsapp or web_widget)" -q` → 1194 passed.
+  - `pytest tests/test_web_widget_static.py tests/test_whatsapp_delivery_static.py tests/test_whatsapp_templates_static.py` → 55 passed.
+  - `npm run lint` (admin-panel) ✓ — sólo warnings pre-existentes en `useTenantSetupSidePanels.js` (no modificado).
+  - `npm test` (admin-panel) → 127 files, 660 tests passed.
+  - `npm run build` (admin-panel) ✓.
+- **Limitaciones / notas:** no se cambió el patrón de routing (paths `/subscriptions` siguen sin prefijo `/tenants/{tenant_id}/` — esto es consistente con cómo los packages CRUD ya estaban implementados en `tenant_admin_router` tras TASK-0077). La elección minimiza el blast radius del PR y preserva la API pública.
+
 ### SEC-011 — Triaje y verificación de findings de Codex sobre paths legacy
 
 - **Fecha:** 2026-05-15

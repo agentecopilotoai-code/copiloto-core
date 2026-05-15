@@ -277,12 +277,23 @@ def test_routes_register_plan_crud_under_admin_router():
     assert "@tenant_ops_router.get('/subscription-plans')" in src
 
 
-def test_routes_register_subscriber_endpoints_under_ops_router():
+def test_routes_register_subscriber_endpoints_with_correct_auth_boundary():
+    """SEC-008: GET stays on tenant_ops_router (agents read for the contact
+    they're chatting with); POST/PATCH/DELETE move to tenant_admin_router
+    (admin role required + MFA enforced) so an `agent` cannot fake/mutate
+    paid subscriptions or cancel a customer's billing.
+    """
     src = ROUTES.read_text()
+    # GET stays on ops (read-only) — agents legitimately need this.
     assert "@tenant_ops_router.get('/subscriptions')" in src
-    assert "@tenant_ops_router.post('/subscriptions', status_code=201)" in src
-    assert "@tenant_ops_router.patch('/subscriptions/{subscription_id}')" in src
-    assert "@tenant_ops_router.delete('/subscriptions/{subscription_id}', status_code=204)" in src
+    # POST/PATCH/DELETE require admin (router-level dependency).
+    assert "@tenant_admin_router.post('/subscriptions', status_code=201)" in src
+    assert "@tenant_admin_router.patch('/subscriptions/{subscription_id}')" in src
+    assert "@tenant_admin_router.delete('/subscriptions/{subscription_id}', status_code=204)" in src
+    # Negative: the mutating endpoints MUST NOT be on tenant_ops_router (agent).
+    assert "@tenant_ops_router.post('/subscriptions'" not in src
+    assert "@tenant_ops_router.patch('/subscriptions/" not in src
+    assert "@tenant_ops_router.delete('/subscriptions/" not in src
 
 
 def test_routes_register_subscriptions_webhook():

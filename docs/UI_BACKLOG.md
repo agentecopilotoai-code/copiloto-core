@@ -1157,17 +1157,15 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-008 — `tenant_ops_router` permite mutaciones de billing/packages al rol `agent`
 
-- **Estado:** PENDING (alta prioridad)
-- **Findings:**
-  - `Agent role can manage recurring subscriptions`
-  - `Agents can grant or refund paid treatment packages`
-  - `Agent can hijack contact phone via start conversation`
-- **Root cause:** `tenant_ops_router` requiere solo `agent`. Los endpoints de suscripciones, packages y `conversation start` permiten mutar campos sensibles que UX expone solo a admin/owner.
-- **Fix:**
-  - Mover endpoints de subscriptions/packages CRUD a `tenant_admin_router` con `require_min_role('admin')` (después de SEC-001).
-  - `conversation start`: NO sobreescribir `phone_e164` desde el payload si `wa_id` ya matchea un contacto existente. Validar contra el contacto persistido.
-- **Tests:** un agent intenta `POST /subscriptions` → 403. Un agent intenta `start conversation` con un `phone_e164` distinto al existente → ignora el phone update.
-- **Severidad:** alta — manipulación financiera + hijack de identidad de contacto.
+- **Estado:** DONE (2026-05-15) — cerrado tras la triage SEC-011 + este PR.
+- **Findings (originalmente 3 sub-findings):**
+  - `Agent role can manage recurring subscriptions` (Codex `32bfc3bd`) → **RESOLVED por este ticket** (PR SEC-008): POST/PATCH/DELETE de `/subscriptions` movidos de `tenant_ops_router` a `tenant_admin_router`.
+  - `Agents can grant or refund paid treatment packages` (Codex `9028bf7f`) → **RESOLVED por TASK-0077** (ver `docs/security-findings-triage-2026-05-15.md`). Las mutaciones de `/packages` y `/contacts/{id}/packages` ya estaban en `tenant_admin_router` antes de este PR.
+  - `Agent can hijack contact phone via start conversation` (Codex `0f07d1b8`) → **RESOLVED por TASK-0082 / BUG22** (ver `app/api/v1/routes.py:4734+` — comentario inline `NEVER mutate an existing contact's phone_e164/wa_id from this endpoint`).
+- **Fix aplicado (este PR):**
+  - `app/api/v1/routes.py`: 3 decoradores cambiados de `@tenant_ops_router` a `@tenant_admin_router` para `POST /subscriptions`, `PATCH /subscriptions/{id}`, `DELETE /subscriptions/{id}`. La ruta no cambia; solo el boundary de auth (de `agent` a `admin` + MFA enforced via router-level deps). El GET sigue en `tenant_ops_router` (lectura legítima para agents). Handlers, audit calls y RLS preservados sin cambios.
+- **Tests:** `tests/test_subscriptions_static.py::test_routes_register_subscriber_endpoints_with_correct_auth_boundary` asserta el boundary nuevo (GET en ops, POST/PATCH/DELETE en admin) + asserts negativos (los mutadores no deben aparecer en `tenant_ops_router`).
+- **Severidad:** alta — manipulación financiera + hijack de identidad de contacto. Cerrado en su totalidad.
 
 ---
 

@@ -6042,7 +6042,13 @@ async def list_contact_subscriptions(
     return [record_to_dict(row) for row in rows]
 
 
-@tenant_ops_router.post('/subscriptions', status_code=201)
+# SEC-008: subscription mutations require `admin` role (was `agent` via
+# tenant_ops_router). Sibling fix to TASK-0077, which already moved the
+# `/packages` CRUD to tenant_admin_router. Path is preserved so the admin
+# panel (`coreApi.cancelContactSubscription`, etc.) keeps working without a
+# breaking change; the auth boundary tightens via the router-level
+# `require_min_role('admin')` + `require_mfa_for_privileged` dependencies.
+@tenant_admin_router.post('/subscriptions', status_code=201)
 async def create_contact_subscription(
     payload: ContactSubscriptionCreate,
     request: Request,
@@ -6095,7 +6101,7 @@ async def create_contact_subscription(
     return record_to_dict(row)
 
 
-@tenant_ops_router.patch('/subscriptions/{subscription_id}')
+@tenant_admin_router.patch('/subscriptions/{subscription_id}')
 async def update_contact_subscription(
     subscription_id: UUID,
     payload: ContactSubscriptionPatch,
@@ -6142,7 +6148,7 @@ async def update_contact_subscription(
     return record_to_dict(row)
 
 
-@tenant_ops_router.delete('/subscriptions/{subscription_id}', status_code=204)
+@tenant_admin_router.delete('/subscriptions/{subscription_id}', status_code=204)
 async def cancel_contact_subscription(
     subscription_id: UUID,
     request: Request,
