@@ -988,7 +988,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### UI-022 — Knowledge Storage: alineamiento visual al sistema de diseño
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **Síntoma actual:** la vista `KnowledgeStorageSettings` (módulo `knowledge-storage`) muestra copy *"Storage por tenant · Storage S3"* con styling distinto al resto del panel.
 - **Alcance:**
   - Mismo procedimiento que UI-021: auditar componentes, reemplazar primitivas ad-hoc por `<Button>`/`<Card>`/`<FormField>`/tokens.

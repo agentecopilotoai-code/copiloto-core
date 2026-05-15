@@ -119,8 +119,8 @@ export const adminModules = [
   },
   {
     id: 'knowledge-storage',
-    label: 'Storage S3',
-    summary: 'Configuración del bucket/prefix de conocimiento por tenant.',
+    label: 'Storage del Knowledge',
+    summary: 'Configura dónde se almacenan los documentos del bot. Compatible con S3 dedicado por tenant o storage local del entorno.',
     scope: ['Backend local o S3', 'Bucket único por tenant', 'Credenciales fuera de DB', 'Prefix de documentos'],
     capability: 'knowledge_storage.write',
   },

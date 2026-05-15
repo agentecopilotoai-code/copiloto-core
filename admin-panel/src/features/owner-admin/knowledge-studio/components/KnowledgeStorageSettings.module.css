@@ -1,0 +1,117 @@
+/**
+ * UI-022 — Knowledge Storage Settings layout. All tokens via var(--...) per
+ * the design system. Mirrors the OWNER:Admin form style used by UI-021
+ * (Tenant Setup) and the read-only `<StorageSummary>` already embedded inside
+ * Knowledge Studio (UI-016.2).
+ *
+ * Structure:
+ *  <section .page>
+ *    <PageHeader>
+ *    <AlertBanner notice>           (optional, on save / error / loading)
+ *    <div .layout>                   (2-col grid: form + sidebar status)
+ *      <Card form>                   (.formCard wraps the <form .formGrid>)
+ *      <Card sidebar>                (.statusCard wraps the status panel)
+ *
+ * No file > 400 LOC. No hex/rgb/oklch literals.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.tenantMeta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
+
+.tenantMeta strong {
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+/* ── two-column layout ──────────────────────────────────────────────────── */
+
+.layout {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── form grid (inside the form Card) ───────────────────────────────────── */
+
+.formGrid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.formGrid > .wide,
+.formGrid > .actions {
+  grid-column: 1 / -1;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.endpointHint {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}
+
+/* ── status sidebar ─────────────────────────────────────────────────────── */
+
+.statusList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.statusItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.statusItem:last-child {
+  border-bottom: none;
+}
+
+.statusItem strong {
+  color: var(--ink-2);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+
+.statusItem small {
+  color: var(--ink);
+  font-size: var(--fs-small);
+  word-break: break-all;
+}
+
+.sidebarHint {
+  margin: var(--space-2) 0 0 0;
+  font-size: var(--fs-small);
+  color: var(--muted);
+}
