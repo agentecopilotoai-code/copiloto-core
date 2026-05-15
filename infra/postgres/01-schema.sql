@@ -57,6 +57,12 @@ create table app.tenant_settings (
   -- it directly. Nullable: tenants without a custom logo fall back to
   -- generated initials in the admin panel (TenantBrandLogo component).
   brand_logo_url text null,
+  -- TASK-UI-016.1-FU: timestamp captured when the tenant owner marks the
+  -- tenant as live in production via ``POST /v1/tenants/{tenant_id}/go-live``.
+  -- NULL = never marked live (still in trial / pre-launch). Once set, the
+  -- tenant is in production mode; subsequent calls are idempotent and do
+  -- not overwrite the original timestamp.
+  go_live_at timestamptz null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint tenant_settings_brand_logo_url_len check (
@@ -69,6 +75,12 @@ create table app.tenant_settings (
 --   alter table app.tenant_settings add column if not exists brand_logo_url text null;
 --   alter table app.tenant_settings add constraint tenant_settings_brand_logo_url_len
 --     check (brand_logo_url is null or length(brand_logo_url) <= 1024);
+
+-- TASK-UI-016.1-FU: go_live_at timestamp captures when the owner marks the
+-- tenant as live in production. NULL = never marked. Once set, "marking
+-- again" is idempotent (preserves the original timestamp). For existing
+-- databases, run once:
+--   alter table app.tenant_settings add column if not exists go_live_at timestamptz null;
 
 create table app.tenant_channels (
   id uuid primary key default gen_random_uuid(),

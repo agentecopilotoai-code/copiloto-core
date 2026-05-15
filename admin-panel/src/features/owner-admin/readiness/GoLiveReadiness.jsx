@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { AlertBanner, Card, EmptyState, PageHeader, StatusBadge } from '../../../components/ui/index.js';
+import {
+  AlertBanner,
+  Card,
+  EmptyState,
+  PageHeader,
+  StatusBadge,
+  useConfirm,
+} from '../../../components/ui/index.js';
 import { RequirePermission } from '../../../permissions/index.js';
 import { usePermissions } from '../../../permissions/usePermissions.js';
 import { useTenantContext } from '../../../app/TenantProvider.jsx';
-import { getTenantReadiness } from '../../../services/coreApi.js';
+import { getTenantReadiness, markTenantLive } from '../../../services/coreApi.js';
 import {
   buildChecklistCsv,
   formatCheckDetails,
@@ -54,12 +61,17 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [markLiveNotice, setMarkLiveNotice] = useState(null);
+  const [markLiveTone, setMarkLiveTone] = useState('success');
+  const [markLiveReasons, setMarkLiveReasons] = useState([]);
+  const [marking, setMarking] = useState(false);
+  const confirm = useConfirm();
 
   useEffect(() => {
     let cancelled = false;
     setReport(null);
     setError(null);
     setMarkLiveNotice(null);
+    setMarkLiveReasons([]);
     if (!tenant?.id) return undefined;
     setLoading(true);
     getTenantReadiness(session, tenant.id)
@@ -92,6 +104,8 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
   const pending = totals.total - totals.passed;
   const allReady = report ? Boolean(report.ready) && pending === 0 : false;
   const canMarkLive = permissions?.can?.('go_live_readiness.mark_live', 'RW') === true;
+  const goLiveAt = report?.tenant_status?.go_live_at || null;
+  const alreadyLive = Boolean(goLiveAt);
 
   function handleExport() {
     if (!report) return;
@@ -107,14 +121,45 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
     URL.revokeObjectURL(url);
   }
 
-  function handleMarkLive() {
-    // UI-016.1-FU: el endpoint `POST /tenants/{id}/go-live` aún no existe
-    // (ver `docs/UI_BACKLOG.md`). Hasta entonces, "Marcar live" se queda en
-    // frontend mostrando un AlertBanner explicativo. El botón solo se enciende
-    // si TODOS los checks pasan + el owner tiene la capability `mark_live`.
-    setMarkLiveNotice(
-      'El endpoint de go-live se entregará en UI-016.1-FU. Mientras tanto, contacta a tu CSM para que active el flag manualmente.',
-    );
+  async function handleMarkLive() {
+    // UI-016.1-FU: llama al endpoint real `POST /tenants/{id}/go-live`.
+    // Antes de disparar, pide confirmación al owner. Si el backend devuelve
+    // 409, muestra la lista de checks pendientes en un AlertBanner; si
+    // devuelve OK, actualiza el reporte local con la respuesta refrescada
+    // (incluye `tenant_status.go_live_at` para marcar el tenant como live).
+    if (!tenant?.id || marking) return;
+    const ok = await confirm({
+      title: 'Marcar tenant en producción',
+      body: 'Esta acción registra el momento en que el tenant pasa a producción. La acción es idempotente — sólo se guarda la primera vez.',
+      confirmLabel: 'Marcar live',
+      cancelLabel: 'Cancelar',
+    });
+    if (!ok) return;
+
+    setMarking(true);
+    setMarkLiveNotice(null);
+    setMarkLiveReasons([]);
+    try {
+      const refreshed = await markTenantLive(session, tenant.id);
+      setReport(refreshed);
+      setMarkLiveTone('success');
+      setMarkLiveNotice('Tenant marcado en producción.');
+    } catch (err) {
+      let reasons = [];
+      if (err?.status === 409) {
+        const detail = err?.detail;
+        if (detail && Array.isArray(detail.reasons)) reasons = detail.reasons;
+      }
+      setMarkLiveReasons(reasons);
+      setMarkLiveTone(err?.status === 409 ? 'warning' : 'danger');
+      setMarkLiveNotice(
+        err?.status === 409
+          ? 'No se pudo marcar live: hay checks pendientes.'
+          : err?.message || 'No se pudo marcar el tenant como live.',
+      );
+    } finally {
+      setMarking(false);
+    }
   }
 
   return (
@@ -146,14 +191,16 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
                 type="button"
                 className={styles.primaryButton}
                 onClick={handleMarkLive}
-                disabled={!allReady || loading}
+                disabled={!allReady || loading || marking || alreadyLive}
                 aria-label={
-                  allReady
-                    ? 'Marcar tenant como live'
-                    : `Marcar live deshabilitado: ${pending} check(s) pendientes`
+                  alreadyLive
+                    ? 'Tenant ya está en producción'
+                    : allReady
+                      ? 'Marcar tenant como live'
+                      : `Marcar live deshabilitado: ${pending} check(s) pendientes`
                 }
               >
-                Marcar live →
+                {alreadyLive ? 'En producción' : marking ? 'Marcando…' : 'Marcar live →'}
               </button>
             </RequirePermission>
           </div>
@@ -172,8 +219,30 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
       {error ? <AlertBanner tone="danger" title={error} /> : null}
 
       {markLiveNotice ? (
-        <AlertBanner tone="warning" title="Cierre de go-live aún manual">
-          {markLiveNotice}
+        <AlertBanner
+          tone={markLiveTone}
+          title={
+            markLiveTone === 'success'
+              ? 'Tenant en producción'
+              : markLiveTone === 'warning'
+                ? 'Checks pendientes'
+                : 'No se pudo marcar live'
+          }
+        >
+          <p>{markLiveNotice}</p>
+          {markLiveReasons.length > 0 ? (
+            <ul>
+              {markLiveReasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          ) : null}
+        </AlertBanner>
+      ) : null}
+
+      {alreadyLive && !markLiveNotice ? (
+        <AlertBanner tone="success" title="Tenant en producción">
+          Marcado live el {new Date(goLiveAt).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })}.
         </AlertBanner>
       ) : null}
 

@@ -2597,6 +2597,104 @@ async def upload_tenant_brand_logo(
     return record_to_dict(row)
 
 
+@tenant_admin_router.post('/tenants/{tenant_id}/go-live')
+async def mark_tenant_go_live(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """UI-016.1-FU: mark a tenant as live in production.
+
+    Owner-only operation that captures the moment the tenant transitions
+    from trial / pre-launch into production. Validates the readiness
+    checklist first (re-uses ``build_tenant_readiness_report``) and
+    rejects with 409 if any check is still pending. Idempotent: if
+    ``tenant_settings.go_live_at`` is already set, the timestamp is
+    preserved and no new audit event is emitted, so re-clicking "Marcar
+    live" cannot silently overwrite the original moment of truth.
+
+    Security primitives:
+      - ``authenticate_request`` (router level) + ``require_min_role('admin')``
+        (router level) + explicit ``require_min_role('owner')`` below to
+        escalate above admin/manager. The ``require_mfa_for_privileged``
+        guard is also inherited from the router.
+      - ``ensure_tenant_access`` confirms the JWT subject can act on
+        this specific tenant.
+      - ``set_config('app.tenant_id')`` so RLS scopes every subsequent
+        statement.
+      - ``audit('tenant.go_live_marked')`` with a snapshot of the
+        readiness checks at the moment of marking, plus the optional
+        free-text ``reason`` from the request body.
+    """
+    await require_min_role('owner')(request)
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    # Validate readiness before flipping the flag.
+    report = await build_tenant_readiness_report(conn, tenant_id)
+    if report.get('status') != 'ready':
+        raise HTTPException(
+            status_code=409,
+            detail={
+                'message': 'Tenant not ready for go-live',
+                'reasons': report.get('reasons', []),
+                'checks': report.get('checks', []),
+            },
+        )
+
+    # Idempotent write — preserve the original go_live_at if already set.
+    current = await conn.fetchrow(
+        'select go_live_at from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    if current is None:
+        raise HTTPException(status_code=404, detail='Tenant settings not found')
+
+    # Body is optional ({reason}). Reading it manually so the endpoint
+    # accepts both `{}` and a fully omitted body (the frontend confirm
+    # flow does not always collect a reason).
+    payload: dict | None = None
+    try:
+        body_bytes = await request.body()
+        if body_bytes:
+            payload = json.loads(body_bytes)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail='Invalid JSON body') from exc
+
+    reason: str | None = None
+    if isinstance(payload, dict):
+        raw_reason = payload.get('reason')
+        if raw_reason is not None and not isinstance(raw_reason, str):
+            raise HTTPException(status_code=422, detail='reason must be a string')
+        reason = (raw_reason or '').strip() or None
+
+    if current['go_live_at'] is None:
+        await conn.execute(
+            'update app.tenant_settings set go_live_at = now(), updated_at = now() where tenant_id=$1',
+            tenant_id,
+        )
+        await audit(
+            conn,
+            tenant_id=tenant_id,
+            actor_type=request.state.actor_type,
+            actor_id=request.state.actor_id,
+            action='tenant.go_live_marked',
+            entity_type='tenant',
+            entity_id=str(tenant_id),
+            metadata={
+                'reason': reason,
+                'readiness_snapshot': {
+                    'status': report.get('status'),
+                    'checks': report.get('checks', []),
+                },
+            },
+        )
+
+    # Refresh the report so the frontend re-renders with go_live_at populated.
+    refreshed = await build_tenant_readiness_report(conn, tenant_id)
+    return refreshed
+
+
 @tenant_admin_router.get('/tenants/{tenant_id}/retention/policies')
 async def list_retention_policies(
     tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
@@ -10121,6 +10219,20 @@ async def build_tenant_readiness_report(
 
     response = readiness_response(tenant_id, checks, smoke_question)
     response['onboarding_progress'] = onboarding_progress
+    # TASK-UI-016.1-FU: surface go_live_at so the frontend can render
+    # "Tenant en producción desde X" once the owner marks live. Defensive
+    # read via `dict(...).get(...)` so older fake connections (legacy tests
+    # that mock `from app.tenant_settings` without including this new
+    # column) don't blow up with KeyError; in production asyncpg returns
+    # the column whenever the SELECT lists it.
+    go_live_row = await conn.fetchrow(
+        'select go_live_at from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    go_live_at = dict(go_live_row).get('go_live_at') if go_live_row else None
+    response['tenant_status'] = {
+        'go_live_at': go_live_at.isoformat() if go_live_at is not None else None,
+    }
     return response
 
 

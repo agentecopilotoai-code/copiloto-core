@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 // Mock coreApi to avoid pulling the whole module graph + real network.
 vi.mock('../../../services/coreApi.js', () => ({
   getTenantReadiness: vi.fn(),
+  markTenantLive: vi.fn(),
 }));
 
 let mockTenantContext;
@@ -64,6 +65,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
   coreApi.getTenantReadiness.mockResolvedValue(READY_REPORT);
+  coreApi.markTenantLive.mockResolvedValue({
+    ...READY_REPORT,
+    tenant_status: { go_live_at: '2026-05-15T14:00:00Z' },
+  });
 });
 
 describe('GoLiveReadiness', () => {
@@ -126,18 +131,56 @@ describe('GoLiveReadiness', () => {
     expect(screen.getByText('1 pendiente')).toBeInTheDocument();
   });
 
-  it('click en "Marcar live" muestra el banner UI-016.1-FU mientras no exista endpoint', async () => {
+  it('click en "Marcar live" dispara markTenantLive y muestra el banner de éxito', async () => {
+    setup();
+    const button = await screen.findByRole('button', { name: /Marcar tenant como live/ });
+
+    await userEvent.click(button);
+
+    // useConfirm fallback (no ConfirmProvider) resuelve true automáticamente —
+    // ver `useConfirm` en `ConfirmDialog.jsx`.
+    await screen.findByText('Tenant marcado en producción.');
+    expect(coreApi.markTenantLive).toHaveBeenCalledWith(SESSION, 'tenant-acme');
+    // El reporte refrescado debe pintar la sección "Tenant en producción"
+    // y deshabilitar el botón porque alreadyLive=true.
+    const btnAfter = screen.getByRole('button', { name: /Tenant ya está en producción/ });
+    expect(btnAfter).toBeDisabled();
+    expect(btnAfter.textContent).toMatch(/En producción/);
+  });
+
+  it('respuesta 409 del backend muestra los reasons en un AlertBanner', async () => {
+    const conflict = new Error('Tenant not ready for go-live');
+    conflict.status = 409;
+    conflict.detail = {
+      message: 'Tenant not ready for go-live',
+      reasons: ['Canal WhatsApp no está en modo live', 'Sin eventos de auditoría'],
+    };
+    coreApi.markTenantLive.mockRejectedValue(conflict);
     setup();
     const button = await screen.findByRole('button', { name: /Marcar tenant como live/ });
 
     await userEvent.click(button);
 
     expect(
-      await screen.findByText('Cierre de go-live aún manual'),
+      await screen.findByText('No se pudo marcar live: hay checks pendientes.'),
     ).toBeInTheDocument();
+    expect(screen.getByText('Canal WhatsApp no está en modo live')).toBeInTheDocument();
+    expect(screen.getByText('Sin eventos de auditoría')).toBeInTheDocument();
+  });
+
+  it('reporte ya marcado live renderiza el banner "Tenant en producción"', async () => {
+    coreApi.getTenantReadiness.mockResolvedValue({
+      ...READY_REPORT,
+      tenant_status: { go_live_at: '2026-05-15T14:00:00Z' },
+    });
+    setup();
+
+    await screen.findByText('Tenant en producción');
     expect(
-      screen.getByText(/UI-016\.1-FU/),
-    ).toBeInTheDocument();
+      screen.getByRole('button', { name: /Tenant ya está en producción/ }),
+    ).toBeDisabled();
+    // markTenantLive NO se llama por sí solo (solo on-click).
+    expect(coreApi.markTenantLive).not.toHaveBeenCalled();
   });
 
   it('rol admin (sin mark_live) ve el banner "Solo el owner" y NO ve el botón Marcar live', async () => {

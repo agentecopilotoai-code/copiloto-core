@@ -46,14 +46,26 @@ async function request(path, { body, method = 'GET', session, tenantId } = {}) {
 
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
+    let rawDetail = null;
     try {
       const payload = await response.json();
-      detail = payload.detail || JSON.stringify(payload);
+      rawDetail = payload?.detail ?? payload ?? null;
+      if (typeof payload?.detail === 'string') {
+        detail = payload.detail;
+      } else if (payload?.detail && typeof payload.detail === 'object') {
+        // UI-016.1-FU: backend may return a structured detail (e.g. 409
+        // with {message, reasons, checks}). Surface the human message in
+        // `error.message`, keep the full object on `error.detail`.
+        detail = payload.detail.message || JSON.stringify(payload.detail);
+      } else {
+        detail = JSON.stringify(payload);
+      }
     } catch {
       detail = response.statusText || detail;
     }
     const error = new Error(detail);
     error.status = response.status;
+    error.detail = rawDetail;
     throw error;
   }
 
@@ -289,6 +301,20 @@ export function getTenantReadiness(session, tenantId, options = {}) {
   }
   const query = params.toString();
   return request(`/tenants/${tenantId}/readiness${query ? `?${query}` : ''}`, { session, tenantId });
+}
+
+// UI-016.1-FU: marca el tenant como live en producción. Llama al endpoint
+// `POST /tenants/{id}/go-live` que valida la readiness checklist y devuelve
+// 409 si algún check sigue pendiente. Idempotente — re-clicks devuelven el
+// reporte actual sin sobrescribir el go_live_at original.
+export function markTenantLive(session, tenantId, reason) {
+  const body = reason ? { reason } : {};
+  return request(`/tenants/${tenantId}/go-live`, {
+    method: 'POST',
+    session,
+    tenantId,
+    body,
+  });
 }
 
 export function listAuditLogs(session, tenantId) {

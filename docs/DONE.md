@@ -15,6 +15,57 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-016.1-FU — Backend endpoint POST /v1/tenants/{id}/go-live
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el follow-up declarado por UI-016.1. La pantalla "Go-live Readiness" había shipeado el botón "Marcar live" como stub (`setMarkLiveNotice` mostraba un AlertBanner "Cierre de go-live aún manual"). UI-016.1-FU entrega el endpoint backend real + columna en `tenant_settings` + helper en `coreApi.js` + wireado con `useConfirm` desde el frontend para reemplazar el stub.
+- **Cambios realizados:**
+  - **Schema (`infra/postgres/01-schema.sql`):** nueva columna `go_live_at timestamptz null` en `app.tenant_settings`. Bloque de migration hint `TASK-UI-016.1-FU` para DBs existentes (`alter table ... add column if not exists go_live_at timestamptz null`).
+  - **Endpoint nuevo (`app/api/v1/routes.py`):** `POST /v1/tenants/{tenant_id}/go-live` registrado en `tenant_admin_router`. El handler:
+    - Escala explícitamente a `require_min_role('owner')(request)` arriba del default admin del router (admin/manager NO pueden marcar live; sólo el owner del tenant).
+    - Llama `await ensure_tenant_access(...)` + `set_config('app.tenant_id', ...)` para sostener RLS.
+    - Re-construye el readiness report con `build_tenant_readiness_report(...)`; si `status != 'ready'` devuelve **409** con `{message, reasons, checks}` en `detail` (no un string suelto — el frontend lee `error.detail.reasons` para pintar los pendientes en el AlertBanner).
+    - Lee la fila actual de `tenant_settings`. Si `go_live_at is None` ejecuta `update ... set go_live_at = now(), updated_at = now()` y emite `audit(action='tenant.go_live_marked', metadata={reason, readiness_snapshot})`. Si ya estaba seteado, la idempotencia preserva el timestamp original y NO emite un nuevo audit (re-clicks no contaminan el log).
+    - Devuelve el reporte refrescado (que ya expone `tenant_status.go_live_at`) para que el frontend re-renderice con el banner "Tenant en producción" sin un round-trip extra.
+  - **`build_tenant_readiness_report` extendida:** ahora añade `response['tenant_status'] = {'go_live_at': ...}` al final del payload. Esto cubre `GET /readiness` también — la pantalla Go-live ya recibe el flag en su primer load, sin código condicional.
+  - **`admin-panel/src/services/coreApi.js`:**
+    - Helper nuevo `markTenantLive(session, tenantId, reason)` → `POST /tenants/${tenantId}/go-live` con body `{reason}` opcional.
+    - El error handler de `request()` ahora preserva el `detail` estructurado en `error.detail` (antes lo collapseaba a `JSON.stringify` en el message). El 409 del backend devuelve `{message, reasons, checks}` y el frontend lee `error.detail.reasons` directamente.
+  - **`GoLiveReadiness.jsx`:** el placeholder `setMarkLiveNotice('El endpoint... contacta a tu CSM')` desapareció. El nuevo `handleMarkLive`:
+    - Pide confirmación vía `useConfirm({ title: 'Marcar tenant en producción', body: '...' })`. Si el usuario cancela, no hace nada.
+    - Dispara `await markTenantLive(session, tenant.id)`, set `marking=true` mientras corre. En éxito, reemplaza el `report` local con la respuesta refrescada y muestra `AlertBanner tone="success" title="Tenant en producción"`.
+    - En 409 lee `err.detail.reasons` y los pinta como `<ul>` dentro del AlertBanner warning. Otros errores muestran AlertBanner danger con el message.
+    - El botón "Marcar live" queda deshabilitado mientras `marking=true` ("Marcando…") y permanentemente si `alreadyLive=true` ("En producción" + aria-label "Tenant ya está en producción").
+    - Si el reporte trae `tenant_status.go_live_at` desde el GET inicial, renderiza un AlertBanner success "Marcado live el DD de MMM" (formato `es-CO`) sin esperar al click.
+- **Decisiones de implementación:**
+  - **Por qué no `PATCH /tenants/{id}/status`:** el endpoint existente es platform-owner-only y opera sobre `app.tenants.status` con transiciones `trial → active/suspended/churned`. "Live" no es un valor válido del enum y mover-lo allí mezcla dos dominios (lifecycle del platform-owner vs. switch del owner del tenant). La columna nueva `tenant_settings.go_live_at` permite registrar el momento sin tocar el lifecycle del tenant.
+  - **Por qué el endpoint vive bajo `tenant_admin_router` con escalada in-handler:** los routers en `routes.py` tienen role minimums baked-in vía `dependencies`. `tenant_admin_router` está en admin para reusar `authenticate_request + require_mfa_for_privileged`. Para escalar a owner sin crear un router nuevo dedicado, el handler llama `await require_min_role('owner')(request)` como primera línea — patrón usado en `get_tenant_readiness` ya (`require_min_role('admin')(request)` antes de la lógica).
+  - **Idempotencia explícita:** comparar `current['go_live_at'] is None` antes del write es más legible que un `ON CONFLICT DO NOTHING` (que no aplica acá — no hay conflicto, hay una transición). Re-clicks devuelven el reporte refrescado pero NO escriben ni auditan.
+  - **Auditoría con snapshot:** la metadata graba `{reason, readiness_snapshot: {status, checks}}`. El snapshot es chunky pero crítico para forensics: si después un check se vuelve falso (por ejemplo, el canal WhatsApp se suspende), seguimos teniendo evidencia de que en el momento de marcar live estaba activo. La `reason` libre permite al owner explicar (e.g. "lanzamiento programado 16-may-2026").
+  - **`error.detail` enriquecido:** modificar el helper `request()` en `coreApi.js` para preservar el objeto crudo en `error.detail` fue necesario porque FastAPI devuelve `{detail: {message, reasons, checks}}` en el 409, y el código viejo lo collapseaba con `JSON.stringify`. El cambio es retro-compatible con las llamadas existentes (que sólo leían `error.message`).
+- **Archivos modificados / creados:**
+  - **Nuevos (1):** `tests/test_tenant_go_live_static.py` (11 tests static).
+  - **Modificados (5):** `app/api/v1/routes.py` (+endpoint + extensión de `build_tenant_readiness_report`), `infra/postgres/01-schema.sql` (+columna + migration hint), `admin-panel/src/services/coreApi.js` (+`markTenantLive` + `error.detail`), `admin-panel/src/features/owner-admin/readiness/GoLiveReadiness.jsx` (handleMarkLive real + banners), `admin-panel/src/features/owner-admin/readiness/GoLiveReadiness.test.jsx` (3 tests nuevos reemplazando el de placeholder), `docs/UI_BACKLOG.md` (UI-016.1-FU DONE), `docs/DONE.md` (esta entrada).
+- **Validaciones ejecutadas:**
+  - `python3 -m ruff check app/api/v1/routes.py` ✓
+  - `python3 -m pytest tests/test_tenant_go_live_static.py -v` ✓ (11 / 11)
+  - `python3 -m pytest tests/test_tenant_branding_static.py -v` ✓ (8 / 8 — regresión OK)
+  - `npm run lint` ✓ (mismos 2 warnings preexistentes en `useTenantSetupSidePanels.js`)
+  - `npm test -- --run` ✓ (635 / 635)
+  - `npm run test:a11y` ✓ (6 / 6)
+  - `npm run test:coverage` ✓
+  - `npm run build` ✓ (CSS 179.26 kB / JS 818.17 kB)
+- **Nota de seguridad:**
+  - `authenticate_request` (router) + `require_min_role('admin')` (router) + escalada explícita a `require_min_role('owner')` in-handler. Admin / manager / agent / viewer NO pueden marcar live — sólo el owner del tenant.
+  - `require_mfa_for_privileged` también heredado del router.
+  - `ensure_tenant_access` valida cross-tenant: un owner del tenant A no puede marcar live al tenant B.
+  - `set_config('app.tenant_id', $1, true)` antes de todo SELECT/UPDATE → RLS sobre `tenant_settings` + `audit_logs`.
+  - Audit log capturando `actor_type / actor_id / action='tenant.go_live_marked' / metadata={reason, readiness_snapshot}`. Forensic trail completo.
+  - Sin nuevas dependencias de Python ni de npm.
+- **Limitaciones reconocidas:**
+  - El endpoint no expone "des-marcar live" (no hay `delete go_live_at` ni `PATCH go_live_at=null`). Si en el futuro se necesita revertir un tenant a pre-launch, se hace por DB directamente o se abre un nuevo follow-up — por ahora el ciclo es monotonic (null → timestamp) para reflejar la realidad operativa: "marcar live" es un evento irreversible en el negocio (el canal WhatsApp ya está pasando tráfico real).
+  - El frontend pinta `goLiveAt` con `toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })`. No hay un selector de timezone — usa el del navegador. Suficiente para el caso de uso (owner viendo cuándo marcó live su propio tenant).
+
 ### UI-016.8 — Responsive 360px (bottom-nav móvil + breakpoints dedicados)
 
 - **Fecha:** 2026-05-15
