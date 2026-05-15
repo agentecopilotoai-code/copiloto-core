@@ -35,6 +35,7 @@ vi.mock('../../../services/coreApi.js', () => ({
   createBranch: vi.fn(),
   updateBranch: vi.fn(),
   deleteBranch: vi.fn(),
+  uploadTenantBrandLogo: vi.fn(),
 }));
 
 // eslint-disable-next-line import/first
@@ -77,5 +78,16 @@ describe('TenantSetupWizard', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'Voz del bot' }));
     expect(screen.getByRole('heading', { name: 'Voz del bot', level: 3 })).toBeInTheDocument();
     expect(screen.getByText('Tono')).toBeInTheDocument();
+  });
+
+  it('renders the brand logo uploader inside the Voz del bot tab', async () => {
+    setup();
+    await userEvent.click(screen.getByRole('tab', { name: 'Voz del bot' }));
+    expect(screen.getByRole('heading', { name: 'Logo de marca', level: 3 })).toBeInTheDocument();
+    // Empty state message (no tenant selected, brand_logo_url null).
+    expect(screen.getByTestId('brand-logo-empty')).toBeInTheDocument();
+    // The file input + submit button are present.
+    expect(screen.getByTestId('brand-logo-file-input')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Subir logo' })).toBeDisabled();
   });
 });

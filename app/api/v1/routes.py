@@ -2413,9 +2413,28 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         for k in (
             'locale', 'business_hours', 'escalation_policy', 'pii_policy',
             'no_train', 'notification_settings', 'bot_personality',
+            'brand_logo_url',
         )
         if k in payload
     }
+    # UI-012-FU: validate brand_logo_url shape/length up front. Empty string
+    # clears the logo (-> null) so the admin UI can offer a "Quitar logo"
+    # action without a dedicated DELETE endpoint.
+    if 'brand_logo_url' in allowed:
+        raw_logo = allowed['brand_logo_url']
+        if raw_logo is not None:
+            if not isinstance(raw_logo, str):
+                raise HTTPException(
+                    status_code=422,
+                    detail='brand_logo_url must be a string or null',
+                )
+            stripped_logo = raw_logo.strip()
+            if len(stripped_logo) > 1024:
+                raise HTTPException(
+                    status_code=422,
+                    detail='brand_logo_url must be at most 1024 chars',
+                )
+            allowed['brand_logo_url'] = stripped_logo or None
     current = await conn.fetchrow('select * from app.tenant_settings where tenant_id=$1', tenant_id)
     if not current:
         raise HTTPException(status_code=404, detail='Settings not found')
@@ -2453,7 +2472,8 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         """
         update app.tenant_settings
         set locale=$2, business_hours=$3::jsonb, escalation_policy=$4::jsonb, pii_policy=$5::jsonb,
-            no_train=$6, notification_settings=$7::jsonb, bot_personality=$8::jsonb
+            no_train=$6, notification_settings=$7::jsonb, bot_personality=$8::jsonb,
+            brand_logo_url=$9
         where tenant_id=$1 returning *
         """,
         tenant_id,
@@ -2464,8 +2484,116 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         merged['no_train'],
         json.dumps(merged['notification_settings']),
         json.dumps(merged['bot_personality']),
+        merged.get('brand_logo_url'),
     )
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
+    return record_to_dict(row)
+
+
+@tenant_admin_router.post('/tenants/{tenant_id}/branding/logo')
+async def upload_tenant_brand_logo(
+    tenant_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """UI-012-FU: upload a tenant brand logo.
+
+    Reuses ``store_media_file`` (kind=``image``) so the MIME allowlist
+    (``image/png``, ``image/jpeg``, ``image/webp``) and the 5 MB size cap
+    apply uniformly with the rest of the media library. SVG is
+    intentionally excluded from the allowlist so we do not need a
+    sanitizer (``defusedxml`` or similar) — PNG/JPEG/WEBP cover the
+    branding use case.
+
+    The uploaded file lands in ``app.media_assets`` (for reuse and
+    deletability) and the resulting public ``source_uri`` is written
+    into ``app.tenant_settings.brand_logo_url`` so the admin shell picks
+    it up on the next request without extra plumbing.
+    """
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    try:
+        form = await request.form()
+    except AssertionError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail='python-multipart dependency is required for file uploads',
+        ) from exc
+
+    file = form.get('file')
+    if not file or not hasattr(file, 'read'):
+        raise HTTPException(status_code=422, detail='file is required')
+
+    data = await file.read()
+    filename = getattr(file, 'filename', None) or 'logo.bin'
+    mime_type = getattr(file, 'content_type', None)
+    asset_id = uuid4()
+    settings = get_settings()
+
+    try:
+        stored = store_media_file(
+            data=data,
+            tenant_id=str(tenant_id),
+            asset_id=str(asset_id),
+            kind='image',  # MEDIA_MIME_ALLOWLIST['image'] = png/jpeg/webp
+            filename=filename,
+            mime_type=mime_type,
+            settings=settings,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    uploader_id = await current_user_id_from_request(request, conn)
+
+    await conn.execute(
+        """
+        insert into app.media_assets (
+          id, tenant_id, kind, label, description,
+          storage_backend, storage_bucket, object_key, source_uri,
+          mime_type, sha256, size_bytes, tags, uploaded_by_user_id
+        )
+        values ($1, $2, 'image', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::text[], $13)
+        """,
+        asset_id,
+        tenant_id,
+        f'Logo del tenant ({filename})',
+        'Logo de marca del tenant — UI-012-FU',
+        stored.storage_backend,
+        stored.bucket,
+        stored.object_key,
+        stored.source_uri,
+        stored.mime_type,
+        stored.sha256,
+        stored.size_bytes,
+        ['branding', 'logo'],
+        uploader_id,
+    )
+
+    new_url = stored.source_uri
+    row = await conn.fetchrow(
+        'update app.tenant_settings set brand_logo_url=$1 where tenant_id=$2 returning *',
+        new_url,
+        tenant_id,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail='Settings not found')
+
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant_settings.branding_updated',
+        entity_type='tenant_settings',
+        entity_id=str(tenant_id),
+        metadata={
+            'asset_id': str(asset_id),
+            'size_bytes': stored.size_bytes,
+            'mime_type': stored.mime_type,
+        },
+    )
+
     return record_to_dict(row)
 
 

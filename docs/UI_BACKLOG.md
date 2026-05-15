@@ -713,7 +713,7 @@ src/
 
 ### UI-012-FU — Backend support para `brand_logo_url`
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **Origen:** follow-up declarado en `docs/DONE.md` durante UI-012 (frontend-only). El frontend ya pinta `tenant.brand_logo_url` cuando viene del backend con fallback a iniciales; falta toda la cadena server-side para persistirlo y devolverlo.
 - **Alcance:**
   - Migración SQL: agregar columna `brand_logo_url text null` a `app.tenant_settings` (con check de longitud razonable, p. ej. ≤ 1024 chars).

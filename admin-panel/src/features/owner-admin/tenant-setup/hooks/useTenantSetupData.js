@@ -9,6 +9,7 @@ import {
   reindexAllKnowledgeDocuments,
   updateTenant,
   updateTenantSettings,
+  uploadTenantBrandLogo,
 } from '../../../../services/coreApi.js';
 import {
   DEFAULT_BOT_PERSONALITY,
@@ -74,6 +75,10 @@ export function useTenantSetupData({ session, tenant, onTenantCreated, setActive
     dimensions: 1536,
   });
   const [reindexResult, setReindexResult] = useState(null);
+  // UI-012-FU: brand logo state — `brandLogoUrl` mirrors
+  // tenant_settings.brand_logo_url so the BotPersonalityTab preview can
+  // reflect the current value before/after upload + "Quitar logo".
+  const [brandLogoUrl, setBrandLogoUrl] = useState(null);
 
   const settingsPayload = useMemo(
     () => ({
@@ -121,6 +126,7 @@ export function useTenantSetupData({ session, tenant, onTenantCreated, setActive
         setNotificationSettings(hydrated.notificationSettings);
         setBotPersonality(hydrated.botPersonality);
         setLastSettings(loadedSettings);
+        setBrandLogoUrl(loadedSettings?.brand_logo_url || null);
       })
       .catch(() => {
         // Keep editable defaults if tenant details or settings cannot be loaded.
@@ -225,6 +231,35 @@ export function useTenantSetupData({ session, tenant, onTenantCreated, setActive
     }
   }
 
+  // UI-012-FU: upload a logo file and reflect the new URL locally.
+  async function handleUploadBrandLogo(file) {
+    if (!currentTenantId || !file) return null;
+    const updated = await runAction(
+      () => uploadTenantBrandLogo(session, currentTenantId, file),
+      'Logo de marca actualizado y auditado.',
+    );
+    if (updated) {
+      setBrandLogoUrl(updated.brand_logo_url || null);
+      setLastSettings(updated);
+    }
+    return updated;
+  }
+
+  // UI-012-FU: clear the logo by PATCH-ing brand_logo_url to ''
+  // (the backend coerces empty string -> null).
+  async function handleClearBrandLogo() {
+    if (!currentTenantId) return null;
+    const updated = await runAction(
+      () => updateTenantSettings(session, currentTenantId, { brand_logo_url: '' }),
+      'Logo de marca eliminado.',
+    );
+    if (updated) {
+      setBrandLogoUrl(updated.brand_logo_url || null);
+      setLastSettings(updated);
+    }
+    return updated;
+  }
+
   async function refreshAuditLogs(tenantId = currentTenantId, showNotice = true) {
     if (!tenantId) return;
     const logs = await runAction(
@@ -255,6 +290,7 @@ export function useTenantSetupData({ session, tenant, onTenantCreated, setActive
       ragForm,
       reindexResult,
       settingsPayload,
+      brandLogoUrl,
       ...sidePanels.state,
     },
     actions: {
@@ -275,6 +311,8 @@ export function useTenantSetupData({ session, tenant, onTenantCreated, setActive
       handleChangeStatus,
       handleProviderChange,
       handleReindexAll,
+      handleUploadBrandLogo,
+      handleClearBrandLogo,
       refreshAuditLogs,
       ...sidePanels.actions,
     },

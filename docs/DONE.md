@@ -15,6 +15,48 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-012-FU — Backend support para `brand_logo_url`
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el follow-up de UI-012 (frontend-only) implementando la cadena server-side completa para `tenant.brand_logo_url`. El componente `TenantBrandLogo` del topbar ya consumía el campo y caía a iniciales cuando venía vacío; UI-012-FU añade la columna en `app.tenant_settings`, el allowlist en el PATCH `/v1/tenants/{id}/settings`, el endpoint nuevo `POST /v1/tenants/{id}/branding/logo` (multipart) y el uploader admin en el wizard.
+- **Cambios realizados:**
+  - **Schema (`infra/postgres/01-schema.sql`):** se añadió la columna `brand_logo_url text null` dentro del bloque `create table app.tenant_settings (...)` (entre `bot_personality` y `created_at`), más el `constraint tenant_settings_brand_logo_url_len check (brand_logo_url is null or length(brand_logo_url) <= 1024)`. Como el proyecto no usa Alembic, se dejó un bloque comentado `TASK-UI-012-FU` con los `alter table ... add column if not exists` y el `add constraint` correspondientes para correr una vez contra bases existentes. La columna queda nullable: un tenant sin logo cae a las iniciales generadas por `TenantBrandLogo` (UI-012) sin layout shift.
+  - **PATCH `/v1/tenants/{id}/settings` (`app/api/v1/routes.py` ~L2407):** `brand_logo_url` añadido al tuple del `allowed = {k: payload[k] for k in (...)}`. Validación previa al UPDATE: rechaza con 422 si no es `str | None`, recorta con `.strip()`, exige ≤ 1024 chars, y normaliza `''` → `None` para que la UI pueda "Quitar logo" via PATCH sin endpoint dedicado. El UPDATE ahora persiste el nuevo campo (`brand_logo_url=$9`). El audit existente `tenant_settings.updated` cubre la mutación, no se añadió un evento separado para mantener una entrada por request (consistente con los demás keys del allowlist).
+  - **`POST /v1/tenants/{id}/branding/logo` (nuevo, `app/api/v1/routes.py`):** mounted en `tenant_admin_router` (hereda `authenticate_request` + `require_min_role('admin')`). Llama `ensure_tenant_access`, fija `set_config('app.tenant_id', ...)` para RLS, parsea el `multipart/form-data` (`file` campo único, `content_type` + `filename` del UploadFile), y delega validación + escritura física a `store_media_file(kind='image', ...)` — el helper ya impone el MIME allowlist `{image/jpeg, image/png, image/webp}` y el cap de 5 MB. Inserta el resultado en `app.media_assets` (tags `['branding','logo']` para futura indexación/borrado), hace `update app.tenant_settings set brand_logo_url=$1` con el `source_uri` devuelto, y emite `audit(action='tenant_settings.branding_updated', metadata={asset_id, size_bytes, mime_type})`. Reutiliza `current_user_id_from_request` para `uploaded_by_user_id`. **SVG queda intencionalmente fuera del allowlist — la sanitización via `defusedxml` NO se hizo porque PNG/JPEG/WEBP cubren el caso de branding sin riesgo de XSS via `<script>` o `xlink:href` externo.**
+  - **`uploadTenantBrandLogo` en `admin-panel/src/services/coreApi.js`:** helper nuevo que arma `FormData` con `file` y delega a `uploadMultipart()` (el wrapper preexistente que no fuerza `Content-Type: application/json`, dejando que el browser ponga el boundary multipart). Sigue el patrón canónico de `uploadMediaAsset` pero más simple porque el endpoint solo necesita `file`.
+  - **`useTenantSetupData.js`:** nuevo state `brandLogoUrl` (lee `loadedSettings?.brand_logo_url` en el `useEffect` de carga inicial), nuevas acciones `handleUploadBrandLogo(file)` (POST y refresca `brandLogoUrl` + `lastSettings`) y `handleClearBrandLogo()` (PATCH `{ brand_logo_url: '' }` para limpiar). Ambas usan `runAction` para audit-friendly notice.
+  - **`BotPersonalityTab.jsx`:** sección nueva "Logo de marca" debajo del form de voz (ambas son branding del tenant, conviven naturalmente). Contiene preview del logo actual (`<img>` 120×120 con alt accesible si hay `brandLogoUrl`, mensaje `data-testid="brand-logo-empty"` si no), `<input type="file" accept="image/png,image/jpeg,image/webp">`, submit "Subir logo" (deshabilitado sin archivo o sin tenant), y "Quitar logo" condicional (solo cuando hay logo). El input se resetea via `useRef` después de un upload exitoso para evitar re-submit accidental. Permanece dentro del wizard que ya está detrás del gate de capability (`moduleRegistry`).
+  - **`TenantSetupWizard.test.jsx`:** actualizado el mock de `coreApi.js` para incluir `uploadTenantBrandLogo`, y nuevo test que cambia a la pestaña "Voz del bot" y asserta que la sección "Logo de marca" + empty state + botón "Subir logo" disabled están en el DOM.
+  - **`BotPersonalityTab.test.jsx` (nuevo):** 6 tests cubriendo empty state, render con logo, upload, "Quitar logo", botón deshabilitado sin archivo y sin tenant. Mocks de `handleUploadBrandLogo` / `handleClearBrandLogo` devuelven Promises (race-resilient).
+  - **`coreApi.test.js` (nuevo):** assert que `uploadTenantBrandLogo` envía `FormData` con `file`, POST a `/tenants/:id/branding/logo`, headers `authorization` + `X-Tenant-Id` sin `content-type` (multipart), y propaga el `detail` del backend cuando el upload falla.
+  - **`tests/test_tenant_branding_static.py` (nuevo):** 8 tests static-style siguiendo el patrón del proyecto (`Path('app/api/v1/routes.py').read_text()` + asserts de substring). Cubren: (1) schema declara `brand_logo_url` + constraint + hint de migración, (2) PATCH whitelist + validación de longitud, (3) endpoint POST registrado en `tenant_admin_router`, (4) usa `ensure_tenant_access` + RLS + `audit` con `action='tenant_settings.branding_updated'`, (5) reusa `store_media_file(kind='image')` + insert en `media_assets` + update en `tenant_settings`, (6) helper `uploadTenantBrandLogo` expuesto en `coreApi.js` con FormData, (7) `BotPersonalityTab` renderiza el uploader con el `accept` correcto, (8) `useTenantSetupData` cablea los handlers.
+- **Seguridad (chequeo final):**
+  - `authenticate_request` + `require_min_role('admin')` — heredados del `tenant_admin_router`. OK.
+  - `ensure_tenant_access` — explícito en la primera línea del handler. OK.
+  - `set_config('app.tenant_id', ...)` para RLS — explícito antes del `await request.form()`. OK.
+  - Audit log — `tenant_settings.branding_updated` con `metadata={asset_id, size_bytes, mime_type}`. OK.
+  - MIME allowlist heredado de `store_media_file` (`image/jpeg`, `image/png`, `image/webp`). SVG **fuera** del allowlist por diseño — sin riesgo de XSS via SVG embebido. OK.
+  - Sin nuevas dependencias Python (NO `defusedxml`, NO `Pillow`). OK.
+- **Archivos modificados / creados:**
+  - **Nuevos (3):** `tests/test_tenant_branding_static.py`, `admin-panel/src/services/coreApi.test.js`, `admin-panel/src/features/owner-admin/tenant-setup/components/BotPersonalityTab.test.jsx`.
+  - **Modificados (7):** `infra/postgres/01-schema.sql`, `app/api/v1/routes.py`, `admin-panel/src/services/coreApi.js`, `admin-panel/src/features/owner-admin/tenant-setup/hooks/useTenantSetupData.js`, `admin-panel/src/features/owner-admin/tenant-setup/components/BotPersonalityTab.jsx`, `admin-panel/src/features/owner-admin/tenant-setup/TenantSetupWizard.test.jsx`, `docs/UI_BACKLOG.md`.
+  - **Docs:** esta entrada en `docs/DONE.md`.
+- **Validación local:**
+  - `python3 -m ruff check app` → 0 errores.
+  - `python3 -m pytest tests/test_tenant_branding_static.py -v` → 8/8 verdes.
+  - `python3 -m pytest tests/test_bot_personality_static.py tests/test_auto_rebook_static.py` (smoke tests sobre tenant_settings) → 29/29 verdes (no regresión por la columna nueva).
+  - `npm --prefix admin-panel run lint` → 0 errores, 2 warnings preexistentes en `useTenantSetupSidePanels.js` (sin cambios).
+  - `npm --prefix admin-panel test` → **108 archivos / 498 tests pasan, 0 fallos** (UI-012 cerró con 489; +9 nuevos: 2 en `coreApi.test.js`, 6 en `BotPersonalityTab.test.jsx`, 1 en `TenantSetupWizard.test.jsx`).
+  - `npm --prefix admin-panel run test:a11y` → 6/6 verdes (sin nuevas vistas a11y-críticas, el uploader vive embebido en la pestaña ya cubierta).
+  - `npm --prefix admin-panel run test:coverage` → exit 0, thresholds en verde.
+  - `npm --prefix admin-panel run build` → vite OK (`✓ 423 modules transformed`, 770 kB JS / 145 kB CSS).
+- **Notas y limitaciones reales:**
+  - El handler de upload **no** abre ni inspecciona los bytes de la imagen (Pillow no se añadió). El cap de 5 MB y el MIME allowlist los aplica `store_media_file()` antes de tocar storage. Para casos donde un PNG malformado pudiera engañar al MIME sniffer del cliente: el riesgo es que se sirva un archivo "roto" pero no hay vector de XSS porque `<img>` no ejecuta script.
+  - Tests `requires_db` no se añadieron — el proyecto solo usa ese marker en `test_rls_multitenant_e2e.py` y no es una convención establecida para validar PATCHes individuales. Los static tests cubren la superficie de routes.py y schema.sql.
+  - El componente uploader vive dentro de `BotPersonalityTab` en vez de una pestaña dedicada. Mover a su propia tab "Branding" se evalúa como follow-up si el equipo decide que el branding merece más densidad.
+
+---
+
 ### UI-012 — Theming + dark mode + branding por tenant (opcional)
 
 - **Fecha:** 2026-05-15

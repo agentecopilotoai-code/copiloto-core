@@ -51,9 +51,24 @@ create table app.tenant_settings (
   payment_settings jsonb not null default '{}'::jsonb,
   onboarding_progress jsonb not null default '{"last_completed_step":0,"steps":{}}'::jsonb,
   bot_personality jsonb not null default '{"tone":"neutral","formality":"tu","emoji_level":"moderate","custom_persona":""}'::jsonb,
+  -- TASK-UI-012-FU: per-tenant brand logo URL, populated by
+  -- ``POST /v1/tenants/{tenant_id}/branding/logo``. Stored as the public
+  -- ``source_uri`` returned by ``store_media_file()`` so the shell can render
+  -- it directly. Nullable: tenants without a custom logo fall back to
+  -- generated initials in the admin panel (TenantBrandLogo component).
+  brand_logo_url text null,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint tenant_settings_brand_logo_url_len check (
+    brand_logo_url is null or length(brand_logo_url) <= 1024
+  )
 );
+
+-- TASK-UI-012-FU: brand_logo_url column for per-tenant branding logo.
+-- For existing databases, run once:
+--   alter table app.tenant_settings add column if not exists brand_logo_url text null;
+--   alter table app.tenant_settings add constraint tenant_settings_brand_logo_url_len
+--     check (brand_logo_url is null or length(brand_logo_url) <= 1024);
 
 create table app.tenant_channels (
   id uuid primary key default gen_random_uuid(),

@@ -183,6 +183,22 @@ export function updateTenantSettings(session, tenantId, payload) {
   });
 }
 
+// UI-012-FU: upload a tenant brand logo.
+// The backend reuses ``store_media_file`` (kind=image) which enforces the
+// MIME allowlist (png/jpeg/webp) and the size cap; this helper just
+// packages the file as multipart/form-data so ``request`` is bypassed
+// (it forces application/json).
+export function uploadTenantBrandLogo(session, tenantId, file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return uploadMultipart(`/tenants/${tenantId}/branding/logo`, {
+    formData,
+    method: 'POST',
+    session,
+    tenantId,
+  });
+}
+
 export function listRetentionPolicies(session, tenantId) {
   return request(`/tenants/${tenantId}/retention/policies`, { session, tenantId });
 }

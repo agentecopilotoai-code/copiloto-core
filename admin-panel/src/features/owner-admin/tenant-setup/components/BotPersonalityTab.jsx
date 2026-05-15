@@ -1,3 +1,5 @@
+import { useRef, useState } from 'react';
+
 import {
   BOT_EMOJI_OPTIONS,
   BOT_FORMALITY_OPTIONS,
@@ -7,9 +9,28 @@ import {
 } from '../tenantSetupData.js';
 import { renderPersonalityPreview } from '../tenantSetupTransforms.js';
 
+const LOGO_ACCEPT_MIME = 'image/png,image/jpeg,image/webp';
+
 export function BotPersonalityTab({ state, actions }) {
-  const { botPersonality, tenantForm, isBusy, currentTenantId } = state;
-  const { handleSaveSettings, setBotPersonality } = actions;
+  const { botPersonality, tenantForm, isBusy, currentTenantId, brandLogoUrl } = state;
+  const {
+    handleSaveSettings,
+    setBotPersonality,
+    handleUploadBrandLogo,
+    handleClearBrandLogo,
+  } = actions;
+  const fileInputRef = useRef(null);
+  const [pendingLogoFile, setPendingLogoFile] = useState(null);
+
+  async function onUploadLogo(event) {
+    event.preventDefault();
+    if (!pendingLogoFile) return;
+    const result = await handleUploadBrandLogo?.(pendingLogoFile);
+    if (result) {
+      setPendingLogoFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
   return (
     <div className="wizard-panel voz-bot-panel">
@@ -138,6 +159,74 @@ export function BotPersonalityTab({ state, actions }) {
           </button>
         </div>
       </form>
+
+      {/* UI-012-FU: branding logo uploader. Lives next to the bot voice
+          because both shape how the tenant presents itself in the admin
+          shell. Behind the same tenant_setup.write boundary as the rest
+          of the wizard via moduleRegistry. */}
+      <section className="wizard-panel brand-logo-panel" aria-labelledby="brand-logo-heading">
+        <header className="voz-bot-header">
+          <h3 id="brand-logo-heading">Logo de marca</h3>
+          <p className="hint">
+            Sube el logo del tenant (PNG, JPEG o WEBP, máx. 5 MB). Aparecerá en el
+            topbar del panel admin y en cualquier vista que ya use el slot de
+            branding. SVG no se acepta por seguridad — usa PNG con fondo
+            transparente para el mismo efecto visual.
+          </p>
+        </header>
+
+        <div className="brand-logo-preview" aria-live="polite">
+          {brandLogoUrl ? (
+            <img
+              src={brandLogoUrl}
+              alt={`Logo actual de ${tenantForm.display_name || 'el tenant'}`}
+              style={{ maxWidth: 120, maxHeight: 120, borderRadius: 8 }}
+            />
+          ) : (
+            <p className="hint" data-testid="brand-logo-empty">
+              No hay logo cargado todavía. Se mostrarán las iniciales del tenant.
+            </p>
+          )}
+        </div>
+
+        <form
+          className="form-grid"
+          onSubmit={onUploadLogo}
+          aria-label="Subir logo de marca del tenant"
+        >
+          <label className="wide">
+            <span>Archivo de imagen</span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={LOGO_ACCEPT_MIME}
+              onChange={(e) => setPendingLogoFile(e.target.files?.[0] || null)}
+              data-testid="brand-logo-file-input"
+            />
+            <small className="hint">PNG, JPEG o WEBP. Máx 5 MB.</small>
+          </label>
+
+          <div className="form-actions wide">
+            <button
+              className="primary-action"
+              type="submit"
+              disabled={isBusy || !currentTenantId || !pendingLogoFile}
+            >
+              {isBusy ? 'Subiendo…' : 'Subir logo'}
+            </button>
+            {brandLogoUrl ? (
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={() => handleClearBrandLogo?.()}
+                disabled={isBusy || !currentTenantId}
+              >
+                Quitar logo
+              </button>
+            ) : null}
+          </div>
+        </form>
+      </section>
     </div>
   );
 }
