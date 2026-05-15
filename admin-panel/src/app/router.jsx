@@ -270,7 +270,7 @@ function ReadOnlyShellRoute() {
   const location = useLocation();
 
   const segments = location.pathname.split('/').filter(Boolean); // ['t', slug, 'read', moduleId]
-  const activeModuleId = segments[3] || 'analytics';
+  const activeModuleId = segments[3] || ROLE_HOME.viewer;
   const activeModule =
     adminModules.find((item) => item.id === activeModuleId) ?? adminModules[0];
 
@@ -326,7 +326,7 @@ export const routes = [
             path: 'read',
             element: <ReadOnlyShellRoute />,
             children: [
-              { index: true, element: <Navigate to="analytics" replace /> },
+              { index: true, element: <Navigate to={ROLE_HOME.viewer} replace /> },
               ...TENANT_MODULE_IDS.map(moduleRoute),
             ],
           },

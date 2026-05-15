@@ -15,6 +15,56 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-010.1 — Lectura · Resumen (Viewer)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** primera vista del rol Viewer en `admin-panel/src/features/viewer/summary/`, aplicando el mockup `33 _ Lectura _ Resumen.html`. Es la **versión read-only del dashboard Owner/Admin (UI-007.1)** — la reutilización es el principio rector: se reaprovecha verbatim `useDashboardData` y el componente `DashboardKpis` (que a su vez reusa `KpiCardWithDelta` del dominio), sin re-fetchear ni duplicar helpers. Con esta entrega **arranca el bloque UI-010 (Viewer)** — la primera de 4 subtareas; la próxima `PENDING` es **UI-010.2 — Lectura · Analítica (Viewer)**.
+- **Cambios realizados:**
+  - **Frontend — `src/features/viewer/summary/` (nuevo, 7 archivos):**
+    - `summaryData.js` (helpers puros, ~65 LOC): `periodLabel(referenceDate)` deriva el chip "Últimos 7 días · <mes> <año>" en español (el rango es el mismo del dashboard, 7 días móviles), `SUMMARY_DESCRIPTION` con la línea «datos se actualizan cada 15 minutos» que el HTML refleja sobre el chip, y **re-exports** explícitos de `buildKpis` / `formatMoney` desde `dashboardData.js` — el barrel del feature así no tiene deep-imports al dashboard.
+    - `hooks/useSummaryData.js`: wrapper fino sobre `useDashboardData({session, tenantId})` — NO refetchea; sólo añade el `periodLabel` memoizado y un flag `readOnly: true` para señalizar intención.
+    - `ViewerSummary.jsx` (orquestador / entrada de módulo): `<RequirePermission capability="analytics.tenant.read" mode="R">` (mismo patrón que `OutboundDLQ` / `ManagerAnalytics` — `usePermissions` + `useTenantContext`) + `PageHeader` («Lectura» eyebrow + título «Resumen del negocio» + descripción + chip de período como `actions`) + estados loading / error / no-tenant con `Card` + `EmptyState` + el componente reusado `<DashboardKpis current={...} previous={...}/>`. Conserva `data-module="viewer-summary"`. **No** se monta `DashboardQuickLinks` ni `DashboardAlerts` (ambos exponen botones de navegación — criterio global UI-010 exige ocultar las write actions).
+    - `ViewerSummary.module.css` (~20 LOC): un solo selector `.periodChip` con tokens `var(--line-strong)` / `var(--panel-alt)` / `var(--r-xl)` / `var(--fs-small)` / `var(--fw-medium)`. Cero literales.
+    - `index.js` (barrel: `export { ViewerSummary }`).
+    - `summaryData.test.js` (5 tests de helpers puros: `periodLabel` formato es-CO + cobertura enero/diciembre + fallback sin argumento, `SUMMARY_DESCRIPTION` smoke, re-exports `buildKpis`/`formatMoney`).
+    - `ViewerSummary.test.jsx` (4 tests: render del PageHeader + chip de período + grid `aria-label="Indicadores del negocio"` con las KPIs reusadas, **NO** se renderiza «Accesos rápidos» / «Alertas» / botones de acción del Owner Dashboard, EmptyState defensivo cuando el tenant aún no expone `id`, `AccessDenied` para rol sin `analytics.tenant.read`). Mock de `coreApi.js` (solo `getAnalyticsOverview`) y de `TenantProvider.jsx`, siguiendo el patrón de `ManagerAnalytics.test.jsx` / `AuditPanel.test.jsx`.
+  - **Frontend — ampliación del barrel del dashboard (purely additive):**
+    - `admin-panel/src/features/owner-admin/dashboard/index.js`: ahora exporta también `useDashboardData` y `DashboardKpis` (antes sólo exportaba `Dashboard`). Sin cambios en `Dashboard.jsx` ni en los componentes — sólo se abrió la superficie para que el Viewer pueda consumirla sin deep-imports.
+  - **Frontend — wiring del nuevo módulo `viewer-summary`:**
+    - `app/moduleRegistry.js`: import de `ViewerSummary` + entrada `'viewer-summary': { Component: ViewerSummary, capability: 'analytics.tenant.read' }`.
+    - `data/modules.js`: entrada nueva `viewer-summary` (label «Resumen», summary, scope, capability `analytics.tenant.read`).
+    - `app/nav.js`: `viewer-summary` añadido **primero** en la sección «Lectura» de `VIEWER_NAV` (es la landing del Viewer). `TENANT_NAV` no se tocó.
+    - `permissions/matrix.js`: `ROLE_HOME.viewer` cambió de `'analytics'` a `'viewer-summary'` (la sección 6 del UI_BACKLOG manda «Viewer → Resumen»).
+    - `app/router.jsx`: dos referencias hard-coded a `'analytics'` (índice del subárbol `/t/:slug/read` y default de `ReadOnlyShellRoute`) se reemplazaron por `ROLE_HOME.viewer` para que la landing del Viewer quede en una sola fuente de verdad.
+  - **Tests actualizados por el cambio de `ROLE_HOME.viewer`:**
+    - `permissions/matrix.test.js`: nuevo test que pinea `ROLE_HOME.viewer === 'viewer-summary'`. Los tests existentes («declara landing para todos los roles» + el de agent/platform_owner) siguen igual.
+    - `app/router.test.jsx`: mock de `MODULE_REGISTRY` extendido con `viewer-summary`; el test «redirect raíz: un viewer entra al shell de solo lectura» espera ahora `/t/acme/read/viewer-summary` (en lugar de `/t/acme/read/analytics`) y renderiza `VIEWER SUMMARY VIEW`. El otro test de viewer (deep-link a `/t/acme/analytics` redirigido a `/t/acme/read/analytics`) no cambió: el módulo deep-linked se preserva.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/viewer/summary/{ViewerSummary.jsx,ViewerSummary.module.css,ViewerSummary.test.jsx,summaryData.js,summaryData.test.js,index.js,hooks/useSummaryData.js}` (todos nuevos).
+  - `admin-panel/src/features/owner-admin/dashboard/index.js` (barrel ampliado).
+  - `admin-panel/src/app/moduleRegistry.js` (import + entrada `viewer-summary`).
+  - `admin-panel/src/app/nav.js` (item `viewer-summary` en `VIEWER_NAV`).
+  - `admin-panel/src/data/modules.js` (entrada `viewer-summary`).
+  - `admin-panel/src/permissions/matrix.js` (`ROLE_HOME.viewer`).
+  - `admin-panel/src/permissions/matrix.test.js` (test nuevo de la landing del viewer).
+  - `admin-panel/src/app/router.jsx` (dos literales `'analytics'` → `ROLE_HOME.viewer`).
+  - `admin-panel/src/app/router.test.jsx` (mock + aserción actualizada).
+  - `docs/UI_BACKLOG.md` (UI-010.1 marcado `DONE` con bloques `Alcance` / `Diferencias intencionales` / `Tests`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (solo los 2 warnings preexistentes de `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK (`✓ 401 modules transformed`, sin warnings nuevos).
+  - `npm --prefix admin-panel test` → 90 archivos pasan, 1 falla (`src/app/router.test.jsx` con **exactamente 7 fallos** de entorno Node-24 `undici`/`AbortSignal`, documentados desde UI-002 / UI-006.* / UI-007.* / UI-008.* / UI-009.*). **No es regresión** — el conteo coincide con la línea base; la única aserción del viewer redirect raíz se actualizó al nuevo URL, y el mock del registry se extendió con la entrada nueva (los fallos restantes son los mismos del entorno). CI corre Node 20 y solo ejecuta lint + build para el front. Se añadieron **9 tests nuevos** (5 helpers + 4 componente) + 1 test de la landing del viewer en `matrix.test.js` y todos pasan; 435 tests totales OK.
+  - No se tocó ningún archivo de servidor → no se ejecutó pytest/ruff.
+- **Seguridad:**
+  - **Frontend-only** — no se tocó ningún archivo de servidor (`app/...`), schema, dependencia ni endpoint. Vista de **sólo lectura** que reusa la capa de datos del dashboard del Owner/Admin (`getAnalyticsOverview` ya existía y es **tenant-scoped server-side** vía header `X-Tenant-Id`).
+  - La entrada de módulo se gateó con `<RequirePermission capability="analytics.tenant.read" mode="R">`; el backend reverifica con JWT + role + RLS. La capability `analytics.tenant.read` ya existía en `permissions/matrix.js` (viewer/agent/manager/admin/owner = R) — no se añadieron nuevos permisos.
+  - **No se renderizan CTAs de escritura** (el orquestador omite `DashboardQuickLinks` y `DashboardAlerts`; el `ReadOnlyShell` (UI-002) ya añade el banner permanente «Modo solo lectura»). El criterio global UI-010 («100% de las acciones write deben estar ocultas o renderizar `<DisabledCTA reason="read_only"/>`») se cumple.
+- **Limitaciones / próximos pasos:**
+  - **Diferencias intencionales declaradas:** el HTML muestra (a) una gráfica «Ingreso mensual · últimos 12 meses», (b) un breakdown «Mix de servicios» por categoría y (c) un breakdown «Origen de pacientes» por canal. `analytics_overview` no expone series de 12 meses ni porcentajes por servicio/origen — esos tres bloques se **difieren** (no se inventan datos ni se cablea contra endpoints inexistentes). Se renderiza el entregable mínimo viable que el backlog declara: «Versión read-only de UI-007.1. Reusa `KpiCardWithDelta`.» — título + chip de período + las KPIs reusadas del dashboard.
+  - **Apertura del bloque UI-010 (Viewer):** con esta entrega arranca la primera de las 4 subtareas. **Próxima `PENDING` real:** **UI-010.2 — Lectura · Analítica (Viewer)**.
+
+---
+
 ### UI-009.5 — Hoy · Citas del día (Agente)
 
 - **Fecha:** 2026-05-14

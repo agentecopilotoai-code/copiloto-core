@@ -27,6 +27,10 @@ vi.mock('./moduleRegistry.js', () => ({
       Component: () => <div>INBOX VIEW</div>,
       capability: 'conversations.view',
     },
+    'viewer-summary': {
+      Component: () => <div>VIEWER SUMMARY VIEW</div>,
+      capability: 'analytics.tenant.read',
+    },
   },
 }));
 
@@ -99,8 +103,9 @@ describe('router por rol', () => {
 
   it('redirect raíz: un viewer entra al shell de solo lectura', async () => {
     const router = renderAt('/', { tenants: [ACME(['viewer'])] });
-    await screen.findByText('ANALYTICS VIEW');
-    expect(router.state.location.pathname).toBe('/t/acme/read/analytics');
+    // UI-010.1: el home del Viewer es `viewer-summary` (era `analytics`).
+    await screen.findByText('VIEWER SUMMARY VIEW');
+    expect(router.state.location.pathname).toBe('/t/acme/read/viewer-summary');
   });
 
   it('un viewer con deep-link al shell de escritura es redirigido a /read', async () => {

@@ -236,4 +236,11 @@ export const adminModules = [
     scope: ['Invitar usuarios', 'Cambiar rol', 'Revocar acceso', 'Sincronización con Auth0'],
     capability: 'team.write',
   },
+  {
+    id: 'viewer-summary',
+    label: 'Resumen',
+    summary: 'Vista del Viewer: resumen del negocio en modo solo lectura — KPIs con variación semanal reutilizando el dashboard del Owner/Admin. UI-010.1.',
+    scope: ['KPIs con delta semanal (read-only)', 'Chip de período (Últimos 7 días)', 'Sin acciones de edición', 'Banner permanente "Modo solo lectura"'],
+    capability: 'analytics.tenant.read',
+  },
 ];
