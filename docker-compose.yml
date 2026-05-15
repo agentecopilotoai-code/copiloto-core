@@ -119,6 +119,17 @@ services:
       BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-http://minio:9000}
       BACKUP_GPG_RECIPIENT: ${BACKUP_GPG_RECIPIENT:-}
       BACKUP_GPG_PUBKEY_PATH: ${BACKUP_GPG_PUBKEY_PATH:-/app/.secrets/backup_gpg_pubkey.asc}
+      # SEC-009 — firma detached del producer.
+      BACKUP_SIGNER_FPR: ${BACKUP_SIGNER_FPR:-}
+      BACKUP_SIGNER_PRIVKEY_PATH: ${BACKUP_SIGNER_PRIVKEY_PATH:-/app/.secrets/backup_signer_privkey.asc}
+      BACKUP_SIGNER_PUBKEY_PATH: ${BACKUP_SIGNER_PUBKEY_PATH:-/app/.secrets/backup_signer_pubkey.asc}
+      # SEC-009 — verifier corre el restore en un Postgres efímero en
+      # `backup-verify-net` (red bridge --internal). Si docker socket no está
+      # disponible, fallback degraded a `pg_restore --list` (ver SEC-009.1-FU).
+      BACKUP_VERIFY_PG_IMAGE: ${BACKUP_VERIFY_PG_IMAGE:-postgres:16-alpine}
+      BACKUP_VERIFY_PG_PORT: ${BACKUP_VERIFY_PG_PORT:-55432}
+      BACKUP_VERIFY_NETWORK: ${BACKUP_VERIFY_NETWORK:-backup-verify-net}
+      BACKUP_VERIFY_SKIP_EPHEMERAL: ${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
@@ -127,6 +138,13 @@ services:
       - ./.secrets:/app/.secrets:ro
       - ./scripts:/app/scripts:ro
       - backup-logs:/var/log
+      # SEC-009 — el verifier necesita el docker socket SOLO para spin-up del
+      # Postgres efímero isolated. El container desechable corre en una red
+      # bridge `--internal`, así que no puede salir al exterior. Operadores
+      # paranoicos pueden setear `BACKUP_VERIFY_SKIP_EPHEMERAL=1` para usar el
+      # fallback `pg_restore --list` y omitir el socket — pierde Layer 2 a
+      # cambio de no exponer el daemon. Ver docs/runbooks/backup-signature-setup.md.
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy

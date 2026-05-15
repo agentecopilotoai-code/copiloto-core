@@ -12,9 +12,10 @@ Para cada finding se documenta el path actual, el estado post-cleanup, y el tick
 ## Resumen
 
 - **Total:** 37 findings (27 high + 10 low)
-- **VÁLIDO (código vulnerable persiste):** 3 (0 high + 3 low) — actualizado 2026-05-15 tras PR SEC-008.
+- **VÁLIDO (código vulnerable persiste):** 2 (0 high + 2 low) — actualizado 2026-05-15 tras PR SEC-008 + PR SEC-009.
 - **RESOLVED por TASK-0077..0086:** 27 (22 high + 5 low)
 - **RESOLVED por PR SEC-008 (este triage):** 1 high (`32bfc3bd` — subscription mutations → tenant_admin_router).
+- **RESOLVED por PR SEC-009 (este triage):** 1 high (`0ebe3783` — backup verifier trust model: GPG detached signature + ephemeral isolated Postgres + non-superuser restore role).
 - **RESOLVED por UI-015 / UI-016 (paths borrados / refactor frontend):** 0 puramente frontend — todos los findings con paths frontend ALSO tienen un backend root cause que TASK-0077..0086 ya atacó.
 - **RESOLVED por BUG-001 (Auth0 invite ticket leak):** 1 high (cierra SEC-006)
 - **MIXED (frontend resolved, backend pendiente):** 1 (1 high SEC-002 `RAG evaluation ignores document visibility` low) — SEC-008 ya cerrado.
@@ -34,7 +35,7 @@ Para cada finding se documenta el path actual, el estado post-cleanup, y el tick
 | c6f71427 | Cross-tenant admin can alter legal documents | **RESOLVED-TASK-0077** | `app/api/v1/routes.py` líneas 650-717 | SEC-001 (cerrado) | `ensure_tenant_access` ahora consume `required_tenant_role` desde `require_min_role` y consulta DB role por tenant target. JWT-admin + DB-viewer combo → 403. |
 | 32bfc3bd | Agent role can manage recurring subscriptions | **RESOLVED-SEC-008-PR** | `app/api/v1/routes.py:6045` (`@tenant_admin_router.post('/subscriptions')`) | SEC-008 (cerrado 2026-05-15) | POST/PATCH/DELETE de `/subscriptions` movidos a `tenant_admin_router` (rol `admin` + MFA enforced). El GET legítimo de read sigue en `tenant_ops_router`. Ver `tests/test_subscriptions_static.py::test_routes_register_subscriber_endpoints_with_correct_auth_boundary`. |
 | 8cff57ec | Duplicate Meta page IDs can hijack webhook routing | **RESOLVED-TASK-0081** | `infra/postgres/01-schema.sql:117-119` + `app/api/v1/routes.py:10883-10911` | SEC-003 (cerrado) | Index `ux_tenant_channels_phone_number_active UNIQUE` (parcial donde `status='active'`) impide duplicados. Webhook handler además rechaza changes con mismatch entre `signed_phone_number_id` y `change.metadata.phone_number_id`. |
-| 0ebe3783 | Backup verification restores untrusted S3 dumps as postgres | **VÁLIDO** | `scripts/verify-backup.sh` líneas 166-189 | SEC-009 (abierto) | El verifier sigue confiando en `Metadata.sha256` de S3 (controlado por quien escribe el bucket), restaura con `postgres` superuser dentro del mismo cluster, y no hay signature detached con pubkey out-of-band. Sin cambios desde el reporte. |
+| 0ebe3783 | Backup verification restores untrusted S3 dumps as postgres | **RESOLVED-SEC-009-PR** | `scripts/verify-backup.sh` (reescrito) + `scripts/backup-to-cloud.sh` (signing) + `infra/backup-worker/{Dockerfile,entrypoint.sh}` + `docker-compose.yml` (verifier service) | SEC-009 (cerrado 2026-05-15) | Tres capas implementadas: Layer 1 — `gpg --detach-sign` en el producer + `gpg --verify` antes de `--decrypt` en el verifier contra pubkey out-of-band; Metadata.sha256 ya no es trust path. Layer 2 — restore en `postgres:16-alpine` efímero en red bridge `--internal` (`backup-verify-net`). Layer 3 — rol `backup_verifier` (`nosuperuser noreplication nobypassrls`). Stop-gap degraded mode (`pg_restore --list`) cuando docker socket no está disponible → SEC-009.1-FU. Ver `docs/runbooks/backup-signature-setup.md`. Tests en `tests/test_backup_verifier_static.py`. |
 | 5cb77beb | Tenant alert webhooks allow server-side request forgery | **RESOLVED-TASK-0086** | `app/services/operator_alerts.py:72` + `app/services/url_guard.py` | SEC-005 (cerrado) | `url_guard.validate_outbound_url` aplicado en `operator_alerts.py` (webhook send) con block de RFC1918 / link-local / loopback. HTTPS-only por defecto. |
 | 9028bf7f | Agents can grant or refund paid treatment packages | **RESOLVED-TASK-0077** | `app/api/v1/routes.py:5511, 5561, 5635, 5696, 5760, 5819` | SEC-008 (parcial-cerrado) | Las mutaciones de `/packages` (POST/PATCH/DELETE) y `/contacts/{id}/packages` ya están en `tenant_admin_router` con `require_min_role('admin')`. Solo el GET sigue en `tenant_ops_router`, que es lectura. |
 | 405fcecf | Cross-tenant admin access to media and promotions | **RESOLVED-TASK-0077** | `app/api/v1/routes.py:650-717` + media/promo routers usan `tenant_admin_router` | SEC-001 (cerrado) | Mismo root-cause que c6f71427: el doble-check JWT+DB por tenant target cierra la escalada cross-tenant. |
@@ -111,8 +112,8 @@ Para cada finding se documenta el path actual, el estado post-cleanup, y el tick
 - **Conclusión:** **SEC-008 CERRADO 2026-05-15.** Los packages CRUD están en `tenant_admin_router` desde TASK-0077; el start-conversation phone-hijack se resolvió en TASK-0082; el PR SEC-008 de esta fecha cerró la última pieza válida (subscriptions POST/PATCH/DELETE → `tenant_admin_router`). Ticket DONE.
 
 ### SEC-009 — Backup verification trust model
-- **1 finding, VÁLIDO:** 0ebe3783.
-- **Conclusión:** **SEC-009 sigue PENDING.** Sin cambios desde el reporte. Mantener prioridad operacional alta antes de auditoría externa.
+- **1 finding, RESOLVED:** 0ebe3783 (RESOLVED-SEC-009-PR 2026-05-15).
+- **Conclusión:** **SEC-009 CERRADO 2026-05-15.** Las 3 capas implementadas (GPG detached signature out-of-band + Postgres efímero isolated en red bridge `--internal` + rol `backup_verifier` non-superuser). Stop-gap degraded mode (`pg_restore --list` cuando docker socket no disponible) cubierto por SEC-009.1-FU (low priority, no urgente).
 
 ### SEC-010 — Hardening misceláneo
 - **10 findings (subset que cae aquí):** 9124cd00, 6317cdc8, 7bf8fcde, 3052da6a, 4d4f9520, a425e6ed, 410c5af6, 1a3c5c3d, 36a388e3, cc216794.
@@ -170,7 +171,7 @@ Para construir este triage se verificaron manualmente los siguientes paths y fun
 18. `app/services/outbound_dlq.py:240-294` — DLQ retry con UUID idempotency key (SEC-010)
 19. `infra/postgres/01-schema.sql:88-119` — `tenant_channels` UNIQUE parcial (SEC-003)
 20. `admin-panel/src/components/domain/MfaRequiredBlocker.jsx` — gate no-descartable (SEC-004)
-21. `scripts/verify-backup.sh:72-189` — backup verifier (SEC-009 — VÁLIDO)
+21. `scripts/verify-backup.sh` — backup verifier (SEC-009 — RESOLVED-SEC-009-PR 2026-05-15: GPG signature out-of-band + ephemeral isolated PG + non-superuser role)
 22. `tests/conftest_e2e.py:39-86` — RUN_E2E gate (SEC-010 sub VÁLIDO)
 23. `docs/runbooks/consent-violation-claim.md:120-128` — data-export query param (SEC-010 sub VÁLIDO)
 24. `scripts/bootstrap.sh:91` — `psql "$DATABASE_URL_VALUE"` (SEC-010 sub VÁLIDO)
@@ -182,8 +183,8 @@ Para construir este triage se verificaron manualmente los siguientes paths y fun
 
 De los 37 findings de Codex:
 
-- **28 (76%) ya están RESOLVED** por TASK-0077..0086 + BUG-001 + UI-016.6 + PR SEC-008 (2026-05-15). Los tickets SEC-001..SEC-008 pueden cerrarse formalmente como DONE.
-- **8 (22%) siguen VÁLIDO** y requieren trabajo: SEC-009 (backup verifier completo), SEC-010 (7 sub-findings), y SEC-012 (nuevo, classifier DoS).
+- **29 (78%) ya están RESOLVED** por TASK-0077..0086 + BUG-001 + UI-016.6 + PR SEC-008 + PR SEC-009 (2026-05-15). Los tickets SEC-001..SEC-009 pueden cerrarse formalmente como DONE.
+- **7 (19%) siguen VÁLIDO** y requieren trabajo: SEC-010 (7 sub-findings), y SEC-012 (nuevo, classifier DoS). SEC-009.1-FU es un sub-ticket low priority del trabajo de SEC-009 (modo no-Docker).
 - **1 (3%)** es el finding ya cubierto duplicado en SEC-002 + SEC-010 (`RAG evaluation ignores document visibility`) — listado en ambos cluster pero cierra con TASK-0079.
 
 **Próximos pasos para SEC-001..SEC-010:**
@@ -191,7 +192,7 @@ De los 37 findings de Codex:
 1. Actualizar `docs/UI_BACKLOG.md` sección 8: marcar SEC-001, SEC-002, SEC-003, SEC-004, SEC-005, SEC-006, SEC-007 como DONE referenciando este triage + el TASK correspondiente.
 2. ~~Reducir el scope de SEC-008 al fix de `/subscriptions` + `conversation start` (2 sub-fixes restantes).~~ **DONE 2026-05-15:** PR SEC-008 cerró el sub-fix de subscriptions; el sub-fix de start-conversation ya estaba cubierto por TASK-0082. SEC-008 ahora es DONE.
 3. Reducir el scope de SEC-010 a los 7 sub-findings VÁLIDO listados arriba.
-4. Mantener SEC-009 sin cambios.
+4. ~~Mantener SEC-009 sin cambios.~~ **DONE 2026-05-15:** PR SEC-009 implementó las 3 capas. SEC-009.1-FU queda abierto como low-priority follow-up para el modo no-Docker.
 5. Añadir SEC-012 nuevo al backlog para el classifier DoS (`ddce83b1`).
 
 Este triage es informativo y NO toca código de backend ni de frontend. Cualquier fix de los tickets SEC-XXX abiertos se hace en sus PRs dedicados.

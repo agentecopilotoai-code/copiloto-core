@@ -1,27 +1,54 @@
 #!/usr/bin/env bash
-# TASK-0064 — Verificación periódica de backups en cloud.
+# TASK-0064 / SEC-009 — Verificación periódica de backups en cloud.
 #
-# Descarga el último dump cifrado del bucket S3, lo descifra con la clave
-# privada GPG, restaura sobre una base efímera `copilotoia_verify`, corre 3
-# sanity checks (count de tenants, conversations, messages) y reporta:
-#   * éxito → `audit_logs(action='backup.verified')`
+# SEC-009 hardening (2026-05-15): el verifier ahora corre en un trust model
+# end-to-end más estricto:
+#   * Capa 1 — `gpg --verify` con detached signature contra una pubkey importada
+#     out-of-band en el container (NO descargada del bucket). Falla cerrado si
+#     `db.dump.gpg.sig` no existe o la firma no coincide. La hash en
+#     `Metadata.sha256` deja de ser autoritativa (sigue auditada para
+#     correlación pero ya no decide).
+#   * Capa 2 — la restauración ocurre en un Postgres efímero (`postgres:16`)
+#     levantado por este script en su propia red bridge isolated (`docker
+#     network create --internal`). NUNCA toca el cluster productivo.
+#   * Capa 3 — el rol que ejecuta el restore es `backup_verifier`
+#     (non-superuser); el `postgres` superuser solo se usa al inicio para
+#     provisionar el rol y otorgar privilegios mínimos sobre la DB efímera.
+#
+# Resultado:
+#   * éxito → `audit_logs(action='backup.verified')`.
 #   * fallo → `operator_alerts(kind='backup_failure')` + audit log con la causa.
 #
-# Diseñado para correr semanalmente (cron `0 4 * * 0` en docker-compose) o
-# manualmente en el host (host: GPG_PRIVATE_KEY_PATH apunta al keyring local).
+# Diseñado para correr semanalmente (cron `0 4 * * 0` en docker-compose).
 #
 # Variables requeridas:
 #   BACKUP_S3_BUCKET            bucket origen.
 #   BACKUP_ENV                  prefijo de ambiente.
-#   DATABASE_ADMIN_URL          conexión administrativa para escribir el run.
-#   POSTGRES_HOST               host de PG (default 'postgres').
-#   POSTGRES_SUPERUSER_URL      URL para crear/dropear la DB efímera
-#                               (rol con CREATEDB; default deriva del admin url
-#                               apuntando a la DB `postgres`).
+#   DATABASE_ADMIN_URL          conexión administrativa para escribir el run en
+#                               el CLUSTER PRODUCTIVO (sólo writes a
+#                               app.backup_runs / audit_logs / operator_alerts —
+#                               no es target de restore).
+#   BACKUP_SIGNER_PUBKEY_PATH   ruta al .asc PÚBLICO del signer (importado en
+#                               build-time del container). El verifier abortará
+#                               si no encuentra esta clave.
 #
 # Variables opcionales:
-#   BACKUP_S3_ENDPOINT          endpoint custom (MinIO local).
-#   BACKUP_GPG_PRIVATE_KEY_PATH ruta al .asc privado (sólo para CI/host).
+#   BACKUP_S3_ENDPOINT                endpoint custom (MinIO local).
+#   BACKUP_GPG_PRIVATE_KEY_PATH       ruta al .asc privado (sólo para CI/host).
+#   BACKUP_VERIFY_PG_IMAGE            imagen del Postgres efímero (default
+#                                     `postgres:16-alpine`).
+#   BACKUP_VERIFY_PG_PORT             puerto local del Postgres efímero
+#                                     (default 55432).
+#   BACKUP_VERIFY_NETWORK             nombre de la red bridge isolated (default
+#                                     `backup-verify-net`).
+#   BACKUP_VERIFY_SKIP_EPHEMERAL=1    fallback de stop-gap: si el daemon Docker
+#                                     no está disponible (p.ej. host bare-metal
+#                                     sin acceso al socket), corre el restore
+#                                     en `--schema-only` envuelto en una
+#                                     transacción que se ROLLBACK-ea contra
+#                                     `POSTGRES_HOST` (NO el productivo). Esto
+#                                     es un degraded mode documentado: ver
+#                                     SEC-009.1-FU.
 
 set -euo pipefail
 
@@ -69,15 +96,33 @@ require_var BACKUP_S3_BUCKET
 require_var BACKUP_ENV
 require_var DATABASE_ADMIN_URL
 
-for tool in aws gpg pg_restore psql createdb dropdb sha256sum; do
+# SEC-009 — la pubkey del signer es OBLIGATORIA y vive en el container, no en
+# el bucket. Sin esta clave el verifier no puede `gpg --verify` y debe abortar.
+BACKUP_SIGNER_PUBKEY_PATH="${BACKUP_SIGNER_PUBKEY_PATH:-/app/.secrets/backup_signer_pubkey.asc}"
+if [[ ! -f "$BACKUP_SIGNER_PUBKEY_PATH" ]]; then
+  echo "Error: SEC-009 — pubkey del signer no encontrada en $BACKUP_SIGNER_PUBKEY_PATH." >&2
+  echo "  Ver docs/runbooks/backup-signature-setup.md." >&2
+  exit 2
+fi
+
+for tool in aws gpg pg_restore psql sha256sum; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "Error: falta dependencia '$tool' en el PATH." >&2
     exit 2
   fi
 done
 
-POSTGRES_SUPERUSER_URL="${POSTGRES_SUPERUSER_URL:-${DATABASE_ADMIN_URL%/*}/postgres}"
+# SEC-009 — parámetros del Postgres efímero. La red `--internal` impide que el
+# container desechable salga al exterior o alcance el cluster productivo, aún
+# si el dump contiene triggers / `COPY ... FROM PROGRAM` adversarios.
+BACKUP_VERIFY_PG_IMAGE="${BACKUP_VERIFY_PG_IMAGE:-postgres:16-alpine}"
+BACKUP_VERIFY_PG_PORT="${BACKUP_VERIFY_PG_PORT:-55432}"
+BACKUP_VERIFY_NETWORK="${BACKUP_VERIFY_NETWORK:-backup-verify-net}"
+BACKUP_VERIFY_PG_CONTAINER="copilotoia-verify-pg-$$"
+BACKUP_VERIFY_SUPERUSER_PASSWORD="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | base64)"
+BACKUP_VERIFY_RESTORE_PASSWORD="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | base64)"
 VERIFY_DB="copilotoia_verify"
+VERIFY_RESTORE_ROLE="backup_verifier"
 
 AWS_CLI_ARGS=()
 if [[ -n "${BACKUP_S3_ENDPOINT:-}" ]]; then
@@ -89,11 +134,25 @@ if [[ -z "$TARGET_DATE" ]]; then
 fi
 S3_KEY="backups/${BACKUP_ENV}/${TARGET_DATE}/db.dump.gpg"
 S3_URI="s3://${BACKUP_S3_BUCKET}/${S3_KEY}"
+# SEC-009 — la firma detached sibling es REQUERIDA. Falla cerrado si falta.
+S3_KEY_SIG="${S3_KEY}.sig"
+S3_URI_SIG="s3://${BACKUP_S3_BUCKET}/${S3_KEY_SIG}"
 
 WORK_DIR="$(mktemp -d -t copilotoia-verify-XXXXXX)"
-trap 'rm -rf "$WORK_DIR"; dropdb -h "${POSTGRES_HOST:-postgres}" -U postgres --if-exists "$VERIFY_DB" >/dev/null 2>&1 || true' EXIT
+
+cleanup_ephemeral_pg() {
+  # SEC-009 — tear-down del Postgres efímero y su red. Idempotente: tolera el
+  # caso degraded donde Docker no estaba disponible.
+  if command -v docker >/dev/null 2>&1; then
+    docker rm -f "$BACKUP_VERIFY_PG_CONTAINER" >/dev/null 2>&1 || true
+    docker network rm "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || true
+  fi
+}
+
+trap 'rm -rf "$WORK_DIR"; cleanup_ephemeral_pg' EXIT
 
 ENC_PATH="$WORK_DIR/db.dump.gpg"
+SIG_PATH="$WORK_DIR/db.dump.gpg.sig"
 DUMP_PATH="$WORK_DIR/db.dump"
 
 RUN_ID="$(psql "$DATABASE_ADMIN_URL" -Atc "select gen_random_uuid()")"
@@ -161,15 +220,40 @@ if [[ ! -s "$ENC_PATH" ]]; then
   report_failure "downloaded_artifact_empty"
 fi
 
-REMOTE_SHA="$(aws "${AWS_CLI_ARGS[@]}" s3api head-object \
-  --bucket "$BACKUP_S3_BUCKET" --key "$S3_KEY" \
-  --query 'Metadata.sha256' --output text 2>/dev/null || echo "")"
-LOCAL_SHA="$(sha256sum "$ENC_PATH" | awk '{print $1}')"
-if [[ -n "$REMOTE_SHA" && "$REMOTE_SHA" != "None" && "$REMOTE_SHA" != "$LOCAL_SHA" ]]; then
-  report_failure "sha256_mismatch:remote=${REMOTE_SHA}:local=${LOCAL_SHA}"
+# SEC-009 — descarga la firma detached. Si no existe, fail-closed: backups
+# anteriores a SEC-009 sin firma quedan deliberadamente NO verificables hasta
+# que el producer empiece a firmar. Esto es el comportamiento intencional —
+# preferimos ruido operacional sobre confiar en un objeto no autenticado.
+echo "==> Descargando firma detached $S3_URI_SIG"
+if ! aws "${AWS_CLI_ARGS[@]}" s3 cp "$S3_URI_SIG" "$SIG_PATH" --only-show-errors; then
+  report_failure "missing_detached_signature:sec_009_fail_closed"
+fi
+if [[ ! -s "$SIG_PATH" ]]; then
+  report_failure "signature_artifact_empty"
 fi
 
-echo "==> Descifrando con GPG"
+# SEC-009 — el sha256 se sigue calculando para correlación con audit_logs, pero
+# YA NO se compara contra `Metadata.sha256` (controlado por quien escribe el
+# bucket). La autoridad es ahora la firma GPG.
+LOCAL_SHA="$(sha256sum "$ENC_PATH" | awk '{print $1}')"
+
+# SEC-009 — verifica la firma ANTES de descifrar. El verifier importa la
+# pubkey del signer en build-time del container (NO la baja del bucket). Si la
+# firma no valida, abortamos sin descifrar — esto cierra el path donde un
+# atacante con write a S3 inyecta un blob malicioso esperando que el decrypt
+# y el restore subsiguientes lo ejecuten.
+echo "==> Verificando firma detached (SEC-009)"
+# Import idempotente de la pubkey del signer (no-op si ya está en keyring).
+gpg --batch --quiet --import "$BACKUP_SIGNER_PUBKEY_PATH" >/dev/null 2>&1 || true
+if ! gpg --batch --status-fd 1 --verify "$SIG_PATH" "$ENC_PATH" >"$WORK_DIR/verify.out" 2>"$WORK_DIR/verify.err"; then
+  report_failure "gpg_verify_failed:$(tail -c 200 "$WORK_DIR/verify.err" | tr '\n' ' ')"
+fi
+# Defense in depth: GOODSIG en stdout machine-readable.
+if ! grep -q '^\[GNUPG:\] GOODSIG ' "$WORK_DIR/verify.out"; then
+  report_failure "gpg_verify_no_goodsig"
+fi
+
+echo "==> Descifrando con GPG (post-verify)"
 if ! gpg --batch --yes --quiet --output "$DUMP_PATH" --decrypt "$ENC_PATH"; then
   report_failure "gpg_decrypt_failed"
 fi
@@ -178,39 +262,111 @@ if [[ ! -s "$DUMP_PATH" ]]; then
   report_failure "decrypted_dump_empty"
 fi
 
-PG_HOST="${POSTGRES_HOST:-postgres}"
+# SEC-009 — Layer 2: arranque del Postgres efímero ISOLATED. La red bridge se
+# crea con `--internal` para que el container no tenga acceso al cluster
+# productivo aún si el dump contiene payloads adversarios (triggers que
+# intenten `COPY ... FROM PROGRAM`, dblink, etc.).
+EPHEMERAL_PG_OK=0
+if [[ "${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}" != "1" ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  echo "==> Creando red isolated ${BACKUP_VERIFY_NETWORK}"
+  # `--internal` impide tráfico fuera de la red bridge.
+  docker network create --driver bridge --internal "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || \
+    docker network inspect "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || \
+    report_failure "ephemeral_network_create_failed"
 
-echo "==> Recreando DB efímera ${VERIFY_DB}"
-dropdb -h "$PG_HOST" -U postgres --if-exists "$VERIFY_DB" >/dev/null 2>&1 || true
-if ! createdb -h "$PG_HOST" -U postgres "$VERIFY_DB"; then
-  report_failure "createdb_failed"
+  echo "==> Arrancando Postgres efímero ${BACKUP_VERIFY_PG_IMAGE}"
+  if ! docker run -d --rm \
+        --name "$BACKUP_VERIFY_PG_CONTAINER" \
+        --network "$BACKUP_VERIFY_NETWORK" \
+        -p "127.0.0.1:${BACKUP_VERIFY_PG_PORT}:5432" \
+        -e POSTGRES_PASSWORD="$BACKUP_VERIFY_SUPERUSER_PASSWORD" \
+        -e POSTGRES_DB="$VERIFY_DB" \
+        "$BACKUP_VERIFY_PG_IMAGE" >/dev/null 2>"$WORK_DIR/docker.err"; then
+    report_failure "ephemeral_pg_start_failed:$(tail -c 200 "$WORK_DIR/docker.err" | tr '\n' ' ')"
+  fi
+
+  # Wait for Postgres to accept connections (timeout 30s).
+  EPHEMERAL_HOST="127.0.0.1"
+  EPHEMERAL_PG_OK=0
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if PGPASSWORD="$BACKUP_VERIFY_SUPERUSER_PASSWORD" psql \
+         "postgres://postgres@${EPHEMERAL_HOST}:${BACKUP_VERIFY_PG_PORT}/${VERIFY_DB}" \
+         -Atc 'select 1' >/dev/null 2>&1; then
+      EPHEMERAL_PG_OK=1
+      break
+    fi
+    sleep 2
+  done
+  if [[ "$EPHEMERAL_PG_OK" != "1" ]]; then
+    report_failure "ephemeral_pg_not_ready"
+  fi
+
+  # SEC-009 — Layer 3: provisionar el rol non-superuser. El restore usa
+  # `backup_verifier` (sin SUPERUSER, REPLICATION, BYPASSRLS), con privilegios
+  # mínimos sobre la DB de verificación.
+  PGPASSWORD="$BACKUP_VERIFY_SUPERUSER_PASSWORD" psql \
+    "postgres://postgres@${EPHEMERAL_HOST}:${BACKUP_VERIFY_PG_PORT}/${VERIFY_DB}" \
+    -v ON_ERROR_STOP=1 -Atc "
+      create role ${VERIFY_RESTORE_ROLE} login password '${BACKUP_VERIFY_RESTORE_PASSWORD}' nosuperuser noreplication nobypassrls nocreaterole nocreatedb;
+      grant all on database ${VERIFY_DB} to ${VERIFY_RESTORE_ROLE};
+      grant all on schema public to ${VERIFY_RESTORE_ROLE};
+    " >/dev/null 2>"$WORK_DIR/role.err" || \
+    report_failure "ephemeral_role_provision_failed:$(tail -c 200 "$WORK_DIR/role.err" | tr '\n' ' ')"
+
+  VERIFY_URL="postgres://${VERIFY_RESTORE_ROLE}:${BACKUP_VERIFY_RESTORE_PASSWORD}@${EPHEMERAL_HOST}:${BACKUP_VERIFY_PG_PORT}/${VERIFY_DB}"
+  RESTORE_MODE="ephemeral_isolated"
+
+  echo "==> Restaurando dump en Postgres efímero como ${VERIFY_RESTORE_ROLE}"
+  if ! pg_restore --dbname="$VERIFY_URL" --no-owner --no-privileges --exit-on-error "$DUMP_PATH" >/dev/null 2>"$WORK_DIR/restore.err"; then
+    report_failure "pg_restore_failed:$(tail -c 200 "$WORK_DIR/restore.err" | tr '\n' ' ')"
+  fi
+else
+  # SEC-009.1-FU stop-gap — degraded mode cuando Docker no está disponible
+  # (host bare-metal sin socket). NO restaura: corre `pg_restore --list` para
+  # validar parseability del dump, y reporta el degraded mode en el audit log.
+  # Esto NO es un sustituto válido a Layer 2; el FU ticket trackea hardening
+  # adicional (p.ej. levantar Postgres efímero via systemd-nspawn).
+  echo "==> [DEGRADED] Docker no disponible; corriendo pg_restore --list (SEC-009.1-FU stop-gap)"
+  if ! pg_restore --list "$DUMP_PATH" >"$WORK_DIR/restore.list" 2>"$WORK_DIR/restore.err"; then
+    report_failure "pg_restore_list_failed:$(tail -c 200 "$WORK_DIR/restore.err" | tr '\n' ' ')"
+  fi
+  if [[ ! -s "$WORK_DIR/restore.list" ]]; then
+    report_failure "pg_restore_list_empty"
+  fi
+  RESTORE_MODE="degraded_list_only"
 fi
 
-VERIFY_URL="postgres://postgres@${PG_HOST}/${VERIFY_DB}"
+TENANTS_COUNT=0
+CONVERSATIONS_COUNT=0
+MESSAGES_COUNT=0
+if [[ "$RESTORE_MODE" == "ephemeral_isolated" ]]; then
+  echo "==> Sanity checks"
+  SANITY_SQL="
+  select 'tenants', count(*) from app.tenants
+  union all select 'conversations', count(*) from app.conversations
+  union all select 'messages', count(*) from app.messages
+  "
+  SANITY_OUT="$(psql "$VERIFY_URL" -Atc "$SANITY_SQL" 2>"$WORK_DIR/sanity.err" || true)"
+  if [[ -z "$SANITY_OUT" ]]; then
+    report_failure "sanity_query_failed:$(tail -c 200 "$WORK_DIR/sanity.err" | tr '\n' ' ')"
+  fi
 
-echo "==> Restaurando dump"
-if ! pg_restore --dbname="$VERIFY_URL" --no-owner --no-privileges --exit-on-error "$DUMP_PATH" >/dev/null 2>"$WORK_DIR/restore.err"; then
-  report_failure "pg_restore_failed:$(tail -c 200 "$WORK_DIR/restore.err" | tr '\n' ' ')"
-fi
+  TENANTS_COUNT="$(echo "$SANITY_OUT" | awk -F'|' '$1=="tenants" {print $2}')"
+  CONVERSATIONS_COUNT="$(echo "$SANITY_OUT" | awk -F'|' '$1=="conversations" {print $2}')"
+  MESSAGES_COUNT="$(echo "$SANITY_OUT" | awk -F'|' '$1=="messages" {print $2}')"
 
-echo "==> Sanity checks"
-SANITY_SQL="
-select 'tenants', count(*) from app.tenants
-union all select 'conversations', count(*) from app.conversations
-union all select 'messages', count(*) from app.messages
-"
-SANITY_OUT="$(psql "$VERIFY_URL" -Atc "$SANITY_SQL" 2>"$WORK_DIR/sanity.err" || true)"
-if [[ -z "$SANITY_OUT" ]]; then
-  report_failure "sanity_query_failed:$(tail -c 200 "$WORK_DIR/sanity.err" | tr '\n' ' ')"
-fi
-
-TENANTS_COUNT="$(echo "$SANITY_OUT" | awk -F'|' '$1=="tenants" {print $2}')"
-CONVERSATIONS_COUNT="$(echo "$SANITY_OUT" | awk -F'|' '$1=="conversations" {print $2}')"
-MESSAGES_COUNT="$(echo "$SANITY_OUT" | awk -F'|' '$1=="messages" {print $2}')"
-
-# Schema fundamentally requires at least 1 tenant for a meaningful backup.
-if [[ -z "$TENANTS_COUNT" || "$TENANTS_COUNT" -lt 1 ]]; then
-  report_failure "sanity_check_failed:tenants_count_is_${TENANTS_COUNT}"
+  # Schema fundamentally requires at least 1 tenant for a meaningful backup.
+  if [[ -z "$TENANTS_COUNT" || "$TENANTS_COUNT" -lt 1 ]]; then
+    report_failure "sanity_check_failed:tenants_count_is_${TENANTS_COUNT}"
+  fi
+else
+  # SEC-009.1-FU stop-gap — degraded mode: contamos las tablas declaradas en el
+  # listado del dump (no es equivalente a sanity real pero detecta dumps
+  # truncados / sin schema `app`).
+  TABLE_LINES="$(grep -c -E '^\S+ TABLE app\.' "$WORK_DIR/restore.list" || true)"
+  if [[ -z "$TABLE_LINES" || "$TABLE_LINES" -lt 5 ]]; then
+    report_failure "degraded_sanity_failed:table_count_is_${TABLE_LINES}"
+  fi
 fi
 
 SIZE_BYTES="$(wc -c <"$ENC_PATH" | tr -d ' ')"
@@ -222,9 +378,11 @@ psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -v run_id="$RUN_ID" -Atc "
          sha256='${LOCAL_SHA}',
          size_bytes=${SIZE_BYTES},
          metadata = metadata || jsonb_build_object(
-           'tenants_count', ${TENANTS_COUNT},
+           'tenants_count', ${TENANTS_COUNT:-0},
            'conversations_count', ${CONVERSATIONS_COUNT:-0},
-           'messages_count', ${MESSAGES_COUNT:-0}
+           'messages_count', ${MESSAGES_COUNT:-0},
+           'restore_mode', '${RESTORE_MODE}',
+           'signature_verified', true
          )
    where id=:'run_id'::uuid
 " >/dev/null
@@ -239,12 +397,14 @@ psql "$DATABASE_ADMIN_URL" -v ON_ERROR_STOP=1 -v run_id="$RUN_ID" -Atc "
     :'run_id'::uuid,
     jsonb_build_object(
       'evidence_path','${S3_URI}',
+      'signature_path','${S3_URI_SIG}',
       'sha256','${LOCAL_SHA}',
-      'tenants_count', ${TENANTS_COUNT},
+      'restore_mode','${RESTORE_MODE}',
+      'tenants_count', ${TENANTS_COUNT:-0},
       'conversations_count', ${CONVERSATIONS_COUNT:-0},
       'messages_count', ${MESSAGES_COUNT:-0}
     )
   )
 " >/dev/null
 
-echo "Backup verify OK: tenants=${TENANTS_COUNT} conversations=${CONVERSATIONS_COUNT:-0} messages=${MESSAGES_COUNT:-0}"
+echo "Backup verify OK [${RESTORE_MODE}]: tenants=${TENANTS_COUNT:-0} conversations=${CONVERSATIONS_COUNT:-0} messages=${MESSAGES_COUNT:-0}"

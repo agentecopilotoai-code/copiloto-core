@@ -1171,15 +1171,26 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-009 — Backup verification trust model
 
-- **Estado:** PENDING (alta prioridad pero opera fuera del API)
+- **Estado:** DONE (2026-05-15) — PR `claude/implement-ui-backlog-kuv9g`. Sigue abierto `SEC-009.1-FU` para el modo no-Docker (degraded `pg_restore --list` cuando el socket no está disponible).
 - **Finding:** `Backup verification restores untrusted S3 dumps as postgres`
-- **Root cause:** el verifier confía en `Metadata.sha256` del propio objeto S3 (controlado por quien escribe el bucket); decrypta con GPG sin signature verification; restora con superuser `postgres` dentro del mismo cluster productivo.
-- **Fix:**
-  - Reemplazar la validación de hash por una signature detached (GPG `--verify` contra una pubkey almacenada FUERA del bucket).
-  - Restaurar a una instancia Postgres efímera ISOLATED del cluster productivo (container `postgres:16` desechable con red bridge separada).
-  - Usar un rol non-superuser para la restauración.
-- **Tests:** intento de restore con un dump no firmado → falla; restore con firma válida → ok.
-- **Severidad:** alta (operacional).
+- **Root cause (cerrado):** el verifier confiaba en `Metadata.sha256` del propio objeto S3 (controlado por quien escribe el bucket); decryptaba con GPG sin signature verification; restoraba con superuser `postgres` dentro del mismo cluster productivo.
+- **Fix implementado:**
+  - **Capa 1 (GPG detached signature):** el producer (`scripts/backup-to-cloud.sh`) firma `db.dump.gpg` con `gpg --detach-sign` usando `BACKUP_SIGNER_FPR` y sube `db.dump.gpg.sig` sibling. El consumer (`scripts/verify-backup.sh`) baja la firma, importa la pubkey del signer desde `BACKUP_SIGNER_PUBKEY_PATH` (out-of-band, NO desde el bucket) y corre `gpg --verify` ANTES de cualquier `--decrypt`. Fail-closed si falta la firma o no valida.
+  - **Capa 2 (Postgres efímero isolated):** el verifier levanta `postgres:16-alpine` desechable en `backup-verify-net` (red bridge `--internal` que impide salida al exterior). El restore aterriza ahí, NO en el cluster productivo. Tear-down post-verify via `trap EXIT`. Docker CLI agregado al container (`infra/backup-worker/Dockerfile` instala `docker.io`).
+  - **Capa 3 (rol non-superuser):** el restore se ejecuta como `backup_verifier` (rol provisionado al startup del PG efímero con `nosuperuser noreplication nobypassrls nocreaterole nocreatedb`). El `postgres` superuser solo provisiona el rol.
+  - **Stop-gap degraded mode (SEC-009.1-FU):** si el daemon Docker no está disponible, fallback a `pg_restore --list` (parseability validation only). El audit log marca `restore_mode='degraded_list_only'`. El follow-up ticket cubre alternativas (systemd-nspawn / podman / rootless).
+- **Runbook operador:** `docs/runbooks/backup-signature-setup.md` (NUEVO) documenta key generation, distribución, rotación, smoke test, y todos los failure modes esperados.
+- **Tests:** `tests/test_backup_verifier_static.py` (14 tests, todos PASSED): producer signs after encrypt, sibling .sig uploaded, verifier requires pubkey + .sig (fail-closed), gpg --verify precedes --decrypt, no S3 metadata trust, ephemeral PG with internal network, non-superuser role, degraded mode declared. Tests existentes (`tests/test_backup_cloud_static.py`) actualizados para reflejar el nuevo trust model.
+- **Severidad:** alta (operacional) → cerrado en este PR.
+
+---
+
+### SEC-009.1-FU — Backup verifier sin docker socket
+
+- **Estado:** PENDING (low priority, dependiente del entorno operativo).
+- **Motivación:** SEC-009 Capa 2 requiere acceso al docker socket para spin-up del Postgres efímero. Hosts con políticas restrictivas (rootless containers, runners gestionados) caen al modo degraded `pg_restore --list` que valida parseability pero NO ejecuta el restore.
+- **Fix candidato:** levantar el Postgres efímero vía `podman` (rootless) o `systemd-nspawn`. Alternativa: empotrar `postgres` como binario sidecar dentro del container del verifier y arrancarlo con `pg_ctl` en un datadir efímero.
+- **Severidad:** baja — el degraded mode reporta correctamente en `audit_logs.metadata.restore_mode` y la firma GPG (Capa 1) sigue activa, así que la pérdida es solo de validación de restore real.
 
 ---
 

@@ -11,6 +11,9 @@ ENV_FILE="/etc/cron.d/copilotoia-env"
 : >"$ENV_FILE"
 for var in BACKUP_S3_BUCKET BACKUP_ENV BACKUP_S3_ENDPOINT \
            BACKUP_GPG_RECIPIENT BACKUP_GPG_PUBKEY_PATH \
+           BACKUP_SIGNER_FPR BACKUP_SIGNER_PRIVKEY_PATH BACKUP_SIGNER_PUBKEY_PATH \
+           BACKUP_VERIFY_PG_IMAGE BACKUP_VERIFY_PG_PORT BACKUP_VERIFY_NETWORK \
+           BACKUP_VERIFY_SKIP_EPHEMERAL \
            BACKUP_RETENTION_DAYS \
            DATABASE_ADMIN_URL POSTGRES_HOST POSTGRES_SUPERUSER_URL \
            AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION \
@@ -30,6 +33,15 @@ if [[ -f "${BACKUP_GPG_PUBKEY_PATH:-/app/.secrets/backup_gpg_pubkey.asc}" ]]; th
 fi
 if [[ -f "/app/.secrets/backup_gpg_privkey.asc" ]]; then
   gpg --batch --quiet --import "/app/.secrets/backup_gpg_privkey.asc" >/dev/null 2>&1 || true
+fi
+# SEC-009 — pubkey del signer importada out-of-band para `gpg --verify`. La
+# privkey del signer NO se monta en el verifier; vive en el producer host.
+if [[ -f "${BACKUP_SIGNER_PUBKEY_PATH:-/app/.secrets/backup_signer_pubkey.asc}" ]]; then
+  gpg --batch --quiet --import "${BACKUP_SIGNER_PUBKEY_PATH:-/app/.secrets/backup_signer_pubkey.asc}" >/dev/null 2>&1 || true
+fi
+# El producer (mismo binario por ahora) además importa la privkey del signer.
+if [[ -f "${BACKUP_SIGNER_PRIVKEY_PATH:-/app/.secrets/backup_signer_privkey.asc}" ]]; then
+  gpg --batch --quiet --import "${BACKUP_SIGNER_PRIVKEY_PATH:-/app/.secrets/backup_signer_privkey.asc}" >/dev/null 2>&1 || true
 fi
 
 echo "backup-worker booted at $(date -u +%FT%TZ) — schedule: daily 03:00 UTC / verify Sun 04:00 UTC" \

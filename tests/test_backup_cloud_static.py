@@ -136,6 +136,8 @@ def test_backup_script_retention_30days_plus_monthly_snapshot() -> None:
 
 def test_verify_script_runs_3_sanity_checks_and_emits_audit_log() -> None:
     script = _verify_script()
+    # SEC-009 — restore target is the ephemeral PG, surfaced through VERIFY_URL
+    # that points at backup_verifier@ephemeral_host (NOT the productive cluster).
     assert 'pg_restore --dbname="$VERIFY_URL"' in script
     assert "from app.tenants" in script
     assert "from app.conversations" in script
@@ -152,9 +154,10 @@ def test_verify_script_alerts_on_failure_with_null_tenant() -> None:
     assert "'backup_failure'" in script
     # System-wide: tenant_id null.
     assert 'values (\n      null,\n      \'backup_failure\',' in script
-    # SHA256 mismatch path is enforced.
-    assert 'sha256_mismatch' in script
-    # Empty dump / decrypt failures are wired.
+    # SEC-009 — the old `sha256_mismatch` trust path was removed; the new
+    # authoritative failure mode is missing/invalid GPG signature.
+    assert 'missing_detached_signature' in script or 'gpg_verify_failed' in script
+    # Empty dump / decrypt failures are still wired.
     assert 'gpg_decrypt_failed' in script
     assert 'decrypted_dump_empty' in script
 
