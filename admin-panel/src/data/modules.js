@@ -181,6 +181,13 @@ export const adminModules = [
     capability: 'outbound_dlq.retry',
   },
   {
+    id: 'appointments',
+    label: 'Citas del día',
+    summary: 'Agenda del día del rol Agente: lista de citas con estado en vivo (confirmada, sin confirmar, atendida, no-show) y navegación entre días. UI-009.5.',
+    scope: ['Lista de citas del día', 'Estados en vivo', 'Navegación Día anterior / Hoy / Mañana', 'Conteos del día (total, sin confirmar, atendidas, próxima)'],
+    capability: 'appointments.view',
+  },
+  {
     id: 'go-live-readiness',
     label: 'Go-live Readiness',
     summary: 'Checklist automatizado para validar si un tenant puede entrar a producción controlada.',

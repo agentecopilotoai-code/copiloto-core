@@ -20,6 +20,7 @@ export const TENANT_NAV = Object.freeze([
     section: 'Conversaciones',
     items: ['operations-desk', 'my-handoffs', 'contacts', 'campaigns', 'segments', 'digest-reports'],
   },
+  { section: 'Hoy', items: ['appointments'] },
   {
     section: 'Negocio',
     items: ['services', 'packages', 'subscriptions', 'branches', 'analytics'],
