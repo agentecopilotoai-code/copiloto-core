@@ -1,4 +1,6 @@
 import { Button, StateScreen } from '../ui/index.js';
+import { adminPath } from '../../services/adminSession.js';
+import styles from './NoTenantOnboarding.module.css';
 
 /**
  * UI-016.6 — pantalla `/no-tenant` redibujada al diseño `T2 _ Estados de
@@ -39,9 +41,18 @@ export function NoTenantOnboarding({ onCreateTenant, onRefresh }) {
         </Button>
       }
       secondary={
-        <Button variant="ghost" onClick={refresh}>
-          Refrescar
-        </Button>
+        <div className={styles.secondaryActions}>
+          <Button variant="ghost" onClick={refresh}>
+            Refrescar
+          </Button>
+          {/* BUG-002 fix: escape hatch garantizado. Si la persona no tiene
+              forma de crear ni esperar invitación, debe poder salir. */}
+          <form method="post" action={adminPath('/admin/logout')} className={styles.logoutForm}>
+            <Button type="submit" variant="ghost">
+              Cerrar sesión
+            </Button>
+          </form>
+        </div>
       }
     />
   );

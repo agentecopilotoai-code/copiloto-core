@@ -41,4 +41,15 @@ describe('<AccessDenied/> (UI-016.6 refactor)', () => {
     );
     expect(screen.getByText('Slot adicional')).toBeInTheDocument();
   });
+
+  // BUG-002: garantiza escape hatch desde CUALQUIER AccessDenied. Sin esto,
+  // un usuario sin permisos para volver al home (rol vacío, capabilities
+  // nuevas, tenant sin acceso) queda lockeado en loop sin poder cerrar sesión.
+  it('siempre incluye un form de logout como secondary action', () => {
+    const { container } = render(<AccessDenied capability="x.read" mode="R" />);
+    expect(screen.getByRole('button', { name: 'Cerrar sesión' })).toBeInTheDocument();
+    const form = container.querySelector('form[method="post"]');
+    expect(form).not.toBeNull();
+    expect(form.getAttribute('action')).toMatch(/\/admin\/logout$/);
+  });
 });

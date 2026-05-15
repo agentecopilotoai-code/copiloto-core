@@ -194,11 +194,17 @@ function OnboardingRoute() {
   const { session, handleTenantCreated } = useTenantContext();
   const navigate = useNavigate();
   const module = adminModules.find((item) => item.id === 'tenant-setup');
+  // BUG-002 fix: initialSignup={true} skips the wizard's tenant_setup.write
+  // RequirePermission gate. The user reaches this route from /no-tenant with
+  // zero tenant memberships, so they have no roles and would always crash
+  // into AccessDenied. The backend's tenant-signup endpoint is the actual
+  // security boundary.
   return (
     <TenantSetupWizard
       module={module}
       session={session}
       tenant={null}
+      initialSignup
       onTenantCreated={(tenant) => {
         handleTenantCreated(tenant);
         if (tenant?.slug) navigate(`/t/${tenant.slug}`);

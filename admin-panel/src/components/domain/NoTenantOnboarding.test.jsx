@@ -36,4 +36,13 @@ describe('<NoTenantOnboarding/> (UI-016.6 refactor)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Refrescar' }));
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
+
+  // BUG-002: escape hatch garantizado para usuarios sin acceso a ningún tenant.
+  it('incluye un form de logout en el secondary slot', () => {
+    const { container } = render(<NoTenantOnboarding onCreateTenant={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Cerrar sesión' })).toBeInTheDocument();
+    const form = container.querySelector('form[method="post"]');
+    expect(form).not.toBeNull();
+    expect(form.getAttribute('action')).toMatch(/\/admin\/logout$/);
+  });
 });

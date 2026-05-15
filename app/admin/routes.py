@@ -554,3 +554,20 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
         status_code=upstream_response.status_code,
         headers=response_headers,
     )
+
+
+# BUG-002 fix: SPA fallback. Any `/admin/<react-router-path>` that the user
+# hits via hard refresh, deep link or back-button hits this catch-all. The
+# specific routes above (`/admin/login`, `/admin/logout`, `/admin/callback`,
+# `/admin/assets/*`, `/admin/api/*`, websocket) match first per FastAPI's
+# registration order; everything else (`/admin/no-tenant`, `/admin/onboarding`,
+# `/admin/t/<slug>/<module>`, `/admin/account/profile`, ...) returns the SPA
+# index.html and React Router takes over client-side. Before this fix a hard
+# refresh on any non-root admin path returned `{"detail":"Not Found"}` and
+# the user had no way back without re-typing the URL.
+#
+# MUST be the LAST route registered in this module so that all the specific
+# `/admin/*` handlers (auth, proxy, assets) win the match-by-order race.
+@router.get('/admin/{spa_path:path}', include_in_schema=False)
+async def admin_spa_fallback(spa_path: str) -> FileResponse:
+    return _dist_file()

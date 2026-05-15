@@ -32,14 +32,21 @@ import styles from './TenantSetupWizard.module.css';
  * Behaviour and data flow (the `useTenantSetupData` hook, every subtab from
  * UI-007.12) are preserved verbatim — this PR is visual-only.
  *
- * The wizard is gated by `tenant_setup.write` (RW) at the entry point; the
- * registry has `capability: null` so the wrapper here is the authority on the
- * client. The backend remains the source of truth.
+ * The wizard is gated by `tenant_setup.write` (RW) at the entry point WHEN
+ * an existing tenant is being edited; the registry has `capability: null` so
+ * the wrapper here is the authority on the client. The backend remains the
+ * source of truth.
+ *
+ * `initialSignup={true}` SKIPS the gate — this is the entry from
+ * `/onboarding` (router.jsx OnboardingRoute), where the user has NO tenant
+ * yet and therefore has no roles in any tenant. Without this exception the
+ * first-time signup user would crash into `<AccessDenied>` and have no path
+ * forward. (BUG-002 fix.)
  *
  * @param {{ module: object, session: object, tenant?: object, initialTab?: string,
- *           onTenantCreated?: Function }} props
+ *           initialSignup?: boolean, onTenantCreated?: Function }} props
  */
-export function TenantSetupWizard({ module, onTenantCreated, session, tenant, initialTab }) {
+export function TenantSetupWizard({ module, onTenantCreated, session, tenant, initialTab, initialSignup = false }) {
   const { profile } = useTenantContext();
   const permissions = usePermissions({ profile, tenant });
   const [activeTab, setActiveTab] = useState(initialTab || 'tenant');
@@ -59,36 +66,46 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
 
   const panel = renderPanel({ activeTab, state, actions, session });
 
+  const wizard = (
+    <section className={styles.page}>
+      <PageHeader
+        eyebrow="Configuración"
+        title={module?.label || 'Tenant Setup'}
+        description={module?.summary || 'Configuración general del tenant.'}
+        actions={
+          <div className={styles.tenantMeta}>
+            <span>Tenant activo</span>
+            <strong>{tenant?.label || (initialSignup ? 'Nuevo tenant' : 'Sin tenant seleccionado')}</strong>
+          </div>
+        }
+      />
+
+      <Tabs
+        items={wizardTabs.map((tab) => ({ value: tab.id, label: tab.label }))}
+        value={activeTab}
+        onChange={setActiveTab}
+        variant="underline"
+      />
+
+      {notice ? (
+        <p className={noticeClass} role="status">
+          {notice.text}
+        </p>
+      ) : null}
+
+      {panel}
+    </section>
+  );
+
+  // BUG-002 fix: skip the capability gate during initial signup. Users at
+  // /onboarding have no tenant and therefore no roles, so the RequirePermission
+  // wrapper would always deny them. The backend remains authoritative —
+  // tenant signup is its own endpoint with its own auth model.
+  if (initialSignup) return wizard;
+
   return (
     <RequirePermission permissions={permissions} capability="tenant_setup.write" mode="RW">
-      <section className={styles.page}>
-        <PageHeader
-          eyebrow="Configuración"
-          title={module?.label || 'Tenant Setup'}
-          description={module?.summary || 'Configuración general del tenant.'}
-          actions={
-            <div className={styles.tenantMeta}>
-              <span>Tenant activo</span>
-              <strong>{tenant?.label || 'Sin tenant seleccionado'}</strong>
-            </div>
-          }
-        />
-
-        <Tabs
-          items={wizardTabs.map((tab) => ({ value: tab.id, label: tab.label }))}
-          value={activeTab}
-          onChange={setActiveTab}
-          variant="underline"
-        />
-
-        {notice ? (
-          <p className={noticeClass} role="status">
-            {notice.text}
-          </p>
-        ) : null}
-
-        {panel}
-      </section>
+      {wizard}
     </RequirePermission>
   );
 }

@@ -1,4 +1,5 @@
 import { Button, StateScreen } from '../components/ui/index.js';
+import { adminPath } from '../services/adminSession.js';
 import styles from './AccessDenied.module.css';
 
 /**
@@ -10,6 +11,12 @@ import styles from './AccessDenied.module.css';
  * Reutiliza el primitive `StateScreen` (tono "warning") para garantizar
  * layout consistente con `/no-tenant`, `MfaRequiredBlocker`, 404 y
  * `ErrorBoundary`.
+ *
+ * BUG-002 fix: el secondary action es SIEMPRE el form de logout. Sin esto,
+ * un usuario que aterriza en AccessDenied sin permisos para volver al home
+ * (rol vacío, capabilities nuevas, tenant sin acceso) queda en loop con
+ * /no-tenant → onboarding → AccessDenied → / → ...  El logout garantiza
+ * escape hatch desde CUALQUIER lockout.
  *
  * @param {Object} props
  * @param {string} props.capability Capability code (`services.write`, etc.).
@@ -49,6 +56,13 @@ export function AccessDenied({ capability, mode = 'R', onGoHome, children }) {
         <Button variant="primary" onClick={goHome}>
           Volver al inicio
         </Button>
+      }
+      secondary={
+        <form method="post" action={adminPath('/admin/logout')} className={styles.logoutForm}>
+          <Button type="submit" variant="ghost">
+            Cerrar sesión
+          </Button>
+        </form>
       }
     />
   );

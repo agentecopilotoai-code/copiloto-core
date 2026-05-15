@@ -13,3 +13,10 @@
   padding: 4px 10px;
   text-transform: uppercase;
 }
+
+/* BUG-002: the StateScreen secondary slot needs the logout <form> to render
+   inline (not block) so the Button matches the primary action visually. */
+.logoutForm {
+  display: inline-flex;
+  margin: 0;
+}
