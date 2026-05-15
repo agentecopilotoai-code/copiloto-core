@@ -221,4 +221,8 @@ describe('ROLE_HOME', () => {
     expect(ROLE_HOME.agent).toBe('operations-desk');
     expect(ROLE_HOME.platform_owner).toBe('platform-fleet');
   });
+
+  it('viewer aterriza en viewer-summary (UI-010.1)', () => {
+    expect(ROLE_HOME.viewer).toBe('viewer-summary');
+  });
 });

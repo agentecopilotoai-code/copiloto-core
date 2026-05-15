@@ -177,7 +177,7 @@ export const ROLE_HOME = Object.freeze({
   admin: 'dashboard',
   manager: 'manager-analytics',
   agent: 'operations-desk',
-  viewer: 'analytics',
+  viewer: 'viewer-summary',
 });
 
 /**
