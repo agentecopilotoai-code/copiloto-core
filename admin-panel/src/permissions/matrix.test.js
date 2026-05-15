@@ -87,6 +87,18 @@ describe('can()', () => {
     expect(can(['owner'], 'tenant_setup.write', 'RW')).toBe(true);
   });
 
+  it('go_live_readiness.mark_live es exclusivo del owner del tenant', () => {
+    // UI-016.1: marcar el tenant como live es una operación de cierre que solo
+    // el owner del negocio debe poder ejecutar. Admin lee el checklist pero no
+    // dispara el go-live.
+    expect(can(['owner'], 'go_live_readiness.mark_live', 'RW')).toBe(true);
+    expect(can(['owner'], 'go_live_readiness.read', 'R')).toBe(true);
+    expect(can(['admin'], 'go_live_readiness.read', 'R')).toBe(true);
+    expect(can(['admin'], 'go_live_readiness.mark_live', 'RW')).toBe(false);
+    expect(can(['manager'], 'go_live_readiness.mark_live', 'RW')).toBe(false);
+    expect(can(['platform_owner'], 'go_live_readiness.mark_live', 'RW')).toBe(false);
+  });
+
   it('platform_owner accede a la flota pero NO al tenant', () => {
     expect(can(['platform_owner'], 'platform.tenants.write', 'RW')).toBe(true);
     expect(can(['platform_owner'], 'platform.system_health.read', 'R')).toBe(true);

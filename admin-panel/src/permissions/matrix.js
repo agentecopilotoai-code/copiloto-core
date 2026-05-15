@@ -84,6 +84,7 @@ export const PERMISSIONS = Object.freeze({
   'legal.write':               { viewer: null, agent: null, manager: null, admin: RW, owner: RW, platform_owner: null },
   'audit.read':                { viewer: null, agent: null, manager: null, admin: R,  owner: R,  platform_owner: null },
   'go_live_readiness.read':    { viewer: null, agent: null, manager: null, admin: R,  owner: R,  platform_owner: null },
+  'go_live_readiness.mark_live': { viewer: null, agent: null, manager: null, admin: null, owner: RW, platform_owner: null },
 
   // ─────────────────────────────────── PLATFORM OWNER (fleet) ─────────────────────────────
   'platform.tenants.read':       { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: R },

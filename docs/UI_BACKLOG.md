@@ -737,10 +737,25 @@ src/
 
 #### UI-016.1 — Go-live Readiness (Owner-Admin)
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **HTML:** `docs/HTML DESIGN/Transversales/10b _ Inicio _ Go-live Readiness.html` (319 LOC).
 - **Alcance:** refactorizar `src/features/owner-admin/readiness/GoLiveReadiness.jsx` al diseño entregado. El HTML muestra un checklist de 17 ítems agrupados en 5-6 secciones (Tenant activo, Canal WhatsApp y templates, Servicios y agenda, etc.), con contador "16 / 17 pasados", badges por sección "3 / 3", botón "Marcar live" deshabilitado hasta que todo pase, botón "Exportar checklist".
 - **Criterios:** capability `go_live_readiness.read`. CTA "Marcar live" requiere `RequirePermission mode="RW"` con `go_live_readiness.mark_live` (capability nueva si no existe). Tests: render del checklist, botón "Marcar live" deshabilitado con ítems pendientes, llamada al endpoint correcto cuando todo pasa.
+- **Cierre:** ver `docs/DONE.md` (entrada UI-016.1). El endpoint backend para "Marcar live" queda fuera de UI-016.1 — ver follow-up `UI-016.1-FU`.
+
+##### UI-016.1-FU — Backend endpoint para "Marcar live"
+
+- **Estado:** PENDING (backlog backend)
+- **Motivación:** UI-016.1 dejó el botón "Marcar live" implementado en frontend con un AlertBanner explicativo, porque la operación "transicionar un tenant a producción controlada" no tiene endpoint dedicado. El backend tiene `PATCH /tenants/{id}/status` pero (1) es platform-owner-only y (2) sus transiciones permitidas son `trial → active/suspended/churned`, no "live" — "live" hoy es un atributo del canal WhatsApp, no del tenant.
+- **Alcance backend:**
+  - Nuevo endpoint `POST /v1/tenants/{id}/go-live` montado en `tenant_admin_router` (`require_min_role('owner')`). Body opcional `{reason}`. El handler:
+    - Llama `await build_tenant_readiness_report(...)` (helper existente) y devuelve `409` si `ready != True`.
+    - Marca un flag `tenant_settings.go_live_at = now()` (columna nueva — migración en `01-schema.sql`).
+    - Audita `tenant.go_live_marked` con `metadata={reason, readiness_snapshot}`.
+    - Devuelve el reporte para que el frontend lo re-renderice.
+  - Helper `markTenantLive(session, tenantId, reason)` en `admin-panel/src/services/coreApi.js`.
+  - Actualizar `GoLiveReadiness.jsx`: reemplazar el `setMarkLiveNotice(...)` placeholder por el `await markTenantLive(...)` real, con confirmación via `useConfirm()` antes de disparar.
+- **Tests backend:** `tests/test_tenant_go_live_static.py` con casos: (1) endpoint registrado en `tenant_admin_router`, (2) 409 si `ready != True`, (3) audit con `action='tenant.go_live_marked'`, (4) idempotente si ya estaba live.
 
 #### UI-016.2 — Knowledge Studio redesign
 

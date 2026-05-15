@@ -38,12 +38,17 @@ def test_readiness_checks_cover_go_live_scope():
 
 
 def test_admin_panel_exposes_go_live_readiness_module():
+    # UI-016.1 refactored the legacy "Generar reporte / Razones de not_ready"
+    # affordances out of the page in favor of the designer's checklist layout
+    # with "Exportar checklist" + "Marcar live" CTAs. The integration points
+    # (coreApi helper, module registration, source import) still pin the
+    # module to the readiness endpoint.
     assert 'getTenantReadiness' in CORE_API.read_text()
     assert "id: 'go-live-readiness'" in MODULES.read_text()
     ui = READINESS_UI.read_text()
-    assert 'Generar reporte' in ui
-    assert 'Razones de not_ready' in ui
     assert 'getTenantReadiness' in ui
+    assert 'Exportar checklist' in ui
+    assert 'Marcar live' in ui
 
 
 def test_readiness_report_handles_nullable_settings_without_500():
@@ -376,12 +381,15 @@ def test_policy_engine_readiness_fails_without_after_bot_turns(monkeypatch):
     assert 'after_bot_turns' in pe_check['reason']
 
 
-def test_readiness_ui_has_escalation_navigation():
+def test_readiness_ui_surfaces_failure_reasons_per_check():
+    # UI-016.1 removed the in-place "Ir a Escalamiento" / "Aplicar política
+    # mínima" buttons (they were ad-hoc shortcuts in the legacy UI). The new
+    # design surfaces failure reasons inline per check via `check.reason`;
+    # the user navigates to the affected module through the regular sidebar.
+    # The reason text remains a load-bearing piece of the failure UX.
     ui = READINESS_UI.read_text()
-    assert 'onGoToEscalation' in ui
-    assert 'Ir a Escalamiento' in ui
-    assert 'Aplicar política mínima recomendada' in ui
-    assert 'updateTenantSettings' in ui
+    assert 'check.reason' in ui
+    assert 'checkReason' in ui  # CSS-module class for the reason paragraph
 
 
 def test_tenant_setup_wizard_accepts_initial_tab():
