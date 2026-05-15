@@ -37,6 +37,20 @@ describe('Landing (UI-016.4)', () => {
     });
   });
 
+  it('UI-017 — "Iniciar sesión" usa por defecto el BFF redirect a Auth0', () => {
+    // Sin override, `loginHref` debe terminar en `/admin/login` — la ruta del
+    // backend que dispara el Authorization Code Flow vs Auth0 (app/admin/routes.py).
+    // `adminPath()` puede prefijar un origin (`VITE_ADMIN_BACKEND_ORIGIN`) cuando
+    // el SPA corre detrás de un host distinto; en tests vitest el env es vacío
+    // y el href queda como `/admin/login`.
+    render(<Landing />);
+    const loginLinks = screen.getAllByRole('link', { name: /Iniciar sesión/i });
+    expect(loginLinks.length).toBeGreaterThan(0);
+    loginLinks.forEach((link) => {
+      expect(link.getAttribute('href')).toMatch(/\/admin\/login$/);
+    });
+  });
+
   it('"Solicitar demo gratuita" usa el mailto configurado', () => {
     render(
       <Landing

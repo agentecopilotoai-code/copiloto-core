@@ -15,6 +15,44 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-017 — Landing como ruta inicial y flujo Auth0 desde "Iniciar sesión"
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** quitar el splash legacy "Admin Panel MVP" que se interponía entre `/` y la Landing comercial (UI-016.4) cuando el usuario no tenía sesión. El splash mostraba copy *"Ingresa con Auth0/OIDC para administrar tenants, canales, conocimiento y operación humana"* + un único botón `Iniciar sesión con Auth0` y bloqueaba el reemplazo por la landing pública con sus CTAs comerciales. Tras UI-017 la ruta `/` anónima renderiza la Landing y su botón "Iniciar sesión" dispara el flujo Auth0 real.
+- **Root cause confirmada:**
+  - `admin-panel/src/App.jsx` chequeaba `!isAuthenticated` ANTES de montar el `<RouterProvider />` y, cuando la sesión era nula, pintaba `<LoginScreen />` (el splash). El `IndexRedirect` del router — que UI-016.4 había cableado para renderizar `<Landing />` ante `session === null` — nunca llegaba a ejecutarse porque el SPA ni siquiera montaba el router en estado anónimo.
+- **Cambios realizados:**
+  - **`admin-panel/src/App.jsx`:** eliminada la rama `!isAuthenticated → <LoginScreen />`. Ahora el `RouterProvider` se monta SIEMPRE que `isLoading === false`, sea la sesión nula o válida. El `IndexRedirect` decide: nula → Landing pública, válida → home del rol. Se conserva `<LoadingScreen />` para `isLoading === true` (evita flash de Landing mientras `AuthContext` resuelve `/admin/api/session`). El import de `LoginScreen` queda fuera del árbol y el componente sale del bundle.
+  - **`admin-panel/src/features/public/landing/Landing.jsx`:** `DEFAULT_LOGIN_HREF` pasa de la string hardcoded `'/admin/login'` al resultado de `adminPath('/admin/login')` (del mismo helper que ya usan `MfaRequiredBlocker`, `AccountShell` y `ShellSidebar` para sus formularios de logout). Esto garantiza que el redirect respete `VITE_ADMIN_BACKEND_ORIGIN` cuando el SPA está servido desde un host distinto al backend (cross-origin dev). En tests (env vacío) el href sigue siendo `/admin/login` plano. La doc del componente queda alineada con UI-017.
+  - **`admin-panel/src/components/layout/LoginScreen.jsx`:** **borrado**. UI-015 dejó el principio "no legacy code huérfano" y este componente caía en ese caso — sólo lo usaba `App.jsx`.
+- **Patrón Auth0 usado:** **BFF redirect**. El SPA NO usa `@auth0/auth0-react` ni `loginWithRedirect()`; la sesión se establece vía Authorization Code Flow servidor-a-Auth0 expuesto en `app/admin/routes.py`. El flujo completo:
+  1. Click "Iniciar sesión" en `LandingHeader` → `<a href={loginHref}>` con `loginHref = adminPath('/admin/login')`.
+  2. Browser navega a `/admin/login` (FastAPI) → backend genera state + nonce y redirige a `https://<tenant>.auth0.com/authorize`.
+  3. Auth0 universal login → callback en `/admin/callback` → backend intercambia code por tokens, escribe cookie HTTP-only, redirige al SPA en `/admin/`.
+  4. SPA monta de nuevo, `fetchAdminSession()` retorna profile → `IndexRedirect` enruta al home del rol (owner/admin/manager/agent/viewer/platform_owner).
+- **Tests:**
+  - **`admin-panel/src/app/router.test.jsx`:** nuevo test `UI-017 — el splash legacy ya no se muestra: el copy MVP no aparece para anónimos` que asserta que tras montar `/` con `session: null` el texto "Admin Panel MVP", el copy "Ingresa con Auth0/OIDC", y el link "Iniciar sesión con Auth0" están ausentes. Bloquea regresiones donde alguien vuelva a meter un splash arriba del router.
+  - **`admin-panel/src/features/public/landing/Landing.test.jsx`:** nuevo test `UI-017 — "Iniciar sesión" usa por defecto el BFF redirect a Auth0` que monta `<Landing />` sin override de `loginHref` y verifica que los anchors "Iniciar sesión" terminan en `/admin/login`. Robusto frente a `adminPath()` con o sin origin (`toMatch(/\/admin\/login$/)`).
+  - El test pre-existente `UI-016.4 — usuario anónimo en /` que valida el heading "Responde, califica y agenda" sigue verde — el flow desde el router hasta la landing está intacto.
+- **Grep gates (todos a 0 en `admin-panel/src`):**
+  - `grep -rn "Admin Panel MVP" admin-panel/src` → 0
+  - `grep -rn "LoginScreen" admin-panel/src` → 0
+  - `grep -rn "Ingresa con Auth0/OIDC" admin-panel/src` → 0
+- **Archivos modificados / creados:**
+  - **Borrados (1):** `admin-panel/src/components/layout/LoginScreen.jsx` (vía `git rm`).
+  - **Modificados (5):** `admin-panel/src/App.jsx`, `admin-panel/src/features/public/landing/Landing.jsx`, `admin-panel/src/features/public/landing/Landing.test.jsx`, `admin-panel/src/app/router.test.jsx`, `docs/UI_BACKLOG.md` (UI-017 DONE), `docs/DONE.md` (esta entrada).
+- **Validaciones ejecutadas:**
+  - `npm run lint` ✓ (0 errors, 2 warnings pre-existentes en `useTenantSetupSidePanels.js`).
+  - `npm test` ✓ — 125 test files, 637 tests passed.
+  - `npm run test:a11y` ✓ — 6/6 a11y suites limpias.
+  - `npm run test:coverage` ✓ — 637/637 bajo instrumentación Node 20.
+  - `npm run build` ✓ — bundle se construye sin el componente borrado.
+  - `grep -rn "Admin Panel MVP\|LoginScreen\|Ingresa con Auth0" tests/` → 0 (no hay tests backend pinning el splash).
+- **Notas:**
+  - El componente borrado tenía un `error?.message` fallback que mostraba "Usa la aplicación copilotoia-admin-web generada por scripts/configure-auth0.sh." cuando `AuthContext` reportaba un error. Ese diagnóstico era útil sólo durante el bootstrap inicial del proyecto y desde UI-016.4 la Landing puede mostrar el error de Auth0 si fuera necesario (futuro follow-up: superponer un AlertBanner en la Landing cuando `useAuth().error` esté seteado; hoy `App.jsx` simplemente loga al console silenciosamente porque la rama de error no rendea nada — bajo riesgo en producción ya que el deploy fallido se detectaría en healthcheck antes de pintar la landing).
+  - La doc legacy en `docs/ADMIN_PANEL.md` (línea 1) menciona "Admin Panel MVP" como **nombre del producto** (no como copy del splash). Se preserva tal cual: UI-017 no renombra el panel, sólo elimina la pantalla de bienvenida MVP. Mismo argumento para `docs/UI_BACKLOG.md` y `docs/DONE.md` (entries históricos de TASK-0002 / UI-011), que documentan estados pasados del sistema y deben quedar inmutables para auditabilidad.
+- **PR:** abierto contra `develop`. No mergeado por la sesión; el loop padre vigila CI.
+
 ### BUG-001 — Auth0 invite member devuelve 403 Forbidden en `/oauth/token`
 
 - **Fecha:** 2026-05-15

@@ -170,6 +170,18 @@ describe('router por rol', () => {
     expect(router.state.location.pathname).toBe('/');
   });
 
+  it('UI-017 — el splash legacy ya no se muestra: el copy MVP no aparece para anónimos', async () => {
+    // El splash legacy ("Admin Panel MVP" + "Ingresa con Auth0/OIDC para
+    // administrar tenants…") fue eliminado en UI-017. La landing es ahora la
+    // única vista que ve un usuario anónimo en `/`. Este test bloquea
+    // regresiones donde alguien re-introduzca ese splash arriba del router.
+    renderAt('/', { session: null, tenants: [] });
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByText(/Admin Panel MVP/i)).toBeNull();
+    expect(screen.queryByText(/Ingresa con Auth0\/OIDC/i)).toBeNull();
+    expect(screen.queryByRole('link', { name: /Iniciar sesión con Auth0/i })).toBeNull();
+  });
+
   it('mfa_required bloquea cualquier ruta con el gate de MFA', async () => {
     renderAt('/t/acme/services', {
       session: { mfa_required: true, profile: { sub: 'u1', roles: ['owner'] } },

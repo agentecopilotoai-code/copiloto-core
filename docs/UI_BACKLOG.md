@@ -909,7 +909,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### UI-017 — Landing como ruta inicial y flujo Auth0 desde "Iniciar sesión"
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **Síntoma actual:** la ruta `/` muestra una vista intermedia tipo "Admin Panel MVP" con copy *"Ingresa con Auth0/OIDC para administrar tenants, canales, conocimiento y operación humana"* y un único botón `Iniciar sesión con Auth0`. El UI-016.4 ya creó la landing comercial en `src/features/public/landing/`, pero esa pantalla intermedia legacy bloquea el reemplazo.
 - **Alcance:**
   - Borrar el placeholder MVP (probablemente en `admin-panel/src/app/router.jsx` o en un componente intermedio tipo `LoginSplash.jsx` — verificar con `grep -rn "Admin Panel MVP\|Ingresa con Auth0/OIDC" admin-panel/src`).
