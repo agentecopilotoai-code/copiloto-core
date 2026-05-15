@@ -1,0 +1,9 @@
+/*
+ * UI-010.2 — Viewer · Lectura · Analítica.
+ *
+ * El wrapper no añade chrome propio: reusa íntegramente `AnalyticsPanel` (que
+ * trae su propio `module-card analytics-panel` styling). El módulo CSS existe
+ * sólo para mantener la convención del feature (un `.module.css` por feature),
+ * pero ahora mismo no tiene reglas — cualquier estilo nuevo debe usar tokens
+ * `var(--...)` y nunca literales.
+ */
