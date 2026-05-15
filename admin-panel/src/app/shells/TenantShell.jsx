@@ -1,6 +1,7 @@
 import { ErrorBoundary } from '../../components/ui/index.js';
 import { TENANT_NAV } from '../nav.js';
 import { resolveNav } from './resolveNav.js';
+import { ShellBottomNav } from './components/ShellBottomNav.jsx';
 import { ShellSidebar } from './components/ShellSidebar.jsx';
 import { ShellTopbar } from './components/ShellTopbar.jsx';
 import { TenantSwitcher } from './components/TenantSwitcher.jsx';
@@ -71,6 +72,11 @@ export function TenantShell({
         />
         <ErrorBoundary>{children}</ErrorBoundary>
       </main>
+      <ShellBottomNav
+        navGroups={navGroups}
+        activeModuleId={activeModuleId}
+        onModuleSelect={onModuleSelect}
+      />
     </div>
   );
 }

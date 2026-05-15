@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 import { adminModules } from '../modules.js';
@@ -47,9 +47,13 @@ describe('<ReadOnlyShell/>', () => {
     // UI-010.4: el Viewer ahora ve `viewer-conversations` («Conversaciones»)
     // en vez de `operations-desk` («Operations Desk») — la lista read-only que
     // reusa `InboxList` con `showStartForm={false}`.
-    expect(screen.getByRole('button', { name: 'Analítica' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Conversaciones' })).toBeInTheDocument();
-    const contactos = screen.getByText('Contactos');
+    // UI-016.8 — el sidebar pinta los items (incl. los disabled). El bottom-nav
+    // mobile también incluye Analítica pero el sidebar es la fuente con la que
+    // este test valida la sección "Sin acceso".
+    const sidebarNav = screen.getByRole('navigation', { name: 'Módulos de administración' });
+    expect(within(sidebarNav).getByRole('button', { name: 'Analítica' })).toBeInTheDocument();
+    expect(within(sidebarNav).getByRole('button', { name: 'Conversaciones' })).toBeInTheDocument();
+    const contactos = within(sidebarNav).getByText('Contactos');
     expect(contactos.tagName).toBe('SPAN');
     expect(contactos).toHaveAttribute('aria-disabled', 'true');
   });

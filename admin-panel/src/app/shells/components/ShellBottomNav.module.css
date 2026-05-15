@@ -1,0 +1,212 @@
+/*
+ * UI-016.8 — Bottom navigation rail (mobile-only).
+ *
+ * Oculto por completo en desktop; aparece a `@media (max-width: 480px)` como
+ * barra fija al borde inferior del viewport (igual que el HTML T4). Comparte
+ * los mismos `navGroups` que `ShellSidebar` — el sidebar desaparece a < 480px,
+ * el bottom-nav lo reemplaza como nav primaria mobile.
+ *
+ * Tokens 100% via `var(--...)`.
+ */
+
+.bottomNav {
+  display: none;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.slot {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.tab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  min-height: var(--space-7);
+  padding: var(--space-1) var(--space-1);
+}
+
+.tab:hover {
+  color: var(--ink-2);
+}
+
+.tab:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.tab[disabled],
+.tab[aria-disabled='true'] {
+  color: var(--muted-2);
+  cursor: not-allowed;
+}
+
+.tabActive {
+  color: var(--accent-ink);
+}
+
+.tabActive .icon {
+  background: var(--accent-soft);
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--r-md);
+  color: currentColor;
+}
+
+.label {
+  font-size: var(--fs-caption);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Más sheet (overflow items) ─────────────────────────────────────── */
+.scrim {
+  display: none;
+}
+
+.sheet {
+  display: none;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  box-shadow: var(--shadow-md);
+}
+
+.sheetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) 0;
+}
+
+.sheetTitle {
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 800;
+}
+
+.sheetClose {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: var(--fs-h3);
+  line-height: 1;
+  padding: var(--space-1) var(--space-2);
+}
+
+.sheetClose:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.sheetList {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.sheetItem {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.sheetItem:hover,
+.sheetItemActive {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.sheetItem:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.sheetItem[disabled],
+.sheetItem[aria-disabled='true'] {
+  color: var(--muted-2);
+  cursor: not-allowed;
+}
+
+/* ── Mobile activation (≤ 480px) ────────────────────────────────────── */
+@media (max-width: 480px) {
+  .bottomNav {
+    display: block;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: var(--z-sticky);
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    box-shadow: var(--shadow-md);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+
+  .list {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal);
+    background: rgba(14, 15, 12, 0.5);
+  }
+
+  .sheet {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: var(--z-modal);
+    border-top-left-radius: var(--r-xl);
+    border-top-right-radius: var(--r-xl);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+}

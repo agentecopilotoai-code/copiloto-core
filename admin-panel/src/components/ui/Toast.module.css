@@ -156,3 +156,25 @@
   background: var(--panel);
   color: var(--ink);
 }
+
+/* ── 360px viewport (UI-016.8) ──────────────────────────────────────────
+ *
+ * Mockup `T4 _ Responsive 360px.html` — toasts a 360px ocupan casi todo
+ * el ancho de la pantalla con margins de 8px (`var(--space-2)`). Se mueve
+ * el stack arriba del bottom-nav (`var(--space-7)` + safe-area). Padding
+ * interno y gap se compactan para optimizar lectura en mobile.
+ */
+@media (max-width: 480px) {
+  .viewport {
+    bottom: calc(var(--space-7) + var(--space-3) + env(safe-area-inset-bottom, 0));
+    left: var(--space-2);
+    right: var(--space-2);
+    max-width: none;
+    width: auto;
+  }
+
+  .toast {
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
+}

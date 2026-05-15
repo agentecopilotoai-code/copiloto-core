@@ -731,7 +731,7 @@ src/
 
 ### UI-016 — Pantallas transversales entregadas por el diseñador
 
-- **Estado:** IN PROGRESS (8 subtareas; HTMLs entregados en `docs/HTML DESIGN/Transversales/`)
+- **Estado:** DONE (2026-05-15; 8 subtareas — ver `docs/DONE.md`)
 - **Motivación:** la auditoría post-UI-015/UI-012 detectó vistas y estados sin HTML asociado. El diseñador respondió entregando 9 HTMLs (8 únicos + 1 duplicado) en `docs/HTML DESIGN/Transversales/`. UI-016 se trocea en 8 subtareas, una por HTML, siguiendo la receta 0.bis.1.
 - **HTMLs entregados (mapeo a subtareas):**
 
@@ -832,13 +832,21 @@ src/
 
 #### UI-016.8 — Responsive 360px
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-15)
 - **HTML:** `docs/HTML DESIGN/Transversales/T4 _ Responsive 360px.html` (319 LOC).
 - **Alcance:** mockups móviles formales para las vistas críticas:
   - Owner dashboard a 360px.
   - Agent chat a 360px.
   - Toasts a 360px.
 - **Criterios:** media queries `@media (max-width: 480px)` específicas en `Dashboard.module.css`, `OperationsDesk.module.css` y `Toast.module.css` aplicando el diseño del HTML. Reemplaza el "collapse genérico" que UI-013 aplicó. Bottom-nav móvil ("Inicio | Inbox | Citas | Analítica | Más") es una mini-feature nueva — crear `ShellBottomNav.jsx` que se muestra solo en mobile (hidden en desktop).
+- **Cierre:** ver `docs/DONE.md` (entrada UI-016.8). El sidebar se oculta a < 480px y `ShellBottomNav` toma su lugar como nav primaria mobile (4 slots + opcional "Más" sheet para overflow). Follow-up declarado en `UI-016.8-FU` para el state-machine de navegación lista ↔ conversación en `OperationsDesk` mobile (a 360px conviven mal en el mismo viewport; UI-016.8 solo apretó CSS, no rediseñó la navegación interna del módulo).
+
+##### UI-016.8-FU — State machine mobile list↔conversation para OperationsDesk
+
+- **Estado:** PENDING (frontend follow-up)
+- **Origen:** UI-016.8 solo aplicó CSS responsivo a `OperationsDesk.module.css`. A 360px la lista de conversaciones y el detalle siguen renderizándose juntos en stack vertical — funcional pero apretado. El HTML T4 muestra un patrón "una pantalla a la vez" en mobile: lista hasta que se selecciona; al seleccionar, full-screen del chat con back button.
+- **Alcance frontend:** introducir un estado `mobileView: 'list' | 'detail'` en `OperationsDesk.jsx` (o el hook que maneja la conversación activa) que controle visibilidad de los paneles a < 480px. Back button del detalle vuelve a la lista. Desktop sigue side-by-side sin cambios.
+- **Tests:** verificar que el toggle se respeta solo a width < 480px (usar matchMedia mock); back navigation desde detalle vuelve a la lista; el handoff "Tomar" sigue funcionando desde el detalle mobile.
 
 - **Procedimiento general:** cada subtarea sigue la receta 0.bis.1 (tokens 100% desde `var(--...)`, primitivas reusadas, screenshots HTML vs React en el PR, archivos ≤ 400 LOC, sin código legacy).
 - **Dependencias:** UI-001 ... UI-015.

@@ -71,3 +71,48 @@
 .cancelEditButton {
   margin-left: var(--space-2);
 }
+
+/* ── 360px viewport (UI-016.8) ──────────────────────────────────────────
+ *
+ * Mockup `T4 _ Responsive 360px.html` — Agent chat a 360px. A este ancho
+ * el side-by-side (lista de conversaciones | detalle) no cabe; pasamos a
+ * un stack vertical: lista arriba (scroll horizontal de tabs si hay
+ * varias), detalle abajo full-width, compose box pegado al fondo del
+ * contenedor de detalle. Los CTAs "Tomar / Hoy" se vuelven una fila de
+ * acciones full-width arriba del feed.
+ *
+ * Nota: la navegación entre lista y conversación activa (mostrar solo
+ * una pantalla a la vez en mobile, con back button) requiere un state
+ * machine adicional — queda en `UI-016.8-FU` (ver UI_BACKLOG.md).
+ */
+@media (max-width: 480px) {
+  .page {
+    gap: var(--space-3);
+  }
+
+  .inboxList {
+    gap: var(--space-2);
+  }
+
+  .inboxTabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .detailHeaderBadges {
+    gap: var(--space-1);
+  }
+
+  .tagRow {
+    gap: var(--space-1);
+  }
+
+  .quickNoteRow {
+    width: 100%;
+  }
+
+  .cancelEditButton {
+    margin-left: 0;
+    margin-top: var(--space-1);
+  }
+}
