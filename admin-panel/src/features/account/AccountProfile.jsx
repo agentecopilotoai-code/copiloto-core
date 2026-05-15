@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { AlertBanner, FormField, PageHeader } from '../../components/ui/index.js';
+import { AlertBanner, FormField, PageHeader, useToast } from '../../components/ui/index.js';
 import { useAuth } from '../../context/AuthContext.jsx';
+import { getMyProfile, patchMyProfile } from '../../services/coreApi.js';
 import styles from './Account.module.css';
 import {
   ACCOUNT_LOCALES,
@@ -20,28 +21,83 @@ import {
  * "Lo gestiona Auth0 · cambia desde tu identity provider". El nombre que
  * mostramos en el hero viene de `session.profile.name`/`email` (Auth0).
  *
- * Mientras `PATCH /v1/me/profile` (UI-016.7-FU) no exista, "Guardar cambios"
- * dispara un `AlertBanner tone="warning"` explicando el estado del feature —
- * mismo patrón que UI-016.1 con "Marcar live".
+ * UI-016.7-FU cableó los endpoints reales: GET `/v1/me/profile` hidrata el
+ * form con los valores cacheados en `app.user_preferences` (con fallback al
+ * profile de Auth0); PATCH persiste los cambios y dispara un toast `success`
+ * (4s, patrón UI-016.5). Errores 4xx muestran un `AlertBanner tone="danger"`
+ * con el detail del backend; 5xx caen al toast `error` (8s).
  */
 export function AccountProfile() {
   const { session } = useAuth();
   const profile = session?.profile ?? null;
+  const toast = useToast();
 
   const initialForm = useMemo(() => deriveProfileForm(profile), [profile]);
   const [form, setForm] = useState(initialForm);
-  const [notice, setNotice] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  // UI-016.7-FU: hidrata el form con los datos persistidos del backend cuando
+  // están disponibles. Si el GET falla (404 antes de la primera escritura,
+  // 401 sin sesión válida, etc.) seguimos usando el initialForm derivado del
+  // profile de Auth0 — el form sigue editable y un POST creará la fila.
+  useEffect(() => {
+    let cancelled = false;
+    if (!session) return undefined;
+    (async () => {
+      try {
+        const data = await getMyProfile(session);
+        if (cancelled) return;
+        setForm((current) => ({
+          ...current,
+          name: data.display_name || current.name,
+          email: data.email || current.email,
+          phone: data.phone || current.phone,
+          locale: data.locale || current.locale,
+          timezone: data.timezone || current.timezone,
+        }));
+      } catch {
+        // Tolerable: caer al fallback derivado del profile de Auth0.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
 
   const onChange = (field) => (event) => {
     const value = event.target.value;
     setForm((current) => ({ ...current, [field]: value }));
-    setNotice(null);
+    setError(null);
   };
 
-  const onSubmit = (event) => {
-    event.preventDefault();
-    setNotice('saved');
-  };
+  const onSubmit = useCallback(
+    async (event) => {
+      event.preventDefault();
+      if (saving || !session) return;
+      setSaving(true);
+      setError(null);
+      const payload = {
+        display_name: form.name?.trim() || null,
+        phone: form.phone?.trim() || null,
+        locale: form.locale || null,
+        timezone: form.timezone || null,
+      };
+      try {
+        await patchMyProfile(session, payload);
+        toast.success('Perfil actualizado.');
+      } catch (err) {
+        if (err?.status && err.status >= 400 && err.status < 500) {
+          setError(err?.message || 'No se pudo guardar el perfil.');
+        } else {
+          toast.error(err?.message || 'Error inesperado al guardar.');
+        }
+      } finally {
+        setSaving(false);
+      }
+    },
+    [saving, session, form, toast],
+  );
 
   return (
     <section className={styles.section}>
@@ -68,24 +124,21 @@ export function AccountProfile() {
         <span className={styles.profileBadge}>{profileRoleLabel(profile)}</span>
       </div>
 
-      {notice === 'saved' ? (
+      {error ? (
         <AlertBanner
-          tone="warning"
-          title="Tus cambios todavía no se persisten"
+          tone="danger"
+          title="No se pudo guardar el perfil"
           action={
             <button
               type="button"
               className={styles.secondaryButton}
-              onClick={() => setNotice(null)}
+              onClick={() => setError(null)}
             >
-              Entendido
+              Cerrar
             </button>
           }
         >
-          El endpoint <code>PATCH /v1/me/profile</code> está pendiente
-          (<strong>UI-016.7-FU</strong>). Por ahora puedes editar el formulario
-          y validarlo visualmente, pero los cambios se aplicarán al backend
-          cuando ese endpoint exista.
+          {error}
         </AlertBanner>
       ) : null}
 
@@ -139,8 +192,8 @@ export function AccountProfile() {
         </div>
 
         <div className={styles.formActions}>
-          <button type="submit" className={styles.primaryButton}>
-            Guardar cambios
+          <button type="submit" className={styles.primaryButton} disabled={saving}>
+            {saving ? 'Guardando…' : 'Guardar cambios'}
           </button>
         </div>
       </form>

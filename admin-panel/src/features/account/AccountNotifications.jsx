@@ -1,6 +1,11 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { AlertBanner, PageHeader } from '../../components/ui/index.js';
+import { AlertBanner, PageHeader, useToast } from '../../components/ui/index.js';
+import { useAuth } from '../../context/AuthContext.jsx';
+import {
+  getMyNotifications,
+  patchMyNotifications,
+} from '../../services/coreApi.js';
 import styles from './Account.module.css';
 import {
   NOTIFICATION_CHANNELS,
@@ -17,22 +22,72 @@ import {
  * Quality rating de WhatsApp baja, Resumen semanal de campañas. Cada uno se
  * puede toggear por email / WhatsApp / en-la-app.
  *
- * Sin persistencia hasta UI-016.7-FU: el botón "Guardar preferencias" dispara
- * un `AlertBanner tone="warning"` (mismo patrón que perfil).
+ * UI-016.7-FU cableó GET/PATCH `/v1/me/notifications`. El form arranca con
+ * los defaults canónicos (`initialNotificationMatrix`) y, si el backend tiene
+ * una matriz guardada, la merge encima — así un evento nuevo del catálogo
+ * mantiene su default mientras los preexistentes preservan la elección del
+ * usuario. PATCH manda la matriz completa (no diff). Éxito → toast `success`;
+ * 4xx → AlertBanner; 5xx → toast `error`.
  */
 export function AccountNotifications() {
+  const { session } = useAuth();
+  const toast = useToast();
   const [matrix, setMatrix] = useState(initialNotificationMatrix());
-  const [notice, setNotice] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  // UI-016.7-FU: hidrata con la matriz persistida en el backend. Si el GET
+  // falla nos quedamos con los defaults canónicos del catálogo.
+  useEffect(() => {
+    let cancelled = false;
+    if (!session) return undefined;
+    (async () => {
+      try {
+        const data = await getMyNotifications(session);
+        if (cancelled) return;
+        const persisted = data?.notification_matrix || {};
+        setMatrix((current) => {
+          const next = { ...current };
+          Object.entries(persisted).forEach(([eventId, channels]) => {
+            next[eventId] = { ...(next[eventId] || {}), ...(channels || {}) };
+          });
+          return next;
+        });
+      } catch {
+        // Mantiene los defaults canónicos.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
 
   const onToggle = (eventId, channelId) => {
     setMatrix((current) => toggleNotificationChannel(current, eventId, channelId));
-    setNotice(null);
+    setError(null);
   };
 
-  const onSave = (event) => {
-    event.preventDefault();
-    setNotice('saved');
-  };
+  const onSave = useCallback(
+    async (event) => {
+      event.preventDefault();
+      if (saving || !session) return;
+      setSaving(true);
+      setError(null);
+      try {
+        await patchMyNotifications(session, matrix);
+        toast.success('Preferencias de notificaciones guardadas.');
+      } catch (err) {
+        if (err?.status && err.status >= 400 && err.status < 500) {
+          setError(err?.message || 'No se pudieron guardar las preferencias.');
+        } else {
+          toast.error(err?.message || 'Error inesperado al guardar.');
+        }
+      } finally {
+        setSaving(false);
+      }
+    },
+    [saving, session, matrix, toast],
+  );
 
   return (
     <section className={styles.section}>
@@ -42,23 +97,21 @@ export function AccountNotifications() {
         description="Elige qué eventos te llegan y por dónde. Las notificaciones in-app se ven en el header del panel; email y WhatsApp respetan el contacto configurado en tu perfil."
       />
 
-      {notice === 'saved' ? (
+      {error ? (
         <AlertBanner
-          tone="warning"
-          title="Las preferencias todavía no se persisten"
+          tone="danger"
+          title="No se pudieron guardar las preferencias"
           action={
             <button
               type="button"
               className={styles.secondaryButton}
-              onClick={() => setNotice(null)}
+              onClick={() => setError(null)}
             >
-              Entendido
+              Cerrar
             </button>
           }
         >
-          El endpoint <code>PATCH /v1/me/notifications</code> está pendiente
-          (<strong>UI-016.7-FU</strong>). Tu selección queda visible en esta
-          sesión, pero no llega al backend todavía.
+          {error}
         </AlertBanner>
       ) : null}
 
@@ -96,8 +149,8 @@ export function AccountNotifications() {
         </div>
 
         <div className={styles.formActions}>
-          <button type="submit" className={styles.primaryButton}>
-            Guardar preferencias
+          <button type="submit" className={styles.primaryButton} disabled={saving}>
+            {saving ? 'Guardando…' : 'Guardar preferencias'}
           </button>
         </div>
       </form>

@@ -1,8 +1,55 @@
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+// UI-016.7-FU — mock auth/session source so the GET hydration effect runs.
+let mockSession;
+vi.mock('../../context/AuthContext.jsx', () => ({
+  useAuth: () => ({ session: mockSession }),
+}));
+
+vi.mock('../../services/coreApi.js', () => ({
+  listMySessions: vi.fn(),
+  revokeMySession: vi.fn(),
+}));
+
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+vi.mock('../../components/ui/index.js', async () => {
+  const actual = await vi.importActual('../../components/ui/index.js');
+  return {
+    ...actual,
+    useToast: () => ({
+      push: () => '',
+      dismiss: () => {},
+      success: toastSuccess,
+      error: toastError,
+      info: () => '',
+      warning: () => '',
+    }),
+  };
+});
+
+// eslint-disable-next-line import/first
+import * as coreApi from '../../services/coreApi.js';
+// eslint-disable-next-line import/first
 import { AccountSessions } from './AccountSessions.jsx';
+
+const SESSION = { accessToken: 'tok', profile: { sub: 'u-1' } };
+
+beforeEach(() => {
+  mockSession = SESSION;
+  toastSuccess.mockClear();
+  toastError.mockClear();
+  coreApi.listMySessions.mockReset();
+  coreApi.revokeMySession.mockReset();
+  coreApi.listMySessions.mockResolvedValue({
+    user_id: 'u-1',
+    sessions: [{ id: 'current', current: true, last_seen_at: null }],
+    follow_up: 'UI-016.7-FU-SESSIONS',
+  });
+  coreApi.revokeMySession.mockResolvedValue(null);
+});
 
 describe('<AccountSessions/>', () => {
   it('pinta heading + listado de sesiones demo', () => {
@@ -27,17 +74,27 @@ describe('<AccountSessions/>', () => {
     expect(currentBtn).toBeDisabled();
   });
 
-  it('al revocar una sesión muestra AlertBanner UI-016.7-FU', async () => {
+  it('al montar invoca listMySessions para refrescar el estado', async () => {
+    render(<AccountSessions />);
+    await waitFor(() => {
+      expect(coreApi.listMySessions).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('revocar otra sesión muestra AlertBanner UI-016.7-FU-SESSIONS (stub)', async () => {
     render(<AccountSessions />);
     const otherSessionBtn = screen
       .getAllByRole('button', { name: /Revocar sesión/ })
       .find((btn) => btn.getAttribute('aria-label')?.includes('WhatsApp Web'));
     await userEvent.click(otherSessionBtn);
     expect(screen.getByText(/DELETE \/v1\/me\/sessions/)).toBeInTheDocument();
-    expect(screen.getByText(/UI-016.7-FU/)).toBeInTheDocument();
+    expect(screen.getByText(/UI-016.7-FU-SESSIONS/)).toBeInTheDocument();
+    // No HTTP call para otras sesiones — el backend retorna 404 hasta que
+    // exista el session store.
+    expect(coreApi.revokeMySession).not.toHaveBeenCalled();
   });
 
-  it('al cerrar todas las demás sesiones muestra AlertBanner UI-016.7-FU', async () => {
+  it('al cerrar todas las demás sesiones muestra AlertBanner UI-016.7-FU-SESSIONS', async () => {
     render(<AccountSessions />);
     await userEvent.click(
       screen.getByRole('button', { name: 'Cerrar todas las demás sesiones' }),

@@ -6,7 +6,17 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { uploadTenantBrandLogo } from './coreApi.js';
+import {
+  getMyNotifications,
+  getMyPreferences,
+  getMyProfile,
+  listMySessions,
+  patchMyNotifications,
+  patchMyPreferences,
+  patchMyProfile,
+  revokeMySession,
+  uploadTenantBrandLogo,
+} from './coreApi.js';
 
 const TENANT_ID = 'tenant-abc';
 const SESSION = { accessToken: 'tk', api: { baseUrl: '/admin/api/core/v1' } };
@@ -59,5 +69,83 @@ describe('uploadTenantBrandLogo', () => {
     await expect(uploadTenantBrandLogo(SESSION, TENANT_ID, file)).rejects.toThrow(
       /mime type image\/svg\+xml not allowed/,
     );
+  });
+});
+
+// UI-016.7-FU — verify the `/me/*` helpers hit the right paths/methods.
+describe('coreApi /me/* helpers (UI-016.7-FU)', () => {
+  function mockJsonResponse(body = {}) {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => body,
+    });
+  }
+
+  it('getMyProfile -> GET /me/profile', async () => {
+    mockJsonResponse({ user_id: 'u-1' });
+    await getMyProfile(SESSION);
+    const [url, init] = globalThis.fetch.mock.calls[0];
+    expect(url).toContain('/me/profile');
+    expect(init.method || 'GET').toBe('GET');
+    expect(init.headers.authorization).toBe('Bearer tk');
+  });
+
+  it('patchMyProfile -> PATCH /me/profile with JSON body', async () => {
+    mockJsonResponse({ user_id: 'u-1' });
+    await patchMyProfile(SESSION, { display_name: 'Camila' });
+    const [url, init] = globalThis.fetch.mock.calls[0];
+    expect(url).toContain('/me/profile');
+    expect(init.method).toBe('PATCH');
+    expect(init.headers['content-type']).toBe('application/json');
+    expect(JSON.parse(init.body)).toEqual({ display_name: 'Camila' });
+  });
+
+  it('getMyPreferences -> GET /me/preferences', async () => {
+    mockJsonResponse({ theme_override: 'dark' });
+    await getMyPreferences(SESSION);
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('/me/preferences');
+  });
+
+  it('patchMyPreferences -> PATCH /me/preferences', async () => {
+    mockJsonResponse({ theme_override: 'light' });
+    await patchMyPreferences(SESSION, { theme_override: 'light' });
+    const [, init] = globalThis.fetch.mock.calls[0];
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body)).toEqual({ theme_override: 'light' });
+  });
+
+  it('getMyNotifications -> GET /me/notifications', async () => {
+    mockJsonResponse({ notification_matrix: {} });
+    await getMyNotifications(SESSION);
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('/me/notifications');
+  });
+
+  it('patchMyNotifications -> wraps matrix in notification_matrix key', async () => {
+    mockJsonResponse({ notification_matrix: { daily_digest: { email: true } } });
+    await patchMyNotifications(SESSION, { daily_digest: { email: true } });
+    const [, init] = globalThis.fetch.mock.calls[0];
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body)).toEqual({
+      notification_matrix: { daily_digest: { email: true } },
+    });
+  });
+
+  it('listMySessions -> GET /me/sessions', async () => {
+    mockJsonResponse({ sessions: [] });
+    await listMySessions(SESSION);
+    expect(globalThis.fetch.mock.calls[0][0]).toContain('/me/sessions');
+  });
+
+  it('revokeMySession -> DELETE /me/sessions/{sid} with url-encoded id', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      json: async () => null,
+    });
+    await revokeMySession(SESSION, 'current');
+    const [url, init] = globalThis.fetch.mock.calls[0];
+    expect(url).toContain('/me/sessions/current');
+    expect(init.method).toBe('DELETE');
   });
 });

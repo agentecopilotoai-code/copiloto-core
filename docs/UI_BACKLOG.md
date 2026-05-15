@@ -819,16 +819,29 @@ src/
 
 ##### UI-016.7-FU — Backend para preferencias del usuario
 
-- **Estado:** PENDING (backlog backend)
-- **Origen:** follow-up declarado en UI-016.7 (frontend-only). El frontend ya muestra perfil, apariencia, notificaciones y sesiones; falta toda la cadena server-side para persistir.
+- **Estado:** DONE (2026-05-15)
+- **Origen:** follow-up declarado en UI-016.7 (frontend-only). El frontend ya muestra perfil, apariencia, notificaciones y sesiones; faltaba toda la cadena server-side para persistir.
 - **Alcance backend:**
-  - Tabla `app.user_preferences` con campos `display_name`, `phone`, `locale`, `timezone`, `theme_override`, `notification_matrix jsonb`, FK `auth0_user_id`.
+  - Tabla `app.user_preferences` con campos `display_name`, `phone`, `locale`, `timezone`, `theme_override`, `notification_matrix jsonb`, FK `user_id` → `app.users(id)` (el `auth_subject` de Auth0 vive en `app.users`).
   - GET/PATCH `/v1/me/profile`, GET/PATCH `/v1/me/preferences`, GET/PATCH `/v1/me/notifications`.
-  - GET `/v1/me/sessions`, DELETE `/v1/me/sessions/{sid}` (revocar).
-  - Seguridad: `authenticate_request` + el `actor_id` debe matchear el path subject (no se permite editar otro usuario). Audit log `user.preferences_updated`.
-  - Auth0 fuente de verdad para name/email/phone — solo se cachean en `user_preferences` con timestamp.
-- **Frontend post-FU:** reemplazar los `AlertBanner` placeholder en `AccountProfile.jsx` / `AccountNotifications.jsx` / `AccountSessions.jsx` por llamadas reales a `getMyProfile / patchMyProfile / patchMyNotifications / listMySessions / revokeSession` en `coreApi.js`, manteniendo el toast pattern de UI-016.5 para feedback.
-- **Tests backend:** `tests/test_user_preferences_static.py` con casos: (1) endpoints registrados, (2) 403 al editar otro usuario, (3) audit `action='user.preferences_updated'`, (4) revocación de sesión inválida → 404.
+  - GET `/v1/me/sessions`, DELETE `/v1/me/sessions/{sid}` — STUB hasta `UI-016.7-FU-SESSIONS` (no existe `app.auth_sessions`). El backend solo conoce `current`; cualquier otro `sid` devuelve 404.
+  - Seguridad: `authenticate_request` en el router + cada handler resuelve el `user_id` vía `current_user_id_from_request(request, conn)` (lee `request.state.actor_id` del JWT validado). NO existe `{user_id}` en ningún path → imposible editar otro usuario. Audit log `action='user.preferences_updated'` en los 3 PATCH y en el DELETE.
+  - Auth0 fuente de verdad para email/name — se cachean en `user_preferences.display_name` con `auth0_synced_at`. `email` siempre viene de `app.users.email`.
+- **Cierre:** ver `docs/DONE.md` (entrada UI-016.7-FU). 6 endpoints reales + 2 stubs (`/sessions`); follow-up `UI-016.7-FU-SESSIONS` declarado para cuando se implemente la tabla `app.auth_sessions`.
+- **Frontend post-FU:** `AccountProfile.jsx` y `AccountNotifications.jsx` reemplazaron sus `AlertBanner` placeholder por llamadas reales (`getMyProfile`/`patchMyProfile`/`getMyNotifications`/`patchMyNotifications` en `coreApi.js`) con toast `success`/`error` (UI-016.5). `AccountSessions.jsx` cablea el `listMySessions` informativo + `revokeMySession('current')` y mantiene el `AlertBanner` solo para revocar OTRAS sesiones (`UI-016.7-FU-SESSIONS`).
+- **Tests backend:** `tests/test_user_preferences_static.py` (23 tests) cubre: schema + check constraint + trigger; router con `authenticate_request`; 6+2 endpoints registrados con sus métodos; cada handler usa `current_user_id_from_request`; NO existe `/me/{user_id}/...` (regression gate cross-user); audit emitido en los 3 PATCH + DELETE; validación de timezone (SEC-010 — captura `ZoneInfoNotFoundError` + `ValueError`); validación de `theme_override` enum; validación del `notification_matrix` (channels ∈ `email|wa|inapp`); /sessions stubs declaran `UI-016.7-FU-SESSIONS`; revoke con `sid` desconocido → 404.
+
+##### UI-016.7-FU-SESSIONS — Tabla de sesiones server-side
+
+- **Estado:** PENDING (backlog backend)
+- **Origen:** follow-up declarado en UI-016.7-FU (sessions endpoints quedaron como stubs).
+- **Alcance:**
+  - Tabla `app.auth_sessions` con `id text pk (jti del JWT o id del refresh token)`, `user_id uuid fk app.users`, `created_at`, `last_seen_at`, `revoked_at`, `device text`, `user_agent text`, `ip inet`, `location text`.
+  - Hook en `authenticate_request` para upsertear la sesión (last_seen_at = now()) en cada request autenticada.
+  - GET `/v1/me/sessions` real (lista todas las del `user_id` con `revoked_at is null`).
+  - DELETE `/v1/me/sessions/{sid}` real — marca `revoked_at` y opcionalmente revoca el refresh token vía Auth0 Management API.
+  - Coordinación con Auth0: documentar trade-off entre el server-side store y el SSO logout flow.
+- **Tests:** ampliar `test_user_preferences_static.py` con casos para `app.auth_sessions`; agregar tests dinámicos de hook en `authenticate_request`.
 
 #### UI-016.8 — Responsive 360px
 

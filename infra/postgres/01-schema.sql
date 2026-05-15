@@ -144,6 +144,26 @@ create table app.user_tenant_roles (
 );
 create index ix_user_tenant_roles_tenant on app.user_tenant_roles(tenant_id, role);
 
+-- TASK-UI-016.7-FU: user preferences (per-user, not per-tenant).
+-- name/email/phone are cached from Auth0 (their identity layer) with a refresh
+-- timestamp (`auth0_synced_at`); locale/timezone/theme_override/notification_matrix
+-- are app-managed. The PK is `user_id` (FK -> app.users.id, which stores the
+-- Auth0 `sub` as `auth_subject`). For existing deployments:
+--   create table if not exists app.user_preferences (...);
+--   create trigger if not exists trg_user_preferences_touch ...
+create table app.user_preferences (
+  user_id uuid primary key references app.users(id) on delete cascade,
+  display_name text null,
+  phone text null,
+  locale text null default 'es-CO',
+  timezone text null default 'America/Bogota',
+  theme_override text null check (theme_override is null or theme_override in ('auto','light','dark')),
+  notification_matrix jsonb not null default '{}'::jsonb,
+  auth0_synced_at timestamptz null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table app.contacts (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -1207,6 +1227,8 @@ create trigger trg_treatment_packages_touch before update on app.treatment_packa
 create trigger trg_contact_packages_touch before update on app.contact_packages for each row execute function app.touch_updated_at();
 create trigger trg_subscription_plans_touch before update on app.subscription_plans for each row execute function app.touch_updated_at();
 create trigger trg_contact_subscriptions_touch before update on app.contact_subscriptions for each row execute function app.touch_updated_at();
+-- TASK-UI-016.7-FU
+create trigger trg_user_preferences_touch before update on app.user_preferences for each row execute function app.touch_updated_at();
 
 -- TASK-0051: consume one session from the linked package when an appointment
 -- is closed as completed. Idempotent: the appointment row is updated only

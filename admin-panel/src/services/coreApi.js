@@ -386,6 +386,50 @@ export function listMyTenants(session) {
   return request('/me/tenants', { session });
 }
 
+// UI-016.7-FU: per-user preferences endpoints. The backend resolves the
+// user_id from the JWT, so there is no path parameter for the subject —
+// these helpers cannot be used to read or edit another user's data.
+export function getMyProfile(session) {
+  return request('/me/profile', { session });
+}
+
+export function patchMyProfile(session, payload) {
+  return request('/me/profile', { method: 'PATCH', session, body: payload });
+}
+
+export function getMyPreferences(session) {
+  return request('/me/preferences', { session });
+}
+
+export function patchMyPreferences(session, payload) {
+  return request('/me/preferences', { method: 'PATCH', session, body: payload });
+}
+
+export function getMyNotifications(session) {
+  return request('/me/notifications', { session });
+}
+
+export function patchMyNotifications(session, notificationMatrix) {
+  return request('/me/notifications', {
+    method: 'PATCH',
+    session,
+    body: { notification_matrix: notificationMatrix },
+  });
+}
+
+// UI-016.7-FU stub: backend returns only the current session until
+// UI-016.7-FU-SESSIONS lands a server-side session store.
+export function listMySessions(session) {
+  return request('/me/sessions', { session });
+}
+
+export function revokeMySession(session, sessionId) {
+  return request(`/me/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+    session,
+  });
+}
+
 export function listTenantMembers(session, tenantId) {
   return request(`/tenants/${tenantId}/members`, { session, tenantId });
 }

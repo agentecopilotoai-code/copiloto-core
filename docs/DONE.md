@@ -15,6 +15,74 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-016.7-FU — Backend `/v1/me/*` para preferencias del usuario
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el follow-up declarado por UI-016.7. El cluster `/account/profile`, `/account/notifications`, `/account/sessions` shipeó frontend-only en UI-016.7: los formularios funcionaban en memoria y "Guardar cambios" pintaba un `AlertBanner` explicando que los endpoints `/v1/me/*` no existían. Este PR entrega: schema + 6 endpoints reales + 2 endpoints stub + cableado frontend con toast feedback (UI-016.5).
+- **Cambios:**
+  - **Schema (`infra/postgres/01-schema.sql`)**: nueva tabla `app.user_preferences` con columnas `user_id uuid pk → app.users(id) on delete cascade`, `display_name text null`, `phone text null`, `locale text null default 'es-CO'`, `timezone text null default 'America/Bogota'`, `theme_override text null check (theme_override is null or theme_override in ('auto','light','dark'))`, `notification_matrix jsonb not null default '{}'::jsonb`, `auth0_synced_at timestamptz null`, `created_at`/`updated_at`. Trigger `trg_user_preferences_touch` registrado junto al resto de `trg_*_touch`. Bloque de comentarios con `TASK-UI-016.7-FU` documenta la migration para deployments existentes (`create table if not exists app.user_preferences (...)`).
+  - **Router (`app/api/v1/routes.py`)**: nuevo `me_router = APIRouter(tags=['me'], dependencies=[Depends(authenticate_request)])`, registrado al final de los `include_router(...)`. Sin prefix; los handlers exponen `/me/...` y heredan el `/v1` del `router` raíz → paths finales `/v1/me/*`. Mirror del patrón `tenant_user_router` (que ya servía `/v1/me/tenants`).
+  - **Endpoints reales (6)**:
+    - GET `/me/profile`: merge de `app.user_preferences` (overrides del usuario) + `app.users` (canonical Auth0-synced email/display_name/mfa).
+    - PATCH `/me/profile`: campos permitidos `display_name`, `phone`, `locale`, `timezone`. Validaciones: `display_name` str ≤ 200; `phone` str ≤ 32; `locale` ∈ `SUPPORTED_COUNTRIES`; `timezone` parsea con `ZoneInfo(...)` y captura `ZoneInfoNotFoundError | ValueError | KeyError` (SEC-010 hardening). Email NO es escribible (lo gestiona Auth0 — escribirlo divergiría del JWT subject).
+    - GET/PATCH `/me/preferences`: solo `theme_override` (auto/light/dark/null) — además del check del schema, hay un 422 limpio antes de tocar la DB.
+    - GET/PATCH `/me/notifications`: `notification_matrix` completa (no diff). Validación de shape: `{event_id: {channel_id ∈ {email,wa,inapp}: bool}}`. Event ids son free-form (catalog frontend-driven), channel ids constrained al catálogo (`NOTIFICATION_CHANNEL_IDS`).
+  - **Endpoints stub (2)**: GET `/me/sessions` y DELETE `/me/sessions/{session_id}`. Mantienen `authenticate_request` + audit emission pero devuelven solo la sesión `current` y rechazan cualquier otro `session_id` con 404. El docstring declara explícitamente `UI-016.7-FU-SESSIONS` como follow-up para cuando se implemente `app.auth_sessions`.
+  - **Seguridad (no-negociable)**: cada handler resuelve el `user_id` vía un helper interno `_require_current_user(request, conn) → UUID` que delega en `current_user_id_from_request` (existente desde UI-005, lee `request.state.actor_id` del JWT validado y upsertea `app.users`). El test `test_no_me_endpoint_accepts_a_user_id_path_parameter` es un regression gate: ningún path puede tener forma `/me/{user_id}/...` (eso permitiría que un admin edite a otro usuario).
+  - **Audit**: los 3 PATCH y el DELETE emiten `audit(action='user.preferences_updated', tenant_id=None, entity_type='user_preferences'|'user_session', entity_id=str(user_id), metadata={fields, scope})`. `tenant_id=None` porque las preferencias son per-user, no per-tenant (auditable globalmente por el platform owner).
+  - **Helper interno `_load_user_preferences_row`**: insert lazy on-demand para el primer GET de un usuario, evitando un 404 para perfiles que nunca tocaron `/me/*`.
+  - **Frontend (`admin-panel/src/services/coreApi.js`)**: 8 helpers nuevos (`getMyProfile`, `patchMyProfile`, `getMyPreferences`, `patchMyPreferences`, `getMyNotifications`, `patchMyNotifications`, `listMySessions`, `revokeMySession`). El helper `patchMyNotifications(session, matrix)` envuelve la matriz en `{notification_matrix: matrix}` para matchear el contrato del backend.
+  - **Frontend (`AccountProfile.jsx`, `AccountNotifications.jsx`)**: reemplazo de los `AlertBanner` placeholder por:
+    - `useEffect` que hidrata el form vía `getMyProfile`/`getMyNotifications` (best-effort — falla silenciosa si el endpoint no responde aún, se preservan los defaults canónicos).
+    - `onSubmit` con `patchMyProfile`/`patchMyNotifications`. Éxito → `toast.success(...)` (4s, patrón UI-016.5). 4xx → `<AlertBanner tone="danger">` con `err.message`. 5xx → `toast.error(...)` (8s).
+    - Botón submit con `disabled={saving}` + label "Guardando…".
+  - **Frontend (`AccountSessions.jsx`)**: cablea `listMySessions(session)` en el mount (informativo, refresca `last_login_at` server-side) y `revokeMySession(session, 'current')` para la sesión actual. Para "otras" sesiones (los demos del catálogo) mantiene el `AlertBanner` explicando que `UI-016.7-FU-SESSIONS` está pendiente (el backend devuelve 404 para esos `sid`).
+  - **Tests backend (`tests/test_user_preferences_static.py`, +23 nuevos)**: schema (columnas + check constraint + trigger + marker TASK), router con `authenticate_request`, 8 endpoints registrados con sus métodos, cada handler usa `current_user_id_from_request` (regression gate cross-user), audit emission en los 3 PATCH + DELETE, validación de timezone (SEC-010 — `ZoneInfoNotFoundError | ValueError`), length bounds en `display_name`/`phone`, theme_override enum, channel ids catálogo, docstrings declaran `UI-016.7-FU-SESSIONS`, DELETE rechaza `sid` desconocido con 404, coreApi.js expone los 8 helpers, los componentes account llaman a los nuevos helpers + usan `useToast`.
+  - **Tests frontend**:
+    - `AccountProfile.test.jsx` (+3 casos nuevos, total 7): mock de `getMyProfile`/`patchMyProfile`/`useToast` con `vi.mock(...)`; verifica que PATCH se invoca con el payload del form, que un 422 muestra `<AlertBanner danger>` con `err.message`, y que un 500 dispara `toast.error`. El caso "permite editar el nombre" ahora hace `waitFor(getMyProfile)` antes de tocar el input (para evitar la race con el effect de hidratación).
+    - `AccountNotifications.test.jsx` (+2 casos nuevos, total 5): verifica que el PATCH manda los 6 event ids del catálogo y que un 422 muestra el banner.
+    - `AccountSessions.test.jsx` (+1 caso nuevo, total 6): verifica que `listMySessions` se invoca al mount; verifica que revocar una sesión que NO es `current` NO invoca `revokeMySession` (porque el backend devuelve 404) y sí muestra el banner `UI-016.7-FU-SESSIONS`.
+    - `coreApi.test.js` (+8 casos nuevos): cada helper hace fetch contra el path correcto con el método correcto; el body de `patchMyNotifications` envuelve la matriz en `{notification_matrix: ...}`.
+- **Migración (existing deployments)**:
+  ```sql
+  create table if not exists app.user_preferences (
+    user_id uuid primary key references app.users(id) on delete cascade,
+    display_name text null,
+    phone text null,
+    locale text null default 'es-CO',
+    timezone text null default 'America/Bogota',
+    theme_override text null check (theme_override is null or theme_override in ('auto','light','dark')),
+    notification_matrix jsonb not null default '{}'::jsonb,
+    auth0_synced_at timestamptz null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+  );
+  -- el trigger usa una syntax que NO soporta `if not exists`, así que en
+  -- existing deployments es responsabilidad del operador correr:
+  drop trigger if exists trg_user_preferences_touch on app.user_preferences;
+  create trigger trg_user_preferences_touch before update on app.user_preferences
+    for each row execute function app.touch_updated_at();
+  ```
+- **Follow-up `UI-016.7-FU-SESSIONS`**: declarado en `docs/UI_BACKLOG.md`. Requiere tabla `app.auth_sessions` (keyed by JWT `jti` o refresh-token id) + hook en `authenticate_request` para upsertear `last_seen_at` + GET/DELETE reales. Mientras tanto, el frontend muestra el catálogo demo (`DEFAULT_SESSIONS`) y solo la sesión `current` es revocable real (vía Auth0 logout endpoint, no este).
+- **Decisión de diseño — Auth0 ownership de email**: PATCH `/me/profile` NO acepta el campo `email`. Auth0 es el identity provider; mutar el email aquí sin coordinar con Auth0 dejaría el `auth_subject` apuntando a un email obsoleto. La UI muestra el email como `readOnly` con copy "Lo gestiona Auth0 · cambia desde tu identity provider". El `display_name` SÍ es escribible porque la mayoría de proveedores Auth0 no propagan profile updates a través del access token, así que el usuario espera poder cambiar cómo aparece en el panel sin tocar Auth0.
+- **Decisión de diseño — sessions como stub**: el backend Auth0 BFF flow guarda los tokens en cookies HTTP-only y el access JWT es stateless — no hay un store server-side de sesiones. Implementarlo en este PR (con tabla + hook en `authenticate_request`) era out-of-scope (alteraría la rama hot del 100% de las requests autenticadas) y mejor merece su propio ticket con tests de carga. La opción tomada: stubs que mantienen el security envelope (`authenticate_request` + `current_user_id_from_request` + audit) pero devuelven solo la sesión `current` derivada del JWT.
+- **Validaciones ejecutadas:**
+  - `ruff check app` ✓
+  - `pytest tests/test_user_preferences_static.py -v` → **23 passed**.
+  - `pytest tests/ -k "static and not (whatsapp or web_widget)" -q` → 1219 passed.
+  - `pytest tests/test_web_widget_static.py tests/test_whatsapp_delivery_static.py tests/test_whatsapp_templates_static.py` → 55 passed.
+  - `npm run lint` (admin-panel) ✓ — 0 errors, 2 warnings pre-existentes en `useTenantSetupSidePanels.js`.
+  - `npm test` (admin-panel) → **128 files, 679 tests passed**.
+  - `npm run test:a11y` → 6/6 suites verdes.
+  - `npm run build` → vite 5.4.11, 468 módulos, `dist/assets/index-*.css` 189.75 kB.
+- **Archivos modificados (12) / nuevos (1):**
+  - **Modificados**: `infra/postgres/01-schema.sql`, `app/api/v1/routes.py`, `admin-panel/src/services/coreApi.js`, `admin-panel/src/features/account/AccountProfile.jsx`, `admin-panel/src/features/account/AccountNotifications.jsx`, `admin-panel/src/features/account/AccountSessions.jsx`, `admin-panel/src/features/account/AccountProfile.test.jsx`, `admin-panel/src/features/account/AccountNotifications.test.jsx`, `admin-panel/src/features/account/AccountSessions.test.jsx`, `admin-panel/src/services/coreApi.test.js`, `docs/UI_BACKLOG.md`, `docs/DONE.md`.
+  - **Nuevos**: `tests/test_user_preferences_static.py` (23 tests, ~245 LOC).
+- **Limitaciones / notas:**
+  - El refresh de `auth0_synced_at` es **manual** hoy — la columna existe y se serializa en `GET /me/profile`, pero no hay job que la actualice automáticamente cuando Auth0 modifica el profile. Es informativa por ahora; cuando UI-016.7-FU-SESSIONS aterrice se puede agregar un hook en `current_user_id_from_request` que toque `auth0_synced_at = now()` cada vez que se sincroniza el row de `app.users`.
+  - `notification_matrix` se reemplaza completa en cada PATCH (no diff). Esto matchea el patrón del form (que somete el estado completo al click de "Guardar preferencias") y simplifica el contrato; un agregado granular tipo `PATCH /me/notifications/{event_id}` puede aterrizar después si la UX lo amerita.
+  - La validación de `locale` confía en `SUPPORTED_COUNTRIES` del módulo `app.services.locale`. Si el catálogo crece (UI-022.5 podría agregar `fr-FR`), basta extender ese módulo sin tocar este endpoint.
+
 ### SEC-009 — Backup verifier trust model: GPG signature + ephemeral Postgres + non-superuser
 
 - **Fecha:** 2026-05-15

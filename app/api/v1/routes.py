@@ -479,6 +479,15 @@ system_router = APIRouter(
     tags=['system'],
     dependencies=[Depends(authenticate_request), Depends(require_service)],
 )
+# UI-016.7-FU: user-scoped router for `/me/profile`, `/me/preferences`,
+# `/me/notifications` and `/me/sessions`. Auth is required at the router
+# level; each handler additionally enforces that the actor on the JWT
+# matches the user_id being mutated (no cross-user edits — `current_user_id_from_request`
+# only ever resolves to the authenticated subject, never to a path parameter).
+me_router = APIRouter(
+    tags=['me'],
+    dependencies=[Depends(authenticate_request)],
+)
 
 
 KNOWLEDGE_DOCUMENT_RESPONSE_COLUMNS = (
@@ -10428,6 +10437,400 @@ async def export_tenant_data(
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# UI-016.7-FU — `/v1/me/*` endpoints (user preferences)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# These endpoints persist the per-user settings that UI-016.7 wired into the
+# `/account/*` screens. The data model lives in `app.user_preferences`
+# (one row per user, PK = `app.users.id`). Auth0 is the source of truth for
+# `email`/`display_name`/`phone` — we only cache them in this table to avoid
+# round-tripping Auth0 on every read; `auth0_synced_at` marks when the cache
+# was last refreshed.
+#
+# Security primitives (non-negotiable, mirror UI-012-FU / UI-016.1-FU):
+#   1. `authenticate_request` at the router level (so unauthenticated callers
+#      get 401 before any handler runs).
+#   2. Each handler resolves the user_id via `current_user_id_from_request(...)`
+#      — that helper reads `request.state.actor_id` (the Auth0 `sub` from the
+#      validated JWT) and looks up / upserts the matching `app.users` row.
+#      There is NO path parameter for the subject, so a caller cannot edit
+#      another user even with a forged URL.
+#   3. Every PATCH emits `audit(action='user.preferences_updated', ...)` with
+#      `tenant_id=None` (this is per-user, not per-tenant) and metadata
+#      listing the fields touched.
+
+NOTIFICATION_CHANNEL_IDS = ('email', 'wa', 'inapp')
+
+
+async def _load_user_preferences_row(
+    conn: asyncpg.Connection, user_id: UUID
+) -> asyncpg.Record:
+    """Fetch the `user_preferences` row, creating it lazily on first access.
+
+    First-time callers (whose `app.users` row exists from
+    `current_user_id_from_request` but who have never hit `/me/*`) get an
+    auto-provisioned row with the schema defaults so GET handlers can return
+    a stable shape without a 404.
+    """
+    row = await conn.fetchrow(
+        'select * from app.user_preferences where user_id=$1', user_id
+    )
+    if row is None:
+        await conn.execute(
+            'insert into app.user_preferences (user_id) values ($1) on conflict do nothing',
+            user_id,
+        )
+        row = await conn.fetchrow(
+            'select * from app.user_preferences where user_id=$1', user_id
+        )
+    return row
+
+
+def _serialize_profile(prefs_row: asyncpg.Record, user_row: asyncpg.Record, user_id: UUID) -> dict:
+    """Merge user_preferences (app cache) with app.users (Auth0-synced canonical fields)."""
+    return {
+        'user_id': str(user_id),
+        'email': user_row['email'],
+        # The cached display_name in user_preferences wins (the user explicitly
+        # set it); fall back to the Auth0-synced one on app.users.
+        'display_name': prefs_row['display_name'] or user_row['display_name'],
+        'phone': prefs_row['phone'],
+        'locale': prefs_row['locale'],
+        'timezone': prefs_row['timezone'],
+        'theme_override': prefs_row['theme_override'],
+        'auth0_synced_at': (
+            prefs_row['auth0_synced_at'].isoformat()
+            if prefs_row['auth0_synced_at'] is not None
+            else None
+        ),
+        'mfa_enabled': user_row['mfa_enabled'],
+        'last_login_at': (
+            user_row['last_login_at'].isoformat()
+            if user_row['last_login_at'] is not None
+            else None
+        ),
+    }
+
+
+def _validate_timezone(tz: str | None) -> None:
+    """Raise 422 if `tz` is not a valid IANA timezone.
+
+    `ZoneInfo(...)` raises `ZoneInfoNotFoundError` for unknown zones; older
+    inputs (e.g. trailing slashes) can surface `ValueError` — SEC-010 hardening
+    asks us to catch both. None / empty → no-op (handled by the column default).
+    """
+    if tz is None or tz == '':
+        return
+    try:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # noqa: PLC0415
+        ZoneInfo(tz)
+    except (ZoneInfoNotFoundError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=f'Invalid timezone: {tz}') from exc
+
+
+def _validate_notification_matrix(matrix: Any) -> dict:
+    """Validate the `notification_matrix` payload.
+
+    Shape: `{event_id (str): {channel_id (str in {email,wa,inapp}): bool}}`.
+    Unknown channel ids are rejected; unknown event ids are allowed (the
+    catalog of events is frontend-driven and may grow without a backend
+    migration).
+    """
+    if not isinstance(matrix, dict):
+        raise HTTPException(status_code=422, detail='notification_matrix must be an object')
+    for event_id, channels in matrix.items():
+        if not isinstance(event_id, str) or not event_id:
+            raise HTTPException(status_code=422, detail='notification_matrix keys must be non-empty strings')
+        if not isinstance(channels, dict):
+            raise HTTPException(
+                status_code=422,
+                detail=f'notification_matrix[{event_id}] must be an object',
+            )
+        for channel_id, enabled in channels.items():
+            if channel_id not in NOTIFICATION_CHANNEL_IDS:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f'notification_matrix[{event_id}][{channel_id}]: '
+                        f'channel must be one of {NOTIFICATION_CHANNEL_IDS}'
+                    ),
+                )
+            if not isinstance(enabled, bool):
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f'notification_matrix[{event_id}][{channel_id}]: '
+                        'value must be a boolean'
+                    ),
+                )
+    return matrix
+
+
+async def _require_current_user(request: Request, conn: asyncpg.Connection) -> UUID:
+    user_id = await current_user_id_from_request(request, conn)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail='Authentication required')
+    return user_id
+
+
+@me_router.get('/me/profile')
+async def get_my_profile(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    """Return the canonical profile shape consumed by `/account/profile`.
+
+    Merges the Auth0-synced fields on `app.users` (email/display_name/mfa)
+    with the user-managed overrides in `app.user_preferences` (phone,
+    locale, timezone).
+    """
+    user_id = await _require_current_user(request, conn)
+    prefs_row = await _load_user_preferences_row(conn, user_id)
+    user_row = await conn.fetchrow(
+        'select email, display_name, status, mfa_enabled, last_login_at from app.users where id=$1',
+        user_id,
+    )
+    if user_row is None:
+        raise HTTPException(status_code=404, detail='User row missing')
+    return _serialize_profile(prefs_row, user_row, user_id)
+
+
+@me_router.patch('/me/profile')
+async def patch_my_profile(
+    payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    """PATCH `/me/profile`. Allowed keys: display_name, phone, locale, timezone.
+
+    Email is intentionally NOT writable here — it is owned by Auth0 (the
+    identity provider) and would diverge from the JWT subject. Validation:
+      - `display_name`: str ≤ 200 chars or null.
+      - `phone`: str ≤ 32 chars or null.
+      - `locale`: must appear in the SUPPORTED_COUNTRIES locale catalog (or null).
+      - `timezone`: must parse as a valid IANA zone via `ZoneInfo(...)` (or null).
+    """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail='Body must be an object')
+    user_id = await _require_current_user(request, conn)
+
+    allowed_keys = ('display_name', 'phone', 'locale', 'timezone')
+    updates = {key: payload[key] for key in allowed_keys if key in payload}
+
+    if 'display_name' in updates and updates['display_name'] is not None:
+        if not isinstance(updates['display_name'], str) or len(updates['display_name']) > 200:
+            raise HTTPException(status_code=422, detail='display_name must be a string ≤ 200 chars')
+    if 'phone' in updates and updates['phone'] is not None:
+        if not isinstance(updates['phone'], str) or len(updates['phone']) > 32:
+            raise HTTPException(status_code=422, detail='phone must be a string ≤ 32 chars')
+    if 'locale' in updates and updates['locale'] is not None:
+        if not isinstance(updates['locale'], str):
+            raise HTTPException(status_code=422, detail='locale must be a string')
+        # SUPPORTED_COUNTRIES locale codes are full BCP-47 tags (es-CO, en-US, ...).
+        # Accept the catalog entries the frontend already shows.
+        known_locales = {profile['locale'] for profile in SUPPORTED_COUNTRIES.values()}
+        if updates['locale'] not in known_locales:
+            raise HTTPException(status_code=422, detail=f'Unsupported locale: {updates["locale"]}')
+    if 'timezone' in updates:
+        _validate_timezone(updates['timezone'])
+
+    # Ensure the row exists before UPDATE.
+    await _load_user_preferences_row(conn, user_id)
+
+    if updates:
+        # Build the SET clause dynamically; user_id is $1, fields start at $2.
+        set_clause = ', '.join(f'{key}=${idx + 2}' for idx, key in enumerate(updates.keys()))
+        params = [user_id, *updates.values()]
+        await conn.execute(
+            f'update app.user_preferences set {set_clause} where user_id=$1',
+            *params,
+        )
+        await audit(
+            conn,
+            tenant_id=None,
+            actor_type=request.state.actor_type,
+            actor_id=request.state.actor_id,
+            action='user.preferences_updated',
+            entity_type='user_preferences',
+            entity_id=str(user_id),
+            metadata={'fields': list(updates.keys()), 'scope': 'profile'},
+        )
+
+    return await get_my_profile(request, conn)
+
+
+@me_router.get('/me/preferences')
+async def get_my_preferences(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    """Return the per-user UI preferences (currently: `theme_override`)."""
+    user_id = await _require_current_user(request, conn)
+    prefs_row = await _load_user_preferences_row(conn, user_id)
+    return {
+        'user_id': str(user_id),
+        'theme_override': prefs_row['theme_override'],
+        'locale': prefs_row['locale'],
+        'timezone': prefs_row['timezone'],
+    }
+
+
+@me_router.patch('/me/preferences')
+async def patch_my_preferences(
+    payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    """PATCH `/me/preferences`. Currently only `theme_override` is writable.
+
+    Valid values: `'auto' | 'light' | 'dark' | null`. The schema check enforces
+    this at the DB level too, so a malformed payload would 500 — we validate
+    here to return a clean 422.
+    """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail='Body must be an object')
+    user_id = await _require_current_user(request, conn)
+
+    if 'theme_override' in payload:
+        value = payload['theme_override']
+        if value is not None and value not in ('auto', 'light', 'dark'):
+            raise HTTPException(
+                status_code=422,
+                detail="theme_override must be one of 'auto', 'light', 'dark' or null",
+            )
+        await _load_user_preferences_row(conn, user_id)
+        await conn.execute(
+            'update app.user_preferences set theme_override=$2 where user_id=$1',
+            user_id,
+            value,
+        )
+        await audit(
+            conn,
+            tenant_id=None,
+            actor_type=request.state.actor_type,
+            actor_id=request.state.actor_id,
+            action='user.preferences_updated',
+            entity_type='user_preferences',
+            entity_id=str(user_id),
+            metadata={'fields': ['theme_override'], 'scope': 'preferences'},
+        )
+
+    return await get_my_preferences(request, conn)
+
+
+@me_router.get('/me/notifications')
+async def get_my_notifications(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    """Return the `notification_matrix` (event_id → channel toggles) for this user."""
+    user_id = await _require_current_user(request, conn)
+    prefs_row = await _load_user_preferences_row(conn, user_id)
+    matrix = prefs_row['notification_matrix']
+    if isinstance(matrix, str):
+        # asyncpg returns jsonb as text when no codec is registered; defensive parse.
+        matrix = json.loads(matrix)
+    return {
+        'user_id': str(user_id),
+        'notification_matrix': matrix or {},
+    }
+
+
+@me_router.patch('/me/notifications')
+async def patch_my_notifications(
+    payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    """PATCH `/me/notifications` — replaces the entire matrix atomically.
+
+    The frontend `AccountNotifications` form submits the FULL matrix on every
+    save (so we do not need partial diffing here). The payload shape is
+    `{notification_matrix: {event_id: {channel_id: bool}}}`.
+    """
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail='Body must be an object')
+    user_id = await _require_current_user(request, conn)
+
+    if 'notification_matrix' not in payload:
+        raise HTTPException(status_code=422, detail='notification_matrix is required')
+
+    matrix = _validate_notification_matrix(payload['notification_matrix'])
+
+    await _load_user_preferences_row(conn, user_id)
+    await conn.execute(
+        'update app.user_preferences set notification_matrix=$2::jsonb where user_id=$1',
+        user_id,
+        json.dumps(matrix),
+    )
+    await audit(
+        conn,
+        tenant_id=None,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='user.preferences_updated',
+        entity_type='user_preferences',
+        entity_id=str(user_id),
+        metadata={
+            'fields': ['notification_matrix'],
+            'scope': 'notifications',
+            'event_count': len(matrix),
+        },
+    )
+
+    return await get_my_notifications(request, conn)
+
+
+@me_router.get('/me/sessions')
+async def list_my_sessions(request: Request, conn: asyncpg.Connection = Depends(get_db)):
+    """Stubbed — see UI-016.7-FU-SESSIONS.
+
+    Tracking active sessions per-user requires a server-side session store
+    (e.g. `app.auth_sessions` keyed by JWT `jti` or refresh-token id), which
+    the current Auth0 BFF flow does not provide — tokens are kept in
+    HTTP-only cookies and the access JWT is stateless. Until that
+    infrastructure lands, this endpoint returns the current session only,
+    derived from the validated JWT, so the frontend can show "this session"
+    accurately and keep the placeholder banner for everything else.
+    """
+    user_id = await _require_current_user(request, conn)
+    user_row = await conn.fetchrow(
+        'select last_login_at from app.users where id=$1', user_id,
+    )
+    last_login = user_row['last_login_at'] if user_row else None
+    return {
+        'user_id': str(user_id),
+        'sessions': [
+            {
+                'id': 'current',
+                'current': True,
+                'last_seen_at': last_login.isoformat() if last_login is not None else None,
+                # `device` / `location` come from the user-agent + IP geolocation
+                # once UI-016.7-FU-SESSIONS lands.
+                'device': None,
+                'location': None,
+            },
+        ],
+        'follow_up': 'UI-016.7-FU-SESSIONS',
+    }
+
+
+@me_router.delete('/me/sessions/{session_id}', status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_my_session(
+    session_id: str, request: Request, conn: asyncpg.Connection = Depends(get_db)
+):
+    """Stubbed — see UI-016.7-FU-SESSIONS.
+
+    Until `app.auth_sessions` (or equivalent) exists, there is nothing to
+    revoke server-side: the JWT is stateless and the cookie session is
+    managed entirely by Auth0. Returns 404 for any session_id other than
+    the synthetic `current` placeholder so the frontend can show a clean
+    error toast. For `current` we still return 204 so the operator UX of
+    "log out the current session" can be wired (the actual logout goes
+    through Auth0 `/logout`, not this endpoint).
+    """
+    user_id = await _require_current_user(request, conn)
+    if session_id != 'current':
+        raise HTTPException(status_code=404, detail='Session not found')
+    await audit(
+        conn,
+        tenant_id=None,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='user.preferences_updated',
+        entity_type='user_session',
+        entity_id=session_id,
+        metadata={'scope': 'sessions', 'action': 'revoke_current', 'user_id': str(user_id)},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 web_router = APIRouter(prefix='/web', tags=['public-web-widget'])
 
 
@@ -13320,3 +13723,5 @@ router.include_router(tenant_catalog_router)
 router.include_router(tenant_ops_router)
 router.include_router(tenant_analytics_router)
 router.include_router(system_router)
+# UI-016.7-FU
+router.include_router(me_router)
