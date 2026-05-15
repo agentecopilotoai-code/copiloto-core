@@ -15,6 +15,44 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-009.5 — Hoy · Citas del día (Agente)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** nueva vista del rol Agente en `admin-panel/src/features/agente/today-appointments/`, aplicando el mockup `32 _ Hoy _ Citas del día.html`. Lista de las citas del día con estado en vivo (confirmada, sin confirmar, atendida, no-show), reutilizando los componentes de dominio `AppointmentCard` (que a su vez reusa `StatusBadge`) y el mapa de tonos `appointmentStatusTone`. Con esta entrega **se cierra el bloque UI-009 (Agente)** — 5 subtareas completas; la próxima `PENDING` es **UI-010.1 — Lectura · Resumen (Viewer)**.
+- **Cambios realizados:**
+  - **Frontend — `src/features/agente/today-appointments/` (nuevo, 8 archivos):**
+    - `todayAppointmentsData.js` (helper puro, 152 LOC): `todayISO`/`dateKey`/`shiftDayISO` (claves de día locales), `filterByDay` (filtro cliente sobre `starts_at` — campo real del registro de cita, ver `useScheduleData` + `ContactScheduleSection`), `sortByTime`, `groupByStatus`, `deriveCounts` (total, sin confirmar, atendidas, próxima cita), `nextAppointment` (primera futura), `formatTime`/`formatDateTime`/`dayNavLabel`, mapas `STATUS_LABELS` + `statusLabel`/`statusTone` (este último delega en `appointmentStatusTone` del dominio).
+    - `hooks/useTodayAppointmentsData.js`: posee `selectedDay` (default `todayISO`), trae la lista vía `listAppointments` (tenant-scoped server-side), aplica el filtro de día en cliente y expone `goToPrevDay` / `goToNextDay` / `goToToday` / `refresh`, con estado loading/error.
+    - `TodayAppointments.jsx` (orquestador / entrada de módulo): `<RequirePermission capability="appointments.view" mode="R">` + `PageHeader` («Hoy» eyebrow + título «Citas del día») + navegador de día (Día anterior / Hoy / Mañana) + `AlertBanner` para error + `DayAppointmentsSummary` + `TodayAppointmentsList`. Resuelve `{ profile }` desde `useTenantContext()` y `permissions` desde `usePermissions` (mismo patrón que `OutboundDLQ`). Conserva `data-module="appointments"`.
+    - `components/DayAppointmentsSummary.jsx`: fila de tiles con los conteos derivables (Citas del día, Sin confirmar, Atendidas, Próxima — hora + servicio · recurso). Solo campos reales de la lista.
+    - `components/TodayAppointmentsList.jsx`: lista del día con `EmptyState` para «sin citas» y «cargando»; cada fila renderiza una columna izquierda con la hora `HH:MM` y reusa `AppointmentCard` (con `dateText` formateado en es-CO y `showPayment` activo).
+    - `TodayAppointments.module.css` (121 LOC) — 100% `var(--...)`.
+    - `index.js` (barrel) + `todayAppointmentsData.test.js` (6 tests) + `TodayAppointments.test.jsx` (4 tests).
+  - **Frontend — wiring del módulo `appointments`** (estaba en `VIEWER_NAV` pero sin entrada en el registry/`data/modules.js`, renderizando como `ModulePlaceholder`):
+    - `app/moduleRegistry.js`: import de `TodayAppointments` + entrada `appointments: { Component, capability: 'appointments.view' }`.
+    - `data/modules.js`: entrada nueva `appointments` (label «Citas del día», summary, scope, capability `appointments.view`).
+    - `app/nav.js`: nueva sección «Hoy» en `TENANT_NAV` con `['appointments']` (justo después de «Conversaciones»; el grupo encaja con el de la sidebar del mockup). `VIEWER_NAV` ya contenía `'appointments'` — no se tocó. `ROLE_HOME` no se tocó.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/agente/today-appointments/{TodayAppointments.jsx,TodayAppointments.module.css,TodayAppointments.test.jsx,todayAppointmentsData.js,todayAppointmentsData.test.js,index.js,hooks/useTodayAppointmentsData.js,components/{DayAppointmentsSummary,TodayAppointmentsList}.jsx}` (todos nuevos).
+  - `admin-panel/src/app/moduleRegistry.js` (import + entrada `appointments`).
+  - `admin-panel/src/app/nav.js` (nueva sección «Hoy» en `TENANT_NAV`).
+  - `admin-panel/src/data/modules.js` (entrada `appointments`).
+  - `docs/UI_BACKLOG.md` (UI-009.5 marcado `DONE` con bloques `Alcance` / `Tests`).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (solo los 2 warnings preexistentes de `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK (`✓ 396 modules transformed`).
+  - `npm --prefix admin-panel test` → 88 archivos pasan, 1 falla (`src/app/router.test.jsx` con **exactamente 7 fallos** de entorno Node-24 `undici`/`AbortSignal`, documentados desde UI-002/UI-006.*/UI-007.*/UI-008.*/UI-009.1-4). **No es regresión** — `router.test.jsx` mockea `moduleRegistry.js` por completo, así que registrar `appointments` no afecta el test; CI corre Node 20 y solo ejecuta lint + build para el front. Se añadieron **10 tests nuevos** (6 helpers + 4 componente) y todos pasan.
+  - No se tocó ningún archivo de servidor → no se ejecutó pytest/ruff.
+- **Seguridad:**
+  - **Frontend-only** — no se tocó ningún archivo de servidor (`app/...`), schema ni dependencia. Vista de **sólo lectura** (no hay handlers de mutación, no se cableó CTA «Nueva cita»).
+  - La entrada de módulo se gateó con `<RequirePermission capability="appointments.view" mode="R">`; el backend reverifica. La capability `appointments.view` ya existía en `permissions/matrix.js` (viewer/agent/manager/admin/owner = R) — no se añadieron nuevos permisos.
+  - `listAppointments` es **tenant-scoped server-side** (lleva header `X-Tenant-Id`). El filtro por día corre en cliente — no se inventó un parámetro de fecha de servidor (`listAppointments` no expone uno establecido en el frontend; `useScheduleData` lo invoca sin filtros).
+- **Limitaciones / próximos pasos:**
+  - **Diferencias intencionales declaradas:** el HTML muestra una grilla «Agenda» recurso × franja horaria, KPIs de «Ocupación %» e «Ingreso proyectado» y un CTA «Nueva cita». `listAppointments` devuelve registros planos y no expone carriles de agenda por recurso, ocupación ni monto proyectado del día; la creación de citas vive en el panel de contacto del Inbox. Todo eso se **difiere** (no se inventan datos ni se cablea un botón a la nada). Se renderiza la **lista** de citas (el entregable núcleo del backlog: «calendario/lista … Reusa AppointmentCard, StatusBadge») + los conteos derivables + la navegación de día.
+  - **Cierre del bloque UI-009 (Agente):** con esta entrega quedan las 5 subtareas UI-009.1..UI-009.5 completadas. **Próxima `PENDING` real:** **UI-010.1 — Lectura · Resumen (Viewer)**.
+
+---
+
 ### UI-009.4 — Operación · Outbound DLQ (Agente)
 
 - **Fecha:** 2026-05-14

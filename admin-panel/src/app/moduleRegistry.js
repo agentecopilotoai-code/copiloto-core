@@ -26,6 +26,7 @@ import { MediaLibraryModule } from '../features/owner-admin/media-library/index.
 import { MyHandoffs } from '../features/agente/my-handoffs/index.js';
 import { OperationsDesk } from '../features/agente/inbox/index.js';
 import { OutboundDLQ } from '../features/agente/outbound-dlq/index.js';
+import { TodayAppointments } from '../features/agente/today-appointments/index.js';
 import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness.jsx';
 import { SegmentsModule } from '../features/manager/segments/index.js';
 import { SocialChannelsModule } from '../features/owner-admin/social-channels/index.js';
@@ -86,6 +87,7 @@ export const MODULE_REGISTRY = Object.freeze({
   'operations-desk': { Component: OperationsDesk, capability: 'conversations.view' },
   'my-handoffs': { Component: MyHandoffs, capability: 'conversations.view' },
   'outbound-dlq': { Component: OutboundDLQ, capability: 'outbound_dlq.retry', mode: 'RW' },
+  appointments: { Component: TodayAppointments, capability: 'appointments.view' },
   'go-live-readiness': { Component: GoLiveReadiness, capability: 'go_live_readiness.read' },
   analytics: { Component: AnalyticsPanel, capability: 'analytics.tenant.read' },
   'manager-analytics': {
