@@ -48,7 +48,12 @@ SCHEDULER = Path('app/workers/scheduler.py')
 METRICS = Path('app/services/metrics.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/data/modules.js')
-DLQ_PANEL = Path('admin-panel/src/components/modules/outbound/OutboundDLQ.jsx')
+# UI-009.4: the OutboundDLQ module was redesigned into a feature directory.
+DLQ_FEATURE = Path('admin-panel/src/features/agente/outbound-dlq')
+
+
+def _dlq_feature_source() -> str:
+    return '\n'.join(p.read_text() for p in sorted(DLQ_FEATURE.rglob('*.js*')))
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 
 
@@ -470,12 +475,12 @@ def test_admin_panel_registers_outbound_dlq_module():
     assert 'Outbound DLQ' in modules
 
     layout = ADMIN_LAYOUT.read_text()
-    assert "from '../components/modules/outbound/OutboundDLQ.jsx'" in layout
+    assert "from '../features/agente/outbound-dlq/index.js'" in layout
     assert "'outbound-dlq': {" in layout
 
 
 def test_outbound_dlq_panel_renders_filter_and_retry_action():
-    panel = DLQ_PANEL.read_text()
+    panel = _dlq_feature_source()
     assert 'listOutboundDlq' in panel
     assert 'retryOutboundDlqMessage' in panel
     # Filter chips and retry button hooks for QA selectors.
