@@ -119,13 +119,38 @@ ORDER BY msgs.created_at;
 
    COMMIT;
    ```
-2. Generar **extracto del ledger** para entregar al titular vía el endpoint
-   ya existente de export firmado (TASK-0061):
-   ```bash
-   curl -sS -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-     "https://<api>/v1/tenants/<tenant_id>/data-export?contact_id=<contact_uuid>&kinds=consent_ledger,messages" \
-     -o extracto-<wa_id>.json
+2. Generar **extracto contact-scoped** del ledger para entregar al titular.
+   ⚠️ **NO usar el endpoint `data-export` para esto.** Ese endpoint es
+   tenant-wide (devuelve `tenant_settings`, channels, aggregate counts) y NO
+   acepta `contact_id`/`kinds` como filtros — esos query params son
+   silenciosamente ignorados por FastAPI y la response incluye datos
+   internos del tenant que NUNCA se entregan a un complainant externo. Ver
+   finding Codex `6317cdc8` / SEC-010 sub-ticket.
+
+   Mientras existe un endpoint contact-scoped (ver follow-up
+   `SEC-010-EXPORT-FU` más abajo), el operador debe componer manualmente el
+   extracto vía SQL — solo las tablas que tocan al contacto:
+   ```sql
+   -- Consent ledger del contacto (filtra por wa_id y tenant_id)
+   SELECT created_at, event_type, channel, metadata
+   FROM   app.consent_ledger
+   WHERE  tenant_id = '<tenant_id>' AND wa_id = '<wa_id>'
+   ORDER  BY created_at ASC;
+
+   -- Mensajes del contacto (solo el wa_id reclamante)
+   SELECT created_at, direction, channel, body
+   FROM   app.messages
+   WHERE  tenant_id = '<tenant_id>' AND wa_id = '<wa_id>'
+   ORDER  BY created_at ASC;
    ```
+   Exportar a JSON/CSV firmado con `pg_dump --data-only --table=...` o vía
+   un script ad-hoc que el operador audita antes de entregar.
+
+   **Follow-up declarado:** `SEC-010-EXPORT-FU` — agregar
+   `GET /v1/tenants/{tenant_id}/contacts/{contact_id}/export?kinds=...` con
+   capability dedicada (`contact.export.read`), audit log
+   `contact.exported_for_consent_claim`, y firma del archivo de salida.
+   Hasta entonces el operador es responsable de la redacción.
 3. Si la queja es por canal masivo (campaña): identificar la campaña vía
    `messages.campaign_id` (query #2) y cancelarla si más de un caso reporta
    lo mismo:

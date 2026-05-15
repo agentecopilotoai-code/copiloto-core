@@ -1199,7 +1199,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 - **Estado:** PENDING (low priority, pero accionable)
 - **Findings agrupados:**
   - `Rejected payment webhook audits are rolled back` — wrap `audit()` calls que preceden a `HTTPException` en una transacción independiente (autocommit) para preservar el audit log.
-  - `Runbook can leak tenant export to consent complainants` — corregir `docs/runbooks/consent-violation-claim.md` para usar el endpoint correcto (no `data-export?contact_id=...`); declarar que el operador debe redactar manualmente el contact-scoped export hasta que exista.
+  - ~~`Runbook can leak tenant export to consent complainants`~~ — **DONE (2026-05-15)** en PR del runbook fix. El runbook ahora prohíbe usar `data-export` para extractos contact-scoped y el operador compone el extracto vía SQL ad-hoc. Follow-up declarado: `SEC-010-EXPORT-FU` (ver más abajo).
   - `DLQ retry is not actually idempotent` — usar `UPDATE ... WHERE status='failed' RETURNING` con stable idempotency key derivada del `(message_id, attempt_count)` en lugar del epoch.
   - `Hardcoded E2E database role password` — gating `RUN_E2E=1` debe verificar que el `DATABASE_URL` apunta a una DB efímera (host `localhost` o nombre `*_e2e`); abortar si no.
   - `Malformed tenant timezone can disable bot replies` — validar timezone con `zoneinfo.ZoneInfo(value)` en el `TenantUpdate` schema (raise `ValidationError`); catch `ValueError` además de `ZoneInfoNotFoundError` en el runtime.
@@ -1209,6 +1209,24 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
   - `DATABASE_URL password exposed in bootstrap process args` — usar `.pgpass` o `PGPASSWORD` env var en lugar de pasar `DATABASE_URL` como argv al `psql`.
 - **Fix:** un PR por sub-finding o un PR consolidado de "hardening misceláneo".
 - **Severidad:** low pero recomendable cerrar antes de auditoría externa.
+
+---
+
+##### SEC-010-EXPORT-FU — Endpoint contact-scoped para extracto de consent ledger
+
+- **Estado:** PENDING (backend follow-up)
+- **Origen:** SEC-010 cerró el sub-finding `6317cdc8` (Runbook leak) editando el runbook para que el operador no use `data-export` (tenant-wide) para extractos de un contacto individual. Mientras el operador compone manualmente vía SQL, este FU agrega un endpoint server-side dedicado.
+- **Alcance:**
+  - Nuevo `GET /v1/tenants/{tenant_id}/contacts/{contact_id}/export?kinds=consent_ledger,messages` montado en `tenant_admin_router` con capability nueva `contact.export.read` (owner + admin; manager → null por defecto).
+  - Handler:
+    - `ensure_tenant_access` + `set_config('app.tenant_id')` + RLS por tenant.
+    - Valida que el contacto pertenece al tenant.
+    - Compone respuesta JSON contact-scoped: `consent_ledger`, `messages`, opcionalmente `appointments`/`subscriptions` según `kinds=`.
+    - Firma el JSON de salida con HMAC y un timestamp (operator audit trail).
+    - Audit log `contact.exported_for_consent_claim` con `metadata={kinds, requested_by}`.
+  - Update del runbook `consent-violation-claim.md` para usar el endpoint nuevo en lugar del SQL ad-hoc.
+- **Tests:** `tests/test_contact_export_static.py` cubriendo capability, RLS, kinds filtering, audit log, firma.
+- **Dependencias:** ninguna; standalone.
 
 ---
 
