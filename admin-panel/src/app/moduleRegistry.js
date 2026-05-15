@@ -23,6 +23,7 @@ import { KnowledgeStorageSettings } from '../components/modules/knowledgeStorage
 import { KnowledgeStudio } from '../features/owner-admin/knowledge-studio/index.js';
 import { LegalModule } from '../features/owner-admin/legal/index.js';
 import { MediaLibraryModule } from '../features/owner-admin/media-library/index.js';
+import { MyHandoffs } from '../features/agente/my-handoffs/index.js';
 import { OperationsDesk } from '../features/agente/inbox/index.js';
 import { OutboundDLQ } from '../components/modules/outbound/OutboundDLQ.jsx';
 import { GoLiveReadiness } from '../components/modules/readiness/GoLiveReadiness.jsx';
@@ -83,6 +84,7 @@ export const MODULE_REGISTRY = Object.freeze({
   segments: { Component: SegmentsModule, capability: 'segments.write', mode: 'RW' },
   campaigns: { Component: CampaignsModule, capability: 'campaigns.write', mode: 'RW' },
   'operations-desk': { Component: OperationsDesk, capability: 'conversations.view' },
+  'my-handoffs': { Component: MyHandoffs, capability: 'conversations.view' },
   'outbound-dlq': { Component: OutboundDLQ, capability: 'outbound_dlq.retry', mode: 'RW' },
   'go-live-readiness': { Component: GoLiveReadiness, capability: 'go_live_readiness.read' },
   analytics: { Component: AnalyticsPanel, capability: 'analytics.tenant.read' },

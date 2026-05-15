@@ -15,6 +15,43 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-009.2 — Operación · Mis handoffs (Agente)
+
+- **Fecha:** 2026-05-14
+- **Objetivo:** nueva vista del rol Agente en `admin-panel/src/features/agente/my-handoffs/` que reutiliza la maquinaria del Inbox (`useInboxData` + el componente de dominio `ConversationListItem`) con un filtro de handoffs pre-aplicado, aplicando el mockup `29 _ Operación _ Mis handoffs.html`. **Tarea frontend-only** — el filtro de «mis handoffs» es cliente sobre la misma respuesta tenant-scoped de `listConversations`; ningún archivo de servidor se tocó.
+- **Cambios realizados:**
+  - **Frontend — `src/features/agente/my-handoffs/` (nuevo, 7 archivos):**
+    - `myHandoffsData.js` (helper puro): `HANDOFF_FILTERS` / `DEFAULT_HANDOFF_FILTER` (tabs `Todos` / `Sin asignar` / `Mías`), `isHandoffConversation`, `filterHandoffs`, `filterUnassignedHandoffs`, `filterMyHandoffs(conversations, currentUserId)`, `applyHandoffFilter`, `deriveHandoffCounts`, `toHandoffRow` — puros, unit-testables, sin React. Reusa `formatDate` / `statusLabel` de `inboxData.js` (cero duplicación). El filtro de «mis handoffs» compara `active_handoff_assigned_to` (el `app.users.id` que el backend graba al aceptar un handoff, expuesto por `GET /conversations`) contra el id del usuario actual.
+    - `hooks/useMyHandoffsData.js`: wrapper fino sobre `useInboxData` — NO re-consulta nada; reusa verbatim la lista de conversaciones, el stream WebSocket de tiempo real y las acciones de handoff (`acceptHandoff` / `releaseHandoff`) del Inbox. Encima añade sólo la resolución del id del usuario actual (desde `profile.sub`), el estado de la tab de filtro y la lista derivada ya filtrada + los conteos por tab.
+    - `MyHandoffs.jsx`: orquestador / entrada de módulo — `<RequirePermission capability="conversations.view" mode="R">` (vía `usePermissions` + `useTenantContext`) + `PageHeader` ("Mis handoffs") + `AlertBanner` para el notice + `MyHandoffsList` + una `Card` de detalle del handoff seleccionado con las acciones «Tomar handoff» / «Liberar al bot». Props `{ module, session, tenant }`.
+    - `components/MyHandoffsList.jsx`: la cola de handoffs — reutiliza el componente de dominio `ConversationListItem` (el mismo que usa `InboxList`) y le añade encima sólo las tabs específicas de handoff. `InboxList` no se reusa tal cual porque su API está acoplada al form «iniciar conversación» y a las tabs `Todas` / `Quejas`; el backlog admite explícitamente caer a `ConversationListItem` en ese caso.
+    - `MyHandoffs.module.css` (tokens 100% `var(--...)`) + `index.js` (barrel) + `myHandoffsData.test.js` (7 tests) + `MyHandoffs.test.jsx` (5 tests).
+  - **Frontend — barrel del Inbox ampliado:** `src/features/agente/inbox/index.js` ahora exporta también `InboxList` y `useInboxData` (además de `OperationsDesk`) para que otras features reutilicen la maquinaria del Inbox sin imports profundos. Es puramente ampliar el barrel — el comportamiento de `InboxList` / `useInboxData` no cambia.
+  - **Frontend — wiring del módulo `my-handoffs`:**
+    - `app/moduleRegistry.js`: import de `MyHandoffs` desde `'../features/agente/my-handoffs/index.js'` + entrada `'my-handoffs': { Component: MyHandoffs, capability: 'conversations.view' }`.
+    - `data/modules.js`: entrada nueva (id `my-handoffs`, label "Mis handoffs", summary, capability `conversations.view`).
+    - `app/nav.js`: `'my-handoffs'` agregado a la sección `Conversaciones` de `TENANT_NAV`, junto a `operations-desk`. `ROLE_HOME` no se tocó — el home del agente sigue siendo `operations-desk`.
+- **Archivos modificados / creados:**
+  - `admin-panel/src/features/agente/my-handoffs/{MyHandoffs.jsx,MyHandoffs.module.css,MyHandoffs.test.jsx,myHandoffsData.js,myHandoffsData.test.js,index.js,hooks/useMyHandoffsData.js,components/MyHandoffsList.jsx}` (todos nuevos).
+  - `admin-panel/src/features/agente/inbox/index.js` (barrel ampliado con `InboxList` + `useInboxData`).
+  - `admin-panel/src/app/moduleRegistry.js`, `admin-panel/src/app/nav.js`, `admin-panel/src/data/modules.js` (wiring del módulo `my-handoffs`).
+  - `docs/UI_BACKLOG.md` (UI-009.2 marcado `DONE`), `docs/DONE.md` (esta entrada).
+- **Validación local:**
+  - `npm --prefix admin-panel run lint` → sin errores (2 warnings pre-existentes ajenos en `tenant-setup`).
+  - `npm --prefix admin-panel run build` → vite build OK.
+  - `npm --prefix admin-panel test` → 397 tests pasan, incluidos los 12 nuevos (7 `myHandoffsData` + 5 `MyHandoffs`) y los 5 del Inbox (sin regresión al ampliar el barrel). Sigue fallando `src/app/router.test.jsx` (7 fallos) por el problema ambiental Node 24 + `undici`/`AbortSignal` documentado en UI-002/UI-006.*/UI-007.*/UI-008.*/UI-009.1 — **no es regresión** (CI corre Node 20 y solo ejecuta lint + build para el front).
+  - No se tocó ningún archivo de servidor — no se ejecutó pytest/ruff (no aplica). Los tests estáticos de pytest que apuntan a `features/agente/inbox` siguen pasando: sólo se le añadieron 2 líneas de re-export al `index.js` (sin lógica ni literales nuevos) y globean `*.js*` por presencia de strings.
+- **Seguridad:**
+  - Tarea frontend-only — **no se tocó ningún archivo de servidor** (`app/...`), schema ni dependencia.
+  - La vista reusa la capa de datos del Inbox (`useInboxData`) y sus acciones de handoff (`acceptHandoff` / `releaseHandoff`) verbatim — sin nuevas llamadas a `coreApi`. El filtro de «mis handoffs» es cliente sobre la misma respuesta tenant-scoped de `listConversations` que ya consume el Inbox; el backend reverifica cada acción.
+  - La entrada de módulo se gateó con `<RequirePermission capability="conversations.view" mode="R">` (la misma capability que el Inbox) vía `usePermissions` + `useTenantContext`.
+- **Limitaciones / próximos pasos:**
+  - **Diferencia intencional declarada:** el HTML de referencia muestra KPIs ("Esperando humano", "Asignadas a mí", "Resueltas hoy", "% por bot · semana", "tiempo medio mío", "cerca de SLA") y columnas de SLA por fila que `listConversations` no expone — se difieren (no se inventan datos). Las tabs `Colegas` / `Cerrados` tampoco tienen respaldo en el endpoint y se difieren. Se renderiza sólo lo que la respuesta de conversaciones realmente trae: cliente, estado, tiempo de espera derivado de `handoff_created_at` / `updated_at`, y la acción «Tomar» / liberar.
+  - El id del agente se resuelve desde `profile.sub` (el subject de Auth0) — es el único identificador del agente disponible en el frontend. `active_handoff_assigned_to` es el `app.users.id`; si la equivalencia `auth_subject ↔ users.id` no se cumple en un entorno dado, el filtro «Mías» quedaría vacío de forma segura (sin fabricar datos) — exponer el `users.id` al frontend es trabajo de backend futuro.
+  - Próxima tarea `PENDING`: **UI-009.3 — Operación · Ficha de contacto**, que reusará `ContactCard`, `ContactTimeline`, `AppointmentCard`.
+
+---
+
 ### UI-009.1 — Operación · Inbox (Agente)
 
 - **Fecha:** 2026-05-14

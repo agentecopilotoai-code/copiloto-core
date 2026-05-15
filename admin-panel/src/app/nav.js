@@ -18,7 +18,7 @@ export const TENANT_NAV = Object.freeze([
   { section: 'Inicio', items: ['dashboard', 'manager-analytics', 'onboarding-wizard'] },
   {
     section: 'Conversaciones',
-    items: ['operations-desk', 'contacts', 'campaigns', 'segments', 'digest-reports'],
+    items: ['operations-desk', 'my-handoffs', 'contacts', 'campaigns', 'segments', 'digest-reports'],
   },
   {
     section: 'Negocio',
