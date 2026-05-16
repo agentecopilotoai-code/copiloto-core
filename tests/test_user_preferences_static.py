@@ -183,10 +183,11 @@ def test_patch_my_notifications_emits_user_preferences_updated_audit():
 
 
 def test_revoke_my_session_emits_audit_log():
-    # DELETE /me/sessions/{sid} is a stub today but still logs the intent
-    # for forensics (someone clicked "log out current session").
+    # DELETE /me/sessions/{sid} logs `user.session_revoked` (action renamed
+    # from the stub-era `user.preferences_updated` once UI-016.7-FU-SESSIONS
+    # shipped — the operation is no longer a placeholder).
     source = inspect.getsource(routes_module.revoke_my_session)
-    assert "action='user.preferences_updated'" in source
+    assert "action='user.session_revoked'" in source
     assert "entity_type='user_session'" in source
 
 
@@ -244,10 +245,14 @@ def test_patch_my_notifications_validates_channel_ids():
     assert catalog == ('email', 'wa', 'inapp')
 
 
-# ───── /sessions stubs are explicit about UI-016.7-FU-SESSIONS ─────────────
+# ───── /sessions handlers (UI-016.7-FU-SESSIONS shipped — no longer stubs) ─
 
 
-def test_sessions_endpoints_declare_follow_up_in_docstring():
+def test_sessions_endpoints_reference_followup_ticket():
+    # Both handlers cite UI-016.7-FU-SESSIONS in their docstring so a reader
+    # walking the source can trace the design back to the ticket. (After
+    # UI-016.7-FU-SESSIONS shipped, these are no longer stubs — see
+    # `tests/test_auth_sessions_static.py` for full coverage.)
     list_src = inspect.getsource(routes_module.list_my_sessions)
     revoke_src = inspect.getsource(routes_module.revoke_my_session)
     assert 'UI-016.7-FU-SESSIONS' in list_src
@@ -255,10 +260,11 @@ def test_sessions_endpoints_declare_follow_up_in_docstring():
 
 
 def test_revoke_my_session_rejects_unknown_session_id():
-    # Until a real session store exists, the only id we accept is `current`.
-    # Anything else returns 404 (not a silent no-op that pretends success).
+    # After UI-016.7-FU-SESSIONS the revoke handler queries `app.auth_sessions`
+    # by id+user_id; an unknown id (not owned by this user / already revoked)
+    # surfaces as 404 via the explicit ` 0` check on the asyncpg result string.
     source = inspect.getsource(routes_module.revoke_my_session)
-    assert "session_id != 'current'" in source
+    assert "result.endswith(' 0')" in source
     assert 'status_code=404' in source
 
 

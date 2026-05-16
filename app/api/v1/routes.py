@@ -10777,66 +10777,172 @@ async def patch_my_notifications(
     return await get_my_notifications(request, conn)
 
 
+def _session_id_from_request(request: Request) -> str | None:
+    """UI-016.7-FU-SESSIONS: derive a stable per-session id from the JWT.
+
+    Auth0 emits `jti` for every access token by default; we prefer that.
+    Fallback when `jti` is absent: a deterministic SHA-256 hash of
+    `sub + iat` so the same logical session resolves to the same id across
+    requests until the token expires. Returns `None` only when the request
+    is unauthenticated (anonymous/service) — handlers must guard with
+    `_require_current_user` first, so reaching here without a user means
+    the caller built the JWT without `sub`, which is a misconfig.
+    """
+    jti = getattr(request.state, 'session_jti', None)
+    if jti:
+        return str(jti)
+    actor_id = getattr(request.state, 'actor_id', None)
+    iat = getattr(request.state, 'token_iat', None)
+    if not actor_id or iat is None:
+        return None
+    digest = hashlib.sha256(f'{actor_id}|{iat}'.encode()).hexdigest()
+    # Prefix marks fallback ids so audit/logs can tell them apart from real jti.
+    return f'iat-{digest[:32]}'
+
+
+async def record_auth_session(
+    request: Request, conn: asyncpg.Connection, user_id: UUID
+) -> str | None:
+    """UI-016.7-FU-SESSIONS: upsertea `app.auth_sessions` para la request actual.
+
+    Devuelve el `session_id` que queda registrado (para que el handler pueda
+    marcar la entrada como `current` en el GET list). Si la request no es de
+    usuario autenticado, devuelve `None` sin tocar la DB.
+
+    No re-activa una sesión previamente revocada (la cláusula `where
+    revoked_at is null` en el update lo previene); si la sesión está
+    revocada, el upsert deja de actualizar `last_seen_at` — lo correcto, ya
+    que el usuario debe re-loguear para obtener un nuevo JWT con jti distinto.
+
+    Best-effort sobre IP/user_agent: si no están disponibles (test client,
+    headers strippados por un proxy), se persisten como NULL.
+    """
+    session_id = _session_id_from_request(request)
+    if not session_id:
+        return None
+    user_agent = request.headers.get('user-agent') or None
+    client = getattr(request, 'client', None)
+    client_ip = client.host if client and client.host else None
+    await conn.execute(
+        """
+        insert into app.auth_sessions (id, user_id, user_agent, ip, last_seen_at)
+        values ($1, $2, $3, $4::inet, now())
+        on conflict (id) do update set
+            user_agent = coalesce(excluded.user_agent, app.auth_sessions.user_agent),
+            ip = coalesce(excluded.ip, app.auth_sessions.ip),
+            last_seen_at = now()
+        where app.auth_sessions.revoked_at is null
+        """,
+        session_id,
+        user_id,
+        user_agent,
+        client_ip,
+    )
+    return session_id
+
+
 @me_router.get('/me/sessions')
 async def list_my_sessions(request: Request, conn: asyncpg.Connection = Depends(get_db)):
-    """Stubbed — see UI-016.7-FU-SESSIONS.
+    """UI-016.7-FU-SESSIONS: devuelve las sesiones activas del usuario.
 
-    Tracking active sessions per-user requires a server-side session store
-    (e.g. `app.auth_sessions` keyed by JWT `jti` or refresh-token id), which
-    the current Auth0 BFF flow does not provide — tokens are kept in
-    HTTP-only cookies and the access JWT is stateless. Until that
-    infrastructure lands, this endpoint returns the current session only,
-    derived from the validated JWT, so the frontend can show "this session"
-    accurately and keep the placeholder banner for everything else.
+    Cada request a este endpoint upsertea su propia sesión via
+    `record_auth_session(...)` antes de listar, lo que garantiza:
+      1. Si la UI muestra "esta sesión", al menos hay una fila (la actual).
+      2. `last_seen_at` se refresca con cada hit del frontend al endpoint.
+
+    El campo `current: true` se marca por igualdad con el `session_id` que
+    `record_auth_session` acaba de upsertear, sin depender de heurísticas
+    sobre `last_seen_at` (que podrían marcar como current una sesión vieja
+    si dos pestañas con el mismo JWT hacen request casi simultáneo).
     """
     user_id = await _require_current_user(request, conn)
-    user_row = await conn.fetchrow(
-        'select last_login_at from app.users where id=$1', user_id,
+    current_sid = await record_auth_session(request, conn, user_id)
+    rows = await conn.fetch(
+        """
+        select id, user_agent, ip::text as ip, location, device,
+               created_at, last_seen_at
+        from app.auth_sessions
+        where user_id = $1 and revoked_at is null
+        order by last_seen_at desc
+        """,
+        user_id,
     )
-    last_login = user_row['last_login_at'] if user_row else None
-    return {
-        'user_id': str(user_id),
-        'sessions': [
+    sessions = []
+    for row in rows:
+        sessions.append(
             {
-                'id': 'current',
-                'current': True,
-                'last_seen_at': last_login.isoformat() if last_login is not None else None,
-                # `device` / `location` come from the user-agent + IP geolocation
-                # once UI-016.7-FU-SESSIONS lands.
-                'device': None,
-                'location': None,
-            },
-        ],
-        'follow_up': 'UI-016.7-FU-SESSIONS',
-    }
+                'id': row['id'],
+                'current': row['id'] == current_sid,
+                'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                'last_seen_at': row['last_seen_at'].isoformat() if row['last_seen_at'] else None,
+                'device': row['device'],
+                'user_agent': row['user_agent'],
+                'ip': row['ip'],
+                'location': row['location'],
+            }
+        )
+    return {'user_id': str(user_id), 'sessions': sessions}
 
 
 @me_router.delete('/me/sessions/{session_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_my_session(
     session_id: str, request: Request, conn: asyncpg.Connection = Depends(get_db)
 ):
-    """Stubbed — see UI-016.7-FU-SESSIONS.
+    """UI-016.7-FU-SESSIONS: marca una sesión como revocada.
 
-    Until `app.auth_sessions` (or equivalent) exists, there is nothing to
-    revoke server-side: the JWT is stateless and the cookie session is
-    managed entirely by Auth0. Returns 404 for any session_id other than
-    the synthetic `current` placeholder so the frontend can show a clean
-    error toast. For `current` we still return 204 so the operator UX of
-    "log out the current session" can be wired (the actual logout goes
-    through Auth0 `/logout`, not this endpoint).
+    El frontend puede pasar el alias `current` para revocar la sesión
+    asociada al JWT que viene en la request; resolvemos contra
+    `_session_id_from_request` y delegamos al mismo path del id explícito.
+
+    El UPDATE filtra por `user_id` para impedir que un usuario revoque
+    sesiones ajenas (el endpoint no permite indicar otro `user_id` en path —
+    todos los `/me/*` derivan el `user_id` del JWT). Devuelve 404 si el
+    `session_id` no pertenece a este usuario o si ya estaba revocado.
+
+    Notas sobre Auth0:
+      - Este endpoint marca `revoked_at` en nuestra tabla pero NO invalida
+        el JWT (es stateless). El backend ignora sesiones revocadas en los
+        listados; para forzar logout efectivo, el cliente debe seguir el
+        flow `/admin/logout` (que clava la cookie HTTP-only de Auth0).
+      - Revocar el refresh token vía Auth0 Management API queda como
+        follow-up; documentado en la entrada `UI-016.7-FU-SESSIONS` del
+        backlog (sección "Notas / limitaciones").
     """
     user_id = await _require_current_user(request, conn)
-    if session_id != 'current':
+    target_id = session_id
+    if session_id == 'current':
+        derived = _session_id_from_request(request)
+        if not derived:
+            raise HTTPException(status_code=404, detail='Session not found')
+        target_id = derived
+
+    result = await conn.execute(
+        """
+        update app.auth_sessions
+        set revoked_at = now()
+        where id = $1 and user_id = $2 and revoked_at is null
+        """,
+        target_id,
+        user_id,
+    )
+    # asyncpg returns 'UPDATE 0' when no rows matched.
+    if result.endswith(' 0'):
         raise HTTPException(status_code=404, detail='Session not found')
+
     await audit(
         conn,
         tenant_id=None,
         actor_type=request.state.actor_type,
         actor_id=request.state.actor_id,
-        action='user.preferences_updated',
+        action='user.session_revoked',
         entity_type='user_session',
-        entity_id=session_id,
-        metadata={'scope': 'sessions', 'action': 'revoke_current', 'user_id': str(user_id)},
+        entity_id=target_id,
+        metadata={
+            'scope': 'sessions',
+            'action': 'revoke',
+            'user_id': str(user_id),
+            'alias_used': session_id == 'current',
+        },
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

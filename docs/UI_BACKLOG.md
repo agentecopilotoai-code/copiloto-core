@@ -833,15 +833,13 @@ src/
 
 ##### UI-016.7-FU-SESSIONS — Tabla de sesiones server-side
 
-- **Estado:** PENDING (backlog backend)
+- **Estado:** DONE (2026-05-15)
 - **Origen:** follow-up declarado en UI-016.7-FU (sessions endpoints quedaron como stubs).
-- **Alcance:**
-  - Tabla `app.auth_sessions` con `id text pk (jti del JWT o id del refresh token)`, `user_id uuid fk app.users`, `created_at`, `last_seen_at`, `revoked_at`, `device text`, `user_agent text`, `ip inet`, `location text`.
-  - Hook en `authenticate_request` para upsertear la sesión (last_seen_at = now()) en cada request autenticada.
-  - GET `/v1/me/sessions` real (lista todas las del `user_id` con `revoked_at is null`).
-  - DELETE `/v1/me/sessions/{sid}` real — marca `revoked_at` y opcionalmente revoca el refresh token vía Auth0 Management API.
-  - Coordinación con Auth0: documentar trade-off entre el server-side store y el SSO logout flow.
-- **Tests:** ampliar `test_user_preferences_static.py` con casos para `app.auth_sessions`; agregar tests dinámicos de hook en `authenticate_request`.
+- **Cierre:** Ver `docs/DONE.md` (entrada UI-016.7-FU-SESSIONS). Tabla `app.auth_sessions` shipeada con FK a `app.users(id)` + índice activo `ix_auth_sessions_user_active` (`where revoked_at is null`) + trigger `trg_auth_sessions_touch`. `authenticate_request` ahora expone `request.state.session_jti` y `request.state.token_iat` desde el JWT validado. Helper `record_auth_session(request, conn, user_id)` upsertea por request preservando user_agent/ip vía `coalesce(excluded.*, ...)` y filtrando `revoked_at is null` para no revivir sesiones revocadas. Los dos endpoints son ahora reales: `GET /v1/me/sessions` upsertea + lista activos ordenados por `last_seen_at desc` con `current` marcado por igualdad de id; `DELETE /v1/me/sessions/{sid}` acepta alias `current`, scoping por `user_id` en el UPDATE para imposibilitar revocaciones cross-user, devuelve 404 idempotente cuando el id no es del caller / ya estaba revocado. Audit `user.session_revoked` (renombrado del placeholder `user.preferences_updated`). 22 tests nuevos en `tests/test_auth_sessions_static.py` (schema + jti capture + helper + endpoints + audit) + 3 tests actualizados en `tests/test_user_preferences_static.py` para reflejar el nuevo estado.
+- **Follow-ups pendientes:**
+  - Revocar refresh tokens vía Auth0 Management API en el DELETE — requiere extender `app/services/auth0_admin.py` con `revoke_user_refresh_tokens(user_id)`. Hoy el JWT sigue siendo válido hasta su `exp` aunque la sesión esté marcada `revoked_at` en nuestra tabla; el listado lo oculta pero no impide nuevas requests con ese mismo JWT.
+  - Hook universal (no solo `/me/*`): el `record_auth_session` se llama solo desde los handlers de `/me/sessions`. Para tener un mapa real de sesiones activas en cualquier ruta, hace falta un middleware FastAPI post-`authenticate_request` que upsertee best-effort. Pendiente como `UI-016.7-FU-SESSIONS-MIDDLEWARE`.
+  - Geolocalización del `ip` (campo `location`): hoy queda NULL. Requiere proveedor externo (MaxMind GeoLite2 o equivalente). Documentado pero no shipeado.
 
 #### UI-016.8 — Responsive 360px
 

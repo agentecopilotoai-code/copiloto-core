@@ -168,6 +168,13 @@ async def authenticate_request(
     request.state.mfa_verified = False
     request.state.email = None
     request.state.name = None
+    # UI-016.7-FU-SESSIONS: session id derivable desde el JWT, usado por
+    # `record_auth_session(...)` para upsertear `app.auth_sessions`. Si Auth0
+    # emite `jti` (default en la mayoría de tenants), lo usamos directo. Si no,
+    # los handlers caen a un fallback determinístico (`sub + iat` hash) — ver
+    # `_session_id_from_request` en `app/api/v1/routes.py`.
+    request.state.session_jti = None
+    request.state.token_iat = None
 
     if not authorization:
         if x_tenant_id:
@@ -219,6 +226,11 @@ async def authenticate_request(
     request.state.email = payload.get('email')
     request.state.name = payload.get('name') or payload.get('nickname')
     request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
+    # UI-016.7-FU-SESSIONS: capturamos los claims que identifican esta sesión
+    # del JWT. `jti` es el identificador canónico; `iat` se usa como fallback
+    # cuando jti no está presente (algunos tenants Auth0 pueden no emitirlo).
+    request.state.session_jti = payload.get('jti')
+    request.state.token_iat = payload.get('iat')
 
 
 def _has_role(roles: list[str], minimum_role: str) -> bool:

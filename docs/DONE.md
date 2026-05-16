@@ -15,6 +15,37 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-016.7-FU-SESSIONS — Tabla `app.auth_sessions` + endpoints reales
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el follow-up declarado en UI-016.7-FU. Los endpoints `/v1/me/sessions` y `/v1/me/sessions/{sid}` shipearon como STUBS porque no existía la tabla server-side; el frontend (`AccountSessions.jsx`) mostraba un `AlertBanner` "infra pendiente". Este PR cierra la cadena entera: schema + hook en `authenticate_request` para capturar el `jti` + helper `record_auth_session` + endpoints reales.
+- **Cambios:**
+  - **Schema (`infra/postgres/01-schema.sql`)**: nueva tabla `app.auth_sessions(id text pk, user_id uuid fk app.users on delete cascade, device text null, user_agent text null, ip inet null, location text null, created_at, last_seen_at, revoked_at, updated_at)`. Índice `ix_auth_sessions_user_active on (user_id, last_seen_at desc) where revoked_at is null` — match exacto del `ORDER BY` del listado. Trigger `trg_auth_sessions_touch`. Bloque de comentarios con `TASK-UI-016.7-FU-SESSIONS` para deployments existentes (`create table if not exists ... ; create index if not exists ... ; create trigger if not exists ...`).
+  - **`app/core/security.py`**: `authenticate_request` ahora setea `request.state.session_jti` y `request.state.token_iat` desde el JWT validado (None en el branch anónimo, valores desde `payload.get('jti')` / `payload.get('iat')` en el branch usuario). Estos dos campos son la fuente del `session_id` que usa todo el resto del flujo.
+  - **`app/api/v1/routes.py`**:
+    - `_session_id_from_request(request)`: helper que devuelve el `jti` (preferido) o un fallback determinístico `iat-<sha256(sub|iat)[:32]>`. Prefijo `iat-` marca al fallback para que el audit log distinga jti reales de derivados. Devuelve `None` para anónimos.
+    - `record_auth_session(request, conn, user_id)`: upsertea `app.auth_sessions` con `on conflict (id) do update`. `coalesce(excluded.user_agent, app.auth_sessions.user_agent)` preserva los valores capturados al primer login si un proxy strippea el header en requests siguientes. La cláusula `where app.auth_sessions.revoked_at is null` en el UPDATE impide reactivar una sesión revocada. Devuelve el `session_id` para que el caller marque `current: True` en el listado.
+    - `GET /v1/me/sessions`: upsertea via `record_auth_session` ANTES de la SELECT (garantiza que la sesión actual siempre aparece, incluso en la primera request post-login), filtra `revoked_at is null`, ordena `last_seen_at desc`, marca `current: True` por igualdad de id (no por heurística sobre `last_seen_at`).
+    - `DELETE /v1/me/sessions/{sid}`: acepta alias `current` (resuelto vía `_session_id_from_request`). UPDATE filtra por `user_id` en el WHERE → imposible revocar sesiones ajenas aunque el caller conozca el id. `result.endswith(' 0')` distingue "no row matched" → 404 (no leak de existencia: wrong user, wrong id, ya revocada → todas son 404). Audit `user.session_revoked` con `metadata={'alias_used': session_id == 'current'}` para diferenciar revocaciones explícitas vs "log out current".
+- **Archivos:**
+  - `infra/postgres/01-schema.sql` — tabla `app.auth_sessions` + índice + trigger + comentario migration.
+  - `app/core/security.py` — `authenticate_request` expone `session_jti`/`token_iat`.
+  - `app/api/v1/routes.py` — `_session_id_from_request` + `record_auth_session` + handlers reales (`list_my_sessions`, `revoke_my_session`).
+  - `tests/test_auth_sessions_static.py` (NEW) — 22 tests static cubriendo schema, jti capture, helper semantics, endpoint behavior, audit.
+  - `tests/test_user_preferences_static.py` — 3 tests actualizados (`test_sessions_endpoints_reference_followup_ticket`, `test_revoke_my_session_rejects_unknown_session_id`, `test_revoke_my_session_emits_audit_log`) para reflejar el nuevo estado (handlers ya no son stubs; audit action renombrada).
+  - `docs/UI_BACKLOG.md` — UI-016.7-FU-SESSIONS marcado DONE con cierre + follow-ups documentados.
+- **Validaciones:**
+  - `pytest tests/test_auth_sessions_static.py tests/test_user_preferences_static.py` → 46/46 passed.
+  - `pytest tests/test_security.py` → 9/9 passed (no regresión en `authenticate_request`).
+  - `ruff check app/core/security.py app/api/v1/routes.py tests/test_auth_sessions_static.py tests/test_user_preferences_static.py` → clean.
+- **Notas / limitaciones (follow-ups declarados):**
+  - **Refresh token revoke vía Auth0 Management API**: el DELETE marca `revoked_at` en nuestra tabla pero NO invalida el JWT (es stateless). El backend lo oculta del listado pero el mismo JWT sigue siendo válido para nuevas requests hasta su `exp`. Para forzar logout efectivo, hace falta extender `app/services/auth0_admin.py` con `revoke_user_refresh_tokens(user_id)` y llamarlo desde `revoke_my_session`. Pendiente como `UI-016.7-FU-SESSIONS-AUTH0-REVOKE`.
+  - **Hook universal**: `record_auth_session` se llama solo desde `list_my_sessions`. Para tener un mapa real de sesiones activas en cualquier endpoint autenticado (no solo `/me/sessions`), hace falta un middleware FastAPI post-`authenticate_request` que upsertee best-effort. Documentado como `UI-016.7-FU-SESSIONS-MIDDLEWARE`.
+  - **Geolocalización**: el campo `location` se persiste pero hoy queda NULL. Requiere proveedor externo (MaxMind GeoLite2 o equivalente).
+- **Nota de seguridad:** este fix MANTIENE todos los parámetros de seguridad de UI-016.7-FU. El `user_id` se sigue resolviendo desde el JWT vía `_require_current_user(request, conn)` — no hay path parameter `{user_id}` en ningún `/me/*`. El UPDATE del DELETE filtra por `user_id = $2` en el WHERE, impidiendo revocar sesiones ajenas aunque el caller adivine el `session_id`. La 404 idempotente del DELETE no distingue "id no existe" de "id es de otro usuario" de "ya revocada" — no leak de existencia. El `coalesce` en el upsert no permite que un proxy hostil sobrescriba el `user_agent` original con NULL. El fallback `iat-<hash>` cuando no hay `jti` usa SHA-256 sobre `sub|iat` (no reversible, no permite predecir session_ids ajenos). Cero relajamiento de `authenticate_request`, `require_platform_owner`, RLS, scoping por tenant.
+
+---
+
 ### BUG-006 — `platform_owner` cae al onboarding de tenant en vez de `/platform`
 
 - **Fecha:** 2026-05-15

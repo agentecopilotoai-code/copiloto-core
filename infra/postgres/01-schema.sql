@@ -164,6 +164,32 @@ create table app.user_preferences (
   updated_at timestamptz not null default now()
 );
 
+-- TASK-UI-016.7-FU-SESSIONS: server-side session store.
+-- Cierra el follow-up declarado en UI-016.7-FU: los endpoints
+-- `/v1/me/sessions` y `/v1/me/sessions/{sid}` vivían como stubs porque no
+-- existía esta tabla. Ahora cada request autenticada upsertea su sesión por
+-- `id` (jti del JWT cuando Auth0 lo emite; fallback determinístico hash
+-- estable basado en `sub + iat` cuando no), refrescando `last_seen_at`. Al
+-- DELETE marcamos `revoked_at` y el GET filtra `revoked_at is null`. El FK a
+-- `app.users(id)` se cascadea (si el usuario se borra, sus sesiones también).
+-- Para deployments existentes:
+--   create table if not exists app.auth_sessions (...);
+--   create index if not exists ix_auth_sessions_user_active ...
+--   create trigger if not exists trg_auth_sessions_touch ...
+create table app.auth_sessions (
+  id text primary key,
+  user_id uuid not null references app.users(id) on delete cascade,
+  device text null,
+  user_agent text null,
+  ip inet null,
+  location text null,
+  created_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  revoked_at timestamptz null,
+  updated_at timestamptz not null default now()
+);
+create index ix_auth_sessions_user_active on app.auth_sessions(user_id, last_seen_at desc) where revoked_at is null;
+
 create table app.contacts (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
@@ -1229,6 +1255,8 @@ create trigger trg_subscription_plans_touch before update on app.subscription_pl
 create trigger trg_contact_subscriptions_touch before update on app.contact_subscriptions for each row execute function app.touch_updated_at();
 -- TASK-UI-016.7-FU
 create trigger trg_user_preferences_touch before update on app.user_preferences for each row execute function app.touch_updated_at();
+-- TASK-UI-016.7-FU-SESSIONS
+create trigger trg_auth_sessions_touch before update on app.auth_sessions for each row execute function app.touch_updated_at();
 
 -- TASK-0051: consume one session from the linked package when an appointment
 -- is closed as completed. Idempotent: the appointment row is updated only
