@@ -19,6 +19,7 @@ let mockTenantContext;
 const mockHandleTenantCreated = vi.fn();
 vi.mock('../../../app/TenantProvider.jsx', () => ({
   useTenantContext: () => mockTenantContext,
+  useOptionalTenantContext: () => mockTenantContext,
 }));
 
 // eslint-disable-next-line import/first

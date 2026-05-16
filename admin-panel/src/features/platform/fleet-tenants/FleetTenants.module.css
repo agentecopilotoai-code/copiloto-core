@@ -167,3 +167,13 @@
   justify-content: flex-end;
   gap: var(--space-3);
 }
+
+/* BUG-008 — banner de error cuando handleSupportInto falla (ej. 403
+   porque el caller no es platform_owner). Se muestra arriba de la tabla
+   para que no se confunda con un error de carga del listado. */
+.supportError {
+  margin: 0;
+  color: var(--danger-ink, var(--ink));
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+}

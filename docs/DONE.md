@@ -15,6 +15,50 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### BUG-008 — Toggle real de `support_mode` (cookie HMAC scoped + audit + TTL)
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el workaround inseguro de `BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=true` (setear `app_metadata.support_mode=true` PERMANENTE en Auth0) por un opt-in temporal scoped por tenant. Antes: el `platform_owner` tenía privilegios cross-tenant cada vez que logueaba, duplicando blast radius si robaban su cookie. Ahora: el toggle se activa explícitamente por tenant, con TTL 1h, audit obligatorio, y un banner persistente para que el operador no olvide que está operando con privilegios elevados.
+- **Cambios:**
+  - **Helper compartido `app/core/signed_cookies.py` (NEW)** — `pack_signed_payload(secret, dict) → str` y `unpack_signed_payload(secret, value) → dict | None`. Wire format: `<b64url(json)>.<b64url(hmac_sha256(secret, b64url(json)))>`. Usa `hmac.compare_digest` (constant time) para evitar timing oracle. Nunca raise — devuelve `None` para tampered/malformed.
+  - **Migración `app/admin/routes.py`** — la cookie OAuth state que vivía con `_pack_state` / `_unpack_state` / `_sign` inline ahora delega al helper compartido. Sin esto, dos consumers podían desincronizarse del wire format silenciosamente. Imports de `base64`/`hashlib`/`hmac` quedaron en el archivo solo porque uno de los handlers de Auth0 callback usa `base64.urlsafe_b64decode` para parsear el id_token JWT (path no relacionado).
+  - **`app/core/security.py`** — nueva constante `SUPPORT_MODE_COOKIE_NAME = 'copilotoia_support_mode'`. `authenticate_request` ahora:
+    - Inicializa `request.state.support_mode_source = None` para anonymous.
+    - Setea a `'service'` para service tokens.
+    - Tras leer el JWT, si `support_mode === false` Y hay `X-Tenant-Id`, lee el cookie y valida `tid === str(x_tenant_id)`, `sub === payload['sub']`, `exp > now_ts`. Si pasa, bumpea `support_mode = True` y marca `source = 'cookie'`.
+    - El cookie NO escala roles globales — solo permite que el rol `platform_owner` del JWT aplique en el contexto del tenant scopeado.
+  - **`app/api/v1/routes.py`** — dos endpoints nuevos en `me_router`:
+    - `POST /v1/me/support-mode/{tenant_id}` (status 201): valida `actor_type=='user'`, rol global `platform_owner`, tenant existe (404 si no); emite cookie HTTP-only firmado con `pack_signed_payload(settings.jwt_secret, {sub, tid, iat, exp})`, `samesite='lax'`, `max_age=SUPPORT_MODE_TTL_SECONDS=3600`, `secure=True` salvo en `app_env=='local'` (cookies secure no se mandan sobre http dev). Audit durable `support_mode.activated` con `metadata={expires_at, ttl_seconds, justification, justification_length}`.
+    - `DELETE /v1/me/support-mode/{tenant_id}` (status 204): idempotente (sin importar si había cookie activo), borra cookie + audit `support_mode.deactivated`.
+  - **`admin-panel/src/services/coreApi.js`** — `activateSupportModeForTenant(session, tenantId, {justification})` y `deactivateSupportModeForTenant(session, tenantId)`.
+  - **`admin-panel/src/app/TenantProvider.jsx`** — state `supportModeOverride: { tenantId, expiresAt } | null`, actions `activateSupportMode` (invoca endpoint + actualiza state) y `deactivateSupportMode` (limpia state local SIEMPRE — best-effort sobre el endpoint, idempotente). Nueva `useOptionalTenantContext` que devuelve `null` en lugar de lanzar — para componentes opcionales como el banner que pueden estar fuera del provider en tests.
+  - **`admin-panel/src/permissions/matrix.js`** — `resolveActiveRoles({profile, tenant, supportModeOverride})` ahora considera el override: si `override.tenantId === tenant.id` Y el profile tiene rol global, OR-ea con `profile.support_mode`. TASK-0077 preservado: cuando NO hay tenant activo, el override no aplica (solo rol global del profile).
+  - **`admin-panel/src/permissions/usePermissions.js`** — propaga `supportModeOverride` a `resolveActiveRoles`. `isSystemOwner` ahora considera ambas fuentes (JWT permanente + override temporal).
+  - **`admin-panel/src/features/platform/fleet-tenants/FleetTenants.jsx`** — `handleSupportInto` ahora es async: `await activateSupportMode(tenant.id)` ANTES de navegar. Si el endpoint falla (típico: rol global insuficiente), muestra `supportError` en un Card prominente y NO navega.
+  - **`admin-panel/src/components/domain/SupportModeBanner.jsx` (NEW)** — banner sticky en el top del workspace cuando `override.tenantId` matchea el `activeTenantId`. Contador de TTL (HH:MM, se actualiza cada 30s; "Expira pronto" si vencido), botón "Salir de support mode" que invoca `deactivateSupportMode`. Styling warning prominente para que el operador no olvide. Responsive a mobile (stack vertical, botón width 100%).
+  - **`admin-panel/src/app/shells/TenantShell.jsx`** — monta `<SupportModeBanner activeTenantId={activeTenantId} />` arriba del `ShellTopbar`. El banner se auto-oculta si no hay override matcheando.
+- **Archivos:**
+  - Backend: `app/core/signed_cookies.py` (NEW), `app/core/security.py`, `app/api/v1/routes.py`, `app/admin/routes.py`.
+  - Frontend: `admin-panel/src/services/coreApi.js`, `admin-panel/src/app/TenantProvider.jsx`, `admin-panel/src/permissions/matrix.js`, `admin-panel/src/permissions/usePermissions.js`, `admin-panel/src/features/platform/fleet-tenants/FleetTenants.jsx` + `.module.css`, `admin-panel/src/components/domain/SupportModeBanner.jsx` (NEW) + `.module.css` (NEW), `admin-panel/src/app/shells/TenantShell.jsx`.
+  - Tests: `tests/test_support_mode_toggle_static.py` (NEW, **19 tests**), `admin-panel/src/permissions/matrix.test.js` (**+5 tests BUG-008**), `admin-panel/src/components/domain/SupportModeBanner.test.jsx` (NEW, **6 tests**), `admin-panel/src/features/platform/fleet-tenants/FleetTenants.test.jsx` (actualizado: mock incluye `activateSupportMode`/`deactivateSupportMode`/`supportModeOverride`).
+  - Docs: `docs/UI_BACKLOG.md` BUG-008 marcado DONE.
+- **Validaciones:**
+  - `pytest tests/test_support_mode_toggle_static.py tests/test_security.py` → 28/28 passed.
+  - `npm --prefix admin-panel test` → **703/703 passed** (sin regresiones).
+  - `npm --prefix admin-panel run lint` → 0 errors (2 warnings pre-existentes).
+  - `npm --prefix admin-panel run build` → ok.
+  - `ruff check app/` → clean.
+- **Nota de seguridad:** este fix MEJORA la seguridad sin romper compatibilidad:
+  - **Blast radius acotado**: el cookie es scoped a UN tenant. Un platform_owner que activa support_mode para `tenant-A` NO puede operar en `tenant-B` con privilegios elevados aunque tenga ambos abiertos en pestañas distintas — `authenticate_request` valida `tid === x_tenant_id` de cada request.
+  - **Atado al user**: `sub` del cookie debe matchear `sub` del JWT. Si la cookie filtra a otro browser (improbable, es HTTP-only), no se puede reusar con un JWT distinto.
+  - **TTL**: 1h por default. Expiración natural del cookie + invalidación server-side al verificar `exp > now_ts`. No hay refresh mechanism — re-activación explícita después del TTL.
+  - **Audit obligatorio**: todo `activate` / `deactivate` queda en `app.audit_logs` via `audit_durably` (sobrevive a rollbacks). El `metadata.justification` es opcional pero presente para forensia.
+  - **Constant-time signature compare**: `hmac.compare_digest` en `unpack_signed_payload` previene timing oracle del HMAC.
+  - **Defense in depth**: el frontend (`resolveActiveRoles`) es solo cosmético — el backend mantiene la autoridad. Aún si un atacante falsifica `supportModeOverride` en el state del provider, las requests siguen pasando por `authenticate_request` que valida el cookie firmado.
+  - **Workaround legacy compatible**: `BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=true` sigue funcionando (el JWT con `support_mode=true` permanente bypasea el cookie). Operadores que prefieran ese modo pueden seguir usándolo, pero el flow correcto es opt-in.
+
+---
+
 ### Auth0 bootstrap — `BOOTSTRAP_PLATFORM_OWNER_EMAIL` en `configure-auth0.sh`
 
 - **Fecha:** 2026-05-15

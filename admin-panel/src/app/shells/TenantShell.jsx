@@ -1,4 +1,5 @@
 import { ErrorBoundary } from '../../components/ui/index.js';
+import { SupportModeBanner } from '../../components/domain/SupportModeBanner.jsx';
 import { TENANT_NAV } from '../nav.js';
 import { resolveNav } from './resolveNav.js';
 import { ShellBottomNav } from './components/ShellBottomNav.jsx';
@@ -65,6 +66,10 @@ export function TenantShell({
         }
       />
       <main className={styles.workspace} id="main-content" tabIndex={-1}>
+        {/* BUG-008 — banner sticky cuando platform_owner opera bajo
+            support_mode opt-in en ESTE tenant. El componente se auto-oculta
+            si supportModeOverride.tenantId no matchea con activeTenantId. */}
+        <SupportModeBanner activeTenantId={activeTenantId} />
         <ShellTopbar
           eyebrow="Tenant operations"
           title={activeModule.label}

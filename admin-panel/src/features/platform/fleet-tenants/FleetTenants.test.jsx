@@ -18,6 +18,7 @@ const mockHandleTenantCreated = vi.fn();
 let mockTenantContext;
 vi.mock('../../../app/TenantProvider.jsx', () => ({
   useTenantContext: () => mockTenantContext,
+  useOptionalTenantContext: () => mockTenantContext,
 }));
 
 // eslint-disable-next-line import/first
@@ -82,6 +83,14 @@ beforeEach(() => {
     session: { profile: PLATFORM_OWNER_PROFILE },
     profile: PLATFORM_OWNER_PROFILE,
     handleTenantCreated: mockHandleTenantCreated,
+    // BUG-008 — handleSupportInto ahora activa support_mode antes de navegar.
+    activateSupportMode: vi.fn().mockResolvedValue({
+      tenant_id: 'any',
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      ttl_seconds: 3600,
+    }),
+    deactivateSupportMode: vi.fn().mockResolvedValue(undefined),
+    supportModeOverride: null,
   };
   listFleetTenants.mockResolvedValue({ items: TENANTS, total: TENANTS.length, limit: 100, offset: 0 });
 });
@@ -164,6 +173,9 @@ describe('FleetTenants', () => {
       session: { profile: { sub: 'u-admin', roles: ['admin'] } },
       profile: { sub: 'u-admin', roles: ['admin'] },
       handleTenantCreated: mockHandleTenantCreated,
+      activateSupportMode: vi.fn(),
+      deactivateSupportMode: vi.fn(),
+      supportModeOverride: null,
     };
     setup();
     expect(screen.getByText(/Acceso restringido/i)).toBeInTheDocument();

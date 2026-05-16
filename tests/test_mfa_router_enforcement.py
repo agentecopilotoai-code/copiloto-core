@@ -80,7 +80,10 @@ def test_routes_import_includes_require_mfa():
 def test_admin_proxy_gates_on_session_mfa_required():
     source = ADMIN_ROUTES_FILE.read_text()
     proxy_start = source.index('async def admin_core_api_proxy(')
-    proxy_end = source.index('return Response(\n        content=upstream_response.content,', proxy_start)
+    # BUG-008 cambió la línea final del proxy (Response se construye antes
+    # del Set-Cookie forwarding y se retorna como `proxied` tras los append).
+    # Apuntamos al construct de Response (cualquier shape) como marker.
+    proxy_end = source.index('Response(\n        content=upstream_response.content,', proxy_start)
     block = source[proxy_start:proxy_end]
     assert '_session_mfa_required(session)' in block
     assert 'status_code=403' in block

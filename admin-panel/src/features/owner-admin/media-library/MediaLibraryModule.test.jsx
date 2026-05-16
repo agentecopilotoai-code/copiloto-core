@@ -19,6 +19,7 @@ vi.mock('../../../services/coreApi.js', () => ({
 let mockTenantContext;
 vi.mock('../../../app/TenantProvider.jsx', () => ({
   useTenantContext: () => mockTenantContext,
+  useOptionalTenantContext: () => mockTenantContext,
 }));
 
 // eslint-disable-next-line import/first

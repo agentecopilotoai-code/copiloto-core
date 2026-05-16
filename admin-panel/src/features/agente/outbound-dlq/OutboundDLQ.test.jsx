@@ -12,6 +12,7 @@ vi.mock('../../../services/coreApi.js', () => ({
 let mockTenantContext;
 vi.mock('../../../app/TenantProvider.jsx', () => ({
   useTenantContext: () => mockTenantContext,
+  useOptionalTenantContext: () => mockTenantContext,
 }));
 
 // UI-011 — useConfirm() replaces the native browser confirm at the retry call

@@ -430,6 +430,26 @@ export function revokeMySession(session, sessionId) {
   });
 }
 
+// BUG-008 — opt-in temporal del support_mode para un tenant. El backend
+// emite cookie HTTP-only firmado scoped al `tenant_id`; subsiguientes
+// requests con `X-Tenant-Id=tenant_id` reciben `support_mode=true`
+// automáticamente. El cookie expira a las `ttl_seconds` o cuando el caller
+// invoca `deactivateSupportModeForTenant`.
+export function activateSupportModeForTenant(session, tenantId, { justification } = {}) {
+  return request(`/me/support-mode/${encodeURIComponent(tenantId)}`, {
+    method: 'POST',
+    session,
+    body: justification ? { justification } : {},
+  });
+}
+
+export function deactivateSupportModeForTenant(session, tenantId) {
+  return request(`/me/support-mode/${encodeURIComponent(tenantId)}`, {
+    method: 'DELETE',
+    session,
+  });
+}
+
 export function listTenantMembers(session, tenantId) {
   return request(`/tenants/${tenantId}/members`, { session, tenantId });
 }

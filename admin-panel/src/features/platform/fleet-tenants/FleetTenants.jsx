@@ -25,19 +25,36 @@ import styles from './FleetTenants.module.css';
  * Visual reference: `docs/HTML DESIGN/Platform Owner/01 _ Fleet _ Tenants.html`.
  */
 export function FleetTenants() {
-  const { session, profile, handleTenantCreated } = useTenantContext();
+  const { session, profile, handleTenantCreated, activateSupportMode } = useTenantContext();
   const permissions = usePermissions({ profile, tenant: null });
   const navigate = useNavigate();
   const [filters, setFilters] = useState({});
   const [selected, setSelected] = useState(null);
+  const [supportError, setSupportError] = useState(null);
 
   const { items, total, loading, error, refresh } = useFleetTenants({
     session,
     filters: { ...filters, limit: 100, offset: 0 },
   });
 
-  function handleSupportInto(tenant) {
+  async function handleSupportInto(tenant) {
     if (!tenant?.slug) return;
+    setSupportError(null);
+    // BUG-008 — antes solo navegábamos, lo que dejaba al user en "Sin
+    // acceso a ningún módulo" si su JWT no tenía `support_mode=true`
+    // permanente. Ahora activamos el toggle temporal vía endpoint
+    // (cookie scoped + audit) ANTES de navegar. Si falla, mostramos el
+    // error y NO navegamos — el user queda en /platform/tenants sabiendo
+    // que no entró.
+    try {
+      await activateSupportMode(tenant.id);
+    } catch (err) {
+      setSupportError(
+        err?.message
+          || 'No se pudo activar support_mode. Tu sesión puede no tener el rol platform_owner.',
+      );
+      return;
+    }
     handleTenantCreated?.({
       ...tenant,
       label: `${tenant.slug} · ${tenant.id}`,
@@ -72,6 +89,14 @@ export function FleetTenants() {
         />
 
         <FleetKpis items={items} total={total} />
+
+        {supportError ? (
+          <Card padding="md">
+            <p role="alert" className={styles.supportError}>
+              {supportError}
+            </p>
+          </Card>
+        ) : null}
 
         <Card padding="md">
           <FleetFilters filters={filters} onChange={setFilters} />

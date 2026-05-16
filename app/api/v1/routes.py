@@ -91,6 +91,7 @@ from app.api.v1.schemas import (
 )
 from app.core.config import get_settings
 from app.core.security import (
+    SUPPORT_MODE_COOKIE_NAME,
     authenticate_request,
     has_jwt_role,
     require_mfa_for_privileged,
@@ -98,6 +99,7 @@ from app.core.security import (
     require_platform_owner,
     require_service,
 )
+from app.core.signed_cookies import pack_signed_payload
 from app.db.pool import get_db, record_to_dict
 from app.services import feature_flags as feature_flags_service
 from app.services import locale as locale_service
@@ -10973,6 +10975,169 @@ async def revoke_my_session(
         },
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ─── BUG-008 — Support mode opt-in temporal por sesión ──────────────────────
+# Reemplaza el workaround actual de setear `app_metadata.support_mode=true`
+# permanente en Auth0 (ver `BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE` en
+# `scripts/configure-auth0.sh`). Ahora el `platform_owner` activa el modo
+# explícitamente para UN tenant a la vez; el cookie tiene TTL (1h default)
+# y `authenticate_request` solo lo aplica si matchea el `X-Tenant-Id` del
+# request. Esto respeta TASK-0077 — opt-in deliberado, audit trail, blast
+# radius acotado a un tenant.
+
+SUPPORT_MODE_TTL_SECONDS = 60 * 60  # 1 hora — alcanza para una sesión de soporte
+SUPPORT_MODE_MIN_JUSTIFICATION_LEN = 8
+
+
+@me_router.post('/me/support-mode/{tenant_id}', status_code=status.HTTP_201_CREATED)
+async def activate_support_mode(
+    tenant_id: UUID,
+    request: Request,
+    response: Response,
+    payload: dict | None = None,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """BUG-008 — activa support_mode opt-in temporal para `tenant_id`.
+
+    Requiere:
+      - JWT validado como user (no service token).
+      - Rol global `platform_owner` (sin esto, el rol no tiene scope
+        cross-tenant y el toggle es vacío).
+      - `tenant_id` existe y no está borrado.
+      - body opcional `{"justification": "<≥8 chars>"}` — recomendado por
+        forensia, requerido si lo dejas vacío para no fomentar logging
+        sin contexto (la API NO falla si está vacío, solo registra
+        'unspecified' en el audit — pero el frontend lo prompt en el modal).
+
+    Side effects:
+      - Emite cookie HTTP-only firmado con payload {sub, tid, iat, exp}.
+      - Audit log durable `support_mode.activated` con metadata completa.
+
+    El cookie es scoped al tenant_id por construcción: el JWT que sigue
+    llegando puede tener `support_mode=false` pero `authenticate_request`
+    lo OR-ea con el cookie SOLO si matchea el `X-Tenant-Id` que el caller
+    manda. Otros tenant_ids no se ven afectados aunque el cookie esté en
+    el browser (anti-blast-radius).
+    """
+    actor_type = getattr(request.state, 'actor_type', None)
+    if actor_type != 'user':
+        raise HTTPException(status_code=401, detail='Authentication required')
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        raise HTTPException(status_code=401, detail='Authentication required')
+    if 'platform_owner' not in (getattr(request.state, 'roles', []) or []):
+        raise HTTPException(
+            status_code=403,
+            detail='platform_owner role required to activate support_mode',
+        )
+
+    # Validar que el tenant existe — el cookie scoped a un UUID inexistente
+    # no es exploitable, pero el 404 evita confusión operacional.
+    tenant_exists = await conn.fetchval(
+        'select 1 from app.tenants where id=$1 and deleted_at is null',
+        tenant_id,
+    )
+    if not tenant_exists:
+        raise HTTPException(status_code=404, detail='Tenant not found')
+
+    justification = ''
+    if isinstance(payload, dict):
+        raw_just = payload.get('justification')
+        if isinstance(raw_just, str):
+            justification = raw_just.strip()[:512]
+
+    settings = get_settings()
+    now = datetime.now(UTC)
+    expires_at = now + timedelta(seconds=SUPPORT_MODE_TTL_SECONDS)
+    cookie_payload = {
+        'sub': actor_id,
+        'tid': str(tenant_id),
+        'iat': int(now.timestamp()),
+        'exp': int(expires_at.timestamp()),
+    }
+    cookie_value = pack_signed_payload(settings.jwt_secret, cookie_payload)
+    # `samesite='lax'` permite que la navegación desde la vista platform
+    # mande el cookie cuando el usuario hace click en "Ver como tenant".
+    # `secure=True` en prod — en localhost dev http no se setea (cookie
+    # `secure` no se envía en http). Sin esa toggle el flow dev se rompe.
+    response.set_cookie(
+        SUPPORT_MODE_COOKIE_NAME,
+        cookie_value,
+        httponly=True,
+        samesite='lax',
+        max_age=SUPPORT_MODE_TTL_SECONDS,
+        secure=settings.app_env != 'local',
+    )
+
+    await audit_durably(
+        tenant_id=tenant_id,
+        actor_type='user',
+        actor_id=actor_id,
+        action='support_mode.activated',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+        metadata={
+            'expires_at': expires_at.isoformat(),
+            'ttl_seconds': SUPPORT_MODE_TTL_SECONDS,
+            'justification': justification or 'unspecified',
+            'justification_length': len(justification),
+        },
+    )
+
+    return {
+        'tenant_id': str(tenant_id),
+        'expires_at': expires_at.isoformat(),
+        'ttl_seconds': SUPPORT_MODE_TTL_SECONDS,
+    }
+
+
+@me_router.delete('/me/support-mode/{tenant_id}', status_code=status.HTTP_204_NO_CONTENT)
+async def deactivate_support_mode(
+    tenant_id: UUID,
+    request: Request,
+    response: Response,
+):
+    """BUG-008 — revoca el cookie de support_mode antes del TTL.
+
+    No requiere que el cookie matchee exactamente el `tenant_id` del path
+    — borramos el cookie sea cual sea. Si el caller no tiene un cookie
+    activo, igual devolvemos 204 (idempotente — el cliente no necesita
+    diferenciar "no había nada que borrar" de "borrado exitoso").
+
+    Audit log emitido siempre para que se vea el intento del operator de
+    salir del modo (útil para detectar patrones de "activar/desactivar
+    repetidamente" que podrían indicar abuso).
+    """
+    actor_type = getattr(request.state, 'actor_type', None)
+    if actor_type != 'user':
+        raise HTTPException(status_code=401, detail='Authentication required')
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        raise HTTPException(status_code=401, detail='Authentication required')
+
+    response.delete_cookie(
+        SUPPORT_MODE_COOKIE_NAME,
+        httponly=True,
+        samesite='lax',
+    )
+
+    await audit_durably(
+        tenant_id=tenant_id,
+        actor_type='user',
+        actor_id=actor_id,
+        action='support_mode.deactivated',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+        metadata={},
+    )
+    # codex P2 fix: NO retornar un Response nuevo — eso descarta los
+    # headers que `response.delete_cookie(...)` puso en el response
+    # inyectado por FastAPI (incluido el `Set-Cookie` con `Max-Age=0` que
+    # el browser necesita para expirar el cookie). Mutamos el status_code
+    # en el response inyectado y lo devolvemos tal cual.
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 web_router = APIRouter(prefix='/web', tags=['public-web-widget'])

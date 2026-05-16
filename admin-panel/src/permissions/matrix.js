@@ -202,12 +202,21 @@ export const ROLE_HOME = Object.freeze({
  *      accidentalmente en un tenant ajeno con privilegios elevados sin haber
  *      activado support_mode a propósito (espejo del backend).
  *
+ * BUG-008 — `supportModeOverride` agrega una tercera fuente de support_mode
+ * en el contexto de tenant: si el `TenantProvider` activó el toggle
+ * temporal (cookie scoped server-side) Y el `tenantId` del override matchea
+ * el tenant activo, OR-eamos con `profile.support_mode` del JWT. El backend
+ * tiene su propio gating (cookie + matcheo con `X-Tenant-Id` en
+ * `authenticate_request`), así que este flag de frontend solo afecta lo
+ * que la UI muestra/oculta — los writes igual van a tener que pasar el
+ * gate del servidor.
+ *
  * Roles de tenant (`tenant.roles` / `tenant.role` legacy) se incluyen siempre.
  * Devuelve un array deduplicado. Si nada aplica → `[]` (fail-closed).
  */
 const GLOBAL_ROLES = ['owner', 'platform_owner'];
 
-export function resolveActiveRoles({ profile, tenant } = {}) {
+export function resolveActiveRoles({ profile, tenant, supportModeOverride = null } = {}) {
   const tenantRoles = Array.isArray(tenant?.roles)
     ? tenant.roles
     : tenant?.role
@@ -223,10 +232,22 @@ export function resolveActiveRoles({ profile, tenant } = {}) {
     // profile. BUG-006: sin esto, platform_owner cae al onboarding de tenant.
     profileRoles = profileGlobalRoles;
   } else {
-    // Contexto de tenant: TASK-0077 — profile.roles solo se sumarn al merge
-    // bajo support_mode + rol global, para forzar opt-in explícito a actuar
-    // cross-tenant.
-    const supportMode = Boolean(profile?.support_mode) && profileGlobalRoles.length > 0;
+    // Contexto de tenant: TASK-0077 + BUG-008 — profile.roles se sumarn al
+    // merge si CUALQUIERA de las dos fuentes de support_mode aplica:
+    //   * `profile.support_mode` del JWT (modo permanente — workaround legacy).
+    //   * `supportModeOverride.tenantId === tenant.id` (opt-in temporal vía
+    //     POST /v1/me/support-mode/{tenant_id}; el backend valida el cookie
+    //     y bumpea su propio request.state.support_mode).
+    // En ambos casos requerimos que el profile tenga un rol global —
+    // support_mode sin rol global es inocuo (no escala nada).
+    const overrideMatchesTenant = Boolean(
+      supportModeOverride
+      && tenant?.id
+      && String(supportModeOverride.tenantId) === String(tenant.id),
+    );
+    const supportMode =
+      (Boolean(profile?.support_mode) || overrideMatchesTenant)
+      && profileGlobalRoles.length > 0;
     profileRoles = supportMode ? profileRoleList : [];
   }
 

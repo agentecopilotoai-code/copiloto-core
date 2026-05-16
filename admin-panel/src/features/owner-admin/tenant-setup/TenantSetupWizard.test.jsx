@@ -41,11 +41,15 @@ vi.mock('../../../services/coreApi.js', () => ({
 // Mock TenantProvider so `usePermissions` resolves with an owner role via
 // `profile.support_mode` (no tenant required). Owner gets RW on
 // `tenant_setup.write`, which is the gate UI-021 added at the wizard root.
-vi.mock('../../../app/TenantProvider.jsx', () => ({
-  useTenantContext: () => ({
+vi.mock('../../../app/TenantProvider.jsx', () => {
+  const ctx = {
     profile: { sub: 'u-owner', support_mode: true, roles: ['owner'] },
-  }),
-}));
+  };
+  return {
+    useTenantContext: () => ctx,
+    useOptionalTenantContext: () => ctx,
+  };
+});
 
 // eslint-disable-next-line import/first
 import { TenantSetupWizard } from './TenantSetupWizard.jsx';

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
-import hmac
 import json
 import secrets
 import time
@@ -25,6 +23,11 @@ from fastapi import (
 from fastapi.responses import FileResponse, RedirectResponse
 
 from app.admin.config import get_admin_settings
+from app.core.signed_cookies import (
+    _sign as _signed_cookies_sign,
+    pack_signed_payload,
+    unpack_signed_payload,
+)
 from app.db.pool import db
 
 STATIC_DIR = Path(__file__).parent / 'static'
@@ -39,31 +42,25 @@ _ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support':
 _PRIVILEGED_ROLES = {'admin', 'owner', 'platform_owner'}
 
 
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode('ascii').rstrip('=')
-
-
+# BUG-008: el wire format del cookie (HMAC-SHA256 + base64url) se extrajo a
+# `app/core/signed_cookies.py` para que el endpoint nuevo /v1/me/support-mode
+# pueda reusarlo sin duplicación. Estos wrappers locales preservan la API
+# anterior (`_sign(value)` / `_pack_state(payload)` / `_unpack_state(value)`)
+# que el resto del módulo usaba; solo cambia que el secret se inyecta a
+# través del helper en vez de leerse implícitamente.
 def _sign(value: str) -> str:
     settings = get_admin_settings()
-    digest = hmac.new(
-        settings.state_secret.encode('utf-8'),
-        value.encode('utf-8'),
-        hashlib.sha256,
-    ).digest()
-    return _b64url(digest)
+    return _signed_cookies_sign(settings.state_secret, value)
 
 
 def _pack_state(payload: dict[str, Any]) -> str:
-    raw = _b64url(json.dumps(payload, separators=(',', ':')).encode('utf-8'))
-    return f'{raw}.{_sign(raw)}'
+    settings = get_admin_settings()
+    return pack_signed_payload(settings.state_secret, payload)
 
 
 def _unpack_state(value: str) -> dict[str, Any] | None:
-    raw, separator, signature = value.partition('.')
-    if not separator or not hmac.compare_digest(_sign(raw), signature):
-        return None
-    padding = '=' * (-len(raw) % 4)
-    return json.loads(base64.urlsafe_b64decode(raw + padding))
+    settings = get_admin_settings()
+    return unpack_signed_payload(settings.state_secret, value)
 
 
 def _auth0_base_url() -> str:
@@ -168,6 +165,15 @@ def _core_api_url(path: str, query: str = '') -> str:
     return url
 
 
+# BUG-008 (codex P1 fix): cookies que el browser puede mandar al BFF y
+# que SÍ queremos forwardear al Core. Es un allowlist deliberado — NO
+# forwardamos `copilotoia_admin_session` (es opaco al Core y daría info
+# innecesaria al cluster productivo). Solo `copilotoia_support_mode` que
+# el Core necesita leer para bumpear `request.state.support_mode` en
+# `authenticate_request`.
+_CORE_API_FORWARDED_COOKIES = ('copilotoia_support_mode',)
+
+
 def _core_api_headers(
     request: Request, session: dict[str, Any], has_body: bool
 ) -> dict[str, str]:
@@ -190,6 +196,18 @@ def _core_api_headers(
         headers['x-admin-user-email'] = profile['email']
     if profile.get('name'):
         headers['x-admin-user-name'] = profile['name']
+    # BUG-008 (codex P1 fix): el endpoint `/v1/me/support-mode/{tenant_id}`
+    # emite una cookie `copilotoia_support_mode` que `authenticate_request`
+    # lee en cada request al Core para bumpear `support_mode`. Sin forwarding,
+    # el browser nunca recibe la cookie y la próxima request del panel sigue
+    # con `support_mode=false` → el toggle no aplica.
+    forwarded_cookies = []
+    for name in _CORE_API_FORWARDED_COOKIES:
+        value = request.cookies.get(name)
+        if value:
+            forwarded_cookies.append(f'{name}={value}')
+    if forwarded_cookies:
+        headers['cookie'] = '; '.join(forwarded_cookies)
     return headers
 
 
@@ -549,11 +567,22 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
     content_type = upstream_response.headers.get('content-type')
     if content_type:
         response_headers['content-type'] = content_type
-    return Response(
+    proxied = Response(
         content=upstream_response.content,
         status_code=upstream_response.status_code,
         headers=response_headers,
     )
+    # BUG-008 (codex P1 fix): forwardear `Set-Cookie` del Core al browser.
+    # Sin esto, la cookie `copilotoia_support_mode` que el endpoint
+    # `/v1/me/support-mode/{tenant_id}` emite NUNCA llega al browser y el
+    # toggle nunca persiste. Una sola response puede tener MÚLTIPLES
+    # `Set-Cookie` (POST emite cookie nuevo, DELETE emite cookie expirado),
+    # así que usamos `httpx.Headers.get_list('set-cookie')` (`.get` solo
+    # devuelve el primero) y `MutableHeaders.append` (Starlette soporta
+    # multi-value via append; pasar como dict colapsaría a uno solo).
+    for set_cookie in upstream_response.headers.get_list('set-cookie'):
+        proxied.headers.append('set-cookie', set_cookie)
+    return proxied
 
 
 # BUG-002 fix: SPA fallback. Any `/admin/<react-router-path>` that the user

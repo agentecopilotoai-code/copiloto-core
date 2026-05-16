@@ -7,6 +7,16 @@ from fastapi import Header, HTTPException, Request, status
 from jose import JWTError, jwt
 
 from app.core.config import get_settings
+from app.core.signed_cookies import unpack_signed_payload
+
+# BUG-008 — `POST /v1/me/support-mode/{tenant_id}` emite este cookie HTTP-only
+# firmado para activar support_mode OPT-IN TEMPORAL scoped a un tenant
+# específico. `authenticate_request` lo lee al validar la request y, si
+# matchea el `X-Tenant-Id` y el `sub` del JWT y no expiró, OR-ea con
+# `support_mode` del JWT. Esto reemplaza el workaround de setear
+# `app_metadata.support_mode=true` permanente en Auth0 (que daba acceso
+# cross-tenant siempre, sin opt-in).
+SUPPORT_MODE_COOKIE_NAME = 'copilotoia_support_mode'
 
 _jwks_cache: dict[str, tuple[float, dict]] = {}
 # TASK-0077: shared role ranking used by both JWT-session checks
@@ -165,6 +175,11 @@ async def authenticate_request(
     request.state.actor_id = None
     request.state.roles = []
     request.state.support_mode = False
+    # BUG-008 — `support_mode_source` distingue cómo se activó: 'jwt' (claim
+    # permanente), 'cookie' (opt-in temporal vía /v1/me/support-mode/{tid}),
+    # 'service' (service token interno con support_mode auto-true), o None.
+    # Permite filtrar audit logs y detectar abuso del modo permanente.
+    request.state.support_mode_source = None
     request.state.mfa_verified = False
     request.state.email = None
     request.state.name = None
@@ -192,6 +207,7 @@ async def authenticate_request(
     if token == settings.service_token:
         request.state.actor_type = 'service'
         request.state.support_mode = True
+        request.state.support_mode_source = 'service'
         return
 
     payload = await _decode_user_token(token, settings)
@@ -213,6 +229,33 @@ async def authenticate_request(
     if isinstance(roles, str):
         roles = [roles]
 
+    # BUG-008 — cookie scoped puede bumpear support_mode SOLO si matchea
+    # `X-Tenant-Id` Y el `sub` del JWT. El cookie no escala roles globales
+    # (esos siguen viniendo del JWT firmado por Auth0); solo permite que el
+    # rol global `platform_owner` aplique dentro de un tenant específico
+    # durante el TTL del cookie. Una request sin `X-Tenant-Id` ignora el
+    # cookie — el opt-in es per-tenant por diseño (anti-blast-radius).
+    support_mode_source = 'jwt' if support_mode else None
+    if not support_mode and x_tenant_id:
+        cookie_value = request.cookies.get(SUPPORT_MODE_COOKIE_NAME)
+        if cookie_value:
+            cookie_payload = unpack_signed_payload(settings.jwt_secret, cookie_value)
+            if cookie_payload:
+                cookie_tid = cookie_payload.get('tid')
+                cookie_sub = cookie_payload.get('sub')
+                cookie_exp = cookie_payload.get('exp')
+                now_ts = int(datetime.now(UTC).timestamp())
+                if (
+                    isinstance(cookie_tid, str)
+                    and cookie_tid == str(x_tenant_id)
+                    and isinstance(cookie_sub, str)
+                    and cookie_sub == payload.get('sub')
+                    and isinstance(cookie_exp, int)
+                    and cookie_exp > now_ts
+                ):
+                    support_mode = True
+                    support_mode_source = 'cookie'
+
     if token_tenant_id and x_tenant_id and x_tenant_id != token_tenant_id and not support_mode:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -222,6 +265,11 @@ async def authenticate_request(
     request.state.actor_id = payload.get('sub')
     request.state.roles = roles
     request.state.support_mode = support_mode
+    # BUG-008 — debug-friendly: el resto de la app puede distinguir
+    # support_mode permanente (JWT) de support_mode temporal (cookie) sin
+    # tener que re-parsear el cookie. Útil para audit (sabremos si la
+    # acción ocurrió bajo opt-in temporal o bajo el modo legacy).
+    request.state.support_mode_source = support_mode_source
     request.state.mfa_verified = _extract_mfa_verified(payload, namespace)
     request.state.email = payload.get('email')
     request.state.name = payload.get('name') or payload.get('nickname')

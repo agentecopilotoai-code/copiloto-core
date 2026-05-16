@@ -263,6 +263,70 @@ describe('resolveActiveRoles()', () => {
     });
     expect(roles.filter((r) => r === 'owner')).toHaveLength(1);
   });
+
+  // ─── BUG-008: supportModeOverride opt-in temporal por tenant ──────────
+
+  it('BUG-008: supportModeOverride matcheando tenant.id aplica roles globales', () => {
+    // Replica el flujo "Ver como tenant": el frontend activó el toggle
+    // via POST /v1/me/support-mode/{tenant.id}, así que aunque el JWT
+    // tenga `support_mode=false`, el override del provider permite que
+    // el rol global aplique en ESTE tenant.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: false },
+      tenant: { id: 'tenant-acme', roles: [] },
+      supportModeOverride: { tenantId: 'tenant-acme', expiresAt: null },
+    });
+    expect(roles).toContain('platform_owner');
+  });
+
+  it('BUG-008: supportModeOverride scoped — NO aplica si tenant.id no matchea', () => {
+    // El cookie es scoped a UN tenant_id. Si el user navega a OTRO
+    // tenant donde NO activó el toggle, el override no debe filtrar
+    // roles globales — sino reabriríamos el blast radius.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: false },
+      tenant: { id: 'tenant-other', roles: [] },
+      supportModeOverride: { tenantId: 'tenant-acme', expiresAt: null },
+    });
+    expect(roles).toEqual([]);
+    expect(roles).not.toContain('platform_owner');
+  });
+
+  it('BUG-008: supportModeOverride es noop sin rol global en profile', () => {
+    // Sin rol global, el toggle no escala nada — solo permite que el
+    // rol existente aplique cross-tenant. Para un user que NO es
+    // platform_owner, el override es inocuo.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['admin'], support_mode: false },
+      tenant: { id: 'tenant-acme', roles: ['viewer'] },
+      supportModeOverride: { tenantId: 'tenant-acme', expiresAt: null },
+    });
+    expect(roles).toEqual(['viewer']);
+    expect(roles).not.toContain('admin');
+  });
+
+  it('BUG-008: support_mode del JWT (legacy) sigue funcionando sin override', () => {
+    // El workaround viejo (BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=true)
+    // marca el user permanente. Ese path no se rompe con el fix.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: true },
+      tenant: { id: 'tenant-acme', roles: [] },
+      supportModeOverride: null,
+    });
+    expect(roles).toContain('platform_owner');
+  });
+
+  it('BUG-008: comparison de tenant.id usa String() — UUID vs UUID-like string', () => {
+    // El tenant.id puede llegar como UUID object o string (depende del
+    // serializer). El override usa String() en ambos para no fallar por
+    // comparación de tipos cuando son lógicamente iguales.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: false },
+      tenant: { id: 'abc-123', roles: [] },
+      supportModeOverride: { tenantId: 'abc-123', expiresAt: null },
+    });
+    expect(roles).toContain('platform_owner');
+  });
 });
 
 describe('ROLE_HOME', () => {

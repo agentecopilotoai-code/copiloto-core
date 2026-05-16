@@ -1,0 +1,63 @@
+/* BUG-008 — Banner persistente arriba del workspace cuando el
+   platform_owner opera bajo support_mode opt-in temporal.
+   Colores: warning intencionalmente prominente para que NO se ignore.
+   Posición: sticky al top del workspace (no del viewport) para que
+   acompañe el scroll del módulo activo.
+   Tokens 100% var(--...) — sin literales. */
+
+.banner {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--warn-soft);
+  border-bottom: 1px solid var(--warn);
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+}
+
+.exitButton {
+  flex-shrink: 0;
+  background: var(--warn);
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--panel);
+  cursor: pointer;
+  font: inherit;
+  font-weight: var(--fw-medium);
+  padding: var(--space-1) var(--space-3);
+}
+
+.exitButton:hover:not([disabled]) {
+  filter: brightness(0.95);
+}
+
+.exitButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.exitButton:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+@media (max-width: 1024px) {
+  .banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+  .exitButton {
+    width: 100%;
+  }
+}

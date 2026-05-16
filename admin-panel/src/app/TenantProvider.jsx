@@ -2,7 +2,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 
 import { useTenantOptions } from '../hooks/useTenantOptions.js';
 import { highestRole } from '../permissions/index.js';
-import { listMyTenants } from '../services/coreApi.js';
+import {
+  activateSupportModeForTenant,
+  deactivateSupportModeForTenant,
+  listMyTenants,
+} from '../services/coreApi.js';
 
 export const ACTIVE_TENANT_STORAGE_KEY = 'copilotoia.activeTenantId';
 
@@ -83,6 +87,45 @@ export function TenantProvider({ session, children }) {
     });
   }, []);
 
+  // BUG-008 — supportModeOverride: opt-in temporal del `platform_owner`
+  // para operar dentro de UN tenant ajeno. Reemplaza el workaround de
+  // tener `app_metadata.support_mode=true` permanente en Auth0. La forma:
+  //   { tenantId: string, expiresAt: Date | null }   → modo activo
+  //   null                                            → modo inactivo
+  // El cookie HTTP-only firmado vive en el browser (lo setea el endpoint
+  // POST /v1/me/support-mode/{tenant_id}); este state es solo para que el
+  // frontend pueda mostrar el banner persistente + ajustar permisos UI vía
+  // resolveActiveRoles. La fuente de verdad sigue siendo la cookie + el
+  // JWT validados server-side.
+  const [supportModeOverride, setSupportModeOverride] = useState(null);
+
+  const activateSupportMode = useCallback(
+    async (tenantId, { justification } = {}) => {
+      if (!tenantId) return null;
+      const response = await activateSupportModeForTenant(session, tenantId, { justification });
+      const expiresAt = response?.expires_at ? new Date(response.expires_at) : null;
+      setSupportModeOverride({ tenantId: String(tenantId), expiresAt });
+      return response;
+    },
+    [session],
+  );
+
+  const deactivateSupportMode = useCallback(
+    async (tenantId) => {
+      // Limpia el state local SIEMPRE — aunque el backend falle (cookie
+      // ya revocada, network drop, etc.), el browser no debe quedar con
+      // el banner "estás en support_mode" si el operator pidió salir.
+      // El backend es idempotente (204 incluso sin cookie activo).
+      setSupportModeOverride(null);
+      try {
+        await deactivateSupportModeForTenant(session, tenantId);
+      } catch {
+        /* best-effort — el cookie ya quedó borrado en el state local */
+      }
+    },
+    [session],
+  );
+
   const value = useMemo(
     () => ({
       session,
@@ -91,8 +134,21 @@ export function TenantProvider({ session, children }) {
       tenantsLoading,
       hasTenant: tenantOptions.length > 0,
       handleTenantCreated,
+      // BUG-008
+      supportModeOverride,
+      activateSupportMode,
+      deactivateSupportMode,
     }),
-    [session, profile, tenantOptions, tenantsLoading, handleTenantCreated],
+    [
+      session,
+      profile,
+      tenantOptions,
+      tenantsLoading,
+      handleTenantCreated,
+      supportModeOverride,
+      activateSupportMode,
+      deactivateSupportMode,
+    ],
   );
 
   return <TenantContext.Provider value={value}>{children}</TenantContext.Provider>;
@@ -107,6 +163,18 @@ export function useTenantContext() {
     throw new Error('useTenantContext debe usarse dentro de <TenantProvider>');
   }
   return ctx;
+}
+
+/**
+ * Variante tolerante: devuelve `null` cuando el contexto NO está disponible
+ * (en lugar de lanzar). Útil para componentes que pueden montarse en tests
+ * aislados del provider — ej. `SupportModeBanner` rendererizado dentro de
+ * `TenantShell.test.jsx` que no envuelve con `<TenantProvider>`.
+ *
+ * El consumer debe handlear el `null` (típicamente renderizando nada).
+ */
+export function useOptionalTenantContext() {
+  return useContext(TenantContext);
 }
 
 /**
