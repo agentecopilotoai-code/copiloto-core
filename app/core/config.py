@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     # toggle and ``challengeWith`` Action are unavailable), so local/dev work
     # is not blocked by an MFA flow Auth0 cannot serve.
     mfa_enforcement_enabled: bool = True
+    # SEC-010 fix — gate del bloque diagnóstico cross-tenant que loguea el
+    # `actual_tenant_id` y `actual_status` de una conversación cuando un
+    # caller pega un 404. Esa metadata puede pertenecer a OTRO tenant
+    # (alguien pidió `/v1/tenants/A/conversations/<id-de-B>`) y exponerla
+    # en logs operacionales filtra info cross-tenant a operadores que no
+    # deberían verla. Default false. Para debugging de incidentes, setear
+    # `DEBUG_CROSS_TENANT_DIAGNOSTICS=1` en el `.env` y reiniciar — los
+    # logs habilitados solo deben mantenerse activos durante la
+    # investigación (procedimiento operacional: documentar quién lo
+    # activó, por qué, y desactivarlo cuando termine).
+    debug_cross_tenant_diagnostics: bool = False
     service_token: str = Field(min_length=16)
     meta_graph_version: str = 'v23.0'
     s3_endpoint_url: str = 'http://minio:9000'

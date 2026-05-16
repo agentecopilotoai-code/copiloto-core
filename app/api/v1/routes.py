@@ -4955,27 +4955,55 @@ async def get_conversation(
             break
         await asyncio.sleep(0.1)
     if not row:
-        diagnostic = await conn.fetchrow(
-            """
-            select
-              exists(select 1 from app.conversations where id=$1) as exists_any_tenant,
-              exists(select 1 from app.conversations where tenant_id=$2 and id=$1) as exists_for_tenant,
-              (select tenant_id::text from app.conversations where id=$1 limit 1) as actual_tenant_id,
-              (select status from app.conversations where id=$1 limit 1) as actual_status
-            """,
-            conversation_id,
-            tenant_id,
-        )
-        log.warning(
-            'operations.conversation.detail_not_found',
-            tenant_id=str(tenant_id),
-            conversation_id=str(conversation_id),
-            actor_id=getattr(request.state, 'actor_id', None),
-            exists_any_tenant=bool(diagnostic and diagnostic['exists_any_tenant']),
-            exists_for_tenant=bool(diagnostic and diagnostic['exists_for_tenant']),
-            actual_tenant_id=diagnostic['actual_tenant_id'] if diagnostic else None,
-            actual_status=diagnostic['actual_status'] if diagnostic else None,
-        )
+        # SEC-010 fix — el bloque diagnóstico ANTES corría siempre y logueaba
+        # `actual_tenant_id` + `actual_status` aún cuando el conversation_id
+        # pedido pertenecía a OTRO tenant. Eso filtraba metadata cross-tenant
+        # a logs operacionales (alguien con acceso a `docker logs` o al log
+        # aggregator podía descubrir qué conversaciones existen en otros
+        # tenants y su estado, simplemente probando UUIDs random vía
+        # `/v1/tenants/<su-tenant>/conversations/<uuid-random>`).
+        #
+        # Ahora el bloque está gated por `debug_cross_tenant_diagnostics`
+        # (env `DEBUG_CROSS_TENANT_DIAGNOSTICS=1`, default false). Sin el
+        # flag, solo logueamos los identificadores del caller (su tenant
+        # + el conversation_id que pidió + actor) — info que ELLOS ya
+        # conocen. El leak cierra.
+        #
+        # Para investigar un 404 sospechoso, operadores enable el flag
+        # transitoriamente (procedimiento en runbook).
+        settings = get_settings()
+        if settings.debug_cross_tenant_diagnostics:
+            diagnostic = await conn.fetchrow(
+                """
+                select
+                  exists(select 1 from app.conversations where id=$1) as exists_any_tenant,
+                  exists(select 1 from app.conversations where tenant_id=$2 and id=$1) as exists_for_tenant,
+                  (select tenant_id::text from app.conversations where id=$1 limit 1) as actual_tenant_id,
+                  (select status from app.conversations where id=$1 limit 1) as actual_status
+                """,
+                conversation_id,
+                tenant_id,
+            )
+            log.warning(
+                'operations.conversation.detail_not_found',
+                tenant_id=str(tenant_id),
+                conversation_id=str(conversation_id),
+                actor_id=getattr(request.state, 'actor_id', None),
+                exists_any_tenant=bool(diagnostic and diagnostic['exists_any_tenant']),
+                exists_for_tenant=bool(diagnostic and diagnostic['exists_for_tenant']),
+                actual_tenant_id=diagnostic['actual_tenant_id'] if diagnostic else None,
+                actual_status=diagnostic['actual_status'] if diagnostic else None,
+                diagnostic_flag='DEBUG_CROSS_TENANT_DIAGNOSTICS',
+            )
+        else:
+            # Log mínimo: solo info que el caller YA conoce (su tenant_id, su
+            # conversation_id pedido, su actor_id). Cero info cross-tenant.
+            log.info(
+                'operations.conversation.detail_not_found',
+                tenant_id=str(tenant_id),
+                conversation_id=str(conversation_id),
+                actor_id=getattr(request.state, 'actor_id', None),
+            )
         raise HTTPException(status_code=404, detail='Conversation not found')
     log.info(
         'operations.conversation.detail_found',

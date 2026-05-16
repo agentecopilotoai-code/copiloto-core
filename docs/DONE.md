@@ -15,6 +15,41 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-010.3 — Cross-tenant conversation metadata logged on 404 (gated por env flag)
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el sub-finding de SEC-010 `Cross-tenant conversation metadata logged on 404`. El handler `get_conversation` (`app/api/v1/routes.py:4935`) ejecutaba un query diagnóstico SIEMPRE que devolvía 404, logueando `actual_tenant_id` + `actual_status` de la conversación pedida. Cuando un caller probaba UUIDs random vía `/v1/tenants/<su-tenant>/conversations/<uuid-ajeno>`, el log filtraba: (a) si la conversación existe globalmente, (b) el tenant_id dueño real, (c) su estado actual. Operadores con acceso a `docker logs` o al log aggregator (legítimo para debugging) podían enumerar conversaciones de otros tenants sin querer.
+- **Cambios:**
+  - **`app/core/config.py`** — nuevo field `debug_cross_tenant_diagnostics: bool = False` en `Settings`. Env var `DEBUG_CROSS_TENANT_DIAGNOSTICS` lo activa. Docstring inline documenta el flag con caveat operacional (debe desactivarse cuando termina la investigación).
+  - **`app/api/v1/routes.py::get_conversation`** — el bloque `fetchrow` del query diagnóstico + el `log.warning` con `actual_*` quedan dentro de `if settings.debug_cross_tenant_diagnostics:`. El path por default (flag off) loguea solo `log.info('operations.conversation.detail_not_found', tenant_id=str(tenant_id), conversation_id=str(conversation_id), actor_id=...)` — info que el caller YA conoce, cero leak cross-tenant. El log warning del path flagged incluye `diagnostic_flag='DEBUG_CROSS_TENANT_DIAGNOSTICS'` para que el operator sepa qué flag está activo y cómo desactivarlo.
+- **Archivos:**
+  - `app/core/config.py` — field nuevo con docstring extenso.
+  - `app/api/v1/routes.py` — handler reescrito con if/else.
+  - `tests/test_cross_tenant_diagnostic_gating_static.py` (NEW) — 6 tests static:
+    1. `test_settings_exposes_debug_cross_tenant_diagnostics_default_false`: verifica `Settings.model_fields['debug_cross_tenant_diagnostics']` con `default=False` y `annotation=bool`.
+    2. `test_settings_field_is_documented_in_source`: ancla la decisión al ticket SEC-010 con la mención literal en el código.
+    3. `test_handler_gates_diagnostic_query_behind_flag`: AST-based — localiza el `fetchrow` con el SQL marker `exists_any_tenant` y verifica que su ancestor `if` evalúa la flag.
+    4. `test_handler_logs_minimum_info_when_flag_off`: AST check del `log.info` del path por default — verifica que NO recibe kwargs `actual_tenant_id`, `actual_status`, `exists_any_tenant`, `exists_for_tenant`.
+    5. `test_handler_marks_diagnostic_log_with_flag_name`: el log warning del path flagged incluye `diagnostic_flag='DEBUG_CROSS_TENANT_DIAGNOSTICS'`.
+    6. `test_no_diagnostic_query_outside_gated_block`: el SQL marker NO aparece fuera del handler `get_conversation` Y dentro del handler todas sus ocurrencias están dentro del `if` (defense en profundidad — si alguien copia el query a otro handler, el test falla).
+  - `docs/UI_BACKLOG.md` — sub-finding marcado DONE dentro del cluster SEC-010.
+- **Validaciones:**
+  - `pytest tests/test_cross_tenant_diagnostic_gating_static.py` → 6/6 passed.
+  - `pytest tests/` → 1802/1802 passed (sin regresiones).
+  - `ruff check app/` → clean.
+- **Nota de seguridad:** este fix CIERRA un leak operacional. NO relaja ningún guard de seguridad:
+  - El handler sigue devolviendo `404 Conversation not found` cuando el `conversation_id` no pertenece al tenant — el comportamiento del API no cambia, solo el contenido del log.
+  - Operadores con permisos de debugging legítimo pueden seguir usando el query diagnóstico activando explícitamente el env flag (procedimiento operacional: documentar quién lo activó, por qué, desactivarlo cuando termine; runbook future).
+  - El log mínimo del path por default mantiene auditoría suficiente (4 campos: tenant_id, conversation_id, actor_id, event name) para detectar patrones de scan sin filtrar info ajena.
+- **Sub-findings restantes en SEC-010:**
+  - `DLQ retry is not actually idempotent`
+  - `Hardcoded E2E database role password`
+  - `Malformed tenant timezone can disable bot replies`
+  - `Claude allowlist permits unprompted curl data exfiltration`
+  - `DATABASE_URL password exposed in bootstrap process args`
+
+---
+
 ### BUG-008 — Toggle real de `support_mode` (cookie HMAC scoped + audit + TTL)
 
 - **Fecha:** 2026-05-15
