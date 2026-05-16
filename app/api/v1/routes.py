@@ -293,6 +293,20 @@ def verify_token_hash(verify_token: str) -> bytes:
     return hashlib.sha256(verify_token.encode('utf-8')).digest()
 
 
+_WHATSAPP_WEBHOOK_DUMMY_SECRET = secrets.token_hex(32)
+"""SEC-010 fix — secret estable usado para defender el oracle del webhook
+WhatsApp. Generado al arranque del proceso (token_hex(32) → 64 hex chars,
+formato compatible con `normalize_meta_app_secret`), distinto entre
+workers, nunca puede coincidir con un App Secret real de Meta (es noise
+puro). Cuando el lookup de `tenant_channels` no encuentra el
+`phone_number_id`, igual ejecutamos el HMAC contra este dummy para que
+el tiempo de respuesta (O(n) sobre el body) sea indistinguible de un
+channel real con firma mala — sin esto, un atacante podría enumerar
+phone_number_ids activos midiendo la latencia respuesta o el status
+code (los dos paths de rechazo retornaban 404 vs 401 distinguibles).
+"""
+
+
 def whatsapp_phone_number_id_from_payload(payload: dict[str, Any]) -> str | None:
     for entry in payload.get('entry', []):
         for change in entry.get('changes', []):
@@ -11366,31 +11380,85 @@ async def verify_whatsapp_webhook(
 @webhook_router.post('/whatsapp', status_code=202)
 async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = Depends(get_db), x_hub_signature_256: str | None = Header(default=None, alias='X-Hub-Signature-256')):
     body = await request.body()
+    # SEC-010 fix — Webhook status codes expose active WhatsApp channel IDs.
+    # Antes: parse error → 400, phone_number_id ausente → 404, channel no
+    # encontrado → 404, firma inválida → 401. Diferentes status codes
+    # permitían enumerar phone_number_ids activos en la plataforma.
+    # Ahora: TODO rechazo retorna el mismo 401 con el mismo detail. Además
+    # ejecutamos el HMAC contra `_WHATSAPP_WEBHOOK_DUMMY_SECRET` cuando no
+    # hay channel real para que el tiempo de respuesta (O(n) sobre el body)
+    # tampoco distinga "channel inexistente" de "channel existe + firma
+    # mala". El payload sigue siendo opcional de parsear sin gatear el
+    # rechazo: si falla el JSON, igual computamos el HMAC dummy para
+    # uniformar timing.
+    payload: dict[str, Any] | None
     try:
         payload = json.loads(body or b'{}')
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail='Invalid webhook payload') from exc
+        if not isinstance(payload, dict):
+            payload = None
+    except json.JSONDecodeError:
+        payload = None
 
-    phone_number_id = whatsapp_phone_number_id_from_payload(payload)
-    if not phone_number_id:
-        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
-
-    await conn.execute("select set_config('app.support_mode', 'true', true)")
-    channel = await conn.fetchrow(
-        """
-        select id, tenant_id, app_secret_ref, account_mode
-        from app.tenant_channels
-        where provider='whatsapp_cloud_api'
-          and phone_number_id=$1
-          and status='active'
-        """,
-        phone_number_id,
+    phone_number_id = (
+        whatsapp_phone_number_id_from_payload(payload) if payload is not None else None
     )
-    if not channel:
-        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
 
-    app_secret = resolve_secret_ref(channel['app_secret_ref'])
-    if not verify_signature_with_secret(body, x_hub_signature_256, app_secret):
+    channel = None
+    if phone_number_id:
+        await conn.execute("select set_config('app.support_mode', 'true', true)")
+        channel = await conn.fetchrow(
+            """
+            select id, tenant_id, app_secret_ref, account_mode
+            from app.tenant_channels
+            where provider='whatsapp_cloud_api'
+              and phone_number_id=$1
+              and status='active'
+            """,
+            phone_number_id,
+        )
+
+    # SEC-010 fix — resolver el secret real si hay channel, dummy si no.
+    # `_WHATSAPP_WEBHOOK_DUMMY_SECRET` es nonce estable del proceso,
+    # imposible que matchee con una firma legítima (ver constante).
+    if channel:
+        app_secret = (
+            resolve_secret_ref(channel['app_secret_ref'])
+            or _WHATSAPP_WEBHOOK_DUMMY_SECRET
+        )
+    else:
+        app_secret = _WHATSAPP_WEBHOOK_DUMMY_SECRET
+
+    signature_ok = verify_signature_with_secret(body, x_hub_signature_256, app_secret)
+
+    if not channel or not signature_ok:
+        # SEC-010 fix — auditamos durably para mantener forensia de los
+        # intentos rechazados (sobrevive al rollback del raise). El
+        # `metadata.reason` interno distingue causa real (unknown_channel
+        # vs invalid_signature vs invalid_payload) sin que esa info se
+        # filtre por el status code/body al caller. Operadores ven el
+        # detalle en `app.audit_logs`; el atacante solo ve 401 idéntico.
+        if not payload:
+            reason = 'invalid_payload'
+        elif not phone_number_id:
+            reason = 'missing_phone_number_id'
+        elif not channel:
+            reason = 'unknown_channel'
+        else:
+            reason = 'invalid_signature'
+        await audit_durably(
+            tenant_id=channel['tenant_id'] if channel else None,
+            actor_type='system',
+            actor_id=None,
+            action='webhook.whatsapp_rejected',
+            entity_type='tenant_channel',
+            entity_id=str(channel['id']) if channel else None,
+            metadata={
+                'reason': reason,
+                'phone_number_id_present': bool(phone_number_id),
+                'signature_present': bool(x_hub_signature_256),
+            },
+        )
+        # Mismo status + mismo body sin importar la causa real — cierra el oracle.
         raise HTTPException(status_code=401, detail='Invalid webhook signature')
 
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(channel['tenant_id']))

@@ -15,6 +15,61 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-010.2 — Webhook WhatsApp cierra el oracle de status code + timing
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el sub-finding de SEC-010 `Webhook status codes expose active WhatsApp channel IDs`. El handler `receive_whatsapp_webhook` rechazaba con tres status codes distintos según la causa:
+  - `400 Invalid webhook payload` → JSON inválido
+  - `404 WhatsApp channel not found` → `phone_number_id` ausente del payload OR channel no encontrado en `app.tenant_channels`
+  - `401 Invalid webhook signature` → channel encontrado pero HMAC mal
+- **Vector de ataque:** un atacante shipping `POST /v1/webhooks/whatsapp` con `phone_number_id=<guess>` + firma garbage podía enumerar phone_number_ids activos en la plataforma: 404 vs 401 distinguía "ese phone_number_id NO está activo aquí" de "ese phone_number_id SÍ está activo pero la firma no matchea". Sumado a un timing oracle (el HMAC O(n) sobre el body solo se ejecutaba si el channel existía → ruta sin channel resolvía a `False` rápido, ruta con channel ejecutaba `hmac.new + compare_digest` sobre el body completo), la enumeración era práctica.
+- **Cambios:**
+  - **`app/api/v1/routes.py`** — nueva constante a nivel módulo:
+    ```python
+    _WHATSAPP_WEBHOOK_DUMMY_SECRET = secrets.token_hex(32)
+    ```
+    Generada al arranque del proceso (token_hex(32) → 64 hex chars, formato compatible con `normalize_meta_app_secret`), distinta entre workers, imposible que matchee con un App Secret real de Meta (es noise puro). Docstring extenso explica el propósito.
+  - **Handler `receive_whatsapp_webhook` reescrito**:
+    - JSON parse failure NO levanta 400; pone `payload = None` y sigue al flujo común.
+    - `phone_number_id` ausente NO levanta 404; queda como `None` y sigue.
+    - Lookup del channel se hace solo si hay `phone_number_id`; si no encuentra, `channel = None`.
+    - **HMAC se invoca SIEMPRE** con `verify_signature_with_secret(body, x_hub_signature_256, app_secret)`, donde `app_secret` es:
+      - `resolve_secret_ref(channel['app_secret_ref']) or _WHATSAPP_WEBHOOK_DUMMY_SECRET` si hay channel (el `or` cubre el edge case de channel sin secret persistido).
+      - `_WHATSAPP_WEBHOOK_DUMMY_SECRET` si no hay channel.
+    - **Si no hay channel O firma inválida** → audit_durably(motivo real interno) + `raise HTTPException(401, 'Invalid webhook signature')` uniforme.
+    - El motivo real (`invalid_payload` / `missing_phone_number_id` / `unknown_channel` / `invalid_signature`) se preserva en `metadata.reason` del audit log (`action='webhook.whatsapp_rejected'`) para forensia operacional, sin filtrarse al caller.
+  - **`audit_durably(...)` reusado del fix SEC-010.1** (PR #208): el audit del rechazo sobrevive al rollback del raise; sin esto, los intentos hostiles se perderían junto con la transacción del request.
+- **Archivos:**
+  - `app/api/v1/routes.py` — constante `_WHATSAPP_WEBHOOK_DUMMY_SECRET` + handler reescrito con comentarios inline `SEC-010 fix:` explicando cada cambio.
+  - `tests/test_whatsapp_webhook_oracle_static.py` (NEW) — **8 tests static**:
+    1. Constante existe a nivel módulo y tiene longitud ≥32 chars.
+    2. Inicializada desde `secrets.token_hex(...)` (no string literal predecible).
+    3. **AST-based**: todos los `raise HTTPException` del handler usan `status_code=401` y `detail='Invalid webhook signature'`. Cualquier 400/404/403/etc. rompe el test loudly.
+    4. El detail antiguo (`WhatsApp channel not found`) NO aparece en el cuerpo + ningún `status_code=404` ni `status_code=400`.
+    5. El handler referencia `_WHATSAPP_WEBHOOK_DUMMY_SECRET` Y tiene `or _WHATSAPP_WEBHOOK_DUMMY_SECRET` para el edge case de channel sin secret.
+    6. `verify_signature_with_secret` se invoca **exactamente una vez** y NO dentro de un `if channel` (regression gate contra futura refactorización que vuelva a meterlo en branch condicional).
+    7. `audit_durably` se usa con todos los 4 motivos enumerados y `action='webhook.whatsapp_rejected'`.
+    8. Audit corre **antes** del raise (orden semántico, aunque `audit_durably` sobrevive al rollback igual).
+- **Validaciones:**
+  - `pytest tests/test_whatsapp_webhook_oracle_static.py` → 8/8 passed.
+  - `pytest tests/test_whatsapp_webhook_helpers.py tests/test_whatsapp_channel_binding.py tests/test_webhook_idempotency_static.py tests/test_payment_webhook_audit_durably_static.py` → 91/91 passed (sin regresiones en suites relacionadas).
+  - `ruff check app/api/v1/routes.py tests/test_whatsapp_webhook_oracle_static.py` → clean.
+- **Nota de seguridad:** este fix MEJORA la seguridad sin relajar nada existente:
+  - El handler sigue rechazando lo que tiene que rechazar (JSON inválido, channel inexistente, firma mala). Solo cambia el **shape** del rechazo: status code uniforme + cuerpo uniforme + tiempo uniforme.
+  - `verify_signature_with_secret` sigue usando `hmac.compare_digest` (constant-time comparison contra timing attacks dentro del HMAC).
+  - El motivo real del rechazo se preserva en `app.audit_logs` para que el operador pueda detectar patrones de enumeración (muchos `unknown_channel` desde la misma IP = scan en curso).
+  - El dummy secret nunca puede coincidir con un App Secret legítimo de Meta (es noise de 64 hex chars distinto en cada proceso); un atacante que conozca el código fuente NO puede forjar una firma que matchee.
+  - Cero cambio en RLS, scoping por tenant, `authenticate_request`, etc.
+- **Sub-findings restantes en SEC-010** (siguen PENDING):
+  - `DLQ retry is not actually idempotent`
+  - `Hardcoded E2E database role password`
+  - `Malformed tenant timezone can disable bot replies`
+  - `Claude allowlist permits unprompted curl data exfiltration`
+  - `Cross-tenant conversation metadata logged on 404`
+  - `DATABASE_URL password exposed in bootstrap process args`
+
+---
+
 ### SEC-010.1 — Audit `payment.webhook_rejected` sobrevive al rollback de la request
 
 - **Fecha:** 2026-05-15
