@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import structlog
 
@@ -216,18 +216,32 @@ async def requeue_message(
 ) -> dict[str, Any]:
     """Resetea un mensaje ``status='failed'`` a ``queued`` y lo re-encola.
 
-    Operación idempotente desde el punto de vista del operador: si ya está
-    en ``queued`` (re-clic accidental) la función devuelve
-    ``{'requeued': False, 'reason': 'already_queued'}`` sin lanzar.
-    Devuelve ``None`` si el mensaje no existe en este tenant.
+    SEC-010 (DLQ retry idempotency): la transición ``failed → queued`` se hace
+    en UN solo ``UPDATE ... WHERE status='failed' RETURNING retry_count`` que
+    incrementa atomicamente ``retry_count``. Dos requeues concurrentes del
+    MISMO mensaje (operator dobleclickea, bulk-requeue + manual race, etc.)
+    no pueden ambos ganar el UPDATE — el segundo no matchea ``status='failed'``
+    (porque el primero ya movió a ``queued``) y se reporta como
+    ``already_queued`` sin emitir un segundo domain event. El ``idempotency_key``
+    del domain event se deriva de ``(message_id, retry_count)`` — estable por
+    intento, así que un retry posterior del MISMO ``retry_count`` (escenario
+    teorico de retry de la operación administrativa entera) hace short-circuit
+    en ``on conflict do nothing`` en lugar de emitir un duplicate.
 
-    El reset no toca ningún contador de reintentos automático: la nota del
-    TASK-0065 dice que el reintento manual es decisión del operador y no
-    afecta a la lógica del worker.
+    Operación idempotente desde el punto de vista del operador: si ya está
+    en ``queued`` (re-clic accidental o race) la función devuelve
+    ``{'requeued': False, 'reason': 'already_queued'}`` sin lanzar.
+    Devuelve ``{'requeued': False, 'reason': 'not_found'}`` si el mensaje no
+    existe en este tenant.
+
+    El ``retry_count`` se incrementa SOLO en transiciones reales — operadores
+    pueden inspeccionar la columna para entender cuántas veces se intentó
+    rescatar un mensaje. La lógica del worker no lo lee (el TASK-0065 dice
+    que el retry manual es decisión del operador y no afecta el bot).
     """
     row = await conn.fetchrow(
         """
-        select id, status, direction
+        select id, status, direction, retry_count
         from app.messages
         where tenant_id=$1 and id=$2
         """,
@@ -243,24 +257,37 @@ async def requeue_message(
     if row['status'] not in ('failed',):
         return {'requeued': False, 'reason': f'invalid_status:{row["status"]}'}
 
-    await conn.execute(
+    # Atomic transition: only succeed if status is STILL 'failed' (defensive
+    # against the race between the pre-check above and this UPDATE). The
+    # RETURNING gives us the post-increment retry_count, which is the stable
+    # half of the idempotency_key. If WHERE doesn't match (lost the race),
+    # updated is None and we report 'already_queued' without emitting an event.
+    updated = await conn.fetchrow(
         """
         update app.messages
         set status='queued',
             failed_at=null,
             error_code=null,
-            error_message=null
-        where tenant_id=$1 and id=$2
+            error_message=null,
+            retry_count = retry_count + 1
+        where tenant_id=$1 and id=$2 and status='failed'
+        returning retry_count
         """,
         tenant_id,
         message_id,
     )
-    # Emit a fresh ``message.queued`` so the event_worker picks it up. The
-    # idempotency key embeds a UUID suffix so two retries within the same
-    # second cannot collide on ``on conflict do nothing`` (which would leave
-    # the message stuck in ``queued`` with no event to drain it). We verify
-    # the insert actually produced a row before reporting success.
-    idem = f'message-retry:{message_id}:{uuid4().hex}'
+    if updated is None:
+        # Lost the race vs. a concurrent requeue (or the row's status changed
+        # between fetchrow and update). Idempotent: report no-op.
+        return {'requeued': False, 'reason': 'already_queued'}
+
+    retry_count = int(updated['retry_count'])
+    # Stable idempotency_key: derived from (message_id, retry_count). Two
+    # concurrent retries can't both reach here because the atomic UPDATE
+    # filters on status='failed'; if a future replay of THIS administrative
+    # call happens with the same retry_count (e.g. application-level retry
+    # of the bulk handler), on conflict do nothing makes it a true no-op.
+    idem = f'message-retry:{message_id}:{retry_count}'
     inserted = await conn.fetchval(
         """
         insert into app.domain_events
@@ -272,26 +299,44 @@ async def requeue_message(
         tenant_id,
         message_id,
         idem,
-        json.dumps({'retry': True, 'requested_by': requested_by or 'operator'}),
+        json.dumps({
+            'retry': True,
+            'retry_count': retry_count,
+            'requested_by': requested_by or 'operator',
+        }),
     )
     if inserted is None:
-        # Defensive: with a UUID suffix this is essentially unreachable, but
-        # if a duplicate ever sneaks past we surface it instead of leaving
-        # the message in ``queued`` with no event for the worker.
-        log.error(
-            'outbound_dlq.requeue_event_collision',
+        # The (message_id, retry_count) tuple was already present — a previous
+        # invocation of the same administrative retry attempt already emitted
+        # the event. Idempotent: report success without re-emitting, otherwise
+        # the operator UI would treat the second call as failure.
+        log.info(
+            'outbound_dlq.requeue_event_already_emitted',
             tenant_id=str(tenant_id),
             message_id=str(message_id),
+            retry_count=retry_count,
             idempotency_key=idem,
         )
-        raise RuntimeError('requeue_event_collision')
+        return {
+            'requeued': True,
+            'message_id': str(message_id),
+            'idempotency_key': idem,
+            'retry_count': retry_count,
+            'event_replayed': True,
+        }
     log.info(
         'outbound_dlq.requeued',
         tenant_id=str(tenant_id),
         message_id=str(message_id),
+        retry_count=retry_count,
         requested_by=requested_by,
     )
-    return {'requeued': True, 'message_id': str(message_id), 'idempotency_key': idem}
+    return {
+        'requeued': True,
+        'message_id': str(message_id),
+        'idempotency_key': idem,
+        'retry_count': retry_count,
+    }
 
 
 async def requeue_tenant_dlq(

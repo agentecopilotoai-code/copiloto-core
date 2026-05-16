@@ -15,6 +15,54 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-010.4 — DLQ retry idempotency: atomic UPDATE + stable key
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el sub-finding de SEC-010 `DLQ retry is not actually idempotent`. El handler `app/services/outbound_dlq.py::requeue_message` usaba `SELECT status → UPDATE (no atómico) → INSERT INTO domain_events` con `idempotency_key = f'message-retry:{id}:{uuid4().hex}'`. Dos requeues concurrentes del mismo mensaje (operator dobleclickea, bulk requeue + retry manual del mismo mensaje, retry de la operación administrativa entera) ambos pasaban el `if status == 'queued'` early-return, ambos hacían UPDATE no condicional, y ambos insertaban domain events con keys DIFERENTES (uuid4 random) → 2 eventos emitidos para 1 retry → el worker procesaba el mismo mensaje 2 veces (o el worker reject por idempotencia, pero con churn y métricas duplicadas).
+- **Cambios:**
+  - **`infra/postgres/01-schema.sql`** — nueva columna `app.messages.retry_count integer not null default 0` con docstring inline que ancla la decisión al ticket SEC-010 y explica que es la mitad estable del idempotency_key del domain event.
+  - **`app/services/outbound_dlq.py::requeue_message`** reescrito:
+    - SELECT inicial trae `retry_count` (necesario para el path `not_outbound` / `invalid_status` sin extra round-trip).
+    - Transición atómica: `UPDATE app.messages SET status='queued', retry_count=retry_count+1, ... WHERE tenant_id=$1 AND id=$2 AND status='failed' RETURNING retry_count`. El `WHERE status='failed'` cierra la ventana de race entre la lectura y el UPDATE — solo el winner transiciona; el loser obtiene `None` y reporta `already_queued` sin emitir evento.
+    - `idempotency_key = f'message-retry:{message_id}:{retry_count}'` — derivado del post-UPDATE retry_count. Replay de la misma operación administrativa con el mismo retry_count → mismo key → dedup via `on conflict (tenant_id, idempotency_key) do nothing`.
+    - El path de "collision en `on conflict`" cambió de `raise RuntimeError('requeue_event_collision')` (que rompía idempotencia desde la perspectiva del caller — un replay legítimo recibía un error) a un `log.info('outbound_dlq.requeue_event_already_emitted')` + `return {'requeued': True, 'event_replayed': True, ...}`. La colisión es la señal CORRECTA de que el retry ya fue procesado, no de error.
+    - Removido `from uuid import uuid4` (junto con todo uso de `uuid4()`).
+    - Payload del evento incluye `retry_count` para que el worker / métricas puedan correlar.
+- **Archivos:**
+  - `infra/postgres/01-schema.sql` — columna `retry_count` nueva con comentario SEC-010.
+  - `app/services/outbound_dlq.py` — `requeue_message` reescrito + import `uuid4` removido.
+  - `tests/test_dlq_retry_idempotency_static.py` (NEW) — **10 tests AST-based** defienden:
+    1. `test_messages_table_has_retry_count_column`: schema declara la columna.
+    2. `test_schema_comments_link_retry_count_to_sec_010`: ancla al ticket para que un PR futuro no la borre por "legacy".
+    3. `test_requeue_message_does_not_import_uuid4`: el módulo NO importa ni usa `uuid4` (defense en profundidad — si reintroducís uuid4, el bug regresa).
+    4. `test_requeue_message_uses_atomic_update_with_where_failed`: el UPDATE filtra por `status='failed'` Y devuelve `retry_count` Y bumpea atomicamente.
+    5. `test_requeue_message_idempotency_key_is_stable_not_random`: la key es `f'message-retry:{message_id}:{retry_count}'`; prohibe los tokens `uuid4()`, `.hex`, `time.time()`, `epoch`, `datetime.now` en la línea de construcción de `idem`.
+    6. `test_requeue_message_does_not_collide_raise_on_conflict`: el viejo `raise RuntimeError('requeue_event_collision')` fue removido; existe el log `outbound_dlq.requeue_event_already_emitted` y el marker `event_replayed: True`.
+    7. `test_requeue_message_returns_retry_count_in_result`: response incluye retry_count.
+    8. `test_requeue_message_payload_includes_retry_count_for_consumers`: payload del domain_event lleva retry_count.
+    9. `test_requeue_tenant_dlq_still_delegates_to_requeue_message`: el bulk handler hereda la nueva semántica gratis.
+    10. `test_initial_select_fetches_retry_count`: el SELECT inicial trae la columna.
+  - `tests/test_outbound_dlq_static.py` — `_RequeueConn` mock actualizado para soportar UPDATE...RETURNING; tests reescritos:
+    - `test_requeue_message_resets_status_and_emits_domain_event`: asserts del nuevo UPDATE atómico + key estable `message-retry:{id}:1`.
+    - `test_requeue_message_produces_stable_idem_key_for_same_attempt` (NEW): **invierte** el viejo `test_requeue_message_uses_unique_idem_per_call` que codificaba el bug — dos calls con mismo `(message_id, retry_count)` producen el MISMO key.
+    - `test_requeue_message_distinct_attempts_produce_distinct_idem_keys` (NEW): retries legítimos sucesivos (después de re-fail) producen keys distintos.
+    - `test_requeue_message_treats_event_insert_collision_as_idempotent` (reescrito): collision no raise, marca `event_replayed: True`.
+    - `test_requeue_message_returns_already_queued_when_update_loses_race` (NEW): el atomic UPDATE pierde el race → reporta `already_queued` sin emitir evento.
+    - `test_requeue_message_payload_includes_retry_count` (NEW): payload trae retry_count.
+  - `docs/UI_BACKLOG.md` — sub-finding marcado DONE dentro del cluster SEC-010.
+- **Validaciones:**
+  - `pytest tests/test_outbound_dlq_static.py tests/test_dlq_retry_idempotency_static.py -v` → **41/41 passed**.
+  - `pytest tests/` → **1822 passed, 22 skipped, 0 failures**.
+  - `ruff check app tests` → clean.
+- **Nota de seguridad:** este fix CIERRA un gap operacional (eventos duplicados → operadores ven inconsistencia entre "intenté 1 retry" y "el worker procesó 2"). NO toca permisos ni RLS — el handler sigue ejecutando con el rol del operador autenticado y opera solo sobre su tenant. La nueva columna `retry_count` da observabilidad sobre cuántas veces se intentó rescatar cada mensaje (forensia para incidentes), pero no afecta la lógica del worker (TASK-0065 mantiene la regla de "el retry manual es decisión del operador").
+- **Sub-findings restantes en SEC-010:**
+  - `Hardcoded E2E database role password`
+  - `Malformed tenant timezone can disable bot replies`
+  - `Claude allowlist permits unprompted curl data exfiltration`
+  - `DATABASE_URL password exposed in bootstrap process args`
+
+---
+
 ### BUG-009 — `invite_user` propaga `tenant_id` + asigna rol Auth0 (JWT del invitado ya viene con claims)
 
 - **Fecha:** 2026-05-15

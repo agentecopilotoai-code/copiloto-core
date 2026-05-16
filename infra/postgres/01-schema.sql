@@ -263,6 +263,12 @@ create table app.messages (
   error_message text,
   reply_to_external_message_id text,
   campaign_id uuid,
+  -- SEC-010 (DLQ retry idempotency): contador estable de re-encolados manuales del
+  -- DLQ. El handler `outbound_dlq.requeue_message` lo incrementa atomicamente con
+  -- `UPDATE ... WHERE status='failed' RETURNING retry_count` y deriva el
+  -- idempotency_key del domain_event de `(message_id, retry_count)` para que dos
+  -- requeues concurrentes del MISMO mensaje no puedan emitir 2 eventos distintos.
+  retry_count integer not null default 0,
   created_at timestamptz not null default now(),
   unique (tenant_id, external_message_id)
 );

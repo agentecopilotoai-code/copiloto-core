@@ -255,22 +255,55 @@ def test_count_recent_failures_returns_total_and_preview():
 
 
 class _RequeueConn:
-    def __init__(self, *, status='failed', direction='outbound', found=True, insert_returns_id=True):
+    """Mock connection supporting the new atomic UPDATE...RETURNING flow.
+
+    SEC-010 (DLQ retry idempotency): the helper now uses ``fetchrow`` TWICE —
+    once for the SELECT, once for the atomic UPDATE...RETURNING retry_count.
+    It also uses ``fetchval`` once for INSERT...RETURNING id. ``update_wins``
+    simulates whether the atomic UPDATE matched ``status='failed'`` (False
+    means a concurrent requeue already moved the row to 'queued').
+    ``insert_returns_id`` False simulates the (now-idempotent) collision on
+    the domain_events unique key.
+    """
+
+    def __init__(
+        self,
+        *,
+        status='failed',
+        direction='outbound',
+        found=True,
+        insert_returns_id=True,
+        initial_retry_count=0,
+        update_wins=True,
+    ):
         self.status = status
         self.direction = direction
         self.found = found
         self.insert_returns_id = insert_returns_id
+        self.initial_retry_count = initial_retry_count
+        self.update_wins = update_wins
+        self.fetchrows: list[tuple[str, tuple]] = []
         self.executes: list[tuple[str, tuple]] = []
         self.fetchvals: list[tuple[str, tuple]] = []
 
     async def fetchrow(self, query, *args):
-        if not self.found:
-            return None
-        return {
-            'id': args[1],
-            'status': self.status,
-            'direction': self.direction,
-        }
+        self.fetchrows.append((query, args))
+        # First call: the SELECT before the UPDATE.
+        if 'select id, status, direction, retry_count' in query:
+            if not self.found:
+                return None
+            return {
+                'id': args[1],
+                'status': self.status,
+                'direction': self.direction,
+                'retry_count': self.initial_retry_count,
+            }
+        # Second call: the atomic UPDATE...RETURNING retry_count.
+        if 'update app.messages' in query and 'returning retry_count' in query:
+            if not self.update_wins:
+                return None
+            return {'retry_count': self.initial_retry_count + 1}
+        raise AssertionError(f'unexpected fetchrow query: {query[:80]}')
 
     async def execute(self, query, *args):
         self.executes.append((query, args))
@@ -282,6 +315,8 @@ class _RequeueConn:
 
 
 def test_requeue_message_resets_status_and_emits_domain_event():
+    """The fix is atomic now: SELECT to validate + UPDATE...WHERE status='failed'
+    RETURNING retry_count + INSERT into domain_events with stable idem key."""
     conn = _RequeueConn()
     tenant_id = uuid4()
     message_id = uuid4()
@@ -294,58 +329,141 @@ def test_requeue_message_resets_status_and_emits_domain_event():
         )
     )
     assert result['requeued'] is True
-    # ``execute`` resets the row; ``fetchval`` inserts the domain event with
-    # ``returning id`` so the helper can verify the insert actually happened.
-    update_query, update_args = conn.executes[0]
+    assert result['retry_count'] == 1
+    # Two fetchrow calls: the SELECT (validation) + the atomic UPDATE...RETURNING.
+    select_query, _select_args = conn.fetchrows[0]
+    update_query, _update_args = conn.fetchrows[1]
     insert_query, insert_args = conn.fetchvals[0]
-    assert "update app.messages" in update_query
+    assert 'select id, status, direction, retry_count' in select_query
+    assert 'update app.messages' in update_query
     assert "set status='queued'" in update_query
     assert 'error_code=null' in update_query
     assert 'error_message=null' in update_query
-    assert "insert into app.domain_events" in insert_query
+    # Atomic guard: only transition if STILL 'failed' (defends against races).
+    assert "status='failed'" in update_query
+    # Bump retry_count atomically and return it for the stable idem key.
+    assert 'retry_count = retry_count + 1' in update_query
+    assert 'returning retry_count' in update_query
+    assert 'insert into app.domain_events' in insert_query
     assert "'message.queued'" in insert_query
     assert 'returning id' in insert_query
-    # Idempotency key embeds a UUID hex suffix so two retries within the same
-    # second cannot collide on ``on conflict do nothing``.
+    # SEC-010 stable idempotency key: derived from (message_id, retry_count).
     idem = insert_args[2]
-    assert idem.startswith(f'message-retry:{message_id}:')
-    suffix = idem.split(':')[-1]
-    assert len(suffix) == 32  # uuid4().hex
+    assert idem == f'message-retry:{message_id}:1'
 
 
-def test_requeue_message_uses_unique_idem_per_call():
-    """Two consecutive retries must produce distinct idempotency keys even
-    when invoked back-to-back within the same second."""
-    conn_a = _RequeueConn()
-    conn_b = _RequeueConn()
-    asyncio.run(requeue_message(conn_a, tenant_id=uuid4(), message_id=uuid4()))
-    asyncio.run(requeue_message(conn_b, tenant_id=uuid4(), message_id=uuid4()))
-    assert conn_a.fetchvals[0][1][2] != conn_b.fetchvals[0][1][2]
+def test_requeue_message_produces_stable_idem_key_for_same_attempt():
+    """SEC-010 — TWO calls to requeue_message with the SAME (message_id,
+    retry_count) MUST produce the SAME idempotency_key. This is the entire
+    point of the fix: a replay of the same administrative retry must
+    deduplicate on the domain_events unique constraint, not emit a duplicate.
+
+    Inverts the old test ``test_requeue_message_uses_unique_idem_per_call``
+    which codified the bug (uuid4().hex per call → no deduplication possible).
+    """
+    tenant_id = uuid4()
+    message_id = uuid4()
+    conn_a = _RequeueConn(initial_retry_count=4)  # post-update will be 5
+    conn_b = _RequeueConn(initial_retry_count=4)  # same scenario, replay
+    asyncio.run(
+        requeue_message(conn_a, tenant_id=tenant_id, message_id=message_id)
+    )
+    asyncio.run(
+        requeue_message(conn_b, tenant_id=tenant_id, message_id=message_id)
+    )
+    # Same (message_id, retry_count) → same idempotency_key (no uuid suffix).
+    assert conn_a.fetchvals[0][1][2] == conn_b.fetchvals[0][1][2]
+    assert conn_a.fetchvals[0][1][2] == f'message-retry:{message_id}:5'
 
 
-def test_requeue_message_raises_when_event_insert_collides():
-    """Defensive: if the ``on conflict do nothing`` ever no-ops we must
-    surface it instead of leaving the message in ``queued`` with no event."""
+def test_requeue_message_distinct_attempts_produce_distinct_idem_keys():
+    """Different retry_count values for the same message MUST produce
+    different idem keys — otherwise the second LEGITIMATE retry (after the
+    first one fully drained and re-failed) would be silently dropped by the
+    domain_events unique constraint."""
+    tenant_id = uuid4()
+    message_id = uuid4()
+    conn1 = _RequeueConn(initial_retry_count=0)  # first retry → key ends :1
+    conn2 = _RequeueConn(initial_retry_count=1)  # second retry → key ends :2
+    asyncio.run(
+        requeue_message(conn1, tenant_id=tenant_id, message_id=message_id)
+    )
+    asyncio.run(
+        requeue_message(conn2, tenant_id=tenant_id, message_id=message_id)
+    )
+    assert conn1.fetchvals[0][1][2] == f'message-retry:{message_id}:1'
+    assert conn2.fetchvals[0][1][2] == f'message-retry:{message_id}:2'
+    assert conn1.fetchvals[0][1][2] != conn2.fetchvals[0][1][2]
+
+
+def test_requeue_message_treats_event_insert_collision_as_idempotent():
+    """SEC-010 — if the (message_id, retry_count) tuple is already present
+    in domain_events (administrative-layer retry of the SAME retry attempt),
+    we MUST report success without re-emitting the event. The previous
+    behavior raised RuntimeError, which broke idempotency from the caller's
+    perspective (the second call saw an error even though everything was OK)."""
     conn = _RequeueConn(insert_returns_id=False)
-    with pytest.raises(RuntimeError, match='requeue_event_collision'):
-        asyncio.run(
-            requeue_message(conn, tenant_id=uuid4(), message_id=uuid4())
-        )
+    tenant_id = uuid4()
+    message_id = uuid4()
+    result = asyncio.run(
+        requeue_message(conn, tenant_id=tenant_id, message_id=message_id)
+    )
+    # Idempotent success, with a marker so callers/tests can distinguish.
+    assert result['requeued'] is True
+    assert result['event_replayed'] is True
+    assert result['idempotency_key'] == f'message-retry:{message_id}:1'
+
+
+def test_requeue_message_returns_already_queued_when_update_loses_race():
+    """SEC-010 — concurrent requeue race: SELECT returns status='failed',
+    but between SELECT and UPDATE another caller wins and transitions the
+    row to 'queued'. Our atomic UPDATE...WHERE status='failed' RETURNING
+    returns no row. We MUST report 'already_queued' and NOT emit a domain
+    event, otherwise both racers emit events for the same retry."""
+    conn = _RequeueConn(update_wins=False)
+    result = asyncio.run(
+        requeue_message(conn, tenant_id=uuid4(), message_id=uuid4())
+    )
+    assert result == {'requeued': False, 'reason': 'already_queued'}
+    # The domain event MUST NOT have been inserted.
+    assert conn.fetchvals == []
 
 
 def test_requeue_message_is_idempotent_for_already_queued():
+    """Pre-check short-circuit: if the SELECT already shows 'queued', we
+    return early without touching the UPDATE or the domain_events insert."""
     conn = _RequeueConn(status='queued')
     result = asyncio.run(
         requeue_message(conn, tenant_id=uuid4(), message_id=uuid4())
     )
     assert result == {'requeued': False, 'reason': 'already_queued'}
-    assert conn.executes == []
+    # Only the validation SELECT runs — no UPDATE, no INSERT.
+    assert len(conn.fetchrows) == 1
+    assert conn.fetchvals == []
 
 
 def test_requeue_message_returns_not_found():
     conn = _RequeueConn(found=False)
     result = asyncio.run(requeue_message(conn, tenant_id=uuid4(), message_id=uuid4()))
     assert result == {'requeued': False, 'reason': 'not_found'}
+    # Only the validation SELECT runs (returned None) — no UPDATE, no INSERT.
+    assert len(conn.fetchrows) == 1
+    assert conn.fetchvals == []
+
+
+def test_requeue_message_payload_includes_retry_count():
+    """The domain_event payload must include the retry_count for observability
+    — downstream consumers (worker logs, metrics) can correlate the event with
+    the operational retry attempt."""
+    conn = _RequeueConn(initial_retry_count=2)
+    asyncio.run(requeue_message(conn, tenant_id=uuid4(), message_id=uuid4()))
+    insert_args = conn.fetchvals[0][1]
+    payload_json = insert_args[3]
+    import json as _json
+    payload = _json.loads(payload_json)
+    assert payload['retry'] is True
+    assert payload['retry_count'] == 3
+    assert payload['requested_by'] == 'operator'
 
 
 # ───── threshold alert ─────────────────────────────────────────────────────
