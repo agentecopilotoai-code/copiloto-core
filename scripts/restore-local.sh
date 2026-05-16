@@ -80,8 +80,16 @@ if [[ -z "$DATABASE_URL_VALUE" ]]; then
   exit 1
 fi
 
+# SEC-010: separar password del URL antes de pasarlo a psql/pg_restore para
+# que NO aparezca en `ps aux`. El restore tarda minutos — ventana suficiente
+# para que un proceso adversarial muestree el cmdline.
+# shellcheck source=lib/postgres-url.sh
+source "$(dirname "$0")/lib/postgres-url.sh"
+parse_db_url "$DATABASE_URL_VALUE"
+export PGPASSWORD="$DB_PASSWORD"
+
 psql_app() {
-  docker compose exec -T postgres psql "$DATABASE_URL_VALUE" -v ON_ERROR_STOP=1 "$@"
+  docker compose exec -T -e PGPASSWORD postgres psql "$DB_URL_NO_PASSWORD" -v ON_ERROR_STOP=1 "$@"
 }
 
 TABLE_COUNTS_SQL="
@@ -132,8 +140,8 @@ MSG
 fi
 
 echo "==> Restaurando PostgreSQL desde $BACKUP_DIR/postgres.dump"
-docker compose exec -T postgres pg_restore \
-  --dbname="$DATABASE_URL_VALUE" \
+docker compose exec -T -e PGPASSWORD postgres pg_restore \
+  --dbname="$DB_URL_NO_PASSWORD" \
   --clean \
   --if-exists \
   --no-owner \
