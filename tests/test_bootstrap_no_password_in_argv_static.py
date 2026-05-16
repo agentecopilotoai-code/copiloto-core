@@ -112,6 +112,104 @@ def test_parse_db_url_preserves_query_string():
     assert 'application_name=cpi' in out
 
 
+def test_parse_db_url_decodes_url_encoded_password():
+    """SEC-010.8 codex P2 review: el password puede venir URL-encoded
+    (`%40` para `@`, `%3A` para `:`, etc.) porque el .env tiene que
+    encodear caracteres reservados de URI. libpq decodifica los `%XX`
+    cuando parsea la URL COMPLETA pero NO los decodifica cuando lee
+    `PGPASSWORD` (lo trata como literal). Sin la decodificación, exportar
+    los bytes encoded comparía contra el password real `p@ss` el string
+    `p%40ss` y fallaría auth.
+
+    El parser DEBE decodificar el password antes de exportar.
+    """
+    script = """
+        set -euo pipefail
+        source scripts/lib/postgres-url.sh
+        parse_db_url "postgresql://u:p%40ss@host:5432/db"
+        echo "$DB_PASSWORD"
+    """
+    result = subprocess.run(
+        ['bash', '-c', script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # `p%40ss` URL-encoded → `p@ss` literal en PGPASSWORD.
+    assert result.stdout.strip() == 'p@ss'
+
+
+def test_parse_db_url_decodes_multiple_special_chars_in_password():
+    """Caso más complejo del bot: password con `@`, `:`, `/` URL-encoded."""
+    script = """
+        set -euo pipefail
+        source scripts/lib/postgres-url.sh
+        parse_db_url "postgresql://u:p%40ss%3Aword%2Fextra@host/db"
+        echo "$DB_PASSWORD"
+    """
+    result = subprocess.run(
+        ['bash', '-c', script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == 'p@ss:word/extra'
+
+
+def test_parse_db_url_decodes_literal_percent_in_password():
+    """Password con `%` literal debe venir como `%25` URL-encoded. Decodear
+    debe devolver el `%` literal."""
+    script = """
+        set -euo pipefail
+        source scripts/lib/postgres-url.sh
+        parse_db_url "postgresql://u:abc%25def@host/db"
+        echo "$DB_PASSWORD"
+    """
+    result = subprocess.run(
+        ['bash', '-c', script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == 'abc%def'
+
+
+def test_parse_db_url_leaves_user_encoded_in_url():
+    """Defense en profundidad: cuando un user tiene caracteres URL-encoded
+    (ej. `user%40org` = `user@org`), DB_URL_NO_PASSWORD debe mantenerlo
+    encoded porque libpq decodificará la URL completa que pasamos a psql.
+    Si lo decodificáramos acá, libpq vería un `@` literal en el medio del
+    user y se confundiría con un nuevo separator de userinfo."""
+    script = """
+        set -euo pipefail
+        source scripts/lib/postgres-url.sh
+        parse_db_url "postgresql://user%40org:p%40ss@host:5432/db"
+        echo "$DB_URL_NO_PASSWORD"
+    """
+    result = subprocess.run(
+        ['bash', '-c', script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # User sigue encoded; password ya no aparece.
+    assert result.stdout.strip() == 'postgresql://user%40org@host:5432/db'
+
+
+def test_url_decode_helper_exists_and_is_invoked():
+    """Anti-regression AST: si alguien borra la decodificación pensando
+    que es legacy, el test falla. Verificamos que el helper existe Y que
+    parse_db_url lo invoca para el password."""
+    body = LIB_URL.read_text()
+    assert 'url_decode()' in body, 'helper url_decode no existe'
+    # parse_db_url debe invocar url_decode sobre el password.
+    assert 'url_decode "$password_only"' in body, (
+        'parse_db_url no invoca url_decode sobre el password — el codex P2 '
+        'de SEC-010.8 regresaría. PGPASSWORD se lee como literal por libpq, '
+        'no decodifica %XX.'
+    )
+
+
 # ───── Scripts no pasan DATABASE_URL_VALUE a psql/pg_dump/pg_restore ─────
 
 

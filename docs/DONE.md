@@ -48,10 +48,11 @@ Cada entrada debe incluir:
     10. `test_psql_app_helper_uses_inherited_pgpassword_in_all_three_scripts`: regex anchor del patrón completo `psql_app() { docker compose exec -T -e PGPASSWORD postgres psql "$DB_URL_NO_PASSWORD"` en los tres scripts — defensa contra refactors descuidados.
   - `docs/UI_BACKLOG.md` — sub-finding marcado DONE + cluster SEC-010 cerrado.
 - **Validaciones:**
-  - `pytest tests/test_bootstrap_no_password_in_argv_static.py -v` → **10/10 passed**.
-  - `pytest tests/` → **1875 passed, 22 skipped, 0 failures**.
+  - `pytest tests/test_bootstrap_no_password_in_argv_static.py -v` → **15/15 passed** (10 originales + 5 nuevos del codex P2 fix).
+  - `pytest tests/` → **1880 passed, 22 skipped, 0 failures**.
   - `ruff check app tests` → clean.
-  - Smoke manual del parser: 5 edge cases (con password, sin password, query string, postgres:// scheme, sin userinfo) → todos correctos.
+  - Smoke manual del parser: 5 edge cases base (con password, sin password, query string, postgres:// scheme, sin userinfo) + 5 cases URL-encoded (codex P2) — todos correctos.
+- **Codex P2 (review en CI):** `PGPASSWORD` se lee como literal por libpq, NO decodifica `%XX`. La versión inicial del helper exportaba los bytes URL-encoded como `PGPASSWORD`, así que un .env con password URL-encoded (ej. `p%40ss` para representar `p@ss`) fallaría auth — libpq compararía el string literal `p%40ss` contra el password real `p@ss`. Fix: nuevo helper `url_decode(encoded)` en `scripts/lib/postgres-url.sh` que reemplaza `%XX` por bytes via `printf '%b' "${encoded//%/\\x}"`. `parse_db_url` ahora hace `DB_PASSWORD="$(url_decode "$password_only")"` antes de exportar. La user component se deja encoded en `DB_URL_NO_PASSWORD` porque libpq sí decodifica cuando psql recibe la URL completa. 5 tests nuevos defienden: decoding básico (`p%40ss` → `p@ss`), múltiples especiales (`p%40ss%3Aword%2Fextra` → `p@ss:word/extra`), literal `%` (`abc%25def` → `abc%def`), user queda encoded en URL_NO_PASSWORD, AST anchor que `url_decode` exista Y sea invocado en `parse_db_url`.
 - **Nota de seguridad:** este fix CIERRA un leak de credenciales en cmdline. Cambios materiales:
   - El password sigue estando en el archivo `.env` (mismo riesgo previo — el operador debe protegerlo) y en el environment block del proceso `docker` (visible vía `/proc/<pid>/environ` para mismo uid). Esos vectores no cambiaron — esta no es una rotación de credenciales, es una reducción del attack surface.
   - El cmdline (`ps aux`, `/proc/<pid>/cmdline`) es leíble por CUALQUIER usuario del host por default — esto es lo que el fix cierra.

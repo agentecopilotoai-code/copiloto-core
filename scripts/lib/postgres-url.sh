@@ -18,8 +18,26 @@
 #
 # Limitaciones: el parser asume que el password no contiene `@` literal sin
 # URL-encoding. Para passwords con caracteres especiales, usar URL-encoding
-# (RFC 3986) en el .env — el connection libpq lo decodifica del lado server.
+# (RFC 3986) en el .env. El helper **decodifica** los `%XX` del password antes
+# de exportarlo como PGPASSWORD, porque libpq decodifica los `%XX` cuando
+# parsea la URL completa pero NO los decodifica cuando lee `PGPASSWORD`
+# (ahí lo trata como literal). Sin la decodificación, un password con caracteres
+# reservados (`@`, `:`, `/`, `%`) URL-encoded fallaría auth — codex P2 review
+# en SEC-010.8.
 set -euo pipefail
+
+# url_decode <encoded_string>
+#
+# Decodifica secuencias `%XX` en bytes. Emite el resultado en stdout. NO toca
+# `+` (RFC 3986: solo HTML form encoding usa `+`=space, no URIs). Asume input
+# bien formado (RFC 3986); inputs malformados (`%` sin 2 hex digits) tienen
+# comportamiento implementation-defined (printf %b).
+url_decode() {
+  local encoded="$1"
+  # Reemplaza `%` por `\x` para que printf %b lo interprete como byte literal:
+  #   p%40ss → p\x40ss → p@ss
+  printf '%b' "${encoded//%/\\x}"
+}
 
 # parse_db_url <url>
 #
@@ -65,11 +83,19 @@ parse_db_url() {
   fi
 
   # Userinfo es `user[:password]`. Si no hay `:`, no hay password.
+  # IMPORTANTE (codex P2 SEC-010.8): la URL viene URL-encoded (RFC 3986). El
+  # password con caracteres reservados (@, :, /, %) tiene que estar como `%XX`
+  # para que libpq lo parsee bien desde la URL completa. PERO `PGPASSWORD` se
+  # lee como literal — sin decodificación. Si exportamos las bytes encoded
+  # como PGPASSWORD, libpq compararía `p%40ss` contra el password de la DB
+  # `p@ss` y fallaría auth. Decodificamos ANTES de exportar.
+  # La user_only en `DB_URL_NO_PASSWORD` se deja intacta (encoded) porque libpq
+  # sí decodifica la URL completa cuando se la pasamos a psql.
   local user_only password_only
   if [[ "$userinfo" == *":"* ]]; then
     user_only="${userinfo%%:*}"
     password_only="${userinfo#*:}"
-    DB_PASSWORD="$password_only"
+    DB_PASSWORD="$(url_decode "$password_only")"
     DB_URL_NO_PASSWORD="${scheme}${user_only}@${hostpart}"
   else
     DB_PASSWORD=''
