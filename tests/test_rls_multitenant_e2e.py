@@ -63,11 +63,20 @@ def _database_url() -> str | None:
 
 
 def _requires_database() -> str:
+    # SEC-010: reusa el guard de conftest_e2e que valida que la URL apunte a
+    # una DB efímera (host localhost/127.0.0.1 o db con marker _e2e/_test).
+    # Este suite hace DELETE FROM masivos sobre el schema `app` para limpiar
+    # entre tests — ejecutarlo contra prod sería catastrófico. El guard
+    # rechaza HARD (RuntimeError) en lugar de skip para que no pase
+    # silenciosamente.
+    from tests.conftest_e2e import _require_ephemeral_e2e_url
+
     database_url = _database_url()
     if os.getenv('RUN_RLS_E2E') != '1':
         pytest.skip('set RUN_RLS_E2E=1 to run the PostgreSQL RLS end-to-end suite')
     if not database_url:
         pytest.skip('set TEST_DATABASE_URL or DATABASE_URL for the PostgreSQL RLS suite')
+    _require_ephemeral_e2e_url(database_url)
     return database_url
 
 

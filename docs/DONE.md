@@ -15,6 +15,45 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-010.5 — E2E DB ephemeral guard contra wipe accidental de producción
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el sub-finding de SEC-010 `Hardcoded E2E database role password`. `tests/conftest_e2e.py::_apply_schema` ejecuta DDL destructivo (`drop schema if exists app cascade`) Y crea el rol `copiloto_app` con password conocido (`'copiloto_app_e2e'`). El gating original era solo `if os.getenv('RUN_E2E') == '1'`. Sin validación de la URL: un developer que corra `RUN_E2E=1 pytest` con `DATABASE_URL` apuntando accidentalmente a prod (variable persistente en shell, copy-paste error, env compartido entre `make test` y `make dev`, etc.) borraba TODO el schema `app` de producción Y sobrescribía el password del rol app con un valor trivial conocido.
+- **Cambios:**
+  - **`tests/conftest_e2e.py`** — 4 piezas nuevas:
+    - Constantes `_EPHEMERAL_HOSTS` (`localhost`, `127.0.0.1`, `::1`, `host.docker.internal`), `_EPHEMERAL_HOST_PREFIXES` (`e2e-`, `test-`, `ci-`), `_EPHEMERAL_DB_MARKERS` (`_e2e`, `e2e_`, `_test`, `test_`, `_ci`, `ci_`) — cobertura para los patrones DBA convencionales sin ser tan estricto que rompa CI legítimo.
+    - `_is_ephemeral_e2e_url(url) → (ok, reason)`: parsea con `urlsplit`, evalúa host + db name contra los sets/prefijos/markers. El `reason` SANITIZA — nunca incluye la URL completa porque puede tener password embebido; solo `host=X db=Y` + lista de patrones válidos.
+    - `_require_ephemeral_e2e_url(url)`: thin wrapper que hace `raise RuntimeError(...)` con mensaje que menciona SEC-010 + remedio operacional. Crítico: RAISE (no `pytest.skip`) — un skip silencioso ocultaría la misconfiguración con un green "skipped" line.
+    - Defense en profundidad: el guard se invoca en `_skip_unless_ready` (path normal de test collection) Y en `_apply_schema` ANTES de abrir la conexión (cubre scripts que llamen `_apply_schema` directo bypasseando el fixture).
+  - **`tests/test_rls_multitenant_e2e.py::_requires_database`** — importa y usa el mismo `_require_ephemeral_e2e_url`. Este suite también hace DELETEs masivos sobre `app.*` para limpieza entre tests; sin guard, mismo riesgo de wipe accidental.
+- **Archivos:**
+  - `tests/conftest_e2e.py` — constantes + validador + wrapper + dos invocaciones del guard.
+  - `tests/test_rls_multitenant_e2e.py` — `_requires_database` invoca el guard.
+  - `tests/test_e2e_ephemeral_guard_static.py` (NEW) — **19 tests** defienden:
+    1-4. Hosts/prefijos/db markers reconocidos como efímeros (`localhost`, `127.0.0.1`, `::1` con bracket notation, `host.docker.internal`, `e2e-postgres`, `test-pg-1`, `ci-db-cluster`, db names con `_e2e`/`e2e_`/`_test`/`test_`/`_ci`).
+    5-6. URLs prod-like rechazadas con mensaje explícito; reason NO incluye password ni `user:pass` (defense en profundidad para que el RuntimeError loguee seguro).
+    7. URLs malformadas no crashean — devuelven `(False, reason)`.
+    8-10. `_require_ephemeral_e2e_url` raise para prod-like, pasa silently para localhost + e2e db name.
+    11-13. Tanto `_skip_unless_ready` como `_apply_schema` como `tests/test_rls_multitenant_e2e.py::_requires_database` invocan el guard (AST-checked); `_apply_schema` lo invoca ANTES de `asyncpg.connect` (incluso una conexión a la DB equivocada ya es problema — aparece en logs).
+    14-16. El skip path se mantiene cuando `RUN_E2E` unset / URL missing (no son casos peligrosos, solo "olvidó configurar"); pero RAISE cuando RUN_E2E=1 + URL prod-like (camino central del fix).
+    17-19. Module exposes el validator + sets mínimos protegidos (`localhost`, `127.0.0.1`, `_e2e`, `_test`) — anti-regression contra "limpieza" descuidada del set; docstring del módulo menciona SEC-010 para que contribuidores futuros no piensen que es lógica de skip extra removible.
+  - `docs/UI_BACKLOG.md` — sub-finding marcado DONE dentro del cluster SEC-010.
+- **Validaciones:**
+  - `pytest tests/test_e2e_ephemeral_guard_static.py -v` → **19/19 passed**.
+  - `pytest tests/` → **1841 passed, 22 skipped, 0 failures**.
+  - `ruff check app tests` → clean.
+- **Nota de seguridad:** este fix CIERRA una bomba de tiempo operacional. Cambios materiales:
+  - El guard NO cambia los passwords ni rota credenciales — sigue siendo `copiloto_app_e2e` (hardcoded), pero ahora SOLO se ejecuta cuando la URL pasa el guard (DB efímera por design).
+  - El reason del RuntimeError sanitiza la URL para que el log/stderr no exponga el password embebido si el operador apuntó a prod por accidente.
+  - El cambio NO toca runtime — afecta solo el path de test bootstrap (conftest_e2e + RLS multitenant suite). Tests existentes que dependen del fixture transición sin cambio porque sus URLs ya son `localhost` o `*_e2e`.
+  - El guard es "estricto pero permisivo" — acepta los patrones DBA convencionales (`e2e-`, `test-`, `_ci` prefijos/markers) para no romper setups CI legítimos; rechaza solo URLs sin NINGÚN indicador efímero.
+- **Sub-findings restantes en SEC-010:**
+  - `Malformed tenant timezone can disable bot replies`
+  - `Claude allowlist permits unprompted curl data exfiltration`
+  - `DATABASE_URL password exposed in bootstrap process args`
+
+---
+
 ### SEC-010.4 — DLQ retry idempotency: atomic UPDATE + stable key
 
 - **Fecha:** 2026-05-15

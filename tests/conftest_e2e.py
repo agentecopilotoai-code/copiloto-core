@@ -25,6 +25,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -34,6 +35,72 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type checkers
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_FILE = REPO_ROOT / 'infra' / 'postgres' / '01-schema.sql'
+
+
+# SEC-010 (hardcoded E2E DB role password): el helper ``_apply_schema`` DROP-ea
+# el schema ``app`` y crea el rol ``copiloto_app`` con un password conocido
+# (``copiloto_app_e2e``). Ejecutarlo contra una DB de producción sería
+# catastrófico — perdería todo el datos del schema app Y dejaría el rol
+# productivo con un password trivial. Validamos antes de tocar cualquier
+# conexión que la URL apunte a una DB efímera reconocible. La validación
+# rechaza HARD (RuntimeError) en lugar de skip — un skip silencioso ocultaría
+# el problema y un developer podría asumir que el suite "pasó".
+_EPHEMERAL_HOSTS = frozenset({
+    'localhost',
+    '127.0.0.1',
+    '::1',
+    'host.docker.internal',  # docker-desktop / podman bridge
+})
+_EPHEMERAL_HOST_PREFIXES = ('e2e-', 'test-', 'ci-')
+_EPHEMERAL_DB_MARKERS = ('_e2e', 'e2e_', '_test', 'test_', '_ci', 'ci_')
+
+
+def _is_ephemeral_e2e_url(url: str) -> tuple[bool, str]:
+    """Return ``(ok, reason)``. ``ok=False`` triggers a hard abort.
+
+    Accepts an URL as ephemeral iff the host is in :data:`_EPHEMERAL_HOSTS`,
+    starts with an :data:`_EPHEMERAL_HOST_PREFIXES`, or the database name (URL
+    path minus the leading slash) contains an :data:`_EPHEMERAL_DB_MARKERS`.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError as exc:
+        return False, f'malformed URL: {exc}'
+    host = (parts.hostname or '').lower()
+    db_name = parts.path.lstrip('/').lower()
+    if host in _EPHEMERAL_HOSTS:
+        return True, f'host={host}'
+    if any(host.startswith(prefix) for prefix in _EPHEMERAL_HOST_PREFIXES):
+        return True, f'host={host} (ephemeral prefix)'
+    if any(marker in db_name for marker in _EPHEMERAL_DB_MARKERS):
+        return True, f'db={db_name} (ephemeral marker)'
+    # Sanitize host/db for the error message (NEVER include the full URL — it
+    # may have an embedded password).
+    return False, (
+        f'host={host or "<empty>"} db={db_name or "<empty>"} — '
+        'neither matches an ephemeral pattern '
+        '(host in {localhost, 127.0.0.1, ::1, host.docker.internal} OR '
+        'host starts with {e2e-, test-, ci-} OR '
+        'db name contains {_e2e, e2e_, _test, test_, _ci, ci_})'
+    )
+
+
+def _require_ephemeral_e2e_url(url: str) -> None:
+    """Hard-abort if ``url`` doesn't look ephemeral.
+
+    Used as defense-in-depth from both :func:`_skip_unless_ready` (which gates
+    test collection) and :func:`_apply_schema` (which actually executes the
+    destructive DDL). If a caller bypasses the skip path (e.g. direct invocation
+    from a script), the second check still prevents catastrophe.
+    """
+    ok, reason = _is_ephemeral_e2e_url(url)
+    if not ok:
+        raise RuntimeError(
+            'SEC-010 E2E safety guard: refusing to run destructive DDL '
+            f'against a non-ephemeral DATABASE_URL ({reason}). Set '
+            'TEST_DATABASE_URL to an ephemeral DB (host localhost / 127.0.0.1 '
+            'or db name containing _e2e) before re-running with RUN_E2E=1.'
+        )
 
 
 def e2e_enabled() -> bool:
@@ -51,6 +118,10 @@ def _skip_unless_ready() -> str:
     url = _database_url()
     if not url:
         pytest.skip('set TEST_DATABASE_URL (or DATABASE_URL) for the E2E suite')
+    # SEC-010: abort HARD (no skip) if the URL is not obviously ephemeral.
+    # Skipping would hide the misconfiguration; a developer pointing prod
+    # accidentally must see the failure, not a green "skipped" line.
+    _require_ephemeral_e2e_url(url)
     return url
 
 
@@ -61,9 +132,15 @@ async def _apply_schema(url: str) -> None:
     application uses to satisfy RLS). In a production-like deploy that role is
     created by ``00-init-roles.sh`` before ``01-schema.sql`` runs. For the E2E
     job we provision the role here so the suite is self-contained.
+
+    SEC-010: defense in depth — re-validates the ephemeral guard before
+    issuing destructive DDL, in case a caller bypassed ``_skip_unless_ready``.
     """
     import asyncpg
 
+    # SEC-010: validate BEFORE opening a connection. Catches the case where a
+    # script invokes ``_apply_schema`` directly with a hand-crafted URL.
+    _require_ephemeral_e2e_url(url)
     if not SCHEMA_FILE.is_file():
         raise RuntimeError(f'schema file missing: {SCHEMA_FILE}')
     sql = SCHEMA_FILE.read_text(encoding='utf-8')
