@@ -159,39 +159,178 @@ Para correr el stack con Docker **no necesitas instalar dependencias Python loca
 | `SERVICE_TOKEN` | generado | Sí | Token interno para automatizaciones/servicios. Sigue funcionando aunque Auth0 esté habilitado y permite soporte interno/operaciones tenant-aware. Protégelo como secreto crítico. |
 
 
-### Auth0 para panel administrativo
+### Auth0 desde cero: tutorial completo
 
-El repo incluye `scripts/configure-auth0.sh` para preparar Auth0 de forma idempotente para CopilotoIA. El script crea/actualiza:
+Esta es la guía paso a paso para conectar CopilotoIA con un **tenant Auth0 nuevo** (recién creado, vacío). El script `scripts/configure-auth0.sh` automatiza casi todo, pero necesita una credencial inicial que solo se puede crear manualmente desde el dashboard de Auth0. Sigue el orden estricto — saltarte el Paso 1.2 (MFA) reproduce el BUG-005 conocido (login bloqueado con `Two-factor authentication is required to access this application`).
 
-1. API `copilotoia-core-api` con audience `AUTH0_API_IDENTIFIER` y RBAC habilitado.
-2. App regular web `copilotoia-admin-web` para el futuro panel administrativo.
-3. App M2M `copilotoia-service-m2m` y client grant contra el API.
-4. Roles `owner`, `admin`, `manager`, `agent`, `viewer` y `support` con permisos por alcance.
-5. Action post-login `copilotoia-post-login-claims` para emitir claims namespaced de roles, permisos, `tenant_id`, `tenant_slug` y `support_mode`.
+#### Paso 1 — Setup manual mínimo en Auth0 dashboard (~5 min)
 
-Ejemplo:
+##### 1.1 Crear M2M app para Management API
+
+El script necesita credenciales de Management API para crear el resto de recursos. Esta app es la única que se configura a mano.
+
+1. Abre <https://manage.auth0.com> y selecciona tu tenant nuevo.
+2. **Applications** > **Applications** > **Create Application**.
+3. Nombre: `copilotoia-bootstrap-m2m`.
+4. Tipo: **Machine to Machine Applications** > **Create**.
+5. En el selector "Select an API" elige **Auth0 Management API**.
+6. En la grilla de scopes marca como mínimo:
+   - `read:clients`, `create:clients`, `update:clients`, `delete:clients`
+   - `read:client_grants`, `create:client_grants`, `update:client_grants`, `delete:client_grants`
+   - `read:resource_servers`, `create:resource_servers`, `update:resource_servers`
+   - `read:roles`, `create:roles`, `update:roles`, `delete:roles`
+   - `read:role_members`, `create:role_members`
+   - `read:users`, `create:users`, `update:users`
+   - `read:actions`, `create:actions`, `update:actions`, `delete:actions`
+7. **Authorize**.
+8. En la pestaña **Settings** copia **Domain**, **Client ID** y **Client Secret** — los usarás en el Paso 2.
+
+##### 1.2 Activar MFA en Auth0 (obligatorio si vas a usar enforcement)
+
+> **Crítico**: el script crea una PostLogin Action que llama `api.authentication.challengeWith({type:'otp'})` para forzar MFA en roles privilegiados (`owner`, `admin`, `platform_owner`). Esa API requiere que el tenant Auth0 tenga al menos un factor MFA habilitado. Sin esto, **ningún usuario puede loguear** y Auth0 responde con `invalid_request: MFA customized via PostLogin action but feature is not enabled` (BUG-005).
+
+1. Auth0 Dashboard > **Security** > **Multi-factor Auth**.
+2. Activa al menos **One-time Password** (compatible con Google Authenticator, Authy, 1Password, etc.).
+3. (Opcional, recomendado para prod) activa también **WebAuthn with FIDO Security Keys**.
+4. **Save**.
+
+Si estás en un sandbox/dev y prefieres NO usar MFA por ahora, pásale `ENFORCE_MFA_ACTION=false` al script en el Paso 2 — la Action no se crea y los logins funcionan sin segundo factor. Para producción, **siempre** activa MFA y deja `ENFORCE_MFA_ACTION=true`.
+
+Más detalles operativos (cómo quitar la Action si ya la creaste, cómo desbindearla del flow, etc.): `docs/runbooks/auth0-postlogin-mfa-error.md`.
+
+#### Paso 2 — Correr el script de configuración
+
+El script crea el resto: API resource, app web admin, app M2M service, roles, permisos, Action de custom claims y, si lo activas, Action de MFA enforcement. Es **idempotente**: si los recursos ya existen, los actualiza en lugar de duplicar — puedes re-correrlo cuantas veces necesites.
+
+Desde la raíz del repo:
 
 ```bash
-export AUTH0_DOMAIN=tu-tenant.us.auth0.com
-export MGMT_CLIENT_ID=xxxx
-export MGMT_CLIENT_SECRET=xxxx
-export COPILOTOIA_DOMAIN=copilotoia.tu-dominio.com
+# Credenciales del bootstrap M2M del Paso 1.1
+export AUTH0_DOMAIN="dev-xxxxxxxx.us.auth0.com"     # tu dominio Auth0
+export MGMT_CLIENT_ID="<client_id del bootstrap M2M>"
+export MGMT_CLIENT_SECRET="<client_secret del bootstrap M2M>"
+
+# Dominio del producto (puede quedar copilotoia.local para dev)
+export COPILOTOIA_DOMAIN="copilotoia.local"
+
+# Si activaste MFA en el Paso 1.2:
+export ENFORCE_MFA_ACTION=true
+# Si NO activaste MFA (dev rápido):
+# export ENFORCE_MFA_ACTION=false
+
+# Imprimir secretos en consola (útil para guardarlos en gestor externo)
+export OUTPUT_SECRETS=true
+
 ./scripts/configure-auth0.sh
 ```
 
-También puedes usar `MGMT_ACCESS_TOKEN` si ya tienes un token de Management API válido. La aplicación M2M de Management API debe tener permisos suficientes para gestionar resource servers, clients, client grants, roles y actions.
+**Lo que crea el script:**
 
-Al terminar, el script guarda automáticamente la configuración necesaria en archivos locales ignorados por git:
+1. API `copilotoia-core-api` con audience `AUTH0_API_IDENTIFIER` y RBAC habilitado.
+2. App **regular web** `copilotoia-admin-web` para el login del panel (Authorization Code Flow + refresh tokens, secret en `.secrets/auth0-admin-client-secret`).
+3. App **M2M** `copilotoia-service-m2m` + client grant contra el API. El backend usa este client para Management API (invitar miembros, asignar roles). Estas credenciales son **distintas** de las del admin web; mezclarlas reproduce BUG-001.
+4. Roles `platform_owner`, `owner`, `admin`, `manager`, `agent`, `viewer`, `support` con permisos por alcance (ver matriz en `app/services/auth0_admin.py`).
+5. Action PostLogin `copilotoia-post-login-claims` que inyecta `tenant_id`, `tenant_slug`, `roles`, `permissions` y `support_mode` como custom claims namespaced (`https://<COPILOTOIA_DOMAIN>/claims/...`).
+6. Action PostLogin `copilotoia-mfa-challenge` (solo si `ENFORCE_MFA_ACTION=true`) que dispara OTP challenge para roles privilegiados sin MFA verificada.
 
-| Archivo | Contenido | Se versiona |
-|---|---|---:|
-| `.env.auth0.local` | `AUTH0_DOMAIN`, `AUTH0_ISSUER`, `AUTH0_AUDIENCE`, namespace de claims, client IDs, URLs permitidas y rutas de secretos | No |
-| `.secrets/auth0-admin-client-secret` | client secret de la app web admin si Auth0 lo entrega | No |
-| `.secrets/auth0-service-client-secret` | client secret de la app M2M interna | No |
+**Salida esperada:**
 
-Puedes cambiar la salida con `AUTH0_ENV_FILE`, `AUTH0_SECRETS_DIR` o desactivarla con `SAVE_AUTH0_CONFIG=false`. Estos archivos son locales y sensibles; no los subas al repositorio ni los compartas por chat.
+```text
+✅ Auth0 CopilotoIA configurado
+AUTH0_DOMAIN=dev-xxxxxxxx.us.auth0.com
+AUTH0_AUDIENCE=https://copilotoia.local/api
+AUTH0_CLAIMS_NAMESPACE=https://copilotoia.local/claims
+AUTH0_ADMIN_APP_NAME=copilotoia-admin-web
+AUTH0_ADMIN_CLIENT_ID=AbC123...
+AUTH0_SERVICE_APP_NAME=copilotoia-service-m2m
+AUTH0_SERVICE_CLIENT_ID=XyZ789...
+AUTH0_ENV_FILE=.env.auth0.local
+AUTH0_SECRETS_DIR=.secrets
+```
 
-> Nota: no dupliques estas variables en `.env`. La app carga `.env` y `.env.auth0.local` en ese orden, y `docker-compose.yml` inyecta ambos archivos en los servicios Python. Cuando `AUTH0_DOMAIN` y `AUTH0_AUDIENCE` existen en `.env.auth0.local`, los bearer tokens de usuario se validan como access tokens Auth0 RS256 usando JWKS. Si `AUTH0_DOMAIN` queda vacío, la API conserva la validación HS256 local para desarrollo.
+**Archivos generados (todos gitignored):**
+
+| Archivo | Contenido |
+|---|---|
+| `.env.auth0.local` | `AUTH0_DOMAIN`, `AUTH0_ISSUER`, `AUTH0_AUDIENCE`, namespace de claims, los dos client IDs (`ADMIN_*` y `SERVICE_*`), URLs permitidas y rutas de secretos. |
+| `.secrets/auth0-admin-client-secret` | Client secret de la app web admin (login del panel). |
+| `.secrets/auth0-service-client-secret` | Client secret de la app M2M interna (Management API). |
+
+Puedes redirigir la salida con `AUTH0_ENV_FILE=...`, `AUTH0_SECRETS_DIR=...` o desactivarla con `SAVE_AUTH0_CONFIG=false`. También puedes usar `MGMT_ACCESS_TOKEN=<token>` en lugar de `MGMT_CLIENT_ID + MGMT_CLIENT_SECRET` si ya tienes un token de Management API válido.
+
+> **No dupliques estas variables en `.env`**. La app carga `.env` y `.env.auth0.local` en ese orden, y `docker-compose.yml` inyecta ambos archivos en los servicios Python. Cuando `AUTH0_DOMAIN` y `AUTH0_AUDIENCE` existen en `.env.auth0.local`, los bearer tokens de usuario se validan como access tokens Auth0 RS256 contra JWKS. Si `AUTH0_DOMAIN` queda vacío, la API conserva la validación HS256 local con `JWT_SECRET` para desarrollo.
+
+#### Paso 3 — Crear tu primer usuario `platform_owner`
+
+El script crea los **roles** pero no los **usuarios** — esas cuentas las creas vos y les asignás el rol que corresponda. Para tener acceso de superadmin (operación cross-tenant, fleet, system health, billing) necesitas un usuario con rol `platform_owner`.
+
+##### 3.1 Crear el usuario en Auth0
+
+1. Auth0 Dashboard > **User Management** > **Users** > **Create User**.
+2. **Email**: tu email real (te llegará el email de verificación / recuperación de password ahí).
+3. **Password**: una temporal fuerte (la cambias en el primer login si activas password rotation).
+4. **Connection**: `Username-Password-Authentication` (default).
+5. **Create**.
+
+##### 3.2 Asignarle el rol `platform_owner`
+
+1. En la lista de Users, abrí tu usuario recién creado.
+2. Pestaña **Roles** > **Assign Roles**.
+3. Busca `platform_owner` > marcar > **Assign**.
+
+> **Nota sobre el flujo post-login**: con rol `platform_owner` y sin `tenant_id` asignado en `app_metadata`, el panel te redirige automáticamente a `/admin/platform/tenants` (vista de flota). Si caes en `/admin/onboarding` (wizard de "crear tenant"), significa que el panel está pre-BUG-006 fix — actualizá a `develop` reciente y reintenta.
+
+##### 3.3 (Opcional) Asignar `tenant_id` a un usuario para que entre directo a un tenant
+
+Para usuarios que operan **dentro** de un tenant específico (no platform_owner cross-tenant):
+
+1. En la pestaña **Details** del usuario, abre **app_metadata** y agrega:
+   ```json
+   {
+     "tenant_id": "<UUID del tenant>",
+     "default_tenant_id": "<UUID del tenant>"
+   }
+   ```
+2. Asignale el rol que corresponda (`owner`, `admin`, `manager`, `agent`, `viewer`).
+
+La Action PostLogin de custom claims (creada por el script) inyecta `tenant_id` desde `app_metadata` al JWT, y el backend lo lee desde `request.state.tenant_id` para aplicar RLS.
+
+#### Paso 4 — Conectar el backend con las creds de Auth0
+
+El script ya escribió `.env.auth0.local`. El stack Docker Compose lo carga automáticamente — no hay que copiar nada al `.env` principal. Solo verifica que ambos archivos existen:
+
+```bash
+ls -l .env .env.auth0.local
+```
+
+Si `.env` no existe todavía (primera instalación), genéralo con:
+
+```bash
+./scripts/generate-local-secrets.sh
+```
+
+#### Paso 5 — Arrancar admin panel y probar el flujo end-to-end
+
+Si todavía no levantaste el core (Paso 6 más abajo), hazlo primero. Luego:
+
+```bash
+./scripts/bootstrap-admin-panel.sh
+```
+
+##### 5.1 Smoke test
+
+1. Abrí <http://localhost:3000/admin/>.
+2. Click **Iniciar sesión** > te redirige a Auth0 Universal Login.
+3. Ingresa el email/password del usuario que creaste en el Paso 3.
+4. **Primera vez con MFA activo**: Auth0 te pide enrolar OTP — escaneá el QR con Google Authenticator/Authy y confirma con el código de 6 dígitos.
+5. Tras MFA, Auth0 te redirige a `/admin/callback` y de ahí al destino según tu rol:
+   - **`platform_owner`** > `/admin/platform/tenants` (flota de tenants).
+   - **`owner`/`admin`/etc. con `tenant_id`** > home del tenant (`/admin/t/<slug>/...`).
+   - **Usuario sin tenant ni rol global** > onboarding wizard para crear su primer tenant.
+
+##### 5.2 Verificar la sesión server-side
+
+Una vez logueado, abrí <http://localhost:3000/admin/account/sessions> — debería aparecer una sesión con `current: true`, refrescada en cada visita (UI-016.7-FU-SESSIONS). Si está vacío, el hook de sesiones no se está poblando — revisa `app.auth_sessions` en la DB.
 
 ### Admin Panel local
 
@@ -209,7 +348,7 @@ El script termina mostrando `docker compose ps admin-panel`; ahí debe aparecer 
 docker compose up -d --build admin-panel
 ```
 
-Luego abre `http://localhost:3000/admin/` e inicia sesión con Auth0. El puerto `3000` es solo para el Admin Panel; los endpoints core `/v1/*` viven en la API del puerto `8000`. En Docker, el Admin Panel se comunica con esa API mediante `ADMIN_CORE_API_BASE_URL=http://api:8000` y expone al navegador el proxy `/admin/api/core/v1/*`, por lo que el frontend no debe intentar llamar `/v1/*` en `http://localhost:3000`. Si el usuario autenticado no tiene `tenant_id`, el panel muestra un botón central para crear su primer tenant vía `POST /tenant-signup`; ese usuario queda asociado como `owner` del tenant creado. Si tu aplicación Auth0 fue configurada antes de esta versión, vuelve a ejecutar `scripts/configure-auth0.sh` para agregar `http://localhost:3000/admin/` a Allowed Logout URLs. Más detalles y comandos de desarrollo están en `docs/ADMIN_PANEL.md`.
+Luego abre `http://localhost:3000/admin/` e inicia sesión con Auth0. El puerto `3000` es solo para el Admin Panel; los endpoints core `/v1/*` viven en la API del puerto `8000`. En Docker, el Admin Panel se comunica con esa API mediante `ADMIN_CORE_API_BASE_URL=http://api:8000` y expone al navegador el proxy `/admin/api/core/v1/*`, por lo que el frontend no debe intentar llamar `/v1/*` en `http://localhost:3000`. Si el usuario autenticado no tiene `tenant_id` y tampoco rol global `platform_owner`/`owner`, el panel muestra un botón central para crear su primer tenant vía `POST /tenant-signup`; ese usuario queda asociado como `owner` del tenant creado. Si tu aplicación Auth0 fue configurada antes de esta versión, vuelve a ejecutar `scripts/configure-auth0.sh` para agregar `http://localhost:3000/admin/` a Allowed Logout URLs. Más detalles y comandos de desarrollo están en `docs/ADMIN_PANEL.md`.
 
 ### WhatsApp / Meta Graph API
 
@@ -826,3 +965,60 @@ Los scripts de inicialización corren solo cuando el volumen de PostgreSQL se cr
 ### Puerto ocupado
 
 Si `8000`, `5432`, `6379`, `9000` o `9001` están ocupados, cambia los puertos en `docker-compose.yml` o detén el servicio que los usa.
+
+### Auth0: `Two-factor authentication is required to access this application` (BUG-005)
+
+Al loguear con cualquier usuario, Auth0 muestra una pantalla blanca con `Something Went Wrong - Two-factor authentication is required to access this application. To enable this, please contact your system administrator`. Si llegás al callback (`/admin/callback`), responde:
+
+```json
+{"detail":"invalid_request: MFA customized via PostLogin action but feature is not enabled."}
+```
+
+**Causa**: el script `configure-auth0.sh` creó la PostLogin Action `copilotoia-mfa-challenge` con `ENFORCE_MFA_ACTION=true`, pero Auth0 no tiene OTP/WebAuthn habilitado en **Security > Multi-factor Auth**. La Action llama `api.authentication.challengeWith({type:'otp'})` y Auth0 rechaza el request porque ese factor no está provisionado en el tenant. El bloqueo es **total**: incluye al `platform_owner`, no se puede bypassear desde el panel.
+
+**Solución A (producción) — habilitar MFA en Auth0:**
+
+1. Auth0 Dashboard > **Security** > **Multi-factor Auth**.
+2. Activar **One-time Password** (OTP) o **WebAuthn**.
+3. Refrescar el login. Los usuarios privilegiados deberán enrolar el segundo factor en su primer login post-cambio.
+
+**Solución B (sandbox/dev sin add-on) — quitar la Action del flow:**
+
+1. Auth0 Dashboard > **Actions** > **Flows** > **Login**.
+2. Arrastrar el bloque `copilotoia-mfa-challenge` **fuera** del flow (a la columna derecha "Library").
+3. **Apply**. Los logins funcionan sin segundo factor.
+
+> `ENFORCE_MFA_ACTION=false` en el script **no** desbindea una Action ya creada — solo evita que la cree. Para quitarla usa la opción B arriba.
+
+Runbook completo con la receta vía Management API (curl): `docs/runbooks/auth0-postlogin-mfa-error.md`.
+
+### Auth0: invite member devuelve `403 Forbidden` en `/oauth/token` (BUG-001)
+
+Al invitar un miembro al tenant desde el módulo **Equipo**, el log del backend muestra `auth0_admin.invite_user_create_failed` con `403 Forbidden` en `https://<tenant>.us.auth0.com/oauth/token`. El POST `/v1/tenants/{id}/members` retorna 201 (el usuario queda creado localmente en `app.users`) pero **Auth0 no recibe la invitación** y el usuario nunca recibe el email para configurar password.
+
+**Causa**: el backend está intentando usar credenciales de la **app web admin** (`AUTH0_ADMIN_*`) para Management API. Ese tipo de app no tiene `client_credentials` grant — solo `authorization_code` y `refresh_token`. Auth0 rechaza el request con 403.
+
+**Solución**: verificá que `.env.auth0.local` tiene **ambos** sets de credenciales — el script las crea por separado:
+
+```bash
+grep -E '^AUTH0_(ADMIN|SERVICE)_' .env.auth0.local
+```
+
+Debe aparecer tanto `AUTH0_ADMIN_CLIENT_ID` (web app, usada para el login del panel) como `AUTH0_SERVICE_CLIENT_ID` (M2M app, usada para Management API). Si falta `AUTH0_SERVICE_*`, re-corré `./scripts/configure-auth0.sh` con todas las variables del Paso 2 — el script es idempotente y agrega lo que falte.
+
+Si las credenciales están pero el invite sigue fallando: en el Auth0 Dashboard, abrí la app `copilotoia-service-m2m`, pestaña **APIs**, y verificá que tiene autorizado **Auth0 Management API** con scopes `read:users`, `create:users`, `update:users` y `read:tickets` como mínimo. Si faltan, márcalos y guarda.
+
+### Auth0: `platform_owner` cae al onboarding de tenant en vez de `/platform` (BUG-006)
+
+Logueás con un usuario que tiene rol global `platform_owner` (verificable en Auth0 > Users > tu user > Roles), pero el panel te aterriza en la tarjeta "Bienvenido a CopilotoIA — Crear tenant" (`NoTenantOnboarding` / `TenantSetupWizard`) en vez de `/admin/platform/tenants` (vista de flota).
+
+**Causa**: el panel está en una versión pre-PR #204. La función `resolveActiveRoles` exigía `support_mode === true` para que los roles globales del JWT aplicaran en contexto sin tenant; sin `support_mode`, el redirect inicial no detectaba el rol global y caía a `/no-tenant`.
+
+**Solución**: actualizar a `develop` reciente.
+
+```bash
+git pull origin develop
+./scripts/bootstrap-admin-panel.sh
+```
+
+Verificación rápida: en `admin-panel/src/permissions/matrix.js`, la función `resolveActiveRoles` debe tener una bifurcación `if (!tenant) { profileRoles = profileGlobalRoles; }` que incluye los roles globales sin requerir `support_mode`.
