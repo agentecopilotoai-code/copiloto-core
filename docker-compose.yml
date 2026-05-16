@@ -126,7 +126,11 @@ services:
       # SEC-009 — verifier corre el restore en un Postgres efímero en
       # `backup-verify-net` (red bridge --internal). Si docker socket no está
       # disponible, fallback degraded a `pg_restore --list` (ver SEC-009.1-FU).
-      BACKUP_VERIFY_PG_IMAGE: ${BACKUP_VERIFY_PG_IMAGE:-postgres:16-alpine}
+      # codex P1 fix: default `pgvector/pgvector:pg16` para que el restore
+      # pueda procesar la extensión `vector` que vive en el schema productivo
+      # (`app.knowledge_chunks.embedding vector(1536)`). La imagen plain
+      # `postgres:16-alpine` fallaba al toparse con esos objects.
+      BACKUP_VERIFY_PG_IMAGE: ${BACKUP_VERIFY_PG_IMAGE:-pgvector/pgvector:pg16}
       BACKUP_VERIFY_PG_PORT: ${BACKUP_VERIFY_PG_PORT:-55432}
       BACKUP_VERIFY_NETWORK: ${BACKUP_VERIFY_NETWORK:-backup-verify-net}
       BACKUP_VERIFY_SKIP_EPHEMERAL: ${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}

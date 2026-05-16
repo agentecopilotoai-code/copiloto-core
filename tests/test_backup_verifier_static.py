@@ -145,14 +145,101 @@ def test_verifier_restores_into_ephemeral_isolated_postgres_not_productive_clust
     assert 'BACKUP_VERIFY_NETWORK' in script
     # --internal network ensures the ephemeral PG cannot reach the productive cluster.
     assert 'docker network create --driver bridge --internal "$BACKUP_VERIFY_NETWORK"' in script
-    # Restore target is the ephemeral host:port, NOT POSTGRES_HOST.
+    # Restore target is the ephemeral host:port, NOT POSTGRES_HOST. Después del
+    # codex P1 fix de networking, EPHEMERAL_HOST="127.0.0.1" solo aplica al
+    # branch bare-metal (EN_DOCKER=0); en container se usa el nombre del
+    # ephemeral container via DNS Docker (ver tests dedicados abajo).
     assert 'EPHEMERAL_HOST="127.0.0.1"' in script
-    assert 'postgres://${VERIFY_RESTORE_ROLE}:${BACKUP_VERIFY_RESTORE_PASSWORD}@${EPHEMERAL_HOST}:${BACKUP_VERIFY_PG_PORT}/${VERIFY_DB}' in script
+    assert (
+        'postgres://${VERIFY_RESTORE_ROLE}:${BACKUP_VERIFY_RESTORE_PASSWORD}'
+        '@${EPHEMERAL_HOST}:${EPHEMERAL_PORT}/${VERIFY_DB}'
+    ) in script
     # We do NOT createdb / dropdb against POSTGRES_HOST anymore.
     assert 'createdb -h "$PG_HOST" -U postgres' not in script
     assert 'dropdb -h "$PG_HOST" -U postgres' not in script
     # And the previous "VERIFY_URL=postgres://postgres@${PG_HOST}/..." pattern is gone.
     assert 'postgres://postgres@${PG_HOST}' not in script
+
+
+# --------------------------------------------------------------------------- #
+# Verifier — codex P1 fixes (networking + pgvector image)                    #
+# --------------------------------------------------------------------------- #
+
+
+def test_verifier_default_image_includes_pgvector_extension() -> None:
+    """codex P1: el schema productivo usa `vector(1536)` en
+    `app.knowledge_chunks.embedding`. La imagen plain `postgres:16-alpine`
+    no incluye pgvector, así que `pg_restore` fallaba al toparse con los
+    objects de la extensión `vector`. Default ahora es la imagen oficial
+    pgvector (drop-in de Postgres 16 con la extensión pre-instalada).
+
+    El test cubre AMBOS lugares donde vive el default — el script y el
+    `docker-compose.yml` — para que no se desincronicen.
+    """
+    script = _verifier()
+    assert 'BACKUP_VERIFY_PG_IMAGE:-pgvector/pgvector:pg16' in script, (
+        'el default del verifier debe ser pgvector/pgvector:pg16, no postgres:16-alpine'
+    )
+    # El default plain ya no debe aparecer como literal.
+    assert ':-postgres:16-alpine' not in script, (
+        'postgres:16-alpine no debe aparecer como default — el restore fallaría '
+        'sobre dumps con la extensión vector'
+    )
+
+    compose_path = Path('docker-compose.yml')
+    compose = compose_path.read_text()
+    assert 'BACKUP_VERIFY_PG_IMAGE: ${BACKUP_VERIFY_PG_IMAGE:-pgvector/pgvector:pg16}' in compose
+
+
+def test_verifier_detects_running_inside_container_via_dockerenv() -> None:
+    """codex P1: cuando el verifier corre en `backup-worker` container,
+    `127.0.0.1` del worker NO es el host del Docker daemon. El script
+    detecta el modo via `/.dockerenv` y conmuta el transporte de red.
+    """
+    script = _verifier()
+    assert '/.dockerenv' in script, (
+        'el script debe detectar si corre dentro de un container Docker'
+    )
+    assert 'EN_DOCKER=1' in script
+    assert 'EN_DOCKER=0' in script
+    # `hostname` dentro de un container es el container ID — usable como
+    # argumento de `docker network connect`.
+    assert 'WORKER_CONTAINER_ID="$(hostname)"' in script
+
+
+def test_verifier_in_container_skips_port_publish_and_uses_dns() -> None:
+    """codex P1: el `-p 127.0.0.1:${PORT}:5432` publica en el HOST del
+    daemon, inalcanzable desde el worker. Cuando EN_DOCKER=1 el script
+    omite `-p` y se conecta al ephemeral por DNS (`<container>:5432`).
+    """
+    script = _verifier()
+    # Branch de port publishing condicional.
+    assert 'PORT_PUBLISH_ARGS=()' in script
+    assert 'if [[ "$EN_DOCKER" != "1" ]]; then' in script
+    assert 'PORT_PUBLISH_ARGS=(-p "127.0.0.1:${BACKUP_VERIFY_PG_PORT}:5432")' in script
+    # El docker run usa el array, no la flag literal.
+    assert '"${PORT_PUBLISH_ARGS[@]}"' in script
+    # Host efectivo en container = nombre del ephemeral container.
+    assert 'EPHEMERAL_HOST="$BACKUP_VERIFY_PG_CONTAINER"' in script
+    # En container usa el puerto 5432 default de Postgres (no el mapeado).
+    assert 'EPHEMERAL_PORT=5432' in script
+    # En bare-metal usa el puerto publicado.
+    assert 'EPHEMERAL_PORT="$BACKUP_VERIFY_PG_PORT"' in script
+
+
+def test_verifier_in_container_attaches_worker_to_verify_network() -> None:
+    """codex P1: para que el worker pueda hablar con el ephemeral por DNS,
+    se conecta TEMPORALMENTE a `BACKUP_VERIFY_NETWORK`. El cleanup desco-
+    necta antes de borrar la red (sino `network rm` falla con
+    `has active endpoints`).
+    """
+    script = _verifier()
+    assert 'docker network connect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID"' in script
+    # Falla cerrado si el attach no funciona — sin él, el verifier no
+    # alcanza al ephemeral y queda con timeout misterioso.
+    assert 'ephemeral_network_attach_failed' in script
+    # Cleanup desconecta antes de borrar la red.
+    assert 'docker network disconnect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID"' in script
 
 
 # --------------------------------------------------------------------------- #

@@ -15,6 +15,40 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-009 P1 — verifier alcanza al ephemeral en container + imagen con pgvector
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar dos hallazgos P1 del codex review sobre `scripts/verify-backup.sh`. Sin estos fixes, el scheduled verifier en producción (backup-worker container) NUNCA podía completar un restore real — fallaba con `ephemeral_pg_not_ready` por networking inalcanzable y, aún si llegaba, fallaba en `pg_restore` por imagen sin pgvector.
+- **P1 #1 — `Connect to the Docker host, not container localhost`:** el `docker run -p 127.0.0.1:${BACKUP_VERIFY_PG_PORT}:5432` publica en el HOST del Docker daemon, NO en el `backup-worker` container donde corre el verifier. La línea `EPHEMERAL_HOST="127.0.0.1"` + `psql -h 127.0.0.1` apuntaba al loopback del worker (vacío) → timeout `ephemeral_pg_not_ready` siempre. El verifier "funcionaba" solo cuando se corría a mano desde el host (raro).
+  - **Fix:** detección de runtime via `/.dockerenv`. Dos paths:
+    - **`EN_DOCKER=0`** (host bare-metal / CI runner): comportamiento original — `-p 127.0.0.1:${PORT}:5432` + `psql -h 127.0.0.1 -p ${BACKUP_VERIFY_PG_PORT}`.
+    - **`EN_DOCKER=1`** (backup-worker container): se OMITE `-p` (sería inútil), el worker se conecta TEMPORALMENTE a `backup-verify-net` via `docker network connect $BACKUP_VERIFY_NETWORK $WORKER_CONTAINER_ID`, y se accede al ephemeral por DNS de Docker: `psql -h ${BACKUP_VERIFY_PG_CONTAINER} -p 5432`. `WORKER_CONTAINER_ID="$(hostname)"` (en Docker, hostname devuelve el container ID corto).
+  - **Cleanup ampliado:** `cleanup_ephemeral_pg` ahora desconecta el worker de la red ANTES de borrar la red (`network rm` falla con `has active endpoints` si hay un endpoint activo). Sigue siendo idempotente.
+- **P1 #2 — `Use an ephemeral image that includes pgvector`:** el default `BACKUP_VERIFY_PG_IMAGE="postgres:16-alpine"` no incluye la extensión `vector`. Pero el schema productivo (`infra/postgres/01-schema.sql`) declara `app.knowledge_chunks.embedding vector(1536)`, así que cualquier `pg_dump --format=custom` real lleva entries `CREATE EXTENSION vector` que `pg_restore` ejecuta. Resultado: el restore fallaba en producción para cualquier backup válido (mientras pasaba en local porque alguien podría override la variable manualmente).
+  - **Fix:** default cambiado a `pgvector/pgvector:pg16` — la imagen oficial mantenida por el equipo de pgvector, drop-in compatible con `postgres:16` y trae la extensión pre-instalada. Actualizado en **dos lugares** que tenían que mantenerse sincronizados:
+    - `scripts/verify-backup.sh` línea 118: `BACKUP_VERIFY_PG_IMAGE="${BACKUP_VERIFY_PG_IMAGE:-pgvector/pgvector:pg16}"`.
+    - `docker-compose.yml` línea 129: `BACKUP_VERIFY_PG_IMAGE: ${BACKUP_VERIFY_PG_IMAGE:-pgvector/pgvector:pg16}`.
+- **Archivos:**
+  - `scripts/verify-backup.sh` — detección `EN_DOCKER`, `PORT_PUBLISH_ARGS` condicional, `docker network connect`/`disconnect` para el worker, `EPHEMERAL_HOST`/`EPHEMERAL_PORT` resueltos según runtime, default image bumped.
+  - `docker-compose.yml` — default `BACKUP_VERIFY_PG_IMAGE` bumped.
+  - `tests/test_backup_verifier_static.py` — 4 tests nuevos:
+    - `test_verifier_default_image_includes_pgvector_extension`: chequea AMBOS lugares (script + compose) para que no se desincronicen.
+    - `test_verifier_detects_running_inside_container_via_dockerenv`: verifica el switch `/.dockerenv` + `EN_DOCKER=1/0` + captura de `hostname`.
+    - `test_verifier_in_container_skips_port_publish_and_uses_dns`: regression gate del `-p` condicional + host efectivo.
+    - `test_verifier_in_container_attaches_worker_to_verify_network`: chequea `network connect` + fail-closed + `network disconnect` en cleanup.
+  - Test existente `test_verifier_restores_into_ephemeral_isolated_postgres_not_productive_cluster` actualizado para usar `EPHEMERAL_PORT` en lugar del `BACKUP_VERIFY_PG_PORT` hardcoded.
+  - `docs/UI_BACKLOG.md` — entrada SEC-009 ampliada con esta nota de follow-up.
+- **Validaciones:**
+  - `pytest tests/test_backup_verifier_static.py` → 18/18 passed (incluyendo el `test_scripts_pass_bash_syntax_check` que ejecuta `bash -n` sobre el script).
+  - `pytest tests/test_backup_*` → 35/35 passed (sin regresiones).
+- **Nota de seguridad:** ambos fixes son operacionales — el verifier ya no está roto en producción, pero NO se relajó ningún guard:
+  - El ephemeral Postgres sigue corriendo en `backup-verify-net` con `--internal` (sin acceso al exterior). El worker se conecta TEMPORALMENTE a esa misma red, no al revés (no expone al worker como destino del ephemeral).
+  - El rol de restore sigue siendo `backup_verifier` (`nosuperuser noreplication nobypassrls nocreaterole nocreatedb`). El cambio de imagen NO incluye herramientas peligrosas — `pgvector/pgvector:pg16` es solo `postgres:16` + extensión.
+  - El `network connect`/`disconnect` requiere el docker socket que el worker ya tenía (`BACKUP_VERIFY_SKIP_EPHEMERAL=1` sigue siendo el opt-out documentado para operadores que no quieren exponer el socket).
+  - Capa 1 (GPG signature verification) y Capa 3 (non-superuser role) intactas.
+
+---
+
 ### BUG-007 — `POST /v1/tenant-signup` response incluye `roles` (no más "Sin acceso" post-creación)
 
 - **Fecha:** 2026-05-15

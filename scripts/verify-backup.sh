@@ -115,10 +115,43 @@ done
 # SEC-009 — parámetros del Postgres efímero. La red `--internal` impide que el
 # container desechable salga al exterior o alcance el cluster productivo, aún
 # si el dump contiene triggers / `COPY ... FROM PROGRAM` adversarios.
-BACKUP_VERIFY_PG_IMAGE="${BACKUP_VERIFY_PG_IMAGE:-postgres:16-alpine}"
+#
+# Default image: `pgvector/pgvector:pg16` — el schema productivo usa pgvector
+# para `app.knowledge_chunks.embedding vector(1536)`, así que cualquier dump
+# real lleva entries de la extensión `vector` que `pg_restore` ejecuta. Con la
+# imagen plain `postgres:16-alpine` el restore fallaba al toparse con esos
+# objects (codex P1 SEC-009.1). La imagen oficial pgvector es un drop-in de
+# Postgres 16 con la extensión pre-instalada.
+BACKUP_VERIFY_PG_IMAGE="${BACKUP_VERIFY_PG_IMAGE:-pgvector/pgvector:pg16}"
 BACKUP_VERIFY_PG_PORT="${BACKUP_VERIFY_PG_PORT:-55432}"
 BACKUP_VERIFY_NETWORK="${BACKUP_VERIFY_NETWORK:-backup-verify-net}"
 BACKUP_VERIFY_PG_CONTAINER="copilotoia-verify-pg-$$"
+
+# SEC-009 networking fix (codex P1) — cuando el verifier corre dentro de un
+# container (backup-worker en docker-compose), el `127.0.0.1` del propio
+# container NO es el host del Docker daemon. `docker run -p 127.0.0.1:...`
+# publica el puerto en el HOST del daemon, así que `psql -h 127.0.0.1`
+# desde dentro del worker apunta a su propio loopback (vacío) y se cuelga
+# con `ephemeral_pg_not_ready` aunque el ephemeral haya arrancado bien.
+#
+# Detectamos el modo de ejecución con `/.dockerenv` y elegimos transporte:
+#
+#   * EN_DOCKER=1 → resolvemos vía DNS de Docker: el ephemeral se une a
+#     `BACKUP_VERIFY_NETWORK`, el worker se conecta TEMPORALMENTE a esa
+#     red, y `psql -h <ephemeral_container_name> -p 5432`. NO publicamos
+#     puerto al host (sin `-p`). Cleanup desconecta el worker antes de
+#     borrar la red.
+#   * EN_DOCKER=0 → host bare-metal / CI runner: mantenemos el comporta-
+#     miento original (`-p 127.0.0.1:${PORT}:5432` + `psql -h 127.0.0.1`).
+EN_DOCKER=0
+WORKER_CONTAINER_ID=""
+if [[ -f /.dockerenv ]]; then
+  EN_DOCKER=1
+  # `hostname` dentro de un container Docker devuelve el container ID corto;
+  # `docker inspect` lo acepta como argumento. El socket ya está montado en
+  # `/var/run/docker.sock` (ver docker-compose backup-worker.volumes).
+  WORKER_CONTAINER_ID="$(hostname)"
+fi
 BACKUP_VERIFY_SUPERUSER_PASSWORD="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | base64)"
 BACKUP_VERIFY_RESTORE_PASSWORD="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | base64)"
 VERIFY_DB="copilotoia_verify"
@@ -145,6 +178,13 @@ cleanup_ephemeral_pg() {
   # caso degraded donde Docker no estaba disponible.
   if command -v docker >/dev/null 2>&1; then
     docker rm -f "$BACKUP_VERIFY_PG_CONTAINER" >/dev/null 2>&1 || true
+    # codex P1: si conectamos el worker a la red verify (cuando EN_DOCKER=1),
+    # hay que desconectarlo ANTES de borrar la red — sino `network rm` falla
+    # con `has active endpoints`.
+    if [[ "$EN_DOCKER" == "1" && -n "$WORKER_CONTAINER_ID" ]]; then
+      docker network disconnect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID" \
+        >/dev/null 2>&1 || true
+    fi
     docker network rm "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || true
   fi
 }
@@ -274,23 +314,50 @@ if [[ "${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}" != "1" ]] && command -v docker >/dev/
     docker network inspect "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || \
     report_failure "ephemeral_network_create_failed"
 
+  # codex P1 fix — `docker run -p 127.0.0.1:${PORT}:5432` publica al HOST del
+  # Docker daemon, no al worker. Solo lo usamos cuando el verifier corre en
+  # bare-metal/CI (sin /.dockerenv). Dentro de un container, omitimos `-p` y
+  # nos conectamos al ephemeral por DNS de Docker (`<container_name>:5432`).
+  PORT_PUBLISH_ARGS=()
+  if [[ "$EN_DOCKER" != "1" ]]; then
+    PORT_PUBLISH_ARGS=(-p "127.0.0.1:${BACKUP_VERIFY_PG_PORT}:5432")
+  fi
+
   echo "==> Arrancando Postgres efímero ${BACKUP_VERIFY_PG_IMAGE}"
   if ! docker run -d --rm \
         --name "$BACKUP_VERIFY_PG_CONTAINER" \
         --network "$BACKUP_VERIFY_NETWORK" \
-        -p "127.0.0.1:${BACKUP_VERIFY_PG_PORT}:5432" \
+        "${PORT_PUBLISH_ARGS[@]}" \
         -e POSTGRES_PASSWORD="$BACKUP_VERIFY_SUPERUSER_PASSWORD" \
         -e POSTGRES_DB="$VERIFY_DB" \
         "$BACKUP_VERIFY_PG_IMAGE" >/dev/null 2>"$WORK_DIR/docker.err"; then
     report_failure "ephemeral_pg_start_failed:$(tail -c 200 "$WORK_DIR/docker.err" | tr '\n' ' ')"
   fi
 
-  # Wait for Postgres to accept connections (timeout 30s).
-  EPHEMERAL_HOST="127.0.0.1"
+  # codex P1 fix — cuando estamos en container, conectamos el worker
+  # temporalmente a la red verify para alcanzar el ephemeral por DNS Docker.
+  # El cleanup desconecta antes de borrar la red (ver `cleanup_ephemeral_pg`).
+  if [[ "$EN_DOCKER" == "1" ]]; then
+    if ! docker network connect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID" \
+         >/dev/null 2>"$WORK_DIR/netconnect.err"; then
+      report_failure "ephemeral_network_attach_failed:$(tail -c 200 "$WORK_DIR/netconnect.err" | tr '\n' ' ')"
+    fi
+  fi
+
+  # codex P1 fix — host + puerto efectivos:
+  #   * EN_DOCKER=1 → DNS del container (`copilotoia-verify-pg-$$`) + 5432 (sin port mapping).
+  #   * EN_DOCKER=0 → 127.0.0.1 + puerto publicado al host.
+  if [[ "$EN_DOCKER" == "1" ]]; then
+    EPHEMERAL_HOST="$BACKUP_VERIFY_PG_CONTAINER"
+    EPHEMERAL_PORT=5432
+  else
+    EPHEMERAL_HOST="127.0.0.1"
+    EPHEMERAL_PORT="$BACKUP_VERIFY_PG_PORT"
+  fi
   EPHEMERAL_PG_OK=0
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if PGPASSWORD="$BACKUP_VERIFY_SUPERUSER_PASSWORD" psql \
-         "postgres://postgres@${EPHEMERAL_HOST}:${BACKUP_VERIFY_PG_PORT}/${VERIFY_DB}" \
+         "postgres://postgres@${EPHEMERAL_HOST}:${EPHEMERAL_PORT}/${VERIFY_DB}" \
          -Atc 'select 1' >/dev/null 2>&1; then
       EPHEMERAL_PG_OK=1
       break
@@ -305,7 +372,7 @@ if [[ "${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}" != "1" ]] && command -v docker >/dev/
   # `backup_verifier` (sin SUPERUSER, REPLICATION, BYPASSRLS), con privilegios
   # mínimos sobre la DB de verificación.
   PGPASSWORD="$BACKUP_VERIFY_SUPERUSER_PASSWORD" psql \
-    "postgres://postgres@${EPHEMERAL_HOST}:${BACKUP_VERIFY_PG_PORT}/${VERIFY_DB}" \
+    "postgres://postgres@${EPHEMERAL_HOST}:${EPHEMERAL_PORT}/${VERIFY_DB}" \
     -v ON_ERROR_STOP=1 -Atc "
       create role ${VERIFY_RESTORE_ROLE} login password '${BACKUP_VERIFY_RESTORE_PASSWORD}' nosuperuser noreplication nobypassrls nocreaterole nocreatedb;
       grant all on database ${VERIFY_DB} to ${VERIFY_RESTORE_ROLE};
@@ -313,7 +380,7 @@ if [[ "${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}" != "1" ]] && command -v docker >/dev/
     " >/dev/null 2>"$WORK_DIR/role.err" || \
     report_failure "ephemeral_role_provision_failed:$(tail -c 200 "$WORK_DIR/role.err" | tr '\n' ' ')"
 
-  VERIFY_URL="postgres://${VERIFY_RESTORE_ROLE}:${BACKUP_VERIFY_RESTORE_PASSWORD}@${EPHEMERAL_HOST}:${BACKUP_VERIFY_PG_PORT}/${VERIFY_DB}"
+  VERIFY_URL="postgres://${VERIFY_RESTORE_ROLE}:${BACKUP_VERIFY_RESTORE_PASSWORD}@${EPHEMERAL_HOST}:${EPHEMERAL_PORT}/${VERIFY_DB}"
   RESTORE_MODE="ephemeral_isolated"
 
   echo "==> Restaurando dump en Postgres efímero como ${VERIFY_RESTORE_ROLE}"
