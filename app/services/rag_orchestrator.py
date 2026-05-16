@@ -108,11 +108,30 @@ _SPANISH_WEEKDAYS = ('lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sáb
 
 
 def _current_datetime_label(timezone_name: str) -> tuple[str, str]:
-    """Return (formatted label, tz name actually used)."""
+    """Return (formatted label, tz name actually used).
+
+    SEC-010 (malformed tenant timezone can disable bot replies): la versión
+    anterior solo capturaba ``ZoneInfoNotFoundError``. Inputs ya persistidos
+    como ``'America/Bogota/'`` (trailing slash legacy), un entero, o un
+    string vacío que llega como ``None`` después de coalesce raisean
+    ``ValueError`` o ``TypeError`` — uncaught, tumbaban este handler y por
+    extensión el path entero de bot reply (el orchestrator levanta 500 al
+    upstream). El bot dejaba de responder al tenant entero hasta que el
+    operador editaba la row a mano.
+
+    Defense en profundidad: el `TenantUpdate` schema ya valida `timezone`
+    al PATCH, así que valores nuevos vienen sanos. Esta función protege
+    contra valores HISTÓRICOS que ya están en la DB (escaparon antes de
+    que existiera el validator) o valores inyectados por scripts/migrations
+    bypasseando el API.
+    """
     tz_name = timezone_name or 'America/Bogota'
     try:
         tz = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
+    except (ZoneInfoNotFoundError, ValueError, KeyError, TypeError):
+        # Log para que el operador detecte la row mal seteada y la corrija,
+        # pero NO crashear — el bot sigue respondiendo con la default TZ.
+        log.warning('rag_orchestrator.invalid_timezone', tz=tz_name)
         tz = ZoneInfo('America/Bogota')
         tz_name = 'America/Bogota'
     now = datetime.now(tz)

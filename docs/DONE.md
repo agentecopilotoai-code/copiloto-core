@@ -15,6 +15,43 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-010.6 — Malformed tenant timezone: schema validation + runtime defense
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el sub-finding de SEC-010 `Malformed tenant timezone can disable bot replies`. Antes: `TenantUpdate.timezone` era un `str | None` sin validador, así que un PATCH a `/v1/tenants/{id}` con `timezone='America/Bogota/'` (trailing slash legacy, copy-paste de URL, artefacto de CSV) persistía el valor inválido. La siguiente vez que el bot intentaba responder a un usuario, `app/services/rag_orchestrator.py::_current_datetime_label` llamaba `ZoneInfo('America/Bogota/')` que raiseaba `ValueError` (no `ZoneInfoNotFoundError` — el handler solo capturaba esta última) → uncaught → 500 al upstream → el orchestrator abortaba → el bot dejaba de responder al tenant entero. Operador necesitaba editar la row a mano para restaurar el servicio.
+- **Cambios:**
+  - **`app/api/v1/schemas.py`** — nuevo helper `_validate_iana_timezone(value)`:
+    - Acepta `None` y `''` (column default `'America/Bogota'` cubre estos casos en el route).
+    - Rechaza no-strings con `ValueError('timezone must be a string')` — defense en profundidad para inputs JSON tipo `{"timezone": 123}` que sin chequeo de tipo crashearían dentro de `ZoneInfo()` con `TypeError` confuso → FastAPI 500.
+    - Valida real con `ZoneInfo(value)` catcheando la unión completa: `ZoneInfoNotFoundError`, `ValueError`, `KeyError`, `TypeError`. Cada CPython release / cada input mal formado surface una distinta — atrapar las 4 cierra todos los gaps.
+    - Pydantic convierte el `ValueError` que el helper raisea en `ValidationError` → FastAPI lo expone como `422 Unprocessable Entity` con el mensaje `'Invalid IANA timezone: {value!r}'`.
+  - **`app/api/v1/schemas.py::TenantCreate` + `TenantUpdate`** — ambos ahora tienen un `@field_validator('timezone')` que llama el helper. `PlatformTenantUpdate` hereda del segundo y obtiene el validator gratis (anclado por test).
+  - **`app/services/rag_orchestrator.py::_current_datetime_label`** — el except amplía de `(ZoneInfoNotFoundError,)` a `(ZoneInfoNotFoundError, ValueError, KeyError, TypeError)`. Agregado `log.warning('rag_orchestrator.invalid_timezone', tz=tz_name)` cuando cae al fallback para que el operador identifique qué tenant tiene la row mal seteada y la corrija. El handler NO re-raisea — sigue y devuelve un label válido con la default TZ. Docstring inline documenta el ataque histórico y el patrón de defense en profundidad.
+  - **`app/services/digest.py::safe_zone`** — mismo cambio: except ampliado de `(ZoneInfoNotFoundError,)` a `(ZoneInfoNotFoundError, ValueError, KeyError, TypeError)`. Sigue cayendo a UTC (default seguro para reportes) y emitiendo `log.warning('digest.unknown_timezone')`.
+- **Archivos:**
+  - `app/api/v1/schemas.py` — helper + 2 validators + import `field_validator` agregado.
+  - `app/services/rag_orchestrator.py` — except ampliado + log.warning + docstring expandido.
+  - `app/services/digest.py` — except ampliado + docstring actualizado linkeando a SEC-010 + schema validator.
+  - `tests/test_tenant_timezone_validation_static.py` (NEW) — **18 tests** defienden:
+    1-4. `TenantCreate`: rechaza trailing slash (ValueError) + unknown TZ (ZoneInfoNotFoundError) + acepta IANA reales (CO, AR Buenos_Aires, UTC, Madrid) + acepta None.
+    5-7. `TenantUpdate`: rechaza trailing slash + rechaza non-string (123) + acepta IANA real.
+    8. `PlatformTenantUpdate` hereda el validator (PATCH platform admin no puede bypassear).
+    9-11. Helper `_validate_iana_timezone` expuesto + pasa None/'' + catchea las 4 excepciones (AST-checked).
+    12-15. `rag_orchestrator._current_datetime_label`: AST-check de las 3+ excepciones + log warning + fallback a default TZ + test dinámico que pasa inputs malos y verifica recovery sin raise.
+    16-17. `digest.safe_zone`: AST + dinámico, mismo patrón.
+    18. AST anchor — `@field_validator('timezone')` aparece >= 2 veces en schemas.py (TenantCreate + TenantUpdate).
+  - `docs/UI_BACKLOG.md` — sub-finding marcado DONE dentro del cluster SEC-010.
+- **Validaciones:**
+  - `pytest tests/test_tenant_timezone_validation_static.py -v` → **18/18 passed**.
+  - `pytest tests/` → **1859 passed, 22 skipped, 0 failures**.
+  - `ruff check app tests` → clean.
+- **Nota de seguridad:** este fix CIERRA un DoS de tenant (un único tenant con timezone mal podía dejarse a sí mismo sin bot reply hasta intervención manual). NO escala privilegios — el validator se aplica IGUAL para tenant admin y platform owner; nadie puede skip-earlo PATCH-eando por otro endpoint. La defense en profundidad es crítica: el schema cubre valores nuevos, pero los valores históricos que ya están en la DB (escaparon antes de SEC-010 o se escribieron via migrations / SQL directo) necesitan que el runtime sea robusto — sin el catch ampliado en `_current_datetime_label`, el bug seguiría manifestándose hasta que un operador hiciera un `UPDATE app.tenants SET timezone='America/Bogota' WHERE timezone LIKE '%/'` global. El nuevo log warning permite encontrar esas rows sin un sweep masivo.
+- **Sub-findings restantes en SEC-010:**
+  - `Claude allowlist permits unprompted curl data exfiltration`
+  - `DATABASE_URL password exposed in bootstrap process args`
+
+---
+
 ### SEC-010.5 — E2E DB ephemeral guard contra wipe accidental de producción
 
 - **Fecha:** 2026-05-15

@@ -2,13 +2,47 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.locale import SUPPORTED_COUNTRIES
 
 # TASK-0073: el MVP solo vende a 7 países LatAm. El patrón viene del catálogo
 # autoritativo de `app.services.locale` para evitar drift.
 SUPPORTED_COUNTRY_PATTERN = '^(' + '|'.join(SUPPORTED_COUNTRIES) + ')$'
+
+
+def _validate_iana_timezone(value: str | None) -> str | None:
+    """SEC-010 — reject malformed timezones at the API boundary.
+
+    Without this validator, a tenant admin could PATCH `timezone` to garbage
+    like ``"America/Bogota/"`` or ``"NotARealZone"``. The bad value would
+    persist, and the next bot-reply path (``rag_orchestrator._current_datetime_label``)
+    crashed with ``ValueError`` (uncaught — only ``ZoneInfoNotFoundError`` was
+    handled). The bot stopped replying to that tenant until an operator
+    edited the row by hand.
+
+    Accepts ``None`` / empty (handled by the column default
+    ``'America/Bogota'`` from the schema). Validates real strings with
+    ``ZoneInfo(value)``; catches ``ZoneInfoNotFoundError``, ``ValueError``,
+    ``KeyError``, ``TypeError`` (the union of every exception ``ZoneInfo``
+    has surfaced across CPython versions and bad input shapes). Pydantic
+    converts the raised ``ValueError`` into a ``ValidationError`` → 422.
+    """
+    if value is None or value == '':
+        return value
+    # Non-string types (e.g. JSON sends `123`) would crash ZoneInfo with a
+    # confusing TypeError — reject up front with a clear message.
+    if not isinstance(value, str):
+        raise ValueError('timezone must be a string')
+    # Lazy import: zoneinfo is stdlib so import is cheap, but keeping the
+    # import local makes the dependency explicit at the validator boundary.
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # noqa: PLC0415
+
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f'Invalid IANA timezone: {value!r}') from exc
+    return value
 
 
 class TenantCreate(BaseModel):
@@ -21,6 +55,12 @@ class TenantCreate(BaseModel):
     # Si ``timezone`` viene vacío, el route lo deriva de ``country_code`` vía
     # ``app.services.locale.default_timezone``.
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
+
+    # SEC-010: validate IANA timezone at the schema boundary.
+    @field_validator('timezone')
+    @classmethod
+    def _validate_timezone_field(cls, v: str | None) -> str | None:
+        return _validate_iana_timezone(v)
 
 
 class TenantUpdate(BaseModel):
@@ -38,6 +78,13 @@ class TenantUpdate(BaseModel):
     business_type_label: str | None = Field(default=None, min_length=1, max_length=160)
     country_code: str | None = Field(default=None, pattern=SUPPORTED_COUNTRY_PATTERN)
     timezone: str | None = None
+
+    # SEC-010: validate IANA timezone at the schema boundary. Subclasses
+    # (PlatformTenantUpdate) inherit this validator automatically.
+    @field_validator('timezone')
+    @classmethod
+    def _validate_timezone_field(cls, v: str | None) -> str | None:
+        return _validate_iana_timezone(v)
 
 
 class PlatformTenantUpdate(TenantUpdate):

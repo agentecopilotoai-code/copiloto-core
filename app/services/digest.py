@@ -55,14 +55,18 @@ DELIVERY_WINDOW_MINUTES = 60
 def safe_zone(tz_name: str | None) -> ZoneInfo:
     """Resolve ``tenants.timezone`` to a ZoneInfo with safe fallback.
 
-    Tenants nuevos siempre vienen con un timezone IANA válido, pero un valor
-    truncado o un alias deprecado no debería tumbar el worker — caemos a UTC
-    y emitimos un log para investigar.
+    Tenants nuevos siempre vienen con un timezone IANA válido (el
+    `TenantUpdate` / `TenantCreate` schema valida al PATCH/POST gracias a
+    SEC-010), pero un valor histórico truncado, un alias deprecado, un
+    string con trailing slash, o (en el peor caso) un tipo no-string que
+    bypasseó el schema raisean ``ValueError`` / ``TypeError`` además de
+    ``ZoneInfoNotFoundError``. Atrapamos toda la familia para no tumbar
+    el digest worker — caemos a UTC y emitimos un log para investigar.
     """
     if tz_name:
         try:
             return ZoneInfo(tz_name)
-        except ZoneInfoNotFoundError:
+        except (ZoneInfoNotFoundError, ValueError, KeyError, TypeError):
             log.warning('digest.unknown_timezone', tz=tz_name)
     return ZoneInfo('UTC')
 
