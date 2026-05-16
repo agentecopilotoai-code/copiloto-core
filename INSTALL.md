@@ -228,10 +228,18 @@ export OUTPUT_SECRETS=true
 
 1. API `copilotoia-core-api` con audience `AUTH0_API_IDENTIFIER` y RBAC habilitado.
 2. App **regular web** `copilotoia-admin-web` para el login del panel (Authorization Code Flow + refresh tokens, secret en `.secrets/auth0-admin-client-secret`).
-3. App **M2M** `copilotoia-service-m2m` + client grant contra el API. El backend usa este client para Management API (invitar miembros, asignar roles). Estas credenciales son **distintas** de las del admin web; mezclarlas reproduce BUG-001.
+3. App **M2M** `copilotoia-service-m2m` + **dos** client grants:
+   - Contra `AUTH0_API_IDENTIFIER` (la API custom del producto).
+   - **Contra Auth0 Management API** (`https://<AUTH0_DOMAIN>/api/v2/`) con los scopes runtime que el backend necesita para invitar miembros, asignar roles y generar tickets de password-change. Lista completa:
+     - `read:users`, `create:users`, `update:users` — gestión de cuentas.
+     - `create:user_tickets` — Auth0 manda email de password-change usando estos tickets (sin esto, el invite crea user pero no envía email). **Nota**: NO usar `read:tickets` — ese scope solo lee tickets existentes y NO autoriza la creación. El endpoint `POST /api/v2/tickets/password-change` exige `create:user_tickets`.
+     - `read:roles`, `read:role_members`, `create:role_members` — asignar rol Auth0 al user invitado para que su JWT post-login traiga el claim.
+   - Estas credenciales son **distintas** de las del admin web; mezclarlas reproduce BUG-001.
 4. Roles `platform_owner`, `owner`, `admin`, `manager`, `agent`, `viewer`, `support` con permisos por alcance (ver matriz en `app/services/auth0_admin.py`).
 5. Action PostLogin `copilotoia-post-login-claims` que inyecta `tenant_id`, `tenant_slug`, `roles`, `permissions` y `support_mode` como custom claims namespaced (`https://<COPILOTOIA_DOMAIN>/claims/...`).
 6. Action PostLogin `copilotoia-mfa-challenge` (solo si `ENFORCE_MFA_ACTION=true`) que dispara OTP challenge para roles privilegiados sin MFA verificada.
+
+> **Verificación post-script**: Auth0 Dashboard → **Applications** → `copilotoia-service-m2m` → tab **APIs** → debes ver **Auth0 Management API** listada como **Authorized** con los 7 scopes arriba. Si no aparece o le faltan scopes, re-corré el script — la operación es idempotente y arregla el grant.
 
 **Salida esperada:**
 

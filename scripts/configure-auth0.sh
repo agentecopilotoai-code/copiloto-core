@@ -263,6 +263,37 @@ else
   api_patch "/client-grants/$client_grant_id" "$patch_grant_payload" >/dev/null
 fi
 
+# BUG-001 follow-up: el script crea la app M2M (`copilotoia-service-m2m`)
+# pero antes NO le autorizaba Auth0 Management API. El backend la usa
+# runtime para invitar miembros (`POST /api/v2/users`), generar tickets de
+# password-change (`POST /api/v2/tickets/password-change`), asignar roles
+# (`POST /api/v2/users/{id}/roles`) y leer roles disponibles
+# (`GET /api/v2/roles`). Sin estos scopes, el invite respondía 403 en
+# `/oauth/token` y los miembros nuevos no recibían email.
+#
+# Los scopes son el mínimo necesario para el flow actual de invite +
+# asignación de rol post-creación (BUG-009 follow-up):
+#   - read:users / create:users / update:users — gestión de cuentas
+#   - create:user_tickets — Auth0 emite ticket de password-change usado
+#     en el email de invitación (POST /api/v2/tickets/password-change).
+#     Nombre EXACTO del scope: `create:user_tickets` — `read:tickets` es
+#     un scope distinto que NO autoriza la creación de tickets (codex P1).
+#   - read:roles / read:role_members / create:role_members — asignar rol
+#     Auth0 al user invitado para que su JWT post-login traiga el claim
+MGMT_API_AUDIENCE="https://${AUTH0_DOMAIN}/api/v2/"
+MGMT_API_SCOPES="read:users,create:users,update:users,create:user_tickets,read:roles,read:role_members,create:role_members"
+echo "▶ Upsert client grant M2M hacia Management API"
+mgmt_grant_id="$(jq -r --arg client_id "$service_client_id" --arg audience "$MGMT_API_AUDIENCE" '.[] | select(.client_id == $client_id and .audience == $audience) | .id' <<<"$client_grants" | head -n1)"
+mgmt_grant_payload="$(jq -n --arg audience "$MGMT_API_AUDIENCE" --arg client_id "$service_client_id" --arg scopes "$MGMT_API_SCOPES" '{audience:$audience,client_id:$client_id,scope:($scopes | split(","))}')"
+if [ -z "$mgmt_grant_id" ]; then
+  api_post '/client-grants' "$mgmt_grant_payload" >/dev/null
+  echo "  Management API grant creado con scopes: $MGMT_API_SCOPES"
+else
+  mgmt_patch_payload="$(jq -n --arg scopes "$MGMT_API_SCOPES" '{scope:($scopes | split(","))}')"
+  api_patch "/client-grants/$mgmt_grant_id" "$mgmt_patch_payload" >/dev/null
+  echo "  Management API grant actualizado con scopes: $MGMT_API_SCOPES"
+fi
+
 echo "▶ Upsert roles y permisos"
 role_names=(platform_owner owner admin manager agent viewer support)
 

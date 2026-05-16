@@ -330,3 +330,80 @@ def test_bootstrap_block_referenced_in_header_section():
     assert re.search(
         r'user\s+debe\s+existir', flat_header, re.IGNORECASE
     ), 'el header del script debe documentar que el user debe existir previamente en Auth0'
+
+
+# ───── BUG-001 follow-up: Management API client grant ─────────────────────
+
+
+def test_script_creates_client_grant_for_auth0_management_api():
+    """BUG-001 follow-up: el script crea la app M2M pero antes NO le
+    autorizaba Auth0 Management API. Resultado: invite member respondía
+    403 en /oauth/token aún con el setup "correcto". Ahora el script
+    crea/upsertea el grant automáticamente.
+    """
+    src = _script()
+    # Constantes a nivel script.
+    assert 'MGMT_API_AUDIENCE="https://${AUTH0_DOMAIN}/api/v2/"' in src
+    assert 'MGMT_API_SCOPES=' in src
+    # Bloque de upsert del grant.
+    assert "▶ Upsert client grant M2M hacia Management API" in src
+    # Idempotente: detecta si ya existe y hace PATCH; si no, POST.
+    assert 'mgmt_grant_id' in src
+    assert "api_post '/client-grants' \"$mgmt_grant_payload\"" in src
+    assert 'api_patch "/client-grants/$mgmt_grant_id"' in src
+
+
+def test_management_api_scopes_include_all_runtime_dependencies():
+    """Los scopes deben cubrir TODAS las operaciones que el backend hace
+    runtime contra Management API. Si alguien quita uno, los endpoints
+    correspondientes (invite, role assignment, etc.) van a fallar 403.
+
+    Lista mínima derivada de:
+      - app/services/auth0_admin.py::invite_user (create:users +
+        create:user_tickets para POST /api/v2/tickets/password-change)
+      - app/services/auth0_admin.py::assign_roles (create:role_members + read:roles)
+      - Look-ups de roles para resolver el role_id (read:roles, read:role_members)
+      - Update de app_metadata post-invite (BUG-009 fix futuro: update:users)
+
+    codex P1 fix: el scope para crear tickets es `create:user_tickets`
+    (no `read:tickets` — ese es para lectura de tickets existentes y NO
+    autoriza la creación). Confundirlos hace que Auth0 emita un token
+    sin el scope correcto y el invite siga fallando.
+    """
+    src = _script()
+    # Extraer la línea MGMT_API_SCOPES=...
+    match = re.search(r'MGMT_API_SCOPES="([^"]+)"', src)
+    assert match, 'no encontré MGMT_API_SCOPES= en el script'
+    scopes = set(match.group(1).split(','))
+    required_scopes = {
+        'read:users',
+        'create:users',
+        'update:users',
+        'create:user_tickets',
+        'read:roles',
+        'read:role_members',
+        'create:role_members',
+    }
+    missing = required_scopes - scopes
+    assert not missing, (
+        f'MGMT_API_SCOPES no incluye scopes requeridos: {missing}. '
+        'Si los quitás, endpoints como /v1/tenants/{id}/members fallarán 403.'
+    )
+    # codex P1 regression gate: `read:tickets` NO debe aparecer porque NO
+    # autoriza la creación del password-change ticket (endpoint POST
+    # /api/v2/tickets/password-change exige create:user_tickets).
+    assert 'read:tickets' not in scopes, (
+        '`read:tickets` no es el scope correcto para crear tickets — '
+        'usar `create:user_tickets`. Ver codex review en PR #218.'
+    )
+
+
+def test_management_api_audience_uses_auth0_domain_var():
+    """El audience debe construirse desde `AUTH0_DOMAIN` (env var del
+    operador) y NO ser un literal. Sin esto el script solo funcionaría
+    contra un tenant Auth0 específico.
+    """
+    src = _script()
+    assert 'MGMT_API_AUDIENCE="https://${AUTH0_DOMAIN}/api/v2/"' in src
+    # El audience pasado al grant payload usa la variable, no un literal.
+    assert '--arg audience "$MGMT_API_AUDIENCE"' in src
