@@ -938,7 +938,8 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### UI-018 — Redirect post-login por rol (fix del crash de "no acceso al home")
 
-- **Estado:** PENDING (urgente, bloquea login para algunos roles)
+- **Estado:** DONE (2026-05-15)
+- **Cierre:** mergeado en PR #187. Nuevo helper `admin-panel/src/app/resolveSafeHomeModule.js` itera `TENANT_NAV`/`VIEWER_NAV` y devuelve el primer módulo accesible; si ninguno lo es, `IndexRedirect` renderiza `NoModuleAccessScreen` (StateScreen tone warning) con CTA de logout. Tests `router.test.jsx` + `resolveSafeHomeModule.test.js` cubren manager-con-permisos-reducidos y rol vacío. Más detalle en `docs/DONE.md` (entrada UI-018).
 - **Síntoma actual:** después del login Auth0 el usuario cae sobre una vista sobre la que su rol no tiene acceso → error de autenticación / pantalla blanca.
 - **Causa probable:** el `IndexRedirect` (router.jsx ~111) calcula el home a partir de `tenantPermissions.role`, pero hay roles edge-case donde:
   - El JWT trae roles globales que no coinciden con `tenant.roles` (TASK-0077).
@@ -1042,7 +1043,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-001 — Cross-tenant authorization escalation (cluster de 9 findings high)
 
-- **Estado:** PENDING (alta prioridad)
+- **Estado:** DONE (RESOLVED retroactivamente — TASK-0077 endureció `ensure_tenant_access` con `required_tenant_role` + DB role check; ver `docs/security-findings-triage-2026-05-15.md`)
 - **Findings consolidados:** los siguientes hallazgos comparten un único root cause:
   - `Cross-tenant admin can alter legal documents`
   - `Cross-tenant admin access to media and promotions`
@@ -1065,7 +1066,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-002 — RAG/LLM visibility leak: agents_only chunks llegan a customer answers
 
-- **Estado:** PENDING (alta prioridad)
+- **Estado:** DONE (RESOLVED retroactivamente — `rag_retrieval.py` filtra por `END_USER_VISIBILITY` allowlist + defensive post-filter en `rag_orchestrator.py:205-210`; ver triage doc)
 - **Findings consolidados:**
   - `RAG replies can leak agents-only knowledge chunks`
   - `WhatsApp RAG can leak agent-only knowledge`
@@ -1083,7 +1084,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-003 — Webhook routing por phone_number_id: duplicate / multi-change hijacking
 
-- **Estado:** PENDING (alta prioridad)
+- **Estado:** DONE (RESOLVED retroactivamente — UNIQUE partial index `(provider, phone_number_id)` + per-change `phone_number_id` mismatch drop; ver triage doc)
 - **Findings:**
   - `Duplicate Meta page IDs can hijack webhook routing`
   - `WhatsApp webhook batches can be written to the wrong tenant`
@@ -1100,7 +1101,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-004 — MFA enforcement: bypass por overlay dismissible + dep no atada a rutas
 
-- **Estado:** PENDING (alta prioridad)
+- **Estado:** DONE (RESOLVED retroactivamente — frontend UI-016.6 redibujó `MfaRequiredBlocker` sin "Continuar sin MFA"; backend ata `require_mfa_for_privileged` a tenant_admin/platform_admin routers; ver triage doc)
 - **Findings:**
   - `MFA warning can be dismissed for privileged admin sessions`
   - `Privileged API MFA check is never enforced`
@@ -1117,7 +1118,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-005 — SSRF: webhooks, S3 endpoints, media proxy
 
-- **Estado:** PENDING (alta prioridad)
+- **Estado:** DONE (RESOLVED retroactivamente — `url_guard.validate_outbound_url` aplicado a `operator_alerts`, `knowledge_storage`, `download_whatsapp_media`; ver triage doc)
 - **Findings:**
   - `Tenant alert webhooks allow server-side request forgery`
   - `Tenant-controlled S3 endpoint enables SSRF`
@@ -1139,7 +1140,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-006 — Auth0 invite expone password-change tickets de cuentas ajenas
 
-- **Estado:** PENDING (alta prioridad) — relacionado con BUG-001
+- **Estado:** DONE (RESOLVED por TASK-0085 + BUG-001 PR #185 — `auth0_admin.invite_user` ya no devuelve el ticket URL al caller; 409 si email pre-existe sin row local; ver triage doc)
 - **Finding:** `Tenant invites expose Auth0 password reset tickets`
 - **Root cause:** el endpoint de invite acepta email arbitrario; si el email NO está en `app.users` localmente pero SÍ existe en Auth0 (p.ej. un staff/platform_owner pre-provisionado), Auth0 devuelve un password-change ticket para esa cuenta REAL. El frontend lo muestra para copiar → account takeover.
 - **Fix:**
@@ -1153,7 +1154,7 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-007 — Tenant lifecycle (`status`) — gating insuficiente
 
-- **Estado:** PENDING (alta prioridad)
+- **Estado:** DONE (RESOLVED retroactivamente — `require_platform_owner` endurecido para exigir rol específico `platform_owner`; `status` removido del `TenantUpdate` schema; ver triage doc)
 - **Findings:**
   - `Tenant status route trusts unscoped owner as platform admin`
   - `Tenant admins can change tenant lifecycle status`

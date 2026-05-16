@@ -103,8 +103,11 @@ describe('SystemHealth', () => {
     setup();
     await screen.findByRole('heading', { name: 'System Health' });
 
-    expect(screen.getByText('CircuitBreakerOpenSustained')).toBeInTheDocument();
-    expect(screen.getByText('Circuit breaker meta OPEN.')).toBeInTheDocument();
+    // Node-20 + coverage instrumentation race: heading renders sync from props
+    // but alerts come from the async getSystemHealth mock. findBy* waits for
+    // the data to populate; getBy* would assert before the resolve fires.
+    expect(await screen.findByText('CircuitBreakerOpenSustained')).toBeInTheDocument();
+    expect(await screen.findByText('Circuit breaker meta OPEN.')).toBeInTheDocument();
   });
 
   it('renders an error state and supports retry', async () => {
