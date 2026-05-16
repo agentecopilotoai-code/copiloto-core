@@ -15,6 +15,33 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### BUG-007 — `POST /v1/tenant-signup` response incluye `roles` (no más "Sin acceso" post-creación)
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el bug reportado por el operador: tras crear un tenant con `/v1/tenant-signup` (201 Created) el frontend lo manda a `/admin/t/{slug}` y aterriza en "Sin acceso a ningún módulo — Tu cuenta no tiene permisos para ver ningún módulo de este tenant". Logout + login resuelve el problema (porque `GET /v1/me/tenants` sí trae roles correctos), confirmando que el bug es solo de propagación post-creación.
+- **Root cause:** naming mismatch entre el response del endpoint y lo que el frontend espera:
+  - `POST /v1/tenant-signup` devolvía solo `user_role: 'owner'` (string singular).
+  - `admin-panel/src/permissions/matrix.js::resolveActiveRoles` busca `tenant.roles` (array) o `tenant.role` (string), nunca `tenant.user_role`.
+  - Cuando `TenantProvider.handleTenantCreated` agregaba el tenant a `tenantOptions` con `...createdTenant`, las keys que importan no estaban → `tenantRoles = []` → "Sin acceso".
+  - La row en `app.user_tenant_roles` SÍ se persistía correctamente con `role='owner'` (routes.py:1853-1859). El bug era 100% de shape del response, no de persistencia.
+- **Cambios:**
+  - **`app/api/v1/routes.py::create_own_tenant`** — agregada línea `response['roles'] = ['owner']` que matchea exactamente el shape de `/v1/me/tenants` (`array_agg(utr.role)`). `response['user_role'] = 'owner'` se mantiene por back-compat con consumers viejos que dependan de esa key. Comentario inline `BUG-007 fix:` documenta el por qué.
+- **Archivos:**
+  - `app/api/v1/routes.py` — 1 línea de fix + bloque de comentario explicando el bug.
+  - `tests/test_tenant_signup_response_shape_static.py` (NEW) — 5 tests static:
+    1. Response incluye `roles: ['owner']` (regression gate frontal).
+    2. Response mantiene `user_role: 'owner'` (back-compat).
+    3. Response sigue construyéndose desde `record_to_dict(row)` (dict mutable).
+    4. Handler sigue insertando row en `app.user_tenant_roles` con `role='owner'` (no romper persistencia).
+    5. AST-based: ambas keys son string constants asignados a `response[...]` (regression gate contra refactor que mueva keys a constantes y termine con name mismatch distinto).
+  - `docs/UI_BACKLOG.md` — entrada BUG-007 marcada DONE.
+- **Validaciones:**
+  - `pytest tests/test_tenant_signup_response_shape_static.py` → 5/5 passed.
+  - `ruff check app/api/v1/routes.py tests/test_tenant_signup_response_shape_static.py` → clean.
+- **Nota de seguridad:** fix puramente de propagación de datos. El backend nunca expuso un rol que el caller no tuviera — siempre fue `owner` real persistido en `app.user_tenant_roles` por el INSERT explícito. El frontend ahora puede leer el rol sin necesidad de re-fetch via `/v1/me/tenants`. Cero cambio en `ensure_tenant_access`, RLS, `require_min_role`, scoping por tenant ni cualquier otro guard. El comportamiento de **"platform_owner navegando a un tenant ajeno"** (donde no tiene row en `user_tenant_roles`) sigue requiriendo activar `support_mode` desde la vista Platform Owner — esto es deliberado por TASK-0077 y no afecta este fix.
+
+---
+
 ### SEC-010.2 — Webhook WhatsApp cierra el oracle de status code + timing
 
 - **Fecha:** 2026-05-15

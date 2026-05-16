@@ -1870,6 +1870,17 @@ async def create_own_tenant(
     )
     response = record_to_dict(row)
     response['user_role'] = 'owner'
+    # BUG-007 fix: el frontend (TenantProvider.handleTenantCreated +
+    # resolveActiveRoles) lee `tenant.roles` o `tenant.role` para inferir
+    # los permisos del caller. Antes del fix, este endpoint solo devolvía
+    # `user_role` (singular, naming distinto), así que al agregar el
+    # tenant recién creado a `tenantOptions` no se propagaba el rol y el
+    # caller aterrizaba en "Sin acceso a ningún módulo" hasta que el
+    # siguiente `GET /v1/me/tenants` traía la info correcta. Devolver
+    # también `roles: ['owner']` matchea exactamente el shape de
+    # `/v1/me/tenants` y permite uso inmediato. `user_role` se mantiene
+    # por back-compat con consumers viejos.
+    response['roles'] = ['owner']
     return response
 
 

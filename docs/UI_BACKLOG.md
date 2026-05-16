@@ -1057,6 +1057,16 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ---
 
+### BUG-007 — `POST /v1/tenant-signup` response no incluye `roles` (el frontend queda "Sin acceso a ningún módulo")
+
+- **Estado:** DONE (2026-05-15)
+- **Síntoma:** un `platform_owner` (o cualquier user sin tenant previo) llena el wizard de Tenant Setup, presiona "Crear tenant", el backend responde `201 Created`, el frontend navega a `/admin/t/{slug}` y la vista renderiza **"Sin acceso a ningún módulo — Tu cuenta no tiene permisos para ver ningún módulo de este tenant"**. Logout + login resuelve el problema (porque el siguiente `GET /v1/me/tenants` sí trae los roles correctos), confirmando que el bug es solo de propagación post-creación, no de seguridad.
+- **Root cause:** el response del `POST /v1/tenant-signup` (`app/api/v1/routes.py::create_own_tenant`) devolvía solo `user_role: 'owner'` (string singular). El frontend (`admin-panel/src/permissions/matrix.js::resolveActiveRoles`) busca `tenant.roles` (array) o `tenant.role` (string singular) — ninguno de los nombres existe en el response. Resultado: `tenantRoles = []` → "Sin acceso". La row en `app.user_tenant_roles` SÍ se persiste correctamente con `role='owner'` (líneas 1853-1859 de routes.py); el bug es puramente de naming del response, no de persistencia.
+- **Cierre:** Ver `docs/DONE.md` (entrada BUG-007). El response ahora incluye también `roles: ['owner']` matcheando exactamente el shape de `/v1/me/tenants`. `user_role` se mantiene por back-compat con consumers viejos. 5 tests static en `tests/test_tenant_signup_response_shape_static.py` (response incluye `roles`, mantiene `user_role`, sigue siendo dict mutable via `record_to_dict`, sigue insertando la row con `role='owner'`, ambas keys son string constants verificadas via AST).
+- **Nota de seguridad:** fix puramente de propagación de datos. El backend nunca expuso un rol que el caller no tuviera — siempre fue `owner` real persistido en `app.user_tenant_roles`. Cero cambio en `ensure_tenant_access`, RLS, `require_min_role` ni ningún otro guard.
+
+---
+
 ### SEC-001 — Cross-tenant authorization escalation (cluster de 9 findings high)
 
 - **Estado:** DONE (RESOLVED retroactivamente — TASK-0077 endureció `ensure_tenant_access` con `required_tenant_role` + DB role check; ver `docs/security-findings-triage-2026-05-15.md`)
