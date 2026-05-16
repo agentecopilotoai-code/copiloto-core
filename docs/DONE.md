@@ -15,6 +15,52 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-010.8 — DATABASE_URL password fuera de argv en scripts de bootstrap/backup/restore
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el último sub-finding de SEC-010, `DATABASE_URL password exposed in bootstrap process args`. Tres scripts (`scripts/bootstrap.sh`, `scripts/backup-local.sh`, `scripts/restore-local.sh`) pasaban `psql "$DATABASE_URL_VALUE" ...` directamente, con el password embebido en el URL. Durante la ejecución, cualquier otro usuario del host podía `ps aux | grep psql` y ver el URL completo. La ventana es larga (dumps/restores tardan minutos) — suficiente para que un proceso adversarial (container hostil en el mismo host, agente de monitoring mal configurado) muestree el cmdline. Mismo problema con `pg_dump "$DATABASE_URL_VALUE"` (en backup) y `pg_restore --dbname="$DATABASE_URL_VALUE"` (en restore).
+- **Cambios:**
+  - **`scripts/lib/postgres-url.sh`** (NEW) — helper compartido que expone `parse_db_url(url)`:
+    - Setea variables globales `DB_PASSWORD` y `DB_URL_NO_PASSWORD`.
+    - Parser puro bash (sin python dependency) que separa scheme + userinfo + host part vía parameter expansion + último `@` como heurística (permite passwords con `%40` URL-encoded literal).
+    - Edge cases cubiertos: sin password en URL, sin userinfo, query strings preservados (`sslmode=require`, `application_name=...`), URLs sin scheme (no parse, devuelve tal cual).
+    - Limitación documentada: passwords con caracteres especiales sin URL-encoding (libpq decodifica del lado server, así que `.env` debe usar URL-encoding RFC 3986 para passwords con `:` `/` `@` `?` literales).
+  - **`scripts/bootstrap.sh`** — source el helper, `parse_db_url "$DATABASE_URL_VALUE"`, `export PGPASSWORD="$DB_PASSWORD"`, y `psql_app()` ahora hace `docker compose exec -T -e PGPASSWORD postgres psql "$DB_URL_NO_PASSWORD" ...`.
+  - **`scripts/backup-local.sh`** — mismo patrón en `psql_app()` + el `pg_dump` directo (línea ~97) también migrado a `-e PGPASSWORD` + `$DB_URL_NO_PASSWORD`.
+  - **`scripts/restore-local.sh`** — mismo patrón en `psql_app()` + el `pg_restore --dbname="$DB_URL_NO_PASSWORD"` (línea ~135).
+  - **`docs/UI_BACKLOG.md`** — sub-finding marcado DONE + estado del cluster SEC-010 actualizado a DONE (todos los sub-findings cerrados).
+- **Por qué `-e PGPASSWORD` (sin valor) en lugar de `-e PGPASSWORD=$DB_PASSWORD`:** la forma `-e PGPASSWORD=valor` reintroduce el password en el argv de `docker` (visible en `ps aux`). La forma sin valor hace que docker inherite la variable del shell padre — el password queda solo en `/proc/<docker_pid>/environ`, que requiere mismo uid o root para leer (defense razonable en boxes de developer + CI runners).
+- **Archivos:**
+  - `scripts/lib/postgres-url.sh` (NEW) — helper compartido.
+  - `scripts/bootstrap.sh` — 1 invocación de psql migrada.
+  - `scripts/backup-local.sh` — 2 invocaciones migradas (psql_app + pg_dump).
+  - `scripts/restore-local.sh` — 2 invocaciones migradas (psql_app + pg_restore).
+  - `tests/test_bootstrap_no_password_in_argv_static.py` (NEW) — **10 tests** AST + dinámico:
+    1. `test_postgres_url_helper_exists`: el archivo existe y declara `parse_db_url()` + setea `DB_PASSWORD` + `DB_URL_NO_PASSWORD`.
+    2. `test_parse_db_url_actually_works`: dinámico — invoca el helper vía `bash -c`, verifica roundtrip con `postgresql://copiloto_app:s3cr3t@postgres:5432/copilotoia` (password='s3cr3t', URL='postgresql://copiloto_app@postgres:5432/copilotoia').
+    3. `test_parse_db_url_handles_no_password`: edge case URL sin password → DB_PASSWORD vacío + URL intacto.
+    4. `test_parse_db_url_preserves_query_string`: query string sobrevive (`sslmode=require`, `application_name=cpi`).
+    5. `test_no_script_passes_database_url_value_to_psql`: 7 regex patterns prohibidos chequean que ningún script tenga `psql "$DATABASE_URL_VALUE"`, `pg_dump "$DATABASE_URL_VALUE"`, ni `pg_restore --dbname="$DATABASE_URL_VALUE"` en cualquier forma de quoting.
+    6. `test_scripts_use_db_url_no_password_variable`: los tres scripts referencian `DB_URL_NO_PASSWORD`.
+    7. `test_scripts_source_postgres_url_helper`: source-an `lib/postgres-url.sh` + invocan `parse_db_url`.
+    8. `test_scripts_export_pgpassword_before_docker_exec`: hacen `export PGPASSWORD=...` (sin export, el `-e PGPASSWORD` inheritaría vacío y psql crashearía con "auth failed").
+    9. `test_scripts_use_inherited_pgpassword_not_inline_value`: defense en profundidad — ningún script usa `-e PGPASSWORD=valor` (que reintroduciría el password en argv de docker).
+    10. `test_psql_app_helper_uses_inherited_pgpassword_in_all_three_scripts`: regex anchor del patrón completo `psql_app() { docker compose exec -T -e PGPASSWORD postgres psql "$DB_URL_NO_PASSWORD"` en los tres scripts — defensa contra refactors descuidados.
+  - `docs/UI_BACKLOG.md` — sub-finding marcado DONE + cluster SEC-010 cerrado.
+- **Validaciones:**
+  - `pytest tests/test_bootstrap_no_password_in_argv_static.py -v` → **10/10 passed**.
+  - `pytest tests/` → **1875 passed, 22 skipped, 0 failures**.
+  - `ruff check app tests` → clean.
+  - Smoke manual del parser: 5 edge cases (con password, sin password, query string, postgres:// scheme, sin userinfo) → todos correctos.
+- **Nota de seguridad:** este fix CIERRA un leak de credenciales en cmdline. Cambios materiales:
+  - El password sigue estando en el archivo `.env` (mismo riesgo previo — el operador debe protegerlo) y en el environment block del proceso `docker` (visible vía `/proc/<pid>/environ` para mismo uid). Esos vectores no cambiaron — esta no es una rotación de credenciales, es una reducción del attack surface.
+  - El cmdline (`ps aux`, `/proc/<pid>/cmdline`) es leíble por CUALQUIER usuario del host por default — esto es lo que el fix cierra.
+  - El helper `parse_db_url` es shell-only — sin dependencia de Python en los scripts de bootstrap (mantiene el contrato de poder ejecutarlos en boxes minimalistas).
+  - Defense en profundidad con `-e PGPASSWORD` (sin valor): el docker argv no expone el password tampoco. Combinado con `export PGPASSWORD` en el shell padre, el password solo vive en environment blocks (no cmdline) en ambos host process Y container process.
+- **Cluster SEC-010 completo:** este es el último sub-finding del cluster. Estado final: 8/8 sub-findings cerrados.
+
+---
+
 ### SEC-010.7 — Claude allowlist: restringir `Bash(curl -s *)` a localhost
 
 - **Fecha:** 2026-05-15
