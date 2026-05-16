@@ -1510,3 +1510,12 @@ alter default privileges in schema app grant usage, select on sequences to copil
 create policy webhook_events_raw_public_insert on app.webhook_events_raw for insert with check (tenant_id is null);
 create policy prompt_templates_global_select on app.prompt_templates for select using (tenant_id is null);
 create policy prompt_templates_global_insert on app.prompt_templates for insert with check (tenant_id is null or tenant_id = app.current_tenant_id() or app.support_mode());
+-- Audits user-scope (sin tenant): los endpoints `/v1/me/*` corren con
+-- `app.tenant_id` sin setear, por lo que `app.current_tenant_id()` es NULL.
+-- La policy genérica (`tenant_id = app.current_tenant_id()`) evalúa a NULL
+-- en ese caso y rechaza el INSERT con `new row violates row-level security`.
+-- Esta policy adicional habilita el caso simétrico: sesión sin tenant
+-- insertando una fila sin tenant. No abre la puerta a cross-tenant porque
+-- aplica solo cuando ambos lados son NULL (un usuario con tenant activo
+-- sigue obligado a pasar por la policy genérica).
+create policy audit_logs_user_scope_insert on app.audit_logs for insert with check (tenant_id is null and app.current_tenant_id() is null);
