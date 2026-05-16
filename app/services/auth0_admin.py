@@ -298,6 +298,49 @@ async def invite_user(
         log.warning('auth0_admin.invite_user_missing_user_id', response=user)
         return {'disabled': False, 'error': 'auth0_create_user_returned_no_id'}
 
+    # BUG-009 fix: propagar tenant_id + rol al user Auth0 ANTES de emitir el
+    # ticket de password-change. Sin esto, el invitado loguea con un JWT
+    # "pelado" (sin `tenant_id` claim ni `roles` claim) y el panel le dice
+    # "Aún no estás asignada a un negocio". Hay que escribir dos cosas:
+    #
+    #   1. `app_metadata.tenant_id` + `app_metadata.default_tenant_id`:
+    #      la PostLogin Action de claims lee de ahí (scripts/configure-auth0.sh
+    #      línea 376: `const tenantId = appMetadata.tenant_id || appMetadata.default_tenant_id;`)
+    #      y emite el claim `{namespace}/tenant_id` al JWT.
+    #
+    #   2. **Rol Auth0** asignado al user via `POST /users/{id}/roles`. La
+    #      Action lee `event.authorization.roles` (línea 374) que Auth0 pobla
+    #      cuando el user tiene roles ASIGNADOS via Management API. `user_metadata.tenant_roles`
+    #      que escribía `assign_roles()` históricamente NO lo lee la Action de
+    #      claims — es ortogonal y por eso el JWT seguía pelado.
+    #
+    # Ambas operaciones son best-effort: si fallan, NO abortamos el invite
+    # (el user de Auth0 ya existe y el ticket es lo que dispara el email).
+    # El operador puede setear los campos a mano si una de las dos falla; el
+    # warning del log indica cuál.
+    propagation_errors: list[str] = []
+    try:
+        await set_user_tenant_metadata(auth_subject=auth0_user_id, tenant_id=tenant_id)
+    except httpx.HTTPError as exc:
+        propagation_errors.append(f'app_metadata: {exc}')
+        log.warning(
+            'auth0_admin.invite_user_app_metadata_failed',
+            auth0_user_id=auth0_user_id,
+            tenant_id=str(tenant_id),
+            error=str(exc),
+        )
+    try:
+        await assign_auth0_role_by_name(auth_subject=auth0_user_id, role_name=role)
+    except httpx.HTTPError as exc:
+        propagation_errors.append(f'role_assignment: {exc}')
+        log.warning(
+            'auth0_admin.invite_user_role_assign_failed',
+            auth0_user_id=auth0_user_id,
+            tenant_id=str(tenant_id),
+            role=role,
+            error=str(exc),
+        )
+
     ticket_body = {
         'user_id': auth0_user_id,
         'result_url': _admin_panel_result_url(settings),
@@ -323,7 +366,20 @@ async def invite_user(
             ticket_present=True,
         )
 
-    return {'disabled': False, 'invited': True, 'auth0_user_id': auth0_user_id}
+    # BUG-009: el dict literal mantiene `auth0_user_id` + `invited` como
+    # antes; si hubo errores de propagación (best-effort), los anexamos como
+    # `propagation_errors` para que la UI pueda mostrar un warning sin
+    # romper el flow del invite.
+    return {
+        'disabled': False,
+        'invited': True,
+        'auth0_user_id': auth0_user_id,
+        **(
+            {'propagation_errors': propagation_errors}
+            if propagation_errors
+            else {}
+        ),
+    }
 
 
 def _random_initial_password() -> str:
@@ -361,6 +417,106 @@ async def assign_roles(*, auth_subject: str | None, roles: list[str]) -> dict[st
         log.warning('auth0_admin.assign_roles_failed', error=str(exc))
         return {'disabled': False, 'error': str(exc)}
     return {'disabled': False, 'synced': True}
+
+
+# BUG-009 — cache de role_id por nombre. Los roles Auth0 (`platform_owner`,
+# `owner`, `admin`, `manager`, `agent`, `viewer`, `support`) son 7 y NO cambian
+# durante la vida del proceso (creados por `scripts/configure-auth0.sh`).
+# Cachear el lookup evita un `GET /roles` por cada invite.
+_AUTH0_ROLE_ID_CACHE: dict[str, str] = {}
+
+
+def clear_auth0_role_cache() -> None:
+    """Test helper — borra el cache para que el siguiente lookup vaya al API."""
+    _AUTH0_ROLE_ID_CACHE.clear()
+
+
+async def _resolve_auth0_role_id(role_name: str) -> str | None:
+    """Resuelve `role_name` → role_id consultando `GET /roles` con cache.
+
+    Devuelve `None` si el rol no existe en Auth0 (typo del caller o tenant
+    Auth0 sin los roles del script). El caller debe manejar el None.
+    """
+    if role_name in _AUTH0_ROLE_ID_CACHE:
+        return _AUTH0_ROLE_ID_CACHE[role_name]
+    # `per_page=100` cubre todos los roles del producto sin paginar.
+    response = await _mgmt_request('GET', '/roles?per_page=100')
+    roles = response if isinstance(response, list) else response.get('roles', [])
+    for entry in roles:
+        name = entry.get('name')
+        rid = entry.get('id')
+        if name and rid:
+            _AUTH0_ROLE_ID_CACHE[name] = rid
+    return _AUTH0_ROLE_ID_CACHE.get(role_name)
+
+
+async def set_user_tenant_metadata(
+    *, auth_subject: str, tenant_id: UUID
+) -> dict[str, Any]:
+    """BUG-009: setea `app_metadata.tenant_id` + `app_metadata.default_tenant_id`.
+
+    La PostLogin Action de claims (`scripts/configure-auth0.sh` línea 376) lee
+    `event.user.app_metadata.tenant_id` y lo inyecta como `{namespace}/tenant_id`
+    claim al access token. Sin esto, el JWT del invitado llega con `tenant_id`
+    vacío y `authenticate_request` lo trata como user sin tenant.
+
+    PATCH semantic — preserva otros campos de `app_metadata` (ej. `support_mode`).
+    """
+    if not auth0_management_enabled():
+        return {'disabled': True}
+    if not auth_subject:
+        return {'disabled': False, 'skipped': 'no_auth_subject'}
+    await _mgmt_request(
+        'PATCH',
+        f'/users/{auth_subject}',
+        json_body={
+            'app_metadata': {
+                'tenant_id': str(tenant_id),
+                'default_tenant_id': str(tenant_id),
+            },
+        },
+    )
+    return {'disabled': False, 'updated': True}
+
+
+async def assign_auth0_role_by_name(
+    *, auth_subject: str, role_name: str
+) -> dict[str, Any]:
+    """BUG-009: asigna rol Auth0 al user via `POST /users/{id}/roles`.
+
+    La PostLogin Action lee `event.authorization.roles` (lo que Auth0 propaga
+    cuando el user tiene roles asignados via Management API). Sin esta llamada,
+    el JWT del invitado llega con `roles=[]` y `ensure_tenant_access` rechaza
+    cualquier endpoint privilegiado con 403 "agent role or higher is required".
+
+    Idempotente: `POST /users/{id}/roles` con un role_id ya asignado es no-op
+    en Auth0 (no duplica). Si `role_name` no se resuelve, fail-closed:
+    devolvemos error explícito sin tocar nada.
+
+    Requiere scopes `read:roles` + `create:role_members` autorizados en la M2M
+    (ver `scripts/configure-auth0.sh` `MGMT_API_SCOPES`).
+    """
+    if not auth0_management_enabled():
+        return {'disabled': True}
+    if not auth_subject:
+        return {'disabled': False, 'skipped': 'no_auth_subject'}
+    role_id = await _resolve_auth0_role_id(role_name)
+    if not role_id:
+        log.warning(
+            'auth0_admin.assign_role_by_name_unresolved',
+            role_name=role_name,
+            auth_subject=auth_subject,
+        )
+        return {
+            'disabled': False,
+            'error': f'auth0_role_not_found:{role_name}',
+        }
+    await _mgmt_request(
+        'POST',
+        f'/users/{auth_subject}/roles',
+        json_body={'roles': [role_id]},
+    )
+    return {'disabled': False, 'assigned': True, 'role_id': role_id}
 
 
 async def revoke_tenant_roles(*, auth_subject: str | None, tenant_id: UUID) -> dict[str, Any]:

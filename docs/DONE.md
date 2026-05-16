@@ -15,6 +15,36 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### BUG-009 — `invite_user` propaga `tenant_id` + asigna rol Auth0 (JWT del invitado ya viene con claims)
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el último gap del flujo de invitación que dejaba al invitado sin permisos efectivos después del primer login. Antes: owner invita a un miembro vía `POST /v1/tenants/{tenant_id}/members`; Auth0 crea el user y manda email de password-change; el invitado completa el password y loguea; el panel muestra "Aún no estás asignada a un negocio" o "Sin acceso a ningún módulo"; cualquier endpoint privilegiado responde `403 "agent role or higher is required for this tenant"`. Workaround manual: editar el user en el dashboard Auth0, setear `app_metadata.tenant_id` Y asignar el rol → logout/login. Pasos imposibles de pedirle al invitado.
+- **Root cause:** `app/services/auth0_admin.py::invite_user` (heredado de TASK-0085 / BUG-001) creaba el user (`POST /api/v2/users`) y emitía el ticket (`POST /api/v2/tickets/password-change`), pero NUNCA poblaba `app_metadata.tenant_id` (PATCH `/users/{id}`) ni asignaba rol Auth0 (POST `/users/{id}/roles`). La PostLogin Action de claims (`scripts/configure-auth0.sh`) lee `event.user.app_metadata.tenant_id` y `event.authorization.roles` para inyectar los custom claims `https://copilotoia/tenant_id` y `https://copilotoia/roles` en el JWT; sin populamiento, el JWT del invitado venía vacío y `ensure_tenant_access` fallaba.
+- **Cambios:**
+  - **`app/services/auth0_admin.py`** — 3 helpers nuevos:
+    - `_AUTH0_ROLE_ID_CACHE: dict[str, str]` y `clear_auth0_role_cache()` (test helper) para evitar 1 `GET /roles` por invite.
+    - `_resolve_auth0_role_id(role_name) → str | None`: cache lookup primero; si miss, `GET /api/v2/roles?per_page=100` y popula el cache con TODOS los roles encontrados (la próxima invite con cualquier rol del set ya cachea); devuelve el role_id pedido o `None`.
+    - `set_user_tenant_metadata(*, auth_subject, tenant_id)` (kwargs-only para evitar order confusion): no-op si `auth0_management_enabled() == False` (dev local sin creds) → `{'disabled': True}`; PATCH `/users/{auth_subject}` con body `{'app_metadata': {'tenant_id': str(tenant_id), 'default_tenant_id': str(tenant_id)}}`. Devuelve `{'disabled': False, 'updated': True}` en happy path.
+    - `assign_auth0_role_by_name(*, auth_subject, role_name)` (kwargs-only): no-op si Mgmt deshabilitado; resuelve `role_id`, fail-closed con `{'error': f'auth0_role_not_found:{role_name}'}` + `log.warning('auth0_admin.assign_role_by_name_unresolved')` si el rol no existe en Auth0; si resuelve, POST `/users/{auth_subject}/roles` con body `{'roles': [role_id]}`.
+  - **`app/services/auth0_admin.py::invite_user`** integra ambos helpers ENTRE crear user y emitir ticket (orden importa: si el invitado clickea el email rápido, el primer login debe llegar con metadata + role ya seteados). Pattern best-effort: cada helper se envuelve en `try/except httpx.HTTPError`; errores acumulan en `propagation_errors: list[str]` con prefijo (`app_metadata: {exc}`, `role_assignment: {exc}`); logs específicos `auth0_admin.invite_user_app_metadata_failed` y `auth0_admin.invite_user_role_assign_failed` con `auth0_user_id` para que el operador pueda fixearlo a mano. El return spread'ea `{'propagation_errors': propagation_errors}` SOLO si la lista tiene items — happy path devuelve el shape original sin keys extra (preservando back-compat con tests existentes).
+- **Archivos:**
+  - `app/services/auth0_admin.py` — 3 helpers nuevos + `invite_user` reescrito con integración best-effort.
+  - `tests/test_invite_propagates_tenant_and_role_static.py` (NEW) — **16 tests static** AST-based: existencia de helpers + firmas kwargs-only (3), cache existe + es dict + tiene clear helper (1), `set_user_tenant_metadata` patchea `app_metadata` (no `user_metadata`) y respeta `auth0_management_enabled` (2), `assign_auth0_role_by_name` resuelve antes de POST + falla explícitamente + POST a `/users/{id}/roles` + log de unresolved (4), `invite_user` llama ambos helpers ANTES del ticket + en orden + best-effort + retorna `propagation_errors` (5), cache de role_id funciona + se popula con todo el batch (2), script `configure-auth0.sh` ya incluye `create:role_members` + `read:roles` + `update:users` en MGMT_API_SCOPES (1).
+  - `tests/test_auth0_invite.py::test_invite_user_returns_user_id_and_no_ticket_url` — actualizado a mock con **5 responses** (POST users → PATCH users → GET roles → POST users/roles → POST tickets) y asserts en cada llamada + `clear_auth0_role_cache()` al inicio del test + assert `'propagation_errors' not in result` en happy path.
+  - `docs/UI_BACKLOG.md` — entrada BUG-009 nueva marcada DONE.
+- **Validaciones:**
+  - `pytest tests/test_invite_propagates_tenant_and_role_static.py tests/test_auth0_invite.py -v` → **30/30 passed**.
+  - `pytest tests/` → **1809 passed, 22 skipped, 0 failures** (sin regresiones).
+  - `ruff check app tests` → clean.
+- **Scopes Auth0:** verificado que `scripts/configure-auth0.sh` ya autorizaba `update:users`, `read:roles` y `create:role_members` en `MGMT_API_SCOPES` (líneas previas — instalaciones nuevas heredaban estos scopes automáticamente desde TASK-0086). El test `test_management_api_scopes_already_include_role_assignment` ancla la dependencia para que un futuro PR no remueva los scopes sin darse cuenta.
+- **Nota de seguridad:** los helpers NO escalan privilegios:
+  - El rol asignado en Auth0 viene del mismo `role` que el caller pasa al endpoint `/v1/tenants/{tenant_id}/members`; ese endpoint YA valida `require_min_role` para que el caller no pueda invitar con rol > propio.
+  - El PATCH a `app_metadata.tenant_id` se hace al tenant en cuyo contexto se invitó — no a un tenant arbitrario; `auth_subject` viene del response del `POST /users` que el mismo `invite_user` acaba de hacer (no de input del usuario).
+  - El cambio CIERRA la brecha entre "lo que el backend persiste en `app.user_tenant_roles`" y "lo que el JWT trae". Sin el fix, el invitado tenía MENOS privilegios que los persistidos (por eso el bug se manifestaba como 403, no como escalación). El fix lo lleva al estado correcto.
+  - Pattern best-effort + `propagation_errors`: si la propagación falla (ej. Mgmt API throttling), el invite NO aborta — el user Auth0 ya existe y el ticket es lo que dispara el email. El response devuelve `propagation_errors` para que el panel pueda mostrar warning ("usuario creado, pero hay que asignar rol/tenant manualmente"); sin el campo, el panel asume happy path.
+
+---
+
 ### SEC-010.3 — Cross-tenant conversation metadata logged on 404 (gated por env flag)
 
 - **Fecha:** 2026-05-15

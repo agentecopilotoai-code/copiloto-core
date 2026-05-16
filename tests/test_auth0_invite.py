@@ -126,11 +126,25 @@ def _build_invite_with_mock(monkeypatch, mgmt_responses):
 
 
 def test_invite_user_returns_user_id_and_no_ticket_url(monkeypatch):
+    # BUG-009 actualizó este flow para propagar tenant_id + asignar role Auth0
+    # antes del ticket. La secuencia ahora es: POST /users → PATCH /users/{id}
+    # (app_metadata) → GET /roles (cache role_id) → POST /users/{id}/roles
+    # (assign) → POST /tickets/password-change. El test cubre todos los calls
+    # y verifica la order semántica.
+    from app.services.auth0_admin import clear_auth0_role_cache
+    clear_auth0_role_cache()  # tests previos pueden haber poblado el cache
+
     calls = _build_invite_with_mock(
         monkeypatch,
         mgmt_responses=[
-            {'user_id': 'auth0|new-user-123'},
-            {'ticket': 'https://example.auth0.com/lo/reset?ticket=abc'},
+            {'user_id': 'auth0|new-user-123'},  # POST /users
+            {},  # PATCH /users/{id} (set app_metadata)
+            [  # GET /roles?per_page=100
+                {'id': 'rol_admin_xyz', 'name': 'admin'},
+                {'id': 'rol_owner_abc', 'name': 'owner'},
+            ],
+            {},  # POST /users/{id}/roles
+            {'ticket': 'https://example.auth0.com/lo/reset?ticket=abc'},  # POST /tickets/password-change
         ],
     )
 
@@ -148,6 +162,8 @@ def test_invite_user_returns_user_id_and_no_ticket_url(monkeypatch):
     assert result['auth0_user_id'] == 'auth0|new-user-123'
     assert 'ticket' not in result
     assert 'ticket_url' not in result
+    # No hubo errores de propagación — el dict no debe incluir la key.
+    assert 'propagation_errors' not in result
 
     # /users called first with the right email + connection.
     assert calls[0][0] == 'POST'
@@ -155,11 +171,23 @@ def test_invite_user_returns_user_id_and_no_ticket_url(monkeypatch):
     assert calls[0][2]['email'] == 'nuevo@empresa.com'
     assert calls[0][2]['email_verified'] is False
     assert 'connection' in calls[0][2]
-    # /tickets/password-change called second, keyed by user_id.
-    assert calls[1][0] == 'POST'
-    assert calls[1][1] == '/tickets/password-change'
-    assert calls[1][2]['user_id'] == 'auth0|new-user-123'
-    assert 'email' not in calls[1][2]
+    # BUG-009: PATCH /users/{id} con app_metadata.
+    assert calls[1][0] == 'PATCH'
+    assert calls[1][1] == '/users/auth0|new-user-123'
+    assert calls[1][2]['app_metadata']['tenant_id'] == '00000000-0000-0000-0000-000000000001'
+    assert calls[1][2]['app_metadata']['default_tenant_id'] == '00000000-0000-0000-0000-000000000001'
+    # BUG-009: GET /roles?per_page=100 para resolver role_id por nombre.
+    assert calls[2][0] == 'GET'
+    assert calls[2][1] == '/roles?per_page=100'
+    # BUG-009: POST /users/{id}/roles con el role_id resuelto.
+    assert calls[3][0] == 'POST'
+    assert calls[3][1] == '/users/auth0|new-user-123/roles'
+    assert calls[3][2]['roles'] == ['rol_admin_xyz']
+    # /tickets/password-change called last, keyed by user_id.
+    assert calls[4][0] == 'POST'
+    assert calls[4][1] == '/tickets/password-change'
+    assert calls[4][2]['user_id'] == 'auth0|new-user-123'
+    assert 'email' not in calls[4][2]
 
 
 def test_invite_user_propagates_conflict_for_preexisting_auth0_user(monkeypatch):
