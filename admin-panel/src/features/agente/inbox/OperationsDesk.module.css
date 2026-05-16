@@ -72,18 +72,54 @@
   margin-left: var(--space-2);
 }
 
-/* ── 360px viewport (UI-016.8) ──────────────────────────────────────────
+/* UI-016.8-FU — Back button mobile.
  *
- * Mockup `T4 _ Responsive 360px.html` — Agent chat a 360px. A este ancho
- * el side-by-side (lista de conversaciones | detalle) no cabe; pasamos a
- * un stack vertical: lista arriba (scroll horizontal de tabs si hay
- * varias), detalle abajo full-width, compose box pegado al fondo del
- * contenedor de detalle. Los CTAs "Tomar / Hoy" se vuelven una fila de
- * acciones full-width arriba del feed.
+ * Por default oculto (desktop muestra lista y detalle side-by-side, sin
+ * necesidad de "volver"). El @media de abajo lo hace visible a < 480px
+ * cuando el state machine pasa a mobileView='detail'.
+ */
+.mobileBackButton {
+  display: none;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--accent-ink);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  width: max-content;
+}
+
+.mobileBackButton:hover {
+  background: var(--accent-soft);
+}
+
+.mobileBackButton:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ── 360px viewport (UI-016.8 + UI-016.8-FU) ──────────────────────────
  *
- * Nota: la navegación entre lista y conversación activa (mostrar solo
- * una pantalla a la vez en mobile, con back button) requiere un state
- * machine adicional — queda en `UI-016.8-FU` (ver UI_BACKLOG.md).
+ * Mockup `T4 _ Responsive 360px.html` — Agent chat a 360px.
+ *
+ * UI-016.8 (shipeado): a este ancho el side-by-side (lista | detalle)
+ * no cabe; pasamos a stack vertical con tabs horizontales scrollables.
+ *
+ * UI-016.8-FU (este sprint): el stack vertical seguía mostrando AMBOS
+ * paneles encimados — funcional pero apretado. Ahora el JSX setea
+ * `data-mobile-view="list" | "detail"` en el wrapper `.operations-layout`
+ * y este @media bloquea la visibilidad del panel que no corresponde a
+ * la vista activa. Resultado: una pantalla a la vez en mobile, back
+ * button para volver desde el detalle, desktop intacto (este media
+ * query no aplica).
+ *
+ * Las reglas `[data-mobile-view] :global(.conversation-...)` usan
+ * `:global()` porque las clases `.conversation-list` y
+ * `.conversation-detail` viven en `styles/global.css`, no en este
+ * module — son legado del split UI-009.1 y siguen siendo globales.
  */
 @media (max-width: 480px) {
   .page {
@@ -114,5 +150,18 @@
   .cancelEditButton {
     margin-left: 0;
     margin-top: var(--space-1);
+  }
+
+  .mobileBackButton {
+    display: inline-block;
+  }
+
+  /* Visibilidad condicional por mobileView. `:global` porque las clases
+     `.conversation-list` y `.conversation-detail` viven en global.css. */
+  :global(.operations-layout)[data-mobile-view='list'] :global(.conversation-detail) {
+    display: none;
+  }
+  :global(.operations-layout)[data-mobile-view='detail'] :global(.conversation-list) {
+    display: none;
   }
 }

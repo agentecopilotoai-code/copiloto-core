@@ -15,6 +15,40 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-016.8-FU — State machine mobile list ↔ detail para OperationsDesk
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el follow-up declarado en UI-016.8. UI-016.8 aplicó CSS responsivo a `OperationsDesk.module.css` pero a 360px la lista de conversaciones y el detalle seguían renderizándose juntos en stack vertical (funcional pero apretado). El HTML T4 mockup muestra el patrón "una pantalla a la vez": lista hasta seleccionar, full-screen del chat con back button.
+- **Cambios:**
+  - **`admin-panel/src/features/agente/inbox/hooks/useInboxData.js`**: nuevo state `mobileView: 'list' | 'detail'` con default `'list'` (HTML T4 aterriza en lista, no en detalle vacío). Dos acciones nuevas:
+    - `selectConversation(conversationId)`: reemplaza el uso directo de `setSelectedConversationId` desde la UI. Setea el id Y switcha a `'detail'` (cuando id no es null). El setter crudo sigue expuesto en `actions` para tests y casos especiales.
+    - `showMobileList()`: back navigation desde el detalle. NO limpia `selectedConversationId` — el usuario puede volver al mismo detalle re-seleccionándolo (preserva contexto).
+    - `setMobileView` también expuesto para casos avanzados.
+  - **`admin-panel/src/features/agente/inbox/OperationsDesk.jsx`**: el wrapper `.operations-layout` recibe `data-mobile-view={state.mobileView}`. `onSelectConversation` pasa `actions.selectConversation`. `ConversationView` recibe `onMobileBack={actions.showMobileList}`.
+  - **`admin-panel/src/features/agente/inbox/components/ConversationView.jsx`**: nueva prop `onMobileBack` opcional. Cuando está presente, renderiza un `<button>` con className `styles.mobileBackButton`, texto `← Volver a la lista` y aria-label explícito (el `←` es decorativo). Si no se pasa la prop, el botón no se renderiza — back-compat para callers que no quieren el comportamiento.
+  - **`admin-panel/src/features/agente/inbox/OperationsDesk.module.css`**: nueva clase `.mobileBackButton` con `display: none` por default. Dentro del existing `@media (max-width: 480px)`:
+    - `.mobileBackButton { display: inline-block }` — visible solo en mobile.
+    - `:global(.operations-layout)[data-mobile-view='list'] :global(.conversation-detail) { display: none }` — en vista list, oculta detalle.
+    - `:global(.operations-layout)[data-mobile-view='detail'] :global(.conversation-list) { display: none }` — en vista detail, oculta lista.
+    - `:global(...)` porque las clases `.conversation-list` / `.conversation-detail` viven en `styles/global.css` (legacy UI-009.1) y siguen siendo globales.
+- **Decisión arquitectónica:** **cero dependencia de `window.matchMedia` en JS.** El state `mobileView` se setea siempre (independiente del viewport); el CSS hace todo el gating con el `@media (max-width: 480px)`. En desktop el atributo se ignora literalmente. Esto evita: (a) acoplar el state a un side-effect global como `window.matchMedia`, (b) bugs sutiles si el viewport cambia mid-session (resize, rotación de tablet), (c) tests que tengan que mockear matchMedia. Es la misma filosofía CSS-driven que UI-013 y UI-016.8 ya aplicaban — la UI responde al viewport via media query, no al revés.
+- **Archivos:**
+  - `admin-panel/src/features/agente/inbox/hooks/useInboxData.js` — +state +2 acciones +exposición.
+  - `admin-panel/src/features/agente/inbox/OperationsDesk.jsx` — data attribute + 2 props nuevas wired.
+  - `admin-panel/src/features/agente/inbox/components/ConversationView.jsx` — prop `onMobileBack` + botón con aria-label.
+  - `admin-panel/src/features/agente/inbox/OperationsDesk.module.css` — `.mobileBackButton` + reglas `data-mobile-view` dentro del @media existente.
+  - `admin-panel/src/features/agente/inbox/OperationsDesk.test.jsx` — **5 tests nuevos** (default state, switch a detail, presencia del botón con aria-label, back navigation sin perder selección, handoff "Tomar" regression).
+  - `tests/test_operations_desk_mobile_view_static.py` (NEW) — **9 tests static** que defienden los invariantes críticos: reglas data-mobile-view dentro del @media correcto (si quedaran fuera, romperían desktop), back button oculto por default + visible solo en @media, JSX cableado correcto, hook expone state + acciones con nombres correctos.
+- **Validaciones:**
+  - `pytest tests/test_operations_desk_mobile_view_static.py` → 9/9 passed.
+  - `npm --prefix admin-panel test -- --run src/features/agente/inbox/OperationsDesk.test.jsx` → 10/10 passed (5 viejos + 5 nuevos).
+  - `npm --prefix admin-panel test` → 691/691 passed (full suite, +5 nuevos sin regresiones).
+  - `npm --prefix admin-panel run lint` → 0 errors (2 warnings pre-existentes, no relacionadas).
+  - `npm --prefix admin-panel run build` → ok.
+- **Nota de seguridad:** este fix es puramente de UI (state machine local en un hook). Las acciones críticas que se accionan desde el detalle (`acceptConversationHandoff`, `createConversationHandoff`, `releaseConversation`, `sendConversationMessage`) son las mismas callbacks de `useInboxData` y siguen pasando por `coreApi.js` → backend con `authenticate_request` + `ensure_tenant_access` + RLS. El test `handoff "Tomar conversación" sigue funcionando desde el detalle mobile` es el regression gate explícito. Cero cambio en seguridad servidor.
+
+---
+
 ### UI-016.7-FU-SESSIONS — Tabla `app.auth_sessions` + endpoints reales
 
 - **Fecha:** 2026-05-15

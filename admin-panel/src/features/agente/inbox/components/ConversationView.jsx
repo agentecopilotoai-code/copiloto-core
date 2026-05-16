@@ -22,6 +22,9 @@ import styles from '../OperationsDesk.module.css';
  * @param {() => void} props.onCreateHandoff
  * @param {() => void} props.onAcceptHandoff
  * @param {() => void} props.onReleaseHandoff
+ * @param {() => void} [props.onMobileBack] — UI-016.8-FU: back navigation
+ *   desde el detalle a la lista en mobile. Si está presente, se renderiza
+ *   el botón "← Volver" (oculto en desktop vía CSS).
  * @param {React.ReactNode} props.contactPanel — slot rendered before the thread
  * @param {React.ReactNode} props.composer — slot rendered after the thread
  */
@@ -37,6 +40,7 @@ export function ConversationView({
   onCreateHandoff,
   onAcceptHandoff,
   onReleaseHandoff,
+  onMobileBack,
   contactPanel,
   composer,
 }) {
@@ -63,6 +67,20 @@ export function ConversationView({
 
   return (
     <section className="conversation-detail">
+      {/* UI-016.8-FU: back button mobile. CSS `.mobileBackButton` lo oculta
+          en desktop (display: none) y lo muestra en una fila propia arriba
+          del header a < 480px. Aria-label explícito porque el icono ← solo
+          es decorativo. */}
+      {onMobileBack ? (
+        <button
+          type="button"
+          className={styles.mobileBackButton}
+          aria-label="Volver a la lista de conversaciones"
+          onClick={onMobileBack}
+        >
+          ← Volver a la lista
+        </button>
+      ) : null}
       <div className="detail-header">
         <div>
           <p className="eyebrow">Conversación</p>

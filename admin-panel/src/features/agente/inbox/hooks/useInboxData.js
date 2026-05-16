@@ -34,6 +34,12 @@ export function useInboxData({ session, tenant }) {
   const [inboxFilter, setInboxFilter] = useState('all');
   const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [conversationDetail, setConversationDetail] = useState(null);
+  // UI-016.8-FU: mobile state machine. A < 480px renderizamos UNA pantalla
+  // a la vez (lista hasta seleccionar; al seleccionar, detalle con back
+  // button). En desktop el CSS ignora este flag y muestra side-by-side.
+  // El default 'list' refleja el HTML T4 mockup: al entrar al módulo el
+  // usuario aterriza en la lista, no en un detalle vacío.
+  const [mobileView, setMobileView] = useState('list');
   const [messageText, setMessageText] = useState('');
   const [messageMedia, setMessageMedia] = useState(emptyMessageMedia);
   const [startForm, setStartForm] = useState(emptyStartForm);
@@ -238,6 +244,14 @@ export function useInboxData({ session, tenant }) {
       });
       setConversationDetail(conversation);
       setSelectedConversationId(conversation.id);
+      // UI-016.8-FU (codex P2 follow-up): "Iniciar conversación" también es
+      // un punto de entrada al detalle — en mobile, sin este switch, el
+      // CSS `data-mobile-view='list'` ocultaría el detalle recién creado
+      // y el usuario se quedaría mirando la lista sin ver su nueva
+      // conversación. `selectConversation` no se reutiliza acá porque la
+      // ruta de start- ya invoca su setter atómico junto al detalle
+      // optimista; replicamos solo el switch a 'detail'.
+      setMobileView('detail');
       refreshConversations();
       setStartForm(emptyStartForm());
       setNotice({ type: 'success', text: 'Conversación iniciada y mensaje inicial encolado.' });
@@ -277,9 +291,27 @@ export function useInboxData({ session, tenant }) {
     setMessageMedia(emptyMessageMedia());
   }
 
+  // UI-016.8-FU: wrappers que mantienen sincronizado el state machine
+  // mobile. `selectConversation` reemplaza el `setSelectedConversationId`
+  // crudo desde la UI — además del id, navega a 'detail' en mobile (en
+  // desktop el CSS ignora el flag, sin efecto). `showMobileList` es el
+  // back navigation desde el detalle; NO limpia `selectedConversationId`
+  // para que el usuario pueda volver al mismo detalle si re-selecciona.
+  function selectConversation(conversationId) {
+    setSelectedConversationId(conversationId);
+    if (conversationId) setMobileView('detail');
+  }
+
+  function showMobileList() {
+    setMobileView('list');
+  }
+
   const actions = {
     setInboxFilter,
     setSelectedConversationId,
+    selectConversation,
+    setMobileView,
+    showMobileList,
     setMessageText,
     setMessageMedia,
     setStartForm,
@@ -323,6 +355,7 @@ export function useInboxData({ session, tenant }) {
       lastLiveRefreshAt,
       streamStatus,
       messageThreadRef,
+      mobileView,
     },
     actions,
   };

@@ -97,7 +97,10 @@ export function OperationsDesk({ module, session, tenant }) {
 
         {notice ? <p className={`notice ${notice.type}`}>{notice.text}</p> : null}
 
-        <div className="operations-layout">
+        {/* UI-016.8-FU — `data-mobile-view` lo consume `OperationsDesk.module.css`
+            para mostrar SOLO la lista o SOLO el detalle a < 480px. En desktop
+            el CSS ignora el atributo y se muestra el side-by-side normal. */}
+        <div className="operations-layout" data-mobile-view={state.mobileView}>
           <InboxList
             conversations={state.conversations}
             complaints={state.complaints}
@@ -106,7 +109,7 @@ export function OperationsDesk({ module, session, tenant }) {
             startForm={state.startForm}
             isBusy={isBusy}
             onFilterChange={actions.setInboxFilter}
-            onSelectConversation={actions.setSelectedConversationId}
+            onSelectConversation={actions.selectConversation}
             onStartFormChange={actions.setStartForm}
             onStartConversation={actions.handleStartConversation}
           />
@@ -123,6 +126,7 @@ export function OperationsDesk({ module, session, tenant }) {
             onCreateHandoff={actions.createHandoff}
             onAcceptHandoff={actions.acceptHandoff}
             onReleaseHandoff={actions.releaseHandoff}
+            onMobileBack={actions.showMobileList}
             contactPanel={(
               <ContactSidePanel
                 contact={contact}

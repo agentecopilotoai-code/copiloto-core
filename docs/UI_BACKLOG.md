@@ -854,10 +854,9 @@ src/
 
 ##### UI-016.8-FU — State machine mobile list↔conversation para OperationsDesk
 
-- **Estado:** PENDING (frontend follow-up)
+- **Estado:** DONE (2026-05-15)
 - **Origen:** UI-016.8 solo aplicó CSS responsivo a `OperationsDesk.module.css`. A 360px la lista de conversaciones y el detalle siguen renderizándose juntos en stack vertical — funcional pero apretado. El HTML T4 muestra un patrón "una pantalla a la vez" en mobile: lista hasta que se selecciona; al seleccionar, full-screen del chat con back button.
-- **Alcance frontend:** introducir un estado `mobileView: 'list' | 'detail'` en `OperationsDesk.jsx` (o el hook que maneja la conversación activa) que controle visibilidad de los paneles a < 480px. Back button del detalle vuelve a la lista. Desktop sigue side-by-side sin cambios.
-- **Tests:** verificar que el toggle se respeta solo a width < 480px (usar matchMedia mock); back navigation desde detalle vuelve a la lista; el handoff "Tomar" sigue funcionando desde el detalle mobile.
+- **Cierre:** Ver `docs/DONE.md` (entrada UI-016.8-FU). State machine `mobileView: 'list' | 'detail'` shipeado en `useInboxData.js` con dos acciones nuevas (`selectConversation`, `showMobileList`) — la primera reemplaza al setter crudo y switcha a 'detail' al seleccionar; la segunda es el back. El JSX expone `data-mobile-view` en `.operations-layout` y el CSS de `OperationsDesk.module.css` añadió reglas `:global(.operations-layout)[data-mobile-view='X'] :global(.conversation-Y) { display: none }` que viven DENTRO del `@media (max-width: 480px)` — en desktop el atributo se ignora y el side-by-side queda intacto. Botón "← Volver a la lista" en `ConversationView.jsx` con aria-label (oculto por default vía `.mobileBackButton { display: none }`, visible a < 480px). Decisión arquitectónica: cero dependencia de `window.matchMedia` en JS — el CSS hace todo el gating, el state es viewport-agnóstico (más test-friendly). Tests: 5 nuevos en `OperationsDesk.test.jsx` (default state, switch a detail, presencia del botón, back navigation sin perder selección, handoff regression) + 9 nuevos static en `tests/test_operations_desk_mobile_view_static.py` (CSS rules dentro del @media correcto, JSX cableado correcto, hook expone state + actions).
 
 - **Procedimiento general:** cada subtarea sigue la receta 0.bis.1 (tokens 100% desde `var(--...)`, primitivas reusadas, screenshots HTML vs React en el PR, archivos ≤ 400 LOC, sin código legacy).
 - **Dependencias:** UI-001 ... UI-015.
