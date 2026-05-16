@@ -262,7 +262,7 @@ Puedes redirigir la salida con `AUTH0_ENV_FILE=...`, `AUTH0_SECRETS_DIR=...` o d
 
 #### Paso 3 — Crear tu primer usuario `platform_owner`
 
-El script crea los **roles** pero no los **usuarios** — esas cuentas las creas vos y les asignás el rol que corresponda. Para tener acceso de superadmin (operación cross-tenant, fleet, system health, billing) necesitas un usuario con rol `platform_owner`.
+El script crea los **roles** pero no los **usuarios** — esas cuentas las creas vos y los identifica el script. Para tener acceso de superadmin (operación cross-tenant, fleet, system health, billing) necesitas un usuario con rol `platform_owner` Y la flag `support_mode: true` en `app_metadata` (sin esto, el botón "Ver como tenant" del panel Platform Owner rechaza el acceso a tenants ajenos — ver TASK-0077).
 
 ##### 3.1 Crear el usuario en Auth0
 
@@ -272,15 +272,66 @@ El script crea los **roles** pero no los **usuarios** — esas cuentas las creas
 4. **Connection**: `Username-Password-Authentication` (default).
 5. **Create**.
 
-##### 3.2 Asignarle el rol `platform_owner`
+> Si vas a loguear con Google OAuth / Microsoft / otro IdP externo en lugar de password local, no creas el user a mano acá — la primera vez que intentes login con esa cuenta, Auth0 lo crea automáticamente. Después del primer login, volvé al Paso 3.2 para bootstrappearlo como platform_owner.
 
-1. En la lista de Users, abrí tu usuario recién creado.
-2. Pestaña **Roles** > **Assign Roles**.
-3. Busca `platform_owner` > marcar > **Assign**.
+##### 3.2 Bootstrappear el usuario como `platform_owner` (automático)
 
-> **Nota sobre el flujo post-login**: con rol `platform_owner` y sin `tenant_id` asignado en `app_metadata`, el panel te redirige automáticamente a `/admin/platform/tenants` (vista de flota). Si caes en `/admin/onboarding` (wizard de "crear tenant"), significa que el panel está pre-BUG-006 fix — actualizá a `develop` reciente y reintenta.
+El script `configure-auth0.sh` puede asignar el rol Y la flag `support_mode` en un solo paso. Re-corré el script con dos variables nuevas:
 
-##### 3.3 (Opcional) Asignar `tenant_id` a un usuario para que entre directo a un tenant
+```bash
+# (mismas variables del Paso 2)
+export AUTH0_DOMAIN="..."
+export MGMT_CLIENT_ID="..."
+export MGMT_CLIENT_SECRET="..."
+
+# Bootstrap del primer platform_owner — el user DEBE existir antes en Auth0.
+export BOOTSTRAP_PLATFORM_OWNER_EMAIL="tu-email@dominio.com"
+
+# Default true. Cuando true:
+#   - El script setea `app_metadata.support_mode = true`.
+#   - El platform_owner puede entrar a CUALQUIER tenant via "Ver como tenant".
+# Cuando false:
+#   - Solo se asigna el rol; vos seteás support_mode a mano cuando lo necesites.
+#   - El platform_owner sigue viendo `/platform/*` pero NO puede operar en
+#     tenants ajenos sin el toggle manual.
+export BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=true
+
+./scripts/configure-auth0.sh
+```
+
+**Salida esperada del bloque de bootstrap:**
+
+```text
+▶ Bootstrap platform_owner: tu-email@dominio.com
+  Rol 'platform_owner' asignado a tu-email@dominio.com
+  app_metadata.support_mode=true seteado (logout+login para que el JWT lo refleje)
+  ⚠ Trade-off: support_mode permanente — el platform_owner puede operar
+    en cualquier tenant sin opt-in temporal. Ver BUG-008 para el toggle.
+```
+
+> **Importante — logout + login**: el JWT que tenés en tu sesión actual NO trae el claim nuevo de `support_mode` ni el rol nuevo. La PostLogin Action de Auth0 solo emite claims actualizados al emitir un token nuevo. Salí del panel y volvé a entrar para que tome efecto.
+
+##### 3.2.bis Trade-off de seguridad de `support_mode: true` permanente
+
+Setear `support_mode: true` en `app_metadata` significa que el platform_owner **siempre** opera con privilegios cross-tenant. Esto contradice el spirit de TASK-0077 (opt-in temporal por sesión). Las opciones:
+
+| Variante | Cuándo usarla | Caveat |
+|---|---|---|
+| `BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=true` | Dev / staging / smoke test. Te desbloquea ya. | El platform_owner puede operar en cualquier tenant sin opt-in. Si robaron tu cookie, el atacante también puede. |
+| `BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=false` | Producción endurecida. | Tenés que setear `support_mode: true` a mano en Auth0 dashboard cada vez que vas a hacer soporte, y `false` cuando terminas. Sin esto, "Ver como tenant" no funciona. |
+
+El follow-up real (`BUG-008` en `docs/UI_BACKLOG.md`) es un endpoint `POST /v1/me/support-mode/{tenant_id}` que emita un cookie temporal scoped al tenant, con audit obligatorio. Hasta entonces, elegís el trade-off arriba.
+
+##### 3.3 Verificación post-login
+
+1. Logout + login en el panel.
+2. Aterrizas en `/admin/platform/tenants` (vista de flota — el redirect post-login detecta `platform_owner`).
+3. Si caes en `/admin/onboarding` o "Sin acceso a ningún módulo", revisá:
+   - Que la Action `copilotoia-post-login-claims` esté **bindeada al flow Login** (ver runbook `docs/runbooks/auth0-postlogin-mfa-error.md` sub-caso 2c).
+   - Que el rol `platform_owner` esté asignado al user (Auth0 Dashboard → Users → Roles).
+4. Click en "Ver como tenant" sobre cualquier tenant → debes entrar al admin del tenant como owner. Si falla con "Sin acceso a ningún módulo", el `support_mode` del JWT está en false — re-corré el script con `BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=true`.
+
+##### 3.4 (Opcional) Asignar `tenant_id` a un usuario para que entre directo a un tenant
 
 Para usuarios que operan **dentro** de un tenant específico (no platform_owner cross-tenant):
 

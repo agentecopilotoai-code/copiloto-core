@@ -15,6 +15,42 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### Auth0 bootstrap — `BOOTSTRAP_PLATFORM_OWNER_EMAIL` en `configure-auth0.sh`
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** automatizar lo que era un setup manual frágil. Antes el operador tenía que: (1) crear el user en Auth0, (2) ir al dashboard > Roles > asignar `platform_owner`, (3) editar `app_metadata` y agregar `{"support_mode": true}` para que el botón "Ver como tenant" funcione, (4) logout + login. Pasos 2-3 son fácil de olvidar — el síntoma "Sin acceso a ningún módulo" en `/admin/t/{slug}` se reproducía constantemente (BUG-008 raíz). Ahora todo es opt-in via dos env vars.
+- **Cambios:**
+  - **`scripts/configure-auth0.sh`** — nuevo bloque (~70 líneas) gated por `BOOTSTRAP_PLATFORM_OWNER_EMAIL`:
+    1. Localiza el user por email vía `GET /users-by-email?email=<URL-encoded>` (URL-encode con `jq '$e | @uri'` para emails con `+`, `.`, etc).
+    2. Si el user no existe → fail-closed con mensaje accionable. NO crea users a ciegas (requiere consent del dueño del email — Auth0 envía email de invitación al crear).
+    3. Asigna el rol `platform_owner` vía `POST /users/{id}/roles` con `{roles:[role_id]}`. Idempotente: primero hace `GET /users/{id}/roles` y skipea si ya está asignado.
+    4. (Opcional) setea `app_metadata.support_mode=true` vía `PATCH /users/{id}` con `{app_metadata:{support_mode:true}}`. Gated por `BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE` (default true).
+    5. Mensajes informativos para el operador: warning del trade-off de seguridad (support_mode permanente vs opt-in temporal), referencia a BUG-008 como el fix correcto.
+  - **`scripts/configure-auth0.sh` header** — documenta las dos nuevas variables opcionales con caveat "el user debe existir previamente en Auth0".
+  - **`INSTALL.md` § 4 Paso 3** — reescrito:
+    - Paso 3.1 — crear el user (Auth0 dashboard), con nota sobre IdP externos (Google OAuth2) que auto-crean el user al primer login.
+    - Paso 3.2 — re-correr el script con `BOOTSTRAP_PLATFORM_OWNER_EMAIL=tu-email` (UNA acción de CLI en lugar de tres clicks en dashboards).
+    - Paso 3.2.bis — tabla del trade-off de seguridad (`SUPPORT_MODE=true` vs `false`).
+    - Paso 3.3 — smoke test post-fix (logout/login + verificar `/admin/platform/tenants` + "Ver como tenant").
+    - Paso 3.4 — el viejo 3.3 (asignar `tenant_id` a un user específico).
+  - **`docs/UI_BACKLOG.md`** — entrada `BUG-008` nueva: documenta que `BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=true` es un workaround. El fix correcto (opt-in temporal via cookie scoped por tenant + audit + TTL) queda como ticket separado.
+- **Archivos:**
+  - `scripts/configure-auth0.sh` — header expandido + bloque opt-in (~70 LOC).
+  - `INSTALL.md` — Paso 3 reescrito.
+  - `docs/UI_BACKLOG.md` — entrada BUG-008 (pendiente, scope completo documentado).
+  - `tests/test_configure_auth0_bootstrap_static.py` (NEW) — 13 tests static cubriendo: bash syntax, header docs, opt-in guard, defaults correctos, lookup por email URL-encoded, fail-closed si user no existe, idempotencia de asignación de rol, payload correcto del POST de role, PATCH de app_metadata bajo el toggle, warnings de trade-off, mensaje del path "Ver como tenant fail".
+- **Validaciones:**
+  - `pytest tests/test_configure_auth0_bootstrap_static.py` → 13/13 passed.
+  - `bash -n scripts/configure-auth0.sh` → OK.
+- **Nota de seguridad:** este PR NO implementa el toggle temporal correcto (BUG-008), solo automatiza el workaround actual:
+  - Setear `support_mode=true` permanente expande el blast radius del platform_owner — cualquier robo de sesión permite operar en CUALQUIER tenant sin opt-in. Para producción endurecida, dejar el toggle en `false` y manejar support_mode a mano.
+  - El script NO crea users — solo busca por email y opera sobre uno existente. Previene mass-assignment accidental.
+  - La asignación de rol es idempotente y NO escala privilegios (solo asigna `platform_owner` al user designado por la env var; no toca otros users).
+  - El `app_metadata` update reemplaza solo `support_mode` (PATCH semantic) — preserva otros campos como `tenant_id` si existen.
+  - La PostLogin Action del script ya filtra `support_mode` desde `app_metadata` al JWT (línea 352-353), así que el flujo es coherente extremo a extremo.
+
+---
+
 ### SEC-009 P1 — verifier alcanza al ephemeral en container + imagen con pgvector
 
 - **Fecha:** 2026-05-15
