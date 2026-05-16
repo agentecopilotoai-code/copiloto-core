@@ -15,6 +15,31 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### BUG-006 — `platform_owner` cae al onboarding de tenant en vez de `/platform`
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** un usuario con rol global `platform_owner` (sin `tenant_id` y sin `support_mode: true`) loguea con Auth0 y aterriza en `NoTenantOnboarding`/`TenantSetupWizard` (la tarjeta "Crear tenant"), cuando debería ir directo a sus vistas declaradas en `HTML DESIGN/` para Platform Owner (`PlatformOwnerShell` bajo `/platform/*`).
+- **Cambios:**
+  - **`admin-panel/src/permissions/matrix.js`** — `resolveActiveRoles({ profile, tenant })` bifurca por contexto:
+    - **`tenant === null` (contexto global, ej. `IndexRedirect`, `/platform`)**: incluye SIEMPRE los roles globales (`owner`, `platform_owner`) presentes en `profile.roles` — sin requerir `support_mode`. Sin esto, el redirect post-login no detectaba el rol global y caía a `/no-tenant`.
+    - **`tenant !== null` (contexto de tenant)**: preserva TASK-0077 — `profile.roles` solo se suman al merge bajo `support_mode === true` + rol global. Esto impide que un platform_owner opere accidentalmente en un tenant ajeno con privilegios elevados sin opt-in explícito.
+  - Roles no-globales (`admin`, `manager`, `agent`, `viewer`) siguen sin filtrarse a nivel global → fail-closed para esos casos.
+  - `usePermissions.isSystemOwner` sigue ligado a `support_mode` — es el toggle del banner cross-tenant, semánticamente distinto a "tengo rol global".
+- **Archivos:**
+  - `admin-panel/src/permissions/matrix.js` — refactor de `resolveActiveRoles` + docstring extendido explicando ambos contextos.
+  - `admin-panel/src/permissions/matrix.test.js` — tres tests nuevos: (a) `platform_owner` sin support_mode + sin tenant → resuelve a `['platform_owner']`; (b) `owner` análogo; (c) TASK-0077 preservado (platform_owner CON tenant y sin support_mode → solo tenant.roles); + un test que verifica que admin/agent en profile NO se filtran a contexto global.
+  - `admin-panel/src/permissions/usePermissions.test.jsx` — test del escenario completo: rol resuelto a `platform_owner`, `home = 'platform-fleet'`, `can('platform.tenants.write', 'RW') === true`, `isSystemOwner === false` (sigue requiriendo support_mode).
+  - `docs/runbooks/auth0-postlogin-mfa-error.md` — ampliado para enfatizar que la PostLogin MFA Action bloquea el login TOTAL (incluyendo platform_owner) ANTES de que el panel se cargue.
+  - `docs/UI_BACKLOG.md` — BUG-006 marcado DONE.
+- **Validaciones:**
+  - `npm --prefix admin-panel test -- --run src/permissions` → 56/56 verde (incluyendo los 4 tests nuevos del fix).
+  - `npm --prefix admin-panel run lint` → clean.
+  - `npm --prefix admin-panel run build` → ok.
+- **Nota de seguridad:** este fix es puramente de UI. El backend sigue enforciando `require_platform_owner`, `require_min_role`, `ensure_tenant_access` + RLS por endpoint — el cliente NO puede auto-promoverse modificando su payload local. Sin support_mode, un platform_owner navegando a `/t/{slug}` ajeno seguirá viendo solo lo que tenga rol explícito en ese tenant.
+- **Relacionado:** BUG-005 — la PostLogin MFA Action de Auth0 bloquea el login antes de que este fix entre en juego. Mientras esa Action esté activa en un tenant Auth0 sin MFA habilitado, NINGÚN usuario llega al panel. Acción operativa documentada en `docs/runbooks/auth0-postlogin-mfa-error.md` (Opción A: habilitar MFA en Auth0; Opción B: quitar la Action del flow PostLogin para sandboxes sin add-on).
+
+---
+
 ### UI-016.7-FU — Backend `/v1/me/*` para preferencias del usuario
 
 - **Fecha:** 2026-05-15

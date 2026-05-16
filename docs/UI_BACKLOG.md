@@ -1041,6 +1041,25 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ---
 
+### BUG-006 — `platform_owner` cae al onboarding de tenant en vez de `/platform`
+
+- **Estado:** DONE (2026-05-15)
+- **Síntoma:** Un usuario con rol global `platform_owner` (sin `tenant_id` asignado y sin `support_mode: true`) loguea con Auth0 y aterriza en `NoTenantOnboarding`/`TenantSetupWizard` (la tarjeta "Bienvenido a CopilotoIA — Crear tenant"). Las vistas declaradas en `HTML DESIGN/` para Platform Owner (`PlatformOwnerShell`, `/platform/*`) nunca se renderizan.
+- **Root cause:** En `admin-panel/src/permissions/matrix.js`, `resolveActiveRoles({ profile, tenant: null })` exigía `profile.support_mode === true` para que los roles globales del profile aplicaran. La intención original (TASK-0077) era evitar que un platform_owner operara accidentalmente DENTRO de un tenant ajeno con privilegios elevados — pero la condición era demasiado amplia: bloqueaba también el reconocimiento del rol global en contextos donde NO hay tenant (la decisión de redirect post-login y la vista `/platform/*`). Resultado: `IndexRedirect` veía `permissions.role !== 'platform_owner'`, fallaba la rama de `Navigate to="/platform"` y caía a `/no-tenant` (que dispara el wizard de signup).
+- **Fix:**
+  - Bifurcar la lógica de `resolveActiveRoles` por contexto:
+    - **`tenant === null` (contexto global)**: incluir SIEMPRE los roles globales (`owner`, `platform_owner`) del profile — sin requerir `support_mode`.
+    - **`tenant !== null` (contexto de tenant)**: preservar TASK-0077 — `profile.roles` solo se suman al merge bajo `support_mode === true` + rol global.
+  - Roles no-globales (`admin`, `manager`, `agent`, `viewer`) siguen sin filtrarse desde `profile.roles` a nivel global → fail-closed para esos.
+  - `isSystemOwner` en `usePermissions` sigue ligado a `support_mode` (es el toggle del banner cross-tenant; semánticamente distinto a "tengo rol global").
+- **Tests:**
+  - `matrix.test.js`: tres tests nuevos cubriendo (a) `platform_owner` sin support_mode + sin tenant → resuelve a `['platform_owner']`; (b) `owner` análogo; (c) TASK-0077 preservado (platform_owner CON tenant y sin support_mode → solo tenant.roles).
+  - `usePermissions.test.jsx`: test del escenario completo del bug (rol `platform_owner` + `home = 'platform-fleet'` + `can('platform.tenants.write', 'RW')` + `isSystemOwner: false`).
+- **Nota de seguridad:** este fix NO relaja ninguna política del servidor. El backend sigue enforciando `require_platform_owner` y RLS por endpoint independiente. Es puramente un fix de UI que destrabar el primer routing post-login para que el platform_owner pueda llegar a sus vistas.
+- **Relacionado:** BUG-005 (Auth0 PostLogin MFA action bloquea el login antes de que este fix entre en juego). Mientras esa Action esté activa en un tenant Auth0 sin MFA habilitado, el login NO llega al panel — ver `docs/runbooks/auth0-postlogin-mfa-error.md`. Acción operativa, no de código.
+
+---
+
 ### SEC-001 — Cross-tenant authorization escalation (cluster de 9 findings high)
 
 - **Estado:** DONE (RESOLVED retroactivamente — TASK-0077 endureció `ensure_tenant_access` con `required_tenant_role` + DB role check; ver `docs/security-findings-triage-2026-05-15.md`)

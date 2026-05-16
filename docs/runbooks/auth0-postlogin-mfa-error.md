@@ -1,15 +1,28 @@
 # Runbook: Auth0 PostLogin Action MFA error
 
+> ⚠️ **Severidad: BLOQUEO TOTAL.** Mientras la Action esté activa en un
+> tenant Auth0 sin MFA habilitado, **NINGÚN usuario** (incluyendo el
+> `platform_owner`) puede completar el login. La pantalla blanca con
+> "Something Went Wrong — Two-factor authentication is required to access
+> this application" en Auth0 es este bug. Es una acción operativa, no de
+> código: el panel no se puede arreglar desde el repo.
+
 ## Síntoma
 
-Al hacer login en el panel admin con Auth0 universal login, el callback (`/admin/callback`)
-falla con la respuesta:
+1. **Pantalla del browser** (renderizada por Auth0, no por el panel):
+   ```
+   Something Went Wrong
+   Two-factor authentication is required to access this application.
+   To enable this, please contact your system administrator.
+   ```
+2. **Si llega al callback** (`/admin/callback`), responde:
+   ```json
+   {"detail":"invalid_request: MFA customized via PostLogin action but feature is not enabled."}
+   ```
 
-```json
-{"detail":"invalid_request: MFA customized via PostLogin action but feature is not enabled."}
-```
-
-El usuario queda en la página de error sin poder entrar al panel.
+El usuario queda en la página de error sin poder entrar al panel — y los
+roles globales (incluido `platform_owner`) tampoco pueden bypassear esto,
+porque la Action se ejecuta ANTES de emitir el token.
 
 ## Root cause
 

@@ -208,9 +208,52 @@ describe('resolveActiveRoles()', () => {
     expect(roles).toEqual(['viewer']);
   });
 
-  it('sin tenant ni support_mode → [] (fail-closed)', () => {
+  it('sin tenant ni roles globales → [] (fail-closed)', () => {
     expect(resolveActiveRoles({})).toEqual([]);
+    // `admin` no es rol global; sin tenant activo no aplica.
     expect(resolveActiveRoles({ profile: { roles: ['admin'] } })).toEqual([]);
+    expect(resolveActiveRoles({ profile: { roles: ['agent', 'manager'] } })).toEqual([]);
+  });
+
+  it('BUG-006: platform_owner SIN tenant aplica aunque support_mode sea false', () => {
+    // Contexto: vistas globales de plataforma (`/platform`, IndexRedirect).
+    // El platform_owner debe ser reconocido SIEMPRE — sin esto, el redirect
+    // post-login lo manda al onboarding de tenant en vez de /platform.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: false },
+      tenant: null,
+    });
+    expect(roles).toEqual(['platform_owner']);
+  });
+
+  it('BUG-006: owner SIN tenant aplica aunque support_mode sea false', () => {
+    const roles = resolveActiveRoles({
+      profile: { roles: ['owner'], support_mode: false },
+      tenant: null,
+    });
+    expect(roles).toEqual(['owner']);
+  });
+
+  it('BUG-006: sin tenant solo aplican roles globales — admin/agent del profile no se filtran', () => {
+    // Si el profile trae [platform_owner, admin], solo platform_owner cuenta
+    // a nivel global (admin no es rol global). El admin solo aplica dentro de
+    // un tenant activo.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner', 'admin'], support_mode: false },
+      tenant: null,
+    });
+    expect(roles).toEqual(['platform_owner']);
+  });
+
+  it('TASK-0077 preservado: platform_owner CON tenant requiere support_mode para heredar', () => {
+    // El fix de BUG-006 NO debe romper TASK-0077: operar EN un tenant ajeno
+    // con privilegios elevados sigue requiriendo support_mode explícito.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: false },
+      tenant: { roles: ['viewer'] },
+    });
+    expect(roles).toEqual(['viewer']);
+    expect(roles).not.toContain('platform_owner');
   });
 
   it('deduplica', () => {

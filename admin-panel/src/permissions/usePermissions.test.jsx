@@ -99,11 +99,29 @@ describe('usePermissions()', () => {
     expect(platform.result.current.home).toBe('platform-fleet');
   });
 
-  it('sin tenant ni support_mode el hook devuelve roles vacíos (fail-closed)', () => {
+  it('sin tenant ni roles globales el hook devuelve vacío (fail-closed)', () => {
     const { result } = renderHook(() => usePermissions({ profile: {} }));
     expect(result.current.roles).toEqual([]);
     expect(result.current.can('conversations.view')).toBe(false);
     expect(result.current.role).toBe('viewer');
+  });
+
+  it('BUG-006: platform_owner SIN support_mode resuelve home /platform sin tenant', () => {
+    // Reproduce el escenario que mandaba al onboarding: usuario con rol
+    // global platform_owner, support_mode false (default), sin tenant en
+    // contexto. El hook DEBE reconocerlo como platform_owner y resolver el
+    // home a `platform-fleet` para que IndexRedirect redirija a /platform.
+    const { result } = renderHook(() =>
+      usePermissions({
+        profile: { roles: ['platform_owner'], support_mode: false },
+        tenant: null,
+      }),
+    );
+    expect(result.current.role).toBe('platform_owner');
+    expect(result.current.home).toBe('platform-fleet');
+    expect(result.current.can('platform.tenants.write', 'RW')).toBe(true);
+    // isSystemOwner sigue ligado a support_mode (es el banner cross-tenant).
+    expect(result.current.isSystemOwner).toBe(false);
   });
 
   it('level() expone niveles especiales', () => {

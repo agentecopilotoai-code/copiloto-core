@@ -182,24 +182,53 @@ export const ROLE_HOME = Object.freeze({
 });
 
 /**
- * Resuelve los roles efectivos que aplican en el tenant activo.
+ * Resuelve los roles efectivos que aplican en el contexto activo.
  *
- * - `tenant.roles` (o `tenant.role` legacy) → roles del usuario en ese tenant.
- * - `profile.roles` se suman SOLO si el profile está en `support_mode` con rol
- *   `owner`/`platform_owner` (TASK-0077: platform owners conservan privilegios
- *   cross-tenant en support mode, espejo del backend).
+ * Hay DOS contextos distintos y se tratan diferente para no mezclar capas:
  *
- * Devuelve un array deduplicado. Si `tenant` es null y el profile no tiene
- * support_mode, devuelve `[]` (fail-closed).
+ *   1. **Sin tenant activo** (`tenant === null`): el caller está mirando vistas
+ *      globales de la plataforma (ej. `/platform/*`, decidir el redirect inicial
+ *      en `IndexRedirect`). Acá los roles globales del profile (`owner`,
+ *      `platform_owner`) aplican SIEMPRE — no requieren support_mode. Un
+ *      platform_owner siempre debe poder ver sus propias vistas, sea o no que
+ *      esté operando en algún tenant en particular. Sin esto, BUG-006 reaparece:
+ *      el `IndexRedirect` no detecta el rol global y manda al usuario al
+ *      onboarding de tenant en vez de a `/platform`.
+ *
+ *   2. **Con tenant activo** (`tenant !== null`): el caller está operando
+ *      DENTRO de un tenant concreto. Acá rige TASK-0077: los roles globales
+ *      solo se suman al merge si `support_mode === true` y el profile tiene
+ *      rol `owner`/`platform_owner`. Esto previene que un platform_owner opere
+ *      accidentalmente en un tenant ajeno con privilegios elevados sin haber
+ *      activado support_mode a propósito (espejo del backend).
+ *
+ * Roles de tenant (`tenant.roles` / `tenant.role` legacy) se incluyen siempre.
+ * Devuelve un array deduplicado. Si nada aplica → `[]` (fail-closed).
  */
+const GLOBAL_ROLES = ['owner', 'platform_owner'];
+
 export function resolveActiveRoles({ profile, tenant } = {}) {
   const tenantRoles = Array.isArray(tenant?.roles)
     ? tenant.roles
     : tenant?.role
       ? [tenant.role]
       : [];
-  const supportMode = Boolean(profile?.support_mode) && Array.isArray(profile?.roles)
-    && profile.roles.some((r) => r === 'owner' || r === 'platform_owner');
-  const profileRoles = supportMode ? (profile.roles || []) : [];
+
+  const profileRoleList = Array.isArray(profile?.roles) ? profile.roles : [];
+  const profileGlobalRoles = profileRoleList.filter((r) => GLOBAL_ROLES.includes(r));
+
+  let profileRoles;
+  if (!tenant) {
+    // Contexto global (sin tenant): siempre incluir los roles globales del
+    // profile. BUG-006: sin esto, platform_owner cae al onboarding de tenant.
+    profileRoles = profileGlobalRoles;
+  } else {
+    // Contexto de tenant: TASK-0077 — profile.roles solo se sumarn al merge
+    // bajo support_mode + rol global, para forzar opt-in explícito a actuar
+    // cross-tenant.
+    const supportMode = Boolean(profile?.support_mode) && profileGlobalRoles.length > 0;
+    profileRoles = supportMode ? profileRoleList : [];
+  }
+
   return Array.from(new Set([...tenantRoles, ...profileRoles]));
 }
