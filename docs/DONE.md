@@ -15,6 +15,51 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-010.1 — Audit `payment.webhook_rejected` sobrevive al rollback de la request
+
+- **Fecha:** 2026-05-15
+- **Objetivo:** cerrar el sub-finding de SEC-010 `Rejected payment webhook audits are rolled back`. Los endpoints `receive_payment_webhook` y `receive_subscription_webhook` emitían `await audit(conn, ..., action='payment.webhook_rejected', ...)` justo antes de `raise HTTPException(503|401, ...)` cuando faltaba el signing secret o la firma era inválida. La connection inyectada por `get_db` está envuelta en `async with conn.transaction():` (`app/db/pool.py:29`); el raise dispara ROLLBACK y borra el INSERT del audit. Resultado: el operador NO veía en `audit_logs` que alguien intentó abusar del endpoint (solo aparecía el 401/503 del access log, sin contexto de payload ni provider).
+- **Cambios:**
+  - **`app/services/audit.py`** — nuevo helper `audit_durably(*, tenant_id, actor_type, actor_id, action, entity_type, entity_id, metadata=None)`:
+    - Adquiere una connection ad-hoc del pool global vía `async with db.pool.acquire() as audit_conn`. Como no abre `conn.transaction()`, asyncpg autocommittea el INSERT inmediatamente y queda independiente de cualquier ROLLBACK que ocurra en la transacción de la request.
+    - **Best-effort por diseño**: `try/except Exception` con `logger.exception(...)` que NO propaga. Un audit perdido es mucho menos grave que romper el handler que está intentando rechazar correctamente una request maliciosa.
+    - **Skip si pool no inicializado**: en tests/CLI donde `db.pool` es `None`, loguea warning y retorna sin crashear con `AttributeError`.
+    - Import perezoso de `app.db.pool.db` para evitar ciclo de imports.
+  - **`app/api/v1/routes.py`** — 4 sitios migrados de `audit(conn, ...)` a `audit_durably(...)`:
+    - `receive_payment_webhook` — rechazo por `missing_secret` (503) y por `bad_signature` (401).
+    - `receive_subscription_webhook` — mismos 2 rejection paths con `entity_type='contact_subscription'`.
+    - Import actualizado: `from app.services.audit import audit, audit_durably`.
+  - **`audit(conn, ...)` original sigue intacto** y se usa para audits de flujos exitosos (que se commitean con el resto de la request) — más barato (sin acquire extra del pool) y la transacción del request ya garantiza durabilidad.
+- **Archivos:**
+  - `app/services/audit.py` — nuevo helper `audit_durably` con docstring extenso explicando cuándo usarlo vs `audit`.
+  - `app/api/v1/routes.py` — import + 4 call sites migrados con comentario inline `SEC-010 fix:` apuntando al motivo.
+  - `tests/test_payment_webhook_audit_durably_static.py` (NEW) — **9 tests static** cubriendo:
+    1. `audit_durably` expuesto + firma sin parámetro `conn`.
+    2. Acquire del pool + insert directo (no llama recursivo a `audit()`).
+    3. **NO abre transacción explícita** — verificado vía AST parse del cuerpo de la función (rechaza llamadas reales a `.transaction()`, ignorando docstrings que la mencionan para explicar por qué se evita).
+    4. Best-effort con `try/except` + `logger.exception`.
+    5. Skip si `db.pool` no inicializado + `logger.warning`.
+    6. `receive_payment_webhook` usa `audit_durably` en ≥2 sitios y `await audit(` NO aparece entre los 2 raises.
+    7. Mismo invariante para `receive_subscription_webhook`.
+    8. Import en `routes.py` está correcto.
+    9. `audit()` original sigue activo (regression gate — no rompimos consumers).
+  - `docs/UI_BACKLOG.md` — sub-finding marcado DONE dentro del cluster SEC-010.
+- **Validaciones:**
+  - `pytest tests/test_payment_webhook_audit_durably_static.py` → 9/9 passed.
+  - `pytest tests/test_payment_webhook_audit_durably_static.py tests/test_user_preferences_static.py tests/test_auth_sessions_static.py tests/test_security.py` → 64/64 passed (sin regresión en módulos relacionados).
+  - `ruff check app/services/audit.py app/api/v1/routes.py tests/test_payment_webhook_audit_durably_static.py` → clean.
+- **Nota de seguridad:** este fix MEJORA la seguridad sin relajar nada existente. Los rejection paths siguen rechazando (503 cuando falta secret, 401 cuando la firma es inválida) — solo agregamos la persistencia durable del audit log que ya pretendían emitir. La connection auxiliar del pool no toca `set_config('app.tenant_id')` ni `app.support_mode` — no necesita scoping RLS porque escribe a `app.audit_logs` con `tenant_id` explícito en el INSERT. La pool sigue siendo la misma (`min_size=1, max_size=10`); el acquire ad-hoc de los rejection paths es esporádico (los webhooks rechazados son edge cases) y no impacta capacidad operativa.
+- **Sub-findings restantes en SEC-010** (siguen PENDING):
+  - `DLQ retry is not actually idempotent`
+  - `Hardcoded E2E database role password`
+  - `Malformed tenant timezone can disable bot replies` (mover validación a schema `TenantUpdate`)
+  - `Claude allowlist permits unprompted curl data exfiltration` (config `.claude/settings.json`)
+  - `Webhook status codes expose active WhatsApp channel IDs` (oracle de phone_number_id)
+  - `Cross-tenant conversation metadata logged on 404` (gating por env flag)
+  - `DATABASE_URL password exposed in bootstrap process args` (usar `.pgpass`)
+
+---
+
 ### UI-016.8-FU — State machine mobile list ↔ detail para OperationsDesk
 
 - **Fecha:** 2026-05-15

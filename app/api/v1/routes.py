@@ -107,7 +107,7 @@ from app.services import platform_dlq
 from app.services import platform_incidents
 from app.services import platform_runbooks
 from app.services.locale import SUPPORTED_COUNTRIES
-from app.services.audit import audit
+from app.services.audit import audit, audit_durably
 from app.services.campaign_attribution import attribute_appointment
 from app.services.auth0_admin import (
     Auth0UserAlreadyExists,
@@ -8512,8 +8512,11 @@ async def receive_payment_webhook(
         # — a forged event with a known appointment UUID would otherwise mark
         # the appointment as paid. Audit the rejection so operators can spot
         # the misconfiguration in dashboards.
-        await audit(
-            conn,
+        # SEC-010 fix: `audit_durably` para que el log sobreviva al ROLLBACK
+        # disparado por el `raise HTTPException(...)` de abajo. Con el `audit`
+        # normal (atado a la connection del request) el INSERT se perdía y los
+        # dashboards no veían los rechazos.
+        await audit_durably(
             tenant_id=tenant_id,
             actor_type='system',
             actor_id=None,
@@ -8540,8 +8543,8 @@ async def receive_payment_webhook(
         sig_header = request.headers.get('stripe-signature')
         signature_ok = verify_stripe_signature(body, sig_header, secret)
     if not signature_ok:
-        await audit(
-            conn,
+        # SEC-010 fix: ver comentario sobre `audit_durably` arriba.
+        await audit_durably(
             tenant_id=tenant_id,
             actor_type='system',
             actor_id=None,
@@ -8674,8 +8677,8 @@ async def receive_subscription_webhook(
         # TASK-0083 / BUG04 (subscriptions): same fail-closed rule as the
         # appointment payments webhook above. Without a configured signing
         # secret we refuse the event and audit the rejection.
-        await audit(
-            conn,
+        # SEC-010 fix: `audit_durably` para sobrevivir el ROLLBACK del raise.
+        await audit_durably(
             tenant_id=tenant_id,
             actor_type='system',
             actor_id=None,
@@ -8702,8 +8705,8 @@ async def receive_subscription_webhook(
         sig_header = request.headers.get('stripe-signature')
         signature_ok = verify_stripe_signature(body, sig_header, secret)
     if not signature_ok:
-        await audit(
-            conn,
+        # SEC-010 fix: ver comentario sobre `audit_durably` arriba.
+        await audit_durably(
             tenant_id=tenant_id,
             actor_type='system',
             actor_id=None,
