@@ -73,3 +73,9 @@ alter table app.reminder_jobs
       'appointment','quote','service_request',
       'conversation','contact_subscription','contact'
     ));
+
+-- BUG-159: rastreo de canales ya entregados en operator_alerts. Sin esto,
+-- un retry tras error parcial (ej. email OK + webhook 500) reenvía el
+-- email exitoso en cada attempt hasta que el webhook termine.
+alter table app.operator_alerts
+  add column if not exists delivered_channels text[] not null default '{}';

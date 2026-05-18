@@ -928,6 +928,11 @@ create table app.operator_alerts (
   status text not null default 'pending' check (status in ('pending','sent','failed')),
   attempts integer not null default 0,
   last_error text,
+  -- BUG-159: rastreo de canales ya entregados para que un retry tras error
+  -- parcial (ej. email OK pero webhook 500) no re-envíe el email exitoso.
+  -- El dispatcher escribe el nombre del canal en este array al cerrar con
+  -- éxito y lo lee al entrar para hacer skip de canales ya OK.
+  delivered_channels text[] not null default '{}',
   scheduled_for timestamptz not null default now(),
   created_at timestamptz not null default now(),
   sent_at timestamptz,

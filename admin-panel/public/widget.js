@@ -58,14 +58,28 @@
     };
   }
 
+  // BUG-161: el backend validaba forma UUID, pero el widget aceptaba
+  // cualquier string. Cuando un usuario manda `?ref=garbage` o
+  // `?ref=<script>...`, el body del POST traía el junk y consumía slots
+  // del rate-limit del backend antes del 422. Validamos client-side
+  // primero para fail-fast y para evitar leakeo de strings sin sentido
+  // al body de tracking.
+  var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
   function readReferrerContactId() {
     // TASK-0055: prefer the explicit data-ref attribute, fall back to ?ref=
-    // on the page URL. Format must be a UUID string; the backend validates
-    // shape before linking, so we just trim here.
-    if (referrerAttr) return referrerAttr.trim();
-    var params = new URLSearchParams(window.location.search);
-    var fromQuery = params.get('ref');
-    return fromQuery ? fromQuery.trim() : undefined;
+    // on the page URL. BUG-161: validate UUID shape before returning so
+    // junk doesn't reach the backend.
+    var candidate;
+    if (referrerAttr) {
+      candidate = referrerAttr.trim();
+    } else {
+      var params = new URLSearchParams(window.location.search);
+      var fromQuery = params.get('ref');
+      candidate = fromQuery ? fromQuery.trim() : '';
+    }
+    if (!candidate) return undefined;
+    return UUID_RE.test(candidate) ? candidate : undefined;
   }
 
   function injectStyles() {

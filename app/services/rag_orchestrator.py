@@ -53,6 +53,7 @@ from app.services.intent_classifier import (
     classify_intent,
 )
 from app.services.consent import enforce_inbound_consent, record_opt_out_by_keyword
+from app.services.operator_alerts import ALERT_KIND_COMPLAINT, enqueue_operator_alert
 from app.services.policy_engine import evaluate_policy
 
 if TYPE_CHECKING:
@@ -565,6 +566,33 @@ async def _orchestrate_inbound_message_impl(
     )
 
     if policy_result.action == 'require_handoff':
+        # BUG-158: cuando el policy engine escala por queja/riesgo del
+        # cliente, además del handoff queremos notificar al operador vía el
+        # canal de operator_alerts (email/whatsapp/webhook). Antes el
+        # constant `ALERT_KIND_COMPLAINT` existía pero nadie lo enqueueaba,
+        # así que las quejas escalaban silenciosamente al inbox sin
+        # alertar al manager.
+        if policy_result.reason == 'intent_complaint_or_risk':
+            try:
+                await enqueue_operator_alert(
+                    conn,
+                    tenant_id=tenant_id,
+                    kind=ALERT_KIND_COMPLAINT,
+                    payload={
+                        'conversation_id': str(conversation['id']),
+                        'contact_id': str(contact['id']),
+                        'intent': intent_result.intent,
+                        'risk_level': policy_result.risk_level,
+                        'inbound_message_id': str(inbound_message['id']),
+                        'inbound_body_excerpt': (body_text or '')[:280],
+                    },
+                )
+            except Exception:
+                # Best-effort: el handoff debe correr aunque el alert falle.
+                log.exception(
+                    'orchestrator.complaint_alert_enqueue_failed',
+                    conversation_id=str(conversation['id']),
+                )
         return await _do_handoff(
             conn,
             tenant_id=tenant_id,

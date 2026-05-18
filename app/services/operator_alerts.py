@@ -593,11 +593,20 @@ async def dispatch_operator_alert(
         if base:
             payload['panel_url'] = f'{base}/admin?tenant={alert_row["tenant_id"]}#outbound-dlq'
     channels = normalize_alert_channels(payload.get('channels'))
+    # BUG-159: leer canales ya entregados de attempts anteriores. Si la fila
+    # vino de un retry tras error parcial (ej. email OK + webhook 500), no
+    # re-disparamos el canal que ya cerró exitoso.
+    try:
+        already_delivered = set(alert_row['delivered_channels'] or [])
+    except (KeyError, TypeError):
+        already_delivered = set()
+    newly_delivered: list[str] = []
     trace: dict[str, Any] = {
         'email_sent': 0,
         'whatsapp_queued': 0,
         'webhook_sent': False,
         'errors': [],
+        'skipped_already_delivered': sorted(already_delivered),
     }
     if email_sender is None:
         email_sender = _send_email_channel
@@ -606,13 +615,14 @@ async def dispatch_operator_alert(
     if webhook_sender is None:
         webhook_sender = _send_webhook_channel
     try:
-        if channels['email']:
+        if channels['email'] and 'email' not in already_delivered:
             await email_sender(cfg, recipients=channels['email'], payload=payload)
             trace['email_sent'] = len(channels['email'])
+            newly_delivered.append('email')
     except Exception as exc:  # noqa: BLE001
         trace['errors'].append(f'email:{exc}')
     try:
-        if channels['whatsapp']:
+        if channels['whatsapp'] and 'whatsapp' not in already_delivered:
             queued = await whatsapp_sender(
                 conn,
                 tenant_id=alert_row['tenant_id'],
@@ -620,18 +630,21 @@ async def dispatch_operator_alert(
                 payload=payload,
             )
             trace['whatsapp_queued'] = queued or 0
+            newly_delivered.append('whatsapp')
     except Exception as exc:  # noqa: BLE001
         trace['errors'].append(f'whatsapp:{exc}')
     try:
-        if channels['webhook_url']:
+        if channels['webhook_url'] and 'webhook' not in already_delivered:
             await webhook_sender(
                 tenant_id=alert_row['tenant_id'],
                 url=channels['webhook_url'],
                 payload=payload,
             )
             trace['webhook_sent'] = True
+            newly_delivered.append('webhook')
     except Exception as exc:  # noqa: BLE001
         trace['errors'].append(f'webhook:{exc}')
+    trace['newly_delivered'] = newly_delivered
     return trace
 
 
@@ -685,14 +698,23 @@ async def process_pending_operator_alerts(
             whatsapp_sender=whatsapp_sender,
             webhook_sender=webhook_sender,
         )
+        # BUG-159: cualquier canal entregado en este attempt se acumula a
+        # `delivered_channels` para que el próximo retry (si los demás canales
+        # fallaron) lo skipee y no re-envíe.
+        newly_delivered = trace.get('newly_delivered') or []
         if not trace['errors']:
             await conn.execute(
                 """
                 update app.operator_alerts
-                set status='sent', sent_at=now(), last_error=null, updated_at=now()
+                set status='sent', sent_at=now(), last_error=null, updated_at=now(),
+                    delivered_channels = (
+                      select coalesce(array_agg(distinct c), '{}')
+                      from unnest(delivered_channels || $2::text[]) as c
+                    )
                 where id=$1
                 """,
                 row['id'],
+                list(newly_delivered),
             )
             log.info(
                 'operator_alert.sent',
@@ -707,11 +729,16 @@ async def process_pending_operator_alerts(
             await conn.execute(
                 """
                 update app.operator_alerts
-                set status='failed', last_error=$2, updated_at=now()
+                set status='failed', last_error=$2, updated_at=now(),
+                    delivered_channels = (
+                      select coalesce(array_agg(distinct c), '{}')
+                      from unnest(delivered_channels || $3::text[]) as c
+                    )
                 where id=$1
                 """,
                 row['id'],
                 error_text,
+                list(newly_delivered),
             )
             log.warning(
                 'operator_alert.failed',
@@ -724,12 +751,17 @@ async def process_pending_operator_alerts(
         await conn.execute(
             """
             update app.operator_alerts
-            set status='pending', last_error=$2, scheduled_for=$3, updated_at=now()
+            set status='pending', last_error=$2, scheduled_for=$3, updated_at=now(),
+                delivered_channels = (
+                  select coalesce(array_agg(distinct c), '{}')
+                  from unnest(delivered_channels || $4::text[]) as c
+                )
             where id=$1
             """,
             row['id'],
             error_text,
             next_retry_at(attempts, cfg.alerts_retry_base_seconds),
+            list(newly_delivered),
         )
         log.info(
             'operator_alert.retry_scheduled',

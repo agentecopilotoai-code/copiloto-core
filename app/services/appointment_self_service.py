@@ -532,10 +532,26 @@ async def _persist_state(
         meta.pop('self_service', None)
     else:
         meta['self_service'] = state
+    # BUG-160: antes este UPDATE escribía SIEMPRE `status='waiting_user'`.
+    # Cuando un path previo (ej. auto-rebook timeout en línea 293-303) había
+    # promovido la conversación a `waiting_agent` con `handoff_required=true`,
+    # un `_persist_state(...)` posterior la regresaba a `waiting_user` y el
+    # bot volvía a responder en el siguiente inbound — el handoff humano se
+    # perdía. El call site del timeout ya evita llamar a este helper (ver
+    # comentario en línea 362-366), pero defendemos el invariante acá también:
+    # preservamos `waiting_agent` y `human_active` (que tienen handoff abierto
+    # con un humano del lado), y solo escribimos `waiting_user` desde otros
+    # statuses (open / waiting_user / etc.).
     await conn.execute(
         """
         update app.conversations
-        set metadata=$1::jsonb, status='waiting_user', updated_at=now()
+        set metadata=$1::jsonb,
+            status=case
+              when status in ('waiting_agent', 'human_active', 'human_required')
+                then status
+              else 'waiting_user'
+            end,
+            updated_at=now()
         where tenant_id=$2 and id=$3
         """,
         json.dumps(meta),
