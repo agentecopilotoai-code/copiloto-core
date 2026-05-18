@@ -149,6 +149,7 @@ from app.services.payment_provider import (
     verify_stripe_signature,
 )
 from app.services.subscriptions import (
+    INVOICE_FAILED_PURPOSE,
     INVOICE_FAILED_TEMPLATE,
     extract_subscription_event,
 )
@@ -8995,7 +8996,12 @@ async def receive_subscription_webhook(
             'contact_phone_e164': subscription['contact_phone_e164'],
             'plan_name': subscription['plan_name'],
             'retry_payment_link': retry_url,
-            'purpose': INVOICE_FAILED_TEMPLATE,
+            # BUG-056: `purpose` debe ser el enum del schema
+            # (`subscription_payment_failed`), NO el name del template
+            # (`subscription_payment_failed_v1`). El scheduler buscaba
+            # `whatsapp_templates WHERE purpose=$2` con `_v1` y nunca
+            # matcheaba → todos los retries se marcaban `template_not_approved`.
+            'purpose': INVOICE_FAILED_PURPOSE,
         }
         await conn.execute(
             """

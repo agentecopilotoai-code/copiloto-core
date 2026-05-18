@@ -21,6 +21,7 @@ __all__ = (
     'SUBSCRIPTION_STATUSES',
     'BILLING_PERIODS',
     'INVOICE_FAILED_TEMPLATE',
+    'INVOICE_FAILED_PURPOSE',
     'SubscriptionInvoiceEvent',
     'extract_subscription_event',
 )
@@ -29,6 +30,15 @@ __all__ = (
 SUBSCRIPTION_STATUSES = ('active', 'past_due', 'cancelled')
 BILLING_PERIODS = ('monthly', 'quarterly', 'yearly')
 INVOICE_FAILED_TEMPLATE = 'subscription_payment_failed_v1'
+# BUG-056: `purpose` es el enum del schema (`whatsapp_templates.purpose CHECK
+# (... 'subscription_payment_failed' ...)`), distinto del NAME del template
+# que se manda a Meta (`subscription_payment_failed_v1`). Antes el código
+# usaba `INVOICE_FAILED_TEMPLATE` como `payload['purpose']`; el scheduler
+# buscaba `where purpose='subscription_payment_failed_v1'` y nunca matcheaba
+# → todo retry de subscription failure se marcaba `template_not_approved`.
+# Mantener las dos constantes separadas: `INVOICE_FAILED_TEMPLATE` para la
+# API de Meta y `INVOICE_FAILED_PURPOSE` para el lookup en DB.
+INVOICE_FAILED_PURPOSE = 'subscription_payment_failed'
 
 
 @dataclass(frozen=True)
