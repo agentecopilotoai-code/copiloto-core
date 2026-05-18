@@ -68,6 +68,22 @@ def delivery_error_code(exc: Exception) -> str:
 
 
 async def process_once(conn: asyncpg.Connection) -> int:
+    # BUG-058: envolver TODO el ciclo en transacción con
+    # `FOR UPDATE SKIP LOCKED` sobre `domain_events`. Sin esto, dos workers
+    # concurrentes (caso real cuando escalamos el deployment horizontal,
+    # ver ARCHITECTURE.md async-process section) seleccionaban las MISMAS
+    # filas, llamaban Meta 2 veces y mandaban WhatsApps duplicados al
+    # usuario. Cada worker ahora ve solo las filas que NO están lockadas
+    # por otra transacción; las filas seleccionadas quedan lockadas hasta
+    # que la transacción cierre (al terminar el `for row in rows` loop,
+    # ~unos segundos típicos contra Meta API). Trade-off: locks más largos
+    # vs duplicate delivery — preferimos correctness para nuestro volumen
+    # actual.
+    async with conn.transaction():
+        return await _process_locked_batch(conn)
+
+
+async def _process_locked_batch(conn: asyncpg.Connection) -> int:
     rows = await conn.fetch(
         """
         select e.id, e.tenant_id, e.aggregate_id, m.conversation_id, m.body_text,
@@ -85,6 +101,7 @@ async def process_once(conn: asyncpg.Connection) -> int:
           and c.provider in ('whatsapp_cloud_api','instagram_messenger','facebook_messenger')
         order by e.occurred_at
         limit 10
+        for update of e skip locked
         """
     )
     pending_total = await conn.fetchval(
