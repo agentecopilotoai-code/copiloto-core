@@ -58,13 +58,20 @@ describe('ErrorBoundary', () => {
     expect(screen.queryByRole('button', { name: 'Reportar al equipo' })).toBeNull();
   });
 
-  it('muestra el mensaje del error capturado en un bloque <pre>', () => {
+  it('muestra un código de incidente derivado del error (no el mensaje crudo)', () => {
+    // BUG-088: antes el fallback rendereaba `error.message` raw en `<pre>`,
+    // leakeando stack traces / paths internos / SQL params. Ahora solo
+    // mostramos un código hash (ERR-XXXXXXXX) que el operador puede usar
+    // para buscar el error en logs/audit.
     render(
       <ErrorBoundary>
         <Boom />
       </ErrorBoundary>,
     );
-    expect(screen.getByText('boom-test')).toBeInTheDocument();
+    // El mensaje crudo NO debe aparecer.
+    expect(screen.queryByText('boom-test')).toBeNull();
+    // Un código tipo ERR-XXXXXXXX sí.
+    expect(screen.getByText(/ERR-[0-9A-F]{8}/)).toBeInTheDocument();
   });
 
   it('clears the error state when Reintentar is clicked', async () => {

@@ -106,7 +106,11 @@ function Notice({ notice }) {
   return <p className={`notice ${notice.type}`}>{notice.text}</p>;
 }
 
-export function AnalyticsPanel({ module, session, tenant }) {
+export function AnalyticsPanel({ module, session, tenant, readOnly = false }) {
+  // BUG-090: `readOnly` se pasa a `AgentPerformance` para que oculte el
+  // botón "Exportar" CSV cuando el panel está montado dentro de
+  // `ViewerAnalytics` (UI-010.2). Sin esto, viewers heredan acciones
+  // write y rompen el contrato del shell read-only.
   const [preset, setPreset] = useState('30d');
   const [range, setRange] = useState(() => defaultRange(30));
   const [activeTab, setActiveTab] = useState('overview');
@@ -272,6 +276,7 @@ export function AnalyticsPanel({ module, session, tenant }) {
           range={range}
           session={session}
           tenant={tenant}
+          readOnly={readOnly}
         />
       )}
 

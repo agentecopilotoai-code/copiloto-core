@@ -38,7 +38,10 @@ export function ViewerAnalytics({ module, session, tenant }) {
 
   return (
     <RequirePermission permissions={permissions} capability="analytics.tenant.read" mode="R">
-      <AnalyticsPanel module={module} session={session} tenant={tenant} />
+      {/* BUG-090: readOnly oculta el botón "Exportar" CSV de AgentPerformance.
+        Sin esto, el viewer heredaba un CTA write y rompía el contrato
+        read-only del shell UI-010.2. */}
+      <AnalyticsPanel module={module} session={session} tenant={tenant} readOnly />
     </RequirePermission>
   );
 }

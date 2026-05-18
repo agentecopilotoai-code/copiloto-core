@@ -57,7 +57,11 @@ import styles from './AgentPerformance.module.css';
  *   range?: { fromDate?: string, toDate?: string },
  * }} props
  */
-export function AgentPerformance({ module, session, tenant, range }) {
+export function AgentPerformance({ module, session, tenant, range, readOnly = false }) {
+  // BUG-090: cuando `readOnly=true` (typical Viewer reusando AnalyticsPanel),
+  // ocultamos el botón "Exportar" CSV — viewer no debe poder descargar
+  // datos. Sin esta prop, ViewerAnalytics heredaba el CTA de write y
+  // rompía el contrato read-only de UI-010.2.
   const { profile } = useTenantContext();
   const permissions = usePermissions({ profile, tenant });
   const tenantId = tenant?.id;
@@ -145,14 +149,16 @@ export function AgentPerformance({ module, session, tenant, range }) {
                   ))}
                 </select>
               </label>
-              <button
-                type="button"
-                className={styles.exportButton}
-                onClick={handleExport}
-                disabled={!agents || loading}
-              >
-                Exportar
-              </button>
+              {readOnly ? null : (
+                <button
+                  type="button"
+                  className={styles.exportButton}
+                  onClick={handleExport}
+                  disabled={!agents || loading}
+                >
+                  Exportar
+                </button>
+              )}
               <button
                 type="button"
                 className={styles.exportButton}

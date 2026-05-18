@@ -62,6 +62,13 @@ export class ErrorBoundary extends Component {
     const { fallback, onReport } = this.props;
     if (fallback) return fallback;
 
+    // BUG-088: NO renderear `error.message` raw — leak de internals
+    // (stack frames, paths internos, parámetros SQL, datos de PII en
+    // mensajes de excepción mal manejadas). Mostramos un código corto
+    // hash-based para que el operador pueda correlacionar contra logs/audit.
+    const errorCode = error?.message
+      ? `ERR-${hashErrorMessage(error.message)}`
+      : null;
     return (
       <StateScreen
         tone="danger"
@@ -75,8 +82,10 @@ export class ErrorBoundary extends Component {
               das permiso, lo enviamos a nuestro equipo. Mientras lo
               arreglamos, puedes reintentar o volver al panel.
             </p>
-            {error?.message ? (
-              <pre className={styles.details}>{error.message}</pre>
+            {errorCode ? (
+              <p className={styles.details}>
+                Código de incidente: <code>{errorCode}</code>
+              </p>
             ) : null}
           </>
         }
@@ -95,6 +104,18 @@ export class ErrorBoundary extends Component {
       />
     );
   }
+}
+
+// BUG-088: hash determinístico simple (FNV-1a 32-bit) → 8 hex chars.
+// No es criptográfico — solo sirve para que el operador pueda buscar
+// "ERR-A1B2C3D4" en logs / audit y correlacionar con el incidente.
+function hashErrorMessage(message) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < message.length; i += 1) {
+    hash ^= message.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).toUpperCase().padStart(8, '0');
 }
 
 function AlertIcon() {
