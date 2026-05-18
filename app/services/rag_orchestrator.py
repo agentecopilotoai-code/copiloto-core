@@ -484,7 +484,12 @@ async def _orchestrate_inbound_message_impl(
             intent_settings_raw = {}
     intent_cfg = intent_settings_raw if isinstance(intent_settings_raw, dict) else {}
 
-    intent_result = await classify_intent(body_text, settings=get_settings(), tenant_config=intent_cfg)
+    intent_result = await classify_intent(
+        body_text,
+        settings=get_settings(),
+        tenant_config=intent_cfg,
+        tenant_no_train=tenant_no_train,
+    )
 
     log.info(
         'orchestrator.intent_classified',

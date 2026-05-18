@@ -121,6 +121,7 @@ from app.services.auth0_admin import (
     invite_user as auth0_invite_user,
     revoke_tenant_roles as auth0_revoke_tenant_roles,
 )
+from app.services.circuit_breaker import CircuitOpenError
 from app.services.knowledge_storage import delete_knowledge_file, is_binary_extractable, normalize_object_prefix, store_knowledge_file
 from app.services.media_storage import (
     MEDIA_KINDS,
@@ -194,6 +195,7 @@ from app.services.rag_retrieval import (
     retrieval_match_to_dict,
 )
 from app.services.whatsapp import (
+    WhatsAppMediaTooLargeError,
     delete_template_from_meta,
     download_whatsapp_media,
     fetch_templates_from_meta,
@@ -2385,6 +2387,16 @@ async def invite_tenant_member(
                 tenant_id=tenant_id,
                 display_name=payload.display_name,
             )
+        except CircuitOpenError as exc:
+            # AUDIT-49 / re-audit §1.4 (2026-05-18): Auth0 breaker está abierto
+            # — devolver 503 + Retry-After en vez de degradar a 2xx con `error`
+            # en body, que ocultaba el incidente. El frontend del panel debe
+            # mostrar "Auth0 temporalmente indisponible, reintentar en Ns".
+            raise HTTPException(
+                status_code=503,
+                detail='Auth0 Management API temporarily unavailable',
+                headers={'Retry-After': str(max(1, int(round(exc.retry_after_seconds))))},
+            ) from exc
         except Auth0UserAlreadyExists:
             raise HTTPException(
                 status_code=409,
@@ -2453,6 +2465,13 @@ async def invite_tenant_member(
             auth0_result = await auth0_assign_roles(
                 auth_subject=auth_subject, roles=roles_list
             )
+        except CircuitOpenError as exc:
+            # AUDIT-49: ver invite — fail-loud con 503 + Retry-After.
+            raise HTTPException(
+                status_code=503,
+                detail='Auth0 Management API temporarily unavailable',
+                headers={'Retry-After': str(max(1, int(round(exc.retry_after_seconds))))},
+            ) from exc
         except Exception as exc:  # noqa: BLE001
             log.warning('tenant_member.auth0_assign_failed', error=str(exc))
             auth0_result = {'disabled': False, 'error': str(exc)}
@@ -2596,6 +2615,13 @@ async def update_tenant_member_role(
         auth0_result = await auth0_assign_roles(
             auth_subject=user_row['auth_subject'], roles=roles_list
         )
+    except CircuitOpenError as exc:
+        # AUDIT-49: ver invite — fail-loud con 503 + Retry-After.
+        raise HTTPException(
+            status_code=503,
+            detail='Auth0 Management API temporarily unavailable',
+            headers={'Retry-After': str(max(1, int(round(exc.retry_after_seconds))))},
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         log.warning('tenant_member.auth0_assign_failed', error=str(exc))
         auth0_result = {'disabled': False, 'error': str(exc)}
@@ -2662,6 +2688,28 @@ async def remove_tenant_member(
         await auth0_revoke_tenant_roles(
             auth_subject=user_row['auth_subject'], tenant_id=tenant_id
         )
+    except CircuitOpenError as exc:
+        # AUDIT-49 / re-audit §1.4: la fila de `user_tenant_roles` ya fue
+        # eliminada (línea 2680) — el JWT viejo del user sigue con `tenant_id`
+        # en el claim hasta que expire, pero el DB-check (`ensure_tenant_access`)
+        # ya rechazará todo request (no hay row). Surfacear 503 + Retry-After
+        # para que el panel auto-reintente la sincronización Auth0; la operación
+        # es idempotente (DB delete = no-op si ya está, Auth0 revoke también).
+        log.error(
+            'tenant_member.auth0_revoke_circuit_open',
+            tenant_id=str(tenant_id),
+            user_id=str(user_id),
+            retry_after=exc.retry_after_seconds,
+            hint='DB-side membership revoked; Auth0 metadata sync deferred',
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                'Membership revoked in our database; Auth0 metadata sync '
+                'temporarily unavailable. Retry to complete propagation.'
+            ),
+            headers={'Retry-After': str(max(1, int(round(exc.retry_after_seconds))))},
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         log.warning('tenant_member.auth0_revoke_failed', error=str(exc))
 
@@ -5516,6 +5564,23 @@ async def get_conversation_message_media(
                 'Cache-Control': 'private, max-age=300',
             },
         )
+
+    except WhatsAppMediaTooLargeError as error:
+        # AUDIT-49 / re-audit §1.5 (2026-05-18): typed exception → HTTP 413
+        # con detail saneado (no expone el cap interno al cliente). El
+        # `phase` (`preflight` o `streamed`) queda solo en logs server-side
+        # para forensia operativa.
+        log.warning(
+            'media.payload_too_large',
+            phase=error.phase,
+            tenant_id=str(tenant_id),
+            message_id=str(message_id),
+            max_bytes=get_settings().knowledge_file_max_bytes,
+        )
+        raise HTTPException(
+            status_code=413,
+            detail='Media exceeds maximum allowed size',
+        ) from error
 
     except httpx.HTTPStatusError as error:
         raise HTTPException(
@@ -9874,8 +9939,20 @@ async def index_knowledge_document(
                 tenant_id,
                 document_id,
             )
+            # AUDIT-49: cargar `no_train` per-tenant para gate del embedding
+            # provider cloud en Phase 2. Si la fila no existe (tenant viejo),
+            # fail-closed a `True` (bloquea cloud).
+            settings_row = await conn.fetchrow(
+                'select no_train from app.tenant_settings where tenant_id=$1',
+                tenant_id,
+            )
     if not document:
         raise HTTPException(status_code=404, detail='Knowledge document not found')
+    tenant_no_train: bool | None = (
+        bool(settings_row['no_train'])
+        if settings_row and settings_row['no_train'] is not None
+        else True
+    )
 
     # Phase 2: embedding call WITHOUT holding a conn.
     try:
@@ -9887,6 +9964,7 @@ async def index_knowledge_document(
             embedding_provider=settings.rag_embedding_provider,
             embedding_model=settings.rag_embedding_model,
             embedding_api_key=settings.rag_embedding_api_key,
+            tenant_no_train=tenant_no_train,
         )
     except (ValueError, RuntimeError) as exc:
         # BUG-211 (codex MEDIUM): el `detail=str(exc)` exponía errores raw
@@ -10075,6 +10153,16 @@ async def reindex_all_knowledge_documents(
                 """,
                 tenant_id,
             )
+            # AUDIT-49: gate cloud embedding provider por tenant_no_train.
+            settings_row = await conn.fetchrow(
+                'select no_train from app.tenant_settings where tenant_id=$1',
+                tenant_id,
+            )
+    tenant_no_train: bool | None = (
+        bool(settings_row['no_train'])
+        if settings_row and settings_row['no_train'] is not None
+        else True
+    )
 
     indexed = 0
     failed = 0
@@ -10091,6 +10179,7 @@ async def reindex_all_knowledge_documents(
                 embedding_provider=settings.rag_embedding_provider,
                 embedding_model=settings.rag_embedding_model,
                 embedding_api_key=settings.rag_embedding_api_key,
+                tenant_no_train=tenant_no_train,
             )
         except (ValueError, RuntimeError) as exc:
             # BUG-211: ver comentario en `index_knowledge_document` — el error

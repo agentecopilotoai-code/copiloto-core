@@ -158,7 +158,13 @@ out_of_scope
 opt_out"""
 
 
-async def _llm_classify(text: str, enabled_intents: set[str], settings: Any) -> IntentResult | None:
+async def _llm_classify(
+    text: str,
+    enabled_intents: set[str],
+    settings: Any,
+    *,
+    tenant_no_train: bool | None = None,
+) -> IntentResult | None:
     """Clasifica con el LLM en cascada usando clientes async y timeout efectivo.
 
     TASK-0086 / BUG09: la versión anterior instanciaba ``anthropic.Anthropic`` /
@@ -182,6 +188,23 @@ async def _llm_classify(text: str, enabled_intents: set[str], settings: Any) -> 
     hard_deadline = max(timeout_seconds + 2, 5)
 
     intent_raw: str | None = None
+
+    # AUDIT-49 / re-audit §1.6 (2026-05-18): respetar `tenant_settings.no_train`
+    # antes de enviar el mensaje del usuario al provider cloud. AUDIT-48 gated
+    # los 3 sitios de `cloud_llm_answer.py`, pero este path (clasificación de
+    # intención) seguía abierto: cada inbound se enviaba a Anthropic/OpenAI
+    # antes de que el orchestrator pudiera bloquearlo. Fail-closed (default
+    # `True`/`None` => bloquea cloud, sólo `False` permite). Cuando el cloud
+    # está bloqueado, caemos al Ollama local; si Ollama tampoco está
+    # disponible, devolvemos None y la layer-3 hace fallback regex/handoff.
+    if provider and api_key and tenant_no_train is not False:
+        log.info(
+            'intent_classifier.cloud_llm_blocked_by_tenant_no_train',
+            provider=provider,
+            hint='tenant_settings.no_train=true (default) — usando Ollama local',
+        )
+        provider = None
+        api_key = None
 
     if provider and api_key:
         try:
@@ -270,6 +293,7 @@ async def classify_intent(
     *,
     settings: Any,
     tenant_config: dict[str, Any] | None = None,
+    tenant_no_train: bool | None = None,
 ) -> IntentResult:
     """Clasifica la intención del mensaje en 3 capas.
 
@@ -277,6 +301,9 @@ async def classify_intent(
       - enabled_intents: list[str]  — intenciones activas (default: todas)
       - custom_keywords: dict[str, list[str]]  — keywords adicionales por intención
       - min_confidence: float  — umbral mínimo de confianza para fallback (default 0.70)
+
+    AUDIT-49: `tenant_no_train` se propaga a `_llm_classify` para gate del
+    provider cloud (Anthropic/OpenAI). Default `None` (fail-closed = block cloud).
     """
     cfg = tenant_config or {}
     enabled_set = set(cfg.get('enabled_intents') or ALL_INTENTS) & set(ALL_INTENTS)
@@ -304,8 +331,8 @@ async def classify_intent(
             layer_detail='high_confidence_complaint',
         )
 
-    # Capa 2 — LLM
-    llm_result = await _llm_classify(text, enabled_set, settings)
+    # Capa 2 — LLM (con gate AUDIT-49 por tenant_no_train)
+    llm_result = await _llm_classify(text, enabled_set, settings, tenant_no_train=tenant_no_train)
     if llm_result and llm_result.confidence >= min_conf:
         log.info('intent_classifier.resolved_llm', intent=llm_result.intent, confidence=llm_result.confidence)
         # Si la capa 1 tenía algo con menor confianza, combinar

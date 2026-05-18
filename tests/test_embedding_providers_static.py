@@ -178,6 +178,10 @@ def test_build_indexing_result_async_real_provider_raises_on_network_error():
             embedding_provider='openai',
             embedding_model='text-embedding-3-small',
             embedding_api_key=None,
+            # AUDIT-49: explicit opt-in so the OpenAI provider is actually
+            # invoked (default `None` would force `local_hash` per the
+            # `tenant_no_train` gate added in AUDIT-49).
+            tenant_no_train=False,
         ))
 
 

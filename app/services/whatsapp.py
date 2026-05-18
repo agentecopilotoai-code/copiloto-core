@@ -65,6 +65,23 @@ def token_ref_is_configured(token_ref: str | None) -> bool:
     return meta_token_is_configured(resolve_secret_ref(token_ref))
 
 
+class WhatsAppMediaTooLargeError(Exception):
+    """AUDIT-49 / re-audit §1.5 (2026-05-18): el upstream de Meta respondió
+    con un payload que excede `knowledge_file_max_bytes`. Antes el codepath
+    levantaba `RuntimeError` con string `f'... ({content_length} > {max_bytes}
+    bytes)'` que el caller mapeaba a HTTP 502 (Bad Gateway) y filtraba el cap
+    interno al cliente. Ahora usamos un tipo dedicado para que la API mappee
+    a HTTP 413 (Payload Too Large) con un detail saneado.
+
+    El campo `phase` distingue ``preflight`` (Content-Length excedido antes
+    de stream) de ``streamed`` (cap excedido durante el stream).
+    """
+
+    def __init__(self, phase: str) -> None:
+        super().__init__(f'WhatsApp media payload exceeds allowed size ({phase})')
+        self.phase = phase
+
+
 def verify_signature_with_secret(body: bytes, signature: str | None, app_secret: str | None) -> bool:
     normalized_secret = normalize_meta_app_secret(app_secret)
     if not signature or not normalized_secret:
@@ -714,10 +731,8 @@ async def download_whatsapp_media(
                 except ValueError:
                     content_length = None
                 if content_length is not None and content_length > max_bytes:
-                    raise RuntimeError(
-                        f'WhatsApp media exceeds max allowed size '
-                        f'({content_length} > {max_bytes} bytes)'
-                    )
+                    # AUDIT-49 / re-audit §1.5: typed error → caller mapea a 413.
+                    raise WhatsAppMediaTooLargeError(phase='preflight')
 
             content_type = (
                 response.headers.get('content-type')
@@ -729,9 +744,6 @@ async def download_whatsapp_media(
             async for chunk in response.aiter_bytes():
                 buffer.extend(chunk)
                 if len(buffer) > max_bytes:
-                    raise RuntimeError(
-                        f'WhatsApp media exceeds max allowed size '
-                        f'(>{max_bytes} bytes streamed before stop)'
-                    )
+                    raise WhatsAppMediaTooLargeError(phase='streamed')
 
             return bytes(buffer), content_type

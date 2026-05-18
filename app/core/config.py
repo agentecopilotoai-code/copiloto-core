@@ -1,5 +1,5 @@
 from functools import lru_cache
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -184,6 +184,22 @@ class Settings(BaseSettings):
     # reads it from ``data-api-base`` on the snippet.
     web_widget_api_base: str = 'http://localhost:8000'
     web_widget_cdn_url: str = 'https://cdn.copilotoia.com/widget/v1/widget.js'
+
+    # AUDIT-49 / re-audit §1.9 (2026-05-18): coerce empty string → None para
+    # `service_token_next`. El default operacional de rotación es: setear
+    # `SERVICE_TOKEN_NEXT=<nuevo>` en `.env`, rotar clientes M2M, promover
+    # a `SERVICE_TOKEN`, y desactivar el slot. Si el operador "desactiva"
+    # dejando la línea como `SERVICE_TOKEN_NEXT=` (vacío), Pydantic veía
+    # `""` (str de 0 chars) y reventaba con `ValidationError: string too
+    # short` (min_length=16) → app no arranca. Ahora `""` se mapea a `None`
+    # antes de la validación de min_length, así "borrar la línea" y
+    # "dejar la línea vacía" tienen el mismo efecto operacional.
+    @field_validator('service_token_next', mode='before')
+    @classmethod
+    def _empty_service_token_next_is_none(cls, value):
+        if isinstance(value, str) and value.strip() == '':
+            return None
+        return value
 
     @property
     def knowledge_storage_bucket(self) -> str:

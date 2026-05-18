@@ -7,6 +7,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+import structlog
+
+log = structlog.get_logger()
+
 # Real embedding providers are imported lazily to keep the module usable
 # without optional dependencies installed.
 SUPPORTED_REAL_PROVIDERS = ('openai', 'anthropic', 'ollama')
@@ -425,6 +429,7 @@ async def build_indexing_result_async(
     embedding_provider: str = 'local_hash',
     embedding_model: str = 'copilotoia-local-hash-v1',
     embedding_api_key: str | None = None,
+    tenant_no_train: bool | None = None,
 ) -> IndexingResult:
     """Async indexing that calls real ML embedding APIs when the provider is not local_hash.
 
@@ -432,12 +437,31 @@ async def build_indexing_result_async(
     for each chunk. Provider failures propagate as `RuntimeError` so the caller
     can surface a clear 5xx error to the operator instead of producing chunks
     with deterministic SHA256 vectors that look healthy but are not searchable.
+
+    AUDIT-49 / re-audit §1.6 (2026-05-18): si el tenant tiene
+    `tenant_settings.no_train=True` (default), forzar `local_hash` aunque la
+    config global pida un provider cloud (`openai`/`anthropic`). Esto cierra
+    el path por el que los KB documents salían a Anthropic/OpenAI para
+    embeddings sin opt-in explícito del tenant. `ollama` no cuenta como
+    cloud (corre on-prem), así que NO se gatea. Fail-closed: `None` /`True`
+    bloquean cloud, solo `False` permite.
     """
     extracted_text = extract_document_text(document)
     mime_type = (document.get('mime_type') or '').lower()
     if mime_type == 'text/csv' or is_csv_content(extracted_text):
         extracted_text = csv_rows_to_natural_language(extracted_text)
     sanitized_text, sanitized_warning_count = sanitize_document_text(extracted_text)
+
+    # AUDIT-49: gate por tenant_no_train antes de salir al provider cloud.
+    if embedding_provider in {'openai', 'anthropic'} and tenant_no_train is not False:
+        log.info(
+            'rag_indexing.cloud_provider_blocked_by_tenant_no_train',
+            requested_provider=embedding_provider,
+            fallback='local_hash',
+            hint='tenant_settings.no_train=true (default) — embeddings se generan localmente',
+        )
+        embedding_provider = 'local_hash'
+        embedding_model = 'copilotoia-local-hash-v1'
 
     if not is_semantic_provider(embedding_provider):
         chunks = chunk_document_text(

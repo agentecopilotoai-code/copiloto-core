@@ -143,6 +143,9 @@ def test_llm_classify_returns_intent_when_provider_responds_promptly(monkeypatch
             'agendame mañana',
             {'book_appointment', 'faq', 'greeting'},
             _settings(timeout=5),
+            # AUDIT-49: explicit opt-in to test the cloud path. Default
+            # `None` would now block cloud per `tenant_settings.no_train`.
+            tenant_no_train=False,
         )
     )
 
@@ -176,6 +179,7 @@ def test_llm_classify_returns_none_on_provider_timeout_without_hanging(monkeypat
             'algo ambiguo',
             {'faq', 'book_appointment'},
             _settings(timeout=1),
+            tenant_no_train=False,  # AUDIT-49: opt-in to test cloud path
         )
         await ticker_task
         return result, latencies
@@ -206,6 +210,7 @@ def test_llm_classify_propagates_timeout_to_anthropic_sdk(monkeypatch):
             'cuánto cuesta',
             {'faq'},
             _settings(timeout=7),
+            tenant_no_train=False,  # AUDIT-49: opt-in to test cloud path
         )
     )
 

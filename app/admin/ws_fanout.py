@@ -106,7 +106,16 @@ class _PubSubFanout:
                     )
 
     async def _supervise(self) -> None:
-        """Long-running task: holds the LISTEN connection until cancelled."""
+        """Long-running task: holds the LISTEN connection until cancelled.
+
+        AUDIT-49 / re-audit §1.1 (2026-05-18): si add_listener / LISTEN
+        levantan excepción durante el setup (DB down, permisos), antes
+        dejábamos `self._task` poblado pero el task ya muerto — el siguiente
+        `subscribe()` veía `self._task is not None` y se colgaba para siempre
+        en `await self._ready.wait()`. Ahora cualquier excepción (incluido
+        durante el setup) resetea el estado de instance ANTES del raise para
+        que el próximo subscriber respawnee el supervisor.
+        """
         try:
             assert self._pool is not None, 'pool must be injected before supervise'
             async with self._pool.acquire() as conn:
@@ -128,6 +137,16 @@ class _PubSubFanout:
             raise
         except Exception:
             log.exception('ws_fanout.supervisor_crashed')
+            # AUDIT-49 / re-audit §1.1: limpiar el estado de instance ANTES
+            # del raise — sino `_task is not None` queda True con un task
+            # ya muerto y el próximo `subscribe()` cuelga en
+            # `self._ready.wait()` para siempre. Además SET el _ready event
+            # para destrabar los subscribers que estaban esperando — ellos
+            # detectan el crash en `subscribe()` (check `_task is None or
+            # _task.done()`) y reintentan respawneando el supervisor.
+            self._task = None
+            self._pool = None
+            self._ready.set()
             raise
 
     def _on_notify_factory(self, _conn):
@@ -137,20 +156,48 @@ class _PubSubFanout:
         return _on
 
     async def subscribe(self, pool: Any, tenant_id: UUID) -> asyncio.Queue[str]:
-        """Register a new subscriber and start the supervisor if needed."""
+        """Register a new subscriber and start the supervisor if needed.
+
+        AUDIT-49 / re-audit §1.1: si el supervisor murió (crash en setup), el
+        _ready event puede señalizarse como "false-ready" — el subscribe lo
+        detecta y respawnea el supervisor antes de fallar. Hasta 2 reintentos
+        (initial + 1) para no loop infinito si el upstream sigue caído.
+        """
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=QUEUE_MAX_SIZE)
-        async with self._lock:
-            self._subscribers.setdefault(str(tenant_id), set()).add(queue)
-            if self._task is None:
-                self._pool = pool
-                self._ready.clear()
-                self._task = asyncio.create_task(
-                    self._supervise(), name='ws_fanout_supervisor'
+        attempts = 0
+        while True:
+            attempts += 1
+            async with self._lock:
+                self._subscribers.setdefault(str(tenant_id), set()).add(queue)
+                if self._task is None:
+                    self._pool = pool
+                    self._ready = asyncio.Event()
+                    self._task = asyncio.create_task(
+                        self._supervise(), name='ws_fanout_supervisor'
+                    )
+                task = self._task
+            # Wait until LISTEN is registered before returning — otherwise the
+            # caller could miss notifications fired right after subscribe().
+            await self._ready.wait()
+            # Detect false-ready: supervisor died during setup (crashed +
+            # set _ready before raising). Cleanup queue + retry with fresh
+            # supervisor. Max 2 attempts to avoid infinite loop if DB stays down.
+            if task.done() and attempts < 2:
+                log.warning(
+                    'ws_fanout.subscribe_retry_after_supervisor_crash',
+                    tenant_id=str(tenant_id),
+                    attempt=attempts,
                 )
-        # Wait until LISTEN is registered before returning — otherwise the
-        # caller could miss notifications fired right after subscribe().
-        await self._ready.wait()
-        return queue
+                # The crashed supervisor already reset self._task/_pool/_ready.
+                # Continue the loop to respawn.
+                continue
+            if task.done():
+                # Second attempt also failed → bail with a clear error so
+                # the WS handler can close the socket with 1011.
+                async with self._lock:
+                    self._subscribers.get(str(tenant_id), set()).discard(queue)
+                raise RuntimeError('ws_fanout supervisor crashed; LISTEN unavailable')
+            return queue
 
     async def unsubscribe(self, tenant_id: UUID, queue: asyncio.Queue[str]) -> None:
         """Detach a subscriber; stop the supervisor when none remain."""

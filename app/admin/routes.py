@@ -542,7 +542,14 @@ async def admin_conversations_stream(websocket: WebSocket) -> None:
     # los WS comparten UNA sola conn vía `ws_fanout` (LISTEN + fanout
     # in-memory). El operador puede abrir 100 tabs sin tocar el pool más
     # allá del primer subscriber.
-    queue = await ws_fanout.subscribe(db.pool, tenant_id)
+    # AUDIT-49: si el supervisor murió 2 veces seguidas (DB down), subscribe
+    # levanta RuntimeError — cerramos con 1011 (Internal Error) en vez de
+    # colgar el socket o devolver 200.
+    try:
+        queue = await ws_fanout.subscribe(db.pool, tenant_id)
+    except RuntimeError:
+        await websocket.close(code=1011, reason='listen_unavailable')
+        return
     try:
         await websocket.send_json({'type': 'connected', 'tenant_id': str(tenant_id)})
         while True:

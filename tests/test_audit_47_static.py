@@ -38,8 +38,11 @@ def test_download_whatsapp_media_uses_stream_not_buffer_all():
     # Size cap referencing the shared knowledge cap (10 MB).
     assert 'knowledge_file_max_bytes' in code_only
     # Both the optimistic Content-Length pre-check and the bytes-read guard
-    # raise RuntimeError so the route maps them to a 502 (existing handler).
-    assert code_only.count('exceeds max allowed size') == 2
+    # raise the typed exception so the route can map them to HTTP 413
+    # (AUDIT-49 / re-audit §1.5; the original AUDIT-47 used RuntimeError
+    # which the caller mapped to 502 — that has been replaced by a typed
+    # `WhatsAppMediaTooLargeError` with `phase` discriminator).
+    assert code_only.count('WhatsAppMediaTooLargeError(phase=') == 2
 
 
 def test_download_whatsapp_media_still_validates_url_guard():
