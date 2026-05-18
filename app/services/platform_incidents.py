@@ -67,6 +67,19 @@ _PII_PAYLOAD_KEYS = frozenset({
     'phone',
     'email',
     'whatsapp',
+    # BUG-215 (codex MEDIUM, 2026-05-18): el redactor pasaba estas keys
+    # tal cual al feed `/platform/incidents`. Son customer-facing message
+    # excerpts y conversation URLs — el platform_owner no debe verlos
+    # cross-tenant. inbound_body_excerpt = primeros chars del mensaje
+    # original (complaint/risk → puede contener health/payment details).
+    # comment_preview = preview del feedback. conversation_url = link al
+    # admin panel del tenant víctima.
+    'inbound_body_excerpt',
+    'comment_preview',
+    'conversation_url',
+    'contact_id',  # un opaque UUID, pero permite pivots entre incidents
+    'feedback_id',
+    'appointment_id',
 })
 
 

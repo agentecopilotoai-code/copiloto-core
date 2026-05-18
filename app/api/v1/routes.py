@@ -4446,6 +4446,10 @@ async def get_contact_profile(
                 where m.tenant_id = c.tenant_id and m.conversation_id = c.id) as message_count
         from app.conversations c
         where c.tenant_id = $1 and c.contact_id = $2
+          -- BUG-216 (codex P2 follow-up): excluir conversations internas
+          -- del digest_worker para que el agent NO obtenga el UUID via
+          -- profile y pueda abrir la conversación con los KPIs.
+          and coalesce(c.metadata->>'kind', '') <> 'internal_digest'
         order by c.updated_at desc
         limit 5
         """,
@@ -4961,6 +4965,14 @@ async def list_conversations(request: Request, conn: asyncpg.Connection = Depend
           limit 1
         ) h on true
         where c.tenant_id=$1
+          -- BUG-216 (codex MEDIUM, 2026-05-18): excluir conversations
+          -- marcadas `metadata.kind = 'internal_digest'`. El digest_worker
+          -- escribe los KPIs semanales (revenue, retention, top service)
+          -- como messages outbound en una "conversación interna" creada
+          -- ad-hoc. Sin filtro, cualquier agent del tenant (rol más bajo)
+          -- podía listar conversaciones, abrir la interna, y leer
+          -- analytics manager/admin-only — violando el RBAC del módulo.
+          and coalesce(c.metadata->>'kind', '') <> 'internal_digest'
         order by c.updated_at desc
         limit 100
         """,
@@ -5283,6 +5295,11 @@ async def get_conversation(
             from app.conversations c
             join app.contacts ct on ct.id = c.contact_id
             where c.tenant_id=$1 and c.id=$2
+              -- BUG-216 (codex P2 follow-up): excluir conversations internas
+              -- del digest_worker. Sin esto, un agent que conoce el UUID
+              -- (via /contacts/{id}/profile que lista conversation_ids) puede
+              -- abrir la conversación interna y leer KPIs manager-only.
+              and coalesce(c.metadata->>'kind', '') <> 'internal_digest'
             """,
             tenant_id,
             conversation_id,

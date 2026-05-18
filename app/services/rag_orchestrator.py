@@ -234,13 +234,25 @@ async def _orchestrate_inbound_message_impl(
     conversation_id = str(conversation['id'])
     message_id = str(inbound_message['id'])
 
+    # BUG-217 (codex MEDIUM, 2026-05-18): el `body_preview=body_text[:80]`
+    # se emitía a INFO level — capturado por agregadores de log que pueden
+    # estar fuera del scope tenant (Datadog, Splunk, etc.). El body contiene
+    # mensajes del cliente que pueden incluir nombres, direcciones,
+    # síntomas, payment details, OTPs, etc. — el redactor de logs solo
+    # masquea phone/email patterns con regex, no contenido arbitrario.
+    # Fix: log a DEBUG y solo emitir un hash del body para correlación
+    # operativa (no permite recuperar el contenido).
+    import hashlib  # noqa: PLC0415
+
+    body_digest = hashlib.sha256(body_text.encode('utf-8', errors='replace')).hexdigest()[:16]
     log.info(
         'orchestrator.received',
         tenant_id=str(tenant_id),
         conversation_id=conversation_id,
         message_id=message_id,
         message_type=inbound_message['message_type'],
-        body_preview=body_text[:80],
+        body_digest=body_digest,
+        body_length=len(body_text),
         conversation_status=conversation['status'],
     )
 
@@ -926,6 +938,14 @@ async def _orchestrate_inbound_message_impl(
         new_collected = decision.get('collected', ctx.collected)
         action = decision.get('action')
 
+        # BUG-217 (codex MEDIUM, 2026-05-18): `answer_preview` exponía
+        # los primeros 120 chars de la respuesta del LLM — que puede incluir
+        # booking summaries con datos del cliente, tenant knowledge específico,
+        # o información de servicios que solo debe verla el agente. A INFO
+        # level esto se va a agregadores externos. Fix: solo loggear largo +
+        # hash para correlación.
+        answer_text = decision.get('answer') or ''
+        answer_digest = hashlib.sha256(answer_text.encode('utf-8', errors='replace')).hexdigest()[:16]
         log.info(
             'orchestrator.conversational_result',
             conversation_id=conversation_id,
@@ -933,7 +953,8 @@ async def _orchestrate_inbound_message_impl(
             next_stage=new_stage,
             action=action,
             sufficient_context=decision['sufficient_context'],
-            answer_preview=(decision.get('answer') or '')[:120],
+            answer_digest=answer_digest,
+            answer_length=len(answer_text),
             collected_keys=list(new_collected.keys()),
         )
 
