@@ -116,7 +116,13 @@ services:
       POSTGRES_HOST: postgres
       BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
       BACKUP_ENV: ${BACKUP_ENV:-local}
-      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-http://minio:9000}
+      # BUG-151: el default `http://minio:9000` rutaba backups de prod al
+      # MinIO local cuando se olvidaba setear `BACKUP_S3_ENDPOINT` — silently
+      # corrompía la pipeline de prod. Ahora el default es empty: si la var
+      # no está seteada, el aws-cli usa el endpoint AWS real. Para correr
+      # con MinIO local, setear explícitamente:
+      #   BACKUP_S3_ENDPOINT=http://minio:9000 docker compose up backup-worker
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
       BACKUP_GPG_RECIPIENT: ${BACKUP_GPG_RECIPIENT:-}
       BACKUP_GPG_PUBKEY_PATH: ${BACKUP_GPG_PUBKEY_PATH:-/app/.secrets/backup_gpg_pubkey.asc}
       # SEC-009 — firma detached del producer.
