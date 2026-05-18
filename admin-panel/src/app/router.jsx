@@ -170,8 +170,13 @@ function IndexRedirect() {
 
 /** `/no-tenant`: tarjeta de bienvenida para usuarios sin tenant. */
 function NoTenantRoute() {
-  const { tenantOptions, tenantsLoading } = useTenantContext();
+  const { session, tenantOptions, tenantsLoading } = useTenantContext();
   const navigate = useNavigate();
+  // BUG-085: usuarios anónimos no deben llegar a `/no-tenant`. Sin esta
+  // guarda, `/admin/no-tenant` rendereaba el wizard de signup a cualquiera
+  // que tipeara la URL — el backend ya rechaza las requests, pero la UI
+  // exponía el formulario y leaks de copy interno.
+  if (!session) return <Navigate to="/" replace />;
   if (tenantsLoading) return <LoadingScreen />;
   if (tenantOptions.length > 0) return <Navigate to="/" replace />;
   return <NoTenantOnboarding onCreateTenant={() => navigate('/onboarding')} />;
@@ -193,6 +198,8 @@ function AccountRoute() {
 function OnboardingRoute() {
   const { session, handleTenantCreated } = useTenantContext();
   const navigate = useNavigate();
+  // BUG-085: usuarios anónimos no deben llegar al onboarding wizard.
+  if (!session) return <Navigate to="/" replace />;
   const module = adminModules.find((item) => item.id === 'tenant-setup');
   // BUG-002 fix: initialSignup={true} skips the wizard's tenant_setup.write
   // RequirePermission gate. The user reaches this route from /no-tenant with
@@ -215,11 +222,17 @@ function OnboardingRoute() {
 
 /** `/platform`: shell de flota. Guard: rol efectivo `platform_owner`. */
 function PlatformRoute() {
-  const { profile, tenantsLoading } = useTenantContext();
+  const { session, profile, tenantsLoading } = useTenantContext();
   const permissions = usePermissions({ profile, tenant: null });
   const navigate = useNavigate();
   const location = useLocation();
 
+  // BUG-085: usuarios anónimos no deben llegar a `/platform/*`. La guarda
+  // de role check (line abajo) NO catchea anon — `permissions.role` puede
+  // ser undefined y `!== 'platform_owner'` los frena, PERO la guarda
+  // explícita por session es más clara y consistente con NoTenantRoute /
+  // OnboardingRoute.
+  if (!session) return <Navigate to="/" replace />;
   if (tenantsLoading) return <LoadingScreen />;
   if (permissions.role !== 'platform_owner') {
     return <AccessDenied capability="platform.tenants.read" mode="R" />;
@@ -336,7 +349,13 @@ function ReadOnlyShellRoute() {
   const location = useLocation();
 
   const segments = location.pathname.split('/').filter(Boolean); // ['t', slug, 'read', moduleId]
-  const activeModuleId = segments[3] || ROLE_HOME.viewer;
+  // BUG-084: usar `resolveSafeHomeModule(permissions)` cuando no hay segment
+  // explícito, igual que IndexRedirect. Antes `ROLE_HOME.viewer` apuntaba a
+  // un módulo cuya capability el viewer podía no tener en este tenant
+  // (TASK-0077 desincronía de roles globales vs tenant.roles) → pantalla en
+  // blanco o AccessDenied bajo el ReadOnlyShell.
+  const safeHome = resolveSafeHomeModule(permissions);
+  const activeModuleId = segments[3] || safeHome || ROLE_HOME.viewer;
   const activeModule =
     adminModules.find((item) => item.id === activeModuleId) ?? adminModules[0];
 

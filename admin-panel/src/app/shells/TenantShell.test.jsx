@@ -49,7 +49,10 @@ describe('<TenantShell/>', () => {
   it('dispara onModuleSelect al click en un item de navegación', async () => {
     const onModuleSelect = vi.fn();
     renderShell(<p>x</p>, { onModuleSelect });
-    await userEvent.click(screen.getByRole('button', { name: 'Contactos' }));
+    // BUG-087: el botón "Contactos" se renderea tanto en sidebar como en
+    // ShellBottomNav (priority mobile rail). Tomamos el primero (sidebar).
+    const buttons = screen.getAllByRole('button', { name: 'Contactos' });
+    await userEvent.click(buttons[0]);
     expect(onModuleSelect).toHaveBeenCalledWith('contacts');
   });
 

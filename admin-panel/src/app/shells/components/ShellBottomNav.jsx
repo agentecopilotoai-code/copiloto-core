@@ -33,9 +33,18 @@ export function ShellBottomNav({ navGroups, activeModuleId, onModuleSelect }) {
   const flatItems = flattenItems(navGroups);
   if (flatItems.length === 0) return null;
 
+  // BUG-087: el slice(0, MAX_PRIMARY_SLOTS) seguía el orden literal del
+  // sidebar (Inicio → Conversaciones → Hoy → ...), y para owners/admin/agent
+  // Citas (`appointments`) terminaba en posición 10+ → siempre dropeado al
+  // overflow "Más", aunque es una de las acciones más frecuentes en mobile.
+  // Fix: surface explícito de items prioritarios primero, luego rellenar
+  // con cualquier otro item visible. Si el rol no tiene un item prioritario,
+  // no aparece (no inventamos slots vacíos).
   const showMore = flatItems.length > MAX_PRIMARY_SLOTS;
-  const primarySlots = showMore ? flatItems.slice(0, MAX_PRIMARY_SLOTS - 1) : flatItems.slice(0, MAX_PRIMARY_SLOTS);
-  const overflow = showMore ? flatItems.slice(MAX_PRIMARY_SLOTS - 1) : [];
+  const primaryCount = showMore ? MAX_PRIMARY_SLOTS - 1 : MAX_PRIMARY_SLOTS;
+  const primarySlots = pickMobilePrimary(flatItems, primaryCount);
+  const primaryIds = new Set(primarySlots.map((item) => item.id));
+  const overflow = showMore ? flatItems.filter((item) => !primaryIds.has(item.id)) : [];
   const activeInOverflow = overflow.some((item) => item.id === activeModuleId);
 
   const closeSheet = () => {
@@ -170,6 +179,50 @@ function flattenItems(navGroups) {
     }
   }
   return out;
+}
+
+// BUG-087: items que el mobile rail intenta surface primero (en este orden)
+// antes de caer al orden literal del sidebar. Pensado para que las acciones
+// más frecuentes del día queden a 1 tap: Inicio, Inbox, Citas, Contactos,
+// Analytics. Si el rol no tiene alguno, se salta y el slot se llena con el
+// siguiente item disponible.
+const MOBILE_PRIMARY_PRIORITY = Object.freeze([
+  'dashboard',
+  'viewer-summary',          // viewer equivalente al dashboard
+  'operations-desk',
+  'viewer-conversations',    // viewer equivalente a operations-desk
+  'appointments',
+  'viewer-appointments',     // viewer equivalente a appointments
+  'contacts',
+  'manager-analytics',
+  'viewer-analytics',
+]);
+
+/**
+ * Selecciona los `count` items que van al primary rail. Prioriza
+ * `MOBILE_PRIMARY_PRIORITY` (en su orden) y rellena con el resto del
+ * orden literal de `flatItems`.
+ */
+function pickMobilePrimary(flatItems, count) {
+  const byId = new Map(flatItems.map((item) => [item.id, item]));
+  const picked = [];
+  const seen = new Set();
+  for (const id of MOBILE_PRIMARY_PRIORITY) {
+    if (picked.length >= count) break;
+    const item = byId.get(id);
+    if (item && !seen.has(id)) {
+      picked.push(item);
+      seen.add(id);
+    }
+  }
+  for (const item of flatItems) {
+    if (picked.length >= count) break;
+    if (!seen.has(item.id)) {
+      picked.push(item);
+      seen.add(item.id);
+    }
+  }
+  return picked;
 }
 
 /**

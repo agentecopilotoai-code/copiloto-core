@@ -81,7 +81,13 @@ describe('router por rol', () => {
     const router = renderAt('/t/acme/services', { tenants: [ACME(['owner'])] });
     await screen.findByText('SERVICES VIEW');
 
-    await user.click(screen.getByRole('button', { name: 'Contactos' }));
+    // BUG-087: ahora 'contacts' aparece en MOBILE_PRIMARY_PRIORITY, así que
+    // el botón "Contactos" se renderea TANTO en el sidebar como en el
+    // ShellBottomNav (este último oculto en desktop via CSS, pero el DOM
+    // existe en jsdom). Usamos el primero (sidebar) para preservar el
+    // contrato del test original.
+    const buttons = screen.getAllByRole('button', { name: 'Contactos' });
+    await user.click(buttons[0]);
 
     expect(await screen.findByText('CONTACTS VIEW')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/t/acme/contacts');
