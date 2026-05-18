@@ -332,7 +332,9 @@ function ReadHomeRedirect() {
 /** Layout tenant-scoped (Owner / Admin / Manager / Agent). */
 function TenantShellRoute() {
   const { activeTenant } = useOutletContext();
-  const { profile, tenantOptions } = useTenantContext();
+  // BUG-191: extraer `session` del contexto para threadearlo al shell →
+  // ShellTopbar → TenantBrandLogo (fetch del logo proxy con Bearer auth).
+  const { profile, tenantOptions, session } = useTenantContext();
   const permissions = usePermissions({ profile, tenant: activeTenant });
   const navigate = useNavigate();
   const location = useLocation();
@@ -365,6 +367,7 @@ function TenantShellRoute() {
         if (next) navigate(`/t/${next.slug}`);
       }}
       canSwitchTenants={tenantOptions.length > 1 || permissions.isSystemOwner}
+      session={session}
     >
       <Outlet context={{ activeTenant }} />
     </TenantShell>
@@ -374,7 +377,9 @@ function TenantShellRoute() {
 /** Layout de solo lectura (Viewer). */
 function ReadOnlyShellRoute() {
   const { activeTenant } = useOutletContext();
-  const { profile, tenantOptions } = useTenantContext();
+  // BUG-191: thread `session` para que `TenantBrandLogo` pueda fetchear el
+  // logo proxy con auth headers (Bearer + X-Tenant-Id).
+  const { profile, tenantOptions, session } = useTenantContext();
   const permissions = usePermissions({ profile, tenant: activeTenant });
   const navigate = useNavigate();
   const location = useLocation();
@@ -405,6 +410,7 @@ function ReadOnlyShellRoute() {
         if (next) navigate(`/t/${next.slug}/read`);
       }}
       canSwitchTenants={tenantOptions.length > 1 || permissions.isSystemOwner}
+      session={session}
     >
       <Outlet context={{ activeTenant }} />
     </ReadOnlyShell>

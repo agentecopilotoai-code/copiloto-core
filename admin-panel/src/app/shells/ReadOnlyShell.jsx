@@ -17,6 +17,10 @@ import styles from './shell.module.css';
  * Las CTAs de escritura se ocultan dentro de cada feature vía `usePermissions`
  * (UI-010); este shell solo aporta el chrome read-only.
  *
+ * BUG-191 (codex P1 sobre BUG-177): `session` se forwardea a `ShellTopbar` →
+ * `TenantBrandLogo` para que pueda hacer `fetchTenantMediaBlobUrl` con
+ * Bearer auth (proxy interno `/v1/tenants/{id}/media/{asset_id}/content`).
+ *
  * @param {{
  *   profile?: object,
  *   permissions: object,
@@ -28,6 +32,7 @@ import styles from './shell.module.css';
  *   activeTenantId?: string,
  *   onTenantChange: (tenantId: string) => void,
  *   canSwitchTenants?: boolean,
+ *   session?: object,
  *   children: import('react').ReactNode,
  * }} props
  */
@@ -42,6 +47,7 @@ export function ReadOnlyShell({
   activeTenantId,
   onTenantChange,
   canSwitchTenants = false,
+  session,
   children,
 }) {
   const navGroups = resolveNav(VIEWER_NAV, modules, permissions, { includeDenied: true });
@@ -75,6 +81,7 @@ export function ReadOnlyShell({
           eyebrow="Lectura"
           title={activeModule.label}
           tenant={activeTenant}
+          session={session}
           actions={<span className={styles.readOnlyBanner}>Modo solo lectura</span>}
         />
         <ErrorBoundary>{children}</ErrorBoundary>

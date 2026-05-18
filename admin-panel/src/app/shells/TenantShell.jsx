@@ -16,6 +16,11 @@ import styles from './shell.module.css';
  * El contenido del módulo activo llega por `children` (UI-003 lo reemplazará
  * por `<Outlet/>` del router).
  *
+ * BUG-191 (codex P1 sobre BUG-177): `session` se forwardea a `ShellTopbar` →
+ * `TenantBrandLogo` para que pueda hacer `fetchTenantMediaBlobUrl` con
+ * Bearer auth. Sin esta prop, el componente cae a iniciales aunque el
+ * tenant tenga `brand_logo_url` apuntando al proxy interno.
+ *
  * @param {{
  *   profile?: object,
  *   permissions: object,
@@ -27,6 +32,7 @@ import styles from './shell.module.css';
  *   activeTenantId?: string,
  *   onTenantChange: (tenantId: string) => void,
  *   canSwitchTenants?: boolean,
+ *   session?: object,
  *   children: import('react').ReactNode,
  * }} props
  */
@@ -41,6 +47,7 @@ export function TenantShell({
   activeTenantId,
   onTenantChange,
   canSwitchTenants = false,
+  session,
   children,
 }) {
   const navGroups = resolveNav(TENANT_NAV, modules, permissions);
@@ -75,6 +82,7 @@ export function TenantShell({
           eyebrow="Tenant operations"
           title={activeModule.label}
           tenant={activeTenant}
+          session={session}
           // BUG-015 — platform_owners que entran a un tenant (via support_mode
           // o creando uno nuevo) necesitan poder volver a la vista
           // cross-tenant `/platform`. Sin este botón quedaban "atrapados"
