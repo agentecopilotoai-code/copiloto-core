@@ -387,6 +387,13 @@ async def _orchestrate_inbound_message_impl(
     settings_row = await conn.fetchrow(
         """
         select ts.escalation_policy, ts.bot_personality,
+               -- AUDIT-48 / BUG-42 (2026-05-18): no_train + pii_policy ahora se
+               -- threadean al cloud LLM fallback para que el operador del
+               -- tenant pueda OPT-OUT explícitamente del envío de datos a
+               -- proveedores cloud (Anthropic/OpenAI). Default `no_train=true`
+               -- en el schema; cuando es true, el orchestrator evita el cloud
+               -- tier-3 (cae a template) y audit-logea el bloqueo.
+               ts.no_train, ts.pii_policy,
                t.display_name as business_name, t.vertical_code, t.timezone
         from app.tenant_settings ts
         join app.tenants t on t.id = ts.tenant_id
@@ -444,6 +451,15 @@ async def _orchestrate_inbound_message_impl(
         except Exception:
             bot_personality_raw = {}
     bot_personality: dict[str, Any] = bot_personality_raw if isinstance(bot_personality_raw, dict) else {}
+
+    # AUDIT-48 / BUG-42 (2026-05-18): `no_train` controla si el tenant permite
+    # que su contenido salga a Anthropic/OpenAI (cloud LLM tier-3). Default
+    # `True` en el schema; ambos resolvers lo respetan vía
+    # `_tenant_allows_cloud_llm`. Si la fila no existe (tenant viejo sin row),
+    # tratamos como `True` (fail-closed).
+    tenant_no_train: bool | None = (
+        bool(settings_row['no_train']) if settings_row and settings_row['no_train'] is not None else True
+    )
 
     log.info(
         'orchestrator.settings_loaded',
@@ -932,6 +948,7 @@ async def _orchestrate_inbound_message_impl(
             timezone=tenant_timezone,
             resources_context=resources_context,
             bot_personality=bot_personality,
+            tenant_no_train=tenant_no_train,
         )
 
         new_stage = decision.get('next_stage', ctx.stage)
@@ -1046,7 +1063,11 @@ async def _orchestrate_inbound_message_impl(
 
     # ── Q&A cascade (template → LLM → handoff) ───────────────────────────────
     log.info('orchestrator.qa_cascade', conversation_id=conversation_id, engine=engine)
-    decision = await _resolve_answer(body_text, matches, settings, bot_personality=bot_personality)
+    decision = await _resolve_answer(
+        body_text, matches, settings,
+        bot_personality=bot_personality,
+        tenant_no_train=tenant_no_train,
+    )
 
     top_score = matches[0].score if matches else None
     top_document = matches[0].document_title if matches else None
@@ -1104,8 +1125,14 @@ async def _resolve_conversational(
     timezone: str = 'America/Bogota',
     resources_context: str = 'No hay profesionales activos configurados todavía.',
     bot_personality: Any = None,
+    tenant_no_train: bool | None = None,
 ) -> dict[str, Any]:
-    """Call the conversational LLM with booking state; fall back to Q&A cascade on failure."""
+    """Call the conversational LLM with booking state; fall back to Q&A cascade on failure.
+
+    AUDIT-48 / BUG-42: el cloud LLM (tier-3) solo se invoca si
+    `tenant_no_train is False`. Default (True/None) bloquea el envío al provider
+    cloud y cae al template Q&A — sin enviar datos del tenant a Anthropic/OpenAI.
+    """
     try:
         return await build_conversational_llm_answer(
             question,
@@ -1136,7 +1163,15 @@ async def _resolve_conversational(
         )
 
     # Ollama no disponible → intentar cloud LLM como tier-3 conversacional.
-    if _is_cloud_llm_configured(settings):
+    # AUDIT-48 / BUG-42: gate por `tenant_settings.no_train`.
+    if not _tenant_allows_cloud_llm(tenant_no_train):
+        log.info(
+            'cascade.cloud_llm_conv_blocked_by_tenant_no_train',
+            provider=settings.cloud_llm_provider,
+            model=settings.cloud_llm_model,
+            hint='tenant_settings.no_train=true (default) — cae al template Q&A',
+        )
+    elif _is_cloud_llm_configured(settings):
         try:
             log.info(
                 'cascade.cloud_llm_conv_attempt',
@@ -1168,7 +1203,12 @@ async def _resolve_conversational(
             )
 
     # Todos los LLMs no disponibles — Q&A template + seguimiento de etapa.
-    result = await _resolve_answer(question, matches, settings, bot_personality=bot_personality)
+    # AUDIT-48 / BUG-42: respeta el opt-out de cloud LLM aun en el fallback Q&A.
+    result = await _resolve_answer(
+        question, matches, settings,
+        bot_personality=bot_personality,
+        tenant_no_train=tenant_no_train,
+    )
     if result['sufficient_context']:
         followup = stage_followup_prompt(ctx.stage)
         if followup:
@@ -1177,12 +1217,30 @@ async def _resolve_conversational(
     return result
 
 
+def _tenant_allows_cloud_llm(tenant_no_train: bool | None) -> bool:
+    """AUDIT-48 / BUG-42 (2026-05-18): gate del cloud LLM tier-3 por
+    tenant_settings.no_train.
+
+    Cuando `no_train=True` (default del schema), el contenido del tenant NO
+    debe salir a proveedores cloud (Anthropic/OpenAI) — algunos planes de
+    esos providers usan los inputs para fine-tuning a menos que el customer
+    haya firmado el zero-data-retention. El default conservador es bloquear
+    cloud LLM y caer a template+handoff. El operador del tenant tiene que
+    setear explícitamente `no_train=false` (vía UI o SQL update) tras
+    verificar el contrato con el proveedor.
+
+    `None` (settings_row sin la columna) se trata como `True` (fail-closed).
+    """
+    return tenant_no_train is False
+
+
 async def _resolve_answer(
     question: str,
     matches: list,
     settings: Any,
     *,
     bot_personality: Any = None,
+    tenant_no_train: bool | None = None,
 ) -> dict[str, Any]:
     """
     Cascade strategy:
@@ -1194,6 +1252,10 @@ async def _resolve_answer(
     TASK-0071: `bot_personality` se propaga a los tier-2 y tier-3 del cascade
     para que la voz del tenant aplique también a las preguntas de catálogo
     (no sólo al flujo conversacional de booking).
+
+    AUDIT-48 / BUG-42: el cloud LLM (tier-3) solo se invoca si
+    `tenant_no_train is False`. Default (True/None) lo bloquea — los datos
+    del tenant no salen a Anthropic/OpenAI sin opt-in explícito.
     """
     engine = settings.answer_engine
 
@@ -1216,6 +1278,14 @@ async def _resolve_answer(
             return build_grounded_answer(question, matches)
         if not _is_cloud_llm_configured(settings):
             log.warning('cloud_llm.not_configured', hint='Define CLOUD_LLM_PROVIDER y CLOUD_LLM_API_KEY.')
+            return build_grounded_answer(question, matches)
+        # AUDIT-48 / BUG-42: respetar `tenant_settings.no_train` antes de salir
+        # al provider cloud. Si está True (default), caer a template.
+        if not _tenant_allows_cloud_llm(tenant_no_train):
+            log.info(
+                'cloud_llm.blocked_by_tenant_no_train',
+                hint='tenant_settings.no_train=true (default) — datos NO van a cloud LLM',
+            )
             return build_grounded_answer(question, matches)
         return await build_cloud_llm_answer(
             question, matches,
@@ -1281,7 +1351,15 @@ async def _resolve_answer(
                 ),
             )
             # Ollama no disponible → intentar cloud LLM como tier-3.
-            if _is_cloud_llm_configured(settings):
+            # AUDIT-48 / BUG-42: gate por `tenant_settings.no_train`.
+            if not _tenant_allows_cloud_llm(tenant_no_train):
+                log.info(
+                    'cascade.cloud_llm_blocked_by_tenant_no_train',
+                    provider=settings.cloud_llm_provider,
+                    model=settings.cloud_llm_model,
+                    hint='tenant_settings.no_train=true (default) — cae a handoff',
+                )
+            elif _is_cloud_llm_configured(settings):
                 try:
                     log.info(
                         'cascade.cloud_llm_attempt',

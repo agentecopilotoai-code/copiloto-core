@@ -166,8 +166,25 @@ def test_bug_136_subscription_webhook_short_circuits_on_duplicate():
 
 def test_bug_137_resolve_answer_receives_bot_personality():
     src = RAG_ORCHESTRATOR.read_text()
-    # El call site debe pasar bot_personality a _resolve_answer.
-    assert '_resolve_answer(body_text, matches, settings, bot_personality=bot_personality)' in src, (
+    # El call site debe pasar bot_personality a _resolve_answer. AUDIT-48
+    # (2026-05-18) cambió la línea a multi-línea agregando `tenant_no_train`;
+    # ahora chequeamos: (1) hay un await a `_resolve_answer(body_text, ...)`
+    # y (2) en su llamada aparece `bot_personality=bot_personality`.
+    # Acepta tanto multi-line como single-line (`await _resolve_answer(...)` + body_text/matches/settings en cualquier formato).
+    import re as _re
+    call_match = _re.search(
+        r'await\s+_resolve_answer\s*\(\s*\n?\s*body_text\s*,\s*matches\s*,\s*settings\s*,',
+        src,
+    )
+    assert call_match, (
+        "BUG-137: el call site `await _resolve_answer(body_text, matches, settings, ...)` "
+        "debería existir en rag_orchestrator (Q&A cascade)."
+    )
+    call_idx = call_match.start()
+    # Tomamos los siguientes 400 chars del call site (cubre args múltiples
+    # líneas hasta el `)` de cierre).
+    call_window = src[call_idx:call_idx + 400]
+    assert 'bot_personality=bot_personality' in call_window, (
         "BUG-137: `_resolve_answer` (Q&A cascade) debe recibir `bot_personality` "
         "para que el tone configurado del tenant también aplique al cascade, "
         "no solo al conversational tier."

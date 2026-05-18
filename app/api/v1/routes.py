@@ -197,6 +197,7 @@ from app.services.whatsapp import (
     delete_template_from_meta,
     download_whatsapp_media,
     fetch_templates_from_meta,
+    is_meta_message_fresh,
     normalize_meta_app_secret,
     parse_interactive_reply,
     resolve_secret_ref,
@@ -12722,6 +12723,32 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
                 if not wa_id or not external_message_id:
                     continue
 
+                # AUDIT-48 (security #2, 2026-05-18): freshness check anti-replay.
+                # Meta envía `timestamp` por message (epoch). Si está fuera de
+                # ventana (>7d default), audit-drop el mensaje pero seguimos
+                # procesando el resto del payload. Esta es defensa-en-profundidad
+                # sobre el sha256 unique (que protege duplicate idénticos pero
+                # se pierde si la fila expira por retention).
+                settings = get_settings()
+                max_age = settings.webhook_meta_max_message_age_seconds
+                if not is_meta_message_fresh(message, now_ts=int(time.time()), max_age_seconds=max_age):
+                    await audit(
+                        conn,
+                        tenant_id=channel['tenant_id'],
+                        actor_type='system',
+                        actor_id=None,
+                        action='webhook.whatsapp_message_stale',
+                        entity_type='tenant_channel',
+                        entity_id=str(channel['id']),
+                        metadata={
+                            'external_message_id': external_message_id,
+                            'wa_id_hash': hashlib.sha256(wa_id.encode()).hexdigest()[:16],
+                            'message_timestamp': message.get('timestamp'),
+                            'max_age_seconds': max_age,
+                        },
+                    )
+                    continue
+
                 contact_payload = contacts_by_wa_id.get(wa_id, {})
                 display_name = contact_payload.get('profile', {}).get('name')
                 phone_e164 = f'+{wa_id}' if not wa_id.startswith('+') else wa_id
@@ -13048,6 +13075,13 @@ async def receive_messenger_webhook(
         str(signed_channel_recipient_id) if signed_channel_recipient_id else None
     )
     window_hours = int(channel['service_window_hours'] or 24)
+    # AUDIT-48 (security #2, 2026-05-18): freshness gate. `event.timestamp`
+    # viene normalizado a datetime UTC desde el payload de Meta. Si está
+    # fuera de ventana, drop el event con audit log; seguimos procesando
+    # los demás (defensa en profundidad sobre payload_sha256 unique).
+    settings = get_settings()
+    max_age_seconds = settings.webhook_meta_max_message_age_seconds
+    now_utc = datetime.now(UTC)
     for event in events:
         if (
             signed_channel_recipient_id
@@ -13069,6 +13103,39 @@ async def receive_messenger_webhook(
                 },
             )
             continue
+        if max_age_seconds > 0:
+            ev_ts = event.timestamp
+            if ev_ts is None:
+                await audit(
+                    conn,
+                    tenant_id=channel['tenant_id'],
+                    actor_type='system',
+                    actor_id=None,
+                    action='webhook.messenger_event_missing_timestamp',
+                    entity_type='tenant_channel',
+                    entity_id=str(channel['id']),
+                    metadata={'provider': provider, 'sender_id': event.sender_id},
+                )
+                continue
+            age_seconds = (now_utc - ev_ts).total_seconds()
+            if age_seconds > max_age_seconds or age_seconds < -3600:
+                await audit(
+                    conn,
+                    tenant_id=channel['tenant_id'],
+                    actor_type='system',
+                    actor_id=None,
+                    action='webhook.messenger_event_stale',
+                    entity_type='tenant_channel',
+                    entity_id=str(channel['id']),
+                    metadata={
+                        'provider': provider,
+                        'sender_id': event.sender_id,
+                        'event_timestamp': ev_ts.isoformat(),
+                        'age_seconds': int(age_seconds),
+                        'max_age_seconds': max_age_seconds,
+                    },
+                )
+                continue
         contact = await _upsert_messenger_contact(
             conn,
             tenant_id=channel['tenant_id'],

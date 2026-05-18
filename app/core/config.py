@@ -69,6 +69,18 @@ class Settings(BaseSettings):
     # activó, por qué, y desactivarlo cuando termine).
     debug_cross_tenant_diagnostics: bool = False
     service_token: str = Field(min_length=16)
+    # AUDIT-48 (security quick win #3, 2026-05-18): rotación dual del
+    # service_token (M2M trust). El callsite acepta CUALQUIERA de los dos —
+    # operador setea `service_token_next` con el nuevo valor, rota clientes
+    # M2M para que usen el nuevo, y cuando todos están migrados promueve
+    # `service_token_next` a `service_token` y limpia `service_token_next`.
+    # Sin downtime y sin un único secret en el wire. Si ambos están seteados
+    # y matchean, ambos son válidos; el log de auditoría guarda cuál se usó.
+    service_token_next: str | None = Field(default=None, min_length=16)
+    # AUDIT-48 (security quick win #2): freshness check para webhooks de Meta.
+    # Default 7 días (cubre retries agresivos de Meta sin permitir replay
+    # arbitrario tras restore desde backup); 0 = desactivado (NO recomendado).
+    webhook_meta_max_message_age_seconds: int = Field(default=7 * 24 * 3600, ge=0, le=30 * 24 * 3600)
     # AUDIT-46 (speed quick win #1, 2026-05-18): DB pool config expuesto. Antes
     # estaba hardcoded `max_size=10` en `app/db/pool.py:15`, lo cual significa
     # que un solo WS estancado o una query lenta podía saturar la app entera

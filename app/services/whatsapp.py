@@ -75,6 +75,45 @@ def verify_signature_with_secret(body: bytes, signature: str | None, app_secret:
     return hmac.compare_digest(expected, signature)
 
 
+def is_meta_message_fresh(message: dict, *, now_ts: int, max_age_seconds: int) -> bool:
+    """AUDIT-48 (security quick win #2, 2026-05-18): freshness check para
+    ``messages[].timestamp`` de webhooks de Meta (WhatsApp + Messenger).
+
+    Meta envía ``messages[].timestamp`` como UNIX epoch (string para WA Cloud,
+    int para Messenger). Antes solo confiábamos en ``payload_sha256`` unique
+    como anti-replay; si la fila de dedupe expiraba por retention o se perdía
+    en un restore desde backup, un payload viejo podía re-procesarse —
+    duplicate billing, race con state actual del contacto, etc.
+
+    Política:
+      * Si ``max_age_seconds <= 0`` → check desactivado (devuelve True).
+      * Si el message no trae ``timestamp`` → considera SUSPICIOUS y rechaza
+        (fail-closed; Meta siempre lo manda).
+      * Si la diferencia (``now_ts - message.timestamp``) > ``max_age_seconds``
+        → rechaza con log de audit en el caller.
+
+    No usamos clock skew tolerance en el lado "futuro" — un message con
+    ``timestamp > now`` es señal de payload mal generado o clock skew brutal;
+    permitimos hasta 1 hora hacia adelante como margen razonable (Meta corre
+    en otras regiones).
+    """
+    if max_age_seconds <= 0:
+        return True
+    raw = message.get('timestamp')
+    if raw is None:
+        return False
+    try:
+        ts = int(raw)
+    except (TypeError, ValueError):
+        return False
+    if ts <= 0:
+        return False
+    age = now_ts - ts
+    if age < -3600:  # más de 1 hora en el futuro → corrupto
+        return False
+    return age <= max_age_seconds
+
+
 MEDIA_MESSAGE_TYPES = {'image', 'audio', 'video'}
 SUPPORTED_OUTBOUND_MESSAGE_TYPES = {'text', 'interactive', 'template', *MEDIA_MESSAGE_TYPES}
 

@@ -1,13 +1,42 @@
+import hmac
 from datetime import UTC, datetime
 from time import monotonic
 from uuid import UUID
 
 import httpx
+import structlog
 from fastapi import Header, HTTPException, Request, status
 from jose import JWTError, jwt
 
 from app.core.config import get_settings
 from app.core.signed_cookies import unpack_signed_payload
+
+_security_log = structlog.get_logger()
+
+
+def _service_token_match(token: str, settings) -> bool:
+    """AUDIT-48 (2026-05-18): dual-secret service_token comparator.
+
+    Accept either `service_token` (current) or `service_token_next` (incoming).
+    Uses `hmac.compare_digest` for constant-time comparison so we don't leak
+    which of the two matched via timing. When `service_token_next` is set
+    and matches, log a structured event so operators can verify rotation
+    progress before promoting it.
+    """
+    if not token:
+        return False
+    current = getattr(settings, 'service_token', None) or ''
+    nxt = getattr(settings, 'service_token_next', None) or ''
+    matched_current = current and hmac.compare_digest(token, current)
+    matched_next = nxt and hmac.compare_digest(token, nxt)
+    if matched_next and not matched_current:
+        # During rotation, knowing that the new secret is actually used is
+        # critical to decide when to promote. Do NOT log either secret.
+        _security_log.info(
+            'service_token.rotation_next_in_use',
+            hint='client autenticó con SERVICE_TOKEN_NEXT — listo para promoverlo a SERVICE_TOKEN',
+        )
+    return bool(matched_current or matched_next)
 
 # BUG-008 — `POST /v1/me/support-mode/{tenant_id}` emite este cookie HTTP-only
 # firmado para activar support_mode OPT-IN TEMPORAL scoped a un tenant
@@ -211,7 +240,12 @@ async def authenticate_request(
             status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid Authorization header'
         )
 
-    if token == settings.service_token:
+    # AUDIT-48 (security quick win #3, 2026-05-18): dual-secret service_token
+    # para rotación sin downtime. Aceptamos `settings.service_token` (current)
+    # O `settings.service_token_next` (incoming) cuando esté seteado.
+    # Comparación constante-tiempo (hmac.compare_digest) para evitar timing
+    # oracle sobre cuál de los dos matcheó.
+    if _service_token_match(token, settings):
         request.state.actor_type = 'service'
         request.state.support_mode = True
         request.state.support_mode_source = 'service'
