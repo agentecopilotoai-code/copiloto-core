@@ -254,6 +254,20 @@ class ContactPhoneUpdate(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class HandoffCreate(BaseModel):
+    """BUG-157: reemplaza el `payload: dict` raw del endpoint
+    ``POST /v1/conversations/{id}/handoff``. Antes aceptaba cualquier shape;
+    el ``reason`` se persistía a ``handoffs.reason`` text sin límite y se
+    pasaba a ``record_handoff`` para la métrica Prometheus
+    ``cpi_handoff_total{reason}``. Aunque ``normalize_handoff_reason`` ya
+    bucketea valores libres a ``other`` para proteger Prometheus, este
+    modelo acota el string en la API para evitar abuso (DOS con strings
+    gigantes en el body o en la columna).
+    """
+
+    reason: str | None = Field(default=None, max_length=80)
+
+
 class MessageCreate(BaseModel):
     tenant_id: UUID
     conversation_id: UUID
@@ -337,7 +351,11 @@ class ServiceUpdate(BaseModel):
     duration_minutes: int | None = Field(default=None, gt=0, le=1440)
     preparation_notes: str | None = Field(default=None, max_length=2000)
     post_service_notes: str | None = Field(default=None, max_length=2000)
-    recall_interval_days: int | None = Field(default=None, ge=0, le=3650)
+    # BUG-155: el CHECK del schema es `recall_interval_days is null or > 0`,
+    # así que aceptar `ge=0` en la API permite que el cliente mande `0`,
+    # pase Pydantic y haga 500 al insertar (CHECK violation). Alineamos
+    # con `ServiceCreate` (línea 321): `gt=0`.
+    recall_interval_days: int | None = Field(default=None, gt=0, le=3650)
     recall_template_id: UUID | None = None
     applies_when: dict[str, Any] | None = None
     is_active: bool | None = None

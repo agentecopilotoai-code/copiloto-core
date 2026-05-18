@@ -291,30 +291,38 @@ async def _anonymize_conversations(
     # After messages/conversations are anonymized, the contact's phone is
     # still in ``app.contacts``. We only touch contacts whose latest activity
     # falls outside the retention window — that keeps the active book intact.
-    rows = await conn.fetch(
-        """
-        with batch as (
-          select c.id from app.contacts c
-          where c.tenant_id = $1
-            and c.updated_at < now() - ($2::int * interval '1 day')
-            and c.phone_e164 not like $3 || '%'
-          limit $4
+    # BUG-156: antes este bloque corría UNA sola vez con `limit 100`, así
+    # que tenants con más de 100 contactos viejos quedaban semi-anonimizados.
+    # Igualamos el patrón de los messages: loop hasta que la batch devuelva
+    # menos filas que el page_size (señal de que ya no hay más).
+    while True:
+        rows = await conn.fetch(
+            """
+            with batch as (
+              select c.id from app.contacts c
+              where c.tenant_id = $1
+                and c.updated_at < now() - ($2::int * interval '1 day')
+                and c.phone_e164 not like $3 || '%'
+              limit $4
+            )
+            update app.contacts ct
+            set phone_e164 = $3 || encode(digest(ct.id::text || $5::text, 'sha256'), 'hex'),
+                display_name = $6
+            from batch
+            where ct.id = batch.id and ct.tenant_id = $1
+            returning ct.id
+            """,
+            tenant_id,
+            retention_days,
+            ANONYMIZED_PHONE_PREFIX,
+            page_size,
+            str(tenant_id),
+            ANONYMIZED_TOKEN,
         )
-        update app.contacts ct
-        set phone_e164 = $3 || encode(digest(ct.id::text || $5::text, 'sha256'), 'hex'),
-            display_name = $6
-        from batch
-        where ct.id = batch.id and ct.tenant_id = $1
-        returning ct.id
-        """,
-        tenant_id,
-        retention_days,
-        ANONYMIZED_PHONE_PREFIX,
-        100,
-        str(tenant_id),
-        ANONYMIZED_TOKEN,
-    )
-    total += len(rows)
+        n = len(rows)
+        total += n
+        if n < page_size:
+            break
     return total
 
 

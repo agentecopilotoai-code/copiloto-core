@@ -24,6 +24,7 @@ which the scheduler runs once per loop.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -86,6 +87,18 @@ CONSENT_PURPOSE_TEXT = (
 )
 
 REAFFIRM_INTERVAL_MONTHS_DEFAULT = 12
+
+# BUG-153: subset del regex de opt-out del intent_classifier — necesitamos
+# detectar STOP/BAJA en `enforce_inbound_consent` ANTES del consent gate
+# para no bloquear el opt-out de contactos nuevos. Mantener sincronizado
+# con `app.services.intent_classifier::_BASE_RULES` (entrada `INTENT_OPT_OUT`).
+_CONSENT_OPT_OUT_PATTERN = re.compile(
+    r'\b('
+    r'stop|baja|cancelar\s+suscripci[oó]n|no\s+me\s+env[íi]es|'
+    r'no\s+quiero\s+recibir|d[ae]s?suscrib|'
+    r'no\s+contactar|remover\s+lista|eliminar\s+cuenta'
+    r')\b'
+)
 
 THANKS_GRANTED = (
     '¡Gracias! Quedó registrada tu autorización. Ya puedo ayudarte por aquí.'
@@ -434,6 +447,48 @@ async def enforce_inbound_consent(
             outbound_message_id=outbound_id,
             ledger_event_id=ledger_id,
         )
+
+    # BUG-153: si el contacto NUEVO (opt_in='unknown') manda STOP/BAJA en
+    # su primer inbound, queremos registrar el opt-out, NO enviarle un
+    # consent_request. Antes el gate de consent corría primero y devolvía
+    # `consent_request_sent`, así que el opt-out nunca se procesaba y el
+    # usuario quedaba en loop hasta tocar el botón de NO acepto.
+    if opt_in == 'unknown':
+        body_text_raw = _record_get(inbound_message, 'body_text') or ''
+        if _CONSENT_OPT_OUT_PATTERN.search(body_text_raw.lower()):
+            ledger_id = await record_consent_event(
+                conn,
+                tenant_id=tenant_id,
+                contact_id=contact_id,
+                event='revoked',
+                channel='whatsapp',
+                copy_shown=body_text_raw[:500],
+                evidence_payload={
+                    'inbound_message_id': str(inbound_message['id']),
+                    'source': 'opt_out_keyword_before_consent',
+                },
+            )
+            await conn.execute(
+                """
+                update app.contacts
+                set opt_in_status='revoked', opt_out_at=now(), updated_at=now()
+                where tenant_id=$1 and id=$2
+                """,
+                tenant_id,
+                contact_id,
+            )
+            log.info(
+                'consent.opt_out_before_consent_gate',
+                tenant_id=str(tenant_id),
+                contact_id=str(contact_id),
+                conversation_id=str(conversation_id),
+                ledger_event_id=str(ledger_id),
+            )
+            return ConsentDecision(
+                handled=True,
+                reason='opt_out_registered_before_consent',
+                ledger_event_id=ledger_id,
+            )
 
     # First-ever inbound from a brand-new contact ─ send the double opt-in.
     if opt_in == 'unknown':

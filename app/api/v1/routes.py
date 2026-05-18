@@ -45,6 +45,7 @@ from app.api.v1.schemas import (
     ConversationCreate,
     ContactPhoneUpdate,
     ConversationStart,
+    HandoffCreate,
     IntentEvaluateRequest,
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
@@ -5390,7 +5391,12 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
 async def create_handoff(
     conversation_id: UUID,
     request: Request,
-    payload: dict,
+    # BUG-157: antes aceptábamos `payload: dict` raw — cualquier reason
+    # (sin límite) llegaba a la columna `handoffs.reason text` y a la
+    # métrica Prometheus `cpi_handoff_total{reason}`. Aunque
+    # `normalize_handoff_reason` bucketea a `other`, el body raw permitía
+    # strings gigantes (DOS). `HandoffCreate` acota a max_length=80.
+    payload: HandoffCreate,
     conn: asyncpg.Connection = Depends(get_db),
 ):
     tenant_id = await tenant_id_from_request(request, conn)
@@ -5406,7 +5412,7 @@ async def create_handoff(
         """,
         tenant_id,
         conversation_id,
-        payload.get('reason', 'manual_or_policy_handoff'),
+        payload.reason or 'manual_or_policy_handoff',
     )
     await conn.execute("update app.conversations set status='human_required', handoff_required=true where tenant_id=$1 and id=$2", tenant_id, conversation_id)
     await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='handoff.created', entity_type='handoff', entity_id=str(row['id']))
