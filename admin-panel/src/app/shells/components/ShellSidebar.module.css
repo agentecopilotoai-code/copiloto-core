@@ -350,6 +350,20 @@
   padding: var(--space-2);
 }
 
+/* BUG-083: el padding base del sidebar es `var(--space-4)` = 16px por lado
+   (32px horizontal), pero la columna colapsada mide 64px de ancho — eso
+   deja solo `64 - 32 = 32px` de espacio interno, menor al `.brandMark`
+   (2.5rem = 40px) y a los iconos del nav. El `overflow: hidden` del
+   contenedor recortaba el branding y los íconos quedaban truncados.
+   En modo collapsed reducimos el padding a `var(--space-2)` (8px por
+   lado = 16px horizontal) → 48px interno, que sí encaja el brand mark
+   y los íconos con margen visual. El padding vertical se mantiene
+   amplio para preservar la respiración entre header/body/footer. */
+.sidebar[data-collapsed='true'] {
+  padding-left: var(--space-2);
+  padding-right: var(--space-2);
+}
+
 .sidebar[data-collapsed='true'] .brand {
   justify-content: center;
 }
