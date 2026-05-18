@@ -15,6 +15,18 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### AUDIT-47 — Quick wins de velocidad/seguridad: WS fanout + WhatsApp media streaming (parte 2/N)
+
+- **Fecha:** 2026-05-18
+- **Objetivo:** atender los dos refactors HIGH del análisis comprehensivo (chapter "Audit report synthesis"): BUG-49 (memory exhaustion via download de media) y BUG-50 (pool exhaustion via WS sockets). Ambos eran DEFERRED en `docs/UI_BACKLOG.md:1547-1548` con plan escrito; este fix-group los implementa.
+- **Cambios:**
+  - **`app/services/whatsapp.py:download_whatsapp_media`** (BUG-49 / Speed #4): la función hacía `response.content` buffereando el archivo entero a memoria sin tope. Un upstream malicioso (o Meta redirigiendo a un payload de 5GB) colapsaba la memoria del worker. Ahora usa `client.stream('GET', ...)` + `aiter_bytes()`, con dos gates: (1) si Content-Length header viene y excede `knowledge_file_max_bytes` (10MB default) → rechazar antes de leer; (2) accumulator de bytes con cutoff durante el stream — `RuntimeError` si cualquier de los dos excede. Reutiliza la misma constante de cap que usan los uploads de knowledge para consistencia.
+  - **`app/admin/ws_fanout.py`** (BUG-50 / Speed #3 + Security #4): módulo nuevo con `_PubSubFanout`: una sola pool conn proceso-wide que hace `LISTEN tenant_operations_events` y reparte eventos a queues in-memory por suscriptor. Lazy start (1er suscriptor) + tear-down automático (último unsubscribe → conn liberada). Política de queue per subscriber: `maxsize=100`, drop oldest cuando llena (no bloquea el fanout dispatcher).
+  - **`app/admin/routes.py:admin_conversations_stream`** (BUG-50): antes hacía `async with db.pool.acquire() as conn:` por socket — 10 sockets simultáneos = pool agotado = app caída para toda la flota (vector DoS). Ahora llama `ws_fanout.subscribe(db.pool, tenant_id)` (devuelve la queue) y `ws_fanout.unsubscribe(...)` en el `finally`. El operador puede abrir cualquier cantidad de tabs sin tocar el pool más allá del primer subscriber.
+- **Tests nuevos:** `tests/test_audit_47_static.py` con 7 tests cubriendo: (1) `download_whatsapp_media` no usa `return response.content,` y SI usa `client.stream` + `aiter_bytes` + `knowledge_file_max_bytes` + dos gates `exceeds max allowed size` + sigue validando URL guard + `follow_redirects=False`; (2) endpoint WS ya NO acquire pool conn por socket + llama `ws_fanout.subscribe/unsubscribe`; (3) módulo `ws_fanout` exporta singleton + APIs; (4) dispatch enruta a subscribers matching de tenant; (5) JSON malformado drop silente; (6) shed oldest cuando queue llena.
+- **Validaciones:** `pytest tests/test_audit_47_static.py tests/test_url_guard.py -q` → 44/44 pass. `ruff check app/services/whatsapp.py app/admin/routes.py app/admin/ws_fanout.py` → All checks passed.
+- **Notas de seguridad:** la nueva ruta por fanout NO cambia el modelo de permisos del WS (sigue requiriendo session admin + `_session_can_stream_tenant`). El dispatcher SOLO entrega el payload a queues cuyo `str(tenant_id)` matchea el campo `tenant_id` del payload — mantenemos el filtro per-tenant. El listener crash-safety: si el JSON viene corrupto, se loguea y descarta (no kill del asyncpg loop). El size cap de WhatsApp media usa la misma `knowledge_file_max_bytes` que ya validó OWASP/copy review previo.
+
 ### AUDIT-46 — Quick wins de velocidad e infraestructura post-auditoría (parte 1/N)
 
 - **Fecha:** 2026-05-18

@@ -650,17 +650,49 @@ async def download_whatsapp_media(
             'WhatsApp media download requires a real Meta access token.'
         )
 
+    # AUDIT-47 / BUG-49 (2026-05-18): antes hacíamos `response.content` que
+    # buffereaba el archivo entero a memoria sin tope. Un adversario que
+    # respondiera con un payload de 5GB (o un upstream malicioso al que Meta
+    # redirigiera) podía colapsar la memoria del worker. Ahora streameamos en
+    # chunks y enforce un size cap (`knowledge_file_max_bytes`, default 10MB)
+    # — el mismo cap que usamos para uploads de knowledge, así garantizamos
+    # consistencia. Si el upstream excede el cap, abortamos sin leer el resto.
+    settings = get_settings()
+    max_bytes = settings.knowledge_file_max_bytes
+
+    # Si Content-Length viene y excede el cap, rechazar antes de leer.
     async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
-        response = await client.get(
+        async with client.stream(
+            'GET',
             validated_media.canonical,
             headers={'Authorization': f'Bearer {access_token}'},
-        )
-        response.raise_for_status()
+        ) as response:
+            response.raise_for_status()
+            content_length_header = response.headers.get('content-length')
+            if content_length_header:
+                try:
+                    content_length = int(content_length_header)
+                except ValueError:
+                    content_length = None
+                if content_length is not None and content_length > max_bytes:
+                    raise RuntimeError(
+                        f'WhatsApp media exceeds max allowed size '
+                        f'({content_length} > {max_bytes} bytes)'
+                    )
 
-        content_type = (
-            response.headers.get('content-type')
-            or media_info.get('mime_type')
-            or 'application/octet-stream'
-        )
+            content_type = (
+                response.headers.get('content-type')
+                or media_info.get('mime_type')
+                or 'application/octet-stream'
+            )
 
-        return response.content, content_type
+            buffer = bytearray()
+            async for chunk in response.aiter_bytes():
+                buffer.extend(chunk)
+                if len(buffer) > max_bytes:
+                    raise RuntimeError(
+                        f'WhatsApp media exceeds max allowed size '
+                        f'(>{max_bytes} bytes streamed before stop)'
+                    )
+
+            return bytes(buffer), content_type

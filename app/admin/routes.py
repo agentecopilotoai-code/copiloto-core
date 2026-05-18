@@ -23,6 +23,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, RedirectResponse
 
 from app.admin.config import get_admin_settings
+from app.admin.ws_fanout import fanout as ws_fanout
 from app.core.signed_cookies import (
     _sign as _signed_cookies_sign,
     pack_signed_payload,
@@ -534,37 +535,26 @@ async def admin_conversations_stream(websocket: WebSocket) -> None:
         return
 
     await websocket.accept()
-    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=100)
 
-    def listener(_connection, _pid, _channel, payload: str) -> None:
-        try:
-            event = json.loads(payload)
-        except json.JSONDecodeError:
-            return
-        if event.get('tenant_id') != str(tenant_id):
-            return
-        try:
-            queue.put_nowait(payload)
-        except asyncio.QueueFull:
-            queue.get_nowait()
-            queue.put_nowait(payload)
-
-    async with db.pool.acquire() as conn:
-        await conn.add_listener('tenant_operations_events', listener)
-        await conn.execute('listen tenant_operations_events')
-        try:
-            await websocket.send_json({'type': 'connected', 'tenant_id': str(tenant_id)})
-            while True:
-                try:
-                    payload = await asyncio.wait_for(queue.get(), timeout=25)
-                    await websocket.send_text(payload)
-                except asyncio.TimeoutError:
-                    await websocket.send_json({'type': 'heartbeat', 'tenant_id': str(tenant_id)})
-        except WebSocketDisconnect:
-            return
-        finally:
-            await conn.remove_listener('tenant_operations_events', listener)
-            await conn.execute('unlisten tenant_operations_events')
+    # AUDIT-47 / BUG-50 (2026-05-18): antes acquire-eábamos UN pool conn POR
+    # socket y lo manteníamos durante todo el ciclo del WS — 10 sockets
+    # simultáneos = pool agotado = app caída para toda la flota. Ahora todos
+    # los WS comparten UNA sola conn vía `ws_fanout` (LISTEN + fanout
+    # in-memory). El operador puede abrir 100 tabs sin tocar el pool más
+    # allá del primer subscriber.
+    queue = await ws_fanout.subscribe(db.pool, tenant_id)
+    try:
+        await websocket.send_json({'type': 'connected', 'tenant_id': str(tenant_id)})
+        while True:
+            try:
+                payload = await asyncio.wait_for(queue.get(), timeout=25)
+                await websocket.send_text(payload)
+            except asyncio.TimeoutError:
+                await websocket.send_json({'type': 'heartbeat', 'tenant_id': str(tenant_id)})
+    except WebSocketDisconnect:
+        return
+    finally:
+        await ws_fanout.unsubscribe(tenant_id, queue)
 
 
 @router.api_route(
