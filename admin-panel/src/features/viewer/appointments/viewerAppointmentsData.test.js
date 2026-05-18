@@ -31,7 +31,7 @@ const APPTS = [
   {
     id: 'c',
     starts_at: '2026-05-16T10:00:00Z',
-    status: 'pending',
+    status: 'scheduled',
     service_name: 'Limpieza facial · paquete',
     resource_name: 'Dra. Laura',
     contact_label: 'Diego Castro',
@@ -47,7 +47,7 @@ const APPTS = [
   {
     id: 'e',
     starts_at: '2026-05-18T08:00:00Z',
-    status: 'canceled',
+    status: 'cancelled',
     service_name: 'Anti-edad',
     resource_name: 'Dra. Laura',
     contact_label: 'Laura Martínez',
@@ -55,24 +55,27 @@ const APPTS = [
 ];
 
 describe('viewerAppointmentsData', () => {
-  it('STATUS_FILTER_OPTIONS expone exactamente los cinco estados del backlog', () => {
-    // El backlog (`#### UI-010.3 — Lectura · Citas`) pide reusar `AppointmentCard`,
-    // cuyo mapa de tonos cubre confirmed / completed / pending / no_show /
-    // canceled. Estos cinco — y sólo estos — son las opciones canónicas.
+  it('STATUS_FILTER_OPTIONS expone los cinco estados canónicos del schema', () => {
+    // BUG-099 fix: alineados con el enum del schema
+    // (`app.appointments.status CHECK in
+    // (scheduled, confirmed, completed, cancelled, no_show)`).
+    // Antes el filtro exponía `pending` (que el backend no tiene) y
+    // `canceled` (una sola L; backend `cancelled` con doble L) —
+    // ninguna cita matcheaba esos valores y el filter siempre devolvía 0.
     expect(STATUS_FILTER_OPTIONS.map((opt) => opt.value)).toEqual([
+      'scheduled',
       'confirmed',
       'completed',
-      'pending',
+      'cancelled',
       'no_show',
-      'canceled',
     ]);
     expect(statusLabel('no_show')).toBe('No-show');
     expect(statusLabel('weird')).toBe('weird');
   });
 
   it('filterAppointments filtra por estado, rango de fechas y query de cliente', () => {
-    // status sólo
-    expect(filterAppointments(APPTS, { status: 'pending' }).map((a) => a.id)).toEqual(['c']);
+    // status sólo (BUG-099: usar el enum canónico del schema).
+    expect(filterAppointments(APPTS, { status: 'scheduled' }).map((a) => a.id)).toEqual(['c']);
 
     // rango de fechas (inclusivo) — usamos el `dateKey` real para evitar romper
     // el test por la zona horaria del runner.

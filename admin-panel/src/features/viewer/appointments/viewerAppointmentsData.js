@@ -13,19 +13,22 @@
 
 /**
  * Estados de cita expuestos como opciones del filtro Viewer.
- * Coinciden con los que el módulo de Agente (`todayAppointmentsData`) considera
- * canónicos y con el mapa de tonos de `AppointmentCard` (confirmed / completed
- * / pending / no_show / canceled). `rescheduled` y `cancelled` (variante con
- * doble «l») se omiten del menú de filtro porque su uso es ambiguo; el filtro
- * por status compara exactamente, así que sólo se exponen los cinco canónicos
- * del backlog.
+ *
+ * BUG-099 fix: alineados con el enum del schema
+ * (`app.appointments.status CHECK in
+ * ('scheduled','confirmed','completed','cancelled','no_show')`).
+ * Antes: la UI exponía `pending` (que el backend NO tiene; el equivalente
+ * es `scheduled` — appointment creado pero no confirmado por el cliente) y
+ * `canceled` (una sola L; backend usa `cancelled` con doble L). El filtro
+ * `appointment.status !== filter.status` rechazaba TODO porque ningún
+ * row matcheaba esos valores.
  */
 export const STATUS_FILTER_OPTIONS = Object.freeze([
+  { value: 'scheduled', label: 'Programada' },
   { value: 'confirmed', label: 'Confirmada' },
   { value: 'completed', label: 'Atendida' },
-  { value: 'pending', label: 'Sin confirmar' },
+  { value: 'cancelled', label: 'Cancelada' },
   { value: 'no_show', label: 'No-show' },
-  { value: 'canceled', label: 'Cancelada' },
 ]);
 
 /** Etiqueta legible para un estado de cita (fallback: el código crudo). */

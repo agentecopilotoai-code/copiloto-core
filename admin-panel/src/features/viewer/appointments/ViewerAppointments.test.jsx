@@ -44,7 +44,7 @@ const APPOINTMENTS = [
   {
     id: 'a3',
     starts_at: '2026-05-16T10:00:00Z',
-    status: 'pending',
+    status: 'scheduled',
     service_name: 'Limpieza facial · paquete',
     resource_name: 'Dra. Laura',
     contact_label: 'Diego Castro',
@@ -107,9 +107,10 @@ describe('ViewerAppointments', () => {
 
     // El <select> de estado tiene el label «Estado»; lo localizamos por label.
     const statusSelect = screen.getByLabelText('Estado');
-    fireEvent.change(statusSelect, { target: { value: 'pending' } });
+    fireEvent.change(statusSelect, { target: { value: 'scheduled' } });
 
-    // Sólo la cita "Limpieza facial · paquete" (status pending) debe quedar.
+    // BUG-099 fix: solo la cita "Limpieza facial · paquete" (status
+    // scheduled — el enum canónico del schema) debe quedar.
     await waitFor(() => {
       expect(screen.getByText('Limpieza facial · paquete')).toBeInTheDocument();
     });

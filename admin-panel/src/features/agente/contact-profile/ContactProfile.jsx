@@ -31,12 +31,26 @@ import styles from './ContactProfile.module.css';
  * ni `listContactConsent`, así que se difieren (no se inventan datos). Tampoco
  * se agregan CTAs de mutación: la vista es de solo lectura.
  */
+// BUG-100: outer component que GATEA por permisos ANTES de montar el body
+// que dispara `useContactProfileData` (fetches profile + consent). Sin esta
+// separación, viewers/agents sin `contacts.view` triggereaban
+// `getContactProfile` y `listContactConsent` antes de ver el AccessDenied.
 export function ContactProfile() {
   const outletContext = useOutletContext();
   const activeTenant = outletContext?.activeTenant ?? null;
-  const { tenantSlug, contactId } = useParams();
-  const { profile: userProfile, session } = useTenantContext();
+  const { profile: userProfile } = useTenantContext();
   const permissions = usePermissions({ profile: userProfile, tenant: activeTenant });
+
+  return (
+    <RequirePermission permissions={permissions} capability="contacts.view" mode="R">
+      <ContactProfileBody activeTenant={activeTenant} />
+    </RequirePermission>
+  );
+}
+
+function ContactProfileBody({ activeTenant }) {
+  const { tenantSlug, contactId } = useParams();
+  const { session } = useTenantContext();
 
   const { state, actions } = useContactProfileData({
     session,
@@ -49,7 +63,7 @@ export function ContactProfile() {
     : 'Ficha de contacto';
 
   return (
-    <RequirePermission permissions={permissions} capability="contacts.view" mode="R">
+    <>
       <section className={styles.page}>
         <PageHeader
           eyebrow="Operación · Contactos"
@@ -110,6 +124,11 @@ export function ContactProfile() {
           </div>
         ) : null}
       </section>
-    </RequirePermission>
+    </>
   );
 }
+
+// NOTE BUG-100: `tenantSlug` no se usa actualmente en el body — lo dejamos
+// destructurado para que el caller del `useParams()` tenga el contrato
+// completo y un futuro fix que añada navegación post-action pueda usarlo
+// sin re-añadir el destructure.

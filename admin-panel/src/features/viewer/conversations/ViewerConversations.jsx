@@ -36,15 +36,29 @@ import styles from './ViewerConversations.module.css';
  *
  * @param {{ module?: object, session: object, tenant: object }} props
  */
-export function ViewerConversations({ module, session, tenant }) {
+// BUG-098: outer component que GATEA por permisos ANTES de montar el body
+// que dispara `useViewerConversationsData` (lista conversaciones, abre WS).
+// Sin esta separación, viewers sin `conversations.view` triggereaban
+// `listConversations` / `listComplaintConversations` y abrían el SSE antes
+// de ver el AccessDenied.
+export function ViewerConversations(props) {
+  const { tenant } = props;
   const { profile } = useTenantContext();
   const permissions = usePermissions({ profile, tenant });
-  const { state, actions } = useViewerConversationsData({ session, tenant });
-
-  const hasTenant = Boolean(state.tenantId);
 
   return (
     <RequirePermission permissions={permissions} capability="conversations.view" mode="R">
+      <ViewerConversationsBody {...props} />
+    </RequirePermission>
+  );
+}
+
+function ViewerConversationsBody({ module, session, tenant }) {
+  const { state, actions } = useViewerConversationsData({ session, tenant });
+  const hasTenant = Boolean(state.tenantId);
+
+  return (
+    <>
       <section className={styles.page} data-module="viewer-conversations">
         <PageHeader
           eyebrow="Lectura"
@@ -78,6 +92,6 @@ export function ViewerConversations({ module, session, tenant }) {
           />
         )}
       </section>
-    </RequirePermission>
+    </>
   );
 }

@@ -12,8 +12,18 @@ def _operations_desk_source() -> str:
 
     OperationsDesk.jsx (2088 LOC) was split into features/agente/inbox/; the
     static assertions below run against the concatenated feature source.
+
+    BUG-102 fix: `rglob('*.js*')` también matchea `*.test.jsx` y `*.test.js`,
+    así que los static asserts pueden pasar por strings que VIVEN en los
+    tests pero NO en producción (típico anti-pattern: alguien remueve la
+    lógica pero deja un test fixture que la menciona, y el static check no
+    se entera). Filtramos explícitamente los test files.
     """
-    return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
+    return '\n'.join(
+        p.read_text()
+        for p in sorted(OPERATIONS_DESK.rglob('*.js*'))
+        if '.test.' not in p.name
+    )
 
 
 def test_operations_routes_support_handoff_accept_release_and_audit():
