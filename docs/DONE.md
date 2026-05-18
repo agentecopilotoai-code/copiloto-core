@@ -15,6 +15,26 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### fix-group-44 — Codex Reviews follow-up post-merge (BUG-228..230)
+
+- **Fecha:** 2026-05-18
+- **Objetivo:** atender 3 reviews del bot Codex que llegaron POST-merge en PRs ya cerrados (#61, #62, #63) y por lo tanto quedaron sin atender hasta este fix-group consolidado.
+- **Cambios:**
+  - **`app/api/v1/routes.py:user_email_from_request`** + nuevo helper `_email_from_signed_bff_header`: el fix de BUG-195 dropeaba el header `X-Admin-User-Email` completamente, rompiendo el flow normal del admin panel (Auth0 access tokens NO traen claim `email`). Fix: aceptar el header CUANDO viene acompañado de `X-Admin-Identity` (payload firmado `{sub, email, exp}` con `pack_signed_payload(jwt_secret, ...)`). El Core valida HMAC + sub match + exp > now (BUG-228).
+  - **`app/admin/routes.py:_core_api_headers`**: el BFF ahora emite `x-admin-identity` con TTL 1h. Un caller con bearer token directo NO puede producirlo (no tiene `jwt_secret`) (BUG-228).
+  - **`app/api/v1/routes.py:deactivate_support_mode`**: validar `cookie_exp > now_ts` además del match de tid/sub. Cookie expirado replayed ya no triggerea audit (BUG-229).
+  - **`app/services/payment_provider.py:verify_mercadopago_signature`**: cuando `now_ts is not None`, REQUERIR `ts` en el header (`if not ts: return False`). Sin esto, atacante que strippea `ts` caía al fallback raw-payload HMAC y bypaseaba el replay fix (BUG-230).
+  - **`tests/test_fix_group_44_static.py`** — 6 tests defensivos cubriendo los 3 bugs.
+  - **`tests/test_fix_group_37_static.py`** — flip de assertion legacy de BUG-201 al nuevo patrón fail-closed.
+  - **`docs/UI_BACKLOG.md`** — entradas BUG-228..230 DONE.
+- **Validaciones:**
+  - `.venv/bin/pytest tests/test_fix_group_44_static.py tests/test_fix_group_37_static.py` → 10 passed.
+  - `.venv/bin/pytest tests/test_fix_group_35_static.py::test_bug_195_user_email_from_request_does_not_trust_header` → PASS (compatibilidad con el fix original).
+  - `.venv/bin/ruff check app/api/v1/routes.py app/admin/routes.py app/services/payment_provider.py` → All checks passed.
+- **Notas de seguridad:**
+  - BUG-228: `X-Admin-Identity` no reemplaza a `X-Admin-User-Email` — el header informativo sigue para audit display. El nuevo header solo se consume cuando `request.state.email` está vacío (path de fallback). TTL 1h limita el blast radius si jwt_secret se compromete.
+  - BUG-230: cambio **fail-closed restrictivo** — webhooks MP legítimos con timestamps stale (>5 min skew) o sin `ts` se rechazan. Los handlers payment/subscription pasan `now_ts` siempre, así que TODOS los MP webhooks DEBEN traer `ts` válido (alineado con spec actual de MercadoPago `x-signature: ts=<unix>,v1=<hmac>`). Tenants con webhooks legacy sin ts deben actualizarlos.
+
 ### fix-group-37 — Codex Security HIGH: webhook replay/routing (BUG-201, BUG-202)
 ### fix-group-36 — Codex Security HIGH+MEDIUM: support-mode/sessions/audit (BUG-197..200)
 ### fix-group-39 — Codex Security HIGH+MEDIUM: RAG/indexing DoS+leaks (BUG-210..212)

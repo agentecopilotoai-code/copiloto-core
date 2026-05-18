@@ -884,35 +884,79 @@ async def list_public_resources(
 
 
 def user_email_from_request(request: Request) -> str:
-    """Return the email for `app.users` upsert — JWT-only, NEVER from headers.
+    """Return the email for `app.users` upsert — JWT claim or signed BFF header.
 
     BUG-195 (codex HIGH): el header `X-Admin-User-Email` lo emite el admin BFF
     desde el ID token de Auth0, pero el Core API también puede recibir
-    llamadas DIRECTAS con bearer token (clientes service-to-service o
-    integraciones futuras). Si un caller cualquiera puede mandar
+    llamadas DIRECTAS con bearer token. Si un caller cualquiera puede mandar
     `X-Admin-User-Email: victim@example.com` cuando su JWT no incluye claim
     `email`, podemos terminar UPSERTeando `app.users` con (auth_subject de
     ATACANTE, email de VÍCTIMA). Después, cuando un admin invita
-    `victim@example.com` via `invite_tenant_member`, encontramos la fila por
-    email y reusamos el `auth_subject` del atacante → el atacante hereda la
-    membresía de la víctima.
+    `victim@example.com` via `invite_tenant_member`, encontramos la fila
+    por email y reusamos el `auth_subject` del atacante → el atacante
+    hereda la membresía de la víctima.
 
-    Fix: este helper SOLO acepta el email del JWT (`request.state.email`,
-    poblado por `authenticate_request` desde el claim firmado). Si el JWT no
-    trae email, generamos un email sintético deterministico desde el
-    `auth_subject` — único por user, no colisiona con emails reales, no
-    spoofable.
+    BUG-228 (codex P1 follow-up sobre BUG-195): el fix original dropeó el
+    header completamente, pero el Auth0 PostLogin Action NO agrega claim
+    `email` al access token (solo a id_token). Para requests normales del
+    panel `request.state.email` queda vacío → el fallback escribía
+    `<hash>@auth.local` → al invitar a un email real, el lookup por email
+    fallaba y los pending-invite no se reclamaban. ROMPIA el flow normal
+    del admin panel.
 
-    El header `X-Admin-User-Email` SIGUE existiendo y el BFF lo manda — el
-    Core API lo puede usar para audit display (no como identificador
-    canónico). Pero NO para escribir a `app.users.email`.
+    Fix: aceptar el header CUANDO viene acompañado de un payload firmado
+    (`X-Admin-Identity`) que el BFF produce con `pack_signed_payload`. El
+    payload incluye `{sub, email, exp}` firmado con `jwt_secret` — el Core
+    valida que (a) la firma matchea, (b) `sub == request.state.actor_id`,
+    (c) `exp > now`. Un caller con bearer token directo NO puede producir
+    el payload firmado (no tiene `jwt_secret`).
+
+    Si no hay header firmado válido, mantenemos el fallback sintético.
     """
     email = getattr(request.state, 'email', None)
     if email:
         return email
+    # BUG-228: intentar header firmado del BFF.
+    trusted_email = _email_from_signed_bff_header(request)
+    if trusted_email:
+        return trusted_email
     actor_id = getattr(request.state, 'actor_id', 'unknown-user')
     stable_id = uuid5(NAMESPACE_URL, actor_id).hex
     return f'{stable_id}@auth.local'
+
+
+def _email_from_signed_bff_header(request: Request) -> str | None:
+    """BUG-228: validar el header `X-Admin-Identity` que el BFF firma con
+    `pack_signed_payload(jwt_secret, {sub, email, exp})`.
+
+    Retorna el `email` solo cuando:
+      - la firma matchea (`unpack_signed_payload` no retorna None),
+      - `sub` del payload == `request.state.actor_id` (JWT del request),
+      - `exp` > now (cookie/header no expirado),
+      - `email` está presente y no vacío.
+
+    Cualquier otra cosa retorna None (caller cae al sintético).
+    """
+    raw = request.headers.get('X-Admin-Identity')
+    if not raw:
+        return None
+    settings = get_settings()
+    payload = unpack_signed_payload(settings.jwt_secret, raw)
+    if not isinstance(payload, dict):
+        return None
+    sub = payload.get('sub')
+    email = payload.get('email')
+    exp = payload.get('exp')
+    if not isinstance(sub, str) or not isinstance(email, str) or not email:
+        return None
+    if sub != getattr(request.state, 'actor_id', None):
+        return None
+    if not isinstance(exp, int):
+        return None
+    now_ts = int(datetime.now(UTC).timestamp())
+    if exp <= now_ts:
+        return None
+    return email
 
 
 def user_display_name_from_request(request: Request) -> str:
@@ -12065,10 +12109,21 @@ async def deactivate_support_mode(
         if cookie_payload:
             cookie_tid = cookie_payload.get('tid')
             cookie_sub = cookie_payload.get('sub')
+            # BUG-229 (codex P2 follow-up sobre BUG-198): además del tid/sub
+            # match, verificar `exp > now`. Sin esto, un client replaying un
+            # cookie viejo signed con el mismo `sub`+`tid` después del TTL
+            # original (1h) seguía contando como "match" y triggereaba audit
+            # `support_mode.deactivated` en el tenant víctima. El cookie ya
+            # expiró → no representa una sesión activa de support-mode →
+            # el audit no debe registrarse.
+            cookie_exp = cookie_payload.get('exp')
+            now_ts = int(datetime.now(UTC).timestamp())
             if (
                 isinstance(cookie_tid, str)
                 and cookie_tid == str(tenant_id)
                 and cookie_sub == actor_id
+                and isinstance(cookie_exp, int)
+                and cookie_exp > now_ts
             ):
                 cookie_matches_request = True
 

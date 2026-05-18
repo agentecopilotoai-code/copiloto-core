@@ -220,6 +220,26 @@ def _core_api_headers(
         headers['x-admin-user-email'] = profile['email']
     if profile.get('name'):
         headers['x-admin-user-name'] = profile['name']
+    # BUG-228 (codex P1 follow-up sobre BUG-195): el Core API necesita un
+    # email "confiable" para upsertear `app.users.email` (los access tokens
+    # Auth0 no traen claim `email` en esta config). El header
+    # `X-Admin-User-Email` solo es informativo — un caller con bearer token
+    # directo puede spoofearlo. Acá emitimos `X-Admin-Identity` con
+    # `pack_signed_payload(jwt_secret, {sub, email, exp})` que el Core
+    # valida para confirmar que (a) la firma matchea (caller tiene
+    # `jwt_secret` = solo el BFF), (b) `sub` matchea el JWT, (c) no expiró.
+    sub = profile.get('sub')
+    email = profile.get('email')
+    if sub and email:
+        from app.core.config import get_settings  # noqa: PLC0415
+        from app.core.signed_cookies import pack_signed_payload  # noqa: PLC0415
+
+        jwt_secret = get_settings().jwt_secret
+        # TTL corto (1h) — el header solo se usa en requests Core que el BFF
+        # acaba de proxiar, no se cachea client-side.
+        exp_ts = int(time.time()) + 3600
+        identity_payload = {'sub': sub, 'email': email, 'exp': exp_ts}
+        headers['x-admin-identity'] = pack_signed_payload(jwt_secret, identity_payload)
     # BUG-008 (codex P1 fix): el endpoint `/v1/me/support-mode/{tenant_id}`
     # emite una cookie `copilotoia_support_mode` que `authenticate_request`
     # lee en cada request al Core para bumpear `support_mode`. Sin forwarding,

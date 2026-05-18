@@ -270,8 +270,15 @@ def verify_mercadopago_signature(
     ts = parts.get('ts')
     if not expected_hex:
         return False
-    # BUG-201: enforce freshness when now_ts is supplied.
-    if now_ts is not None and ts:
+    # BUG-201 + BUG-230 (codex P1 follow-up): cuando el caller enforce
+    # freshness (`now_ts is not None`), REQUERIMOS `ts` en el header.
+    # Si el header omite `ts` y el caller espera freshness, el manifest
+    # fallback de raw-payload HMAC abajo aceptaría el firmado indefinidamente
+    # — un atacante que pueda strippear `ts` del header bypaseaba todo el
+    # fix de replay. Fail-closed si el caller pide freshness y no hay ts.
+    if now_ts is not None:
+        if not ts:
+            return False
         try:
             ts_int = int(ts)
         except ValueError:

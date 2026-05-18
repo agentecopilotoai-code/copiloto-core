@@ -44,9 +44,17 @@ def test_bug_201_mercadopago_verifier_accepts_now_ts_and_tolerance():
     assert 'now_ts: int | None = None' in block, (
         'BUG-201: `verify_mercadopago_signature` debe aceptar `now_ts`.'
     )
-    assert 'if now_ts is not None and ts:' in block, (
-        'BUG-201: cuando el caller pasa `now_ts` y el header tiene `ts`, '
-        'debe rechazar firmas más viejas que `tolerance_seconds`.'
+    # BUG-201 + BUG-230 (fix-group-44 follow-up): el bloque ahora entra
+    # SIEMPRE que `now_ts is not None` y FALLA si el header omite `ts` —
+    # antes el bloque se skippeaba sin ts y caía al fallback raw payload
+    # (un atacante que strippea `ts` bypaseaba el fix de replay).
+    assert 'if now_ts is not None:' in block, (
+        'BUG-201 + BUG-230: el bloque de freshness debe entrar cuando '
+        '`now_ts is not None`, independiente de si el header trae `ts`.'
+    )
+    assert 'if not ts:\n            return False' in block, (
+        'BUG-230: cuando el caller pasa now_ts y el header omite `ts`, '
+        'fail-closed (raw payload fallback bypaseaba el replay fix).'
     )
     assert 'abs(now_ts - ts_int) > tolerance_seconds' in block, (
         'BUG-201: el check de freshness debe ser `abs(now_ts - ts) > tolerance`.'
