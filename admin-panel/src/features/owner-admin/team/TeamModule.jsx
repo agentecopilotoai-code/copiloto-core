@@ -34,14 +34,27 @@ const ROLE_TILES = [
  *
  * @param {{ module: object, session: object, tenant: object }} props
  */
-export function TeamModule({ module, session, tenant }) {
+// BUG-107: outer component que GATEA por permisos ANTES de montar el body
+// que dispara `useTeamData` (que fetches `listTenantMembers`). Sin esta
+// separación, users sin `team.write` triggereaban la network call antes
+// de ver el AccessDenied.
+export function TeamModule(props) {
+  const { tenant } = props;
   const { profile } = useTenantContext();
   const permissions = usePermissions({ profile, tenant });
+  return (
+    <RequirePermission permissions={permissions} capability="team.write" mode="RW">
+      <TeamModuleBody {...props} />
+    </RequirePermission>
+  );
+}
+
+function TeamModuleBody({ module, session, tenant }) {
   const { state, actions } = useTeamData({ session, tenant });
   const counts = roleCounts(state.members);
 
   return (
-    <RequirePermission permissions={permissions} capability="team.write" mode="RW">
+    <>
       <section className={styles.page}>
         <PageHeader
           eyebrow="Configuración"
@@ -122,6 +135,6 @@ export function TeamModule({ module, session, tenant }) {
           onClose={actions.closeInvite}
         />
       </section>
-    </RequirePermission>
+    </>
   );
 }

@@ -31,7 +31,12 @@ import styles from '../DigestReports.module.css';
  * Still consumed as a default export by the tenant-setup wizard's
  * `NotificationsTab` from its new location.
  */
-export default function DigestSubscriptionsPanel({ session, tenantId }) {
+// BUG-104: `onMutation` opcional — el orchestrator lo pasa para que el
+// summary header del DigestReports outer se refresque después de cada
+// create/toggle/delete. El TenantSetupWizard sigue usando el panel sin
+// la prop (preserva back-compat) — solo el orchestrator del feature lo
+// pasa.
+export default function DigestSubscriptionsPanel({ session, tenantId, onMutation }) {
   const confirm = useConfirm();
   const [subscriptions, setSubscriptions] = useState([]);
   const [form, setForm] = useState(emptyForm());
@@ -78,6 +83,8 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
       });
       setForm(emptyForm());
       await reload();
+      // BUG-104: notificar al orchestrator para que refresque su summary.
+      if (typeof onMutation === 'function') onMutation();
     } catch (err) {
       setError(err?.message || 'No se pudo crear la suscripción.');
     } finally {
@@ -92,6 +99,8 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
         enabled: !sub.enabled,
       });
       await reload();
+      // BUG-104: notificar al orchestrator para que refresque su summary.
+      if (typeof onMutation === 'function') onMutation();
     } catch (err) {
       setError(err?.message || 'No se pudo actualizar la suscripción.');
     }
@@ -108,6 +117,8 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
     try {
       await deleteDigestSubscription(session, tenantId, sub.id);
       await reload();
+      // BUG-104: notificar al orchestrator para que refresque su summary.
+      if (typeof onMutation === 'function') onMutation();
     } catch (err) {
       setError(err?.message || 'No se pudo eliminar la suscripción.');
     }

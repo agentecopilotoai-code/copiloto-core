@@ -29,7 +29,13 @@ import styles from './DigestReports.module.css';
 export function DigestReports({ module, session, tenant }) {
   const { profile } = useTenantContext();
   const permissions = usePermissions({ profile, tenant });
-  const { state } = useDigestReportsData({ session, tenantId: tenant?.id });
+  // BUG-104: extraer `actions.refresh` además del state. El summary header
+  // (counts: destinos / diarios / semanales) se calcula desde el list
+  // que useDigestReportsData fetcha al mount. Cuando el panel hijo hace
+  // create/toggle/delete, su state interno se actualiza pero el summary
+  // del outer quedaba stale hasta refresh manual. Pasamos `onMutation`
+  // al panel para que dispare `actions.refresh` post-CRUD.
+  const { state, actions } = useDigestReportsData({ session, tenantId: tenant?.id });
 
   return (
     <RequirePermission permissions={permissions} capability="digest.write" mode="RW">
@@ -54,7 +60,11 @@ export function DigestReports({ module, session, tenant }) {
         ) : (
           <>
             <DigestSubscribersSummary summary={state.summary} />
-            <DigestSubscriptionsPanel session={session} tenantId={state.tenantId} />
+            <DigestSubscriptionsPanel
+              session={session}
+              tenantId={state.tenantId}
+              onMutation={actions.refresh}
+            />
           </>
         )}
       </section>

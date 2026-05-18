@@ -32,9 +32,23 @@ import { formatDate } from './inboxData.js';
  *
  * @param {{ module: object, session: object, tenant: object }} props
  */
-export function OperationsDesk({ module, session, tenant }) {
+// BUG-103: outer component que GATEA por permisos ANTES de montar el body
+// que dispara `useInboxData` (lista conversaciones + abre WebSocket de
+// live-refresh) y los hooks de contact/schedule/service-requests. Sin
+// esta separación, viewers/agents sin `conversations.view` triggereaban
+// TODAS las network calls y el WS antes de ver el AccessDenied.
+export function OperationsDesk(props) {
+  const { tenant } = props;
   const { profile } = useTenantContext();
   const permissions = usePermissions({ profile, tenant });
+  return (
+    <RequirePermission permissions={permissions} capability="conversations.view">
+      <OperationsDeskBody {...props} />
+    </RequirePermission>
+  );
+}
+
+function OperationsDeskBody({ module, session, tenant }) {
   const { state, actions } = useInboxData({ session, tenant });
   const contact = useContactPanelData({
     session,
@@ -67,8 +81,9 @@ export function OperationsDesk({ module, session, tenant }) {
     || schedule.state.isBusy
     || serviceRequests.state.isBusy;
 
+  // El gate de permisos ya lo hizo OperationsDesk outer; aquí solo renderizamos.
   return (
-    <RequirePermission permissions={permissions} capability="conversations.view">
+    <>
       <section className="module-card operations-desk">
         <div className="module-heading">
           <div>
@@ -149,6 +164,6 @@ export function OperationsDesk({ module, session, tenant }) {
           />
         </div>
       </section>
-    </RequirePermission>
+    </>
   );
 }

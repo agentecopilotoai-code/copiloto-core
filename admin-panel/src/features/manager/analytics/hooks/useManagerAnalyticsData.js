@@ -67,6 +67,16 @@ export function useManagerAnalyticsData({ session, tenantId }) {
     const days = (RANGE_PRESETS.find((p) => p.id === preset) || RANGE_PRESETS[0]).days;
     const { current, previous } = buildRanges(days);
 
+    // BUG-105: limpiar el state ANTES de fetch. Sin esto, al cambiar de
+    // tenant la UI seguía mostrando overview/funnel/agents/campaigns del
+    // tenant anterior porque `ManagerAnalytics` muestra loading solo si
+    // `!state.overview` — con data vieja truthy, nunca aparecía loading
+    // y el usuario veía KPIs del tenant equivocado.
+    setOverview(null);
+    setPreviousOverview(null);
+    setFunnel(null);
+    setAgents(null);
+    setCampaigns(null);
     setLoading(true);
     setError(null);
 
