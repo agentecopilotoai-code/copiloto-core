@@ -46,7 +46,19 @@ _PRIVATE_NETWORKS: tuple[ipaddress._BaseNetwork, ...] = (
     ipaddress.ip_network('::1/128'),
     ipaddress.ip_network('fc00::/7'),
     ipaddress.ip_network('fe80::/10'),
+    # BUG-214 (codex MEDIUM): el original solo bloqueaba `::ffff:127.0.0.0/104`
+    # (IPv4-mapped loopback). Pero IPv6 puede expresar TODAS las RFC1918 y
+    # link-local ranges via `::ffff:<v4>` — un tenant admin podía configurar
+    # webhook URL `https://[::ffff:169.254.169.254]/latest/meta-data/` y
+    # bypassear el SSRF guard hacia el AWS metadata service. Agregamos las
+    # variantes IPv4-mapped de RFC1918, link-local, CGN y unspecified.
     ipaddress.ip_network('::ffff:127.0.0.0/104'),  # IPv4-mapped loopback
+    ipaddress.ip_network('::ffff:10.0.0.0/104'),   # IPv4-mapped RFC1918 class A
+    ipaddress.ip_network('::ffff:172.16.0.0/108'), # IPv4-mapped RFC1918 class B
+    ipaddress.ip_network('::ffff:192.168.0.0/112'),# IPv4-mapped RFC1918 class C
+    ipaddress.ip_network('::ffff:169.254.0.0/112'),# IPv4-mapped link-local
+    ipaddress.ip_network('::ffff:100.64.0.0/106'), # IPv4-mapped CGN
+    ipaddress.ip_network('::ffff:0.0.0.0/104'),    # IPv4-mapped unspecified
 )
 
 _BLOCKED_HOSTNAMES: frozenset[str] = frozenset({
@@ -135,6 +147,18 @@ def _resolve_addresses(host: str) -> list[ipaddress._BaseAddress]:
 def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
     for net in _PRIVATE_NETWORKS:
         if ip in net:
+            return True
+    # BUG-214 (codex MEDIUM): defense-in-depth — además de las redes
+    # `::ffff:*` enumeradas arriba, si el IP es IPv6 con `ipv4_mapped`
+    # populated, también lo bloqueamos si el peer v4 cae en una red
+    # privada. Cubre casos donde el caller pase la forma `::ffff:<v4>`
+    # ya parseada como IPv6Address sin haber expandido a v4 literal.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        v4_peer = ip.ipv4_mapped
+        for net in _PRIVATE_NETWORKS:
+            if isinstance(net, ipaddress.IPv4Network) and v4_peer in net:
+                return True
+        if v4_peer.is_unspecified or v4_peer.is_reserved or v4_peer.is_multicast or v4_peer.is_link_local:
             return True
     return ip.is_unspecified or ip.is_reserved or ip.is_multicast
 

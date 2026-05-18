@@ -39,6 +39,25 @@ Cada entrada debe incluir:
   - BUG-211: clientes que ya consumían `detail=str(exc)` pueden romperse — el código `embedding_provider_unavailable` permite mapping. ValueError sigue retornando detail completo.
 
 ### fix-group-35 — Codex Security HIGH cluster: Auth0/authn (BUG-193..196)
+### fix-group-40 — Codex Security HIGH+MEDIUM: extraction worker trust + SSRF (BUG-213, BUG-214)
+
+- **Fecha:** 2026-05-18
+- **Objetivo:** cerrar 2 findings sobre cross-tenant data leak en el extraction worker y SSRF guard insuficiente para IPv4-mapped IPv6.
+- **Cambios:**
+  - **`app/workers/extraction_worker.py`** — `_load_file_bytes(...)` ahora acepta `tenant_id` keyword-only desde el row de DB. `backend` y `bucket` derivan de `settings.knowledge_storage_*` server-side (NO de metadata tenant-writable). `storage_key` se valida contra el prefix esperado `tenants/<tenant_id>/` — si no matchea, levanta `ValueError` (BUG-213).
+  - **`app/services/url_guard.py`** — `_PRIVATE_NETWORKS` expandido con las variantes IPv4-mapped restantes (`::ffff:10/104`, `::ffff:172.16/108`, `::ffff:192.168/112`, `::ffff:169.254/112`, `::ffff:100.64/106`, `::ffff:0.0.0.0/104`). `_ip_is_blocked` defense-in-depth: si el IP es IPv6 con `ipv4_mapped` set, también chequea contra las redes v4 y atributos `is_unspecified/is_reserved/is_multicast/is_link_local` del peer v4 (BUG-214).
+  - **`tests/test_fix_group_40_static.py`** — 7 tests defensivos.
+  - **`docs/UI_BACKLOG.md`** — entradas BUG-213, BUG-214 DONE.
+- **Validaciones:**
+  - `.venv/bin/pytest tests/test_fix_group_40_static.py -v` → 7 passed.
+  - `.venv/bin/pytest tests/ -k "url_guard or extraction or ssrf"` → 56 passed, 0 regresiones.
+  - `.venv/bin/ruff check app/services/url_guard.py app/workers/extraction_worker.py` → All checks passed.
+- **Notas de seguridad:**
+  - BUG-213: el storage prefix `tenants/<tenant_id>/` lo escribe `normalize_object_prefix(...)` en el upload endpoint. La validación cross-checkea ese pattern; un attacker que controle parcialmente metadata no puede forjar el prefix (incluiría su propio tenant_id, no el de la víctima).
+  - BUG-214: el `ipv4_mapped` check es defense-in-depth — los nets enumerados ya cubren los rangos clásicos, pero si futuras versiones de Python normalizan IPv6 de forma diferente, el chequeo basado en atributo sigue funcionando.
+
+
+### fix-group-36 — Codex Security HIGH+MEDIUM: support-mode/sessions/audit (BUG-197..200)
 
 - **Fecha:** 2026-05-18
 - **Objetivo:** cerrar 2 findings HIGH del CSV `codex-security-findings-2026-05-18` sobre webhook signature freshness y cross-tenant routing en Meta channels.

@@ -124,12 +124,61 @@ async def _fetch_eligible_documents(conn: asyncpg.Connection) -> list[asyncpg.Re
     )
 
 
-async def _load_file_bytes(metadata: dict[str, Any], settings: Any) -> bytes:
-    """Read the raw file from local storage or S3 based on document metadata."""
-    backend = (metadata.get('storage_backend') or settings.knowledge_storage_backend).lower()
+async def _load_file_bytes(
+    metadata: dict[str, Any],
+    settings: Any,
+    *,
+    tenant_id: Any,
+    tenant_storage_config: dict[str, Any] | None = None,
+) -> bytes:
+    """Read the raw file from storage based on TRUSTED tenant config.
+
+    BUG-213 (codex HIGH): el worker antes consumía `metadata.storage_backend`,
+    `metadata.storage_bucket` y `metadata.storage_key` directamente. Los
+    campos `metadata.*` son tenant-writable via los endpoints de
+    knowledge_documents PATCH — un tenant admin malicioso podía crear o
+    actualizar un documento con `storage_key` apuntando al bucket/prefix
+    de otro tenant, y el extraction worker (que corre con `app.support_mode`
+    bypaseando RLS) leía el archivo cross-tenant y persistía su
+    `extracted_text` en `metadata.extracted_text` del documento del
+    atacante.
+
+    Codex P1 follow-up: la versión original derivaba `backend`/`bucket` SOLO
+    del settings global. Pero los tenants con storage custom (S3 mientras
+    global es local, o un bucket distinto) suben con la config tenant via
+    `fetch_tenant_knowledge_storage_config(...)` — para ESOS tenants el
+    worker leía del backend equivocado. Fix: el caller pasa
+    `tenant_storage_config` (el mismo dict que usa el upload), trusted
+    porque viene de `tenant_settings.knowledge_storage` (DB, no metadata
+    tenant-writable). Si es None, fallback al settings global.
+
+    Codex P2 follow-up: el prefix esperado también viene del tenant config
+    (`config['prefix']` validado por `normalize_object_prefix` al PATCH).
+    Hardcodear `tenants/<tenant_id>/` rechazaba tenants con prefix custom
+    como `knowledge/<tenant_id>`. Fix: validar contra `trusted_prefix`.
+    """
     storage_key = metadata.get('storage_key') or ''
     if not storage_key:
         raise ValueError('Document metadata has no storage_key; cannot read file')
+
+    # Server-side: usar tenant config trusted si está disponible; fallback global.
+    if isinstance(tenant_storage_config, dict):
+        backend = (tenant_storage_config.get('backend') or 'local').lower()
+        bucket = tenant_storage_config.get('bucket') or settings.knowledge_storage_bucket
+        trusted_prefix = tenant_storage_config.get('prefix') or f'tenants/{tenant_id}/knowledge'
+    else:
+        backend = (settings.knowledge_storage_backend or 'local').lower()
+        bucket = settings.knowledge_storage_bucket
+        trusted_prefix = f'tenants/{tenant_id}/knowledge'
+
+    # BUG-213 + P2 follow-up: storage_key debe estar bajo el prefix confiable
+    # del tenant (`<prefix>/` con trailing slash para evitar matches parciales).
+    expected_prefix = trusted_prefix.rstrip('/') + '/'
+    if not storage_key.startswith(expected_prefix):
+        raise ValueError(
+            f'extraction_worker.storage_key_not_tenant_scoped: '
+            f'expected prefix {expected_prefix!r}, got key {storage_key!r}'
+        )
 
     loop = asyncio.get_event_loop()
     if backend == 'local':
@@ -138,7 +187,8 @@ async def _load_file_bytes(metadata: dict[str, Any], settings: Any) -> bytes:
             timeout=10,
         )
     elif backend == 's3':
-        bucket = metadata.get('storage_bucket') or settings.knowledge_storage_bucket
+        if not bucket:
+            raise ValueError('extraction_worker.no_bucket_configured')
         return await asyncio.wait_for(
             loop.run_in_executor(None, _read_s3_file, bucket, storage_key, settings),
             timeout=30,
@@ -167,8 +217,28 @@ async def _process_document(conn: asyncpg.Connection, row: asyncpg.Record) -> No
 
     log.info('extraction_started', document_id=str(doc_id), tenant_id=str(tenant_id), attempt=attempt)
 
+    # Codex P1 follow-up: cargar la config tenant (DB-trusted) para que el
+    # worker use el mismo backend/bucket/prefix que el upload path. Import
+    # lazy para evitar ciclo (routes.py importa este módulo indirectamente).
+    from app.api.v1.routes import fetch_tenant_knowledge_storage_config  # noqa: PLC0415
+
     try:
-        file_bytes = await _load_file_bytes(metadata, settings)
+        tenant_storage_config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    except Exception:  # noqa: BLE001
+        log.exception(
+            'extraction_worker.tenant_config_fetch_failed',
+            tenant_id=str(tenant_id),
+            document_id=str(doc_id),
+        )
+        tenant_storage_config = None
+
+    try:
+        file_bytes = await _load_file_bytes(
+            metadata,
+            settings,
+            tenant_id=tenant_id,
+            tenant_storage_config=tenant_storage_config,
+        )
         loop = asyncio.get_event_loop()
         text, pages = await asyncio.wait_for(
             loop.run_in_executor(None, _extract_text_sync, file_bytes, mime_type),
