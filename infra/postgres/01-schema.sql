@@ -768,6 +768,12 @@ create table app.contact_subscriptions (
   last_invoice_status text,
   last_invoice_at timestamptz,
   retry_payment_link text,
+  -- BUG-112: snapshot del precio vigente al momento del subscribe. Las queries
+  -- de MRR usan `coalesce(cs.price_locked_amount, sp.price_amount)` para que
+  -- subir el precio del plan NO altere retroactivamente el MRR ni la factura
+  -- de los suscriptores existentes (cada uno mantiene su precio "locked-in").
+  price_locked_amount numeric(12,2),
+  price_locked_currency text,
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

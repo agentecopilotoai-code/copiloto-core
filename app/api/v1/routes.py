@@ -1280,6 +1280,12 @@ async def platform_billing_mrr(
     # require_mfa_for_privileged; `support_mode` is set transaction-locally.
     await conn.execute("select set_config('app.support_mode', 'true', true)")
 
+    # BUG-112: MRR usa el precio "locked-in" del suscriptor cuando exists
+    # (`cs.price_locked_amount`), cayendo a `sp.price_amount` para suscriptores
+    # legacy (pre-fix) que no tienen snapshot. Sin esto, subir el precio del
+    # plan inflaba retroactivamente el MRR de los suscriptores existentes —
+    # MRR debe reflejar el cash flow real (lo que cada suscriptor paga),
+    # no el precio actual del catálogo.
     tenant_rows = await conn.fetch(
         """
         select
@@ -1288,9 +1294,10 @@ async def platform_billing_mrr(
             t.display_name,
             t.legal_name,
             t.country_code,
-            sp.currency,
+            coalesce(cs.price_locked_currency, sp.currency) as currency,
             sp.billing_period,
-            sum(sp.price_amount) filter (where cs.status = 'active') as price_sum,
+            sum(coalesce(cs.price_locked_amount, sp.price_amount))
+                filter (where cs.status = 'active') as price_sum,
             count(*) filter (where cs.status = 'active') as active_subscriptions,
             count(*) filter (where cs.status = 'past_due') as past_due_subscriptions,
             min(cs.next_billing_at) filter (where cs.status = 'active') as next_billing_at
@@ -1299,7 +1306,7 @@ async def platform_billing_mrr(
         join app.subscription_plans sp on sp.id = cs.plan_id
         where t.deleted_at is null
         group by t.id, t.slug, t.display_name, t.legal_name, t.country_code,
-                 sp.currency, sp.billing_period
+                 coalesce(cs.price_locked_currency, sp.currency), sp.billing_period
         """
     )
     plan_rows = await conn.fetch(
@@ -1310,7 +1317,8 @@ async def platform_billing_mrr(
             sp.currency,
             count(cs.id) filter (where cs.status = 'active') as active_subscriptions,
             count(cs.id) filter (where cs.status = 'past_due') as past_due_subscriptions,
-            sum(sp.price_amount) filter (where cs.status = 'active') as price_sum
+            sum(coalesce(cs.price_locked_amount, sp.price_amount))
+                filter (where cs.status = 'active') as price_sum
         from app.subscription_plans sp
         left join app.contact_subscriptions cs on cs.plan_id = sp.id
         where sp.status = 'active'
@@ -1321,15 +1329,16 @@ async def platform_billing_mrr(
         """
         select
             t.country_code,
-            sp.currency,
+            coalesce(cs.price_locked_currency, sp.currency) as currency,
             sp.billing_period,
             count(*) filter (where cs.status = 'active') as active_subscriptions,
-            sum(sp.price_amount) filter (where cs.status = 'active') as price_sum
+            sum(coalesce(cs.price_locked_amount, sp.price_amount))
+                filter (where cs.status = 'active') as price_sum
         from app.tenants t
         join app.contact_subscriptions cs on cs.tenant_id = t.id
         join app.subscription_plans sp on sp.id = cs.plan_id
         where t.deleted_at is null
-        group by t.country_code, sp.currency, sp.billing_period
+        group by t.country_code, coalesce(cs.price_locked_currency, sp.currency), sp.billing_period
         """
     )
     country_tenant_rows = await conn.fetch(
@@ -1349,14 +1358,15 @@ async def platform_billing_mrr(
             t.display_name,
             t.legal_name,
             cs.payment_provider,
-            sp.currency,
+            coalesce(cs.price_locked_currency, sp.currency) as currency,
             count(*) as failed_count,
-            sum(sp.price_amount) as amount_pending
+            sum(coalesce(cs.price_locked_amount, sp.price_amount)) as amount_pending
         from app.tenants t
         join app.contact_subscriptions cs on cs.tenant_id = t.id
         join app.subscription_plans sp on sp.id = cs.plan_id
         where t.deleted_at is null and cs.status = 'past_due'
-        group by t.id, t.slug, t.display_name, t.legal_name, cs.payment_provider, sp.currency
+        group by t.id, t.slug, t.display_name, t.legal_name, cs.payment_provider,
+                 coalesce(cs.price_locked_currency, sp.currency)
         order by amount_pending desc nulls last
         """
     )
@@ -6288,8 +6298,15 @@ async def create_contact_subscription(
     conn: asyncpg.Connection = Depends(get_db),
 ):
     tenant_id = await tenant_id_from_request(request, conn)
+    # BUG-112: traemos `price_amount` + `currency` del plan para snapshotearlos
+    # en el subscribe (`price_locked_amount` / `price_locked_currency`). Sin el
+    # snapshot, futuros price-bumps del plan inflarían retroactivamente el MRR
+    # y la factura de este suscriptor.
     plan = await conn.fetchrow(
-        'select id from app.subscription_plans where tenant_id=$1 and id=$2 and status=$3',
+        """
+        select id, price_amount, currency from app.subscription_plans
+        where tenant_id=$1 and id=$2 and status=$3
+        """,
         tenant_id,
         payload.plan_id,
         'active',
@@ -6308,9 +6325,9 @@ async def create_contact_subscription(
         insert into app.contact_subscriptions (
             tenant_id, contact_id, plan_id, payment_provider,
             payment_provider_subscription_id, payment_method_id,
-            next_billing_at, metadata
+            next_billing_at, price_locked_amount, price_locked_currency, metadata
         )
-        values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
         returning *
         """,
         tenant_id,
@@ -6320,6 +6337,8 @@ async def create_contact_subscription(
         payload.payment_provider_subscription_id,
         payload.payment_method_id,
         payload.next_billing_at,
+        plan['price_amount'],
+        plan['currency'],
         json.dumps(payload.metadata),
     )
     await audit(

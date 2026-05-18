@@ -33,9 +33,21 @@ import styles from './KnowledgeStudio.module.css';
  *
  * @param {{ module: object, session: object, tenant: object }} props
  */
-export function KnowledgeStudio({ module, session, tenant }) {
+// BUG-110: `useKnowledgeStudioData` corría antes de `<RequirePermission>`,
+// disparando fetch de `documents`/`storage` aun sin `knowledge.read` (la API
+// responde 403, pero el call salía). Split outer/Body — el outer hace gate, el
+// Body monta el hook solo cuando el render del gate procede.
+export function KnowledgeStudio(props) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions({ profile, tenant: props.tenant });
+  return (
+    <RequirePermission permissions={permissions} capability="knowledge.read">
+      <KnowledgeStudioBody {...props} />
+    </RequirePermission>
+  );
+}
+
+function KnowledgeStudioBody({ module, session, tenant }) {
   const { state, actions } = useKnowledgeStudioData({ session, tenant });
 
   const editingDocument =
@@ -45,8 +57,7 @@ export function KnowledgeStudio({ module, session, tenant }) {
   const showLocalHashBanner = hasLocalHashActive(state.documents) && state.documents.length > 0;
 
   return (
-    <RequirePermission permissions={permissions} capability="knowledge.read">
-      <section className={styles.page}>
+    <section className={styles.page}>
         <PageHeader
           eyebrow="IA & Canales"
           title={module?.label || 'Knowledge Studio'}
@@ -167,7 +178,6 @@ export function KnowledgeStudio({ module, session, tenant }) {
           onEvaluate={actions.evaluateRetrieval}
           onClose={actions.closeRag}
         />
-      </section>
-    </RequirePermission>
+    </section>
   );
 }

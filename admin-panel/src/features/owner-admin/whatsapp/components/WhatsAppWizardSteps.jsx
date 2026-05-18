@@ -104,8 +104,13 @@ export function WhatsAppWizardSteps({
               <option value="live">Real vía WhatsApp Cloud API</option>
             </select>
           </FormField>
+          {/* BUG-111: el FormField wrapper también debe declarar `required`
+              cuando el secret todavía no está configurado, para que el
+              asterisco visual de FormField aparezca (sin esto el usuario solo
+              ve la validación HTML5 al submit, no la marca de "obligatorio"). */}
           <FormField
             label="Meta access token del tenant"
+            required={!checks.meta_access_token_configured}
             hint="Requerido la primera vez o cuando quieras rotarlo; se guarda en secrets/tenants/<tenant_id>/meta_access_token."
           >
             <input
@@ -119,6 +124,7 @@ export function WhatsAppWizardSteps({
           </FormField>
           <FormField
             label="App secret del tenant"
+            required={!checks.app_secret_configured}
             hint="Requerido la primera vez o cuando quieras rotarlo; se guarda en secrets/tenants/<tenant_id>/whatsapp_app_secret. Si pegas APP_ID|APP_SECRET, se almacena solo APP_SECRET."
           >
             <input
@@ -132,6 +138,7 @@ export function WhatsAppWizardSteps({
           </FormField>
           <FormField
             label="Verify token del webhook"
+            required={!checks.verify_token_configured}
             hint="Requerido la primera vez o cuando quieras rotarlo; se guarda en secrets/tenants/<tenant_id>/whatsapp_verify_token y el GET del webhook solo lee desde ahí."
           >
             <input

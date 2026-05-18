@@ -101,6 +101,12 @@ export function useMediaLibraryData({ session, tenant }) {
       const { kind, error } = validateUploadFile(file);
       if (error) {
         setNotice({ type: 'error', text: error });
+        // BUG-109: si el usuario ya había seleccionado un archivo válido y
+        // luego selecciona uno inválido, sin esta limpieza el `uploadForm.file`
+        // viejo quedaba en state y `upload()` terminaba enviando el archivo
+        // anterior. Limpiamos `file` (y `kind`) para forzar al usuario a
+        // elegir uno nuevo.
+        setUploadForm((prev) => ({ ...prev, file: null, kind: '' }));
         return;
       }
       setUploadForm((prev) => ({

@@ -24,7 +24,14 @@ CLOUD_LLM = Path('app/services/cloud_llm_answer.py')
 
 
 def _tenant_setup_source() -> str:
-    return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
+    # BUG-108: `rglob('*.js*')` también matchea `.test.jsx` y `.test.js`, así que
+    # los aserts del static test pasaban si la cadena buscada vivía en un test
+    # (no en código de prod). Filtramos `.test.` para mirar solo fuentes.
+    paths = sorted(
+        p for p in TENANT_SETUP_FEATURE.rglob('*.js*')
+        if '.test.' not in p.name
+    )
+    return '\n'.join(p.read_text() for p in paths)
 
 
 # 1 ── Schema

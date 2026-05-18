@@ -49,3 +49,13 @@ create unique index if not exists ux_tenant_channels_page_active
 create unique index if not exists ux_tenant_channels_ig_account_active
   on app.tenant_channels(instagram_account_id)
   where status='active' and instagram_account_id is not null;
+
+-- BUG-112: precio "locked-in" del suscriptor al momento del subscribe.
+-- Sin esto, MRR/invoicing usaban el precio actual del plan y subir el
+-- precio del plan alteraba retroactivamente el MRR de los suscriptores
+-- existentes. Las queries usan `coalesce(cs.price_locked_amount, sp.price_amount)`
+-- para back-compat con filas viejas (price_locked_amount NULL).
+alter table app.contact_subscriptions
+  add column if not exists price_locked_amount numeric(12,2);
+alter table app.contact_subscriptions
+  add column if not exists price_locked_currency text;
