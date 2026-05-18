@@ -599,13 +599,14 @@ def is_service_or_support(request: Request) -> bool:
 # ``app.user_tenant_roles``; it lives in the JWT only.  The JWT half of the
 # double-check uses ``has_jwt_role`` from ``app.core.security`` which *does*
 # include ``platform_owner`` in its ranking.
+# BUG-133: `support` no es un rol — es un modo (`support_mode` flag/cookie).
+# Ver comment en `app/core/security.py::_ROLE_LEVELS` para la racional completa.
 _TENANT_ROLE_LEVELS = {
     'viewer': 5,
     'agent': 10,
     'manager': 20,
     'admin': 30,
     'owner': 40,
-    'support': 50,
 }
 
 
@@ -8988,12 +8989,19 @@ async def receive_subscription_webhook(
         )
         raise HTTPException(status_code=401, detail='Invalid subscription webhook signature')
 
+    # BUG-136: idempotencia real del webhook. Antes el `on conflict (payload_sha256)
+    # do nothing` solo deduplicaba el log raw, pero el resto del flow (update
+    # subscription, audit, reminder_jobs, domain_events) se ejecutaba en cada
+    # delivery → duplicados de cobro fallido, audit spam, reminders dobles.
+    # Ahora capturamos el insert: si no devuelve fila (conflict), el webhook
+    # ya se procesó → short-circuit con 200.
     sha = hashlib.sha256(body).hexdigest()
-    await conn.execute(
+    raw_inserted = await conn.fetchrow(
         """
         insert into app.webhook_events_raw (tenant_id, provider, event_type, headers, payload, payload_sha256)
         values ($1, $2, $3, $4::jsonb, $5::jsonb, $6)
         on conflict (payload_sha256) do nothing
+        returning id
         """,
         tenant_id,
         normalized_provider,
@@ -9002,6 +9010,15 @@ async def receive_subscription_webhook(
         json.dumps(payload),
         sha,
     )
+    if raw_inserted is None:
+        log.info(
+            'subscription_webhook.duplicate_skipped',
+            tenant_id=str(tenant_id),
+            provider=normalized_provider,
+            event_kind=event.event_kind,
+            payload_sha256=sha[:12],
+        )
+        return {'status': 'duplicate', 'event_kind': event.event_kind}
 
     await conn.fetchrow(
         """

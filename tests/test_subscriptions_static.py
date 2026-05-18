@@ -125,11 +125,28 @@ def test_schema_extends_whatsapp_template_purpose_with_subscription_payment_fail
 
 
 def test_schema_extends_reminder_jobs_target_type_with_contact_subscription():
+    # BUG-134 (fix-group-23): el constraint también incluye ahora `'contact'`
+    # para que el consent reaffirm job pueda enqueuear. La aserción ahora
+    # valida los miembros uno por uno en vez de hacer match literal de la
+    # tupla completa (que cambia cada vez que se extiende el dominio).
     schema = SCHEMA.read_text()
-    assert (
-        "target_type text not null check (target_type in ('appointment','quote','service_request','conversation','contact_subscription'))"
-        in schema
-    )
+    rj_idx = schema.find('create table app.reminder_jobs (')
+    assert rj_idx > 0
+    rj_end = schema.find(');', rj_idx)
+    rj_block = schema[rj_idx:rj_end]
+    assert "target_type text not null check (target_type in" in rj_block
+    for member in (
+        "'appointment'",
+        "'quote'",
+        "'service_request'",
+        "'conversation'",
+        "'contact_subscription'",
+        # BUG-134: nuevo miembro.
+        "'contact'",
+    ):
+        assert member in rj_block, (
+            f'reminder_jobs.target_type CHECK debe permitir {member}.'
+        )
 
 
 # ───── Service ─────────────────────────────────────────────────────────────

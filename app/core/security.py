@@ -23,13 +23,20 @@ _jwks_cache: dict[str, tuple[float, dict]] = {}
 # (``require_min_role``) and per-tenant DB checks (``ensure_tenant_role``).  The
 # ``platform_owner`` rank tops the ladder so that the same helper can express
 # "this endpoint requires platform_owner" without a separate code path.
+# BUG-133: `support` no es un rol — es un modo (`support_mode` flag/cookie
+# scoped a un tenant). Antes lo poníamos en el ladder con nivel 50 (entre
+# owner y platform_owner), lo que significaba que un JWT con `support` en
+# `roles[]` (misconfig de Auth0 o claim heredado) pasaba `require_min_role`
+# por encima de admin/owner SIN haber activado support_mode. La activación
+# de support_mode es por endpoint dedicado (cookie firmada + audit), no por
+# rol. Removemos `support` del ladder; cualquier elevación cross-tenant pasa
+# por `support_mode` (verificado en `authenticate_request`).
 _ROLE_LEVELS = {
     'viewer': 5,
     'agent': 10,
     'manager': 20,
     'admin': 30,
     'owner': 40,
-    'support': 50,
     'platform_owner': 60,
 }
 _PRIVILEGED_ROLES = {'admin', 'owner', 'platform_owner'}

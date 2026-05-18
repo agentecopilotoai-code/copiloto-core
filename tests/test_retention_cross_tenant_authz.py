@@ -148,11 +148,14 @@ def test_support_mode_bypasses_tenant_role_check():
     asyncio.run(run_test())
 
 
-def test_support_role_in_target_tenant_passes_admin_check():
-    """A ``support`` membership row in the target tenant outranks admin in
-    the shared role hierarchy (see ``_ROLE_LEVELS`` in ``app.core.security``),
-    so the per-tenant check must accept it — provided the JWT also carries a
-    sufficient role (TASK-0077 double-check)."""
+def test_support_role_does_not_pass_admin_check():
+    """BUG-133: ``support`` is NOT a role — it's a mode (`support_mode` flag/
+    cookie). Removing it from `_ROLE_LEVELS` / `_TENANT_ROLE_LEVELS` means
+    a JWT (or DB membership) carrying ``support`` no longer outranks anything;
+    it now fails admin checks like any unknown role. The legitimate way to
+    elevate cross-tenant is via the support_mode endpoint (cookie + audit),
+    not a role string.
+    """
     async def run_test():
         request = _make_request()
         request.state.actor_type = 'user'
@@ -163,7 +166,11 @@ def test_support_role_in_target_tenant_passes_admin_check():
 
         conn = _FakeRolesConn(['support'])
 
-        await ensure_tenant_role(request, conn, uuid4(), 'admin')
+        with pytest.raises(HTTPException) as exc_info:
+            await ensure_tenant_role(request, conn, uuid4(), 'admin')
+
+        # JWT role gate fails first (`support` is no longer in the ladder).
+        assert exc_info.value.status_code == 403
 
     asyncio.run(run_test())
 

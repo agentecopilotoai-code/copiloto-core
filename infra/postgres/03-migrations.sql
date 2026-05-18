@@ -59,3 +59,17 @@ alter table app.contact_subscriptions
   add column if not exists price_locked_amount numeric(12,2);
 alter table app.contact_subscriptions
   add column if not exists price_locked_currency text;
+
+-- BUG-134: el consent reaffirm worker inserta en `reminder_jobs` con
+-- `target_type='contact'`, pero el check original solo permitía
+-- appointment/quote/service_request/conversation/contact_subscription
+-- → CHECK violation y el job nunca enqueueaba. Recreamos el constraint
+-- agregando 'contact'. Idempotente: drop con IF EXISTS antes de re-add.
+alter table app.reminder_jobs
+  drop constraint if exists reminder_jobs_target_type_check;
+alter table app.reminder_jobs
+  add constraint reminder_jobs_target_type_check
+    check (target_type in (
+      'appointment','quote','service_request',
+      'conversation','contact_subscription','contact'
+    ));

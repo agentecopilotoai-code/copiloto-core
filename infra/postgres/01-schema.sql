@@ -671,7 +671,11 @@ create index ix_contact_segment_members_tenant on app.contact_segment_members(te
 create table app.reminder_jobs (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references app.tenants(id) on delete cascade,
-  target_type text not null check (target_type in ('appointment','quote','service_request','conversation','contact_subscription')),
+  -- BUG-134: 'contact' agregado al check para que el consent reaffirm job
+  -- (insert en app/services/consent.py::enqueue_consent_reaffirm_jobs) no
+  -- viole el constraint. El reaffirm es un reminder standalone sin
+  -- appointment/quote/service_request asociado — el target es el contact mismo.
+  target_type text not null check (target_type in ('appointment','quote','service_request','conversation','contact_subscription','contact')),
   target_id uuid not null,
   channel_id uuid references app.tenant_channels(id) on delete set null,
   template_name text not null,

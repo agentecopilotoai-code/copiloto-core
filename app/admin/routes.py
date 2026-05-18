@@ -38,7 +38,9 @@ SESSION_TTL_SECONDS = 8 * 60 * 60
 
 router = APIRouter()
 _sessions: dict[str, dict[str, Any]] = {}
-_ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40, 'support': 50}
+# BUG-133: `support` no es un rol — es un modo (`support_mode` flag/cookie).
+# Ver `app/core/security.py::_ROLE_LEVELS` para la racional completa.
+_ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40}
 _PRIVILEGED_ROLES = {'admin', 'owner', 'platform_owner'}
 
 

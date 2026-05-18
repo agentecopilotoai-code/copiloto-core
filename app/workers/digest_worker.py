@@ -184,13 +184,21 @@ async def _queue_whatsapp_template(
         recipient_phone=recipient,
     )
     template_name = whatsapp_template_for_cadence(cadence)
-    await conn.execute(
+    # BUG-135: insertar la fila en `app.messages` no es suficiente — el
+    # `event_worker` consume `domain_events WHERE event_name='message.queued'`
+    # para disparar el dispatch outbound. Sin el evento, el digest WhatsApp
+    # quedaba en `status='queued'` para siempre y nunca llegaba al manager.
+    # Capturamos el message_id (RETURNING) y enqueueamos el evento con una
+    # idempotency_key derivada del tenant + cadence + day (UTC), para que
+    # un reinicio del scheduler no genere eventos duplicados.
+    message_row = await conn.fetchrow(
         """
         insert into app.messages (
           tenant_id, conversation_id, direction, sender_actor_type,
           message_type, status, payload, body_text
         )
         values ($1, $2, 'outbound', 'system', 'template', 'queued', $3::jsonb, $4)
+        returning id
         """,
         tenant_id,
         conversation_id,
@@ -204,6 +212,23 @@ async def _queue_whatsapp_template(
             'components': components,
         }),
         f'[digest:{cadence}] manager',
+    )
+    idempotency_key = f'digest-{cadence}-{tenant_id}-{datetime.now(UTC).strftime("%Y%m%d")}'
+    await conn.execute(
+        """
+        insert into app.domain_events
+          (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload)
+        values ($1, 'message', $2, 'message.queued', $3, $4::jsonb)
+        on conflict do nothing
+        """,
+        tenant_id,
+        message_row['id'],
+        idempotency_key,
+        json.dumps({
+            'conversation_id': str(conversation_id),
+            'digest': True,
+            'digest_cadence': cadence,
+        }),
     )
     return True
 
