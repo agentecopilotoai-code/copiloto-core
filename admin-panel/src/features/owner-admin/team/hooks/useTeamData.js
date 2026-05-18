@@ -85,7 +85,17 @@ export function useTeamData({ session, tenant }) {
         // TASK-0085 / BUG06: the API no longer returns a password-change ticket
         // URL — Auth0 emails the invitation directly to the new user. The UI
         // must NOT display, copy or persist any such link.
-        if (result?.auth0?.invited) {
+        // BUG-013: si el email ya tenía cuenta Auth0 (caso SaaS multi-tenant
+        // donde un agente trabaja para varias empresas), invite_user reutiliza
+        // el user existente y NO manda email — el user ve el nuevo tenant en
+        // el selector al loguear. Mostramos un mensaje distinto para que el
+        // admin no espere un email de bienvenida que nunca va a llegar.
+        if (result?.auth0?.reused_existing) {
+          setNotice({
+            type: 'success',
+            text: 'Usuario existente agregado al equipo. Ya tenía cuenta — verá este negocio en su selector la próxima vez que ingrese (no se envía email).',
+          });
+        } else if (result?.auth0?.invited) {
           setNotice({
             type: 'success',
             text: 'Invitación enviada. El usuario recibirá un email de Auth0 para configurar su contraseña.',

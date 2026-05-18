@@ -190,16 +190,132 @@ def test_invite_user_returns_user_id_and_no_ticket_url(monkeypatch):
     assert 'email' not in calls[4][2]
 
 
-def test_invite_user_propagates_conflict_for_preexisting_auth0_user(monkeypatch):
+def test_invite_user_reuses_existing_when_email_exists_in_auth0(monkeypatch):
+    """BUG-013 — caso central del SaaS multi-tenant: un mismo email (agente,
+    consultor) trabaja para múltiples empresas. El segundo invite NO debe
+    fallar con 409: debe hacer lookup por email, reutilizar el user_id
+    existente y attachar el rol al nuevo tenant SIN emitir password-change
+    ticket (el user ya tiene credenciales válidas).
+    """
+    # BUG-009 helper `_resolve_auth0_role_id` cachea el role_id en
+    # `_AUTH0_ROLE_ID_CACHE` para evitar 1 GET /roles por invite. Limpiamos
+    # antes de este test para que el mock vea la llamada GET /roles
+    # (sino el cache hit del test anterior la salta y el conteo de calls falla).
+    from app.services import auth0_admin
+    if hasattr(auth0_admin, 'clear_auth0_role_cache'):
+        auth0_admin.clear_auth0_role_cache()
+
+    calls = _build_invite_with_mock(
+        monkeypatch,
+        mgmt_responses=[
+            # 1) POST /users → 409 (email ya existe en Auth0)
+            Auth0UserAlreadyExists(
+                '{"statusCode":409,"error":"Conflict","message":"The user already exists."}'
+            ),
+            # 2) GET /users-by-email → encuentra el user existente (BUG-013 lookup)
+            [{'user_id': 'auth0|existing-user-456', 'email': 'soporte@plataforma.com'}],
+            # 3) PATCH /users/{id} → set app_metadata (BUG-009 propagation,
+            #    también aplica al user reusado — sobrescribe el tenant_id
+            #    para apuntar al tenant NUEVO).
+            {},
+            # 4) GET /roles?per_page=100 → resolve role_id (BUG-009)
+            [{'id': 'rol_admin_xyz', 'name': 'admin'}],
+            # 5) POST /users/{id}/roles → assign role (BUG-009)
+            {},
+            # NO /tickets/password-change call — el user ya tiene credenciales.
+        ],
+    )
+
+    result = asyncio.run(
+        invite_user(
+            email='soporte@plataforma.com',
+            role='admin',
+            tenant_id='00000000-0000-0000-0000-000000000001',
+        )
+    )
+
+    # Response: invited=True (el user fue attachado al tenant) +
+    # reused_existing=True (flag para que el frontend muestre UX apropiada).
+    assert result['disabled'] is False
+    assert result['invited'] is True
+    assert result['reused_existing'] is True
+    assert result['auth0_user_id'] == 'auth0|existing-user-456'
+    # NO ticket — el password no se resetea para un user existente.
+    assert 'ticket' not in result
+    assert 'ticket_url' not in result
+
+    # Exactamente 5 calls: POST /users (409) + GET /users-by-email + PATCH
+    # metadata + GET roles + POST users/{id}/roles. NO /tickets/password-change.
+    assert len(calls) == 5
+    assert calls[0][0] == 'POST' and calls[0][1] == '/users'
+    assert calls[1][0] == 'GET' and calls[1][1].startswith('/users-by-email?email=')
+    # El email del lookup debe ser URL-encoded (RFC 3986) para soportar
+    # caracteres especiales (+ en alias, %, etc.).
+    assert 'soporte%40plataforma.com' in calls[1][1] or 'soporte@plataforma.com' in calls[1][1]
+    # BUG-009 propagation también aplica al user reusado — el tenant_id del
+    # app_metadata debe apuntar al tenant NUEVO (no al viejo donde el user fue
+    # invitado primero).
+    assert calls[2][0] == 'PATCH'
+    assert calls[2][1] == '/users/auth0|existing-user-456'
+    assert calls[2][2]['app_metadata']['tenant_id'] == '00000000-0000-0000-0000-000000000001'
+    assert calls[3][0] == 'GET' and calls[3][1] == '/roles?per_page=100'
+    assert calls[4][0] == 'POST'
+    assert calls[4][1] == '/users/auth0|existing-user-456/roles'
+    # NINGUNA llamada a /tickets/password-change (verificado por el len(calls)==5
+    # y porque ningún call matchea ese path).
+    for call in calls:
+        assert call[1] != '/tickets/password-change', (
+            'BUG-013 violation: /tickets/password-change emitted for a reused user'
+        )
+
+
+def test_invite_user_propagates_conflict_when_lookup_also_fails(monkeypatch):
+    """BUG-013 edge defensive — cuando el POST /users devuelve 409 PERO el
+    lookup-by-email también falla (Auth0 devuelve [] o 5xx), no podemos
+    recuperar. Propagamos Auth0UserAlreadyExists para que la ruta responda
+    409 con un mensaje útil al operador.
+
+    Esto es raro pero posible: el email puede estar en otra connection de
+    Auth0 (federated/social) que nuestro lookup en
+    Username-Password-Authentication no encuentra.
+    """
     _build_invite_with_mock(
         monkeypatch,
-        mgmt_responses=[Auth0UserAlreadyExists('email already taken')],
+        mgmt_responses=[
+            # POST /users → 409
+            Auth0UserAlreadyExists('email already taken in other connection'),
+            # GET /users-by-email → lista vacía (no en esta connection)
+            [],
+        ],
     )
 
     with pytest.raises(Auth0UserAlreadyExists):
         asyncio.run(
             invite_user(
-                email='soporte@plataforma.com',
+                email='federated@example.com',
+                role='admin',
+                tenant_id='00000000-0000-0000-0000-000000000001',
+            )
+        )
+
+
+def test_invite_user_propagates_conflict_when_lookup_returns_user_without_id(monkeypatch):
+    """Defense: si Auth0 devuelve una row pero sin user_id (caso patológico,
+    debería no pasar pero el contract de la API no lo garantiza), tratamos
+    como "no encontrado" para no continuar con user_id=None.
+    """
+    _build_invite_with_mock(
+        monkeypatch,
+        mgmt_responses=[
+            Auth0UserAlreadyExists('conflict'),
+            [{'email': 'broken@example.com'}],  # SIN user_id
+        ],
+    )
+
+    with pytest.raises(Auth0UserAlreadyExists):
+        asyncio.run(
+            invite_user(
+                email='broken@example.com',
                 role='admin',
                 tenant_id='00000000-0000-0000-0000-000000000001',
             )
