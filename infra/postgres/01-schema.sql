@@ -1090,8 +1090,15 @@ begin
   return new;
 end;
 $$;
+-- BUG-026: usar BEFORE UPDATE — el partial unique index
+-- `ux_tenant_legal_documents_published_current` se chequea cuando la fila
+-- NEW se escribe. Si la fila vieja seguía con `published_at IS NOT NULL AND
+-- archived_at IS NULL` cuando NEW transiciona a published, la UPDATE viola
+-- el índice ANTES de que un AFTER trigger pueda archivar la fila vieja.
+-- BEFORE UPDATE permite archivar la fila vieja primero (sale del partial
+-- index) y recién después dejar que la fila NEW se inserte en el índice.
 create trigger trg_tenant_legal_documents_archive_previous
-  after update on app.tenant_legal_documents
+  before update on app.tenant_legal_documents
   for each row execute function app.tenant_legal_documents_archive_previous();
 
 
@@ -1109,9 +1116,14 @@ alter table app.consent_ledger
 -- TASK-0055: referrer_contact_id is tenant-scoped (cannot reference a contact
 -- from another tenant); on delete set null so deleting the referrer does not
 -- cascade-delete the referee.
+-- BUG-027: especificar la columna en `ON DELETE SET NULL` (sintaxis Postgres
+-- 15+). Sin el `(referrer_contact_id)`, el SET NULL aplica a TODAS las
+-- columnas de la FK — incluido `tenant_id` que es NOT NULL — y borrar al
+-- referrer revienta con `null value in column "tenant_id" violates not-null
+-- constraint`. Solo queremos nullear `referrer_contact_id`.
 alter table app.contacts
   add constraint fk_contacts_referrer foreign key (tenant_id, referrer_contact_id)
-    references app.contacts(tenant_id, id) on delete set null;
+    references app.contacts(tenant_id, id) on delete set null (referrer_contact_id);
 alter table app.conversations add constraint uq_conversations_tenant_id_id unique (tenant_id, id);
 alter table app.messages add constraint uq_messages_tenant_id_id unique (tenant_id, id);
 alter table app.resources add constraint uq_resources_tenant_id_id unique (tenant_id, id);
