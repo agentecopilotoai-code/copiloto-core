@@ -15,27 +15,25 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
-### fix-group-36 — Codex Security HIGH+MEDIUM: support-mode/sessions/audit (BUG-197..200)
+### fix-group-37 — Codex Security HIGH: webhook replay/routing (BUG-201, BUG-202)
 
 - **Fecha:** 2026-05-18
-- **Objetivo:** cerrar 4 findings del CSV `codex-security-findings-2026-05-18` sobre support-mode activation MFA, audit pollution cross-tenant, session revocation enforcement y go-live tenant-owner gate.
+- **Objetivo:** cerrar 2 findings HIGH del CSV `codex-security-findings-2026-05-18` sobre webhook signature freshness y cross-tenant routing en Meta channels.
 - **Cambios:**
-  - **`app/core/security.py`** — `authenticate_request` ahora deriva el `session_id` (jti o fallback `iat-{hash}`) y consulta `app.auth_sessions.revoked_at` al final del path autenticado. Si la sesión está revocada → 401 `'Session has been revoked'`. Helpers nuevos `_derive_session_id` (matchea `_session_id_from_request` de routes.py) + `_enforce_session_not_revoked` (lazy import de `app.db.pool` para evitar ciclo; fail-open por availability si la pool está down).
+  - **`app/services/payment_provider.py`** — `verify_mercadopago_signature(...)` ahora acepta `tolerance_seconds=300` y `now_ts: int | None = None`. Cuando el caller pasa `now_ts` y el header trae `ts`, valida `abs(now_ts - ts) <= tolerance`.
   - **`app/api/v1/routes.py`** —
-    - `activate_support_mode` (POST `/me/support-mode/{tenant_id}`): nueva `dependencies=[Depends(require_mfa_for_privileged)]` en el decorator del endpoint. Cross-tenant opt-in ahora requiere MFA confirmado.
-    - `deactivate_support_mode` (DELETE): lee el cookie ANTES del audit; `audit_durably(...)` solo se invoca cuando `cookie.tid == path tenant_id AND cookie.sub == actor_id`. Sin esto cualquier auth user podía polucionar el audit log del tenant víctima con falsas deactivations (RLS solo exige tenant match, no rol del actor).
-    - `mark_tenant_go_live` (POST `/v1/tenants/{tenant_id}/go-live`): nuevo DB-check explícito que el actor tenga row con `utr.role = 'owner'` en `app.user_tenant_roles` para el `tenant_id` target. Bypass de `platform_owner` / `support_mode` ahora explícitamente rechazado con 403 + mensaje claro al operador.
-    - Import nuevo: `unpack_signed_payload` desde `app.core.signed_cookies`.
-  - **`tests/test_fix_group_36_static.py`** — 5 tests defensivos cubriendo los 4 bugs.
-  - **`docs/UI_BACKLOG.md`** — entradas BUG-197..200 marcadas DONE.
+    - Handlers de `/webhooks/payments` (línea 8909) y `/webhooks/subscriptions` (línea 9071): inicializan `webhook_now_ts = int(datetime.now(UTC).timestamp())` y lo pasan a `verify_stripe_signature(now_ts=...)` y `verify_mercadopago_signature(now_ts=...)`.
+    - Handler de `/webhooks/meta/{provider}` (línea 12598): después de `normalize_messenger_events(...)`, extrae `signed_channel_recipient_id` del channel (`instagram_account_id`/`page_id`). Por cada `event` con mismatch, audita `webhook.recipient_id_mismatch` y `continue`. Patrón análogo a TASK-0081/BUG20.
+  - **`tests/test_fix_group_37_static.py`** — 4 tests defensivos cubriendo los 2 bugs.
+  - **`docs/UI_BACKLOG.md`** — entradas BUG-201, BUG-202 marcadas DONE.
 - **Validaciones:**
-  - `.venv/bin/pytest tests/test_fix_group_36_static.py -v` → 5 passed.
-  - `.venv/bin/ruff check app/core/security.py app/api/v1/routes.py` → All checks passed.
-  - Cero regresiones nuevas en `tests/test_security.py` / `tests/test_mfa_enforcement.py` (5 fallas pre-existentes en develop por config de JWT HS256 vs RS256, no relacionadas a este PR).
+  - `.venv/bin/pytest tests/test_fix_group_37_static.py -v` → 4 passed.
+  - `.venv/bin/pytest tests/ -k "payment_webhook or subscription_webhook or stripe or mercadopago or messenger"` → 54 passed, 0 regresiones.
+  - `.venv/bin/ruff check app/services/payment_provider.py app/api/v1/routes.py` → All checks passed.
 - **Notas de seguridad:**
-  - El revocation check (BUG-199) hace una DB query extra por request autenticado. Overhead ~1ms (indexed lookup por `id` text PK). Fail-open por availability — si pool down, request pasa; el próximo retry re-checkea. La row solo existe si el user hit `/me/sessions` previamente; users que nunca abrieron el listado no tienen row → check pasa (correcto: revocación solo aplica a sesiones que el user registró conscientemente).
-  - El DB-check de go-live (BUG-200) preserva el `platform_owner` global rol pero rechaza el bypass específico para esta transición de lifecycle. Si un platform_owner necesita marcar go-live para un tenant donde no es owner, debe escalarlo al tenant owner.
-  - BUG-198 fix preserva el cookie-delete del response (`response.delete_cookie(...)` se ejecuta ANTES del audit gate) — el flow de UI es idempotente, el cookie se borra siempre aunque el audit no se escriba.
+  - El tolerance default (300s = 5 min) está alineado con la recomendación oficial de Stripe. MP no documenta un tolerance estándar; 5 min es razonable y suficiente para clock skew entre proxy y app sin abrir ventana de replay.
+  - Cuando el header MP no trae `ts`, el verifier hace fallback al raw payload digest (backward compat). En ese fallback no se valida freshness — el caller debe decidir si rechazar webhooks sin ts (no implementado en este fix-group).
+  - El audit `webhook.recipient_id_mismatch` es informativo — permite que el operador detecte attempted tenant mixing en el dashboard de Codex Security.
 
 ### SEC-010-EXPORT-FU — Endpoint contact-scoped para extracto de consent ledger
 

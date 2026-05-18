@@ -242,12 +242,22 @@ def verify_mercadopago_signature(
     *,
     request_id: str | None = None,
     data_id: str | None = None,
+    tolerance_seconds: int = 300,
+    now_ts: int | None = None,
 ) -> bool:
     """Verify MercadoPago webhook signature using HMAC-SHA256.
 
     Newer MP webhooks include `x-signature` like "ts=1700,v1=<hex>". The
     signed manifest is `id:<data_id>;request-id:<request_id>;ts:<ts>;` when
     available, otherwise we fall back to verifying the raw payload digest.
+
+    BUG-201 (codex HIGH): cuando el caller pasa `now_ts`, exigimos que
+    `abs(now_ts - ts) <= tolerance_seconds` (default 5 min, mismo que
+    Stripe). Antes el campo `ts` se usaba solo para construir el manifest
+    de firma pero nunca se validaba su freshness — un webhook MP firmado
+    válido se podía replayear indefinidamente. Cuando `ts` no está
+    presente y caemos al fallback (firma del payload raw), no podemos
+    validar freshness — el caller decide si rechazar el webhook entero.
     """
     if not secret or not signature_header:
         return False
@@ -260,6 +270,14 @@ def verify_mercadopago_signature(
     ts = parts.get('ts')
     if not expected_hex:
         return False
+    # BUG-201: enforce freshness when now_ts is supplied.
+    if now_ts is not None and ts:
+        try:
+            ts_int = int(ts)
+        except ValueError:
+            return False
+        if abs(now_ts - ts_int) > tolerance_seconds:
+            return False
     candidates: list[str] = []
     if ts and data_id and request_id:
         candidates.append(f'id:{data_id};request-id:{request_id};ts:{ts};')

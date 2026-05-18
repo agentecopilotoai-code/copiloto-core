@@ -8990,6 +8990,11 @@ async def receive_payment_webhook(
             status_code=503,
             detail='payment.webhook_unconfigured',
         )
+    # BUG-201 (codex HIGH): pasar `now_ts` a los verifiers para que
+    # rechacen firmas viejas (replay window = 5 min default). Sin esto, un
+    # atacante con cualquier webhook signed payload válido capturado podía
+    # replayearlo indefinidamente para forzar transiciones de payment_status.
+    webhook_now_ts = int(datetime.now(UTC).timestamp())
     if normalized_provider == 'mercadopago':
         sig_header = request.headers.get('x-signature')
         request_id = request.headers.get('x-request-id')
@@ -8998,11 +9003,14 @@ async def receive_payment_webhook(
         if isinstance(data, dict):
             data_id = data.get('id')
         signature_ok = verify_mercadopago_signature(
-            body, sig_header, secret, request_id=request_id, data_id=str(data_id) if data_id else None,
+            body, sig_header, secret,
+            request_id=request_id,
+            data_id=str(data_id) if data_id else None,
+            now_ts=webhook_now_ts,
         )
     else:
         sig_header = request.headers.get('stripe-signature')
-        signature_ok = verify_stripe_signature(body, sig_header, secret)
+        signature_ok = verify_stripe_signature(body, sig_header, secret, now_ts=webhook_now_ts)
     if not signature_ok:
         # SEC-010 fix: ver comentario sobre `audit_durably` arriba.
         await audit_durably(
@@ -9152,6 +9160,9 @@ async def receive_subscription_webhook(
             status_code=503,
             detail='payment.webhook_unconfigured',
         )
+    # BUG-201: ver comentario en el handler de payments arriba — mismo fix
+    # de freshness para subscription webhooks (replay window 5 min).
+    webhook_now_ts = int(datetime.now(UTC).timestamp())
     if normalized_provider == 'mercadopago':
         sig_header = request.headers.get('x-signature')
         request_id = request.headers.get('x-request-id')
@@ -9160,11 +9171,14 @@ async def receive_subscription_webhook(
         if isinstance(data, dict):
             data_id = data.get('id')
         signature_ok = verify_mercadopago_signature(
-            body, sig_header, secret, request_id=request_id, data_id=str(data_id) if data_id else None,
+            body, sig_header, secret,
+            request_id=request_id,
+            data_id=str(data_id) if data_id else None,
+            now_ts=webhook_now_ts,
         )
     else:
         sig_header = request.headers.get('stripe-signature')
-        signature_ok = verify_stripe_signature(body, sig_header, secret)
+        signature_ok = verify_stripe_signature(body, sig_header, secret, now_ts=webhook_now_ts)
     if not signature_ok:
         # SEC-010 fix: ver comentario sobre `audit_durably` arriba.
         await audit_durably(
@@ -12732,8 +12746,42 @@ async def receive_messenger_webhook(
     )
 
     events = normalize_messenger_events(provider, payload)
+    # BUG-202 (codex HIGH, análogo a TASK-0081/BUG20 en WhatsApp): la firma
+    # se verificó contra el channel resuelto a partir del PRIMER recipient_id
+    # del payload. Cada `event.recipient_id` lleva el page_id / ig_account_id
+    # destinatario; si difiere del channel resuelto, hay que dropear el evento
+    # — sino un payload mixto podría firmar válido (gracias al primer
+    # recipient) y bindear mensajes de OTRO tenant a este channel.
+    signed_channel_recipient_id = (
+        channel['instagram_account_id']
+        if provider == 'instagram_messenger'
+        else channel['page_id']
+    )
+    signed_channel_recipient_id = (
+        str(signed_channel_recipient_id) if signed_channel_recipient_id else None
+    )
     window_hours = int(channel['service_window_hours'] or 24)
     for event in events:
+        if (
+            signed_channel_recipient_id
+            and event.recipient_id
+            and str(event.recipient_id) != signed_channel_recipient_id
+        ):
+            await audit(
+                conn,
+                tenant_id=channel['tenant_id'],
+                actor_type='system',
+                actor_id=None,
+                action='webhook.recipient_id_mismatch',
+                entity_type='tenant_channel',
+                entity_id=str(channel['id']),
+                metadata={
+                    'provider': provider,
+                    'signed_recipient_id': signed_channel_recipient_id,
+                    'event_recipient_id': str(event.recipient_id),
+                },
+            )
+            continue
         contact = await _upsert_messenger_contact(
             conn,
             tenant_id=channel['tenant_id'],
