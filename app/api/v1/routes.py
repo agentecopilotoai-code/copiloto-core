@@ -2157,10 +2157,19 @@ async def invite_tenant_member(
 
     auth0_result: dict[str, Any] = {'disabled': True}
     if not existing or (auth_subject and auth_subject.startswith('pending|')):
-        # New user — create a fresh Auth0 identity and issue a ticket keyed by
-        # user_id (TASK-0085 / BUG06). If the email is already taken in Auth0
-        # we refuse with 409 instead of issuing a reset ticket that would land
-        # in the inbox of an unrelated account.
+        # New user en NUESTRA DB — invite_user crea o reutiliza la cuenta
+        # Auth0 (BUG-013):
+        #   - Email NO existe en Auth0: crea cuenta nueva + emite ticket
+        #     password-change (TASK-0085 / BUG06) → Auth0 manda email de
+        #     bienvenida.
+        #   - Email YA existe (caso central SaaS multi-tenant: agente que
+        #     trabaja para varias empresas): lookup por email, reutiliza
+        #     user_id, attachea rol al nuevo tenant. NO emite ticket — el
+        #     user ya tiene credenciales. invite_user devuelve
+        #     `reused_existing=True` para que el frontend muestre UX
+        #     apropiada (agregado vs. invitado).
+        # invite_user solo raisea Auth0UserAlreadyExists cuando incluso el
+        # lookup falla (Auth0 retorna [] o 5xx) — caso operativo real.
         try:
             auth0_result = await auth0_invite_user(
                 email=email,
@@ -2171,8 +2180,9 @@ async def invite_tenant_member(
         except Auth0UserAlreadyExists:
             raise HTTPException(
                 status_code=409,
-                detail='An Auth0 user with this email already exists; ask them '
-                'to log in so we can attach them to this tenant.',
+                detail='Auth0 reportó que el email ya existe pero el lookup '
+                'subsecuente no pudo localizarlo. Revisar el dashboard Auth0 '
+                '(posible duplicado en otra connection) o reintentar.',
             )
         except Exception as exc:  # noqa: BLE001 - log and continue without Auth0
             log.warning('tenant_member.auth0_invite_failed', error=str(exc))
@@ -2238,6 +2248,10 @@ async def invite_tenant_member(
         'disabled': bool(auth0_result.get('disabled')),
         'invited': bool(auth0_result.get('invited')),
         'auth0_user_id': auth0_result.get('auth0_user_id'),
+        # BUG-013: flag para que el frontend muestre "Agregado al tenant"
+        # (con texto explicando que el user ya tenía cuenta y NO se le mandó
+        # email) en lugar de "Invitación enviada".
+        'reused_existing': bool(auth0_result.get('reused_existing')),
     }
     if auth0_result.get('error'):
         safe_auth0['error'] = auth0_result['error']

@@ -109,9 +109,30 @@ def _parse_payload(raw: object) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _record_get(obj: Any, key: str, default: Any = None) -> Any:
+    """BUG-016: dict.get-equivalente que funciona para dict Y para asyncpg.Record.
+
+    Antes (broken): un guard de tipo isinstance-dict-only retornaba False para
+    asyncpg.Record (no es subclass de dict desde asyncpg >= 0.21). Como los
+    rows del webhook llegan como Records desde `await conn.fetchrow(...)`,
+    cualquier extracción de keys via guard de dict caía al default — el
+    orchestrator nunca detectaba el "Acepto" del usuario y re-enviaba el
+    consent prompt en loop infinito.
+
+    Records soportan `record[key]` (subscript). Usamos try/except para devolver
+    el default cuando la key no existe (Record raisea KeyError igual que dict).
+    """
+    if obj is None:
+        return default
+    try:
+        return obj[key]
+    except (KeyError, TypeError):
+        return default
+
+
 def _interactive_id(inbound_message: Any) -> str | None:
     """Return the ``interactive_id`` carried by an inbound interactive reply."""
-    payload = _parse_payload(inbound_message.get('payload') if isinstance(inbound_message, dict) else None)
+    payload = _parse_payload(_record_get(inbound_message, 'payload'))
     interactive_id = payload.get('interactive_id')
     return interactive_id if isinstance(interactive_id, str) else None
 
@@ -296,10 +317,16 @@ async def enforce_inbound_consent(
         * ``None`` when consent was already granted previously and the
           orchestrator should proceed with the normal flow.
     """
-    opt_in = (contact.get('opt_in_status') if isinstance(contact, dict) else None) or 'unknown'
+    # BUG-016: asyncpg.Record NO es subclass de dict, así que un guard de
+    # isinstance-dict-only retorna False para los rows que vienen del webhook.
+    # Sin _record_get, opt_in caía siempre a 'unknown' (default) y el
+    # interactive_id siempre era None — el orchestrator nunca detectaba el
+    # "Acepto" del usuario y re-enviaba el consent prompt en loop infinito,
+    # bloqueando toda conversación nueva del bot.
+    opt_in = _record_get(contact, 'opt_in_status') or 'unknown'
     contact_id = contact['id']
     conversation_id = conversation['id']
-    inbound_payload = _parse_payload(inbound_message.get('payload') if isinstance(inbound_message, dict) else None)
+    inbound_payload = _parse_payload(_record_get(inbound_message, 'payload'))
     interactive_id = inbound_payload.get('interactive_id') if isinstance(inbound_payload, dict) else None
 
     # Consent reply ─ "Acepto" / "No acepto".
@@ -463,8 +490,12 @@ async def record_opt_out_by_keyword(
     raw text as ``copy_shown`` so the audit trail keeps the exact words the
     customer used.
     """
-    body = inbound_message['body_text'] if isinstance(inbound_message, dict) else ''
-    body = body or ''
+    # BUG-016: usar _record_get para que funcione con asyncpg.Record también
+    # (no solo dict). El intent classifier puede llamarse desde un path donde
+    # el inbound_message viene del webhook como Record — sin esto, el body
+    # quedaría '' y el opt_out keyword no registraría el texto exacto del
+    # cliente en el ledger.
+    body = _record_get(inbound_message, 'body_text') or ''
     return await record_consent_event(
         conn,
         tenant_id=tenant_id,
