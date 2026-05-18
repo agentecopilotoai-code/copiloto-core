@@ -40,7 +40,7 @@ import styles from './GoLiveReadiness.module.css';
  *
  * @param {{ module: object, session: object, tenant: object }} props
  */
-export function GoLiveReadiness({ module, session, tenant }) {
+export function GoLiveReadiness({ module, session, tenant, onGoToEscalation }) {
   const { profile } = useTenantContext();
   const permissions = usePermissions({ profile, tenant });
 
@@ -51,12 +51,13 @@ export function GoLiveReadiness({ module, session, tenant }) {
         permissions={permissions}
         session={session}
         tenant={tenant}
+        onGoToEscalation={onGoToEscalation}
       />
     </RequirePermission>
   );
 }
 
-function GoLiveReadinessContent({ module, permissions, session, tenant }) {
+function GoLiveReadinessContent({ module, permissions, session, tenant, onGoToEscalation }) {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -64,6 +65,9 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
   const [markLiveTone, setMarkLiveTone] = useState('success');
   const [markLiveReasons, setMarkLiveReasons] = useState([]);
   const [marking, setMarking] = useState(false);
+  // BUG-094: token de reload — bumpea para forzar re-fetch del readiness
+  // sin que el operador tenga que reload completo de la página.
+  const [reloadToken, setReloadToken] = useState(0);
   const confirm = useConfirm();
 
   useEffect(() => {
@@ -89,7 +93,7 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenant?.id]);
+  }, [tenant?.id, reloadToken]);
 
   const grouped = useMemo(
     () => (report ? groupChecksBySection(report.checks) : []),
@@ -173,6 +177,17 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
         }
         actions={
           <div className={styles.headerActions}>
+            {/* BUG-094: refresh manual del checklist. Sin esto, el operador
+              tenía que recargar la página completa para ver si un fix
+              hecho en otra pestaña ya pasó el check. */}
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={() => setReloadToken((t) => t + 1)}
+              disabled={loading || !tenant?.id}
+            >
+              {loading ? 'Actualizando…' : 'Refrescar'}
+            </button>
             <button
               type="button"
               className={styles.secondaryButton}
@@ -282,7 +297,11 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
       {report && grouped.length > 0 ? (
         <div className={styles.sectionList}>
           {grouped.map((group) => (
-            <SectionCard group={group} key={group.section.id} />
+            <SectionCard
+              group={group}
+              key={group.section.id}
+              onGoToEscalation={onGoToEscalation}
+            />
           ))}
         </div>
       ) : null}
@@ -290,7 +309,7 @@ function GoLiveReadinessContent({ module, permissions, session, tenant }) {
   );
 }
 
-function SectionCard({ group }) {
+function SectionCard({ group, onGoToEscalation }) {
   const complete = group.passed === group.total;
   const badgeClass = `${styles.sectionBadge} ${complete ? styles['sectionBadge--complete'] : styles['sectionBadge--partial']}`;
   return (
@@ -306,7 +325,11 @@ function SectionCard({ group }) {
         </div>
         <ul className={styles.checkList}>
           {group.checks.map((check) => (
-            <CheckRow check={check} key={check.key} />
+            <CheckRow
+              check={check}
+              key={check.key}
+              onGoToEscalation={onGoToEscalation}
+            />
           ))}
         </ul>
       </div>
@@ -314,9 +337,18 @@ function SectionCard({ group }) {
   );
 }
 
-function CheckRow({ check }) {
+// BUG-093: checks que linkean a la pestaña Escalation del wizard. Si están
+// pending y el outer pasa onGoToEscalation, se muestra el CTA "Ir a
+// Escalamiento" para que el operador remedie en un click.
+const ESCALATION_CHECK_KEYS = new Set(['handoff', 'policy_engine']);
+
+function CheckRow({ check, onGoToEscalation }) {
   const detailText = formatCheckDetails(check.details);
   const iconClass = `${styles.checkIcon} ${check.ready ? styles['checkIcon--ready'] : styles['checkIcon--pending']}`;
+  const showEscalationCta =
+    !check.ready
+    && typeof onGoToEscalation === 'function'
+    && ESCALATION_CHECK_KEYS.has(check.key);
   return (
     <li className={styles.checkRow} data-ready={check.ready ? 'true' : 'false'}>
       <span className={iconClass} aria-hidden="true">
@@ -326,6 +358,15 @@ function CheckRow({ check }) {
         <span className={styles.checkLabel}>{check.label}</span>
         {check.reason ? <p className={styles.checkReason}>{check.reason}</p> : null}
         {detailText ? <span className={styles.checkDetails}>{detailText}</span> : null}
+        {showEscalationCta ? (
+          <button
+            type="button"
+            className={styles.checkRemediation}
+            onClick={onGoToEscalation}
+          >
+            Ir a Escalamiento
+          </button>
+        ) : null}
       </div>
     </li>
   );

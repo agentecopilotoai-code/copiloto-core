@@ -68,6 +68,10 @@ export function ToastProvider({ children }) {
   const dismiss = useCallback(
     (id) => {
       clearTimer(id);
+      // BUG-095: filtrar queueRef también. Antes dismiss(id) solo eliminaba
+      // del array visible; si el id estaba en cola (sin promover aún),
+      // seguía ahí y aparecía después como si nunca hubieras cancelado.
+      queueRef.current = queueRef.current.filter((toast) => toast.id !== id);
       // Drain the queue inside the same state update so the promotion
       // commits together with the removal — robust under fake timers
       // (no reliance on microtasks).

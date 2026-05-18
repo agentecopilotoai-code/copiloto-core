@@ -83,7 +83,12 @@ export function TenantShell({
           // cookie temporal BUG-008) — exactamente el caso de uso.
           actions={permissions?.isSystemOwner ? <BackToPlatformButton /> : null}
         />
-        <ErrorBoundary>{children}</ErrorBoundary>
+        {/* BUG-097: key={activeModuleId} fuerza unmount/remount del
+          ErrorBoundary al navegar entre módulos. Sin el key, el `error`
+          capturado en módulo A persistía al abrir módulo B → React
+          mostraba el mismo fallback aunque el módulo nuevo nada tenía
+          que ver con el error. */}
+        <ErrorBoundary key={activeModuleId}>{children}</ErrorBoundary>
       </main>
       <ShellBottomNav
         navGroups={navGroups}
