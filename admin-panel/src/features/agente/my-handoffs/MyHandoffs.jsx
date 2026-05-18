@@ -90,7 +90,19 @@ export function MyHandoffs({ module, session, tenant }) {
               isBusy={state.isBusy}
               onFilterChange={actions.setHandoffFilter}
               onSelectConversation={actions.setSelectedConversationId}
-              onTakeHandoff={actions.setSelectedConversationId}
+              // BUG-019: antes este handler era setSelectedConversationId →
+              // el botón "Tomar" del card solo SELECCIONABA la row (sin
+              // signal visual claro). El usuario clickeaba esperando tomar
+              // el handoff y "no pasaba nada" — el accept real estaba en el
+              // SEGUNDO botón "Tomar handoff" del panel derecho.
+              // Fix: el botón ahora hace ambas cosas — selecciona la row
+              // (para que el panel derecho refleje el handoff actual) Y
+              // accept-ea directamente vía `acceptHandoff(id)` con id
+              // explícito (no depende del state que aún no se actualizó).
+              onTakeHandoff={(id) => {
+                actions.setSelectedConversationId(id);
+                actions.acceptHandoff(id);
+              }}
             />
 
             <Card padding="md" className={styles.detail}>
