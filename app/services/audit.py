@@ -34,7 +34,13 @@ async def audit(
         action,
         entity_type,
         entity_id,
-        json.dumps(metadata or {}),
+        # BUG-041: `default=str` para que UUIDs, datetimes y otros tipos
+        # no-JSON-native se serialicen como strings en lugar de revientar
+        # con TypeError. Antes, `go-live` auditaba metadata con `checks`
+        # que incluían UUIDs y el primer go-live exitoso reventaba el
+        # audit log (sin rollback porque la TX ya había commiteado el
+        # update, dejando auditoría incompleta).
+        json.dumps(metadata or {}, default=str),
     )
 
 
@@ -131,7 +137,13 @@ async def audit_durably(
                 action,
                 entity_type,
                 entity_id,
-                json.dumps(metadata or {}),
+                # BUG-041: `default=str` para que UUIDs, datetimes y otros tipos
+        # no-JSON-native se serialicen como strings en lugar de revientar
+        # con TypeError. Antes, `go-live` auditaba metadata con `checks`
+        # que incluían UUIDs y el primer go-live exitoso reventaba el
+        # audit log (sin rollback porque la TX ya había commiteado el
+        # update, dejando auditoría incompleta).
+        json.dumps(metadata or {}, default=str),
             )
     except Exception:  # noqa: BLE001 — best-effort durably-audit; no debe romper el caller
         logger.exception(

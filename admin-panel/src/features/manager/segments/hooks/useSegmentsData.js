@@ -40,6 +40,10 @@ export function useSegmentsData({ session, tenant }) {
 
   const [segments, setSegments] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  // BUG-039: editingId trackea la fila que se está editando, no selectedId.
+  // El botón "Editar" funciona sobre cualquier fila — sin esto, submit
+  // pisaba la fila seleccionada en vez de la editada.
+  const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [formMode, setFormMode] = useState('create');
   const [form, setForm] = useState(emptySegmentForm);
@@ -80,10 +84,14 @@ export function useSegmentsData({ session, tenant }) {
       setShowForm(false);
       setPreview(null);
     },
-    closeForm: () => setShowForm(false),
+    closeForm: () => {
+      setShowForm(false);
+      setEditingId(null);  // BUG-039.
+    },
     startCreate() {
       setFormMode('create');
       setForm(emptySegmentForm());
+      setEditingId(null);  // BUG-039.
       setPreview(null);
       setShowForm(true);
     },
@@ -91,6 +99,7 @@ export function useSegmentsData({ session, tenant }) {
       if (!segment) return;
       setFormMode('edit');
       setForm(formFromSegment(segment));
+      setEditingId(segment.id);  // BUG-039: trackear el id real editado.
       setPreview(null);
       setShowForm(true);
     },
@@ -138,11 +147,13 @@ export function useSegmentsData({ session, tenant }) {
         if (formMode === 'create') {
           saved = await createContactSegment(session, tenantId, payload);
         } else {
-          saved = await updateContactSegment(session, tenantId, selectedId, payload);
+          // BUG-039: usar editingId, no selectedId.
+          saved = await updateContactSegment(session, tenantId, editingId, payload);
         }
         setNotice({ type: 'success', text: 'Segmento guardado.' });
         await refreshSegments();
         setSelectedId(saved.id);
+        setEditingId(null);
         setShowForm(false);
       } catch (err) {
         setNotice({ type: 'error', text: err.message });

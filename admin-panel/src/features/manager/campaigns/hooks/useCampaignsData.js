@@ -34,6 +34,10 @@ export function useCampaignsData({ session, tenant }) {
   const [availableTags, setAvailableTags] = useState([]);
   const [segments, setSegments] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  // BUG-038: editingId es distinto de selectedId. Editar una fila no
+  // seleccionada NO debe usar selectedId en el update — usaba la id vieja
+  // y pisaba la otra campaña. Reset a null en startCreate/closeForm.
+  const [editingId, setEditingId] = useState(null);
   const [notice, setNotice] = useState(null);
   const [isBusy, setIsBusy] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -98,10 +102,14 @@ export function useCampaignsData({ session, tenant }) {
       setShowForm(false);
       setPreview(null);
     },
-    closeForm: () => setShowForm(false),
+    closeForm: () => {
+      setShowForm(false);
+      setEditingId(null);  // BUG-038: clear edit target on cancel.
+    },
     startCreate() {
       setFormMode('create');
       setForm(emptyCampaignForm());
+      setEditingId(null);  // BUG-038: create no debe arrastrar editingId previo.
       setPreview(null);
       setShowForm(true);
     },
@@ -109,6 +117,13 @@ export function useCampaignsData({ session, tenant }) {
       if (!campaign) return;
       setFormMode('edit');
       setForm(formFromCampaign(campaign));
+      // BUG-038: trackear el id de la fila que se está editando, no
+      // depender de `selectedId`. La tabla permite click en "Editar" sobre
+      // CUALQUIER fila (no solo la seleccionada — el handler hace
+      // event.stopPropagation), así que `selectedId` puede apuntar a una
+      // fila distinta. Sin esto, `submit()` llamaba updateCampaign con el
+      // `selectedId` viejo y pisaba la otra campaña con el form de ésta.
+      setEditingId(campaign.id);
       setPreview(null);
       setShowForm(true);
     },
@@ -133,11 +148,14 @@ export function useCampaignsData({ session, tenant }) {
         if (formMode === 'create') {
           saved = await createCampaign(session, tenantId, payload);
         } else {
-          saved = await updateCampaign(session, tenantId, selectedId, payload);
+          // BUG-038: usar editingId (id de la fila que se está editando),
+          // no selectedId (id de la fila seleccionada — puede ser otra).
+          saved = await updateCampaign(session, tenantId, editingId, payload);
         }
         setNotice({ type: 'success', text: 'Campaña guardada.' });
         await refreshCampaigns();
         setSelectedId(saved.id);
+        setEditingId(null);
         setShowForm(false);
       } catch (err) {
         setNotice({ type: 'error', text: err.message });
