@@ -73,7 +73,17 @@ export function FleetDlq() {
 
   function enterTenant(tenant) {
     if (!tenant?.slug) return;
-    handleTenantCreated?.({ ...tenant, label: `${tenant.slug} · ${tenant.tenant_id}` });
+    // BUG-118: las rows del fleet DLQ vienen con `tenant_id` (no `id`).
+    // `handleTenantCreated` indexa `tenantOptions` por `option.id`, así que
+    // pasar solo el spread guardaba `{id: undefined, tenant_id: '...', ...}`
+    // y downstream que leía `tenant.id` rompía. Mapeamos explícitamente
+    // `id: tenant.tenant_id` para que TenantProvider y el selector reciban
+    // la shape esperada.
+    handleTenantCreated?.({
+      ...tenant,
+      id: tenant.tenant_id,
+      label: `${tenant.slug} · ${tenant.tenant_id}`,
+    });
     navigate(`/t/${tenant.slug}`);
   }
 

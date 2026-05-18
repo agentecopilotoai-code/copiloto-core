@@ -1309,10 +1309,18 @@ async def platform_billing_mrr(
                  coalesce(cs.price_locked_currency, sp.currency), sp.billing_period
         """
     )
+    # BUG-120: antes filtrábamos `where sp.status = 'active'`, lo que ocultaba
+    # los planes archivados que todavía tenían suscriptores activos pagando —
+    # `archive` es forward-only (no cancela contracts existentes), así que el
+    # MRR de esos planes seguía facturándose pero no aparecía en el breakdown.
+    # Mostramos todos los planes que tienen al menos 1 suscriptor activo o
+    # past_due, sin importar el status del plan. El plan_status se incluye
+    # para que la UI pueda decorar visualmente los archivados.
     plan_rows = await conn.fetch(
         """
         select
             sp.name as plan_name,
+            sp.status as plan_status,
             sp.billing_period,
             sp.currency,
             count(cs.id) filter (where cs.status = 'active') as active_subscriptions,
@@ -1321,8 +1329,8 @@ async def platform_billing_mrr(
                 filter (where cs.status = 'active') as price_sum
         from app.subscription_plans sp
         left join app.contact_subscriptions cs on cs.plan_id = sp.id
-        where sp.status = 'active'
-        group by sp.name, sp.billing_period, sp.currency
+        group by sp.name, sp.status, sp.billing_period, sp.currency
+        having count(cs.id) filter (where cs.status in ('active', 'past_due')) > 0
         """
     )
     country_rows = await conn.fetch(
@@ -1393,6 +1401,9 @@ async def platform_billing_mrr(
     for row in plan_rows:
         mrr_by_plan.append({
             'plan_name': row['plan_name'],
+            # BUG-120: el frontend decora visualmente los planes archivados
+            # que todavía tienen subs activas (status badge).
+            'plan_status': row['plan_status'],
             'billing_period': row['billing_period'],
             'currency': row['currency'],
             'active_subscriptions': int(row['active_subscriptions'] or 0),
@@ -1570,7 +1581,11 @@ async def platform_incidents_feed(
                 or row['tenant_slug']
             ),
             'tenant_slug': row['tenant_slug'],
-            'payload': payload if isinstance(payload, dict) else {},
+            # BUG-119: redactar PII (contact_phone/contact_name/recipient_email,
+            # canales del operador) antes de devolver al platform_owner.
+            'payload': platform_incidents.redact_incident_payload(
+                payload if isinstance(payload, dict) else {}
+            ),
             'attempts': int(row['attempts'] or 0),
             'last_error': row['last_error'],
             'scheduled_for': row['scheduled_for'],

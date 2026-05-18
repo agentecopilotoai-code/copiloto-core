@@ -321,9 +321,18 @@ def collect_health_snapshot() -> dict:
 
     inbound = sum(v for (direction, _s), v in messages.items() if direction == 'inbound')
     outbound = sum(v for (direction, _s), v in messages.items() if direction == 'outbound')
+    # BUG-122: `rejected` (mensajes rechazados deliberadamente — ventana
+    # expirada, opt-out, validación de plantilla fallida) NO es lo mismo que
+    # `failed` (error transitorio / rate-limit / 5xx). Antes los bundleabamos
+    # → `outbound_error_rate` inflado, alertas falsas de `HighOutboundErrorRate`.
+    # Ahora contamos `failed` solo y exponemos `rejected` aparte para visibilidad.
     outbound_failed = sum(
         v for (direction, status), v in messages.items()
-        if direction == 'outbound' and status in ('failed', 'rejected')
+        if direction == 'outbound' and status == 'failed'
+    )
+    outbound_rejected = sum(
+        v for (direction, status), v in messages.items()
+        if direction == 'outbound' and status == 'rejected'
     )
 
     llm_total = sum(llm.values())
@@ -334,6 +343,10 @@ def collect_health_snapshot() -> dict:
             'inbound': int(inbound),
             'outbound': int(outbound),
             'outbound_failed': int(outbound_failed),
+            # BUG-122: rejected expuesto aparte. `outbound_error_rate` ya no
+            # los cuenta; el operator igual los ve para diagnóstico de opt-out
+            # / templates rechazadas, sin paginar al on-call.
+            'outbound_rejected': int(outbound_rejected),
             'outbound_error_rate': (outbound_failed / outbound) if outbound else 0.0,
         },
         'response_latency': {
@@ -397,11 +410,27 @@ def evaluate_health_alerts(snapshot: dict) -> list[dict]:
         })
 
     for worker in snapshot['workers']:
-        if worker['queue_depth'] > 1000:
+        queue_depth = worker['queue_depth']
+        if queue_depth > 1000:
             alerts.append({
                 'name': 'WorkerQueueBacklog',
                 'severity': 'page',
                 'summary': f"Cola del worker {worker['worker']} > 1000 elementos.",
+                'runbook_url': 'docs/runbooks/worker-queue-backlog.md',
+            })
+        elif queue_depth > 100:
+            # BUG-121: alerta warning intermedia. Antes solo paginábamos al
+            # cruzar 1000; el rango 101-1000 quedaba silente aunque indica
+            # que el scheduler está atrasado y la SLO de delivery se va a
+            # romper si no se atiende. Severidad `warning` → notificación
+            # pero no page del on-call.
+            alerts.append({
+                'name': 'SchedulerBehind',
+                'severity': 'warning',
+                'summary': (
+                    f"Cola del worker {worker['worker']} entre 101 y 1000 "
+                    f"elementos ({int(queue_depth)}) — scheduler atrasado."
+                ),
                 'runbook_url': 'docs/runbooks/worker-queue-backlog.md',
             })
 

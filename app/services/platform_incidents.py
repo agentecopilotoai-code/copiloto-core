@@ -51,6 +51,75 @@ def is_open(status: str | None) -> bool:
     return (status or '') in OPEN_STATUSES
 
 
+# BUG-119: keys del payload de `operator_alerts` que pueden cargar PII de
+# contactos o canales de notificación. Se enmascaran antes de servir el feed
+# al platform_owner (que tiene MFA pero NO debería ver PII de clientes ni
+# emails/whatsapp de operadores fuera de su scope inmediato).
+_PII_PAYLOAD_KEYS = frozenset({
+    'contact_phone',
+    'contact_phone_e164',
+    'contact_name',
+    'contact_display_name',
+    'contact_email',
+    'recipient_email',
+    'recipient_whatsapp',
+    'recipient_phone',
+    'phone',
+    'email',
+    'whatsapp',
+})
+
+
+def _redact_value(value: object) -> str:
+    """Sustituye un valor sensible por un placeholder con su longitud original
+    (útil para que el operador sepa que había data, sin exponer el contenido).
+    """
+    if value is None:
+        return '[redacted]'
+    text = str(value)
+    if not text:
+        return '[redacted]'
+    return f'[redacted len={len(text)}]'
+
+
+def redact_incident_payload(payload: dict | None) -> dict:
+    """Enmascara PII y canales de notificación del payload de un operator_alert
+    antes de devolverlo en el feed `/platform/incidents`.
+
+    Reglas:
+    - Cualquier key en `_PII_PAYLOAD_KEYS` se reemplaza por `[redacted len=N]`.
+    - `channels` se reduce a `{'email_count': N, 'whatsapp_count': M}` para no
+      exponer los emails/whatsapp del operador.
+    - Se recurse en dicts anidados; listas se mapean elemento a elemento.
+    - Otros tipos pasan tal cual.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    redacted: dict = {}
+    for key, value in payload.items():
+        if key == 'channels' and isinstance(value, dict):
+            email_count = len(value.get('emails') or [])
+            whatsapp_count = len(value.get('whatsapps') or [])
+            redacted[key] = {
+                'email_count': email_count,
+                'whatsapp_count': whatsapp_count,
+            }
+            continue
+        if key in _PII_PAYLOAD_KEYS:
+            redacted[key] = _redact_value(value)
+            continue
+        if isinstance(value, dict):
+            redacted[key] = redact_incident_payload(value)
+        elif isinstance(value, list):
+            redacted[key] = [
+                redact_incident_payload(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            redacted[key] = value
+    return redacted
+
+
 def summarize_incidents(incidents: list[dict]) -> dict:
     """Aggregate KPI counters from a list of incident dicts.
 
