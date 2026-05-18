@@ -40,8 +40,14 @@ def test_bug_138_widget_snippet_emits_logo_welcome_position():
     block = src[snip_idx:next_def]
     # Los 3 campos extra (logo, welcome, position) deben aparecer como
     # data-* attributes en el snippet generado.
-    assert "f'data-logo=\"{logo_url}\"'" in block, (
-        'BUG-138: el snippet debe emitir `data-logo="…"` cuando llega `logo_url`.'
+    # BUG-138 original: el snippet emite `data-logo="…"`.
+    # BUG-226 (fix-group-43, 2026-05-18): el valor se HTML-escapea (`"`→`&quot;`,
+    # `<`/`>` también) antes de la interpolación para prevenir XSS via
+    # `logo_url=x" onload=...`. La variable usada en la f-string es
+    # `safe_logo`, no `logo_url` raw.
+    assert "f'data-logo=\"{safe_logo}\"'" in block, (
+        'BUG-138 + BUG-226: el snippet debe emitir `data-logo="{safe_logo}"` '
+        'donde `safe_logo` es el `logo_url` con `"`/`<`/`>` HTML-escapados.'
     )
     assert "f'data-welcome=\"{safe}\"'" in block, (
         'BUG-138: el snippet debe emitir `data-welcome="…"` cuando llega `welcome_copy`.'

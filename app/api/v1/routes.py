@@ -3757,7 +3757,14 @@ def _build_widget_snippet(
         safe = greeting.replace('"', '&quot;')
         attrs.append(f'data-greeting="{safe}"')
     if logo_url:
-        attrs.append(f'data-logo="{logo_url}"')
+        # BUG-226 (codex MEDIUM, 2026-05-18): el `greeting` y `welcome_copy`
+        # arriba escapan `"` a `&quot;`, pero `logo_url` se insertaba RAW.
+        # Tenant admin podía persistir `logo_url=x" onload="alert(...)`,
+        # el snippet generado terminaba con un `<script>` con un onload
+        # handler atacante en el origin del tenant site. Cualquier visitor
+        # del site que ejecute el snippet oficial corría el JS del atacante.
+        safe_logo = logo_url.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
+        attrs.append(f'data-logo="{safe_logo}"')
     if welcome_copy:
         safe = welcome_copy.replace('"', '&quot;')
         attrs.append(f'data-welcome="{safe}"')

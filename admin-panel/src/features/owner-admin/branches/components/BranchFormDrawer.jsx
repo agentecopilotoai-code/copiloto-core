@@ -4,6 +4,23 @@ import { OpeningHoursEditor } from './OpeningHoursEditor.jsx';
 import styles from '../Branches.module.css';
 
 /**
+ * BUG-227 (codex MEDIUM, 2026-05-18): scheme allowlist para el `maps_url`
+ * cuando se renderiza como anchor `href={...}`. El backend schema solo
+ * validaba max length — un admin malicioso podía persistir
+ * `maps_url=javascript:alert(document.domain)`. Cuando otro admin
+ * (potencialmente higher-priv) editaba la branch y clickeaba "Abrir
+ * enlace actual", el browser ejecutaba JS en el origin del admin panel
+ * con su sesión activa. `rel="noopener"` no mitiga `javascript:`.
+ */
+function isSafeMapsHref(value) {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return false;
+  // Only http/https + Google Maps shortform (`maps://`) are accepted.
+  return trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('maps://');
+}
+
+/**
  * Create / edit drawer for a branch. Reuses the `Modal` primitive; composes
  * `OpeningHoursEditor` for the per-day schedule. Presentational — all state and
  * the mutation actions come from the `useBranchesData` hook via props. The
@@ -170,7 +187,7 @@ export function BranchFormDrawer({
           >
             Generar desde la dirección
           </button>
-          {form.maps_url ? (
+          {form.maps_url && isSafeMapsHref(form.maps_url) ? (
             <a
               href={form.maps_url}
               target="_blank"
