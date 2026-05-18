@@ -133,12 +133,34 @@ def _session_claim_matches_tenant(session: dict[str, Any], tenant_id: UUID) -> b
 
 
 async def _session_can_stream_tenant(session: dict[str, Any], tenant_id: UUID) -> bool:
+    """Authorize a WS stream subscription with a tenant DB-check.
+
+    BUG-196 (codex HIGH) — históricamente esta función aceptaba el WS stream
+    cuando la sesión cacheada del BFF tenía un claim ``tenant_id`` matching
+    el tenant solicitado (shortcut 2). Problema: cuando un admin revocaba al
+    user via ``revoke_tenant_roles``, el claim ``tenant_id`` del JWT viejo
+    seguía vivo (Auth0 PostLogin Action no se re-ejecuta hasta el próximo
+    login), y la sesión BFF cacheada seguía aceptando WS streams del tenant
+    revocado hasta que la sesión expirara.
+
+    Fix: para acceso por tenant role, **siempre** consultamos
+    ``app.user_tenant_roles`` para confirmar que el ``auth_subject`` del JWT
+    tiene rol ``>= agent`` en el ``tenant_id`` solicitado AHORA. Los claims
+    del JWT y el cache del BFF pueden estar stale; la DB es la única fuente
+    de verdad de membresía por tenant.
+
+    El shortcut de ``support_mode`` SE PRESERVA porque ``platform_owner`` es
+    un rol global de Auth0 (RBAC) — revocarlo requiere un flow distinto
+    (remover de Auth0 RBAC) que también invalida el claim ``support_mode``
+    de la sesión. Si en el futuro agregamos un table ``user_global_roles``
+    para DB-check de platform_owner, este shortcut debería migrar a esa
+    consulta.
+    """
     profile = session.get('profile') or {}
     if profile.get('support_mode') and _has_admin_role(session, 'agent'):
         return True
-    if _session_claim_matches_tenant(session, tenant_id) and _has_admin_role(session, 'agent'):
-        return True
-    if not db.pool or not profile.get('sub'):
+    sub = profile.get('sub')
+    if not db.pool or not sub:
         return False
     async with db.pool.acquire() as conn:
         roles = await conn.fetch(
@@ -148,7 +170,7 @@ async def _session_can_stream_tenant(session: dict[str, Any], tenant_id: UUID) -
             join app.user_tenant_roles utr on utr.user_id = u.id
             where u.auth_subject=$1 and utr.tenant_id=$2
             """,
-            profile['sub'],
+            sub,
             tenant_id,
         )
     return any(_role_at_least(row['role'], 'agent') for row in roles)

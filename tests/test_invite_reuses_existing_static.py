@@ -67,11 +67,21 @@ def test_lookup_helper_respects_auth0_management_enabled():
 
 
 def test_lookup_helper_returns_first_match_or_none():
-    """El endpoint Auth0 retorna un array. Tomamos el primero (Auth0 dedupea
-    en la misma connection). Si está vacío → None."""
+    """El endpoint Auth0 retorna un array. Si está vacío → None. Si hay 1
+    match válido (single + email_verified) lo retornamos.
+
+    BUG-193 (fix-group-35): el patrón anterior `return response[0]` blindly
+    se reemplazó por una validación que (a) levanta `Auth0AmbiguousUserMatch`
+    si `enforce_single` y hay >1 match, y (b) levanta `Auth0UserNotVerified`
+    si `require_email_verified` y el match no tiene `email_verified=true`.
+    El "return del candidato" sigue presente — solo está gateado por los
+    chequeos de seguridad.
+    """
     src = _handler_source('lookup_auth0_user_by_email')
-    assert 'return response[0]' in src
+    # El path "lista vacía → None" sigue presente.
     assert 'return None' in src
+    # El "return del candidato validado" sigue siendo terminal en el happy path.
+    assert 'return candidate' in src or 'return response[0]' in src
 
 
 # ───── invite_user integra el lookup en el catch del 409 ──────────────────

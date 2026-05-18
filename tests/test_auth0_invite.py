@@ -213,7 +213,16 @@ def test_invite_user_reuses_existing_when_email_exists_in_auth0(monkeypatch):
                 '{"statusCode":409,"error":"Conflict","message":"The user already exists."}'
             ),
             # 2) GET /users-by-email → encuentra el user existente (BUG-013 lookup)
-            [{'user_id': 'auth0|existing-user-456', 'email': 'soporte@plataforma.com'}],
+            #    BUG-193: el lookup ahora requiere `email_verified=true` por
+            #    defecto. Sin esto, levanta `Auth0UserNotVerified` (correcto —
+            #    no bindeamos roles a identidades sin verificar). El caso happy
+            #    de reuse SaaS multi-tenant asume que el user existente ya
+            #    confirmó su email cuando fue invitado al primer tenant.
+            [{
+                'user_id': 'auth0|existing-user-456',
+                'email': 'soporte@plataforma.com',
+                'email_verified': True,
+            }],
             # 3) PATCH /users/{id} → set app_metadata (BUG-009 propagation,
             #    también aplica al user reusado — sobrescribe el tenant_id
             #    para apuntar al tenant NUEVO).
@@ -304,11 +313,17 @@ def test_invite_user_propagates_conflict_when_lookup_returns_user_without_id(mon
     debería no pasar pero el contract de la API no lo garantiza), tratamos
     como "no encontrado" para no continuar con user_id=None.
     """
+    # BUG-193: el lookup ahora requiere `email_verified=true` por defecto.
+    # Para que este test verifique específicamente "user válido pero sin
+    # user_id" (NO "user sin verificar"), el fixture pone `email_verified=True`
+    # y deja el `user_id` ausente — el invite debe propagar
+    # `Auth0UserAlreadyExists` porque no hay user_id usable, no
+    # `Auth0UserNotVerified` (que sería un caso distinto).
     _build_invite_with_mock(
         monkeypatch,
         mgmt_responses=[
             Auth0UserAlreadyExists('conflict'),
-            [{'email': 'broken@example.com'}],  # SIN user_id
+            [{'email': 'broken@example.com', 'email_verified': True}],  # SIN user_id
         ],
     )
 

@@ -625,6 +625,31 @@ if [ -n "$BOOTSTRAP_PLATFORM_OWNER_EMAIL" ]; then
 
   bootstrap_user_id="$(jq -r '.[0].user_id' <<<"$bootstrap_users_response")"
 
+  # BUG-194 (codex HIGH): la cuenta Auth0 debe estar `email_verified=true`
+  # antes de asignarle `platform_owner` + `support_mode`. Un atacante puede
+  # crear una cuenta sin verificar con el email del platform owner antes que
+  # la víctima active su propia cuenta — si el bootstrap silenciosamente
+  # promueve la cuenta no verificada, el atacante recibe el rol más alto del
+  # sistema y `support_mode` (cross-tenant). Fail-closed: el operador debe
+  # disparar `verify email` desde el Auth0 dashboard antes de re-correr.
+  bootstrap_user_verified="$(jq -r '.[0].email_verified // false' <<<"$bootstrap_users_response")"
+  if [ "$bootstrap_user_verified" != "true" ]; then
+    echo "  ⚠ User '$BOOTSTRAP_PLATFORM_OWNER_EMAIL' (user_id=$bootstrap_user_id)" >&2
+    echo "    tiene email_verified=false en Auth0. Por seguridad, no se asigna" >&2
+    echo "    'platform_owner' + 'support_mode' a una cuenta sin verificar — un" >&2
+    echo "    atacante puede haber registrado el email antes que el dueño legítimo." >&2
+    echo "" >&2
+    echo "    Acción requerida:" >&2
+    echo "      1. Auth0 Dashboard → Users → '$BOOTSTRAP_PLATFORM_OWNER_EMAIL'" >&2
+    echo "      2. Verificá manualmente que la identidad corresponde al owner" >&2
+    echo "         (chequeá el campo 'identities[0].connection' y los logs de" >&2
+    echo "         creación)." >&2
+    echo "      3. Disparar 'Send Verification Email' o setear email_verified=true" >&2
+    echo "         manualmente si confiás en la identidad." >&2
+    echo "      4. Re-correr este script." >&2
+    exit 2
+  fi
+
   # codex P1 fix: Auth0 user_ids tienen prefijo de connection con un pipe
   # (auth0|abc123, google-oauth2|123456, etc.). El pipe `|` no es URL-safe
   # y debe encodearse a `%7C` cuando va como path segment. Sin esto, los

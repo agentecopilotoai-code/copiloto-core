@@ -192,6 +192,34 @@ class Auth0UserAlreadyExists(Exception):
     """
 
 
+class Auth0AmbiguousUserMatch(Exception):
+    """BUG-193 (codex HIGH): Auth0 ``/users-by-email`` devolvió más de un user.
+
+    Auth0 permite que el mismo email viva en múltiples connections (database +
+    Google OAuth + Microsoft + LinkedIn, etc.) — cada uno con su propio
+    ``user_id`` y su propia password/credenciales. Cuando ``invite_user``
+    intenta reutilizar el primer match silenciosamente, podemos terminar
+    bindeando el tenant role a la identidad equivocada (p. ej. una cuenta
+    Google OAuth de un atacante que registró con el mismo email del
+    candidato legítimo). Fail-closed: levantamos esto y el caller responde
+    409 con un mensaje pidiendo al operador que desambigüe en el dashboard
+    Auth0 (o pase el ``auth_subject`` explícitamente).
+    """
+
+
+class Auth0UserNotVerified(Exception):
+    """BUG-193 (codex HIGH): el match de Auth0 por email NO tiene
+    ``email_verified=true``.
+
+    Una cuenta Auth0 sin verificar puede ser de cualquiera: un atacante puede
+    crear ``victim@example.com`` en una database connection antes de que la
+    víctima active su email. Bindear el tenant role a una identidad no
+    verificada significa que el atacante recibe el ticket de bienvenida y
+    puede loguearse al tenant. Fail-closed: levantamos esto y el caller
+    responde 403 con un mensaje pidiendo verificar el email primero.
+    """
+
+
 async def _mgmt_request(
     method: str,
     path: str,
@@ -241,8 +269,13 @@ def _invitation_connection(settings) -> str:
     return getattr(settings, 'auth0_invitation_connection', None) or 'Username-Password-Authentication'
 
 
-async def lookup_auth0_user_by_email(email: str) -> dict[str, Any] | None:
-    """BUG-013: GET /api/v2/users-by-email para encontrar el user existente.
+async def lookup_auth0_user_by_email(
+    email: str,
+    *,
+    enforce_single: bool = True,
+    require_email_verified: bool = True,
+) -> dict[str, Any] | None:
+    """BUG-013 + BUG-193: GET /api/v2/users-by-email con validaciones de seguridad.
 
     Necesario cuando ``POST /api/v2/users`` devuelve 409 (el email ya tiene
     cuenta Auth0 — típicamente porque fue invitado a otro tenant antes, o
@@ -250,11 +283,20 @@ async def lookup_auth0_user_by_email(email: str) -> dict[str, Any] | None:
     buscamos el ``user_id`` real y lo reutilizamos para attach al nuevo
     tenant.
 
-    Devuelve el primer match (Auth0 retorna un array — pueden haber múltiples
-    users con el mismo email si hay multiple connections, pero por nuestra
-    config siempre usamos `Username-Password-Authentication` y Auth0 dedupea
-    dentro de una connection). Si no hay match (Auth0 retorna []) o si el
-    Management API no está habilitado (dev local), devuelve None.
+    BUG-193 (codex HIGH) — Auth0 permite que el mismo email viva en
+    múltiples connections, y un atacante puede registrar una cuenta sin
+    verificar para hijacking de invites. Por defecto:
+
+    - ``enforce_single=True``: si el array tiene >1 user, levanta
+      ``Auth0AmbiguousUserMatch`` en vez de tomar silenciosamente
+      ``response[0]``. El operador debe desambiguar en el dashboard.
+    - ``require_email_verified=True``: si el único match tiene
+      ``email_verified=false``, levanta ``Auth0UserNotVerified``. Una
+      cuenta no verificada puede ser de un atacante que registró el email
+      antes que la víctima.
+
+    Pasar ambos en ``False`` desactiva las guards (solo para flows internos
+    no críticos, p. ej. mostrar metadata de debug).
 
     URL-encodea el email — un `+` literal en alias-style emails
     (``foo+bar@gmail.com``) se rompe sin encode.
@@ -271,7 +313,29 @@ async def lookup_auth0_user_by_email(email: str) -> dict[str, Any] | None:
         return None
     if not isinstance(response, list) or not response:
         return None
-    return response[0]
+    if enforce_single and len(response) > 1:
+        log.warning(
+            'auth0_admin.lookup_ambiguous_match',
+            email=email,
+            match_count=len(response),
+            user_ids=[u.get('user_id') for u in response if isinstance(u, dict)][:5],
+        )
+        raise Auth0AmbiguousUserMatch(
+            f'Email {email} matches {len(response)} Auth0 users across connections'
+        )
+    candidate = response[0]
+    if not isinstance(candidate, dict):
+        return None
+    if require_email_verified and not candidate.get('email_verified'):
+        log.warning(
+            'auth0_admin.lookup_unverified_match',
+            email=email,
+            user_id=candidate.get('user_id'),
+        )
+        raise Auth0UserNotVerified(
+            f'Auth0 user {candidate.get("user_id")} for {email} is not email_verified'
+        )
+    return candidate
 
 
 async def invite_user(
@@ -627,26 +691,72 @@ async def assign_auth0_role_by_name(
 
 
 async def revoke_tenant_roles(*, auth_subject: str | None, tenant_id: UUID) -> dict[str, Any]:
-    """Mark the user as revoked from this tenant in Auth0 user_metadata.
+    """Mark the user as revoked from this tenant + scrub stale tenant pointer.
 
-    The post-login Action drops any tenant role pointing at this tenant
-    before issuing the next token.
+    BUG-196 (codex HIGH) — el revoke histórico solo escribía
+    ``app_metadata.tenant_revocations[<tenant>] = True`` y confiaba en que la
+    PostLogin Action dropearía los claims de ese tenant en el próximo login.
+    Problema: ``app_metadata.tenant_id`` / ``default_tenant_id`` seguían
+    apuntando al tenant revocado, así que la Action emitía un JWT con el
+    claim ``tenant_id`` viejo y el BFF cacheaba ese profile en la sesión.
+    El handler WS ``/admin/api/core/v1/conversations/stream`` consultaba la
+    sesión cacheada (no la DB) y aceptaba conexiones del user revocado.
+
+    Fix: en el revoke también limpiamos ``app_metadata.tenant_id`` y
+    ``default_tenant_id`` cuando matchean el tenant revocado. La próxima
+    sesión Auth0 ya no trae el claim — los DB-checks del Core (que sí
+    consultan ``app.user_tenant_roles``) son ahora la única fuente de verdad.
     """
     if not auth0_management_enabled():
         return {'disabled': True}
     if not auth_subject:
         return {'disabled': False, 'skipped': 'no_auth_subject'}
+    target_tenant_str = str(tenant_id)
+    # Lookup user para saber si tenant_id/default_tenant_id apuntan al
+    # tenant revocado y deben limpiarse. Si la lectura falla, hacemos el
+    # patch básico (revocations) — best-effort.
+    current_app_meta: dict[str, Any] = {}
+    try:
+        from urllib.parse import quote  # noqa: PLC0415
+
+        encoded_sub = quote(auth_subject, safe='')
+        user_doc = await _mgmt_request(
+            'GET',
+            f'/users/{encoded_sub}?fields=app_metadata&include_fields=true',
+        )
+        if isinstance(user_doc, dict):
+            maybe_meta = user_doc.get('app_metadata')
+            if isinstance(maybe_meta, dict):
+                current_app_meta = maybe_meta
+    except httpx.HTTPError as exc:
+        log.warning(
+            'auth0_admin.revoke_roles_read_app_meta_failed',
+            auth_subject=auth_subject,
+            error=str(exc),
+        )
+
+    patch_app_meta: dict[str, Any] = {
+        'tenant_revocations': {target_tenant_str: True},
+    }
+    # Si el tenant revocado es el `tenant_id` o `default_tenant_id` actual,
+    # nullify para que el próximo JWT no traiga el claim. Auth0 acepta
+    # ``null`` en app_metadata patch para borrar el campo.
+    if str(current_app_meta.get('tenant_id') or '') == target_tenant_str:
+        patch_app_meta['tenant_id'] = None
+    if str(current_app_meta.get('default_tenant_id') or '') == target_tenant_str:
+        patch_app_meta['default_tenant_id'] = None
+
     try:
         await _mgmt_request(
             'PATCH',
             f'/users/{auth_subject}',
-            json_body={
-                'app_metadata': {
-                    'tenant_revocations': {str(tenant_id): True},
-                }
-            },
+            json_body={'app_metadata': patch_app_meta},
         )
     except httpx.HTTPError as exc:
         log.warning('auth0_admin.revoke_roles_failed', error=str(exc))
         return {'disabled': False, 'error': str(exc)}
-    return {'disabled': False, 'revoked': True}
+    return {
+        'disabled': False,
+        'revoked': True,
+        'cleared_tenant_pointer': 'tenant_id' in patch_app_meta or 'default_tenant_id' in patch_app_meta,
+    }

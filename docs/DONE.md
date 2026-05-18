@@ -15,6 +15,31 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### fix-group-35 — Codex Security HIGH cluster: Auth0/authn (BUG-193..196)
+
+- **Fecha:** 2026-05-18
+- **Objetivo:** cerrar 4 findings HIGH del CSV `codex-security-findings-2026-05-18T12-29-09.086Z.csv` sobre el flujo de invites Auth0, el bootstrap del platform_owner, el upsert de `app.users` y el revoke de tenant roles. Estos 4 findings comparten un patrón: confiar en datos no validados (Auth0 connection arbitraria, email no verificado, header HTTP no firmado, claim cacheado) para tomar decisiones de autorización.
+- **Cambios:**
+  - **`app/services/auth0_admin.py`** —
+    - 2 nuevas excepciones tipadas: `Auth0AmbiguousUserMatch` (cuando `/users-by-email` retorna >1 cuenta cross-connection) y `Auth0UserNotVerified` (cuando el match tiene `email_verified=false`).
+    - `lookup_auth0_user_by_email(...)` ahora acepta `enforce_single=True` y `require_email_verified=True` por defecto. Las validaciones se ejecutan antes de devolver el match.
+    - `revoke_tenant_roles(...)` lee el `app_metadata` actual del user y nullifica `tenant_id`/`default_tenant_id` si matchean el tenant revocado — sino el siguiente JWT seguía cargando el claim al tenant revocado.
+  - **`app/api/v1/routes.py`** —
+    - El invite handler captura las 2 nuevas excepciones y responde 409 (ambiguous) o 403 (unverified) con mensajes explícitos al operador.
+    - `user_email_from_request(...)` ya NO usa `X-Admin-User-Email` como fallback — solo el claim `email` del JWT (firmado) o un sintético deterministic `{hash}@auth.local`. El header sigue disponible para display (no para identidad).
+  - **`app/admin/routes.py`** — `_session_can_stream_tenant(...)` removió el shortcut que aceptaba el claim `tenant_id` cacheado en la sesión BFF; ahora siempre DB-checkea `app.user_tenant_roles` (excepto el shortcut de `support_mode` para platform_owner que se preserva). Después del revoke de un user, el WS deja de funcionar inmediatamente.
+  - **`scripts/configure-auth0.sh`** — el bootstrap extrae `email_verified` del response de `/users-by-email` y aborta con mensaje explícito (`Send Verification Email` desde dashboard) si no es `true` antes de asignar `platform_owner`.
+  - **`tests/test_fix_group_35_static.py`** — 9 tests defensivos cubriendo los 4 bugs.
+  - **`tests/test_invite_reuses_existing_static.py`** — flip del test legacy `test_lookup_helper_returns_first_match_or_none` al nuevo contrato (returns `candidate` después de validación).
+  - **`docs/UI_BACKLOG.md`** — entradas BUG-193..196 marcadas DONE.
+- **Validaciones:**
+  - `.venv/bin/pytest tests/test_fix_group_35_static.py tests/test_invite_reuses_existing_static.py -v` → 21 passed.
+  - `.venv/bin/ruff check app/services/auth0_admin.py app/api/v1/routes.py app/admin/routes.py` → All checks passed.
+- **Notas de seguridad:**
+  - Los defaults estrictos del `lookup_auth0_user_by_email` son fail-closed: si Auth0 está mal configurado, el invite falla con mensaje explícito en vez de bindear el rol a la identidad equivocada. La opción `enforce_single=False`/`require_email_verified=False` queda como escape hatch para flows internos no críticos (NO usar para el path de invite).
+  - El revoke no purga la sesión BFF en uso (no tenemos handle al cache de sesión desde el Core). Pero el WS check ahora rechaza en el siguiente `accept`, así que la ventana es del orden de un poll WS (~30s) y no del orden de la expiración de sesión (~hours).
+  - La lectura del `app_metadata` antes del PATCH agrega una request extra al Management API. Es trade-off aceptable: el revoke es low-frequency (ms vs s no importa) y la lectura puede fallar best-effort sin romper el revoke.
+
 ### SEC-010-EXPORT-FU — Endpoint contact-scoped para extracto de consent ledger
 
 - **Fecha:** 2026-05-18

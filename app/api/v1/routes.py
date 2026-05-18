@@ -114,7 +114,9 @@ from app.services.locale import SUPPORTED_COUNTRIES
 from app.services.audit import audit, audit_durably
 from app.services.campaign_attribution import attribute_appointment
 from app.services.auth0_admin import (
+    Auth0AmbiguousUserMatch,
     Auth0UserAlreadyExists,
+    Auth0UserNotVerified,
     assign_roles as auth0_assign_roles,
     auth0_management_enabled,
     invite_user as auth0_invite_user,
@@ -883,7 +885,30 @@ async def list_public_resources(
 
 
 def user_email_from_request(request: Request) -> str:
-    email = getattr(request.state, 'email', None) or request.headers.get('X-Admin-User-Email')
+    """Return the email for `app.users` upsert — JWT-only, NEVER from headers.
+
+    BUG-195 (codex HIGH): el header `X-Admin-User-Email` lo emite el admin BFF
+    desde el ID token de Auth0, pero el Core API también puede recibir
+    llamadas DIRECTAS con bearer token (clientes service-to-service o
+    integraciones futuras). Si un caller cualquiera puede mandar
+    `X-Admin-User-Email: victim@example.com` cuando su JWT no incluye claim
+    `email`, podemos terminar UPSERTeando `app.users` con (auth_subject de
+    ATACANTE, email de VÍCTIMA). Después, cuando un admin invita
+    `victim@example.com` via `invite_tenant_member`, encontramos la fila por
+    email y reusamos el `auth_subject` del atacante → el atacante hereda la
+    membresía de la víctima.
+
+    Fix: este helper SOLO acepta el email del JWT (`request.state.email`,
+    poblado por `authenticate_request` desde el claim firmado). Si el JWT no
+    trae email, generamos un email sintético deterministico desde el
+    `auth_subject` — único por user, no colisiona con emails reales, no
+    spoofable.
+
+    El header `X-Admin-User-Email` SIGUE existiendo y el BFF lo manda — el
+    Core API lo puede usar para audit display (no como identificador
+    canónico). Pero NO para escribir a `app.users.email`.
+    """
+    email = getattr(request.state, 'email', None)
     if email:
         return email
     actor_id = getattr(request.state, 'actor_id', 'unknown-user')
@@ -892,10 +917,17 @@ def user_email_from_request(request: Request) -> str:
 
 
 def user_display_name_from_request(request: Request) -> str:
+    """Return display name for audit/UI — display-only, NOT for identity.
+
+    A diferencia de `user_email_from_request`, este sí puede usar el header
+    `X-Admin-User-Name` porque el display name NO es identifier (no participa
+    en lookups por email ni en UPSERT keyed por email). El peor caso de un
+    header spoofeado acá es un audit log con un nombre incorrecto.
+    """
     return (
         getattr(request.state, 'name', None)
         or request.headers.get('X-Admin-User-Name')
-        or request.headers.get('X-Admin-User-Email')
+        or getattr(request.state, 'email', None)
         or getattr(request.state, 'actor_id', None)
         or 'Tenant admin'
     )
@@ -2315,6 +2347,36 @@ async def invite_tenant_member(
                 detail='Auth0 reportó que el email ya existe pero el lookup '
                 'subsecuente no pudo localizarlo. Revisar el dashboard Auth0 '
                 '(posible duplicado en otra connection) o reintentar.',
+            )
+        except Auth0AmbiguousUserMatch as exc:
+            # BUG-193 (codex HIGH): Auth0 devolvió >1 user con el mismo email
+            # (multiple connections: database + Google OAuth + LinkedIn, etc.).
+            # Fail-closed: el operador debe desambiguar en el dashboard antes
+            # de poder invitar — sino podemos terminar bindeando el tenant role
+            # a la identidad equivocada.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    'Auth0 tiene múltiples cuentas para este email en '
+                    'diferentes connections. Desambiguá en el dashboard Auth0 '
+                    '(borrá duplicados o reasigná manualmente) antes de '
+                    f'reintentar el invite. Detalle: {exc}'
+                ),
+            )
+        except Auth0UserNotVerified as exc:
+            # BUG-193 (codex HIGH): la cuenta Auth0 existente NO tiene
+            # email_verified=true. No es seguro bindear el tenant role —
+            # podría ser una cuenta que un atacante registró antes que la
+            # víctima active su email. Fail-closed: el operador debe verificar
+            # primero (resend verification email desde Auth0 dashboard).
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    'La cuenta Auth0 asociada a este email NO está verificada. '
+                    'Por seguridad no se asigna el rol a una identidad sin '
+                    'verificar — pedile a la persona que confirme el email '
+                    f'antes de reintentar el invite. Detalle: {exc}'
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - log and continue without Auth0
             log.warning('tenant_member.auth0_invite_failed', error=str(exc))
