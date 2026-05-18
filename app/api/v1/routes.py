@@ -101,7 +101,7 @@ from app.core.security import (
     require_service,
 )
 from app.core.export_signatures import sign_export_bundle
-from app.core.signed_cookies import pack_signed_payload
+from app.core.signed_cookies import pack_signed_payload, unpack_signed_payload
 from app.db.pool import get_db, record_to_dict
 from app.services import feature_flags as feature_flags_service
 from app.services import locale as locale_service
@@ -2943,8 +2943,42 @@ async def mark_tenant_go_live(
         readiness checks at the moment of marking, plus the optional
         free-text ``reason`` from the request body.
     """
+    # BUG-200 (codex HIGH): go-live es una transición de lifecycle que solo
+    # el business owner del tenant target debe poder ejecutar. La combinación
+    # `require_min_role('owner')` + `ensure_tenant_access` permitía que un
+    # `platform_owner` (rank > owner) o un user con cookie de support_mode
+    # disparara el go-live sin ser tenant-owner — la UI explícitamente NO le
+    # da la capability `go_live_readiness.mark_live` a esos roles
+    # (admin-panel/src/permissions/matrix.js). Aquí cerramos el bypass
+    # backend: exigimos que el actor tenga un row con role='owner' en
+    # `app.user_tenant_roles` para este tenant_id puntual,
+    # independientemente de support_mode o platform_owner.
     await require_min_role('owner')(request)
     await ensure_tenant_access(request, tenant_id, conn)
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        raise HTTPException(status_code=401, detail='Authentication required')
+    is_db_owner = await conn.fetchval(
+        """
+        select 1
+        from app.users u
+        join app.user_tenant_roles utr on utr.user_id = u.id
+        where u.auth_subject = $1
+          and utr.tenant_id = $2
+          and utr.role = 'owner'
+        limit 1
+        """,
+        actor_id,
+        tenant_id,
+    )
+    if not is_db_owner:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                'go-live requires DB role `owner` for this tenant '
+                '(platform_owner / support_mode bypass is not honored here).'
+            ),
+        )
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
 
     # Validate readiness before flipping the flag.
@@ -11645,7 +11679,17 @@ SUPPORT_MODE_TTL_SECONDS = 60 * 60  # 1 hora — alcanza para una sesión de sop
 SUPPORT_MODE_MIN_JUSTIFICATION_LEN = 8
 
 
-@me_router.post('/me/support-mode/{tenant_id}', status_code=status.HTTP_201_CREATED)
+@me_router.post(
+    '/me/support-mode/{tenant_id}',
+    status_code=status.HTTP_201_CREATED,
+    # BUG-197 (codex HIGH): `activate_support_mode` permite que un
+    # `platform_owner` opte temporalmente al modo cross-tenant. Por la matriz
+    # de riesgos (TASK-0080) el cross-tenant access es uno de los privilegios
+    # más sensibles del sistema → MFA debe ser obligatorio. El router base
+    # `me_router` no fuerza MFA (la mayoría de `/me/*` es para usuarios
+    # normales), así que la dependency se ata por-endpoint.
+    dependencies=[Depends(require_mfa_for_privileged)],
+)
 async def activate_support_mode(
     tenant_id: UUID,
     request: Request,
@@ -11760,9 +11804,21 @@ async def deactivate_support_mode(
     activo, igual devolvemos 204 (idempotente — el cliente no necesita
     diferenciar "no había nada que borrar" de "borrado exitoso").
 
-    Audit log emitido siempre para que se vea el intento del operator de
-    salir del modo (útil para detectar patrones de "activar/desactivar
-    repetidamente" que podrían indicar abuso).
+    BUG-198 (codex HIGH) — el audit_durably debe llamarse SOLO si el cookie
+    matchea el `tenant_id` del path. Antes el endpoint escribía un audit
+    `support_mode.deactivated` con `tenant_id=<path>` para CUALQUIER user
+    autenticado, sin chequear que esa persona tuviera support_mode activo
+    para ese tenant. Resultado: cualquier auth user (no platform_owner)
+    podía polucionar el audit log del tenant víctima con falsas
+    "deactivation" entries — el `audit_durably` setea
+    `app.tenant_id=<victim>` en una conn fresca y el INSERT pasa la RLS
+    porque la policy `audit_logs_tenant_insert` solo exige
+    `tenant_id = app.current_tenant_id()`, no que el actor tenga rol en
+    ese tenant.
+
+    Fix: leer el cookie ANTES del audit; si no matchea (o no hay cookie),
+    devolvemos 204 con cookie clear pero SIN audit log — la deactivation
+    es vacua, no hay nada que auditar.
     """
     actor_type = getattr(request.state, 'actor_type', None)
     if actor_type != 'user':
@@ -11771,21 +11827,39 @@ async def deactivate_support_mode(
     if not actor_id:
         raise HTTPException(status_code=401, detail='Authentication required')
 
+    # BUG-198: verificar que el cookie matchea el tenant del path Y el sub
+    # del JWT antes de auditar. El cookie tiene `{sub, tid, iat, exp}` firmado.
+    settings = get_settings()
+    cookie_value = request.cookies.get(SUPPORT_MODE_COOKIE_NAME)
+    cookie_matches_request = False
+    if cookie_value:
+        cookie_payload = unpack_signed_payload(settings.jwt_secret, cookie_value)
+        if cookie_payload:
+            cookie_tid = cookie_payload.get('tid')
+            cookie_sub = cookie_payload.get('sub')
+            if (
+                isinstance(cookie_tid, str)
+                and cookie_tid == str(tenant_id)
+                and cookie_sub == actor_id
+            ):
+                cookie_matches_request = True
+
     response.delete_cookie(
         SUPPORT_MODE_COOKIE_NAME,
         httponly=True,
         samesite='lax',
     )
 
-    await audit_durably(
-        tenant_id=tenant_id,
-        actor_type='user',
-        actor_id=actor_id,
-        action='support_mode.deactivated',
-        entity_type='tenant',
-        entity_id=str(tenant_id),
-        metadata={},
-    )
+    if cookie_matches_request:
+        await audit_durably(
+            tenant_id=tenant_id,
+            actor_type='user',
+            actor_id=actor_id,
+            action='support_mode.deactivated',
+            entity_type='tenant',
+            entity_id=str(tenant_id),
+            metadata={},
+        )
     # codex P2 fix: NO retornar un Response nuevo — eso descarta los
     # headers que `response.delete_cookie(...)` puso en el response
     # inyectado por FastAPI (incluido el `Set-Cookie` con `Max-Age=0` que

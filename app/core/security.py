@@ -287,6 +287,79 @@ async def authenticate_request(
     request.state.session_jti = payload.get('jti')
     request.state.token_iat = payload.get('iat')
 
+    # BUG-199 (codex HIGH) — enforce session revocation.
+    #
+    # UI-016.7-FU-SESSIONS introdujo `app.auth_sessions` y el endpoint
+    # `DELETE /v1/me/sessions/{sid}` que escribe `revoked_at`. Pero
+    # `authenticate_request` NUNCA consultaba ese campo: validaba el JWT
+    # firmado, las roles y los claims de tenant, y retornaba autorizado.
+    # Resultado: una sesión "revocada" desde la UI seguía aceptando requests
+    # hasta que expiraba el JWT (típicamente 8-24h). El user creía haber
+    # cerrado la sesión comprometida y la API seguía pasándola.
+    #
+    # Fix: si el JWT trae un identificador de sesión y la conn pool del Core
+    # está disponible, consultamos `auth_sessions.revoked_at` y rechazamos
+    # 401 si está set. Solo aplica cuando la sesión fue previamente
+    # registrada (vía hit a `/me/sessions`); para users que nunca abrieron
+    # el listado, no hay row y el check pasa (la revocación per-jti requiere
+    # que el row exista, lo que `revoke_my_session` garantiza porque la UI
+    # lista antes de revocar).
+    #
+    # Fail-open en caso de pool down / DB transient — la availability de la
+    # API es más importante que cerrar una revocación segundos antes; el
+    # próximo request retry hará el check de nuevo.
+    session_id = _derive_session_id(payload)
+    if session_id:
+        await _enforce_session_not_revoked(session_id)
+
+
+def _derive_session_id(payload: dict) -> str | None:
+    """Match `_session_id_from_request` in routes.py.
+
+    Preferimos `jti` (siempre presente en JWTs Auth0); fallback a hash
+    determinista de `sub|iat` cuando jti no está. Sin esto, `authenticate_request`
+    y los handlers que upsertean `auth_sessions` divergirían y el revoke no
+    aplicaría.
+    """
+    jti = payload.get('jti')
+    if jti:
+        return str(jti)
+    sub = payload.get('sub')
+    iat = payload.get('iat')
+    if not sub or iat is None:
+        return None
+    import hashlib  # noqa: PLC0415
+
+    digest = hashlib.sha256(f'{sub}|{iat}'.encode()).hexdigest()
+    return f'iat-{digest[:32]}'
+
+
+async def _enforce_session_not_revoked(session_id: str) -> None:
+    """BUG-199: 401 si `auth_sessions.revoked_at IS NOT NULL` para este sid.
+
+    Import lazy de `app.db.pool` para evitar ciclo (la pool importa security
+    indirectamente vía sus consumidores).
+    """
+    try:
+        from app.db.pool import db  # noqa: PLC0415
+
+        if not db.pool:
+            return
+        async with db.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                'select revoked_at from app.auth_sessions where id = $1',
+                session_id,
+            )
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 — fail-open por availability
+        return
+    if row and row['revoked_at'] is not None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Session has been revoked',
+        )
+
 
 def _has_role(roles: list[str], minimum_role: str) -> bool:
     required = _ROLE_LEVELS[minimum_role]

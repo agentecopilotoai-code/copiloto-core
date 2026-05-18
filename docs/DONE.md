@@ -15,30 +15,27 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
-### fix-group-35 — Codex Security HIGH cluster: Auth0/authn (BUG-193..196)
+### fix-group-36 — Codex Security HIGH+MEDIUM: support-mode/sessions/audit (BUG-197..200)
 
 - **Fecha:** 2026-05-18
-- **Objetivo:** cerrar 4 findings HIGH del CSV `codex-security-findings-2026-05-18T12-29-09.086Z.csv` sobre el flujo de invites Auth0, el bootstrap del platform_owner, el upsert de `app.users` y el revoke de tenant roles. Estos 4 findings comparten un patrón: confiar en datos no validados (Auth0 connection arbitraria, email no verificado, header HTTP no firmado, claim cacheado) para tomar decisiones de autorización.
+- **Objetivo:** cerrar 4 findings del CSV `codex-security-findings-2026-05-18` sobre support-mode activation MFA, audit pollution cross-tenant, session revocation enforcement y go-live tenant-owner gate.
 - **Cambios:**
-  - **`app/services/auth0_admin.py`** —
-    - 2 nuevas excepciones tipadas: `Auth0AmbiguousUserMatch` (cuando `/users-by-email` retorna >1 cuenta cross-connection) y `Auth0UserNotVerified` (cuando el match tiene `email_verified=false`).
-    - `lookup_auth0_user_by_email(...)` ahora acepta `enforce_single=True` y `require_email_verified=True` por defecto. Las validaciones se ejecutan antes de devolver el match.
-    - `revoke_tenant_roles(...)` lee el `app_metadata` actual del user y nullifica `tenant_id`/`default_tenant_id` si matchean el tenant revocado — sino el siguiente JWT seguía cargando el claim al tenant revocado.
+  - **`app/core/security.py`** — `authenticate_request` ahora deriva el `session_id` (jti o fallback `iat-{hash}`) y consulta `app.auth_sessions.revoked_at` al final del path autenticado. Si la sesión está revocada → 401 `'Session has been revoked'`. Helpers nuevos `_derive_session_id` (matchea `_session_id_from_request` de routes.py) + `_enforce_session_not_revoked` (lazy import de `app.db.pool` para evitar ciclo; fail-open por availability si la pool está down).
   - **`app/api/v1/routes.py`** —
-    - El invite handler captura las 2 nuevas excepciones y responde 409 (ambiguous) o 403 (unverified) con mensajes explícitos al operador.
-    - `user_email_from_request(...)` ya NO usa `X-Admin-User-Email` como fallback — solo el claim `email` del JWT (firmado) o un sintético deterministic `{hash}@auth.local`. El header sigue disponible para display (no para identidad).
-  - **`app/admin/routes.py`** — `_session_can_stream_tenant(...)` removió el shortcut que aceptaba el claim `tenant_id` cacheado en la sesión BFF; ahora siempre DB-checkea `app.user_tenant_roles` (excepto el shortcut de `support_mode` para platform_owner que se preserva). Después del revoke de un user, el WS deja de funcionar inmediatamente.
-  - **`scripts/configure-auth0.sh`** — el bootstrap extrae `email_verified` del response de `/users-by-email` y aborta con mensaje explícito (`Send Verification Email` desde dashboard) si no es `true` antes de asignar `platform_owner`.
-  - **`tests/test_fix_group_35_static.py`** — 9 tests defensivos cubriendo los 4 bugs.
-  - **`tests/test_invite_reuses_existing_static.py`** — flip del test legacy `test_lookup_helper_returns_first_match_or_none` al nuevo contrato (returns `candidate` después de validación).
-  - **`docs/UI_BACKLOG.md`** — entradas BUG-193..196 marcadas DONE.
+    - `activate_support_mode` (POST `/me/support-mode/{tenant_id}`): nueva `dependencies=[Depends(require_mfa_for_privileged)]` en el decorator del endpoint. Cross-tenant opt-in ahora requiere MFA confirmado.
+    - `deactivate_support_mode` (DELETE): lee el cookie ANTES del audit; `audit_durably(...)` solo se invoca cuando `cookie.tid == path tenant_id AND cookie.sub == actor_id`. Sin esto cualquier auth user podía polucionar el audit log del tenant víctima con falsas deactivations (RLS solo exige tenant match, no rol del actor).
+    - `mark_tenant_go_live` (POST `/v1/tenants/{tenant_id}/go-live`): nuevo DB-check explícito que el actor tenga row con `utr.role = 'owner'` en `app.user_tenant_roles` para el `tenant_id` target. Bypass de `platform_owner` / `support_mode` ahora explícitamente rechazado con 403 + mensaje claro al operador.
+    - Import nuevo: `unpack_signed_payload` desde `app.core.signed_cookies`.
+  - **`tests/test_fix_group_36_static.py`** — 5 tests defensivos cubriendo los 4 bugs.
+  - **`docs/UI_BACKLOG.md`** — entradas BUG-197..200 marcadas DONE.
 - **Validaciones:**
-  - `.venv/bin/pytest tests/test_fix_group_35_static.py tests/test_invite_reuses_existing_static.py -v` → 21 passed.
-  - `.venv/bin/ruff check app/services/auth0_admin.py app/api/v1/routes.py app/admin/routes.py` → All checks passed.
+  - `.venv/bin/pytest tests/test_fix_group_36_static.py -v` → 5 passed.
+  - `.venv/bin/ruff check app/core/security.py app/api/v1/routes.py` → All checks passed.
+  - Cero regresiones nuevas en `tests/test_security.py` / `tests/test_mfa_enforcement.py` (5 fallas pre-existentes en develop por config de JWT HS256 vs RS256, no relacionadas a este PR).
 - **Notas de seguridad:**
-  - Los defaults estrictos del `lookup_auth0_user_by_email` son fail-closed: si Auth0 está mal configurado, el invite falla con mensaje explícito en vez de bindear el rol a la identidad equivocada. La opción `enforce_single=False`/`require_email_verified=False` queda como escape hatch para flows internos no críticos (NO usar para el path de invite).
-  - El revoke no purga la sesión BFF en uso (no tenemos handle al cache de sesión desde el Core). Pero el WS check ahora rechaza en el siguiente `accept`, así que la ventana es del orden de un poll WS (~30s) y no del orden de la expiración de sesión (~hours).
-  - La lectura del `app_metadata` antes del PATCH agrega una request extra al Management API. Es trade-off aceptable: el revoke es low-frequency (ms vs s no importa) y la lectura puede fallar best-effort sin romper el revoke.
+  - El revocation check (BUG-199) hace una DB query extra por request autenticado. Overhead ~1ms (indexed lookup por `id` text PK). Fail-open por availability — si pool down, request pasa; el próximo retry re-checkea. La row solo existe si el user hit `/me/sessions` previamente; users que nunca abrieron el listado no tienen row → check pasa (correcto: revocación solo aplica a sesiones que el user registró conscientemente).
+  - El DB-check de go-live (BUG-200) preserva el `platform_owner` global rol pero rechaza el bypass específico para esta transición de lifecycle. Si un platform_owner necesita marcar go-live para un tenant donde no es owner, debe escalarlo al tenant owner.
+  - BUG-198 fix preserva el cookie-delete del response (`response.delete_cookie(...)` se ejecuta ANTES del audit gate) — el flow de UI es idempotente, el cookie se borra siempre aunque el audit no se escriba.
 
 ### SEC-010-EXPORT-FU — Endpoint contact-scoped para extracto de consent ledger
 
