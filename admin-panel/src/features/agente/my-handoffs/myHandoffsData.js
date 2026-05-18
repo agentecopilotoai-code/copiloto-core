@@ -70,10 +70,18 @@ export function filterUnassignedHandoffs(conversations) {
  * @returns {Array<object>}
  */
 export function filterMyHandoffs(conversations, currentUserId) {
-  if (!currentUserId) return [];
-  return filterHandoffs(conversations).filter(
-    (conversation) => conversation.active_handoff_assigned_to === currentUserId,
-  );
+  // BUG-043: el backend computa `active_handoff_assigned_to_is_me` (boolean)
+  // porque `currentUserId` viene del JWT (`profile.sub = 'auth0|...'`) y
+  // `active_handoff_assigned_to` es `app.users.id` (UUID) — nunca matchean
+  // por comparación directa. Si el backend trae el boolean, lo usamos.
+  // Fallback a la comparación directa para tests que no setean el flag.
+  return filterHandoffs(conversations).filter((conversation) => {
+    if (typeof conversation.active_handoff_assigned_to_is_me === 'boolean') {
+      return conversation.active_handoff_assigned_to_is_me;
+    }
+    if (!currentUserId) return false;
+    return conversation.active_handoff_assigned_to === currentUserId;
+  });
 }
 
 /**

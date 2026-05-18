@@ -4716,6 +4716,12 @@ async def create_conversation(payload: ConversationCreate, request: Request, con
 @tenant_ops_router.get('/conversations')
 async def list_conversations(request: Request, conn: asyncpg.Connection = Depends(get_db)):
     tenant_id = await tenant_id_from_request(request, conn)
+    # BUG-043: el frontend filtra "Mis handoffs" comparando `assigned_to`
+    # contra `profile.sub` (Auth0), pero `assigned_to` es `app.users.id`
+    # (UUID) — nunca matcheaba. Para no obligar al FE a conocer su UUID
+    # interno, computamos server-side `active_handoff_assigned_to_is_me`
+    # usando `current_user_id_from_request`. El FE filtra por ese boolean.
+    current_user_id = await current_user_id_from_request(request, conn)
     rows = await conn.fetch(
         """
         select c.*,
@@ -4753,6 +4759,16 @@ async def list_conversations(request: Request, conn: asyncpg.Connection = Depend
         tenant_id,
     )
     conversations = [record_to_dict(r) for r in rows]
+    # BUG-043: marcar las conversaciones donde el handoff activo está
+    # asignado al usuario actual. False si no hay handoff o no hay user_id
+    # (token de servicio, etc.).
+    for conversation in conversations:
+        assigned_to = conversation.get('active_handoff_assigned_to')
+        conversation['active_handoff_assigned_to_is_me'] = bool(
+            current_user_id is not None
+            and assigned_to is not None
+            and str(assigned_to) == str(current_user_id)
+        )
     if conversations:
         contact_ids = list({c['contact_id'] for c in conversations if c.get('contact_id')})
         if contact_ids:
@@ -8034,7 +8050,16 @@ async def list_appointments(
     resource_id: UUID | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias='status'),
     branch_id: UUID | None = Query(default=None),
+    from_date: date | None = Query(default=None, description='Lower bound (inclusive) on starts_at, ISO date.'),
+    to_date: date | None = Query(default=None, description='Upper bound (exclusive next day) on starts_at, ISO date.'),
 ):
+    """BUG-044: agregados `from_date` / `to_date` para filtrar server-side.
+
+    Antes el endpoint devolvía las 250 más recientes sin filtro por fecha;
+    el frontend (`useTodayAppointmentsData`) filtraba por día en cliente,
+    pero para tenants con >250 citas, el día actual podía caer fuera del
+    slice y el panel mostraba "no hay citas hoy" cuando sí las había.
+    """
     tenant_id = await tenant_id_from_request(request, conn)
     rows = await conn.fetch(
         """
@@ -8046,6 +8071,8 @@ async def list_appointments(
           and ($2::uuid is null or a.resource_id=$2)
           and ($3::text is null or a.status=$3)
           and ($4::uuid is null or a.branch_id=$4)
+          and ($5::date is null or a.starts_at >= $5::date)
+          and ($6::date is null or a.starts_at < ($6::date + interval '1 day'))
         order by a.starts_at desc
         limit 250
         """,
@@ -8053,6 +8080,8 @@ async def list_appointments(
         resource_id,
         status_filter,
         branch_id,
+        from_date,
+        to_date,
     )
     return [record_to_dict(row) for row in rows]
 

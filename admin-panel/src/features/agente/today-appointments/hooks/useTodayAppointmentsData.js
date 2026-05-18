@@ -41,7 +41,10 @@ export function useTodayAppointmentsData({ session, tenant }) {
     setIsLoading(true);
     setError(null);
 
-    listAppointments(session, tenantId)
+    // BUG-044: pasar from_date/to_date al endpoint server-side. Antes el
+    // filtro por día se aplicaba en cliente sobre las primeras 250 rows
+    // sin filtro, y tenants con >250 citas perdían las del día actual.
+    listAppointments(session, tenantId, { from_date: selectedDay, to_date: selectedDay })
       .then((items) => {
         if (cancelled) return;
         setAppointments(Array.isArray(items) ? items : []);
@@ -58,7 +61,8 @@ export function useTodayAppointmentsData({ session, tenant }) {
     return () => {
       cancelled = true;
     };
-  }, [session, tenantId, reloadToken]);
+    // BUG-044: re-fetch al cambiar de día (selectedDay es parte de la query).
+  }, [session, tenantId, reloadToken, selectedDay]);
 
   const dayAppointments = useMemo(
     () => sortByTime(filterByDay(appointments, selectedDay)),
