@@ -135,8 +135,15 @@ describe('BillingMrr', () => {
   it('renders the header, KPIs, tenants table and plan composition', async () => {
     setup();
 
-    // Wait for loaded state — the heading renders in both loading and loaded
-    // states, so awaiting it does not gate on the async fetch.
+    // BUG-021 (flaky CI): `findByRole('heading', {name: 'Billing & MRR'})`
+    // resolvía inmediato porque el heading se renderiza en BOTH estados —
+    // loading ("Cargando snapshot…") y loaded (data poblada). El siguiente
+    // `getByText` (sync) corría antes de que el mock async de
+    // `getPlatformBillingMrr` resolviera y los datos llegaran al DOM —
+    // failing intermittently en CI (lento) y consistently bajo carga.
+    // Fix: await un texto que SOLO existe en el estado loaded (un nombre
+    // de tenant del mock BILLING data). Eso garantiza que la data ya
+    // hidrató el componente antes de las assertions sync.
     await screen.findByText('Clínica Estética Norte');
 
     expect(
@@ -151,12 +158,16 @@ describe('BillingMrr', () => {
       .closest('article');
     expect(failedKpi.textContent).toContain('2');
 
+    // Tenants table + plan composition table.
     expect(screen.getByText('Composición del MRR')).toBeInTheDocument();
     expect(screen.getByText('Pro')).toBeInTheDocument();
   });
 
   it('renders failed payments and the country breakdown', async () => {
     setup();
+    // Same loaded-state gate as the test above — `Estética Quito` only
+    // exists in the loaded mock data, so awaiting it sequences sync
+    // assertions safely after the async fetch hydrates the component.
     await screen.findByText('Estética Quito');
 
     expect(screen.getByText('Países · MRR por geografía')).toBeInTheDocument();

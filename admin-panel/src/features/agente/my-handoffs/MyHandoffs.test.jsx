@@ -123,13 +123,23 @@ describe('MyHandoffs', () => {
     expect(within(queue).queryByText('Camila Velasco')).toBeNull();
   });
 
-  it('selects an unassigned handoff and accepts it via the inbox handoff action', async () => {
+  it('BUG-019 — un solo click en "Tomar" del card acepta el handoff directamente', async () => {
+    // Antes del fix BUG-019 (commit ~hace 1h):
+    //   - El primer click en "Tomar" del card SOLO seleccionaba la row (sin
+    //     feedback visual claro → UX confuso, parecía que "no hacía nada").
+    //   - El usuario tenía que hacer un SEGUNDO click en "Tomar handoff" del
+    //     panel derecho para que realmente se aceptara.
+    // Después del fix:
+    //   - Un solo click en "Tomar" del card hace AMBAS cosas: selecciona +
+    //     accept-ea. La API se llama inmediatamente con el conversationId
+    //     correcto (pasado como argumento explícito a acceptHandoff(id) para
+    //     evitar el race del state batching de React).
     setup();
     await screen.findByText('Andrés Gómez');
 
     await userEvent.click(screen.getByRole('button', { name: 'Tomar' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Tomar handoff' }));
 
+    // Una sola call basta — no necesitamos clickear el panel derecho.
     await waitFor(() =>
       expect(coreApi.acceptConversationHandoff).toHaveBeenCalledWith(
         SESSION,

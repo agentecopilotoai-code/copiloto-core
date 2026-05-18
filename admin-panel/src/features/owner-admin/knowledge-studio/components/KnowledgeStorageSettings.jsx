@@ -202,7 +202,7 @@ export function KnowledgeStorageSettings({ module, session, tenant }) {
 
             <FormField
               label="Endpoint S3 compatible"
-              hint="Solo HTTPS y endpoints AWS / Cloudflare R2 / DigitalOcean Spaces. MinIO (HTTP) solo en entornos locales. Si configuras un endpoint propio debes proveer Access Key + Secret del tenant; nunca se usan credenciales de plataforma contra endpoints de tenant."
+              hint="Solo URLs HTTPS de AWS S3, Cloudflare R2 o DigitalOcean Spaces. Si usás un servicio propio, completá Access Key y Secret de tu cuenta — las credenciales de la plataforma nunca se reutilizan."
             >
               <input
                 disabled={!isS3}

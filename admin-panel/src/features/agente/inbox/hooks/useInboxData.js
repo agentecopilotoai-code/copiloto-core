@@ -327,10 +327,27 @@ export function useInboxData({ session, tenant }) {
       () => createConversationHandoff(session, tenant.id, selectedConversationId, handoffReason),
       'Handoff creado y auditado.',
     ),
-    acceptHandoff: () => runAction(
-      () => acceptConversationHandoff(session, tenant.id, selectedConversationId),
-      'Handoff aceptado; conversación tomada por agente.',
-    ),
+    // BUG-019: acceptHandoff acepta un id opcional para que callers como el
+    // botón "Tomar" del card de Mis handoffs puedan accept-ear directamente
+    // sin tener que seleccionar primero la row (que era confuso: el primer
+    // click "no hacía nada" perceptible — solo seleccionaba). Si no se pasa,
+    // usa el `selectedConversationId` del state (comportamiento previo
+    // preservado para el botón "Tomar handoff" del panel derecho).
+    //
+    // Defensa: muchos callsites pasan `onClick={actions.acceptHandoff}` que
+    // hace que React inyecte el SyntheticEvent como primer arg. Si dejáramos
+    // `conversationId || selectedConversationId`, el event (truthy) ganaría
+    // sobre `selectedConversationId` y la API recibiría un objeto. Filtramos:
+    // solo tratamos `conversationId` como id válido si es string.
+    acceptHandoff: (conversationId) => {
+      const targetId = typeof conversationId === 'string'
+        ? conversationId
+        : selectedConversationId;
+      return runAction(
+        () => acceptConversationHandoff(session, tenant.id, targetId),
+        'Handoff aceptado; conversación tomada por agente.',
+      );
+    },
     releaseHandoff: () => runAction(
       () => releaseConversation(session, tenant.id, selectedConversationId),
       'Conversación liberada al bot y auditada.',

@@ -115,12 +115,10 @@ export default function DigestSubscriptionsPanel({ session, tenantId }) {
 
   return (
     <fieldset className={styles.panel} data-wizard-field="digest_subscriptions">
-      <legend className={styles.panelLegend}>Suscripciones a resúmenes (TASK-0067)</legend>
+      <legend className={styles.panelLegend}>Suscripciones a resúmenes</legend>
       <p className={styles.hint}>
-        Configura emails y WhatsApps del manager para recibir el resumen diario
-        (08:00) o semanal (lunes 08:00). Reutiliza el SMTP de Alertas al equipo
-        y la plantilla aprobada <code>digest_daily_v1</code> /{' '}
-        <code>digest_weekly_v1</code> para WhatsApp.
+        Configurá emails y números de WhatsApp para recibir el resumen diario
+        (08:00) o semanal (lunes 08:00) del rendimiento del negocio.
       </p>
 
       {error ? (

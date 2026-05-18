@@ -229,9 +229,15 @@ def test_routes_module_imports_legal_helpers():
 
 
 def test_admin_panel_registers_legal_module():
+    # Verifica el registro del módulo Legal en `admin-panel/src/app/modules.js`.
+    # Antes este test asertaba el marcador "TASK-0076" en el archivo, pero ese
+    # código fue removido del copy visible (sólo queda en comentarios JSDoc).
+    # Ahora verificamos el contrato real del registro: id + capability +
+    # palabras clave del scope.
     modules = ADMIN_MODULES.read_text()
     assert "id: 'legal'" in modules
-    assert 'TASK-0076' in modules
+    assert "capability: 'legal.write'" in modules
+    assert 'Páginas legales' in modules
     layout = ADMIN_LAYOUT.read_text()
     assert "import { LegalModule }" in layout
     assert 'legal: {' in layout

@@ -333,7 +333,10 @@ def test_admin_panel_registers_packages_module():
     catalog = ADMIN_MODULES.read_text()
     assert "id: 'packages'" in catalog
     assert "label: 'Paquetes'" in catalog
-    assert 'TASK-0051' in catalog
+    # El marcador "TASK-0051" se removió del copy visible (sólo queda en
+    # comentarios JSDoc). Verificamos el contrato del registro.
+    assert "capability: 'packages.write'" in catalog
+    assert 'Paquetes y planes de tratamiento' in catalog
 
 
 def test_packages_module_has_form_and_service_picker():

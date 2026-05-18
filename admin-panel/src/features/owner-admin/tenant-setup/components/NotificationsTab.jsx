@@ -30,7 +30,7 @@ export function NotificationsTab({ state, actions, session }) {
         </p>
 
         <fieldset className={`${styles.fieldset} ${styles.wide}`}>
-          <legend>Confirmación y recordatorios (TASK-0035)</legend>
+          <legend>Confirmación y recordatorios</legend>
           <label className={styles.inlineCheck}>
             <input
               type="checkbox"
@@ -92,7 +92,7 @@ export function NotificationsTab({ state, actions, session }) {
         </fieldset>
 
         <fieldset className={`${styles.fieldset} ${styles.wide}`}>
-          <legend>Reducción de no-show (TASK-0036)</legend>
+          <legend>Reducción de no-show</legend>
           <label className={styles.inlineCheck}>
             <input
               type="checkbox"
@@ -116,7 +116,7 @@ export function NotificationsTab({ state, actions, session }) {
               checked={notificationSettings.auto_rebook_on_decline !== false}
               onChange={(e) => set({ auto_rebook_on_decline: e.target.checked })}
             />
-            Ofrecer reprogramar al declinar la confirmación (TASK-0044)
+            Ofrecer reprogramar al declinar la confirmación
           </label>
           <p className={styles.hint}>
             Si el cliente responde "no" al pedido de confirmación activa, el bot ofrecerá tres
@@ -134,8 +134,8 @@ export function NotificationsTab({ state, actions, session }) {
           </FormField>
           <p className={styles.hint}>
             Si el cliente recibe los horarios y no responde dentro de esta ventana, la cita se
-            cancela y la conversación se escala con la etiqueta "Necesita seguimiento"
-            (TASK-0056). Rango 10–240 min, por defecto 90.
+            cancela y la conversación se escala con la etiqueta "Necesita seguimiento".
+            Rango 10–240 min, por defecto 90.
           </p>
           <label className={styles.inlineCheck} data-wizard-field="ask_referrer">
             <input
@@ -143,7 +143,7 @@ export function NotificationsTab({ state, actions, session }) {
               checked={notificationSettings.ask_referrer === true}
               onChange={(e) => set({ ask_referrer: e.target.checked })}
             />
-            Preguntar "¿quién te recomendó?" al iniciar el booking (TASK-0055)
+            Preguntar "¿quién te recomendó?" al iniciar el booking
           </label>
           <p className={styles.hint}>
             Captura al embajador para medir referidos en Analítica → Top
@@ -160,12 +160,12 @@ export function NotificationsTab({ state, actions, session }) {
           <DigestSubscriptionsPanel session={session} tenantId={currentTenantId} />
         ) : (
           <p className={`${styles.hint} ${styles.wide}`}>
-            Crea el tenant antes de configurar suscripciones al resumen periódico (TASK-0067).
+            Creá el negocio antes de configurar suscripciones al resumen periódico.
           </p>
         )}
 
         <fieldset className={`${styles.fieldset} ${styles.wide}`}>
-          <legend>Flujo post-cita (TASK-0036)</legend>
+          <legend>Flujo post-cita</legend>
           <label className={styles.inlineCheck}>
             <input
               type="checkbox"

@@ -159,7 +159,7 @@ export function Onboarding({ session, tenant, onNavigateToModule }) {
         <PageHeader
           eyebrow="Inicio"
           title="Onboarding self-service"
-          description="Wizard de 7 pasos verificados contra el servidor. No se puede saltar: cada paso se confirma contra la base de datos antes de marcarse como completo (TASK-0069)."
+          description="Asistente guiado de 7 pasos. Cada paso se verifica antes de continuar y no se puede saltar — al terminar tu negocio queda listo para operar."
           actions={
             <button
               type="button"

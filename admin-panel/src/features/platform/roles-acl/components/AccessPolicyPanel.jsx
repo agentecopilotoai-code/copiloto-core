@@ -5,20 +5,20 @@ import styles from '../RolesAcl.module.css';
 // reference — the server-side access model this matrix is the UI mirror of.
 const POLICY_NOTES = [
   {
-    title: 'Doble chequeo obligatorio',
-    body: 'El servidor reverifica cada request: el JWT debe portar el rol y la DB debe confirmar la membership del tenant (require_min_role + ensure_tenant_role). JWT-admin + DB-viewer → 403 insufficient_tenant_role (TASK-0077).',
+    title: 'Doble verificación',
+    body: 'Cada acción se valida dos veces: una en la sesión del usuario y otra contra la base de datos del negocio. Si los dos chequeos no coinciden, la acción se bloquea automáticamente.',
   },
   {
-    title: 'Platform unscoped',
-    body: 'Un token de platform owner es unscoped: bypassa el tenant scope. Solo opera con MFA verificada y bajo support_mode auditado (TASK-0077 / TASK-0080).',
+    title: 'Acceso de plataforma',
+    body: 'El platform owner puede operar sobre todos los negocios pero requiere doble factor (MFA) activo y un modo "soporte" auditado que deja registro de cada acción cross-tenant.',
   },
   {
-    title: 'Cross-tenant hijack',
-    body: 'El alta cruzada de tenants se bloquea en tenant-signup con 409 si el actor ya tiene una membership previa.',
+    title: 'Aislamiento entre negocios',
+    body: 'El sistema bloquea el alta cruzada: si un usuario ya pertenece a otro negocio, no puede crear uno nuevo con la misma identidad sin pasar por el flujo de invitación.',
   },
   {
-    title: 'Esta matriz es defensa en profundidad',
-    body: 'La UI oculta/deshabilita controles según esta matriz, pero el enforcement real vive en el backend (JWT + role + RLS por endpoint). La matriz nunca reemplaza el chequeo del API.',
+    title: 'Matriz como defensa visual',
+    body: 'Esta vista oculta y deshabilita los botones según el rol, pero el control real vive en el servidor. Es un espejo informativo del modelo de permisos.',
   },
 ];
 

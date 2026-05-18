@@ -132,7 +132,7 @@ export function useTeamData({ session, tenant }) {
         await updateTenantMemberRole(session, tenantId, member.user_id, nextRole);
         setNotice({
           type: 'success',
-          text: 'Rol actualizado. El próximo JWT del usuario reflejará el cambio.',
+          text: 'Rol actualizado. El cambio aplica en el próximo inicio de sesión del usuario.',
         });
         await refresh();
       } catch (error) {
