@@ -34,6 +34,35 @@ Cada entrada debe incluir:
   - El tolerance default (300s = 5 min) está alineado con la recomendación oficial de Stripe. MP no documenta un tolerance estándar; 5 min es razonable y suficiente para clock skew entre proxy y app sin abrir ventana de replay.
   - Cuando el header MP no trae `ts`, el verifier hace fallback al raw payload digest (backward compat). En ese fallback no se valida freshness — el caller debe decidir si rechazar webhooks sin ts (no implementado en este fix-group).
   - El audit `webhook.recipient_id_mismatch` es informativo — permite que el operador detecte attempted tenant mixing en el dashboard de Codex Security.
+  - El revocation check (BUG-199) hace una DB query extra por request autenticado. Overhead ~1ms (indexed lookup por `id` text PK). Fail-open por availability — si pool down, request pasa; el próximo retry re-checkea. La row solo existe si el user hit `/me/sessions` previamente; users que nunca abrieron el listado no tienen row → check pasa (correcto: revocación solo aplica a sesiones que el user registró conscientemente).
+  - El DB-check de go-live (BUG-200) preserva el `platform_owner` global rol pero rechaza el bypass específico para esta transición de lifecycle. Si un platform_owner necesita marcar go-live para un tenant donde no es owner, debe escalarlo al tenant owner.
+  - BUG-198 fix preserva el cookie-delete del response (`response.delete_cookie(...)` se ejecuta ANTES del audit gate) — el flow de UI es idempotente, el cookie se borra siempre aunque el audit no se escriba.
+### fix-group-38 — Codex Security HIGH+MEDIUM: booking-flow integrity (BUG-203..209)
+
+- **Fecha:** 2026-05-18
+- **Objetivo:** cerrar 7 findings sobre integridad del booking flow y self-service de citas. BUG-47 (LLM-driven `service_requests`) queda diferido a fix-group-44 por scope.
+- **Cambios:**
+  - **`app/services/booking_flow.py`** —
+    - `SERVICE_CATALOG_HARD_CAP=500` aplicado al SELECT de `_list_active_services` (BUG-203 — DoS cap).
+    - `_fetch_service` SELECTea `applies_when` (BUG-204).
+    - `_fetch_resource` acepta `branch_id` opcional y filtra (BUG-205).
+    - `maybe_run_booking_flow` PREFIX_SERVICE: re-evalúa `evaluate_rules(applies_when, qualification_facts)` (BUG-204).
+    - `maybe_run_booking_flow` PREFIX_RESOURCE: pasa `branch_id=state['selected_branch_id']` (BUG-205).
+    - `maybe_run_booking_flow` PREFIX_SLOT: valida `value in proposed_starts` antes de invocar `_create_appointment` (BUG-206).
+    - `_create_appointment` package binding: SELECT FOR UPDATE en `contact_packages`; count `appointment_package_links` en `(scheduled|confirmed)`; solo bindear si `pending+1 <= remaining` (BUG-207).
+  - **`app/services/appointment_self_service.py`** —
+    - `_execute_cancel` y `_execute_reschedule` re-fetch appointment AHORA; rechazan si status terminal, paid, o too_close (BUG-208).
+    - `start_auto_rebook_flow` añadidos gates `paid` y `too_close_to_start` ANTES del intro (BUG-209).
+  - **`tests/test_fix_group_38_static.py`** — 10 tests defensivos.
+  - **`docs/UI_BACKLOG.md`** — entradas BUG-203..209 marcadas DONE.
+- **Validaciones:**
+  - `.venv/bin/pytest tests/test_fix_group_38_static.py -v` → 10 passed.
+  - `.venv/bin/pytest tests/ -k "booking_flow or self_service or appointment"` → 92 passed, 2 skipped, 0 regresiones.
+  - `.venv/bin/ruff check app/services/booking_flow.py app/services/appointment_self_service.py` → All checks passed.
+- **Notas de seguridad:**
+  - BUG-207 (HIGH): el SELECT FOR UPDATE bloquea la row del package; concurrent bookings esperan. Si el link al package no entra por overcommit, el appointment queda creado SIN package binding — el cliente paga normal.
+  - BUG-208 / 209: las re-verificaciones mid-flow son la única forma de prevenir "abrir flow → esperar → ejecutar". Alternativa rechazada: cerrar el state al primer cambio (UX worse).
+  - BUG-206: re-prompt date en vez de fallar duro mantiene la UX recoverable. Log `booking_flow.slot_not_offered` permite detectar attempted replay.
 
 ### SEC-010-EXPORT-FU — Endpoint contact-scoped para extracto de consent ledger
 

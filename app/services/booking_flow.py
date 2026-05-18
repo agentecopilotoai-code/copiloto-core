@@ -101,12 +101,24 @@ def _interactive_id(inbound_message: Any) -> tuple[str | None, str | None]:
 SERVICE_LIST_DISPLAY_CAP = 10
 
 
+SERVICE_CATALOG_HARD_CAP = 500
+
+
 async def _list_active_services(
     conn: asyncpg.Connection, tenant_id: UUID
 ) -> list[dict[str, Any]]:
-    # TASK-0054: pull the full active catalogue (no SQL ``limit``) so the
-    # qualification filter sees every candidate. We cap the WhatsApp list
-    # later, after filtering, in ``_present_services``.
+    # TASK-0054: pull the active catalogue (capped) so the qualification
+    # filter sees every realistic candidate. We cap the WhatsApp list later,
+    # after filtering, in ``_present_services``.
+    #
+    # BUG-203 (codex MEDIUM): TASK-0054 removió el `LIMIT 10` original para
+    # que el filter `applies_when` viera toda la catalogue. Pero sin cap
+    # alguno, un tenant con miles de servicios activos (o un admin
+    # malicioso) podía explotar el booking flow para DoS: el endpoint es
+    # reachable vía webhook entrante sin auth, y por cada llamada
+    # cargábamos el catalogue completo + lo evaluábamos en Python con
+    # `evaluate_rules` (regex-heavy). Cap a 500 rows: más que cualquier
+    # catalogue real, suficientemente bounded como techo de DoS.
     rows = await conn.fetch(
         """
         select id, name, category, description, price_amount, price_currency,
@@ -114,8 +126,10 @@ async def _list_active_services(
         from app.service_catalog
         where tenant_id=$1 and is_active=true
         order by sort_order asc, name asc
+        limit $2
         """,
         tenant_id,
+        SERVICE_CATALOG_HARD_CAP,
     )
     return [dict(row) for row in rows]
 
@@ -172,9 +186,14 @@ def _filter_services_by_qualification(
 async def _fetch_service(
     conn: asyncpg.Connection, tenant_id: UUID, service_id: UUID
 ) -> dict[str, Any] | None:
+    # BUG-204 (codex MEDIUM): el SELECT también debe traer `applies_when`
+    # para que los callers puedan re-verificar la eligibility cuando el
+    # service id viene de un interactive reply (no del listing filtrado).
+    # Sin esto un atacante con un service id stale del listing pre-filtrado
+    # podía replayar la elección y bypassear la regla de qualification.
     row = await conn.fetchrow(
         """
-        select id, name, duration_minutes, preparation_notes
+        select id, name, duration_minutes, preparation_notes, applies_when
         from app.service_catalog
         where tenant_id=$1 and id=$2 and is_active=true
         """,
@@ -331,16 +350,31 @@ async def _fetch_branch(
 
 
 async def _fetch_resource(
-    conn: asyncpg.Connection, tenant_id: UUID, resource_id: UUID
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    resource_id: UUID,
+    branch_id: UUID | None = None,
 ) -> dict[str, Any] | None:
+    """Fetch an active resource scoped to tenant_id (and optionally branch_id).
+
+    BUG-205 (codex MEDIUM): cuando el caller pasa `branch_id`, el SELECT
+    también filtra por `r.branch_id`. Sin esto un usuario podía seleccionar
+    una branch via `book_branch:<uuid>` y después un resource via
+    `book_resource:<uuid>` que pertenece a OTRA branch — `_create_appointment`
+    almacenaba `state['selected_branch_id']` como branch del appointment, y
+    las notificaciones (address/maps) mostraban la branch incorrecta al
+    cliente. Acá enforce el constraint a nivel SELECT.
+    """
     row = await conn.fetchrow(
         """
-        select id, name, code, capabilities
+        select id, name, code, capabilities, branch_id
         from app.resources
         where tenant_id=$1 and id=$2 and is_active=true
+          and ($3::uuid is null or branch_id = $3)
         """,
         tenant_id,
         resource_id,
+        branch_id,
     )
     return dict(row) if row else None
 
@@ -1175,38 +1209,83 @@ async def _create_appointment(
         new_state.pop('proposed_slots', None)
         return new_state
 
-    # TASK-0051: bind the appointment to the chosen package so the on-completion
-    # trigger discounts a session. Validates the package is still active and
-    # belongs to the same contact to avoid replay/race issues.
+    # TASK-0051 + BUG-207 (codex HIGH): bind the appointment to the chosen
+    # package solo si quedan sesiones suficientes — incluyendo las que ya
+    # están comprometidas con appointments pendientes (scheduled/confirmed
+    # no completados).
+    #
+    # Antes: el check solo miraba `remaining_sessions > 0`. El decremento
+    # real ocurre en el trigger `on completion`. Un cliente podía:
+    #   1) bookear N appointments back-to-back para el mismo package
+    #      mientras `remaining_sessions = 1`
+    #   2) todos quedaban linkeados al package
+    #   3) al completarse el primero, el trigger decrementaba el package a 0
+    #   4) los siguientes appointments completados se marcaban consumed sin
+    #      cobrar (fuga de revenue) o sin descontar otra sesión que ya no
+    #      existía
+    #
+    # Fix: SELECT ... FOR UPDATE bloquea el package row. Contamos pending
+    # appointment_package_links que aún NO se completaron (esos también
+    # cuentan contra remaining_sessions). Si pending + 1 > remaining, no
+    # bindeamos — el appointment se cobra normal y el cliente paga aparte.
     if contact_package_uuid is not None:
-        package_check = await conn.fetchrow(
-            """
-            select id, remaining_sessions
-            from app.contact_packages
-            where tenant_id=$1
-              and id=$2
-              and contact_id=$3
-              and status='active'
-              and remaining_sessions > 0
-              and (expires_at is null or expires_at > now())
-            """,
-            tenant_id,
-            contact_package_uuid,
-            contact['id'],
-        )
-        if package_check:
-            await conn.execute(
+        async with conn.transaction():
+            package_check = await conn.fetchrow(
                 """
-                insert into app.appointment_package_links (
-                  appointment_id, contact_package_id, tenant_id
-                )
-                values ($1, $2, $3)
-                on conflict (appointment_id) do nothing
+                select id, remaining_sessions
+                from app.contact_packages
+                where tenant_id=$1
+                  and id=$2
+                  and contact_id=$3
+                  and status='active'
+                  and remaining_sessions > 0
+                  and (expires_at is null or expires_at > now())
+                for update
                 """,
-                appointment['id'],
-                contact_package_uuid,
                 tenant_id,
+                contact_package_uuid,
+                contact['id'],
             )
+            if package_check:
+                pending_links = await conn.fetchval(
+                    """
+                    select count(*)
+                    from app.appointment_package_links apl
+                    join app.appointments a on a.id = apl.appointment_id
+                    where apl.tenant_id = $1
+                      and apl.contact_package_id = $2
+                      and a.status in ('scheduled','confirmed')
+                    """,
+                    tenant_id,
+                    contact_package_uuid,
+                )
+                pending_count = int(pending_links or 0)
+                # Acá ya creamos `appointment` arriba — incluiría este link
+                # nuevo si fuese a contarse. Verificamos contra el remaining
+                # del package: pending_count YA incluye 0 a N appointments
+                # pendientes que tomaron una sesión cada uno; necesitamos
+                # que el nuevo link no sobrepase remaining_sessions.
+                if pending_count + 1 <= int(package_check['remaining_sessions']):
+                    await conn.execute(
+                        """
+                        insert into app.appointment_package_links (
+                          appointment_id, contact_package_id, tenant_id
+                        )
+                        values ($1, $2, $3)
+                        on conflict (appointment_id) do nothing
+                        """,
+                        appointment['id'],
+                        contact_package_uuid,
+                        tenant_id,
+                    )
+                else:
+                    log.info(
+                        'booking_flow.package_link_refused_overcommit',
+                        tenant_id=str(tenant_id),
+                        contact_package_id=str(contact_package_uuid),
+                        remaining_sessions=int(package_check['remaining_sessions']),
+                        pending_count=pending_count,
+                    )
 
     resource_row = await _fetch_resource(conn, tenant_id, resource_id)
     summary_lines = [
@@ -1515,6 +1594,25 @@ async def maybe_run_booking_flow(
             service_uuid = None
         if service_uuid:
             service = await _fetch_service(conn, tenant_id, service_uuid)
+            # BUG-204 (codex MEDIUM): re-evaluar applies_when contra los
+            # facts actuales de qualification. Sin esto, un cliente con un
+            # service id stale de un listing previo (o uno que reusa un
+            # interactive reply de OTRA conversación) podía bypassear las
+            # reglas de eligibility. El listing de `_present_services` ya
+            # filtra, pero la verificación final tiene que estar acá donde
+            # el bot finalmente crea el path de booking.
+            if service:
+                qualification_facts = _qualification_facts_from_conversation(conversation)
+                if qualification_facts and not evaluate_rules(
+                    service.get('applies_when'), qualification_facts
+                ):
+                    log.info(
+                        'booking_flow.service_eligibility_rejected',
+                        tenant_id=str(tenant_id),
+                        service_id=str(service_uuid),
+                        reason='applies_when_rejected_current_facts',
+                    )
+                    service = None
             if service:
                 base_state = {'selected_service_id': str(service_uuid)}
                 # TASK-0051: if the contact has active packages that cover the
@@ -1615,7 +1713,23 @@ async def maybe_run_booking_flow(
         except ValueError:
             resource_uuid = None
         if resource_uuid:
-            resource = await _fetch_resource(conn, tenant_id, resource_uuid)
+            # BUG-205 (codex MEDIUM): pasar `selected_branch_id` al
+            # _fetch_resource para que el SELECT también filtre por
+            # branch. Sin esto el cliente podía elegir branch A y
+            # después un resource que pertenece a branch B → _create_appointment
+            # almacenaba branch A como la branch del appointment pero el
+            # resource estaba en B → notificaciones con address/maps de
+            # branch B mientras el calendario interno apuntaba a branch A.
+            selected_branch_id_raw = state.get('selected_branch_id')
+            branch_uuid_for_check = None
+            if selected_branch_id_raw:
+                try:
+                    branch_uuid_for_check = UUID(selected_branch_id_raw)
+                except (TypeError, ValueError):
+                    branch_uuid_for_check = None
+            resource = await _fetch_resource(
+                conn, tenant_id, resource_uuid, branch_id=branch_uuid_for_check
+            )
             if resource:
                 new_state = await _present_date(
                     conn,
@@ -1652,16 +1766,53 @@ async def maybe_run_booking_flow(
                 target_date=target_date,
             )
     elif prefix == PREFIX_SLOT and value and state.get('proposed_date'):
-        new_state = await _create_appointment(
-            conn,
-            tenant_id=tenant_id,
-            contact=contact,
-            conversation=conversation,
-            channel_id=channel_id,
-            channel_account_mode=channel_account_mode,
-            state=state,
-            slot_start=value,
-        )
+        # BUG-206 (codex MEDIUM): el `value` del interactive reply
+        # `book_slot:<start_time>` se pasaba RAW a _create_appointment sin
+        # verificar que correspondía a uno de los `proposed_slots` ofrecidos
+        # por el bot. Un cliente con un reply stale (o crafteado) podía
+        # bookear cualquier hora en el día (mientras no choque con otra cita
+        # — el exclusion constraint del schema solo cubre overlaps, no
+        # working hours). Acá validamos el slot_start contra el set de
+        # `proposed_slots` que el bot ofreció.
+        proposed_slots = state.get('proposed_slots') or []
+        proposed_starts = {
+            slot.get('start_time')
+            for slot in proposed_slots
+            if isinstance(slot, dict) and slot.get('start_time')
+        }
+        if value not in proposed_starts:
+            log.info(
+                'booking_flow.slot_not_offered',
+                tenant_id=str(tenant_id),
+                conversation_id=str(conversation['id']),
+                requested_slot=value,
+                proposed_count=len(proposed_starts),
+            )
+            await _queue_text_message(
+                conn,
+                tenant_id=tenant_id,
+                conversation_id=conversation['id'],
+                channel_id=channel_id,
+                channel_account_mode=channel_account_mode,
+                body_text=(
+                    'Ese horario ya no está disponible. Te muestro los horarios '
+                    'que tengo libres.'
+                ),
+                booking_step=STEP_AWAITING_DATE,
+            )
+            new_state = {**state, 'step': STEP_AWAITING_DATE}
+            new_state.pop('proposed_slots', None)
+        else:
+            new_state = await _create_appointment(
+                conn,
+                tenant_id=tenant_id,
+                contact=contact,
+                conversation=conversation,
+                channel_id=channel_id,
+                channel_account_mode=channel_account_mode,
+                state=state,
+                slot_start=value,
+            )
     elif state.get('step') == STEP_AWAITING_REFERRER and prefix is None:
         # TASK-0055: capture the referrer answer (free text) and continue with
         # the regular service-selection flow. The contact row is updated in
