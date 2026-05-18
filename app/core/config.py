@@ -69,6 +69,22 @@ class Settings(BaseSettings):
     # activó, por qué, y desactivarlo cuando termine).
     debug_cross_tenant_diagnostics: bool = False
     service_token: str = Field(min_length=16)
+    # AUDIT-46 (speed quick win #1, 2026-05-18): DB pool config expuesto. Antes
+    # estaba hardcoded `max_size=10` en `app/db/pool.py:15`, lo cual significa
+    # que un solo WS estancado o una query lenta podía saturar la app entera
+    # sin posibilidad de mitigar sin redeploy. Exponer como settings permite
+    # tunear por entorno (dev: bajo; prod: alto). `command_timeout` corta
+    # queries colgadas a nivel pool (defensa en profundidad sobre statement_timeout).
+    db_pool_min_size: int = Field(default=1, ge=1)
+    db_pool_max_size: int = Field(default=10, ge=2, le=200)
+    db_pool_command_timeout_seconds: float = Field(default=30.0, ge=1.0, le=600.0)
+    # AUDIT-46 (speed quick win #2): rate limiter usa un dict in-memory de
+    # buckets por (ip, tenant). Sin eviction, el dict crece sin tope con cada
+    # IP nueva (BUG-219 cerró el spoofing trivial via XFF, pero el ataque por
+    # rotación de NAT/IPv6 sigue creciendo memoria). Estos toggles limitan
+    # la cantidad máxima de buckets vivos y los expira por inactividad.
+    rate_limit_bucket_ttl_seconds: int = Field(default=900, ge=60, le=86400)
+    rate_limit_bucket_max_entries: int = Field(default=10_000, ge=100, le=1_000_000)
     meta_graph_version: str = 'v23.0'
     s3_endpoint_url: str = 'http://minio:9000'
     s3_bucket: str = 'copilotoia-local'

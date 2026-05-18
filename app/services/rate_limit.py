@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import structlog
@@ -57,21 +58,45 @@ class TokenBucket:
 
 
 class RateLimiter:
-    """Registry de buckets por clave + factory por scope (webhook vs default)."""
+    """Registry de buckets por clave + factory por scope (webhook vs default).
+
+    AUDIT-46 (speed quick win #2, 2026-05-18): buckets ahora viven en un
+    ``OrderedDict`` con cap (``max_entries``) y expiración por inactividad
+    (``ttl_seconds``). Sin esto, el dict crecía sin tope: cada IP nueva (o
+    rotación de NAT/IPv6 dirigida) creaba un bucket que NUNCA se liberaba.
+    BUG-219 cerró el spoofing trivial via XFF; el crecimiento ilimitado por
+    fuentes legítimas seguía abierto. El cap es defensa-en-profundidad
+    (límite duro de memoria) y el TTL recupera memoria de tráfico
+    transitorio. Política de eviction:
+      1. Si una key expiró por ``ttl_seconds`` (no se usa hace TTL+), se
+         purga al próximo ``check()``.
+      2. Si tras insertar excedemos ``max_entries``, hacemos LRU pop
+         (``OrderedDict.popitem(last=False)``) hasta volver al cap.
+    """
 
     def __init__(
         self,
         *,
         default_per_minute: int,
         webhook_per_minute: int,
+        max_entries: int = 10_000,
+        ttl_seconds: int = 900,
     ) -> None:
         if default_per_minute <= 0:
             raise ValueError('default_per_minute must be > 0')
         if webhook_per_minute <= 0:
             raise ValueError('webhook_per_minute must be > 0')
+        if max_entries <= 0:
+            raise ValueError('max_entries must be > 0')
+        if ttl_seconds <= 0:
+            raise ValueError('ttl_seconds must be > 0')
         self.default_per_minute = default_per_minute
         self.webhook_per_minute = webhook_per_minute
-        self._buckets: dict[str, TokenBucket] = {}
+        self.max_entries = max_entries
+        self.ttl_seconds = ttl_seconds
+        # OrderedDict para LRU: la key más-recientemente-usada va al final
+        # (move_to_end), la menos-recientemente-usada al inicio (popitem(last=False)).
+        self._buckets: 'OrderedDict[str, TokenBucket]' = OrderedDict()
         self._lock = asyncio.Lock()
 
     def build_bucket(self, *, scope: str) -> TokenBucket:
@@ -85,12 +110,30 @@ class RateLimiter:
             refill_per_second=self.default_per_minute / 60.0,
         )
 
+    @property
+    def size(self) -> int:
+        return len(self._buckets)
+
+    def _is_expired(self, bucket: TokenBucket, now: float) -> bool:
+        return (now - bucket.last_refill) > self.ttl_seconds
+
     async def check(self, key: str, *, scope: str) -> tuple[bool, float]:
         async with self._lock:
+            now = time.monotonic()
             bucket = self._buckets.get(key)
+            if bucket is not None and self._is_expired(bucket, now):
+                # Key fría: descartar y crear nueva (estado lleno).
+                del self._buckets[key]
+                bucket = None
             if bucket is None:
                 bucket = self.build_bucket(scope=scope)
                 self._buckets[key] = bucket
+            else:
+                # Touch para LRU (mueve al final).
+                self._buckets.move_to_end(key)
+            # Cap defensivo (post-insert): pop oldest hasta cumplir.
+            while len(self._buckets) > self.max_entries:
+                self._buckets.popitem(last=False)
             return bucket.consume(1.0)
 
 

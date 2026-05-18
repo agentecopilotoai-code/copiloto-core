@@ -96,6 +96,8 @@ def create_app() -> FastAPI:
     limiter = RateLimiter(
         default_per_minute=settings.rate_limit_per_min,
         webhook_per_minute=settings.rate_limit_webhook_per_min,
+        max_entries=settings.rate_limit_bucket_max_entries,
+        ttl_seconds=settings.rate_limit_bucket_ttl_seconds,
     )
     api.middleware('http')(build_rate_limit_middleware(limiter))
 

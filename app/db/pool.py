@@ -12,7 +12,26 @@ class Database:
         self.pool: asyncpg.Pool | None = None
 
     async def connect(self, dsn: str) -> None:
-        self.pool = await asyncpg.create_pool(dsn, min_size=1, max_size=10, command_timeout=30)
+        # AUDIT-46 (speed quick win #1, 2026-05-18): pool config viene de
+        # settings (defaults conservadores idénticos a los hardcoded previos).
+        # Permite tunear por entorno sin tocar código. Fail-safe: si
+        # `get_settings()` falla (test env minimal sin envvars), caemos a
+        # los defaults históricos 1/10/30.
+        try:
+            from app.core.config import get_settings  # noqa: PLC0415
+
+            settings = get_settings()
+            min_size = settings.db_pool_min_size
+            max_size = settings.db_pool_max_size
+            command_timeout = settings.db_pool_command_timeout_seconds
+        except Exception:  # noqa: BLE001
+            min_size, max_size, command_timeout = 1, 10, 30.0
+        self.pool = await asyncpg.create_pool(
+            dsn,
+            min_size=min_size,
+            max_size=max_size,
+            command_timeout=command_timeout,
+        )
 
     async def close(self) -> None:
         if self.pool:

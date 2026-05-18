@@ -21,12 +21,63 @@ import httpx
 import structlog
 
 from app.core.config import get_settings
+from app.services.circuit_breaker import CircuitOpenError, get_breaker
 
 log = structlog.get_logger()
 
 
 _TOKEN_LOCK = asyncio.Lock()
 _CACHED_TOKEN: dict[str, Any] = {'token': None, 'expires_at': 0.0}
+
+
+def _auth0_mgmt_breaker():
+    """AUDIT-46 (security quick win #5, 2026-05-18): Auth0 Management API
+    ahora corre detrás de circuit breaker.
+
+    Antes: si Auth0 caía (incident regional, ratelimit excedido), cada
+    request del panel admin que requería Auth0 (listar/invitar/revocar
+    miembros, asignar roles) bloqueaba 10s antes de fallar. El operador
+    veía latencia agregada y sin señal clara de "Auth0 está caído". Peor
+    aún: el cache de tokens M2M (``_CACHED_TOKEN``) no se invalidaba si
+    Auth0 revocaba el client_credentials grant — el siguiente 401 dispararía
+    un fetch de token (otro 10s), y así sucesivamente.
+
+    Breaker abre tras 5 fallos consecutivos (default), cooldown 30s. En
+    estado open, las llamadas a `_mgmt_request` levantan `CircuitOpenError`
+    inmediatamente; el caller la mapea a 503 con `Retry-After`. La
+    invalidación del token cache se hace explícitamente en `_mgmt_request`
+    cuando Auth0 devuelve 401 (revocation detection).
+    """
+    try:
+        settings = get_settings()
+        threshold = settings.circuit_breaker_failure_threshold
+        cooldown = settings.circuit_breaker_cooldown_seconds
+    except Exception:  # noqa: BLE001
+        threshold, cooldown = 5, 30.0
+    return get_breaker(
+        'auth0_management',
+        failure_threshold=threshold,
+        cooldown_seconds=cooldown,
+    )
+
+
+async def _auth0_http_post(*, url: str, json: dict[str, Any], timeout: float) -> httpx.Response:
+    """HTTP POST primitive used inside the breaker for /oauth/token."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        return await client.post(url, json=json)
+
+
+async def _auth0_http_request(
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    json_body: Any,
+    timeout: float,
+) -> httpx.Response:
+    """HTTP request primitive used inside the breaker for /api/v2/*."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        return await client.request(method, url, headers=headers, json=json_body)
 
 
 def _read_secret_file(path: str) -> str | None:
@@ -151,23 +202,28 @@ async def get_management_token() -> str | None:
             'client_secret': client_secret,
             'audience': _management_audience(settings),
         }
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, json=payload)
-            if response.status_code == 403:
-                # BUG-001: surface a diagnostic without leaking the secret.
-                log.error(
-                    'auth0_admin.oauth_token_forbidden',
-                    status=response.status_code,
-                    ticket='BUG-001',
-                    hint=(
-                        'Auth0 rechazó client_credentials. Verifica que '
-                        'AUTH0_SERVICE_CLIENT_ID apunta a la app M2M '
-                        '(app_type=non_interactive). Re-corre '
-                        'scripts/configure-auth0.sh si es necesario.'
-                    ),
-                )
-            response.raise_for_status()
-            data = response.json()
+        try:
+            response = await _auth0_mgmt_breaker().call(
+                _auth0_http_post, url=url, json=payload, timeout=10.0
+            )
+        except CircuitOpenError:
+            log.warning('auth0_admin.oauth_token_circuit_open')
+            return None
+        if response.status_code == 403:
+            # BUG-001: surface a diagnostic without leaking the secret.
+            log.error(
+                'auth0_admin.oauth_token_forbidden',
+                status=response.status_code,
+                ticket='BUG-001',
+                hint=(
+                    'Auth0 rechazó client_credentials. Verifica que '
+                    'AUTH0_SERVICE_CLIENT_ID apunta a la app M2M '
+                    '(app_type=non_interactive). Re-corre '
+                    'scripts/configure-auth0.sh si es necesario.'
+                ),
+            )
+        response.raise_for_status()
+        data = response.json()
 
         token = data.get('access_token')
         expires_in = float(data.get('expires_in') or 3600)
@@ -233,8 +289,25 @@ async def _mgmt_request(
     domain = settings.auth0_domain.removeprefix('https://').rstrip('/')
     url = f'https://{domain}/api/v2{path}'
     headers = {'authorization': f'Bearer {token}', 'accept': 'application/json'}
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.request(method, url, headers=headers, json=json_body)
+    response = await _auth0_mgmt_breaker().call(
+        _auth0_http_request,
+        method=method,
+        url=url,
+        headers=headers,
+        json_body=json_body,
+        timeout=10.0,
+    )
+    # AUDIT-46: si Auth0 dice 401 (token revocado / rotación M2M sin avisar),
+    # invalidamos el cache para que el siguiente request fetch un token fresco
+    # sin esperar al TTL. No re-intentamos en este request — el caller decide.
+    if response.status_code == 401:
+        log.warning(
+            'auth0_admin.token_invalidated_by_401',
+            method=method,
+            path=path,
+            hint='token revocado o rotado upstream; cache limpiado para próximo retry',
+        )
+        clear_management_token_cache()
     if response.status_code == 409:
         # Bubble up as a typed exception so the invite flow can refuse to
         # issue a password-reset ticket against an account that already

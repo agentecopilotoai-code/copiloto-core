@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import structlog
 
+from app.core.config import get_settings
+from app.services.circuit_breaker import CircuitOpenError, get_breaker
 from app.services.conversation_flow import (
     ConversationContext,
     build_system_prompt,
@@ -22,6 +24,55 @@ if TYPE_CHECKING:
     from app.services.rag_retrieval import RetrievalMatch
 
 log = structlog.get_logger()
+
+
+def _breaker_for_local_llm():
+    """AUDIT-46 (speed quick win #5, 2026-05-18): Ollama local LLM ahora
+    está envuelto en circuit breaker (mismo patrón que cloud_llm_answer).
+
+    Antes: si Ollama colgaba, cada request bloqueaba 30s (timeout) antes
+    de fallar. En cascade mode con tráfico moderado, el pool de workers
+    se llena en segundos esperando a Ollama. El breaker abre tras 5
+    fallos consecutivos y rechaza inmediatamente con CircuitOpenError
+    hasta el próximo cooldown (30s), liberando capacidad para responder
+    el resto del tráfico (template tier-1 + cloud LLM tier-3).
+    """
+    try:
+        settings = get_settings()
+        threshold = settings.circuit_breaker_failure_threshold
+        cooldown = settings.circuit_breaker_cooldown_seconds
+    except Exception:  # noqa: BLE001
+        threshold, cooldown = 5, 30.0
+    return get_breaker(
+        'local_llm',
+        failure_threshold=threshold,
+        cooldown_seconds=cooldown,
+    )
+
+
+async def _ollama_chat(
+    *,
+    base_url: str,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    num_predict: int,
+    timeout_seconds: int,
+) -> str:
+    """Llamada directa a /api/chat de Ollama. Envuelta por el breaker abajo."""
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        response = await client.post(
+            f'{base_url.rstrip("/")}/api/chat',
+            json={
+                'model': model,
+                'stream': False,
+                'options': {'temperature': temperature, 'num_predict': num_predict},
+                'messages': messages,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        return str(data.get('message', {}).get('content', '')).strip()
 
 _SYSTEM_PROMPT = """Eres un asistente de atención al cliente amable, claro y conciso.
 Responde la pregunta del cliente basándote ÚNICAMENTE en el contexto proporcionado.
@@ -98,24 +149,25 @@ async def build_llm_answer(
 
     user_message = _USER_TEMPLATE.format(context=context, question=question)
     system_prompt = _qa_system_prompt(bot_personality)
+    breaker = _breaker_for_local_llm()
 
     try:
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            response = await client.post(
-                f'{base_url.rstrip("/")}/api/chat',
-                json={
-                    'model': model,
-                    'stream': False,
-                    'options': {'temperature': 0.2, 'num_predict': 400},
-                    'messages': [
-                        {'role': 'system', 'content': system_prompt},
-                        {'role': 'user', 'content': user_message},
-                    ],
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            answer_text: str = data.get('message', {}).get('content', '').strip()
+        answer_text = await breaker.call(
+            _ollama_chat,
+            base_url=base_url,
+            model=model,
+            messages=[
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_message},
+            ],
+            temperature=0.2,
+            num_predict=400,
+            timeout_seconds=timeout_seconds,
+        )
+    except CircuitOpenError:
+        log.warning('llm_answer.circuit_open', model=model, base_url=base_url)
+        record_llm_call(provider='local_llm', status='rejected')
+        raise
     except httpx.TimeoutException:
         log.warning('llm_answer.timeout', model=model, base_url=base_url)
         record_llm_call(provider='local_llm', status='timeout')
@@ -193,21 +245,22 @@ async def build_conversational_llm_answer(
         messages_payload.append({'role': 'user', 'content': f'== HISTORIAL ==\n{history}'})
         messages_payload.append({'role': 'assistant', 'content': 'Entendido, continúo.'})
     messages_payload.append({'role': 'user', 'content': question})
+    breaker = _breaker_for_local_llm()
 
     try:
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            response = await client.post(
-                f'{base_url.rstrip("/")}/api/chat',
-                json={
-                    'model': model,
-                    'stream': False,
-                    'options': {'temperature': 0.3, 'num_predict': 500},
-                    'messages': messages_payload,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-            raw_text: str = data.get('message', {}).get('content', '').strip()
+        raw_text = await breaker.call(
+            _ollama_chat,
+            base_url=base_url,
+            model=model,
+            messages=messages_payload,
+            temperature=0.3,
+            num_predict=500,
+            timeout_seconds=timeout_seconds,
+        )
+    except CircuitOpenError:
+        log.warning('llm_conv.circuit_open', model=model, base_url=base_url)
+        record_llm_call(provider='local_llm', status='rejected')
+        raise
     except httpx.TimeoutException:
         log.warning('llm_conv.timeout', model=model, base_url=base_url)
         record_llm_call(provider='local_llm', status='timeout')
