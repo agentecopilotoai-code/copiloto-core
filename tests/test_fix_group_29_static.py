@@ -55,20 +55,34 @@ def test_bug_163_booking_flow_auto_select_calls_present_packages():
 
 
 def test_bug_164_list_active_services_pulls_full_catalogue():
+    """BUG-164 + BUG-203 (fix-group-38): el SELECT pulls el catálogo activo
+    para que el filtro de qualification vea todos los candidatos. El cap
+    visual de 10 se aplica DESPUÉS en `_present_services`.
+
+    BUG-203 (codex MEDIUM, 2026-05-18) agregó un `LIMIT $2 = SERVICE_CATALOG_HARD_CAP`
+    (500) como techo de DoS contra catalogues maliciosamente grandes.
+    500 es 50× el cap visual final (10), así que el filtro de qualification
+    sigue viendo cualquier catalogue realista — pero un tenant no puede
+    saturar memoria/CPU pumping miles de servicios al endpoint.
+    """
     src = BOOKING_FLOW.read_text()
     fn_idx = src.find('async def _list_active_services(')
     assert fn_idx > 0
     next_def = src.find('\n\ndef ', fn_idx)
     block = src[fn_idx:next_def]
-    # El SQL NO debe tener `limit` al final.
-    assert 'limit ' not in block.lower() or 'LIMIT ' not in block, (
-        "BUG-164: `_list_active_services` no debe aplicar SQL `limit` — el "
-        "filtro de qualification debe ver TODO el catálogo. El cap visual "
-        "(10) se aplica después en `_present_services`."
-    )
-    # Y debe ordenar por sort_order + name (señal de que es el full pull).
+    # El SELECT debe ordenar por sort_order + name (señal de que es el full pull).
     assert 'order by sort_order asc, name asc' in block, (
         "BUG-164: el SELECT debe ordenar por `sort_order asc, name asc`."
+    )
+    # BUG-203: el LIMIT debe estar parametrizado contra SERVICE_CATALOG_HARD_CAP.
+    assert 'limit $2' in block.lower(), (
+        "BUG-203: el SELECT debe terminar con `limit $2` y el segundo "
+        "parámetro debe ser `SERVICE_CATALOG_HARD_CAP` (default 500) — "
+        "techo de DoS contra catalogues maliciosos."
+    )
+    assert 'SERVICE_CATALOG_HARD_CAP' in block, (
+        "BUG-203: la query debe usar la constante `SERVICE_CATALOG_HARD_CAP` "
+        "como parámetro del LIMIT."
     )
 
 

@@ -809,7 +809,76 @@ async def _execute_cancel(
     channel_id: UUID,
     channel_account_mode: str,
     appointment: dict[str, Any],
-) -> None:
+) -> bool:
+    """Cancel the appointment after re-verifying the policy gates.
+
+    BUG-208 (codex MEDIUM): el flow self-service hace verificación en la
+    entrada (start_cancel) pero NO la repetía mid-flow. Cliente abría el
+    flow cuando la cita estaba pristine, esperaba a que el pago se
+    confirmara o a que se acercara la ventana mínima, y entonces
+    presionaba el botón viejo de "Sí, cancelar" → el bot cancelaba sin
+    re-chequear. Acá re-fetcheamos el appointment AHORA y validamos
+    `status not in ('cancelled','completed')` + `payment_status != 'paid'`
+    + `_too_close_to_start == False`. Si alguno falla, escalamos a humano
+    (handoff) en vez de mutar la cita.
+
+    Returns True si la cancelación se ejecutó. False si se rechazó y se
+    escaló — el caller debe NO marcar handled-with-success.
+    """
+    fresh = await _fetch_appointment(conn, tenant_id, appointment['id'])
+    if fresh is None:
+        await _queue_text_message(
+            conn,
+            tenant_id=tenant_id,
+            conversation_id=conversation['id'],
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            body_text='No encuentro tu cita. Te conecto con un asesor.',
+            step=STEP_COMPLETED,
+        )
+        return False
+    if fresh.get('status') in ('cancelled', 'completed', 'no_show'):
+        await _queue_text_message(
+            conn,
+            tenant_id=tenant_id,
+            conversation_id=conversation['id'],
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            body_text='Esa cita ya no se puede cancelar desde acá. Te conecto con un asesor.',
+            step=STEP_COMPLETED,
+        )
+        return False
+    if str(fresh.get('payment_status') or '').lower() == 'paid':
+        await _queue_text_message(
+            conn,
+            tenant_id=tenant_id,
+            conversation_id=conversation['id'],
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            body_text=(
+                'Tu cita ya está pagada y la cancelación requiere asistencia '
+                'humana. Te conecto con un asesor.'
+            ),
+            step=STEP_COMPLETED,
+        )
+        return False
+    if await _too_close_to_start(conn, tenant_id, fresh):
+        await _queue_text_message(
+            conn,
+            tenant_id=tenant_id,
+            conversation_id=conversation['id'],
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            body_text=(
+                'Tu cita está muy cerca y la cancelación requiere asistencia '
+                'humana. Te conecto con un asesor.'
+            ),
+            step=STEP_COMPLETED,
+        )
+        return False
+    # Sustituimos appointment por la copia fresh para que las llamadas
+    # subsiguientes lean los campos confirmados de DB.
+    appointment = fresh
     await conn.execute(
         """
         update app.appointments
@@ -851,6 +920,7 @@ async def _execute_cancel(
             'conversation_id': str(conversation['id']),
         },
     )
+    return True
 
 
 async def _execute_reschedule(
@@ -862,9 +932,81 @@ async def _execute_reschedule(
     channel_account_mode: str,
     appointment: dict[str, Any],
     slot: dict[str, str],
-) -> bool:
-    """Apply the reschedule. Returns ``True`` on success, ``False`` if the
-    selected slot is no longer available (caller should re-offer slots)."""
+) -> bool | str:
+    """Apply the reschedule. Tri-state return for distinct caller handling:
+
+    - ``True`` — reschedule applied successfully.
+    - ``'slot_conflict'`` — slot is no longer available (exclusion constraint
+      raised); caller should fetch fresh alternatives and re-offer.
+    - ``'policy_blocked'`` — BUG-208 follow-up: mid-flow policy gate rejected
+      the reschedule (status terminal / paid / too_close_to_start). Caller
+      must NOT re-offer slots; instead, escalate to human and clear the
+      self-service state. Si retornamos `False`/`'slot_conflict'` para estos
+      casos, el caller persiste `STEP_AWAITING_RESCHEDULE_SLOT` con nuevas
+      alternativas y el cliente sigue viendo botones de horario — el
+      handoff humano nunca dispara y el cliente se confunde.
+
+    BUG-208 (codex MEDIUM): mismo problema que `_execute_cancel` — el
+    flow self-service hace verificación al entry pero no la repite
+    mid-flow. Cliente abre flow cuando todo está pristine, espera a que
+    el pago se confirme o se acerque la min-hours window, presiona
+    botón viejo de reschedule slot → mutaba la cita sin re-check.
+    Acá re-validamos `status not in ('cancelled','completed','no_show')`
+    + `payment_status != 'paid'` + `_too_close_to_start == False` ANTES
+    de mutar.
+    """
+    fresh = await _fetch_appointment(conn, tenant_id, appointment['id'])
+    if fresh is None:
+        await _queue_text_message(
+            conn,
+            tenant_id=tenant_id,
+            conversation_id=conversation['id'],
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            body_text='No encuentro tu cita. Te conecto con un asesor.',
+            step=STEP_COMPLETED,
+        )
+        return 'policy_blocked'
+    if fresh.get('status') in ('cancelled', 'completed', 'no_show'):
+        await _queue_text_message(
+            conn,
+            tenant_id=tenant_id,
+            conversation_id=conversation['id'],
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            body_text='Esa cita ya no se puede reagendar. Te conecto con un asesor.',
+            step=STEP_COMPLETED,
+        )
+        return 'policy_blocked'
+    if str(fresh.get('payment_status') or '').lower() == 'paid':
+        await _queue_text_message(
+            conn,
+            tenant_id=tenant_id,
+            conversation_id=conversation['id'],
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            body_text=(
+                'Tu cita ya está pagada y reagendarla requiere asistencia humana. '
+                'Te conecto con un asesor.'
+            ),
+            step=STEP_COMPLETED,
+        )
+        return 'policy_blocked'
+    if await _too_close_to_start(conn, tenant_id, fresh):
+        await _queue_text_message(
+            conn,
+            tenant_id=tenant_id,
+            conversation_id=conversation['id'],
+            channel_id=channel_id,
+            channel_account_mode=channel_account_mode,
+            body_text=(
+                'Tu cita está muy cerca y reagendarla requiere asistencia humana. '
+                'Te conecto con un asesor.'
+            ),
+            step=STEP_COMPLETED,
+        )
+        return 'policy_blocked'
+    appointment = fresh
     target_date = date.fromisoformat(slot['date'])
     hour, minute = (int(part) for part in slot['start_time'].split(':'))
     starts_at = datetime.combine(target_date, datetime.min.time()).replace(
@@ -1004,6 +1146,38 @@ async def start_auto_rebook_flow(
         idempotency_key,
     ):
         return {'action': 'skipped', 'reason': 'already_processed'}
+
+    # BUG-209 (codex MEDIUM): el auto-rebook se disparaba al recibir un
+    # "no" / "reagendar" en respuesta a la confirmación, pero NO aplicaba
+    # los mismos gates que el entry-point regular de self-service:
+    #   - appointments pagadas (`payment_status='paid'`)
+    #   - dentro de la min_hours_before_start window
+    # Un cliente podía mandar "no" / "cambiar" tan tarde como quisiera y
+    # rampear directo al reschedule sub-flow, bypaseando la política de
+    # "paid o too-close → humano". Acá aplicamos los mismos checks ANTES
+    # de mandar el intro del auto-rebook.
+    if str(appointment.get('payment_status') or '').lower() == 'paid':
+        log.info(
+            'self_service.auto_rebook_blocked_paid',
+            tenant_id=str(tenant_id),
+            appointment_id=str(appointment['id']),
+        )
+        return {
+            'action': 'self_service_escalated',
+            'reason': 'paid_appointment_requires_human',
+            'appointment_id': str(appointment['id']),
+        }
+    if await _too_close_to_start(conn, tenant_id, appointment):
+        log.info(
+            'self_service.auto_rebook_blocked_too_close',
+            tenant_id=str(tenant_id),
+            appointment_id=str(appointment['id']),
+        )
+        return {
+            'action': 'self_service_escalated',
+            'reason': 'too_close_to_start',
+            'appointment_id': str(appointment['id']),
+        }
 
     await _queue_text_message(
         conn,
@@ -1168,7 +1342,11 @@ async def maybe_run_self_service_flow(
             )
         if flow == FLOW_CANCEL and prefix == PREFIX_CANCEL_CONFIRM:
             if value == 'yes':
-                await _execute_cancel(
+                # BUG-208: `_execute_cancel` ahora retorna False si la
+                # re-verificación mid-flow rechaza el cancel (paid /
+                # too-close / status terminal). En ese caso, marcamos
+                # escalated en vez de cancelled.
+                cancelled = await _execute_cancel(
                     conn,
                     tenant_id=tenant_id,
                     conversation=conversation,
@@ -1176,6 +1354,22 @@ async def maybe_run_self_service_flow(
                     channel_account_mode=channel_account_mode,
                     appointment=appointment,
                 )
+                if not cancelled:
+                    await _persist_state(conn, tenant_id, conversation, None)
+                    await _record_handled(
+                        conn,
+                        tenant_id,
+                        conversation['id'],
+                        inbound_message['id'],
+                        flow=FLOW_CANCEL,
+                        step='escalated_policy',
+                        extra={'appointment_id': str(appointment_id)},
+                    )
+                    return {
+                        'action': 'self_service_escalated',
+                        'reason': 'policy_recheck_failed',
+                        'appointment_id': str(appointment_id),
+                    }
                 await _persist_state(
                     conn,
                     tenant_id,
@@ -1229,6 +1423,10 @@ async def maybe_run_self_service_flow(
 
             decision = _parse_conf(inbound_message.get('body_text'))
             if decision == 'declined':
+                # BUG-208: same recheck pattern — el cancel acá ya tenía
+                # semántica de escalation, así que el return action es el
+                # mismo. Pero si _execute_cancel reject por policy mid-flow,
+                # NO mutamos la cita; el escalation queda en pie.
                 await _execute_cancel(
                     conn,
                     tenant_id=tenant_id,
@@ -1272,7 +1470,7 @@ async def maybe_run_self_service_flow(
                     appointment=appointment,
                     slot=slot,
                 )
-                if success:
+                if success is True:
                     await _persist_state(
                         conn,
                         tenant_id,
@@ -1297,6 +1495,26 @@ async def maybe_run_self_service_flow(
                         'action': 'self_service_rescheduled',
                         'appointment_id': str(appointment_id),
                         'new_starts_at': f'{slot["date"]}T{slot["start_time"]}',
+                    }
+                # BUG-208 follow-up: policy gate (paid/too_close/terminal)
+                # rejected mid-flow → escalation, NO re-offer slots. Si
+                # re-presentamos alternativas, el cliente sigue viendo
+                # botones de horario y el handoff humano nunca dispara.
+                if success == 'policy_blocked':
+                    await _persist_state(conn, tenant_id, conversation, None)
+                    await _record_handled(
+                        conn,
+                        tenant_id,
+                        conversation['id'],
+                        inbound_message['id'],
+                        flow=FLOW_RESCHEDULE,
+                        step='escalated_policy',
+                        extra={'appointment_id': str(appointment_id)},
+                    )
+                    return {
+                        'action': 'self_service_escalated',
+                        'reason': 'policy_recheck_failed',
+                        'appointment_id': str(appointment_id),
                     }
                 # Conflict: present fresh slots.
                 refreshed_appointment = await _fetch_appointment(
