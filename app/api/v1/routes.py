@@ -102,7 +102,7 @@ from app.core.security import (
 )
 from app.core.export_signatures import sign_export_bundle
 from app.core.signed_cookies import pack_signed_payload, unpack_signed_payload
-from app.db.pool import get_db, record_to_dict
+from app.db.pool import db, get_db, record_to_dict
 from app.services import feature_flags as feature_flags_service
 from app.services import locale as locale_service
 from app.services import metrics
@@ -9326,6 +9326,11 @@ async def evaluate_intent_retrieval(
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
     visibility_filter = list(ALL_VISIBILITY) if payload.include_agents_only else list(END_USER_VISIBILITY)
+    # BUG-212 (codex MEDIUM): el SELECT antes traía TODOS los chunks activos
+    # del tenant y los rankeaba en Python. Un tenant admin con catálogo
+    # grande podía agotar memoria/CPU del worker. Cap a 1000 candidatos
+    # (mismo cap pre-TASK-0079) — el filtro Python sigue siendo necesario
+    # porque pgvector no enforce el min_score que el caller envía.
     rows = await conn.fetch(
         """
         select kc.id,
@@ -9346,6 +9351,7 @@ async def evaluate_intent_retrieval(
           and kd.status='active'
           and kd.visibility = ANY($2::text[])
         order by kd.updated_at desc, kc.chunk_index asc
+        limit 1000
         """,
         tenant_id,
         visibility_filter,
@@ -9698,23 +9704,58 @@ async def patch_knowledge_document(
 async def index_knowledge_document(
     document_id: UUID,
     request: Request,
-    conn: asyncpg.Connection = Depends(get_db),
 ):
-    tenant_id = await tenant_id_from_request(request, conn)
-    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    document = await conn.fetchrow(
-        f"""
-        select {KNOWLEDGE_DOCUMENT_PROJECTION}
-        from app.knowledge_documents
-        where tenant_id=$1 and id=$2
-        """,
-        tenant_id,
-        document_id,
-    )
+    """Index a knowledge document — embedding is a long-running network call.
+
+    BUG-210 (codex HIGH): el handler antes usaba `Depends(get_db)` que
+    mantiene una conn de la pool (`max_size=10`) durante toda la request,
+    INCLUYENDO la llamada `build_indexing_result_async(...)` que hace 1
+    request por chunk al provider de embeddings (OpenAI / Voyage / Ollama).
+    Para documentos grandes esto puede tardar 30s+. Un tenant admin
+    malicioso podía lanzar 10 reindexes concurrentes y agotar la pool —
+    DoS efectivo para TODOS los tenants.
+
+    Fix: acquire conn ad-hoc en 2 fases —
+      1) SELECT del documento (rápido, libera conn)
+      2) (sin conn) embedding network call
+      3) Re-acquire conn para el UPDATE + INSERT transaccional (rápido)
+
+    Esto bound la ocupación de pool a milisegundos por checkout en vez de
+    segundos. La fase 3 sigue siendo transactional para mantener atomicidad
+    (status flip + chunk insert).
+    """
+    settings = get_settings()
+
+    # Phase 1: load the doc with a short-lived conn — wrapped in transaction
+    # para que `set_config('app.tenant_id', ..., true)` (is_local=true) aplique
+    # al SELECT siguiente (Codex P1 follow-up: sin transaction el `is_local`
+    # solo cubría el statement de set_config y el SELECT corría con
+    # `app.current_tenant_id()` NULL → RLS bloqueaba el row y todo admin veía
+    # 404). También `ensure_tenant_access(...)` siempre se ejecuta para que la
+    # DB-role check (admin actual en `user_tenant_roles`) corra incluso cuando
+    # el JWT trae `tenant_id` scoped — sino, un JWT admin stale pero membresía
+    # downgradeada bypasea el gate (Codex P1 follow-up).
+    async with db.pool.acquire() as conn:
+        async with conn.transaction():
+            tenant_id = await tenant_id_from_request(request, conn)
+            await ensure_tenant_access(request, tenant_id, conn)
+            await conn.execute(
+                "select set_config('app.tenant_id', $1, true)",
+                str(tenant_id),
+            )
+            document = await conn.fetchrow(
+                f"""
+                select {KNOWLEDGE_DOCUMENT_PROJECTION}
+                from app.knowledge_documents
+                where tenant_id=$1 and id=$2
+                """,
+                tenant_id,
+                document_id,
+            )
     if not document:
         raise HTTPException(status_code=404, detail='Knowledge document not found')
 
-    settings = get_settings()
+    # Phase 2: embedding call WITHOUT holding a conn.
     try:
         result = await build_indexing_result_async(
             normalize_knowledge_document(document),
@@ -9726,104 +9767,145 @@ async def index_knowledge_document(
             embedding_api_key=settings.rag_embedding_api_key,
         )
     except (ValueError, RuntimeError) as exc:
-        await conn.execute(
-            """
-            update app.knowledge_documents
-            set status='failed', metadata=metadata || $3::jsonb
-            where tenant_id=$1 and id=$2
-            """,
-            tenant_id,
-            document_id,
-            json.dumps({'indexing_error': str(exc)}),
+        # BUG-211 (codex MEDIUM): el `detail=str(exc)` exponía errores raw
+        # del provider de embeddings (OpenAI/Voyage/Ollama) al tenant admin,
+        # incluyendo a veces prefijos de API key, account/project ids, request
+        # IDs internos, URLs de fallback, etc. Cualquiera con rol admin del
+        # tenant puede triggerear este endpoint y leer el error de respuesta.
+        # Fix: log full exception SERVER-side (audit metadata para forensia),
+        # responder al cliente con un mensaje genérico tenant-safe. La
+        # excepción ValueError sí puede sobrevivir el str porque viene del
+        # módulo de RAG (no del provider) — es validation feedback.
+        full_error = str(exc)
+        log.warning(
+            'knowledge_document.indexing_provider_failure',
+            tenant_id=str(tenant_id),
+            document_id=str(document_id),
+            exc_type=type(exc).__name__,
+            error=full_error,
         )
+        # Re-acquire conn for the failure audit + status update — wrapped in
+        # transaction so RLS sees `app.tenant_id` (Codex P1 follow-up).
+        async with db.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "select set_config('app.tenant_id', $1, true)",
+                    str(tenant_id),
+                )
+                await conn.execute(
+                    """
+                    update app.knowledge_documents
+                    set status='failed', metadata=metadata || $3::jsonb
+                    where tenant_id=$1 and id=$2
+                    """,
+                    tenant_id,
+                    document_id,
+                    json.dumps({'indexing_error': full_error}),
+                )
+                await audit(
+                    conn,
+                    tenant_id=tenant_id,
+                    actor_type=request.state.actor_type,
+                    actor_id=request.state.actor_id,
+                    action='knowledge_document.index_failed',
+                    entity_type='knowledge_document',
+                    entity_id=str(document_id),
+                    metadata={'error': full_error},
+                )
+        if isinstance(exc, ValueError):
+            status_code = 422
+            client_detail = full_error
+        else:
+            status_code = 502
+            client_detail = (
+                'Embedding provider unavailable. The error has been logged '
+                'server-side; check the document indexing_error metadata or '
+                'the audit log if more detail is required.'
+            )
+        raise HTTPException(status_code=status_code, detail=client_detail) from exc
+
+    # Phase 3: re-acquire conn for the transactional persistence.
+    # Codex P1 follow-up: set_config dentro de transaction.
+    indexing_started_at = datetime.now(UTC).isoformat()
+    async with db.pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "select set_config('app.tenant_id', $1, true)",
+                str(tenant_id),
+            )
+            await conn.execute(
+                """
+                update app.knowledge_documents
+                set status='indexing', metadata=metadata || $3::jsonb
+                where tenant_id=$1 and id=$2
+                """,
+                tenant_id,
+                document_id,
+                json.dumps(
+                    {
+                        'last_indexing_started_at': indexing_started_at,
+                        'embedding_provider': result.embedding_provider,
+                        'embedding_model': result.embedding_model,
+                        'embedding_dimensions': result.embedding_dimensions,
+                    }
+                ),
+            )
+            await conn.execute(
+                'delete from app.knowledge_chunks where tenant_id=$1 and document_id=$2',
+                tenant_id,
+                document_id,
+            )
+            for chunk in result.chunks:
+                await conn.execute(
+                    """
+                    insert into app.knowledge_chunks (
+                      tenant_id, document_id, chunk_index, section_path, chunk_text,
+                      token_count, embedding, metadata
+                    )
+                    values ($1,$2,$3,$4,$5,$6,$7::vector,$8::jsonb)
+                    """,
+                    tenant_id,
+                    document_id,
+                    chunk.chunk_index,
+                    chunk.section_path,
+                    chunk.chunk_text,
+                    chunk.token_count,
+                    vector_literal(chunk.embedding),
+                    json.dumps(chunk.metadata),
+                )
+            indexing_completed_at = datetime.now(UTC).isoformat()
+            row = await conn.fetchrow(
+                f"""
+                update app.knowledge_documents
+                set status='active', metadata=metadata || $3::jsonb
+                where tenant_id=$1 and id=$2
+                returning {KNOWLEDGE_DOCUMENT_PROJECTION}
+                """,
+                tenant_id,
+                document_id,
+                json.dumps(
+                    {
+                        'chunk_count': len(result.chunks),
+                        'sanitized_warning_count': result.sanitized_warning_count,
+                        'last_indexing_completed_at': indexing_completed_at,
+                    }
+                ),
+            )
         await audit(
             conn,
             tenant_id=tenant_id,
             actor_type=request.state.actor_type,
             actor_id=request.state.actor_id,
-            action='knowledge_document.index_failed',
+            action='knowledge_document.indexed',
             entity_type='knowledge_document',
             entity_id=str(document_id),
-            metadata={'error': str(exc)},
+            metadata={
+                'chunk_count': len(result.chunks),
+                'sanitized_warning_count': result.sanitized_warning_count,
+                'embedding_provider': result.embedding_provider,
+                'embedding_model': result.embedding_model,
+            },
         )
-        status_code = 422 if isinstance(exc, ValueError) else 502
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-
-    indexing_started_at = datetime.now(UTC).isoformat()
-    async with conn.transaction():
-        await conn.execute(
-            """
-            update app.knowledge_documents
-            set status='indexing', metadata=metadata || $3::jsonb
-            where tenant_id=$1 and id=$2
-            """,
-            tenant_id,
-            document_id,
-            json.dumps(
-                {
-                    'last_indexing_started_at': indexing_started_at,
-                    'embedding_provider': result.embedding_provider,
-                    'embedding_model': result.embedding_model,
-                    'embedding_dimensions': result.embedding_dimensions,
-                }
-            ),
-        )
-        await conn.execute(
-            'delete from app.knowledge_chunks where tenant_id=$1 and document_id=$2',
-            tenant_id,
-            document_id,
-        )
-        for chunk in result.chunks:
-            await conn.execute(
-                """
-                insert into app.knowledge_chunks (
-                  tenant_id, document_id, chunk_index, section_path, chunk_text,
-                  token_count, embedding, metadata
-                )
-                values ($1,$2,$3,$4,$5,$6,$7::vector,$8::jsonb)
-                """,
-                tenant_id,
-                document_id,
-                chunk.chunk_index,
-                chunk.section_path,
-                chunk.chunk_text,
-                chunk.token_count,
-                vector_literal(chunk.embedding),
-                json.dumps(chunk.metadata),
-            )
-        indexing_completed_at = datetime.now(UTC).isoformat()
-        row = await conn.fetchrow(
-            f"""
-            update app.knowledge_documents
-            set status='active', metadata=metadata || $3::jsonb
-            where tenant_id=$1 and id=$2
-            returning {KNOWLEDGE_DOCUMENT_PROJECTION}
-            """,
-            tenant_id,
-            document_id,
-            json.dumps(
-                {
-                    'chunk_count': len(result.chunks),
-                    'sanitized_warning_count': result.sanitized_warning_count,
-                    'last_indexing_completed_at': indexing_completed_at,
-                }
-            ),
-        )
-    await audit(
-        conn,
-        tenant_id=tenant_id,
-        actor_type=request.state.actor_type,
-        actor_id=request.state.actor_id,
-        action='knowledge_document.indexed',
-        entity_type='knowledge_document',
-        entity_id=str(document_id),
-        metadata={
-            'chunk_count': len(result.chunks),
-            'sanitized_warning_count': result.sanitized_warning_count,
-            'embedding_provider': result.embedding_provider,
-            'embedding_model': result.embedding_model,
-        },
-    )
     response = normalize_knowledge_document(row)
     response['indexing'] = {
         'chunk_count': len(result.chunks),
@@ -9838,27 +9920,47 @@ async def index_knowledge_document(
 @tenant_admin_router.post('/knowledge/reindex-all')
 async def reindex_all_knowledge_documents(
     request: Request,
-    conn: asyncpg.Connection = Depends(get_db),
 ):
-    """Re-index all active knowledge documents for the tenant using the current embedding provider."""
-    tenant_id = await tenant_id_from_request(request, conn)
-    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
-    docs = await conn.fetch(
-        f"""
-        select {KNOWLEDGE_DOCUMENT_PROJECTION}
-        from app.knowledge_documents
-        where tenant_id=$1 and status in ('active', 'draft')
-        order by updated_at asc
-        """,
-        tenant_id,
-    )
+    """Re-index all active knowledge documents for the tenant.
+
+    BUG-210 (codex HIGH): mismo pattern de DoS que `index_knowledge_document`
+    — el handler ANTES mantenía `Depends(get_db)` durante un loop que
+    podía durar MINUTOS (embedding API call por chunk * N docs). Un admin
+    malicioso con catálogo grande podía agotar la pool global trivialmente.
+    Fix: acquire conn ad-hoc para SELECT de docs, embedding sin conn,
+    re-acquire conn por doc para la persistencia transaccional.
+    """
     settings = get_settings()
+
+    # Phase 1: load doc list — wrapped in transaction + always run
+    # ensure_tenant_access (Codex P1 follow-up: sin transaction el is_local
+    # del set_config no aplica al SELECT y RLS bloquea; sin ensure_tenant_access
+    # un JWT admin stale con membresía downgradeada bypasea el gate).
+    async with db.pool.acquire() as conn:
+        async with conn.transaction():
+            tenant_id = await tenant_id_from_request(request, conn)
+            await ensure_tenant_access(request, tenant_id, conn)
+            await conn.execute(
+                "select set_config('app.tenant_id', $1, true)",
+                str(tenant_id),
+            )
+            docs = await conn.fetch(
+                f"""
+                select {KNOWLEDGE_DOCUMENT_PROJECTION}
+                from app.knowledge_documents
+                where tenant_id=$1 and status in ('active', 'draft')
+                order by updated_at asc
+                """,
+                tenant_id,
+            )
+
     indexed = 0
     failed = 0
     errors: list[dict] = []
     for doc in docs:
         doc_id = doc['id']
         try:
+            # Phase 2a: embedding call WITHOUT holding a conn.
             result = await build_indexing_result_async(
                 normalize_knowledge_document(doc),
                 max_tokens=settings.rag_chunk_max_tokens,
@@ -9869,67 +9971,102 @@ async def reindex_all_knowledge_documents(
                 embedding_api_key=settings.rag_embedding_api_key,
             )
         except (ValueError, RuntimeError) as exc:
+            # BUG-211: ver comentario en `index_knowledge_document` — el error
+            # raw del provider no debe filtrarse al cliente. Aquí mismo:
+            # logueamos full server-side, devolvemos solo el tipo de error +
+            # detalle SI es ValueError (validation).
+            full_error = str(exc)
+            log.warning(
+                'knowledge_reindex_all.document_failed',
+                tenant_id=str(tenant_id),
+                document_id=str(doc_id),
+                exc_type=type(exc).__name__,
+                error=full_error,
+            )
             failed += 1
-            errors.append({'document_id': str(doc_id), 'error': str(exc)})
+            if isinstance(exc, ValueError):
+                errors.append({'document_id': str(doc_id), 'error': full_error})
+            else:
+                errors.append({
+                    'document_id': str(doc_id),
+                    'error': 'embedding_provider_unavailable',
+                })
             continue
+        # Phase 2b: re-acquire conn for transactional persistence per-doc.
+        # Codex P1 follow-up: set_config(`true`) DEBE estar dentro de la
+        # transaction; afuera el is_local solo cubre el statement.
         indexing_ts = datetime.now(UTC).isoformat()
-        async with conn.transaction():
-            await conn.execute(
-                """
-                update app.knowledge_documents
-                set status='indexing', metadata=metadata || $3::jsonb
-                where tenant_id=$1 and id=$2
-                """,
-                tenant_id, doc_id, json.dumps({'last_indexing_started_at': indexing_ts}),
-            )
-            await conn.execute(
-                'delete from app.knowledge_chunks where tenant_id=$1 and document_id=$2',
-                tenant_id, doc_id,
-            )
-            for chunk in result.chunks:
+        async with db.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "select set_config('app.tenant_id', $1, true)",
+                    str(tenant_id),
+                )
                 await conn.execute(
                     """
-                    insert into app.knowledge_chunks (
-                      tenant_id, document_id, chunk_index, section_path, chunk_text,
-                      token_count, embedding, metadata
+                    update app.knowledge_documents
+                    set status='indexing', metadata=metadata || $3::jsonb
+                    where tenant_id=$1 and id=$2
+                    """,
+                    tenant_id, doc_id, json.dumps({'last_indexing_started_at': indexing_ts}),
+                )
+                await conn.execute(
+                    'delete from app.knowledge_chunks where tenant_id=$1 and document_id=$2',
+                    tenant_id, doc_id,
+                )
+                for chunk in result.chunks:
+                    await conn.execute(
+                        """
+                        insert into app.knowledge_chunks (
+                          tenant_id, document_id, chunk_index, section_path, chunk_text,
+                          token_count, embedding, metadata
+                        )
+                        values ($1,$2,$3,$4,$5,$6,$7::vector,$8::jsonb)
+                        """,
+                        tenant_id, doc_id,
+                        chunk.chunk_index, chunk.section_path, chunk.chunk_text,
+                        chunk.token_count, vector_literal(chunk.embedding),
+                        json.dumps(chunk.metadata),
                     )
-                    values ($1,$2,$3,$4,$5,$6,$7::vector,$8::jsonb)
+                await conn.execute(
+                    """
+                    update app.knowledge_documents
+                    set status='active', metadata=metadata || $3::jsonb
+                    where tenant_id=$1 and id=$2
                     """,
                     tenant_id, doc_id,
-                    chunk.chunk_index, chunk.section_path, chunk.chunk_text,
-                    chunk.token_count, vector_literal(chunk.embedding),
-                    json.dumps(chunk.metadata),
+                    json.dumps({
+                        'chunk_count': len(result.chunks),
+                        'last_indexing_completed_at': datetime.now(UTC).isoformat(),
+                        'embedding_provider': result.embedding_provider,
+                        'embedding_model': result.embedding_model,
+                    }),
                 )
-            await conn.execute(
-                """
-                update app.knowledge_documents
-                set status='active', metadata=metadata || $3::jsonb
-                where tenant_id=$1 and id=$2
-                """,
-                tenant_id, doc_id,
-                json.dumps({
-                    'chunk_count': len(result.chunks),
-                    'last_indexing_completed_at': datetime.now(UTC).isoformat(),
-                    'embedding_provider': result.embedding_provider,
-                    'embedding_model': result.embedding_model,
-                }),
-            )
         indexed += 1
-    await audit(
-        conn,
-        tenant_id=tenant_id,
-        actor_type=request.state.actor_type,
-        actor_id=request.state.actor_id,
-        action='knowledge.reindex_all',
-        entity_type='tenant',
-        entity_id=str(tenant_id),
-        metadata={
-            'indexed': indexed,
-            'failed': failed,
-            'embedding_provider': settings.rag_embedding_provider,
-            'embedding_model': settings.rag_embedding_model,
-        },
-    )
+
+    # Phase 3: final audit with a short-lived conn — set_config dentro de
+    # transaction para que RLS vea `app.tenant_id` (Codex P1 follow-up).
+    async with db.pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "select set_config('app.tenant_id', $1, true)",
+                str(tenant_id),
+            )
+            await audit(
+                conn,
+                tenant_id=tenant_id,
+                actor_type=request.state.actor_type,
+                actor_id=request.state.actor_id,
+                action='knowledge.reindex_all',
+                entity_type='tenant',
+                entity_id=str(tenant_id),
+                metadata={
+                    'indexed': indexed,
+                    'failed': failed,
+                    'embedding_provider': settings.rag_embedding_provider,
+                    'embedding_model': settings.rag_embedding_model,
+                },
+            )
     return {
         'tenant_id': str(tenant_id),
         'indexed': indexed,

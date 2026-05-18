@@ -16,6 +16,29 @@ Cada entrada debe incluir:
 ## Tareas completadas
 
 ### fix-group-37 — Codex Security HIGH: webhook replay/routing (BUG-201, BUG-202)
+### fix-group-36 — Codex Security HIGH+MEDIUM: support-mode/sessions/audit (BUG-197..200)
+### fix-group-39 — Codex Security HIGH+MEDIUM: RAG/indexing DoS+leaks (BUG-210..212)
+
+- **Fecha:** 2026-05-18
+- **Objetivo:** cerrar 3 findings sobre DB pool DoS en indexing, leakage de errores del provider de embeddings, y unbounded SELECT en intent eval. BUG-42 (cloud LLM no_train bypass) queda diferido a fix-group-44 por scope.
+- **Cambios:**
+  - **`app/api/v1/routes.py`** —
+    - Import `db` desde `app.db.pool` para acquire ad-hoc.
+    - `index_knowledge_document` y `reindex_all_knowledge_documents`: drop de `Depends(get_db)`. Acquire conn ad-hoc en 2 fases — SELECT (corto) → embedding (sin conn) → INSERT transaccional (corto). El error path también re-acquire para audit (BUG-210).
+    - Errores del provider de embeddings: log full server-side + audit metadata; cliente recibe `'Embedding provider unavailable'` genérico. ValueError sí expone detalle (validation feedback) (BUG-211).
+    - `reindex_all_knowledge_documents` errors array: redacta errores del provider a `'embedding_provider_unavailable'` code; ValueError mantiene full detail (BUG-211).
+    - `evaluate_intent_retrieval`: restablecido `limit 1000` en el SELECT (BUG-212).
+  - **`tests/test_fix_group_39_static.py`** — 6 tests defensivos.
+  - **`docs/UI_BACKLOG.md`** — entradas BUG-210..212 DONE; BUG-42 DEFERRED.
+- **Validaciones:**
+  - `.venv/bin/pytest tests/test_fix_group_39_static.py -v` → 6 passed.
+  - `.venv/bin/pytest tests/ -k "rag or knowledge or indexing"` → 117 passed, 0 regresiones.
+  - `.venv/bin/ruff check app/api/v1/routes.py` → All checks passed.
+- **Notas de seguridad:**
+  - BUG-210: la refactor divide la operación en transacciones cortas. Si el process muere entre Phase 2 (embedding) y Phase 3 (INSERT), el doc queda con `status='draft'` o `status='active'` viejo — el operador debe retry. Aceptable trade-off vs. el DoS pool exhaustion.
+  - BUG-211: clientes que ya consumían `detail=str(exc)` pueden romperse — el código `embedding_provider_unavailable` permite mapping. ValueError sigue retornando detail completo.
+
+### fix-group-35 — Codex Security HIGH cluster: Auth0/authn (BUG-193..196)
 
 - **Fecha:** 2026-05-18
 - **Objetivo:** cerrar 2 findings HIGH del CSV `codex-security-findings-2026-05-18` sobre webhook signature freshness y cross-tenant routing en Meta channels.
