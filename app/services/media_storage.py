@@ -146,6 +146,49 @@ def store_media_file(
     raise ValueError(f'Unsupported storage backend: {backend}')
 
 
+def read_media_file(
+    *,
+    storage_backend: str,
+    object_key: str,
+    source_uri: str | None,
+    bucket: str | None,
+    settings: Settings,
+) -> bytes:
+    """BUG-096: lectura del contenido de un media asset para servirlo por
+    el proxy HTTP. Mirror simétrico de `store_media_file` para los dos
+    backends soportados (`local` + `s3`).
+
+    - `local`: lee desde `source_uri` (file://...). Path-traversal
+      defendido por el `_safe_storage_segment` aplicado al upload.
+    - `s3`: `get_object(bucket, object_key)`.
+
+    Cualquier error → `FileNotFoundError` (caller traduce a 404). No
+    catcheamos para no esconder fallos de storage reales (red caída,
+    permisos S3, etc.) — el caller decide qué hacer con la traza.
+    """
+    backend = (storage_backend or '').lower()
+    if backend == 'local':
+        if not source_uri or not source_uri.startswith('file://'):
+            raise FileNotFoundError(
+                f'local media missing or has non-file source_uri: {source_uri!r}'
+            )
+        path = Path(source_uri[len('file://'):])
+        if not path.exists():
+            raise FileNotFoundError(f'local media gone from disk: {path}')
+        return path.read_bytes()
+    if backend == 's3':
+        if not bucket or not object_key:
+            raise FileNotFoundError(
+                's3 media missing bucket/object_key — incomplete row'
+            )
+        from app.services.knowledge_storage import _s3_client  # lazy
+
+        client = _s3_client(settings)
+        obj = client.get_object(Bucket=bucket, Key=object_key)
+        return obj['Body'].read()
+    raise ValueError(f'Unsupported storage backend: {backend}')
+
+
 def delete_media_file(
     *,
     storage_backend: str,

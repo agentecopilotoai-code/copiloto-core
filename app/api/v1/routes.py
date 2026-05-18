@@ -124,6 +124,7 @@ from app.services.knowledge_storage import delete_knowledge_file, is_binary_extr
 from app.services.media_storage import (
     MEDIA_KINDS,
     delete_media_file,
+    read_media_file,
     store_media_file,
 )
 from app.services.campaigns import (
@@ -2749,7 +2750,12 @@ async def upload_tenant_brand_logo(
         uploader_id,
     )
 
-    new_url = stored.source_uri
+    # BUG-096: persistir la URL del proxy HTTP (no `stored.source_uri`,
+    # que es `file://`/`s3://` y el browser no puede renderizar como
+    # `<img src>`). El proxy vive en `tenant_ops_router` y sirve las
+    # bytes con el mime_type del asset; cualquier miembro del tenant
+    # (agent+ por ahora) puede leer el logo del chrome.
+    new_url = tenant_brand_logo_proxy_url(tenant_id, asset_id)
     row = await conn.fetchrow(
         'update app.tenant_settings set brand_logo_url=$1 where tenant_id=$2 returning *',
         new_url,
@@ -2774,6 +2780,66 @@ async def upload_tenant_brand_logo(
     )
 
     return record_to_dict(row)
+
+
+# BUG-096: helper para construir la URL canónica del proxy de media
+# tenant-scoped. Mantener sincronizado con la ruta del endpoint
+# `get_tenant_media_content` declarado abajo.
+def tenant_brand_logo_proxy_url(tenant_id: UUID, asset_id: UUID) -> str:
+    return f'/v1/tenants/{tenant_id}/media/{asset_id}/content'
+
+
+@tenant_ops_router.get('/tenants/{tenant_id}/media/{asset_id}/content')
+async def get_tenant_media_content(
+    tenant_id: UUID,
+    asset_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """BUG-096: proxy HTTP sobre `app.media_assets` para que el browser
+    pueda renderizar el `brand_logo_url` (y cualquier otro asset
+    tenant-scoped en el futuro).
+
+    Antes el upload guardaba `stored.source_uri` (`file://` o `s3://`)
+    en `tenant_settings.brand_logo_url`, y la admin shell mostraba
+    imagen rota. Ahora el upload guarda la URL de este endpoint
+    (`/v1/tenants/{tenant_id}/media/{asset_id}/content`) y este handler
+    sirve los bytes con el `mime_type` del asset.
+
+    Seguridad: vive en `tenant_ops_router` (agent+ MFA opcional para
+    reads), valida `ensure_tenant_access` (member del tenant), y RLS
+    sobre `app.media_assets` aplica con `app.tenant_id` GUC. El
+    `Cache-Control: private, max-age=600` reduce hits del browser sin
+    permitir caching en proxies compartidos.
+    """
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    asset = await conn.fetchrow(
+        """
+        select kind, mime_type, source_uri, storage_backend, storage_bucket, object_key
+        from app.media_assets
+        where tenant_id = $1 and id = $2
+        """,
+        tenant_id,
+        asset_id,
+    )
+    if not asset:
+        raise HTTPException(status_code=404, detail='Media asset not found')
+    try:
+        content = read_media_file(
+            storage_backend=asset['storage_backend'],
+            object_key=asset['object_key'],
+            source_uri=asset['source_uri'],
+            bucket=asset['storage_bucket'],
+            settings=get_settings(),
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='Media content unavailable') from exc
+    return Response(
+        content=content,
+        media_type=asset['mime_type'] or 'application/octet-stream',
+        headers={'Cache-Control': 'private, max-age=600'},
+    )
 
 
 @tenant_admin_router.post('/tenants/{tenant_id}/go-live')
