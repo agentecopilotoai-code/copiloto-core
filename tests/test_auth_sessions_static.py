@@ -203,8 +203,13 @@ def test_list_my_sessions_records_current_session_first():
 
 
 def test_list_my_sessions_filters_active_sessions_only():
+    # BUG-168 (fix-group-29) split la WHERE clause en múltiples líneas para
+    # agregar el filtro `last_seen_at >= now() - 24h`. La aserción ahora
+    # valida los predicados por separado en vez de hacer match literal de
+    # la cadena contigua.
     source = inspect.getsource(routes_module.list_my_sessions)
-    assert 'where user_id = $1 and revoked_at is null' in source
+    assert 'where user_id = $1' in source
+    assert 'revoked_at is null' in source
     assert 'order by last_seen_at desc' in source
 
 

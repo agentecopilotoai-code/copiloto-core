@@ -11318,6 +11318,13 @@ def _session_id_from_request(request: Request) -> str | None:
     return f'iat-{digest[:32]}'
 
 
+# BUG-168: ventana de actividad para considerar una sesión "viva". Si la
+# pestaña no ha hecho hit al endpoint en este tiempo, asumimos que su JWT
+# expiró (typical JWT TTL es 8h-24h) o que el navegador se cerró. El
+# default de 24h cubre el caso común (sesión laboral o ciclo nocturno).
+AUTH_SESSION_ACTIVE_HOURS = 24
+
+
 async def record_auth_session(
     request: Request, conn: asyncpg.Connection, user_id: UUID
 ) -> str | None:
@@ -11375,15 +11382,26 @@ async def list_my_sessions(request: Request, conn: asyncpg.Connection = Depends(
     """
     user_id = await _require_current_user(request, conn)
     current_sid = await record_auth_session(request, conn, user_id)
+    # BUG-168: filtrar sesiones cuyo JWT ya expiró. `auth_sessions` no tiene
+    # `expires_at` (la expiración vive en el `exp` del JWT), así que usamos
+    # `last_seen_at` como proxy: sesiones que no han hecho hit al endpoint
+    # en `AUTH_SESSION_ACTIVE_HOURS` (default 24h) son efectivamente
+    # muertas — su token ya expiró o la pestaña se cerró hace tiempo. Antes
+    # devolvíamos TODO lo que tuviera `revoked_at is null`, lo que mostraba
+    # al usuario sesiones fantasmas que ya no podían hacer nada y le hacía
+    # creer que alguien estaba conectado.
     rows = await conn.fetch(
         """
         select id, user_agent, ip::text as ip, location, device,
                created_at, last_seen_at
         from app.auth_sessions
-        where user_id = $1 and revoked_at is null
+        where user_id = $1
+          and revoked_at is null
+          and last_seen_at >= now() - ($2 || ' hours')::interval
         order by last_seen_at desc
         """,
         user_id,
+        str(AUTH_SESSION_ACTIVE_HOURS),
     )
     sessions = []
     for row in rows:
