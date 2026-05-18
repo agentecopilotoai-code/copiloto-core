@@ -211,6 +211,43 @@ export function uploadTenantBrandLogo(session, tenantId, file) {
   });
 }
 
+/**
+ * BUG-177: el proxy `/v1/tenants/{id}/media/{asset_id}/content` requiere
+ * `Authorization: Bearer <token>` (vive en `tenant_ops_router` que pasa por
+ * `authenticate_request`). Un `<img src="/v1/...">` no manda headers, así
+ * que el browser recibe 401 → imagen rota. Este helper fetchea con las
+ * mismas credenciales que `request()` (Bearer + X-Tenant-Id), recibe un
+ * Blob y devuelve un object URL que el caller asigna a `<img src>`.
+ *
+ * El caller DEBE revocar el object URL al desmontar:
+ *
+ *   const blobUrl = await fetchTenantMediaBlobUrl(session, tenantId, path);
+ *   try { ... } finally { URL.revokeObjectURL(blobUrl); }
+ *
+ * @param {object} session — admin session
+ * @param {string} tenantId — uuid del tenant (para X-Tenant-Id)
+ * @param {string} mediaPath — path absoluto tipo
+ *   `/v1/tenants/<tenant_id>/media/<asset_id>/content` (lo que el upload
+ *   persiste hoy en `tenant_settings.brand_logo_url`).
+ * @returns {Promise<string>} object URL (`blob:`) listo para `<img src>`.
+ */
+export async function fetchTenantMediaBlobUrl(session, tenantId, mediaPath) {
+  // mediaPath llega como `/v1/tenants/.../media/.../content` desde la API,
+  // pero `coreApiPath` ya monta `/admin/api/core/v1` como prefijo.
+  // Stripeamos el `/v1` para no duplicarlo.
+  const stripped = mediaPath.replace(/^\/v1/, '');
+  const response = await fetch(coreApiPath(session, stripped), {
+    credentials: 'include',
+    method: 'GET',
+    headers: buildHeaders(session, tenantId, undefined),
+  });
+  if (!response.ok) {
+    throw new Error(`media fetch failed: HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
 export function listRetentionPolicies(session, tenantId) {
   return request(`/tenants/${tenantId}/retention/policies`, { session, tenantId });
 }

@@ -112,13 +112,25 @@ backup_last_success_age_seconds = Gauge(
     registry=REGISTRY,
 )
 
+# BUG-176 (codex P1 sobre BUG-047): cuando este Gauge era UNLABELED,
+# `prometheus_client` lo exportaba con valor 0 desde el import del módulo
+# — `BackupVerifyFailed: max(...) < 86400` matcheaba 0 < 86400 = TRUE
+# y disparaba false-positive en greenfield/healthy deployments aunque
+# `refresh_backup_age_metrics` nunca encontrara una fila failed.
+# Fix: convertir a Gauge labeled (`scope='cloud_verify'`). Un labeled
+# Gauge SIN child no se exporta — la serie queda absent hasta que
+# observamos una falla real (`.labels(scope='cloud_verify').set(...)`).
+# La alerta entonces queda vacía y no dispara hasta que aparece la
+# primera failure.
 backup_last_verify_failed_age_seconds = Gauge(
     'cpi_backup_last_verify_failed_age_seconds',
     'Segundos transcurridos desde el último `cloud_verify` que terminó en '
-    'status=failed. Cuando es bajo (<24h por la regla) significa que el '
-    'verifier reportó un dump no restaurable recientemente. Sin runs '
-    'failed previos, no se setea (la alerta evalúa `< 86400` y no debe '
-    'disparar en greenfield).',
+    'status=failed. Labeled por `scope` para que la serie sea ABSENT '
+    'hasta que se observe la primera failure real — sin esto, un Gauge '
+    'unlabeled exporta 0 por default y `BackupVerifyFailed` (< 86400) '
+    'dispara false-positive en greenfield. Sólo se setea cuando el '
+    'refresh encuentra una fila `kind=cloud_verify status=failed`.',
+    labelnames=('scope',),
     registry=REGISTRY,
 )
 
@@ -159,7 +171,12 @@ async def refresh_backup_age_metrics(conn: 'asyncpg.Connection') -> None:
             """
         )
         if failed_age is not None:
-            backup_last_verify_failed_age_seconds.set(float(failed_age))
+            # BUG-176: usar `.labels(scope='cloud_verify')` para crear el child;
+            # sin observación de failure, la serie queda absent y la alerta
+            # `BackupVerifyFailed` no dispara falso positivo.
+            backup_last_verify_failed_age_seconds.labels(scope='cloud_verify').set(
+                float(failed_age)
+            )
     except Exception:  # noqa: BLE001
         log.exception('metrics.refresh_backup_age_failed')
 

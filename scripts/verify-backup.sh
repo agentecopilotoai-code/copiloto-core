@@ -315,14 +315,22 @@ fi
 # el GOODSIG check. Exigimos que la firma sea del FINGERPRINT canónico
 # `BACKUP_SIGNER_FPR`. El payload de GOODSIG es: `GOODSIG <fingerprint>
 # <uid>`. Lo extraemos y comparamos.
-if [[ -n "${BACKUP_SIGNER_FPR:-}" ]]; then
-  GOODSIG_LINE="$(grep -m 1 '^\[GNUPG:\] GOODSIG ' "$WORK_DIR/verify.out")"
-  GOODSIG_FPR="$(awk '{print $3}' <<<"$GOODSIG_LINE")"
-  # GPG entrega el "long key ID" (16 hex) o el fingerprint completo (40 hex)
-  # dependiendo de la versión. Aceptamos suffix-match contra el FPR esperado.
-  if [[ -z "$GOODSIG_FPR" ]] || [[ ! "${BACKUP_SIGNER_FPR^^}" =~ "${GOODSIG_FPR^^}"$ ]]; then
-    report_failure "gpg_verify_wrong_signer:expected=${BACKUP_SIGNER_FPR},actual=${GOODSIG_FPR}"
-  fi
+#
+# BUG-175 (codex P1 sobre BUG-079): el `if [[ -n "${BACKUP_SIGNER_FPR}" ]]`
+# original silenciosamente skippeaba la validación cuando la env var
+# estaba vacía/unset → caía al accept-any-GOODSIG behavior que BUG-079
+# justamente quería cerrar. La compose default es empty y el entrypoint
+# solo exporta vars no-vacías, así que la regresión es real. Ahora la
+# var es REQUERIDA: si está vacía, fail-closed con setup error claro.
+if [[ -z "${BACKUP_SIGNER_FPR:-}" ]]; then
+  report_failure "backup_signer_fpr_unset:set BACKUP_SIGNER_FPR to the canonical signer fingerprint (40 hex chars) in compose/entrypoint"
+fi
+GOODSIG_LINE="$(grep -m 1 '^\[GNUPG:\] GOODSIG ' "$WORK_DIR/verify.out")"
+GOODSIG_FPR="$(awk '{print $3}' <<<"$GOODSIG_LINE")"
+# GPG entrega el "long key ID" (16 hex) o el fingerprint completo (40 hex)
+# dependiendo de la versión. Aceptamos suffix-match contra el FPR esperado.
+if [[ -z "$GOODSIG_FPR" ]] || [[ ! "${BACKUP_SIGNER_FPR^^}" =~ "${GOODSIG_FPR^^}"$ ]]; then
+  report_failure "gpg_verify_wrong_signer:expected=${BACKUP_SIGNER_FPR},actual=${GOODSIG_FPR}"
 fi
 
 echo "==> Descifrando con GPG (post-verify)"

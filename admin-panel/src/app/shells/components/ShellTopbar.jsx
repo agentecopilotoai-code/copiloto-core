@@ -9,20 +9,25 @@ import styles from '../shell.module.css';
  * `ThemeToggle` (UI-012) se monta siempre al final del slot de acciones, en
  * los 3 shells, sin requerir wiring extra.
  *
+ * BUG-177: la prop `session` ahora se forwardea a `TenantBrandLogo` para
+ * que pueda fetchear el logo via proxy auth-protected con `Authorization:
+ * Bearer ...`. Sin `session`, el componente cae a las iniciales.
+ *
  * @param {{
  *   eyebrow: string,
  *   title: string,
  *   actions?: import('react').ReactNode,
- *   tenant?: { brand_logo_url?: string, display_name?: string, slug?: string, name?: string },
+ *   session?: object,
+ *   tenant?: { id?: string, brand_logo_url?: string, display_name?: string, slug?: string, name?: string },
  * }} props
  */
-export function ShellTopbar({ eyebrow, title, actions = null, tenant = null }) {
+export function ShellTopbar({ eyebrow, title, actions = null, session = null, tenant = null }) {
   const hasBrand = Boolean(tenant);
 
   return (
     <header className={styles.topbar}>
       <div className={styles.topbarLeft}>
-        {hasBrand ? <TenantBrandLogo tenant={tenant} /> : null}
+        {hasBrand ? <TenantBrandLogo session={session} tenant={tenant} /> : null}
         <div className={styles.topbarTitle}>
           <p>{eyebrow}</p>
           <h1>{title}</h1>

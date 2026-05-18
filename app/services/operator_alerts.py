@@ -26,6 +26,13 @@ from uuid import UUID
 import structlog
 
 from app.core.config import Settings, get_settings
+# BUG-179 (codex P1 sobre BUG-170): el event_worker llama
+# `send_whatsapp_message(template_payload=message_payload.get('template'))`
+# que requiere el bloque template ya construido. Solo guardar
+# `template_name`/`template_locale`/`components` en el payload deja a
+# `message_payload.get('template') = None` → `build_whatsapp_message_payload`
+# raise ValueError → alert marcado failed (incluso en mock mode).
+from app.services.whatsapp import build_template_message_payload
 
 if TYPE_CHECKING:
     import asyncpg
@@ -475,6 +482,16 @@ async def _send_whatsapp_channel(
     kind = _resolve_alert_kind(payload)
     template_name, template_locale = whatsapp_template_for_kind(kind)
     components = build_whatsapp_template_components(payload)
+    # BUG-179 (codex P1 sobre BUG-170): pre-construir el bloque `template`
+    # que el `event_worker` pasará a `send_whatsapp_message` como
+    # `template_payload`. Sin esto, `build_whatsapp_message_payload` raise
+    # ValueError (requires a template_payload dict) y el alert se marca
+    # `failed` aun en mock mode.
+    template_block = build_template_message_payload(
+        template_name=template_name,
+        locale=template_locale,
+        components=components,
+    )
     if kind == ALERT_KIND_OUTBOUND_DLQ_THRESHOLD:
         body_label = (
             f'[operator_alert] outbound_dlq total={payload.get("total") or 0}'
@@ -519,6 +536,11 @@ async def _send_whatsapp_channel(
                 'template_locale': template_locale,
                 'channel_id': str(channel_id),
                 'components': components,
+                # BUG-179: el `event_worker` lee `message_payload.get('template')`
+                # como el bloque ya formateado para Meta API. Lo guardamos pre-
+                # construido (mismo shape que `build_template_message_payload`
+                # produce: `{name, language, components}`).
+                'template': template_block,
             }),
             body_label,
         )

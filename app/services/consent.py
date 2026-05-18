@@ -490,6 +490,59 @@ async def enforce_inbound_consent(
                 ledger_event_id=ledger_id,
             )
 
+    # BUG-178 (codex P2 sobre BUG-057 reopen): el consent gate solo manejaba
+    # opt-in vía WhatsApp `interactive_id` buttons. El web widget
+    # (`/v1/web/chat/start`) inserta inbound con `payload.channel='web'`,
+    # y el gate trataba de mandar el consent_request template
+    # (WhatsApp-only) → fallo silencioso o leads atascados forever.
+    # Patrón: el widget muestra el aviso de privacidad UPFRONT antes de
+    # permitir enviar el primer mensaje, así que enviar el primer mensaje
+    # ES el consent grant. Registramos `granted` en el ledger con
+    # `channel='web'` + evidencia del inbound y dejamos pasar al flujo
+    # normal (return None — el orchestrator no se corta).
+    if opt_in == 'unknown':
+        inbound_payload_dict = inbound_payload if isinstance(inbound_payload, dict) else {}
+        inbound_channel = inbound_payload_dict.get('channel')
+        if inbound_channel == 'web':
+            copy_shown = (
+                'Aviso de privacidad aceptado al iniciar chat por el web '
+                'widget (CONSENT_REQUEST_BODY).'
+            )
+            ledger_id = await record_consent_event(
+                conn,
+                tenant_id=tenant_id,
+                contact_id=contact_id,
+                event='granted',
+                channel='web',
+                copy_shown=copy_shown,
+                evidence_payload={
+                    'inbound_message_id': str(inbound_message['id']),
+                    'conversation_id': str(conversation_id),
+                    'source': 'web_widget_implicit_grant',
+                    'origin': inbound_payload_dict.get('origin'),
+                    'lead_source': inbound_payload_dict.get('lead_source'),
+                },
+            )
+            await conn.execute(
+                """
+                update app.contacts
+                set opt_in_status='granted', opt_in_at=now(), updated_at=now()
+                where tenant_id=$1 and id=$2
+                """,
+                tenant_id,
+                contact_id,
+            )
+            log.info(
+                'consent.web_widget_implicit_grant',
+                tenant_id=str(tenant_id),
+                contact_id=str(contact_id),
+                conversation_id=str(conversation_id),
+                ledger_event_id=str(ledger_id),
+            )
+            # Devolvemos None para que el orquestador continúe con el flow
+            # normal (no es un short-circuit; ya quedó opt_in=granted).
+            return None
+
     # First-ever inbound from a brand-new contact ─ send the double opt-in.
     if opt_in == 'unknown':
         legal_url = await fetch_published_legal_url(conn, tenant_id, 'privacy')
