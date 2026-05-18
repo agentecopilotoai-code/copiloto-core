@@ -70,7 +70,7 @@ export function WhatsAppWizardSteps({
                 required
                 value={form.business_id}
                 onChange={set('business_id')}
-                placeholder="123456789012345"
+                placeholder="ID numérico de Meta Business (≈15 dígitos)"
               />
             </FormField>
             <FormField label="WABA ID" required>
@@ -80,7 +80,7 @@ export function WhatsAppWizardSteps({
                 required
                 value={form.waba_id}
                 onChange={set('waba_id')}
-                placeholder="987654321098765"
+                placeholder="ID numérico del WhatsApp Business Account"
               />
             </FormField>
           </div>
@@ -95,7 +95,7 @@ export function WhatsAppWizardSteps({
               required
               value={form.phone_number_id}
               onChange={set('phone_number_id')}
-              placeholder="112233445566778"
+              placeholder="ID numérico del Phone Number (cópialo del dashboard Meta)"
             />
           </FormField>
           <FormField label="Modo de entrega">
