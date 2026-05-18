@@ -340,6 +340,17 @@
   display: none;
 }
 
+/* BUG-189 (codex P2 sobre BUG-083): incluso con el padding tighten a
+   `--space-2` (48px internos), el row `.brand` renderiza brandMark (40px)
+   + gap (12px) + collapseToggle (32px) = 84px → overflow / clipping bajo
+   el `overflow: hidden` del sidebar. El brandMark es decorativo (el
+   tooltip del toggle ya identifica el sidebar); ocultamos el brandMark
+   en colapsado y dejamos solo el toggle como el único control del row.
+   Resultado: 32px ≤ 48px ✓, sin clipping. */
+.sidebar[data-collapsed='true'] .brandMark {
+  display: none;
+}
+
 .sidebar[data-collapsed='true'] .navSectionHeader {
   justify-content: center;
   padding: 0;

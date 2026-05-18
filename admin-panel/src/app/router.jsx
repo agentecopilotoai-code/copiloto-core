@@ -101,7 +101,18 @@ function ModuleScreen({ moduleId }) {
  * cualquier vista y provee la lista de tenants al resto del árbol.
  */
 function RootLayout() {
-  const { session } = useAuth();
+  const { session, isLoading } = useAuth();
+  // BUG-185 (codex P2 sobre BUG-085): `AuthProvider` inicializa `session=null`
+  // mientras `fetchAdminSession()` está en flight. Sin este gate, los guards
+  // downstream (`NoTenantRoute`/`OnboardingRoute`/`PlatformRoute`) tratan al
+  // usuario autenticado en mid-load como anónimo y lo redirigen a `/` —
+  // perdiendo el deep link (ej. `/admin/platform/platform-feature-flags`).
+  // Mostramos LoadingScreen hasta que el status resuelve a `authenticated` /
+  // `anonymous` / `error`. Después el resto del árbol decide qué renderear
+  // basado en `session` ya estabilizada.
+  if (isLoading) {
+    return <LoadingScreen />;
+  }
   if (session?.mfa_required === true) {
     return <MfaRequiredBlocker />;
   }
@@ -298,6 +309,26 @@ function TenantHomeRedirect() {
   return <Navigate to={safeHome} replace />;
 }
 
+/**
+ * BUG-186 (codex P2 sobre BUG-084): index del subárbol `/t/:slug/read/`
+ * para viewers. Antes era un `<Navigate to={ROLE_HOME.viewer}>` estático,
+ * que redirigía a `viewer-summary` aunque el rol efectivo no tuviera
+ * `analytics.tenant.read` (caso edge: viewer con caps customizadas).
+ * Resultado: aterrizaban en una vista inaccesible → AccessDenied.
+ * Ahora delegamos en `resolveSafeHomeModule(permissions)` que itera el
+ * `VIEWER_NAV` y devuelve el primer módulo cuya capability el viewer SÍ
+ * tiene; si ninguno es accesible, renderea `NoModuleAccessScreen` igual
+ * que `TenantHomeRedirect`.
+ */
+function ReadHomeRedirect() {
+  const { activeTenant } = useOutletContext();
+  const { profile } = useTenantContext();
+  const permissions = usePermissions({ profile, tenant: activeTenant });
+  const safeHome = resolveSafeHomeModule(permissions);
+  if (!safeHome) return <NoModuleAccessScreen />;
+  return <Navigate to={safeHome} replace />;
+}
+
 /** Layout tenant-scoped (Owner / Admin / Manager / Agent). */
 function TenantShellRoute() {
   const { activeTenant } = useOutletContext();
@@ -486,7 +517,12 @@ export const routes = [
             path: 'read',
             element: <ReadOnlyShellRoute />,
             children: [
-              { index: true, element: <Navigate to={ROLE_HOME.viewer} replace /> },
+              // BUG-186: usar `ReadHomeRedirect` (calcula `safeHome` con
+              // `resolveSafeHomeModule`) en lugar de un `<Navigate>` estático
+              // a `ROLE_HOME.viewer`. Sin esto, viewers con caps customizadas
+              // que no incluyen `analytics.tenant.read` aterrizaban en
+              // `viewer-summary` y veían AccessDenied.
+              { index: true, element: <ReadHomeRedirect /> },
               ...TENANT_MODULE_IDS.map(moduleRoute),
             ],
           },

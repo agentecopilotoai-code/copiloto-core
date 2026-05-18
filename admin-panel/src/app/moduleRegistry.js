@@ -65,7 +65,12 @@ export const MODULE_REGISTRY = Object.freeze({
     Component: FeatureFlags,
     capability: 'platform.feature_flags.read',
   },
-  dashboard: { Component: Dashboard, capability: 'analytics.tenant.read' },
+  // BUG-188 (codex P2 sobre BUG-117): `modules.js` ya cambió la capability
+  // a `dashboard.read` (Owner/Admin only), pero `moduleRegistry` seguía
+  // gating con `analytics.tenant.read` (viewer/agent/manager también).
+  // El nav HIDE el item pero un deep link directo a `/t/<slug>/dashboard`
+  // todavía renderizaba el Dashboard Owner para roles inferiores. Alineamos.
+  dashboard: { Component: Dashboard, capability: 'dashboard.read' },
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
   'onboarding-wizard': { Component: Onboarding, capability: 'onboarding.run', mode: 'RW' },
   services: { Component: Services, capability: 'services.read' },
