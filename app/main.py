@@ -10,6 +10,7 @@ from app.db.pool import db
 from app.services.metrics import (
     ip_allowed,
     parse_ip_allowlist,
+    refresh_backup_age_metrics,
     render_latest,
 )
 from app.services.rate_limit import (
@@ -48,6 +49,21 @@ def create_app() -> FastAPI:
     async def metrics(request: Request) -> Response:
         if not ip_allowed(_client_ip(request), allowlist):
             return Response(status_code=403)
+        # BUG-047: refrescar gauges de backup desde `app.backup_runs` ANTES
+        # de serializar. Sin esto, los gauges quedaban vacíos y las reglas
+        # `BackupCloudStale` / `BackupVerifyFailed` (alerts.yaml) nunca
+        # paginaban — backups stale silentes. `app.backup_runs` es platform-
+        # scoped (sin RLS), así que `db.connection()` sin tenant alcanza.
+        # Best-effort: si la pool no está lista o la DB cae, el helper
+        # loguea y el endpoint sirve los valores en memoria (sin crashear).
+        try:
+            async with db.connection() as conn:
+                await refresh_backup_age_metrics(conn)
+        except Exception:  # noqa: BLE001
+            # No bloquear /metrics si la DB se cae — scrape sigue sirviendo
+            # el resto de las métricas. La alerta `PostgresUnavailable` (si
+            # se llega a configurar) cubrirá la caída de DB independientemente.
+            pass
         payload, content_type = render_latest()
         return Response(content=payload, media_type=content_type)
 

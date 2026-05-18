@@ -11,8 +11,9 @@ materializan en métricas.
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
+import structlog
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -21,6 +22,11 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - solo para anotaciones de tipo
+    import asyncpg
+
+log = structlog.get_logger()
 
 # Latency buckets en segundos: 0.5, 1, 2, 5, 10 + +Inf (default tail).
 _LATENCY_BUCKETS = (0.5, 1.0, 2.0, 5.0, 10.0)
@@ -90,6 +96,72 @@ outbound_dlq_total = Counter(
     labelnames=('tenant_id', 'error_code'),
     registry=REGISTRY,
 )
+
+# BUG-047: gauges que alimentan las reglas `BackupCloudStale` y
+# `BackupVerifyFailed` declaradas en `infra/observability/alerts.yaml`.
+# Sin esta instrumentación, las expresiones `max(cpi_backup_last_*) ...`
+# devolvían vacío y las alertas nunca paginaban — backups stale silentes.
+# El valor es la edad EN SEGUNDOS del último evento relevante (calculada
+# en `refresh_backup_age_metrics` por scrape — el endpoint /metrics la
+# llama antes de `render_latest`).
+backup_last_success_age_seconds = Gauge(
+    'cpi_backup_last_success_age_seconds',
+    'Segundos transcurridos desde el último backup exitoso por kind '
+    '(cloud_dump / cloud_verify). Si no hay ninguno aún, no se setea.',
+    labelnames=('kind',),
+    registry=REGISTRY,
+)
+
+backup_last_verify_failed_age_seconds = Gauge(
+    'cpi_backup_last_verify_failed_age_seconds',
+    'Segundos transcurridos desde el último `cloud_verify` que terminó en '
+    'status=failed. Cuando es bajo (<24h por la regla) significa que el '
+    'verifier reportó un dump no restaurable recientemente. Sin runs '
+    'failed previos, no se setea (la alerta evalúa `< 86400` y no debe '
+    'disparar en greenfield).',
+    registry=REGISTRY,
+)
+
+
+async def refresh_backup_age_metrics(conn: 'asyncpg.Connection') -> None:
+    """Recalcula los gauges de backup desde `app.backup_runs`.
+
+    Se invoca antes de cada `render_latest()` del endpoint /metrics. Es
+    barata: dos queries con LIMIT 1 sobre el índice
+    `ix_backup_runs_kind_status`. Best-effort: si la DB no está
+    disponible (worker arrancando, conn caída) loguea y sigue — el
+    scrape devuelve los últimos valores conocidos en memoria.
+    """
+    try:
+        rows = await conn.fetch(
+            """
+            select kind,
+                   extract(epoch from now() - max(finished_at))::float as age
+            from app.backup_runs
+            where status = 'ok' and finished_at is not null
+              and kind in ('cloud_dump', 'cloud_verify')
+            group by kind
+            """
+        )
+        for row in rows:
+            if row['age'] is None:
+                continue
+            backup_last_success_age_seconds.labels(kind=row['kind']).set(
+                float(row['age'])
+            )
+        failed_age = await conn.fetchval(
+            """
+            select extract(epoch from now() - max(finished_at))::float
+            from app.backup_runs
+            where kind = 'cloud_verify'
+              and status = 'failed'
+              and finished_at is not null
+            """
+        )
+        if failed_age is not None:
+            backup_last_verify_failed_age_seconds.set(float(failed_age))
+    except Exception:  # noqa: BLE001
+        log.exception('metrics.refresh_backup_age_failed')
 
 
 _VALID_DIRECTIONS = frozenset({'inbound', 'outbound'})

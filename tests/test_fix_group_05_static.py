@@ -11,10 +11,12 @@
   antes del INSERT (fix de BUG-010).
 - BUG-046: NOT-APPLICABLE — `infra/observability/prometheus.yml` ya
   scrapea `event-worker:9100` y `scheduler:9100` además de `api:8000`.
-- BUG-047: PENDING-INFRA — `cpi_backup_last_*` metrics no están
-  registradas en `metrics.py`. Requiere wiring del backup verifier al
-  registry de Prometheus (más invasivo que un fix puntual). Catalog
-  marca como tal.
+- BUG-047: DONE (post-marathon) — `cpi_backup_last_success_age_seconds` +
+  `cpi_backup_last_verify_failed_age_seconds` registrados en `metrics.py`,
+  alimentados por `refresh_backup_age_metrics(conn)` que el handler
+  `/metrics` invoca antes de `render_latest()`. Ver
+  `tests/test_bug_047_backup_age_metrics_static.py` para los asserts
+  dedicados.
 """
 from __future__ import annotations
 
@@ -126,18 +128,23 @@ def test_bug_046_prometheus_scrapes_workers_separately():
     )
 
 
-# ───── BUG-047 — PENDING-INFRA (backup metrics no registradas) ──────────
+# ───── BUG-047 — DONE (post-marathon) ──────────────────────────────────
 
 
-def test_bug_047_backup_metric_gauges_are_documented_as_pending():
-    """Las alertas en `alerts.yaml` referencian `cpi_backup_last_*` pero
-    `metrics.py` no las registra. Este test SOLO verifica que el catálogo
-    refleja el estado real para que `fix-group-XX` futuro las agregue
-    cuando el backup verifier se instrumente con Prometheus.
+def test_bug_047_backup_metric_gauges_are_registered():
+    """BUG-047 (post-marathon): los gauges `cpi_backup_last_*` SÍ están
+    registrados en `metrics.py` y alimentan las reglas `BackupCloudStale` y
+    `BackupVerifyFailed` declaradas en `alerts.yaml`. El refresh helper
+    `refresh_backup_age_metrics(conn)` se invoca desde el endpoint /metrics
+    antes de `render_latest()`. Ver `tests/test_bug_047_backup_age_metrics_static.py`
+    para los asserts dedicados.
     """
     metrics_src = METRICS.read_text()
-    # No queremos forzar la implementación todavía. Solo dejar evidencia.
-    assert 'cpi_backup_last_success_age_seconds' not in metrics_src, (
-        'BUG-047: si agregás `cpi_backup_last_success_age_seconds` al '
-        'metrics registry, actualizá este test y el catálogo (BUG-047 → DONE).'
+    assert 'cpi_backup_last_success_age_seconds' in metrics_src, (
+        'BUG-047 regresión: el gauge `cpi_backup_last_success_age_seconds` '
+        'debe seguir registrado en metrics.py.'
+    )
+    assert 'cpi_backup_last_verify_failed_age_seconds' in metrics_src, (
+        'BUG-047 regresión: el gauge `cpi_backup_last_verify_failed_age_seconds` '
+        'debe seguir registrado en metrics.py.'
     )
