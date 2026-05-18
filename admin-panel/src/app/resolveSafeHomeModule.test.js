@@ -85,4 +85,63 @@ describe('resolveSafeHomeModule()', () => {
     expect(resolveSafeHomeModule(undefined)).toBeNull();
     expect(resolveSafeHomeModule({})).toBeNull();
   });
+
+  it('BUG-011: platform_owner en TENANT context NO devuelve `platform-fleet` (404)', () => {
+    // Escenario real (2026-05-17 runtime log):
+    //   - platform_owner activa support_mode contra tenant `demo-taller`.
+    //   - Router navega a /admin/t/demo-taller/ (sin module id).
+    //   - TenantHomeRedirect llama resolveSafeHomeModule(permissions).
+    //   - ROLE_HOME.platform_owner = 'platform-fleet' (PLATFORM module).
+    //   - El step 1 antes devolvía 'platform-fleet' → Navigate to='platform-fleet'
+    //     relativo → /admin/t/demo-taller/platform-fleet → router NO tiene route
+    //     (TENANT_MODULE_IDS solo incluye TENANT_NAV) → cae en `*` → 404.
+    // Fix: step 1 ahora exige que preferredHome esté en `flatNavOrder(role)`,
+    // no solo que sea accesible por capability. `platform-fleet` no está en
+    // TENANT_NAV (donde el platform_owner cae cuando entra a /t/{slug}/), así
+    // que skip step 1 y devuelve el primer módulo TENANT accesible.
+    //
+    // Damos al platform_owner las caps típicas que tiene por support_mode
+    // (todas las de owner+admin del tenant) Y la cap platform.tenants.read
+    // (que es la que hacía que platform-fleet pasara `isModuleAccessible`).
+    const permissions = permissionsWith('platform_owner', [
+      'platform.tenants.read',  // permitía pasar el isModuleAccessible viejo
+      'analytics.tenant.read',  // cap del dashboard (TENANT_NAV)
+      'conversations.view',
+      'appointments.view',
+      'services.read',
+    ]);
+    const result = resolveSafeHomeModule(permissions);
+    expect(result).not.toBe('platform-fleet');
+    // Como el platform_owner en TENANT context resuelve via TENANT_NAV, el
+    // primer módulo del nav con cap accesible es `dashboard`
+    // (Inicio > dashboard, requiere analytics.tenant.read).
+    expect(result).toBe('dashboard');
+  });
+
+  it('BUG-011: platform_owner SIN caps tenant → cae a tenant-setup (módulo tenant-routable), nunca a platform-fleet', () => {
+    // Edge defensivo: platform_owner sin caps tenant (solo caps platform).
+    // El helper itera TENANT_NAV y devuelve el PRIMER tenant-routable
+    // accesible. `tenant-setup` no requiere capability (entry con
+    // capability:null en MODULE_REGISTRY), así que el iterator del step 2
+    // lo encuentra primero. Lo importante: NUNCA devuelve un módulo
+    // PLATFORM (que rompería con 404 bajo /t/{slug}/).
+    const permissions = permissionsWith('platform_owner', [
+      'platform.tenants.read', // solo cap platform, ninguna tenant
+    ]);
+    const result = resolveSafeHomeModule(permissions);
+    expect(result).not.toBe('platform-fleet');
+    // Y tampoco ningún otro módulo platform.
+    const PLATFORM_MODULE_IDS = [
+      'platform-fleet',
+      'platform-modules-control',
+      'platform-billing-mrr',
+      'platform-deals',
+      'platform-roles',
+      'platform-postlogin-actions',
+      'platform-feature-flags',
+      'platform-observability',
+      'platform-compliance',
+    ];
+    expect(PLATFORM_MODULE_IDS.includes(result)).toBe(false);
+  });
 });
