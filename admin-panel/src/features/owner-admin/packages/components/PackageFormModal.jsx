@@ -1,4 +1,4 @@
-import { FormField, Modal } from '../../../../components/ui/index.js';
+import { AlertBanner, FormField, Modal } from '../../../../components/ui/index.js';
 import styles from '../Packages.module.css';
 
 /**
@@ -6,15 +6,21 @@ import styles from '../Packages.module.css';
  * presentational — all state and the mutation actions come from the
  * `usePackagesData` hook via props.
  *
+ * BUG-113: surface `error` inline en el body del modal. Antes el AlertBanner
+ * del outer `<Packages>` quedaba detrás del backdrop cuando el modal estaba
+ * abierto, así que un save-fail no daba ningún feedback visible al usuario.
+ *
  * @param {{
  *   open: boolean,
  *   form: object,
  *   services: Array<object>,
  *   saving: boolean,
+ *   error?: string,
  *   onFieldChange: (patch: object) => void,
  *   onToggleService: (serviceId: string) => void,
  *   onSubmit: () => void,
  *   onClose: () => void,
+ *   onDismissError?: () => void,
  * }} props
  */
 export function PackageFormModal({
@@ -22,10 +28,12 @@ export function PackageFormModal({
   form,
   services,
   saving,
+  error,
   onFieldChange,
   onToggleService,
   onSubmit,
   onClose,
+  onDismissError,
 }) {
   if (!open) return null;
 
@@ -62,6 +70,26 @@ export function PackageFormModal({
           onSubmit();
         }}
       >
+        {/* BUG-113: error inline en el body del modal — fuera del modal el
+            AlertBanner quedaba detrás del backdrop y el save-fail no daba
+            ningún feedback visible al usuario. */}
+        {error ? (
+          <AlertBanner
+            tone="danger"
+            title={error}
+            action={
+              onDismissError ? (
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={onDismissError}
+                >
+                  Cerrar
+                </button>
+              ) : null
+            }
+          />
+        ) : null}
         <FormField label="Nombre" required>
           <input
             type="text"

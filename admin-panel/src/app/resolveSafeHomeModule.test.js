@@ -26,11 +26,13 @@ function permissionsWith(role, allowedCaps = []) {
 
 describe('resolveSafeHomeModule()', () => {
   it('owner con todas las caps → ROLE_HOME.owner (= dashboard)', () => {
-    // Owner real: la matriz le da acceso a TODO. Como `dashboard` exige
-    // `analytics.tenant.read`, lo incluimos en el allowlist y esperamos que
-    // el helper devuelva el ROLE_HOME preferido sin necesidad de iterar
-    // `TENANT_NAV`.
+    // Owner real: la matriz le da acceso a TODO. BUG-117: como `dashboard`
+    // ahora exige `dashboard.read` (no la genérica `analytics.tenant.read`,
+    // que también la tienen viewer/agent/manager), lo incluimos en el
+    // allowlist y esperamos que el helper devuelva el ROLE_HOME preferido
+    // sin necesidad de iterar `TENANT_NAV`.
     const permissions = permissionsWith('owner', [
+      'dashboard.read',
       'analytics.tenant.read',
       'services.read',
       'conversations.view',
@@ -105,7 +107,11 @@ describe('resolveSafeHomeModule()', () => {
     // (que es la que hacía que platform-fleet pasara `isModuleAccessible`).
     const permissions = permissionsWith('platform_owner', [
       'platform.tenants.read',  // permitía pasar el isModuleAccessible viejo
-      'analytics.tenant.read',  // cap del dashboard (TENANT_NAV)
+      // BUG-117: dashboard ahora requiere `dashboard.read` (admin/owner).
+      // Damos esa cap al platform_owner en support_mode para representar el
+      // escenario realista (tiene caps owner del tenant).
+      'dashboard.read',
+      'analytics.tenant.read',
       'conversations.view',
       'appointments.view',
       'services.read',
@@ -114,7 +120,7 @@ describe('resolveSafeHomeModule()', () => {
     expect(result).not.toBe('platform-fleet');
     // Como el platform_owner en TENANT context resuelve via TENANT_NAV, el
     // primer módulo del nav con cap accesible es `dashboard`
-    // (Inicio > dashboard, requiere analytics.tenant.read).
+    // (Inicio > dashboard, requiere dashboard.read tras BUG-117).
     expect(result).toBe('dashboard');
   });
 

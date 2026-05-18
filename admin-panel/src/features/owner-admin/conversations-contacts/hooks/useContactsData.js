@@ -128,6 +128,12 @@ export function useContactsData({ session, tenantId }) {
       refreshContactPackages(selectedContactId);
       refreshConsent(selectedContactId);
     } else {
+      // BUG-116: cuando `selectedContactId` cae a null (tenant switch con
+      // contacts vacío, search sin resultados, etc.), antes solo limpiamos
+      // `consent` — `profile` y `contactPackages` quedaban stale del contacto
+      // anterior, así que el drawer mostraba el contacto del tenant anterior.
+      setProfile(null);
+      setContactPackages([]);
       setConsent(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

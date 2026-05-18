@@ -45,6 +45,9 @@ const _GROUP_BY_DOMAIN = {
   segments: 'Análisis y crecimiento',
   campaigns: 'Análisis y crecimiento',
   digest: 'Análisis y crecimiento',
+  // BUG-117: nueva cap `dashboard.read` (Owner/Admin only) categorizada en
+  // el mismo grupo que el resto de análisis.
+  dashboard: 'Análisis y crecimiento',
   services: 'Configuración del negocio',
   packages: 'Configuración del negocio',
   subscriptions: 'Configuración del negocio',

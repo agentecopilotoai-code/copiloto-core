@@ -51,6 +51,13 @@ export const PERMISSIONS = Object.freeze({
   // ─────────────────────────────────── ANÁLISIS Y CRECIMIENTO ───────────────────────────────
   'analytics.tenant.read':     { viewer: R,    agent: R,    manager: R,  admin: R,  owner: R,  platform_owner: null },
   'analytics.agent_performance.read': { viewer: null, agent: OWN, manager: R, admin: R, owner: R, platform_owner: null },
+  // BUG-117: el módulo `dashboard` (KPIs + alertas operativas + accesos
+  // rápidos) es Owner/Admin-only por spec (`modules.js`), pero antes lo
+  // gateábamos con `analytics.tenant.read` (visible a viewer/agent/manager
+  // también), así que aparecía en la sidebar de roles que no deberían verlo.
+  // `dashboard.read` lo restringe a admin/owner — `manager-analytics` y
+  // `viewer-summary` siguen siendo las landings correctas de manager/viewer.
+  'dashboard.read':            { viewer: null, agent: null, manager: null, admin: R, owner: R, platform_owner: null },
   'segments.read':             { viewer: null, agent: null, manager: R,  admin: R,  owner: R,  platform_owner: null },
   'segments.write':            { viewer: null, agent: null, manager: RW, admin: RW, owner: RW, platform_owner: null },
   'campaigns.read':            { viewer: null, agent: null, manager: R,  admin: R,  owner: R,  platform_owner: null },

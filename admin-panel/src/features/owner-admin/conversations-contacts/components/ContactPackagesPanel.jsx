@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { Card, CardHeader, StatusBadge } from '../../../../components/ui/index.js';
+import { Card, CardHeader, StatusBadge, useConfirm } from '../../../../components/ui/index.js';
 import { TimelineEntry } from '../../../../components/domain/index.js';
 import { formatDateShort } from '../contactsFormat.js';
 import styles from '../ConversationsContacts.module.css';
@@ -29,12 +29,27 @@ export function ContactPackagesPanel({
   onRefund,
 }) {
   const [pendingPackageId, setPendingPackageId] = useState('');
+  // BUG-115: el legacy ContactsModule pedía confirmación antes del refund
+  // (acción irreversible que toca pagos). El feature redesign lo perdió y
+  // disparaba el refund directo sin confirm — regresión vs spec original.
+  const confirm = useConfirm();
 
   function handleAssign(event) {
     event.preventDefault();
     if (!pendingPackageId) return;
     onAssign(pendingPackageId);
     setPendingPackageId('');
+  }
+
+  async function handleRefund(packageId, packageName) {
+    const ok = await confirm({
+      title: 'Reembolsar paquete',
+      body: `¿Reembolsar el paquete${packageName ? ` "${packageName}"` : ''}? Esta acción es irreversible y afecta al pago.`,
+      danger: true,
+      confirmLabel: 'Reembolsar',
+    });
+    if (!ok) return;
+    onRefund(packageId);
   }
 
   return (
@@ -83,7 +98,7 @@ export function ContactPackagesPanel({
                 <button
                   type="button"
                   className={styles.linkButton}
-                  onClick={() => onRefund(pkg.id)}
+                  onClick={() => handleRefund(pkg.id, pkg.package_name || pkg.name)}
                   disabled={isBusy}
                 >
                   Reembolsar

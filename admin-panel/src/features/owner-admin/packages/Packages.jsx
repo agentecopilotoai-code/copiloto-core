@@ -82,10 +82,15 @@ export function Packages({ module, session, tenant }) {
           form={state.form}
           services={state.services}
           saving={state.saving}
+          // BUG-113: pasamos el error al modal para que se vea por encima del
+          // backdrop. El AlertBanner del outer queda igualmente para errores
+          // cuando el modal está cerrado (fetch inicial fallido, etc).
+          error={state.modalOpen ? state.error : ''}
           onFieldChange={actions.setFormField}
           onToggleService={actions.toggleService}
           onSubmit={actions.save}
           onClose={actions.closeModal}
+          onDismissError={actions.dismissError}
         />
       </section>
     </RequirePermission>

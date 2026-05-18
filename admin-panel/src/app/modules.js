@@ -60,7 +60,12 @@ export const adminModules = [
     label: 'Dashboard',
     summary: 'Página de entrada para Owner / Admin: KPIs con variación semanal, alertas operativas y accesos rápidos.',
     scope: ['KPIs con delta semanal', 'Alertas (handoffs, feedback, no-show)', 'Accesos rápidos a módulos'],
-    capability: 'analytics.tenant.read',
+    // BUG-117: el dashboard es Owner/Admin-only — `dashboard.read` (matrix.js)
+    // restringe a admin/owner. Antes usaba `analytics.tenant.read` (R para
+    // viewer/agent/manager también) y el item aparecía en la sidebar de roles
+    // que no deberían verlo. Los managers usan `manager-analytics`; los
+    // viewers usan `viewer-summary`.
+    capability: 'dashboard.read',
   },
   {
     id: 'tenant-setup',
