@@ -85,6 +85,45 @@ worker_queue_depth = Gauge(
     registry=REGISTRY,
 )
 
+# AUDIT-51 / round-3 §1.3+§1.10 (2026-05-18): observabilidad del WS fanout
+# y del rate limiter LRU. Sin esto, el operador no detecta degradación
+# hasta que un cliente reporta lag (fanout) o hasta que la memoria del
+# worker estalla (rate_limit). Ambos son gauges instantáneos seteados
+# antes de cada scrape via `refresh_runtime_metrics()`.
+ws_fanout_subscriber_count = Gauge(
+    'cpi_ws_fanout_subscriber_count',
+    'Subscribers actuales del WebSocket fanout (suma cross-tenant).',
+    registry=REGISTRY,
+)
+ws_fanout_tenant_count = Gauge(
+    'cpi_ws_fanout_tenant_count',
+    'Tenants activos con al menos un subscriber en el WebSocket fanout.',
+    registry=REGISTRY,
+)
+ws_fanout_dropped_total = Counter(
+    'cpi_ws_fanout_dropped_total',
+    'Mensajes droppeados por el fanout dispatcher (queue full o JSON invalido).',
+    labelnames=('reason',),
+    registry=REGISTRY,
+)
+ws_fanout_supervisor_crashes_total = Counter(
+    'cpi_ws_fanout_supervisor_crashes_total',
+    'Cuántas veces el supervisor del fanout crasheó (LISTEN/NOTIFY setup fail).',
+    registry=REGISTRY,
+)
+rate_limit_buckets_current = Gauge(
+    'cpi_rate_limit_buckets_current',
+    'Buckets vivos en el rate limiter LRU (cuán cerca está del cap '
+    '`rate_limit_bucket_max_entries`).',
+    registry=REGISTRY,
+)
+rate_limit_buckets_evicted_total = Counter(
+    'cpi_rate_limit_buckets_evicted_total',
+    'Buckets evictados del rate limiter LRU por TTL o por cap.',
+    labelnames=('reason',),
+    registry=REGISTRY,
+)
+
 # TASK-0065: contador de mensajes outbound que terminaron en la dead-letter
 # queue (status='failed' después de agotar reintentos del event_worker). El
 # `error_code` se normaliza al código devuelto por Meta o ``transport_error``
@@ -133,6 +172,43 @@ backup_last_verify_failed_age_seconds = Gauge(
     labelnames=('scope',),
     registry=REGISTRY,
 )
+
+
+def refresh_runtime_metrics() -> None:
+    """AUDIT-51 (2026-05-18): refresca los gauges runtime no-DB antes de cada
+    scrape de /metrics. Importa los módulos lazy para evitar ciclos de import
+    (`ws_fanout` y `rate_limit` viven en `app.admin` y `app.services`).
+
+    Sin esto, los gauges quedan en 0 hasta que algo los setea — útil para
+    detectar overload del fanout (subscribers acumulándose, dispatcher
+    drop rate) y del rate limiter (cap del LRU acercándose).
+    """
+    try:
+        from app.admin.ws_fanout import fanout as _ws_fanout  # noqa: PLC0415
+        ws_fanout_subscriber_count.set(float(_ws_fanout.subscriber_count))
+        ws_fanout_tenant_count.set(float(_ws_fanout.tenant_count))
+    except Exception:  # noqa: BLE001 - best-effort scrape
+        pass
+    try:
+        # Importar de un singleton requiere acceso al limiter activo —
+        # registrarlo se hace una vez en `app.main:create_app` (ver
+        # `_set_active_rate_limiter`). Si no está seteado (worker, etc.),
+        # el gauge queda en el último valor conocido o 0.
+        limiter = _active_rate_limiter
+        if limiter is not None:
+            rate_limit_buckets_current.set(float(limiter.size))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# Singleton registry for the rate limiter — set by `app.main:create_app`
+# so `refresh_runtime_metrics` can pull `.size` without circular imports.
+_active_rate_limiter = None
+
+
+def _set_active_rate_limiter(limiter) -> None:
+    global _active_rate_limiter
+    _active_rate_limiter = limiter
 
 
 async def refresh_backup_age_metrics(conn: 'asyncpg.Connection') -> None:

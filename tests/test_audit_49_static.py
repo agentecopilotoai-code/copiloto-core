@@ -93,11 +93,15 @@ def test_rag_indexing_forces_local_hash_when_no_train_true():
     assert sig_idx > 0
     sig_window = src[sig_idx:sig_idx + 800]
     assert 'tenant_no_train: bool | None = None' in sig_window
-    # And the gate logic exists
-    assert "embedding_provider in {'openai', 'anthropic'} and tenant_no_train is not False" in src
+    # AUDIT-51 / round-3 §1.4 refactored the gate from a hardcoded set
+    # {'openai', 'anthropic'} to a derived `CLOUD_PROVIDERS` constant so
+    # new cloud providers added to SUPPORTED_REAL_PROVIDERS are fail-closed
+    # automatically. Assert the new form.
+    assert 'embedding_provider in CLOUD_PROVIDERS and tenant_no_train is not False' in src
     assert 'rag_indexing.cloud_provider_blocked_by_tenant_no_train' in src
-    # Ollama is NOT gated (on-prem) — confirm the gate uses the explicit set
-    assert "{'openai', 'anthropic'}" in src
+    # The constant itself is declared and excludes ollama (on-prem).
+    assert "LOCAL_REAL_PROVIDERS = frozenset({'ollama'})" in src
+    assert "CLOUD_PROVIDERS: frozenset[str] = frozenset(SUPPORTED_REAL_PROVIDERS) - LOCAL_REAL_PROVIDERS" in src
 
 
 def test_routes_propagate_tenant_no_train_to_indexing():

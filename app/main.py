@@ -8,9 +8,11 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.pool import db
 from app.services.metrics import (
+    _set_active_rate_limiter,
     ip_allowed,
     parse_ip_allowlist,
     refresh_backup_age_metrics,
+    refresh_runtime_metrics,
     render_latest,
 )
 from app.services.rate_limit import (
@@ -64,6 +66,8 @@ def create_app() -> FastAPI:
             # el resto de las métricas. La alerta `PostgresUnavailable` (si
             # se llega a configurar) cubrirá la caída de DB independientemente.
             pass
+        # AUDIT-51: refrescar gauges runtime (fanout + rate-limit) sin tocar DB.
+        refresh_runtime_metrics()
         payload, content_type = render_latest()
         return Response(content=payload, media_type=content_type)
 
@@ -99,6 +103,9 @@ def create_app() -> FastAPI:
         max_entries=settings.rate_limit_bucket_max_entries,
         ttl_seconds=settings.rate_limit_bucket_ttl_seconds,
     )
+    # AUDIT-51: registrar el limiter para que `refresh_runtime_metrics`
+    # pueda leer `.size` sin import circular.
+    _set_active_rate_limiter(limiter)
     api.middleware('http')(build_rate_limit_middleware(limiter))
 
     api.include_router(admin_router)

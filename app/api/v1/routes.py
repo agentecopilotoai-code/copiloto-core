@@ -2761,6 +2761,16 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         )
         if k in payload
     }
+    # AUDIT-51 / round-3 §1.3 (2026-05-18): validar tipo de `no_train` antes
+    # de aceptar el patch. asyncpg coercione algunos truthy non-bool (1,
+    # "true") en columna boolean, pero la coerción depende de driver/version
+    # y queremos input estricto en el endpoint admin para trazabilidad clara
+    # en el audit log de §1.2 abajo.
+    if 'no_train' in allowed and not isinstance(allowed['no_train'], bool):
+        raise HTTPException(
+            status_code=422,
+            detail='no_train must be a boolean (true/false)',
+        )
     # UI-012-FU: validate brand_logo_url shape/length up front. Empty string
     # clears the logo (-> null) so the admin UI can offer a "Quitar logo"
     # action without a dedicated DELETE endpoint.
@@ -2830,7 +2840,50 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
         json.dumps(merged['bot_personality']),
         merged.get('brand_logo_url'),
     )
-    await audit(conn, tenant_id=tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='tenant_settings.updated', entity_type='tenant_settings', entity_id=str(tenant_id))
+    # AUDIT-51 / round-3 §1.2 (2026-05-18): incluir metadata del diff en el
+    # audit log para trazabilidad GDPR. Antes el log decía solo "settings
+    # updated" sin valor anterior/nuevo — un admin podía flippear `no_train`
+    # (apertura a procesamiento cloud) sin que el audit explicara qué cambió.
+    # Capturamos las keys realmente modificadas + viejo/nuevo para los flags
+    # privacy-sensitive. NO dumpeamos `notification_settings` completo
+    # (puede contener URLs con secrets en query params) — solo bool diffs +
+    # whitelist de keys de bajo riesgo.
+    audit_meta: dict[str, object] = {}
+    changed_keys: list[str] = []
+    privacy_sensitive_keys = ('no_train', 'pii_policy', 'escalation_policy', 'locale')
+    for key in allowed:
+        old_val = current[key] if key in current else None
+        new_val = row[key] if key in row else None
+        if old_val != new_val:
+            changed_keys.append(key)
+            if key in privacy_sensitive_keys:
+                # Solo para keys privacy-sensitive, capturar valor previo+nuevo.
+                # bools y strings son seguros de inline; dicts (jsonb) los
+                # marcamos con hash sha256 truncado para forensia sin leak.
+                if isinstance(old_val, (bool, str, int, float, type(None))):
+                    audit_meta[f'{key}_previous'] = old_val
+                    audit_meta[f'{key}_new'] = new_val
+                else:
+                    import hashlib as _h  # noqa: PLC0415
+                    old_hash = _h.sha256(
+                        json.dumps(old_val, sort_keys=True, default=str).encode()
+                    ).hexdigest()[:12]
+                    new_hash = _h.sha256(
+                        json.dumps(new_val, sort_keys=True, default=str).encode()
+                    ).hexdigest()[:12]
+                    audit_meta[f'{key}_previous_hash'] = old_hash
+                    audit_meta[f'{key}_new_hash'] = new_hash
+    audit_meta['changed_keys'] = changed_keys
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='tenant_settings.updated',
+        entity_type='tenant_settings',
+        entity_id=str(tenant_id),
+        metadata=audit_meta,
+    )
     return record_to_dict(row)
 
 
@@ -9487,6 +9540,20 @@ async def evaluate_intent_retrieval(
 ):
     tenant_id = await tenant_id_from_request(request, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+    # AUDIT-51 / round-3 §1.1 (2026-05-18): cargar `no_train` del tenant para
+    # propagarlo al `classify_intent` callsite abajo. Antes `tenant_no_train`
+    # default `None` siempre bloqueaba cloud — un tenant con `no_train=False`
+    # configurado legítimamente perdía Anthropic/OpenAI en este endpoint
+    # admin (inconsistente con `rag_orchestrator.classify_intent`).
+    settings_row = await conn.fetchrow(
+        'select no_train from app.tenant_settings where tenant_id=$1',
+        tenant_id,
+    )
+    tenant_no_train: bool | None = (
+        bool(settings_row['no_train'])
+        if settings_row and settings_row['no_train'] is not None
+        else True
+    )
     visibility_filter = list(ALL_VISIBILITY) if payload.include_agents_only else list(END_USER_VISIBILITY)
     # BUG-212 (codex MEDIUM): el SELECT antes traía TODOS los chunks activos
     # del tenant y los rankeaba en Python. Un tenant admin con catálogo
@@ -9530,8 +9597,13 @@ async def evaluate_intent_retrieval(
         allow_agents_only=payload.include_agents_only,
     )
 
-    # Intent classification
-    intent_result = await classify_intent(payload.question, settings=get_settings())
+    # Intent classification — AUDIT-51 propaga `tenant_no_train` para que el
+    # gate cloud aplique igual que en el orchestrator (consistencia funcional).
+    intent_result = await classify_intent(
+        payload.question,
+        settings=get_settings(),
+        tenant_no_train=tenant_no_train,
+    )
 
     response = {
         'tenant_id': str(tenant_id),
@@ -12758,6 +12830,52 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
         raise HTTPException(status_code=401, detail='Invalid webhook signature')
 
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(channel['tenant_id']))
+
+    # AUDIT-51 / round-3 §1.8 + re-audit §1.8 (2026-05-18): freshness
+    # pre-scan ANTES del INSERT a `webhook_events_raw`. Antes el INSERT
+    # ocurría siempre y stale payloads (replays de 30+ días) quedaban
+    # persistidos ocupando espacio + impidiendo dedupe de deliveries
+    # legítimos con el mismo body. Pre-scan: si NINGÚN message del
+    # payload está fresco, audit + skip. Cuando hay al menos uno fresco,
+    # se persiste y el loop interno sigue droppeando los stale por message
+    # (defensa en profundidad sobre `payload_sha256` unique).
+    _settings = get_settings()
+    _max_age = _settings.webhook_meta_max_message_age_seconds
+    _now_ts = int(time.time())
+    _has_fresh_message = False
+    _total_messages = 0
+    for _entry in payload.get('entry', []):
+        for _change in _entry.get('changes', []):
+            for _message in _change.get('value', {}).get('messages', []):
+                _total_messages += 1
+                if is_meta_message_fresh(_message, now_ts=_now_ts, max_age_seconds=_max_age):
+                    _has_fresh_message = True
+                    break
+            if _has_fresh_message:
+                break
+        if _has_fresh_message:
+            break
+    # Si el payload tiene mensajes y NINGUNO está fresco → skip raw + audit.
+    # Para payloads sin `messages` (status updates, etc.) NO aplicamos el gate
+    # — esos no llevan timestamp per-message en `messages[].timestamp` y la
+    # freshness check no aplica (Meta los envía con su propio dedupe).
+    if _total_messages > 0 and not _has_fresh_message:
+        await audit(
+            conn,
+            tenant_id=channel['tenant_id'],
+            actor_type='system',
+            actor_id=None,
+            action='webhook.whatsapp_payload_all_messages_stale',
+            entity_type='tenant_channel',
+            entity_id=str(channel['id']),
+            metadata={
+                'message_count': _total_messages,
+                'max_age_seconds': _max_age,
+                'payload_sha256_prefix': hashlib.sha256(body).hexdigest()[:16],
+            },
+        )
+        return {'status': 'rejected', 'reason': 'all_messages_stale'}
+
     sha = hashlib.sha256(body).hexdigest()
     await conn.fetchrow(
         """

@@ -78,11 +78,13 @@ def test_webhook_handler_validates_change_phone_number_id_against_signed_channel
 def test_webhook_handler_drops_mismatched_changes_with_audit():
     source = ROUTES.read_text()
     start = source.index("async def receive_whatsapp_webhook(")
-    block = source[start:start + 8000]
+    # AUDIT-51 / round-3 §1.8 added a freshness pre-scan before the loop;
+    # the handler grew past 8000 chars. Bump the outer window to 12000.
+    block = source[start:start + 12000]
     # The mismatch branch must (a) emit audit + (b) continue iterating; the
     # rest of the changes must still be processed.
     mismatch_idx = block.index('webhook.phone_number_id_mismatch')
-    after = block[mismatch_idx:mismatch_idx + 800]
+    after = block[mismatch_idx:mismatch_idx + 2000]
     assert 'continue' in after
     assert 'signed_phone_number_id' in block
     assert 'change_phone_number_id' in block

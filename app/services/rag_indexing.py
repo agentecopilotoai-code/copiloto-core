@@ -14,6 +14,19 @@ log = structlog.get_logger()
 # Real embedding providers are imported lazily to keep the module usable
 # without optional dependencies installed.
 SUPPORTED_REAL_PROVIDERS = ('openai', 'anthropic', 'ollama')
+
+# AUDIT-51 / round-3 §1.4 (2026-05-18): single source of truth para qué
+# providers ENVÍAN datos al cloud (vs. corren on-prem como ollama). El gate
+# `no_train` en `build_indexing_result_async` SE DERIVA de esta constante
+# para que cualquier provider cloud futuro (cohere, voyage directo, bedrock,
+# gemini, mistral, together, ...) quede fail-closed automáticamente al
+# agregarlo a `SUPPORTED_REAL_PROVIDERS` — el contrato es: "si está en real
+# pero NO es ollama, asume cloud y respeta no_train".
+#
+# Si en el futuro se agrega un provider local nuevo (e.g. `llama_cpp_server`
+# on-prem), agregarlo a `LOCAL_REAL_PROVIDERS` para excluirlo del gate.
+LOCAL_REAL_PROVIDERS = frozenset({'ollama'})
+CLOUD_PROVIDERS: frozenset[str] = frozenset(SUPPORTED_REAL_PROVIDERS) - LOCAL_REAL_PROVIDERS
 _PROVIDER_DEFAULT_DIMS = {
     'openai': 1536,
     'anthropic': 1024,
@@ -453,7 +466,11 @@ async def build_indexing_result_async(
     sanitized_text, sanitized_warning_count = sanitize_document_text(extracted_text)
 
     # AUDIT-49: gate por tenant_no_train antes de salir al provider cloud.
-    if embedding_provider in {'openai', 'anthropic'} and tenant_no_train is not False:
+    # AUDIT-51 / round-3 §1.4: usa `CLOUD_PROVIDERS` (derivada de
+    # `SUPPORTED_REAL_PROVIDERS - LOCAL_REAL_PROVIDERS`) en vez del set
+    # hardcoded `{'openai', 'anthropic'}`. Cualquier provider cloud futuro
+    # queda fail-closed automáticamente al sumarlo a SUPPORTED_REAL_PROVIDERS.
+    if embedding_provider in CLOUD_PROVIDERS and tenant_no_train is not False:
         log.info(
             'rag_indexing.cloud_provider_blocked_by_tenant_no_train',
             requested_provider=embedding_provider,

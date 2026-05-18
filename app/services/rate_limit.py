@@ -118,6 +118,13 @@ class RateLimiter:
         return (now - bucket.last_refill) > self.ttl_seconds
 
     async def check(self, key: str, *, scope: str) -> tuple[bool, float]:
+        # AUDIT-51: counter Prometheus de evictions por causa (ttl/cap).
+        # Lazy import para evitar ciclo con `app.services.metrics` (que
+        # importa `app.admin.ws_fanout` que NO importa rate_limit).
+        try:
+            from app.services.metrics import rate_limit_buckets_evicted_total  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            rate_limit_buckets_evicted_total = None  # noqa: N806
         async with self._lock:
             now = time.monotonic()
             bucket = self._buckets.get(key)
@@ -125,6 +132,8 @@ class RateLimiter:
                 # Key fría: descartar y crear nueva (estado lleno).
                 del self._buckets[key]
                 bucket = None
+                if rate_limit_buckets_evicted_total is not None:
+                    rate_limit_buckets_evicted_total.labels(reason='ttl').inc()
             if bucket is None:
                 bucket = self.build_bucket(scope=scope)
                 self._buckets[key] = bucket
@@ -134,6 +143,8 @@ class RateLimiter:
             # Cap defensivo (post-insert): pop oldest hasta cumplir.
             while len(self._buckets) > self.max_entries:
                 self._buckets.popitem(last=False)
+                if rate_limit_buckets_evicted_total is not None:
+                    rate_limit_buckets_evicted_total.labels(reason='cap').inc()
             return bucket.consume(1.0)
 
 

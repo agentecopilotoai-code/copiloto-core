@@ -74,10 +74,17 @@ class _PubSubFanout:
 
     def _dispatch(self, payload: str) -> None:
         """asyncpg synchronous callback. Fan payload out to matching subs."""
+        # AUDIT-51: counter Prometheus de drops por reason.
+        try:
+            from app.services.metrics import ws_fanout_dropped_total  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            ws_fanout_dropped_total = None  # noqa: N806
         try:
             event = json.loads(payload)
         except json.JSONDecodeError:
             log.warning('ws_fanout.dropped_invalid_json', payload_preview=payload[:80])
+            if ws_fanout_dropped_total is not None:
+                ws_fanout_dropped_total.labels(reason='invalid_json').inc()
             return
         tenant_id = event.get('tenant_id')
         if not tenant_id:
@@ -104,6 +111,8 @@ class _PubSubFanout:
                         'ws_fanout.dropped_message_queue_full',
                         tenant_id=tenant_id,
                     )
+                    if ws_fanout_dropped_total is not None:
+                        ws_fanout_dropped_total.labels(reason='queue_full').inc()
 
     async def _supervise(self) -> None:
         """Long-running task: holds the LISTEN connection until cancelled.
@@ -147,6 +156,14 @@ class _PubSubFanout:
             self._task = None
             self._pool = None
             self._ready.set()
+            # AUDIT-51: counter Prometheus para alertar sobre crash sostenido.
+            try:
+                from app.services.metrics import (  # noqa: PLC0415
+                    ws_fanout_supervisor_crashes_total,
+                )
+                ws_fanout_supervisor_crashes_total.inc()
+            except Exception:  # noqa: BLE001
+                pass
             raise
 
     def _on_notify_factory(self, _conn):
