@@ -229,8 +229,17 @@ class TestWorkerProcessing:
         assert "e.published_at is null and e.event_name='message.queued'" in src
 
     def test_worker_limits_batch_to_10(self):
+        # BUG-173 (fix-group-30): el SELECT per-row ahora usa `LIMIT 1` y el
+        # batch de 10 se logra con un for-loop outer en `process_once`
+        # (cada iteración = transacción propia → per-row commit, sin
+        # rollback de eventos ya entregados a Meta cuando una fila tardía
+        # falla). El semantics-equivalente sigue siendo "hasta 10 eventos
+        # por tick" pero ahora vive en `EVENT_WORKER_BATCH_SIZE = 10` +
+        # `for _ in range(EVENT_WORKER_BATCH_SIZE):` en lugar de SQL LIMIT.
         src = worker_source()
-        assert 'limit 10' in src
+        assert 'EVENT_WORKER_BATCH_SIZE = 10' in src
+        assert 'for _ in range(EVENT_WORKER_BATCH_SIZE):' in src
+        assert 'limit 1' in src
 
     def test_worker_orders_by_occurred_at(self):
         src = worker_source()

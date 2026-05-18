@@ -13479,7 +13479,18 @@ async def analytics_referrals(
     }
 
 
-@tenant_analytics_router.get('/analytics/agents')
+# BUG-171 (codex P1 sobre BUG-037): cuando el router `tenant_analytics_router`
+# se bajó a `viewer` para que viewers vieran sus métricas básicas, este
+# endpoint específico quedó expuesto. Devuelve email + handoffs + feedback +
+# revenue de TODOS los agentes — `analytics.agent_performance.read` en la
+# matriz (`matrix.js:53`) es manager+ (agentes ven `own_only`, no la lista
+# global). Re-restringimos con `require_min_role('manager')` per-route, sin
+# tocar el router (que sigue siendo viewer-readable para los otros endpoints
+# de analytics como overview/funnel/campaigns).
+@tenant_analytics_router.get(
+    '/analytics/agents',
+    dependencies=[Depends(require_min_role('manager'))],
+)
 async def analytics_agents(
     request: Request,
     from_date: str | None = Query(None),
@@ -13496,6 +13507,9 @@ async def analytics_agents(
     performer of the month" flag points at the agent with the highest
     ``revenue_attributed`` inside the requested range; ties broken by
     ``appointments_confirmed`` then ``handoffs_resolved``.
+
+    BUG-171: gated to manager+ per-route (router is viewer+ for other
+    analytics endpoints).
     """
     tenant_id = await tenant_id_from_request(request, conn)
     start, end = _resolve_analytics_range(from_date, to_date)

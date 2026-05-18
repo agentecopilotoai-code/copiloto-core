@@ -67,23 +67,49 @@ def delivery_error_code(exc: Exception) -> str:
     return 'transport_error'
 
 
+EVENT_WORKER_BATCH_SIZE = 10
+
+
 async def process_once(conn: asyncpg.Connection) -> int:
-    # BUG-058: envolver TODO el ciclo en transacción con
-    # `FOR UPDATE SKIP LOCKED` sobre `domain_events`. Sin esto, dos workers
-    # concurrentes (caso real cuando escalamos el deployment horizontal,
-    # ver ARCHITECTURE.md async-process section) seleccionaban las MISMAS
-    # filas, llamaban Meta 2 veces y mandaban WhatsApps duplicados al
-    # usuario. Cada worker ahora ve solo las filas que NO están lockadas
-    # por otra transacción; las filas seleccionadas quedan lockadas hasta
-    # que la transacción cierre (al terminar el `for row in rows` loop,
-    # ~unos segundos típicos contra Meta API). Trade-off: locks más largos
-    # vs duplicate delivery — preferimos correctness para nuestro volumen
-    # actual.
-    async with conn.transaction():
-        return await _process_locked_batch(conn)
+    """BUG-058 + BUG-173: procesar hasta `EVENT_WORKER_BATCH_SIZE` eventos,
+    UNO POR TRANSACCIÓN.
+
+    Cada iteración:
+      1. Abre transacción
+      2. SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1 (locka 1 fila)
+      3. Envía a Meta + UPDATE `published_at`
+      4. COMMIT (libera el lock + persiste el "ya entregado")
+
+    Por qué per-row vs el wrapper batch original:
+    - **BUG-058** (concurrent workers): cada worker compite por filas via
+      SKIP LOCKED — sin esto, dos workers seleccionaban las MISMAS filas y
+      mandaban duplicados a Meta. Preservado: el SELECT FOR UPDATE
+      SKIP LOCKED sigue dentro de la transacción.
+    - **BUG-173** (codex P1 sobre fix-group-08): wrappear TODO el batch en
+      una sola transacción significaba que los `conn.transaction()` per-row
+      pasaban a ser savepoints. Si el worker moría/era cancelado o un row
+      tardío fallaba con error inesperado, el outer transaction rollbackeaba
+      TODAS las actualizaciones — incluidos eventos ya enviados a Meta —
+      y en el próximo tick el mismo `published_at IS NULL` los re-seleccionaba
+      y los re-enviaba = duplicate delivery al usuario.
+
+    Per-row commit garantiza que "entregado a Meta" + "marca como published"
+    son atómicos, y un crash entre rows no invalida el progreso.
+    """
+    processed = 0
+    for _ in range(EVENT_WORKER_BATCH_SIZE):
+        async with conn.transaction():
+            handled = await _process_locked_batch(conn)
+        if handled == 0:
+            break
+        processed += handled
+    return processed
 
 
 async def _process_locked_batch(conn: asyncpg.Connection) -> int:
+    # BUG-173: LIMIT 1 (era LIMIT 10). El loop está afuera en `process_once`
+    # para que cada row se procese en su propia transacción y el commit
+    # sea per-row.
     rows = await conn.fetch(
         """
         select e.id, e.tenant_id, e.aggregate_id, m.conversation_id, m.body_text,
@@ -100,7 +126,7 @@ async def _process_locked_batch(conn: asyncpg.Connection) -> int:
         where e.published_at is null and e.event_name='message.queued'
           and c.provider in ('whatsapp_cloud_api','instagram_messenger','facebook_messenger')
         order by e.occurred_at
-        limit 10
+        limit 1
         for update of e skip locked
         """
     )

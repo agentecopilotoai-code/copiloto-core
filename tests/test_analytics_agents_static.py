@@ -52,7 +52,12 @@ def test_update_appointment_sets_closed_by_user_id_on_status_transitions():
 
 def test_analytics_agents_endpoint_is_registered():
     source = API_ROUTES.read_text()
-    assert "@tenant_analytics_router.get('/analytics/agents')" in source
+    # BUG-171 (fix-group-30) movió el decorator a multi-línea para alojar
+    # `dependencies=[Depends(require_min_role('manager'))]`. Validamos los
+    # dos componentes (decorator path + handler name) en vez del match
+    # literal de la línea completa.
+    assert "@tenant_analytics_router.get(" in source
+    assert "'/analytics/agents'" in source
     assert 'async def analytics_agents(' in source
 
 

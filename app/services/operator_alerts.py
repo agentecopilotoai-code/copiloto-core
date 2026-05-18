@@ -493,13 +493,21 @@ async def _send_whatsapp_channel(
             channel_id=channel_id,
             recipient_phone=to,
         )
-        await conn.execute(
+        # BUG-170: capturamos el message_id (RETURNING) y enqueueamos el
+        # evento `message.queued` en `app.domain_events`. Sin esto, el
+        # `event_worker` no ve el row insertado y el message queda
+        # `status='queued'` forever — el alert WhatsApp nunca llega al
+        # operador aunque `_send_whatsapp_channel` reporte success. Mismo
+        # defecto que BUG-135 corrigió en `digest_worker`. La idempotency
+        # key incluye recipient para soportar el caso multi-destino.
+        message_row = await conn.fetchrow(
             """
             insert into app.messages (
               tenant_id, conversation_id, direction, sender_actor_type,
               message_type, status, payload, body_text
             )
             values ($1, $2, 'outbound', 'system', 'template', 'queued', $3::jsonb, $4)
+            returning id
             """,
             tenant_id,
             conversation_id,
@@ -513,6 +521,26 @@ async def _send_whatsapp_channel(
                 'components': components,
             }),
             body_label,
+        )
+        idempotency_key = (
+            f'operator-alert-{kind}-{tenant_id}-'
+            f'{_wa_id_from_phone(to)}-{message_row["id"]}'
+        )
+        await conn.execute(
+            """
+            insert into app.domain_events
+              (tenant_id, aggregate_type, aggregate_id, event_name, idempotency_key, payload)
+            values ($1, 'message', $2, 'message.queued', $3, $4::jsonb)
+            on conflict do nothing
+            """,
+            tenant_id,
+            message_row['id'],
+            idempotency_key,
+            json.dumps({
+                'conversation_id': str(conversation_id),
+                'operator_alert': True,
+                'operator_alert_kind': kind,
+            }),
         )
         queued += 1
     return queued

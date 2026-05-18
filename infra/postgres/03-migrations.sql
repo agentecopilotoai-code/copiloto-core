@@ -79,3 +79,43 @@ alter table app.reminder_jobs
 -- email exitoso en cada attempt hasta que el webhook termine.
 alter table app.operator_alerts
   add column if not exists delivered_channels text[] not null default '{}';
+
+-- BUG-169 (codex P1 sobre fix-group-01): los fixes de BUG-026 y BUG-027
+-- recrearon trigger + FK en `01-schema.sql` (fresh installs), pero esta
+-- migración solo añadía columnas, dejando intacto el trigger AFTER UPDATE
+-- y el FK sin column-spec en DBs existentes. La regresión se reproduce
+-- en prod cualquier vez que `01-schema.sql` no se aplique sobre un
+-- volumen vacío. Recreamos ambos objetos idempotentemente acá.
+
+-- BUG-026 recreate: el trigger debe ser BEFORE UPDATE para que la fila
+-- vieja se archive PRIMERO (salga del partial unique index) y la NEW no
+-- choque. Drop + create es seguro: misma función `tenant_legal_documents_archive_previous`,
+-- solo cambia el timing.
+do $$
+begin
+  if exists (
+    select 1 from pg_trigger
+    where tgname = 'trg_tenant_legal_documents_archive_previous'
+      and tgrelid = 'app.tenant_legal_documents'::regclass
+  ) then
+    drop trigger trg_tenant_legal_documents_archive_previous
+      on app.tenant_legal_documents;
+  end if;
+end$$;
+
+create trigger trg_tenant_legal_documents_archive_previous
+  before update on app.tenant_legal_documents
+  for each row execute function app.tenant_legal_documents_archive_previous();
+
+-- BUG-027 recreate: el FK `fk_contacts_referrer` necesita el column-spec
+-- `(referrer_contact_id)` en el `on delete set null` para que Postgres 15+
+-- limite el SET NULL a esa columna específica (sin el spec, limpia toda
+-- la tupla compuesta tenant_id+referrer_contact_id, rompiendo la
+-- referencia tenant del contacto). Drop + add es seguro: el data no se mueve.
+alter table app.contacts
+  drop constraint if exists fk_contacts_referrer;
+alter table app.contacts
+  add constraint fk_contacts_referrer
+    foreign key (tenant_id, referrer_contact_id)
+    references app.contacts(tenant_id, id)
+    on delete set null (referrer_contact_id);
