@@ -227,6 +227,7 @@ export function resolveActiveRoles({ profile, tenant, supportModeOverride = null
   const profileGlobalRoles = profileRoleList.filter((r) => GLOBAL_ROLES.includes(r));
 
   let profileRoles;
+  let injectOwnerForSupportMode = false;
   if (!tenant) {
     // Contexto global (sin tenant): siempre incluir los roles globales del
     // profile. BUG-006: sin esto, platform_owner cae al onboarding de tenant.
@@ -249,7 +250,25 @@ export function resolveActiveRoles({ profile, tenant, supportModeOverride = null
       (Boolean(profile?.support_mode) || overrideMatchesTenant)
       && profileGlobalRoles.length > 0;
     profileRoles = supportMode ? profileRoleList : [];
+    // BUG-012: cuando support_mode está activo el platform_owner espera tener
+    // acceso completo al tenant (admin/owner-equivalent) — ese es el propósito
+    // del feature. Pero la matriz tiene `platform_owner: null` para TODAS las
+    // capabilities tenant-scoped (`tenant_setup.write`, `team.write`, etc.)
+    // porque `platform_owner` es fleet-wide, no tenant. Sin inyectar `'owner'`
+    // acá, el platform_owner en support_mode ve el banner "tenés acceso
+    // temporal" pero al clickear cualquier módulo admin recibe "Acceso
+    // restringido". El feature pierde su propósito.
+    // Inyectamos `'owner'` solo cuando: (1) support_mode está activo (no
+    // relaja el permission model en flujos normales) Y (2) el profile tiene
+    // `platform_owner` global (un `owner` sin `platform_owner` no debería
+    // poder elevarse a owner de OTRO tenant — `overrideMatchesTenant` ya
+    // gatea esto, pero defense en profundidad).
+    injectOwnerForSupportMode =
+      supportMode && profileGlobalRoles.includes('platform_owner');
   }
 
-  return Array.from(new Set([...tenantRoles, ...profileRoles]));
+  const finalRoles = injectOwnerForSupportMode
+    ? ['owner', ...tenantRoles, ...profileRoles]
+    : [...tenantRoles, ...profileRoles];
+  return Array.from(new Set(finalRoles));
 }
