@@ -881,6 +881,70 @@ async def current_user_id_from_request(request: Request, conn: asyncpg.Connectio
     actor_id = getattr(request.state, 'actor_id', None)
     if not actor_id or getattr(request.state, 'actor_type', None) != 'user':
         return None
+    user_display = user_display_name_from_request(request)
+
+    # BUG-022: si el usuario fue invitado vía `POST /v1/tenants/{id}/members`
+    # antes de tener cuenta Auth0, su fila en `app.users` quedó con
+    # `auth_subject = 'pending|<uuid5(email).hex>'` (ver `invite_tenant_member`
+    # más abajo). El link de la membresía en `user_tenant_roles` está creado
+    # contra esa fila. Cuando el usuario finalmente loguea con Auth0, el `sub`
+    # del JWT es `auth0|...` y NO matchea el `auth_subject` pendiente — la
+    # membresía existe pero queda "huérfana".
+    #
+    # Multi-tenant: un mismo email puede tener invitaciones a varios tenants
+    # con roles distintos. invite_tenant_member sólo crea UNA fila en
+    # `app.users` por email (las invitaciones subsecuentes reutilizan la fila
+    # y agregan filas en `user_tenant_roles`). Cuando este reclamo dispara,
+    # TODAS las memberships pendientes de ese user se iluminan a la vez
+    # porque comparten el mismo `user_id`.
+    #
+    # Históricamente, el path feliz de `invite_tenant_member` también hacía
+    # `UPDATE app.users SET auth_subject=<sub real>` justo después de Auth0
+    # crear la cuenta, pero ese update vive dentro del `else:` del try/except
+    # y se salta si algún paso post-creación (set_user_tenant_metadata,
+    # assign_auth0_role_by_name, o el ticket de password-change) lanza una
+    # excepción — el invitado se queda con la fila pendiente y al loguear
+    # aterriza en `/admin/no-tenant`.
+    #
+    # **Seguridad** (Codex P1 en PR #17): el reclamo SÓLO usa el claim
+    # `email` del JWT (`request.state.email`), NUNCA el header
+    # `X-Admin-User-Email` ni el email sintético `<hash>@auth.local`. Sin
+    # esta restricción, un atacante autenticado con su propia cuenta Auth0
+    # podría mandar `X-Admin-User-Email: <email-de-la-víctima>` y reclamar
+    # la membresía pendiente de otro tenant. El JWT está firmado por Auth0
+    # — el `email` claim es la única fuente confiable.
+    #
+    # El reclamo es idempotente (sólo afecta filas pendientes) y respeta
+    # UNIQUE de `auth_subject` con un `not exists` defensivo — si por alguna
+    # razón ya hay otra fila con ese `sub`, el reclamo no se ejecuta.
+    trusted_email = getattr(request.state, 'email', None)
+    if trusted_email:
+        claimed = await conn.fetchrow(
+            """
+            update app.users
+            set auth_subject = $1,
+                display_name = case
+                  when coalesce(display_name, '') = '' then $3
+                  else display_name
+                end,
+                status = 'active',
+                last_login_at = now(),
+                updated_at = now()
+            where email = $2
+              and auth_subject like 'pending|%'
+              and not exists (
+                select 1 from app.users u2
+                where u2.auth_subject = $1 and u2.id <> app.users.id
+              )
+            returning id
+            """,
+            actor_id,
+            trusted_email,
+            user_display,
+        )
+        if claimed:
+            return claimed['id']
+
     row = await conn.fetchrow(
         """
         insert into app.users (auth_subject, email, display_name, last_login_at)
@@ -894,7 +958,7 @@ async def current_user_id_from_request(request: Request, conn: asyncpg.Connectio
         """,
         actor_id,
         user_email_from_request(request),
-        user_display_name_from_request(request),
+        user_display,
     )
     return row['id']
 
@@ -1745,6 +1809,15 @@ async def list_my_tenants(request: Request, conn: asyncpg.Connection = Depends(g
     actor_id = getattr(request.state, 'actor_id', None)
     if not actor_id:
         raise HTTPException(status_code=401, detail='Authentication required')
+    # BUG-022: este endpoint es típicamente el primer hit del invitado al
+    # loguearse (lo invoca el switcher de tenants del admin-panel ANTES de
+    # decidir si mandarlo a `/admin/no-tenant`). Llamar a
+    # `current_user_id_from_request` asegura que cualquier fila pendiente
+    # (`auth_subject = 'pending|<hex>'`) creada por `invite_tenant_member`
+    # quede vinculada al `sub` real de Auth0 ANTES de la query — sin esto,
+    # el JOIN por `auth_subject` devuelve vacío y el invitado aterriza
+    # erróneamente en la pantalla "sin tenant".
+    await current_user_id_from_request(request, conn)
     rows = await conn.fetch(
         """
         select t.id, t.slug, t.legal_name, t.display_name, t.vertical_code,
