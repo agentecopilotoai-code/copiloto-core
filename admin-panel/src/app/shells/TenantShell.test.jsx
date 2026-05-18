@@ -65,4 +65,48 @@ describe('<TenantShell/>', () => {
     });
     expect(accountLink).toHaveAttribute('href', '/account/profile');
   });
+
+  it('BUG-015 — owner regular NO ve el botón "Volver a Platform"', () => {
+    // baseProps.permissions = { role: 'owner', can: () => true } sin
+    // isSystemOwner — el dueño del tenant NO debe ver el botón (no tiene
+    // a dónde volver, su home es el tenant mismo).
+    renderShell(<p>x</p>);
+    expect(
+      screen.queryByRole('button', { name: /Platform/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('BUG-015 — platform_owner bajo support_mode SÍ ve el botón "Volver a Platform"', () => {
+    // Caso de uso: platform_owner activó support_mode contra el tenant
+    // (via "Ver como tenant" o creando un tenant nuevo donde es owner).
+    // `isSystemOwner=true` es el flag que el padre usa para mostrar el
+    // botón — el componente confía en ese gate.
+    renderShell(<p>x</p>, {
+      permissions: {
+        role: 'platform_owner',
+        can: () => true,
+        isSystemOwner: true,
+      },
+    });
+    const btn = screen.getByRole('button', { name: /Platform/i });
+    expect(btn).toBeInTheDocument();
+    expect(btn).toHaveAttribute('type', 'button');
+  });
+
+  it('BUG-015 — isSystemOwner=false explícito tampoco monta el botón', () => {
+    // Defensive: solo el flag verdadero monta el botón. Cualquier otro
+    // valor (false, undefined dentro de permissions) lo oculta. Esto
+    // refleja la intent del fix: el botón es EXCLUSIVO para platform_owners
+    // bajo support_mode.
+    renderShell(<p>x</p>, {
+      permissions: {
+        role: 'owner',
+        can: () => true,
+        isSystemOwner: false,
+      },
+    });
+    expect(
+      screen.queryByRole('button', { name: /Platform/i }),
+    ).not.toBeInTheDocument();
+  });
 });
