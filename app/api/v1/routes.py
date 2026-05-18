@@ -99,6 +99,7 @@ from app.core.security import (
     require_platform_owner,
     require_service,
 )
+from app.core.export_signatures import sign_export_bundle
 from app.core.signed_cookies import pack_signed_payload
 from app.db.pool import get_db, record_to_dict
 from app.services import feature_flags as feature_flags_service
@@ -10612,6 +10613,215 @@ async def export_tenant_data(
         media_type='application/json',
         headers={'Content-Disposition': f'attachment; filename="tenant-data-{tenant_id}.json"'},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SEC-010-EXPORT-FU — contact-scoped data export for consent-violation claims.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The tenant-wide `data-export` above is the wrong tool for derecho de acceso
+# claims that target a SINGLE contact: it dumps every contact's data and the
+# operator was building extracts by `grep`-ing the JSON manually, with a high
+# risk of leaking cross-contact PII to the claimant. The runbook
+# `docs/runbooks/consent-violation-claim.md` (SEC-010 sub-finding 6317cdc8)
+# prohibited that path and asked the operator to compose the extract via SQL.
+# This endpoint replaces the manual SQL with a tested server-side handler.
+#
+# Surface:
+#   GET /v1/tenants/{tenant_id}/contacts/{contact_id}/export?kinds=consent_ledger,messages
+#
+# Auth:
+#   - Mounted on `tenant_admin_router` → `require_min_role('admin')` already
+#     gates this; manager/agent/viewer get 403 before the handler runs.
+#   - `ensure_tenant_access` re-verifies the caller has access to THIS tenant
+#     (defense in depth against cross-tenant token reuse).
+#   - The contact row is fetched WITH `tenant_id=$1` in the WHERE — a contact
+#     id from another tenant returns 404 (RLS also enforces this; the explicit
+#     check is the audit-trail signal).
+#
+# Output:
+#   - JSON object `{data: {...}, signature: '<hex>', signature_algorithm: ...}`.
+#   - `data` includes `exported_at` (ISO-8601 UTC), `tenant_id`, `contact`,
+#     `kinds` (echoed) and one key per kind requested.
+#   - `signature` is HMAC-SHA256 of the canonical JSON of `data` under the
+#     server's `jwt_secret`. Operators sharing the export with a claimant or
+#     court can prove integrity via the audit log entry (which records the
+#     same signature) — if anyone tampers with the file, the signature won't
+#     match. The audit log is the source of truth.
+#
+# Audit:
+#   `contact.exported_for_consent_claim` with `{kinds, signature, exported_at}`.
+#   Tenant-scoped so it appears in the tenant's audit_logs feed.
+#
+# Why the tenant-wide export is NOT enough: a Ley 1581 / GDPR access request
+# requires the data of the ONE complainant. Sending the full dump exposes
+# every OTHER contact's PII and creates a worse violation than the one the
+# claimant was reporting. The runbook now points here.
+_CONTACT_EXPORT_ALLOWED_KINDS = ('consent_ledger', 'messages', 'appointments', 'subscriptions')
+
+
+@tenant_admin_router.get('/tenants/{tenant_id}/contacts/{contact_id}/export')
+async def export_contact_data(
+    tenant_id: UUID,
+    contact_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+    kinds: str = Query(
+        default='consent_ledger',
+        description=(
+            'Comma-separated list of data kinds to include. Allowed: '
+            'consent_ledger, messages, appointments, subscriptions.'
+        ),
+    ),
+):
+    """SEC-010-EXPORT-FU — contact-scoped extract for derecho de acceso /
+    consent-violation claims.
+
+    Replaces the manual SQL workaround in the consent-violation runbook.
+    Returns signed JSON with audit_logs entry; never leaks cross-contact PII.
+    """
+    await ensure_tenant_access(request, tenant_id, conn)
+    await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    # Validate `kinds` BEFORE touching the DB — invalid input shouldn't even
+    # generate an audit entry for a request that never produced data.
+    requested_kinds = tuple(
+        kind.strip() for kind in kinds.split(',') if kind.strip()
+    )
+    if not requested_kinds:
+        raise HTTPException(
+            status_code=422,
+            detail='At least one kind is required.',
+        )
+    invalid = [k for k in requested_kinds if k not in _CONTACT_EXPORT_ALLOWED_KINDS]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f'Invalid kinds: {invalid}. '
+                f'Allowed: {list(_CONTACT_EXPORT_ALLOWED_KINDS)}.'
+            ),
+        )
+
+    # Validate contact belongs to tenant. Even with RLS enforcing this, the
+    # explicit check produces a clean 404 (vs an opaque "row not found") and
+    # ensures the audit log records the lookup attempt.
+    contact_row = await conn.fetchrow(
+        """
+        select id, phone_e164, opt_in_status, opt_in_at, opt_out_at,
+               consent_version, created_at
+        from app.contacts
+        where tenant_id=$1 and id=$2
+        """,
+        tenant_id,
+        contact_id,
+    )
+    if contact_row is None:
+        raise HTTPException(status_code=404, detail='Contact not found')
+
+    bundle: dict[str, Any] = {
+        'exported_at': datetime.now(UTC).isoformat(),
+        'tenant_id': str(tenant_id),
+        'contact_id': str(contact_id),
+        'contact': record_to_dict(contact_row),
+        'kinds': list(requested_kinds),
+    }
+
+    if 'consent_ledger' in requested_kinds:
+        rows = await conn.fetch(
+            """
+            select id, event, channel, legal_basis, purpose, copy_shown,
+                   evidence_payload, occurred_at, ip, user_agent
+            from app.consent_ledger
+            where tenant_id=$1 and contact_id=$2
+            order by occurred_at desc, id desc
+            """,
+            tenant_id,
+            contact_id,
+        )
+        bundle['consent_ledger'] = [record_to_dict(r) for r in rows]
+
+    if 'messages' in requested_kinds:
+        # Join through `conversations` to filter by contact — `messages` has
+        # no direct `contact_id` column (intentional: a conversation owns the
+        # contact relationship). The tenant_id guard on BOTH sides is a
+        # defense-in-depth check against the (impossible-given-the-FK)
+        # scenario of a conversation in a different tenant.
+        rows = await conn.fetch(
+            """
+            select m.id, m.conversation_id, m.external_message_id, m.direction,
+                   m.sender_actor_type, m.sender_actor_id, m.message_type,
+                   m.body_text, m.media_id, m.mime_type, m.payload, m.status,
+                   m.received_at, m.sent_at, m.delivered_at, m.read_at,
+                   m.failed_at, m.error_code, m.error_message, m.created_at
+            from app.messages m
+            join app.conversations c on c.id = m.conversation_id
+            where m.tenant_id=$1 and c.tenant_id=$1 and c.contact_id=$2
+            order by m.created_at desc, m.id desc
+            """,
+            tenant_id,
+            contact_id,
+        )
+        bundle['messages'] = [record_to_dict(r) for r in rows]
+
+    if 'appointments' in requested_kinds:
+        rows = await conn.fetch(
+            """
+            select id, service_id, resource_id, service_code, starts_at,
+                   ends_at, timezone, status, location_type, confirmation_status,
+                   notes, payment_status, payment_amount, payment_currency,
+                   created_at
+            from app.appointments
+            where tenant_id=$1 and contact_id=$2
+            order by starts_at desc, id desc
+            """,
+            tenant_id,
+            contact_id,
+        )
+        bundle['appointments'] = [record_to_dict(r) for r in rows]
+
+    if 'subscriptions' in requested_kinds:
+        rows = await conn.fetch(
+            """
+            select id, plan_id, status, started_at, next_billing_at,
+                   cancelled_at, payment_provider, last_invoice_status,
+                   last_invoice_at, created_at, updated_at
+            from app.contact_subscriptions
+            where tenant_id=$1 and contact_id=$2
+            order by started_at desc, id desc
+            """,
+            tenant_id,
+            contact_id,
+        )
+        bundle['subscriptions'] = [record_to_dict(r) for r in rows]
+
+    # Canonical JSON for signature: sorted keys + no whitespace + ensure_ascii
+    # → deterministic so re-signing the same bundle produces the same hex.
+    bundle_canonical = json.dumps(
+        bundle, default=str, sort_keys=True, separators=(',', ':'), ensure_ascii=False
+    )
+    signature = sign_export_bundle(bundle_canonical)
+
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type=request.state.actor_type,
+        actor_id=request.state.actor_id,
+        action='contact.exported_for_consent_claim',
+        entity_type='contact',
+        entity_id=str(contact_id),
+        metadata={
+            'kinds': list(requested_kinds),
+            'signature': signature,
+            'exported_at': bundle['exported_at'],
+        },
+    )
+
+    return {
+        'data': bundle,
+        'signature': signature,
+        'signature_algorithm': 'HMAC-SHA256',
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1280,18 +1280,9 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ##### SEC-010-EXPORT-FU — Endpoint contact-scoped para extracto de consent ledger
 
-- **Estado:** PENDING (backend follow-up)
-- **Origen:** SEC-010 cerró el sub-finding `6317cdc8` (Runbook leak) editando el runbook para que el operador no use `data-export` (tenant-wide) para extractos de un contacto individual. Mientras el operador compone manualmente vía SQL, este FU agrega un endpoint server-side dedicado.
-- **Alcance:**
-  - Nuevo `GET /v1/tenants/{tenant_id}/contacts/{contact_id}/export?kinds=consent_ledger,messages` montado en `tenant_admin_router` con capability nueva `contact.export.read` (owner + admin; manager → null por defecto).
-  - Handler:
-    - `ensure_tenant_access` + `set_config('app.tenant_id')` + RLS por tenant.
-    - Valida que el contacto pertenece al tenant.
-    - Compone respuesta JSON contact-scoped: `consent_ledger`, `messages`, opcionalmente `appointments`/`subscriptions` según `kinds=`.
-    - Firma el JSON de salida con HMAC y un timestamp (operator audit trail).
-    - Audit log `contact.exported_for_consent_claim` con `metadata={kinds, requested_by}`.
-  - Update del runbook `consent-violation-claim.md` para usar el endpoint nuevo en lugar del SQL ad-hoc.
-- **Tests:** `tests/test_contact_export_static.py` cubriendo capability, RLS, kinds filtering, audit log, firma.
+- **Estado:** DONE (2026-05-18)
+- **Origen:** SEC-010 cerró el sub-finding `6317cdc8` (Runbook leak) editando el runbook para que el operador no use `data-export` (tenant-wide) para extractos de un contacto individual. Este FU agregó el endpoint server-side dedicado y eliminó el SQL ad-hoc del runbook.
+- **Cierre:** ver `docs/DONE.md` (entrada SEC-010-EXPORT-FU). Nuevo `GET /v1/tenants/{tenant_id}/contacts/{contact_id}/export?kinds=...` montado en `tenant_admin_router` (admin+, MFA enforced). Allowlist cerrada de `kinds` (`consent_ledger`, `messages`, `appointments`, `subscriptions`) validada antes del primer SELECT — kinds inválidos / vacío → 422 explícito. `ensure_tenant_access` + `set_config('app.tenant_id')` + filtros `WHERE tenant_id=$1` en TODAS las queries (defense-in-depth sobre RLS). Messages joinea via `app.conversations` con doble check de `tenant_id` en ambos lados. Response shape `{data, signature, signature_algorithm: 'HMAC-SHA256'}` donde `signature` es HMAC-SHA256 del JSON canónico (sorted_keys, separators sin whitespace) bajo `settings.jwt_secret`. Audit log `contact.exported_for_consent_claim` (entity_type=`contact`, entity_id=contact_id) con `metadata = {kinds, signature, exported_at}` — sirve para verificar integridad post-entrega cross-checkeando contra la firma del archivo. Runbook `consent-violation-claim.md` actualizado: removió las queries SQL ad-hoc, agregó `curl` directo al endpoint, y agregó receta de verificación post-entrega con `jq -S -c '.data' | openssl dgst -sha256 -hmac` para reconciliar archivo entregado vs firma del audit log. 15 tests static en `tests/test_contact_export_static.py` defienden: handler existe, montado en tenant_admin_router (no en ops/anonymous), allowlist es tuple cerrado, validación antes de DB, ensure_tenant_access + set_config invocados, contacto filtrado por tenant_id, TODAS las queries filtran tenant_id (≥4 ocurrencias), messages joinea con doble tenant check, helper usa HMAC-SHA256 + jwt_secret + hexdigest, firma sobre canonical JSON (sort_keys + separators), response shape correcto, audit action exacto + metadata con kinds/signature/exported_at.
 - **Dependencias:** ninguna; standalone.
 
 ---

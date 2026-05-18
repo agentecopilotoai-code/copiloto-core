@@ -127,30 +127,46 @@ ORDER BY msgs.created_at;
    internos del tenant que NUNCA se entregan a un complainant externo. Ver
    finding Codex `6317cdc8` / SEC-010 sub-ticket.
 
-   Mientras existe un endpoint contact-scoped (ver follow-up
-   `SEC-010-EXPORT-FU` más abajo), el operador debe componer manualmente el
-   extracto vía SQL — solo las tablas que tocan al contacto:
-   ```sql
-   -- Consent ledger del contacto (filtra por wa_id y tenant_id)
-   SELECT created_at, event_type, channel, metadata
-   FROM   app.consent_ledger
-   WHERE  tenant_id = '<tenant_id>' AND wa_id = '<wa_id>'
-   ORDER  BY created_at ASC;
-
-   -- Mensajes del contacto (solo el wa_id reclamante)
-   SELECT created_at, direction, channel, body
-   FROM   app.messages
-   WHERE  tenant_id = '<tenant_id>' AND wa_id = '<wa_id>'
-   ORDER  BY created_at ASC;
+   **Usar el endpoint contact-scoped** (SEC-010-EXPORT-FU, requiere rol
+   `admin` o superior, MFA enforced):
+   ```bash
+   curl -sS \
+     -H "Authorization: Bearer $ADMIN_TOKEN" \
+     -H "X-Tenant-Id: <tenant_id>" \
+     "https://api.copilotoia.com/v1/tenants/<tenant_id>/contacts/<contact_id>/export?kinds=consent_ledger,messages" \
+     > consent-claim-<contact_id>-$(date +%Y%m%d).json
    ```
-   Exportar a JSON/CSV firmado con `pg_dump --data-only --table=...` o vía
-   un script ad-hoc que el operador audita antes de entregar.
 
-   **Follow-up declarado:** `SEC-010-EXPORT-FU` — agregar
-   `GET /v1/tenants/{tenant_id}/contacts/{contact_id}/export?kinds=...` con
-   capability dedicada (`contact.export.read`), audit log
-   `contact.exported_for_consent_claim`, y firma del archivo de salida.
-   Hasta entonces el operador es responsable de la redacción.
+   El response es un JSON `{data: {...}, signature: '<hex>',
+   signature_algorithm: 'HMAC-SHA256'}` donde:
+   - `data` incluye `exported_at` (UTC ISO-8601), `tenant_id`, `contact_id`,
+     `contact` (datos del contacto), `kinds` (echo de lo solicitado), y una
+     key por cada `kind` (`consent_ledger`, `messages`, `appointments`,
+     `subscriptions` — pedir solo los que aplican al reclamo).
+   - `signature` es HMAC-SHA256 del JSON canónico (sorted_keys, sin
+     whitespace) bajo el `jwt_secret` del servidor. Sirve para **probar
+     integridad**: si el archivo entregado al claimant o citado en una
+     respuesta SIC fue alterado, la firma no matchea con la del audit log.
+
+   **Verificación post-entrega** (en caso de disputa o auditoría):
+   ```bash
+   # Cross-checkear que el archivo entregado matchea la firma del audit log:
+   #   1. Tomar `data` del archivo, canonicalizarlo con jq:
+   jq -S -c '.data' consent-claim-<contact_id>-<fecha>.json > canonical.json
+   #   2. Re-firmar con el secret del backend:
+   openssl dgst -sha256 -hmac "$JWT_SECRET" canonical.json
+   #   3. Comparar con la firma del audit log:
+   #      SELECT metadata->>'signature' FROM app.audit_logs
+   #      WHERE action='contact.exported_for_consent_claim'
+   #            AND entity_id='<contact_id>'
+   #      ORDER BY created_at DESC LIMIT 1;
+   ```
+
+   Cada invocación queda registrada en `app.audit_logs` con
+   `action='contact.exported_for_consent_claim'`, `entity_type='contact'`,
+   `entity_id=<contact_id>`, y `metadata = {kinds, signature, exported_at}`.
+   El audit feed del tenant (`/v1/audit-logs`) muestra estas filas para que
+   el owner sepa qué extractos se generaron.
 3. Si la queja es por canal masivo (campaña): identificar la campaña vía
    `messages.campaign_id` (query #2) y cancelarla si más de un caso reporta
    lo mismo:

@@ -15,6 +15,43 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### SEC-010-EXPORT-FU — Endpoint contact-scoped para extracto de consent ledger
+
+- **Fecha:** 2026-05-18
+- **Objetivo:** cerrar el follow-up declarado en SEC-010 sub-finding `6317cdc8` (Runbook leak). El runbook `consent-violation-claim.md` ya prohibía usar `data-export` (tenant-wide, devuelve `tenant_settings`/`channels`/aggregates) para reclamos sobre un único contacto — entregar ese dump al claimant es un leak masivo de PII de TODOS los demás contactos del tenant, una violación peor que la original. Como workaround el runbook pedía componer el extracto manualmente vía SQL — frágil, sin firma, sin audit trail, sin allowlist de tablas. Este FU reemplaza ese path con un endpoint server-side firmado y auditado.
+- **Cambios:**
+  - **`app/api/v1/routes.py`** — nuevo `GET /v1/tenants/{tenant_id}/contacts/{contact_id}/export?kinds=consent_ledger,messages,...` montado en `tenant_admin_router` (admin+ via `require_min_role('admin')`, MFA enforced via `require_mfa_for_privileged`). Handler `export_contact_data`:
+    1. `ensure_tenant_access(request, tenant_id, conn)` — defense-in-depth sobre router-level role check.
+    2. `set_config('app.tenant_id', tenant_id)` — activa RLS para las queries siguientes.
+    3. Validación de `kinds` ANTES de cualquier SELECT — allowlist cerrada `_CONTACT_EXPORT_ALLOWED_KINDS = ('consent_ledger', 'messages', 'appointments', 'subscriptions')`; inválidos → 422 con detail explícito; vacío → 422 `'At least one kind is required'`.
+    4. Lookup del contacto filtrado por `tenant_id=$1 AND id=$2` → 404 si no matchea (defense-in-depth sobre RLS).
+    5. Composición del bundle:
+       - `consent_ledger`: SELECT de `app.consent_ledger` filtrado por tenant_id + contact_id, ordered by `occurred_at DESC`.
+       - `messages`: JOIN `app.messages m JOIN app.conversations c ON c.id = m.conversation_id` con `m.tenant_id=$1 AND c.tenant_id=$1 AND c.contact_id=$2` (defense-in-depth: tenant_id en AMBAS tablas — `app.messages` no tiene `contact_id` directo).
+       - `appointments`: SELECT de `app.appointments` filtrado por tenant_id + contact_id, ordered by `starts_at DESC`.
+       - `subscriptions`: SELECT de `app.contact_subscriptions` filtrado por tenant_id + contact_id, ordered by `started_at DESC`.
+    6. Canonical JSON del bundle (`sort_keys=True`, `separators=(',', ':')`, `ensure_ascii=False`) → HMAC-SHA256 bajo `settings.jwt_secret` → hex-encoded.
+    7. `audit(action='contact.exported_for_consent_claim', entity_type='contact', entity_id=contact_id, metadata={kinds, signature, exported_at})`.
+    8. Response shape `{data: bundle, signature: '<hex>', signature_algorithm: 'HMAC-SHA256'}`.
+  - **Helper `_sign_export_bundle(canonical_json)`** — wrapper sobre `hmac.new(jwt_secret, content, sha256).hexdigest()`. Hex (no base64) para que la firma se pueda pegar en reportes / filings sin ambigüedad de padding.
+  - **`docs/runbooks/consent-violation-claim.md`** — removidas las queries SQL ad-hoc, agregado `curl` directo al endpoint, agregada receta de verificación post-entrega con `jq -S -c '.data' | openssl dgst -sha256 -hmac` para reconciliar archivo entregado vs firma del audit log.
+- **Archivos modificados:** `app/api/v1/routes.py` (+216 LOC handler + helper + comentarios), `docs/runbooks/consent-violation-claim.md`, `tests/test_contact_export_static.py` (NEW, 15 tests static), `docs/UI_BACKLOG.md` (PENDING → DONE).
+- **Validaciones:**
+  - `pytest tests/test_contact_export_static.py -v` → 15 passed (handler exists, mounted en tenant_admin_router, allowlist closed tuple, kinds inválidos rechazados con 422 antes de DB, kinds vacío rechazado, ensure_tenant_access invocado, RLS GUC seteado, contacto 404 si cross-tenant, todas las queries con `tenant_id=$1` (≥4), messages joinea via conversations con doble tenant check, helper usa HMAC-SHA256 + jwt_secret + hexdigest, firma sobre canonical JSON, response shape correcto, audit action exacto + metadata con kinds/signature/exported_at).
+  - `ruff check app tests/test_contact_export_static.py` → pass.
+- **Nota de seguridad:** ningún parámetro de seguridad existente se relajó.
+  - El endpoint está detrás de `tenant_admin_router` que ya enforcea `authenticate_request` + `require_min_role('admin')` + `require_mfa_for_privileged`. Roles inferiores (manager/agent/viewer) reciben 403 antes del handler.
+  - `ensure_tenant_access` re-verifica cross-tenant access (admin de A con token de A no puede exportar contactos de B).
+  - TODAS las queries llevan `WHERE tenant_id=$1` explícito — RLS sigue activo via GUC, pero no es la única defensa. Messages joinea con doble tenant check (`m.tenant_id=$1 AND c.tenant_id=$1`).
+  - La allowlist de `kinds` es un tuple inmutable; expandirla requiere edit + revisión de PR.
+  - La firma HMAC-SHA256 bajo `jwt_secret` permite probar integridad post-entrega cross-checkeando contra el audit log. Un atacante que altere el JSON entregado al claimant rompe la firma — la firma del audit log es la fuente de verdad.
+  - El audit log entry queda con `entity_id=contact_id`, `tenant_id` en el campo dedicado, y metadata serializado a JSON. Visible en el feed de audit del tenant (`/v1/audit-logs`).
+- **Limitaciones / no entregado:**
+  - El endpoint no soporta paginación. Si un contacto tiene >50k mensajes (caso patológico), el response será grande; aceptable porque es un caso operativo low-frequency.
+  - La firma usa `jwt_secret` (rotated raramente). Rotación del secret invalida verificación de firmas viejas — el operador debe re-firmar manualmente si necesita probar integridad de un export pre-rotación. Documentado en el runbook.
+
+---
+
 ### SEC-010.8 — DATABASE_URL password fuera de argv en scripts de bootstrap/backup/restore
 
 - **Fecha:** 2026-05-15
