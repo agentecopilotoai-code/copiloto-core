@@ -103,7 +103,7 @@ export function PackagesTable({ packages, serviceMap, loading, saving, onEdit, o
     <Card padding="md">
       <CardHeader
         title="Catálogo de paquetes"
-        subtitle="Planes multi-cita con saldo de sesiones (TASK-0051)"
+        subtitle="Planes multi-cita con saldo de sesiones"
       />
       <DataTable
         caption="Catálogo de paquetes del tenant"

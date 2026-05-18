@@ -71,7 +71,7 @@ describe('DigestReports', () => {
     ).toBeInTheDocument();
     await waitFor(() => expect(coreApi.listDigestSubscriptions).toHaveBeenCalled());
     expect(
-      screen.getByText('Suscripciones a resúmenes (TASK-0067)'),
+      screen.getByText('Suscripciones a resúmenes'),
     ).toBeInTheDocument();
     expect(await screen.findByText('camila@acme.co')).toBeInTheDocument();
     expect(screen.getByText('diana@acme.co')).toBeInTheDocument();

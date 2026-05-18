@@ -49,7 +49,7 @@ export function BillingMrr() {
         <PageHeader
           eyebrow="Plataforma · Observability"
           title="Billing & MRR"
-          description="Ingreso recurrente del fleet, agregado desde las suscripciones tenant→contacto de TASK-0075. MRR normalizada a mensual; los cobros fallidos vienen de las suscripciones en mora."
+          description="Ingreso recurrente mensual (MRR) agregado de todos los negocios activos. Los cobros fallidos provienen de las suscripciones en mora."
           actions={
             <button type="button" className={styles.refreshButton} onClick={refresh}>
               Actualizar

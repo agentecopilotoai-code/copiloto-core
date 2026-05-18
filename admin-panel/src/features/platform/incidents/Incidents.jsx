@@ -43,7 +43,7 @@ export function Incidents() {
         <PageHeader
           eyebrow="Plataforma · Operaciones"
           title="Incidentes"
-          description="Feed cross-tenant de alertas de operador (TASK-0057 / TASK-0064 / TASK-0065). Cada tipo de alerta deriva una severidad y, cuando aplica, un runbook publicado."
+          description="Alertas operativas de toda la plataforma, agregadas por negocio. Cada alerta tiene severidad y, cuando aplica, una guía de resolución asociada."
           actions={
             <button type="button" className={styles.refreshButton} onClick={refresh}>
               Actualizar

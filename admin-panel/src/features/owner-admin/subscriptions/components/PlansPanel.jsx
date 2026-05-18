@@ -20,7 +20,7 @@ export function PlansPanel({ plans, loading, saving, onEdit, onArchive }) {
     <Card padding="md">
       <CardHeader
         title="Planes"
-        subtitle="Cobros recurrentes vía Stripe y MercadoPago (TASK-0075)"
+        subtitle="Cobros recurrentes vía Stripe y MercadoPago"
       />
       {loading ? (
         <p className={styles.hint}>Cargando…</p>

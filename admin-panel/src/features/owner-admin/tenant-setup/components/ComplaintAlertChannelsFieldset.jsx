@@ -7,7 +7,7 @@ export function ComplaintAlertChannelsFieldset({ notificationSettings, setNotifi
       className={`${styles.fieldset} ${styles.wide}`}
       data-wizard-field="complaint_alert_channels"
     >
-      <legend>Alertas al equipo (TASK-0057)</legend>
+      <legend>Alertas al equipo</legend>
       <p className={styles.hint}>
         Cuando un cliente deja 1–2★ o una queja, avisamos al equipo por estos canales.
         Configura al menos uno para no depender de que alguien esté mirando el Desk.
@@ -62,13 +62,9 @@ export function ComplaintAlertChannelsFieldset({ notificationSettings, setNotifi
         />
       </FormField>
       <p className={styles.hint}>
-        Solo URLs HTTPS públicas. Loopback, RFC1918, link-local y
-        metadata cloud (169.254.169.254, metadata.google.internal) son
-        rechazados con 422.
-        El webhook se firma con HMAC SHA256 si existe el archivo
-        <code> .secrets/tenants/&lt;tenant_id&gt;/alerts_webhook_secret</code>.
-        El template de WhatsApp <code>complaint_alert_v1</code> debe estar aprobado
-        en Meta para que la alerta salga.
+        Usá una URL pública con HTTPS (las direcciones internas no funcionan).
+        Las alertas por WhatsApp requieren que la plantilla esté aprobada por
+        Meta — si todavía no está, contactá a soporte.
       </p>
     </fieldset>
   );

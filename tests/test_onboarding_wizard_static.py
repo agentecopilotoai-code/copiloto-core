@@ -427,9 +427,12 @@ def test_readiness_response_includes_onboarding_progress(monkeypatch):
 
 
 def test_admin_modules_registry_lists_onboarding_wizard():
+    # El marcador "TASK-0069" se removió del copy visible (queda sólo en
+    # comentarios JSDoc). Verificamos el contrato real del registro.
     src = MODULES.read_text()
     assert "id: 'onboarding-wizard'" in src
-    assert 'TASK-0069' in src
+    assert "capability: 'onboarding.run'" in src
+    assert 'Onboarding self-service' in src
 
 
 def test_core_api_exposes_onboarding_helpers():

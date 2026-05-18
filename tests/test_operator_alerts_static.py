@@ -30,7 +30,6 @@ from app.core.config import Settings, get_settings
 from app.services.notifications import DEFAULT_NOTIFICATION_SETTINGS, normalize_notification_settings
 from app.services.operator_alerts import (
     ALERT_KIND_NEGATIVE_FEEDBACK,
-    WHATSAPP_ALERT_TEMPLATE,
     build_comment_preview,
     build_desk_link,
     build_email_body,
@@ -573,11 +572,14 @@ def test_negative_feedback_no_alert_when_no_channels():
 
 
 def test_admin_panel_renders_alerts_block():
+    # El copy visible se simplificó: ya no expone "(TASK-0057)" ni el path
+    # interno `.secrets/<tenant>/alerts_webhook_secret` ni el nombre crudo
+    # de la plantilla WhatsApp (`complaint_alert_v1`). Lo que sí permanece
+    # es el contrato funcional con el backend — los identificadores de
+    # campo y los normalizadores siguen siendo verificados.
     source = _tenant_setup_source()
-    assert 'Alertas al equipo (TASK-0057)' in source
+    assert 'Alertas al equipo' in source
     assert 'complaint_alert_channels' in source
     assert 'normalizeComplaintAlertChannels' in source
     assert 'data-wizard-field="complaint_alert_channels"' in source
     assert 'manager@empresa.com' in source
-    assert 'alerts_webhook_secret' in source
-    assert WHATSAPP_ALERT_TEMPLATE in source

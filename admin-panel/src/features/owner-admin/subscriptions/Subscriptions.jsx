@@ -35,7 +35,7 @@ export function Subscriptions({ module, session, tenant }) {
         <PageHeader
           eyebrow="Negocio"
           title={module?.label || 'Suscripciones'}
-          description="Cobros recurrentes vía Stripe y MercadoPago. El webhook reconcilia los eventos de pago y dispara la plantilla subscription_payment_failed_v1 en cobros fallidos."
+          description="Cobros recurrentes vía Stripe y MercadoPago. Cuando un cobro falla, el cliente recibe una notificación automática por WhatsApp."
           actions={
             <button
               type="button"

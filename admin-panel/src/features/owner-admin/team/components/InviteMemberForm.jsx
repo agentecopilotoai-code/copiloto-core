@@ -39,7 +39,7 @@ export function InviteMemberForm({
       onClose={onClose}
       size="md"
       title="Invitar miembro"
-      description="Auth0 maneja la autenticación; los roles los emite el JWT y se reverifican en cada request contra la DB."
+      description="El nuevo miembro recibirá un email para configurar su contraseña y acceder al panel con el rol que le asignes."
       footer={
         <div className={styles.modalActions}>
           <button type="button" className={styles.secondaryButton} onClick={onClose}>

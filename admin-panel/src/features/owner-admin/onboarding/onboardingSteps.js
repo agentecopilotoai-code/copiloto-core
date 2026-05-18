@@ -33,8 +33,8 @@ export const ONBOARDING_STEPS = [
   {
     step: 4,
     key: 'consent_template',
-    label: 'Template consent_request_v1',
-    helper: 'Crea y sincroniza con Meta el template de opt-in. Solo avanza cuando Meta lo aprueba.',
+    label: 'Plantilla de opt-in aprobada',
+    helper: 'Crea y sincroniza con Meta la plantilla de consentimiento. Solo avanza cuando Meta la aprueba.',
     goToModule: 'whatsapp',
   },
   {
