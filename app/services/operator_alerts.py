@@ -373,6 +373,85 @@ async def _send_email_smtp(config: Settings, msg: EmailMessage) -> None:  # prag
     )
 
 
+def _wa_id_from_phone(phone_e164: str) -> str:
+    """Normalize an E.164 phone for use as a WhatsApp `wa_id` (no leading +).
+
+    Mirrors the helper in `app/workers/digest_worker.py` — kept local to avoid
+    a cross-cutting refactor. Both consumers strip the leading `+` so the
+    same recipient phone produces the same `app.contacts` row on each call.
+    """
+    return phone_e164.lstrip('+')
+
+
+async def _ensure_operator_alert_conversation(
+    conn: asyncpg.Connection,
+    *,
+    tenant_id: UUID,
+    channel_id: UUID,
+    recipient_phone: str,
+) -> UUID:
+    """BUG-029: garantiza (contacto, conversación) interna para alertas
+    salientes al operador.
+
+    Antes este path hacía `insert into app.messages (..., conversation_id, ...)
+    values (..., null, ...)` que SIEMPRE fallaba porque la columna es
+    `NOT NULL`. El outbound worker marcaba todo como `failed:whatsapp:...` y
+    los managers nunca recibían alertas WhatsApp pese a tenerlas configuradas.
+
+    Patrón idéntico al de `digest_worker._ensure_internal_digest_conversation`:
+    upsert un contacto marcado `source='internal_operator_alert'` (no contamina
+    el funnel/analytics) y reutiliza una conversación dedicada con
+    `metadata.kind='internal_operator_alert'` — lookup por kind, no creamos
+    una nueva en cada tick. El `app.contacts` UNIQUE(tenant_id, wa_id) hace
+    upsert seguro; la conversación se cachea para los retries siguientes.
+    """
+    wa_id = _wa_id_from_phone(recipient_phone)
+    phone_hash = hashlib.sha256(recipient_phone.encode('utf-8')).digest()
+    contact_id = await conn.fetchval(
+        """
+        insert into app.contacts (
+          tenant_id, wa_id, phone_e164, phone_hash, source, metadata
+        )
+        values ($1, $2, $3, $4, 'internal_operator_alert', $5::jsonb)
+        on conflict (tenant_id, wa_id) do update
+          set updated_at = now()
+        returning id
+        """,
+        tenant_id,
+        wa_id,
+        recipient_phone,
+        phone_hash,
+        json.dumps({'internal_operator_alert': True}),
+    )
+    conversation_id = await conn.fetchval(
+        """
+        select id from app.conversations
+        where tenant_id = $1
+          and contact_id = $2
+          and channel_id = $3
+          and metadata->>'kind' = 'internal_operator_alert'
+        order by created_at desc
+        limit 1
+        """,
+        tenant_id, contact_id, channel_id,
+    )
+    if conversation_id is not None:
+        return conversation_id
+    return await conn.fetchval(
+        """
+        insert into app.conversations (
+          tenant_id, contact_id, channel_id, status, opened_by, metadata
+        )
+        values ($1, $2, $3, 'open', 'system', $4::jsonb)
+        returning id
+        """,
+        tenant_id,
+        contact_id,
+        channel_id,
+        json.dumps({'kind': 'internal_operator_alert'}),
+    )
+
+
 async def _send_whatsapp_channel(
     conn: asyncpg.Connection,
     *,
@@ -404,15 +483,26 @@ async def _send_whatsapp_channel(
         body_label = f'[operator_alert] {payload.get("contact_name") or "cliente"}'
     queued = 0
     for to in recipients:
+        # BUG-029: cada recipient necesita una conversación real (NOT NULL).
+        # `_ensure_operator_alert_conversation` upserta contacto + conversación
+        # internos por recipient; el lookup por `metadata.kind` los reutiliza
+        # entre ticks así que no acumulamos basura por cada retry.
+        conversation_id = await _ensure_operator_alert_conversation(
+            conn,
+            tenant_id=tenant_id,
+            channel_id=channel_id,
+            recipient_phone=to,
+        )
         await conn.execute(
             """
             insert into app.messages (
               tenant_id, conversation_id, direction, sender_actor_type,
               message_type, status, payload, body_text
             )
-            values ($1, null, 'outbound', 'system', 'template', 'queued', $2::jsonb, $3)
+            values ($1, $2, 'outbound', 'system', 'template', 'queued', $3::jsonb, $4)
             """,
             tenant_id,
+            conversation_id,
             json.dumps({
                 'operator_alert': True,
                 'operator_alert_kind': kind,
