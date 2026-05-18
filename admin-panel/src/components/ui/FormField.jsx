@@ -21,8 +21,18 @@ export const FormField = forwardRef(function FormField(
   const errorId = error ? `${fieldId}-error` : undefined;
   const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined;
 
+  // BUG-081: `required` se pasa al wrapControl SOLO si el FormField recibió
+  // explícitamente required=true. Si pasamos `required: false` cuando es
+  // el default, sobrescribimos cualquier `required` que el child haya
+  // declarado (ej. `<input required>` en GeneralTab Slug/País), y el
+  // browser deja de validar. Cuando FormField es required, sí queremos
+  // forzar la propagación.
+  const wrapperProps = { id: fieldId, 'aria-describedby': describedBy, 'aria-invalid': Boolean(error) };
+  if (required) {
+    wrapperProps.required = true;
+  }
   const control = children
-    ? wrapControl(children, { id: fieldId, 'aria-describedby': describedBy, 'aria-invalid': Boolean(error), required })
+    ? wrapControl(children, wrapperProps)
     : (
       <input
         ref={ref}

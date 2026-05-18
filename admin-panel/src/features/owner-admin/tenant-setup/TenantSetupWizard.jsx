@@ -46,9 +46,31 @@ import styles from './TenantSetupWizard.module.css';
  * @param {{ module: object, session: object, tenant?: object, initialTab?: string,
  *           initialSignup?: boolean, onTenantCreated?: Function }} props
  */
-export function TenantSetupWizard({ module, onTenantCreated, session, tenant, initialTab, initialSignup = false }) {
+// BUG-080: outer component que GATEA por permisos ANTES de montar el body
+// que dispara `useTenantSetupData` (que fetches tenant/settings/tags/payments
+// en mount). Sin esta separación, viewers/agents sin `tenant_setup.write`
+// generaban TODAS las network calls antes de ver el AccessDenied.
+export function TenantSetupWizard(props) {
+  const { tenant, initialSignup = false } = props;
   const { profile } = useTenantContext();
   const permissions = usePermissions({ profile, tenant });
+
+  // Signup inicial bypassa permission check — el caller (anon o sin tenant)
+  // no tiene roles aún; el backend tiene su propio gate en /v1/tenant-signup.
+  if (initialSignup) {
+    return <TenantSetupWizardBody {...props} />;
+  }
+
+  return (
+    <RequirePermission permissions={permissions} capability="tenant_setup.write" mode="RW">
+      <TenantSetupWizardBody {...props} />
+    </RequirePermission>
+  );
+}
+
+function TenantSetupWizardBody({ module, onTenantCreated, session, tenant, initialTab, initialSignup = false }) {
+  // `initialSignup` se usa para el label "Nuevo tenant" abajo. El gate
+  // de permisos lo hace el outer TenantSetupWizard.
   const [activeTab, setActiveTab] = useState(initialTab || 'tenant');
   const { state, actions } = useTenantSetupData({ session, tenant, onTenantCreated, setActiveTab });
   const { notice } = state;
@@ -97,17 +119,7 @@ export function TenantSetupWizard({ module, onTenantCreated, session, tenant, in
     </section>
   );
 
-  // BUG-002 fix: skip the capability gate during initial signup. Users at
-  // /onboarding have no tenant and therefore no roles, so the RequirePermission
-  // wrapper would always deny them. The backend remains authoritative —
-  // tenant signup is its own endpoint with its own auth model.
-  if (initialSignup) return wizard;
-
-  return (
-    <RequirePermission permissions={permissions} capability="tenant_setup.write" mode="RW">
-      {wizard}
-    </RequirePermission>
-  );
+  return wizard;
 }
 
 function renderPanel({ activeTab, state, actions, session }) {

@@ -292,6 +292,21 @@ fi
 if ! grep -q '^\[GNUPG:\] GOODSIG ' "$WORK_DIR/verify.out"; then
   report_failure "gpg_verify_no_goodsig"
 fi
+# BUG-079: GOODSIG sólo dice "alguna pubkey del keyring firmó esto" —
+# el entrypoint también importa la pubkey de encryption, así que un
+# atacante con acceso a esa key podría firmar un blob malicioso y pasaría
+# el GOODSIG check. Exigimos que la firma sea del FINGERPRINT canónico
+# `BACKUP_SIGNER_FPR`. El payload de GOODSIG es: `GOODSIG <fingerprint>
+# <uid>`. Lo extraemos y comparamos.
+if [[ -n "${BACKUP_SIGNER_FPR:-}" ]]; then
+  GOODSIG_LINE="$(grep -m 1 '^\[GNUPG:\] GOODSIG ' "$WORK_DIR/verify.out")"
+  GOODSIG_FPR="$(awk '{print $3}' <<<"$GOODSIG_LINE")"
+  # GPG entrega el "long key ID" (16 hex) o el fingerprint completo (40 hex)
+  # dependiendo de la versión. Aceptamos suffix-match contra el FPR esperado.
+  if [[ -z "$GOODSIG_FPR" ]] || [[ ! "${BACKUP_SIGNER_FPR^^}" =~ "${GOODSIG_FPR^^}"$ ]]; then
+    report_failure "gpg_verify_wrong_signer:expected=${BACKUP_SIGNER_FPR},actual=${GOODSIG_FPR}"
+  fi
+fi
 
 echo "==> Descifrando con GPG (post-verify)"
 if ! gpg --batch --yes --quiet --output "$DUMP_PATH" --decrypt "$ENC_PATH"; then
