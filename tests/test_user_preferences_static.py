@@ -207,17 +207,23 @@ def test_patch_my_profile_validates_timezone_via_zoneinfo():
     assert 'isinstance(tz, str)' in helper_src  # explicit string check up front
 
 
-def test_patch_my_profile_locale_validation_uses_helper_not_values_call():
+def test_patch_my_profile_locale_validation_uses_canonical_set():
     """codex P1 (UI-016.7-FU follow-up): SUPPORTED_COUNTRIES is a tuple, not a
     dict. The original code did `SUPPORTED_COUNTRIES.values()` which
-    AttributeError'd and turned every locale-bearing PATCH into a 500. The fix
-    iterates the tuple and calls `default_locale(code)` for each entry."""
+    AttributeError'd and turned every locale-bearing PATCH into a 500.
+
+    BUG-075 (fix-group-11) reemplazó el set generado en runtime con la
+    constante canonical `SUPPORTED_USER_LOCALES` (frozenset en
+    `app/services/locale.py`) que incluye los locales del frontend
+    (`es-ES`, `en-US`, `pt-BR`) que no son defaults de país. El test
+    sigue defendiendo que el bug original (uso de `.values()`) no
+    vuelva, y ahora también que se use la constante canonical.
+    """
     source = inspect.getsource(routes_module.patch_my_profile)
-    # The buggy pattern MUST be gone.
+    # El patrón bugged sigue prohibido.
     assert 'SUPPORTED_COUNTRIES.values()' not in source
-    # The correct pattern uses default_locale + tuple iteration.
-    assert 'default_locale' in source
-    assert 'for code in SUPPORTED_COUNTRIES' in source
+    # Después de BUG-075, la fuente de verdad es SUPPORTED_USER_LOCALES.
+    assert 'SUPPORTED_USER_LOCALES' in source
 
 
 def test_patch_my_profile_validates_string_length_bounds():

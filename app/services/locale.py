@@ -104,6 +104,25 @@ def default_locale(country_code: str) -> str:
     return profile_for(country_code)['locale']
 
 
+# BUG-075: el set `{default_locale(code) for code in SUPPORTED_COUNTRIES}`
+# (lo que usaba `PATCH /me/profile` para validar) solo contiene los locales
+# "default" por país: `es-CO, es-MX, es-AR, es-CL, es-PE, es-EC, es-UY`.
+# Pero el frontend (`admin-panel/src/features/account/accountData.js::ACCOUNT_LOCALES`)
+# expone opciones adicionales que el usuario puede elegir explícitamente:
+# `es-ES` (peninsular), `en-US` (English), `pt-BR` (Brasilian Portuguese).
+# Sin esta whitelist extendida, el PATCH respondía 422 a cualquier locale
+# que no fuera el default del país del tenant.
+#
+# Mantener sincronizado con `ACCOUNT_LOCALES` del frontend — si el frontend
+# expone más opciones, sumarlas acá.
+SUPPORTED_USER_LOCALES: frozenset[str] = frozenset({
+    'es-CO', 'es-MX', 'es-AR', 'es-CL', 'es-PE', 'es-EC', 'es-UY',
+    'es-ES',
+    'en-US',
+    'pt-BR',
+})
+
+
 def default_currency(country_code: str) -> str:
     return profile_for(country_code)['currency']
 

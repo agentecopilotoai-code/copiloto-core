@@ -11085,11 +11085,18 @@ async def patch_my_profile(
         # codex P1 (UI-016.7-FU review): SUPPORTED_COUNTRIES is a tuple of
         # country codes ('CO', 'MX', ...), NOT a dict of profiles. Calling
         # .values() on it AttributeErrors and every PATCH /me/profile with
-        # `locale` returns 500 instead of persisting. Iterate the catalog and
-        # ask the public helper `default_locale(code)` for each BCP-47 tag.
-        from app.services.locale import default_locale  # noqa: PLC0415
-        known_locales = {default_locale(code) for code in SUPPORTED_COUNTRIES}
-        if updates['locale'] not in known_locales:
+        # `locale` returns 500 instead of persisting.
+        #
+        # BUG-075 (codex P2 follow-up): la validación anterior solo aceptaba
+        # los locales "default" por país (`es-CO`, `es-MX`, etc. — UNO por
+        # país). Pero el frontend (`ACCOUNT_LOCALES` en accountData.js)
+        # expone también `es-ES`, `en-US`, `pt-BR` que el usuario puede
+        # elegir explícitamente. Sin la whitelist extendida, esos selects
+        # respondían 422. Usamos `SUPPORTED_USER_LOCALES` (frozenset
+        # canónico en app/services/locale.py) para que ambos lados queden
+        # en sync.
+        from app.services.locale import SUPPORTED_USER_LOCALES  # noqa: PLC0415
+        if updates['locale'] not in SUPPORTED_USER_LOCALES:
             raise HTTPException(status_code=422, detail=f'Unsupported locale: {updates["locale"]}')
     if 'timezone' in updates:
         _validate_timezone(updates['timezone'])

@@ -82,18 +82,26 @@ def test_bug_039_segments_tracks_editing_id_state():
 
 def test_bug_040_supported_countries_iterated_not_values():
     """`SUPPORTED_COUNTRIES` es tuple, no dict → `.values()` AttributeError.
-    El fix debe iterar con `for code in SUPPORTED_COUNTRIES`.
+
+    El fix de BUG-040 originalmente generaba el set en runtime con
+    `{default_locale(code) for code in SUPPORTED_COUNTRIES}`. BUG-075
+    (fix-group-11) reemplazó ese set generado por la constante explícita
+    `SUPPORTED_USER_LOCALES` (frozenset) para incluir locales del
+    frontend que no son defaults (es-ES, en-US, pt-BR). La defensa
+    contra el bug original sigue válida: no debe haber `.values()` sobre
+    SUPPORTED_COUNTRIES, y la fuente de verdad debe ser una constante
+    canonical (no inline iteration).
     """
     src = ROUTES.read_text()
     # No queremos ver `.values()` directamente sobre SUPPORTED_COUNTRIES.
     assert 'SUPPORTED_COUNTRIES.values()' not in src, (
         'BUG-040: regresión — `SUPPORTED_COUNTRIES.values()` reaparece. '
-        'Es tuple, no dict; itera con `for code in SUPPORTED_COUNTRIES`.'
+        'Es tuple, no dict; usar la constante canonical SUPPORTED_USER_LOCALES.'
     )
-    # El fix existente usa default_locale(code).
-    assert 'default_locale(code) for code in SUPPORTED_COUNTRIES' in src, (
-        'BUG-040: el patron correcto `{default_locale(code) for code in '
-        'SUPPORTED_COUNTRIES}` desapareció — PATCH /me/profile vuelve a 500.'
+    # El handler ahora usa SUPPORTED_USER_LOCALES (fix-group-11 / BUG-075).
+    assert 'SUPPORTED_USER_LOCALES' in src, (
+        'BUG-040/075: el handler PATCH /me/profile debe importar y usar '
+        '`SUPPORTED_USER_LOCALES` (frozenset canonical) para validar locale.'
     )
 
 
