@@ -34,7 +34,13 @@ def test_operations_routes_support_handoff_accept_release_and_audit():
     assert 'operations.conversations.listed' in source
     assert 'operations.conversation.start_requested' in source
     assert 'operations.conversation.detail_not_found' in source
-    assert 'await asyncio.sleep(0.1)' in source
+    # BUG-221 (fix-group-42, 2026-05-18): el retry loop con
+    # `asyncio.sleep(0.1)` se removió porque atacantes con UUIDs random
+    # saturaban la pool. El handler ahora hace una sola query y devuelve
+    # 404 inmediato; el race se maneja client-side con retry-with-backoff.
+    assert 'await asyncio.sleep(0.1)' not in source, (
+        'BUG-221: el retry loop legacy debe permanecer removido.'
+    )
     assert "@tenant_ops_router.post('/conversations/{conversation_id}/handoff/accept'" in source
     assert "where tenant_id=$1 and conversation_id=$2 and status='open'" in source
     assert "action='handoff.accepted'" in source

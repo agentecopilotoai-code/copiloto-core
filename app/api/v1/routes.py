@@ -1,4 +1,3 @@
-import asyncio
 import csv
 import hashlib
 import hmac
@@ -5285,28 +5284,27 @@ async def get_conversation(
     conversation_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
 ):
     tenant_id = await tenant_id_from_request(request, conn)
-    row = None
-    for attempt in range(5):
-        row = await conn.fetchrow(
-            """
-            select c.*,
-                   coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
-                   ct.phone_e164 as contact_phone
-            from app.conversations c
-            join app.contacts ct on ct.id = c.contact_id
-            where c.tenant_id=$1 and c.id=$2
-              -- BUG-216 (codex P2 follow-up): excluir conversations internas
-              -- del digest_worker. Sin esto, un agent que conoce el UUID
-              -- (via /contacts/{id}/profile que lista conversation_ids) puede
-              -- abrir la conversación interna y leer KPIs manager-only.
-              and coalesce(c.metadata->>'kind', '') <> 'internal_digest'
-            """,
-            tenant_id,
-            conversation_id,
-        )
-        if row or attempt == 4:
-            break
-        await asyncio.sleep(0.1)
+    # BUG-221 (codex MEDIUM, 2026-05-18): el retry loop con `asyncio.sleep(0.1)`
+    # mantenía la conn de la pool (`max_size=10`) durante hasta 400ms.
+    # Atacante con UUIDs random saturaba la pool. Fix: 1 sola query, 404
+    # inmediato. El race que el legacy cubría se maneja client-side.
+    #
+    # BUG-216 (codex P2 follow-up): excluir conversations internas del
+    # digest_worker para que un agent que conozca el UUID via
+    # /contacts/{id}/profile NO pueda abrir la conversación con los KPIs.
+    row = await conn.fetchrow(
+        """
+        select c.*,
+               coalesce(ct.display_name, ct.phone_e164, ct.wa_id) as contact_label,
+               ct.phone_e164 as contact_phone
+        from app.conversations c
+        join app.contacts ct on ct.id = c.contact_id
+        where c.tenant_id=$1 and c.id=$2
+          and coalesce(c.metadata->>'kind', '') <> 'internal_digest'
+        """,
+        tenant_id,
+        conversation_id,
+    )
     if not row:
         # SEC-010 fix — el bloque diagnóstico ANTES corría siempre y logueaba
         # `actual_tenant_id` + `actual_status` aún cuando el conversation_id
@@ -7655,6 +7653,20 @@ async def upload_media_asset(
 ):
     await ensure_tenant_access(request, tenant_id, conn)
     await conn.execute("select set_config('app.tenant_id', $1, true)", str(tenant_id))
+
+    # BUG-222 (codex P2 follow-up): Content-Length pre-check ANTES de
+    # `request.form()` que parsea/spoolea el body multipart entero. El cap
+    # tight por-kind se aplica abajo después de saber `kind`, pero acá
+    # cortamos uploads obviamente abusivos (>100MB cualquier kind) sin
+    # buffer en memoria. 100MB es el cap más alto del schema (video).
+    _MAX_MEDIA_BYTES_HARD_CAP = 100 * 1024 * 1024
+    declared_size = int(request.headers.get('content-length') or 0)
+    if declared_size and declared_size > _MAX_MEDIA_BYTES_HARD_CAP * 2:
+        raise HTTPException(
+            status_code=413,
+            detail=f'Upload exceeds the global media cap ({_MAX_MEDIA_BYTES_HARD_CAP} bytes)',
+        )
+
     try:
         form = await request.form()
     except AssertionError as exc:
@@ -7676,6 +7688,22 @@ async def upload_media_asset(
         raise HTTPException(status_code=422, detail='label is required')
     if not file or not hasattr(file, 'read'):
         raise HTTPException(status_code=422, detail='file is required')
+
+    # BUG-222 (codex MEDIUM, 2026-05-18): chequear Content-Length contra el
+    # cap por-kind ANTES de leer el body. Sin esto, un admin podía mandar
+    # un file de GB pre-rejection — el worker buffereaba todo en memoria
+    # antes de que `validate_media_upload` lo rechazara. El cap por-kind
+    # vive en `MEDIA_SIZE_LIMITS_BYTES` (app/services/media_storage.py).
+    from app.services.media_storage import MEDIA_SIZE_LIMITS_BYTES as _MEDIA_CAPS  # noqa: PLC0415
+
+    kind_cap = _MEDIA_CAPS.get(kind, 5 * 1024 * 1024)
+    declared_size = int(request.headers.get('content-length') or 0)
+    if declared_size and declared_size > kind_cap * 2:
+        # 2x slack para multipart overhead (boundary + headers + form fields).
+        raise HTTPException(
+            status_code=413,
+            detail=f'Upload exceeds {kind_cap} bytes for kind={kind}',
+        )
 
     data = await file.read()
     filename = getattr(file, 'filename', None) or 'media.bin'
@@ -9474,6 +9502,18 @@ async def upload_knowledge_document(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ):
+    # BUG-223 (codex P2 follow-up): Content-Length pre-check ANTES de
+    # `request.form()` que parsea/spoolea el body. Sin esto, el body grande
+    # entraba en memoria/disk-spool antes de que el check de tamaño
+    # funcionara. Hard cap del settings con 2x slack multipart.
+    _settings_for_cap = get_settings()
+    declared_size = int(request.headers.get('content-length') or 0)
+    if declared_size and declared_size > _settings_for_cap.knowledge_file_max_bytes * 2:
+        raise HTTPException(
+            status_code=413,
+            detail=f'Upload exceeds {_settings_for_cap.knowledge_file_max_bytes} bytes',
+        )
+
     try:
         form = await request.form()
     except AssertionError as exc:
@@ -9500,6 +9540,19 @@ async def upload_knowledge_document(
         raise HTTPException(status_code=422, detail='Unsupported document_type')
     if visibility not in {'tenant', 'agents_only', 'public'}:
         raise HTTPException(status_code=422, detail='Unsupported visibility')
+
+    # BUG-223 (codex MEDIUM, 2026-05-18): pre-check de Content-Length contra
+    # `knowledge_file_max_bytes` antes de leer el body. Sin esto, un admin
+    # malicioso podía buffearar GBs en memoria del worker antes de que
+    # `validate_knowledge_upload` rechazara. Aplicamos 2x slack para
+    # multipart overhead (boundary + headers).
+    settings_for_cap = get_settings()
+    declared_size = int(request.headers.get('content-length') or 0)
+    if declared_size and declared_size > settings_for_cap.knowledge_file_max_bytes * 2:
+        raise HTTPException(
+            status_code=413,
+            detail=f'Upload exceeds {settings_for_cap.knowledge_file_max_bytes} bytes',
+        )
 
     data = await file.read()
     filename = getattr(file, 'filename', None) or 'upload.bin'

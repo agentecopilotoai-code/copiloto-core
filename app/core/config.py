@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     api_host: str = '0.0.0.0'
     api_port: int = 8000
     log_level: str = Field(default='INFO', pattern='^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$')
+    # BUG-219 (codex MEDIUM, 2026-05-18): toggle deploy-time para indicar que
+    # hay un reverse proxy delante (nginx/ALB/Cloudflare) que SOBREESCRIBE
+    # X-Forwarded-For. Cuando False (default), el rate limiter ignora XFF y
+    # usa el peer IP de la conexión TCP (no spoofable). Setear True solo si
+    # el operador confirmó que el proxy strip + reinjecta el header correcto.
+    trust_proxy_forwarded_for: bool = False
     database_url: str
     redis_url: str = 'redis://redis:6379/0'
     jwt_issuer: str = 'copilotoia-local'

@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 
 import structlog
 
+from app.core.config import get_settings
+
 log = structlog.get_logger()
 
 WEBHOOK_META_PREFIX = '/webhooks/whatsapp'
@@ -107,13 +109,37 @@ def build_rate_limit_key(*, client_ip: str, path: str) -> str:
 
 
 def extract_client_ip(request) -> str:
-    """Extrae IP del cliente respetando X-Forwarded-For si viene del proxy."""
-    forwarded = request.headers.get('x-forwarded-for')
-    if forwarded:
-        # Toma el primer hop (cliente original).
-        first = forwarded.split(',')[0].strip()
-        if first:
-            return first
+    """Extract client IP — ignores X-Forwarded-For when not from a trusted proxy.
+
+    BUG-219 (codex MEDIUM, 2026-05-18): la versión anterior leía X-Forwarded-For
+    UNCONDICIONALLY como source-of-truth para el rate limit key. Un atacante
+    podía rotar el header en cada request (`X-Forwarded-For: 1.2.3.4` →
+    `1.2.3.5` → ...) y cada valor forjado producía una key distinta —
+    cada request abría un nuevo bucket con burst limit full. Bypass total
+    del rate limiter contra endpoints públicos (webhooks, widget).
+
+    Además: el `_buckets` dict no tenía eviction; el atacante podía
+    saturar memoria del worker con millones de fake-IP buckets.
+
+    Fix: solo aceptar XFF cuando settings.trust_proxy_forwarded_for esté
+    seteado (deploy-time toggle requiriendo que el operador confirme que
+    hay un reverse proxy delante que SOBREESCRIBE el header). En caso
+    contrario, usar SIEMPRE el peer IP de la conexión TCP (no spoofable).
+    """
+    # Defensive: si `get_settings()` falla (test env sin envvars completos),
+    # fail-safe a `trust_xff=False` — el peor caso es bucket más generoso,
+    # NO bypass del rate limit.
+    try:
+        settings = get_settings()
+        trust_xff = bool(getattr(settings, 'trust_proxy_forwarded_for', False))
+    except Exception:  # noqa: BLE001
+        trust_xff = False
+    if trust_xff:
+        forwarded = request.headers.get('x-forwarded-for')
+        if forwarded:
+            first = forwarded.split(',')[0].strip()
+            if first:
+                return first
     client = request.client
     if client and client.host:
         return client.host

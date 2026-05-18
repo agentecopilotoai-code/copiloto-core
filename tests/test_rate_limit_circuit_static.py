@@ -85,14 +85,31 @@ class _FakeRequest:
         self.client = client
 
 
-def test_extract_client_ip_uses_x_forwarded_for_first_hop():
+def test_extract_client_ip_uses_x_forwarded_for_first_hop(monkeypatch):
+    """BUG-219 (fix-group-42): XFF solo se honra cuando el operador opt-in
+    via `settings.trust_proxy_forwarded_for=True`. Para este test
+    inyectamos un fake settings con el toggle activo."""
+    fake_settings = type('S', (), {'trust_proxy_forwarded_for': True})()
+    monkeypatch.setattr(rl_module, 'get_settings', lambda: fake_settings)
     req = _FakeRequest(headers={'x-forwarded-for': '8.8.8.8, 10.0.0.1'})
     assert extract_client_ip(req) == '8.8.8.8'
 
 
-def test_extract_client_ip_falls_back_to_request_client():
+def test_extract_client_ip_falls_back_to_request_client(monkeypatch):
+    """Sin XFF, siempre retornamos el peer IP. Independiente del toggle."""
+    fake_settings = type('S', (), {'trust_proxy_forwarded_for': True})()
+    monkeypatch.setattr(rl_module, 'get_settings', lambda: fake_settings)
     req = _FakeRequest(headers={}, client_host='9.9.9.9')
     assert extract_client_ip(req) == '9.9.9.9'
+
+
+def test_extract_client_ip_ignores_xff_when_trust_proxy_disabled(monkeypatch):
+    """BUG-219 (fix-group-42): defaults a no-trust → XFF se ignora aunque
+    venga en el header. El atacante que rote XFF se cae al peer IP real."""
+    fake_settings = type('S', (), {'trust_proxy_forwarded_for': False})()
+    monkeypatch.setattr(rl_module, 'get_settings', lambda: fake_settings)
+    req = _FakeRequest(headers={'x-forwarded-for': '8.8.8.8'}, client_host='5.5.5.5')
+    assert extract_client_ip(req) == '5.5.5.5'
 
 
 def test_classify_scope_routes_meta_webhook_separately():

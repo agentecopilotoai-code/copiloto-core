@@ -684,7 +684,12 @@ class ContactTagUpdate(BaseModel):
 
 
 class ContactTagAssign(BaseModel):
-    tag_ids: list[UUID] = Field(default_factory=list)
+    # BUG-220 (codex MEDIUM, 2026-05-18): la lista era unbounded. Un agent
+    # podía mandar 10M UUIDs (o el mismo UUID repetido), forzando 10M
+    # iteraciones de SELECT + INSERT-ON-CONFLICT mientras el audit metadata
+    # serializaba el array entero. Cap a 50 tags por request (el tenant
+    # promedio tiene <20 tags totales).
+    tag_ids: list[UUID] = Field(default_factory=list, max_length=50)
 
 
 class ContactNoteCreate(BaseModel):
