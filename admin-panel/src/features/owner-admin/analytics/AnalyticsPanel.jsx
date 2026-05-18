@@ -417,8 +417,8 @@ export function AnalyticsPanel({ module, session, tenant, readOnly = false }) {
                 </table>
               )}
               <p className="hint">
-                Distribución por canal de captación (web widget, WhatsApp, manual, etc.). Útil
-                para medir TASK-0039.
+                Distribución por canal de captación (web widget, WhatsApp, manual, etc.).
+                Útil para evaluar la efectividad de cada canal de adquisición.
               </p>
             </div>
 

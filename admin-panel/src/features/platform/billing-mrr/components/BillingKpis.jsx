@@ -33,7 +33,7 @@ export function BillingKpis({ data }) {
         footnote={
           restMrr.length > 0
             ? restMrr.map((entry) => formatMoney(entry.mrr, entry.currency)).join(' · ')
-            : 'normalizado a mensual desde TASK-0075'
+            : 'Suscripciones anuales prorrateadas a base mensual'
         }
       />
       <KpiTile

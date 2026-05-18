@@ -15,6 +15,26 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### fix-group-45 — Codex Reviews follow-up sobre PRs antiguos (BUG-231..233)
+
+- **Fecha:** 2026-05-18
+- **Objetivo:** atender 3 reviews del bot Codex de PRs antiguos (#16, #18, #19) que quedaron sin atender post-merge. PR #17 ya estaba ADDRESSED por BUG-195+BUG-228; PR #20 es cosmetic (docs count drift en backlog).
+- **Cambios:**
+  - **`app/api/v1/routes.py:export_contact_data`** (BUG-231): el response ahora incluye `data_canonical` con el string EXACTO que el server firmó. Cliente verifica via `jq -r .data_canonical | openssl dgst -sha256 -hmac $JWT_SECRET`. Antes la firma se calculaba sobre el `default=str` JSON (`'2026-05-18 13:46:28+00:00'` con espacio) mientras FastAPI serializaba con ISO `T` — los bytes no matcheaban y la verificación externa siempre fallaba.
+  - **`docs/runbooks/consent-violation-claim.md`** (BUG-231): actualizado el bloque de verificación post-entrega para usar `data_canonical` + `openssl -binary | xxd` (sin newline trailing).
+  - **`admin-panel/src/features/agente/inbox/hooks/useInboxData.js`** (BUG-232): `runAction` ahora acepta `{ requireConversation = true } = {}`; `acceptHandoff` pasa `requireConversation: false` cuando tiene un `targetId` explícito (del card click). Antes el guard del runAction abortaba antes de invocar la API si no había selección previa.
+  - **`admin-panel/src/__tests__/no-internal-refs-in-ui.test.js`** (BUG-233): regex de detección de códigos internos cambia de `\((TASK|BUG|SEC|UI)-\d+/i` a `\b(TASK|BUG|SEC|UI)-\d+/i` (word boundary). 4 strings visibles reescritas a lenguaje de negocio en `AccountSessions.jsx`, `AnalyticsPanel.jsx`, `BillingKpis.jsx`, `FleetKpis.jsx`.
+  - **`tests/test_fix_group_45_static.py`** — 4 tests defensivos.
+  - **`docs/UI_BACKLOG.md`** — entradas BUG-231..233 DONE.
+- **Validaciones:**
+  - `.venv/bin/pytest tests/test_fix_group_45_static.py -v` → 4 passed.
+  - `.venv/bin/pytest tests/ -k "export_contact or consent_violation"` → 1 passed (sin regresiones).
+  - `.venv/bin/ruff check app/api/v1/routes.py` → All checks passed.
+  - Script `node /tmp/check-task-codes.mjs` (simula el test JS) → 0 violations (antes de las reescrituras: 4).
+- **Notas de seguridad:**
+  - BUG-231: `data_canonical` es informativo — el caller responsable de firmar **también puede recomputar** la firma localmente (en vez de confiar en la del server). El runbook documenta ambos paths. La back-compat con clientes que solo leen `data` se preserva (el campo `data` sigue presente con el bundle parseado).
+  - BUG-232: el guard se hizo opt-out (no opt-in) para preservar el comportamiento defensivo en otros call sites. Solo `acceptHandoff` se afecta porque es el único que pasa un targetId explícito.
+
 ### fix-group-44 — Codex Reviews follow-up post-merge (BUG-228..230)
 
 - **Fecha:** 2026-05-18

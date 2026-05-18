@@ -91,11 +91,9 @@ export function AccountSessions() {
             </button>
           }
         >
-          El endpoint <code>DELETE /v1/me/sessions/{'{sid}'}</code> sólo soporta
-          la sesión actual mientras no exista una tabla server-side de sesiones
-          (<strong>UI-016.7-FU-SESSIONS</strong>). Para revocar otras sesiones
-          debes cambiar tu contraseña en Auth0 (invalida todos los refresh
-          tokens).
+          Por ahora solo podés cerrar la sesión actual desde acá. Para revocar
+          otras sesiones activas, cambiá tu contraseña — eso invalida todos
+          los inicios de sesión existentes en cualquier dispositivo.
         </AlertBanner>
       ) : null}
 

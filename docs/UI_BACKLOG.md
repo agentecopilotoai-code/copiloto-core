@@ -1319,7 +1319,18 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ## 9. Backlog de bugs derivados de review feedback (mining 2026-05-18)
 
-Resumen del sweep realizado el 2026-05-18 sobre los 171 PRs cerrados en `vmantilla/CopilotoIA` entre 2026-05-11 y 2026-05-18. Reviewer bot único activo: `chatgpt-codex-connector`. Total de comments accionables: 156 (52 P1 + 104 P2). 22 marcados outdated por GitHub. Quedan **134 pendientes (44 P1 + 90 P2)**, catalogados abajo.
+Resumen del sweep realizado el 2026-05-18 sobre los 171 PRs cerrados en `vmantilla/CopilotoIA` entre 2026-05-11 y 2026-05-18. Reviewer bot único activo: `chatgpt-codex-connector`. Total inicial de comments accionables: 156 (52 P1 + 104 P2). 22 marcados outdated por GitHub al momento del sweep.
+
+> **Status update — BUG-234 / fix-group-45 (2026-05-18 PM)**: el catálogo creció con bugs descubiertos en marathons subsecuentes (sweeps de Codex Security findings, post-merge follow-ups). El conteo actual de la tabla siguiente (ejecutar `awk '/^\| BUG-[0-9]+ \|/ {total++; ...}' docs/UI_BACKLOG.md`):
+>
+> - **Total catalogados:** 213 (BUG-023..BUG-234, sin gaps)
+> - **DONE:** 136
+> - **NOT-APPLICABLE:** 69
+> - **RESOLVED-IN-FOLLOWUP:** 5
+> - **DEFERRED:** 3 (BUG-42 cloud LLM, BUG-49 WA media proxy stream, BUG-50 WS pool LISTEN/NOTIFY — todos para fix-group-46+)
+> - **Pendientes accionables:** 0
+>
+> El conteo original "134 pendientes (44 P1 + 90 P2)" reflejaba el estado al cierre del sweep inicial; los marathons fix-group-01..fix-group-45 cerraron toda esa cola y agregaron 67 entries nuevas durante el proceso.
 
 ### Procedimiento del loop
 
@@ -1553,3 +1564,6 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 | BUG-228 | Codex P1 follow-up sobre PR #61 (BUG-195) | `app/api/v1/routes.py:user_email_from_request` + `app/admin/routes.py:_core_api_headers` | El fix de BUG-195 dropeó el header `X-Admin-User-Email`. Pero Auth0 PostLogin Action NO agrega claim `email` al access token → `request.state.email` queda vacío en requests normales del panel → fallback escribía `<hash>@auth.local` en `app.users` → al invitar a un email real, el lookup por email fallaba y los pending-invite no se reclamaban. ROMPIA flow normal del admin panel. | DONE (fix-group-44: nuevo header `X-Admin-Identity` con payload firmado `{sub, email, exp}` que el BFF emite con `pack_signed_payload(jwt_secret, ...)`; el Core lo valida con HMAC + sub match + exp > now antes de aceptar el email. Un caller con bearer token directo NO puede producirlo (no tiene jwt_secret)) |
 | BUG-229 | Codex P2 follow-up sobre PR #62 (BUG-198) | `app/api/v1/routes.py:deactivate_support_mode` | El check de `cookie_matches_request` ignoraba el campo `exp` del cookie firmado. Cliente replaying cookie con `sub`+`tid` correctos pero `exp` ya pasado seguía triggereando audit `support_mode.deactivated`. | DONE (fix-group-44: validar `cookie_exp > now_ts` además del match de tid/sub) |
 | BUG-230 | Codex P1 follow-up sobre PR #63 (BUG-201) | `app/services/payment_provider.py:verify_mercadopago_signature` | El check de freshness era `if now_ts is not None and ts:` — si el header MP omite `ts`, el verifier skippeaba el check entero y caía al fallback raw-payload HMAC, aceptando firmados indefinidamente. Atacante que strippea `ts` bypaseaba todo el fix de replay. | DONE (fix-group-44: cuando `now_ts is not None`, REQUERIR `ts` en el header — `if not ts: return False`. Fail-closed sin freshness data) |
+| BUG-231 | Codex P1 follow-up sobre PR #18 (SEC-010-EXPORT-FU) | `app/api/v1/routes.py:export_contact_data` | El server firmaba `bundle_canonical` (con `default=str`, datetimes como `'2026-05-18 13:46:28+00:00'` con espacio) pero FastAPI serializaba el response con ISO `T` (`'2026-05-18T13:46:28+00:00'`) — el cliente recibía bytes distintos de los firmados y la verificación documentada en `consent-violation-claim.md` con openssl no matcheaba nunca. | DONE (fix-group-45: nuevo campo `data_canonical` en el response con el string crudo firmado; runbook actualizado para usar `jq -r .data_canonical` en vez de `jq -S -c '.data'`) |
+| BUG-232 | Codex P2 follow-up sobre PR #19 | `admin-panel/src/features/agente/inbox/hooks/useInboxData.js:runAction` | `acceptHandoff(id)` desde el card del inbox pasa un `targetId` explícito (computado del id del card), pero `runAction` abortaba antes con `if (!selectedConversationId) return;`. En el caso común "primer click sin selección previa", el "Tomar" no hacía nada — el usuario solo veía la selección actualizarse. | DONE (fix-group-45: `runAction({requireConversation = true})` con default back-compat; `acceptHandoff` pasa `{requireConversation: false}` cuando tiene targetId explícito) |
+| BUG-233 | Codex P2 follow-up sobre PR #16 | `admin-panel/src/__tests__/no-internal-refs-in-ui.test.js` + 4 strings UI | El regex `TASK_CODE_RE = /\((?:TASK|BUG|SEC|UI)-\d+/i` solo matcheaba códigos con `(` antes, dejando pasar unparenthesized como `"para medir TASK-0039"`. 4 strings UI tenían ese patrón. | DONE (fix-group-45: regex cambia a `\b` (word boundary); 4 strings UI reescritas a lenguaje de negocio en AccountSessions, AnalyticsPanel, BillingKpis, FleetKpis) |

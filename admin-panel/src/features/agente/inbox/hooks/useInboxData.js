@@ -198,8 +198,15 @@ export function useInboxData({ session, tenant }) {
     if (thread) thread.scrollTop = thread.scrollHeight;
   }, [conversationDetail?.id, conversationDetail?.messages?.length]);
 
-  async function runAction(action, successText) {
-    if (!selectedConversationId) return;
+  // BUG-232 (codex P2 sobre PR #19): `runAction` antes guardaba con
+  // `if (!selectedConversationId) return;` — pero `acceptHandoff(id)` desde
+  // el card del inbox pasa un `targetId` explícito (computado arriba). Si
+  // no había conversación seleccionada todavía (caso común al primer
+  // click), el guard cortaba la acción ANTES de invocar la API. El usuario
+  // veía "Tomar" sin efecto. Fix: aceptar `requireConversation=false`
+  // cuando el caller indica que ya tiene un targetId explícito.
+  async function runAction(action, successText, { requireConversation = true } = {}) {
+    if (requireConversation && !selectedConversationId) return;
     setIsBusy(true);
     setNotice(null);
     try {
@@ -343,9 +350,14 @@ export function useInboxData({ session, tenant }) {
       const targetId = typeof conversationId === 'string'
         ? conversationId
         : selectedConversationId;
+      if (!targetId) return;
+      // BUG-232: pasar `requireConversation: false` porque tenemos un
+      // targetId explícito (del card click). Sin esto, runAction abortaba
+      // cuando aún no había selección y el "Tomar" no hacía nada.
       return runAction(
         () => acceptConversationHandoff(session, tenant.id, targetId),
         'Handoff aceptado; conversación tomada por agente.',
+        { requireConversation: false },
       );
     },
     releaseHandoff: () => runAction(

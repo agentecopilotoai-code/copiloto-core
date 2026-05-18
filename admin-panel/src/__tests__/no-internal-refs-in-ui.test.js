@@ -29,9 +29,15 @@ const EXCLUDED_FILE_PATTERNS = [
   /vitest\.setup\.js$/,
 ];
 
-// Códigos internos de tarea / bug / seguridad / UI que aparecen entre
-// paréntesis junto al texto visible — ej. "Suscripciones (TASK-0067)".
-const TASK_CODE_RE = /\((?:TASK|BUG|SEC|UI)-\d+/i;
+// Códigos internos de tarea / bug / seguridad / UI que aparecen en
+// texto visible — con o sin paréntesis. Ej. "Suscripciones (TASK-0067)"
+// o "para medir TASK-0039". BUG-233 (codex P2 sobre PR #16) — el regex
+// original requería `(` antes del código y dejaba pasar el unparenthesized
+// pattern, así que regresiones del mismo tipo no se bloqueaban.
+//
+// Usamos `\b` (word boundary) para no matchear substrings dentro de
+// identificadores como `xtask_001` o `mybug-12-tracker.txt`.
+const TASK_CODE_RE = /\b(?:TASK|BUG|SEC|UI)-\d+/i;
 
 // Nombres internos de plantillas WhatsApp con sufijo _vN — ej.
 // "digest_daily_v1", "subscription_payment_failed_v1".

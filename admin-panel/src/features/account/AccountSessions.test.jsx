@@ -81,14 +81,22 @@ describe('<AccountSessions/>', () => {
     });
   });
 
-  it('revocar otra sesión muestra AlertBanner UI-016.7-FU-SESSIONS (stub)', async () => {
+  it('revocar otra sesión muestra AlertBanner explicando workaround (BUG-233)', async () => {
     render(<AccountSessions />);
     const otherSessionBtn = screen
       .getAllByRole('button', { name: /Revocar sesión/ })
       .find((btn) => btn.getAttribute('aria-label')?.includes('WhatsApp Web'));
     await userEvent.click(otherSessionBtn);
-    expect(screen.getByText(/DELETE \/v1\/me\/sessions/)).toBeInTheDocument();
-    expect(screen.getByText(/UI-016.7-FU-SESSIONS/)).toBeInTheDocument();
+    // BUG-233 (codex P2 sobre PR #16): el copy original exponia el endpoint
+    // `DELETE /v1/me/sessions` y el codigo interno UI-016.7-FU-SESSIONS,
+    // jerga tecnica visible al usuario. Ahora el banner describe el
+    // workaround en lenguaje de negocio.
+    expect(
+      screen.getByText(/cambiá tu contraseña/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/cerrar la sesión actual desde acá/i),
+    ).toBeInTheDocument();
     // No HTTP call para otras sesiones — el backend retorna 404 hasta que
     // exista el session store.
     expect(coreApi.revokeMySession).not.toHaveBeenCalled();

@@ -11374,8 +11374,21 @@ async def export_contact_data(
         )
         bundle['subscriptions'] = [record_to_dict(r) for r in rows]
 
-    # Canonical JSON for signature: sorted keys + no whitespace + ensure_ascii
-    # → deterministic so re-signing the same bundle produces the same hex.
+    # Canonical JSON for signature — `default=str` rinde datetimes en formato
+    # Python `str(dt)` (`'2026-05-18 13:46:28+00:00'`, con espacio). El cliente
+    # tiene que verificar la firma contra los bytes que recibe, por lo que la
+    # respuesta DEBE servirse con EXACTAMENTE el mismo canonical_json firmado
+    # (no via el serializer default de FastAPI, que rinde datetimes con `T`).
+    #
+    # BUG-231 (codex P1 sobre PR #18 SEC-010-EXPORT-FU): la versión anterior
+    # devolvía `{'data': bundle, ...}` y FastAPI serializaba `bundle` con su
+    # propio JSON encoder, produciendo bytes distintos de los firmados — la
+    # verificación documentada en `docs/runbooks/consent-violation-claim.md`
+    # via `jq -S -c '.data' | openssl dgst -sha256 -hmac "$JWT_SECRET"` no
+    # matcheaba nunca. Fix: armar el response manualmente con el bundle
+    # canonical embebido como string crudo en `data_canonical` para que el
+    # cliente sepa qué firmar; el operador puede ejecutar
+    # `echo -n "$(jq -r .data_canonical archivo.json)" | openssl dgst ...`.
     bundle_canonical = json.dumps(
         bundle, default=str, sort_keys=True, separators=(',', ':'), ensure_ascii=False
     )
@@ -11396,8 +11409,13 @@ async def export_contact_data(
         },
     )
 
+    # BUG-231: devolver el canonical_json crudo (string) además del bundle
+    # parseado. El operador firma/verifica `data_canonical` (los mismos bytes
+    # que el server firmó); `data` queda como conveniencia para inspección
+    # programática. Mantiene back-compat para clientes que solo leían `data`.
     return {
         'data': bundle,
+        'data_canonical': bundle_canonical,
         'signature': signature,
         'signature_algorithm': 'HMAC-SHA256',
     }

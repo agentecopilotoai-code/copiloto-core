@@ -47,7 +47,7 @@ export function FleetKpis({ items, total }) {
       <KpiTile
         label="MRR consolidado"
         value="—"
-        footnote="Disponible en UI-006.3 · Billing & MRR"
+        footnote="Disponible en la vista Billing & MRR"
       />
       <KpiTile
         label="Países cubiertos"
@@ -61,7 +61,7 @@ export function FleetKpis({ items, total }) {
       <KpiTile
         label="Incidentes abiertos"
         value="—"
-        footnote="Disponible en UI-006.4 · Incidentes"
+        footnote="Disponible en la vista de Incidentes"
       />
     </section>
   );

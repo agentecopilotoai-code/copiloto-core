@@ -150,16 +150,20 @@ ORDER BY msgs.created_at;
 
    **Verificación post-entrega** (en caso de disputa o auditoría):
    ```bash
-   # Cross-checkear que el archivo entregado matchea la firma del audit log:
-   #   1. Tomar `data` del archivo, canonicalizarlo con jq:
-   jq -S -c '.data' consent-claim-<contact_id>-<fecha>.json > canonical.json
-   #   2. Re-firmar con el secret del backend:
-   openssl dgst -sha256 -hmac "$JWT_SECRET" canonical.json
-   #   3. Comparar con la firma del audit log:
-   #      SELECT metadata->>'signature' FROM app.audit_logs
-   #      WHERE action='contact.exported_for_consent_claim'
-   #            AND entity_id='<contact_id>'
-   #      ORDER BY created_at DESC LIMIT 1;
+   # BUG-231 (codex P1 follow-up): el server devuelve `data_canonical`
+   # — los bytes EXACTOS que firmó. Usalo directamente para verificar,
+   # no `data` (que FastAPI re-serializa con datetime ISO `T` y la firma
+   # no matchea contra `default=str` de Python).
+   #
+   # 1. Extraer `data_canonical` (string crudo):
+   jq -r '.data_canonical' consent-claim-<contact_id>-<fecha>.json > canonical.json
+   # 2. Re-firmar con el secret del backend (sin newline trailing):
+   openssl dgst -sha256 -hmac "$JWT_SECRET" -binary canonical.json | xxd -p -c 256
+   # 3. Comparar con la firma del audit log:
+   #    SELECT metadata->>'signature' FROM app.audit_logs
+   #    WHERE action='contact.exported_for_consent_claim'
+   #          AND entity_id='<contact_id>'
+   #    ORDER BY created_at DESC LIMIT 1;
    ```
 
    Cada invocación queda registrada en `app.audit_logs` con
