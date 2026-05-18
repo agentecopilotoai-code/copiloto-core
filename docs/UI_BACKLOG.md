@@ -1263,7 +1263,9 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-010 — Hardening misceláneo (cluster de findings low)
 
-- **Estado:** PENDING (low priority, pero accionable)
+- **Estado:** DONE (2026-05-15) — todos los sub-findings cerrados via PRs
+  individuales SEC-010.1..SEC-010.8. Header sincronizado con el resumen al
+  final de la sección.
 - **Findings agrupados:**
   - ~~`Rejected payment webhook audits are rolled back`~~ — **DONE (2026-05-15)** en commit/PR de este sprint. Nuevo helper `app/services/audit.py::audit_durably(...)` adquiere una connection ad-hoc del pool (fuera de la transacción del request) e inserta el audit en autocommit; el INSERT sobrevive al ROLLBACK que dispara `raise HTTPException(...)`. Los 4 sitios de rechazo (2 en `receive_payment_webhook`, 2 en `receive_subscription_webhook`) migrados de `audit(conn, ...)` a `audit_durably(...)`. Tests static en `tests/test_payment_webhook_audit_durably_static.py` (9 tests: helper expone firma correcta, no abre transacción explícita via AST, es best-effort con log si falla, skip si pool no inicializado, ambos handlers usan `audit_durably` en sus 2 rejection paths, import correcto, `audit()` normal sigue activo para happy paths). Ver `docs/DONE.md`.
   - ~~`Runbook can leak tenant export to consent complainants`~~ — **DONE (2026-05-15)** en PR del runbook fix. El runbook ahora prohíbe usar `data-export` para extractos contact-scoped y el operador compone el extracto vía SQL ad-hoc. Follow-up declarado: `SEC-010-EXPORT-FU` (ver más abajo).
