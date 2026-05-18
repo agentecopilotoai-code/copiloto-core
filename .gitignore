@@ -34,3 +34,8 @@ backups/
 .idea/
 .vscode/
 .claude/
+
+# Python build artifacts (setuptools / pip install . / python -m build)
+build/
+dist/
+*.egg-info/
