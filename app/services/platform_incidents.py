@@ -98,8 +98,16 @@ def redact_incident_payload(payload: dict | None) -> dict:
     redacted: dict = {}
     for key, value in payload.items():
         if key == 'channels' and isinstance(value, dict):
-            email_count = len(value.get('emails') or [])
-            whatsapp_count = len(value.get('whatsapps') or [])
+            # BUG-182 (codex P2 sobre BUG-119): `normalize_alert_channels`
+            # en `operator_alerts.py` guarda los arrays bajo las keys
+            # SINGULAR (`email` / `whatsapp`), no plural. La versión
+            # anterior leía `emails`/`whatsapps` → siempre 0, perdiendo
+            # la señal de cuántos operadores fueron notificados.
+            # Acepta ambas variantes por defensa, prefiriendo la singular
+            # (la real); el fallback plural por si algún caller futuro
+            # cambia de convención.
+            email_count = len(value.get('email') or value.get('emails') or [])
+            whatsapp_count = len(value.get('whatsapp') or value.get('whatsapps') or [])
             redacted[key] = {
                 'email_count': email_count,
                 'whatsapp_count': whatsapp_count,

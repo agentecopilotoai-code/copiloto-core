@@ -79,12 +79,18 @@ def test_bug_044_list_appointments_accepts_date_filters():
     assert 'to_date: date | None' in source, (
         'BUG-044: list_appointments debe aceptar `to_date: date | None`.'
     )
-    assert "a.starts_at >= $5::date" in source, (
-        'BUG-044: el filtro `from_date` debe aplicarse a starts_at.'
+    # BUG-180 (fix-group-32) cambió el filtro para usar TZ local del tenant:
+    # `(a.starts_at AT TIME ZONE t.timezone)::date >= $5::date` (y `<=` en vez
+    # de exclusive next day, dado que ya estamos comparando fechas). El test
+    # original asertaba el patrón legacy (`a.starts_at >= $5::date`) que
+    # rompía con tenants fuera de UTC; flipped a aserción del nuevo shape.
+    assert '(a.starts_at at time zone t.timezone)::date >= $5::date' in source, (
+        'BUG-044/180: el filtro `from_date` debe comparar la fecha local '
+        'del tenant (`AT TIME ZONE t.timezone`), no `starts_at` directo.'
     )
-    assert "a.starts_at < ($6::date + interval '1 day')" in source, (
-        'BUG-044: el filtro `to_date` debe ser exclusive del día siguiente '
-        'para incluir todas las citas del día final.'
+    assert '(a.starts_at at time zone t.timezone)::date <= $6::date' in source, (
+        'BUG-044/180: el filtro `to_date` debe usar el mismo cast a TZ '
+        'local del tenant para ser simétrico con `from_date`.'
     )
 
 

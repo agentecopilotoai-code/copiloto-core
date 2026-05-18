@@ -37,6 +37,10 @@ from app.services.digest import (
     is_due,
     whatsapp_template_for_cadence,
 )
+# BUG-183 (codex P2 sobre BUG-135): el `event_worker` espera el bloque
+# `template` pre-formateado (mismo defecto que BUG-179 corrigió en
+# operator_alerts). Pre-construimos con `build_template_message_payload`.
+from app.services.whatsapp import build_template_message_payload
 from app.services.operator_alerts import (
     _send_email_smtp,
     build_email_message,
@@ -184,13 +188,22 @@ async def _queue_whatsapp_template(
         recipient_phone=recipient,
     )
     template_name = whatsapp_template_for_cadence(cadence)
+    # BUG-183 (codex P2 sobre BUG-135): pre-construir el bloque `template`
+    # con shape `{name, language, components}`. El event_worker llama
+    # `send_whatsapp_message(template_payload=message_payload.get('template'))`;
+    # sin el bloque pre-formateado, `build_whatsapp_message_payload` raise
+    # ValueError → digest WhatsApp marcado `failed` aun con mock mode.
+    template_block = build_template_message_payload(
+        template_name=template_name,
+        locale=WHATSAPP_DIGEST_TEMPLATE_LOCALE,
+        components=components,
+    )
     # BUG-135: insertar la fila en `app.messages` no es suficiente — el
     # `event_worker` consume `domain_events WHERE event_name='message.queued'`
     # para disparar el dispatch outbound. Sin el evento, el digest WhatsApp
     # quedaba en `status='queued'` para siempre y nunca llegaba al manager.
     # Capturamos el message_id (RETURNING) y enqueueamos el evento con una
-    # idempotency_key derivada del tenant + cadence + day (UTC), para que
-    # un reinicio del scheduler no genere eventos duplicados.
+    # idempotency_key estable.
     message_row = await conn.fetchrow(
         """
         insert into app.messages (
@@ -210,10 +223,24 @@ async def _queue_whatsapp_template(
             'template_locale': WHATSAPP_DIGEST_TEMPLATE_LOCALE,
             'channel_id': str(channel_id),
             'components': components,
+            # BUG-183: bloque `template` pre-construido que el event_worker
+            # pasa directo a Meta como `template_payload`.
+            'template': template_block,
         }),
         f'[digest:{cadence}] manager',
     )
-    idempotency_key = f'digest-{cadence}-{tenant_id}-{datetime.now(UTC).strftime("%Y%m%d")}'
+    # BUG-184 (codex P2 sobre BUG-135): la idempotency key antes era
+    # `digest-{cadence}-{tenant}-{YYYYMMDD}` — IDÉNTICA para todos los
+    # recipients del mismo tenant en el mismo día. `app.domain_events` tiene
+    # UNIQUE `(tenant_id, idempotency_key)`, así que el SEGUNDO recipient
+    # insertaba el `app.messages` pero su evento `message.queued` colisionaba
+    # con `ON CONFLICT DO NOTHING` → manager #2/#3/... nunca recibían el
+    # digest. Incluimos el wa_id del recipient en la key para que cada
+    # destinatario tenga su propio evento.
+    idempotency_key = (
+        f'digest-{cadence}-{tenant_id}-{_wa_id_from_phone(recipient)}-'
+        f'{datetime.now(UTC).strftime("%Y%m%d")}'
+    )
     await conn.execute(
         """
         insert into app.domain_events

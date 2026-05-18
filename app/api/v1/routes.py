@@ -1319,20 +1319,30 @@ async def platform_billing_mrr(
     # Mostramos todos los planes que tienen al menos 1 suscriptor activo o
     # past_due, sin importar el status del plan. El plan_status se incluye
     # para que la UI pueda decorar visualmente los archivados.
+    #
+    # BUG-181 (codex P2 sobre BUG-112): la columna `currency` antes era
+    # `sp.currency` (current price del plan), pero la sum usa
+    # `coalesce(cs.price_locked_amount, sp.price_amount)` — si el operador
+    # cambia el currency del plan vía update (`currency = coalesce($7, currency)`),
+    # los suscriptores conservan su `price_locked_currency` pero el reporte
+    # los etiqueta con el nuevo `sp.currency` (ej. COP locked → reportado USD).
+    # Las otras queries (tenant/country/failed) ya bucketean por
+    # `coalesce(cs.price_locked_currency, sp.currency)`; alineamos esta también.
     plan_rows = await conn.fetch(
         """
         select
             sp.name as plan_name,
             sp.status as plan_status,
             sp.billing_period,
-            sp.currency,
+            coalesce(cs.price_locked_currency, sp.currency) as currency,
             count(cs.id) filter (where cs.status = 'active') as active_subscriptions,
             count(cs.id) filter (where cs.status = 'past_due') as past_due_subscriptions,
             sum(coalesce(cs.price_locked_amount, sp.price_amount))
                 filter (where cs.status = 'active') as price_sum
         from app.subscription_plans sp
         left join app.contact_subscriptions cs on cs.plan_id = sp.id
-        group by sp.name, sp.status, sp.billing_period, sp.currency
+        group by sp.name, sp.status, sp.billing_period,
+                 coalesce(cs.price_locked_currency, sp.currency)
         having count(cs.id) filter (where cs.status in ('active', 'past_due')) > 0
         """
     )
@@ -8175,6 +8185,16 @@ async def list_appointments(
     el frontend (`useTodayAppointmentsData`) filtraba por día en cliente,
     pero para tenants con >250 citas, el día actual podía caer fuera del
     slice y el panel mostraba "no hay citas hoy" cuando sí las había.
+
+    BUG-180 (codex P2 sobre BUG-044): el cliente envía `from_date`/`to_date`
+    como `YYYY-MM-DD` local del tenant (de `todayISO()` en
+    `useTodayAppointmentsData`). El SQL antes hacía `a.starts_at >= $5::date`,
+    que Postgres evaluaba en la TZ de sesión (UTC). Para `America/Bogota`
+    (UTC-5), una cita local `2026-05-14 22:00` se guarda como
+    `2026-05-15 03:00 UTC` — el comparador la excluía del filtro
+    `from=2026-05-14&to=2026-05-14`. Fix: comparar `(a.starts_at AT TIME
+    ZONE t.timezone)::date` contra los bounds, leyendo `t.timezone` del
+    join con `app.tenants` (column existente, `timestamptz` aware).
     """
     tenant_id = await tenant_id_from_request(request, conn)
     rows = await conn.fetch(
@@ -8183,12 +8203,13 @@ async def list_appointments(
         from app.appointments a
         join app.resources r on r.id=a.resource_id and r.tenant_id=a.tenant_id
         join app.contacts c on c.id=a.contact_id and c.tenant_id=a.tenant_id
+        join app.tenants t on t.id=a.tenant_id
         where a.tenant_id=$1
           and ($2::uuid is null or a.resource_id=$2)
           and ($3::text is null or a.status=$3)
           and ($4::uuid is null or a.branch_id=$4)
-          and ($5::date is null or a.starts_at >= $5::date)
-          and ($6::date is null or a.starts_at < ($6::date + interval '1 day'))
+          and ($5::date is null or (a.starts_at at time zone t.timezone)::date >= $5::date)
+          and ($6::date is null or (a.starts_at at time zone t.timezone)::date <= $6::date)
         order by a.starts_at desc
         limit 250
         """,
