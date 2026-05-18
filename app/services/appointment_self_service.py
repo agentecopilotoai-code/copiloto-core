@@ -932,9 +932,19 @@ async def _execute_reschedule(
     channel_account_mode: str,
     appointment: dict[str, Any],
     slot: dict[str, str],
-) -> bool:
-    """Apply the reschedule. Returns ``True`` on success, ``False`` if the
-    selected slot is no longer available (caller should re-offer slots).
+) -> bool | str:
+    """Apply the reschedule. Tri-state return for distinct caller handling:
+
+    - ``True`` — reschedule applied successfully.
+    - ``'slot_conflict'`` — slot is no longer available (exclusion constraint
+      raised); caller should fetch fresh alternatives and re-offer.
+    - ``'policy_blocked'`` — BUG-208 follow-up: mid-flow policy gate rejected
+      the reschedule (status terminal / paid / too_close_to_start). Caller
+      must NOT re-offer slots; instead, escalate to human and clear the
+      self-service state. Si retornamos `False`/`'slot_conflict'` para estos
+      casos, el caller persiste `STEP_AWAITING_RESCHEDULE_SLOT` con nuevas
+      alternativas y el cliente sigue viendo botones de horario — el
+      handoff humano nunca dispara y el cliente se confunde.
 
     BUG-208 (codex MEDIUM): mismo problema que `_execute_cancel` — el
     flow self-service hace verificación al entry pero no la repite
@@ -956,7 +966,7 @@ async def _execute_reschedule(
             body_text='No encuentro tu cita. Te conecto con un asesor.',
             step=STEP_COMPLETED,
         )
-        return False
+        return 'policy_blocked'
     if fresh.get('status') in ('cancelled', 'completed', 'no_show'):
         await _queue_text_message(
             conn,
@@ -967,7 +977,7 @@ async def _execute_reschedule(
             body_text='Esa cita ya no se puede reagendar. Te conecto con un asesor.',
             step=STEP_COMPLETED,
         )
-        return False
+        return 'policy_blocked'
     if str(fresh.get('payment_status') or '').lower() == 'paid':
         await _queue_text_message(
             conn,
@@ -981,7 +991,7 @@ async def _execute_reschedule(
             ),
             step=STEP_COMPLETED,
         )
-        return False
+        return 'policy_blocked'
     if await _too_close_to_start(conn, tenant_id, fresh):
         await _queue_text_message(
             conn,
@@ -995,7 +1005,7 @@ async def _execute_reschedule(
             ),
             step=STEP_COMPLETED,
         )
-        return False
+        return 'policy_blocked'
     appointment = fresh
     target_date = date.fromisoformat(slot['date'])
     hour, minute = (int(part) for part in slot['start_time'].split(':'))
@@ -1460,7 +1470,7 @@ async def maybe_run_self_service_flow(
                     appointment=appointment,
                     slot=slot,
                 )
-                if success:
+                if success is True:
                     await _persist_state(
                         conn,
                         tenant_id,
@@ -1485,6 +1495,26 @@ async def maybe_run_self_service_flow(
                         'action': 'self_service_rescheduled',
                         'appointment_id': str(appointment_id),
                         'new_starts_at': f'{slot["date"]}T{slot["start_time"]}',
+                    }
+                # BUG-208 follow-up: policy gate (paid/too_close/terminal)
+                # rejected mid-flow → escalation, NO re-offer slots. Si
+                # re-presentamos alternativas, el cliente sigue viendo
+                # botones de horario y el handoff humano nunca dispara.
+                if success == 'policy_blocked':
+                    await _persist_state(conn, tenant_id, conversation, None)
+                    await _record_handled(
+                        conn,
+                        tenant_id,
+                        conversation['id'],
+                        inbound_message['id'],
+                        flow=FLOW_RESCHEDULE,
+                        step='escalated_policy',
+                        extra={'appointment_id': str(appointment_id)},
+                    )
+                    return {
+                        'action': 'self_service_escalated',
+                        'reason': 'policy_recheck_failed',
+                        'appointment_id': str(appointment_id),
                     }
                 # Conflict: present fresh slots.
                 refreshed_appointment = await _fetch_appointment(

@@ -1286,6 +1286,18 @@ async def _create_appointment(
                         remaining_sessions=int(package_check['remaining_sessions']),
                         pending_count=pending_count,
                     )
+                    # BUG-207 (codex P2 follow-up): si refusamos el link por
+                    # overcommit, también clearear `contact_package_uuid` para
+                    # que el confirmation summary NO le mienta al cliente con
+                    # "• Usa 1 sesión de tu paquete activo". El package no se
+                    # consumió; el cliente paga la cita normal.
+                    contact_package_uuid = None
+            else:
+                # BUG-207: el package no existe / no está activo / no le quedan
+                # sesiones según la verificación FOR UPDATE — tampoco mentir
+                # al cliente. Misma decisión: el link no entra, NO ponemos la
+                # línea del package en el summary.
+                contact_package_uuid = None
 
     resource_row = await _fetch_resource(conn, tenant_id, resource_id)
     summary_lines = [
@@ -1774,12 +1786,21 @@ async def maybe_run_booking_flow(
         # — el exclusion constraint del schema solo cubre overlaps, no
         # working hours). Acá validamos el slot_start contra el set de
         # `proposed_slots` que el bot ofreció.
+        # BUG-206 (codex P1 follow-up): `_present_slots` persiste
+        # `proposed_slots` como una lista de start-time STRINGS (línea 1098:
+        # `[slot['start_time'] for slot in slots]`), no de dicts. La
+        # validación original asumía dicts → `proposed_starts` quedaba vacío
+        # y rechazaba TODOS los `book_slot:<time>` legítimos. Acepta ambas
+        # formas (string del estado real, + dict para forward compat).
         proposed_slots = state.get('proposed_slots') or []
-        proposed_starts = {
-            slot.get('start_time')
-            for slot in proposed_slots
-            if isinstance(slot, dict) and slot.get('start_time')
-        }
+        proposed_starts: set[str] = set()
+        for slot in proposed_slots:
+            if isinstance(slot, str):
+                proposed_starts.add(slot)
+            elif isinstance(slot, dict):
+                start_time = slot.get('start_time')
+                if isinstance(start_time, str):
+                    proposed_starts.add(start_time)
         if value not in proposed_starts:
             log.info(
                 'booking_flow.slot_not_offered',
