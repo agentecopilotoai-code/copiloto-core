@@ -475,7 +475,26 @@ tenant_ops_router = APIRouter(
 )
 tenant_analytics_router = APIRouter(
     tags=['tenant-analytics'],
-    dependencies=[Depends(authenticate_request), Depends(require_min_role('manager'))],
+    # BUG-037: bajado de `manager` a `viewer` — la matriz de permisos
+    # (`admin-panel/src/permissions/matrix.js`) asigna
+    # `analytics.tenant.read` al rol `viewer` (UI-010.2 monta
+    # `ViewerAnalytics` sobre `AnalyticsPanel`). Antes los viewers veían
+    # el componente pero los GET de analytics respondían 403. Todos los
+    # endpoints aquí son GETs read-only.
+    dependencies=[Depends(authenticate_request), Depends(require_min_role('viewer'))],
+)
+# BUG-036: nuevo router para endpoints que la UI expone a managers
+# (digest-reports, etc.) pero que no requieren admin completo. Antes los
+# digest CRUD vivían en `tenant_admin_router` (admin+) mientras la UI los
+# exponía con capability `digest.write` (manager+) → 403 silencioso a todos
+# los managers que intentaban gestionar suscripciones.
+tenant_manager_router = APIRouter(
+    tags=['tenant-manager'],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(require_min_role('manager')),
+        Depends(require_mfa_for_privileged),
+    ],
 )
 tenant_signup_router = APIRouter(
     tags=['tenant-signup'],
@@ -2921,7 +2940,9 @@ def _validate_digest_recipients(email: str | None, whatsapp: str | None) -> None
         )
 
 
-@tenant_admin_router.get('/tenants/{tenant_id}/digest/subscriptions')
+# BUG-036: digest endpoints viven en tenant_manager_router (manager+) para
+# matchear la capability `digest.write` que la UI expone a managers.
+@tenant_manager_router.get('/tenants/{tenant_id}/digest/subscriptions')
 async def list_digest_subscriptions(
     tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
 ):
@@ -2943,7 +2964,8 @@ async def list_digest_subscriptions(
     }
 
 
-@tenant_admin_router.post(
+# BUG-036: en tenant_manager_router (manager+).
+@tenant_manager_router.post(
     '/tenants/{tenant_id}/digest/subscriptions', status_code=status.HTTP_201_CREATED
 )
 async def create_digest_subscription(
@@ -2981,7 +3003,8 @@ async def create_digest_subscription(
     return _digest_subscription_to_dict(row)
 
 
-@tenant_admin_router.patch(
+# BUG-036: en tenant_manager_router (manager+).
+@tenant_manager_router.patch(
     '/tenants/{tenant_id}/digest/subscriptions/{subscription_id}'
 )
 async def update_digest_subscription(
@@ -3039,7 +3062,8 @@ async def update_digest_subscription(
     return _digest_subscription_to_dict(row)
 
 
-@tenant_admin_router.delete(
+# BUG-036: en tenant_manager_router (manager+).
+@tenant_manager_router.delete(
     '/tenants/{tenant_id}/digest/subscriptions/{subscription_id}',
     status_code=204,
 )
@@ -14447,6 +14471,9 @@ router.include_router(tenant_admin_router)
 router.include_router(tenant_catalog_router)
 router.include_router(tenant_ops_router)
 router.include_router(tenant_analytics_router)
+# BUG-036: manager-level router (digest CRUD y demás endpoints que la UI
+# expone a managers pero que no requieren admin).
+router.include_router(tenant_manager_router)
 router.include_router(system_router)
 # UI-016.7-FU
 router.include_router(me_router)

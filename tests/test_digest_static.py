@@ -350,10 +350,15 @@ def test_worker_module_exists_and_dispatches_idempotently():
 
 def test_api_routes_expose_digest_subscriptions_crud():
     source = ROUTES.read_text()
-    assert "@tenant_admin_router.get('/tenants/{tenant_id}/digest/subscriptions')" in source
-    assert "@tenant_admin_router.post(" in source and '/digest/subscriptions' in source
-    assert "@tenant_admin_router.patch(" in source and '/digest/subscriptions/{subscription_id}' in source
-    assert "@tenant_admin_router.delete(" in source and '/digest/subscriptions/{subscription_id}' in source
+    # BUG-036 (fix-group-03): los 4 endpoints migraron de `tenant_admin_router`
+    # (admin+) a `tenant_manager_router` (manager+) para matchear la
+    # capability `digest.write` que la UI expone a managers. Antes había
+    # 403 silencioso a todos los managers que intentaban gestionar
+    # suscripciones del digest.
+    assert "@tenant_manager_router.get('/tenants/{tenant_id}/digest/subscriptions')" in source
+    assert "@tenant_manager_router.post(" in source and '/digest/subscriptions' in source
+    assert "@tenant_manager_router.patch(" in source and '/digest/subscriptions/{subscription_id}' in source
+    assert "@tenant_manager_router.delete(" in source and '/digest/subscriptions/{subscription_id}' in source
     # Validación de al menos un destinatario.
     assert '_validate_digest_recipients' in source
 
