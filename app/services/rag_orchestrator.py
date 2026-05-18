@@ -251,6 +251,40 @@ async def _orchestrate_inbound_message_impl(
         log.info('orchestrator.skip', reason='human_active', conversation_id=conversation_id)
         return {'action': 'skipped', 'reason': 'human_active'}
 
+    # BUG-020: defense en profundidad — incluso si conversation.status NO es
+    # 'human_active' (por bug en otro endpoint que flipea status sin chequear,
+    # ej. POST /messages antes del fix de BUG-020), si EXISTE un handoff con
+    # status='accepted' y `assigned_to` no-null, hay un agente humano
+    # trabajando la conversación. El bot DEBE skipear: pisarle la respuesta
+    # rompería el flow de handoff humano. Este check es ortogonal al status
+    # flip — cierra el gap exacto del bug observado en runtime 2026-05-17
+    # (agente envía mensaje → status='waiting_user' por bug → orchestrator
+    # responde por encima del agente).
+    active_human_handoff_id = await conn.fetchval(
+        """
+        select id from app.handoffs
+        where tenant_id=$1 and conversation_id=$2
+          and status='accepted' and assigned_to is not null
+        limit 1
+        """,
+        tenant_id,
+        conversation['id'],
+    )
+    if active_human_handoff_id:
+        log.info(
+            'orchestrator.skip',
+            reason='active_human_handoff',
+            conversation_id=conversation_id,
+            conversation_status=conversation['status'],
+            handoff_id=str(active_human_handoff_id),
+            hint=(
+                'Agente humano activo (handoff.status=accepted + assigned_to). '
+                'Bot silenciado hasta que el agente haga POST '
+                '/v1/conversations/{id}/release o cierre el handoff.'
+            ),
+        )
+        return {'action': 'skipped', 'reason': 'active_human_handoff'}
+
     # Don't re-run the bot when the conversation is already queued for a human.
     # Exception: if the handoff has been open for longer than bot_reopen_after_hours
     # with no agent picking it up, automatically re-engage the bot so the client

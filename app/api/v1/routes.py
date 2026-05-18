@@ -5189,11 +5189,43 @@ async def create_message(conversation_id: UUID, payload: MessageCreate, request:
         key,
         json.dumps({'conversation_id': str(conversation_id)}),
     )
-    await conn.execute(
-        "update app.conversations set status='waiting_user' where tenant_id=$1 and id=$2",
+    # BUG-020: NO flipear status a 'waiting_user' si hay un agente humano
+    # trabajando activamente la conversación. Antes este UPDATE era
+    # incondicional: si el agente humano enviaba un mensaje vía este
+    # endpoint, el status pasaba de 'human_active' a 'waiting_user', y la
+    # próxima respuesta del usuario entraba al orchestrator que evaluaba
+    # `continue_bot` (porque su check solo skipea con status='human_active'
+    # o 'waiting_agent'). El bot le pisaba la respuesta al agente humano,
+    # rompiendo el handoff que el cliente había pedido.
+    # Fix: chequear si hay un handoff con status='accepted' y agente
+    # asignado. Si lo hay, dejar el status como 'human_active' (el agente
+    # sigue activo, el bot debe seguir silenciado). Sino, mantener el
+    # comportamiento original (flipear a 'waiting_user').
+    active_human_handoff = await conn.fetchval(
+        """
+        select id from app.handoffs
+        where tenant_id=$1 and conversation_id=$2
+          and status='accepted' and assigned_to is not null
+        limit 1
+        """,
         payload.tenant_id,
         conversation_id,
     )
+    if active_human_handoff:
+        # Agente humano sigue activo. Mantener 'human_active' (que el
+        # orchestrator ya skipea con el check de línea ~250).
+        await conn.execute(
+            "update app.conversations set status='human_active' where tenant_id=$1 and id=$2",
+            payload.tenant_id,
+            conversation_id,
+        )
+    else:
+        # Sin handoff humano activo → flow normal del bot (waiting_user).
+        await conn.execute(
+            "update app.conversations set status='waiting_user' where tenant_id=$1 and id=$2",
+            payload.tenant_id,
+            conversation_id,
+        )
     await audit(conn, tenant_id=payload.tenant_id, actor_type=request.state.actor_type, actor_id=request.state.actor_id, action='message.queued', entity_type='message', entity_id=str(row['id']))
     await notify_operations_change(
         conn,

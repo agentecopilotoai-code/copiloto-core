@@ -134,10 +134,11 @@ beforeEach(() => {
 describe('BillingMrr', () => {
   it('renders the header, KPIs, tenants table and plan composition', async () => {
     setup();
-
-    expect(
-      await screen.findByRole('heading', { name: 'Billing & MRR' }),
-    ).toBeInTheDocument();
+    // BUG-021: await un elemento que solo existe en estado loaded (un
+    // tenant del mock data), no el heading que aparece también en loading.
+    // Esto garantiza que la data async ya hidró el componente antes de
+    // las assertions sync siguientes.
+    await screen.findByText('Clínica Estética Norte');
 
     const churnKpi = screen.getByText('Churn 30d').closest('article');
     expect(churnKpi.textContent).toContain('2.0%');
@@ -148,16 +149,23 @@ describe('BillingMrr', () => {
     expect(failedKpi.textContent).toContain('2');
 
     // Tenants table + plan composition table.
-    expect(screen.getByText('Clínica Estética Norte')).toBeInTheDocument();
     expect(screen.getByText('Composición del MRR')).toBeInTheDocument();
     expect(screen.getByText('Pro')).toBeInTheDocument();
   });
 
   it('renders failed payments and the country breakdown', async () => {
     setup();
-    await screen.findByRole('heading', { name: 'Billing & MRR' });
+    // BUG-021 (flaky CI): `findByRole('heading', {name: 'Billing & MRR'})`
+    // resolvía inmediato porque el heading se renderiza en BOTH estados —
+    // loading ("Cargando snapshot…") y loaded (data poblada). El siguiente
+    // `getByText` (sync) corría antes de que el mock async de
+    // `getPlatformBillingMrr` resolviera y los datos llegaran al DOM —
+    // failing intermittently en CI (lento) y consistently bajo carga.
+    // Fix: await un texto que SOLO existe en el estado loaded (un nombre
+    // de tenant del mock BILLING data). Eso garantiza que la data ya
+    // hidrató el componente antes de las assertions sync.
+    await screen.findByText('Estética Quito');
 
-    expect(screen.getByText('Estética Quito')).toBeInTheDocument();
     expect(screen.getByText('Países · MRR por geografía')).toBeInTheDocument();
     const countryItem = screen.getByText('CO', { selector: '.listName' }).closest('li');
     expect(countryItem.textContent).toContain('14 tenants');
