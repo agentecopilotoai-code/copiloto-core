@@ -39,3 +39,13 @@ alter table app.tenant_settings
 -- BUG-024: messages.retry_count
 alter table app.messages
   add column if not exists retry_count integer not null default 0;
+
+-- BUG-064: partial unique indices para page_id / instagram_account_id de
+-- Meta channels, mirroring lo que hicimos con phone_number_id en SEC-003.
+-- Idempotente: `IF NOT EXISTS` no salta si el índice ya existe.
+create unique index if not exists ux_tenant_channels_page_active
+  on app.tenant_channels(page_id)
+  where status='active' and page_id is not null;
+create unique index if not exists ux_tenant_channels_ig_account_active
+  on app.tenant_channels(instagram_account_id)
+  where status='active' and instagram_account_id is not null;

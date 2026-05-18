@@ -477,6 +477,14 @@ ENFORCE_MFA_ACTION="${ENFORCE_MFA_ACTION:-false}"
 
 if [ "$ENFORCE_MFA_ACTION" = "true" ] && [ "$CONFIGURE_LOGIN_ACTION" = "true" ]; then
   echo "▶ Upsert Action MFA-challenge para roles privilegiados"
+  # BUG-065: respetar el factor MFA enrolado del usuario en vez de
+  # hardcodear OTP. Si el usuario está enrolado con WebAuthn/push/SMS y la
+  # Action exige OTP, Auth0 falla con "factors not properly set up" y el
+  # login queda bloqueado. Pattern recomendado: leer
+  # `event.user.enrolledFactors` (filtrar `status === 'confirmed'`) y
+  # llamar `challengeWithAny([...])` con los enrolados; fallback a OTP
+  # solo si no hay ninguno enrolado (es el caso operativo donde el
+  # operador necesita enrolar al usuario via runbook).
   mfa_action_code="$(cat <<MFA_ACTION
 exports.onExecutePostLogin = async (event, api) => {
   const privilegedRoles = new Set(['admin','owner','platform_owner']);
@@ -485,7 +493,16 @@ exports.onExecutePostLogin = async (event, api) => {
   if (!isPrivileged) return;
   const methods = (event.authentication && event.authentication.methods) || [];
   const hasMfa = methods.some(function(m) { return m.name === 'mfa'; });
-  if (!hasMfa) {
+  if (hasMfa) return;
+  // BUG-065: respeta el factor enrolado del usuario.
+  const enrolled = ((event.user && event.user.enrolledFactors) || [])
+    .filter(function(f) { return f && f.status === 'confirmed'; })
+    .map(function(f) { return { type: f.type }; });
+  if (enrolled.length > 0) {
+    api.authentication.challengeWithAny(enrolled);
+  } else {
+    // Fallback: ningún factor enrolado. Challenge con OTP fallará y
+    // forzará al operador a enrolar el usuario via runbook (sub-caso 2b).
     api.authentication.challengeWith({ type: 'otp' });
   }
 };

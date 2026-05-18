@@ -118,6 +118,21 @@ create unique index ux_tenant_channels_phone_number_active
   on app.tenant_channels(phone_number_id)
   where status='active' and phone_number_id is not null;
 create index ix_tenant_channels_waba on app.tenant_channels(waba_id);
+-- BUG-064: misma defensa que ux_tenant_channels_phone_number_active para
+-- los identificadores de Meta Facebook Page e Instagram Account. Sin
+-- unique partial index, dos tenants pueden reclamar el mismo page_id /
+-- instagram_account_id y el webhook router atura inbound al tenant
+-- equivocado (la query usa `where page_id=$1 and status='active'` y
+-- devuelve el primero ordenado por updated_at — vector de hijack).
+create unique index ux_tenant_channels_page_active
+  on app.tenant_channels(page_id)
+  where status='active' and page_id is not null;
+create unique index ux_tenant_channels_ig_account_active
+  on app.tenant_channels(instagram_account_id)
+  where status='active' and instagram_account_id is not null;
+-- Mantenemos los índices no-únicos también — sirven para queries que
+-- filtran por id sin importar el status (ej. troubleshooting de canales
+-- archivados).
 create index ix_tenant_channels_page on app.tenant_channels(page_id) where page_id is not null;
 create index ix_tenant_channels_ig_account on app.tenant_channels(instagram_account_id) where instagram_account_id is not null;
 
