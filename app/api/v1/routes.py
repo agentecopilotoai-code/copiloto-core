@@ -2351,6 +2351,14 @@ async def invite_tenant_member(
         safe_auth0['error'] = auth0_result['error']
     if auth0_result.get('synced'):
         safe_auth0['synced'] = True
+    # BUG-069: incluir `propagation_errors` cuando `invite_user` los reporta.
+    # Antes el dict los devolvía pero `safe_auth0` solo copiaba 5 keys y los
+    # propagation_errors quedaban invisibles a la UI — el operador no podía
+    # saber que el invite se completó pero el role assignment falló (caso
+    # típico cuando el tenant Auth0 no tiene el rol creado). Ahora el frontend
+    # puede mostrar un warning en el modal de invitación.
+    if auth0_result.get('propagation_errors'):
+        safe_auth0['propagation_errors'] = list(auth0_result['propagation_errors'])
     member['auth0'] = safe_auth0
     member['auth0_skipped'] = bool(auth0_result.get('disabled'))
     return member

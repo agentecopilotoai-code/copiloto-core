@@ -402,7 +402,7 @@ async def invite_user(
             error=str(exc),
         )
     try:
-        await assign_auth0_role_by_name(auth_subject=auth0_user_id, role_name=role)
+        role_result = await assign_auth0_role_by_name(auth_subject=auth0_user_id, role_name=role)
     except httpx.HTTPError as exc:
         propagation_errors.append(f'role_assignment: {exc}')
         log.warning(
@@ -412,6 +412,23 @@ async def invite_user(
             role=role,
             error=str(exc),
         )
+    else:
+        # BUG-068: `assign_auth0_role_by_name` también puede devolver
+        # `{'error': 'auth0_role_not_found:...'}` como VALOR (no raise) cuando
+        # el rol no existe en Auth0. Antes el caller solo capturaba
+        # httpx.HTTPError y el `auth0_role_not_found` se tragaba en silencio
+        # → la response API decía `invited: True` aunque el invitado no
+        # quedó con rol asignado y al loguear iba a recibir 403 en todos
+        # los endpoints privilegiados. Ahora chequeamos el dict de retorno.
+        if isinstance(role_result, dict) and role_result.get('error'):
+            propagation_errors.append(f'role_assignment: {role_result["error"]}')
+            log.warning(
+                'auth0_admin.invite_user_role_assign_unresolved',
+                auth0_user_id=auth0_user_id,
+                tenant_id=str(tenant_id),
+                role=role,
+                error=role_result['error'],
+            )
 
     # BUG-013: skip password-change ticket cuando estamos reusando un user
     # Auth0 existente — ya tiene credenciales válidas. Mandar un nuevo ticket

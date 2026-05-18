@@ -1065,7 +1065,7 @@ grep -E '^AUTH0_(ADMIN|SERVICE)_' .env.auth0.local
 
 Debe aparecer tanto `AUTH0_ADMIN_CLIENT_ID` (web app, usada para el login del panel) como `AUTH0_SERVICE_CLIENT_ID` (M2M app, usada para Management API). Si falta `AUTH0_SERVICE_*`, re-corré `./scripts/configure-auth0.sh` con todas las variables del Paso 2 — el script es idempotente y agrega lo que falte.
 
-Si las credenciales están pero el invite sigue fallando: en el Auth0 Dashboard, abrí la app `copilotoia-service-m2m`, pestaña **APIs**, y verificá que tiene autorizado **Auth0 Management API** con scopes `read:users`, `create:users`, `update:users` y `read:tickets` como mínimo. Si faltan, márcalos y guarda.
+Si las credenciales están pero el invite sigue fallando: en el Auth0 Dashboard, abrí la app `copilotoia-service-m2m`, pestaña **APIs**, y verificá que tiene autorizado **Auth0 Management API** con los scopes del Paso 2 línea 235 — mínimo `read:users`, `create:users`, `update:users` **y `create:user_tickets`** (BUG-072: NO `read:tickets` — ese scope solo LEE tickets existentes y NO autoriza la creación; el endpoint `POST /api/v2/tickets/password-change` exige `create:user_tickets`). Si faltan, márcalos y guarda.
 
 ### Auth0: `platform_owner` cae al onboarding de tenant en vez de `/platform` (BUG-006)
 
