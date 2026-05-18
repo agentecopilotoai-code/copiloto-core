@@ -77,6 +77,27 @@ async def audit_durably(
     flujos exitosos (que se commitean con el resto de la request) seguir
     usando `audit(conn, ...)` — más barato (sin acquire extra) y la
     transacción de la request ya garantiza durabilidad.
+
+    RLS context (BUG-010): la connection que acquired del pool NO viene con
+    `app.tenant_id` configurado (el helper `get_db` setea el setting en
+    cada checkout, pero esta connection auxiliar bypassea ese path). Sin
+    el setting:
+      - audits con `tenant_id IS NOT NULL` fallan `audit_logs_tenant_insert`
+        (la policy exige `tenant_id = app.current_tenant_id()` o
+        `app.support_mode()` — ambas son NULL/false en una conn fresca).
+      - audits con `tenant_id IS NULL` SI pasan (matchean
+        `audit_logs_user_scope_insert` que exige ambos NULL).
+    El síntoma original era `support_mode.activated` (tenant != NULL)
+    devolviendo 201 al caller pero el INSERT levantando
+    `InsufficientPrivilegeError: new row violates row-level security policy`
+    dentro del try/except — el audit se perdía silenciosamente,
+    rompiendo el trail durable que es justo el motivo de usar este helper.
+
+    Fix: setear `app.tenant_id` en la conn auxiliar antes del INSERT.
+    Setea STRING vacío cuando `tenant_id IS NULL` para limpiar cualquier
+    setting heredado de la connection si el pool reciclara la misma conn
+    para audits con tenant + sin tenant en ráfaga (defensa, no comportamiento
+    observado — asyncpg pool no garantiza fresh state per checkout).
     """
     # Import perezoso para evitar ciclo (app.db.pool importa este módulo
     # indirectamente vía sus consumidores).
@@ -92,6 +113,13 @@ async def audit_durably(
         return
     try:
         async with db.pool.acquire() as audit_conn:
+            # BUG-010: setear RLS context ANTES del INSERT. Sin esto, audits
+            # con tenant_id != NULL violan `audit_logs_tenant_insert` policy
+            # porque `app.current_tenant_id()` retorna NULL en la conn fresca.
+            await audit_conn.execute(
+                "select set_config('app.tenant_id', $1, false)",
+                str(tenant_id) if tenant_id is not None else '',
+            )
             await audit_conn.execute(
                 """
                 insert into app.audit_logs (tenant_id, actor_type, actor_id, action, entity_type, entity_id, metadata)

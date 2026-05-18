@@ -327,6 +327,91 @@ describe('resolveActiveRoles()', () => {
     });
     expect(roles).toContain('platform_owner');
   });
+
+  // ─── BUG-012: support_mode inyecta `owner` para acceso tenant completo ──
+
+  it('BUG-012: platform_owner en support_mode obtiene `owner` para capabilities tenant-scoped', () => {
+    // Síntoma original (2026-05-17): platform_owner activa support_mode →
+    // banner aparece OK → al entrar a /tenant-setup recibe "Acceso restringido"
+    // porque la matriz tiene `platform_owner: null` para `tenant_setup.write`.
+    // Sin `'owner'` inyectado, el feature pierde su propósito (acceso completo
+    // al tenant target durante la sesión temporal).
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: false },
+      tenant: { id: 'tenant-acme', roles: [] },
+      supportModeOverride: { tenantId: 'tenant-acme', expiresAt: null },
+    });
+    expect(roles).toContain('platform_owner'); // mantiene su rol global
+    expect(roles).toContain('owner');           // NUEVO: caps tenant heredadas
+  });
+
+  it('BUG-012: support_mode JWT legacy también inyecta `owner`', () => {
+    // El workaround viejo (BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=true) que
+    // marcaba el user con support_mode permanente también debe darle acceso
+    // completo al tenant — sino, el fix solo aplicaría al toggle nuevo.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: true },
+      tenant: { id: 'tenant-acme', roles: [] },
+      supportModeOverride: null,
+    });
+    expect(roles).toContain('owner');
+  });
+
+  it('BUG-012: SIN support_mode, platform_owner NO obtiene `owner` (no escala silenciosamente)', () => {
+    // Defense en profundidad: el fix se gatea con `supportMode`. Sin el
+    // toggle activo, el platform_owner sigue sin acceso al tenant — exactamente
+    // como antes (TASK-0077 preservado).
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: false },
+      tenant: { id: 'tenant-acme', roles: ['viewer'] },
+      supportModeOverride: null,
+    });
+    expect(roles).not.toContain('owner');
+    expect(roles).not.toContain('platform_owner');
+    expect(roles).toEqual(['viewer']);
+  });
+
+  it('BUG-012: support_mode con OTRO tenant (override no matchea) NO inyecta `owner`', () => {
+    // El user activó support_mode contra tenant-acme pero está mirando
+    // tenant-other. Sin matcheo, ni `platform_owner` ni `owner` deben
+    // aparecer — sino, el cookie scoped pierde su valor.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: false },
+      tenant: { id: 'tenant-other', roles: ['viewer'] },
+      supportModeOverride: { tenantId: 'tenant-acme', expiresAt: null },
+    });
+    expect(roles).not.toContain('owner');
+    expect(roles).not.toContain('platform_owner');
+    expect(roles).toEqual(['viewer']);
+  });
+
+  it('BUG-012: `owner` global (sin platform_owner) en support_mode NO se inyecta owner adicional', () => {
+    // Defensivo: la inyección de `'owner'` se gatea por
+    // `profileGlobalRoles.includes('platform_owner')`. Un user con `owner`
+    // global pero NO `platform_owner` no debería poder elevarse a `owner`
+    // de OTRO tenant via support_mode (caso edge donde la cookie matchea
+    // pero el user no es platform_owner real). El `'owner'` que ya tiene
+    // en profileRoleList se suma vía el path normal, no por la inyección.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['owner'], support_mode: true },
+      tenant: { id: 'tenant-acme', roles: ['viewer'] },
+    });
+    // `owner` aparece porque viene de profileRoleList (support_mode lo
+    // re-incluye), NO por la inyección de BUG-012.
+    expect(roles).toContain('owner');
+    expect(roles).toContain('viewer');
+  });
+
+  it('BUG-012: deduplica `owner` cuando ya viene del tenant', () => {
+    // Si el tenant del platform_owner es uno donde ya es `owner` real
+    // (caso raro: platform_owner que también tiene rol owner asignado en
+    // ese tenant), no debe aparecer duplicado en el array final.
+    const roles = resolveActiveRoles({
+      profile: { roles: ['platform_owner'], support_mode: true },
+      tenant: { id: 'tenant-acme', roles: ['owner'] },
+    });
+    expect(roles.filter((r) => r === 'owner')).toHaveLength(1);
+  });
 });
 
 describe('ROLE_HOME', () => {

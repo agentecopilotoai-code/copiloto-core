@@ -75,16 +75,32 @@ export function resolveSafeHomeModule(permissions) {
   if (!permissions || typeof permissions.can !== 'function') return null;
   const role = permissions.role;
 
-  // Step 1: preferred home (ROLE_HOME[role]) — sólo si su capability es
-  // accesible. Si la role-table no tiene entry para el rol (caso edge: rol
-  // desconocido), `preferredHome` queda `undefined` y caemos directo al nav.
+  // BUG-011: el resultado se navega bajo `/t/{slug}/{moduleId}` (TenantHomeRedirect)
+  // o `/t/{slug}/read/{moduleId}` (viewer). Si `preferredHome` apunta a un módulo
+  // PLATFORM (ej. `ROLE_HOME.platform_owner = 'platform-fleet'`), el router NO
+  // tiene route bajo `/t/:tenantSlug/platform-fleet` y cae en `*` (NotFound) =
+  // "Esta página no existe". Esto pasa real cuando un platform_owner activa
+  // support_mode y entra al workspace de un tenant — sin el filtro abajo, el
+  // home post-redirect es una pantalla 404.
+  // Solución: solo aceptar `preferredHome` si está en `flatNavOrder(role)` (la
+  // misma fuente que usa el sidebar tenant). Sino, fallthrough a step 2.
+  const navOrder = flatNavOrder(role);
+  const navOrderSet = new Set(navOrder);
+
+  // Step 1: preferred home (ROLE_HOME[role]) — accesible Y tenant-routable.
+  // Si la role-table no tiene entry para el rol (caso edge: rol desconocido),
+  // `preferredHome` queda `undefined` y caemos directo al nav.
   const preferredHome = ROLE_HOME[role];
-  if (preferredHome && isModuleAccessible(preferredHome, permissions)) {
+  if (
+    preferredHome
+    && navOrderSet.has(preferredHome)
+    && isModuleAccessible(preferredHome, permissions)
+  ) {
     return preferredHome;
   }
 
   // Step 2: primer módulo accesible en el orden visual del nav.
-  for (const moduleId of flatNavOrder(role)) {
+  for (const moduleId of navOrder) {
     if (isModuleAccessible(moduleId, permissions)) {
       return moduleId;
     }
