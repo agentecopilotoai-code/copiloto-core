@@ -46,7 +46,7 @@ export function TeamModule({ module, session, tenant }) {
         <PageHeader
           eyebrow="Configuración"
           title={module?.label || 'Equipo'}
-          description="Miembros del tenant. Auth0 maneja la autenticación, los roles los emite el JWT y se reverifican en cada request contra la DB."
+          description="Miembros del negocio con acceso al panel. El acceso se verifica en cada acción contra el rol asignado."
           actions={
             <button
               type="button"

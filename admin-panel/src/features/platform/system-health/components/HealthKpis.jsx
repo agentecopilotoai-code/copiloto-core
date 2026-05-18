@@ -41,7 +41,7 @@ export function HealthKpis({ snapshot }) {
       <KpiTile
         label="Outbound DLQ acumulado"
         value={String(dlq.total ?? 0)}
-        footnote="mensajes en dead-letter queue (TASK-0065)"
+        footnote="mensajes salientes que no se pudieron entregar"
       />
       <KpiTile
         label="Worker queue depth"

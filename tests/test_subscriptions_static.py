@@ -332,9 +332,12 @@ def test_routes_import_service_helpers():
 
 
 def test_admin_modules_registers_subscriptions_entry():
+    # El marcador "TASK-0075" se removió del copy visible (sólo queda en
+    # comentarios JSDoc). Verificamos el contrato del registro.
     src = ADMIN_MODULES.read_text()
     assert "id: 'subscriptions'" in src
-    assert 'TASK-0075' in src
+    assert "capability: 'subscriptions.write'" in src
+    assert 'Membresías con cobro recurrente' in src
 
 
 def test_admin_layout_wires_subscriptions_module_with_admin_gate():

@@ -45,7 +45,7 @@ export function DocumentDetailDrawer({
       onClose={onClose}
       size="lg"
       title={editingId ? 'Editar documento' : 'Nuevo documento'}
-      description="Crea FAQ, políticas y registros de fuente aislados por tenant mediante RLS. Usa «Indexar» en la tabla para generar chunks y activar el documento."
+      description="Cargá preguntas frecuentes, políticas y otros documentos de referencia para que el bot pueda consultarlos. Después de subir, usá «Indexar» para que el bot empiece a usar el contenido."
       footer={
         <div className={styles.modalActions}>
           <button type="button" className={styles.secondaryButton} onClick={onClose}>

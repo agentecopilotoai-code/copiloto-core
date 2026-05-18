@@ -39,7 +39,7 @@ export function RolesAcl() {
         <PageHeader
           eyebrow="Plataforma · Acceso"
           title="Roles & ACL"
-          description="Matriz de permisos por capacidad × rol — el espejo en UI del modelo de acceso del servidor (JWT + role + RLS). Vista de solo lectura; el modo edición con overrides persistidos requiere un ticket de backend (tabla app.permission_overrides aún no existe)."
+          description="Matriz de permisos: qué puede hacer cada rol sobre cada capacidad del sistema. Vista informativa de solo lectura; la edición de excepciones por rol no está disponible todavía."
         />
 
         <section className={styles.kpis} aria-label="Capacidades por rol">

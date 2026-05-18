@@ -58,7 +58,7 @@ export function SystemHealth() {
         <PageHeader
           eyebrow="Plataforma · Observability"
           title="System Health"
-          description="Estado vivo de la plataforma: API, base de datos, workers, breakers de proveedores y latencia del bot. Las métricas vienen del registry Prometheus (TASK-0060); las alertas referencian runbooks."
+          description="Estado en tiempo real de la plataforma: API, base de datos, procesos de fondo, integraciones con proveedores y tiempo de respuesta del bot. Las alertas incluyen su guía de resolución."
           actions={
             <button type="button" className={styles.refreshButton} onClick={refresh}>
               Actualizar

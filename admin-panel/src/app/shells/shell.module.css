@@ -28,11 +28,32 @@
   --shell-sidebar-width: 4rem;
 }
 
+/* BUG-018: cambio de `display: grid` a `display: flex` para arreglar el
+   espacio en blanco gigante que aparecía cuando había 3+ children en el
+   workspace (típico: SupportModeBanner + ShellTopbar + ErrorBoundary
+   children cuando el platform_owner opera bajo support_mode).
+
+   El grid con `grid-template-rows: auto 1fr` asume 2 children y asigna
+   el segundo a un row `1fr` que se estira. Con 3 children pasa lo
+   siguiente:
+     - Item 1 (SupportModeBanner) → row 1 (auto) ✓
+     - Item 2 (ShellTopbar)       → row 2 (1fr)  ✗ ¡SE ESTIRA!
+     - Item 3 (ErrorBoundary)     → row 3 (auto implícito) ✓
+   Resultado visible: el ShellTopbar parece un card blanco gigante
+   ocupando toda la pantalla con el título "Tenant Operations / <Module>"
+   flotando en el medio del vacío.
+
+   Flex column normal (sin flex-grow en items) deja todo compacto arriba.
+   `min-height: 100%` preserva la altura del shell para que el viewport
+   no quede vacío si el contenido del módulo es chico — el módulo puede
+   usar `flex: 1` en su propio root si necesita ocupar todo el alto
+   restante. */
 .workspace {
-  display: grid;
-  grid-template-rows: auto 1fr;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
+  min-height: 100%;
 }
 
 .topbar {
@@ -78,6 +99,28 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+}
+
+/* BUG-015 — botón "Volver a Platform" en el topbar del TenantShell para
+   platform_owners. Estilo intencionalmente sutil (outline + dimensión chica)
+   para no competir visualmente con CTAs operativos del tenant. */
+.backToPlatformButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--line-2);
+  background: var(--surface-1);
+  color: var(--ink-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.backToPlatformButton:hover {
+  background: var(--surface-2);
+  color: var(--ink-1);
 }
 
 .readOnlyBadge {

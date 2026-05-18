@@ -2,6 +2,7 @@ import { ErrorBoundary } from '../../components/ui/index.js';
 import { SupportModeBanner } from '../../components/domain/SupportModeBanner.jsx';
 import { TENANT_NAV } from '../nav.js';
 import { resolveNav } from './resolveNav.js';
+import { BackToPlatformButton } from './components/BackToPlatformButton.jsx';
 import { ShellBottomNav } from './components/ShellBottomNav.jsx';
 import { ShellSidebar } from './components/ShellSidebar.jsx';
 import { ShellTopbar } from './components/ShellTopbar.jsx';
@@ -74,6 +75,13 @@ export function TenantShell({
           eyebrow="Tenant operations"
           title={activeModule.label}
           tenant={activeTenant}
+          // BUG-015 — platform_owners que entran a un tenant (via support_mode
+          // o creando uno nuevo) necesitan poder volver a la vista
+          // cross-tenant `/platform`. Sin este botón quedaban "atrapados"
+          // sin UI visible para regresar. `isSystemOwner` es true cuando el
+          // user tiene rol global Y support_mode activo (JWT permanente o
+          // cookie temporal BUG-008) — exactamente el caso de uso.
+          actions={permissions?.isSystemOwner ? <BackToPlatformButton /> : null}
         />
         <ErrorBoundary>{children}</ErrorBoundary>
       </main>

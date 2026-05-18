@@ -251,6 +251,40 @@ async def _orchestrate_inbound_message_impl(
         log.info('orchestrator.skip', reason='human_active', conversation_id=conversation_id)
         return {'action': 'skipped', 'reason': 'human_active'}
 
+    # BUG-020: defense en profundidad — incluso si conversation.status NO es
+    # 'human_active' (por bug en otro endpoint que flipea status sin chequear,
+    # ej. POST /messages antes del fix de BUG-020), si EXISTE un handoff con
+    # status='accepted' y `assigned_to` no-null, hay un agente humano
+    # trabajando la conversación. El bot DEBE skipear: pisarle la respuesta
+    # rompería el flow de handoff humano. Este check es ortogonal al status
+    # flip — cierra el gap exacto del bug observado en runtime 2026-05-17
+    # (agente envía mensaje → status='waiting_user' por bug → orchestrator
+    # responde por encima del agente).
+    active_human_handoff_id = await conn.fetchval(
+        """
+        select id from app.handoffs
+        where tenant_id=$1 and conversation_id=$2
+          and status='accepted' and assigned_to is not null
+        limit 1
+        """,
+        tenant_id,
+        conversation['id'],
+    )
+    if active_human_handoff_id:
+        log.info(
+            'orchestrator.skip',
+            reason='active_human_handoff',
+            conversation_id=conversation_id,
+            conversation_status=conversation['status'],
+            handoff_id=str(active_human_handoff_id),
+            hint=(
+                'Agente humano activo (handoff.status=accepted + assigned_to). '
+                'Bot silenciado hasta que el agente haga POST '
+                '/v1/conversations/{id}/release o cierre el handoff.'
+            ),
+        )
+        return {'action': 'skipped', 'reason': 'active_human_handoff'}
+
     # Don't re-run the bot when the conversation is already queued for a human.
     # Exception: if the handoff has been open for longer than bot_reopen_after_hours
     # with no agent picking it up, automatically re-engage the bot so the client
@@ -1542,9 +1576,36 @@ async def _do_handoff(
         handoff_id = handoff_row['id']
         record_handoff(tenant_id=tenant_id, reason=reason or 'unspecified')
 
-    # Send handoff_message if the policy defines one
+    # BUG-017: el operador puede setear `escalation_policy.handoff_message`
+    # per-tenant (ej. "Te paso con nuestra coordinadora Mariana..."). Si NO
+    # lo seteó, antes el bot escalaba en silencio: usuario veía el bot
+    # responder normalmente, después dejaba de responder de la nada y
+    # esperaba sin saber qué pasó hasta que un agente humano apareciera
+    # (o nunca, si no hay agente disponible). UX terrible — los usuarios
+    # asumen "el sistema se rompió" y se van.
+    #
+    # Fix: si el tenant no configuró un handoff_message custom, usamos un
+    # mensaje default en español que explica lo que está pasando. El
+    # operador puede sobrescribirlo per-tenant via PATCH /v1/tenants/{id}/settings
+    # actualizando `escalation_policy.handoff_message`.
+    #
+    # NOTA: el mensaje default solo aplica cuando el handoff tiene un
+    # cliente esperando del otro lado (i.e. siempre que llegamos acá vía
+    # un mensaje inbound del usuario). Si el handoff se dispara por algún
+    # path interno sin inbound_message, no enviamos default (sería ruido).
+    _DEFAULT_HANDOFF_MESSAGE = (
+        'Voy a pasarte con una persona del equipo para que pueda ayudarte mejor. '
+        'En unos minutos te responde por este mismo chat. Gracias por tu paciencia.'
+    )
+
+    # Send handoff_message if the policy defines one, OR fallback al default
+    # de BUG-017 cuando el tenant no configuró nada (antes el bot silenciaba).
     handoff_message_sent = False
     handoff_message_text: str = policy.get('handoff_message') or ''
+    handoff_message_is_default = False
+    if not handoff_message_text.strip():
+        handoff_message_text = _DEFAULT_HANDOFF_MESSAGE
+        handoff_message_is_default = True
     if handoff_message_text.strip():
         idempotency_key = f'handoff_msg:{inbound_message["id"]}'
         existing_event = await conn.fetchval(
@@ -1607,6 +1668,10 @@ async def _do_handoff(
             'reason_detail': reason_detail,
             'inbound_message_id': str(inbound_message['id']),
             'handoff_message_sent': handoff_message_sent,
+            # BUG-017: marca si usamos el default message (operador no
+            # configuró handoff_message custom). Útil para el operador
+            # saber qué tenants se beneficiarían de un mensaje propio.
+            'handoff_message_is_default': handoff_message_is_default,
         },
     )
 
