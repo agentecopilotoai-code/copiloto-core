@@ -145,12 +145,28 @@ BACKUP_VERIFY_PG_CONTAINER="copilotoia-verify-pg-$$"
 #     miento original (`-p 127.0.0.1:${PORT}:5432` + `psql -h 127.0.0.1`).
 EN_DOCKER=0
 WORKER_CONTAINER_ID=""
-if [[ -f /.dockerenv ]]; then
+# SEC-009.1-FU: además de `/.dockerenv` (Docker), reconocemos
+# `/run/.containerenv` (Podman / runc) para que el worker se
+# autodetecte correctamente cuando el verifier corre bajo un runtime
+# rootless. Sin esto, `EN_DOCKER=0` activaba la lógica bare-metal
+# (`-p 127.0.0.1:PORT`) que en un container apunta al loopback equivocado.
+if [[ -f /.dockerenv ]] || [[ -f /run/.containerenv ]]; then
   EN_DOCKER=1
-  # `hostname` dentro de un container Docker devuelve el container ID corto;
-  # `docker inspect` lo acepta como argumento. El socket ya está montado en
-  # `/var/run/docker.sock` (ver docker-compose backup-worker.volumes).
+  # `hostname` dentro de un container devuelve el container ID corto;
+  # tanto `docker inspect` como `podman inspect` lo aceptan.
   WORKER_CONTAINER_ID="$(hostname)"
+fi
+
+# SEC-009.1-FU: selección de runtime. Prefiere `docker` (compat con el
+# escenario actual del compose), cae a `podman` cuando docker no está
+# disponible o su daemon no responde (hosts rootless / managed runners
+# que no exponen el socket). Si ni docker ni podman funcionan, queda
+# vacío y el script cae al modo degradado (`pg_restore --list`).
+CONTAINER_CMD=""
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  CONTAINER_CMD="docker"
+elif command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+  CONTAINER_CMD="podman"
 fi
 BACKUP_VERIFY_SUPERUSER_PASSWORD="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | base64)"
 BACKUP_VERIFY_RESTORE_PASSWORD="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | base64)"
@@ -174,18 +190,19 @@ S3_URI_SIG="s3://${BACKUP_S3_BUCKET}/${S3_KEY_SIG}"
 WORK_DIR="$(mktemp -d -t copilotoia-verify-XXXXXX)"
 
 cleanup_ephemeral_pg() {
-  # SEC-009 — tear-down del Postgres efímero y su red. Idempotente: tolera el
-  # caso degraded donde Docker no estaba disponible.
-  if command -v docker >/dev/null 2>&1; then
-    docker rm -f "$BACKUP_VERIFY_PG_CONTAINER" >/dev/null 2>&1 || true
+  # SEC-009 — tear-down del Postgres efímero y su red. Idempotente:
+  # tolera el caso degraded donde no había runtime de container, y
+  # funciona tanto con `docker` como con `podman` (SEC-009.1-FU).
+  if [[ -n "$CONTAINER_CMD" ]]; then
+    "$CONTAINER_CMD" rm -f "$BACKUP_VERIFY_PG_CONTAINER" >/dev/null 2>&1 || true
     # codex P1: si conectamos el worker a la red verify (cuando EN_DOCKER=1),
     # hay que desconectarlo ANTES de borrar la red — sino `network rm` falla
-    # con `has active endpoints`.
+    # con `has active endpoints`. Aplica igual para podman.
     if [[ "$EN_DOCKER" == "1" && -n "$WORKER_CONTAINER_ID" ]]; then
-      docker network disconnect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID" \
+      "$CONTAINER_CMD" network disconnect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID" \
         >/dev/null 2>&1 || true
     fi
-    docker network rm "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || true
+    "$CONTAINER_CMD" network rm "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || true
   fi
 }
 
@@ -322,38 +339,41 @@ fi
 # productivo aún si el dump contiene payloads adversarios (triggers que
 # intenten `COPY ... FROM PROGRAM`, dblink, etc.).
 EPHEMERAL_PG_OK=0
-if [[ "${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}" != "1" ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  echo "==> Creando red isolated ${BACKUP_VERIFY_NETWORK}"
-  # `--internal` impide tráfico fuera de la red bridge.
-  docker network create --driver bridge --internal "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || \
-    docker network inspect "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || \
+if [[ "${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}" != "1" ]] && [[ -n "$CONTAINER_CMD" ]]; then
+  echo "==> Creando red isolated ${BACKUP_VERIFY_NETWORK} (runtime=${CONTAINER_CMD})"
+  # `--internal` impide tráfico fuera de la red bridge. Funciona igual
+  # con docker y podman (ambos soportan `--driver bridge --internal`).
+  "$CONTAINER_CMD" network create --driver bridge --internal "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || \
+    "$CONTAINER_CMD" network inspect "$BACKUP_VERIFY_NETWORK" >/dev/null 2>&1 || \
     report_failure "ephemeral_network_create_failed"
 
-  # codex P1 fix — `docker run -p 127.0.0.1:${PORT}:5432` publica al HOST del
-  # Docker daemon, no al worker. Solo lo usamos cuando el verifier corre en
-  # bare-metal/CI (sin /.dockerenv). Dentro de un container, omitimos `-p` y
-  # nos conectamos al ephemeral por DNS de Docker (`<container_name>:5432`).
+  # codex P1 fix — `run -p 127.0.0.1:${PORT}:5432` publica al HOST del
+  # runtime, no al worker. Solo lo usamos cuando el verifier corre en
+  # bare-metal/CI (sin /.dockerenv y sin /run/.containerenv). Dentro de
+  # un container, omitimos `-p` y nos conectamos al ephemeral por DNS
+  # del runtime (`<container_name>:5432`).
   PORT_PUBLISH_ARGS=()
   if [[ "$EN_DOCKER" != "1" ]]; then
     PORT_PUBLISH_ARGS=(-p "127.0.0.1:${BACKUP_VERIFY_PG_PORT}:5432")
   fi
 
   echo "==> Arrancando Postgres efímero ${BACKUP_VERIFY_PG_IMAGE}"
-  if ! docker run -d --rm \
+  if ! "$CONTAINER_CMD" run -d --rm \
         --name "$BACKUP_VERIFY_PG_CONTAINER" \
         --network "$BACKUP_VERIFY_NETWORK" \
         "${PORT_PUBLISH_ARGS[@]}" \
         -e POSTGRES_PASSWORD="$BACKUP_VERIFY_SUPERUSER_PASSWORD" \
         -e POSTGRES_DB="$VERIFY_DB" \
-        "$BACKUP_VERIFY_PG_IMAGE" >/dev/null 2>"$WORK_DIR/docker.err"; then
-    report_failure "ephemeral_pg_start_failed:$(tail -c 200 "$WORK_DIR/docker.err" | tr '\n' ' ')"
+        "$BACKUP_VERIFY_PG_IMAGE" >/dev/null 2>"$WORK_DIR/runtime.err"; then
+    report_failure "ephemeral_pg_start_failed:$(tail -c 200 "$WORK_DIR/runtime.err" | tr '\n' ' ')"
   fi
 
   # codex P1 fix — cuando estamos en container, conectamos el worker
-  # temporalmente a la red verify para alcanzar el ephemeral por DNS Docker.
-  # El cleanup desconecta antes de borrar la red (ver `cleanup_ephemeral_pg`).
+  # temporalmente a la red verify para alcanzar el ephemeral por DNS del
+  # runtime. El cleanup desconecta antes de borrar la red (ver
+  # `cleanup_ephemeral_pg`). Aplica igual con docker y podman.
   if [[ "$EN_DOCKER" == "1" ]]; then
-    if ! docker network connect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID" \
+    if ! "$CONTAINER_CMD" network connect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID" \
          >/dev/null 2>"$WORK_DIR/netconnect.err"; then
       report_failure "ephemeral_network_attach_failed:$(tail -c 200 "$WORK_DIR/netconnect.err" | tr '\n' ' ')"
     fi
@@ -396,19 +416,26 @@ if [[ "${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}" != "1" ]] && command -v docker >/dev/
     report_failure "ephemeral_role_provision_failed:$(tail -c 200 "$WORK_DIR/role.err" | tr '\n' ' ')"
 
   VERIFY_URL="postgres://${VERIFY_RESTORE_ROLE}:${BACKUP_VERIFY_RESTORE_PASSWORD}@${EPHEMERAL_HOST}:${EPHEMERAL_PORT}/${VERIFY_DB}"
-  RESTORE_MODE="ephemeral_isolated"
+  # SEC-009.1-FU: el sufijo `:docker` / `:podman` aparece en
+  # `audit_logs.metadata.restore_mode` para que el operador sepa qué runtime
+  # ejecutó el restore real (útil para auditoría y para confirmar que el
+  # fallback rootless está funcionando en hosts sin Docker daemon).
+  RESTORE_MODE="ephemeral_isolated:${CONTAINER_CMD}"
 
   echo "==> Restaurando dump en Postgres efímero como ${VERIFY_RESTORE_ROLE}"
   if ! pg_restore --dbname="$VERIFY_URL" --no-owner --no-privileges --exit-on-error "$DUMP_PATH" >/dev/null 2>"$WORK_DIR/restore.err"; then
     report_failure "pg_restore_failed:$(tail -c 200 "$WORK_DIR/restore.err" | tr '\n' ' ')"
   fi
 else
-  # SEC-009.1-FU stop-gap — degraded mode cuando Docker no está disponible
-  # (host bare-metal sin socket). NO restaura: corre `pg_restore --list` para
-  # validar parseability del dump, y reporta el degraded mode en el audit log.
-  # Esto NO es un sustituto válido a Layer 2; el FU ticket trackea hardening
-  # adicional (p.ej. levantar Postgres efímero via systemd-nspawn).
-  echo "==> [DEGRADED] Docker no disponible; corriendo pg_restore --list (SEC-009.1-FU stop-gap)"
+  # SEC-009.1-FU stop-gap — degraded mode cuando NI docker NI podman
+  # están disponibles (host sin runtime de container). NO restaura: corre
+  # `pg_restore --list` para validar parseability del dump, y reporta el
+  # degraded mode en el audit log. La preferencia ahora es:
+  #   1. `docker` con daemon respondiendo (modo legacy del compose)
+  #   2. `podman` con daemon respondiendo (rootless, sin socket — hosts
+  #      con políticas restrictivas que sí permiten podman rootless)
+  #   3. degraded `pg_restore --list` (solo parseability)
+  echo "==> [DEGRADED] Ni docker ni podman disponibles; corriendo pg_restore --list (SEC-009.1-FU)"
   if ! pg_restore --list "$DUMP_PATH" >"$WORK_DIR/restore.list" 2>"$WORK_DIR/restore.err"; then
     report_failure "pg_restore_list_failed:$(tail -c 200 "$WORK_DIR/restore.err" | tr '\n' ' ')"
   fi
@@ -421,7 +448,9 @@ fi
 TENANTS_COUNT=0
 CONVERSATIONS_COUNT=0
 MESSAGES_COUNT=0
-if [[ "$RESTORE_MODE" == "ephemeral_isolated" ]]; then
+# SEC-009.1-FU: `RESTORE_MODE` ahora puede ser `ephemeral_isolated:docker` o
+# `ephemeral_isolated:podman` (sufijo con el runtime). Comparamos por prefijo.
+if [[ "$RESTORE_MODE" == ephemeral_isolated* ]]; then
   echo "==> Sanity checks"
   SANITY_SQL="
   select 'tenants', count(*) from app.tenants

@@ -139,12 +139,17 @@ def test_verifier_no_longer_trusts_s3_metadata_sha256() -> None:
 
 def test_verifier_restores_into_ephemeral_isolated_postgres_not_productive_cluster() -> None:
     script = _verifier()
-    # Layer 2 — ephemeral container spin up.
-    assert 'docker run -d --rm' in script
+    # Layer 2 — ephemeral container spin up. SEC-009.1-FU parametrizó el
+    # runtime a `"$CONTAINER_CMD"` (docker o podman); validamos el patrón
+    # nuevo en vez del literal `docker ...`.
+    assert '"$CONTAINER_CMD" run -d --rm' in script
     assert 'BACKUP_VERIFY_PG_IMAGE' in script
     assert 'BACKUP_VERIFY_NETWORK' in script
     # --internal network ensures the ephemeral PG cannot reach the productive cluster.
-    assert 'docker network create --driver bridge --internal "$BACKUP_VERIFY_NETWORK"' in script
+    assert (
+        '"$CONTAINER_CMD" network create --driver bridge --internal "$BACKUP_VERIFY_NETWORK"'
+        in script
+    )
     # Restore target is the ephemeral host:port, NOT POSTGRES_HOST. Después del
     # codex P1 fix de networking, EPHEMERAL_HOST="127.0.0.1" solo aplica al
     # branch bare-metal (EN_DOCKER=0); en container se usa el nombre del
@@ -231,15 +236,21 @@ def test_verifier_in_container_attaches_worker_to_verify_network() -> None:
     """codex P1: para que el worker pueda hablar con el ephemeral por DNS,
     se conecta TEMPORALMENTE a `BACKUP_VERIFY_NETWORK`. El cleanup desco-
     necta antes de borrar la red (sino `network rm` falla con
-    `has active endpoints`).
+    `has active endpoints`). SEC-009.1-FU parametrizó docker → CONTAINER_CMD.
     """
     script = _verifier()
-    assert 'docker network connect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID"' in script
+    assert (
+        '"$CONTAINER_CMD" network connect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID"'
+        in script
+    )
     # Falla cerrado si el attach no funciona — sin él, el verifier no
     # alcanza al ephemeral y queda con timeout misterioso.
     assert 'ephemeral_network_attach_failed' in script
     # Cleanup desconecta antes de borrar la red.
-    assert 'docker network disconnect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID"' in script
+    assert (
+        '"$CONTAINER_CMD" network disconnect "$BACKUP_VERIFY_NETWORK" "$WORKER_CONTAINER_ID"'
+        in script
+    )
 
 
 # --------------------------------------------------------------------------- #

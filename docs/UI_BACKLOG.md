@@ -1254,10 +1254,10 @@ Las tareas siguientes salen de una sesión de feedback del usuario (2026-05-15) 
 
 ### SEC-009.1-FU — Backup verifier sin docker socket
 
-- **Estado:** PENDING (low priority, dependiente del entorno operativo).
-- **Motivación:** SEC-009 Capa 2 requiere acceso al docker socket para spin-up del Postgres efímero. Hosts con políticas restrictivas (rootless containers, runners gestionados) caen al modo degraded `pg_restore --list` que valida parseability pero NO ejecuta el restore.
-- **Fix candidato:** levantar el Postgres efímero vía `podman` (rootless) o `systemd-nspawn`. Alternativa: empotrar `postgres` como binario sidecar dentro del container del verifier y arrancarlo con `pg_ctl` en un datadir efímero.
-- **Severidad:** baja — el degraded mode reporta correctamente en `audit_logs.metadata.restore_mode` y la firma GPG (Capa 1) sigue activa, así que la pérdida es solo de validación de restore real.
+- **Estado:** DONE (post-marathon) — `scripts/verify-backup.sh` ahora selecciona runtime preferido: `docker` (compose actual) → `podman` rootless (hosts sin daemon) → degraded `pg_restore --list`. `EN_DOCKER` también reconoce `/run/.containerenv` (podman / runc) para que el worker se autodetecte bajo runtime rootless. `RESTORE_MODE` lleva sufijo `:docker` / `:podman` para auditoría. Ver tests `tests/test_sec_009_1_fu_podman_fallback_static.py`.
+- **Motivación:** SEC-009 Capa 2 requiere acceso al docker socket para spin-up del Postgres efímero. Hosts con políticas restrictivas (rootless containers, runners gestionados) caían al modo degraded `pg_restore --list` que valida parseability pero NO ejecuta el restore.
+- **Fix aplicado:** `podman` rootless como fallback (API-compatible con `docker run`/`docker network`; no requiere daemon ni socket). La alternativa `systemd-nspawn` queda como follow-up si aparece un host donde tampoco hay podman.
+- **Severidad:** baja — el degraded mode reporta correctamente en `audit_logs.metadata.restore_mode` y la firma GPG (Capa 1) sigue activa.
 
 ---
 
