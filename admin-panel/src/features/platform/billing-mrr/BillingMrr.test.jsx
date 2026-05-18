@@ -135,8 +135,12 @@ describe('BillingMrr', () => {
   it('renders the header, KPIs, tenants table and plan composition', async () => {
     setup();
 
+    // Wait for loaded state — the heading renders in both loading and loaded
+    // states, so awaiting it does not gate on the async fetch.
+    await screen.findByText('Clínica Estética Norte');
+
     expect(
-      await screen.findByRole('heading', { name: 'Billing & MRR' }),
+      screen.getByRole('heading', { name: 'Billing & MRR' }),
     ).toBeInTheDocument();
 
     const churnKpi = screen.getByText('Churn 30d').closest('article');
@@ -147,17 +151,14 @@ describe('BillingMrr', () => {
       .closest('article');
     expect(failedKpi.textContent).toContain('2');
 
-    // Tenants table + plan composition table.
-    expect(screen.getByText('Clínica Estética Norte')).toBeInTheDocument();
     expect(screen.getByText('Composición del MRR')).toBeInTheDocument();
     expect(screen.getByText('Pro')).toBeInTheDocument();
   });
 
   it('renders failed payments and the country breakdown', async () => {
     setup();
-    await screen.findByRole('heading', { name: 'Billing & MRR' });
+    await screen.findByText('Estética Quito');
 
-    expect(screen.getByText('Estética Quito')).toBeInTheDocument();
     expect(screen.getByText('Países · MRR por geografía')).toBeInTheDocument();
     const countryItem = screen.getByText('CO', { selector: '.listName' }).closest('li');
     expect(countryItem.textContent).toContain('14 tenants');
