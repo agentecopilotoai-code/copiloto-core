@@ -1567,3 +1567,42 @@ create policy prompt_templates_global_insert on app.prompt_templates for insert 
 -- aplica solo cuando ambos lados son NULL (un usuario con tenant activo
 -- sigue obligado a pasar por la policy genérica).
 create policy audit_logs_user_scope_insert on app.audit_logs for insert with check (tenant_id is null and app.current_tenant_id() is null);
+
+-- ============================================================================
+-- TASK-INFLU-001 — Módulo Influencer / Ravit Studio (fresh-install)
+-- ============================================================================
+-- Schema dedicado + tabla `app.tenant_modules`. Ver `03-migrations.sql` para
+-- el mismo bloque idempotente que se aplica sobre DBs existentes y los
+-- detalles de decisión (D1/D2/D3/D7).
+
+create schema if not exists influencer;
+grant usage on schema influencer to copiloto_app;
+alter default privileges in schema influencer
+  grant select, insert, update, delete on tables to copiloto_app;
+alter default privileges in schema influencer
+  grant usage, select on sequences to copiloto_app;
+
+create table if not exists app.tenant_modules (
+  tenant_id     uuid not null references app.tenants(id) on delete cascade,
+  module        text not null check (module in ('influencer')),
+  enabled       boolean not null default false,
+  plan          text null,
+  activated_at  timestamptz null,
+  activated_by  uuid null references app.users(id) on delete set null,
+  notes         text null,
+  primary key (tenant_id, module)
+);
+
+create index if not exists ix_tenant_modules_enabled
+  on app.tenant_modules (tenant_id, module)
+  where enabled = true;
+
+alter table app.tenant_modules enable row level security;
+create policy tenant_modules_tenant_select on app.tenant_modules
+  for select using (tenant_id = app.current_tenant_id() or app.support_mode());
+create policy tenant_modules_support_insert on app.tenant_modules
+  for insert with check (app.support_mode());
+create policy tenant_modules_support_update on app.tenant_modules
+  for update using (app.support_mode()) with check (app.support_mode());
+create policy tenant_modules_support_delete on app.tenant_modules
+  for delete using (app.support_mode());

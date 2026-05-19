@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, Response
 from app.api.v1.routes import router as v1_router
 from app.admin.routes import router as admin_router
 from app.core.config import get_settings
+from app.influencer.router import influencer_router
 from app.core.logging import configure_logging
 from app.db.pool import db
 from app.services.metrics import (
@@ -110,6 +111,12 @@ def create_app() -> FastAPI:
 
     api.include_router(admin_router)
     api.include_router(v1_router)
+    # TASK-INFLU-001 — módulo opcional Ravit Studio. El router siempre se
+    # monta; el gate `ensure_module_enabled` en cada endpoint responde 404
+    # cuando el tenant no tiene la fila `app.tenant_modules.influencer
+    # enabled=true`. No filtramos la existencia del módulo a tenants sin
+    # acceso (decisión D2 del backlog).
+    api.include_router(influencer_router)
     return api
 
 

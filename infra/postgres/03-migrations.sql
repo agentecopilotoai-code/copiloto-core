@@ -119,3 +119,88 @@ alter table app.contacts
     foreign key (tenant_id, referrer_contact_id)
     references app.contacts(tenant_id, id)
     on delete set null (referrer_contact_id);
+
+-- ============================================================================
+-- TASK-INFLU-001 — Módulo Influencer / Ravit Studio
+-- ============================================================================
+--
+-- Habilita el módulo opcional `influencer` (Ravit Studio). El módulo NO debe
+-- estar disponible para tenants que no lo activen — el router responde 404
+-- (no 403, para no filtrar la existencia del feature) cuando el tenant no
+-- tiene la fila en `app.tenant_modules`.
+--
+-- Decisiones (ver docs/BACKLOG.md sección "Módulo Influencer"):
+--   - D1: schema `influencer.*` separado de `app.*` para activación quirúrgica.
+--   - D2: `app.tenant_modules` controla qué tenant tiene qué módulo activo.
+--   - D3: la configuración de proveedores IA del módulo (TASK-INFLU-002) es
+--         platform_owner-only — el tenant NO ve ni edita providers.
+--   - D7: RLS por tenant_id en todas las tablas `influencer.*` (las migraciones
+--         de las tablas vienen en TASK-INFLU-008+; este archivo crea solo el
+--         schema vacío + el control de activación).
+
+-- 1) Schema dedicado del módulo. Granular GRANT al rol del app para que
+-- las tablas creadas posteriormente por TASK-INFLU-008+ hereden permisos.
+create schema if not exists influencer;
+grant usage on schema influencer to copiloto_app;
+alter default privileges in schema influencer
+  grant select, insert, update, delete on tables to copiloto_app;
+alter default privileges in schema influencer
+  grant usage, select on sequences to copiloto_app;
+
+-- 2) Tabla `app.tenant_modules` — opt-in por tenant.
+--    `module ∈ {'influencer', ...}` — sin enum dura para permitir agregar
+--    módulos futuros sin migration de tipo.
+--    `plan` opcional (free|pro|enterprise) para distinguir tiers cuando el
+--    módulo lo necesite. Sin plan = acceso default.
+create table if not exists app.tenant_modules (
+  tenant_id     uuid not null references app.tenants(id) on delete cascade,
+  module        text not null check (
+    module in ('influencer')
+    -- Cuando agreguemos más módulos, ampliar el CHECK aquí.
+  ),
+  enabled       boolean not null default false,
+  plan          text null,
+  activated_at  timestamptz null,
+  activated_by  uuid null references app.users(id) on delete set null,
+  notes         text null,
+  primary key (tenant_id, module)
+);
+
+create index if not exists ix_tenant_modules_enabled
+  on app.tenant_modules (tenant_id, module)
+  where enabled = true;
+
+-- 3) RLS — read tenant-scoped; mutaciones gateadas en el app layer
+-- (require_platform_owner + audit). NO se confía en el rol DB para la
+-- escritura porque solo `platform_owner` con MFA puede activar el módulo,
+-- lo que es lógica de aplicación. El SELECT sí es tenant-scoped vía RLS
+-- estándar.
+alter table app.tenant_modules enable row level security;
+
+drop policy if exists tenant_modules_tenant_select on app.tenant_modules;
+create policy tenant_modules_tenant_select
+  on app.tenant_modules
+  for select
+  using (tenant_id = app.current_tenant_id() or app.support_mode());
+
+-- Insert/update/delete: solo bajo support_mode (platform_owner) — el resto
+-- de roles NO puede activar/desactivar módulos vía SQL directo, debe pasar
+-- por el endpoint dedicado de platform_admin.
+drop policy if exists tenant_modules_support_insert on app.tenant_modules;
+create policy tenant_modules_support_insert
+  on app.tenant_modules
+  for insert
+  with check (app.support_mode());
+
+drop policy if exists tenant_modules_support_update on app.tenant_modules;
+create policy tenant_modules_support_update
+  on app.tenant_modules
+  for update
+  using (app.support_mode())
+  with check (app.support_mode());
+
+drop policy if exists tenant_modules_support_delete on app.tenant_modules;
+create policy tenant_modules_support_delete
+  on app.tenant_modules
+  for delete
+  using (app.support_mode());
