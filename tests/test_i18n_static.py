@@ -297,7 +297,13 @@ def test_i18n_loader_returns_key_for_unknown_section():
 
 def test_routes_derive_country_profile_in_create_tenant():
     """``create_tenant`` debe consultar el profile del país para derivar tz/locale/currency."""
-    routes_src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # After the routes.py refactor (phase 3) the platform_admin handlers
+    # live in app/api/v1/handlers/platform_admin_handlers.py — use the
+    # aggregated source so the asserts keep matching regardless of file
+    # boundaries.
+    from tests._routes_aggregator import routes_aggregated_source
+
+    routes_src = routes_aggregated_source()
     assert 'locale_service.profile_for(payload.country_code)' in routes_src
     # Se pasa locale y currency al insert de tenant_settings.
     assert "insert into app.tenant_settings (tenant_id, escalation_policy, locale, currency)" in routes_src

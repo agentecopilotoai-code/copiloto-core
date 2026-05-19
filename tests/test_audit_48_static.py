@@ -84,7 +84,12 @@ def test_is_meta_message_fresh_basic():
 
 
 def test_whatsapp_webhook_uses_freshness_check():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # After the routes.py refactor (phase 3) the webhook handlers live in
+    # app/api/v1/handlers/webhook_handlers.py — use the aggregated source so
+    # the asserts keep matching regardless of file boundaries.
+    from tests._routes_aggregator import routes_aggregated_source
+
+    src = routes_aggregated_source()
     assert 'from app.services.whatsapp import (' in src
     assert 'is_meta_message_fresh,' in src
     # The handler invokes it with the configured max age
@@ -94,7 +99,9 @@ def test_whatsapp_webhook_uses_freshness_check():
 
 
 def test_messenger_webhook_uses_freshness_check():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    from tests._routes_aggregator import routes_aggregated_source
+
+    src = routes_aggregated_source()
     # The messenger loop guards on event.timestamp
     assert "action='webhook.messenger_event_stale'" in src
     assert "action='webhook.messenger_event_missing_timestamp'" in src

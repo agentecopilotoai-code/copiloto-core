@@ -183,7 +183,11 @@ def test_readiness_retrieval_sql_filters_visibility():
 
 
 def test_intent_evaluate_endpoint_respects_include_agents_only_flag():
-    source = ROUTES.read_text()
+    # Refactor phase 3: tenant_admin handlers live in
+    # app/api/v1/handlers/tenant_admin_handlers.py — use the aggregated source.
+    from tests._routes_aggregator import routes_aggregated_source
+
+    source = routes_aggregated_source()
     start = source.index("@tenant_admin_router.post('/intents/evaluate')")
     end = source.index("@tenant_admin_router.post('/knowledge/documents'", start)
     block = source[start:end]

@@ -23,7 +23,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_evaluate_intent_loads_no_train_and_propagates_to_classify():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # Refactor phase 3: handler bodies live in app/api/v1/handlers/*.py — use
+
+    # the aggregated source so asserts match regardless of file boundaries.
+
+    from tests._routes_aggregator import routes_aggregated_source
+
+    src = routes_aggregated_source()
     ep_idx = src.find('async def evaluate_intent_retrieval(')
     assert ep_idx > 0
     ep_window = src[ep_idx:ep_idx + 3500]
@@ -39,7 +45,13 @@ def test_evaluate_intent_loads_no_train_and_propagates_to_classify():
 
 
 def test_patch_settings_validates_no_train_is_bool():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # Refactor phase 3: handler bodies live in app/api/v1/handlers/*.py — use
+
+    # the aggregated source so asserts match regardless of file boundaries.
+
+    from tests._routes_aggregator import routes_aggregated_source
+
+    src = routes_aggregated_source()
     ep_idx = src.find('async def patch_settings(')
     assert ep_idx > 0
     ep_window = src[ep_idx:ep_idx + 6000]
@@ -49,7 +61,13 @@ def test_patch_settings_validates_no_train_is_bool():
 
 
 def test_patch_settings_audit_includes_changed_keys_diff():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # Refactor phase 3: handler bodies live in app/api/v1/handlers/*.py — use
+
+    # the aggregated source so asserts match regardless of file boundaries.
+
+    from tests._routes_aggregator import routes_aggregated_source
+
+    src = routes_aggregated_source()
     ep_idx = src.find('async def patch_settings(')
     assert ep_idx > 0
     # AUDIT-51 / HTTP-E2E follow-up: the function grew when jsonb hashing
@@ -145,7 +163,10 @@ def test_ws_fanout_increments_drop_and_crash_counters():
 
 
 def test_whatsapp_handler_freshness_prescan_before_raw_insert():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # After the routes.py refactor (phase 3) the webhook handlers live in
+    # app/api/v1/handlers/webhook_handlers.py — use the aggregated source.
+    from tests._routes_aggregator import routes_aggregated_source
+    src = routes_aggregated_source()
     ep_idx = src.find('async def receive_whatsapp_webhook(')
     assert ep_idx > 0
     ep_window = src[ep_idx:ep_idx + 8000]
@@ -164,7 +185,10 @@ def test_whatsapp_handler_freshness_prescan_before_raw_insert():
 
 
 def test_whatsapp_handler_skips_when_all_messages_stale():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # After the routes.py refactor (phase 3) the webhook handlers live in
+    # app/api/v1/handlers/webhook_handlers.py — use the aggregated source.
+    from tests._routes_aggregator import routes_aggregated_source
+    src = routes_aggregated_source()
     ep_idx = src.find('async def receive_whatsapp_webhook(')
     assert ep_idx > 0
     ep_window = src[ep_idx:ep_idx + 8000]
@@ -176,7 +200,10 @@ def test_whatsapp_handler_skips_when_all_messages_stale():
 def test_whatsapp_handler_does_not_skip_status_update_payloads():
     """Status updates (no `messages[]`) MUST NOT be filtered by the freshness
     pre-scan — they don't carry per-message timestamps and Meta handles dedup."""
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # After the routes.py refactor (phase 3) the webhook handlers live in
+    # app/api/v1/handlers/webhook_handlers.py — use the aggregated source.
+    from tests._routes_aggregator import routes_aggregated_source
+    src = routes_aggregated_source()
     ep_idx = src.find('async def receive_whatsapp_webhook(')
     assert ep_idx > 0
     ep_window = src[ep_idx:ep_idx + 8000]

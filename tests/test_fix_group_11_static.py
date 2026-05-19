@@ -86,7 +86,12 @@ def test_bug_075_supported_locales_include_account_locales_options():
 
 
 def test_bug_075_patch_profile_uses_extended_locale_set():
-    full_src = inspect.getsource(routes_module)
+    # After the routes.py refactor (phase 3) the me_router handlers live in
+    # app/api/v1/handlers/me_handlers.py — use the aggregated source so the
+    # assert keeps matching regardless of file boundaries.
+    from tests._routes_aggregator import routes_aggregated_source
+
+    full_src = routes_aggregated_source()
     assert 'SUPPORTED_USER_LOCALES' in full_src, (
         'BUG-075: el handler PATCH /me/profile debe usar '
         '`SUPPORTED_USER_LOCALES` (no `default_locale(code) for code in '

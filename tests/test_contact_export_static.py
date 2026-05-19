@@ -56,9 +56,11 @@ def test_export_endpoint_mounted_on_tenant_admin_router():
     podría dumpear el extracto de cualquier contacto.
     """
     source = _source_of('export_contact_data')
-    # El decorador de FastAPI no aparece en getsource(handler), así que
-    # vamos al source completo del módulo para verificarlo.
-    full = inspect.getsource(routes_module)
+    # Refactor phase 3: handlers live in app/api/v1/handlers/*.py — use the
+    # aggregated source so we can still assert on the decorator wiring.
+    from tests._routes_aggregator import routes_aggregated_source
+
+    full = routes_aggregated_source()
     decorator_idx = full.find(
         "@tenant_admin_router.get('/tenants/{tenant_id}/contacts/{contact_id}/export')"
     )
