@@ -6,7 +6,6 @@ import asyncio
 import json
 from uuid import uuid4
 
-import pytest
 
 
 def test_fanout_initial_state():

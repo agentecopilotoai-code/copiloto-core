@@ -1,7 +1,6 @@
 """Pure-helper tests for `app/services/qualification_flow.py`."""
 from __future__ import annotations
 
-import pytest
 
 
 # ───────── _parse_json ────────────────────────────────────────────────────

@@ -1,7 +1,6 @@
 """Pure-helper tests for `app/services/appointment_self_service.py`."""
 from __future__ import annotations
 
-import pytest
 
 
 # ───────── _parse_json ────────────────────────────────────────────────────

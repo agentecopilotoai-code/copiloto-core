@@ -6,7 +6,7 @@ settings normalizers that live in routes.py but are pure (no I/O).
 """
 from __future__ import annotations
 
-from datetime import datetime, time, timezone
+from datetime import datetime, timezone
 
 import pytest
 

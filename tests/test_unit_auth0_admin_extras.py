@@ -7,7 +7,6 @@ import asyncio
 from types import SimpleNamespace
 from uuid import uuid4
 
-import pytest
 
 
 def _disabled_settings():

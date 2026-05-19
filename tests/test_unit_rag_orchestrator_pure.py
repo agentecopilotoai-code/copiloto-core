@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 
 
 # ───────── _is_cloud_llm_configured ──────────────────────────────────────

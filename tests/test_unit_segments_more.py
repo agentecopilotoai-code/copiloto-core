@@ -3,7 +3,6 @@ and operator coverage (no DB). Complements test_unit_segments_evaluator.py
 which exercises the in-memory evaluator path."""
 from __future__ import annotations
 
-import pytest
 
 
 # ───────── _coerce_number ────────────────────────────────────────────────
