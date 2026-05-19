@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from time import monotonic
 
 import pytest
@@ -182,7 +181,8 @@ def test_authenticate_request_no_auth_with_x_tenant_id_raises():
 
     class _Req:
         def __init__(self):
-            class _State: pass
+            class _State:
+                pass
             self.state = _State()
             self.cookies = {}
 
@@ -199,7 +199,8 @@ def test_authenticate_request_invalid_bearer_scheme():
 
     class _Req:
         def __init__(self):
-            class _State: pass
+            class _State:
+                pass
             self.state = _State()
             self.cookies = {}
 
@@ -216,7 +217,8 @@ def test_authenticate_request_bearer_no_token():
 
     class _Req:
         def __init__(self):
-            class _State: pass
+            class _State:
+                pass
             self.state = _State()
             self.cookies = {}
 
@@ -234,7 +236,8 @@ def test_authenticate_request_anonymous_pass():
 
     class _Req:
         def __init__(self):
-            class _State: pass
+            class _State:
+                pass
             self.state = _State()
             self.cookies = {}
 

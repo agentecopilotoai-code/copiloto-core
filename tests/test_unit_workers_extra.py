@@ -622,7 +622,6 @@ def test_process_document_metadata_is_invalid_json(monkeypatch):
         await extraction_worker._process_document(conn, row)
     asyncio.run(_go())
     # Should have stamped failure
-    sqls = [sql for sql, _ in conn.executed]
     assert any('extraction_error' in str(args) or 'status' in s for s, args in conn.executed)
 
 

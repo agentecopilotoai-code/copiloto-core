@@ -335,7 +335,6 @@ def test_delete_media_file_local_swallows_oserror(monkeypatch, tmp_path):
 def test_queue_promo_message_pdf_promo(monkeypatch):
     """Hit the document-message-type branch."""
     from app.services.promotions import queue_promo_message
-    import json
 
     msg_id = uuid4()
     conn = _FakeConn(fetchrow_results=[{'id': msg_id}])

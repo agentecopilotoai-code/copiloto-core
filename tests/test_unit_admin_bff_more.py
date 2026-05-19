@@ -15,8 +15,7 @@ import base64
 import json
 import time
 from types import SimpleNamespace
-from uuid import UUID, uuid4
-from unittest.mock import patch
+from uuid import uuid4
 
 import httpx
 import pytest

@@ -1,10 +1,6 @@
 """More tests for `app/services/metrics.py` — refresh helpers + recorders."""
 from __future__ import annotations
 
-import asyncio
-
-import pytest
-
 
 # ═══ normalize_handoff_reason ═══════════════════════════════════════════
 

@@ -5,8 +5,6 @@ import asyncio
 import json
 from uuid import uuid4
 
-import pytest
-
 
 class _FakeConn:
     def __init__(self, *, fetch_results=None, fetchrow_results=None, fetchval_results=None):
