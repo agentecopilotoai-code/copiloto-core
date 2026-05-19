@@ -110,7 +110,8 @@ Workflow: `.github/workflows/auto-merge.yml`.
    - **No hubo nuevos commits durante el cool-down** (push reciente reinicia).
 5. Si todo cumple → `merge_method: squash` → comenta `✅ Auto-merged`.
 6. Si algo falla → comenta `🚫 Auto-merge skipped: <razón>` y espera el
-   próximo evento (otro push, review, o re-disparo del check_suite).
+   próximo evento (otro push, review, o re-disparo de `workflow_run`
+   cuando CI vuelva a correr).
 
 ### Cómo cancelar el auto-merge
 
@@ -123,7 +124,9 @@ Workflow: `.github/workflows/auto-merge.yml`.
 - `pull_request.labeled` (cuando alguien agrega la label)
 - `pull_request.synchronize` (nuevo push)
 - `pull_request_review.submitted` (alguien dio review)
-- `check_suite.completed` (CI terminó)
+- `workflow_run.completed` (workflow `CI` terminó — Codex P1 fix:
+  `check_suite.completed` NO se entrega para suites creadas por GH Actions,
+  dejando el auto-merger colgado; `workflow_run` SÍ se entrega siempre)
 - `workflow_dispatch` (manual con número de PR)
 
 ### Política end-to-end

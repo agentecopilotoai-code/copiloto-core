@@ -27,7 +27,20 @@ on:
     types: [labeled, synchronize, opened, reopened]
   pull_request_review:
     types: [submitted, dismissed]
-  check_suite:
+  # Codex P1 fix (PR #X): NO usar `check_suite.completed` — GitHub
+  # documenta explícitamente que `check_suite` NO triggera workflows cuando
+  # el suite fue creado por GitHub Actions (que es el caso del workflow
+  # `CI` de este repo). En el path común "auto-merge labeled antes que CI
+  # verde", el primer run del auto-merger salía como unsafe
+  # (mergeable_state=blocked) y NO había follow-up cuando CI terminaba,
+  # dejando el auto-merger colgado indefinidamente.
+  #
+  # `workflow_run` SÍ se entrega cuando un workflow termina,
+  # independientemente de quién lo creó. Filtramos a `CI` por nombre y
+  # `completed` por type. El job lee `workflow_run.pull_requests` para
+  # mapear a los PRs afectados.
+  workflow_run:
+    workflows: ['CI']
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -44,7 +57,7 @@ jobs:
       (github.event_name == 'workflow_dispatch') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'auto-merge')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.pull_request.labels.*.name, 'auto-merge')) ||
-      (github.event_name == 'check_suite' && github.event.check_suite.conclusion == 'success')
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
 
     steps:
       - name: Resolve PR + gate on auto-merge label
@@ -53,12 +66,12 @@ jobs:
         with:
           script: |
             // Job-level `if:` gates `pull_request` and `pull_request_review`
-            // events by label, but `check_suite` only checks `conclusion ==
-            // success` — it fires for every PR with a green CI even when the
-            // PR has no `auto-merge` label. Without an early label-check here,
-            // that path would run the 5-min sleep + safety check + post a
-            // "🚫 Auto-merge skipped: auto-merge label removed" comment on
-            // EVERY ordinary PR with green CI, which is noisy.
+            // events by label, but `workflow_run` only checks
+            // `conclusion == success` — fires for every PR with a green CI
+            // even when the PR has no `auto-merge` label. Sin chequeo
+            // temprano de label, ese path correría sleep 5min + safety check
+            // + comentaría "🚫 Auto-merge skipped: label removed" en CADA
+            // PR ordinario con CI verde, lo cual es ruidoso.
             //
             // This step resolves the PR number AND short-circuits before the
             // cool-down for any trigger whose PR doesn't carry the label.
@@ -72,10 +85,19 @@ jobs:
               prNumber = context.payload.inputs.pr_number;
             } else if (context.payload.pull_request) {
               prNumber = context.payload.pull_request.number;
-            } else if (eventName === 'check_suite') {
-              const checkSuite = context.payload.check_suite;
-              if (checkSuite && checkSuite.pull_requests && checkSuite.pull_requests.length > 0) {
-                prNumber = checkSuite.pull_requests[0].number;
+            } else if (eventName === 'workflow_run') {
+              // Codex P1 fix: el payload de `workflow_run` incluye
+              // `pull_requests[]` poblado por GitHub cuando el run pertenece
+              // a un PR (típicamente 1 entry — el PR del head_branch del
+              // run). Si está vacío (e.g. CI sobre push directo a develop),
+              // `prNumber` queda null y caemos al silent skip de abajo.
+              //
+              // `check_suite.completed` (el trigger viejo) NO se entregaba
+              // para suites creadas por GH Actions, dejando el auto-merger
+              // colgado. `workflow_run` SÍ se entrega siempre.
+              const wr = context.payload.workflow_run;
+              if (wr && wr.pull_requests && wr.pull_requests.length > 0) {
+                prNumber = wr.pull_requests[0].number;
               }
             }
 
@@ -87,7 +109,7 @@ jobs:
             }
 
             // Re-fetch PR to read its current labels (the payload labels list
-            // can be stale for `check_suite` events) and gate on the label.
+            // can be stale for `workflow_run` events) and gate on the label.
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
