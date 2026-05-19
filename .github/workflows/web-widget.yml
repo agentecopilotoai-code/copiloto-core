@@ -1,11 +1,8 @@
 name: Web Widget — build, size check & CDN publish
 
 on:
-  push:
-    branches: [main, develop]
-    paths:
-      - 'web-widget/**'
-      - '.github/workflows/web-widget.yml'
+  # 2026-05-19: removido `push:` para ahorrar Actions minutes (flujo local).
+  # Ver scripts/ci-local-full.sh.
   pull_request:
     branches: [main, develop]
     paths:

@@ -1,10 +1,14 @@
 name: CI
 
 on:
-  push:
-    branches: [main, develop]
+  # 2026-05-19: removido `push:` para ahorrar Actions minutes.
+  # Flujo local: 6 tareas → 1 PR. La verificación previa se hace con
+  # scripts/ci-local-fast.sh (tras cada tarea) y scripts/ci-local-full.sh
+  # (antes de abrir el PR). GitHub Actions corre solo como gate final
+  # cuando se abre el PR a main/develop.
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
 
 # Fail-fast por PR/branch: cuando llega un push nuevo, cancela el run en
 # curso del MISMO PR (o branch directa). Ahorra runner time durante una

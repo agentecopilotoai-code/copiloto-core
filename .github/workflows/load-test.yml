@@ -1,16 +1,13 @@
 name: Load test
 
 # TASK-0072: corre el escenario Locust contra un compose efímero y regenera
-# docs/sla.md con los percentiles del último run. Se dispara en:
-#   - cada release (lo que pide el backlog),
-#   - cada push a main, para detectar regresiones tras un merge,
-#   - workflow_dispatch, para validar PRs sensibles a rendimiento bajo demanda.
+# docs/sla.md con los percentiles del último run.
+# 2026-05-19: removido `push: main` para ahorrar Actions minutes (flujo local).
+# Quedan release + workflow_dispatch.
 
 on:
   release:
     types: [published]
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       users:
