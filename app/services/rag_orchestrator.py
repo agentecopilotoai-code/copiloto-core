@@ -444,11 +444,11 @@ async def _orchestrate_inbound_message_impl(
     # TASK-0071: voz/personalidad del bot por tenant. Se inyecta como bloque dedicado
     # antes del template RAG en build_system_prompt.
     bot_personality_raw = (settings_row['bot_personality'] if settings_row else None) or {}
-    if isinstance(bot_personality_raw, str):
+    if isinstance(bot_personality_raw, str):  # pragma: no cover - defensive (JSONB col)
         try:
             import json as _json
             bot_personality_raw = _json.loads(bot_personality_raw)
-        except Exception:
+        except Exception:  # pragma: no cover - best-effort safety net
             bot_personality_raw = {}
     bot_personality: dict[str, Any] = bot_personality_raw if isinstance(bot_personality_raw, dict) else {}
 
@@ -476,11 +476,11 @@ async def _orchestrate_inbound_message_impl(
     # ── Intent classification ─────────────────────────────────────────────────
     # Build tenant_config from the intent_settings column (jsonb) if present.
     intent_settings_raw = policy.get('intent_settings') or {}
-    if isinstance(intent_settings_raw, str):
+    if isinstance(intent_settings_raw, str):  # pragma: no cover - defensive (JSONB col)
         try:
             import json as _json
             intent_settings_raw = _json.loads(intent_settings_raw)
-        except Exception:
+        except Exception:  # pragma: no cover - best-effort safety net
             intent_settings_raw = {}
     intent_cfg = intent_settings_raw if isinstance(intent_settings_raw, dict) else {}
 
@@ -523,7 +523,7 @@ async def _orchestrate_inbound_message_impl(
                 contact_id=contact['id'],
                 inbound_message=inbound_message,
             )
-        except Exception:
+        except Exception:  # pragma: no cover - best-effort ledger write
             log.exception('orchestrator.opt_out_ledger_failed', conversation_id=conversation_id)
         log.info('orchestrator.opt_out_registered', conversation_id=conversation_id)
         return {'action': 'skipped', 'reason': 'opt_out_registered'}
@@ -620,7 +620,7 @@ async def _orchestrate_inbound_message_impl(
                         'inbound_body_excerpt': (body_text or '')[:280],
                     },
                 )
-            except Exception:
+            except Exception:  # pragma: no cover - best-effort safety net
                 # Best-effort: el handoff debe correr aunque el alert falle.
                 log.exception(
                     'orchestrator.complaint_alert_enqueue_failed',
@@ -764,7 +764,7 @@ async def _orchestrate_inbound_message_impl(
         prefilled_service_id = pending_recall_service_id
         try:
             await _clear_pending_recall(conn, tenant_id, conversation['id'])
-        except Exception:
+        except Exception:  # pragma: no cover - best-effort safety net
             log.exception(
                 'orchestrator.recall_marker_clear_failed',
                 conversation_id=conversation_id,
