@@ -864,13 +864,20 @@ def test_ws_stream_happy_path_sends_connected_then_heartbeat(monkeypatch):
 
     # The queue never receives messages; the WS handler will hit the heartbeat
     # branch after the (asyncio.wait_for) timeout. We monkeypatch asyncio.wait_for
-    # to raise TimeoutError immediately so we don't actually wait 25s.
+    # to raise TimeoutError immediately so we don't actually wait 25s. To avoid
+    # a tight loop that hangs CI (when client-side close doesn't propagate fast
+    # enough across Python versions), the second call raises WebSocketDisconnect
+    # to exit the handler's `while True` cleanly via its except branch.
     real_wait_for = asyncio.wait_for
+    call_count = {'n': 0}
 
     async def _fast_wait_for(awaitable, timeout):
-        # Cancel the underlying awaitable and raise TimeoutError
+        from starlette.websockets import WebSocketDisconnect
         if asyncio.iscoroutine(awaitable):
             awaitable.close()
+        call_count['n'] += 1
+        if call_count['n'] >= 2:
+            raise WebSocketDisconnect(1000)
         raise asyncio.TimeoutError
 
     class _Fanout:
@@ -902,8 +909,9 @@ def test_ws_stream_happy_path_sends_connected_then_heartbeat(monkeypatch):
                 # Second frame: heartbeat (because wait_for raises TimeoutError)
                 heartbeat = ws.receive_json()
                 assert heartbeat['type'] == 'heartbeat'
-                # Close from client side
-                ws.close()
+                # The 2nd wait_for call raises WebSocketDisconnect → server
+                # exits the loop cleanly. The TestClient detects the close
+                # when we leave the context manager.
         # Unsubscribed at finally
         assert fanout.unsubscribed is True
     finally:
