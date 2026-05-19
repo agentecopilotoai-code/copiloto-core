@@ -1606,3 +1606,40 @@ create policy tenant_modules_support_update on app.tenant_modules
   for update using (app.support_mode()) with check (app.support_mode());
 create policy tenant_modules_support_delete on app.tenant_modules
   for delete using (app.support_mode());
+
+-- ============================================================================
+-- TASK-INFLU-002 — Platform AI providers + secret store (fresh-install)
+-- ============================================================================
+-- Ver `03-migrations.sql` para el bloque idempotente equivalente + la
+-- discusión de decisión D3 (config solo para platform_owner).
+
+create table if not exists app.platform_secrets (
+  secret_ref    text primary key,
+  backend       text not null check (backend in ('env', 'aws_sm', 'vault', 'file')),
+  ciphertext    bytea null,
+  hint          text not null,
+  created_at    timestamptz not null default now(),
+  rotated_at    timestamptz null,
+  created_by    uuid null references app.users(id) on delete set null
+);
+alter table app.platform_secrets enable row level security;
+
+create table if not exists app.platform_ai_providers (
+  modality      text primary key check (modality in ('llm', 'image', 'video', 'tts', 'stt')),
+  provider      text not null,
+  secret_ref    text null references app.platform_secrets(secret_ref) on delete set null,
+  model         text null,
+  params        jsonb not null default '{}'::jsonb,
+  updated_at    timestamptz not null default now(),
+  updated_by    uuid null references app.users(id) on delete set null
+);
+alter table app.platform_ai_providers enable row level security;
+
+insert into app.platform_ai_providers (modality, provider, model)
+values
+  ('llm',   'unset', null),
+  ('image', 'unset', null),
+  ('video', 'unset', null),
+  ('tts',   'unset', null),
+  ('stt',   'unset', null)
+on conflict (modality) do nothing;

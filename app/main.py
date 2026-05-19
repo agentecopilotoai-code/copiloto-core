@@ -6,6 +6,11 @@ from app.api.v1.routes import router as v1_router
 from app.admin.routes import router as admin_router
 from app.core.config import get_settings
 from app.influencer.router import influencer_router
+# TASK-INFLU-002 — import side-effect que registra los endpoints
+# `/v1/platform/ai-providers*` sobre `platform_admin_router`. Sin este
+# import, los decoradores `@platform_admin_router.X` del archivo nunca
+# corren y las rutas no aparecen en la app.
+from app.influencer import admin_routes as _influencer_admin_routes  # noqa: F401
 from app.core.logging import configure_logging
 from app.db.pool import db
 from app.services.metrics import (

@@ -204,3 +204,64 @@ create policy tenant_modules_support_delete
   on app.tenant_modules
   for delete
   using (app.support_mode());
+
+-- ============================================================================
+-- TASK-INFLU-002 — Platform AI providers + secret store
+-- ============================================================================
+--
+-- Tabla global (sin tenant_id) que guarda la configuración del proveedor de
+-- IA para cada modalidad del módulo Influencer. Decisión D3 del backlog:
+-- SOLO `platform_owner` con MFA puede leer/editar estas filas — el tenant
+-- jamás ve ni modifica qué proveedor está activo. Los endpoints viven en
+-- `platform_admin_router`.
+--
+-- Modalidades:
+--   - llm     → captions, descripciones de identidad, decisiones de bot
+--   - image   → fotos de personajes, escenas, anuncios visuales
+--   - video   → reels, historias, anuncios en video
+--   - tts     → voz del personaje (sample del wizard + narración de reels)
+--   - stt     → transcripción opcional para audio inputs
+--
+-- Storage de secretos en tabla separada `app.platform_secrets` con
+-- `secret_ref` opaco — el contenido `ciphertext` nunca se devuelve por API
+-- después de configurar. El operador ve solo el `hint` (últimos 4 chars).
+
+create table if not exists app.platform_secrets (
+  secret_ref    text primary key,                       -- e.g. 'aws-sm://copilotoia/grok/prod'
+  backend       text not null check (backend in ('env', 'aws_sm', 'vault', 'file')),
+  ciphertext    bytea null,                             -- opcional: encriptado at-rest (env/aws_sm pueden delegar)
+  hint          text not null,                          -- últimos 4 chars en claro — para que el operador identifique cuál key está activa
+  created_at    timestamptz not null default now(),
+  rotated_at    timestamptz null,
+  created_by    uuid null references app.users(id) on delete set null
+);
+
+-- NO RLS: la tabla es accesible solo desde funciones SECURITY DEFINER o
+-- desde el path del app después de `require_platform_owner`. Sin policy
+-- equivale a "deny all" en el rol del app — el código tiene que pasar por
+-- el dependency de auth antes de leer/escribir.
+alter table app.platform_secrets enable row level security;
+
+create table if not exists app.platform_ai_providers (
+  modality      text primary key check (modality in ('llm', 'image', 'video', 'tts', 'stt')),
+  provider      text not null,                          -- 'grok' | 'anthropic' | 'openai' | 'elevenlabs' | 'ollama' | 'local_sdxl' | 'local_whisper'
+  secret_ref    text null references app.platform_secrets(secret_ref) on delete set null,
+  model         text null,                              -- e.g. 'grok-4.3', 'grok-imagine-image-quality', 'claude-3-5-sonnet'
+  params        jsonb not null default '{}'::jsonb,     -- { fallback_chain: [...], timeout_seconds: 30, ... }
+  updated_at    timestamptz not null default now(),
+  updated_by    uuid null references app.users(id) on delete set null
+);
+
+alter table app.platform_ai_providers enable row level security;
+
+-- Seed de las 5 modalidades sin proveedor — endpoints PATCH luego setean
+-- provider + secret. Esto permite que el helper `resolve_provider` siempre
+-- vea las 5 filas y caiga a fallback env-var si no hay configuración.
+insert into app.platform_ai_providers (modality, provider, model)
+values
+  ('llm',   'unset', null),
+  ('image', 'unset', null),
+  ('video', 'unset', null),
+  ('tts',   'unset', null),
+  ('stt',   'unset', null)
+on conflict (modality) do nothing;
