@@ -2858,12 +2858,22 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
             changed_keys.append(key)
             if key in privacy_sensitive_keys:
                 # Solo para keys privacy-sensitive, capturar valor previo+nuevo.
-                # bools y strings son seguros de inline; dicts (jsonb) los
-                # marcamos con hash sha256 truncado para forensia sin leak.
-                if isinstance(old_val, (bool, str, int, float, type(None))):
-                    audit_meta[f'{key}_previous'] = old_val
-                    audit_meta[f'{key}_new'] = new_val
-                else:
+                # AUDIT-51 round-3 §1.2 bugfix (HTTP E2E exposed it):
+                # asyncpg returns jsonb columns as str (the JSON-encoded text),
+                # not dict. The original `isinstance(old_val, str)` branch
+                # therefore INLINED the raw JSON for `pii_policy` /
+                # `escalation_policy` / `notification_settings` — leaking the
+                # exact privacy policy + webhook URLs (which may contain
+                # secrets) into the audit table.
+                #
+                # Fix: keys known to be jsonb ALWAYS get hashed regardless of
+                # the runtime Python type. The whitelist of jsonb-known keys
+                # mirrors the SET clause of the UPDATE below.
+                JSONB_KEYS = {
+                    'pii_policy', 'escalation_policy', 'notification_settings',
+                    'business_hours', 'bot_personality',
+                }
+                if key in JSONB_KEYS:
                     import hashlib as _h  # noqa: PLC0415
                     old_hash = _h.sha256(
                         json.dumps(old_val, sort_keys=True, default=str).encode()
@@ -2873,6 +2883,18 @@ async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn:
                     ).hexdigest()[:12]
                     audit_meta[f'{key}_previous_hash'] = old_hash
                     audit_meta[f'{key}_new_hash'] = new_hash
+                elif isinstance(old_val, (bool, str, int, float, type(None))):
+                    audit_meta[f'{key}_previous'] = old_val
+                    audit_meta[f'{key}_new'] = new_val
+                else:
+                    # Fallback (defensive): hash anything unexpected.
+                    import hashlib as _h  # noqa: PLC0415
+                    audit_meta[f'{key}_previous_hash'] = _h.sha256(
+                        json.dumps(old_val, sort_keys=True, default=str).encode()
+                    ).hexdigest()[:12]
+                    audit_meta[f'{key}_new_hash'] = _h.sha256(
+                        json.dumps(new_val, sort_keys=True, default=str).encode()
+                    ).hexdigest()[:12]
     audit_meta['changed_keys'] = changed_keys
     await audit(
         conn,

@@ -52,7 +52,11 @@ def test_patch_settings_audit_includes_changed_keys_diff():
     src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
     ep_idx = src.find('async def patch_settings(')
     assert ep_idx > 0
-    ep_window = src[ep_idx:ep_idx + 8000]
+    # AUDIT-51 / HTTP-E2E follow-up: the function grew when jsonb hashing
+    # was reworked (asyncpg returns jsonb as str, so the `isinstance(str)`
+    # branch was inlining raw JSON values — now we whitelist jsonb-known keys
+    # to always hash). Bumped window from 8000 to 12000 chars.
+    ep_window = src[ep_idx:ep_idx + 12000]
     # The audit call passes metadata with diff
     assert 'audit_meta' in ep_window
     assert "audit_meta['changed_keys'] = changed_keys" in ep_window

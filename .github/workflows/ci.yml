@@ -80,17 +80,25 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Journey E2E tests
+      - name: Journey E2E tests (service-layer scenarios)
         run: |
-          pytest tests/test_journey_e2e.py -m e2e -v --tb=short \
+          pytest tests/test_journey_e2e.py tests/test_rls_multitenant_e2e.py \
+            -m e2e -v --tb=short \
             --junitxml=pytest-e2e-report.xml
 
-      - name: Upload E2E report
+      - name: HTTP-boundary E2E tests (FastAPI app + middleware + auth)
+        run: |
+          pytest tests/test_e2e_http_*.py -m e2e -v --tb=short \
+            --junitxml=pytest-e2e-http-report.xml
+
+      - name: Upload E2E reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pytest-e2e-report
-          path: pytest-e2e-report.xml
+          path: |
+            pytest-e2e-report.xml
+            pytest-e2e-http-report.xml
 
   admin-panel:
     name: "Admin Panel — install, lint & build"

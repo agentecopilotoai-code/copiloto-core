@@ -34,6 +34,13 @@ load = ["locust>=2.31,<3"]
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint.per-file-ignores]
+# pytest fixtures imported via `from tests.conftest_e2e_http import http_app, ...`
+# are intentionally re-shadowed across test files for fixture discovery —
+# F811 ("redefinition of unused name") is a false positive in this pattern.
+"tests/test_e2e_http_*.py" = ["F811"]
+"tests/conftest_e2e_http.py" = ["F811"]
+
 [tool.setuptools.packages.find]
 include = ["app*"]
 
