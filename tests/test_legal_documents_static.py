@@ -29,9 +29,9 @@ from app.services.legal import (
     legal_public_url,
     render_markdown_to_safe_html,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 CONSENT = Path('app/services/consent.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/app/modules.js')
@@ -201,7 +201,7 @@ def test_legal_document_draft_create_schema_enforces_kind():
 
 
 def test_routes_register_public_legal_get_and_admin_endpoints():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert "@public_router.get('/tenants/{tenant_id}/legal/{kind}')" in src
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/legal')" in src
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/legal', status_code=201)" in src
@@ -212,7 +212,7 @@ def test_routes_register_public_legal_get_and_admin_endpoints():
 
 
 def test_routes_audit_legal_publishing_actions():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert "action='legal_document.drafted'" in src
     assert "action='legal_document.published'" in src
     assert "entity_type='tenant_legal_document'" in src

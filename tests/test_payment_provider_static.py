@@ -24,10 +24,10 @@ from app.services.payment_provider import (
     verify_mercadopago_signature,
     verify_stripe_signature,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-API_ROUTES = Path('app/api/v1/routes.py')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
 PAYMENT_SERVICE = Path('app/services/payment_provider.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
@@ -263,7 +263,7 @@ def test_schema_has_payment_columns():
 
 
 def test_routes_register_payment_endpoints():
-    text = API_ROUTES.read_text(encoding='utf-8')
+    text = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/payments/settings')" in text
     assert "@tenant_admin_router.put('/tenants/{tenant_id}/payments/settings')" in text
     assert "@tenant_ops_router.post('/appointments/{appointment_id}/payment-link')" in text

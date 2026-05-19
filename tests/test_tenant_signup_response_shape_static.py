@@ -40,12 +40,8 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
-from pathlib import Path
 
 from app.api.v1 import routes as routes_module
-
-ROUTES = Path('app/api/v1/routes.py')
-
 
 def _handler_source() -> str:
     return textwrap.dedent(inspect.getsource(routes_module.create_own_tenant))

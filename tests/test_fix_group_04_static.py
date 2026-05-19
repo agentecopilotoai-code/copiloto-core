@@ -14,14 +14,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 CAMPAIGNS_HOOK = Path('admin-panel/src/features/manager/campaigns/hooks/useCampaignsData.js')
 SEGMENTS_HOOK = Path('admin-panel/src/features/manager/segments/hooks/useSegmentsData.js')
 AUDIT = Path('app/services/audit.py')
-ROUTES = Path('app/api/v1/routes.py')
-
-
 # ───── BUG-038 — Campaigns editingId vs selectedId ───────────────────────
 
 
@@ -92,7 +90,7 @@ def test_bug_040_supported_countries_iterated_not_values():
     SUPPORTED_COUNTRIES, y la fuente de verdad debe ser una constante
     canonical (no inline iteration).
     """
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # No queremos ver `.values()` directamente sobre SUPPORTED_COUNTRIES.
     assert 'SUPPORTED_COUNTRIES.values()' not in src, (
         'BUG-040: regresión — `SUPPORTED_COUNTRIES.values()` reaparece. '
@@ -133,7 +131,7 @@ def test_bug_041_audit_json_dumps_uses_default_str():
 
 def test_bug_042_create_own_tenant_returns_roles_array():
     """El response debe incluir `roles: ['owner']` además de `user_role`."""
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Anchor a la función create_own_tenant.
     assert "response['roles'] = ['owner']" in src, (
         'BUG-042: regresión — `create_own_tenant` ya no incluye `roles: '

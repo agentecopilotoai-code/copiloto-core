@@ -38,11 +38,11 @@ from app.services.outbound_dlq import (
     normalize_error_code,
     requeue_message,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
 ALERTS_YAML = Path('infra/observability/alerts.yaml')
-ROUTES = Path('app/api/v1/routes.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 METRICS = Path('app/services/metrics.py')
@@ -574,7 +574,7 @@ def test_alerts_yaml_ships_outbound_dlq_growing_rule():
 
 
 def test_routes_register_dlq_endpoints_on_operations_router():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_ops_router.get('/tenants/{tenant_id}/outbound/dlq')" in source
     assert (
         "@tenant_ops_router.post('/tenants/{tenant_id}/outbound/dlq/{message_id}/retry')"

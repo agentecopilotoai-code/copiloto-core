@@ -22,10 +22,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 PLATFORM_INCIDENTS = Path('app/services/platform_incidents.py')
-ROUTES = Path('app/api/v1/routes.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 
 
@@ -55,7 +55,7 @@ def test_bug_215_pii_keys_include_inbound_body_excerpt():
 
 
 def test_bug_216_list_conversations_excludes_internal_digest():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('@tenant_ops_router.get(\'/conversations\')\nasync def list_conversations(')
     assert fn_idx > 0
     next_fn = src.find('\n@tenant_ops_router', fn_idx + 10)

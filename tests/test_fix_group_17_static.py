@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox/OperationsDesk.jsx')
@@ -90,7 +91,7 @@ def test_bug_106_tenant_analytics_router_allows_viewer_or_lower():
     `require_min_role('viewer')`. Como agent > viewer en la jerarquía,
     agent también pasa el gate — no más 403 en analytics.
     """
-    src = Path('app/api/v1/routes.py').read_text()
+    src = routes_aggregated_source()
     block_idx = src.find('tenant_analytics_router = APIRouter(')
     assert block_idx > 0
     block_end = src.find('tenant_manager_router', block_idx)

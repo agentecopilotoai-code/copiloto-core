@@ -17,15 +17,15 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
 def _tenant_setup_source() -> str:
     return '\n'.join(p.read_text() for p in sorted(TENANT_SETUP_FEATURE.rglob('*.js*')))
 
 def _payments_webhook_block() -> str:
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     # The appointment-payments webhook lives above the subscription one; the
     # block we care about ends at the first ``return`` after the update of
     # ``app.appointments``.
@@ -37,7 +37,7 @@ def _payments_webhook_block() -> str:
 
 
 def _subscription_webhook_block() -> str:
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('subscription = await conn.fetchrow')
     end = source.index('@', start + 1)
     return source[start:end]
@@ -123,7 +123,7 @@ def test_subscription_webhook_audits_both_rejection_reasons():
 
 
 def test_admin_payments_settings_refuses_provider_without_secret():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def update_tenant_payment_settings(')
     end = source.index('\n@', start + 1)
     block = source[start:end]

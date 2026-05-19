@@ -18,11 +18,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 AGENT_CSV = Path('admin-panel/src/features/owner-admin/analytics/agentPerformanceData.js')
 APPT_CSV = Path('admin-panel/src/features/viewer/appointments/viewerAppointmentsData.js')
-ROUTES = Path('app/api/v1/routes.py')
 BRANCH_FORM = Path('admin-panel/src/features/owner-admin/branches/components/BranchFormDrawer.jsx')
 
 
@@ -46,7 +46,7 @@ def test_bug_225_appointments_csv_escapes_formula_triggers():
 
 
 def test_bug_226_widget_snippet_escapes_logo_url():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('def _build_widget_snippet(')
     next_def = src.find('\n@tenant_admin_router', fn_idx)
     block = src[fn_idx:next_def]

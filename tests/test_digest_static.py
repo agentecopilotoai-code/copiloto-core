@@ -39,10 +39,10 @@ from app.services.digest import (
     safe_zone,
     whatsapp_template_for_cadence,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 COMPOSE = Path('docker-compose.yml')
 WORKER = Path('app/workers/digest_worker.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
@@ -349,7 +349,7 @@ def test_worker_module_exists_and_dispatches_idempotently():
 
 
 def test_api_routes_expose_digest_subscriptions_crud():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     # BUG-036 (fix-group-03): los 4 endpoints migraron de `tenant_admin_router`
     # (admin+) a `tenant_manager_router` (manager+) para matchear la
     # capability `digest.write` que la UI expone a managers. Antes había

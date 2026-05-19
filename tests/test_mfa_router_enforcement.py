@@ -11,8 +11,8 @@ import re
 from pathlib import Path
 
 import pytest
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES_FILE = Path('app/api/v1/routes.py')
 ADMIN_ROUTES_FILE = Path('app/admin/routes.py')
 ROUTER_FILE = Path('admin-panel/src/app/router.jsx')
 MFA_BLOCKER_FILE = Path('admin-panel/src/components/domain/MfaRequiredBlocker.jsx')
@@ -29,25 +29,25 @@ def _router_block(source: str, router_name: str) -> str:
 
 
 def test_tenant_admin_router_attaches_mfa_dependency():
-    source = ROUTES_FILE.read_text()
+    source = routes_aggregated_source()
     block = _router_block(source, 'tenant_admin_router')
     assert 'require_mfa_for_privileged' in block
 
 
 def test_platform_admin_router_attaches_mfa_dependency():
-    source = ROUTES_FILE.read_text()
+    source = routes_aggregated_source()
     block = _router_block(source, 'platform_admin_router')
     assert 'require_mfa_for_privileged' in block
 
 
 def test_tenant_signup_router_attaches_mfa_dependency():
-    source = ROUTES_FILE.read_text()
+    source = routes_aggregated_source()
     block = _router_block(source, 'tenant_signup_router')
     assert 'require_mfa_for_privileged' in block
 
 
 def test_tenant_catalog_router_attaches_mfa_dependency():
-    source = ROUTES_FILE.read_text()
+    source = routes_aggregated_source()
     block = _router_block(source, 'tenant_catalog_router')
     assert 'require_mfa_for_privileged' in block
 
@@ -55,19 +55,19 @@ def test_tenant_catalog_router_attaches_mfa_dependency():
 def test_tenant_ops_router_does_not_require_mfa():
     """Agents (handoff helpers) explicitly do not need MFA — the dependency
     only fires for privileged roles."""
-    source = ROUTES_FILE.read_text()
+    source = routes_aggregated_source()
     block = _router_block(source, 'tenant_ops_router')
     assert 'require_mfa_for_privileged' not in block
 
 
 def test_tenant_analytics_router_does_not_require_mfa():
-    source = ROUTES_FILE.read_text()
+    source = routes_aggregated_source()
     block = _router_block(source, 'tenant_analytics_router')
     assert 'require_mfa_for_privileged' not in block
 
 
 def test_routes_import_includes_require_mfa():
-    source = ROUTES_FILE.read_text()
+    source = routes_aggregated_source()
     assert 'require_mfa_for_privileged' in source
     # Confirm the import isn't dead code:
     occurrences = source.count('require_mfa_for_privileged')

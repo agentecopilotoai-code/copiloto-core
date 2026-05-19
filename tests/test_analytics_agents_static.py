@@ -9,8 +9,8 @@ contenedor.
 """
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')
@@ -31,7 +31,7 @@ def test_appointments_table_has_metadata_jsonb_column():
 
 
 def test_create_appointment_persists_closed_by_user_id():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     create_block = source.split('@tenant_ops_router.post(\'/appointments\', status_code=201)')[1]
     create_block = create_block.split('@tenant_ops_router')[0]
     assert "current_user_id_from_request(request, conn)" in create_block
@@ -41,7 +41,7 @@ def test_create_appointment_persists_closed_by_user_id():
 
 
 def test_update_appointment_sets_closed_by_user_id_on_status_transitions():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     update_block = source.split('async def update_appointment(')[1]
     update_block = update_block.split('@tenant_ops_router')[0]
     assert "current_user_id_from_request(request, conn)" in update_block
@@ -51,7 +51,7 @@ def test_update_appointment_sets_closed_by_user_id_on_status_transitions():
 
 
 def test_analytics_agents_endpoint_is_registered():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     # BUG-171 (fix-group-30) movió el decorator a multi-línea para alojar
     # `dependencies=[Depends(require_min_role('manager'))]`. Validamos los
     # dos componentes (decorator path + handler name) en vez del match
@@ -62,7 +62,7 @@ def test_analytics_agents_endpoint_is_registered():
 
 
 def test_analytics_agents_computes_required_metrics():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     block = source.split('async def analytics_agents(')[1]
     block = block.split('SEGMENT_PROJECTION')[0]
     # Only agents in this tenant.
@@ -93,7 +93,7 @@ def test_analytics_agents_never_casts_text_user_id_to_uuid():
     subject). The safe direction is to cast the agent's ``users.id`` (always
     a uuid) to text and join on text equality.
     """
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     block = source.split('async def analytics_agents(')[1]
     block = block.split('SEGMENT_PROJECTION')[0]
     # No "<text col>::uuid = <uuid col>" join in the final select.
@@ -109,7 +109,7 @@ def test_analytics_agents_never_casts_text_user_id_to_uuid():
 
 
 def test_analytics_agents_returns_top_performer_and_totals():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     block = source.split('async def analytics_agents(')[1]
     block = block.split('SEGMENT_PROJECTION')[0]
     assert "'top_performer_user_id'" in block
@@ -191,7 +191,7 @@ def test_analytics_agents_appts_closed_qualifies_metadata_with_table_alias():
     The fix qualifies the SELECT with `a.metadata` (matching the WHERE and
     GROUP BY which already used the alias).
     """
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     # Locate the `appts_closed as (` CTE and read until the next CTE/SELECT.
     cte_start = source.index('appts_closed as (')
     cte_end = source.index('),', cte_start)

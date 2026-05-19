@@ -27,11 +27,11 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+from tests._routes_aggregator import routes_aggregated_source
 
 
 UI_BACKLOG = Path('docs/UI_BACKLOG.md')
 BACKLOG = Path('docs/BACKLOG.md')
-ROUTES = Path('app/api/v1/routes.py')
 SECURITY = Path('app/core/security.py')
 GLOBAL_CSS = Path('admin-panel/src/styles/global.css')
 TOKENS_CSS = Path('admin-panel/src/styles/tokens.css')
@@ -126,7 +126,7 @@ def test_bug_130_real_tenant_routes_still_exist():
     """Defensa: las rutas reales `POST/GET /tenants` y
     `PATCH /tenants/{id}/status` siguen en `platform_admin_router`.
     """
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert "@platform_admin_router.post('/tenants'," in src, (
         'BUG-130: `POST /v1/tenants` (en platform_admin_router) debe existir.'
     )

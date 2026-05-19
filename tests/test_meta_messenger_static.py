@@ -21,10 +21,10 @@ from app.services.meta_messenger import (
     service_window_expiry,
     verify_messenger_signature,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 DB_SCHEMA = Path('infra/postgres/01-schema.sql')
 META_MESSENGER = Path('app/services/meta_messenger.py')
-API_ROUTES = Path('app/api/v1/routes.py')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
@@ -250,7 +250,7 @@ async def test_send_messenger_message_raises_outside_window_and_validates_provid
 
 
 def test_webhook_get_route_supports_meta_provider_path_and_verify_token_lookup():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@webhook_router.get('/meta/{provider}')" in source
     assert 'verify_messenger_webhook' in source
     assert 'META_MESSENGER_PROVIDERS' in source
@@ -260,7 +260,7 @@ def test_webhook_get_route_supports_meta_provider_path_and_verify_token_lookup()
 
 
 def test_webhook_post_route_validates_signature_and_persists_messages():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@webhook_router.post('/meta/{provider}'" in source
     assert 'receive_messenger_webhook' in source
     assert 'verify_messenger_signature(body, x_hub_signature_256, app_secret)' in source
@@ -277,7 +277,7 @@ def test_webhook_post_route_validates_signature_and_persists_messages():
 
 
 def test_webhook_post_sets_service_window_expiry_on_conversation():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'service_window_expiry(' in source
     assert 'service_window_expires_at=$' in source
     assert 'service_window_hours' in source
@@ -310,7 +310,7 @@ def test_event_worker_dispatches_to_messenger_send_and_blocks_outside_window():
 
 
 def test_messenger_channel_upsert_endpoint_writes_secrets_and_audits():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/channels/messenger')" in source
     assert "@tenant_admin_router.put('/tenants/{tenant_id}/channels/messenger')" in source
     assert 'def list_messenger_channels(' in source

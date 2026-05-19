@@ -1,7 +1,7 @@
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 # UI-007.3: the contacts module was split into a feature directory.
@@ -59,7 +59,7 @@ def test_contact_tags_tables_defined_with_rls():
 
 
 def test_contact_crm_endpoints_registered():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_ops_router.get('/tenants/{tenant_id}/contact-tags')" in source
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/contact-tags', status_code=201)" in source
     assert "@tenant_admin_router.patch('/tenants/{tenant_id}/contact-tags/{tag_id}')" in source
@@ -87,14 +87,14 @@ def test_contact_crm_schemas_defined():
 
 
 def test_inbox_includes_contact_tags():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     # The conversations list endpoint enriches each item with the contact's tags.
     assert "conversation['contact_tags']" in source
     assert "from app.contact_tag_assignments cta" in source
 
 
 def test_contact_profile_returns_full_history():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'get_contact_profile' in source
     assert "from app.appointments" in source
     assert "from app.contact_notes n" in source

@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 PACKAGES = Path('admin-panel/src/features/owner-admin/packages/Packages.jsx')
@@ -38,9 +39,6 @@ USE_CONTACTS_DATA = Path(
 MATRIX = Path('admin-panel/src/permissions/matrix.js')
 MODULES = Path('admin-panel/src/app/modules.js')
 ROLES_ACL_DATA = Path('admin-panel/src/features/platform/roles-acl/rolesAclData.js')
-ROUTES = Path('app/api/v1/routes.py')
-
-
 # ───── BUG-113 — error inline en el modal ────────────────────────────────
 
 
@@ -174,7 +172,7 @@ def test_bug_114_services_mutations_remain_on_admin_router():
     un router con role más bajo, BUG-114 se vuelve VIGENTE. Este test defiende
     el statu-quo (los 4 mutadores siguen siendo admin+).
     """
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     for path in (
         "@tenant_admin_router.post('/tenants/{tenant_id}/services'",
         "@tenant_admin_router.patch('/tenants/{tenant_id}/services/{service_id}'",

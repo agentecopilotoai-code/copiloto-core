@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 BOT_PERSONALITY_TEST = Path('tests/test_bot_personality_static.py')
@@ -41,9 +42,6 @@ WHATSAPP_WIZARD_STEPS = Path(
 )
 SCHEMA = Path('infra/postgres/01-schema.sql')
 MIGRATIONS = Path('infra/postgres/03-migrations.sql')
-ROUTES = Path('app/api/v1/routes.py')
-
-
 # ───── BUG-108 — rglob excluye tests ─────────────────────────────────────
 
 
@@ -147,7 +145,7 @@ def test_bug_112_migrations_add_price_locked_columns_idempotently():
 
 
 def test_bug_112_mrr_queries_use_coalesce_locked_price():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Las 3 queries del MRR endpoint deben usar coalesce(cs.price_locked_amount, sp.price_amount).
     mrr_idx = src.find("@platform_admin_router.get('/platform/billing/mrr')")
     assert mrr_idx > 0
@@ -163,7 +161,7 @@ def test_bug_112_mrr_queries_use_coalesce_locked_price():
 
 
 def test_bug_112_create_contact_subscription_snapshots_plan_price():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     create_idx = src.find('async def create_contact_subscription(')
     assert create_idx > 0
     next_def = src.find('\nasync def ', create_idx + 1)

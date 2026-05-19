@@ -1,10 +1,7 @@
-from pathlib import Path
-
-ROUTES = Path('app/api/v1/routes.py')
-
+from tests._routes_aggregator import routes_aggregated_source
 
 def _intent_evaluate_source() -> str:
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index("@tenant_admin_router.post('/intents/evaluate')")
     end = source.index("@tenant_admin_router.post('/knowledge/documents'", start)
     return source[start:end]

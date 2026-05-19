@@ -24,7 +24,6 @@ from fastapi import Depends
 from app.api.v1 import routes as routes_module
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 ACCOUNT_PROFILE = Path('admin-panel/src/features/account/AccountProfile.jsx')
 ACCOUNT_NOTIFICATIONS = Path('admin-panel/src/features/account/AccountNotifications.jsx')

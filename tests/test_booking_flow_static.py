@@ -16,9 +16,9 @@ from app.services.booking_flow import (
     _working_hours_for_date,
     compute_free_slots,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
@@ -120,12 +120,12 @@ def test_schema_adds_service_id_column_to_appointments():
 def test_appointment_schema_accepts_service_id():
     schemas_source = SCHEMAS.read_text()
     assert 'service_id: UUID | None = None' in schemas_source
-    routes_source = API_ROUTES.read_text()
+    routes_source = routes_aggregated_source()
     assert 'insert into app.appointments (tenant_id, contact_id, conversation_id, service_request_id, service_id, resource_id, service_code, starts_at, ends_at, notes, metadata)' in routes_source
 
 
 def test_availability_endpoints_registered():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_catalog_router.get(\n    '/tenants/{tenant_id}/resources/{resource_id}/availability'\n)" in source
     assert "@tenant_catalog_router.get('/tenants/{tenant_id}/availability')" in source
     assert 'def working_hours_for_date(' in source

@@ -34,10 +34,10 @@ from app.services.promotions import (
     promo_caption,
     queue_promo_message,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 PROMOTIONS = Path('app/services/promotions.py')
@@ -157,7 +157,7 @@ def test_media_object_key_namespaces_by_tenant():
 
 
 def test_media_endpoints_registered_under_admin_router():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/media')" in source
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/media', status_code=201)" in source
     assert "@tenant_admin_router.patch('/tenants/{tenant_id}/media/{asset_id}')" in source
@@ -165,7 +165,7 @@ def test_media_endpoints_registered_under_admin_router():
 
 
 def test_promotion_endpoints_registered_under_admin_router():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/promotions')" in source
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/promotions', status_code=201)" in source
     assert "@tenant_admin_router.patch('/tenants/{tenant_id}/promotions/{promotion_id}')" in source
@@ -173,7 +173,7 @@ def test_promotion_endpoints_registered_under_admin_router():
 
 
 def test_media_and_promotion_endpoints_emit_audit():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     for action in (
         'media_asset.created',
         'media_asset.updated',

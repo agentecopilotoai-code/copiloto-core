@@ -14,16 +14,13 @@ Covers:
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
-
-ROUTES_FILE = Path('app/api/v1/routes.py')
-
+from tests._routes_aggregator import routes_aggregated_source
 
 @pytest.fixture(scope='module')
 def routes_source() -> str:
-    return ROUTES_FILE.read_text()
+    return routes_aggregated_source()
 
 
 # ── Endpoints live on platform_admin_router ──────────────────────────────────

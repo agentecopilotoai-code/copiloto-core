@@ -8,8 +8,8 @@ implementados correctamente, sin necesidad de levantar PostgreSQL ni Docker.
 """
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-API_ROUTES = Path('app/api/v1/routes.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 WHATSAPP_SVC = Path('app/services/whatsapp.py')
 DB_SCHEMA = Path('infra/postgres/01-schema.sql')
@@ -21,7 +21,7 @@ BOOTSTRAP = Path('scripts/bootstrap.sh')
 # ---------------------------------------------------------------------------
 
 def routes_source() -> str:
-    return API_ROUTES.read_text()
+    return routes_aggregated_source()
 
 
 def worker_source() -> str:

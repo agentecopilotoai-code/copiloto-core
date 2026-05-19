@@ -19,13 +19,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.services import subscriptions
+from tests._routes_aggregator import routes_aggregated_source
 
 
 WIDGET_DIR = Path('admin-panel/src/features/widget')
 RETENTION = Path('app/services/retention.py')
-ROUTES = Path('app/api/v1/routes.py')
-
-
 # ───── BUG-053 / 054 — NOT-APPLICABLE (no widget) ────────────────────────
 
 
@@ -85,7 +83,7 @@ def test_bug_056_reminder_payload_uses_purpose_not_template_name():
     """`payload['purpose']` para reminder_jobs debe ser
     `INVOICE_FAILED_PURPOSE` (enum) no `INVOICE_FAILED_TEMPLATE` (name).
     """
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert "'purpose': INVOICE_FAILED_PURPOSE" in src, (
         'BUG-056: regresión — `payload[\'purpose\']` volvió a usar '
         'INVOICE_FAILED_TEMPLATE (que termina en `_v1`), lo cual NO matchea '

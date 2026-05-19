@@ -1,14 +1,12 @@
 """Static analysis and unit tests for the WhatsApp RAG inbound orchestrator (TASK-0021)."""
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
-API_ROUTES = Path('app/api/v1/routes.py')
-
-
 # ── Static source checks ──────────────────────────────────────────────────────
 
 def test_orchestrator_is_called_from_webhook_after_inbound_message_is_saved():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
 
     assert 'from app.services.rag_orchestrator import orchestrate_inbound_message' in source
     assert 'await orchestrate_inbound_message(' in source
@@ -17,7 +15,7 @@ def test_orchestrator_is_called_from_webhook_after_inbound_message_is_saved():
 
 
 def test_webhook_channel_query_fetches_account_mode():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
 
     assert 'select id, tenant_id, app_secret_ref, account_mode' in source
 
@@ -176,7 +174,7 @@ def test_orchestrator_does_not_create_duplicate_handoff_if_one_is_already_open()
 
 
 def test_orchestrator_errors_are_caught_and_logged_without_failing_the_webhook():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
 
     assert 'log.exception(' in source
     assert "'rag_orchestrator.error'" in source

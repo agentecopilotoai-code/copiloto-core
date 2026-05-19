@@ -31,12 +31,9 @@ from __future__ import annotations
 
 import inspect
 import textwrap
-from pathlib import Path
 
 from app.services import rag_orchestrator
-
-ROUTES_PATH = Path('app/api/v1/routes.py')
-
+from tests._routes_aggregator import routes_aggregated_source
 
 def _orchestrator_source() -> str:
     """Source del entry point del orchestrator (_orchestrate_inbound_message_impl)."""
@@ -61,7 +58,7 @@ def test_routes_create_message_checks_active_human_handoff_before_status_flip():
     status='waiting_user' unconditionally — debe primero chequear si hay
     un handoff con status='accepted' y assigned_to no-null.
     """
-    src = ROUTES_PATH.read_text()
+    src = routes_aggregated_source()
     # Buscamos el handler `create_message` y verificamos que tenga el query
     # de handoffs antes del UPDATE de conversations.
     create_msg_pos = src.find("@tenant_ops_router.post('/conversations/{conversation_id}/messages'")
@@ -100,7 +97,7 @@ def test_routes_create_message_keeps_human_active_when_agent_assigned():
     """Cuando hay handoff activo, el handler debe setear status='human_active'
     (no 'waiting_user'). 'human_active' es el status que el orchestrator
     skipea por el check de línea ~250."""
-    src = ROUTES_PATH.read_text()
+    src = routes_aggregated_source()
     create_msg_pos = src.find("@tenant_ops_router.post('/conversations/{conversation_id}/messages'")
     next_handler_pos = src.find('@tenant_ops_router', create_msg_pos + 50)
     block = src[create_msg_pos:next_handler_pos] if next_handler_pos > 0 else src[create_msg_pos:]

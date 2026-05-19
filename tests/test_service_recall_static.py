@@ -44,9 +44,9 @@ from app.workers.scheduler import (
     _extract_purpose,
     _mark_conversation_pending_recall,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 # UI-007.4: the ServiceCatalog monolith was split into a feature directory.
@@ -160,7 +160,7 @@ def test_service_catalog_projection_exposes_recall_columns():
 
 
 def test_create_service_route_passes_recall_columns():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # The insert must include both columns and bind the payload values.
     assert 'recall_interval_days, recall_template_id,' in src
     assert 'payload.recall_interval_days,' in src
@@ -168,7 +168,7 @@ def test_create_service_route_passes_recall_columns():
 
 
 def test_update_service_route_uses_set_flags_to_allow_clearing():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert "recall_days_set = 'recall_interval_days' in update_data" in src
     assert "recall_template_set = 'recall_template_id' in update_data" in src
     assert 'recall_interval_days = case when $14::boolean then $15 else recall_interval_days end' in src

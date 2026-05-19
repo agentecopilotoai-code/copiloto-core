@@ -29,10 +29,10 @@ Cierra 4 findings del CSV `codex-security-findings-2026-05-18T12-29-09.086Z.csv`
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 AUTH0_ADMIN = Path('app/services/auth0_admin.py')
-ROUTES = Path('app/api/v1/routes.py')
 CONFIGURE_AUTH0 = Path('scripts/configure-auth0.sh')
 ADMIN_ROUTES = Path('app/admin/routes.py')
 
@@ -88,7 +88,7 @@ def test_bug_193_lookup_enforces_email_verified_by_default():
 
 
 def test_bug_193_invite_route_handles_new_exceptions():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert 'Auth0AmbiguousUserMatch' in src, (
         'BUG-193: `routes.py` debe importar `Auth0AmbiguousUserMatch` para '
         'mapearlo a un HTTP 409 con mensaje de desambiguación.'
@@ -124,7 +124,7 @@ def test_bug_194_bootstrap_checks_email_verified():
 
 
 def test_bug_195_user_email_from_request_does_not_trust_header():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('def user_email_from_request(request: Request) -> str:')
     assert fn_idx > 0
     next_fn = src.find('\ndef user_display_name_from_request', fn_idx)

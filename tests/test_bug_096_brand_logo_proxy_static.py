@@ -19,12 +19,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from tests._routes_aggregator import routes_aggregated_source
 
 
 MEDIA_STORAGE = Path('app/services/media_storage.py')
-ROUTES = Path('app/api/v1/routes.py')
-
-
 # ───── read_media_file helper ────────────────────────────────────────────
 
 
@@ -61,7 +59,7 @@ def test_bug_096_read_media_file_supports_local_and_s3_backends():
 
 
 def test_bug_096_tenant_brand_logo_proxy_url_helper_exists():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert 'def tenant_brand_logo_proxy_url(' in src, (
         "BUG-096: debe existir `tenant_brand_logo_proxy_url(tenant_id, asset_id)` "
         "como única fuente de la ruta del proxy (evita drift entre upload + endpoint)."
@@ -79,7 +77,7 @@ def test_bug_096_tenant_brand_logo_proxy_url_helper_exists():
 
 
 def test_bug_096_proxy_endpoint_exists_on_tenant_ops_router():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     decorator = "@tenant_ops_router.get('/tenants/{tenant_id}/media/{asset_id}/content')"
     assert decorator in src, (
         "BUG-096: el endpoint proxy debe estar en `tenant_ops_router` (agent+) "
@@ -88,7 +86,7 @@ def test_bug_096_proxy_endpoint_exists_on_tenant_ops_router():
 
 
 def test_bug_096_proxy_endpoint_validates_tenant_access_and_rls():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def get_tenant_media_content(')
     assert fn_idx > 0
     next_def = src.find('\n\n@', fn_idx)
@@ -122,7 +120,7 @@ def test_bug_096_proxy_endpoint_validates_tenant_access_and_rls():
 
 
 def test_bug_096_upload_persists_proxy_url_not_source_uri():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def upload_tenant_brand_logo(')
     assert fn_idx > 0
     next_def = src.find('\n\n# BUG-096', fn_idx)

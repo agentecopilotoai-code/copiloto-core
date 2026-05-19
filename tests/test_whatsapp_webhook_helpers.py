@@ -1,11 +1,11 @@
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-API_ROUTES = Path('app/api/v1/routes.py')
 WHATSAPP = Path('app/services/whatsapp.py')
 
 
 def test_whatsapp_phone_number_id_extractor_uses_meta_metadata_path():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
 
     assert 'def whatsapp_phone_number_id_from_payload' in source
     assert "payload.get('entry', [])" in source
@@ -17,7 +17,7 @@ def test_whatsapp_phone_number_id_extractor_uses_meta_metadata_path():
 
 def test_webhook_signature_normalizes_app_id_secret_pairs():
     source = WHATSAPP.read_text()
-    routes_source = API_ROUTES.read_text()
+    routes_source = routes_aggregated_source()
 
     assert 'def normalize_meta_app_secret' in source
     assert "cleaned.split('|', 1)" in source
@@ -28,7 +28,7 @@ def test_webhook_signature_normalizes_app_id_secret_pairs():
 
 
 def test_verify_webhook_reads_verify_token_from_tenant_secret_only():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
 
     assert "tenant_secret_ref(row['tenant_id'], 'whatsapp_verify_token')" in source
     assert 'hmac.compare_digest(verify_token, hub_verify_token)' in source
@@ -37,7 +37,7 @@ def test_verify_webhook_reads_verify_token_from_tenant_secret_only():
 
 
 def test_webhook_raw_event_insert_is_tenant_scoped_for_rls():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
 
     assert "select set_config('app.support_mode', 'true', true)" in source
     assert "select set_config('app.tenant_id', $1, true)" in source
@@ -46,7 +46,7 @@ def test_webhook_raw_event_insert_is_tenant_scoped_for_rls():
 
 
 def test_whatsapp_webhook_persists_inbound_messages_for_live_inbox():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
 
     assert "for message in value.get('messages', [])" in source
     assert 'upsert_whatsapp_contact' in source

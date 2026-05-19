@@ -13,8 +13,8 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 WIDGET_DIR = Path('web-widget')
 SRC = WIDGET_DIR / 'src'
@@ -190,7 +190,7 @@ def test_web_widget_has_smoke_test_under_jsdom():
 
 
 def test_snippet_builder_points_at_cdn_and_emits_new_data_attrs():
-    text = ROUTES.read_text()
+    text = routes_aggregated_source()
     # CDN URL + API origin both come from settings so prod/dev can override.
     assert 'settings.web_widget_cdn_url' in text
     assert 'settings.web_widget_api_base' in text
@@ -253,7 +253,7 @@ def test_upsert_response_passes_all_customisation_to_snippet():
     # forward the new logo/welcome/button_position fields just like the GET
     # endpoint does, otherwise admins who copy the snippet immediately after
     # saving lose the customisation until they reload.
-    text = ROUTES.read_text()
+    text = routes_aggregated_source()
     upsert_block = text.split('async def upsert_web_channel')[1].split('async def ')[0]
     assert 'logo_url=widget_config.get(' in upsert_block
     assert 'welcome_copy=widget_config.get(' in upsert_block

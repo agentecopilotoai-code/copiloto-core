@@ -25,10 +25,10 @@ from app.services.segments import (
     evaluate_rules,
     normalize_applies_when,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-API_ROUTES = Path('app/api/v1/routes.py')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
 SEGMENTS = Path('app/services/segments.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
@@ -84,14 +84,14 @@ def test_pydantic_qualification_includes_key_field():
 
 
 def test_routes_project_and_bind_applies_when():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "'applies_when'," in source  # projection tuple
     assert 'normalize_applies_when' in source
     assert 'applies_when=coalesce($18::jsonb, applies_when)' in source
 
 
 def test_routes_project_and_bind_question_key():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "'applies_to_service_ids, preset, key, created_at, updated_at'" in source
     assert 'key=case when $12::boolean then $11 else key end' in source
 

@@ -36,12 +36,9 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
-from pathlib import Path
 
 from app.api.v1 import routes as routes_module
-
-ROUTES = Path('app/api/v1/routes.py')
-
+from tests._routes_aggregator import routes_aggregated_source
 
 # ───── Dummy secret module constant ───────────────────────────────────────
 
@@ -69,7 +66,7 @@ def test_dummy_secret_uses_secrets_module_for_entropy():
     inicializarse desde `secrets.token_hex(...)`.
     """
     # Buscar la asignación en el source completo del módulo.
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Permitimos espacios variables pero exigimos secrets.token_hex.
     assert '_WHATSAPP_WEBHOOK_DUMMY_SECRET = secrets.token_hex(' in src, (
         'el dummy secret debe inicializarse desde secrets.token_hex(...) — '

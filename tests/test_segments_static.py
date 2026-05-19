@@ -31,10 +31,10 @@ from app.services.segments import (
     normalize_rules,
     seed_preconstructed_segments,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
 SEED = Path('infra/postgres/02-seed.sql')
-API_ROUTES = Path('app/api/v1/routes.py')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
 SEGMENTS_SERVICE = Path('app/services/segments.py')
 CAMPAIGNS_SERVICE = Path('app/services/campaigns.py')
@@ -336,7 +336,7 @@ def test_resolve_campaign_recipients_falls_back_to_segment_filter():
 
 
 def test_segments_endpoints_registered():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/segments')" in source
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/segments', status_code=201)" in source
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/segments/{segment_id}')" in source
@@ -347,7 +347,7 @@ def test_segments_endpoints_registered():
 
 
 def test_segments_routes_audit_actions():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "action='segment.created'" in source
     assert "action='segment.updated'" in source
     assert "action='segment.deleted'" in source
@@ -355,7 +355,7 @@ def test_segments_routes_audit_actions():
 
 
 def test_tenant_creation_seeds_preconstructed_segments():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'seed_preconstructed_segments(conn, tenant_id)' in source
     # Both the admin-side create_tenant and self-service create paths seed.
     assert source.count('seed_preconstructed_segments(') >= 2

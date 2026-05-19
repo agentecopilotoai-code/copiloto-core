@@ -15,9 +15,9 @@ Covers:
 import asyncio
 from pathlib import Path
 from uuid import uuid4
+from tests._routes_aggregator import routes_aggregated_source
 
 
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 MODULES = Path('admin-panel/src/app/modules.js')
@@ -82,7 +82,7 @@ def test_normalize_onboarding_progress_handles_garbage():
 
 
 def test_endpoints_registered_on_tenant_admin_router():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/onboarding')" in source
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/onboarding/steps/{step}/verify')" in source
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/onboarding/steps/{step}/complete')" in source

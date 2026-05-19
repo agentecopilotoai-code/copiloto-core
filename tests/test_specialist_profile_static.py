@@ -22,9 +22,9 @@ from pathlib import Path
 from app.api.v1 import routes as routes_module
 from app.api.v1.schemas import ResourceCreate, ResourceUpdate
 from app.services import booking_flow
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
@@ -114,7 +114,7 @@ def test_public_resources_endpoint_registered_without_auth():
 
 
 def test_public_endpoint_filters_public_profile_and_active():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     # The handler restricts the query to active+public rows and joins media.
     assert 'and r.is_active = true' in source
     assert 'and r.public_profile = true' in source
@@ -123,7 +123,7 @@ def test_public_endpoint_filters_public_profile_and_active():
 
 
 def test_resource_create_persists_profile_fields():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'bio, photo_media_asset_id, specialty, license_number, years_of_experience' in source
     # TASK-0050 inserts branch_id between public_profile and is_active.
     assert 'public_profile, branch_id, is_active' in source
@@ -132,7 +132,7 @@ def test_resource_create_persists_profile_fields():
 
 
 def test_resource_update_emits_profile_updated_audit():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "action='resource.profile_updated'" in source
     assert 'profile_changed' in source
 

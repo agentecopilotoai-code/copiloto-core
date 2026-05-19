@@ -33,11 +33,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 MIGRATIONS = Path('infra/postgres/03-migrations.sql')
 OPERATOR_ALERTS = Path('app/services/operator_alerts.py')
-ROUTES = Path('app/api/v1/routes.py')
 SETTINGS = Path('.claude/settings.json')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 
@@ -106,7 +106,7 @@ def test_bug_170_operator_alerts_whatsapp_enqueues_domain_event():
 
 
 def test_bug_171_analytics_agents_requires_manager_role_per_route():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     ep_idx = src.find("@tenant_analytics_router.get(\n    '/analytics/agents'")
     assert ep_idx > 0, (
         "BUG-171: el endpoint `/analytics/agents` debe declararse con "

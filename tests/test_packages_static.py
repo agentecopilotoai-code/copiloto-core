@@ -30,9 +30,9 @@ from app.api.v1.schemas import (
     TreatmentPackageUpdate,
 )
 from app.services import booking_flow
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/app/modules.js')
@@ -240,7 +240,7 @@ def test_package_routes_registered():
 
 
 def test_package_routes_emit_audit_events():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "action='package.created'" in source
     assert "action='package.updated'" in source
     assert "action='package.deleted'" in source

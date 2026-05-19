@@ -23,9 +23,9 @@ introduce el anti-patrón, el grupo correspondiente vuelve a aplicar.
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 
 
@@ -33,7 +33,7 @@ SCHEMA = Path('infra/postgres/01-schema.sql')
 
 
 def test_bug_138_widget_snippet_emits_logo_welcome_position():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     snip_idx = src.find('def _build_widget_snippet(')
     assert snip_idx > 0
     next_def = src.find('\n\n\n', snip_idx)
@@ -58,7 +58,7 @@ def test_bug_138_widget_snippet_emits_logo_welcome_position():
 
 
 def test_bug_138_put_channels_web_passes_all_three_fields():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     put_idx = src.find("@tenant_admin_router.put('/tenants/{tenant_id}/channels/web')")
     assert put_idx > 0
     next_route = src.find('\n@', put_idx + 10)
@@ -75,7 +75,7 @@ def test_bug_138_put_channels_web_passes_all_three_fields():
 
 
 def test_bug_139_business_hours_verifier_rejects_all_empty_days():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     ver_idx = src.find('async def _verify_onboarding_business_hours(')
     assert ver_idx > 0
     next_def = src.find('\n\nasync def ', ver_idx)
@@ -96,7 +96,7 @@ def test_bug_139_business_hours_verifier_rejects_all_empty_days():
 
 
 def test_bug_140_e2e_verifier_filters_by_target_wa_id():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     ver_idx = src.find('async def _verify_onboarding_end_to_end_test(')
     assert ver_idx > 0
     next_def = src.find('\n\n\nONBOARDING_VERIFIERS', ver_idx)
@@ -133,7 +133,7 @@ def test_bug_141_users_schema_separates_id_from_auth_subject():
 
 
 def test_bug_141_current_user_id_inserts_actor_into_auth_subject_column():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def current_user_id_from_request(')
     assert fn_idx > 0
     next_def = src.find('\n\n@', fn_idx)
@@ -168,7 +168,7 @@ def test_bug_142_no_uuid_cast_on_sender_actor_id_in_routes():
     """Regresión: si alguien añade `UUID(sender_actor_id)` o
     `sender_actor_id::uuid`, romperá runs con auth subjects no-UUID.
     """
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert 'UUID(sender_actor_id)' not in src, (
         'BUG-142: no convertir `sender_actor_id` a UUID — la columna es text '
         'y el valor puede ser `auth0|abc` (no parseable).'

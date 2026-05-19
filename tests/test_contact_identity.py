@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 
 from app.api.v1.schemas import ContactPhoneUpdate, ConversationStart
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 
 
@@ -71,7 +71,7 @@ def test_start_conversation_never_calls_upsert_whatsapp_contact():
     """The legacy path called ``upsert_whatsapp_contact`` which UPDATEd
     phone_e164/wa_id on conflict. The new handler must not invoke it from
     this endpoint."""
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def start_conversation(')
     end = source.index('\n@', start + 1)
     block = source[start:end]
@@ -79,7 +79,7 @@ def test_start_conversation_never_calls_upsert_whatsapp_contact():
 
 
 def test_start_conversation_requires_contact_id_or_phone_e164():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def start_conversation(')
     end = source.index('\n@', start + 1)
     block = source[start:end]
@@ -88,7 +88,7 @@ def test_start_conversation_requires_contact_id_or_phone_e164():
 
 
 def test_start_conversation_creates_new_contact_only_when_phone_unknown():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def start_conversation(')
     end = source.index('\n@', start + 1)
     block = source[start:end]
@@ -100,7 +100,7 @@ def test_start_conversation_creates_new_contact_only_when_phone_unknown():
 
 
 def test_start_conversation_rejects_unknown_contact_id():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def start_conversation(')
     end = source.index('\n@', start + 1)
     block = source[start:end]
@@ -112,7 +112,7 @@ def test_start_conversation_rejects_unknown_contact_id():
 
 
 def test_patch_contact_phone_endpoint_exists_with_manager_gate():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_ops_router.patch('/contacts/{contact_id}/phone')" in source
     start = source.index("@tenant_ops_router.patch('/contacts/{contact_id}/phone')")
     end = source.index('\n@', start + 1)
@@ -121,7 +121,7 @@ def test_patch_contact_phone_endpoint_exists_with_manager_gate():
 
 
 def test_patch_contact_phone_writes_audit_log():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index("@tenant_ops_router.patch('/contacts/{contact_id}/phone')")
     end = source.index('\n@', start + 1)
     block = source[start:end]
@@ -131,7 +131,7 @@ def test_patch_contact_phone_writes_audit_log():
 
 
 def test_patch_contact_phone_rejects_collision_with_another_contact():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index("@tenant_ops_router.patch('/contacts/{contact_id}/phone')")
     end = source.index('\n@', start + 1)
     block = source[start:end]
@@ -142,7 +142,7 @@ def test_patch_contact_phone_rejects_collision_with_another_contact():
 def test_patch_contact_phone_updates_wa_id_and_phone_hash_together():
     """Identity columns must stay consistent — phone_e164, wa_id, phone_hash
     are derived from each other."""
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index("@tenant_ops_router.patch('/contacts/{contact_id}/phone')")
     end = source.index('\n@', start + 1)
     block = source[start:end]
@@ -170,7 +170,7 @@ def test_web_chat_start_synthesizes_fresh_identity_not_reuse_existing():
     synthesized wa_id and stores the user-supplied phone as ``unverified_phone``
     metadata. This regression guard pins the behaviour so a future refactor
     cannot re-introduce phone-based contact reuse from the widget."""
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def web_chat_start(')
     end = source.index('\n@', start + 1) if '\n@' in source[start:] else len(source)
     block = source[start:end]
@@ -185,7 +185,7 @@ def test_web_chat_start_synthesizes_fresh_identity_not_reuse_existing():
 def test_web_chat_start_seed_includes_random_nonce():
     """Even if two visitors submit the same phone/email, the synthesized
     identity must differ — the seed mixes a 16-byte nonce."""
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def web_chat_start(')
     end = start + 5000
     block = source[start:end]

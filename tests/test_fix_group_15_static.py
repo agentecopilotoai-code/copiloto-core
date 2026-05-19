@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 GO_LIVE = Path('admin-panel/src/features/owner-admin/readiness/GoLiveReadiness.jsx')
@@ -84,7 +85,7 @@ def test_bug_096_brand_logo_url_pending_infra_documented():
     para convertir `file://...` / `s3://...` a una URL browser-loadable.
     Cuando se implemente, actualizar este test y catalog.
     """
-    src = Path('app/api/v1/routes.py').read_text()
+    src = routes_aggregated_source()
     assert 'stored.source_uri' in src, (
         'BUG-096: si reemplazás `stored.source_uri` por una URL pública '
         '(media proxy / presigned), actualizá el catalog (BUG-096 → DONE).'

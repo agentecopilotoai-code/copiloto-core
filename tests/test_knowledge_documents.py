@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.api.v1.schemas import KnowledgeDocumentCreate, KnowledgeDocumentUpdate
+from tests._routes_aggregator import routes_aggregated_source
 
 
 def test_knowledge_document_create_accepts_manual_faq_content():
@@ -101,7 +102,7 @@ def test_normalize_knowledge_document_recovers_invalid_metadata_as_empty_object(
 
 
 def test_knowledge_storage_routes_and_admin_module_are_registered():
-    routes_source = Path('app/api/v1/routes.py').read_text()
+    routes_source = routes_aggregated_source()
     modules_source = Path('admin-panel/src/app/modules.js').read_text()
     layout_source = Path('admin-panel/src/app/moduleRegistry.js').read_text()
 

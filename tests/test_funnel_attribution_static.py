@@ -1,8 +1,8 @@
 """Static tests for TASK-0048 — funnel and campaign attribution."""
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-API_ROUTES = Path('app/api/v1/routes.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')
 SCHEMA = Path('infra/postgres/01-schema.sql')
@@ -34,7 +34,7 @@ def test_schema_extends_campaigns_with_cost_and_window():
 
 
 def test_funnel_endpoint_registered_under_manager_role():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "tenant_analytics_router = APIRouter(" in source
     assert "require_min_role('manager')" in source
     assert "@tenant_analytics_router.get('/analytics/funnel')" in source
@@ -42,7 +42,7 @@ def test_funnel_endpoint_registered_under_manager_role():
 
 
 def test_funnel_query_covers_five_steps():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     # Five steps: leads, engaged, scheduled, completed, repeat_customers.
     assert 'with leads as (' in source
     assert 'engaged as (' in source
@@ -60,7 +60,7 @@ def test_funnel_query_covers_five_steps():
 
 
 def test_campaigns_endpoint_joins_attribution_and_revenue():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     # Attribution join.
     assert 'from app.campaign_attributions ca' in source
     assert 'join app.appointments a on a.tenant_id = ca.tenant_id' in source
@@ -91,7 +91,7 @@ def test_attribution_service_last_touch_within_window():
 
 def test_attribution_wired_into_appointment_creation_paths():
     # Both the ops endpoint and the bot booking flow attribute appointments.
-    routes = API_ROUTES.read_text()
+    routes = routes_aggregated_source()
     assert 'from app.services.campaign_attribution import attribute_appointment' in routes
     assert 'await attribute_appointment(' in routes
 
@@ -139,7 +139,7 @@ def test_analytics_panel_registers_funnel_and_campaigns_subtabs():
 
 
 def test_create_campaign_persists_cost_and_window():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     # The insert must reference the new columns.
     assert 'cost_amount, cost_currency, attribution_window_days' in source
     # PATCH supports updating cost_amount nullable, cost_currency, window.
@@ -149,7 +149,7 @@ def test_create_campaign_persists_cost_and_window():
 
 
 def test_campaign_projection_includes_new_columns():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'cost_amount, cost_currency, ' in source
     assert 'attribution_window_days' in source
 
@@ -162,7 +162,7 @@ def test_campaign_replies_cte_derives_from_conversation_window():
     webhook never populates — so every real-traffic campaign reported
     ``replied=0`` and ``response_rate_pct=0``.
     """
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     # New CTE walks outbound campaign messages and verifies a matching inbound
     # exists in the same conversation inside the attribution window.
     assert 'from app.messages om' in source
@@ -183,7 +183,7 @@ def test_whatsapp_webhook_persists_reply_context_id():
     sends a ``context`` block (native quote). Without this hygiene fix the
     field is always NULL and downstream consumers (analytics, threading)
     cannot link a reply back to the message that triggered it."""
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "context_obj = message.get('context')" in source
     # Insert lists the column and binds the resolved value (param $11).
     assert 'reply_to_external_message_id\n                    )' in source

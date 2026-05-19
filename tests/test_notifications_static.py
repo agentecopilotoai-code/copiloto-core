@@ -16,9 +16,9 @@ from app.services.notifications import (
     build_variables,
     normalize_notification_settings,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-API_ROUTES = Path('app/api/v1/routes.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 NOTIFICATIONS = Path('app/services/notifications.py')
 FEEDBACK = Path('app/services/feedback_flow.py')
@@ -329,7 +329,7 @@ def test_schema_adds_notification_settings_and_feedback_table():
 
 
 def test_routes_call_notifications_on_appointment_lifecycle():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'from app.services.notifications import' in source
     assert 'create_appointment_reminder_jobs' in source
     assert 'cancel_appointment_reminder_jobs' in source
@@ -341,7 +341,7 @@ def test_routes_call_notifications_on_appointment_lifecycle():
 
 
 def test_tenant_settings_patch_persists_notification_settings():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "'notification_settings'" in source
     assert "notification_settings=$7::jsonb" in source
 

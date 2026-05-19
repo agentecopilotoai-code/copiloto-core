@@ -25,9 +25,9 @@ from app.services.campaigns import (
     normalize_segment_filter,
     refresh_campaign_counters,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 CAMPAIGNS_SERVICE = Path('app/services/campaigns.py')
 SCHEDULER = Path('app/workers/scheduler.py')
@@ -448,7 +448,7 @@ def test_default_rate_limit_matches_meta_recommendation():
 
 
 def test_campaigns_endpoints_registered():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/campaigns', status_code=201)" in source
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/campaigns')" in source
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/campaigns/{campaign_id}')" in source
@@ -459,7 +459,7 @@ def test_campaigns_endpoints_registered():
 
 
 def test_campaigns_routes_audit_actions():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "action='campaign.created'" in source
     assert "action='campaign.launched'" in source
     assert "action='campaign.cancelled'" in source

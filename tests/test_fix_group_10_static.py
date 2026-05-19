@@ -23,12 +23,10 @@ import textwrap
 from pathlib import Path
 
 from app.services import auth0_admin
+from tests._routes_aggregator import routes_aggregated_source
 
 
 INSTALL_MD = Path('INSTALL.md')
-ROUTES = Path('app/api/v1/routes.py')
-
-
 # ───── BUG-068 — auth0_role_not_found agregado a propagation_errors ─────
 
 
@@ -57,7 +55,7 @@ def test_bug_068_invite_user_checks_role_assignment_error_value():
 
 
 def test_bug_069_safe_auth0_includes_propagation_errors():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert "if auth0_result.get('propagation_errors'):" in src, (
         'BUG-069: `safe_auth0` debe incluir `propagation_errors` cuando '
         '`auth0_result` los reporta — sin esto, la UI no muestra warnings.'
@@ -75,7 +73,7 @@ def test_bug_070_deactivate_support_mode_returns_injected_response():
     """El handler DELETE debe MUTAR el `response` inyectado por FastAPI,
     NO retornar un nuevo Response (que descarta el Set-Cookie).
     """
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Buscar el bloque de deactivate_support_mode
     handler_idx = src.find('async def deactivate_support_mode(')
     assert handler_idx > 0, 'BUG-070: handler debe existir.'

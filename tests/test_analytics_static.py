@@ -1,6 +1,6 @@
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-API_ROUTES = Path('app/api/v1/routes.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')
 MODULES = Path('admin-panel/src/app/modules.js')
@@ -8,14 +8,14 @@ ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 
 
 def test_analytics_router_requires_manager_role():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'tenant_analytics_router = APIRouter(' in source
     assert "require_min_role('manager')" in source
     assert 'router.include_router(tenant_analytics_router)' in source
 
 
 def test_analytics_endpoints_registered():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_analytics_router.get('/analytics/overview')" in source
     assert "@tenant_analytics_router.get('/analytics/conversations')" in source
     assert "@tenant_analytics_router.get('/analytics/appointments')" in source
@@ -23,7 +23,7 @@ def test_analytics_endpoints_registered():
 
 
 def test_analytics_overview_computes_required_kpis():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     # Conversations: total + handoff rate.
     assert "count(*) filter (where status in ('open','waiting_user','waiting_agent'))" in source
     assert "handoff_rate_pct" in source
@@ -46,7 +46,7 @@ def test_analytics_overview_computes_required_kpis():
 
 
 def test_analytics_conversations_returns_intents_and_evolution():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "coalesce(current_intent, 'unknown') as intent" in source
     assert "avg_first_bot_response_seconds" in source
     assert "daily_evolution" in source
@@ -54,21 +54,21 @@ def test_analytics_conversations_returns_intents_and_evolution():
 
 
 def test_analytics_appointments_returns_services_and_weekday():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "top_services" in source
     assert "no_shows_by_weekday" in source
     assert "extract(dow from starts_at)" in source
 
 
 def test_analytics_contacts_returns_tags_and_optout():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "from app.contact_tags t" in source
     assert "opt_out_rate_pct" in source
     assert "source_distribution" in source
 
 
 def test_analytics_range_helper_defaults_to_30_days():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'def _resolve_analytics_range' in source
     # Default range is 30 days, expressed as today - 29 days inclusive.
     assert 'timedelta(days=29)' in source

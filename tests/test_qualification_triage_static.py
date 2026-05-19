@@ -31,11 +31,11 @@ from app.services.qualification_flow import (
     _vip_budget_threshold,
     maybe_run_qualification_flow,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
 SCHEMAS = Path('app/api/v1/schemas.py')
-ROUTES = Path('app/api/v1/routes.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
@@ -75,7 +75,7 @@ def test_pydantic_schemas_expose_presets_and_option_metadata():
 
 
 def test_routes_projection_and_inserts_include_preset():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # TASK-0054 extended the projection with `key`; check both fragments
     # remain in their canonical order.
     assert ", preset, key, created_at, updated_at" in src

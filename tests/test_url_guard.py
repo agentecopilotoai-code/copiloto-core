@@ -17,6 +17,7 @@ from app.services.url_guard import (
     assert_whatsapp_media_id,
     validate_outbound_url,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 @pytest.fixture(autouse=True)
@@ -280,9 +281,8 @@ def test_send_webhook_channel_drops_legacy_loopback_url():
 
 def test_patch_settings_blocks_loopback_webhook_at_source_handler():
     """The PATCH handler must call normalize_alert_channels(strict=True)."""
-    from pathlib import Path
 
-    source = Path('app/api/v1/routes.py').read_text()
+    source = routes_aggregated_source()
     start = source.index("async def patch_settings(")
     end = source.index("@tenant_admin_router", start + 1)
     block = source[start:end]
@@ -340,9 +340,8 @@ def test_s3_client_rejects_endpoint_outside_allowlist():
 
 
 def test_patch_knowledge_storage_validates_endpoint_at_source_handler():
-    from pathlib import Path
 
-    source = Path('app/api/v1/routes.py').read_text()
+    source = routes_aggregated_source()
     start = source.index('async def patch_knowledge_storage_settings(')
     end = source.index('@tenant_admin_router', start + 1)
     block = source[start:end]

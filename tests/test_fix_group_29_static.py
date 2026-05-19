@@ -26,13 +26,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 RAG_ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
-ROUTES = Path('app/api/v1/routes.py')
-
-
 # ───── BUG-163 — auto-select usa _present_packages ───────────────────────
 
 
@@ -103,7 +101,7 @@ def test_bug_165_urgency_completion_overrides_handoff_message():
 
 
 def test_bug_166_campaign_reply_rates_use_conversation_time_join():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Buscar el CTE `replies as (` cerca de la query de campaigns. Usamos
     # `group by om.campaign_id` como cierre del CTE (más estable que `),`
     # porque dentro del CTE hay `)::interval`).
@@ -129,7 +127,7 @@ def test_bug_166_campaign_reply_rates_use_conversation_time_join():
 
 
 def test_bug_168_auth_session_active_hours_constant_exists():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert 'AUTH_SESSION_ACTIVE_HOURS = 24' in src, (
         "BUG-168: debe existir la constante `AUTH_SESSION_ACTIVE_HOURS` "
         "(default 24h) que define la ventana de freshness para considerar "
@@ -138,7 +136,7 @@ def test_bug_168_auth_session_active_hours_constant_exists():
 
 
 def test_bug_168_list_my_sessions_filters_stale_rows():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     ep_idx = src.find("@me_router.get('/me/sessions')")
     assert ep_idx > 0
     next_ep = src.find('\n@me_router.', ep_idx + 10)

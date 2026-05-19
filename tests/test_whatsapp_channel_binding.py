@@ -7,11 +7,9 @@ tenants).
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
-
-
 def test_schema_has_unique_partial_index_on_active_phone_number_id():
     source = SCHEMA.read_text()
     assert 'ux_tenant_channels_phone_number_active' in source
@@ -35,7 +33,7 @@ def test_schema_keeps_non_unique_lookup_index_for_speed():
 
 
 def test_create_channel_rejects_phone_number_id_active_in_another_tenant():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index("@tenant_admin_router.post('/tenants/{tenant_id}/channels/whatsapp'")
     end = source.index("@tenant_admin_router.get('/tenants/{tenant_id}/channels/whatsapp/health'")
     block = source[start:end]
@@ -51,7 +49,7 @@ def test_create_channel_runs_uniqueness_check_before_writing_secrets():
     """If we wrote secrets first and only then realized the binding was
     forbidden, the secret store would carry orphan secrets. The 409 path must
     short-circuit before ``write_tenant_secret`` is called."""
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index("@tenant_admin_router.post('/tenants/{tenant_id}/channels/whatsapp'")
     end = source.index("@tenant_admin_router.get('/tenants/{tenant_id}/channels/whatsapp/health'")
     block = source[start:end]
@@ -64,7 +62,7 @@ def test_create_channel_runs_uniqueness_check_before_writing_secrets():
 
 
 def test_webhook_handler_validates_change_phone_number_id_against_signed_channel():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index("async def receive_whatsapp_webhook(")
     block = source[start:start + 8000]
     # The handler captures the signed channel's phone_number_id and uses it
@@ -76,7 +74,7 @@ def test_webhook_handler_validates_change_phone_number_id_against_signed_channel
 
 
 def test_webhook_handler_drops_mismatched_changes_with_audit():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index("async def receive_whatsapp_webhook(")
     # AUDIT-51 / round-3 §1.8 added a freshness pre-scan before the loop;
     # the handler grew past 8000 chars. Bump the outer window to 12000.
@@ -94,7 +92,7 @@ def test_webhook_handler_uses_system_actor_type_for_audit_compliance():
     """``audit_logs.actor_type`` only accepts a fixed set including
     ``system``; the bug fix must NOT introduce a new value that the CHECK
     constraint would reject at runtime."""
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index("async def receive_whatsapp_webhook(")
     block = source[start:start + 8000]
     mismatch_idx = block.index('webhook.phone_number_id_mismatch')

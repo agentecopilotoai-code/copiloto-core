@@ -31,9 +31,9 @@ from app.api.v1.schemas import (
     SubscriptionPlanUpdate,
 )
 from app.services import subscriptions as subscriptions_service
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 SERVICE = Path('app/services/subscriptions.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 ADMIN_MODULES = Path('admin-panel/src/app/modules.js')
@@ -287,7 +287,7 @@ def test_subscription_plan_update_is_partial():
 
 
 def test_routes_register_plan_crud_under_admin_router():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert "@tenant_admin_router.post('/subscription-plans', status_code=201)" in src
     assert "@tenant_admin_router.patch('/subscription-plans/{plan_id}')" in src
     assert "@tenant_admin_router.delete('/subscription-plans/{plan_id}', status_code=204)" in src
@@ -300,7 +300,7 @@ def test_routes_register_subscriber_endpoints_with_correct_auth_boundary():
     (admin role required + MFA enforced) so an `agent` cannot fake/mutate
     paid subscriptions or cancel a customer's billing.
     """
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # GET stays on ops (read-only) — agents legitimately need this.
     assert "@tenant_ops_router.get('/subscriptions')" in src
     # POST/PATCH/DELETE require admin (router-level dependency).
@@ -314,7 +314,7 @@ def test_routes_register_subscriber_endpoints_with_correct_auth_boundary():
 
 
 def test_routes_register_subscriptions_webhook():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert "@webhook_router.post('/subscriptions/{provider}', status_code=202)" in src
     # The handler must hit our service translator and queue a reminder_jobs
     # entry when the invoice fails.
@@ -324,7 +324,7 @@ def test_routes_register_subscriptions_webhook():
 
 
 def test_routes_audit_subscription_actions():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     for action in (
         "action='subscription_plan.created'",
         "action='subscription_plan.updated'",
