@@ -1570,7 +1570,7 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-## 10. Módulo Influencer — Ravit Studio (UI-INFLU-001..016)
+## 10. Módulo Influencer — Ravit Studio (UI-INFLU-001..017)
 
 > **Diseño de referencia:** `docs/influencer/*.html` (renombrado desde `Inlfuencer/` por typo, ver TASK-INFLU-001).
 >
@@ -1901,7 +1901,38 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 | UI-INFLU-014 | TASK-INFLU-015 (posts + publish_worker) |
 | UI-INFLU-015 | TASK-INFLU-002 (platform_ai_providers) |
 | UI-INFLU-016 | ninguna backend (público) |
+| UI-INFLU-017 | TASK-INFLU-019 (endpoints `app.tenant_modules`) |
 
-Orden de ejecución recomendado: backend infra (TASK-INFLU-001..003) → providers (-004..007) → personas + wizard (-008..010, -013) → generación (-011..012) → plataformas + publish (-014..015) → créditos + observabilidad (-016..018). UI puede arrancar UI-INFLU-001..002 en paralelo con backend infra; UI-INFLU-003..014 esperan a sus TASK-INFLU correspondientes; UI-INFLU-015..016 son independientes.
+Orden de ejecución recomendado: backend infra (TASK-INFLU-001..003) → providers (-004..007) → personas + wizard (-008..010, -013) → generación (-011..012) → plataformas + publish (-014..015) → créditos + observabilidad (-016..018). UI puede arrancar UI-INFLU-001..002 en paralelo con backend infra; UI-INFLU-003..014 esperan a sus TASK-INFLU correspondientes; UI-INFLU-015..016 son independientes. **UI-INFLU-017 desbloquea la activación self-service del módulo desde la consola de Platform Owner (hoy requiere SQL directo).**
+
+---
+
+### UI-INFLU-017 — Platform · Control de módulos por tenant (`platform-modules-control`)
+
+- **Estado:** PENDING
+- **HTML:** sin mockup específico — extiende el bloque Platform Owner (sección UI-006). Reutilizar el styling de `docs/HTML DESIGN/Platform Owner/01 _ Fleet _ Tenants.html` (tabla por tenant + drawer/acciones) y de `07 _ Roles _ ACL.html` (matriz capacidad × rol) para la matriz tenant × módulo.
+- **Motivación:** hoy, activar el módulo Influencer / Ravit Studio para un tenant requiere un INSERT directo en `app.tenant_modules` como `copiloto_admin` (RLS exige `app.support_mode()=true`). Esa fricción no es viable para onboarding comercial — el Platform Owner debe poder togglearlo desde la UI con audit + MFA, sin pasar por la DB. Las RLS policies `tenant_modules_support_*` ya soportan el path (TASK-INFLU-001); falta el endpoint REST + la vista.
+- **Alcance:**
+  - Nuevo módulo `platform-modules-control` en `admin-panel/src/app/modules.js` (label "Control de módulos", capability `platform.modules.write`) + registro en `moduleRegistry.js` apuntando a `src/features/platform/modules-control/ModulesControl.jsx` + entrada en `app/nav.js` dentro del grupo Plataforma (junto a `platform-roles-acl` y `platform-feature-flags`).
+  - `src/features/platform/modules-control/`:
+    - `ModulesControl.jsx` — orquestador, monta `<RequirePermission capability="platform.modules.write" mode="R">`, `PageHeader` ("Control de módulos por tenant"), filtros por tenant/módulo/estado, y `ModulesMatrix`.
+    - `ModulesMatrix.jsx` — `DataTable` con filas = tenants y columnas = módulos disponibles (hoy solo `influencer`, escalable cuando se agreguen futuros módulos al CHECK constraint de `app.tenant_modules.module`). Cada celda muestra `StatusBadge` (`enabled` / `disabled` / `not-provisioned`) + botón "Activar" / "Desactivar" que abre `ModuleToggleConfirm`.
+    - `ModuleToggleConfirm.jsx` — `Modal` de confirmación con (1) preview del cambio (tenant + módulo + estado destino), (2) campo opcional `notes` (justificación que persiste en `app.tenant_modules.notes`), (3) banner explicativo de las consecuencias (al desactivar, los endpoints del módulo responden 404 inmediatamente para el tenant; las tablas `influencer.*` no se borran), (4) reusa `MfaRequiredBlocker` (UI-005) para gatear la confirmación detrás de MFA — sigue el patrón de `PATCH /v1/platform/ai-providers` y demás endpoints `platform_admin`.
+    - `useModulesControl.js` — hook que llama `coreApi.listTenantModules(session)` → matriz, y `coreApi.upsertTenantModule(session, { tenantId, module, enabled, plan?, notes? })` → POST/PATCH (ver TASK-INFLU-019).
+  - Extensión a `src/services/coreApi.js`:
+    - `listTenantModules(session)` → `GET /v1/platform/tenant-modules` (lista cross-tenant; usa `support_mode`).
+    - `upsertTenantModule(session, payload)` → `PATCH /v1/platform/tenant-modules/{tenantId}/{module}` con body `{enabled, plan?, notes?}`.
+  - Permissions matrix (`src/permissions/matrix.js`): agregar `platform.modules.write` con valores `RW (MFA)` solo para `platform_owner`, todos los demás `—`. Documentar en el bloque de matriz de la sección 10 de este backlog (no en la matriz del módulo influencer — esta capability es de plataforma, no del módulo).
+  - Banner informativo cuando se activa un módulo para un tenant nuevo: si el módulo es `influencer`, recordar al operador que también debe verificar la config global de `platform_ai_providers` (UI-INFLU-015) — un módulo activado sin proveedores configurados generaría 500 al primer request del tenant.
+- **Criterios:**
+  - Archivos ≤ 400 LOC (mismo límite que UI-006.*).
+  - 100% de la vista detrás de `<RequirePermission capability="platform.modules.write" mode="R">` + `<MfaRequiredBlocker>`; un Admin/Owner/Manager de tenant que llegue por deep-link recibe `AccessDenied`.
+  - El toggle es **idempotente**: re-activar un módulo ya activo no cambia `activated_at` (UPDATE solo si `enabled` cambia, side-effect-free para no-ops); idem para desactivar.
+  - El cache de `ensure_module_enabled` (TTL 5 min, en [app/influencer/__init__.py:48](app/influencer/__init__.py:48)) NO se invalida desde el frontend — el banner en `ModuleToggleConfirm` debe explicar al operador que el cambio puede tardar hasta 5 min en propagarse a workers de API si no se reinicia el pool. El endpoint de backend (TASK-INFLU-019) invalida el cache local del worker que recibe el PATCH; el resto se renueva por TTL.
+- **Tests:**
+  - `ModulesControl.test.jsx` (5): render con tenants y matriz; toggle activa via mock de `upsertTenantModule`; toggle requiere MFA (sin MFA → blocker, no llama API); `AccessDenied` para Admin/Manager/Agent/Viewer; banner Influencer recuerda config de proveedores cuando se activa el módulo.
+  - `useModulesControl.test.js` (3): payload del PATCH correcto (incluye `notes`); retry de error preserva el filtro; refresh post-toggle.
+  - `matrix.test.js`: la nueva capability `platform.modules.write` con valores correctos por rol.
+- **Dependencias:** UI-006 (Platform Owner shell + primitivas), UI-005 (MFA), UI-INFLU-002 (capability matrix + InfluencerShell ya consume `tenant_modules.influencer.enabled`), **TASK-INFLU-019** (endpoints de backend; bloquea esta tarea).
 
 ---

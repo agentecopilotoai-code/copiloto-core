@@ -958,7 +958,7 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-## Módulo Influencer — Ravit Studio (TASK-INFLU-001..018)
+## Módulo Influencer — Ravit Studio (TASK-INFLU-001..019)
 
 > **Producto:** plataforma de influencers de IA (personajes con cara/cuerpo/voz consistentes) que produce contenido para redes y monetiza por créditos.
 >
@@ -1339,5 +1339,29 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
   - `tests/test_influencer_metrics_static.py`: cada metric registrada con su label set; alertas referencian metric names existentes.
   - `tests/test_disclose_ai_enforcement.py`: tenant no puede setear `disclose_ai=false`; override platform_owner desbloquea + audit.
 - **Dependencias:** TASK-INFLU-001..017.
+
+---
+
+### TASK-INFLU-019 — Endpoints `platform_admin` para `app.tenant_modules` (enable/disable per tenant)
+
+- **Estado:** PENDING
+- **Diseño:** sin HTML directo — backend admin de plataforma. La UI consumidora es UI-INFLU-017 (`src/features/platform/modules-control/`).
+- **Motivación:** TASK-INFLU-001 entregó la tabla `app.tenant_modules` + el gate `ensure_module_enabled`, pero **no hay endpoint REST** para que Platform Owner active/desactive el módulo de un tenant. Hoy la activación requiere `INSERT` directo en la DB como `copiloto_admin` (las RLS policies `tenant_modules_support_*` exigen `app.support_mode()=true`). Esa fricción no es viable para onboarding comercial — necesitamos un PATCH con audit + MFA.
+- **Alcance:**
+  - Nuevos endpoints en `app/influencer/admin_routes.py` (mismo file que TASK-INFLU-002 para no fragmentar el platform_admin del módulo; reusa `platform_admin_router` que ya aplica `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`):
+    - `GET /v1/platform/tenant-modules` — lista cross-tenant `(tenant_id, tenant_slug, tenant_name, module, enabled, plan, activated_at, activated_by, notes)` agrupado por tenant. Setea `app.support_mode='true'` transaction-local para bypassear RLS de `app.tenant_modules` y `app.tenants` en el read. Filtros query: `module` (default todos), `enabled` (boolean opcional), `tenant_search` (substring sobre `slug`/`name`).
+    - `PATCH /v1/platform/tenant-modules/{tenant_id}/{module}` — body `{enabled: bool, plan?: str | null, notes?: str | null}`. `module` validado contra el CHECK constraint actual (`{'influencer'}`). Si la fila no existe → INSERT con `activated_at=now()`, `activated_by=<actor>`. Si existe y `enabled` cambia → UPDATE `activated_at=now()`. Si `enabled` NO cambia → UPDATE solo `plan`/`notes`/`updated_at` (idempotente, no toca `activated_at` — evita ruido en audit). El endpoint setea `app.support_mode='true'` transaction-local para que las RLS policies `tenant_modules_support_insert`/`_update` admitan la mutación.
+  - **Invalidación de cache:** después del PATCH, invocar `app.influencer._cache_invalidate()` en el worker que sirvió el request — limpia el cache local del gate (los demás workers se ponen al día por TTL 5 min, [app/influencer/__init__.py:48](app/influencer/__init__.py:48); en single-worker dev el cambio es inmediato).
+  - **Audit:** cada PATCH emite `platform.tenant_module.activated` o `_deactivated` (según el toggle) con metadata `{tenant_id, module, enabled, plan, notes_provided: bool}`. **El campo `notes` NO se incluye en el audit row** (puede contener texto libre del operador con info sensible del cliente) — solo se persiste en `app.tenant_modules.notes`; el audit captura su presencia, no su contenido.
+  - **Banner de pre-flight para el módulo `influencer`:** si el caller intenta `enabled=true` sobre `module='influencer'` y NO hay filas en `app.platform_ai_providers` con `secret_ref IS NOT NULL` para las 5 modalidades requeridas, devolver `409 Conflict` con `detail='ai_providers_not_configured'` (no `400`, para que el frontend pueda mostrar un banner accionable que linkee a UI-INFLU-015). El operador debe configurar al menos LLM + IMAGE antes de activar el módulo para un tenant.
+- **Tests:**
+  - `tests/test_tenant_modules_admin_static.py` (AST): (1) endpoints montados en `platform_admin_router`, no en routers de tenant; (2) ambos endpoints declaran `set_local app.support_mode='true'` antes del SELECT/PATCH; (3) `audit(...)` se invoca tras cada PATCH; (4) el body schema declara `notes` opcional + máximo de chars razonable; (5) `_cache_invalidate()` se invoca tras PATCH.
+  - `tests/test_tenant_modules_admin.py` (con DB): (1) PATCH sin MFA → 403; (2) PATCH con MFA por un Admin de tenant → 403 (no es platform_owner); (3) PATCH platform_owner sobre tenant inexistente → 404; (4) PATCH con `module='unknown'` → 400 (CHECK constraint); (5) PATCH `enabled=true` cuando providers no configurados → 409 + audit NO emitido (precondición falla antes del side-effect); (6) PATCH `enabled=true` happy path → fila creada, `activated_at` y `activated_by` poblados, gate de ese tenant pasa al siguiente request; (7) PATCH idempotente: `enabled=true` sobre fila ya enabled NO cambia `activated_at` y NO emite audit `_activated` duplicado; (8) PATCH `enabled=false` → gate del tenant devuelve 404 al request siguiente; (9) `notes` se persiste en `tenant_modules.notes` pero NO aparece en `audit_log.metadata`.
+- **Seguridad:**
+  - Solo `platform_owner` con MFA puede invocar (heredado de `platform_admin_router`). Defense-in-depth: las RLS policies `tenant_modules_support_*` ya exigen `support_mode()` — un actor sin support_mode falla a nivel DB aunque bypasee el dependency.
+  - El audit es la fuente de verdad de quién activó qué módulo para qué tenant — no se permite el toggle desde SQL directo en producción (la documentación del runbook de onboarding debe apuntar al endpoint REST, no al `psql`).
+  - `notes` libre permite hasta 500 chars; el frontend (UI-INFLU-017) muestra un warning si el operador pega más de 200 caracteres (heurística para detectar leak accidental de datos del cliente).
+- **Dependencias:** TASK-INFLU-001 (tabla + RLS), TASK-INFLU-002 (precondición de providers para el banner 409). Las migraciones NO cambian — solo se agregan endpoints + tests.
+- **Follow-up sugerido (no en alcance):** cuando se agregue un segundo módulo opt-in (`analytics_pro`, `whitelabel`, etc.), ampliar el CHECK constraint de `app.tenant_modules.module` con una migración y agregar el módulo al frontend de `ModulesControl` (ya soporta matriz N×M).
 
 ---
