@@ -36,6 +36,12 @@ import { ViewerAnalytics } from '../features/viewer/analytics/index.js';
 import { ViewerAppointments } from '../features/viewer/appointments/index.js';
 import { ViewerConversations } from '../features/viewer/conversations/index.js';
 import { ViewerSummary } from '../features/viewer/summary/index.js';
+import {
+  InfluencerCalendar,
+  InfluencerCasting,
+  InfluencerCredits,
+  InfluencerLibrary,
+} from '../features/influencer/placeholders.jsx';
 
 /**
  * Registro `module id → { Component, capability, mode }`.
@@ -111,4 +117,14 @@ export const MODULE_REGISTRY = Object.freeze({
   'viewer-analytics': { Component: ViewerAnalytics, capability: 'analytics.tenant.read' },
   'viewer-appointments': { Component: ViewerAppointments, capability: 'appointments.view' },
   'viewer-conversations': { Component: ViewerConversations, capability: 'conversations.view' },
+  // ─── Módulo Influencer / Ravit Studio (UI-INFLU-002) ───────────────────
+  // Placeholders mientras se materializan las vistas reales en UI-INFLU-003+.
+  // El gate de módulo (tenant_modules.influencer.enabled=true) lo hace el
+  // shell vía 404 del backend (TASK-INFLU-001) — el capability adicional
+  // protege contra rol que no debe ver el módulo aún teniendo el tenant
+  // activado.
+  'influencer-casting': { Component: InfluencerCasting, capability: 'influencer.module.access' },
+  'influencer-calendar': { Component: InfluencerCalendar, capability: 'influencer.posts.schedule', mode: 'RW' },
+  'influencer-library': { Component: InfluencerLibrary, capability: 'influencer.module.access' },
+  'influencer-credits': { Component: InfluencerCredits, capability: 'influencer.credits.read' },
 });

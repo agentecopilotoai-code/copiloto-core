@@ -1587,7 +1587,7 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 > | `influencer.personas.write` | — | — | RW | RW | RW | — |
 > | `influencer.personas.archive` | — | — | — | RW (MFA) | RW (MFA) | — |
 > | `influencer.generate` | — | — | RW | RW | RW | — |
-> | `influencer.platforms.connect` | — | — | — | RW (MFA) | RW (MFA) | — |
+> | `influencer.channels.connect` | — | — | — | RW (MFA) | RW (MFA) | — |
 > | `influencer.posts.schedule` | — | — | RW | RW | RW | — |
 > | `influencer.posts.approve_publish` | — | — | RW | RW | RW | — |
 > | `influencer.credits.read` | — | — | R | R | R | — |
@@ -1627,10 +1627,11 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-002 — Shell + routing del módulo (gate por `tenant_modules.influencer`)
+### UI-INFLU-002 — Shell + routing del módulo (gate por `tenant_modules.influencer`) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE (2026-05-19)
 - **HTML:** sidebar visible en todos los 9 HTMLs principales (Ravit Studio · Personaje activo · Estudio · Generar contenido · Feed · Calendario · Stats · Casting · Biblioteca · Créditos · Ayuda y comunidad · Gana 10% con Ravit).
+- **Cierre:** ver `docs/DONE.md` (entrada UI-INFLU-002). 11 capabilities `influencer.*` agregadas a `permissions/matrix.js` (renombrada `influencer.platforms.connect` → `influencer.channels.connect` para evitar match con filtro substring `'platform'` de UI-006.7). Nuevo `InfluencerShell.jsx` con sub-nav `INFLUENCER_NAV` (Estudio/Producción/Recursos) + banner "Módulo no habilitado" cuando backend 404. Helper `coreApi.isInfluencerEnabled(session, tenantId)` traduce 200→true, 404→false, otros errors propagados. Ruta `/t/:tenantSlug/influencer/*` con `InfluencerShellRoute` que chequea activación + redirige al casting si no hay path explícito. 4 placeholders del feature en `src/features/influencer/placeholders.jsx` para casting/calendar/library/credits (vistas reales en UI-INFLU-003+). Tests: matrix (6 nuevos) + InfluencerShell (4) + isInfluencerEnabled (4) — total 14 tests del módulo, suite completa 152 archivos / 1125 tests verdes.
 - **Alcance:**
   - Nueva ruta padre `/t/:tenantSlug/influencer/*` que renderiza `InfluencerShell.jsx` (extiende `TenantShell` con sub-nav lateral del módulo).
   - Sub-rutas:

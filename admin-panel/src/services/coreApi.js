@@ -1602,3 +1602,36 @@ export function legalDocumentPublicUrl(session, tenantId, kind) {
   // the same link the bot inserts in the consent template.
   return `${coreApiPath(session, `/tenants/${tenantId}/legal/${kind}`)}`;
 }
+
+// ─── Módulo Influencer / Ravit Studio (UI-INFLU-002) ──────────────────────
+
+/**
+ * Chequea si el tenant tiene el módulo influencer activo.
+ *
+ * El backend (TASK-INFLU-001) monta `GET /v1/influencer/_health` con el gate
+ * `ensure_module_enabled`: devuelve 200 con `{module:'influencer',
+ * status:'active'}` si el tenant tiene la fila en `app.tenant_modules` con
+ * `enabled=true`, o 404 si no — decisión D2 explícita (NO filtra existencia
+ * del feature; el tenant que pide cualquier endpoint del módulo sin tenerlo
+ * activado recibe 404 indistinguible de una ruta inexistente).
+ *
+ * El frontend traduce el 404 a `false` y lo usa en `InfluencerShell` para
+ * mostrar el banner "Módulo no habilitado" en lugar de un error genérico.
+ * Cualquier otro error (401/403/5xx) se propaga al ErrorBoundary.
+ *
+ * @param {object} session - Sesión activa (usa Bearer JWT).
+ * @param {string} tenantId - UUID del tenant activo.
+ * @returns {Promise<boolean>} `true` si el módulo está activo para el tenant,
+ *   `false` si el backend respondió 404 (módulo no habilitado).
+ */
+export async function isInfluencerEnabled(session, tenantId) {
+  try {
+    await request('/influencer/_health', { session, tenantId });
+    return true;
+  } catch (err) {
+    if (err?.status === 404) {
+      return false;
+    }
+    throw err;
+  }
+}

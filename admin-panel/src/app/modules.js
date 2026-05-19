@@ -269,4 +269,36 @@ export const adminModules = [
     scope: ['Lista de conversaciones', 'Tabs «Todas» / «Quejas» (read-only)', 'Sin composer ni acciones de handoff', 'Sin formulario «Iniciar conversación»', 'Banner permanente "Modo solo lectura"'],
     capability: 'conversations.view',
   },
+  // ─────────────────────────────────── MÓDULO INFLUENCER / Ravit Studio ────────────────────
+  // UI-INFLU-002. Las 6 vistas materializadas viven en `src/features/influencer/` y
+  // se implementan en UI-INFLU-003+. Aquí solo declaramos el catálogo + capability;
+  // el `moduleRegistry` apunta a placeholders mientras se construye cada vista.
+  {
+    id: 'influencer-casting',
+    label: 'Casting',
+    summary: 'Ravit Studio · home del rol que ve los personajes IA del tenant con KPIs (posts, alcance, engagement).',
+    scope: ['Grid de personajes activos', 'KPIs cross-personajes', 'Filtros por categoría', 'CTA "Crear personaje" (gate por write)'],
+    capability: 'influencer.module.access',
+  },
+  {
+    id: 'influencer-calendar',
+    label: 'Calendario',
+    summary: 'Ravit Studio · calendario semanal/mensual cross-personajes con scheduling y aprobación de posts.',
+    scope: ['Vista Día/Semana/Mes', 'Filtro multi-personaje', 'Aprobar y publicar', 'Reprogramar/cancelar'],
+    capability: 'influencer.posts.schedule',
+  },
+  {
+    id: 'influencer-library',
+    label: 'Biblioteca',
+    summary: 'Ravit Studio · acceso al banco de medios reusando el módulo `media-library` existente.',
+    scope: ['Reuso de media-library para assets generados', 'Filtros por personaje y tipo'],
+    capability: 'influencer.module.access',
+  },
+  {
+    id: 'influencer-credits',
+    label: 'Créditos',
+    summary: 'Ravit Studio · balance del tenant + historial de movimientos + (admin/owner) top-up.',
+    scope: ['Balance actual + últimas 50 transacciones', 'Histórico de generaciones × créditos', 'CTA "Comprar créditos" (gate por topup)'],
+    capability: 'influencer.credits.read',
+  },
 ];

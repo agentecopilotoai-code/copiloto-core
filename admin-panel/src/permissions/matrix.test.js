@@ -430,3 +430,62 @@ describe('ROLE_HOME', () => {
     expect(ROLE_HOME.viewer).toBe('viewer-summary');
   });
 });
+
+describe('UI-INFLU-002 — Módulo Influencer capabilities', () => {
+  const INFLU_CAPS = [
+    'influencer.module.access',
+    'influencer.personas.read',
+    'influencer.personas.write',
+    'influencer.personas.archive',
+    'influencer.generate',
+    'influencer.channels.connect',
+    'influencer.posts.schedule',
+    'influencer.posts.approve_publish',
+    'influencer.credits.read',
+    'influencer.credits.topup',
+    'influencer.ai_providers.configure',
+  ];
+
+  it('declara las 11 capabilities del módulo', () => {
+    for (const cap of INFLU_CAPS) {
+      expect(PERMISSIONS[cap], `${cap} no declarada`).toBeDefined();
+    }
+  });
+
+  it('viewer y agent NO tienen acceso al módulo (capability `module.access` null)', () => {
+    expect(PERMISSIONS['influencer.module.access'].viewer).toBeNull();
+    expect(PERMISSIONS['influencer.module.access'].agent).toBeNull();
+  });
+
+  it('manager tiene acceso de lectura pero NO compra créditos ni conecta plataformas', () => {
+    expect(PERMISSIONS['influencer.module.access'].manager).toBe('R');
+    expect(PERMISSIONS['influencer.personas.write'].manager).toBe('RW');
+    expect(PERMISSIONS['influencer.generate'].manager).toBe('RW');
+    expect(PERMISSIONS['influencer.credits.topup'].manager).toBeNull();
+    expect(PERMISSIONS['influencer.channels.connect'].manager).toBeNull();
+    expect(PERMISSIONS['influencer.personas.archive'].manager).toBeNull();
+  });
+
+  it('admin/owner pueden archivar, conectar canales y comprar créditos', () => {
+    for (const role of ['admin', 'owner']) {
+      expect(PERMISSIONS['influencer.personas.archive'][role]).toBe('RW');
+      expect(PERMISSIONS['influencer.channels.connect'][role]).toBe('RW');
+      expect(PERMISSIONS['influencer.credits.topup'][role]).toBe('RW');
+    }
+  });
+
+  it('platform_owner es el ÚNICO que configura proveedores IA (D3 del backlog)', () => {
+    const row = PERMISSIONS['influencer.ai_providers.configure'];
+    expect(row.platform_owner).toBe('RW');
+    for (const role of ['viewer', 'agent', 'manager', 'admin', 'owner']) {
+      expect(row[role], `${role} no debe configurar providers`).toBeNull();
+    }
+  });
+
+  it('platform_owner NO tiene acceso operativo al módulo (config-only, no operación)', () => {
+    expect(PERMISSIONS['influencer.module.access'].platform_owner).toBeNull();
+    expect(PERMISSIONS['influencer.personas.write'].platform_owner).toBeNull();
+    expect(PERMISSIONS['influencer.generate'].platform_owner).toBeNull();
+    expect(PERMISSIONS['influencer.credits.topup'].platform_owner).toBeNull();
+  });
+});

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   createBrowserRouter,
   Navigate,
@@ -34,6 +34,8 @@ import { resolveSafeHomeModule } from './resolveSafeHomeModule.js';
 import { PlatformOwnerShell } from './shells/PlatformOwnerShell.jsx';
 import { ReadOnlyShell } from './shells/ReadOnlyShell.jsx';
 import { TenantShell } from './shells/TenantShell.jsx';
+import { InfluencerShell } from './shells/InfluencerShell.jsx';
+import { isInfluencerEnabled } from '../services/coreApi.js';
 import {
   ACTIVE_TENANT_STORAGE_KEY,
   pickDefaultTenant,
@@ -45,8 +47,18 @@ const PLATFORM_MODULE_IDS = adminModules
   .filter((module) => module.id.startsWith('platform-'))
   .map((module) => module.id);
 
+// UI-INFLU-002: los módulos `influencer-*` viven bajo un shell distinto
+// (`InfluencerShell` con su propio `INFLUENCER_NAV`), por eso los excluimos
+// de `TENANT_MODULE_IDS` para que `TenantShellRoute` no intente renderizarlos.
+const INFLUENCER_MODULE_IDS = adminModules
+  .filter((module) => module.id.startsWith('influencer-'))
+  .map((module) => module.id);
+
 const TENANT_MODULE_IDS = adminModules
-  .filter((module) => !module.id.startsWith('platform-'))
+  .filter(
+    (module) =>
+      !module.id.startsWith('platform-') && !module.id.startsWith('influencer-'),
+  )
   .map((module) => module.id);
 
 /**
@@ -374,6 +386,82 @@ function TenantShellRoute() {
   );
 }
 
+/**
+ * UI-INFLU-002 — Layout del módulo Influencer / Ravit Studio.
+ *
+ * Igual que `TenantShellRoute` (extrae tenant del slug + permisos + navega),
+ * pero usa `InfluencerShell` con `INFLUENCER_NAV`. Adicionalmente:
+ *   - Consulta `isInfluencerEnabled(session, tenantId)` al montar y guarda
+ *     el resultado en estado. Si el backend responde 404 (módulo no activo
+ *     para el tenant), el shell muestra un `<AlertBanner>` "Módulo no
+ *     habilitado" en lugar del módulo real (decisión D2 — frontend traduce
+ *     el 404 a UX amistosa sin filtrar la existencia del feature).
+ *   - El estado inicial `null` significa "cargando"; mostramos `<LoadingScreen>`.
+ *   - El gate primario sigue siendo el backend; el frontend solo respeta
+ *     su veredicto. Si en una venta futura el tenant pierde el módulo, el
+ *     primer 404 del próximo request lo refleja.
+ */
+function InfluencerShellRoute() {
+  const { activeTenant } = useOutletContext();
+  const { profile, tenantOptions, session } = useTenantContext();
+  const permissions = usePermissions({ profile, tenant: activeTenant });
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // null = loading; true = activo; false = 404 del backend.
+  const [moduleEnabled, setModuleEnabled] = useState(null);
+
+  useEffect(() => {
+    if (!session || !activeTenant?.id) return undefined;
+    let cancelled = false;
+    isInfluencerEnabled(session, activeTenant.id)
+      .then((enabled) => {
+        if (!cancelled) setModuleEnabled(enabled);
+      })
+      .catch(() => {
+        // Cualquier error que NO sea 404 → tratamos como "no activo" para
+        // no bloquear la UI. El ErrorBoundary atrapa los crashes reales.
+        if (!cancelled) setModuleEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, activeTenant?.id]);
+
+  // Mientras se resuelve la activación, mostramos loading screen sin shell —
+  // evita el flash de "Módulo no habilitado" en el primer render.
+  if (moduleEnabled === null) return <LoadingScreen />;
+
+  const segments = location.pathname.split('/').filter(Boolean); // ['t', slug, 'influencer', moduleId]
+  const activeModuleId = segments[3] || 'influencer-casting';
+  const activeModule =
+    adminModules.find((item) => item.id === activeModuleId) ??
+    adminModules.find((item) => item.id === 'influencer-casting') ??
+    null;
+
+  return (
+    <InfluencerShell
+      profile={profile}
+      permissions={permissions}
+      modules={adminModules}
+      activeModule={activeModule}
+      activeModuleId={activeModuleId}
+      onModuleSelect={(id) => navigate(`/t/${activeTenant.slug}/influencer/${id}`)}
+      tenantOptions={tenantOptions}
+      activeTenantId={activeTenant.id}
+      onTenantChange={(id) => {
+        const next = tenantOptions.find((tenant) => tenant.id === id);
+        if (next) navigate(`/t/${next.slug}/influencer`);
+      }}
+      canSwitchTenants={tenantOptions.length > 1 || permissions.isSystemOwner}
+      session={session}
+      moduleEnabled={moduleEnabled}
+    >
+      <Outlet context={{ activeTenant }} />
+    </InfluencerShell>
+  );
+}
+
 /** Layout de solo lectura (Viewer). */
 function ReadOnlyShellRoute() {
   const { activeTenant } = useOutletContext();
@@ -530,6 +618,22 @@ export const routes = [
               // `viewer-summary` y veían AccessDenied.
               { index: true, element: <ReadHomeRedirect /> },
               ...TENANT_MODULE_IDS.map(moduleRoute),
+            ],
+          },
+          {
+            // UI-INFLU-002 — sub-tree del módulo Influencer / Ravit Studio.
+            // Vive PARALELO a TenantShellRoute (no anidado dentro) porque
+            // tiene su propio shell con sub-nav distinta (INFLUENCER_NAV).
+            // El gate de activación del módulo (404 del backend) se chequea
+            // dentro de `InfluencerShellRoute` con `isInfluencerEnabled`.
+            path: 'influencer',
+            element: <InfluencerShellRoute />,
+            children: [
+              {
+                index: true,
+                element: <Navigate to="influencer-casting" replace />,
+              },
+              ...INFLUENCER_MODULE_IDS.map(moduleRoute),
             ],
           },
           {

@@ -74,3 +74,22 @@ export const VIEWER_NAV = Object.freeze([
     items: ['viewer-summary', 'viewer-analytics', 'viewer-appointments', 'viewer-conversations', 'contacts'],
   },
 ]);
+
+// Módulo Influencer / Ravit Studio — UI-INFLU-002. Sub-nav del módulo, se
+// muestra DENTRO del `InfluencerShell` (no se mezcla con `TENANT_NAV`). El
+// shell filtra los items por `usePermissions().can('influencer.module.access', 'R')`
+// y por capability específica de cada item, igual que el resto de nav.
+//
+// Mapping a HTMLs del diseñador (sidebar en docs/influencer/01..05):
+//   - "Estudio · Generar contenido"  → casting (entry) + generate
+//   - "Feed · Posts publicados"       → casting (con tab posts publicados)
+//   - "Calendario · Programación"     → calendar
+//   - "Stats · Rendimiento Global"    → casting con focus en stats
+//   - "Casting · 6 personajes"        → casting
+//   - "Biblioteca"                    → library (link a media-library existente)
+//   - "Créditos · 248"                → credits
+export const INFLUENCER_NAV = Object.freeze([
+  { section: 'Estudio', items: ['influencer-casting'] },
+  { section: 'Producción', items: ['influencer-calendar'] },
+  { section: 'Recursos', items: ['influencer-library', 'influencer-credits'] },
+]);

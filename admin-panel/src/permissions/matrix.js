@@ -107,6 +107,36 @@ export const PERMISSIONS = Object.freeze({
   'platform.roles_acl.write':    { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
   'platform.feature_flags.read': { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: R },
   'platform.feature_flags.write':{ viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
+
+  // ─────────────────────────────────── MÓDULO INFLUENCER / Ravit Studio ────────────────────
+  // UI-INFLU-002. Activación opt-in por tenant (D2 backlog). El gate
+  // `tenant_modules.influencer.enabled=true` se chequea en el shell del módulo
+  // (via 404 del backend, TASK-INFLU-001). Estas capabilities son la matriz
+  // de rol × acción DENTRO del módulo, asumiendo que el tenant lo tiene activo.
+  //
+  // Política (sección 10 de docs/UI_BACKLOG.md):
+  //   - Configuración de proveedores IA = platform_owner-only (D3).
+  //   - Compra de créditos + archivado de personas + conexión de plataformas
+  //     externas = admin/owner only (MFA en el backend para los 2 últimos).
+  //   - Creación de personas + generación + scheduling = manager+ (manager y
+  //     superiores). Manager NO conecta plataformas ni compra créditos.
+  //   - Agent / viewer: sin acceso al módulo.
+  'influencer.module.access':       { viewer: null, agent: null, manager: R,  admin: R,  owner: R,  platform_owner: null },
+  'influencer.personas.read':       { viewer: null, agent: null, manager: R,  admin: R,  owner: R,  platform_owner: null },
+  'influencer.personas.write':      { viewer: null, agent: null, manager: RW, admin: RW, owner: RW, platform_owner: null },
+  'influencer.personas.archive':    { viewer: null, agent: null, manager: null, admin: RW, owner: RW, platform_owner: null },
+  'influencer.generate':            { viewer: null, agent: null, manager: RW, admin: RW, owner: RW, platform_owner: null },
+  // NOTA: nombre `channels.connect` (no `platforms.connect`) para evitar
+  // ambigüedad con caps `platform.*` de Platform Owner (UI-006). El filtro
+  // case-insensitive de la matriz Roles · ACL busca substring, y el módulo
+  // Influencer NO pertenece al dominio de Platform Owner aunque conecte
+  // "plataformas" externas como Instagram/TikTok/etc.
+  'influencer.channels.connect':    { viewer: null, agent: null, manager: null, admin: RW, owner: RW, platform_owner: null },
+  'influencer.posts.schedule':      { viewer: null, agent: null, manager: RW, admin: RW, owner: RW, platform_owner: null },
+  'influencer.posts.approve_publish': { viewer: null, agent: null, manager: RW, admin: RW, owner: RW, platform_owner: null },
+  'influencer.credits.read':        { viewer: null, agent: null, manager: R,  admin: R,  owner: R,  platform_owner: null },
+  'influencer.credits.topup':       { viewer: null, agent: null, manager: null, admin: RW, owner: RW, platform_owner: null },
+  'influencer.ai_providers.configure': { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
 });
 
 const LEVEL_RANK = Object.freeze({

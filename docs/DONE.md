@@ -15,6 +15,71 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-INFLU-001 — Infraestructura del módulo Influencer (schema + gate)
+
+- **Fecha:** 2026-05-19
+- **PR:** [#2](https://github.com/agentecopilotoai-code/CopilotoIA/pull/2) (squash-merged a develop)
+- **Resumen:** bloque fundacional del módulo Ravit Studio. Establece el contrato de activación opt-in por tenant y monta el router del módulo con un gate **404 (no 403)** cuando el tenant no tiene el módulo activo — decisión D2 explícita para no filtrar la existencia del feature.
+- **Componentes:**
+  - **Migración SQL** (`01-schema.sql` + `03-migrations.sql`): schema `influencer` separado de `app` (activación quirúrgica). Tabla `app.tenant_modules(tenant_id, module, enabled, plan, activated_at, activated_by, notes)` con FK CASCADE al tenant, CHECK constraint sobre `module IN ('influencer')`, PK compuesto, default `enabled=false` (fail-closed), partial index `WHERE enabled=true` (lookup O(1)). RLS + 4 policies: select tenant-scoped O support_mode; insert/update/delete **support_mode-only** (platform_owner) — defense-in-depth, el tenant no puede activar su propio módulo vía SQL directo.
+  - **`app/influencer/__init__.py`**: constante `MODULE_NAME = 'influencer'`. Helper async `ensure_module_enabled(request, conn, _auth)` con cache TTL 300s por worker. Levanta `HTTPException(404)` cuando no hay tenant o `enabled=false`. Helper `_cache_invalidate()` exportado para tests.
+  - **`app/influencer/router.py`**: `influencer_router` prefix `/v1/influencer`, tag `influencer`, dependencies `[authenticate_request, ensure_module_enabled]`. Endpoint `/_health` interno para validar el gate desde E2E.
+  - **`app/main.py`**: `api.include_router(influencer_router)` con comentario inline declarando política D2.
+- **Archivos modificados:**
+  - `infra/postgres/01-schema.sql`, `infra/postgres/03-migrations.sql` (+90 LOC)
+  - `app/influencer/__init__.py` (creado, 142 LOC)
+  - `app/influencer/router.py` (creado, 52 LOC)
+  - `app/main.py` (import + mount)
+  - `tests/test_influencer_module_gate_static.py` (creado, 17 tests)
+- **Validaciones:**
+  - `python3 -m ruff check app tests` → All checks passed
+  - `python3 -m compileall app -q` → OK
+  - `python3 -m pytest tests/test_influencer_module_gate_static.py` → 17/17 PASSED en 0.26s
+  - CI completo PR #2 → 4/4 checks verdes en primera corrida (api 53s, e2e 2m24s, coverage 3m14s, admin-panel 5m58s).
+- **Nota de seguridad:** `authenticate_request` puebla `tenant_roles_by_tenant` antes del gate. RLS impide cross-tenant SQL directo. Gate retorna **404** (no 403) — no filtra existencia del módulo. Mutaciones SQL directas a `tenant_modules` requieren `support_mode` (platform_owner) — el tenant no puede activarse el módulo a sí mismo.
+- **Desbloquea:** TASK-INFLU-002..018 (todo el resto del backend del módulo) + UI-INFLU-002 (shell + routing) que ahora gateée contra 404 real.
+
+---
+
+### UI-INFLU-002 — Shell + routing del módulo Influencer / Ravit Studio
+
+- **Fecha:** 2026-05-19
+- **Resumen:** monta el shell del módulo Ravit Studio en el admin panel con sub-nav propia, gating por activación del módulo (404 del backend → banner amistoso), 11 capabilities por rol en la matriz, y 4 placeholders de las vistas mientras se materializan en UI-INFLU-003+.
+- **Componentes:**
+  - **`permissions/matrix.js`**: 11 capabilities `influencer.*` agregadas (module.access, personas.read/write/archive, generate, channels.connect, posts.schedule/approve_publish, credits.read/topup, ai_providers.configure). Política: viewer/agent sin acceso; manager con RW operacional pero NO archive/connect/topup; admin/owner full incluido MFA gates; `ai_providers.configure` exclusivo de `platform_owner` (D3 del backlog). Renombrada `platforms.connect` → `channels.connect` para evitar match substring con filtro `'platform'` de UI-006.7.
+  - **`app/nav.js`**: nueva sección `INFLUENCER_NAV` con grupos Estudio · Producción · Recursos (filtrado por permisos en runtime).
+  - **`app/modules.js`**: 4 module entries (`influencer-casting/calendar/library/credits`) con summary + scope + capability.
+  - **`app/moduleRegistry.js`**: registry entries apuntando a los 4 placeholders del feature.
+  - **`features/influencer/placeholders.jsx`**: 4 componentes mínimos (PageHeader + Card "Próximamente" + referencia al HTML del diseñador). Las vistas reales materializan en UI-INFLU-003+.
+  - **`app/shells/InfluencerShell.jsx`** (creado, 109 LOC): mismo patrón que TenantShell pero con `INFLUENCER_NAV`, `data-module="influencer"` para CSS gating, `eyebrow="Ravit Studio"`, y soporte de prop `moduleEnabled` — si false, renderiza `<AlertBanner tone="warning" title="Módulo no habilitado">` en lugar del módulo real (decisión D2 traducida a UX amistosa).
+  - **`app/router.jsx`**: nuevo `InfluencerShellRoute` que extrae tenant del slug, consulta `isInfluencerEnabled(session, tenantId)` al montar (con loading screen mientras resuelve), y pasa `moduleEnabled` al shell. Ruta `path: 'influencer'` paralela a `TenantShellRoute` bajo `/t/:tenantSlug/`, con index redirect a `influencer-casting`. Filtro `TENANT_MODULE_IDS` actualizado para excluir `influencer-*` (esos viven bajo el shell del módulo, no bajo `TenantShell`).
+  - **`services/coreApi.js`**: helper `isInfluencerEnabled(session, tenantId)` que llama `GET /v1/influencer/_health` y traduce 200→true, 404→false, otros errors propagados al ErrorBoundary.
+  - **`features/platform/roles-acl/rolesAclData.js`**: agregado dominio `influencer` al grouping con sección "Módulo Influencer / Ravit Studio" en el `GROUP_ORDER` (entre Administración del tenant y Platform Owner · fleet).
+- **Archivos modificados:**
+  - `admin-panel/src/permissions/matrix.js` (+33 LOC con 11 caps)
+  - `admin-panel/src/permissions/matrix.test.js` (+62 LOC, 6 tests nuevos)
+  - `admin-panel/src/app/nav.js` (+15 LOC con `INFLUENCER_NAV`)
+  - `admin-panel/src/app/modules.js` (+33 LOC con 4 entries)
+  - `admin-panel/src/app/moduleRegistry.js` (+8 LOC: imports + 4 entries)
+  - `admin-panel/src/app/router.jsx` (+77 LOC: `InfluencerShellRoute` + ruta + filtros)
+  - `admin-panel/src/app/shells/InfluencerShell.jsx` (creado, 109 LOC)
+  - `admin-panel/src/app/shells/InfluencerShell.test.jsx` (creado, 4 tests)
+  - `admin-panel/src/features/influencer/placeholders.jsx` (creado, 70 LOC, 4 componentes)
+  - `admin-panel/src/services/coreApi.js` (+33 LOC con `isInfluencerEnabled`)
+  - `admin-panel/src/services/isInfluencerEnabled.test.js` (creado, 4 tests)
+  - `admin-panel/src/features/platform/roles-acl/rolesAclData.js` (+9 LOC con dominio influencer)
+- **Validaciones:**
+  - `npm --prefix admin-panel run lint` → 0 errores
+  - `npm --prefix admin-panel test` → **152 archivos / 1125 tests verdes** sin regresión
+  - `npm --prefix admin-panel run build` → OK (840.80 kB JS, 193.53 kB CSS, 817ms)
+- **Notas:**
+  - El shell del módulo es un sub-tree paralelo a `TenantShellRoute` bajo `/t/:tenantSlug/`. Sub-rutas concretas como `/t/:slug/influencer/personas/new/step-:n` (wizard de UI-INFLU-008..012) se agregarán como hijos del `InfluencerShellRoute` cuando esas tareas se materialicen.
+  - El comportamiento del banner "Módulo no habilitado" se valida en el test del shell pasando `moduleEnabled={false}` — el caso real (backend respondiendo 404) se cubre con el test de `isInfluencerEnabled` que mockea `fetch`.
+  - El placeholder del feature (`InfluencerCasting`/`Calendar`/`Library`/`Credits`) es intencionalmente minimal — su única función es no romper el render mientras se construyen las vistas reales. Cada uno desaparece al landing la sub-tarea correspondiente.
+- **Nota de seguridad:** tarea purely frontend + scaffolding. NO toca backend, NO modifica políticas RLS, NO altera autenticación. El gate de seguridad real lo enforce el backend (TASK-INFLU-001) vía 404; este PR solo traduce el 404 a UX amistosa.
+
+---
+
 ### UI-INFLU-001 — Design tokens & tipografía Ravit Studio (módulo Influencer)
 
 - **Fecha:** 2026-05-19

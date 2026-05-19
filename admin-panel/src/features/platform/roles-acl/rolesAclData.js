@@ -64,6 +64,11 @@ const _GROUP_BY_DOMAIN = {
   audit: 'Administración del tenant',
   go_live_readiness: 'Administración del tenant',
   platform: 'Platform Owner · fleet',
+  // UI-INFLU-002: capabilities `influencer.*` agrupadas en su propia
+  // sección dentro de la matriz Roles · ACL (visible en Platform Owner
+  // UI-006.7). El módulo es opcional por tenant — la matriz refleja
+  // el rol × acción asumiendo que el tenant tiene el módulo activo.
+  influencer: 'Módulo Influencer / Ravit Studio',
 };
 
 // Stable render order for the groups.
@@ -73,6 +78,7 @@ export const GROUP_ORDER = [
   'Configuración del negocio',
   'Canales e IA',
   'Administración del tenant',
+  'Módulo Influencer / Ravit Studio',
   'Platform Owner · fleet',
 ];
 
