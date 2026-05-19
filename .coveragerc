@@ -1,0 +1,41 @@
+# Coverage config for `pytest --cov=app`.
+#
+# Exclusions below are paths/lines that we intentionally don't measure:
+#   - Worker `main()` entrypoints already have `# pragma: no cover` — they're
+#     manual-only.
+#   - Admin OAuth flow (`/admin/login`, `/admin/callback`) requires a live
+#     Auth0 tenant to test end-to-end; the unit tests cover the helpers.
+#   - LLM provider stubs are only reached with API keys (mocked in their own
+#     unit tests).
+#   - `TYPE_CHECKING` blocks are import-only.
+#
+# The goal is to keep coverage focused on code that's reasonably testable
+# without standing up the full external dependency chain (Auth0, Meta,
+# Anthropic, OpenAI, S3) in CI.
+
+[run]
+branch = false
+source = app
+omit =
+    # Workers entry-point loops (already marked `# pragma: no cover - manual`)
+    app/workers/alerts_worker.py
+    # Admin OAuth flow requires live Auth0 — its helpers are unit-tested,
+    # the full request-cycle isn't reproducible without Auth0.
+    # We KEEP `app/admin/ws_fanout.py` (covered by AUDIT-47 + HTTP E2E tests).
+    # We OMIT the OAuth proxy path that requires Auth0:
+    # (Note: we don't fully omit `app/admin/routes.py` because partial tests
+    # land — see test_e2e_http_admin_bff.py.)
+
+[report]
+# Exclude lines that explicitly opt out + standard patterns.
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    @abstractmethod
+    \.\.\.
+show_missing = true
+skip_covered = false
+precision = 1

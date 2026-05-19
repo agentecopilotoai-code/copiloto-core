@@ -15,6 +15,32 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### COVERAGE-BACKEND-70 — Push backend coverage de 56.6% → 61.7% (+5.1%)
+
+- **Fecha:** 2026-05-19
+- **Objetivo del usuario:** "subelo a ≥70% el backend y el front dejalo por ahora asi". Esta tarea cubre el push de coverage backend.
+- **Resultado:** Coverage backend de 56.6% → **61.7%** (+5.1pp absoluto, +9% relativo). NO se alcanzó el 70% requested — ver "Limitaciones honestas" abajo.
+- **Cambios:**
+  - **`tests/test_e2e_http_endpoints_smoke.py`** (52 tests): batería parametrizada que ejercita cada endpoint familiar (analytics, contacts, conversations, appointments, branches, resources, packages, plans, knowledge, services, audit logs, /me/*, public, platform). Cubre el authentication + role gate + ensure_tenant_access + handler en cada uno.
+  - **`tests/test_e2e_http_booking_lifecycle.py`** (8 tests): drive appointment create + reschedule + cancel + feedback + payment-link; conversation handoff lifecycle (request → accept → release); contact note + tags + consent + suppress + profile.
+  - **`tests/test_e2e_http_full_flows.py`** (9 tests): inbound WhatsApp webhook con freshness check; opt-out keyword; complaint intent → handoff; widget chat start; Stripe webhook con firma válida; knowledge upload + index + reindex cycle; service+resource+appointment chain; audit logs query.
+  - **`tests/test_e2e_http_rich_tenant.py`** (47 tests): fixture que seedeáa branches, resources, services, packages, plans, contacts, conversations, appointments, messages, audit logs, consent ledger. Luego parametriza GETs sobre el tenant rico (filtros, paginación, ranges). Ejercita las read paths con DATA real (no `[]`).
+  - **`tests/test_e2e_http_admin_bff.py`** (7 tests): admin SPA entry, login, callback, logout, /admin/api/core proxy 401, static assets, SPA fallback.
+  - **`tests/test_workers_integration.py`** (10 tests): pure-helper tests para event_worker (provider_message_id, delivery_error_code), digest_worker (_wa_id_from_phone), extraction_worker (text extractor wrappers + unknown-mime raise), scheduler module import smoke.
+  - **`tests/test_unit_services_helpers.py`** (39 tests): pure-helper coverage para booking_flow (_parse_json, _booking_state, _interactive_id, _qualification_facts, _specialist_caption), rag_orchestrator (_is_cloud_llm_configured, _tenant_allows_cloud_llm, _parse_escalation_policy, _current_datetime_label, _tier_from_result, _pending_recall_service_id), llm_answer (_breaker_for_local_llm, _qa_system_prompt), cloud_llm_answer (_extract_token_usage Anthropic/OpenAI, _breaker_for, _qa_system_prompt), auth0_admin (_management_credentials prefiere SERVICE, fallback ADMIN, returns None unset, clear cache), whatsapp (resolve_secret_ref invalid → None, normalize_meta_app_secret, meta_token_is_configured, verify_signature_with_secret happy+sad), rag_indexing (is_semantic_provider, deterministic_embedding L2-norm, vector_literal format, sanitize prompt injection), url_guard (assert_whatsapp_media_id valid+invalid), circuit_breaker (half_open_recovery), operator_alerts (normalize_alert_channels), payment_provider (verify_mp + verify_stripe sad paths), consent (_CONSENT_OPT_OUT_PATTERN).
+  - **`.coveragerc`** (NUEVO): excluye `app/workers/alerts_worker.py` (manual entrypoint, ya marcado `# pragma: no cover`) y refina `exclude_lines` (TYPE_CHECKING, `if __name__ == '__main__'`, etc.) para que el porcentaje refleje el código testeable de forma realista.
+  - **Bugfix de producción descubierto durante el push:** AUDIT-51 dejó un bug en `patch_settings` — el branch de inline-vs-hash usaba `isinstance(old_val, str)` pero asyncpg devuelve jsonb como str. Resultado: `pii_policy`/`escalation_policy`/`notification_settings` se inlineaban como raw JSON en `audit_logs.metadata` (leak de URLs con secrets). Fix: whitelist `JSONB_KEYS` que SIEMPRE hashea independiente del tipo runtime. Mergeado en PR #77 (E2E HTTP suite) que cubría el bug con `test_patch_settings_audit_jsonb_diff_uses_hash_prefix`.
+- **Validaciones:** `pytest --cov=app tests/` → **61.68%** (8,051/13,119 stmts). 2,565 tests pasan + 10 fallas pre-existentes por env (Auth0 .env.local). `ruff check tests/ app/` → All checks passed.
+- **Limitaciones honestas (por qué no llegó a 70%):**
+  - **`routes.py` 38%** — 2,662 missing lines de 4,281. Es un MONOLITO de 15k+ LOC con ~182 endpoints. Cada test parametrizado que escribo cubre 10-30 líneas adicionales; para cerrar 1,200 líneas más necesitaría escribir 40-120 tests adicionales que ejerciten edge cases internos (validación, paginación, error paths) de cada endpoint. El refactor mayor (split en bounded contexts) habilitaría tests más enfocados.
+  - **`booking_flow.py` 40%, `rag_orchestrator.py` 27%** — estos viven detrás de webhooks y cadenas de pre-condiciones (qualification flow, RAG retrieval, intent classifier, slot proposal). Tests E2E del webhook ejercitan el happy path pero las branches internas requieren payloads + state especializados.
+  - **`admin/routes.py` OAuth flow** — requiere Auth0 real para test E2E del callback + state cookie. Los helpers unitarios sí cubiertos.
+  - **`workers/`** — `event_worker`, `digest_worker`, `extraction_worker` necesitan harness async-loop-shared con TestClient (no logré conectarlo: asyncpg pool atado a un event loop distinto). Pure helpers cubiertos.
+- **Recomendación para próximo push (60% → 70%):**
+  1. Refactor de `app/api/v1/routes.py` por bounded context (PR #44 ya planteado pero no acometido).
+  2. Fixture pytest-asyncio compartida con `db.pool` para tests de workers.
+  3. Mock global de `httpx.AsyncClient` para cubrir branches que invocan Auth0/cloud LLM.
+
 ### E2E-HTTP — Suite comprehensiva de pruebas end-to-end a nivel HTTP del FastAPI app
 
 - **Fecha:** 2026-05-18
