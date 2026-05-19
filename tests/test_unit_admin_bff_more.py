@@ -652,6 +652,15 @@ def test_admin_core_api_proxy_happy_path(monkeypatch):
         jwt_secret='secret-min-length-16-chars',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
+    # _core_api_headers does `from app.core.config import get_settings` to build
+    # the X-Admin-Identity HMAC when sub+email are present. In CI the global
+    # Settings() can't initialize (missing env). Patch at source.
+    import app.core.config as _core_config
+    monkeypatch.setattr(
+        _core_config,
+        'get_settings',
+        lambda: SimpleNamespace(jwt_secret='secret-min-length-16-chars'),
+    )
     sid, _ = _make_session(profile={
         'sub': 'u|1', 'email': 'u@x.com', 'roles': ['admin'], 'mfa_verified': True,
     })
@@ -687,6 +696,15 @@ def test_admin_core_api_proxy_upstream_error(monkeypatch):
         jwt_secret='secret-min-length-16-chars',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
+    # _core_api_headers does `from app.core.config import get_settings` to build
+    # the X-Admin-Identity HMAC when sub+email are present. In CI the global
+    # Settings() can't initialize (missing env). Patch at source.
+    import app.core.config as _core_config
+    monkeypatch.setattr(
+        _core_config,
+        'get_settings',
+        lambda: SimpleNamespace(jwt_secret='secret-min-length-16-chars'),
+    )
     sid, _ = _make_session(profile={'sub': 'u|1', 'email': 'u@x.com', 'roles': ['admin'], 'mfa_verified': True})
 
     class _BrokenClient:
@@ -722,6 +740,15 @@ def test_admin_core_api_proxy_post_with_body(monkeypatch):
         jwt_secret='secret-min-length-16-chars',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
+    # _core_api_headers does `from app.core.config import get_settings` to build
+    # the X-Admin-Identity HMAC when sub+email are present. In CI the global
+    # Settings() can't initialize (missing env). Patch at source.
+    import app.core.config as _core_config
+    monkeypatch.setattr(
+        _core_config,
+        'get_settings',
+        lambda: SimpleNamespace(jwt_secret='secret-min-length-16-chars'),
+    )
     sid, _ = _make_session(profile={'sub': 'u|1', 'email': 'u@x.com', 'roles': ['admin'], 'mfa_verified': True})
 
     _patch_httpx(monkeypatch, [

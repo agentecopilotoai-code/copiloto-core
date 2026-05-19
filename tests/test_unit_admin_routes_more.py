@@ -232,8 +232,14 @@ def test_core_api_url_with_query():
 # ─── _core_api_headers ──────────────────────────────────────────────────
 
 
-def test_core_api_headers_basic():
+def test_core_api_headers_basic(monkeypatch):
     from app.admin.routes import _core_api_headers
+    import app.core.config as _core_config
+    monkeypatch.setattr(
+        _core_config,
+        'get_settings',
+        lambda: SimpleNamespace(jwt_secret='secret-min-length-16-chars'),
+    )
     request = SimpleNamespace(
         headers={'accept': 'application/json', 'content-type': 'application/json',
                  'x-tenant-id': str(uuid4()), 'idempotency-key': 'idem-1'},

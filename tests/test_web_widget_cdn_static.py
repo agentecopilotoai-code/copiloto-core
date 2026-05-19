@@ -261,14 +261,17 @@ def test_upsert_response_passes_all_customisation_to_snippet():
 
 
 def test_build_widget_snippet_rejects_unknown_position(monkeypatch):
-    from app.api.v1 import routes as routes_module
     from app.api.v1.routes import _build_widget_snippet
+    from app.api.v1._helpers import widget as widget_helper
 
     class FakeSettings:
         web_widget_cdn_url = 'https://cdn.copilotoia.com/widget/v1/widget.js'
         web_widget_api_base = 'https://api.copilotoia.com'
 
-    monkeypatch.setattr(routes_module, 'get_settings', lambda: FakeSettings())
+    # After REFACTOR-ROUTES split, the helper lives in `_helpers/widget.py` and
+    # reads `core_config.get_settings()` from its own module binding — patching
+    # the legacy `routes.get_settings` no longer wires the fake.
+    monkeypatch.setattr(widget_helper.core_config, 'get_settings', lambda: FakeSettings())
 
     snippet = _build_widget_snippet(
         tenant_slug='demo',
