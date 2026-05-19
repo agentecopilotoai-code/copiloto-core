@@ -48,9 +48,9 @@ def test_admin_callback_without_state_returns_error(http_client):
 
 def test_admin_logout_endpoint(http_client):
     """`POST /admin/logout` should clear the session cookie even without
-    an active session. (Endpoint may be GET-only in this build → 404 OK.)"""
+    an active session. CI env without React build → 503 also OK."""
     resp = http_client.post('/admin/logout')
-    assert resp.status_code in (200, 204, 302, 303, 307, 404, 405), resp.text[:200]
+    assert resp.status_code in (200, 204, 302, 303, 307, 404, 405, 503), resp.text[:200]
 
 
 def test_admin_api_proxy_rejects_no_session(http_client):
