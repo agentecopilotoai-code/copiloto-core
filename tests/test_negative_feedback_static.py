@@ -29,10 +29,10 @@ from app.services.feedback_flow import (
     negative_feedback_reply,
     parse_rating,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 FEEDBACK_FLOW = Path('app/services/feedback_flow.py')
-ROUTES = Path('app/api/v1/routes.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
@@ -114,7 +114,7 @@ def test_orchestrator_threads_conversation_and_channel_into_feedback():
 
 
 def test_complaints_endpoint_is_registered():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_ops_router.get('/conversations/complaints')" in source
     assert "h.reason = 'negative_feedback'" in source
     assert 'appointment_feedback' in source

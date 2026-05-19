@@ -1,6 +1,6 @@
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-API_ROUTES = Path('app/api/v1/routes.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
 OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
@@ -27,7 +27,7 @@ def _operations_desk_source() -> str:
 
 
 def test_operations_routes_support_handoff_accept_release_and_audit():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
 
     assert "@tenant_ops_router.post('/conversations/start'" in source
     assert "action='conversation.started_by_agent'" in source
@@ -71,7 +71,7 @@ def test_admin_panel_mounts_operations_desk_module():
 
 
 def test_tenant_ops_reads_set_rls_context_from_requested_tenant():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
 
     assert 'async def tenant_id_from_request' in source
     assert "request.state, 'requested_tenant_id', None" in source

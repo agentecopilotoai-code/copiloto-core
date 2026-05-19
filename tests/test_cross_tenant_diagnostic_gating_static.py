@@ -33,8 +33,8 @@ from pathlib import Path
 
 from app.api.v1 import routes as routes_module
 from app.core import config as config_module
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 CONFIG = Path('app/core/config.py')
 
 
@@ -206,7 +206,7 @@ def test_no_diagnostic_query_outside_gated_block():
 
     # En el resto de `routes.py` (todo lo que no sea el handler), `exists_any_tenant`
     # NO debe aparecer. Defensa contra que alguien copie el query.
-    full_src = ROUTES.read_text()
+    full_src = routes_aggregated_source()
     # Filtrar comentarios para evitar falsos positivos.
     executable_lines = [
         line for line in full_src.splitlines() if not line.lstrip().startswith('#')

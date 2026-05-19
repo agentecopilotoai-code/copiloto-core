@@ -27,9 +27,7 @@ from app.api.v1.schemas import (
     ContactPackageAssign,
     ContactPackagePatch,
 )
-
-ROUTES = Path('app/api/v1/routes.py')
-
+from tests._routes_aggregator import routes_aggregated_source
 
 # ── Schema: client-writable subset excludes financial transitions ───────────
 
@@ -96,7 +94,7 @@ def _router_decorator_for(source: str, fn_name: str) -> str:
 
 
 def test_assign_contact_package_uses_tenant_admin_router():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     decorator = _router_decorator_for(source, 'assign_contact_package')
     assert '@tenant_admin_router.post' in decorator
     assert '/contacts/{contact_id}/packages' in decorator
@@ -104,7 +102,7 @@ def test_assign_contact_package_uses_tenant_admin_router():
 
 
 def test_update_contact_package_uses_tenant_admin_router():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     decorator = _router_decorator_for(source, 'update_contact_package')
     assert '@tenant_admin_router.patch' in decorator
     assert '/contacts/{contact_id}/packages/{contact_package_id}' in decorator
@@ -112,7 +110,7 @@ def test_update_contact_package_uses_tenant_admin_router():
 
 
 def test_refund_contact_package_uses_tenant_admin_router():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     decorator = _router_decorator_for(source, 'refund_contact_package')
     assert '@tenant_admin_router.delete' in decorator
     assert '/contacts/{contact_id}/packages/{contact_package_id}' in decorator
@@ -121,7 +119,7 @@ def test_refund_contact_package_uses_tenant_admin_router():
 
 def test_list_contact_packages_stays_on_tenant_ops_router_for_agents():
     """Read access remains available to agents — only the mutations escalate."""
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     decorator = _router_decorator_for(source, 'list_contact_packages')
     assert '@tenant_ops_router.get' in decorator
 
@@ -130,7 +128,7 @@ def test_list_contact_packages_stays_on_tenant_ops_router_for_agents():
 
 
 def test_refund_contact_package_emits_audit():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def refund_contact_package(')
     end = source.index('\n@', start + 1)
     block = source[start:end]

@@ -28,10 +28,10 @@ from app.services.qualification_flow import (
     _validate_text_reply,
     maybe_run_qualification_flow,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
@@ -97,7 +97,7 @@ def test_qualification_schemas_constrain_kinds():
 
 
 def test_qualification_endpoints_are_registered():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_catalog_router.get('/tenants/{tenant_id}/qualification-questions')" in source
     assert (
         "@tenant_admin_router.post(\n"
@@ -119,7 +119,7 @@ def test_qualification_endpoints_are_registered():
 
 
 def test_qualification_endpoints_emit_audit_actions():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     for action in (
         'qualification.created',
         'qualification.updated',
@@ -130,7 +130,7 @@ def test_qualification_endpoints_emit_audit_actions():
 
 
 def test_contact_profile_returns_qualification_answers():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "'qualification_questions': [" in source
     assert "'qualification_answers': raw_qualification" in source
 

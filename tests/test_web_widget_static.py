@@ -18,9 +18,9 @@ from app.services.web_widget import (
     origin_is_allowed,
     synthesize_web_identity,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 MAIN = Path('app/main.py')
 WORKER = Path('app/workers/event_worker.py')
@@ -80,7 +80,7 @@ def test_schemas_define_web_channel_models():
 
 
 def test_routes_register_web_router_and_endpoints():
-    text = ROUTES.read_text()
+    text = routes_aggregated_source()
     assert "web_router = APIRouter(prefix='/web'" in text
     assert "@web_router.post('/chat/start'" in text
     assert "@web_router.post('/chat/{conversation_id}/messages'" in text
@@ -89,21 +89,21 @@ def test_routes_register_web_router_and_endpoints():
 
 
 def test_routes_admin_endpoints_for_web_channel():
-    text = ROUTES.read_text()
+    text = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/channels/web')" in text
     assert "@tenant_admin_router.put('/tenants/{tenant_id}/channels/web')" in text
     assert '_build_widget_snippet' in text
 
 
 def test_routes_persist_lead_source_on_web_contact():
-    text = ROUTES.read_text()
+    text = routes_aggregated_source()
     # Web start endpoint must insert into contacts with lead_source column.
     assert 'lead_source' in text
     assert "source, metadata, lead_source" in text
 
 
 def test_routes_analytics_overview_returns_lead_sources():
-    text = ROUTES.read_text()
+    text = routes_aggregated_source()
     assert "lead_source->>'channel'" in text
     assert "'lead_sources'" in text
 

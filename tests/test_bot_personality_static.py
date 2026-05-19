@@ -13,9 +13,9 @@ Cobertura mínima requerida por el backlog (≥ 6 tests):
 10. El orchestrator carga bot_personality del SELECT y lo pasa a _resolve_conversational.
 """
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 CONV_FLOW = Path('app/services/conversation_flow.py')
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 ORCH = Path('app/services/rag_orchestrator.py')
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
@@ -136,7 +136,7 @@ def test_build_system_prompt_playful_vs_formal_differ():
 
 # 8 ── API admin PATCH lista bot_personality
 def test_patch_settings_accepts_bot_personality_key():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # La tupla de claves permitidas debe incluir bot_personality.
     assert "'bot_personality'" in src
     # El UPDATE debe persistir bot_personality como jsonb.

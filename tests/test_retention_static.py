@@ -54,10 +54,10 @@ from app.services.retention import (
 )
 from app.workers import retention_worker
 from app.workers.retention_worker import _seconds_until_next_run
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
 
 def _tenant_setup_source() -> str:
@@ -288,7 +288,7 @@ def test_default_policy_rows_match_documented_defaults():
 
 
 def test_create_tenant_calls_seed_default_retention_policies():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'from app.services.retention import' in source
     assert 'seed_default_retention_policies' in source
     # Both tenant creation flows (admin + self-service) seed it.
@@ -440,7 +440,7 @@ def test_run_retention_cycle_emits_completed_event_per_tenant():
 
 
 def test_preview_endpoint_is_wired_in_routes():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/retention/preview')" in source
     assert 'preview_retention(' in source
     # Returns a payload keyed by ``preview`` so the UI can iterate.
@@ -492,7 +492,7 @@ def test_preview_retention_uses_age_column_mapping():
 
 
 def test_policies_crud_endpoints_validate_before_writing():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/retention/policies')" in source
     assert "@tenant_admin_router.put('/tenants/{tenant_id}/retention/policies')" in source
     # Validation is called before the INSERT/UPSERT loop.

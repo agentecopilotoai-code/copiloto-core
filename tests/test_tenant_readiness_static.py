@@ -1,6 +1,6 @@
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 READINESS_UI = Path('admin-panel/src/features/owner-admin/readiness/GoLiveReadiness.jsx')
 MODULES = Path('admin-panel/src/app/modules.js')
@@ -12,7 +12,7 @@ def _tenant_setup_source() -> str:
 
 
 def test_readiness_endpoint_returns_ready_or_not_ready_report():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/readiness')" in source
     assert "'status': 'ready' if ready else 'not_ready'" in source
     assert "'reasons': reasons" in source
@@ -20,7 +20,7 @@ def test_readiness_endpoint_returns_ready_or_not_ready_report():
 
 
 def test_readiness_checks_cover_go_live_scope():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     for key in [
         'tenant_active',
         'tenant_settings',

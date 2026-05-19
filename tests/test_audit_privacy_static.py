@@ -1,6 +1,6 @@
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-API_ROUTES = Path('app/api/v1/routes.py')
 LOGGING = Path('app/core/logging.py')
 SCHEMA_SQL = Path('infra/postgres/01-schema.sql')
 BOOTSTRAP = Path('scripts/bootstrap.sh')
@@ -54,7 +54,7 @@ def test_logging_processor_is_in_pipeline():
 # --- Backend routes ---
 
 def test_list_audit_logs_has_filters():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'async def list_audit_logs' in source
     assert 'action: str | None' in source
     assert 'actor_type: str | None' in source
@@ -64,7 +64,7 @@ def test_list_audit_logs_has_filters():
 
 
 def test_export_audit_logs_endpoint_exists():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "'/audit-logs/export'" in source
     assert 'async def export_audit_logs' in source
     assert 'text/csv' in source
@@ -73,7 +73,7 @@ def test_export_audit_logs_endpoint_exists():
 
 
 def test_suppress_contact_endpoint_exists():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "'/contacts/{contact_id}/suppress'" in source
     assert 'async def suppress_contact' in source
     assert "opt_in_status = 'suppressed'" in source
@@ -81,19 +81,19 @@ def test_suppress_contact_endpoint_exists():
 
 
 def test_suppress_contact_requires_admin_role():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "require_min_role('admin')(request)" in source
 
 
 def test_suppress_contact_pseudonymizes_fields():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'pseudo' in source
     assert 'suppressed+' in source
     assert 'phone_hash' in source
 
 
 def test_tenant_data_export_endpoint_exists():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "'/tenants/{tenant_id}/data-export'" in source
     assert 'async def export_tenant_data' in source
     assert 'application/json' in source
@@ -106,7 +106,7 @@ def test_tenant_data_export_requires_owner():
     """TASK-0077/BUG17: data-export is gated by ``ensure_tenant_role('owner')``,
     a double-check (JWT + DB) that replaces the single-side
     ``require_min_role('owner')`` previously used at the handler level."""
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "ensure_tenant_role(request, conn, tenant_id, 'owner')" in source
 
 

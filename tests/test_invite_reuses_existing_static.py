@@ -23,9 +23,9 @@ import textwrap
 from pathlib import Path
 
 from app.services import auth0_admin
+from tests._routes_aggregator import routes_aggregated_source
 
 AUTH0 = Path('app/services/auth0_admin.py')
-ROUTES = Path('app/api/v1/routes.py')
 USE_TEAM_DATA = Path('admin-panel/src/features/owner-admin/team/hooks/useTeamData.js')
 
 
@@ -160,7 +160,7 @@ def test_invite_user_logs_reused_event_for_observability():
 def test_routes_propagate_reused_existing_to_safe_auth0_response():
     """El handler de routes debe incluir `reused_existing` en el `safe_auth0`
     que se devuelve al frontend, sino la UX no puede distinguir los casos."""
-    routes_src = ROUTES.read_text()
+    routes_src = routes_aggregated_source()
     # safe_auth0 dict literal incluye la key.
     assert "'reused_existing': bool(auth0_result.get('reused_existing'))" in routes_src
 

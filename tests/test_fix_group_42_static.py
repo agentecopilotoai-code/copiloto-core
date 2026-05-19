@@ -26,11 +26,11 @@ requieren refactor más invasivo quedan diferidos a fix-group-44.
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 RATE_LIMIT = Path('app/services/rate_limit.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
-ROUTES = Path('app/api/v1/routes.py')
 CONFIG = Path('app/core/config.py')
 
 
@@ -65,7 +65,7 @@ def test_bug_220_contact_tag_assign_caps_max_length():
 
 
 def test_bug_221_get_conversation_drops_retry_sleep_loop():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def get_conversation(')
     next_fn = src.find('\n@tenant_ops_router', fn_idx + 10)
     block = src[fn_idx:next_fn]
@@ -79,7 +79,7 @@ def test_bug_221_get_conversation_drops_retry_sleep_loop():
 
 
 def test_bug_222_media_upload_precheck_content_length():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Buscar el bloque del media upload — heuristic: `MEDIA_SIZE_LIMITS_BYTES`.
     assert 'from app.services.media_storage import MEDIA_SIZE_LIMITS_BYTES as _MEDIA_CAPS' in src, (
         'BUG-222: el media upload debe importar `MEDIA_SIZE_LIMITS_BYTES` '
@@ -91,7 +91,7 @@ def test_bug_222_media_upload_precheck_content_length():
 
 
 def test_bug_223_knowledge_upload_precheck_content_length():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # El comment del BUG-223 es señal específica.
     assert 'BUG-223' in src and 'knowledge_file_max_bytes * 2' in src, (
         'BUG-223: el knowledge upload debe comparar `content-length` contra '

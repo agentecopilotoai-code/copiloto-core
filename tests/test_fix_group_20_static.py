@@ -27,11 +27,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 FLEET_DLQ = Path('admin-panel/src/features/platform/fleet-dlq/FleetDlq.jsx')
 PLATFORM_INCIDENTS = Path('app/services/platform_incidents.py')
-ROUTES = Path('app/api/v1/routes.py')
 METRICS = Path('app/services/metrics.py')
 
 
@@ -81,7 +81,7 @@ def test_bug_119_platform_incidents_module_exports_redact_helper():
 
 
 def test_bug_119_incidents_route_invokes_redact():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # El route del feed debe envolver el payload con el redactor.
     feed_idx = src.find("@platform_admin_router.get('/platform/incidents')")
     assert feed_idx > 0
@@ -123,7 +123,7 @@ def test_bug_119_redact_payload_unit_behaviour():
 
 
 def test_bug_120_mrr_plan_query_includes_archived_plans_with_active_subs():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     mrr_idx = src.find("@platform_admin_router.get('/platform/billing/mrr')")
     assert mrr_idx > 0
     next_route = src.find('@platform_admin_router', mrr_idx + 10)

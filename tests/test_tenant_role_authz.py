@@ -12,7 +12,6 @@ where a full e2e would require Postgres + Auth0.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -28,10 +27,10 @@ from app.api.v1.routes import (
 )
 from app.api.v1.schemas import PlatformTenantUpdate, TenantCreate, TenantUpdate
 from app.core.security import require_min_role
+from tests._routes_aggregator import routes_aggregated_source
 
 
-ROUTES = Path('app/api/v1/routes.py')
-ROUTES_SOURCE = ROUTES.read_text()
+ROUTES_SOURCE = routes_aggregated_source()
 
 
 def _make_request() -> Request:

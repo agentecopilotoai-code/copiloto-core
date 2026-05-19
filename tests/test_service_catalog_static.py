@@ -1,7 +1,7 @@
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-API_ROUTES = Path('app/api/v1/routes.py')
 SCHEMAS = Path('app/api/v1/schemas.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 # UI-007.4: the ServiceCatalog monolith was split into a feature directory.
@@ -41,7 +41,7 @@ def test_service_catalog_table_defined_with_rls():
 
 
 def test_service_catalog_endpoints_registered():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "tenant_catalog_router = APIRouter(" in source
     assert "@tenant_catalog_router.get('/tenants/{tenant_id}/services')" in source
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/services', status_code=201)" in source

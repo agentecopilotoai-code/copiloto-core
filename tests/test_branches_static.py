@@ -22,10 +22,10 @@ from pathlib import Path
 from app.api.v1 import routes as routes_module
 from app.api.v1.schemas import BranchCreate, BranchUpdate, ResourceCreate, ResourceUpdate
 from app.services import booking_flow, notifications
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
 SEED = Path('infra/postgres/02-seed.sql')
-ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 NOTIFICATIONS = Path('app/services/notifications.py')
 ADMIN_LAYOUT = Path('admin-panel/src/app/moduleRegistry.js')
@@ -250,14 +250,14 @@ def test_branches_routes_registered_on_admin_and_ops_routers():
 
 
 def test_branch_routes_emit_audit_events():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "action='branch.created'" in source
     assert "action='branch.updated'" in source
     assert "action='branch.deleted'" in source
 
 
 def test_list_resources_and_appointments_accept_branch_filter():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     # resources listing exposes branch filter
     assert 'branch_id: UUID | None = Query(default=None)' in source
     assert 'and ($4::uuid is null or branch_id=$4)' in source
@@ -273,7 +273,7 @@ def test_analytics_appointments_accepts_branch_filter():
 
 
 def test_create_resource_persists_branch_id():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'public_profile, branch_id, is_active' in source
     assert 'payload.branch_id,' in source
 

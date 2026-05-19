@@ -19,9 +19,9 @@ llegaron post-merge. Los 5 reviews detectados en PRs #16..#20:
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
-ROUTES = Path('app/api/v1/routes.py')
 INBOX_HOOK = Path('admin-panel/src/features/agente/inbox/hooks/useInboxData.js')
 TASK_CODE_TEST = Path('admin-panel/src/__tests__/no-internal-refs-in-ui.test.js')
 
@@ -30,7 +30,7 @@ TASK_CODE_TEST = Path('admin-panel/src/__tests__/no-internal-refs-in-ui.test.js'
 
 
 def test_bug_231_export_response_includes_data_canonical():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def export_contact_data(')
     assert fn_idx > 0, 'export_contact_data handler must exist'
     next_fn = src.find('\n# ─────', fn_idx)

@@ -28,17 +28,14 @@ afecta varios call sites del cascade):
 """
 from __future__ import annotations
 
-from pathlib import Path
-
-
-ROUTES = Path('app/api/v1/routes.py')
+from tests._routes_aggregator import routes_aggregated_source
 
 
 # ───── BUG-210 — pool DoS via indexing ───────────────────────────────────
 
 
 def test_bug_210_index_knowledge_document_drops_get_db_dependency():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def index_knowledge_document(')
     assert fn_idx > 0
     next_def = src.find('\n@tenant_admin_router.post(\'/knowledge/reindex-all\')', fn_idx)
@@ -57,7 +54,7 @@ def test_bug_210_index_knowledge_document_drops_get_db_dependency():
 
 
 def test_bug_210_reindex_all_drops_get_db_dependency():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def reindex_all_knowledge_documents(')
     assert fn_idx > 0
     next_def = src.find('\n@tenant_admin_router.delete(\'/knowledge/documents/{document_id}\'', fn_idx)
@@ -72,7 +69,7 @@ def test_bug_210_reindex_all_drops_get_db_dependency():
 
 
 def test_bug_210_db_pool_is_imported():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert 'from app.db.pool import db, get_db, record_to_dict' in src, (
         'BUG-210: `db` debe estar importado desde `app.db.pool` para que '
         'los handlers refactoreados puedan usar `db.pool.acquire()`.'
@@ -83,7 +80,7 @@ def test_bug_210_db_pool_is_imported():
 
 
 def test_bug_211_index_handler_returns_generic_502_message():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def index_knowledge_document(')
     assert fn_idx > 0
     next_def = src.find('\n@tenant_admin_router.post(\'/knowledge/reindex-all\')', fn_idx)
@@ -101,7 +98,7 @@ def test_bug_211_index_handler_returns_generic_502_message():
 
 
 def test_bug_211_reindex_all_redacts_provider_errors_in_array():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def reindex_all_knowledge_documents(')
     assert fn_idx > 0
     next_def = src.find('\n@tenant_admin_router.delete(\'/knowledge/documents/{document_id}\'', fn_idx)
@@ -117,7 +114,7 @@ def test_bug_211_reindex_all_redacts_provider_errors_in_array():
 
 
 def test_bug_212_intent_evaluate_caps_candidate_chunks():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def evaluate_intent_retrieval(')
     assert fn_idx > 0
     next_def = src.find('\n@tenant_admin_router', fn_idx + 1)

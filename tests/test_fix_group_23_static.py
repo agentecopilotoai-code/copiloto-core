@@ -31,10 +31,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SECURITY = Path('app/core/security.py')
-ROUTES = Path('app/api/v1/routes.py')
 ADMIN_ROUTES = Path('app/admin/routes.py')
 CONSENT = Path('app/services/consent.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
@@ -60,7 +60,7 @@ def test_bug_133_security_role_levels_excludes_support():
 
 
 def test_bug_133_routes_tenant_role_levels_excludes_support():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     idx = src.find('_TENANT_ROLE_LEVELS = {')
     assert idx > 0
     end = src.find('}', idx)
@@ -139,7 +139,7 @@ def test_bug_135_digest_worker_enqueues_message_queued_event():
 
 
 def test_bug_136_subscription_webhook_short_circuits_on_duplicate():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Buscar el endpoint del webhook de subscriptions.
     ep_idx = src.find("async def receive_subscription_webhook(")
     assert ep_idx > 0

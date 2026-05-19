@@ -34,9 +34,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
-ROUTES = Path('app/api/v1/routes.py')
 PLATFORM_INCIDENTS = Path('app/services/platform_incidents.py')
 DIGEST_WORKER = Path('app/workers/digest_worker.py')
 
@@ -45,7 +45,7 @@ DIGEST_WORKER = Path('app/workers/digest_worker.py')
 
 
 def test_bug_180_list_appointments_filters_in_tenant_local_timezone():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def list_appointments(')
     assert fn_idx > 0
     next_def = src.find('\n@tenant_ops_router.post(\'/appointments\'', fn_idx)
@@ -71,7 +71,7 @@ def test_bug_180_list_appointments_filters_in_tenant_local_timezone():
 
 
 def test_bug_181_mrr_plan_buckets_use_locked_currency():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Encontrar la query plan_rows (entre el comment de BUG-181 y el siguiente CTE).
     bug181_idx = src.find('BUG-181 (codex P2 sobre BUG-112):')
     assert bug181_idx > 0

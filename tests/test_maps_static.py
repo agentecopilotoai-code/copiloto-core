@@ -17,6 +17,7 @@ from urllib.parse import urlparse, parse_qs
 
 from app.api.v1 import routes as routes_module
 from app.services.maps import MAPS_BASE_URL, build_maps_url
+from tests._routes_aggregator import routes_aggregated_source
 
 # UI-007.7: the branches module was redesigned into a feature directory.
 BRANCHES_FEATURE = Path('admin-panel/src/features/owner-admin/branches')
@@ -89,7 +90,7 @@ def test_build_maps_url_encodes_special_characters_in_address():
 
 
 def test_routes_imports_build_maps_url():
-    source = Path('app/api/v1/routes.py').read_text()
+    source = routes_aggregated_source()
     assert 'from app.services.maps import build_maps_url' in source
 
 

@@ -15,10 +15,10 @@ from app.workers.scheduler import (
     _has_approved_template,
     _process_pending_reminder_jobs,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
 SCHEMAS = Path('app/api/v1/schemas.py')
-API_ROUTES = Path('app/api/v1/routes.py')
 WHATSAPP = Path('app/services/whatsapp.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
 SCHEDULER = Path('app/workers/scheduler.py')
@@ -199,7 +199,7 @@ def test_pydantic_schemas_for_templates_are_exported():
 
 
 def test_template_endpoints_registered_with_audit():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/whatsapp/templates', status_code=201)" in source
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/whatsapp/templates')" in source
     assert "@tenant_admin_router.get('/tenants/{tenant_id}/whatsapp/templates/{template_id}')" in source
@@ -213,7 +213,7 @@ def test_template_endpoints_registered_with_audit():
 
 
 def test_readiness_check_for_minimum_templates():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "'whatsapp_templates'" in source
     assert "Plantillas mínimas aprobadas" in source
     assert 'WHATSAPP_TEMPLATE_REQUIRED_PURPOSES' in source

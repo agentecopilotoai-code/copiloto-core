@@ -28,9 +28,9 @@ sin atender hasta este fix-group consolidado.
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
-ROUTES = Path('app/api/v1/routes.py')
 ADMIN_ROUTES = Path('app/admin/routes.py')
 PAYMENT_PROVIDER = Path('app/services/payment_provider.py')
 
@@ -39,7 +39,7 @@ PAYMENT_PROVIDER = Path('app/services/payment_provider.py')
 
 
 def test_bug_228_user_email_falls_back_to_signed_bff_header():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('def user_email_from_request(request: Request) -> str:')
     assert fn_idx > 0
     next_fn = src.find('\ndef _email_from_signed_bff_header(', fn_idx)
@@ -51,7 +51,7 @@ def test_bug_228_user_email_falls_back_to_signed_bff_header():
 
 
 def test_bug_228_signed_header_validator_exists():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('def _email_from_signed_bff_header(request: Request) -> str | None:')
     assert fn_idx > 0, (
         'BUG-228: debe existir el helper `_email_from_signed_bff_header`.'
@@ -97,7 +97,7 @@ def test_bug_228_bff_emits_signed_identity_header():
 
 
 def test_bug_229_deactivate_support_mode_validates_cookie_exp():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def deactivate_support_mode(')
     assert fn_idx > 0
     next_fn = src.find('\nweb_router = ', fn_idx)

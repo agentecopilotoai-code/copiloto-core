@@ -10,7 +10,6 @@ See: ``ensure_tenant_role`` and the ``put_retention_policies`` handler.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -18,9 +17,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.api.v1.routes import ensure_tenant_role
-
-
-ROUTES = Path('app/api/v1/routes.py')
+from tests._routes_aggregator import routes_aggregated_source
 
 
 def _make_request() -> Request:
@@ -194,7 +191,7 @@ def test_put_retention_policies_handler_calls_ensure_tenant_role():
     """Static guard: the destructive PUT handler must consult the per-tenant
     role table, not just the router-level ``require_min_role('admin')`` which
     is satisfied by any JWT carrying admin for *some* tenant."""
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     handler_start = source.index(
         "@tenant_admin_router.put('/tenants/{tenant_id}/retention/policies')"
     )

@@ -22,9 +22,9 @@ Cierra 3 findings del CSV `codex-security-findings-2026-05-18`:
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
-ROUTES = Path('app/api/v1/routes.py')
 PAYMENT_PROVIDER = Path('app/services/payment_provider.py')
 
 
@@ -62,7 +62,7 @@ def test_bug_201_mercadopago_verifier_accepts_now_ts_and_tolerance():
 
 
 def test_bug_201_payments_route_passes_now_ts_to_verifiers():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Buscar el primer handler (payments) — incluye webhook_now_ts antes del if mercadopago.
     payments_idx = src.find("/payments/{provider}")
     assert payments_idx > 0
@@ -83,7 +83,7 @@ def test_bug_201_payments_route_passes_now_ts_to_verifiers():
 
 
 def test_bug_201_subscriptions_route_passes_now_ts_to_verifiers():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     subs_idx = src.find("/subscriptions/{provider}")
     assert subs_idx > 0
     block = src[subs_idx:subs_idx + 4500]
@@ -100,7 +100,7 @@ def test_bug_201_subscriptions_route_passes_now_ts_to_verifiers():
 
 
 def test_bug_202_meta_messenger_drops_events_with_recipient_mismatch():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     # Buscar el bloque del receive_messenger_webhook handler (después del
     # comentario TASK-0081 / WhatsApp pattern).
     meta_idx = src.find('events = normalize_messenger_events(provider, payload)')

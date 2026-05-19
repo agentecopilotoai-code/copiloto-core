@@ -1,4 +1,5 @@
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 EVENT_WORKER = Path('app/workers/event_worker.py')
 WHATSAPP = Path('app/services/whatsapp.py')
@@ -22,7 +23,6 @@ def _operations_desk_source() -> str:
     return '\n'.join(p.read_text() for p in sorted(OPERATIONS_DESK.rglob('*.js*')))
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 API_SCHEMAS = Path('app/api/v1/schemas.py')
-API_ROUTES = Path('app/api/v1/routes.py')
 DB_SCHEMA = Path('infra/postgres/01-schema.sql')
 DOCKER_COMPOSE = Path('docker-compose.yml')
 
@@ -45,7 +45,7 @@ def test_whatsapp_delivery_mode_controls_mocking_per_tenant_channel():
     worker_source = EVENT_WORKER.read_text()
     service_source = WHATSAPP.read_text()
     schema_source = API_SCHEMAS.read_text()
-    routes_source = API_ROUTES.read_text()
+    routes_source = routes_aggregated_source()
     db_source = DB_SCHEMA.read_text()
 
     assert 'c.account_mode' in worker_source
@@ -134,7 +134,7 @@ def test_whatsapp_media_messages_supported_in_both_agent_flows_and_worker():
     worker_source = EVENT_WORKER.read_text()
     service_source = WHATSAPP.read_text()
     schema_source = API_SCHEMAS.read_text()
-    routes_source = API_ROUTES.read_text()
+    routes_source = routes_aggregated_source()
     operations_source = _operations_desk_source()
 
     assert 'send_whatsapp_message' in service_source
@@ -166,7 +166,7 @@ def test_whatsapp_media_messages_supported_in_both_agent_flows_and_worker():
 
 
 def test_whatsapp_webhook_persists_inbound_media_metadata():
-    routes_source = API_ROUTES.read_text()
+    routes_source = routes_aggregated_source()
 
     assert "media_payload = message.get(message_type)" in routes_source
     assert "media_id = media_payload.get('id')" in routes_source

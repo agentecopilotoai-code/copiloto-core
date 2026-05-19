@@ -25,8 +25,8 @@ from pathlib import Path
 
 from app.api.v1 import routes as routes_module
 from app.services import audit as audit_module
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 AUDIT = Path('app/services/audit.py')
 
 
@@ -182,7 +182,7 @@ def test_subscription_webhook_rejection_paths_use_audit_durably():
 
 
 def test_routes_imports_audit_durably():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     assert 'from app.services.audit import audit, audit_durably' in src, (
         'app/api/v1/routes.py debe importar audit_durably junto a audit'
     )
@@ -196,7 +196,7 @@ def test_normal_audit_still_used_for_successful_flows():
     (commiteables con la transacción del request) deben seguir usando
     `audit(conn, ...)` — más barato (sin acquire extra) y la transacción
     del request ya garantiza durabilidad."""
-    routes_src = ROUTES.read_text()
+    routes_src = routes_aggregated_source()
     # El módulo sigue usando `await audit(` en muchos sitios (tests anteriores
     # como test_user_preferences_static.py los cuentan). Asegurarnos que
     # esa función no se borró por accidente.

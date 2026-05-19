@@ -25,6 +25,8 @@ from pathlib import Path
 
 from app.api.v1 import routes as routes_module
 
+from tests._routes_aggregator import routes_aggregated_source
+
 
 CONFIGURE_AUTH0 = Path('scripts/configure-auth0.sh')
 AUTH0_ADMIN = Path('app/services/auth0_admin.py')
@@ -107,7 +109,11 @@ def test_bug_036_digest_endpoints_on_manager_router():
     """Los 4 endpoints de digest subscriptions deben colgar de
     `tenant_manager_router`, no de `tenant_admin_router`.
     """
-    full_src = inspect.getsource(routes_module)
+    # After the routes.py refactor (phase 3) the digest handlers live in
+    # app/api/v1/handlers/tenant_manager_handlers.py — use the aggregated
+    # source so we keep asserting the decorator is wired against the right
+    # router regardless of which file holds the function body.
+    full_src = routes_aggregated_source()
     # 4 decoradores esperados en el manager router.
     expected_decorators = [
         "@tenant_manager_router.get('/tenants/{tenant_id}/digest/subscriptions')",

@@ -24,7 +24,6 @@ from app.api.v1.schemas import WebChatStart
 from app.services import booking_flow, notifications
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 BOOKING_FLOW = Path('app/services/booking_flow.py')
 WIDGET_JS = Path('admin-panel/public/widget.js')
 ANALYTICS_PANEL = Path('admin-panel/src/features/owner-admin/analytics/AnalyticsPanel.jsx')

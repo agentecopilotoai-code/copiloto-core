@@ -105,7 +105,13 @@ def test_rag_indexing_forces_local_hash_when_no_train_true():
 
 
 def test_routes_propagate_tenant_no_train_to_indexing():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # Refactor phase 3: handler bodies live in app/api/v1/handlers/*.py — use
+
+    # the aggregated source so asserts match regardless of file boundaries.
+
+    from tests._routes_aggregator import routes_aggregated_source
+
+    src = routes_aggregated_source()
     # Both index endpoints load no_train + pass it through
     assert src.count('select no_train from app.tenant_settings where tenant_id=$1') >= 2
     assert src.count('tenant_no_train=tenant_no_train') >= 2
@@ -165,12 +171,24 @@ def test_ws_route_handles_subscribe_runtime_error_with_close_1011():
 
 
 def test_routes_import_circuit_open_error():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # Refactor phase 3: handler bodies live in app/api/v1/handlers/*.py — use
+
+    # the aggregated source so asserts match regardless of file boundaries.
+
+    from tests._routes_aggregator import routes_aggregated_source
+
+    src = routes_aggregated_source()
     assert 'from app.services.circuit_breaker import CircuitOpenError' in src
 
 
 def test_auth0_callsites_map_circuit_open_to_503():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # Refactor phase 3: handler bodies live in app/api/v1/handlers/*.py — use
+
+    # the aggregated source so asserts match regardless of file boundaries.
+
+    from tests._routes_aggregator import routes_aggregated_source
+
+    src = routes_aggregated_source()
     # All 4 Auth0 call sites (invite, assign x2, revoke) now have a typed
     # CircuitOpenError handler that returns 503 + Retry-After.
     assert src.count('except CircuitOpenError as exc:') >= 4
@@ -194,7 +212,12 @@ def test_whatsapp_module_exposes_typed_error():
 
 
 def test_routes_map_media_too_large_to_413_with_sanitized_detail():
-    src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text()
+    # After the routes.py refactor (phase 3) the ops handlers live in
+    # app/api/v1/handlers/tenant_ops_handlers.py — use the aggregated
+    # source so the asserts keep matching regardless of file boundaries.
+    from tests._routes_aggregator import routes_aggregated_source
+
+    src = routes_aggregated_source()
     assert 'WhatsAppMediaTooLargeError' in src
     # The handler maps to 413 with a generic detail that doesn't expose the cap
     assert 'status_code=413' in src

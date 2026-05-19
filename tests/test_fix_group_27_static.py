@@ -26,15 +26,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
 CONSENT = Path('app/services/consent.py')
 README = Path('README.md')
 SCHEMAS = Path('app/api/v1/schemas.py')
 RETENTION = Path('app/services/retention.py')
-ROUTES = Path('app/api/v1/routes.py')
-
-
 # ───── BUG-153 — consent gate respeta opt-out de contactos unknown ──────
 
 
@@ -174,7 +172,7 @@ def test_bug_157_handoff_create_schema_exists_with_max_length():
 
 
 def test_bug_157_handoff_endpoint_uses_handoff_create_not_raw_dict():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     ep_idx = src.find(
         "@tenant_ops_router.post('/conversations/{conversation_id}/handoff', status_code=202)"
     )

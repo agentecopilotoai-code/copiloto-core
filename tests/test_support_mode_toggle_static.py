@@ -34,8 +34,8 @@ from app.core.signed_cookies import (
     pack_signed_payload,
     unpack_signed_payload,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 SECURITY = Path('app/core/security.py')
 SIGNED_COOKIES = Path('app/core/signed_cookies.py')
 ADMIN_ROUTES = Path('app/admin/routes.py')
@@ -266,7 +266,7 @@ def test_no_inline_hmac_signing_outside_signed_cookies_module():
     HMAC + base64url. El único lugar válido es `app/core/signed_cookies.py`
     y los wrappers en `app/admin/routes.py` que delegan a él.
     """
-    routes_src = ROUTES.read_text()
+    routes_src = routes_aggregated_source()
     # routes.py NO debe construir HMACs a mano para support-mode cookies.
     # Acepta el import del helper compartido (los strings de import no
     # cuentan como inline).

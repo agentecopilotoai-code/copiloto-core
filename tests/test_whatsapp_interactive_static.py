@@ -10,10 +10,10 @@ from app.services.whatsapp import (
     build_whatsapp_message_payload,
     parse_interactive_reply,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 WHATSAPP = Path('app/services/whatsapp.py')
 EVENT_WORKER = Path('app/workers/event_worker.py')
-API_ROUTES = Path('app/api/v1/routes.py')
 OPERATIONS_DESK = Path('admin-panel/src/features/agente/inbox')
 
 
@@ -174,7 +174,7 @@ def test_event_worker_forwards_interactive_payload():
 
 
 def test_webhook_parses_interactive_reply_into_body_text():
-    source = API_ROUTES.read_text()
+    source = routes_aggregated_source()
     assert 'parse_interactive_reply' in source
     assert 'interactive_reply = parse_interactive_reply(message)' in source
     assert "if interactive_reply:" in source

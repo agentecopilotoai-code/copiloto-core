@@ -57,10 +57,10 @@ from app.services.consent import (
     record_consent_event,
     record_opt_out_by_keyword,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
 
 SCHEMA = Path('infra/postgres/01-schema.sql')
-ROUTES = Path('app/api/v1/routes.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 SCHEDULER = Path('app/workers/scheduler.py')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
@@ -370,7 +370,7 @@ def test_14_scheduler_invokes_consent_reaffirmations_periodically():
 
 
 def test_15_admin_endpoint_lists_consent_ledger_paginated():
-    text = ROUTES.read_text()
+    text = routes_aggregated_source()
     assert "@tenant_ops_router.get('/contacts/{contact_id}/consent')" in text
     assert 'list_contact_consent' in text
     # Reads from consent_ledger with pagination.

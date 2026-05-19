@@ -15,8 +15,8 @@ run in CI without Docker. They cover:
   surfaces the uploader in ``BotPersonalityTab``.
 """
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 BOT_TAB = Path(
@@ -40,7 +40,7 @@ def test_schema_declares_brand_logo_url_column():
 
 
 def test_patch_settings_whitelists_brand_logo_url():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     # ``brand_logo_url`` must appear inside the ``allowed`` tuple of
     # patch_settings. We use a soft check: the literal must show up
     # near 'no_train', 'notification_settings', 'bot_personality'.
@@ -52,13 +52,13 @@ def test_patch_settings_whitelists_brand_logo_url():
 
 
 def test_logo_upload_endpoint_is_registered_under_admin_router():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/branding/logo')" in source
     assert 'async def upload_tenant_brand_logo' in source
 
 
 def test_logo_upload_enforces_tenant_access_and_rls():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     # Carve out the upload_tenant_brand_logo function and assert it
     # individually uses the four security primitives.
     start = source.index('async def upload_tenant_brand_logo')
@@ -72,7 +72,7 @@ def test_logo_upload_enforces_tenant_access_and_rls():
 
 
 def test_logo_upload_reuses_media_storage():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def upload_tenant_brand_logo')
     end = source.index('@tenant_admin_router.get', start)
     fn_source = source[start:end]

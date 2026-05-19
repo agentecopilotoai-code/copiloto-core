@@ -28,9 +28,9 @@ Cierra 4 findings:
 from __future__ import annotations
 
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
 
-ROUTES = Path('app/api/v1/routes.py')
 SECURITY = Path('app/core/security.py')
 
 
@@ -38,7 +38,7 @@ SECURITY = Path('app/core/security.py')
 
 
 def test_bug_197_activate_support_mode_requires_mfa():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     decorator_start = src.find("@me_router.post(\n    '/me/support-mode/{tenant_id}'")
     assert decorator_start > 0, (
         'BUG-197: el decorator de `activate_support_mode` debe ser multi-line '
@@ -57,7 +57,7 @@ def test_bug_197_activate_support_mode_requires_mfa():
 
 
 def test_bug_198_deactivate_only_audits_when_cookie_matches():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def deactivate_support_mode(')
     assert fn_idx > 0
     # Buscar el siguiente def para acotar el bloque.
@@ -124,7 +124,7 @@ def test_bug_199_enforce_helper_queries_revoked_at():
 
 
 def test_bug_200_go_live_requires_db_owner_role():
-    src = ROUTES.read_text()
+    src = routes_aggregated_source()
     fn_idx = src.find('async def mark_tenant_go_live(')
     if fn_idx == -1:
         # Otro nombre posible — buscar por path en decorator.

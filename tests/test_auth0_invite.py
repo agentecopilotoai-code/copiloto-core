@@ -32,8 +32,8 @@ from app.services.auth0_admin import (
     _random_initial_password,
     invite_user,
 )
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 AUTH0 = Path('app/services/auth0_admin.py')
 # UI-007.13: the TeamModule was redesigned into a feature directory.
 TEAM_FEATURE = Path('admin-panel/src/features/owner-admin/team')
@@ -390,7 +390,7 @@ def test_invite_user_disabled_when_management_creds_missing(monkeypatch):
 
 
 def test_route_maps_auth0_user_already_exists_to_409():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     # The invite handler imports the exception type and converts it to 409.
     assert 'Auth0UserAlreadyExists' in source
     pattern = re.compile(
@@ -401,7 +401,7 @@ def test_route_maps_auth0_user_already_exists_to_409():
 
 
 def test_route_does_not_include_ticket_url_in_response():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     # Look at the invite_member handler block.
     start = source.index('auth0_result = await auth0_invite_user(')
     # Take a wide window and confirm no ticket_url is propagated into member.
@@ -414,7 +414,7 @@ def test_route_does_not_include_ticket_url_in_response():
 
 
 def test_audit_logs_auth0_user_id_and_email_fingerprint_not_plain_email():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     audit_block = source[source.index("action='tenant_member.invited'") - 600:
                          source.index("action='tenant_member.invited'") + 800]
     assert 'auth0_user_id' in audit_block
@@ -424,7 +424,7 @@ def test_audit_logs_auth0_user_id_and_email_fingerprint_not_plain_email():
 
 
 def test_route_binds_auth_subject_when_invite_returns_user_id():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     block = source[source.index('Auth0UserAlreadyExists'):source.index('return member')]
     assert 'set auth_subject=$2' in block
     assert "auth0_result.get('auth0_user_id')" in block

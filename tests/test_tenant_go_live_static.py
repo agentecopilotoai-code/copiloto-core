@@ -18,8 +18,8 @@ run in CI without Docker. They cover:
   inside ``GoLiveReadiness.jsx``.
 """
 from pathlib import Path
+from tests._routes_aggregator import routes_aggregated_source
 
-ROUTES = Path('app/api/v1/routes.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 CORE_API = Path('admin-panel/src/services/coreApi.js')
 READINESS_JSX = Path(
@@ -28,7 +28,7 @@ READINESS_JSX = Path(
 
 
 def _go_live_function_source() -> str:
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     start = source.index('async def mark_tenant_go_live')
     # Walk forward to the next top-level decorator (start of next route).
     end = source.index('\n@tenant_admin_router', start + 1)
@@ -48,7 +48,7 @@ def test_schema_declares_go_live_at_column():
 
 
 def test_go_live_endpoint_is_registered_under_admin_router():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     assert "@tenant_admin_router.post('/tenants/{tenant_id}/go-live')" in source
     assert 'async def mark_tenant_go_live' in source
 
@@ -107,7 +107,7 @@ def test_go_live_endpoint_validates_reason_shape():
 
 
 def test_readiness_response_exposes_go_live_at():
-    source = ROUTES.read_text()
+    source = routes_aggregated_source()
     # `build_tenant_readiness_report` must surface `tenant_status.go_live_at`
     # so the frontend can render the "Tenant en producción desde X" banner
     # without a second round-trip.
