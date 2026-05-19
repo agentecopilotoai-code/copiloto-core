@@ -3,10 +3,8 @@ import hashlib
 import hmac
 import io
 import json
-import re
 import secrets
 import time
-from pathlib import Path
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -132,7 +130,6 @@ from app.services.media_storage import (
 from app.services.campaigns import (
     count_recipients as count_campaign_recipients,
     evaluate_segment,
-    normalize_segment_filter,
     refresh_campaign_counters,
 )
 from app.services.segments import (
@@ -226,227 +223,234 @@ from app.services.meta_messenger import (
 log = structlog.get_logger()
 
 
-def tenant_secret_ref(tenant_id: UUID, secret_name: str) -> str:
-    return f'secrets/tenants/{tenant_id}/{secret_name}'
+# Extracted to app/api/v1/_helpers/parsing.py
+from app.api.v1._helpers.parsing import (  # noqa: E402,F401 — re-exported for backward compat
+    _coerce_jsonb,
+    metadata_extracted_text,
+    parse_json_object,
+)
 
+# Extracted to app/api/v1/_helpers/secrets.py
+from app.api.v1._helpers.secrets import (  # noqa: E402,F401 — re-exported for backward compat
+    tenant_knowledge_s3_secret_ref,
+    tenant_secret_ref,
+    write_tenant_secret,
+)
 
-def write_tenant_secret(secret_ref: str, value: str) -> None:
-    relative_name = secret_ref.removeprefix('secrets/').strip('/')
-    if not relative_name or '..' in Path(relative_name).parts:
-        raise HTTPException(status_code=400, detail='Invalid tenant secret ref')
-    path = Path('/app/.secrets') / relative_name
-    if not path.parent.exists() and not Path('/app/.secrets').exists():
-        path = Path.cwd() / '.secrets' / relative_name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(value.strip(), encoding='utf-8')
-    path.chmod(0o600)
+# Extracted to app/api/v1/_helpers/widget_proxy.py
+from app.api.v1._helpers.widget_proxy import (  # noqa: E402,F401 — re-exported for backward compat
+    tenant_brand_logo_proxy_url,
+)
 
+# Extracted to app/api/v1/_helpers/legal.py
+from app.api.v1._helpers.legal import html_escape_attr  # noqa: E402,F401 — re-exported for backward compat
 
-def tenant_knowledge_s3_secret_ref(tenant_id: UUID) -> str:
-    return tenant_secret_ref(tenant_id, 'knowledge_s3_secret_access_key')
+# Extracted to app/api/v1/_helpers/whatsapp_pure.py
+from app.api.v1._helpers.whatsapp_pure import (  # noqa: E402,F401 — re-exported for backward compat
+    MEDIA_MESSAGE_TYPES,
+    SUPPORTED_AGENT_MESSAGE_TYPES,
+    WHATSAPP_TEMPLATE_COLUMNS,
+    WHATSAPP_TEMPLATE_PROJECTION,
+    WHATSAPP_TEMPLATE_REQUIRED_PURPOSES,
+    _WHATSAPP_WEBHOOK_DUMMY_SECRET,
+    media_url_from_payload,
+    normalize_whatsapp_template,
+    validate_outbound_message_content,
+    verify_token_hash,
+    whatsapp_phone_number_id_from_payload,
+)
 
+# Extracted to app/api/v1/_helpers/knowledge_storage_config.py
+from app.api.v1._helpers.knowledge_storage_config import (  # noqa: E402,F401 — re-exported for backward compat
+    default_knowledge_storage_config,
+    normalize_knowledge_storage_config,
+    public_knowledge_storage_config,
+)
 
-def default_knowledge_storage_config(tenant_id: UUID) -> dict[str, Any]:
-    return {
-        'backend': 'local',
-        'bucket': None,
-        'region': None,
-        'endpoint_url': None,
-        'prefix': f'tenants/{tenant_id}/knowledge',
-        'access_key_id': None,
-        'secret_ref': None,
-    }
+# Extracted to app/api/v1/_helpers/knowledge_documents.py
+from app.api.v1._helpers.knowledge_documents import (  # noqa: E402,F401 — re-exported for backward compat
+    KNOWLEDGE_DOCUMENT_PROJECTION,
+    KNOWLEDGE_DOCUMENT_RESPONSE_COLUMNS,
+    KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS,
+    normalize_knowledge_document,
+    normalize_knowledge_documents,
+)
 
+# Extracted to app/api/v1/_helpers/slots.py
+from app.api.v1._helpers.slots import (  # noqa: E402,F401 — re-exported for backward compat
+    WEEKDAY_KEYS,
+    compute_free_slots,
+    minutes_to_hhmm,
+    parse_iso_date,
+    slot_start_minutes,
+    working_hours_for_date,
+)
 
-def normalize_knowledge_storage_config(tenant_id: UUID, value: Any) -> dict[str, Any]:
-    config = default_knowledge_storage_config(tenant_id)
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            value = {}
-    if isinstance(value, dict):
-        for key in ('backend', 'bucket', 'region', 'endpoint_url', 'prefix', 'access_key_id', 'secret_ref'):
-            if key in value:
-                config[key] = value[key]
-    config['backend'] = config.get('backend') if config.get('backend') in {'local', 's3'} else 'local'
-    # Validate the prefix against traversal / root-like values. If the stored
-    # config has a bad prefix (legacy data or a tenant admin that managed to
-    # write '/' before this validation was in place), fall back to the
-    # tenant-default rather than let an unrestricted prefix flow into the
-    # deletion code path.
-    try:
-        config['prefix'] = normalize_object_prefix(config.get('prefix'), str(tenant_id))
-    except ValueError:
-        config['prefix'] = f'tenants/{tenant_id}/knowledge'
-    return config
+# Extracted to app/api/v1/_helpers/onboarding.py
+from app.api.v1._helpers.onboarding import (  # noqa: E402,F401 — re-exported for backward compat
+    ONBOARDING_CONSENT_TEMPLATE_NAME,
+    ONBOARDING_STEP_METADATA,
+    ONBOARDING_STEPS,
+    ONBOARDING_TOTAL_STEPS,
+    _step_metadata,
+    normalize_onboarding_progress,
+)
 
+# Extracted to app/api/v1/_helpers/readiness.py
+from app.api.v1._helpers.readiness import (  # noqa: E402,F401 — re-exported for backward compat
+    readiness_check,
+    readiness_positive_int,
+    readiness_response,
+    readiness_truthy_object,
+)
 
-async def fetch_tenant_knowledge_storage_config(
-    conn: asyncpg.Connection, tenant_id: UUID
-) -> dict[str, Any]:
-    value = await conn.fetchval(
-        'select knowledge_storage from app.tenant_settings where tenant_id=$1', tenant_id
-    )
-    return normalize_knowledge_storage_config(tenant_id, value)
+# Extracted to app/api/v1/_helpers/health.py
+from app.api.v1._helpers.health import _derive_health_services  # noqa: E402,F401 — re-exported for backward compat
 
+# Extracted to app/api/v1/_helpers/analytics.py
+from app.api.v1._helpers.analytics import (  # noqa: E402,F401 — re-exported for backward compat
+    _funnel_step,
+    _range_bounds,
+    _resolve_analytics_range,
+)
 
-def public_knowledge_storage_config(tenant_id: UUID, config: dict[str, Any]) -> dict[str, Any]:
-    response = normalize_knowledge_storage_config(tenant_id, config)
-    response['secret_configured'] = secret_ref_is_configured(response.get('secret_ref'))
-    response['effective_bucket'] = response.get('bucket') or get_settings().knowledge_storage_bucket
-    return response
+# Extracted to app/api/v1/_helpers/validators.py
+from app.api.v1._helpers.validators import (  # noqa: E402,F401 — re-exported for backward compat
+    NOTIFICATION_CHANNEL_IDS,
+    _validate_digest_recipients,
+    _validate_notification_matrix,
+    _validate_timezone,
+)
 
+# Extracted to app/api/v1/_helpers/auth_misc.py
+from app.api.v1._helpers.auth_misc import (  # noqa: E402,F401 — re-exported for backward compat
+    _TENANT_ROLE_LEVELS,
+    _tenant_db_role_meets,
+)
 
+# Extracted to app/api/v1/_helpers/sessions.py
+from app.api.v1._helpers.sessions import AUTH_SESSION_ACTIVE_HOURS  # noqa: E402,F401 — re-exported for backward compat
 
-def verify_token_hash(verify_token: str) -> bytes:
-    return hashlib.sha256(verify_token.encode('utf-8')).digest()
+# Extracted to app/api/v1/_helpers/support_mode.py
+from app.api.v1._helpers.support_mode import (  # noqa: E402,F401 — re-exported for backward compat
+    SUPPORT_MODE_MIN_JUSTIFICATION_LEN,
+    SUPPORT_MODE_TTL_SECONDS,
+)
 
+# Extracted to app/api/v1/_helpers/platform_filters.py
+from app.api.v1._helpers.platform_filters import (  # noqa: E402,F401 — re-exported for backward compat
+    _CONTACT_EXPORT_ALLOWED_KINDS,
+    _FLEET_LIST_STATUS_PATTERN,
+    _INCIDENT_KIND_PATTERN,
+    _INCIDENT_STATUS_PATTERN,
+)
 
-_WHATSAPP_WEBHOOK_DUMMY_SECRET = secrets.token_hex(32)
-"""SEC-010 fix — secret estable usado para defender el oracle del webhook
-WhatsApp. Generado al arranque del proceso (token_hex(32) → 64 hex chars,
-formato compatible con `normalize_meta_app_secret`), distinto entre
-workers, nunca puede coincidir con un App Secret real de Meta (es noise
-puro). Cuando el lookup de `tenant_channels` no encuentra el
-`phone_number_id`, igual ejecutamos el HMAC contra este dummy para que
-el tiempo de respuesta (O(n) sobre el body) sea indistinguible de un
-channel real con firma mala — sin esto, un atacante podría enumerar
-phone_number_ids activos midiendo la latencia respuesta o el status
-code (los dos paths de rechazo retornaban 404 vs 401 distinguibles).
-"""
+# Extracted to app/api/v1/_helpers/widget.py
+from app.api.v1._helpers.widget import _build_widget_snippet  # noqa: E402,F401 — re-exported for backward compat
 
+# Extracted to app/api/v1/_helpers/payments_pure.py
+from app.api.v1._helpers.payments_pure import (  # noqa: E402,F401 — re-exported for backward compat
+    _appointment_payment_external_ref,
+    _appointment_payment_summary,
+    _normalize_payment_settings,
+    _parse_appointment_external_ref,
+    _public_payment_settings,
+)
 
-def whatsapp_phone_number_id_from_payload(payload: dict[str, Any]) -> str | None:
-    for entry in payload.get('entry', []):
-        for change in entry.get('changes', []):
-            value = change.get('value', {})
-            metadata = value.get('metadata', {})
-            phone_number_id = metadata.get('phone_number_id')
-            if phone_number_id:
-                return str(phone_number_id)
-    return None
+# Extracted to app/api/v1/_helpers/quotes.py
+from app.api.v1._helpers.quotes import (  # noqa: E402,F401 — re-exported for backward compat
+    _build_quote_summary_text,
+    _compute_quote_subtotal,
+)
 
+# Extracted to app/api/v1/_helpers/projections.py
+from app.api.v1._helpers.projections import (  # noqa: E402,F401 — re-exported for backward compat
+    CAMPAIGN_PROJECTION,
+    MEDIA_ASSET_COLUMNS,
+    MESSENGER_CHANNEL_PROJECTION,
+    PROMOTION_COLUMNS,
+    QUALIFICATION_PROJECTION,
+    SEGMENT_PROJECTION,
+    SERVICE_CATALOG_COLUMNS,
+    SERVICE_CATALOG_PROJECTION,
+    WEB_CHANNEL_PROJECTION,
+)
 
-async def notify_operations_change(
-    conn: asyncpg.Connection,
-    tenant_id: UUID,
-    event: str,
-    *,
-    conversation_id: UUID | str | None = None,
-    message_id: UUID | str | None = None,
-) -> None:
-    payload = {
-        'type': event,
-        'tenant_id': str(tenant_id),
-        'conversation_id': str(conversation_id) if conversation_id else None,
-        'message_id': str(message_id) if message_id else None,
-        'occurred_at': datetime.now(UTC).isoformat(),
-    }
-    await conn.execute("select pg_notify('tenant_operations_events', $1)", json.dumps(payload))
+# Extracted to app/api/v1/_helpers/normalizers.py
+from app.api.v1._helpers.normalizers import (  # noqa: E402,F401 — re-exported for backward compat
+    _digest_subscription_to_dict,
+    _legal_row_to_dict,
+    _normalize_messenger_channel,
+    _normalize_web_channel,
+    _serialize_profile,
+    normalize_campaign,
+    normalize_media_asset,
+    normalize_promotion,
+    normalize_qualification_question,
+    normalize_segment_row,
+    normalize_service_catalog_row,
+)
 
+# Extracted to app/api/v1/_helpers/notifications_db.py
+from app.api.v1._helpers.notifications_db import notify_operations_change  # noqa: E402,F401 — re-exported for backward compat
 
+# Extracted to app/api/v1/_helpers/whatsapp_db.py
+from app.api.v1._helpers.whatsapp_db import (  # noqa: E402,F401 — re-exported for backward compat
+    _fetch_template_or_404,
+    _resolve_channel_for_template,
+    upsert_whatsapp_contact,
+)
 
+# Extracted to app/api/v1/_helpers/booking_db.py
+from app.api.v1._helpers.booking_db import (  # noqa: E402,F401 — re-exported for backward compat
+    appointment_detail,
+    ensure_resource_available,
+    fetch_fallback_duration,
+    fetch_service_duration,
+)
 
-MEDIA_MESSAGE_TYPES = {'image', 'audio', 'video'}
-SUPPORTED_AGENT_MESSAGE_TYPES = {'text', *MEDIA_MESSAGE_TYPES}
+# Extracted to app/api/v1/_helpers/knowledge_storage_db.py
+from app.api.v1._helpers.knowledge_storage_db import fetch_tenant_knowledge_storage_config  # noqa: E402,F401 — re-exported for backward compat
 
+# Extracted to app/api/v1/_helpers/onboarding_db.py
+from app.api.v1._helpers.onboarding_db import (  # noqa: E402,F401 — re-exported for backward compat
+    ONBOARDING_VERIFIERS,
+    _load_onboarding_progress,
+    _verify_onboarding_business_details,
+    _verify_onboarding_business_hours,
+    _verify_onboarding_consent_template,
+    _verify_onboarding_end_to_end_test,
+    _verify_onboarding_locale_currency,
+    _verify_onboarding_service_catalog,
+    _verify_onboarding_whatsapp_channel,
+)
 
-def media_url_from_payload(payload: dict[str, Any] | None) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    value = payload.get('media_url') or payload.get('link')
-    return value.strip() if isinstance(value, str) and value.strip() else None
+# Extracted to app/api/v1/_helpers/payments_db.py
+from app.api.v1._helpers.payments_db import _fetch_tenant_payment_settings  # noqa: E402,F401 — re-exported for backward compat
 
+# Extracted to app/api/v1/_helpers/campaigns_db.py
+from app.api.v1._helpers.campaigns_db import (  # noqa: E402,F401 — re-exported for backward compat
+    _campaign_segment_filter_dict,
+    _ensure_template_approved,
+    _fetch_campaign_or_404,
+)
 
-def validate_outbound_message_content(
-    message_type: str,
-    body_text: str | None,
-    media_id: str | None = None,
-    media_url: str | None = None,
-) -> None:
-    if message_type not in SUPPORTED_AGENT_MESSAGE_TYPES:
-        raise HTTPException(status_code=400, detail='Only text, image, audio, and video outbound WhatsApp messages are supported')
-    if message_type == 'text' and not (body_text or '').strip():
-        raise HTTPException(status_code=400, detail='Text messages require body_text')
-    if message_type in MEDIA_MESSAGE_TYPES and not ((media_id or '').strip() or (media_url or '').strip()):
-        raise HTTPException(status_code=400, detail=f'{message_type} messages require media_id or payload.media_url')
-    # TASK-0079 / BUG19: reject crafted media_id values BEFORE they reach the
-    # Graph URL interpolation path. The validator accepts numeric Meta IDs
-    # only; anything else (path traversal, query string, NUL bytes) is dropped.
-    cleaned_media_id = (media_id or '').strip() if media_id else ''
-    if cleaned_media_id:
-        from app.services.url_guard import (  # noqa: PLC0415
-            UnsafeOutboundURLError,
-            assert_whatsapp_media_id,
-        )
-        try:
-            assert_whatsapp_media_id(cleaned_media_id)
-        except UnsafeOutboundURLError as exc:
-            raise HTTPException(status_code=422, detail=f'media_id rejected: {exc}')
+# Extracted to app/api/v1/_helpers/segments_db.py
+from app.api.v1._helpers.segments_db import _fetch_segment_or_404  # noqa: E402,F401 — re-exported for backward compat
 
-async def upsert_whatsapp_contact(
-    conn: asyncpg.Connection,
-    *,
-    tenant_id: UUID,
-    wa_id: str,
-    phone_e164: str,
-    phone_hash: bytes,
-    display_name: str | None,
-    metadata: dict[str, Any],
-    source: str | None = 'whatsapp_cloud_api',
-):
-    existing = await conn.fetchrow(
-        """
-        select *
-        from app.contacts
-        where tenant_id=$1 and (wa_id=$2 or phone_e164=$3)
-        order by case when wa_id=$2 then 0 else 1 end, updated_at desc
-        limit 1
-        """,
-        tenant_id,
-        wa_id,
-        phone_e164,
-    )
-    if existing:
-        return await conn.fetchrow(
-            """
-            update app.contacts
-            set wa_id=$2,
-                phone_e164=$3,
-                phone_hash=$4,
-                display_name=coalesce($5, display_name),
-                source=coalesce($6, source),
-                metadata=metadata || $7::jsonb,
-                updated_at=now()
-            where tenant_id=$1 and id=$8
-            returning *
-            """,
-            tenant_id,
-            wa_id,
-            phone_e164,
-            phone_hash,
-            display_name,
-            source,
-            json.dumps(metadata),
-            existing['id'],
-        )
-    default_lead_source = build_lead_source(channel='whatsapp')
-    return await conn.fetchrow(
-        """
-        insert into app.contacts (tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source)
-        values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
-        returning *
-        """,
-        tenant_id,
-        wa_id,
-        phone_e164,
-        phone_hash,
-        display_name,
-        source,
-        json.dumps(metadata),
-        json.dumps(default_lead_source),
-    )
+# Extracted to app/api/v1/_helpers/messenger_db.py
+from app.api.v1._helpers.messenger_db import _upsert_messenger_contact  # noqa: E402,F401 — re-exported for backward compat
+
+# Extracted to app/api/v1/_helpers/auth_db.py
+from app.api.v1._helpers.auth_db import (  # noqa: E402,F401 — re-exported for backward compat
+    _TENANT_MEMBER_ROLES,
+    _tenant_member_payload,
+    _tenant_owner_count,
+)
+
+# Extracted to app/api/v1/_helpers/web_chat_db.py
+from app.api.v1._helpers.web_chat_db import _persist_bot_reply_sync  # noqa: E402,F401 — re-exported for backward compat
+
 
 
 router = APIRouter(prefix='/v1')
@@ -533,67 +537,6 @@ me_router = APIRouter(
 )
 
 
-KNOWLEDGE_DOCUMENT_RESPONSE_COLUMNS = (
-    'id',
-    'tenant_id',
-    'source_type',
-    'document_type',
-    'title',
-    'source_uri',
-    'checksum',
-    'mime_type',
-    'content',
-    'visibility',
-    'status',
-    'uploaded_by_user_id',
-    'metadata',
-    'created_at',
-    'updated_at',
-)
-KNOWLEDGE_DOCUMENT_WRITABLE_COLUMNS = (
-    'source_type',
-    'document_type',
-    'title',
-    'source_uri',
-    'checksum',
-    'mime_type',
-    'content',
-    'visibility',
-    'status',
-    'metadata',
-)
-KNOWLEDGE_DOCUMENT_PROJECTION = ', '.join(KNOWLEDGE_DOCUMENT_RESPONSE_COLUMNS)
-
-
-def parse_json_object(value: Any, default: dict[str, Any] | None = None) -> dict[str, Any]:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return default or {}
-    if isinstance(value, dict):
-        return value
-    return default or {}
-
-
-def normalize_knowledge_document(row: asyncpg.Record | None) -> dict | None:
-    document = record_to_dict(row)
-    if not document:
-        return None
-    document['metadata'] = parse_json_object(document.get('metadata'), default={})
-    return document
-
-
-def normalize_knowledge_documents(rows: list[asyncpg.Record]) -> list[dict]:
-    return [normalize_knowledge_document(row) for row in rows]
-
-
-def metadata_extracted_text(value: Any) -> str | None:
-    metadata = parse_json_object(value, default={})
-    extracted_text = metadata.get('extracted_text')
-    return extracted_text if isinstance(extracted_text, str) else None
-
-
 def is_service_or_support(request: Request) -> bool:
     return getattr(request.state, 'actor_type', None) == 'service' or getattr(
         request.state, 'support_mode', False
@@ -605,17 +548,6 @@ def is_service_or_support(request: Request) -> bool:
 # ``app.user_tenant_roles``; it lives in the JWT only.  The JWT half of the
 # double-check uses ``has_jwt_role`` from ``app.core.security`` which *does*
 # include ``platform_owner`` in its ranking.
-# BUG-133: `support` no es un rol — es un modo (`support_mode` flag/cookie).
-# Ver comment en `app/core/security.py::_ROLE_LEVELS` para la racional completa.
-_TENANT_ROLE_LEVELS = {
-    'viewer': 5,
-    'agent': 10,
-    'manager': 20,
-    'admin': 30,
-    'owner': 40,
-}
-
-
 async def get_user_tenant_role(
     conn: asyncpg.Connection, request: Request, tenant_id: UUID
 ) -> str | None:
@@ -692,12 +624,6 @@ async def _audit_authz_denied(
         )
     except Exception:  # pragma: no cover - defensive
         pass
-
-
-def _tenant_db_role_meets(role: str | None, minimum_role: str) -> bool:
-    if role is None:
-        return False
-    return _TENANT_ROLE_LEVELS.get(role, 0) >= _TENANT_ROLE_LEVELS.get(minimum_role, 0)
 
 
 async def ensure_tenant_access(
@@ -1117,9 +1043,6 @@ async def create_tenant(payload: TenantCreate, request: Request, conn: asyncpg.C
 # `authenticate_request` + `require_platform_owner` + `require_mfa_for_privileged`
 # dependencies already enforce that ONLY a platform_owner with verified MFA can
 # read across tenants — never relaxed at the handler level.
-_FLEET_LIST_STATUS_PATTERN = re.compile(r'^(trial|active|suspended|churned)$')
-
-
 @platform_admin_router.get('/tenants')
 async def list_tenants_fleet(
     status_filter: str | None = Query(default=None, alias='status', max_length=16),
@@ -1232,70 +1155,6 @@ async def list_tenants_fleet(
 #
 # Drives the platform-owner "System Health" view. Same router-level security as
 # the rest of `platform_admin_router` (`authenticate_request` +
-# `require_platform_owner` + `require_mfa_for_privileged`) — never relaxed at
-# the handler level.
-#
-# Reads the in-process Prometheus `REGISTRY` (the same one `/metrics` exposes
-# and Prometheus scrapes — TASK-0060) plus a live DB connectivity probe. It is a
-# point-in-time snapshot; historical time-series (24h/7d/30d) require the
-# Prometheus query API and are out of scope for UI-006.2.
-def _derive_health_services(
-    snapshot: dict, *, db_ok: bool, db_latency_ms: float | None
-) -> list[dict]:
-    """Synthesise the per-service health rows from the metrics snapshot.
-
-    Status vocabulary: ``ok`` / ``warn`` / ``down``. The API row is always
-    ``ok`` — if this handler runs, the API process is serving requests.
-    """
-    services: list[dict] = [
-        {
-            'key': 'api',
-            'label': 'API · FastAPI',
-            'status': 'ok',
-            'detail': 'Atendiendo requests',
-        },
-        {
-            'key': 'postgres',
-            'label': 'Postgres · primary',
-            'status': 'ok' if db_ok else 'down',
-            'detail': (
-                f'select 1 · {db_latency_ms}ms'
-                if db_ok and db_latency_ms is not None
-                else 'sin conexión'
-            ),
-        },
-    ]
-    for worker in snapshot['workers']:
-        depth = worker['queue_depth']
-        if depth > 1000:
-            worker_status = 'down'
-        elif depth > 100:
-            worker_status = 'warn'
-        else:
-            worker_status = 'ok'
-        services.append({
-            'key': f"worker:{worker['worker']}",
-            'label': f"Worker · {worker['worker']}",
-            'status': worker_status,
-            'detail': f"queue {depth}",
-        })
-    for breaker in snapshot['circuit_breakers']:
-        state = breaker['state']
-        if state == 'open':
-            breaker_status = 'down'
-        elif state == 'half_open':
-            breaker_status = 'warn'
-        else:
-            breaker_status = 'ok'
-        services.append({
-            'key': f"provider:{breaker['provider']}",
-            'label': f"Proveedor · {breaker['provider']}",
-            'status': breaker_status,
-            'detail': f"breaker {state}",
-        })
-    return services
-
-
 @platform_admin_router.get('/platform/metrics/health')
 async def platform_system_health(
     conn: asyncpg.Connection = Depends(get_db),
@@ -1591,12 +1450,6 @@ async def platform_billing_mrr(
 # `app.support_mode` — operator_alerts has RLS and a nullable `tenant_id` for
 # system-level alerts; the schema comment notes that surfacing NULL-tenant rows
 # under `app.support_mode()` is the expected operator path (TASK-0064).
-_INCIDENT_STATUS_PATTERN = re.compile(r'^(pending|sent|failed)$')
-_INCIDENT_KIND_PATTERN = re.compile(
-    r'^(negative_feedback|complaint|backup_failure|outbound_dlq_threshold)$'
-)
-
-
 @platform_admin_router.get('/platform/incidents')
 async def platform_incidents_feed(
     status_filter: str | None = Query(default=None, alias='status', max_length=16),
@@ -2176,9 +2029,6 @@ async def patch_tenant_status(
     return record_to_dict(updated)
 
 
-_TENANT_MEMBER_ROLES = ('owner', 'admin', 'manager', 'agent', 'viewer')
-
-
 async def _ensure_caller_can_target_role(
     request: Request, conn: asyncpg.Connection, tenant_id: UUID, target_role: str
 ) -> None:
@@ -2204,49 +2054,6 @@ async def _ensure_caller_can_target_role(
     )
     if not caller_is_owner:
         raise HTTPException(status_code=403, detail='Only an owner can manage the owner role')
-
-
-async def _tenant_owner_count(conn: asyncpg.Connection, tenant_id: UUID) -> int:
-    return int(
-        await conn.fetchval(
-            'select count(*) from app.user_tenant_roles where tenant_id=$1 and role=$2',
-            tenant_id,
-            'owner',
-        )
-    )
-
-
-async def _tenant_member_payload(
-    conn: asyncpg.Connection, tenant_id: UUID, user_id: UUID
-) -> dict[str, Any]:
-    row = await conn.fetchrow(
-        """
-        select u.id as user_id, u.auth_subject, u.email, u.display_name,
-               u.status, u.last_login_at, u.created_at,
-               array_agg(utr.role order by
-                   case utr.role
-                       when 'owner' then 1
-                       when 'admin' then 2
-                       when 'manager' then 3
-                       when 'agent' then 4
-                       when 'viewer' then 5
-                       else 6
-                   end
-               ) as roles,
-               bool_or(utr.is_default) as is_default_role
-        from app.users u
-        join app.user_tenant_roles utr on utr.user_id = u.id
-        where u.id=$1 and utr.tenant_id=$2
-        group by u.id
-        """,
-        user_id,
-        tenant_id,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail='Member not found')
-    payload = record_to_dict(row)
-    payload['roles'] = list(payload.get('roles') or [])
-    return payload
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/members')
@@ -2738,16 +2545,6 @@ async def get_tenant_settings(
     return record_to_dict(row)
 
 
-def _coerce_jsonb(value: Any) -> Any:
-    """Ensure a value that may arrive as a JSON string is returned as a Python dict/list."""
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return value
-
-
 @tenant_admin_router.patch('/tenants/{tenant_id}/settings')
 async def patch_settings(tenant_id: UUID, payload: dict, request: Request, conn: asyncpg.Connection = Depends(get_db)):
     await ensure_tenant_access(request, tenant_id, conn)
@@ -3021,13 +2818,6 @@ async def upload_tenant_brand_logo(
     return record_to_dict(row)
 
 
-# BUG-096: helper para construir la URL canónica del proxy de media
-# tenant-scoped. Mantener sincronizado con la ruta del endpoint
-# `get_tenant_media_content` declarado abajo.
-def tenant_brand_logo_proxy_url(tenant_id: UUID, asset_id: UUID) -> str:
-    return f'/v1/tenants/{tenant_id}/media/{asset_id}/content'
-
-
 @tenant_ops_router.get('/tenants/{tenant_id}/media/{asset_id}/content')
 async def get_tenant_media_content(
     tenant_id: UUID,
@@ -3288,31 +3078,6 @@ async def get_retention_preview(
         'tenant_id': str(tenant_id),
         'preview': await preview_retention(conn, tenant_id),
     }
-
-
-# TASK-0067: digest_subscriptions CRUD. Cada fila pinea un destinatario
-# (email, whatsapp o ambos) a una cadencia (daily/weekly) — el worker
-# `digest_worker` itera estas filas y dispara a las 08:00 hora local del
-# tenant.
-def _digest_subscription_to_dict(row: asyncpg.Record) -> dict[str, Any]:
-    return {
-        'id': str(row['id']),
-        'recipient_email': row['recipient_email'] or '',
-        'recipient_whatsapp': row['recipient_whatsapp'] or '',
-        'cadence': row['cadence'],
-        'enabled': bool(row['enabled']),
-        'last_sent_at': row['last_sent_at'].isoformat() if row['last_sent_at'] else None,
-        'created_at': row['created_at'].isoformat() if row['created_at'] else None,
-        'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None,
-    }
-
-
-def _validate_digest_recipients(email: str | None, whatsapp: str | None) -> None:
-    if not (email or '').strip() and not (whatsapp or '').strip():
-        raise HTTPException(
-            status_code=400,
-            detail='recipient_email or recipient_whatsapp is required',
-        )
 
 
 # BUG-036: digest endpoints viven en tenant_manager_router (manager+) para
@@ -3758,31 +3523,6 @@ async def patch_channel_mode(
     return record_to_dict(row)
 
 
-WEB_CHANNEL_PROJECTION = (
-    "id, tenant_id, provider, status, account_mode, allowed_origins, widget_config, "
-    "token_ref, created_at, updated_at"
-)
-
-
-MESSENGER_CHANNEL_PROJECTION = (
-    "id, tenant_id, provider, business_id, page_id, instagram_account_id, "
-    "account_mode, status, service_window_hours, token_ref, app_secret_ref, "
-    "verify_token_hash, created_at, updated_at"
-)
-
-
-def _normalize_messenger_channel(row: asyncpg.Record | None) -> dict[str, Any] | None:
-    channel = record_to_dict(row)
-    if not channel:
-        return None
-    channel['token_configured'] = token_ref_is_configured(channel.get('token_ref'))
-    channel['app_secret_configured'] = secret_ref_is_configured(channel.get('app_secret_ref'))
-    channel['verify_token_configured'] = bool(channel.get('verify_token_hash'))
-    # Avoid leaking raw bytes through JSON. The bool flag is enough.
-    channel.pop('verify_token_hash', None)
-    return channel
-
-
 @tenant_admin_router.get('/tenants/{tenant_id}/channels/messenger')
 async def list_messenger_channels(
     tenant_id: UUID,
@@ -3886,59 +3626,6 @@ async def upsert_messenger_channel(
         metadata={'provider': provider},
     )
     return _normalize_messenger_channel(row)
-
-
-def _normalize_web_channel(row: asyncpg.Record | None) -> dict[str, Any] | None:
-    channel = record_to_dict(row)
-    if not channel:
-        return None
-    channel['allowed_origins'] = list(channel.get('allowed_origins') or [])
-    channel['widget_config'] = parse_json_object(channel.get('widget_config'), default={})
-    return channel
-
-
-def _build_widget_snippet(
-    *,
-    tenant_slug: str,
-    widget_token: str,
-    color: str | None,
-    greeting: str | None,
-    logo_url: str | None = None,
-    welcome_copy: str | None = None,
-    button_position: str | None = None,
-) -> str:
-    # TASK-0070: snippet points at the CDN-hosted bundle and carries the full
-    # per-tenant customisation as data-* attributes so the widget renders
-    # without an extra round-trip. ``data-api-base`` is required: the CDN host
-    # only serves static assets, so the widget must know the real API origin
-    # to call /v1/web/chat/*.
-    settings = get_settings()
-    attrs = [
-        f'src="{settings.web_widget_cdn_url}"',
-        f'data-tenant="{tenant_slug}"',
-        f'data-widget-token="{widget_token}"',
-        f'data-api-base="{settings.web_widget_api_base.rstrip("/")}"',
-    ]
-    if color:
-        attrs.append(f'data-color="{color}"')
-    if greeting:
-        safe = greeting.replace('"', '&quot;')
-        attrs.append(f'data-greeting="{safe}"')
-    if logo_url:
-        # BUG-226 (codex MEDIUM, 2026-05-18): el `greeting` y `welcome_copy`
-        # arriba escapan `"` a `&quot;`, pero `logo_url` se insertaba RAW.
-        # Tenant admin podía persistir `logo_url=x" onload="alert(...)`,
-        # el snippet generado terminaba con un `<script>` con un onload
-        # handler atacante en el origin del tenant site. Cualquier visitor
-        # del site que ejecute el snippet oficial corría el JS del atacante.
-        safe_logo = logo_url.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
-        attrs.append(f'data-logo="{safe_logo}"')
-    if welcome_copy:
-        safe = welcome_copy.replace('"', '&quot;')
-        attrs.append(f'data-welcome="{safe}"')
-    if button_position in ('left', 'right'):
-        attrs.append(f'data-position="{button_position}"')
-    return '<script async ' + ' '.join(attrs) + '></script>'
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/channels/web')
@@ -4055,69 +3742,6 @@ async def upsert_web_channel(
         'has_widget_token': bool(widget_token),
         'tenant_slug': tenant_slug,
     }
-
-
-WHATSAPP_TEMPLATE_COLUMNS = (
-    'id',
-    'tenant_id',
-    'channel_id',
-    'name',
-    'locale',
-    'category',
-    'status',
-    'purpose',
-    'components',
-    'meta_template_id',
-    'rejection_reason',
-    'created_at',
-    'updated_at',
-)
-WHATSAPP_TEMPLATE_PROJECTION = ', '.join(WHATSAPP_TEMPLATE_COLUMNS)
-
-WHATSAPP_TEMPLATE_REQUIRED_PURPOSES = (
-    'appointment_confirmation',
-    'appointment_reminder_24h',
-)
-
-
-def normalize_whatsapp_template(row: asyncpg.Record | None) -> dict | None:
-    template = record_to_dict(row)
-    if not template:
-        return None
-    template['components'] = parse_json_object(template.get('components'), default={})
-    return template
-
-
-async def _fetch_template_or_404(
-    conn: asyncpg.Connection, tenant_id: UUID, template_id: UUID
-) -> asyncpg.Record:
-    row = await conn.fetchrow(
-        f'select {WHATSAPP_TEMPLATE_PROJECTION} from app.whatsapp_templates where tenant_id=$1 and id=$2',
-        tenant_id,
-        template_id,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail='Template not found')
-    return row
-
-
-async def _resolve_channel_for_template(
-    conn: asyncpg.Connection, tenant_id: UUID, channel_id: UUID | None
-) -> asyncpg.Record:
-    if channel_id:
-        row = await conn.fetchrow(
-            "select id, waba_id, token_ref, account_mode from app.tenant_channels where tenant_id=$1 and id=$2 and provider='whatsapp_cloud_api'",
-            tenant_id,
-            channel_id,
-        )
-    else:
-        row = await conn.fetchrow(
-            "select id, waba_id, token_ref, account_mode from app.tenant_channels where tenant_id=$1 and provider='whatsapp_cloud_api'",
-            tenant_id,
-        )
-    if not row:
-        raise HTTPException(status_code=404, detail='WhatsApp channel not found')
-    return row
 
 
 @tenant_admin_router.post('/tenants/{tenant_id}/whatsapp/templates', status_code=201)
@@ -5868,77 +5492,6 @@ async def release_conversation(
     return record_to_dict(row)
 
 
-async def ensure_resource_available(
-    conn: asyncpg.Connection,
-    *,
-    tenant_id: UUID,
-    resource_id: UUID,
-    starts_at: datetime,
-    ends_at: datetime,
-    appointment_id: UUID | None = None,
-) -> None:
-    if starts_at >= ends_at:
-        raise HTTPException(status_code=400, detail='Appointment starts_at must be before ends_at')
-
-    resource = await conn.fetchrow(
-        """
-        select id, is_active
-        from app.resources
-        where tenant_id=$1 and id=$2
-        """,
-        tenant_id,
-        resource_id,
-    )
-    if not resource:
-        raise HTTPException(status_code=404, detail='Resource not found')
-    if not resource['is_active']:
-        raise HTTPException(status_code=409, detail='Resource is inactive')
-
-    conflict = await conn.fetchrow(
-        """
-        select id, starts_at, ends_at, status
-        from app.appointments
-        where tenant_id=$1
-          and resource_id=$2
-          and status in ('scheduled','confirmed')
-          and ($5::uuid is null or id <> $5)
-          and tstzrange(starts_at, ends_at, '[)') && tstzrange($3, $4, '[)')
-        order by starts_at
-        limit 1
-        """,
-        tenant_id,
-        resource_id,
-        starts_at,
-        ends_at,
-        appointment_id,
-    )
-    if conflict:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                'message': 'Resource has a conflicting appointment',
-                'conflicting_appointment_id': str(conflict['id']),
-                'starts_at': conflict['starts_at'].isoformat(),
-                'ends_at': conflict['ends_at'].isoformat(),
-                'status': conflict['status'],
-            },
-        )
-
-
-async def appointment_detail(conn: asyncpg.Connection, tenant_id: UUID, appointment_id: UUID):
-    return await conn.fetchrow(
-        """
-        select a.*, r.name as resource_name, r.code as resource_code, c.display_name as contact_label, c.phone_e164
-        from app.appointments a
-        join app.resources r on r.id=a.resource_id and r.tenant_id=a.tenant_id
-        join app.contacts c on c.id=a.contact_id and c.tenant_id=a.tenant_id
-        where a.tenant_id=$1 and a.id=$2
-        """,
-        tenant_id,
-        appointment_id,
-    )
-
-
 # ───── Branches (TASK-0050) ────────────────────────────────────────────────
 
 
@@ -6995,131 +6548,6 @@ async def deactivate_resource(resource_id: UUID, request: Request, conn: asyncpg
     return Response(status_code=204)
 
 
-WEEKDAY_KEYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
-
-
-def parse_iso_date(value: str) -> datetime:
-    try:
-        return datetime.strptime(value, '%Y-%m-%d')
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail='date must use YYYY-MM-DD format') from exc
-
-
-def working_hours_for_date(capabilities: Any, target_date: datetime) -> list[dict[str, str]]:
-    """Read resources.capabilities.working_hours and return franjas of the target weekday."""
-    config = parse_json_object(capabilities, default={})
-    working_hours = config.get('working_hours')
-    if not isinstance(working_hours, dict):
-        return []
-    weekday_key = WEEKDAY_KEYS[target_date.weekday()]
-    franjas = working_hours.get(weekday_key)
-    if not isinstance(franjas, list):
-        return []
-    normalized: list[dict[str, str]] = []
-    for franja in franjas:
-        if not isinstance(franja, dict):
-            continue
-        start = franja.get('start')
-        end = franja.get('end')
-        if isinstance(start, str) and isinstance(end, str) and start and end:
-            normalized.append({'start': start, 'end': end})
-    return normalized
-
-
-def slot_start_minutes(value: str) -> int:
-    hours, _, minutes = value.partition(':')
-    try:
-        return int(hours) * 60 + int(minutes or 0)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=f'Invalid time format: {value}') from exc
-
-
-def minutes_to_hhmm(minutes: int) -> str:
-    return f'{minutes // 60:02d}:{minutes % 60:02d}'
-
-
-def compute_free_slots(
-    franjas: list[dict[str, str]],
-    busy_intervals: list[tuple[int, int]],
-    duration_minutes: int,
-    step_minutes: int | None = None,
-) -> list[dict[str, str]]:
-    """Yield free slots of `duration_minutes` skipping any overlap with busy_intervals.
-
-    Slots are aligned to the franja start and advance in `step_minutes`
-    (defaults to duration_minutes — back-to-back slots).
-    """
-    if duration_minutes <= 0:
-        return []
-    step = step_minutes or duration_minutes
-    slots: list[dict[str, str]] = []
-    for franja in franjas:
-        franja_start = slot_start_minutes(franja['start'])
-        franja_end = slot_start_minutes(franja['end'])
-        if franja_end <= franja_start:
-            continue
-        cursor = franja_start
-        while cursor + duration_minutes <= franja_end:
-            slot_start = cursor
-            slot_end = cursor + duration_minutes
-            overlaps = False
-            for busy_start, busy_end in busy_intervals:
-                if slot_start < busy_end and busy_start < slot_end:
-                    overlaps = True
-                    break
-            if not overlaps:
-                slots.append({
-                    'start_time': minutes_to_hhmm(slot_start),
-                    'end_time': minutes_to_hhmm(slot_end),
-                })
-            cursor += step
-    return slots
-
-
-async def fetch_service_duration(
-    conn: asyncpg.Connection, tenant_id: UUID, service_id: UUID | None
-) -> tuple[int | None, asyncpg.Record | None]:
-    """Return (duration_minutes, service_row) for the given service or (None, None)."""
-    if not service_id:
-        return None, None
-    row = await conn.fetchrow(
-        'select id, name, duration_minutes, is_active from app.service_catalog where tenant_id=$1 and id=$2',
-        tenant_id,
-        service_id,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail='Service not found')
-    return int(row['duration_minutes']), row
-
-
-async def fetch_fallback_duration(conn: asyncpg.Connection, tenant_id: UUID) -> int:
-    """Return tenant_settings.service_durations.default (in minutes), or 60."""
-    raw = await conn.fetchval(
-        "select escalation_policy->>'service_durations' from app.tenant_settings where tenant_id=$1",
-        tenant_id,
-    )
-    if isinstance(raw, str) and raw.strip():
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                default_minutes = parsed.get('default')
-                if isinstance(default_minutes, int) and default_minutes > 0:
-                    return default_minutes
-        except (json.JSONDecodeError, TypeError):
-            pass
-    settings_row = await conn.fetchval(
-        'select escalation_policy from app.tenant_settings where tenant_id=$1',
-        tenant_id,
-    )
-    parsed = parse_json_object(settings_row, default={})
-    durations = parsed.get('service_durations') if isinstance(parsed, dict) else None
-    if isinstance(durations, dict):
-        default_minutes = durations.get('default')
-        if isinstance(default_minutes, int) and default_minutes > 0:
-            return default_minutes
-    return 60
-
-
 @tenant_catalog_router.get(
     '/tenants/{tenant_id}/resources/{resource_id}/availability'
 )
@@ -7276,47 +6704,6 @@ async def tenant_availability(
     }
 
 
-SERVICE_CATALOG_COLUMNS = (
-    'id',
-    'tenant_id',
-    'name',
-    'category',
-    'description',
-    'price_amount',
-    'price_currency',
-    'duration_minutes',
-    'preparation_notes',
-    'post_service_notes',
-    'recall_interval_days',
-    'recall_template_id',
-    'applies_when',
-    'is_active',
-    'sort_order',
-    'metadata',
-    'created_at',
-    'updated_at',
-)
-SERVICE_CATALOG_PROJECTION = ', '.join(SERVICE_CATALOG_COLUMNS)
-
-
-def normalize_service_catalog_row(row: asyncpg.Record | None) -> dict | None:
-    service = record_to_dict(row)
-    if not service:
-        return None
-    service['metadata'] = parse_json_object(service.get('metadata'), default={})
-    # TASK-0054: applies_when is normalized when written, but rows persisted
-    # before this column existed could surface here as null — coerce to {}.
-    raw_rules = service.get('applies_when')
-    if isinstance(raw_rules, str):
-        try:
-            service['applies_when'] = json.loads(raw_rules) if raw_rules else {}
-        except json.JSONDecodeError:
-            service['applies_when'] = {}
-    elif raw_rules is None:
-        service['applies_when'] = {}
-    if service.get('price_amount') is not None:
-        service['price_amount'] = float(service['price_amount'])
-    return service
 
 
 @tenant_catalog_router.get('/tenants/{tenant_id}/services')
@@ -7544,30 +6931,6 @@ async def reorder_services(
     return {'updated': len(payload.order)}
 
 
-# ── Qualification questions (TASK-0042) ─────────────────────────────────────
-QUALIFICATION_PROJECTION = (
-    'id, tenant_id, position, label, kind, options, required, '
-    'applies_to_service_ids, preset, key, created_at, updated_at'
-)
-
-
-def normalize_qualification_question(row: asyncpg.Record | None) -> dict | None:
-    question = record_to_dict(row)
-    if not question:
-        return None
-    options = question.get('options')
-    if isinstance(options, str):
-        try:
-            question['options'] = json.loads(options)
-        except json.JSONDecodeError:
-            question['options'] = []
-    elif not isinstance(options, list):
-        question['options'] = []
-    applies = question.get('applies_to_service_ids') or []
-    question['applies_to_service_ids'] = [str(item) for item in applies]
-    return question
-
-
 @tenant_catalog_router.get('/tenants/{tenant_id}/qualification-questions')
 async def list_qualification_questions(
     tenant_id: UUID,
@@ -7776,37 +7139,6 @@ async def reorder_qualification_questions(
         entity_id=str(tenant_id),
     )
     return {'updated': len(payload.order)}
-
-
-# ── Media library + promotions (TASK-0046) ─────────────────────────────────
-MEDIA_ASSET_COLUMNS = (
-    'id, tenant_id, kind, label, description, storage_backend, storage_bucket, '
-    'object_key, source_uri, mime_type, sha256, size_bytes, tags, '
-    'uploaded_by_user_id, created_at, updated_at'
-)
-PROMOTION_COLUMNS = (
-    'id, tenant_id, name, description, media_asset_id, valid_from, valid_until, '
-    'applies_to_service_ids, coupon_code, discount_percent, is_active, '
-    'sort_order, created_at, updated_at'
-)
-
-
-def normalize_media_asset(row: asyncpg.Record | None) -> dict | None:
-    asset = record_to_dict(row)
-    if not asset:
-        return None
-    asset['tags'] = list(asset.get('tags') or [])
-    return asset
-
-
-def normalize_promotion(row: asyncpg.Record | None) -> dict | None:
-    promo = record_to_dict(row)
-    if not promo:
-        return None
-    promo['applies_to_service_ids'] = [str(s) for s in (promo.get('applies_to_service_ids') or [])]
-    if promo.get('discount_percent') is not None:
-        promo['discount_percent'] = float(promo['discount_percent'])
-    return promo
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/media')
@@ -8328,29 +7660,6 @@ async def patch_service_request(
     return record_to_dict(row)
 
 
-def _compute_quote_subtotal(line_items: list) -> float:
-    return sum(item['qty'] * item['unit_price'] for item in line_items)
-
-
-def _build_quote_summary_text(sr: Any, quote: Any) -> str:
-    items = quote['line_items'] if isinstance(quote['line_items'], list) else json.loads(quote['line_items'])
-    lines = [f"- {it['description']}: {it['qty']} x {it['unit_price']:,.0f} = {it['qty'] * it['unit_price']:,.0f}" for it in items]
-    items_block = '\n'.join(lines) if lines else '(sin ítems)'
-    valid_str = ''
-    if quote['valid_until']:
-        valid_str = f"\nVálida hasta: {quote['valid_until'].strftime('%Y-%m-%d %H:%M')}"
-    return (
-        f"*Cotización orientativa*\n"
-        f"Servicio: {sr['service_type']}\n\n"
-        f"{items_block}\n\n"
-        f"Subtotal: {quote['subtotal']:,.0f} {quote['currency']}\n"
-        f"Descuento: {quote['discount_total']:,.0f}\n"
-        f"Impuestos: {quote['tax_total']:,.0f}\n"
-        f"*Total: {quote['grand_total']:,.0f} {quote['currency']}*"
-        f"{valid_str}"
-    )
-
-
 @tenant_ops_router.post('/service-requests/{request_id}/quotes', status_code=201)
 async def create_quote(
     request_id: UUID,
@@ -8804,49 +8113,6 @@ async def create_appointment_feedback(
     return record_to_dict(row)
 
 
-def _normalize_payment_settings(value: Any) -> dict[str, Any]:
-    """Read tenant payment_settings jsonb into a dict with predictable keys."""
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            value = {}
-    if not isinstance(value, dict):
-        value = {}
-    provider = value.get('provider') or 'none'
-    if provider not in {'mercadopago', 'stripe', 'none'}:
-        provider = 'none'
-    return {
-        'provider': provider,
-        'currency': (value.get('currency') or 'COP').upper()[:3],
-        'default_amount': value.get('default_amount'),
-        'api_key_ref': value.get('api_key_ref'),
-        'webhook_secret_ref': value.get('webhook_secret_ref'),
-    }
-
-
-def _public_payment_settings(tenant_id: UUID, settings: dict[str, Any]) -> dict[str, Any]:
-    """Strip secrets from payment settings before returning them to the panel."""
-    normalized = _normalize_payment_settings(settings)
-    return {
-        'provider': normalized['provider'],
-        'currency': normalized['currency'],
-        'default_amount': normalized['default_amount'],
-        'api_key_configured': secret_ref_is_configured(normalized['api_key_ref']),
-        'webhook_secret_configured': secret_ref_is_configured(normalized['webhook_secret_ref']),
-        'tenant_id': str(tenant_id),
-    }
-
-
-async def _fetch_tenant_payment_settings(
-    conn: asyncpg.Connection, tenant_id: UUID
-) -> dict[str, Any]:
-    value = await conn.fetchval(
-        'select payment_settings from app.tenant_settings where tenant_id=$1', tenant_id
-    )
-    return _normalize_payment_settings(value)
-
-
 @tenant_admin_router.get('/tenants/{tenant_id}/payments/settings')
 async def get_tenant_payment_settings(
     tenant_id: UUID, request: Request, conn: asyncpg.Connection = Depends(get_db)
@@ -8914,37 +8180,6 @@ async def update_tenant_payment_settings(
     return _public_payment_settings(tenant_id, next_settings)
 
 
-def _appointment_payment_external_ref(tenant_id: UUID, appointment_id: UUID) -> str:
-    return f'tenant:{tenant_id}:appointment:{appointment_id}'
-
-
-def _parse_appointment_external_ref(ref: str | None) -> UUID | None:
-    if not ref:
-        return None
-    tokens = ref.split(':')
-    for index, token in enumerate(tokens):
-        if token == 'appointment' and index + 1 < len(tokens):
-            try:
-                return UUID(tokens[index + 1])
-            except ValueError:
-                return None
-    return None
-
-
-def _appointment_payment_summary(row: asyncpg.Record) -> dict[str, Any]:
-    appointment = record_to_dict(row)
-    return {
-        'appointment_id': appointment.get('id'),
-        'payment_status': appointment.get('payment_status'),
-        'payment_amount': appointment.get('payment_amount'),
-        'payment_currency': appointment.get('payment_currency'),
-        'payment_link': appointment.get('payment_link'),
-        'payment_provider': appointment.get('payment_provider'),
-        'payment_provider_reference': appointment.get('payment_provider_reference'),
-        'payment_link_generated_at': appointment.get('payment_link_generated_at'),
-        'payment_link_sent_at': appointment.get('payment_link_sent_at'),
-        'payment_paid_at': appointment.get('payment_paid_at'),
-    }
 
 
 @tenant_ops_router.post('/appointments/{appointment_id}/payment-link')
@@ -10464,243 +9699,6 @@ async def create_prompt(payload: PromptCreate, request: Request, conn: asyncpg.C
 # ─────────────────────────────────────────────────────────────────────────────
 # TASK-0069 — Wizard de onboarding self-service con verificación paso-a-paso
 # ─────────────────────────────────────────────────────────────────────────────
-ONBOARDING_TOTAL_STEPS = 7
-ONBOARDING_STEPS = tuple(range(1, ONBOARDING_TOTAL_STEPS + 1))
-ONBOARDING_STEP_METADATA = {
-    1: {'key': 'business_details', 'label': 'Datos del negocio'},
-    2: {'key': 'locale_currency', 'label': 'Timezone, locale y moneda'},
-    3: {'key': 'whatsapp_channel', 'label': 'Canal WhatsApp con firma verificada'},
-    4: {'key': 'consent_template', 'label': 'Template consent_request_v1'},
-    5: {'key': 'service_catalog', 'label': 'Catálogo de servicios mínimo'},
-    6: {'key': 'business_hours', 'label': 'Horarios de atención'},
-    7: {'key': 'end_to_end_test', 'label': 'Test E2E del bot'},
-}
-ONBOARDING_CONSENT_TEMPLATE_NAME = 'consent_request_v1'
-
-
-def normalize_onboarding_progress(raw: Any) -> dict[str, Any]:
-    data = raw if isinstance(raw, dict) else {}
-    try:
-        last_completed = int(data.get('last_completed_step') or 0)
-    except (TypeError, ValueError):
-        last_completed = 0
-    last_completed = max(0, min(last_completed, ONBOARDING_TOTAL_STEPS))
-    steps_raw = data.get('steps') if isinstance(data.get('steps'), dict) else {}
-    steps: dict[str, Any] = {}
-    for n in ONBOARDING_STEPS:
-        entry = steps_raw.get(str(n)) if isinstance(steps_raw, dict) else None
-        if isinstance(entry, dict):
-            steps[str(n)] = entry
-    return {
-        'step': min(last_completed + 1, ONBOARDING_TOTAL_STEPS),
-        'total': ONBOARDING_TOTAL_STEPS,
-        'last_completed_step': last_completed,
-        'steps': steps,
-        'complete': last_completed >= ONBOARDING_TOTAL_STEPS,
-    }
-
-
-async def _verify_onboarding_business_details(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
-    tenant = await conn.fetchrow(
-        'select slug, legal_name, display_name, vertical_code, country_code, timezone, status, deleted_at '
-        'from app.tenants where id=$1',
-        tenant_id,
-    )
-    if not tenant:
-        return False, 'Tenant no encontrado.', {}
-    missing = [
-        f for f in ('slug', 'legal_name', 'display_name', 'vertical_code', 'country_code', 'timezone')
-        if not (tenant[f] and str(tenant[f]).strip())
-    ]
-    if missing:
-        return False, f'Faltan campos del negocio: {", ".join(missing)}.', {'missing': missing}
-    if tenant['deleted_at'] is not None:
-        return False, 'Tenant eliminado.', {}
-    return True, 'Datos del negocio completos.', {'slug': tenant['slug'], 'vertical_code': tenant['vertical_code']}
-
-
-async def _verify_onboarding_locale_currency(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
-    tenant = await conn.fetchrow('select timezone from app.tenants where id=$1', tenant_id)
-    settings = await conn.fetchrow(
-        'select locale, payment_settings from app.tenant_settings where tenant_id=$1',
-        tenant_id,
-    )
-    if not tenant or not settings:
-        return False, 'Settings o tenant ausentes.', {}
-    timezone = (tenant['timezone'] or '').strip()
-    locale = (settings['locale'] or '').strip()
-    payment_settings = _coerce_jsonb(settings['payment_settings']) or {}
-    currency = (payment_settings.get('currency') or '').strip() if isinstance(payment_settings, dict) else ''
-    missing = []
-    if not timezone:
-        missing.append('timezone')
-    if not locale:
-        missing.append('locale')
-    if not currency:
-        missing.append('currency')
-    if missing:
-        return False, f'Falta configurar: {", ".join(missing)}.', {'missing': missing}
-    return True, 'Timezone, locale y moneda configurados.', {'timezone': timezone, 'locale': locale, 'currency': currency}
-
-
-async def _verify_onboarding_whatsapp_channel(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
-    channel = await conn.fetchrow(
-        """
-        select business_id, waba_id, phone_number_id, token_ref, app_secret_ref,
-               verify_token_hash is not null as verify_token_hash_configured, status
-        from app.tenant_channels
-        where tenant_id=$1 and provider='whatsapp_cloud_api'
-        """,
-        tenant_id,
-    )
-    if not channel:
-        return False, 'Canal WhatsApp no aprovisionado. Configúralo desde el wizard.', {}
-    if channel['status'] != 'active':
-        return False, f"Canal WhatsApp en estado {channel['status']}.", {'status': channel['status']}
-    if not (channel['business_id'] and channel['waba_id'] and channel['phone_number_id']):
-        return False, 'Falta business_id, waba_id o phone_number_id de Meta.', {}
-    if not token_ref_is_configured(channel['token_ref']):
-        return False, 'Token Meta inválido o ausente. Vuelve a pegar el token de acceso.', {}
-    if not secret_ref_is_configured(channel['app_secret_ref']):
-        return False, 'App Secret ausente. Configúralo para validar firmas HMAC.', {}
-    if not channel['verify_token_hash_configured']:
-        return False, 'Verify Token del webhook ausente. Genera y pega el verify token.', {}
-    verify_token_ref = tenant_secret_ref(tenant_id, 'whatsapp_verify_token')
-    if not secret_ref_is_configured(verify_token_ref):
-        return False, 'Verify Token no resuelto en el secret store. Reconfigura el canal.', {}
-    return True, 'Canal WhatsApp con firma verificada contra Meta.', {
-        'business_id': channel['business_id'],
-        'waba_id': channel['waba_id'],
-        'phone_number_id': channel['phone_number_id'],
-    }
-
-
-async def _verify_onboarding_consent_template(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
-    row = await conn.fetchrow(
-        """
-        select status from app.whatsapp_templates
-        where tenant_id=$1 and name=$2 and purpose='consent_request'
-        order by updated_at desc limit 1
-        """,
-        tenant_id,
-        ONBOARDING_CONSENT_TEMPLATE_NAME,
-    )
-    if not row:
-        return False, (
-            f'No existe el template {ONBOARDING_CONSENT_TEMPLATE_NAME}. '
-            'Crea y sincroniza el opt-in con Meta desde el wizard.'
-        ), {}
-    if row['status'] != 'approved':
-        return False, (
-            f'Template {ONBOARDING_CONSENT_TEMPLATE_NAME} en estado {row["status"]}. '
-            'Espera la aprobación de Meta antes de continuar.'
-        ), {'status': row['status']}
-    return True, 'Template consent_request_v1 aprobado por Meta.', {'status': 'approved'}
-
-
-async def _verify_onboarding_service_catalog(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
-    count = await conn.fetchval(
-        'select count(*) from app.service_catalog where tenant_id=$1 and is_active=true',
-        tenant_id,
-    )
-    count = int(count or 0)
-    if count <= 0:
-        return False, 'Crea al menos un servicio activo en el catálogo.', {'active_services': 0}
-    return True, f'{count} servicio(s) activo(s) en el catálogo.', {'active_services': count}
-
-
-async def _verify_onboarding_business_hours(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
-    row = await conn.fetchrow(
-        'select business_hours from app.tenant_settings where tenant_id=$1',
-        tenant_id,
-    )
-    if not row:
-        return False, 'Tenant settings ausentes.', {}
-    hours = _coerce_jsonb(row['business_hours']) or {}
-    if not isinstance(hours, dict) or not hours:
-        return False, 'Horarios de atención vacíos.', {}
-    # TenantSetupWizard persiste {timezone_strategy, weekly_schedule: {mon: [...]}}.
-    # Aceptamos esa forma y también el flat {day: [...]} para tests/seeds.
-    weekly = hours.get('weekly_schedule') if isinstance(hours.get('weekly_schedule'), dict) else hours
-    populated = {day: ranges for day, ranges in weekly.items() if ranges}
-    if not populated:
-        return False, 'Ningún día tiene rangos de atención definidos.', {}
-    return True, f'Horarios definidos para {len(populated)} día(s).', {'days_configured': sorted(populated.keys())}
-
-
-async def _verify_onboarding_end_to_end_test(conn: asyncpg.Connection, tenant_id: UUID) -> tuple[bool, str, dict[str, Any]]:
-    settings = await conn.fetchrow(
-        'select onboarding_progress from app.tenant_settings where tenant_id=$1',
-        tenant_id,
-    )
-    progress = normalize_onboarding_progress(_coerce_jsonb(settings['onboarding_progress']) if settings else {})
-    step7 = progress['steps'].get('7') or {}
-    sent_at = step7.get('test_message_sent_at')
-    if not sent_at:
-        return False, 'Aún no se envió el mensaje de prueba al wa_id del admin.', {}
-    target_wa_id = step7.get('target_wa_id')
-    if not target_wa_id:
-        return False, (
-            'No se registró el wa_id del admin al que se envió la prueba. '
-            'Vuelve a marcar el envío con el wa_id correcto.'
-        ), {'sent_at': sent_at}
-    inbound = await conn.fetchrow(
-        """
-        select m.id, m.created_at, c.wa_id
-        from app.messages m
-        join app.conversations conv on conv.id=m.conversation_id and conv.tenant_id=m.tenant_id
-        join app.contacts c on c.id=conv.contact_id and c.tenant_id=m.tenant_id
-        where m.tenant_id=$1
-          and m.direction='inbound'
-          and m.created_at >= $2::timestamptz
-          and c.wa_id=$3
-        order by m.created_at desc limit 1
-        """,
-        tenant_id,
-        sent_at,
-        str(target_wa_id),
-    )
-    if not inbound:
-        return False, (
-            f'No se recibió ningún mensaje inbound de {target_wa_id} '
-            'después de enviar la prueba. Pide al admin que responda al mensaje.'
-        ), {'sent_at': sent_at, 'target_wa_id': target_wa_id}
-    return True, 'Test E2E exitoso: inbound del wa_id del admin recibido.', {
-        'sent_at': sent_at,
-        'target_wa_id': target_wa_id,
-        'inbound_message_id': str(inbound['id']),
-        'inbound_at': inbound['created_at'].isoformat() if inbound['created_at'] else None,
-    }
-
-
-ONBOARDING_VERIFIERS = {
-    1: _verify_onboarding_business_details,
-    2: _verify_onboarding_locale_currency,
-    3: _verify_onboarding_whatsapp_channel,
-    4: _verify_onboarding_consent_template,
-    5: _verify_onboarding_service_catalog,
-    6: _verify_onboarding_business_hours,
-    7: _verify_onboarding_end_to_end_test,
-}
-
-
-async def _load_onboarding_progress(conn: asyncpg.Connection, tenant_id: UUID) -> dict[str, Any]:
-    row = await conn.fetchrow(
-        'select onboarding_progress from app.tenant_settings where tenant_id=$1',
-        tenant_id,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail='Tenant settings not found')
-    return normalize_onboarding_progress(_coerce_jsonb(row['onboarding_progress']))
-
-
-def _step_metadata(step: int) -> dict[str, Any]:
-    meta = ONBOARDING_STEP_METADATA.get(step)
-    if not meta:
-        raise HTTPException(status_code=400, detail=f'Step {step} inválido (1..{ONBOARDING_TOTAL_STEPS}).')
-    return meta
-
-
 @tenant_admin_router.get('/tenants/{tenant_id}/onboarding')
 async def get_tenant_onboarding(
     tenant_id: UUID,
@@ -10877,45 +9875,6 @@ async def record_onboarding_test_message_sent(
         'step': 7,
         'test_message_sent_at': sent_at,
         'target_wa_id': target_wa_id,
-    }
-
-
-def readiness_check(key: str, label: str, ready: bool, reason: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {
-        'key': key,
-        'label': label,
-        'ready': ready,
-        'reason': reason,
-        'details': details or {},
-    }
-
-
-def readiness_truthy_object(value: Any) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, dict | list | tuple | set):
-        return bool(value)
-    return bool(str(value).strip()) if isinstance(value, str) else bool(value)
-
-
-def readiness_positive_int(value: Any) -> bool:
-    try:
-        return int(value) > 0
-    except (TypeError, ValueError):
-        return False
-
-
-def readiness_response(tenant_id: UUID, checks: list[dict[str, Any]], smoke_question: str) -> dict[str, Any]:
-    reasons = [check['reason'] for check in checks if not check['ready']]
-    ready = not reasons
-    return {
-        'tenant_id': str(tenant_id),
-        'checked_at': datetime.now(UTC).isoformat(),
-        'status': 'ready' if ready else 'not_ready',
-        'ready': ready,
-        'reasons': reasons,
-        'smoke_question': smoke_question,
-        'checks': checks,
     }
 
 
@@ -11420,9 +10379,6 @@ async def export_tenant_data(
 # requires the data of the ONE complainant. Sending the full dump exposes
 # every OTHER contact's PII and creates a worse violation than the one the
 # claimant was reporting. The runbook now points here.
-_CONTACT_EXPORT_ALLOWED_KINDS = ('consent_ledger', 'messages', 'appointments', 'subscriptions')
-
-
 @tenant_admin_router.get('/tenants/{tenant_id}/contacts/{contact_id}/export')
 async def export_contact_data(
     tenant_id: UUID,
@@ -11628,9 +10584,6 @@ async def export_contact_data(
 #      `tenant_id=None` (this is per-user, not per-tenant) and metadata
 #      listing the fields touched.
 
-NOTIFICATION_CHANNEL_IDS = ('email', 'wa', 'inapp')
-
-
 async def _load_user_preferences_row(
     conn: asyncpg.Connection, user_id: UUID
 ) -> asyncpg.Record:
@@ -11653,92 +10606,6 @@ async def _load_user_preferences_row(
             'select * from app.user_preferences where user_id=$1', user_id
         )
     return row
-
-
-def _serialize_profile(prefs_row: asyncpg.Record, user_row: asyncpg.Record, user_id: UUID) -> dict:
-    """Merge user_preferences (app cache) with app.users (Auth0-synced canonical fields)."""
-    return {
-        'user_id': str(user_id),
-        'email': user_row['email'],
-        # The cached display_name in user_preferences wins (the user explicitly
-        # set it); fall back to the Auth0-synced one on app.users.
-        'display_name': prefs_row['display_name'] or user_row['display_name'],
-        'phone': prefs_row['phone'],
-        'locale': prefs_row['locale'],
-        'timezone': prefs_row['timezone'],
-        'theme_override': prefs_row['theme_override'],
-        'auth0_synced_at': (
-            prefs_row['auth0_synced_at'].isoformat()
-            if prefs_row['auth0_synced_at'] is not None
-            else None
-        ),
-        'mfa_enabled': user_row['mfa_enabled'],
-        'last_login_at': (
-            user_row['last_login_at'].isoformat()
-            if user_row['last_login_at'] is not None
-            else None
-        ),
-    }
-
-
-def _validate_timezone(tz: Any) -> None:
-    """Raise 422 if `tz` is not a valid IANA timezone.
-
-    `ZoneInfo(...)` raises `ZoneInfoNotFoundError` for unknown zones; older
-    inputs (e.g. trailing slashes) can surface `ValueError` — SEC-010 hardening
-    asks us to catch both. None / empty → no-op (handled by the column default).
-
-    codex P2 (UI-016.7-FU review): a non-string JSON value (e.g. `123`) would
-    reach `ZoneInfo()` and raise `TypeError` — uncaught, leaking a 500 to the
-    caller. Reject non-strings up front with the expected 422.
-    """
-    if tz is None or tz == '':
-        return
-    if not isinstance(tz, str):
-        raise HTTPException(status_code=422, detail='timezone must be a string')
-    try:
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # noqa: PLC0415
-        ZoneInfo(tz)
-    except (ZoneInfoNotFoundError, ValueError, KeyError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail=f'Invalid timezone: {tz}') from exc
-
-
-def _validate_notification_matrix(matrix: Any) -> dict:
-    """Validate the `notification_matrix` payload.
-
-    Shape: `{event_id (str): {channel_id (str in {email,wa,inapp}): bool}}`.
-    Unknown channel ids are rejected; unknown event ids are allowed (the
-    catalog of events is frontend-driven and may grow without a backend
-    migration).
-    """
-    if not isinstance(matrix, dict):
-        raise HTTPException(status_code=422, detail='notification_matrix must be an object')
-    for event_id, channels in matrix.items():
-        if not isinstance(event_id, str) or not event_id:
-            raise HTTPException(status_code=422, detail='notification_matrix keys must be non-empty strings')
-        if not isinstance(channels, dict):
-            raise HTTPException(
-                status_code=422,
-                detail=f'notification_matrix[{event_id}] must be an object',
-            )
-        for channel_id, enabled in channels.items():
-            if channel_id not in NOTIFICATION_CHANNEL_IDS:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f'notification_matrix[{event_id}][{channel_id}]: '
-                        f'channel must be one of {NOTIFICATION_CHANNEL_IDS}'
-                    ),
-                )
-            if not isinstance(enabled, bool):
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f'notification_matrix[{event_id}][{channel_id}]: '
-                        'value must be a boolean'
-                    ),
-                )
-    return matrix
 
 
 async def _require_current_user(request: Request, conn: asyncpg.Connection) -> UUID:
@@ -11975,13 +10842,6 @@ def _session_id_from_request(request: Request) -> str | None:
     return f'iat-{digest[:32]}'
 
 
-# BUG-168: ventana de actividad para considerar una sesión "viva". Si la
-# pestaña no ha hecho hit al endpoint en este tiempo, asumimos que su JWT
-# expiró (typical JWT TTL es 8h-24h) o que el navegador se cerró. El
-# default de 24h cubre el caso común (sesión laboral o ciclo nocturno).
-AUTH_SESSION_ACTIVE_HOURS = 24
-
-
 async def record_auth_session(
     request: Request, conn: asyncpg.Connection, user_id: UUID
 ) -> str | None:
@@ -12148,10 +11008,6 @@ async def revoke_my_session(
 # y `authenticate_request` solo lo aplica si matchea el `X-Tenant-Id` del
 # request. Esto respeta TASK-0077 — opt-in deliberado, audit trail, blast
 # radius acotado a un tenant.
-
-SUPPORT_MODE_TTL_SECONDS = 60 * 60  # 1 hora — alcanza para una sesión de soporte
-SUPPORT_MODE_MIN_JUSTIFICATION_LEN = 8
-
 
 @me_router.post(
     '/me/support-mode/{tenant_id}',
@@ -12375,61 +11231,6 @@ def _resolve_web_session(
         )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-
-async def _persist_bot_reply_sync(
-    conn: asyncpg.Connection,
-    *,
-    tenant_id: UUID,
-    conversation_id: UUID,
-) -> dict[str, Any] | None:
-    """After the orchestrator runs, claim the latest pending outbound message.
-
-    The RAG orchestrator queues the bot's outbound message via
-    ``message.queued`` for the event worker (WhatsApp delivery). For the web
-    channel we deliver synchronously: we mark the message as ``sent`` and
-    publish the event right here so the response is returned to the browser
-    immediately.
-    """
-    row = await conn.fetchrow(
-        """
-        select id, body_text, message_type, payload, created_at
-        from app.messages
-        where tenant_id=$1 and conversation_id=$2
-          and direction='outbound' and status='queued'
-        order by created_at desc
-        limit 1
-        """,
-        tenant_id,
-        conversation_id,
-    )
-    if not row:
-        return None
-    await conn.execute(
-        """
-        update app.messages
-        set status='sent', sent_at=now()
-        where tenant_id=$1 and id=$2
-        """,
-        tenant_id,
-        row['id'],
-    )
-    await conn.execute(
-        """
-        update app.domain_events
-        set published_at=now()
-        where tenant_id=$1 and aggregate_id=$2 and event_name='message.queued'
-          and published_at is null
-        """,
-        tenant_id,
-        row['id'],
-    )
-    return {
-        'id': str(row['id']),
-        'body_text': row['body_text'] or '',
-        'message_type': row['message_type'],
-        'created_at': row['created_at'].isoformat() if row.get('created_at') else None,
-    }
 
 
 @web_router.post('/chat/start', status_code=201)
@@ -13131,70 +11932,6 @@ async def receive_whatsapp_webhook(request: Request, conn: asyncpg.Connection = 
     return {'accepted': True, 'payload_sha256': sha}
 
 
-async def _upsert_messenger_contact(
-    conn: asyncpg.Connection,
-    *,
-    tenant_id: UUID,
-    provider: str,
-    psid: str,
-    display_name: str | None,
-):
-    """Upsert a contact identified by a Messenger PSID.
-
-    Instagram/Facebook PSIDs are opaque numeric strings tied to the page+user
-    pair. They are not phone numbers, so we stash them in ``wa_id`` (acts as
-    the canonical external id) and synthesize a placeholder ``phone_e164``
-    of the form ``+ig:<psid>`` / ``+fb:<psid>``. This keeps the existing
-    ``unique (tenant_id, phone_e164)`` constraint usable without altering
-    the schema or requiring real phones for social channels.
-    """
-    prefix = 'ig' if provider == 'instagram_messenger' else 'fb'
-    pseudo_phone = f'+{prefix}:{psid}'
-    phone_hash = hashlib.sha256(pseudo_phone.encode()).digest()
-    existing = await conn.fetchrow(
-        """
-        select *
-        from app.contacts
-        where tenant_id=$1 and wa_id=$2
-        limit 1
-        """,
-        tenant_id,
-        psid,
-    )
-    if existing:
-        return await conn.fetchrow(
-            """
-            update app.contacts
-            set display_name=coalesce($3, display_name),
-                source=coalesce($4, source),
-                updated_at=now()
-            where tenant_id=$1 and id=$2
-            returning *
-            """,
-            tenant_id,
-            existing['id'],
-            display_name,
-            provider,
-        )
-    default_lead_source = build_lead_source(channel=provider)
-    return await conn.fetchrow(
-        """
-        insert into app.contacts (
-            tenant_id, wa_id, phone_e164, phone_hash, display_name, source, metadata, lead_source
-        )
-        values ($1, $2, $3, $4, $5, $6, '{}'::jsonb, $7::jsonb)
-        returning *
-        """,
-        tenant_id,
-        psid,
-        pseudo_phone,
-        phone_hash,
-        display_name,
-        provider,
-        json.dumps(default_lead_source),
-    )
-
-
 @webhook_router.get('/meta/{provider}')
 async def verify_messenger_webhook(
     provider: str,
@@ -13484,21 +12221,6 @@ async def receive_messenger_webhook(
                 )
 
     return {'accepted': True, 'payload_sha256': sha, 'provider': provider}
-
-
-def _resolve_analytics_range(from_date: str | None, to_date: str | None) -> tuple[date, date]:
-    today = datetime.now(UTC).date()
-    end = date.fromisoformat(to_date) if to_date else today
-    start = date.fromisoformat(from_date) if from_date else (end - timedelta(days=29))
-    if start > end:
-        raise HTTPException(status_code=400, detail='from_date must be on or before to_date')
-    return start, end
-
-
-def _range_bounds(start: date, end: date) -> tuple[datetime, datetime]:
-    range_start = datetime.combine(start, datetime.min.time(), tzinfo=UTC)
-    range_end = datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
-    return range_start, range_end
 
 
 @tenant_analytics_router.get('/analytics/overview')
@@ -13908,19 +12630,6 @@ async def analytics_contacts(
         'source_distribution': [
             {'source': row['source'], 'count': row['count']} for row in sources
         ],
-    }
-
-
-def _funnel_step(label: str, count: int, prev_count: int, top_count: int) -> dict:
-    return {
-        'step': label,
-        'count': count,
-        'conversion_from_previous_pct': (
-            round(count / prev_count * 100, 1) if prev_count else 0.0
-        ),
-        'conversion_from_top_pct': (
-            round(count / top_count * 100, 1) if top_count else 0.0
-        ),
     }
 
 
@@ -14469,33 +13178,6 @@ async def analytics_agents(
     }
 
 
-SEGMENT_PROJECTION = (
-    'id, tenant_id, name, description, kind, rules, contact_count, '
-    'last_refreshed_at, is_system, created_by, created_at, updated_at'
-)
-
-
-def normalize_segment_row(row: asyncpg.Record | None) -> dict | None:
-    seg = record_to_dict(row)
-    if not seg:
-        return None
-    seg['rules'] = parse_json_object(seg.get('rules'), default={})
-    return seg
-
-
-async def _fetch_segment_or_404(
-    conn: asyncpg.Connection, tenant_id: UUID, segment_id: UUID
-) -> asyncpg.Record:
-    row = await conn.fetchrow(
-        f'select {SEGMENT_PROJECTION} from app.contact_segments where tenant_id=$1 and id=$2',
-        tenant_id,
-        segment_id,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail='Segment not found')
-    return row
-
-
 @tenant_admin_router.get('/tenants/{tenant_id}/segments')
 async def list_contact_segments(
     tenant_id: UUID,
@@ -14790,71 +13472,6 @@ async def set_static_segment_members(
     return normalize_segment_row(
         await _fetch_segment_or_404(conn, tenant_id, segment_id)
     )
-
-
-CAMPAIGN_PROJECTION = (
-    'id, tenant_id, name, status, template_id, template_variables, '
-    'segment_filter, segment_id, launched_snapshot_at, scheduled_at, '
-    'recipient_count, sent_count, delivered_count, read_count, '
-    'failed_count, started_at, completed_at, cost_amount, cost_currency, '
-    'attribution_window_days, created_by, created_at, updated_at'
-)
-
-
-def normalize_campaign(row: asyncpg.Record | None) -> dict | None:
-    campaign = record_to_dict(row)
-    if not campaign:
-        return None
-    campaign['template_variables'] = parse_json_object(campaign.get('template_variables'), default={})
-    campaign['segment_filter'] = parse_json_object(campaign.get('segment_filter'), default={})
-    return campaign
-
-
-def _campaign_segment_filter_dict(payload_segment) -> dict[str, Any]:
-    if payload_segment is None:
-        return {}
-    if hasattr(payload_segment, 'model_dump'):
-        raw = payload_segment.model_dump(exclude_none=True)
-    elif isinstance(payload_segment, dict):
-        raw = payload_segment
-    else:
-        raw = {}
-    # UUIDs in the pydantic dump come back as UUID instances; the helper
-    # converts them to strings so the JSON encoder doesn't trip up.
-    if isinstance(raw.get('tags'), list):
-        raw['tags'] = [str(tag) for tag in raw['tags']]
-    return normalize_segment_filter(raw)
-
-
-async def _fetch_campaign_or_404(
-    conn: asyncpg.Connection, tenant_id: UUID, campaign_id: UUID
-) -> asyncpg.Record:
-    row = await conn.fetchrow(
-        f'select {CAMPAIGN_PROJECTION} from app.campaigns where tenant_id=$1 and id=$2',
-        tenant_id,
-        campaign_id,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail='Campaign not found')
-    return row
-
-
-async def _ensure_template_approved(
-    conn: asyncpg.Connection, tenant_id: UUID, template_id: UUID
-) -> asyncpg.Record:
-    row = await conn.fetchrow(
-        'select id, name, status, category from app.whatsapp_templates where tenant_id=$1 and id=$2',
-        tenant_id,
-        template_id,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail='Template not found')
-    if row['status'] != 'approved':
-        raise HTTPException(
-            status_code=400,
-            detail='Campaign templates must be approved by Meta before launch',
-        )
-    return row
 
 
 @tenant_admin_router.post('/tenants/{tenant_id}/campaigns', status_code=201)
@@ -15243,21 +13860,6 @@ async def retry_outbound_dlq_message(
 # ─── TASK-0076: páginas legales por tenant ───────────────────────────────
 
 
-def _legal_row_to_dict(row: asyncpg.Record) -> dict[str, Any]:
-    return {
-        'id': str(row['id']),
-        'tenant_id': str(row['tenant_id']),
-        'kind': row['kind'],
-        'language': row['language'],
-        'version': row['version'],
-        'title': row['title'],
-        'content_md': row['content_md'],
-        'published_at': row['published_at'].isoformat() if row['published_at'] else None,
-        'archived_at': row['archived_at'].isoformat() if row['archived_at'] else None,
-        'created_at': row['created_at'].isoformat() if row['created_at'] else None,
-    }
-
-
 @public_router.get('/tenants/{tenant_id}/legal/{kind}')
 async def get_public_legal_document(
     tenant_id: UUID,
@@ -15310,10 +13912,6 @@ async def get_public_legal_document(
         '</body></html>'
     )
     return HTMLResponse(content=html_doc, status_code=200)
-
-
-def html_escape_attr(value: str) -> str:
-    return value.replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;')
 
 
 @tenant_admin_router.get('/tenants/{tenant_id}/legal')
