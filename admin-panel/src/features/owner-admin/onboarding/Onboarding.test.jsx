@@ -17,12 +17,14 @@ vi.mock('../../../app/TenantProvider.jsx', () => ({
   useOptionalTenantContext: () => mockTenantContext,
 }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import {
   getTenantOnboarding,
   verifyOnboardingStep,
+  completeOnboardingStep,
+  recordOnboardingTestMessageSent,
 } from '../../../services/coreApi.js';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { Onboarding } from './Onboarding.jsx';
 
 const OWNER_PROFILE = { sub: 'u-owner' };
@@ -88,5 +90,87 @@ describe('Onboarding', () => {
     expect(
       screen.queryByRole('heading', { name: 'Onboarding self-service' }),
     ).toBeNull();
+  });
+
+  it('renders the empty-tenant card and "Onboarding completo" meta path', async () => {
+    setup({ tenant: { id: undefined, slug: 'x', roles: ['owner'] } });
+    expect(screen.getByText(/Selecciona un tenant/i)).toBeInTheDocument();
+  });
+
+  it('shows "Onboarding completo" in the header meta when progress.complete is true', async () => {
+    getTenantOnboarding.mockResolvedValueOnce({
+      progress: { last_completed_step: 7, total: 7, complete: true },
+    });
+    setup();
+    expect(await screen.findByText('Onboarding completo')).toBeInTheDocument();
+  });
+
+  it('surfaces an error notice when getTenantOnboarding fails', async () => {
+    getTenantOnboarding.mockRejectedValueOnce(new Error('fail-load'));
+    setup();
+    expect(await screen.findByText('fail-load')).toBeInTheDocument();
+  });
+
+  it('surfaces a success notice and updates progress when completeOnboardingStep succeeds', async () => {
+    completeOnboardingStep.mockResolvedValueOnce({
+      progress: { last_completed_step: 4, total: 7, complete: false },
+    });
+    // Force the current step's verify result into a ready=true state so the
+    // OnboardingStep exposes a "Completar" button. We make verifyOnboardingStep
+    // return ready=true for the current step.
+    verifyOnboardingStep.mockResolvedValueOnce({ ready: true });
+    setup();
+    await screen.findByText('Progreso: 3/7');
+
+    const verifyButtons = screen.getAllByRole('button', { name: 'Verificar' });
+    await userEvent.click(verifyButtons[verifyButtons.length - 1]);
+    await screen.findByText('Paso 4 listo para completar.');
+
+    const completeBtn = await screen.findByRole('button', { name: /Completar paso 4/ });
+    await userEvent.click(completeBtn);
+
+    await waitFor(() => {
+      expect(completeOnboardingStep).toHaveBeenCalledWith(SESSION, 'tenant-acme', 4);
+    });
+    expect(await screen.findByText('Paso 4 completado.')).toBeInTheDocument();
+  });
+
+  it('surfaces an error notice when completeOnboardingStep throws with a detail.reason', async () => {
+    const err = new Error('boom');
+    err.body = { detail: { reason: 'falta config' } };
+    completeOnboardingStep.mockRejectedValueOnce(err);
+    verifyOnboardingStep.mockResolvedValueOnce({ ready: true });
+    setup();
+    await screen.findByText('Progreso: 3/7');
+
+    const verifyButtons = screen.getAllByRole('button', { name: 'Verificar' });
+    await userEvent.click(verifyButtons[verifyButtons.length - 1]);
+    await screen.findByText('Paso 4 listo para completar.');
+
+    const completeBtn = await screen.findByRole('button', { name: /Completar paso 4/ });
+    await userEvent.click(completeBtn);
+
+    expect(await screen.findByText('falta config')).toBeInTheDocument();
+  });
+
+  it('refresh button retriggers getTenantOnboarding', async () => {
+    setup();
+    await screen.findByText('Progreso: 3/7');
+    expect(getTenantOnboarding).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refrescar' }));
+    await waitFor(() => expect(getTenantOnboarding).toHaveBeenCalledTimes(2));
+  });
+
+  it('verifyOnboardingStep failure surfaces an error notice', async () => {
+    verifyOnboardingStep.mockReset();
+    verifyOnboardingStep.mockRejectedValueOnce(new Error('verify-fail'));
+    setup();
+    await screen.findByText('Progreso: 3/7');
+
+    const verifyButtons = screen.getAllByRole('button', { name: 'Verificar' });
+    await userEvent.click(verifyButtons[verifyButtons.length - 1]);
+
+    expect(await screen.findByText('verify-fail')).toBeInTheDocument();
   });
 });

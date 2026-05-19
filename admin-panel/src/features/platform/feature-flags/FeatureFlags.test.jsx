@@ -14,9 +14,9 @@ vi.mock('../../../app/TenantProvider.jsx', () => ({
   useOptionalTenantContext: () => mockTenantContext,
 }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { getPlatformFeatureFlags } from '../../../services/coreApi.js';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { FeatureFlags } from './FeatureFlags.jsx';
 
 const PLATFORM_OWNER_PROFILE = {

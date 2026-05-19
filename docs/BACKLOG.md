@@ -957,3 +957,387 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 -->
 
 ---
+
+## Módulo Influencer — Ravit Studio (TASK-INFLU-001..018)
+
+> **Producto:** plataforma de influencers de IA (personajes con cara/cuerpo/voz consistentes) que produce contenido para redes y monetiza por créditos.
+>
+> **Diseño de referencia:** `docs/influencer/*.html` (15 HTMLs entregados por el diseñador). Cada tarea referencia el filename exacto del HTML que materializa.
+>
+> **Decisiones de diseño (confirmadas con el usuario, 2026-05-19):**
+> - **D1 — Path:** módulo aislado en `app/influencer/` (router, schemas) + `app/services/influencer/` (lógica + `providers/`) + esquema Postgres `influencer.*` (separado de `app.*`). Frontend: `admin-panel/src/features/influencer/`.
+> - **D2 — Activación por tenant:** tabla `app.tenant_modules(tenant_id, module, enabled, plan, activated_at)`. Si `influencer` no está enabled → router responde **404** (no 403, para no filtrar la existencia del feature).
+> - **D3 — Configuración de proveedores: SOLO `platform_owner`.** El tenant NO ve ni edita providers. La elección de modelo/proveedor es decisión del dueño de la plataforma para controlar margen, calidad y compliance unificados. Tabla `app.platform_ai_providers(modality, provider, secret_ref, model, params jsonb)` — una fila por modalidad global.
+> - **D4 — Secretos:** `app.platform_secrets(secret_ref, backend, ciphertext)` con referencia tipo `aws-sm://`, `vault://` o `env://`. Las API keys nunca se devuelven por la API después de configurar (write-only).
+> - **D5 — Providers de arranque:** `Grok` (LLM+IMG+VIDEO+TTS+STT), `Anthropic` (LLM), `OpenAI` (LLM+IMG+TTS+STT), `ElevenLabs` (TTS), `Ollama` (LLM local), `LocalSDXL` (IMG local), `LocalWhisper` (STT local).
+> - **D6 — Créditos propios** del módulo (`influencer.credit_ledger`), separados del billing del SaaS. Top-up por Owner/Admin/Manager (excepto Manager no compra). Pricing en `influencer.generation_pricing(kind, cost_credits)`.
+> - **D7 — RLS + MFA:** todas las tablas `influencer.*` con RLS por `tenant_id`. MFA requerida para crear/eliminar persona y conectar plataformas externas.
+> - **D8 — Plataformas externas:** arrancamos con **Instagram only** (publish). TikTok/YouTube/Threads/X/Facebook se difieren a sub-tareas posteriores.
+> - **D9 — Etiqueta "IA visible"** (compliance EU AI Act, FTC): campo `disclose_ai` boolean en `personas`, default `true`. Al publicar se prepende `#AI` / `#generadoConIA` al caption automáticamente.
+> - **D10 — Matriz de permisos:** ver tabla en `docs/UI_BACKLOG.md` sección "Módulo Influencer".
+
+### TASK-INFLU-001 — Infraestructura del módulo: schema `influencer.*` + `tenant_modules` + RLS
+
+- **Estado:** PENDING
+- **Diseño:** transversal a todos los HTMLs.
+- **Alcance:**
+  - Migración SQL `infra/postgres/03-migrations.sql`:
+    - Crear schema `influencer` separado de `app`.
+    - Tabla `app.tenant_modules(tenant_id uuid fk app.tenants, module text not null, enabled boolean not null default false, plan text, activated_at timestamptz, activated_by uuid fk app.users, primary key (tenant_id, module))`. `module ∈ {'influencer', ...}`.
+    - Activar RLS en `app.tenant_modules` con policy `tenant_modules_tenant_select`/`_admin_write` (mismo patrón que `app.tenant_settings`).
+  - Helper `app/influencer/__init__.py::ensure_module_enabled(conn, tenant_id, module='influencer')` que retorna 404 (`HTTPException(status_code=404, detail='Not Found')`) si `enabled=False` o no hay row. Cache LRU 5 min.
+  - Decorator/dependency `require_influencer_module` para montar en cada route del nuevo `influencer_router`.
+  - Esqueleto `app/influencer/router.py` con `influencer_router = APIRouter(prefix='/v1/influencer', tags=['influencer'], dependencies=[Depends(authenticate_request), Depends(require_influencer_module)])` + monteo condicional en `app/main.py`.
+- **Tests:**
+  - `tests/test_influencer_module_gate_static.py`: AST checks de (1) helper existe y retorna 404 (no 403); (2) router monta con `require_influencer_module`; (3) cache de `ensure_module_enabled` tiene TTL ≤ 300s; (4) tabla `app.tenant_modules` declarada en migration con `enabled default false`; (5) RLS policies presentes.
+  - `tests/test_influencer_module_gate.py` (con DB): tenant sin row → 404; tenant con `enabled=false` → 404; tenant con `enabled=true` → pasa el gate.
+- **Dependencias:** ninguna.
+- **Seguridad:** policy `tenant_modules_admin_write` solo permite `platform_owner` activar el módulo (el tenant no se auto-habilita). Audit `tenant_module.activated` / `_deactivated` con actor.
+
+---
+
+### TASK-INFLU-002 — `app.platform_ai_providers` + `app.platform_secrets` + `resolve_provider` (platform_owner only)
+
+- **Estado:** PENDING
+- **Diseño:** sin HTML directo (es backend admin de la plataforma; la UI en `admin-panel/src/features/platform/ai-providers/` es UI-INFLU-015).
+- **Alcance:**
+  - Migración:
+    - `app.platform_ai_providers(modality text primary key check (modality in ('llm','image','video','tts','stt')), provider text not null, secret_ref text, model text, params jsonb default '{}', updated_at timestamptz, updated_by uuid fk app.users)`. **Sin tenant_id** — config global.
+    - `app.platform_secrets(secret_ref text primary key, backend text check (backend in ('env','aws_sm','vault','file')), ciphertext bytea, hint text, created_at timestamptz, rotated_at timestamptz)`. **Sin tenant_id** — secretos de plataforma. RLS deshabilitada (acceso solo via security definer functions).
+  - Helper `app/services/influencer/provider_registry.py::resolve_provider(modality)` con cache 5 min, fallback a env var `INFLUENCER_DEFAULT_<MODALITY>_PROVIDER` si la fila no existe.
+  - Endpoints en nuevo `platform_ai_providers_router` (montado en `platform_admin_router`, requiere `require_platform_owner` + `require_mfa_for_privileged`):
+    - `GET /v1/platform/ai-providers` — lista las 5 filas (sin `secret_ref` resuelto, solo `hint`).
+    - `PATCH /v1/platform/ai-providers/{modality}` — body `{provider, secret_ref?, model?, params?}`. Si se pasa `secret_value` se rota: persiste en `platform_secrets` con `secret_ref` generado y guarda solo el `secret_ref` en `platform_ai_providers`.
+    - El API **nunca** retorna `secret_ref.ciphertext` ni el valor en claro — solo `hint` (últimos 4 chars) para que el operador verifique cuál key está activa.
+  - Audit cada PATCH: `platform.ai_provider_updated` con `{modality, provider, secret_rotated: bool}`.
+- **Tests:**
+  - `tests/test_platform_ai_providers_static.py`: schema correcto, modality enum check, endpoints en router correcto (no en tenant routers), `secret_ref.ciphertext` no aparece en ningún response shape (AST), `require_mfa_for_privileged` aplicado.
+  - `tests/test_platform_ai_providers.py`: PATCH sin MFA → 403; PATCH con MFA → 200 + audit emitido + `ciphertext` no en response; GET muestra `hint` últimos 4 chars.
+  - `tests/test_provider_registry.py`: cache TTL respeta 300s; fallback a env var; resolve cross-modality independiente.
+- **Dependencias:** TASK-INFLU-001.
+
+---
+
+### TASK-INFLU-003 — Abstracción `IAProvider` + interfaces de modalidad
+
+- **Estado:** PENDING
+- **Diseño:** capa interna, sin HTML.
+- **Alcance:**
+  - `app/services/influencer/providers/base.py` con clases abstractas:
+    - `IAProvider` (base abstracta con `provider_name`, `health_check()`).
+    - `LLMProvider(IAProvider)`: `async generate_text(prompt, system?, max_tokens, temperature, persona_voice?) -> TextResult`.
+    - `ImageProvider(IAProvider)`: `async generate_image(prompt, count, format, persona_anchor, safety_mode, reference?) -> List[ImageResult]`. `persona_anchor` encapsula cara+cuerpo del personaje para consistencia.
+    - `VideoProvider(IAProvider)`: `async generate_video(prompt, duration_s, format, persona_anchor, audio?) -> VideoResult`.
+    - `TTSProvider(IAProvider)`: `async synthesize_speech(text, voice_id, language, sample_rate) -> AudioResult`.
+    - `STTProvider(IAProvider)`: `async transcribe(audio_bytes, language?) -> TranscriptResult`.
+  - Result dataclasses con campos `bytes`, `mime`, `provider_meta`, `cost_units`, `elapsed_ms`.
+  - `PersonaAnchor` dataclass con `face_embedding`, `body_traits`, `style_tokens`, `reference_image_urls`.
+  - Exceptions tipadas: `ProviderTimeoutError`, `ProviderRateLimited`, `ProviderContentRejected`, `ProviderUnavailable`.
+- **Tests:**
+  - `tests/test_influencer_provider_base_static.py`: clases declaradas + métodos abstractos + dataclass shape; cada result-class incluye `provider_meta` para audit.
+  - `tests/test_persona_anchor.py`: roundtrip JSON serialization, `face_embedding` vector length validation (e.g. 512 floats).
+- **Dependencias:** TASK-INFLU-002.
+
+---
+
+### TASK-INFLU-004 — `GrokProvider` (LLM + IMAGE + VIDEO + TTS + STT)
+
+- **Estado:** PENDING
+- **Diseño:** se invoca desde `04 _ Generar contenido _con Sofía_.html` y `03d _ Crear personaje _ Paso 4 Voz.html`.
+- **Alcance:**
+  - `app/services/influencer/providers/grok.py` implementando las 5 interfaces de TASK-INFLU-003. Modelos por modalidad (de la imagen de pricing que el usuario compartió):
+    - LLM: `grok-4.3` (1M context, $1.25/M in, $2.50/M out).
+    - LLM reasoning extendido: `grok-4.20-multi-agent-0309` (2M ctx) — uso opcional para captions con reasoning.
+    - Image quality: `grok-imagine-image-quality` ($0.05/img).
+    - Image fast: `grok-imagine-image` ($0.02/img).
+    - Video: `grok-imagine-video` ($0.05/s).
+    - TTS: `Text to Speech` Grok ($15/1M chars).
+    - STT: `Speech to Text` Grok ($0.10–0.20/hr).
+  - Usa SDK oficial Grok / xAI si existe; si no, `httpx.AsyncClient` con `timeout=settings.influencer_provider_timeout`. **Streaming** para LLM, **chunked** para audio/video.
+  - Wrap `asyncio.wait_for(..., hard_deadline)` (mismo patrón que TASK-0086) para fail-closed contra hangs del SDK.
+  - Persona anchor: para `image`/`video`, pasa `reference_image_urls` y `style_tokens` al endpoint Grok como prompt extension.
+  - Safety filters: si `safety_mode=True`, agrega prefix `[SAFE-FOR-WORK, BRAND-SAFE]` y verifica respuesta `content_flags` antes de retornar.
+- **Tests:**
+  - `tests/test_grok_provider_static.py`: cada método async, timeout aplicado, `asyncio.wait_for` wrap, modelos cableados.
+  - `tests/test_grok_provider.py` con mocks (`respx` para httpx): cada modalidad con happy path + timeout + 429 rate limited + 5xx + content rejection. Verifica que `provider_meta` captura `model`, `request_id`, `tokens_used`.
+- **Dependencias:** TASK-INFLU-003.
+- **Seguridad:** API key nunca en logs (solo `secret_ref`); requests con `idempotency_key` para retry safety.
+
+---
+
+### TASK-INFLU-005 — `AnthropicProvider` + `OpenAIProvider` + `ElevenLabsProvider` (cloud fallbacks)
+
+- **Estado:** PENDING
+- **Diseño:** transversal — alternativas a Grok que el platform_owner puede seleccionar por modalidad.
+- **Alcance:**
+  - `providers/anthropic.py` (LLM): reusa `AsyncAnthropic` ya en deps. Para captions y descripciones de identidad.
+  - `providers/openai.py` (LLM + IMG + TTS + STT): `AsyncOpenAI`. DALL-E 3 para imagen, gpt-4o-mini para texto rápido, tts-1-hd para voz, whisper-1 para STT.
+  - `providers/elevenlabs.py` (TTS): `httpx.AsyncClient` + voice cloning para personajes premium (cada persona tendría su `voice_id` ElevenLabs si platform_owner habilita).
+  - Mismo patrón `asyncio.wait_for` + result dataclass que Grok.
+- **Tests:**
+  - `tests/test_anthropic_provider.py`, `tests/test_openai_provider.py`, `tests/test_elevenlabs_provider.py` — cada uno con mocks + happy/timeout/error paths.
+- **Dependencias:** TASK-INFLU-003.
+
+---
+
+### TASK-INFLU-006 — Providers locales: `OllamaProvider` + `LocalSDXLProvider` + `LocalWhisperProvider`
+
+- **Estado:** PENDING
+- **Diseño:** opción off-cloud para tenants regulados / con datos sensibles.
+- **Alcance:**
+  - `providers/ollama.py` (LLM local): reusa cliente Ollama existente del backend (TASK-0025 / RAG). Modelos `llama3.1:8b`, `qwen2.5:14b`.
+  - `providers/local_sdxl.py` (IMG local): adapter sobre Stable Diffusion XL via `diffusers` o `comfyui` REST API. Soporta IP-Adapter para persona consistency (cara/cuerpo desde `PersonaAnchor.reference_image_urls`).
+  - `providers/local_whisper.py` (STT local): `faster-whisper` con CPU/GPU autodetect.
+  - Health check en cada uno; si no disponible al arranque, marcar provider como `degraded` en `provider_registry`.
+- **Tests:**
+  - `tests/test_ollama_provider.py`, `tests/test_local_sdxl_provider.py`, `tests/test_local_whisper_provider.py` con mocks de los runtimes locales. Skip si `INFLUENCER_LOCAL_PROVIDERS_ENABLED=false`.
+- **Dependencias:** TASK-INFLU-003.
+
+---
+
+### TASK-INFLU-007 — Provider fallback chain + circuit breaker + audit
+
+- **Estado:** PENDING
+- **Diseño:** robustez transversal.
+- **Alcance:**
+  - `app/services/influencer/provider_dispatcher.py::dispatch(modality, call_fn, fallback_chain)`:
+    - Resuelve provider primario via `resolve_provider(modality)`.
+    - Si `ProviderTimeoutError` / `ProviderUnavailable` / `ProviderRateLimited` → consulta fila `app.platform_ai_providers.params.fallback_chain` (array ordenado de provider names) y reintenta con el siguiente.
+    - Circuit breaker por provider: 5 fallos consecutivos en 60s → marca `degraded` por 5 min en cache.
+    - Audit `influencer.provider_dispatch` con `{modality, provider_primary, provider_used, fallback_depth, elapsed_ms, success: bool}`.
+  - Provider switch jamás cambia el `generation_id` ni el `cost_credits` (el tenant siempre paga lo mismo).
+- **Tests:**
+  - `tests/test_provider_dispatcher.py`: primary fail → fallback usado; full chain fail → `ProviderUnavailable` raise con detail correcto; circuit breaker abre y cierra; audit emite para cada call.
+- **Dependencias:** TASK-INFLU-004, -005, -006.
+
+---
+
+### TASK-INFLU-008 — Tabla `influencer.personas` + CRUD
+
+- **Estado:** PENDING
+- **Diseño:** `02 _ Estudio de Sof_a _detalle_.html` (vista de detalle del personaje creado).
+- **Alcance:**
+  - Migración:
+    - `influencer.personas(id uuid pk, tenant_id uuid fk app.tenants, name text not null, handle text not null unique, status text check (status in ('draft','active','paused','archived')) default 'draft', category text, face jsonb not null default '{}', body jsonb not null default '{}', identity jsonb not null default '{}', voice jsonb not null default '{}', platforms jsonb not null default '{}', mode text check (mode in ('auto_generate','manual_approval','hybrid')) default 'manual_approval', disclose_ai boolean not null default true, created_at, updated_at, created_by, archived_at)`.
+    - Unique constraint `(tenant_id, lower(handle))` para handles únicos por tenant.
+    - RLS `personas_tenant_isolation` + indices `(tenant_id, status, created_at desc)`.
+  - Endpoints en `influencer_router`:
+    - `GET /v1/influencer/personas` — lista del tenant con filters `status`, `category`, `search`.
+    - `GET /v1/influencer/personas/{id}` — detalle (cara/cuerpo/identidad/voz/plataformas/stats).
+    - `POST /v1/influencer/personas` — crea draft (requiere `personas.write` capability).
+    - `PATCH /v1/influencer/personas/{id}` — update parcial.
+    - `DELETE /v1/influencer/personas/{id}` — archiva (soft delete; el handle queda reservado).
+- **Tests:**
+  - `tests/test_influencer_personas_static.py`: schema correcto, RLS policies declaradas, endpoints en router correcto.
+  - `tests/test_influencer_personas.py`: CRUD completo con auth; cross-tenant 404; handle único por tenant; archived no aparece en lista por defecto.
+- **Dependencias:** TASK-INFLU-001.
+- **Seguridad:** `DELETE` (archivar) requiere `require_mfa_for_privileged` + audit `influencer.persona_archived`.
+
+---
+
+### TASK-INFLU-009 — Wizard 5 pasos: endpoints `/face`, `/body`, `/identity`, `/voice`, `/platforms`
+
+- **Estado:** PENDING
+- **Diseño:** `03a _ Crear personaje _ Paso 1 Cara.html` + `03b _ Cuerpo` + `03c _ Identidad` + `03d _ Voz` + `03e _ Plataformas`.
+- **Alcance:**
+  - 5 endpoints (uno por paso del wizard) que persisten incrementalmente en `personas.{face,body,identity,voice,platforms}` y validan el shape JSONB:
+    - `PUT /v1/influencer/personas/{id}/face` — body: `{starting_point: 'upload'|'template'|'random', ethnicity, eye_color, hair_color, hair_style, skin_tone, age_range, variations: int}`.
+    - `PUT /v1/influencer/personas/{id}/body` — body: `{silhouette: 'slim'|'athletic'|'curvy'|'average', height_cm, posture}`.
+    - `PUT /v1/influencer/personas/{id}/identity` — body: `{name, handle, age, city, country, languages[], brands[], categories[], description, latitude?, longitude?}`. Valida handle único.
+    - `PUT /v1/influencer/personas/{id}/voice` — body: `{tone: 'warm'|'close'|'aspirational'|..., formality, energy_level, voice_id_ref?}`.
+    - `PUT /v1/influencer/personas/{id}/platforms` — body: `{accounts: [{platform, handle, posts_per_week}], mode, auto_respond_dms, disclose_ai}`.
+  - Endpoint final `POST /v1/influencer/personas/{id}/activate` — valida que los 5 pasos tienen contenido mínimo, hace `status='active'`, emite audit `influencer.persona_activated`.
+  - Cada PUT actualiza `updated_at` y emite audit `influencer.persona_step_updated` con `{step, fields_changed}`.
+- **Tests:**
+  - `tests/test_influencer_wizard_static.py`: 5 endpoints registrados; cada body schema declarado en `app/influencer/schemas.py`; activate requiere los 5 pasos no vacíos.
+  - `tests/test_influencer_wizard.py`: roundtrip de cada paso; validación de handle duplicado (409); activate falla si falta voice; activate emite audit.
+- **Dependencias:** TASK-INFLU-008.
+
+---
+
+### TASK-INFLU-010 — Generación de variaciones de cara (Paso 1 wizard) async
+
+- **Estado:** PENDING
+- **Diseño:** `03a _ Crear personaje _ Paso 1 Cara.html` — sección "Variaciones generadas · Generar 4 más".
+- **Alcance:**
+  - `POST /v1/influencer/personas/{id}/face/variations` — genera N (default 4) variaciones de cara basadas en `face.{ethnicity,eye_color,...}`. Es async, retorna `202 Accepted` con `variation_request_id`.
+  - Worker `generation_worker` levanta el job, llama `provider_dispatcher.dispatch('image', ...)` con prompt "portrait headshot, {ethnicity}, {features}, professional photography, neutral background, consistent identity", `count=N`, `safety_mode=True`.
+  - Resultados en S3 `tenants/{tenant_id}/influencer/personas/{persona_id}/face_variations/{variation_request_id}/{n}.jpg`.
+  - Inserta filas en `influencer.assets` con `kind='face_variation'`, `persona_id`.
+  - WebSocket push `influencer.face_variations.ready` para refrescar UI sin polling.
+  - User puede marcar una variación como `canonical` → se setea en `personas.face.canonical_asset_id`.
+- **Tests:**
+  - `tests/test_face_variations_static.py`: endpoint async (202), worker procesa, S3 path correcto, prompt incluye los face traits.
+  - `tests/test_face_variations.py`: post 4 variaciones, worker mock genera assets, persiste en S3 mock, WS recibe push.
+- **Dependencias:** TASK-INFLU-009, TASK-INFLU-007.
+- **Costo:** consume créditos (`generation_pricing.face_variation = 1` crédito por variación) — ver TASK-INFLU-016.
+
+---
+
+### TASK-INFLU-011 — Tabla `influencer.generations` + `assets` + `POST /personas/{id}/generate`
+
+- **Estado:** PENDING
+- **Diseño:** `04 _ Generar contenido _con Sofía_.html` — composer + cola.
+- **Alcance:**
+  - Migrations:
+    - `influencer.generations(id uuid pk, tenant_id, persona_id fk, kind text check (kind in ('photo','reel','carousel','story','ad','face_variation','voice_sample')), prompt text, format text, count int default 1, status text check (status in ('queued','running','succeeded','failed','canceled')) default 'queued', provider_used text, cost_credits int not null, params jsonb, error text, created_at, started_at, completed_at)`.
+    - `influencer.assets(id uuid pk, tenant_id, persona_id, generation_id fk, kind text, storage_key text not null, mime text, width int, height int, duration_s float, bytes int, created_at)`.
+    - RLS por `tenant_id`; indices `(persona_id, status, created_at desc)`, `(tenant_id, status)`.
+  - Endpoint `POST /v1/influencer/personas/{id}/generate` — body `{kind, prompt, format, count, params: {style, location, reference_image_url}}`. Valida:
+    - Persona activa.
+    - Cost_credits ≤ balance.
+    - Prompt length ≤ 1000 chars.
+    - `format` válido para `kind` (e.g. `reel` solo acepta `9:16`).
+  - Inserta `generations` con `status='queued'` y debita `cost_credits` provisional del `credit_ledger` (con `reason='gen:reserved:{gen_id}'`). En `succeeded`, confirma; en `failed`, reembolsa.
+  - Emite `influencer.generation.requested` en `domain_events` con `idempotency_key = generation_id`.
+  - Endpoints lectura:
+    - `GET /v1/influencer/generations/{id}` — estado actual + assets si succeeded.
+    - `GET /v1/influencer/personas/{id}/generations` — paginado, filter `kind`, `status`.
+- **Tests:**
+  - `tests/test_generations_static.py`: schemas correctos, RLS, endpoints, format validation por kind, cost debit en queued.
+  - `tests/test_generations.py`: happy path (queue → succeeded), insufficient credits → 402, persona archived → 409, cross-tenant → 404, refund on failed.
+- **Dependencias:** TASK-INFLU-008, -016.
+
+---
+
+### TASK-INFLU-012 — `generation_worker` async + persona consistency + safety filters
+
+- **Estado:** PENDING
+- **Diseño:** capa worker para `04 _ Generar contenido _con Sofía_.html`.
+- **Alcance:**
+  - `app/workers/influencer_generation_worker.py`:
+    - Procesa eventos `influencer.generation.requested` con `FOR UPDATE SKIP LOCKED` (mismo patrón que TASK-0058 / BUG-058).
+    - Carga persona completa (face/body/voice) → arma `PersonaAnchor` con embeddings + reference URLs.
+    - Para `kind=photo|carousel`: `provider_dispatcher.dispatch('image', ...)` con `count`, `format`, `persona_anchor`.
+    - Para `kind=reel`: dispatch a `video` para visual + dispatch a `tts` para narración + merge vía ffmpeg (en una sub-tarea, primer iteración puede ser solo visual mute).
+    - Para `kind=story`: similar a photo pero `9:16` forzado + duración 15s si video.
+    - Para `kind=ad`: photo + LLM dispatch para copy + retorna `{image, headline, body}`.
+    - Filtros de seguridad: si provider devuelve `content_flags=['unsafe']`, marca `status='failed'`, error=`content_rejected`, reembolsa créditos, NO sube a S3.
+  - Sube binarios a S3 con `cache-control: private, max-age=3600` y `content-type` correcto.
+  - Inserta filas en `influencer.assets`, actualiza `generations.status='succeeded'`, emite `influencer.generation.completed`.
+- **Tests:**
+  - `tests/test_influencer_worker_static.py`: worker registra handler, FOR UPDATE SKIP LOCKED, refund en failed, content_rejected handling.
+  - `tests/test_influencer_worker.py`: cada kind con mock provider — assets persistidos, S3 mock invocado, WS push.
+- **Dependencias:** TASK-INFLU-011, -007.
+
+---
+
+### TASK-INFLU-013 — TTS de voz del personaje (Paso 4 wizard) + captions de prueba
+
+- **Estado:** PENDING
+- **Diseño:** `03d _ Crear personaje _ Paso 4 Voz.html` — sample "Hola chicas, hoy os traigo mi look favorito del verano…" + 3 captions generados con la voz (IG/TikTok/Story).
+- **Alcance:**
+  - `POST /v1/influencer/personas/{id}/voice/sample` — body `{sample_text?}` (default texto fijo del HTML). Genera audio via TTS provider con `voice_traits` derivados de `voice.{tone,energy_level,formality}`. Persiste asset `kind='voice_sample'`.
+  - `POST /v1/influencer/personas/{id}/voice/captions-preview` — body `{platforms: ['ig','tiktok','story']}`. Genera 3 captions via LLM con system prompt que codifica el `voice` JSON. Retorna inline (no async — texto rápido).
+  - Re-genera al cambiar `voice.{tone,energy}` desde el wizard.
+- **Tests:**
+  - `tests/test_voice_sample_static.py`: 2 endpoints registrados, voice JSONB pasado al provider.
+  - `tests/test_voice_sample.py`: sample crea asset; captions devuelve 3 strings; voice tone "cálida" produce prompt distinto a "aspiracional" (snapshot del system prompt).
+- **Dependencias:** TASK-INFLU-009, -005 (TTS providers).
+
+---
+
+### TASK-INFLU-014 — `influencer.platform_connections` + OAuth Instagram (primer plataforma)
+
+- **Estado:** PENDING
+- **Diseño:** `03e _ Crear personaje _ Paso 5 Plataformas.html` — sección "Cuentas conectadas · Instagram @sofiavega.studio".
+- **Alcance:**
+  - Migración `influencer.platform_connections(id uuid pk, tenant_id, persona_id fk, platform text check (platform in ('instagram','tiktok','youtube','threads','x','facebook')), external_account_id text, external_handle text, oauth_token_ref text fk app.platform_secrets, refresh_token_ref text, expires_at timestamptz, scopes text[], posts_per_week int, status text check (status in ('connected','expired','disconnected','pending')) default 'pending', connected_at, last_used_at)`. **`oauth_token_ref`** apunta a `platform_secrets` (no token en claro).
+  - OAuth flow:
+    - `GET /v1/influencer/personas/{id}/platforms/instagram/oauth/start` → redirect a Meta con state firmado HMAC.
+    - `GET /v1/influencer/personas/{id}/platforms/instagram/oauth/callback?code&state` → exchange code, persiste tokens en `platform_secrets` + row en `platform_connections`.
+    - `POST /v1/influencer/personas/{id}/platforms/instagram/disconnect` → revoke + status='disconnected'.
+  - Manejo de refresh tokens (Instagram tokens son long-lived 60d, refresh diario).
+  - **Solo Instagram en esta tarea.** TikTok/YouTube/Threads/X/Facebook → sub-tareas separadas (TASK-INFLU-014-FU-TIKTOK, etc., diferidas).
+- **Tests:**
+  - `tests/test_platform_connections_static.py`: schema, OAuth state HMAC, tokens en `platform_secrets`, MFA en disconnect.
+  - `tests/test_instagram_oauth.py`: full flow con httpx mocks; state mismatch → 403; expired refresh → marca status='expired'.
+- **Dependencias:** TASK-INFLU-008, -002.
+- **Seguridad:** OAuth callback con state firmado HMAC (anti-CSRF). Tokens nunca en logs (solo `secret_ref`). Refresh con `httpx` async timeout 5s.
+
+---
+
+### TASK-INFLU-015 — `influencer.posts` + `publish_worker` (Instagram)
+
+- **Estado:** PENDING
+- **Diseño:** `05 _ Calendario _todos los personajes_.html` — calendario semanal + "Aprobar y publicar".
+- **Alcance:**
+  - Migración `influencer.posts(id uuid pk, tenant_id, persona_id fk, generation_id fk, kind text check (kind in ('photo','reel','carousel','story','ad')), caption text, hashtags text[], scheduled_at timestamptz not null, platforms text[] check (cardinality(platforms) > 0), status text check (status in ('scheduled','approved','publishing','published','failed','canceled')) default 'scheduled', approved_at, approved_by fk app.users, published_at, external_post_ids jsonb default '{}', error text, created_at)`.
+  - Endpoints:
+    - `POST /v1/influencer/posts` — body `{persona_id, generation_id, caption, hashtags, scheduled_at, platforms, mode: 'draft'|'scheduled'|'approved'}`.
+    - `PATCH /v1/influencer/posts/{id}` — reprograma, edita caption, marca `approved`.
+    - `POST /v1/influencer/posts/{id}/cancel` — status='canceled'.
+    - `GET /v1/influencer/calendar?from&to&persona_id?` — vista de calendario para UI-INFLU-014.
+  - Worker `publish_worker` (separado del generation_worker):
+    - Cron cada 60s: `SELECT * FROM influencer.posts WHERE status='approved' AND scheduled_at <= now() FOR UPDATE SKIP LOCKED LIMIT 10`.
+    - Para cada post: por cada platform → llama Instagram Graph API `POST /me/media` (resolve token desde `platform_connections.oauth_token_ref`) → `POST /me/media_publish`. Guarda `external_post_ids[platform]`.
+    - Si `disclose_ai=true`, prepende automáticamente `#AI #generadoConIA` al caption antes de publicar.
+    - Maneja rate limits (IG: 200 calls/hr per user) con exponential backoff.
+- **Tests:**
+  - `tests/test_influencer_posts_static.py`: schema, endpoints, worker cron registered, disclose_ai prepend lógica.
+  - `tests/test_influencer_posts.py`: CRUD posts, worker publish happy path con IG mock, rate limit → backoff, disclose_ai prepend assert literal `#AI #generadoConIA` en caption final.
+- **Dependencias:** TASK-INFLU-011, -014.
+
+---
+
+### TASK-INFLU-016 — `influencer.credit_ledger` + `generation_pricing` + top-up
+
+- **Estado:** PENDING
+- **Diseño:** sidebar `Créditos 248` en todos los HTMLs + recap costos en `04 _ Generar contenido _con Sofía_.html` ("3 créditos · 4 imágenes = 12 créditos").
+- **Alcance:**
+  - Migraciones:
+    - `influencer.credit_ledger(id bigserial pk, tenant_id uuid not null, delta int not null, balance_after int not null, reason text not null, ref text, actor_id uuid fk app.users, created_at timestamptz default now())`. `balance_after` materializa el running balance (evita SUM scan).
+    - `influencer.generation_pricing(kind text pk, cost_credits int not null, updated_at)`. Seed con: `photo=3, reel=8, carousel=10, story=2, ad=5, face_variation=1, voice_sample=2`.
+    - Trigger `trg_credit_ledger_balance` que setea `balance_after = (last balance_after) + delta` atómicamente con `FOR UPDATE`.
+  - Helper `app/services/influencer/credits.py::current_balance(conn, tenant_id)` (SELECT del último `balance_after`); `debit(conn, tenant_id, amount, reason, ref, actor_id)`; `credit(conn, ...)` (refund o top-up).
+  - Endpoints:
+    - `GET /v1/influencer/credits/balance` — balance actual + last 50 transacciones.
+    - `POST /v1/influencer/credits/topup` — body `{amount, payment_ref}` — solo Owner/Admin; integra con Stripe/MercadoPago vía `TASK-0040` (subscription/billing existente). Audit `influencer.credits.topup`.
+    - `GET /v1/influencer/pricing` — lista de `kind → cost_credits`.
+- **Tests:**
+  - `tests/test_credit_ledger_static.py`: schema, trigger, helper signatures, top-up requires Owner/Admin (Manager bloqueado).
+  - `tests/test_credit_ledger.py`: debit-credit roundtrip mantiene balance correcto; concurrent debits no race-condition (test con asyncio.gather); refund tras failed generation; top-up emite audit.
+- **Dependencias:** TASK-INFLU-001.
+- **Seguridad:** `balance_after` no puede ser negativo (check constraint); top-up via `payment_ref` validado por TASK-0083 (fail-closed payment webhooks).
+
+---
+
+### TASK-INFLU-017 — Casting home + studio detail (read endpoints con stats)
+
+- **Estado:** PENDING
+- **Diseño:** `01 _ Casting _Home_.html` (KPIs globales: Personajes activos, Posts este mes, Alcance total, Engagement medio) + `02 _ Estudio de Sofía _detalle_.html` (stats por personaje).
+- **Alcance:**
+  - `GET /v1/influencer/casting` — body devuelve `{kpis: {active_personas, posts_this_month, total_reach, avg_engagement}, personas: [...con stats por personaje]}`. Filters por `category`, `sort`.
+  - `GET /v1/influencer/personas/{id}/studio` — bundle de la vista detalle: `{persona, stats: {posts_total, reach_30d, engagement_rate, scheduled_count}, next_post: {at, kind, platforms}, platforms_connected: [...], recent_generations: [...max 12]}`.
+  - Las stats `reach`, `engagement`, `posts_count` se computan a partir de `influencer.posts.external_post_ids` consultando el provider (IG Insights) en background y cacheando en `influencer.persona_stats_cache` con TTL 1h.
+  - Materialized helper `refresh_persona_stats(persona_id)` invocado por cron horario.
+- **Tests:**
+  - `tests/test_casting_static.py`: endpoints registrados, shape correcto, cache TTL 1h.
+  - `tests/test_casting.py`: tenant con 0 personas → empty; con 6 → KPIs agregados correctos; stats cache reused dentro de TTL; cross-tenant no leak.
+- **Dependencias:** TASK-INFLU-008, -015.
+
+---
+
+### TASK-INFLU-018 — Observabilidad, métricas, etiqueta IA visible + runbook
+
+- **Estado:** PENDING
+- **Diseño:** transversal — compliance + ops.
+- **Alcance:**
+  - Métricas Prometheus en `app/services/metrics.py`:
+    - `influencer_generations_total{kind, status, provider}` (counter).
+    - `influencer_generation_duration_seconds{kind, provider}` (histogram, p50/p95/p99).
+    - `influencer_credits_balance{tenant_id}` (gauge) — actualizado en cada debit/credit.
+    - `influencer_posts_published_total{platform, status}` (counter).
+    - `influencer_provider_health{provider, modality}` (gauge 0/1).
+  - Alertas Prometheus en `infra/observability/alerts/`:
+    - `InfluencerProviderDown` — `influencer_provider_health == 0` por 5min.
+    - `InfluencerGenerationP95High` — p95 duration > 60s en ventana 10min.
+    - `InfluencerPublishFailures` — `rate(influencer_posts_published_total{status='failed'}[15m]) > 0.1`.
+  - Runbook `docs/runbooks/influencer-generation-stuck.md` + `influencer-instagram-publish-failure.md` (cubre tokens expirados, rate limits, content rejection).
+  - Enforcer `disclose_ai`: si tenant intenta desactivar `disclose_ai` en una persona vía PATCH, devuelve 400 con mensaje "AI disclosure is required by platform policy" salvo que `platform_owner` haya seteado override por tenant.
+- **Tests:**
+  - `tests/test_influencer_metrics_static.py`: cada metric registrada con su label set; alertas referencian metric names existentes.
+  - `tests/test_disclose_ai_enforcement.py`: tenant no puede setear `disclose_ai=false`; override platform_owner desbloquea + audit.
+- **Dependencias:** TASK-INFLU-001..017.
+
+---

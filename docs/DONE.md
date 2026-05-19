@@ -15,6 +15,35 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-INFLU-001 — Design tokens & tipografía Ravit Studio (módulo Influencer)
+
+- **Fecha:** 2026-05-19
+- **Resumen:** primera tarea del módulo Ravit Studio. Se materializa el sistema de diseño (paleta + tipografía) en `admin-panel/src/styles/tokens.css` como **35 tokens aditivos** con prefijo `--influencer-*`, declarados en el mismo `:root` que los tokens base de CopilotoIA pero sin pisarlos (cumple D2 del mandato UI). Los tokens se consumen únicamente desde `src/features/influencer/` y desde el shell del módulo (selector `[data-module='influencer']`) — el resto del admin panel sigue usando `--bg`, `--ink`, `--accent`.
+- **Filosofía preservada (del HTML 04 _ Paleta):** "Cream Bento como base · navy de la identidad para texto · verde Ravit usado solo donde gritamos. El verde es la voz de Ravit, no su volumen. Cream + navy hacen el 95% del trabajo. El verde sólo entra para señalar AI, acción primaria y estado activo. Si una pantalla tiene más de 3 elementos en verde, es demasiado."
+- **Tokens agregados (extraídos verbatim de los HTMLs):**
+  - **5 superficies** cream bento — `--influencer-bg` `#F1EDE3` (fondo página), `--influencer-bg-alt` `#E8E2D3` (topbar/footers), `--influencer-bg-sidebar` `#F7F4EA`, `--influencer-bg-card` `#FFFFFF`, `--influencer-bg-card-alt` `#FBF9F2` + `--influencer-bg-inputs` para inputs/chips.
+  - **4 navy Pulse** para texto — `--influencer-ink` `#1B2542` (principal), `--influencer-ink-mid` (rgba 0.78, bodies), `--influencer-ink-soft` (0.55, captions), `--influencer-ink-faint` (0.32, eyebrows).
+  - **4 verde Ravit** — `--influencer-green` `#2DBB6A` (CTA/AI), `--influencer-green-dim` `#0F7A3F` (texto sobre verde claro), `--influencer-green-soft` (0.12, badges activos), `--influencer-green-border` (0.38, bordes activos).
+  - **3 estados** — `--influencer-coral` `#E45D4A` (error), `--influencer-amber` `#D99536` (aviso), `--influencer-sky` `#5B8FB9` (info).
+  - **2 familias tipográficas** — `--influencer-font-sans` (Geist · Inter Tight · Inter), `--influencer-font-mono` (Geist Mono).
+  - **12 font-sizes** (escala completa de "05 _ Tipograf_a.html") — `display-xl 56px` → `display-l 40px` → `display-m 32px` → `display-s 22px` → `heading 17px` → `body-l 16px` → `body-m 14px` → `body-s 13px` → `caption 11.5px` → `eyebrow 10.5px` → `mono-cap 10px` → `code 12px`.
+  - **8 letter-spacings** — desde `-0.04em` (display-xl) hasta `0.18em` (eyebrow mono).
+- **Archivos modificados:**
+  - `admin-panel/src/styles/tokens.css` (+90 LOC al final, sección "Módulo Influencer / Ravit Studio").
+  - `admin-panel/src/__tests__/influencer-tokens.test.js` (creado, ~190 LOC, 9 tests).
+  - `docs/UI_BACKLOG.md`: UI-INFLU-001 marcada DONE.
+- **Validaciones ejecutadas:**
+  - `npm --prefix admin-panel run lint`: 0 errores (2 warnings preexistentes en `useTenantSetupSidePanels.js`, no relacionados).
+  - `npm --prefix admin-panel test -- --run influencer-tokens`: **9/9 tests** del módulo pasan.
+  - `npm --prefix admin-panel test`: **150 archivos, 1111 tests** verdes sin regresión.
+  - `npm --prefix admin-panel run build`: build OK, 472 módulos transformados, 875ms.
+- **Notas:**
+  - Los HTMLs `04 _ Paleta.html` y `05 _ Tipograf_a.html` NO traen un bloque `:root { ... }` literal (son tablas explicativas con etiquetas tipo `bg #F1EDE3`); por eso el contrato HTML ↔ CSS se valida con un test cruzado que parsea los hex literals visibles en el HTML y verifica que aparecen como valor de algún `--influencer-*` en `tokens.css`.
+  - El módulo Ravit mantiene la paleta cream también en dark-mode (decisión declarada en el comentario del bloque) — el branding visual NO se invierte; solo el shell base (`--bg`, `--ink`, etc.) cambia con `prefers-color-scheme: dark`.
+- **Nota de seguridad:** tarea puramente frontend. NO toca backend, NO modifica políticas RLS, NO altera autenticación. Cero superficie de ataque agregada.
+
+---
+
 ### COVERAGE-BACKEND-70 (iter 3) — refactor abortado + 8 tests rag_orchestrator DB
 
 - **Fecha:** 2026-05-19

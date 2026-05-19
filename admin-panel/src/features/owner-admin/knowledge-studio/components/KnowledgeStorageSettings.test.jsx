@@ -10,12 +10,12 @@ vi.mock('../../../../services/coreApi.js', () => ({
   updateKnowledgeStorageSettings: vi.fn(),
 }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import {
   getKnowledgeStorageSettings,
   updateKnowledgeStorageSettings,
 } from '../../../../services/coreApi.js';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { KnowledgeStorageSettings } from './KnowledgeStorageSettings.jsx';
 
 const MODULE = {

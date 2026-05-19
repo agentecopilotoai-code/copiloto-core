@@ -9,7 +9,7 @@ vi.mock('../../../app/TenantProvider.jsx', () => ({
   useOptionalTenantContext: () => mockTenantContext,
 }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { RolesAcl } from './RolesAcl.jsx';
 
 const PLATFORM_OWNER_PROFILE = {

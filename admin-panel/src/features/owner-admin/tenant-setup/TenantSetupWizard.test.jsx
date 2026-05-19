@@ -51,7 +51,7 @@ vi.mock('../../../app/TenantProvider.jsx', () => {
   };
 });
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { TenantSetupWizard } from './TenantSetupWizard.jsx';
 
 const MODULE = { label: 'Tenant Setup', summary: 'Configuración general del tenant.' };

@@ -1,0 +1,247 @@
+name: Auto-merge (cool-down 5 min)
+
+# Política de merge automática:
+#
+# 1. Branch protection en GitHub debe exigir:
+#    - "API — compile, lint & test"                  (verde)
+#    - "API — journey E2E (Postgres ephemeral)"     (verde)
+#    - "API — coverage ≥90% (gate de merge)"        (verde)
+#    - "Admin Panel — install, lint & build"        (verde) — incluye vitest coverage ≥85%
+#    - Al menos 1 review aprobado
+#    - No 'changes-requested' pendiente
+#    - Branch up-to-date with base
+#
+# 2. Este workflow agrega un **cool-down de 5 minutos**:
+#    - Cuando un PR tiene la label `auto-merge` (la pones manualmente),
+#      el workflow espera 5 min después del último push/review/check.
+#    - Re-verifica que CI sigue verde y que NO hubo nuevos reviews
+#      bloqueantes en esos 5 min.
+#    - Solo entonces mergea (squash).
+#
+# El delay da tiempo a un reviewer humano a alcanzar al PR antes del merge.
+#
+# Para activarlo: agregar la label `auto-merge` al PR cuando esté listo.
+
+on:
+  pull_request:
+    types: [labeled, synchronize, opened, reopened]
+  pull_request_review:
+    types: [submitted, dismissed]
+  check_suite:
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to evaluate'
+        required: true
+
+jobs:
+  cooldown-and-merge:
+    name: "Cool-down + safety check + merge"
+    runs-on: ubuntu-latest
+    # Sólo corre cuando el PR tiene la label `auto-merge` (o se dispara manual)
+    if: >-
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'auto-merge')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.pull_request.labels.*.name, 'auto-merge')) ||
+      (github.event_name == 'check_suite' && github.event.check_suite.conclusion == 'success')
+
+    steps:
+      - name: Resolve PR + gate on auto-merge label
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Job-level `if:` gates `pull_request` and `pull_request_review`
+            // events by label, but `check_suite` only checks `conclusion ==
+            // success` — it fires for every PR with a green CI even when the
+            // PR has no `auto-merge` label. Without an early label-check here,
+            // that path would run the 5-min sleep + safety check + post a
+            // "🚫 Auto-merge skipped: auto-merge label removed" comment on
+            // EVERY ordinary PR with green CI, which is noisy.
+            //
+            // This step resolves the PR number AND short-circuits before the
+            // cool-down for any trigger whose PR doesn't carry the label.
+            // Output `proceed='true'` means: continue with cool-down + merge.
+            // Anything else → silent early exit (no comment, no runtime cost).
+
+            const eventName = context.eventName;
+            let prNumber = null;
+
+            if (eventName === 'workflow_dispatch') {
+              prNumber = context.payload.inputs.pr_number;
+            } else if (context.payload.pull_request) {
+              prNumber = context.payload.pull_request.number;
+            } else if (eventName === 'check_suite') {
+              const checkSuite = context.payload.check_suite;
+              if (checkSuite && checkSuite.pull_requests && checkSuite.pull_requests.length > 0) {
+                prNumber = checkSuite.pull_requests[0].number;
+              }
+            }
+
+            if (!prNumber) {
+              core.notice('No PR associated with this event — silent skip.');
+              core.setOutput('proceed', 'false');
+              core.setOutput('pr_number', '');
+              return;
+            }
+
+            // Re-fetch PR to read its current labels (the payload labels list
+            // can be stale for `check_suite` events) and gate on the label.
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            const hasLabel = pr.labels.some(l => l.name === 'auto-merge');
+            if (!hasLabel) {
+              core.notice(`PR #${prNumber} has no auto-merge label — silent skip (event=${eventName}).`);
+              core.setOutput('proceed', 'false');
+              core.setOutput('pr_number', String(prNumber));
+              return;
+            }
+
+            core.setOutput('proceed', 'true');
+            core.setOutput('pr_number', String(prNumber));
+
+      - name: Wait 5 minutes (cool-down for late reviews)
+        if: steps.pr.outputs.proceed == 'true'
+        run: |
+          echo "Cool-down: waiting 5 min so reviewers can still block this merge..."
+          sleep 300
+
+      - name: Re-verify PR is safe to merge
+        if: steps.pr.outputs.proceed == 'true'
+        id: safety
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = parseInt('${{ steps.pr.outputs.pr_number }}');
+            const { owner, repo } = context.repo;
+
+            // 1. Re-fetch PR — state may have changed in 5 min
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: prNumber,
+            });
+
+            if (pr.state !== 'open') {
+              core.setOutput('safe', 'false');
+              core.setOutput('reason', `PR is ${pr.state}`);
+              return;
+            }
+            if (pr.draft) {
+              core.setOutput('safe', 'false');
+              core.setOutput('reason', 'PR is draft');
+              return;
+            }
+            if (pr.merged) {
+              core.setOutput('safe', 'false');
+              core.setOutput('reason', 'PR already merged');
+              return;
+            }
+
+            // 2. Verify `auto-merge` label still present
+            const hasLabel = pr.labels.some(l => l.name === 'auto-merge');
+            if (!hasLabel) {
+              core.setOutput('safe', 'false');
+              core.setOutput('reason', 'auto-merge label removed');
+              return;
+            }
+
+            // 3. Verify mergeable + state
+            if (pr.mergeable === false) {
+              core.setOutput('safe', 'false');
+              core.setOutput('reason', `mergeable=false (mergeable_state=${pr.mergeable_state})`);
+              return;
+            }
+            // mergeable_state values: clean | unstable | blocked | behind | dirty | unknown
+            if (pr.mergeable_state !== 'clean') {
+              core.setOutput('safe', 'false');
+              core.setOutput('reason', `mergeable_state=${pr.mergeable_state} (needs clean)`);
+              return;
+            }
+
+            // 4. Check for CHANGES_REQUESTED reviews not dismissed
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner, repo, pull_number: prNumber,
+            });
+            // Get latest review per reviewer
+            const latestByUser = new Map();
+            for (const r of reviews) {
+              const prev = latestByUser.get(r.user.login);
+              if (!prev || new Date(r.submitted_at) > new Date(prev.submitted_at)) {
+                latestByUser.set(r.user.login, r);
+              }
+            }
+            const blocking = [...latestByUser.values()].filter(r => r.state === 'CHANGES_REQUESTED');
+            if (blocking.length > 0) {
+              core.setOutput('safe', 'false');
+              core.setOutput('reason', `${blocking.length} reviewer(s) requested changes: ${blocking.map(r => r.user.login).join(', ')}`);
+              return;
+            }
+
+            // 5. Confirm at least 1 APPROVED (branch protection should require
+            // this too, but we double-check).
+            const approved = [...latestByUser.values()].filter(r => r.state === 'APPROVED');
+            if (approved.length === 0) {
+              core.setOutput('safe', 'false');
+              core.setOutput('reason', 'No approving review');
+              return;
+            }
+
+            // 6. Check that the PR hasn't been updated in the last 5 min
+            // (i.e. no new push during cool-down)
+            const updatedAt = new Date(pr.updated_at).getTime();
+            const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+            if (updatedAt > fiveMinAgo) {
+              core.setOutput('safe', 'false');
+              core.setOutput('reason', 'PR updated during cool-down — waiting for next cycle');
+              return;
+            }
+
+            core.setOutput('safe', 'true');
+            core.setOutput('reason', `Approved by ${approved.length} reviewer(s); CI clean`);
+
+      - name: Comment if not safe
+        if: steps.safety.outputs.safe == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = parseInt('${{ steps.pr.outputs.pr_number }}');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `🚫 Auto-merge **skipped**: ${{ steps.safety.outputs.reason }}.\n\n` +
+                    `El workflow se re-evaluará en el próximo evento (push, review, CI).`,
+            });
+
+      - name: Merge PR (squash)
+        if: steps.safety.outputs.safe == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = parseInt('${{ steps.pr.outputs.pr_number }}');
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            await github.rest.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              merge_method: 'squash',
+              commit_title: pr.title,
+              commit_message: pr.body || '',
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: `✅ Auto-merged after 5-min cool-down.\n\n${{ steps.safety.outputs.reason }}`,
+            });

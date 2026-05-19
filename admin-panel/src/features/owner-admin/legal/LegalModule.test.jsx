@@ -19,9 +19,9 @@ vi.mock('../../../app/TenantProvider.jsx', () => ({
   useOptionalTenantContext: () => mockTenantContext,
 }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import * as coreApi from '../../../services/coreApi.js';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { LegalModule } from './LegalModule.jsx';
 
 const OWNER_PROFILE = { sub: 'u-owner' };
@@ -98,5 +98,37 @@ describe('LegalModule', () => {
     setup({ tenant: { id: 'tenant-acme', slug: 'acme', roles: ['agent'] } });
     expect(screen.getByText(/Acceso restringido/i)).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Legal', level: 1 })).toBeNull();
+  });
+
+  it('shows the error banner when the listLegalDocuments call fails and dismisses on click', async () => {
+    coreApi.listLegalDocuments.mockRejectedValueOnce(new Error('No se pudieron cargar'));
+    setup();
+
+    expect(
+      await screen.findByText('No se pudieron cargar', undefined, { timeout: 2000 }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Cerrar' })[0]);
+    expect(screen.queryByText('No se pudieron cargar')).toBeNull();
+  });
+
+  it('shows the success info banner after creating a draft and dismisses it', async () => {
+    coreApi.createLegalDocumentDraft.mockResolvedValueOnce({ version: 5 });
+    setup();
+    await screen.findByText('Editor · Markdown');
+
+    await userEvent.type(screen.getByRole('textbox', { name: /Título/ }), 'Política');
+    await userEvent.type(screen.getByLabelText('Contenido (Markdown)'), 'algo');
+    await userEvent.click(screen.getByRole('button', { name: /Crear borrador/i }));
+
+    expect(await screen.findByText(/Borrador v5/i)).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Cerrar' })[0]);
+    expect(screen.queryByText(/Borrador v5/i)).toBeNull();
+  });
+
+  it('renders the empty-tenant card when there is no current tenant', () => {
+    setup({ tenant: { id: undefined, slug: 'acme', roles: ['owner'] } });
+    expect(screen.getByText(/Selecciona un tenant/i)).toBeInTheDocument();
+    expect(screen.queryByText('Editor · Markdown')).toBeNull();
   });
 });

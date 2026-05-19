@@ -19,9 +19,9 @@ vi.mock('../../../app/TenantProvider.jsx', () => ({
   useOptionalTenantContext: () => mockTenantContext,
 }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import * as coreApi from '../../../services/coreApi.js';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { Subscriptions } from './Subscriptions.jsx';
 
 const OWNER_PROFILE = { sub: 'u-owner' };

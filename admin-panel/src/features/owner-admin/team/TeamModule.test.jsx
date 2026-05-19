@@ -17,9 +17,9 @@ vi.mock('../../../app/TenantProvider.jsx', () => ({
   useOptionalTenantContext: () => mockTenantContext,
 }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import * as coreApi from '../../../services/coreApi.js';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { TeamModule } from './TeamModule.jsx';
 
 const OWNER_PROFILE = { sub: 'u-owner', roles: ['owner'] };
@@ -103,5 +103,30 @@ describe('TeamModule', () => {
     setup({ tenant: { id: 'tenant-acme', slug: 'acme', roles: ['agent'] } });
     expect(screen.getByText(/Acceso restringido/i)).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Equipo', level: 1 })).toBeNull();
+  });
+
+  it('renders the empty-tenant card when there is no tenant id', () => {
+    setup({ tenant: { id: undefined, slug: 'x', roles: ['owner'] } });
+    expect(screen.getByText(/Selecciona un tenant/i)).toBeInTheDocument();
+  });
+
+  it('renders the auth0 disabled banner when management API is off', async () => {
+    coreApi.listTenantMembers.mockResolvedValueOnce({
+      auth0_management_enabled: false,
+      members: MEMBERS.members,
+    });
+    setup();
+    expect(
+      await screen.findByText(/Auth0 Management API no está habilitada/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows an error notice when listTenantMembers fails and dismisses it', async () => {
+    coreApi.listTenantMembers.mockRejectedValueOnce(new Error('team-load-fail'));
+    setup();
+
+    expect(await screen.findByText('team-load-fail')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }));
+    expect(screen.queryByText('team-load-fail')).toBeNull();
   });
 });

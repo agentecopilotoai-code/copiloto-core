@@ -34,9 +34,9 @@ vi.mock('../../../components/ui/index.js', async () => {
   };
 });
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import * as coreApi from '../../../services/coreApi.js';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { OutboundDLQ } from './OutboundDLQ.jsx';
 
 const OWNER_PROFILE = { sub: 'u-owner' };
@@ -115,5 +115,29 @@ describe('OutboundDLQ', () => {
     setup({ tenant: { id: 'tenant-acme', slug: 'acme', roles: ['viewer'] } });
     expect(screen.getByText(/Acceso restringido/i)).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Outbound DLQ', level: 1 })).toBeNull();
+  });
+
+  it('renders the empty-tenant card when there is no tenant id', () => {
+    setup({ tenant: { id: undefined, slug: 'x', roles: ['owner'] } });
+    expect(screen.getByText(/Selecciona un tenant/i)).toBeInTheDocument();
+  });
+
+  it('renders an error AlertBanner when the listOutboundDlq call fails and dismisses', async () => {
+    coreApi.listOutboundDlq.mockRejectedValueOnce(new Error('dlq-fail'));
+    setup();
+
+    expect(await screen.findByText('dlq-fail')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }));
+    expect(screen.queryByText('dlq-fail')).toBeNull();
+  });
+
+  it('refresh button retriggers the listOutboundDlq fetch', async () => {
+    setup();
+    await screen.findByText('appointment_reminder_v3');
+    expect(coreApi.listOutboundDlq).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refrescar' }));
+    await waitFor(() => expect(coreApi.listOutboundDlq).toHaveBeenCalledTimes(2));
   });
 });

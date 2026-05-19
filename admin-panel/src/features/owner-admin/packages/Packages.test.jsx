@@ -18,9 +18,9 @@ vi.mock('../../../app/TenantProvider.jsx', () => ({
   useOptionalTenantContext: () => mockTenantContext,
 }));
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import * as coreApi from '../../../services/coreApi.js';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { Packages } from './Packages.jsx';
 
 const OWNER_PROFILE = { sub: 'u-owner' };
@@ -104,5 +104,19 @@ describe('Packages', () => {
     setup({ tenant: { id: 'tenant-acme', slug: 'acme', roles: ['agent'] } });
     expect(screen.getByText(/Acceso restringido/i)).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Paquetes', level: 1 })).toBeNull();
+  });
+
+  it('renders the empty-tenant card when there is no tenant id', () => {
+    setup({ tenant: { id: undefined, slug: 'x', roles: ['owner'] } });
+    expect(screen.getByText(/Selecciona un tenant/i)).toBeInTheDocument();
+  });
+
+  it('shows an error banner when listTreatmentPackages fails and dismisses on click', async () => {
+    coreApi.listTreatmentPackages.mockRejectedValueOnce(new Error('pkg-load-fail'));
+    setup();
+    expect(await screen.findByText('pkg-load-fail')).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Cerrar' })[0]);
+    expect(screen.queryByText('pkg-load-fail')).toBeNull();
   });
 });

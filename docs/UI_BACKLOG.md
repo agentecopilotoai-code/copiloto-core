@@ -1567,3 +1567,340 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 | BUG-231 | Codex P1 follow-up sobre PR #18 (SEC-010-EXPORT-FU) | `app/api/v1/routes.py:export_contact_data` | El server firmaba `bundle_canonical` (con `default=str`, datetimes como `'2026-05-18 13:46:28+00:00'` con espacio) pero FastAPI serializaba el response con ISO `T` (`'2026-05-18T13:46:28+00:00'`) — el cliente recibía bytes distintos de los firmados y la verificación documentada en `consent-violation-claim.md` con openssl no matcheaba nunca. | DONE (fix-group-45: nuevo campo `data_canonical` en el response con el string crudo firmado; runbook actualizado para usar `jq -r .data_canonical` en vez de `jq -S -c '.data'`) |
 | BUG-232 | Codex P2 follow-up sobre PR #19 | `admin-panel/src/features/agente/inbox/hooks/useInboxData.js:runAction` | `acceptHandoff(id)` desde el card del inbox pasa un `targetId` explícito (computado del id del card), pero `runAction` abortaba antes con `if (!selectedConversationId) return;`. En el caso común "primer click sin selección previa", el "Tomar" no hacía nada — el usuario solo veía la selección actualizarse. | DONE (fix-group-45: `runAction({requireConversation = true})` con default back-compat; `acceptHandoff` pasa `{requireConversation: false}` cuando tiene targetId explícito) |
 | BUG-233 | Codex P2 follow-up sobre PR #16 | `admin-panel/src/__tests__/no-internal-refs-in-ui.test.js` + 4 strings UI | El regex `TASK_CODE_RE = /\((?:TASK|BUG|SEC|UI)-\d+/i` solo matcheaba códigos con `(` antes, dejando pasar unparenthesized como `"para medir TASK-0039"`. 4 strings UI tenían ese patrón. | DONE (fix-group-45: regex cambia a `\b` (word boundary); 4 strings UI reescritas a lenguaje de negocio en AccountSessions, AnalyticsPanel, BillingKpis, FleetKpis) |
+
+---
+
+## 10. Módulo Influencer — Ravit Studio (UI-INFLU-001..016)
+
+> **Diseño de referencia:** `docs/influencer/*.html` (renombrado desde `Inlfuencer/` por typo, ver TASK-INFLU-001).
+>
+> **Patrón:** receta `0.bis.1` de este documento aplica completa — abrir HTML, extraer tokens (`docs/influencer/04 _ Paleta.html` y `05 _ Tipograf_a.html`), inventariar bloques, reusar primitivas (`components/ui/`, `components/domain/`), screenshots lado a lado HTML vs React en cada PR.
+>
+> **Path:** `admin-panel/src/features/influencer/` — todo aislado para que se pueda excluir del build si el tenant no tiene el módulo (D2 backend: gate por `tenant_modules.influencer`).
+>
+> **Matriz de permisos del módulo:**
+>
+> | Capability | Viewer | Agent | Manager | Admin | Owner | Platform Owner |
+> |---|---|---|---|---|---|---|
+> | `influencer.module.access` | — | — | R | R | R | — |
+> | `influencer.personas.read` | — | — | R | R | R | — |
+> | `influencer.personas.write` | — | — | RW | RW | RW | — |
+> | `influencer.personas.archive` | — | — | — | RW (MFA) | RW (MFA) | — |
+> | `influencer.generate` | — | — | RW | RW | RW | — |
+> | `influencer.platforms.connect` | — | — | — | RW (MFA) | RW (MFA) | — |
+> | `influencer.posts.schedule` | — | — | RW | RW | RW | — |
+> | `influencer.posts.approve_publish` | — | — | RW | RW | RW | — |
+> | `influencer.credits.read` | — | — | R | R | R | — |
+> | `influencer.credits.topup` | — | — | — | RW | RW | — |
+> | `influencer.ai_providers.configure` | — | — | — | — | — | RW (MFA) |
+>
+> Codificada en `permissions/matrix.js` por UI-INFLU-002.
+>
+> **Mapping tarea ↔ HTML:**
+>
+> | Tarea | HTML de referencia |
+> |---|---|
+> | UI-INFLU-001 | `docs/influencer/04 _ Paleta.html` + `05 _ Tipograf_a.html` |
+> | UI-INFLU-002 | transversal (shell + routing) |
+> | UI-INFLU-003 | `docs/influencer/01 _ Casting _Home_ _ primera vez.html` |
+> | UI-INFLU-004 | `docs/influencer/01 _ Casting _Home_.html` |
+> | UI-INFLU-005 | `docs/influencer/02 _ Estudio de Sof_a _detalle_.html` |
+> | UI-INFLU-006 | `docs/influencer/02 _ Empty states _ transversal.html` |
+> | UI-INFLU-007 | `docs/influencer/03 _ Toasts _ todos los tipos.html` |
+> | UI-INFLU-008 | `docs/influencer/03a _ Crear personaje _ Paso 1 Cara.html` |
+> | UI-INFLU-009 | `docs/influencer/03b _ Crear personaje _ Paso 2 Cuerpo.html` |
+> | UI-INFLU-010 | `docs/influencer/03c _ Crear personaje _ Paso 3 Identidad.html` |
+> | UI-INFLU-011 | `docs/influencer/03d _ Crear personaje _ Paso 4 Voz.html` |
+> | UI-INFLU-012 | `docs/influencer/03e _ Crear personaje _ Paso 5 Plataformas.html` |
+> | UI-INFLU-013 | `docs/influencer/04 _ Generar contenido _con Sof_a_.html` |
+> | UI-INFLU-014 | `docs/influencer/05 _ Calendario _todos los personajes_.html` |
+> | UI-INFLU-015 | transversal (sólo Platform Owner — configura proveedores IA) |
+> | UI-INFLU-016 | `docs/influencer/Ravit Studio Landing _standalone_.html` |
+
+---
+
+### UI-INFLU-001 — Design tokens & tipografía Ravit Studio — DONE (2026-05-19)
+
+- **Estado:** DONE (2026-05-19)
+- **HTML:** `docs/influencer/04 _ Paleta.html` + `docs/influencer/05 _ Tipograf_a.html`.
+- **Cierre:** ver `docs/DONE.md` (entrada UI-INFLU-001). Se agregaron 35 tokens nuevos al final de `admin-panel/src/styles/tokens.css` como **aditivos** (NO reemplazan los base de CopilotoIA — coexisten en el mismo `:root`): 11 colores (5 superficies cream bento, 1 ink navy + 3 opacidades, 4 verde Ravit con variantes, 3 estados), 12 font-sizes (display-xl→code), 8 letter-spacings (display + eyebrow + mono), 2 familias (Geist + Geist Mono con fallback Inter Tight). Filosofía declarada en el HTML preservada en comentarios: "el verde es la voz de Ravit, no su volumen". Test `admin-panel/src/__tests__/influencer-tokens.test.js` con 9 tests que verifican (1) HTMLs de diseño presentes, (2) cada color del HTML mapeado, (3) escala tipográfica completa, (4) 3 variantes de verde, (5) 4 opacidades de navy ink, (6) familia Geist + fallbacks, (7) letter-spacing, (8) NO sobreescritura de tokens base, (9) audit cruzado HTML ↔ CSS. **150 test files / 1111 tests** verdes sin regresión. Build OK.
+
+---
+
+### UI-INFLU-002 — Shell + routing del módulo (gate por `tenant_modules.influencer`)
+
+- **Estado:** PENDING
+- **HTML:** sidebar visible en todos los 9 HTMLs principales (Ravit Studio · Personaje activo · Estudio · Generar contenido · Feed · Calendario · Stats · Casting · Biblioteca · Créditos · Ayuda y comunidad · Gana 10% con Ravit).
+- **Alcance:**
+  - Nueva ruta padre `/t/:tenantSlug/influencer/*` que renderiza `InfluencerShell.jsx` (extiende `TenantShell` con sub-nav lateral del módulo).
+  - Sub-rutas:
+    - `/influencer/casting` → UI-INFLU-004 (home).
+    - `/influencer/personas/:personaId/studio` → UI-INFLU-005 (detalle).
+    - `/influencer/personas/new/step-:n` (n=1..5) → UI-INFLU-008..012 (wizard).
+    - `/influencer/personas/:personaId/generate` → UI-INFLU-013 (composer).
+    - `/influencer/calendar` → UI-INFLU-014.
+    - `/influencer/library` → reusa `media-library` existente (link al módulo de UI-007.11).
+    - `/influencer/credits` → balance + history (consume `GET /v1/influencer/credits/balance`).
+  - Gate: si el tenant no tiene `tenant_modules.influencer.enabled=true`, la ruta padre redirige a `/t/:tenantSlug/dashboard` con un `AlertBanner` "Este módulo no está habilitado para tu tenant; contacta a tu Platform Owner". El backend ya retorna 404 (TASK-INFLU-001) — el frontend tolera el 404 mostrando ese banner.
+  - Capabilities en `permissions/matrix.js`: las 10 capabilities listadas en la matriz de arriba.
+  - Nueva entrada en `app/nav.js` sección `INFLUENCER_NAV` (solo visible si `permissions.can('influencer.module.access','R')`).
+- **Criterios:** archivos ≤ 400 LOC; sub-nav reusa `Sidebar` primitive (UI-001) con `data-section='influencer'` para styling distintivo (color crema Ravit).
+- **Tests:**
+  - `InfluencerShell.test.jsx` (4): renderiza nav para Owner; redirect + banner para Agent (sin capability); redirect cuando módulo no habilitado (mock 404); deep-link `/t/acme/influencer/casting` aterriza bien.
+  - `matrix.test.js`: las 10 capabilities con valores correctos por rol.
+- **Dependencias:** UI-INFLU-001, UI-001, UI-002, UI-003, UI-005.
+
+---
+
+### UI-INFLU-003 — Casting · Home · primera vez (empty state)
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/01 _ Casting _Home_ _ primera vez.html`.
+- **Alcance:** componente `CastingEmptyState.jsx` en `src/features/influencer/casting/` que se renderiza cuando `GET /v1/influencer/casting` devuelve `personas=[]`. Hero + ilustración + CTA primario "Crear personaje" → router push a `/influencer/personas/new/step-1`. Reusa `PageHeader`, `Card`, `Button` (variant primary), `EmptyState` (UI-001).
+- **Criterios:** sin acciones write a menos que el rol tenga `influencer.personas.write` (CTA renderiza pero deshabilitado con tooltip si no).
+- **Tests:** `CastingEmptyState.test.jsx` (3): render del hero + CTA; CTA disabled para Viewer/Agent; click navega al wizard.
+- **Dependencias:** UI-INFLU-002.
+
+---
+
+### UI-INFLU-004 — Casting · Home (con personajes)
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/01 _ Casting _Home_.html`.
+- **Alcance:** orquestador `Casting.jsx` + hook `useCastingData` + helper puro `castingData.js` + componentes `CastingKpis` (4 KPI tiles: Personajes activos, Posts este mes, Alcance total, Engagement medio — usa `KpiCardWithDelta` del dominio), `CastingFilters` (chips: Todos · Lifestyle · Fashion · Beauty · Editorial · Beach · Travel + sort selector "Ordenar: actividad/posts/alcance"), `PersonaCard` (avatar+nombre+handle+status+stats foto+alcance+engagement+CTA "Abrir estudio"), `PersonaGrid`. Consume `GET /v1/influencer/casting` (TASK-INFLU-017).
+- **Criterios:** `PersonaCard` extraído a `components/domain/` porque también se reusa en UI-INFLU-014 (calendario filter). Cada card ≤ 200 LOC.
+- **Tests:**
+  - `castingData.test.js` (5): `categoryLabel`, `formatReach`, `formatEngagementRate`, `sortPersonas` por cada criterio, `filterByCategory`.
+  - `Casting.test.jsx` (4): render con 6 personas + KPIs + filtros; click en chip filtra grid; click en card navega a studio; AccessDenied sin capability.
+- **Dependencias:** UI-INFLU-002, -003.
+
+---
+
+### UI-INFLU-005 — Estudio del personaje (detalle)
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/02 _ Estudio de Sof_a _detalle_.html`.
+- **Alcance:** orquestador `PersonaStudio.jsx` + hook `usePersonaStudioData` + componentes:
+  - `PersonaHeader` (avatar grande + nombre + status badge "ACTIVO · 12 PROGRAMADOS" + CTAs "Editar cara" / "Generar contenido con Sofía" / "Ver feed").
+  - `PersonaBio` (descripción, tags de estilo: Cálida · Cercana · Aspiracional · Resort wear · Joyería · Hospitality).
+  - `PlatformsConnected` (Instagram, TikTok, YouTube, X con followers count).
+  - `StudioKpis` (Posts 184, Alcance 2.4M, Engagement 8.4%).
+  - `NextPostCard` ("Próximo post · 11:00 mañana · IG, YT").
+  - `RecentGenerationsStrip` (carrusel horizontal de últimas 12 generaciones).
+- Consume `GET /v1/influencer/personas/{id}/studio` (TASK-INFLU-017).
+- **Criterios:** botón "Editar cara" navega a `/influencer/personas/{id}/edit/face` (re-entra al wizard en paso 1 con datos cargados). "Generar contenido" navega a `/influencer/personas/{id}/generate`.
+- **Tests:**
+  - `personaStudioData.test.js` (4): `statusLabel`, `formatScheduledCount`, `nextPostLabel` (es-CO timezone-aware), `tagsFromVoice`.
+  - `PersonaStudio.test.jsx` (5): render con persona activa; estado loading; not-found (persona archivada); CTA generar visible para Manager; CTA conectar plataformas gateado por `platforms.connect`.
+- **Dependencias:** UI-INFLU-002, UI-INFLU-004.
+
+---
+
+### UI-INFLU-006 — Empty states transversal del módulo
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/02 _ Empty states _ transversal.html`.
+- **Alcance:** suite de empty states reusables en `src/features/influencer/components/empty/`:
+  - `NoGenerationsEmpty` (cuando una persona no tiene generaciones aún).
+  - `NoScheduledPostsEmpty` (cuando el calendario está vacío en la semana visible).
+  - `NoPlatformsConnectedEmpty` (cuando una persona no tiene plataformas conectadas).
+  - `NoCreditsEmpty` (cuando balance ≤ 0 — bloquea acciones write y muestra CTA "Comprar créditos" gateado por capability).
+  - `ProviderUnavailableEmpty` (cuando el backend devuelve `provider_unavailable` — friendly message + retry).
+  - Todos reusan la primitiva `EmptyState` (UI-001) + ilustración mínima + 1 acción primaria.
+- **Tests:** `EmptyStates.test.jsx` (5): cada empty render correcto + CTA navega/dispara la acción esperada.
+- **Dependencias:** UI-INFLU-002, UI-001.
+
+---
+
+### UI-INFLU-007 — Toasts del módulo (variantes)
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/03 _ Toasts _ todos los tipos.html`.
+- **Alcance:** auditar el `Toast` global de UI-016.5 contra los 4 tipos del HTML (success/info/warn/error) + casos específicos del módulo: "Generación completada · 4 imágenes listas" (success con thumbnail), "Crédito insuficiente · faltan N" (warn con CTA top-up), "Provider Grok temporalmente caído · usando OpenAI" (info con auto-dismiss 8s), "Publicación a Instagram falló · token expirado" (error con CTA reconectar). Si los specs visuales del HTML divergen del Toast global, agregar variantes `withThumbnail` y `withCta` al primitive sin romper consumers.
+- **Tests:** `Toast.test.jsx` extendido con (3): success con thumbnail renderiza img; warn con CTA dispara handler; error con CTA "Reconectar" navega al flow de OAuth.
+- **Dependencias:** UI-INFLU-002, UI-016.5.
+
+---
+
+### UI-INFLU-008 — Wizard · Paso 1 · Cara
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/03a _ Crear personaje _ Paso 1 Cara.html`.
+- **Alcance:** `src/features/influencer/wizard/Step1Face.jsx` + hook `useStep1Face` + helpers puros. Contenido del HTML:
+  - Stepper visual de 5 pasos (reusa `Stepper` de UI-007.2).
+  - Panel "Punto de partida": 3 opciones radio (Subir foto / Plantilla 8 caras base / Aleatorio IA al azar).
+  - Selectores: Etnia (chips europea/asiática/africana/latina/...), Color de ojos, Color de pelo, Estilo de pelo, Tono de piel, Rango de edad.
+  - Vista previa "Generación #04" con 4 variaciones generadas + CTA "Generar 4 más" (llama `POST /v1/influencer/personas/{id}/face/variations` — TASK-INFLU-010, async). User selecciona una como canonical.
+  - Footer del wizard: "Paso 1 de 5" + "Guardar borrador" + "Siguiente paso".
+- **Criterios:** persiste estado en `PUT /v1/influencer/personas/{id}/face` (TASK-INFLU-009) al click "Siguiente". El loading de variations usa skeleton mientras espera el async (escucha WS `influencer.face_variations.ready`).
+- **Tests:**
+  - `step1FaceData.test.js` (4): `buildFacePayload`, `validateMinimum` (al menos etnia + ojos + pelo), `canonicalFromVariations`, `defaultsForRandom`.
+  - `Step1Face.test.jsx` (5): render del stepper; click "Aleatorio" auto-selecciona valores; click "Generar 4 más" llama API; selección de variation marca canonical; "Siguiente" sin canonical → AlertBanner.
+- **Dependencias:** UI-INFLU-002, UI-007.2 (Stepper primitive).
+
+---
+
+### UI-INFLU-009 — Wizard · Paso 2 · Cuerpo
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/03b _ Crear personaje _ Paso 2 Cuerpo.html`.
+- **Alcance:** `Step2Body.jsx`. Panel "Tipo de cuerpo" con 4 silhouette cards (Slim/Athletic/Curvy/Average) + slider de altura (140cm–200cm) + selector de postura. Vista previa "ATLÉTICA · 172CM" con 4 ángulos (Frontal · 3/4 · Perfil · Espalda) renderizados desde S3 (assets generados por TASK-INFLU-012 para el persona-anchor `body`).
+- **Criterios:** persiste en `PUT /personas/{id}/body`. Si el persona no tiene assets de cuerpo aún, las 4 vistas son placeholders + CTA "Generar vistas" (consume 4 créditos).
+- **Tests:**
+  - `step2BodyData.test.js` (3): `silhouetteLabel`, `validateHeight` (range), `buildBodyPayload`.
+  - `Step2Body.test.jsx` (3): selección de silhouette propaga al payload; slider altura validado; placeholder de vistas + CTA gate por créditos.
+- **Dependencias:** UI-INFLU-008.
+
+---
+
+### UI-INFLU-010 — Wizard · Paso 3 · Identidad
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/03c _ Crear personaje _ Paso 3 Identidad.html`.
+- **Alcance:** `Step3Identity.jsx`. Form completo:
+  - Nombre (required) + Handle (required, unique per tenant — valida vía API debounced `GET /personas?handle=...`).
+  - Edad, Etnia (read-only del paso 1), Tipo cuerpo (read-only paso 2), Altura (read-only paso 2).
+  - Ciudad + País + Lat/Lng opcionales.
+  - Idiomas (multi-select).
+  - Brands (chips ingresables) + Categorías (chips: Lifestyle · Fashion · Beauty · Editorial · etc.).
+  - Descripción libre (textarea ≤ 280 chars).
+  - Card preview live "@sofiavega.studio · Tulum, MX · Madrileña en Tulum..." que se actualiza con cada cambio.
+- **Tests:**
+  - `step3IdentityData.test.js` (5): `validateHandle` (regex + length), `buildIdentityPayload`, `previewCardData`, `debounceHandleCheck`, `descriptionWithinLimit`.
+  - `Step3Identity.test.jsx` (4): handle duplicado → 409 → error inline; preview card actualiza en tiempo real; brands chips add/remove; siguiente sin nombre → bloqueado.
+- **Dependencias:** UI-INFLU-009.
+
+---
+
+### UI-INFLU-011 — Wizard · Paso 4 · Voz
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/03d _ Crear personaje _ Paso 4 Voz.html`.
+- **Alcance:** `Step4Voice.jsx`. Slider/chips de tono (Cálida · Cercana · Aspiracional · Profesional · Divertida), formalidad (informal ↔ formal), nivel de energía (calmada ↔ enérgica). Sección "Voz de Sofía · sample" con player de audio (consume `POST /personas/{id}/voice/sample` — TASK-INFLU-013). Sección "Captions generados con esta voz" con 3 captions live para IG·Foto / TikTok·Reel / IG·Story (consume `POST /personas/{id}/voice/captions-preview`).
+- **Criterios:** los captions se regeneran (debounced 1s) cada vez que el user cambia tono. El audio sample se re-genera explícitamente con CTA "Re-generar sample" (consume 2 créditos).
+- **Tests:**
+  - `step4VoiceData.test.js` (4): `toneLabel`, `buildVoicePayload`, `captionPromptHash` (para detectar cambios y disparar re-gen), `validateMinimum`.
+  - `Step4Voice.test.jsx` (4): cambio de tono dispara llamada `captions-preview` debounced; click "Re-generar sample" requiere créditos; player play/pause; siguiente sin sample → bloqueado.
+- **Dependencias:** UI-INFLU-010.
+
+---
+
+### UI-INFLU-012 — Wizard · Paso 5 · Plataformas
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/03e _ Crear personaje _ Paso 5 Plataformas.html`.
+- **Alcance:** `Step5Platforms.jsx`. Lista de 6 plataformas (Instagram · TikTok · YouTube · Threads · X · Facebook) con para cada una:
+  - Toggle conectado/sin conectar.
+  - Si conectada: handle + cadencia editable ("Diario", "5 / semana", "3 / semana"...).
+  - Si sin conectar: CTA "Conectar" → OAuth flow (solo Instagram funcional en MVP, las demás son disabled con tooltip "Próximamente").
+  - Card preview "Vista previa · Instagram" con mock del feed del personaje.
+- Bloque "Modo de publicación":
+  - Radio: Auto-generar contenido / Aprobación manual / Híbrido.
+  - Toggle: Auto-responder DMs (solo a preguntas frecuentes).
+  - Toggle: Etiqueta IA visible (recomendado · transparencia con tu audiencia) — **NO se puede desactivar** por defecto (TASK-INFLU-018 enforcer).
+- Recap: "Cadencia recomendada · 17 posts / semana · ≈85 créditos/semana".
+- Footer: "Crear personaje" (CTA primario, dispara `POST /personas/{id}/activate`).
+- **Tests:**
+  - `step5PlatformsData.test.js` (5): `cadenceToPerWeek`, `computeWeeklyCredits` (suma por kind), `validateAtLeastOnePlatform`, `modeLabel`, `cannotDisableDiscloseAi`.
+  - `Step5Platforms.test.jsx` (4): conectar Instagram dispara OAuth start; toggle disclose_ai a false → bloqueado + tooltip; "Crear personaje" dispara activate; estimado de créditos correcto.
+- **Dependencias:** UI-INFLU-011.
+
+---
+
+### UI-INFLU-013 — Generar contenido (composer)
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/04 _ Generar contenido _con Sof_a_.html`.
+- **Alcance:** `src/features/influencer/generate/Generate.jsx` + hook `useGenerateData` + componentes:
+  - `KindSelector` (5 cards: Foto 3cr · Reel 8cr · Carrusel 10cr · Historia 2cr · Anuncio 5cr; badge HOT en reel).
+  - `Composer` (textarea de prompt 1000 chars con contador, chips de referencia "Producto / Plantilla", botón "Subir foto de referencia").
+  - `Settings` (formato 1:1/4:5/9:16/16:9, cantidad 1-10, estilo visual select, locación opcional).
+  - `SafetyFilters` (toggle "Modo seguro" — default true).
+  - `GenerationsQueue` (panel derecho con últimas generaciones del personaje + estado en vivo + thumbnails clickeables → modal full-screen + CTAs "Descargar todas" / "Programar post").
+- Consume `POST /v1/influencer/personas/{id}/generate` y se suscribe a WS `influencer.generation.completed` para refrescar el queue.
+- Costo proyectado live: "Generar · 4 imágenes · 3 créditos / imagen = 12 créditos".
+- **Criterios:** el botón "Generar" se deshabilita si `balance < total_cost` y muestra `NoCreditsEmpty` (UI-INFLU-006). Si todos los formatos del kind soportado fallan (provider down), muestra `ProviderUnavailableEmpty`.
+- **Tests:**
+  - `generateData.test.js` (6): `kindMeta`, `computeCost`, `validateFormatForKind` (reel solo 9:16), `buildGeneratePayload`, `promptWithinLimit`, `costExceedsBalance`.
+  - `Generate.test.jsx` (5): cambio de kind actualiza costo; submit con balance bajo → empty state; submit happy path → optimistic queue + WS resolves; click thumbnail → modal; click "Programar post" → navega calendario con pre-fill.
+- **Dependencias:** UI-INFLU-005, UI-INFLU-006.
+
+---
+
+### UI-INFLU-014 — Calendario semanal/mensual de todos los personajes
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/05 _ Calendario _todos los personajes_.html`.
+- **Alcance:** `src/features/influencer/calendar/Calendar.jsx` + hook `useCalendarData` + componentes:
+  - `CalendarHeader` (rango "12 – 18 May 2026" + navegación prev/next + tabs Día/Semana/Mes + filtro de personajes "Camila · Valeria · Emma · Mia · Sofía"; cada filter chip con color asignado al personaje).
+  - `CalendarGrid` (Lun-Dom × franjas horarias 08:00-22:00 si vista Semana; grid de mes si vista Mes).
+  - `PostCard` (chip por post con hora + kind + título corto + dot del personaje color-coded). Click abre `PostDetailDrawer`.
+  - `PostDetailDrawer` (caption, hashtags, plataformas IG/Threads/TikTok, preview de assets + CTAs "Aprobar y publicar" / "Editar" / "Reprogramar" / "Cancelar"). CTAs gateadas por `posts.approve_publish`.
+  - CTA primaria header "Programar post" → modal con form (persona, generation_id ya generada, scheduled_at, platforms, caption editable, hashtags).
+- Consume `GET /v1/influencer/calendar?from&to` + `PATCH /posts/{id}` + `POST /posts/{id}/cancel`.
+- **Criterios:** drag-and-drop opcional (si tiempo permite); MVP es click-to-edit. Posts "draft" se renderan con borde punteado.
+- **Tests:**
+  - `calendarData.test.js` (6): `weekRange` (es-CO), `groupPostsByDay`, `personaColorMap`, `formatTimeSlot`, `canApprove` (capability check), `buildSchedulePayload`.
+  - `Calendar.test.jsx` (5): render semanal con 5 personajes filter; click chip filtra grid; click post abre drawer; "Aprobar y publicar" disabled para Manager sin `approve_publish`; cancelar post → confirm dialog (UI-011 `useConfirm`) + remove de la vista.
+- **Dependencias:** UI-INFLU-002, UI-INFLU-013, UI-011 (ConfirmProvider).
+
+---
+
+### UI-INFLU-015 — Platform Owner · Config de proveedores IA del módulo
+
+- **Estado:** PENDING
+- **HTML:** sin HTML directo del diseñador (es admin de plataforma; estilo se hereda de `features/platform/*` existente, UI-006).
+- **Alcance:** `src/features/platform/influencer-ai-providers/AIProviders.jsx` montado bajo `/platform/influencer-ai-providers` (gate `<RequirePermission capability="influencer.ai_providers.configure">`, MFA enforced).
+  - Tabla con 5 filas (una por modalidad: LLM · Image · Video · TTS · STT).
+  - Cada fila: Provider actual (Grok/Anthropic/OpenAI/ElevenLabs/Ollama/SDXL/Whisper) · Modelo · Hint últimos 4 chars del secret · Health (✓/✗ con timestamp último check) · CTA "Editar".
+  - Drawer de edición con: select de provider, input de model, input de API key (write-only, label "Se sobrescribirá la actual" cuando hay una), config de `fallback_chain` (drag-reorder de providers para esta modalidad), guardar dispara `PATCH /v1/platform/ai-providers/{modality}` (TASK-INFLU-002).
+  - Test panel: para cada modalidad, botón "Probar provider" que dispara generación de prueba (e.g. "una imagen 256x256 de un atardecer") y devuelve OK/FAIL con elapsed_ms y cost_units.
+- **Criterios:** la UI **nunca** muestra la API key después de guardar (solo `hint`). Audit visible: muestra "Última rotación · YYYY-MM-DD HH:mm · platform_owner@email" en cada fila.
+- **Tests:**
+  - `aiProvidersData.test.js` (4): `modalityLabel`, `providerLabel`, `validateModelByProvider` (e.g. Grok solo acepta `grok-*`), `buildPatchPayload`.
+  - `AIProviders.test.jsx` (5): render tabla con 5 filas; drawer edit prefill correcto; submit dispara PATCH; clave nunca aparece en input después de save (siempre placeholder); test panel happy path muestra elapsed_ms.
+- **Dependencias:** UI-006 (Platform Owner shell), UI-INFLU-002.
+
+---
+
+### UI-INFLU-016 — Landing comercial Ravit Studio (público pre-login)
+
+- **Estado:** PENDING
+- **HTML:** `docs/influencer/Ravit Studio Landing _standalone_.html`.
+- **Alcance:** vista PÚBLICA pre-login (sin auth). Análoga a UI-016.4 (landing CopilotoIA) pero específica del producto Ravit Studio.
+  - Ruta `/ravit` (no choca con root `/` que ya tiene la landing CopilotoIA).
+  - Hero: "Influencers de IA que producen contenido por ti — cada día, en todas las redes".
+  - Sección "Cómo funciona" (Casting → Generar → Programar → Monetizar).
+  - Demo embebida (carousel de personajes Sofía, Camila, etc. con sus feeds reales).
+  - Pricing teaser (planes por paquete de créditos: 100cr / 500cr / 2000cr).
+  - Programa de afiliados "Gana 10% con Ravit" (del sidebar del HTML).
+  - CTAs: "Solicitar demo" + "Iniciar sesión" (este último al flow Auth0 existente).
+- **Criterios:** SIN `RequirePermission` (público). Vive en `src/features/public/ravit-landing/` (marketing, no requiere el módulo backend habilitado).
+- **Tests:** `RavitLanding.test.jsx` (3): renderiza hero + secciones; CTA "Iniciar sesión" dispara flow Auth0 (mock); CTA "Solicitar demo" abre form modal y submit POST a `/v1/leads/demo-request` (endpoint nuevo — declara follow-up `UI-INFLU-016-FU` para el backend si no existe).
+- **Dependencias:** UI-INFLU-001.
+
+---
+
+### Criterios globales UI-INFLU
+
+- Cada feature ≤ 400 LOC, dividida en `index.jsx` + `components/` + `hooks/` + helpers puros + `.module.css`.
+- Tokens 100% desde `var(--...)` (UI-INFLU-001).
+- Todas las acciones write envueltas en `<RequirePermission>`.
+- Cada PR incluye screenshots HTML vs React lado a lado (criterio 0.bis.4).
+- Tests ≥ los listados por subtarea; el módulo agrega al menos 60 tests nuevos en total.
+
+### Dependencias entre UI-INFLU y TASK-INFLU
+
+| UI | Depende de TASK-INFLU |
+|---|---|
+| UI-INFLU-002 | TASK-INFLU-001 (gate por module) |
+| UI-INFLU-004, -005 | TASK-INFLU-017 (casting/studio endpoints) |
+| UI-INFLU-008..012 | TASK-INFLU-009 (wizard endpoints), -010 (face variations), -013 (voice) |
+| UI-INFLU-013 | TASK-INFLU-011, -012 (generación + worker) |
+| UI-INFLU-014 | TASK-INFLU-015 (posts + publish_worker) |
+| UI-INFLU-015 | TASK-INFLU-002 (platform_ai_providers) |
+| UI-INFLU-016 | ninguna backend (público) |
+
+Orden de ejecución recomendado: backend infra (TASK-INFLU-001..003) → providers (-004..007) → personas + wizard (-008..010, -013) → generación (-011..012) → plataformas + publish (-014..015) → créditos + observabilidad (-016..018). UI puede arrancar UI-INFLU-001..002 en paralelo con backend infra; UI-INFLU-003..014 esperan a sus TASK-INFLU correspondientes; UI-INFLU-015..016 son independientes.
+
+---

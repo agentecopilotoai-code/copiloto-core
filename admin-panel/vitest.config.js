@@ -13,17 +13,23 @@ export default defineConfig({
       },
     },
     include: ['src/**/*.test.{js,jsx}'],
-    // UI-014 — Cobertura del admin-panel.
-    // Mínimos por directorio:
-    //   - components/ui   ≥ 60%
-    //   - permissions     ≥ 60%
-    //   - features        ≥ 40%
-    // El job de CI corre `npm run test:coverage` y falla si algún umbral
-    // queda por debajo. Mantener estos números en sincronía con
-    // docs/UI_BACKLOG.md (UI-014) y docs/DONE.md.
+    // Cobertura del admin-panel.
+    // **Umbral global: ≥85%** statements/lines (política PR-merge).
+    //   - Si el total cae bajo 85%, `npm run test:coverage` exit 1 → CI rojo
+    //     → branch protection bloquea el merge.
+    //   - Mantener este número alineado con docs/DONE.md y la regla de
+    //     `Required status checks` en GitHub.
+    //
+    // Mínimos por directorio (más estrictos donde ya tenemos cobertura
+    // alta, para evitar regresiones puntuales aun cuando el total siga ≥85%):
+    //   - components/ui    ≥ 85%
+    //   - permissions      ≥ 85%
+    //   - services         ≥ 85%
+    //   - hooks            ≥ 85%
+    //   - features         ≥ 80% (todavía hay sub-módulos en construcción)
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'html', 'lcov'],
+      reporter: ['text', 'html', 'lcov', 'json-summary'],
       reportsDirectory: './coverage',
       include: ['src/**/*.{js,jsx}'],
       exclude: [
@@ -33,23 +39,43 @@ export default defineConfig({
         'src/**/*.module.css',
       ],
       thresholds: {
+        // Umbral global — el más importante para la regla "PR no mergeable
+        // si frontend coverage < 85%".
+        lines: 85,
+        statements: 85,
+        functions: 75,
+        branches: 75,
+        // Umbrales por carpeta — más estrictos donde ya hay cobertura alta
+        // y deben preservarse.
         'src/components/ui/**': {
-          lines: 60,
-          functions: 60,
-          branches: 60,
-          statements: 60,
+          lines: 85,
+          functions: 75,
+          branches: 75,
+          statements: 85,
         },
         'src/permissions/**': {
-          lines: 60,
-          functions: 60,
-          branches: 60,
-          statements: 60,
+          lines: 85,
+          functions: 75,
+          branches: 75,
+          statements: 85,
+        },
+        'src/services/**': {
+          lines: 85,
+          functions: 75,
+          branches: 75,
+          statements: 85,
+        },
+        'src/hooks/**': {
+          lines: 85,
+          functions: 75,
+          branches: 75,
+          statements: 85,
         },
         'src/features/**': {
-          lines: 40,
-          functions: 40,
-          branches: 40,
-          statements: 40,
+          lines: 80,
+          functions: 70,
+          branches: 70,
+          statements: 80,
         },
       },
     },

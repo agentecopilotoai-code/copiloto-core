@@ -30,9 +30,9 @@ vi.mock('../../components/ui/index.js', async () => {
   };
 });
 
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import * as coreApi from '../../services/coreApi.js';
-// eslint-disable-next-line import/first
+// eslint-disable-next-line no-unused-vars -- vitest hoists vi.mock
 import { AccountNotifications } from './AccountNotifications.jsx';
 
 const SESSION = { accessToken: 'tok', profile: { sub: 'u-1' } };

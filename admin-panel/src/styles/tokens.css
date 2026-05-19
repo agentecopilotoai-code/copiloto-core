@@ -198,3 +198,77 @@
   --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 1px 0 rgba(0, 0, 0, 0.5), 0 6px 18px -8px rgba(0, 0, 0, 0.55);
 }
+
+/* ── Módulo Influencer / Ravit Studio — UI-INFLU-001 ───────────────────────
+ *
+ * Fuente de verdad visual:
+ *   - docs/influencer/04 _ Paleta.html
+ *   - docs/influencer/05 _ Tipograf_a.html
+ *
+ * Filosofía declarada en el HTML:
+ *   "El verde es la voz de Ravit, no su volumen. Cream + navy hacen el 95% del
+ *    trabajo. El verde sólo entra para señalar AI, acción primaria y estado
+ *    activo. Si una pantalla tiene más de 3 elementos en verde, es demasiado."
+ *
+ * Estos tokens son ADITIVOS — NO reemplazan los `--bg`/`--ink`/`--accent` base
+ * de CopilotoIA. Solo se consumen desde components en `src/features/influencer/`
+ * y desde el shell del módulo (selector `[data-module='influencer']`).
+ *
+ * Dark mode: el módulo Ravit mantiene la paleta cream en cualquier setting de
+ * tema — la identidad visual no se invierte entre light/dark por decisión de
+ * marca declarada en el HTML.
+ */
+:root {
+  /* === Superficies — Cream Bento warm === */
+  --influencer-bg:           #F1EDE3; /* Fondo de página */
+  --influencer-bg-alt:       #E8E2D3; /* Topbar · footers · paneles */
+  --influencer-bg-sidebar:   #F7F4EA; /* Sidebar (más clara) */
+  --influencer-bg-card:      #FFFFFF; /* Cards · paneles principales */
+  --influencer-bg-card-alt:  #FBF9F2; /* Sub-cards · cards anidadas */
+  --influencer-bg-inputs:    rgba(27, 37, 66, 0.04); /* Inputs · chips inactivos */
+
+  /* === Texto — Navy Pulse === */
+  --influencer-ink:          #1B2542; /* Texto principal · titulares */
+  --influencer-ink-mid:      rgba(27, 37, 66, 0.78); /* Texto secundario · bodies */
+  --influencer-ink-soft:     rgba(27, 37, 66, 0.55); /* Captions · placeholders */
+  --influencer-ink-faint:    rgba(27, 37, 66, 0.32); /* Eyebrows · etiquetas mono */
+
+  /* === Verde Ravit — identidad/acento === */
+  --influencer-green:        #2DBB6A; /* CTA primario · indicador AI */
+  --influencer-green-dim:    #0F7A3F; /* Texto sobre fondo verde claro */
+  --influencer-green-soft:   rgba(45, 187, 106, 0.12); /* Badges · pills · estados activos */
+  --influencer-green-border: rgba(45, 187, 106, 0.38); /* Bordes en estados activos */
+
+  /* === Estados — toasts · validaciones · semáforos === */
+  --influencer-coral:        #E45D4A; /* Error · falló · destructivo */
+  --influencer-amber:        #D99536; /* Aviso · expira · programado */
+  --influencer-sky:          #5B8FB9; /* Info neutra · sugerencia */
+
+  /* === Tipografía Geist === */
+  --influencer-font-sans:    'Geist', 'Inter Tight', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --influencer-font-mono:    'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* Escala tipográfica del módulo (extraída de "05 _ Tipograf_a.html") */
+  --influencer-fs-display-xl: 56px;   /* Hero de landing */
+  --influencer-fs-display-l:  40px;   /* Títulos de pantalla principal */
+  --influencer-fs-display-m:  32px;   /* Sección hero · página interna */
+  --influencer-fs-display-s:  22px;   /* Sub-secciones · cards grandes */
+  --influencer-fs-heading:    17px;   /* Card titles · sidebar */
+  --influencer-fs-body-l:     16px;   /* Subhead · bullet de landing */
+  --influencer-fs-body-m:     14px;   /* Cuerpo principal de UI */
+  --influencer-fs-body-s:     13px;   /* Cards · listas · descripciones */
+  --influencer-fs-caption:    11.5px; /* Sub-labels · hints */
+  --influencer-fs-eyebrow:    10.5px; /* Mono · por encima de títulos */
+  --influencer-fs-mono-cap:   10px;   /* Mono · etiquetas · timestamps */
+  --influencer-fs-code:       12px;   /* Mono · hex · IDs · datos */
+
+  /* Tracking (letter-spacing) del módulo */
+  --influencer-ls-display-xl: -0.04em;
+  --influencer-ls-display-l:  -0.035em;
+  --influencer-ls-display-m:  -0.03em;
+  --influencer-ls-display-s:  -0.02em;
+  --influencer-ls-heading:    -0.015em;
+  --influencer-ls-eyebrow:    0.18em;
+  --influencer-ls-mono-cap:   0.16em;
+  --influencer-ls-code:       0.02em;
+}
