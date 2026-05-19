@@ -269,7 +269,7 @@ async def _update_scheduler_queue_depth(conn: asyncpg.Connection) -> None:
 CONSENT_REAFFIRM_EVERY_TICKS = 360  # ≈ once per hour at 10s/loop
 
 
-async def main() -> None:
+async def main() -> None:  # pragma: no cover - manual entrypoint
     configure_logging(get_settings().log_level)
     settings = get_settings()
     start_metrics_http_server(settings.worker_metrics_port)
