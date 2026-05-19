@@ -311,7 +311,7 @@ async def _process_locked_batch(conn: asyncpg.Connection) -> int:
     return len(rows)
 
 
-async def main() -> None:
+async def main() -> None:  # pragma: no cover - manual entrypoint
     configure_logging(get_settings().log_level)
     settings = get_settings()
     start_metrics_http_server(settings.worker_metrics_port)

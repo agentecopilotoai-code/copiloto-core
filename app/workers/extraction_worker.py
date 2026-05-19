@@ -340,7 +340,7 @@ async def _audit(
 # Main loop
 # ---------------------------------------------------------------------------
 
-async def main() -> None:
+async def main() -> None:  # pragma: no cover - manual entrypoint
     configure_logging(get_settings().log_level)
     settings = get_settings()
     log.info('extraction_worker_starting', poll_interval=POLL_INTERVAL_SECONDS)
