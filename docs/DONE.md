@@ -15,6 +15,21 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### COVERAGE-BACKEND-70 (iter 3) — refactor abortado + 8 tests rag_orchestrator DB
+
+- **Fecha:** 2026-05-19
+- **Objetivo:** intentar el refactor estructural de `routes.py` (split a package) y agregar tests directos sobre `rag_orchestrator.py`.
+- **Resultado:** **63.0% → 63.05%** (negligible). El refactor de `routes.py` fue abortado tras descubrir que **97 archivos de tests hard-codean el path `app/api/v1/routes.py`** para checks estáticos — convertirlo en package quebraría todos. Los 8 tests nuevos para `rag_orchestrator.py` apenas movieron coverage (era el path con menos retorno marginal).
+- **Cambios:**
+  - **`tests/test_unit_rag_orchestrator_db.py`** (8 tests): direct DB tests para `_load_active_resources_context` (con seed + sin), `_clear_pending_recall` (verifica metadata key removed), `orchestrate_inbound_message` early-return cases (handoff active / unsupported message_type / empty body), `_resolve_answer` template engine, `_tier_from_result` mapping.
+  - **`pyproject.toml`**: F811 ignore para el nuevo archivo.
+- **Refactor abortado:** intenté convertir `routes.py` (15,472 LOC) en package (`routes/main.py` + `__init__.py` re-export). El move funciona pero **97 test files** hacen `Path('app/api/v1/routes.py').read_text()` para checks estáticos. Updating todos requiere su propio PR coordinado. Reverted vía `git mv` inverso. Roadmap documentado: la migración debe ir en pasos pequeños (mover handlers uno-por-uno a submódulos, mantener `routes.py` como re-export façade) en lugar de un big-bang.
+- **Validaciones:** `pytest --cov=app tests/` → 63.05%. 2,689 tests pass. `ruff check` → All checks passed.
+- **Razón honesta para no llegar a 70%:** los marginal returns por test han caído a <0.01% por test. Los 280+ tests escritos en 3 iteraciones cubrieron lo cubrible sin refactor estructural. El path real al 70%:
+  1. Split incremental de `routes.py` (1-2 handlers por PR durante varias semanas).
+  2. Mocking centralizado (fixture global) de `httpx.AsyncClient` para cubrir Auth0/cloud LLM branches en routes.py.
+  3. Test harness pytest-asyncio compartido para workers que reuse el `db.pool` del TestClient.
+
 ### COVERAGE-BACKEND-70 (iter 2) — 61.7% → 63.0% (+1.3pp) con tests mockeados de LLM/Auth0/segments/booking
 
 - **Fecha:** 2026-05-19

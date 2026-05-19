@@ -40,6 +40,7 @@ target-version = "py312"
 # F811 ("redefinition of unused name") is a false positive in this pattern.
 "tests/test_e2e_http_*.py" = ["F811"]
 "tests/test_unit_booking_flow_db.py" = ["F811"]
+"tests/test_unit_rag_orchestrator_db.py" = ["F811"]
 "tests/conftest_e2e_http.py" = ["F811"]
 
 [tool.setuptools.packages.find]
