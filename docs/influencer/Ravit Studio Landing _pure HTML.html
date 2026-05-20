@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ravit Studio — Tu marca, con cara propia</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  /* ─── Tokens ──────────────────────────────────────────────── */
+  :root {
+    --bg:         #F1EDE3;
+    --bg-alt:     #E8E2D3;
+    --bg-card:    #FFFFFF;
+    --bg-inset:   #FBF9F2;
+    --ink:        #1B2542;
+    --ink-mid:    rgba(27,37,66,0.78);
+    --ink-soft:   rgba(27,37,66,0.55);
+    --ink-faint:  rgba(27,37,66,0.32);
+    --line:       rgba(27,37,66,0.08);
+    --line-mid:   rgba(27,37,66,0.16);
+    --line-strong:rgba(27,37,66,0.24);
+    --green:      #2DBB6A;
+    --green-dim:  #0F7A3F;
+    --green-soft: rgba(45,187,106,0.12);
+    --green-border: rgba(45,187,106,0.36);
+    --coral:      #E45D4A;
+    --amber:      #D99536;
+    --radius:     18px;
+    --radius-lg:  26px;
+    --radius-xl:  36px;
+    --font:       "Geist", "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+    --mono:       "Geist Mono", ui-monospace, monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); }
+  body {
+    font-family: var(--font);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* ─── Generic atoms ───────────────────────────────────────── */
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px 6px 10px;
+    background: var(--green-soft); color: var(--green-dim);
+    border: 1px solid var(--green-border);
+    border-radius: 999px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.01em;
+  }
+  .eyebrow .dot {
+    width: 6px; height: 6px; border-radius: 999px;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+  }
+  .mono-label {
+    font-family: var(--mono); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .mono-label.green { color: var(--green-dim); }
+  .mono-label.green-bright { color: var(--green); }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 9px; font-family: var(--font); font-weight: 600;
+    letter-spacing: -0.005em; white-space: nowrap;
+    border-radius: 11px; padding: 11px 18px; font-size: 14px;
+    cursor: pointer; user-select: none;
+    border: 1px solid transparent;
+    text-decoration: none;
+  }
+  .btn.lg { font-size: 15.5px; padding: 15px 26px; border-radius: 13px; }
+  .btn.xl { font-size: 16.5px; padding: 18px 30px; border-radius: 14px; }
+  .btn.primary {
+    background: var(--green); color: #0A1530; border-color: var(--green);
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.25) inset,
+      0 8px 24px rgba(45,187,106,0.32);
+  }
+  .btn.ghost {
+    background: var(--bg-card); color: var(--ink); border-color: var(--line-mid);
+  }
+  .btn.full { width: 100%; }
+
+  .section-head { text-align: center; margin-bottom: 50px; }
+  .section-head .eyebrow-wrap { display: flex; justify-content: center; }
+  .section-head h2 {
+    margin: 20px auto 0;
+    font-family: var(--font); font-weight: 600;
+    font-size: 56px; line-height: 1.02; letter-spacing: -0.04em;
+    color: var(--ink); max-width: 720px;
+    text-wrap: balance;
+  }
+  .section-head p {
+    margin: 18px auto 0;
+    font-size: 17px; line-height: 1.55;
+    color: var(--ink-mid); max-width: 580px;
+  }
+
+  /* Pill badges over imagery */
+  .ai-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px 4px 8px; border-radius: 999px;
+    background: rgba(11,18,38,0.65); backdrop-filter: blur(10px);
+    color: var(--green); font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.06em;
+    border: 1px solid var(--green-border);
+  }
+  .brand-pill {
+    padding: 3px 9px; border-radius: 999px;
+    background: rgba(255,255,255,0.95); color: var(--ink);
+    font-size: 10.5px; font-weight: 700;
+  }
+
+  /* Persona image tile (CSS background) */
+  .img-tile {
+    background-color: #E0DBC9;
+    background-size: cover; background-position: 50% 25%;
+    position: relative; overflow: hidden;
+  }
+  .img-tile .gradient-bottom {
+    position: absolute; inset: 0;
+    background: linear-gradient(to top, rgba(15,20,40,0.75), transparent 50%);
+  }
+  .img-tile .gradient-bottom.stronger {
+    background: linear-gradient(to top, rgba(15,20,40,0.85), transparent 55%);
+  }
+  .img-tile .caption-bottom {
+    position: absolute; bottom: 16px; left: 18px; right: 18px;
+    color: #fff;
+  }
+
+  /* Logo */
+  .logo { display: flex; align-items: center; gap: 11px; }
+  .logo svg { display: block; }
+  .logo .word { line-height: 1; }
+  .logo .word .ravit {
+    font-family: var(--font); font-weight: 700;
+    font-size: 22px; letter-spacing: -0.02em; color: var(--ink);
+  }
+  .logo .word .studio {
+    font-family: var(--mono); font-size: 9px;
+    letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--ink-faint); margin-top: 3px; font-weight: 600;
+  }
+
+  /* ─── 1) Nav ──────────────────────────────────────────────── */
+  .nav {
+    position: relative; z-index: 10;
+    padding: 22px 56px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .nav-pill {
+    display: flex; align-items: center; gap: 4px;
+    padding: 5px; border-radius: 999px;
+    background: var(--bg-card); border: 1px solid var(--line);
+  }
+  .nav-pill a {
+    padding: 8px 16px; font-size: 13.5px; font-weight: 500;
+    color: var(--ink-soft); border-radius: 999px;
+    border: 1px solid transparent;
+    text-decoration: none;
+  }
+  .nav-pill a.active {
+    color: var(--ink);
+    background: var(--green-soft);
+    border-color: var(--green-border);
+  }
+  .nav-right { display: flex; align-items: center; gap: 12px; }
+  .nav-right .login {
+    font-size: 14px; color: var(--ink-mid); font-weight: 500; cursor: pointer;
+  }
+
+  /* ─── 2) Hero ─────────────────────────────────────────────── */
+  .hero {
+    padding: 40px 56px 100px;
+    position: relative;
+  }
+  .hero-grid {
+    display: grid; grid-template-columns: 1.05fr 1fr; gap: 60px;
+    align-items: center;
+  }
+  .hero h1 {
+    margin: 24px 0 0;
+    font-family: var(--font); font-weight: 600;
+    font-size: 96px; line-height: 0.96; letter-spacing: -0.045em;
+    color: var(--ink); text-wrap: balance;
+  }
+  .hero h1 .accent {
+    font-style: italic; font-weight: 500; color: var(--green-dim);
+  }
+  .hero .lede {
+    margin: 28px 0 0;
+    font-size: 19px; line-height: 1.5;
+    color: var(--ink-mid); max-width: 540px;
+  }
+  .hero .cta-row { margin-top: 36px; display: flex; gap: 12px; align-items: center; }
+  .hero .stats {
+    margin-top: 50px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px;
+    max-width: 540px;
+  }
+  .hero .stat { padding-left: 18px; border-left: 1px solid var(--line-mid); }
+  .hero .stat:first-child { padding-left: 0; border-left: none; }
+  .hero .stat-v {
+    font-size: 32px; font-weight: 600;
+    letter-spacing: -0.03em; color: var(--ink); line-height: 1;
+  }
+  .hero .stat-l { font-size: 12.5px; color: var(--ink-soft); margin-top: 6px; }
+
+  /* Right bento */
+  .hero-bento { position: relative; height: 700px; }
+
+  .pulse-tile {
+    position: absolute; top: 0; right: 0;
+    width: 280px; height: 380px; border-radius: 24px;
+    background: var(--ink); color: var(--bg);
+    padding: 26px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    border: 1px solid var(--ink);
+    box-shadow: 0 30px 60px rgba(10,15,31,0.18);
+  }
+  .pulse-tile .status {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 4px 10px 4px 8px; border-radius: 999px;
+    background: rgba(45,187,106,0.18);
+    border: 1px solid var(--green-border);
+    color: var(--green);
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
+  }
+  .pulse-tile .status .dot {
+    width: 5px; height: 5px; border-radius: 999px;
+    background: var(--green); box-shadow: 0 0 6px var(--green);
+  }
+  .pulse-tile .big {
+    font-size: 28px; font-weight: 600;
+    margin-top: 18px; letter-spacing: -0.025em; line-height: 1.1;
+  }
+  .pulse-tile .sub-soft {
+    font-size: 13px; color: rgba(241,237,227,0.6); margin-top: 8px;
+  }
+  .pulse-tile .reach-label {
+    font-family: var(--mono); font-size: 10px;
+    color: rgba(241,237,227,0.5); letter-spacing: 0.16em;
+    text-transform: uppercase; font-weight: 600;
+  }
+  .pulse-tile .reach-v {
+    font-size: 38px; font-weight: 600;
+    margin-top: 8px; color: var(--green); letter-spacing: -0.03em;
+  }
+  .pulse-tile .reach-sub {
+    font-size: 12px; color: rgba(241,237,227,0.55); margin-top: 4px;
+  }
+
+  .hero-card {
+    position: absolute;
+    border-radius: 22px; overflow: hidden;
+    border: 1px solid var(--line-mid);
+    box-shadow: 0 30px 60px rgba(10,15,31,0.15);
+  }
+  .hero-card.main { top: 70px; left: 30px; width: 280px; height: 430px; }
+  .hero-card.sec  { top: 280px; right: 40px; width: 220px; height: 280px; transform: rotate(2deg); box-shadow: 0 20px 50px rgba(10,15,31,0.12); }
+  .hero-card.tri  { bottom: 0; left: 80px; width: 200px; height: 260px; transform: rotate(-3deg); box-shadow: 0 20px 50px rgba(10,15,31,0.12); }
+  .hero-card .ai-pill { position: absolute; top: 14px; left: 14px; }
+  .hero-card .name {
+    font-size: 22px; font-weight: 600; color: #fff;
+    letter-spacing: -0.02em; text-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  }
+  .hero-card .meta {
+    font-size: 12px; color: rgba(255,255,255,0.75); margin-top: 3px;
+  }
+  .hero-card.sec .name, .hero-card.tri .name { font-size: 17px; letter-spacing: -0.015em; }
+  .hero-card.sec .meta, .hero-card.tri .meta { font-size: 11px; }
+
+  .notif {
+    position: absolute;
+    padding: 12px 16px; border-radius: 14px;
+    background: var(--bg-card); border: 1px solid var(--line);
+    box-shadow: 0 8px 24px rgba(10,15,31,0.10);
+    display: flex; align-items: center; gap: 12px;
+    max-width: 280px;
+  }
+  .notif .icon {
+    width: 36px; height: 36px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--green-soft); color: var(--green-dim);
+    border: 1px solid var(--green-border);
+    flex-shrink: 0;
+  }
+  .notif .icon.coral {
+    background: rgba(228,93,74,0.12); color: var(--coral);
+    border-color: rgba(228,93,74,0.30);
+  }
+  .notif .t { font-size: 13px; font-weight: 600; color: var(--ink); line-height: 1.2; }
+  .notif .s { font-size: 11px; color: var(--ink-soft); margin-top: 3px; }
+  .notif.tl { top: 0; left: 0; }
+  .notif.br { bottom: 60px; right: 0; max-width: 260px; }
+
+  /* ─── 3) Trust ────────────────────────────────────────────── */
+  .trust {
+    padding: 40px 56px 70px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-alt);
+  }
+  .trust-row {
+    display: flex; align-items: center; gap: 40px;
+    justify-content: space-between; flex-wrap: wrap;
+  }
+  .trust-intro {
+    font-size: 13.5px; color: var(--ink-soft); font-weight: 500;
+    max-width: 240px; line-height: 1.5;
+  }
+  .trust-intro .mono-label { display: block; margin-bottom: 6px; }
+  .trust-brands {
+    display: flex; align-items: center; gap: 38px; flex-wrap: wrap;
+  }
+  .trust-brands span {
+    font-family: var(--font); font-size: 18px; font-weight: 600;
+    letter-spacing: 0.18em; color: var(--ink-soft);
+  }
+
+  /* ─── 4) The Shift ────────────────────────────────────────── */
+  .shift { padding: 120px 56px 100px; }
+  .shift-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+    max-width: 1100px; margin: 0 auto;
+  }
+  .shift-card {
+    padding: 36px; border-radius: var(--radius-lg);
+    position: relative;
+  }
+  .shift-card.old {
+    background: var(--bg-card); border: 1px solid var(--line);
+  }
+  .shift-card.new {
+    background: var(--ink); color: var(--bg);
+    border: 1px solid var(--ink);
+    overflow: hidden;
+  }
+  .shift-card.new .glow {
+    position: absolute; top: -60px; right: -60px;
+    width: 220px; height: 220px; border-radius: 999px;
+    background: radial-gradient(circle, var(--green-soft) 0%, transparent 70%);
+    filter: blur(20px);
+  }
+  .shift-card .header {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 22px; position: relative;
+  }
+  .shift-card .header .rule { flex: 1; height: 1px; background: var(--line); }
+  .shift-card.new .header .rule { background: rgba(241,237,227,0.15); }
+  .shift-card h3 {
+    margin: 0; font-family: var(--font); font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+  .shift-card.old h3 {
+    font-size: 28px; color: var(--ink-mid);
+    text-decoration: line-through; text-decoration-color: var(--coral); text-decoration-thickness: 2px;
+  }
+  .shift-card.new h3 {
+    font-size: 32px; color: #F1EDE3;
+  }
+  .shift-rows { margin-top: 22px; display: flex; flex-direction: column; gap: 14px; }
+  .shift-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding-bottom: 12px;
+    font-size: 14px;
+    border-bottom: 1px dashed var(--line);
+  }
+  .shift-row:last-child { border-bottom: none; }
+  .shift-card.new .shift-row { border-bottom: 1px dashed rgba(241,237,227,0.14); }
+  .shift-card.new .shift-row:last-child { border-bottom: none; }
+  .shift-row .k { color: var(--ink-soft); font-weight: 500; }
+  .shift-row .v { color: var(--ink-mid); font-weight: 500; text-align: right; }
+  .shift-card.new .shift-row .k { color: rgba(241,237,227,0.55); }
+  .shift-card.new .shift-row .v { color: #F1EDE3; font-weight: 600; }
+
+  /* ─── 5) How it works ─────────────────────────────────────── */
+  .how {
+    padding: 120px 56px 100px;
+    background: var(--bg-alt);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .how-steps {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+    max-width: 1280px; margin: 0 auto;
+  }
+  .how-step {
+    padding: 28px; border-radius: var(--radius);
+    background: var(--bg-card); border: 1px solid var(--line);
+    position: relative; min-height: 240px;
+  }
+  .how-step .n {
+    font-family: var(--font); font-size: 64px; font-weight: 600;
+    letter-spacing: -0.04em; color: var(--ink-faint); line-height: 1;
+    margin-top: 14px; margin-bottom: 14px;
+  }
+  .how-step h3 {
+    margin: 0; font-family: var(--font); font-size: 22px; font-weight: 600;
+    letter-spacing: -0.02em; color: var(--ink); line-height: 1.15;
+  }
+  .how-step p {
+    margin: 12px 0 0; font-size: 13.5px; line-height: 1.5; color: var(--ink-soft);
+  }
+  .how-step .arrow-link {
+    position: absolute; top: 50%; right: -14px; transform: translateY(-50%);
+    width: 28px; height: 28px; border-radius: 999px;
+    background: var(--bg-alt); border: 1px solid var(--line);
+    color: var(--ink-soft); z-index: 2;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .how-step:last-child .arrow-link { display: none; }
+
+  .how-bonus {
+    margin: 60px auto 0;
+    max-width: 1280px;
+    padding: 28px; border-radius: var(--radius);
+    background: var(--ink); color: var(--bg);
+    display: flex; align-items: center; justify-content: space-between; gap: 30px;
+  }
+  .how-bonus .mono-label.green-bright {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .how-bonus h3 {
+    margin: 8px 0 0;
+    font-family: var(--font); font-size: 26px; font-weight: 600;
+    letter-spacing: -0.025em; color: #F1EDE3;
+  }
+  .how-bonus p {
+    margin: 8px 0 0; font-size: 14px; color: rgba(241,237,227,0.7);
+    max-width: 640px; line-height: 1.5;
+  }
+
+  /* ─── 6) Casting ──────────────────────────────────────────── */
+  .casting { padding: 120px 56px 100px; }
+  .casting-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: 360px 360px;
+    gap: 14px;
+    max-width: 1280px; margin: 0 auto;
+  }
+  .showcase-card {
+    position: relative; border-radius: var(--radius);
+    overflow: hidden; border: 1px solid var(--line);
+    background: var(--bg-card);
+  }
+  .showcase-card .img-tile { width: 100%; height: 100%; }
+  .showcase-card .topbar {
+    position: absolute; top: 16px; left: 16px; right: 16px;
+    display: flex; justify-content: space-between; align-items: flex-start;
+  }
+  .showcase-card .ai-pill {
+    background: rgba(11,18,38,0.55); backdrop-filter: blur(8px);
+  }
+  .showcase-card .bottom {
+    position: absolute; bottom: 16px; left: 18px; right: 18px;
+  }
+  .showcase-card .name {
+    font-weight: 600; color: #fff;
+    letter-spacing: -0.025em; line-height: 1.05;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  }
+  .showcase-card .name { font-size: 19px; }
+  .showcase-card.wide .name { font-size: 26px; }
+  .showcase-card.large .name { font-size: 38px; }
+  .showcase-card .meta {
+    display: flex; align-items: center; gap: 10px; margin-top: 8px;
+    font-size: 11.5px; color: rgba(255,255,255,0.75);
+  }
+  .showcase-card .socials {
+    margin-top: 14px; display: flex; align-items: center; gap: 8px;
+    color: rgba(255,255,255,0.6);
+  }
+  .casting-cta { text-align: center; margin-top: 36px; }
+
+  /* ─── 7) Use cases ────────────────────────────────────────── */
+  .cases {
+    padding: 120px 56px 100px;
+    background: var(--bg-alt);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .cases-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+    max-width: 1280px; margin: 0 auto;
+  }
+  .case-card {
+    border-radius: var(--radius); overflow: hidden;
+    background: var(--bg-card); border: 1px solid var(--line);
+  }
+  .case-card .photo { position: relative; aspect-ratio: 4 / 5; }
+  .case-card .photo .img-tile { width: 100%; height: 100%; }
+  .case-card .industry {
+    position: absolute; top: 14px; left: 14px;
+    padding: 4px 10px; border-radius: 999px;
+    background: rgba(255,255,255,0.95); color: var(--ink);
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .case-card .caption-overlay {
+    position: absolute; bottom: 14px; left: 14px; right: 14px;
+    padding: 10px 12px; border-radius: 10px;
+    background: rgba(11,18,38,0.55); backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.18);
+    font-size: 12.5px; color: #fff; line-height: 1.4;
+  }
+  .case-card .body { padding: 20px 22px 22px; }
+  .case-card .row {
+    display: flex; justify-content: space-between; align-items: flex-end;
+  }
+  .case-card .result-v {
+    font-size: 26px; font-weight: 600; color: var(--ink); margin-top: 6px;
+    letter-spacing: -0.025em; line-height: 1;
+  }
+  .case-card .cadence-v {
+    font-size: 13.5px; color: var(--ink-mid); font-weight: 500; margin-top: 8px;
+  }
+  .case-card .footer-row {
+    margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .case-card .socials-soft { display: flex; gap: 6px; color: var(--ink-soft); }
+  .case-card .see {
+    font-size: 12.5px; color: var(--green-dim); font-weight: 600;
+    display: flex; align-items: center; gap: 4px; cursor: pointer;
+  }
+
+  /* ─── 8) Pricing ──────────────────────────────────────────── */
+  .pricing { padding: 120px 56px 100px; }
+  .pricing-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+    max-width: 1100px; margin: 0 auto;
+  }
+  .plan {
+    padding: 32px; border-radius: var(--radius-lg);
+    background: var(--bg-card); color: var(--ink);
+    border: 1px solid var(--line);
+    position: relative;
+  }
+  .plan.best {
+    background: var(--ink); color: var(--bg);
+    border-color: var(--ink);
+    transform: translateY(-12px);
+    box-shadow: 0 30px 60px rgba(10,15,31,0.18);
+  }
+  .plan .best-badge {
+    position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+    padding: 5px 14px; border-radius: 999px;
+    background: var(--green); color: #0A1530;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .plan .price {
+    margin-top: 14px; display: flex; align-items: baseline; gap: 6px;
+  }
+  .plan .price .num {
+    font-size: 56px; font-weight: 600;
+    letter-spacing: -0.04em; line-height: 1;
+  }
+  .plan .price .per { font-size: 14px; color: var(--ink-soft); }
+  .plan.best .price .per { color: rgba(241,237,227,0.55); }
+  .plan .desc {
+    margin: 14px 0 0; font-size: 13.5px; color: var(--ink-mid); line-height: 1.5;
+  }
+  .plan.best .desc { color: rgba(241,237,227,0.7); }
+  .plan .features {
+    margin-top: 22px; padding-top: 22px;
+    border-top: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .plan.best .features { border-top-color: rgba(241,237,227,0.14); }
+  .plan .feature {
+    display: flex; align-items: center; gap: 10px; font-size: 13.5px;
+  }
+  .plan .feature .tick {
+    width: 18px; height: 18px; border-radius: 999px;
+    background: var(--green-soft); color: var(--green-dim);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .plan.best .feature .tick {
+    background: rgba(45,187,106,0.22); color: var(--green);
+  }
+  .plan .feature span:last-child { color: var(--ink-mid); }
+  .plan.best .feature span:last-child { color: #F1EDE3; }
+  .plan .cta { margin-top: 26px; }
+
+  .pricing-foot {
+    margin-top: 50px; text-align: center;
+    font-size: 13px; color: var(--ink-soft);
+  }
+  .pricing-foot strong { color: var(--ink); font-weight: 600; }
+
+  /* ─── 9) Final ────────────────────────────────────────────── */
+  .final { padding: 60px 56px 100px; }
+  .final-card {
+    max-width: 1280px; margin: 0 auto;
+    padding: 80px 60px;
+    background: var(--ink); color: var(--bg);
+    border-radius: var(--radius-xl);
+    position: relative; overflow: hidden;
+    display: grid; grid-template-columns: 1.4fr 1fr; align-items: center; gap: 50px;
+  }
+  .final-card .glow {
+    position: absolute; top: -100px; right: -100px;
+    width: 400px; height: 400px; border-radius: 999px;
+    background: radial-gradient(circle, var(--green-soft) 0%, transparent 70%);
+    filter: blur(30px);
+  }
+  .final-card .copy { position: relative; z-index: 2; }
+  .final-card h2 {
+    margin: 20px 0 0; font-family: var(--font); font-weight: 600;
+    font-size: 72px; line-height: 0.98; letter-spacing: -0.04em;
+    color: #F1EDE3; text-wrap: balance;
+  }
+  .final-card h2 .accent {
+    color: var(--green); font-style: italic; font-weight: 500;
+  }
+  .final-card p {
+    margin: 24px 0 0; font-size: 17px; line-height: 1.55;
+    color: rgba(241,237,227,0.7); max-width: 540px;
+  }
+  .final-card .cta-row {
+    margin-top: 36px; display: flex; gap: 12px; align-items: center;
+  }
+  .final-card .cta-row .alt {
+    font-size: 13px; color: rgba(241,237,227,0.6);
+  }
+  .final-card .cta-row .alt a {
+    color: #F1EDE3; font-weight: 600; text-decoration: none;
+  }
+  .final-card .portrait { position: relative; z-index: 2; display: flex; justify-content: center; }
+  .final-card .portrait .img-tile {
+    width: 260px; height: 380px; border-radius: 22px;
+    border: 1px solid rgba(45,187,106,0.4);
+    box-shadow: 0 30px 60px rgba(45,187,106,0.18);
+    transform: rotate(-3deg);
+  }
+
+  /* ─── 10) Footer ──────────────────────────────────────────── */
+  .footer {
+    padding: 70px 56px 30px;
+    background: var(--bg-alt);
+    border-top: 1px solid var(--line);
+  }
+  .footer-inner {
+    max-width: 1280px; margin: 0 auto;
+    display: grid; grid-template-columns: 1.4fr repeat(4, 1fr); gap: 40px;
+  }
+  .footer .brand-blurb {
+    margin: 22px 0 0; font-size: 13.5px; color: var(--ink-soft);
+    line-height: 1.55; max-width: 320px;
+  }
+  .footer .transparency-pill {
+    margin-top: 22px;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px 6px 10px; border-radius: 999px;
+    background: var(--green-soft); border: 1px solid var(--green-border);
+    color: var(--green-dim); font-size: 11.5px; font-weight: 600;
+  }
+  .footer-col .mono-label { margin-bottom: 18px; display: block; }
+  .footer-col .links { display: flex; flex-direction: column; gap: 12px; }
+  .footer-col .links a {
+    font-size: 13.5px; color: var(--ink-mid); cursor: pointer;
+    text-decoration: none;
+  }
+  .footer-bottom {
+    max-width: 1280px; margin: 50px auto 0;
+    padding-top: 22px; border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 14px;
+    font-size: 12px; color: var(--ink-soft);
+  }
+  .footer-bottom .socials { display: flex; gap: 14px; color: var(--ink-soft); }
+
+  /* SVG icons inherit color */
+  svg { color: currentColor; }
+
+  /* Responsive (light) */
+  @media (max-width: 1100px) {
+    .hero h1 { font-size: 72px; }
+    .hero-grid { grid-template-columns: 1fr; gap: 80px; }
+    .hero-bento { height: 600px; }
+    .nav { padding: 18px 28px; }
+    .hero, .trust, .shift, .how, .casting, .cases, .pricing, .final, .footer { padding-left: 28px; padding-right: 28px; }
+    .how-steps { grid-template-columns: repeat(2, 1fr); }
+    .cases-grid { grid-template-columns: 1fr; }
+    .pricing-grid { grid-template-columns: 1fr; }
+    .plan.best { transform: none; }
+    .shift-grid { grid-template-columns: 1fr; }
+    .casting-grid { grid-template-columns: repeat(2, 1fr); grid-template-rows: auto; }
+    .final-card { grid-template-columns: 1fr; padding: 50px 30px; }
+    .final-card h2 { font-size: 52px; }
+    .footer-inner { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════
+     Reusable icon symbols (referenced via <use href="#id">)
+     ════════════════════════════════════════════════════════════ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-sparkle" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3l1.8 5.2 5.2 1.8-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>
+        <path d="M19 3v3M21 4.5h-3"/>
+      </g>
+    </symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24">
+      <path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-play" viewBox="0 0 24 24">
+      <path d="M8 5v14l11-7z" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24">
+      <path d="M5 12.5l4.5 4.5L19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24">
+      <path d="M12 21s-7-4.5-9.5-9.2C.8 8.4 3 5 6.4 5c1.9 0 3.5 1 4.6 2.5C12.1 6 13.7 5 15.6 5 19 5 21.2 8.4 19.5 11.8 17 16.5 12 21 12 21z" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-ig" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.6">
+        <rect x="3" y="3" width="18" height="18" rx="5"/>
+        <circle cx="12" cy="12" r="4"/>
+        <circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>
+      </g>
+    </symbol>
+    <symbol id="i-tt" viewBox="0 0 24 24">
+      <path d="M16 3v3.5a4.5 4.5 0 004.5 4.5V14a8 8 0 01-4.5-1.4V16a6 6 0 11-6-6h.5v3.5H10A2.5 2.5 0 1012.5 16V3H16z" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-yt" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.6">
+        <rect x="2" y="6" width="20" height="12" rx="3"/>
+      </g>
+      <path d="M10 9.5v5l5-2.5z" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-x" viewBox="0 0 24 24">
+      <path d="M18.244 3H21.5L14.06 11.55 22.83 21H16.06l-5.29-6.21L4.76 21H1.5l7.94-9.13L1.17 3h6.93l4.78 5.69L18.244 3z" fill="currentColor"/>
+    </symbol>
+    <symbol id="i-threads" viewBox="0 0 24 24">
+      <path d="M12 3c5 0 8 3 8 8s-3 10-8 10-8-3-8-8c0-3.5 1.5-6 4-6 2 0 3 1 3 3v3c0 1.5 1 2.5 2.5 2.5 2 0 3.5-1.5 3.5-4 0-3-2-5-5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-fb" viewBox="0 0 24 24">
+      <path d="M14 8h3V4h-3c-2 0-3.5 1.5-3.5 3.5V10H8v4h2.5v8h4v-8H17l1-4h-3.5V8.5c0-.3.2-.5.5-.5z" fill="currentColor"/>
+    </symbol>
+  </defs>
+</svg>
+
+<!-- ════════════════════════════════════════════════════════════
+     1) NAV
+     ════════════════════════════════════════════════════════════ -->
+<header class="nav">
+  <div class="logo">
+    <svg viewBox="0 0 80 80" width="28" height="28" aria-hidden="true">
+      <path d="M40 8 C 60 14, 70 30, 64 50 C 58 66, 38 72, 22 64 C 6 56, 4 36, 14 24 C 22 14, 32 10, 40 8 Z" fill="#2DBB6A"/>
+      <circle cx="44" cy="28" r="3.4" fill="#FFFFFF"/>
+      <path d="M22 64 C 30 50, 38 38, 50 28" stroke="#0F7A3F" stroke-width="1.4" fill="none" opacity=".4"/>
+    </svg>
+    <div class="word">
+      <div class="ravit">Ravit</div>
+      <div class="studio">STUDIO</div>
+    </div>
+  </div>
+
+  <nav class="nav-pill" aria-label="Main">
+    <a href="#casting" class="active">Casting</a>
+    <a href="#how">Cómo funciona</a>
+    <a href="#cases">Industrias</a>
+    <a href="#pricing">Precios</a>
+  </nav>
+
+  <div class="nav-right">
+    <span class="login">Entrar</span>
+    <a class="btn primary" href="#start">
+      Empezar gratis
+      <svg width="14" height="14"><use href="#i-arrow"/></svg>
+    </a>
+  </div>
+</header>
+
+<!-- ════════════════════════════════════════════════════════════
+     2) HERO
+     ════════════════════════════════════════════════════════════ -->
+<section class="hero">
+  <div class="hero-grid">
+    <!-- Left text -->
+    <div>
+      <span class="eyebrow"><span class="dot"></span>Casting de personajes con IA</span>
+      <h1>
+        Tu marca,<br>
+        con <span class="accent">cara propia</span>.
+      </h1>
+      <p class="lede">
+        Crea un influencer virtual a la medida de tu marca y produce fotos, reels y anuncios listos para Instagram, TikTok y WhatsApp. Sin shootings, sin modelos, sin drama.
+      </p>
+
+      <div class="cta-row">
+        <a class="btn primary xl" href="#start">
+          Crear mi personaje
+          <svg width="14" height="14"><use href="#i-arrow"/></svg>
+        </a>
+        <a class="btn ghost xl" href="#demo">
+          <svg width="14" height="14"><use href="#i-play"/></svg>
+          Ver demo · 90s
+        </a>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-v">5 min</div>
+          <div class="stat-l">crear un personaje</div>
+        </div>
+        <div class="stat">
+          <div class="stat-v">30 seg</div>
+          <div class="stat-l">generar un reel</div>
+        </div>
+        <div class="stat">
+          <div class="stat-v">+312%</div>
+          <div class="stat-l">engagement medio</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right bento -->
+    <div class="hero-bento">
+      <!-- Pulse navy tile -->
+      <div class="pulse-tile">
+        <div>
+          <span class="status"><span class="dot"></span>EN PRODUCCIÓN</span>
+          <div class="big">184 posts<br>esta semana</div>
+          <div class="sub-soft">5 personajes · 7 plataformas</div>
+        </div>
+        <div>
+          <div class="reach-label">Alcance</div>
+          <div class="reach-v">12.4M</div>
+          <div class="reach-sub">últimos 30 días</div>
+        </div>
+      </div>
+
+      <!-- Main persona card -->
+      <div class="hero-card main">
+        <div class="img-tile" style="width:100%;height:100%;background-image:url('assets/char-1.jpg');background-position:50% 25%"></div>
+        <div class="gradient-bottom"></div>
+        <span class="ai-pill">
+          <svg width="11" height="11"><use href="#i-sparkle"/></svg>
+          AI · TUYO
+        </span>
+        <div class="caption-bottom">
+          <div class="name">Sofía Vega</div>
+          <div class="meta">@sofiavega.studio · 24.7K</div>
+        </div>
+      </div>
+
+      <!-- Secondary -->
+      <div class="hero-card sec">
+        <div class="img-tile" style="width:100%;height:100%;background-image:url('assets/char-3.png');background-position:50% 30%"></div>
+        <div class="gradient-bottom"></div>
+        <div class="caption-bottom" style="bottom:14px;left:14px;right:auto">
+          <div class="name">Valeria</div>
+          <div class="meta">Fashion · 42.1K</div>
+        </div>
+      </div>
+
+      <!-- Tertiary -->
+      <div class="hero-card tri">
+        <div class="img-tile" style="width:100%;height:100%;background-image:url('assets/char-4.png');background-position:30% 30%"></div>
+        <div class="gradient-bottom"></div>
+        <div class="caption-bottom" style="bottom:12px;left:14px;right:auto">
+          <div class="name" style="font-size:16px">Emma</div>
+          <div class="meta">Beauty · 15.3K</div>
+        </div>
+      </div>
+
+      <!-- Floating notification cards -->
+      <div class="notif tl">
+        <div class="icon">
+          <svg width="16" height="16"><use href="#i-sparkle"/></svg>
+        </div>
+        <div>
+          <div class="t">+12 nuevas variaciones</div>
+          <div class="s">generadas en 28s · Sofía</div>
+        </div>
+      </div>
+      <div class="notif br">
+        <div class="icon coral">
+          <svg width="14" height="14"><use href="#i-heart"/></svg>
+        </div>
+        <div>
+          <div class="t">Reel viral · 94K vistas</div>
+          <div class="s">Valeria · front row AW26</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════
+     3) TRUST
+     ════════════════════════════════════════════════════════════ -->
+<section class="trust">
+  <div class="trust-row">
+    <div class="trust-intro">
+      <span class="mono-label">Marcas que producen con Ravit</span>
+      Moda, hotelería, e-commerce, agencias y restaurantes.
+    </div>
+    <div class="trust-brands">
+      <span>MAISON 14</span>
+      <span>LUME</span>
+      <span>NUMÉRO</span>
+      <span>AURA</span>
+      <span>LAGO</span>
+      <span>ATELIER NORTE</span>
+      <span>CIELO HOTELS</span>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════
+     4) THE SHIFT
+     ════════════════════════════════════════════════════════════ -->
+<section class="shift" id="shift">
+  <div class="section-head">
+    <div class="eyebrow-wrap"><span class="eyebrow"><span class="dot"></span>El shift</span></div>
+    <h2>De €4,000 a un café.</h2>
+    <p>Lo que antes costaba un shooting de un día completo, ahora cabe en una pestaña del navegador.</p>
+  </div>
+
+  <div class="shift-grid">
+    <!-- Old way -->
+    <div class="shift-card old">
+      <div class="header">
+        <span class="mono-label">El método antiguo</span>
+        <span class="rule"></span>
+      </div>
+      <h3>Shooting tradicional</h3>
+      <div class="shift-rows">
+        <div class="shift-row"><span class="k">Coste</span><span class="v">€4,000–€12,000</span></div>
+        <div class="shift-row"><span class="k">Tiempo</span><span class="v">48–72 horas</span></div>
+        <div class="shift-row"><span class="k">Personal</span><span class="v">Fotógrafo, modelo, estilista, retoque</span></div>
+        <div class="shift-row"><span class="k">Repetir</span><span class="v">Re-contratar todo + viaje</span></div>
+        <div class="shift-row"><span class="k">Output</span><span class="v">20–40 imágenes finales</span></div>
+        <div class="shift-row"><span class="k">Consistencia</span><span class="v">Depende de quién dispare</span></div>
+      </div>
+    </div>
+
+    <!-- New way -->
+    <div class="shift-card new">
+      <div class="glow"></div>
+      <div class="header">
+        <span class="mono-label green-bright">Con Ravit</span>
+        <span class="rule"></span>
+        <svg width="16" height="16" style="color:var(--green)"><use href="#i-sparkle"/></svg>
+      </div>
+      <h3>Tu casting virtual</h3>
+      <div class="shift-rows">
+        <div class="shift-row"><span class="k">Coste</span><span class="v">desde €0 · pago por crédito</span></div>
+        <div class="shift-row"><span class="k">Tiempo</span><span class="v">30 segundos por imagen</span></div>
+        <div class="shift-row"><span class="k">Personal</span><span class="v">Solo tú · y la IA</span></div>
+        <div class="shift-row"><span class="k">Repetir</span><span class="v">Infinitas variaciones, 1 clic</span></div>
+        <div class="shift-row"><span class="k">Output</span><span class="v">Fotos, reels, stories, anuncios</span></div>
+        <div class="shift-row"><span class="k">Consistencia</span><span class="v">Misma cara · siempre · forever</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════
+     5) HOW IT WORKS
+     ════════════════════════════════════════════════════════════ -->
+<section class="how" id="how">
+  <div class="section-head">
+    <div class="eyebrow-wrap"><span class="eyebrow"><span class="dot"></span>Cómo funciona</span></div>
+    <h2>De cero a casting en 5 minutos.</h2>
+    <p>No es magia. Son 5 pasos guiados, una preview en vivo y un personaje listo para postear hoy.</p>
+  </div>
+
+  <div class="how-steps">
+    <div class="how-step">
+      <span class="mono-label green">Paso 1 · Cara</span>
+      <div class="n">01</div>
+      <h3>Construyes la cara</h3>
+      <p>Elige rasgos, ojos, pelo, piel, edad. O sube una foto.</p>
+      <span class="arrow-link">
+        <svg width="12" height="12"><use href="#i-arrow"/></svg>
+      </span>
+    </div>
+    <div class="how-step">
+      <span class="mono-label green">Pasos 2–5</span>
+      <div class="n">02</div>
+      <h3>Defines su mundo</h3>
+      <p>Identidad, voz, marcas afiliadas, idiomas y plataformas.</p>
+      <span class="arrow-link">
+        <svg width="12" height="12"><use href="#i-arrow"/></svg>
+      </span>
+    </div>
+    <div class="how-step">
+      <span class="mono-label green">Estudio</span>
+      <div class="n">03</div>
+      <h3>Generas contenido</h3>
+      <p>Fotos, reels, stories, anuncios. Misma cara, infinitas escenas.</p>
+      <span class="arrow-link">
+        <svg width="12" height="12"><use href="#i-arrow"/></svg>
+      </span>
+    </div>
+    <div class="how-step">
+      <span class="mono-label green">Calendario</span>
+      <div class="n">04</div>
+      <h3>Publicas y vendes</h3>
+      <p>Auto-post a IG, TikTok, YouTube. Con captions y hashtags.</p>
+    </div>
+  </div>
+
+  <div class="how-bonus">
+    <div>
+      <span class="mono-label green-bright">
+        <svg width="13" height="13"><use href="#i-sparkle"/></svg>
+        Bonus
+      </span>
+      <h3>Ravit aprende tu marca mientras posteas.</h3>
+      <p>Cada caption aprobado, cada foto descartada, cada hashtag manual entrena la voz de tu personaje. En 2 semanas escribe casi solo.</p>
+    </div>
+    <a class="btn primary lg" href="#start">
+      Probar gratis
+      <svg width="14" height="14"><use href="#i-arrow"/></svg>
+    </a>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════
+     6) CASTING
+     ════════════════════════════════════════════════════════════ -->
+<section class="casting" id="casting">
+  <div class="section-head">
+    <div class="eyebrow-wrap"><span class="eyebrow"><span class="dot"></span>El casting</span></div>
+    <h2>Influencers que son 100% tuyos.</h2>
+    <p>Cada personaje mantiene cara, voz y estilo en cada render. Tú eres la agencia.</p>
+  </div>
+
+  <div class="casting-grid">
+    <!-- Large feature: Sofía (3×2) -->
+    <article class="showcase-card large" style="grid-column: span 3; grid-row: span 2;">
+      <div class="img-tile" style="width:100%;height:100%;background-image:url('assets/char-1.jpg');background-position:50% 28%"></div>
+      <div class="gradient-bottom stronger" style="position:absolute;inset:0"></div>
+      <div class="topbar">
+        <span class="ai-pill">
+          <svg width="10" height="10"><use href="#i-sparkle"/></svg>
+          AI
+        </span>
+        <span class="brand-pill">×Maison14</span>
+      </div>
+      <div class="bottom">
+        <div class="name">Sofía Vega</div>
+        <div class="meta">
+          <span>Lifestyle · Resort</span>
+          <span>·</span>
+          <span>24.7K seguidores</span>
+        </div>
+        <div class="socials">
+          <svg width="14" height="14"><use href="#i-ig"/></svg>
+          <svg width="14" height="14"><use href="#i-tt"/></svg>
+          <svg width="14" height="14"><use href="#i-yt"/></svg>
+          <svg width="14" height="14"><use href="#i-threads"/></svg>
+          <svg width="12" height="12"><use href="#i-x"/></svg>
+        </div>
+      </div>
+    </article>
+
+    <!-- Wide: Valeria (3×1) -->
+    <article class="showcase-card wide" style="grid-column: span 3; grid-row: span 1;">
+      <div class="img-tile" style="width:100%;height:100%;background-image:url('assets/char-3.png');background-position:50% 28%"></div>
+      <div class="gradient-bottom stronger" style="position:absolute;inset:0"></div>
+      <div class="topbar">
+        <span class="ai-pill">
+          <svg width="10" height="10"><use href="#i-sparkle"/></svg>
+          AI
+        </span>
+        <span class="brand-pill">×Numéro</span>
+      </div>
+      <div class="bottom">
+        <div class="name">Valeria Soto</div>
+        <div class="meta"><span>Fashion · Editorial</span></div>
+      </div>
+    </article>
+
+    <!-- Three small (1×1 each) -->
+    <article class="showcase-card" style="grid-column: span 1; grid-row: span 1;">
+      <div class="img-tile" style="width:100%;height:100%;background-image:url('assets/char-2.jpg');background-position:50% 25%"></div>
+      <div class="gradient-bottom stronger" style="position:absolute;inset:0"></div>
+      <div class="topbar">
+        <span class="ai-pill">
+          <svg width="10" height="10"><use href="#i-sparkle"/></svg>
+          AI
+        </span>
+        <span class="brand-pill">×Lago</span>
+      </div>
+      <div class="bottom">
+        <div class="name">Camila Ruiz</div>
+        <div class="meta"><span>Beach · Joyería</span></div>
+      </div>
+    </article>
+
+    <article class="showcase-card" style="grid-column: span 1; grid-row: span 1;">
+      <div class="img-tile" style="width:100%;height:100%;background-image:url('assets/char-4.png');background-position:50% 25%"></div>
+      <div class="gradient-bottom stronger" style="position:absolute;inset:0"></div>
+      <div class="topbar">
+        <span class="ai-pill">
+          <svg width="10" height="10"><use href="#i-sparkle"/></svg>
+          AI
+        </span>
+        <span class="brand-pill">×Lume</span>
+      </div>
+      <div class="bottom">
+        <div class="name">Emma Lin</div>
+        <div class="meta"><span>Beauty · Skincare</span></div>
+      </div>
+    </article>
+
+    <article class="showcase-card" style="grid-column: span 1; grid-row: span 1;">
+      <div class="img-tile" style="width:100%;height:100%;background-image:url('assets/char-5.png');background-position:50% 25%"></div>
+      <div class="gradient-bottom stronger" style="position:absolute;inset:0"></div>
+      <div class="topbar">
+        <span class="ai-pill">
+          <svg width="10" height="10"><use href="#i-sparkle"/></svg>
+          AI
+        </span>
+      </div>
+      <div class="bottom">
+        <div class="name">Mia Castro</div>
+        <div class="meta"><span>Editorial · Arte</span></div>
+      </div>
+    </article>
+  </div>
+
+  <div class="casting-cta">
+    <a class="btn ghost lg" href="#all">
+      Ver casting completo
+      <svg width="14" height="14"><use href="#i-arrow"/></svg>
+    </a>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════
+     7) USE CASES / INDUSTRIES
+     ════════════════════════════════════════════════════════════ -->
+<section class="cases" id="cases">
+  <div class="section-head">
+    <div class="eyebrow-wrap"><span class="eyebrow"><span class="dot"></span>Industrias</span></div>
+    <h2>Hecho para marcas que postean mucho.</h2>
+    <p>Moda, hotelería, e-commerce, beauty, hospitality. Donde la cara importa, Ravit funciona.</p>
+  </div>
+
+  <div class="cases-grid">
+    <!-- Moda -->
+    <article class="case-card">
+      <div class="photo">
+        <div class="img-tile" style="background-image:url('assets/char-3.png')"></div>
+        <div class="gradient-bottom stronger" style="position:absolute;inset:0"></div>
+        <span class="industry">Moda</span>
+        <div class="caption-overlay">Drop nuevo · outfit completo desde €49</div>
+      </div>
+      <div class="body">
+        <div class="row">
+          <div>
+            <div class="mono-label">Resultado</div>
+            <div class="result-v">+312% engagement</div>
+          </div>
+          <div style="text-align:right">
+            <div class="mono-label">Cadencia</div>
+            <div class="cadence-v">4 reels/semana</div>
+          </div>
+        </div>
+        <div class="footer-row">
+          <div class="socials-soft">
+            <svg width="14" height="14"><use href="#i-ig"/></svg>
+            <svg width="14" height="14"><use href="#i-tt"/></svg>
+            <svg width="14" height="14"><use href="#i-yt"/></svg>
+            <svg width="14" height="14"><use href="#i-threads"/></svg>
+          </div>
+          <span class="see">Ver caso <svg width="14" height="14"><use href="#i-arrow"/></svg></span>
+        </div>
+      </div>
+    </article>
+
+    <!-- Hotelería -->
+    <article class="case-card">
+      <div class="photo">
+        <div class="img-tile" style="background-image:url('assets/char-1.jpg')"></div>
+        <div class="gradient-bottom stronger" style="position:absolute;inset:0"></div>
+        <span class="industry">Hotelería</span>
+        <div class="caption-overlay">Atardeceres en Tulum · suites desde €380</div>
+      </div>
+      <div class="body">
+        <div class="row">
+          <div>
+            <div class="mono-label">Resultado</div>
+            <div class="result-v">94K vistas/post</div>
+          </div>
+          <div style="text-align:right">
+            <div class="mono-label">Cadencia</div>
+            <div class="cadence-v">180 reservas</div>
+          </div>
+        </div>
+        <div class="footer-row">
+          <div class="socials-soft">
+            <svg width="14" height="14"><use href="#i-ig"/></svg>
+            <svg width="14" height="14"><use href="#i-tt"/></svg>
+            <svg width="14" height="14"><use href="#i-yt"/></svg>
+            <svg width="14" height="14"><use href="#i-threads"/></svg>
+          </div>
+          <span class="see">Ver caso <svg width="14" height="14"><use href="#i-arrow"/></svg></span>
+        </div>
+      </div>
+    </article>
+
+    <!-- Beauty -->
+    <article class="case-card">
+      <div class="photo">
+        <div class="img-tile" style="background-image:url('assets/char-4.png')"></div>
+        <div class="gradient-bottom stronger" style="position:absolute;inset:0"></div>
+        <span class="industry">Beauty</span>
+        <div class="caption-overlay">Rutina noche · 4 pasos clean</div>
+      </div>
+      <div class="body">
+        <div class="row">
+          <div>
+            <div class="mono-label">Resultado</div>
+            <div class="result-v">+24% conversión</div>
+          </div>
+          <div style="text-align:right">
+            <div class="mono-label">Cadencia</div>
+            <div class="cadence-v">2x ROAS</div>
+          </div>
+        </div>
+        <div class="footer-row">
+          <div class="socials-soft">
+            <svg width="14" height="14"><use href="#i-ig"/></svg>
+            <svg width="14" height="14"><use href="#i-tt"/></svg>
+            <svg width="14" height="14"><use href="#i-yt"/></svg>
+            <svg width="14" height="14"><use href="#i-threads"/></svg>
+          </div>
+          <span class="see">Ver caso <svg width="14" height="14"><use href="#i-arrow"/></svg></span>
+        </div>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════
+     8) PRICING
+     ════════════════════════════════════════════════════════════ -->
+<section class="pricing" id="pricing">
+  <div class="section-head">
+    <div class="eyebrow-wrap"><span class="eyebrow"><span class="dot"></span>Precios</span></div>
+    <h2>Empieza gratis. Escala cuando vendas.</h2>
+    <p>Suscripción mensual + créditos para generaciones. Los créditos nunca caducan. Cancela cuando quieras.</p>
+  </div>
+
+  <div class="pricing-grid">
+    <!-- Starter -->
+    <div class="plan">
+      <div class="mono-label green">Starter</div>
+      <div class="price">
+        <span class="num">€0</span>
+      </div>
+      <p class="desc">Para probar Ravit y crear tu primer personaje.</p>
+      <div class="features">
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>1 personaje</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>15 imágenes / mes</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>3 reels cortos</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>Resolución 720p</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>Marca de agua Ravit</span></div>
+      </div>
+      <div class="cta">
+        <a class="btn ghost lg full" href="#start">Empezar gratis<svg width="14" height="14"><use href="#i-arrow"/></svg></a>
+      </div>
+    </div>
+
+    <!-- Creator (best) -->
+    <div class="plan best">
+      <span class="best-badge">El más elegido</span>
+      <div class="mono-label green-bright">Creator</div>
+      <div class="price">
+        <span class="num">€49</span>
+        <span class="per">/mes</span>
+      </div>
+      <p class="desc">Para creadores y marcas que postean a diario.</p>
+      <div class="features">
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>3 personajes</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>200 imágenes / mes</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>20 reels verticales</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>1080p · sin marca</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>1 voz clonada</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>Auto-post IG · TikTok</span></div>
+      </div>
+      <div class="cta">
+        <a class="btn primary lg full" href="#start">Probar 14 días<svg width="14" height="14"><use href="#i-arrow"/></svg></a>
+      </div>
+    </div>
+
+    <!-- Agencia -->
+    <div class="plan">
+      <div class="mono-label green">Agencia</div>
+      <div class="price">
+        <span class="num">€199</span>
+        <span class="per">/mes</span>
+      </div>
+      <p class="desc">Multi-marca, aprobaciones y volumen sin tope.</p>
+      <div class="features">
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>Marcas ilimitadas</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>2,000 imágenes / mes</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>200 reels / mes</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>Voces ilimitadas</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>API + Webhooks</span></div>
+        <div class="feature"><span class="tick"><svg width="12" height="12"><use href="#i-check"/></svg></span><span>Roles y aprobaciones</span></div>
+      </div>
+      <div class="cta">
+        <a class="btn ghost lg full" href="#contact">Hablar con ventas<svg width="14" height="14"><use href="#i-arrow"/></svg></a>
+      </div>
+    </div>
+  </div>
+
+  <div class="pricing-foot">
+    Todos los planes incluyen <strong>etiquetado IA</strong>, <strong>auto-publish</strong> y <strong>biblioteca infinita</strong>.
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════
+     9) FINAL CTA
+     ════════════════════════════════════════════════════════════ -->
+<section class="final">
+  <div class="final-card">
+    <div class="glow"></div>
+
+    <div class="copy">
+      <span class="eyebrow"><span class="dot"></span>Última llamada</span>
+      <h2>
+        Tu marca también puede tener<br>
+        <span class="accent">cara propia.</span>
+      </h2>
+      <p>14 días gratis. Sin tarjeta. Tu primer personaje listo en 5 minutos y tu primer reel en 30 segundos.</p>
+      <div class="cta-row">
+        <a class="btn primary xl" href="#start">
+          Crear personaje gratis
+          <svg width="14" height="14"><use href="#i-arrow"/></svg>
+        </a>
+        <span class="alt">ó <a href="#contact">hablar con un humano →</a></span>
+      </div>
+    </div>
+
+    <div class="portrait">
+      <div class="img-tile" style="background-image:url('assets/char-1.jpg');background-position:50% 25%"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════
+     10) FOOTER
+     ════════════════════════════════════════════════════════════ -->
+<footer class="footer">
+  <div class="footer-inner">
+    <div>
+      <div class="logo">
+        <svg viewBox="0 0 80 80" width="32" height="32" aria-hidden="true">
+          <path d="M40 8 C 60 14, 70 30, 64 50 C 58 66, 38 72, 22 64 C 6 56, 4 36, 14 24 C 22 14, 32 10, 40 8 Z" fill="#2DBB6A"/>
+          <circle cx="44" cy="28" r="3.4" fill="#FFFFFF"/>
+          <path d="M22 64 C 30 50, 38 38, 50 28" stroke="#0F7A3F" stroke-width="1.4" fill="none" opacity=".4"/>
+        </svg>
+        <div class="word">
+          <div class="ravit" style="font-size:24px">Ravit</div>
+          <div class="studio">STUDIO</div>
+        </div>
+      </div>
+      <p class="brand-blurb">
+        El estudio de casting AI para marcas que quieren tener cara propia, postear sin parar y vender más.
+      </p>
+      <div class="transparency-pill">
+        <svg width="12" height="12"><use href="#i-sparkle"/></svg>
+        Etiquetas de transparencia IA en cada export
+      </div>
+    </div>
+
+    <div class="footer-col">
+      <span class="mono-label">Producto</span>
+      <div class="links">
+        <a>Casting</a>
+        <a>Estudio</a>
+        <a>Calendario</a>
+        <a>Plataformas</a>
+        <a>Roadmap</a>
+      </div>
+    </div>
+
+    <div class="footer-col">
+      <span class="mono-label">Estudio</span>
+      <div class="links">
+        <a>Galería</a>
+        <a>Casos</a>
+        <a>Blog</a>
+        <a>Comunidad</a>
+      </div>
+    </div>
+
+    <div class="footer-col">
+      <span class="mono-label">Empresa</span>
+      <div class="links">
+        <a>Sobre nosotros</a>
+        <a>Contacto</a>
+        <a>Trabaja con nosotros</a>
+      </div>
+    </div>
+
+    <div class="footer-col">
+      <span class="mono-label">Legal</span>
+      <div class="links">
+        <a>Términos</a>
+        <a>Privacidad</a>
+        <a>Política IA</a>
+        <a>Derechos de imagen</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bottom">
+    <span>© 2026 Ravit Studio · Madrid · Barcelona · CDMX</span>
+    <div class="socials">
+      <svg width="14" height="14"><use href="#i-ig"/></svg>
+      <svg width="14" height="14"><use href="#i-tt"/></svg>
+      <svg width="14" height="14"><use href="#i-yt"/></svg>
+      <svg width="12" height="12"><use href="#i-x"/></svg>
+      <svg width="14" height="14"><use href="#i-threads"/></svg>
+      <svg width="14" height="14"><use href="#i-fb"/></svg>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
