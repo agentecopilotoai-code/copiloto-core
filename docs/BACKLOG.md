@@ -1365,3 +1365,30 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 - **Follow-up sugerido (no en alcance):** cuando se agregue un segundo módulo opt-in (`analytics_pro`, `whitelabel`, etc.), ampliar el CHECK constraint de `app.tenant_modules.module` con una migración y agregar el módulo al frontend de `ModulesControl` (ya soporta matriz N×M).
 
 ---
+
+### TASK-0087 — Refactor estructural: separar módulo AI transversal de Chatbot e Influencer
+
+- **Estado:** PENDING
+- **Motivación:** La lógica de proveedores de IA (Grok, Anthropic, OpenAI, ElevenLabs, Ollama, SDXL, Whisper) vive hoy acoplada bajo `app/services/influencer/providers/` y `app/services/influencer/provider_{dispatcher,registry}.py`, pese a ser **transversal** a la aplicación. El answer-engine del chatbot (`app/services/{llm_answer,cloud_llm_answer,intent_classifier}.py`) habla con Ollama/Claude/OpenAI por su cuenta vía `httpx` directo, sin pasar por la capa de providers. El cliente puede querer comprar "solo Influencer" o "solo Chatbot" — la separación actual no permite empaquetar uno sin arrastrar la lógica de modelos del otro.
+- **Decisión de diseño (ya validada con el usuario):**
+  - **Contrato AI:** API interna Python (no HTTP). Chatbot e Influencer importan `from app.ai import ...`. Sigue siendo un solo proceso FastAPI.
+  - **Alcance Chatbot:** solo el answer-engine se mueve (`llm_answer`, `cloud_llm_answer`, `intent_classifier`). El resto del pipeline conversacional (RAG, policy, booking, qualification, feedback) **permanece en `app/services/`** porque es business logic compartida, no chatbot puro.
+- **Trabajo (todo en un solo commit en su propio batch):**
+  1. Crear `app/ai/` con `providers/` (mover los 7 adapters + `base.py`), `registry.py` (mover `provider_registry.py`), `dispatcher.py` (mover `provider_dispatcher.py`) y `__init__.py` exportando el contrato público (`resolve_provider`, `dispatch`, las 5 interfaces, los `*Result` dataclasses y `ProviderError*`).
+  2. Crear `app/chatbot/` con `llm_answer.py`, `cloud_llm_answer.py`, `intent_classifier.py` movidos desde `app/services/` y un `__init__.py` que describa el módulo.
+  3. Mover `app/services/influencer/credits.py` → `app/influencer/credits.py`. Eliminar `app/services/influencer/` por completo.
+  4. Reescribir imports en producción y tests con `git mv` para preservar historial. Files afectados conocidos:
+     - Producción: `app/influencer/{admin_routes,credits_router}.py`, `app/workers/influencer_generation_worker.py`, `app/api/v1/handlers/tenant_admin_handlers.py`, `app/services/{rag_orchestrator,consent}.py`.
+     - Tests: ~22 archivos en `tests/` (todos los `test_{cloud,intent,llm,grok,local,influencer,provider,rag,bot,conversation,temporal,credit,answer}_*`).
+  5. Actualizar `ARCHITECTURE.md` §6 (tabla de componentes), §7 (cascada de respuesta) y §10 (árbol de directorios) para reflejar `app/ai/`, `app/chatbot/`, `app/influencer/`.
+- **Follow-up (NO incluir en esta tarea — abrir TASK-0088 si se decide ejecutar):** rewirear `llm_answer` y `cloud_llm_answer` para invocar a Ollama/Claude/OpenAI a través de `app.ai.dispatch(modality='llm', ...)` en vez de `httpx` directo. Esto también implica reemplazar el `app.services.circuit_breaker` actual por el del dispatcher. Comportamiento cambia (métricas, fallback, audit) — no es mecánico.
+- **Criterios de aceptación:**
+  - `grep -r "app\.services\.influencer\|app\.services\.llm_answer\|app\.services\.cloud_llm_answer\|app\.services\.intent_classifier"` devuelve cero matches en `app/` y `tests/` (sólo `docs/DONE.md` puede mantener menciones históricas).
+  - `python3 -c "import app.ai; print(len(app.ai.__all__))"` ≥ 28 nombres públicos.
+  - `ci-local-fast.sh` pasa.
+  - `pytest tests/test_{cloud,intent,llm,grok,local,influencer,provider,rag,bot,conversation,temporal,credit,answer}_*` pasa sin cambios de comportamiento.
+- **No-objetivos explícitos:**
+  - NO cambiar el contrato de los providers ni añadir modalidades nuevas.
+  - NO rewirear el answer-engine al dispatcher (TASK-0088).
+  - NO reorganizar `app/services/` más allá de los 4 archivos mencionados.
+- **Antecedente:** intentado y ejecutado por error en PR #16 (cerrado el 2026-05-19 sin merge — el usuario solo quería un ítem de backlog, no la ejecución inmediata). El commit del intento queda en reflog por si se quiere recuperar como base.
