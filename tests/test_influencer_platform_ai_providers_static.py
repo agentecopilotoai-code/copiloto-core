@@ -259,10 +259,26 @@ def test_patch_invalidates_provider_cache() -> None:
     assert '_provider_cache_invalidate()' in src
 
 
-def test_main_imports_admin_routes_for_side_effect() -> None:
+def test_routes_imports_admin_routes_for_side_effect() -> None:
+    """BUGFIX-PLATFORM-ROUTES — el import side-effect que carga los
+    decoradores de `app.influencer.admin_routes` ahora vive **dentro** de
+    `app/api/v1/routes.py`, justo ANTES del `router.include_router(
+    platform_admin_router)`. Antes vivía en `main.py:28`, después del import
+    de `v1_router`, lo cual era demasiado tarde (FastAPI ya había copiado
+    las rutas vacías). Sin este orden los endpoints `/platform/ai-providers*`
+    y `/platform/tenant-modules*` devuelven 404 en runtime aunque el código
+    exista y `platform_admin_router.routes` los contenga.
+    """
+    routes_src = (REPO_ROOT / 'app' / 'api' / 'v1' / 'routes.py').read_text(encoding='utf-8')
+    assert 'from app.influencer import admin_routes' in routes_src, (
+        'routes.py debe importar admin_routes antes del include_router(platform_admin_router)'
+    )
+
+    # main.py NO debe re-importar admin_routes (sería redundante y tardío).
     main_src = MAIN_PY.read_text(encoding='utf-8')
-    # Import explícito + noqa F401 (es side-effect-only).
-    assert 'from app.influencer import admin_routes' in main_src
+    assert 'from app.influencer import admin_routes' not in main_src, (
+        'main.py no debe importar admin_routes — vive en routes.py ahora'
+    )
 
 
 def test_endpoints_response_models_declared() -> None:
@@ -281,3 +297,75 @@ def test_endpoints_response_models_declared() -> None:
             assert r.response_model is not None, (
                 f'{r.path} debe declarar response_model'
             )
+
+
+# ─── BUGFIX-PLATFORM-ROUTES — tests estructurales/funcionales ─────────────
+# Estos tests son defensa contra el bug donde los endpoints declarados en
+# `admin_routes.py` quedaban registrados en `platform_admin_router.routes`
+# pero NUNCA llegaban a `app.routes` porque `v1_router.include_router(
+# platform_admin_router)` corría antes de que los decoradores ejecutaran.
+# Antes solo había un test ESTÁTICO de string (verificaba que el import
+# existiera en main.py). Ese test pasaba aunque el import fuera tardío
+# y los endpoints devolvieran 404. Los tests siguientes verifican que la
+# wiring HTTP funciona en runtime.
+
+EXPECTED_ENDPOINTS_FROM_ADMIN_ROUTES = {
+    # TASK-INFLU-002 — AI providers
+    '/v1/platform/ai-providers',
+    '/v1/platform/ai-providers/{modality}',
+    # TASK-INFLU-019 — tenant modules
+    '/v1/platform/tenant-modules',
+    '/v1/platform/tenant-modules/{tenant_id}/{module}',
+}
+
+
+@pytest.fixture(scope='module')
+def fastapi_app():
+    """Importa la app FastAPI con env vars dummy para no requerir BD/secrets."""
+    import os
+    os.environ.setdefault('DATABASE_URL', 'postgresql://x:x@localhost/x')
+    os.environ.setdefault('JWT_SECRET', 'x' * 32)
+    os.environ.setdefault('SERVICE_TOKEN', 'x' * 32)
+    os.environ.setdefault('S3_SECRET_ACCESS_KEY', 'x' * 32)
+    import app.main
+    return app.main.app
+
+
+def test_admin_routes_endpoints_mounted_in_app(fastapi_app) -> None:
+    """Verifica que los endpoints declarados en `app/influencer/admin_routes.py`
+    aparecen en `app.routes` — es decir, fueron incluidos correctamente vía
+    el orden de imports (BUGFIX-PLATFORM-ROUTES).
+    """
+    mounted = {r.path for r in fastapi_app.routes if hasattr(r, 'path')}
+    missing = EXPECTED_ENDPOINTS_FROM_ADMIN_ROUTES - mounted
+    assert not missing, (
+        f'Estos endpoints están declarados en admin_routes.py pero NO están '
+        f'montados en app.routes: {sorted(missing)}. Causa típica: el import '
+        f'de admin_routes corre DESPUÉS de v1_router.include_router('
+        f'platform_admin_router). Ver comentario en app/api/v1/routes.py:1695.'
+    )
+
+
+def test_admin_routes_endpoints_respond_not_404(fastapi_app) -> None:
+    """Smoke test: cada endpoint montado debe responder algo distinto de 404
+    incluso sin auth. Lo esperado es 401/403/422 — pero NUNCA 404 (que
+    indicaría endpoint fantasma).
+    """
+    from starlette.testclient import TestClient
+    client = TestClient(fastapi_app, raise_server_exceptions=False)
+
+    # Las requests sin auth deben rechazarse, pero antes deben encontrar la
+    # ruta. Un 404 indica que la ruta no está montada.
+    for path in EXPECTED_ENDPOINTS_FROM_ADMIN_ROUTES:
+        # Sustituye placeholders {x} por valores dummy para que el matcher
+        # de FastAPI encuentre la ruta.
+        concrete_path = path.replace('{modality}', 'llm') \
+                            .replace('{tenant_id}', '00000000-0000-0000-0000-000000000000') \
+                            .replace('{module}', 'influencer')
+        method = 'PATCH' if '{' in path else 'GET'
+        body = {'enabled': True} if method == 'PATCH' else None
+        resp = client.request(method, concrete_path, json=body)
+        assert resp.status_code != 404, (
+            f'{method} {concrete_path} respondió 404. La ruta no está '
+            f'montada en la app FastAPI.'
+        )

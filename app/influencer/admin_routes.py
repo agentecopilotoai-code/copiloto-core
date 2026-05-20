@@ -340,13 +340,17 @@ async def list_tenant_modules(
         where.append(f'tm.enabled = ${len(params)}')
     if tenant_search:
         params.append(f'%{tenant_search.lower()}%')
+        # BUGFIX — el query usaba `t.name` que no existe en `app.tenants`.
+        # Las columnas reales son `legal_name` y `display_name`. Buscamos
+        # contra `display_name` (lo que ve el operador en la UI) además del
+        # slug.
         where.append(
-            f'(lower(t.slug) like ${len(params)} or lower(t.name) like ${len(params)})',
+            f'(lower(t.slug) like ${len(params)} or lower(t.display_name) like ${len(params)})',
         )
 
     rows = await conn.fetch(
         f'''
-        select t.id as tenant_id, t.slug as tenant_slug, t.name as tenant_name,
+        select t.id as tenant_id, t.slug as tenant_slug, t.display_name as tenant_name,
                tm.module, tm.enabled, tm.plan, tm.activated_at, tm.activated_by,
                tm.notes
         from app.tenants t
@@ -389,8 +393,9 @@ async def update_tenant_module(
     await _set_support_mode(conn, True)
 
     # Verifica que el tenant existe.
+    # BUGFIX — la columna `name` no existe; usar `display_name`.
     tenant = await conn.fetchrow(
-        'select id, slug, name from app.tenants where id = $1', tenant_id,
+        'select id, slug, display_name from app.tenants where id = $1', tenant_id,
     )
     if tenant is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'tenant not found')
@@ -483,7 +488,7 @@ async def update_tenant_module(
     return TenantModuleRow(
         tenant_id=str(row['tenant_id']),
         tenant_slug=tenant['slug'],
-        tenant_name=tenant['name'],
+        tenant_name=tenant['display_name'],
         module=row['module'],
         enabled=bool(row['enabled']),
         plan=row['plan'],
