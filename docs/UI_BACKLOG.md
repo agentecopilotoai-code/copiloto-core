@@ -1615,7 +1615,7 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 > | UI-INFLU-013 | `docs/influencer/04 _ Generar contenido _con Sof_a_.html` |
 > | UI-INFLU-014 | `docs/influencer/05 _ Calendario _todos los personajes_.html` |
 > | UI-INFLU-015 | transversal (sólo Platform Owner — configura proveedores IA) |
-> | UI-INFLU-016 | `docs/influencer/Ravit Studio Landing _standalone_.html` |
+> | UI-INFLU-016 | `docs/Agent/_ Ravit Agent _ Pulse.html` (tab default) + `docs/influencer/Ravit Studio Landing _standalone_.html` (paleta) + landing CopilotoIA actual (tab `/copiloto`) |
 
 ---
 
@@ -1864,20 +1864,47 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-016 — Landing comercial Ravit Studio (público pre-login)
+### UI-INFLU-016 — Landing público pre-login: shell con tabs (Ravit Agent · Pulse + CopilotoIA)
 
 - **Estado:** PENDING
-- **HTML:** `docs/influencer/Ravit Studio Landing _standalone_.html`.
-- **Alcance:** vista PÚBLICA pre-login (sin auth). Análoga a UI-016.4 (landing CopilotoIA) pero específica del producto Ravit Studio.
-  - Ruta `/ravit` (no choca con root `/` que ya tiene la landing CopilotoIA).
-  - Hero: "Influencers de IA que producen contenido por ti — cada día, en todas las redes".
+- **HTML de referencia:**
+  - Tab default → `docs/Agent/_ Ravit Agent _ Pulse.html` (estructura y secciones del nuevo hero/agente).
+  - Paleta y tipografía → `docs/influencer/Ravit Studio Landing _standalone_.html` (tokens Ravit Studio: bg `#F1EDE3`, brand `#2DBB6A`, accent `#0F7A3F`, texto `#1B2542`, fuente Geist — todos ya disponibles vía `var(--ra-*)` de UI-INFLU-001).
+  - Tab `CopilotoIA` → reusa el componente existente `admin-panel/src/features/public/landing/Landing.jsx` **sin modificarlo** (sus subcomponentes `LandingHeader`, `LandingPricing`, `LandingSocialProof` quedan intactos).
+- **Alcance:** vista PÚBLICA pre-login (sin auth). REEMPLAZA al actual `<Landing />` montado en `/` por `IndexRedirect` ([`admin-panel/src/app/router.jsx:170`](admin-panel/src/app/router.jsx:170)) con un **shell de tabs** que conserva ambos landings.
+  - Ruta `/` (anónimo) → shell con tab **"Ravit Agent · Pulse"** activo por defecto.
+  - Ruta `/copiloto` (anónimo) → mismo shell con tab **"CopilotoIA"** activo (preserva la landing histórica como opción accesible desde el menú/tabs y vía deep-link).
+  - Ruta `/ravit` → `<Navigate to="/" replace />` (back-compat con la spec previa de este ticket; evita 404 si alguien guardó el link).
+  - El tab bar es el menú visible que enumera ambas opciones; las dos rutas comparten el mismo shell `<PublicLandingShell />`, sólo cambia el panel activo (mismo footer, mismo top-nav, mismos CTAs "Iniciar sesión" / "Solicitar demo").
+- **Contenido tab "Ravit Agent · Pulse" (default):**
+  - Hero: "Influencers de IA que producen contenido por ti — cada día, en todas las redes" (estilo Pulse: tipografía grande Geist, fondo `#F1EDE3`).
   - Sección "Cómo funciona" (Casting → Generar → Programar → Monetizar).
   - Demo embebida (carousel de personajes Sofía, Camila, etc. con sus feeds reales).
   - Pricing teaser (planes por paquete de créditos: 100cr / 500cr / 2000cr).
-  - Programa de afiliados "Gana 10% con Ravit" (del sidebar del HTML).
-  - CTAs: "Solicitar demo" + "Iniciar sesión" (este último al flow Auth0 existente).
-- **Criterios:** SIN `RequirePermission` (público). Vive en `src/features/public/ravit-landing/` (marketing, no requiere el módulo backend habilitado).
-- **Tests:** `RavitLanding.test.jsx` (3): renderiza hero + secciones; CTA "Iniciar sesión" dispara flow Auth0 (mock); CTA "Solicitar demo" abre form modal y submit POST a `/v1/leads/demo-request` (endpoint nuevo — declara follow-up `UI-INFLU-016-FU` para el backend si no existe).
+  - Programa de afiliados "Gana 10% con Ravit".
+  - CTAs: "Solicitar demo" + "Iniciar sesión" (flow Auth0 existente).
+- **Contenido tab "CopilotoIA":**
+  - Render directo del componente `<Landing />` actual de `src/features/public/landing/Landing.jsx`. NO se duplica markup ni copy: la fuente única sigue siendo ese componente. Si el shell aporta su propio header/footer, el `<Landing />` se monta sin su `<LandingHeader />` propio para evitar doble header — exponer prop `embedded` (default `false`) en `Landing` para suprimirlo cuando se renderiza dentro del shell.
+- **Estructura de archivos:**
+  - `src/features/public/ravit-landing/` (nuevo):
+    - `PublicLandingShell.jsx` — shell con top-nav, tabs (`Ravit Agent · Pulse` / `CopilotoIA`), footer; lee tab activo desde la ruta (`/` vs `/copiloto`) y enruta clicks con `<Link>` (no recarga, mantiene scroll del shell).
+    - `RavitAgentPulse.jsx` — contenido del tab default (hero + secciones del Pulse HTML).
+    - `components/` y `RavitAgentPulse.module.css` para los bloques.
+  - `src/features/public/landing/Landing.jsx` — se le añade prop `embedded` (opcional, default `false`); cuando es `true` no renderiza `<LandingHeader />`. Sin otros cambios.
+  - `src/app/router.jsx` — `IndexRedirect` para sesión anónima en `/` renderiza `<PublicLandingShell activeTab="ravit" />`; añadir ruta pública `/copiloto` (anónimo) que renderiza `<PublicLandingShell activeTab="copiloto" />`; añadir `/ravit` → `<Navigate to="/" replace />`. Las rutas `/copiloto` y `/ravit` redirigen a `/` si hay sesión (delegan a `IndexRedirect`, igual que hoy hace `/no-tenant`).
+- **Criterios:**
+  - SIN `RequirePermission` en ninguna de las dos pestañas (públicas).
+  - Tokens 100% vía `var(--ra-*)` de UI-INFLU-001 (no hex inline).
+  - El shell + tab default ≤ 400 LOC dividido en `PublicLandingShell.jsx` + `RavitAgentPulse.jsx` + `components/` + `.module.css`.
+  - El componente `Landing` existente no se reescribe: sólo recibe la prop `embedded` y un test extra que cubre `embedded={true}` ⇒ no header.
+  - Screenshots en el PR: HTML vs React lado a lado para Pulse, y captura del shell mostrando ambos tabs.
+- **Tests:** `PublicLandingShell.test.jsx` (5) + extensión de `Landing.test.jsx` (1):
+  1. `/` anónimo renderiza shell con tab "Ravit Agent · Pulse" activo y hero del Pulse visible.
+  2. `/copiloto` anónimo renderiza shell con tab "CopilotoIA" activo y monta `<Landing embedded />`.
+  3. Click en el tab "CopilotoIA" navega a `/copiloto` (verifica `history.location.pathname`); click en "Ravit Agent · Pulse" navega a `/`.
+  4. CTA "Iniciar sesión" del shell dispara flow Auth0 (mock) — válido desde ambos tabs.
+  5. CTA "Solicitar demo" abre form modal y hace POST a `/v1/leads/demo-request` (endpoint nuevo — declarar follow-up `UI-INFLU-016-FU` para el backend si no existe).
+  6. `Landing.test.jsx`: con `embedded={true}` no renderiza `<LandingHeader />`; con default (sin prop) sigue renderizándolo (no romper tests existentes de la landing actual).
 - **Dependencias:** UI-INFLU-001.
 
 ---
