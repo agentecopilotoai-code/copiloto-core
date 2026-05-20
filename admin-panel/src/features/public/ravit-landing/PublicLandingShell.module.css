@@ -1,0 +1,126 @@
+/* Shell público + header con personalidad Ravit Studio. */
+
+.shell {
+  background: #F1EDE3;
+  min-height: 100vh;
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  color: #1B2542;
+}
+
+/* ─── Header ────────────────────────────────────────────────────────── */
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(241, 237, 227, 0.92);
+  backdrop-filter: saturate(160%) blur(14px);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid rgba(27, 37, 66, 0.08);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 32px;
+}
+
+@media (max-width: 720px) {
+  .header {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px 20px;
+  }
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+  font-weight: 700;
+}
+
+.brandText {
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+/* ─── Tabs segmented ─────────────────────────────────────────────────── */
+
+.tabs {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(27, 37, 66, 0.06);
+  border-radius: 999px;
+}
+
+.tabIdle,
+.tabActive {
+  padding: 8px 18px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 14px;
+  transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  white-space: nowrap;
+}
+
+.tabIdle {
+  color: rgba(27, 37, 66, 0.78);
+  background: transparent;
+}
+.tabIdle:hover { color: #1B2542; }
+
+.tabActive {
+  background: #fff;
+  color: #1B2542;
+  box-shadow: 0 2px 8px rgba(27, 37, 66, 0.12);
+}
+
+/* ─── CTAs del header ───────────────────────────────────────────────── */
+
+.headerCtas {
+  display: inline-flex;
+  gap: 8px;
+  justify-self: end;
+}
+
+.btnPrimary {
+  padding: 10px 18px;
+  background: #2DBB6A;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 4px 12px rgba(45, 187, 106, 0.28);
+}
+.btnPrimary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(45, 187, 106, 0.38);
+}
+
+.btnGhost {
+  padding: 10px 18px;
+  background: transparent;
+  color: #1B2542;
+  border: 1.5px solid #1B2542;
+  border-radius: 10px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  transition: background 120ms ease;
+}
+.btnGhost:hover { background: rgba(27, 37, 66, 0.06); }

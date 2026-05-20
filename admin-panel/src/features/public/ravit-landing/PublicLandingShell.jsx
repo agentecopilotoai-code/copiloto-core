@@ -7,6 +7,8 @@ import { Link } from 'react-router-dom';
 import { adminPath } from '../../../services/adminSession.js';
 import { Landing } from '../landing/Landing.jsx';
 import { RavitAgentPulse } from './RavitAgentPulse.jsx';
+import { RavitMark } from './assets/illustrations.jsx';
+import styles from './PublicLandingShell.module.css';
 
 
 const TABS = [
@@ -29,59 +31,36 @@ export function PublicLandingShell({
   const [demoModalOpen, setDemoModalOpen] = useState(false);
 
   return (
-    <div data-testid="public-landing-shell" style={{
-      background: 'var(--ra-bg, #F1EDE3)',
-      minHeight: '100vh',
-    }}>
-      <header role="banner" style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: 'var(--space-2) var(--space-4)',
-        borderBottom: '1px solid rgba(15, 122, 63, 0.15)',
-      }}>
-        <Link to="/" style={{ fontWeight: 800, textDecoration: 'none', color: 'inherit' }}>
-          Ravit
+    <div data-testid="public-landing-shell" className={styles.shell}>
+      <header role="banner" className={styles.header}>
+        <Link to="/" className={styles.brand} aria-label="Ravit Studio">
+          <RavitMark size={32} />
+          <span className={styles.brandText}>Ravit Studio</span>
         </Link>
-        <nav aria-label="Tabs principales">
-          <ul style={{ display: 'flex', gap: 'var(--space-2)', listStyle: 'none', margin: 0, padding: 0 }}>
-            {TABS.map((tab) => {
-              const isActive = activeTab === tab.id;
-              return (
-                <li key={tab.id}>
-                  <Link
-                    to={tab.href}
-                    aria-current={isActive ? 'page' : undefined}
-                    style={{
-                      padding: '6px 12px',
-                      borderRadius: 6,
-                      textDecoration: 'none',
-                      color: isActive ? '#fff' : 'inherit',
-                      background: isActive ? 'var(--ra-accent, #0F7A3F)' : 'transparent',
-                      fontWeight: 600,
-                    }}
-                  >{tab.label}</Link>
-                </li>
-              );
-            })}
-          </ul>
+        <nav aria-label="Tabs principales" className={styles.tabs}>
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <Link
+                key={tab.id}
+                to={tab.href}
+                aria-current={isActive ? 'page' : undefined}
+                className={isActive ? styles.tabActive : styles.tabIdle}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
         </nav>
-        <div style={{ display: 'flex', gap: 'var(--space-1)' }}>
+        <div className={styles.headerCtas}>
           <button
             type="button"
             onClick={() => setDemoModalOpen(true)}
-            style={{
-              padding: '6px 14px',
-              background: 'var(--ra-brand, #2DBB6A)',
-              color: '#fff', border: 'none', borderRadius: 6,
-              fontWeight: 600, cursor: 'pointer',
-            }}
+            className={styles.btnPrimary}
           >Solicitar demo</button>
-          <a href={loginHref} style={{
-            padding: '6px 14px',
-            background: 'transparent',
-            border: '1px solid var(--ra-text, #1B2542)',
-            color: 'var(--ra-text, #1B2542)',
-            borderRadius: 6, textDecoration: 'none', fontWeight: 600,
-          }}>Iniciar sesión</a>
+          <a href={loginHref} className={styles.btnGhost}>
+            Iniciar sesión
+          </a>
         </div>
       </header>
 

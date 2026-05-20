@@ -18,27 +18,19 @@ import {
   RavitMark,
   ScheduleIcon,
 } from './assets/illustrations.jsx';
+import sofiaKitchen from './assets/images/sofia-kitchen.png';
+import sofiaBedroom from './assets/images/sofia-bedroom.png';
+import sofiaCar from './assets/images/sofia-car.png';
+import sofiaDress from './assets/images/sofia-dress.png';
 
 
 const DEFAULT_LOGIN_HREF = adminPath('/admin/login');
 
 const PERSONAJES_EJEMPLO = [
-  {
-    name: 'Sofía Vega', handle: '@sofia.studio', tag: 'Lifestyle',
-    image: '/ravit/sofia-kitchen.png',
-  },
-  {
-    name: 'Camila Ríos', handle: '@camila.rios', tag: 'Fashion',
-    image: '/ravit/sofia-dress.png',
-  },
-  {
-    name: 'Valeria Soto', handle: '@val.soto', tag: 'Travel',
-    image: '/ravit/sofia-car.png',
-  },
-  {
-    name: 'Mia Aguilar', handle: '@mia.aguilar', tag: 'Beauty',
-    image: '/ravit/sofia-bedroom.png',
-  },
+  { name: 'Sofía Vega', handle: '@sofia.studio', tag: 'Lifestyle', image: sofiaKitchen },
+  { name: 'Camila Ríos', handle: '@camila.rios', tag: 'Fashion', image: sofiaDress },
+  { name: 'Valeria Soto', handle: '@val.soto', tag: 'Travel', image: sofiaCar },
+  { name: 'Mia Aguilar', handle: '@mia.aguilar', tag: 'Beauty', image: sofiaBedroom },
 ];
 
 const PASOS = [
@@ -125,7 +117,7 @@ export function RavitAgentPulse({
             {/* Phone-like card with persona feed */}
             <div className={styles.feedHeader}>
               <div className={styles.feedAvatar}>
-                <img src="/ravit/sofia-kitchen.png" alt="Sofía Vega" />
+                <img src={sofiaKitchen} alt="Sofía Vega" />
               </div>
               <div className={styles.feedHeaderText}>
                 <div className={styles.feedName}>Sofía Vega ✓</div>
@@ -134,7 +126,7 @@ export function RavitAgentPulse({
               <span className={styles.feedAiTag}>· AI</span>
             </div>
             <div className={styles.feedHeroImg}>
-              <img src="/ravit/sofia-dress.png" alt="Sofía en cocina" />
+              <img src={sofiaDress} alt="Sofía en cocina con vestido azul" />
             </div>
             <div className={styles.feedActions}>
               <span>♡ 8.4K</span>
