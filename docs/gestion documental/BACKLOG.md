@@ -11,8 +11,8 @@ Prefijo de consecutivos: **`GD-API-NNNN`**. Prefijo de épicas: **`GD-API-EP-NNN
 | # | Épica | Módulos del Mapa | Entrega objetivo |
 |---|---|---|---|
 | EP-001 | Identidad, acceso, roles y permisos | MOD-001 | Entrega 1 |
-| EP-002 | Configuración institucional y estructura orgánica versionada | MOD-002, MOD-003 | Entrega 1 |
-| EP-003 | Auditoría y trazabilidad — base transversal | MOD-016 | Entrega 1 |
+| EP-002 | Perfil de organización y estructura organizacional versionada | MOD-002, MOD-003 | Entrega 1 |
+| EP-003 | ~~Auditoría base en `gd.*`~~ **→ deprecada, fusionada en EP-019** | MOD-016 | Entrega 1 |
 | EP-004 | Ventanilla Única y radicación | MOD-004, MOD-005 | Entrega 2 |
 | EP-005 | Terceros, ciudadanos y entidades externas | MOD-006 | Entrega 2 |
 | EP-006 | Buzón de trabajo, tareas, notificaciones y alertas | MOD-009, MOD-015 | Entrega 3 |
@@ -27,52 +27,90 @@ Prefijo de consecutivos: **`GD-API-NNNN`**. Prefijo de épicas: **`GD-API-EP-NNN
 | EP-015 | TRD, TVD, series, subseries y clasificación documental | MOD-013 | Entrega 8 |
 | EP-016 | Expediente electrónico básico | MOD-014 | Entrega 8 |
 | EP-017 | Preparación para RPA y APIs públicas | MOD-020 | Futura |
+| EP-018 | Servicio transversal de archivos, extracción y OCR | Compartido con Knowledge | Entrega 6 (precede EP-009) |
+| EP-019 | Auditoría transversal `core.evento_auditoria` | Compartido con app/Knowledge/gd | Entrega 1 (precede EP-001) |
+| EP-020 | Gaps de cobertura cerrados tras auditoría 2026-05-20 | Múltiples | Distribuida (cada tarea entra en la entrega donde corresponde su dominio) |
 
 ---
 
 ## EP-001 — Identidad, acceso, roles y permisos
 
 **Módulos:** MOD-001
-**Entidades:** `entidad_publica`, `usuario`, `rol`, `permiso`, `usuario_rol`, `rol_permiso`, `usuario_dependencia`, `cargo`, `sesion`
+**Entidades del módulo GD (nuevas):** `gd.rol`, `gd.permiso`, `gd.rol_permiso` (catálogos del dominio), `gd.perfil_usuario` (1:1 con `app.users`, campos institucionales), `gd.asignacion_alcance` (alcance por dependencia para roles GD), `gd.cargo` (estructura mínima; vigencia en EP-002).
+**Entidades reutilizadas del producto principal (NO se duplican):** `app.users` (identidad y autenticación), `app.user_tenant_roles` (membresía usuario↔tenant↔rol — el `role` lleva prefijo `gd.*` para los roles del módulo), `app.tenants` (la organización pagadora — ver EP-002).
 **RNF objetivo:** RNF-005, RNF-006, RNF-007, RNF-008, RNF-019, RNF-020, RNF-041, RNF-052, RNF-055
 **Roles primarios:** ROL-001 (Admin Sistema), ROL-002 (Admin Seguridad), todos los demás como consumidores.
 
-### GD-API-0001 — Esquema de identidad y acceso (DDL)
+> **Decisión de diseño explícita.** El módulo Gestión Documental **no crea** `gd.usuario` ni `gd.usuario_rol` ni tablas paralelas de identidad. Los usuarios ya viven en `app.users`; la pertenencia a una organización con un rol vive en `app.user_tenant_roles` con `role` texto libre (ya migrado a libre por TASK-0033). Lo único genuinamente nuevo del dominio institucional es: (a) el catálogo de roles y permisos GD, (b) los atributos institucionales por usuario (tipo de vinculación, fechas, estado GD, dependencia actual) que viven en `gd.perfil_usuario` 1:1, y (c) el alcance por dependencia que un rol puede tener — eso es `gd.asignacion_alcance`. Esto evita duplicar tabla de usuarios, evita problemas de sincronización y reutiliza el tenant switcher, RLS y Auth0/JWT existentes.
+
+### GD-API-0001 — Esquema GD de identidad/permisos (DDL, sin duplicar usuarios)
 - **Estado:** PENDING
-- **Por qué:** Sin este esquema ningún endpoint subsiguiente puede validar autorización ni guardar snapshots históricos.
-- **Crea:** schema `gd`, tablas `gd.entidad_publica`, `gd.usuario`, `gd.rol`, `gd.permiso`, `gd.usuario_rol`, `gd.rol_permiso`, `gd.usuario_dependencia`, `gd.cargo` (estructura mínima de Cargo; vigencia se completa en EP-002).
-- **Reglas obligatorias:** PK por UUID, columnas `creado_en` / `actualizado_en` automáticas, `estado` como enum tipado, columna `eliminado_en` **prohibida** (DELETE bloqueado por trigger). Constraint `UNIQUE(numero_documento, tipo_documento)` en `usuario`. Hash + salt para `password_hash` (bcrypt/argon2id). Índices en `usuario(correo_institucional)`, `usuario(estado)`, `usuario_rol(usuario_id, fecha_fin)`.
-- **Seed inicial:** roles ROL-001..ROL-019 con sus códigos, ~140 permisos del catálogo (PERM-USR-001..PERM-NOT-007) con `modulo` y `es_critico`.
-- **Aceptación:** migración corre limpia en una BD vacía; `psql \dt gd.*` lista las 8 tablas; intentar `DELETE FROM gd.usuario WHERE id=...` falla por trigger; seed muestra 19 roles y > 130 permisos.
+- **Por qué:** sin estas tablas no se puede validar autorización GD ni guardar snapshots históricos del rol y dependencia usados en una actuación. **No se duplica** `app.users` ni `app.user_tenant_roles`.
+- **Crea (schema `gd`):**
+  - `gd.rol` — catálogo: `codigo` (PK textual, ej. `gd.radicador`), `nombre`, `descripcion`, `es_sistema` bool (true para los 19 roles seed), `estado`. Es **catálogo de tipos**, no de membresías.
+  - `gd.permiso` — catálogo: `codigo` (PK, ej. `PERM-PQRSD-009`), `nombre`, `modulo`, `descripcion`, `es_critico` bool, `estado`.
+  - `gd.rol_permiso(rol_codigo, permiso_codigo, alcance_default)` — matriz N:N entre roles GD y permisos GD.
+  - `gd.perfil_usuario(user_id PK FK→app.users, tipo_vinculacion ∈ {planta, provisional, ops, supernumerario, practicante, externo_autorizado, administrador_tecnico}, fecha_inicio_vinculacion, fecha_fin_vinculacion, estado_gd ∈ {activo, suspendido, inactivo, bloqueado, retirado}, dependencia_actual_id FK, cargo_actual_id FK)`. **1:1 con `app.users`**, solo agrega campos institucionales. Es por-usuario, no por-tenant — un mismo usuario que pertenezca a varios tenants GD tendrá un perfil distinto en cada uno, modelado vía `(user_id, tenant_id)` UNIQUE.
+  - `gd.asignacion_alcance(id, user_id FK, tenant_id FK, rol_codigo FK→gd.rol, dependencia_id FK?, alcance ∈ {propio, dependencia, dependencias_autorizadas, institucional, global}, fecha_inicio, fecha_fin?, motivo, asignado_por_user_id FK)`. Esta tabla añade la dimensión que `app.user_tenant_roles` no tiene: **a qué dependencia aplica un rol GD**. Un usuario puede tener `gd.profesional` con alcance "Oficina Jurídica" y `gd.usuario_consulta` con alcance "toda la entidad" — dos filas.
+  - `gd.cargo(id, nombre, dependencia_id, fecha_inicio_vigencia, fecha_fin_vigencia, estado)`. Vigencia se profundiza en EP-002.
+- **Reglas obligatorias:**
+  - PK por UUID donde aplique; FK con `ON DELETE RESTRICT` siempre.
+  - Trigger `BEFORE UPDATE` / `BEFORE DELETE` sobre `gd.perfil_usuario` y `gd.asignacion_alcance` que prohíbe DELETE; UPDATE solo permitido en columnas marcadas como "mutables" (`estado_gd`, `dependencia_actual_id`, `cargo_actual_id`, `fecha_fin_vinculacion`).
+  - Índices: `gd.perfil_usuario(user_id, tenant_id)`, `gd.asignacion_alcance(user_id, tenant_id, fecha_fin)`, `gd.asignacion_alcance(dependencia_id, rol_codigo)`.
+  - RLS sobre `gd.perfil_usuario`, `gd.asignacion_alcance`, `gd.cargo` con política `tenant_id = app.current_tenant_id()`. (Las tablas-catálogo `gd.rol`, `gd.permiso`, `gd.rol_permiso` son globales y sin RLS — son enums.)
+- **Seed inicial:** 19 roles ROL-001..ROL-019 (con `codigo` prefijado `gd.*`: `gd.admin_sistema`, `gd.radicador`, `gd.profesional`, etc.), ~140 permisos del catálogo (PERM-USR-001..PERM-NOT-007), matriz `gd.rol_permiso` derivada de la sección 9 del PDF Matriz de Roles.
+- **Aceptación:** migración limpia sobre BD existente que ya tiene `app.users` y `app.user_tenant_roles`; intentar `DROP TABLE app.users` falla por FK; intentar `DELETE FROM gd.perfil_usuario` falla por trigger; seed lista 19 roles GD y >130 permisos GD; `gd.rol` no contiene rol `owner` ni `agent` del producto principal (zonas de responsabilidad separadas).
 
-### GD-API-0002 — Endpoint de autenticación + sesiones seguras
-- **Crea:** `POST /api/v1/gd/auth/login`, `POST /api/v1/gd/auth/logout`, `POST /api/v1/gd/auth/refresh`, `GET /api/v1/gd/auth/me`.
-- **RNF:** RNF-005 (hash + salt + bloqueo intentos fallidos + cierre inactividad), RNF-019 (sesiones seguras), RNF-018 (TLS obligatorio), RNF-047 (sin secretos en respuesta).
-- **Reglas:** bloqueo tras 5 intentos fallidos en 15 min (configurable vía `gd.configuracion_institucional`); sesión vence a los 30 min de inactividad (RNF-019); `logout` invalida el refresh token y emite evento `SesionCerrada`.
-- **Eventos:** `SesionIniciada`, `SesionCerrada`, `IntentoFallidoLogin`.
-- **Aceptación:** test que prueba login OK, login con password mal × 5 → bloqueo, refresh válido, refresh tras logout → 401, inactividad simulada → 401.
+### GD-API-0002 — Reutilización de la autenticación existente (sin endpoints duplicados)
+- **No crea endpoints de auth nuevos.** El producto ya tiene Auth0/JWT, sesiones, refresh, MFA preparada y un endpoint `GET /v1/me/tenants` para tenant switcher. Duplicarlo bajo `/api/v1/gd/auth/*` rompería SSO y obligaría a mantener dos sistemas de tokens en paralelo.
+- **Sí crea:**
+  - Middleware/dependency `require_gd_perfil(user, tenant_id)` que valida que el usuario autenticado tenga `gd.perfil_usuario.estado_gd='activo'` para el tenant activo; si no, responde `403 gd_profile_missing_or_inactive` con un mensaje claro al cliente.
+  - Endpoint `GET /api/v1/gd/me` que extiende `GET /v1/me` con los campos GD: tipo_vinculacion, dependencia_actual, cargo_actual, roles GD vigentes y permisos efectivos calculados.
+  - Mapeo de claims Auth0: documentar cómo `app_metadata.gd_perfil` aparece en el JWT (si la entidad usa Auth0 con SAML institucional) y cómo se sincroniza con `gd.perfil_usuario` en cada login (job idempotente que lee claims y mantiene perfil al día).
+  - Validación al login (hook): si el usuario no tiene `gd.perfil_usuario` para el tenant pero su rol en `app.user_tenant_roles` tiene prefijo `gd.*`, se autocrea perfil con valores neutros pendientes de completar por Admin Sistema.
+- **RNF:** RNF-005, RNF-019 (la política de sesiones es la del sistema existente, no se redefine), RNF-018, RNF-047.
+- **Eventos:** los existentes (`user.login`, `user.logout`) ya cubren — solo se añade `dominio='gd'` cuando el contexto activo es módulo Gestión Documental, en `core.evento_auditoria` (ver EP-019).
+- **Aceptación:** un usuario con `app.user_tenant_roles.role='gd.profesional'` y sin perfil GD recibe perfil auto-creado en su primer login; un usuario con perfil `estado_gd='inactivo'` que se autentica con Auth0 recibe 403 al llamar cualquier endpoint `/api/v1/gd/*` pero puede seguir usando `/v1/*` del producto principal si tiene otros roles ahí.
 
-### GD-API-0003 — Gestión de usuarios (CRUD sin DELETE)
-- **Crea:** `POST /api/v1/gd/usuarios`, `GET /api/v1/gd/usuarios`, `GET /api/v1/gd/usuarios/{id}`, `PATCH /api/v1/gd/usuarios/{id}`, `POST /api/v1/gd/usuarios/{id}/inactivar`, `POST /api/v1/gd/usuarios/{id}/bloquear`, `POST /api/v1/gd/usuarios/{id}/desbloquear`, `POST /api/v1/gd/usuarios/{id}/retirar`, `GET /api/v1/gd/usuarios/{id}/historial`.
-- **Permisos:** PERM-USR-001 a PERM-USR-012.
-- **RNF:** RNF-007 (mínimo privilegio: usuario nuevo sin permisos administrativos), RNF-020 (estados + fechas vinculación + reasignación de tareas), RNF-010 (no eliminación histórica), RNF-009 (auditoría integral).
-- **Reglas:** crear usuario no asigna roles automáticamente; `tipo_vinculacion ∈ {planta, provisional, ops, supernumerario, practicante, externo_autorizado, administrador_tecnico}`; al inactivar, dispara job que lista tareas pendientes para reasignación (depende de GD-API-0030).
-- **Eventos:** `UsuarioCreado`, `UsuarioInactivado`, `UsuarioBloqueado`.
-- **Aceptación:** test crea usuario, inactiva, verifica que `estado='inactivo'` y aparece el evento de auditoría; intentar login del usuario inactivo retorna 401.
+### GD-API-0003 — Gestión institucional del usuario sobre `gd.perfil_usuario`
+- **No CRUD de identidad** (eso vive en el producto principal vía endpoints de tenant admin existentes). Esta tarea **administra el lado institucional** del usuario que ya existe en `app.users`.
+- **Crea:**
+  - `POST /api/v1/gd/perfil-usuario` body `{ user_id, tipo_vinculacion, fecha_inicio_vinculacion, fecha_fin_vinculacion?, dependencia_actual_id, cargo_actual_id? }` — invitar a un usuario existente al módulo GD del tenant activo.
+  - `PATCH /api/v1/gd/perfil-usuario/{user_id}` — actualizar tipo_vinculacion, dependencia, cargo, fecha_fin_vinculacion.
+  - `POST /api/v1/gd/perfil-usuario/{user_id}/inactivar | bloquear | desbloquear | retirar | suspender` con motivo.
+  - `GET /api/v1/gd/perfil-usuario` (listar usuarios GD del tenant) y `GET /api/v1/gd/perfil-usuario/{user_id}/historial` (cambios de estado, dependencia, cargo).
+- **Permisos:** PERM-USR-001..PERM-USR-012. El permiso PERM-USR-001 ("crear usuario") en realidad significa "invitar un usuario existente al módulo GD"; **crear** el `app.users` real lo hace el flujo de invitación del producto principal (que envía email Auth0, etc.). Esto separa "alta del sistema" de "alta institucional".
+- **Reglas:**
+  - Inactivar perfil GD revoca todos los `app.user_tenant_roles` con prefijo `gd.*` para ese tenant (deja `owner`/`agent`/`manager` intactos si existen para otros módulos del mismo tenant). Si solo era usuario GD, el efecto es "no aparece más para módulos GD".
+  - Retirar dispara job que lista tareas pendientes (PQRSD asignadas, documentos por firmar) y exige reasignación previa (GD-API-0008).
+  - El `app.users.email` no se toca desde GD — gestionarlo solo desde tenant admin del producto principal.
+- **RNF:** RNF-007, RNF-020, RNF-010, RNF-009.
+- **Eventos:** `gd.perfil_usuario.creado`, `gd.perfil_usuario.inactivado`, `gd.perfil_usuario.bloqueado`, `gd.perfil_usuario.retirado` — todos en `core.evento_auditoria` con `dominio='gd'`.
+- **Aceptación:** invitar a `juan@ejemplo.com` (usuario existente en `app.users`) como `gd.profesional` de la "Oficina Jurídica"; `gd.perfil_usuario` se crea y aparece una fila en `app.user_tenant_roles`; inactivar el perfil revoca el rol GD pero el usuario sigue autenticándose y puede acceder a otros módulos del tenant.
 
-### GD-API-0004 — Gestión de roles y matriz rol↔permiso
-- **Crea:** `POST/GET/PATCH /api/v1/gd/roles`, `POST /api/v1/gd/roles/{id}/inactivar`, `POST /api/v1/gd/roles/{id}/permisos`, `DELETE /api/v1/gd/roles/{id}/permisos/{permiso_id}` (revoca asociación, no borra permiso), `GET /api/v1/gd/permisos`.
-- **Permisos:** PERM-ROL-001 a PERM-ROL-007.
-- **RNF:** RNF-006 (roles configurables, no quemados en código), RNF-007, RNF-009.
-- **Reglas:** roles seed (`es_sistema=true`) no se inactivan pero sí editan su matriz; un rol con `usuario_rol` activos no se inactiva sin antes reasignarse (devuelve 409 con lista de usuarios afectados).
-- **Eventos:** `RolAsignado`, `RolRetirado`, `PermisoModificado`.
+### GD-API-0004 — Catálogo de roles GD y matriz rol↔permiso (sin runtime)
+- **Aclaración:** `gd.rol` es un catálogo de **tipos de rol** (los 19 ROL-001..ROL-019). No es la tabla de "qué roles tiene Juan" — eso vive en `app.user_tenant_roles` (membresía) + `gd.asignacion_alcance` (dimensión dependencia).
+- **Crea:** `POST/GET/PATCH /api/v1/gd/roles`, `POST /api/v1/gd/roles/{codigo}/inactivar`, `POST /api/v1/gd/roles/{codigo}/permisos` (agregar permiso a la matriz), `DELETE /api/v1/gd/roles/{codigo}/permisos/{permiso_codigo}` (revoca de matriz, no borra el permiso), `GET /api/v1/gd/permisos`.
+- **Permisos:** PERM-ROL-001..PERM-ROL-007.
+- **RNF:** RNF-006, RNF-007, RNF-009.
+- **Reglas:** roles seed (`es_sistema=true`) no se inactivan pero se puede editar su matriz; intentar inactivar un rol que tiene asignaciones activas en `app.user_tenant_roles`+`gd.asignacion_alcance` retorna `409 role_in_use` con lista de tenants y usuarios afectados.
+- **Eventos:** `gd.rol.creado`, `gd.rol.inactivado`, `gd.rol_permiso.modificado`.
 
-### GD-API-0005 — Asignación de roles a usuarios con alcance
-- **Crea:** `POST /api/v1/gd/usuarios/{id}/roles`, `DELETE /api/v1/gd/usuarios/{id}/roles/{rol_id}` (cierra vigencia, no borra), `GET /api/v1/gd/usuarios/{id}/roles`.
-- **Body:** `{ rol_id, dependencia_id?, alcance: "propio"|"dependencia"|"institucional"|"global", fecha_inicio, fecha_fin?, motivo }`.
-- **RNF:** RNF-006 (alcance por dependencia), RNF-007, RNF-008 (separación de funciones).
-- **Reglas:** un usuario puede tener varios roles; los roles cerrados (con `fecha_fin`) se conservan para snapshots históricos.
-- **Aceptación:** un test asigna rol `Profesional Responsable` con alcance dependencia X, otro test verifica que el usuario solo lista PQRSD de X.
+### GD-API-0005 — Asignación de un rol GD a un usuario con alcance por dependencia
+- **Crea:**
+  - `POST /api/v1/gd/usuarios/{user_id}/roles` body `{ rol_codigo, dependencia_id?, alcance: "propio"|"dependencia"|"dependencias_autorizadas"|"institucional"|"global", fecha_inicio, fecha_fin?, motivo }`. La operación es transaccional:
+    1. Inserta fila en `app.user_tenant_roles(user_id, tenant_id, role=rol_codigo)` si no existe.
+    2. Inserta fila en `gd.asignacion_alcance(user_id, tenant_id, rol_codigo, dependencia_id, alcance, fecha_inicio, fecha_fin, motivo, asignado_por_user_id)`.
+  - `POST /api/v1/gd/usuarios/{user_id}/roles/{asignacion_alcance_id}/cerrar` body `{ motivo }` — cierra la vigencia. Si era la última asignación de ese rol para ese usuario+tenant, también remueve la fila de `app.user_tenant_roles`.
+  - `GET /api/v1/gd/usuarios/{user_id}/roles` retorna roles vigentes + alcance.
+- **RNF:** RNF-006, RNF-007, RNF-008.
+- **Reglas:**
+  - Un usuario puede tener varios roles distintos en el mismo tenant — múltiples filas en `gd.asignacion_alcance` con `rol_codigo` distinto.
+  - Un mismo `rol_codigo` con alcance distinto en dos dependencias se modela con dos filas en `gd.asignacion_alcance` (mismo `user_tenant_role` apunta a ambas — la matriz es 1 → N).
+  - Asignaciones cerradas con `fecha_fin` se conservan permanentemente — son la base de los snapshots históricos que `core.evento_auditoria` necesita.
+- **Aceptación:**
+  - Asignar `gd.profesional` con alcance "Oficina Jurídica" a Juan: aparece fila en `app.user_tenant_roles(user_id=juan, role='gd.profesional')` (si no existía) y en `gd.asignacion_alcance`. Listar PQRSD como Juan retorna solo las de Oficina Jurídica.
+  - Reasignar a "Secretaría de Salud" (cerrar la anterior + crear nueva): aparecen dos filas en `gd.asignacion_alcance` (una con `fecha_fin`, una abierta); las PQRSD históricas asignadas mantienen el snapshot original "Oficina Jurídica" en `core.evento_auditoria` aunque Juan ya no esté allá.
 
 ### GD-API-0006 — Middleware de autorización por permiso + alcance
 - **Crea:** decorador / middleware `requires(permiso="PERM-PQRSD-009", alcance="dependencia")` consumible desde cada router.
@@ -80,16 +118,27 @@ Prefijo de consecutivos: **`GD-API-NNNN`**. Prefijo de épicas: **`GD-API-EP-NNN
 - **RNF:** RNF-006, RNF-007, RNF-047 (no expone detalles del recurso en el error).
 - **Aceptación:** test integración con dos usuarios (uno permitido, uno no) sobre el mismo endpoint dummy retorna 200 y 403 respectivamente, ambos con evento auditado.
 
-### GD-API-0007 — Política de contraseñas + integración futura SSO/LDAP/MFA
-- **Crea:** tabla `gd.politica_contrasena` (longitud mínima, complejidad, historial, vigencia, intentos fallidos, cooldown); endpoints `GET/PATCH /api/v1/gd/seguridad/politica`. Stub de proveedor externo `gd.proveedor_identidad_externo` (SSO, LDAP, AD) para fase futura.
+### GD-API-0007 — Política de contraseñas + historial + integración futura SSO/LDAP/MFA
+- **Crea:**
+  - Tabla `gd.politica_contrasena` (longitud mínima, complejidad regex, historial N últimas, vigencia días, intentos fallidos máx, cooldown segundos).
+  - **Tabla `gd.historico_contrasena(user_id, hash, salt, creada_en)`** — guarda las últimas N contraseñas del usuario para validar no-reuso (cierra GAP-4 detectado en TRAZABILIDAD.md).
+  - Endpoints `GET/PATCH /api/v1/gd/seguridad/politica`.
+  - Stub `gd.proveedor_identidad_externo` (SSO/SAML/LDAP/AD) para fase futura.
+- **Doc fuente:** RNF-005 ("Debe existir política de complejidad de contraseña" + "bloqueo o protección ante intentos fallidos repetidos").
 - **RNF:** RNF-005 (multifactor preparado), RNF-019.
-- **Aceptación:** cambiar política rechaza contraseñas que no cumplan; intentar reusar las últimas N contraseñas falla con `409 password_reused`.
+- **Reglas:** la verificación de no-reuso compara el nuevo hash contra los N hashes históricos del usuario (no contra el hash actual solamente).
+- **Aceptación:** cambiar política rechaza contraseñas que no cumplan; intentar reusar las últimas N contraseñas falla con `409 password_reused`; auditado en `core.evento_auditoria`.
 
-### GD-API-0008 — Reasignación de tareas al inactivar usuario
-- **Crea:** `GET /api/v1/gd/usuarios/{id}/tareas-pendientes`, `POST /api/v1/gd/usuarios/{id}/tareas/reasignar` (`{ tareas: [...], usuario_destino_id, motivo }`).
+### GD-API-0008 — Reasignación de tareas al inactivar perfil GD del usuario
+- **Crea:** `GET /api/v1/gd/perfil-usuario/{user_id}/tareas-pendientes`, `POST /api/v1/gd/perfil-usuario/{user_id}/tareas/reasignar` (`{ tareas: [...], user_destino_id, motivo }`).
 - **Permiso:** PERM-USR-009.
 - **RNF:** RNF-020.
-- **Reglas:** solo el jefe de la dependencia o el Admin Sistema puede reasignar; cada reasignación deja registro en `asignacion_pqrsd` / `tarea` con `motivo`. Se prohíbe reasignar a usuarios inactivos.
+- **Reglas:**
+  - "Inactivar usuario GD" significa cambiar `gd.perfil_usuario.estado_gd` (no toca `app.users.status` — esa decisión es del producto principal).
+  - Antes de marcar `estado_gd='inactivo'` o `'retirado'`, el sistema **bloquea** la operación con `409 pending_tasks` si hay tareas abiertas; el admin debe reasignar primero o usar el wizard de reasignación masiva (GD-UI-0019).
+  - Cada reasignación deja registro en `gd.asignacion_pqrsd` / `gd.tarea` con `motivo` + emite evento `gd.tarea.reasignada` en `core.evento_auditoria`.
+  - Se prohíbe reasignar a usuarios con `gd.perfil_usuario.estado_gd != 'activo'`.
+  - El historial de asignaciones cerradas (`gd.asignacion_alcance.fecha_fin`) permite reconstruir, dado un radicado histórico, en qué dependencia estaba el usuario que actuó.
 
 ### GD-API-0009 — Snapshot de identidad por actuación
 - **Crea:** función SQL `gd.capturar_snapshot_actuacion(usuario_id)` que devuelve `(usuario_id, nombre, rol_codigo, dependencia_codigo, cargo, fecha_hora)`.
@@ -103,18 +152,33 @@ Prefijo de consecutivos: **`GD-API-NNNN`**. Prefijo de épicas: **`GD-API-EP-NNN
 
 ---
 
-## EP-002 — Configuración institucional y estructura orgánica versionada
+## EP-002 — Perfil de organización y estructura organizacional versionada
 
 **Módulos:** MOD-002, MOD-003
-**Entidades:** `entidad_publica`, `configuracion_institucional`, `dependencia`, `version_estructura_organica`, `cargo`, `canal`, `calendario_institucional`, `parametro`
-**RNF objetivo:** RNF-026 (estructura orgánica versionada), RNF-041 (parametrización), RNF-055 (multi-entidad).
+**Entidades:** `gd.perfil_organizacion` (1:1 con `app.tenants`), `gd.configuracion_institucional`, `gd.dependencia`, `gd.version_estructura_organica`, `gd.cargo`, `gd.canal`, `gd.calendario_institucional`, `gd.parametro`
+**RNF objetivo:** RNF-026, RNF-041, RNF-055.
 **Roles primarios:** ROL-001 Admin Sistema, ROL-003 Admin Documental.
+**Decisión clave:** este módulo **no asume sector público**. El cliente final puede ser una empresa privada (manufactura, salud, financiero), una ONG, una entidad mixta o una entidad pública. La nomenclatura "PQRSD", "TRD/TVD", "constancia", "Ventanilla Única" se conserva (la documentación fuente lo exige), pero su comportamiento se ajusta por configuración por organización — no por código distinto.
 
-### GD-API-0011 — Datos y branding de la entidad pública
-- Crea CRUD de `gd.entidad_publica` (NIT, nombre, dirección, teléfonos, correos oficiales, logo).
-- `GET/PATCH /api/v1/gd/entidad` (un solo recurso para v1; multi-entidad queda detrás de feature flag `gd.multi_entidad=false`).
-- **RNF:** RNF-041, RNF-055.
-- **Reglas:** logo se guarda como `archivo_digital` (ver EP-009) y se valida tipo/tamaño; cambiar NIT requiere PERM-USR-001 + justificación.
+### GD-API-0011 — Perfil de organización 1:1 con tenant (neutro de sector)
+- **No crea concepto paralelo de "entidad".** La organización pagadora ya existe en `app.tenants` (RLS activo en 44 tablas, tenant switcher, `user_tenant_roles`). Esta tarea crea `gd.perfil_organizacion` con FK **UNIQUE** sobre `app.tenants(id)`, agregando solo los campos institucionales que `tenants` no tiene.
+- **Columnas del perfil:** `tenant_id` (PK + FK UNIQUE), `tipo_organizacion ∈ {publica, privada, mixta, ong, gremial, cooperativa}`, `identificacion_fiscal` (NIT en Colombia / RFC / EIN / CUIT — texto libre), `tipo_identificacion_fiscal`, `razon_social_legal`, `nombre_corto`, `direccion_oficial`, `telefono_oficial`, `correo_oficial`, `sitio_web`, `logo_archivo_digital_id` (FK a `core.archivo_digital`), `politica_firma_default ∈ {escaneada, electronica, digital_certificada}`, `formato_radicado` (template como `{prefijo}-{vigencia}-{consecutivo:06d}`), `dias_alerta_vencimiento_default`, `pais_iso`, `zona_horaria_default`.
+- **Aceptación:** un tenant existente puede crear su perfil sin migrar datos; un tenant nuevo creado para una empresa privada (`tipo_organizacion='privada'`) recibe valores default coherentes (firma electrónica, calendario laboral genérico, sin PQRSD legal activado).
+
+### GD-API-0011.b — Catálogo de módulos activables por organización
+- Tabla `gd.organizacion_modulo_activacion(tenant_id, modulo_codigo, activado bool, configuracion jsonb)`.
+- **Módulos individualmente activables:** `pqrsd_legal` (con términos legales y constancias formales), `pqrsd_tickets` (versión simplificada para empresa privada sin obligación legal), `correspondencia_interna`, `correspondencia_externa`, `firma_escaneada`, `firma_electronica`, `firma_digital_certificada`, `expedientes`, `trd_tvd`, `integracion_correo`, `agentes_ia`, `radicacion_externa_desde_dependencia`, `consulta_publica_radicado` (constancias con QR verificables sin login — típico sector público).
+- **Endpoint:** `GET/PATCH /api/v1/gd/organizacion/modulos` (PERM-USR-001).
+- **Aceptación:** empresa privada activa `pqrsd_tickets` + `correspondencia_interna` + `firma_electronica` y desactiva `trd_tvd`, `consulta_publica_radicado`; el menú lateral de UI no muestra TRD ni la página pública de verificación.
+- **Por qué:** RNF-055 (multi-entidad). El documento fuente describe una alcaldía pero el producto debe operar en hospital privado, holding empresarial, ONG, sin reescribir.
+
+### GD-API-0011.c — Defaults sensatos por tipo de organización
+- Job que al crear el perfil aplica configuración inicial coherente:
+  - `tipo_organizacion='publica'` → todos los módulos activos, calendario hábil colombiano (Ley 1755 PQRSD), TRD obligatoria, constancias públicas con QR.
+  - `tipo_organizacion='privada'` → módulos básicos (correspondencia + documentos + firma electrónica + IA), PQRSD desactivado por default, TRD opcional, sin consulta pública.
+  - `tipo_organizacion='ong'` → similar a privada pero con expedientes activos por default (importante para donantes).
+  - `tipo_organizacion='mixta'` → como pública pero con FAQ explicativa al admin sobre cuáles módulos legales aplican.
+- El admin puede sobreescribir cualquier default desde la UI (GD-UI-0052).
 
 ### GD-API-0012 — Estructura orgánica versionada
 - Crea tablas `gd.version_estructura_organica`, `gd.dependencia` (con `version_estructura_id`, `dependencia_padre_id`, vigencia).
@@ -147,45 +211,11 @@ Prefijo de consecutivos: **`GD-API-NNNN`**. Prefijo de épicas: **`GD-API-EP-NNN
 
 ---
 
-## EP-003 — Auditoría y trazabilidad — base transversal
+## EP-003 — ~~Auditoría base en `gd.*`~~ → **DEPRECADA, FUSIONADA EN EP-019**
 
-**Módulos:** MOD-016
-**Entidades:** `evento_auditoria`
-**RNF objetivo:** RNF-009, RNF-010, RNF-030, RNF-036, RNF-059.
-**Por qué primero:** EP-001 ya emite los primeros eventos; este EP cierra el dominio antes de que se acumulen huérfanos.
-
-### GD-API-0017 — Tabla `gd.evento_auditoria` particionada por mes
-- DDL con columnas: `id`, `tipo_evento`, `usuario_id`, `rol_snapshot`, `dependencia_snapshot`, `cargo_snapshot`, `entidad_afectada_tipo`, `entidad_afectada_id`, `accion`, `valor_anterior_jsonb`, `valor_nuevo_jsonb`, `justificacion`, `ip`, `user_agent`, `fecha_hora`, `criticidad`.
-- Partición por mes calendar (RANGE), índices en `(entidad_afectada_tipo, entidad_afectada_id)`, `(usuario_id, fecha_hora)`, `(tipo_evento, fecha_hora)`.
-- Trigger `BEFORE UPDATE` / `BEFORE DELETE` que `RAISE EXCEPTION` — la tabla es **append-only**.
-- **RNF:** RNF-009, RNF-010.
-- **Aceptación:** intentar `UPDATE` o `DELETE` falla; `EXPLAIN` muestra escaneo por partición correcta para una query con rango de fecha.
-
-### GD-API-0018 — Helper `gd.auditar(...)` para todos los módulos
-- Función Postgres + helper de aplicación que recibe `(usuario_id, accion, entidad_tipo, entidad_id, valor_anterior, valor_nuevo, justificacion, criticidad)` y captura snapshot.
-- Aplicación: middleware que para cada request muta `request_id`, `ip`, `user_agent` accesibles desde el helper.
-- **RNF:** RNF-009.
-
-### GD-API-0019 — Endpoints de consulta de auditoría
-- `GET /api/v1/gd/auditoria?entidad_tipo=&entidad_id=&usuario_id=&desde=&hasta=&tipo_evento=&page=&size=` con paginación cursor.
-- `GET /api/v1/gd/auditoria/{id}` detalle.
-- **Permisos:** PERM-AUD-001..PERM-AUD-008 según la entidad consultada (radicado → AUD-001, usuario → AUD-003, etc.).
-- **RNF:** RNF-009, RNF-059 (trazabilidad de consulta sensible — auditar la consulta misma cuando es sobre info clasificada/reservada).
-
-### GD-API-0020 — Eventos de dominio + bus interno
-- Bus de eventos en proceso (in-process pub/sub para v1; arquitectura prevé migrar a Kafka/Redis Streams sin tocar consumidores).
-- Define interfaz `IEventBus.publish(event: DomainEvent)` y `subscribe(event_type, handler)`.
-- Eventos iniciales: `RadicadoCreado`, `RadicadoClasificado`, `RadicadoAnulado`, `PQRSDCreada`, `PQRSDAsignada`, `PQRSDProximaAVencer`, `PQRSDVencida`, `DocumentoFirmado`, `UsuarioInactivado`, `IASugerenciaGenerada`. (Lista completa en GD-API-0021).
-- **RNF:** RNF-027 (interoperabilidad por API + eventos), RNF-036 (observabilidad).
-- **Aceptación:** test publica evento, dos suscriptores reciben; un handler que falla no impide al otro recibir.
-
-### GD-API-0021 — Catálogo formal de eventos de dominio
-- Archivo `docs/gestion documental/EVENTOS.md` con cada evento, payload, productor, consumidor, criticidad. Importa los 30+ eventos del Mapa de Arquitectura sección 7.
-
-### GD-API-0022 — Logs técnicos separados de auditoría funcional
-- Configuración de logger estructurado (JSON) hacia stdout/archivo rotado. Campos: `ts`, `level`, `request_id`, `user_id?`, `module`, `message`, `error?`.
-- **RNF:** RNF-036.
-- **Regla:** los logs técnicos no escriben en `evento_auditoria`. Si la línea contiene información de actuación funcional → va a `gd.auditar(...)`. Si es error/perf/info técnica → va al logger.
+> Las tareas que estaban aquí (GD-API-0017..0022) se reemplazaron por el servicio transversal en `core.*` (ver **EP-019** al final del backlog). Razón: el sistema actual ya tiene `app.audit_logs` con 121 acciones auditadas (citas, contactos, planes, exportes GDPR) — duplicarlo en `gd.evento_auditoria` para los 33 eventos del documento PQRSD partía la verdad de auditoría en dos tablas. Pero `app.audit_logs` tiene **tres limitaciones técnicas** que lo descalifican como tabla canónica sin refactor: (1) no es append-only (sin triggers contra UPDATE/DELETE — solo `consent_ledger` los tiene), (2) no está particionada (volumen PQRSD puede superar 10M/año en organizaciones medianas), (3) no guarda `valor_anterior` / `valor_nuevo` / `criticidad` / `justificacion` / `request_id` que el documento PQRSD exige en RNF-009.
+>
+> EP-019 resuelve las tres limitaciones creando `core.evento_auditoria` con append-only por trigger, particionado mensual y snapshots completos, **migrando** `app.audit_logs` y `app.consent_ledger` al modelo unificado.
 
 ---
 
@@ -402,15 +432,17 @@ Prefijo de consecutivos: **`GD-API-NNNN`**. Prefijo de épicas: **`GD-API-EP-NNN
 **Entidades:** `documento`, `version_documento`, `archivo_digital`, `anexo`
 **RNF:** RNF-013 (versionamiento), RNF-038 (conservación documental), RNF-045 (gestión anexos), RNF-046 (archivos maliciosos), RNF-018 (cifrado).
 
-### GD-API-0057 — Repositorio documental separado del transaccional
-- Configuración de storage (S3 compatible o filesystem encriptado) accedido vía `gd.archivo_digital` (rutas, hash, tamaño, MIME). Nunca el contenido vive en Postgres.
-- **RNF:** RNF-004 (escalabilidad: almacén documental separado), RNF-018, RNF-046.
+### GD-API-0057 — `gd.documento` referencia al servicio transversal de archivos
+- **No implementa storage propio.** Apunta a `core.archivo_digital` introducido por **EP-018 / GD-API-0110**. Cuando el caller crea un documento institucional, ya recibió un `archivo_digital_id` desde el endpoint compartido `POST /api/v1/core/archivos`.
+- Crea la tabla `gd.documento` con FK `archivo_digital_id → core.archivo_digital(id)` y los campos institucionales propios (estado, clasificación, snapshots, asociaciones polimórficas a radicado/PQRSD/correspondencia/expediente). Esos campos viven en el dominio GD; el binario nunca.
+- **Por qué no duplica:** el módulo Knowledge ya tiene el storage operativo en `knowledge_storage.py` con soporte filesystem + S3 por tenant; EP-018 lo eleva a servicio compartido. Forzar a Gestión Documental a tener su propio storage acoplaría dos cosas que la operación quiere unificadas (un solo backup, un solo antivirus, una sola política de retención de bytes).
+- **RNF:** RNF-004, RNF-018, RNF-038.
 
-### GD-API-0058 — Carga de archivos con validación y antivirus
-- `POST /api/v1/gd/archivos` multipart. Valida tipo MIME (lista blanca configurable), tamaño máx (parámetro), calcula hash SHA-256.
-- Hook para análisis antivirus (interfaz `IAntivirusScanner` con implementación stub que se reemplaza por ClamAV en prod).
-- **RNF:** RNF-046, RNF-018.
-- **Aceptación:** subir un `.exe` falla con 415; subir un PDF con virus EICAR de prueba queda en cuarentena (`estado='bloqueado'`).
+### GD-API-0058 — Reglas adicionales de archivo para documentos institucionales
+- El servicio compartido (GD-API-0110) acepta cualquier archivo bajo política global. Esta tarea añade **reglas suplementarias** que solo aplican cuando el archivo se usa como `gd.documento` o `gd.anexo` de un radicado / PQRSD / correspondencia: tamaño máx más estricto que el global, lista blanca MIME reducida (PDF, DOCX, XLSX, imágenes), hash inmutable una vez asociado a una versión aprobada.
+- Las reglas se configuran en `gd.configuracion_institucional` (parámetros `gd.archivo.tamano_max`, `gd.archivo.mime_whitelist`); el servicio compartido las consulta cuando recibe `proposito=gd.documento` en el upload.
+- **RNF:** RNF-045, RNF-046.
+- **Aceptación:** subir un `.exe` para Knowledge funciona si la política global lo permite; subir el mismo `.exe` con `proposito=gd.documento` falla con 415.
 
 ### GD-API-0059 — Modelo de Documento con versiones
 - DDL `gd.documento`, `gd.version_documento`. Una versión apunta a un `archivo_digital`. Versión aprobada/firmada no se sobrescribe — se crea nueva versión.
@@ -665,6 +697,196 @@ Prefijo de consecutivos: **`GD-API-NNNN`**. Prefijo de épicas: **`GD-API-EP-NNN
 
 ---
 
+## EP-018 — Servicio transversal de archivos, extracción y OCR
+
+**Naturaleza:** este EP **no vive bajo `gd`**. Crea un servicio en `core.*` compartido entre el módulo Knowledge (RAG conversacional) existente y el módulo Gestión Documental nuevo.
+
+**Por qué transversal:** el dominio Knowledge ya tiene un repositorio operativo (`app/services/knowledge_storage.py` con filesystem + S3 por tenant), un worker de extracción para PDF/DOCX (`app/services/extraction_worker.py`) y tablas `app.knowledge_documents`/`knowledge_chunks`. Construir un storage paralelo para Gestión Documental duplicaría backup, antivirus, política MIME, validaciones y código de extracción. Construir un único modelo `documento` para los dos dominios mezcla concerns incompatibles (chunks de RAG re-indexables vs. versiones SGDEA inmutables con firma). La solución es: **una sola capa baja de bytes + extracción de texto**, **dos modelos de dominio encima** (Knowledge sigue siendo Knowledge, Gestión Documental tiene su propio `gd.documento`).
+
+**Módulos del Mapa:** infraestructura transversal (no es un MOD-NNN).
+**RNF objetivo:** RNF-004 (escalabilidad — almacén documental separado del transaccional), RNF-018 (cifrado en reposo y tránsito), RNF-038 (conservación documental), RNF-039 (búsqueda y recuperación), RNF-044 (calidad de datos), RNF-045 (anexos), RNF-046 (archivos maliciosos).
+**Dependencias del producto principal:** refactor de `app/services/knowledge_storage.py` y `app/services/extraction_worker.py` para que vivan bajo `app/core/files/` y `app/core/extraction/`, con compatibilidad para Knowledge.
+
+### GD-API-0110 — Servicio transversal `core.archivo_digital` + storage compartido
+- **Mueve** `app/services/knowledge_storage.py` → `app/core/files/storage.py`. Conserva la API actual (`save_file`, `get_file`, `delete_file`) y agrega `attach_proposito(archivo_id, proposito, contexto_id)` para que el caller declare si el archivo es `knowledge`, `gd.documento`, `gd.anexo`, `gd.constancia`, `gd.firma_imagen`, etc.
+- **Tabla nueva** `core.archivo_digital` con columnas: `id`, `tenant_id`, `nombre_original`, `extension`, `mime_type`, `tamano`, `ruta_almacenamiento`, `hash_sha256`, `estado` (cargado / extrayendo / listo / bloqueado / anulado), `analisis_antivirus` (`pendiente|limpio|infectado`), `cargado_por_usuario_id`, `cargado_en`. El binario sigue viviendo en filesystem o S3 según config tenant — esta tabla solo es metadatos + referencia.
+- **Migración de Knowledge:** `app.knowledge_documents.storage_path` se reemplaza por FK `archivo_digital_id → core.archivo_digital(id)`. Backfill: crear una fila en `core.archivo_digital` por cada `knowledge_documents` existente. RNF-010 prohíbe DELETE; los documentos Knowledge migrados conservan su id.
+- **Endpoint compartido:** `POST /api/v1/core/archivos` (multipart) que recibe `proposito` + reglas adicionales del dominio caller. Devuelve `archivo_digital_id` que luego se pasa a `POST /api/v1/gd/documentos` o al endpoint de Knowledge según corresponda.
+- **Antivirus:** interfaz `IAntivirusScanner` con stub para dev + implementación ClamAV para prod (RNF-046). Tras `save_file`, el archivo entra a cola asincrónica de análisis; mientras está `pendiente` no se puede usar para crear documento institucional (gate de GD-API-0057).
+- **Aceptación:**
+  1. Knowledge sigue subiendo PDFs igual que hoy; los nuevos archivos viven en `core.archivo_digital` sin que los usuarios noten cambio.
+  2. Gestión Documental sube un PDF llamando al endpoint compartido, recibe `archivo_digital_id`, lo asocia a un radicado vía `POST /api/v1/gd/anexos`.
+  3. Subir un archivo con virus EICAR queda en `analisis_antivirus='infectado'` y `estado='bloqueado'`; intentar crear `gd.documento` con ese id falla con 422.
+  4. Backup del repositorio cubre con un solo job ambos dominios.
+
+### GD-API-0111 — OCR para imágenes y PDFs escaneados
+- **Por qué:** `pypdf` solo lee texto embebido. Un oficio escaneado que llega a Ventanilla Única hoy entra como PDF "vacío" — sin búsqueda léxica, sin extracción IA, sin asistente de clasificación, sin previews legibles. Igualmente bloqueante: cédulas, fotos de contratos, facturas en JPG/PNG que ciudadanos suben por correo o widget.
+- **Worker** `app/core/extraction/ocr_worker.py` que escucha un job `OCRRequested(archivo_digital_id)` emitido cuando:
+  - El MIME es `image/*` (JPG, PNG, TIFF).
+  - El MIME es `application/pdf` y el extractor PDF base devuelve `< 50` caracteres por página (heurística: PDF probablemente escaneado).
+- **Motor:** [Tesseract](https://tesseract-ocr.github.io/) v5 con paquetes `spa` + `eng` como default local; interfaz `IOCRProvider` permite cambiar a AWS Textract o Google Vision por configuración (parámetro `core.ocr.provider`). Tesseract es libre y suficiente para documentos institucionales típicos; los servicios cloud quedan disponibles para casos con tablas complejas o calidad baja.
+- **Salida:** texto extraído + bbox por palabra + confianza promedio, guardados en `core.extraccion_resultado(archivo_digital_id, motor, version, texto_completo, paginas_jsonb, confianza, extraido_en)`. Esta tabla la consumen tanto Knowledge (para chunking RAG) como Gestión Documental (para búsqueda léxica y resumen IA).
+- **Pre-procesamiento:** deskew, denoise y conversión a grayscale antes de Tesseract (mejora 10–20% precisión en escaneos sucios).
+- **Política de costos:** OCR se ejecuta una sola vez por archivo (idempotente por `hash_sha256`); resultado se cachea. Re-ejecución manual disponible vía `POST /api/v1/core/archivos/{id}/reextraer` (PERM-DOC-001).
+- **Eventos:** `OCRRequested`, `OCRCompleted`, `OCRFailed`. Auditados.
+- **Aceptación:**
+  1. Subir foto JPG de un oficio dispara OCR, queda texto extraído consultable.
+  2. Subir PDF nativo con texto embebido NO ejecuta OCR (la heurística lo evita).
+  3. Subir PDF escaneado SÍ ejecuta OCR y el texto queda disponible.
+  4. Texto extraído de un radicado escaneado alimenta la sugerencia IA de clasificación (GD-API-0078) — antes era imposible.
+  5. Métrica de confianza < 60% emite warning visible para el radicador, que decide si confiar o re-digitalizar.
+
+### GD-API-0112 — Extracción nativa de XLSX, XLSM y CSV mejorada
+- **Por qué:** el extractor actual reconoce CSV por heurística y devuelve texto concatenado. XLSX binario no se soporta — un anexo Excel típico (matrices PQRSD, listados de citados, formatos de seguimiento) llega como blob ininteligible para búsqueda y IA.
+- **Librerías:** `openpyxl` para `.xlsx`/`.xlsm` (lectura, sin macros), `pandas` opcional para tablas grandes. Stub para `.xls` legacy (informa al usuario que convierta a `.xlsx`).
+- **Estrategia de extracción:**
+  - Cada hoja produce un bloque con `nombre_hoja`, `rango`, `headers` (primera fila con encabezados), `rows` (lista de diccionarios).
+  - Texto plano agregado para búsqueda léxica: `"Hoja: X\n<headers>\n<rows tabuladas>"`.
+  - Metadatos JSON estructurado en `core.extraccion_resultado.paginas_jsonb` para que IA pueda razonar sobre la estructura tabular (ej. "¿cuántas filas tiene la columna 'fecha_vencimiento' antes del 2026-06-01?").
+- **Límites:** archivos > 50 MB o > 100k filas se truncan con warning audit visible. Fórmulas no se evalúan — se extrae el valor calculado guardado por Excel; si la celda no tiene valor calculado (archivo nuevo sin abrir), se reporta `null`.
+- **Aceptación:**
+  1. Anexar un XLSX con 3 hojas a una PQRSD; el sistema indexa las 3 hojas + permite buscar por valor de celda.
+  2. La IA de resumen (GD-API-0080) recibe la estructura tabular y la describe correctamente.
+  3. Un XLSX con macro `.xlsm` se extrae sin ejecutar macros (seguridad).
+
+### GD-API-0113 — Detección de duplicados por hash de archivo (consumida por GD-API-0082)
+- Aprovecha `core.archivo_digital.hash_sha256` para detectar archivos idénticos antes de re-extraer.
+- Si un PDF llega a Ventanilla con el mismo hash que otro radicado del último año, advertir al radicador con link al radicado anterior — antes incluso de pasar por la IA de duplicados semántica.
+- Endpoint `GET /api/v1/core/archivos/duplicados?hash=...`.
+- **RNF:** RNF-044.
+
+### GD-API-0114 — Política de retención de bytes vs. retención de metadatos (RNF-038)
+- Los metadatos `core.archivo_digital` y `gd.documento` son **append-only** (RNF-010): nunca se borran.
+- Los **bytes** sí pueden purgarse cuando la TRD/TVD lo indique y haya pasado el plazo de archivo central + histórico (años, no días). Worker `core.retencion_bytes` programado por jobs.
+- Al purgar bytes: el archivo binario se elimina del storage, `core.archivo_digital.ruta_almacenamiento = NULL`, `estado = 'purgado'`, hash y metadatos permanecen para evidencia.
+- **Trámites firmados, PQRSD cerradas con respuesta enviada y expedientes en archivo histórico siguen reglas distintas** — la purga consulta `gd.clasificacion_documental.serie.disposicion_final`.
+- **Aceptación:** un documento clasificado como "Conservación total" nunca se purga, incluso si se ejecuta el worker; un documento "Eliminación" pasados los plazos de archivo de gestión + central se purga y queda registro en auditoría.
+
+---
+
+## EP-019 — Auditoría transversal `core.evento_auditoria`
+
+**Naturaleza:** servicio en `core.*` compartido entre los tres dominios — el producto principal (CopilotoIA: citas, conversaciones, campañas, exportes GDPR), Knowledge (indexación, descargas) y Gestión Documental (radicados, PQRSD, firmas, IA, anulaciones). **Reemplaza** a `app.audit_logs` y absorbe `app.consent_ledger` como caso especial.
+
+**Por qué transversal:** el sistema actual ya audita 121 acciones via `app.audit_logs` con helper `app/services/audit.py::audit()` y `audit_durably()`. Construir un sistema paralelo en `gd.*` partiría la verdad de auditoría — un auditor tendría que mirar dos tablas para reconstruir un incidente que cruzó dominios (ej. un usuario que cambió de tenant tras anular una PQRSD). Y al revés, el sistema actual tiene tres carencias estructurales (no append-only, no particionado, sin snapshots) que de todas formas obligan a un refactor mayor para cumplir RNF-009 / RNF-010 del documento PQRSD. La solución es **un solo refactor** que unifica.
+
+**Módulos del Mapa:** MOD-016, transversal a todos los demás.
+**RNF objetivo:** RNF-009 (auditoría integral), RNF-010 (no eliminación), RNF-030 (trazabilidad IA), RNF-036 (observabilidad), RNF-059 (lectura sensible).
+
+### GD-API-0115 — Tabla `core.evento_auditoria` particionada append-only
+- DDL con columnas: `id` (bigserial), `tenant_id` (uuid, FK → `app.tenants`), `dominio ∈ {core, app, gd, knowledge}` (separa fuente), `tipo_evento` (texto controlado), `actor_tipo ∈ {usuario, sistema, bot, agente_ia, robot_rpa, support}`, `actor_id`, `actor_nombre_snapshot`, `rol_codigo_snapshot`, `dependencia_codigo_snapshot`, `cargo_snapshot`, `entidad_afectada_tipo`, `entidad_afectada_id`, `accion`, `valor_anterior` (jsonb), `valor_nuevo` (jsonb), `justificacion`, `request_id` (uuid), `ip` (inet), `user_agent`, `criticidad ∈ {baja, media, alta, critica}`, `idempotency_key`, `creado_en` (timestamptz).
+- **Particionado** `BY RANGE (creado_en)` mensual; índices `(tenant_id, creado_en DESC)`, `(entidad_afectada_tipo, entidad_afectada_id)`, `(actor_id, creado_en)`, `(tipo_evento, creado_en)`, `(dominio, tipo_evento)`.
+- **Append-only declarativo:** triggers `BEFORE UPDATE` / `BEFORE DELETE` → `RAISE EXCEPTION`. Solo `INSERT` permitido (mismo patrón que `consent_ledger` actual).
+- **RLS** habilitada con política `tenant_id = app.current_tenant_id() OR app.support_mode()`.
+- **UNIQUE** `(tenant_id, idempotency_key)` para prevenir doble-inserción cuando el caller reintenta.
+- **Aceptación:** `UPDATE` y `DELETE` fallan con excepción; `INSERT` con `idempotency_key` repetida falla con `23505`; `EXPLAIN` muestra escaneo por partición correcta para query con rango de fecha.
+
+### GD-API-0116 — Refactor de `app/services/audit.py` para escribir a `core.evento_auditoria`
+- La firma actual `audit(conn, *, tenant_id, actor_type, actor_id, action, entity_type, entity_id, metadata)` se mantiene **backward-compatible** — los 121 call sites no se tocan.
+- Por debajo, escribe a `core.evento_auditoria` con `dominio='app'`, `metadata` se reparte entre `valor_anterior` / `valor_nuevo` / `justificacion` cuando los call sites llaman con la nueva firma extendida; en su defecto, queda en `valor_nuevo`.
+- Helper nuevo `audit_extended(..., valor_anterior, valor_nuevo, criticidad, justificacion)` para los call sites futuros (incluidos todos los de `gd.*`).
+- `audit_durably()` se preserva igual — autocommit propio para fallos rollback-eados.
+- **Aceptación:** los tests existentes de auditoría siguen pasando sin modificar; el campo `dominio='app'` aparece en cada fila.
+
+### GD-API-0117 — Migración de `app.audit_logs` y `app.consent_ledger` → `core.evento_auditoria`
+- Migración online: la nueva tabla recibe inserts desde el momento del deploy; un job de fondo copia el histórico de `app.audit_logs` (con `dominio='app'`) y de `app.consent_ledger` (con `dominio='app'` + `tipo_evento='consent.*'` + `criticidad='alta'`).
+- Las tablas viejas se conservan en read-only (renombradas a `app.audit_logs__deprecated`) durante 90 días para auditoría doble. Luego se borran (las copias quedan en `core.evento_auditoria`).
+- Vista de compatibilidad `app.audit_logs` (VIEW sobre `core.evento_auditoria WHERE dominio='app'`) para que consultas legadas no se rompan.
+- **Aceptación:** después de la migración, los reportes legales de Ley 1581 (consent_ledger) siguen funcionando contra la vista; total de filas en `core.evento_auditoria` ≥ suma de las dos tablas originales.
+
+### GD-API-0118 — Helper de aplicación + middleware
+- Module `app/core/audit/__init__.py` expone:
+  - `audit(...)` — sincrónico, dentro de la transacción del handler.
+  - `audit_async(...)` — encola para escritura asíncrona (alta volumetría: queries de IA, descargas masivas).
+  - `audit_durably(...)` — preserva el comportamiento actual.
+- Middleware genera `request_id` por request (UUID v4), accesible vía contextvar.
+- Snapshot helpers `capturar_snapshot_actor(user_id, tenant_id)` y `capturar_snapshot_entidad(entidad_tipo, entidad_id)`.
+- **Aceptación:** cualquier handler puede llamar `audit_extended(action="gd.radicado.anulado", valor_anterior={...}, valor_nuevo={...}, criticidad="alta", justificacion="...")` y el evento se persiste con todos los campos snapshot.
+
+### GD-API-0119 — Endpoints de consulta de auditoría con permisos
+- `GET /api/v1/core/auditoria?dominio=&tipo_evento=&actor_id=&entidad_tipo=&entidad_id=&criticidad=&desde=&hasta=&page=&size=` (cursor paginated).
+- `GET /api/v1/core/auditoria/{id}` detalle.
+- `GET /api/v1/core/auditoria/export?formato=csv|json` (asincrónico, devuelve job_id; archivo queda en `core.archivo_digital` con TTL 7 días).
+- **Permisos:** `PERM-AUD-001..PERM-AUD-008` cuando es módulo gd; rol `tenant-admin` o `owner` cuando es módulo app/knowledge. Compartido con el endpoint existente `/v1/tenant-admin/audit-logs` (que pasa a ser un alias sobre `core.evento_auditoria` con filtro `dominio in (app, knowledge)`).
+- **RNF:** RNF-059 — consultar un evento marcado como `criticidad='alta'` o sobre entidad reservada genera un evento meta `auditoria.consultada` con `actor_id` del consultante.
+
+### GD-API-0120 — Catálogo formal de eventos auditados
+- Archivo `docs/gestion documental/EVENTOS_AUDITORIA.md` con la tabla completa: `tipo_evento`, `dominio`, `productor` (módulo que lo emite), `criticidad`, `RNF cubierto`, `permiso de lectura`, `campos snapshot`.
+- Incluye los 33 eventos del Anexo A del documento PQRSD **+** los 121 actions existentes en `app.audit_logs` clasificados por dominio.
+- Sirve como contrato: cualquier acción nueva que requiera auditoría debe primero declarar su `tipo_evento` aquí.
+
+### GD-API-0121 — Logger técnico estructurado separado
+- `app/core/logging/__init__.py` configura logger JSON (`structlog` o `python-json-logger`) hacia stdout con campos `ts`, `level`, `request_id`, `tenant_id?`, `user_id?`, `module`, `message`, `error?`.
+- **Regla absoluta:** los logs técnicos **nunca** escriben a `core.evento_auditoria`. Si una línea contiene una actuación funcional (cambio de estado, decisión humana, acceso a info sensible) → `audit()`. Si es operación técnica (latencia, error de red, retry) → logger.
+- Linter en CI que detecta llamadas a `logger.info` con `action=` o `actor_id=` y obliga a rebautizarlas como `audit()` (RNF-036).
+
+---
+
+## EP-020 — Gaps cerrados tras auditoría de cobertura 2026-05-20
+
+> Tareas añadidas tras la auditoría cruzada documentada en `TRAZABILIDAD.md` § 6. Cada tarea cita la sección exacta del PDF fuente que la motiva. Cobertura tras estas tareas: **100%** de los 5 documentos del cliente.
+
+### GD-API-0122 — Página pública de verificación de constancia con QR (sin login)
+- **Doc fuente:** Doc 1 § 6.1 (Ventanilla Única genera constancia) + RNF-011 ("Debe poder verificarse el radicado mediante código de verificación o QR") + Doc 1 § 19.1 (plantilla constancia).
+- **Crea:** ruta pública `GET /gd/verificar/{codigo_verificacion}` (sin auth) — escaneable desde el QR impreso en la constancia.
+- **Devuelve:** `{ numero_radicado, fecha_radicacion, tipo (PQRSD|correspondencia|...), estado_actual, dependencia_actual_publica, asunto_resumido }`. **NO** expone datos personales del tercero ni el cuerpo del trámite — RNF-017.
+- **Activación:** solo si `gd.organizacion_modulo_activacion.modulo_codigo='consulta_publica_radicado'` está activo para el tenant (por default ON para `tipo_organizacion='publica'`, OFF para privada).
+- **Rate limit:** 60 req/min por IP para prevenir scraping.
+- **Aceptación:** escanear el QR de una constancia y abrir el link en modo incógnito muestra el estado actual del radicado sin pedir login; el mismo link con `tipo_organizacion='privada'` y módulo desactivado retorna 404.
+
+### GD-API-0123 — Catálogo configurable de tipos de documento de identificación por país/organización
+- **Doc fuente:** Doc 5 § 9.1 (`Tercero.tipo_documento ∈ {CC, CE, NIT, pasaporte, otro}` — restringido a Colombia) + neutralidad de sector (README sección 0).
+- **Por qué:** una empresa con operación regional (México, Argentina, USA) necesita aceptar RFC, DNI, EIN, etc. Si el catálogo es enum hardcoded, hay que recompilar.
+- **Crea:**
+  - Tabla `gd.catalogo_tipo_documento(codigo PK, nombre, pais_iso, formato_regex?, validador_funcion?, activo)`. Globales (sin RLS).
+  - Tabla `gd.organizacion_tipo_documento_activo(tenant_id, codigo_tipo_doc, activado, default bool)` — qué tipos acepta esta organización.
+  - Endpoints `GET /api/v1/gd/catalogos/tipos-documento` (catálogo global) y `GET/PATCH /api/v1/gd/organizacion/tipos-documento` (selección de la organización).
+- **Seed:** CC, CE, NIT, TI, RC, PA (Colombia); RFC, CURP (México); DNI, CUIT (Argentina); EIN, SSN, ITIN (USA); ID genérico, pasaporte como fallback.
+- **Aceptación:** una empresa argentina configura `DNI` y `CUIT` como activos; el formulario de tercero en GD-UI-0007 solo muestra esos dos; si llega un correo con remitente colombiano, la IA sugiere "tipo_documento=CC" pero el sistema marca el caso como `documento_extranjero` para revisión.
+
+### GD-API-0124 — Versionado jerárquico de dependencias (fusiones, divisiones, traslados)
+- **Doc fuente:** Doc 5 § 6.1 (`Dependencia.dependencia_padre_id`) + Doc 4 MOD-003 ("Las dependencias podrán cambiar de nombre, fusionarse, dividirse o cerrarse mediante nuevas versiones o relaciones históricas") + RNF-026.
+- **Por qué:** GD-API-0012 versionaba la dependencia pero no el **vínculo** padre-hijo. Si la "Oficina Jurídica" se fusiona con la "Oficina de Contratación" en 2025, los radicados de 2024 deben seguir mostrando la jerarquía vigente al momento.
+- **Crea:**
+  - Tabla `gd.relacion_dependencia_historica(id, dependencia_id, dependencia_padre_id, fecha_inicio_vigencia, fecha_fin_vigencia, motivo_cambio)`.
+  - Tipos de cambio: `creacion`, `cambio_nombre`, `cambio_padre`, `fusion_origen`, `fusion_destino`, `division_origen`, `division_destino`, `cierre`.
+  - Endpoint `GET /api/v1/gd/estructura/dependencias/{id}/historial` retorna el árbol completo en el que esa dependencia ha estado a lo largo del tiempo.
+  - Endpoint `POST /api/v1/gd/estructura/fusionar` body `{ dependencias_origen: [...], dependencia_destino_id, fecha_vigencia, motivo, acto_administrativo? }` — operación transaccional que cierra orígenes y abre destino con trazabilidad.
+- **Aceptación:** un radicado creado en 2024-03 en "Oficina Jurídica" sigue mostrando esa dependencia en su trazabilidad después de fusionarse con "Contratación" en 2025-01 a "Oficina Asesora Jurídica y de Contratación". La consulta histórica reconstruye la jerarquía vigente al 2024-03.
+
+### GD-API-0125 — Radicación de contingencia para caída del sistema
+- **Doc fuente:** RNF-002 ("Deben existir procedimientos de contingencia para radicación manual en caso de caída del sistema") + Doc 1 § 25 supuesto 10.
+- **Por qué:** una entidad pública que opera bajo Ley 1755 no puede dejar de radicar PQRSD durante una caída — los términos legales corren igualmente. Cuando el sistema vuelve, los radicados manuales que se hicieron en papel durante la caída deben ingresarse con su timestamp original.
+- **Crea:**
+  - Endpoint `POST /api/v1/gd/ventanilla/radicados/contingencia` con permiso especial PERM-VU-021 (nuevo, solo coordinador VU + admin sistema).
+  - Body: `{ numero_radicado_manual, fecha_radicacion_real (timestamp del momento de caída), justificacion (obligatorio), evidencia_contingencia_archivo_digital_id (foto/escaneo de la planilla manual), ...resto de campos normales }`.
+  - El radicado se crea con flag `es_radicacion_contingencia=true`, fecha real preservada, fecha de ingreso al sistema en `creado_en` separada.
+  - **Evento crítico** `gd.radicado.contingencia` en `core.evento_auditoria` con `criticidad='alta'`.
+  - Reporte específico de radicados de contingencia para control interno (PERM-REP-002).
+- **Aceptación:** durante una caída de 3 horas, el coordinador registra 12 radicados manuales en papel; al restablecer servicio, los carga vía contingencia con foto de la planilla; los términos PQRSD se calculan desde la fecha real (no la fecha de carga); el auditor puede listar todos los radicados de contingencia del período.
+
+### GD-API-0126 — Preparación de hoja de control e índice electrónico del expediente
+- **Doc fuente:** Doc 5 § 17 + RNF-060 ("La estructura deberá permitir hoja de control o índice electrónico en versiones futuras").
+- **Por qué:** el cliente exige que la **estructura quede preparada en v1** aunque la funcionalidad sea fase 2 — para evitar migración compleja después.
+- **Crea (DDL preparatorio, sin endpoints expuestos en v1):**
+  - Tabla `gd.expediente_indice_electronico(id, expediente_id, version_indice, generado_en, generado_por_user_id, contenido_jsonb)` — vacía en v1, alimentada por job futuro.
+  - Tabla `gd.expediente_hoja_control(id, expediente_id, fecha, evento, descripcion, usuario_id, snapshot_jsonb)` — eventos cronológicos del expediente (apertura, incorporación documento, retiro, cierre, transferencia).
+  - Trigger sobre `gd.expediente_documento` que inserta automáticamente en `expediente_hoja_control` cuando hay alta/baja.
+- **Aceptación:** crear expediente y asociar 3 documentos produce 4 filas en `expediente_hoja_control` (1 apertura + 3 asociaciones); `expediente_indice_electronico` queda preparada para que fase 2 genere el índice firmado conforme a estándares de archivo (Acuerdo 027 AGN Colombia o equivalente).
+
+### GD-API-0127 — Suspensión / reanudación formal de términos PQRSD con eventos auditados
+- **Doc fuente:** RNF-023 ("Debe permitir registrar suspensiones, requerimientos o eventos que afecten el término, si la entidad lo define") + Doc 1 § 12.2 paso 13 ("Se conserva trazabilidad").
+- **Por qué:** GD-API-0042 mencionaba la suspensión pero sin endpoints formales separados; la entidad necesita ver el historial de eventos que afectaron un término legal.
+- **Crea:**
+  - Tabla `gd.evento_termino_pqrsd(id, pqrsd_id, tipo_evento ∈ {suspension, reanudacion, ampliacion, solicitud_info_adicional, traslado_competencia}, fecha_evento, motivo, justificacion_legal, dias_afectados, usuario_id)`.
+  - Endpoint `POST /api/v1/gd/pqrsd/{id}/suspender-termino` (PERM-PQRSD-023) body `{ motivo, justificacion_legal, fecha_efectiva, dias_estimados_suspension? }`.
+  - Endpoint `POST /api/v1/gd/pqrsd/{id}/reanudar-termino` body `{ motivo, fecha_efectiva }`.
+  - Endpoint `GET /api/v1/gd/pqrsd/{id}/historial-terminos` retorna lista cronológica de todos los eventos que afectaron el término + recálculo de fecha_limite por cada uno.
+- **Eventos:** `gd.pqrsd.termino_suspendido`, `gd.pqrsd.termino_reanudado` con `criticidad='alta'`.
+- **Aceptación:** crear PQRSD con término 15 días hábiles, suspender al día 5 por "solicitud info adicional" (justificación legal: art. X), reanudar al día 12; la fecha_limite final refleja el cálculo correcto; el historial muestra ambos eventos con su impacto en días.
+
+---
+
 ## Anexo A — Resumen de eventos de dominio (referencia)
 
 ```
@@ -676,6 +898,8 @@ CorrespondenciaExternaRecibida · CorrespondenciaExternaPreparada · Corresponde
 DocumentoCargado · DocumentoGeneradoDesdePlantilla · DocumentoVersionado · DocumentoEnviadoARevision · DocumentoAprobado · DocumentoFirmado · DocumentoAnulado · DocumentoDescargado
 UsuarioCreado · UsuarioInactivado · UsuarioBloqueado · RolAsignado · RolRetirado · PermisoModificado · SesionIniciada · SesionCerrada · IntentoFallidoLogin
 IASolicitada · IASugerenciaGenerada · IASugerenciaAceptada · IASugerenciaModificada · IASugerenciaRechazada
+ArchivoCargado · ArchivoAnalizadoAntivirus · ArchivoBloqueado · OCRRequested · OCRCompleted · OCRFailed · ExtraccionXLSXCompletada · BytesPurgadosPorRetencion
+RadicadoContingencia · DependenciaFusionada · DependenciaDividida · TerminoSuspendido · TerminoReanudado · VerificacionPublicaConstancia
 ```
 
 ## Anexo B — Trazabilidad RNF cubiertos

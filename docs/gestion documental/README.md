@@ -2,17 +2,34 @@
 
 > Carpeta **externa** a `docs/BACKLOG.md` y `docs/UI_BACKLOG.md`. Estos backlogs son **independientes** del producto principal (CopilotoIA), no comparten consecutivos ni se ejecutan en el mismo flujo de PRs hasta que el usuario lo indique explícitamente.
 
+## 0. Neutro de sector — público, privado, mixto
+
+Los documentos fuente del cliente fueron escritos para una **entidad pública** y usan terminología legal colombiana (PQRSD con términos hábiles, TRD/TVD, constancia con QR verificable públicamente, Ley 1755). El módulo **conserva esa terminología** porque la documentación lo exige, pero **el producto resultante debe operar en cualquier tipo de organización**: empresa privada, ONG, gremio, cooperativa, entidad mixta y entidad pública. Esto se logra con dos mecanismos:
+
+1. **`gd.perfil_organizacion.tipo_organizacion`** ∈ `{publica, privada, mixta, ong, gremial, cooperativa}` — atributo del perfil 1:1 con el tenant.
+2. **`gd.organizacion_modulo_activacion`** — feature flags individuales por organización: `pqrsd_legal`, `pqrsd_tickets`, `correspondencia_interna/externa`, `firma_escaneada/electronica/digital_certificada`, `expedientes`, `trd_tvd`, `consulta_publica_radicado`, `integracion_correo`, `agentes_ia`, `radicacion_externa_desde_dependencia`.
+
+Defaults coherentes por tipo de organización (GD-API-0011.c):
+- **Pública**: todo activo, calendario hábil colombiano, TRD obligatoria, consulta pública con QR.
+- **Privada**: módulos esenciales (correspondencia + documentos + firma + IA), PQRSD desactivado, TRD opcional.
+- **ONG**: como privada + expedientes activos por default.
+- **Mixta**: como pública con FAQ guiando al admin qué módulos legales aplican.
+
+El admin puede activar/desactivar cualquier módulo en cualquier momento desde la UI (GD-UI-0052).
+
 ## 1. Origen funcional
+
+Los **PDFs originales del cliente** viven anexados al repo bajo [`source-documents/`](source-documents/) (versionados — no se actualizan sin justificación expresa del cliente, ya que una nueva versión obligaría a re-auditar el backlog completo). La auditoría de cobertura tarea por tarea, sección por sección, está en [`TRAZABILIDAD.md`](TRAZABILIDAD.md) y se actualiza cada vez que el cliente publica una nueva versión de algún documento o cuando se añade/elimina una tarea.
 
 Este módulo implementa la plataforma institucional descrita en los cinco documentos fuente entregados por el cliente:
 
-| Doc fuente | Aporte al backlog |
+| Doc fuente (archivo en `source-documents/`) | Aporte al backlog |
 |---|---|
-| Visión y Alcance del Producto v0.1 | Alcance funcional, módulos 1–15, fases, principios funcionales, plantillas, flujos de extremo a extremo. |
-| Requisitos No Funcionales v0.1 | 60 RNF (RNF-001 a RNF-060) con criterios verificables — cada épica enlaza los RNF que cumple. |
-| Matriz de Roles, Permisos y Funciones v0.1 | 19 roles (ROL-001..ROL-019) + ~140 permisos (PERM-*) + reglas especiales de seguridad. |
-| Mapa de Módulos Funcionales y Arquitectura Lógica v0.1 | 20 módulos (MOD-001..MOD-020) + dependencias + eventos del sistema. |
-| Modelo de Datos Conceptual v0.1 | 36 entidades críticas para v1 + reglas de persistencia histórica + estados conceptuales. |
+| [`01-vision-alcance-producto-v0.1.pdf`](source-documents/01-vision-alcance-producto-v0.1.pdf) | Alcance funcional, módulos 1–15, fases, principios funcionales, plantillas, flujos de extremo a extremo. |
+| [`02-requisitos-no-funcionales-v0.1.pdf`](source-documents/02-requisitos-no-funcionales-v0.1.pdf) | 60 RNF (RNF-001 a RNF-060) con criterios verificables — cada épica enlaza los RNF que cumple. |
+| [`03-matriz-roles-permisos-funciones-v0.1.pdf`](source-documents/03-matriz-roles-permisos-funciones-v0.1.pdf) | 19 roles (ROL-001..ROL-019) + ~140 permisos (PERM-*) + reglas especiales de seguridad. |
+| [`04-mapa-modulos-arquitectura-logica-v0.1.pdf`](source-documents/04-mapa-modulos-arquitectura-logica-v0.1.pdf) | 20 módulos (MOD-001..MOD-020) + dependencias + eventos del sistema. |
+| [`05-modelo-datos-conceptual-v0.1.pdf`](source-documents/05-modelo-datos-conceptual-v0.1.pdf) | 36 entidades críticas para v1 + reglas de persistencia histórica + estados conceptuales. |
 
 Los PDFs originales no se versionan en el repo (vienen del cliente). Cualquier ambigüedad se resuelve por el orden de prelación:
 
@@ -43,12 +60,23 @@ No reutilizar números: si una tarea se mueve a un futuro `docs/gestion document
 8. **Permisos validados en backend.** Aunque la UI oculte un menú, cada endpoint valida `usuario → rol → permiso → alcance (propio/dependencia/institucional/global)`. La UI nunca es la fuente de verdad de autorización.
 9. **APIs por dominio.** Cada módulo del Mapa de Arquitectura tiene su prefijo de ruta (`/api/v1/gd/ventanilla`, `/api/v1/gd/pqrsd`, `/api/v1/gd/documentos`, etc.). No se mezclan módulos en un mismo router gigante.
 10. **Eventos como primer ciudadano.** Cada acción crítica emite un evento de dominio (`RadicadoCreado`, `PQRSDVencida`, `DocumentoFirmado`, etc.) hacia el bus interno. Auditoría, notificaciones y reportes consumen eventos — no leen tablas directamente.
-11. **Cero acoplamiento con CopilotoIA principal.** Este módulo vive bajo el prefijo `gd_` (schema, tablas, rutas, módulos React). Comparte autenticación e infraestructura, no lógica de negocio del producto comercial.
+11. **Cero acoplamiento con CopilotoIA principal — con dos excepciones explícitas y justificadas.** Este módulo vive bajo el prefijo `gd_` (schema, tablas, rutas, módulos React). Comparte autenticación e infraestructura, no lógica de negocio del producto comercial. Las **dos zonas transversales** viven en `core.*` (no en `gd.*` ni en `app.*`) y sirven tanto al producto principal como al módulo Knowledge y a Gestión Documental:
+
+    a. **EP-018 — Archivos + extracción + OCR.** `core.archivo_digital` + `core.extraccion_resultado`. Storage de bytes, antivirus, extractores (PDF/DOCX/XLSX/OCR). Reemplaza al storage tenant-scoped que hoy vive en `app/services/knowledge_storage.py`. Sin duplicar backup, sin duplicar antivirus.
+
+    b. **EP-019 — Auditoría transversal.** `core.evento_auditoria` particionada y append-only por trigger. Reemplaza a `app.audit_logs` y absorbe `app.consent_ledger`. Una sola tabla con campo `dominio ∈ {core, app, gd, knowledge}` para diferenciar fuente; permite reconstruir incidentes que cruzan dominios (ej. un mismo usuario que anula una PQRSD y luego exporta un contacto GDPR — dos eventos hoy en tablas distintas, una sola query mañana).
+
+    Los **modelos de dominio** se mantienen separados (`app.knowledge_documents` vs `gd.documento` vs `app.contacts` vs `gd.tercero`). Solo se comparte la capa transversal de **bytes, texto extraído y eventos auditables**. Cualquier excepción adicional debe documentarse aquí con la misma estructura.
+
+12. **Neutro de sector por configuración, no por código.** No existirán dos versiones del módulo "GD para empresa privada" y "GD para entidad pública". Existe **una sola versión** cuyo comportamiento se ajusta por el `tipo_organizacion` del perfil y los módulos activados. Ver sección 0 arriba. Quien escriba `if tipo_organizacion == 'publica':` dentro del código de dominio está violando este mandato; la decisión debe leer de `gd.organizacion_modulo_activacion`.
 
 ## 4. Cómo se navega este backlog
 
-- `BACKLOG.md` → tareas de **backend / API / base de datos / workers / integraciones / IA**. Agrupadas en 17 épicas alineadas a los 20 módulos (MOD-001..MOD-020) del Mapa de Arquitectura.
-- `UI_BACKLOG.md` → tareas de **frontend (admin-panel)** para todos los roles. Agrupadas en 12 épicas alineadas a los menús por rol que define la Matriz de Roles.
+- [`BACKLOG.md`](BACKLOG.md) → tareas de **backend / API / base de datos / workers / integraciones / IA**. Agrupadas en 20 épicas (EP-001..EP-020) alineadas a los 20 módulos (MOD-001..MOD-020) del Mapa de Arquitectura más dos servicios transversales (EP-018 archivos, EP-019 auditoría) y una de cierre de gaps (EP-020).
+- [`UI_BACKLOG.md`](UI_BACKLOG.md) → tareas de **frontend (admin-panel)** para todos los roles. Agrupadas en 12 épicas alineadas a los menús por rol que define la Matriz de Roles.
+- [`ARQUITECTURA.md`](ARQUITECTURA.md) → cinco mermaids: ER tenant↔perfil↔módulos, arquitectura completa core/app/knowledge/gd, flujo end-to-end de PDF escaneado con OCR, activación de módulos por tipo de organización, patrones de tenancy.
+- [`TRAZABILIDAD.md`](TRAZABILIDAD.md) → auditoría cruzada: cada sección de cada PDF mapeada a la tarea que la cubre, con identificación explícita de gaps (cerrados en EP-020).
+- [`source-documents/`](source-documents/) → los cinco PDFs originales del cliente versionados en el repo.
 
 Cada tarea declara:
 - **Épica padre.**
