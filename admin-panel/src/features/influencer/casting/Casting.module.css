@@ -1,0 +1,84 @@
+/* UI-INFLU-004 — estilos locales del Casting Home. */
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  background: var(--influencer-bg-card, #fff);
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(27, 37, 66, 0.06);
+}
+
+.chipsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chipIdle,
+.chipActive {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(27, 37, 66, 0.18);
+  cursor: pointer;
+  font-size: var(--influencer-fs-body-s, 13px);
+  font-weight: 600;
+  font-family: var(--influencer-font-sans);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.chipIdle {
+  background: transparent;
+  color: var(--influencer-ink-mid, rgba(27, 37, 66, 0.78));
+}
+
+.chipActive {
+  background: var(--influencer-green, #2DBB6A);
+  color: #fff;
+  border-color: var(--influencer-green, #2DBB6A);
+}
+
+.sortLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: var(--influencer-fs-body-s, 13px);
+  color: var(--influencer-ink-soft, rgba(27, 37, 66, 0.55));
+}
+
+.sortSelect {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(27, 37, 66, 0.2);
+  background: #fff;
+  font-family: var(--influencer-font-sans);
+  font-size: var(--influencer-fs-body-s, 13px);
+  color: var(--influencer-ink, #1B2542);
+}
+
+.personaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

@@ -1,19 +1,16 @@
 /**
  * UI-INFLU-004 — Casting Home con personajes (orquestador).
  *
- * Consume `GET /v1/influencer/casting` (TASK-INFLU-017) y monta:
- *  - `CastingKpis`: 4 tiles globales.
- *  - `CastingFilters`: chips de categoría + sort selector.
- *  - `PersonaGrid`: lista de `PersonaCard`.
- *
- * Si `personas=[]`, delega al `CastingEmptyState` (UI-INFLU-003).
+ * Estilos via `_shared/RavitStyles.module.css` + `Casting.module.css`
+ * local. Sistema visual fiel a la paleta Ravit Studio confirmada
+ * (docs/influencer/04 _ Paleta.html).
  */
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
-import { PageHeader } from '../../../components/ui/index.js';
 import { PersonaCard } from '../../../components/domain/PersonaCard.jsx';
 import { usePermissions } from '../../../permissions/index.js';
+import shared from '../_shared/RavitStyles.module.css';
 import {
   CATEGORY_FILTER_OPTIONS,
   SORT_OPTIONS,
@@ -23,6 +20,7 @@ import {
   sortPersonas,
 } from './castingData.js';
 import { CastingEmptyState } from './CastingEmptyState.jsx';
+import styles from './Casting.module.css';
 
 
 function CastingKpis({ kpis }) {
@@ -34,22 +32,11 @@ function CastingKpis({ kpis }) {
     { label: 'Engagement medio', value: formatEngagementRate(kpis.avg_engagement) },
   ];
   return (
-    <ul
-      aria-label="KPIs del casting"
-      style={{
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-        gap: 'var(--space-3)', margin: 0, padding: 0, listStyle: 'none',
-      }}
-    >
+    <ul aria-label="KPIs del casting" className={styles.kpiGrid}>
       {tiles.map((t) => (
-        <li key={t.label} style={{
-          background: 'var(--color-surface, #fff)',
-          padding: 'var(--space-3)',
-          borderRadius: 'var(--radius-md, 8px)',
-          border: '1px solid var(--color-border-subtle, #e5e7eb)',
-        }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-subtle, #6b7280)' }}>{t.label}</div>
-          <div style={{ fontWeight: 700, fontSize: 22 }}>{t.value}</div>
+        <li key={t.label} className={shared.kpiTile}>
+          <div className={shared.kpiNumber}>{t.value}</div>
+          <div className={shared.kpiLabel}>{t.label}</div>
         </li>
       ))}
     </ul>
@@ -59,10 +46,8 @@ function CastingKpis({ kpis }) {
 
 function CastingFilters({ category, sort, onCategoryChange, onSortChange }) {
   return (
-    <div role="toolbar" aria-label="Filtros del casting"
-      style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--space-2)' }}>
-      <div role="group" aria-label="Categoría"
-        style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)' }}>
+    <div role="toolbar" aria-label="Filtros del casting" className={styles.filters}>
+      <div role="group" aria-label="Categoría" className={styles.chipsRow}>
         {CATEGORY_FILTER_OPTIONS.map((opt) => {
           const isActive = (category ?? null) === opt.value;
           return (
@@ -71,25 +56,21 @@ function CastingFilters({ category, sort, onCategoryChange, onSortChange }) {
               type="button"
               onClick={() => onCategoryChange(opt.value)}
               aria-pressed={isActive}
-              style={{
-                padding: '4px 10px',
-                borderRadius: 999,
-                border: '1px solid var(--color-border, #d1d5db)',
-                background: isActive ? 'var(--color-action-primary-bg, #111)' : 'transparent',
-                color: isActive ? 'var(--color-action-primary-fg, #fff)' : 'inherit',
-                cursor: 'pointer',
-                fontSize: 13,
-              }}
+              className={isActive ? styles.chipActive : styles.chipIdle}
             >
               {opt.label}
             </button>
           );
         })}
       </div>
-      <label
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-1)', marginLeft: 'auto' }}>
-        <span style={{ fontSize: 13, color: 'var(--color-text-subtle, #6b7280)' }}>Ordenar por</span>
-        <select value={sort} onChange={(e) => onSortChange(e.target.value)} aria-label="Ordenar personajes">
+      <label className={styles.sortLabel}>
+        <span>Ordenar por</span>
+        <select
+          value={sort}
+          onChange={(e) => onSortChange(e.target.value)}
+          aria-label="Ordenar personajes"
+          className={styles.sortSelect}
+        >
           {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </label>
@@ -101,19 +82,13 @@ function CastingFilters({ category, sort, onCategoryChange, onSortChange }) {
 function PersonaGrid({ personas, onOpenStudio }) {
   if (personas.length === 0) {
     return (
-      <p role="status" style={{ color: 'var(--color-text-subtle, #6b7280)' }}>
+      <p role="status" className={shared.textSubtle}>
         No hay personajes para los filtros seleccionados.
       </p>
     );
   }
   return (
-    <ul
-      aria-label="Lista de personajes"
-      style={{
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-        gap: 'var(--space-3)', margin: 0, padding: 0, listStyle: 'none',
-      }}
-    >
+    <ul aria-label="Lista de personajes" className={styles.personaGrid}>
       {personas.map((p) => (
         <li key={p.id}>
           <PersonaCard persona={p} onOpenStudio={onOpenStudio} />
@@ -138,7 +113,7 @@ export function Casting({ casting }) {
   );
 
   if (!can('influencer.personas.read')) {
-    return <CastingEmptyState />;  // fallback con CTA disabled (mismo gate)
+    return <CastingEmptyState />;
   }
 
   if (personas.length === 0) {
@@ -150,13 +125,16 @@ export function Casting({ casting }) {
   };
 
   return (
-    <div data-module="influencer" data-view="casting">
-      <PageHeader
-        eyebrow="Ravit Studio"
-        title="Tu casting"
-        description="Los personajes que generan contenido en nombre de tu marca."
-      />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+    <div className={shared.page} data-module="influencer" data-view="casting">
+      <div className={shared.pageHeader}>
+        <div className={shared.eyebrow}>Ravit Studio · Casting</div>
+        <h1 className={shared.h1Page}>Tu casting</h1>
+        <p className={shared.textSubtle}>
+          Los personajes que generan contenido en nombre de tu marca.
+        </p>
+      </div>
+
+      <div className={styles.sections}>
         <CastingKpis kpis={casting?.kpis} />
         <CastingFilters
           category={category}
