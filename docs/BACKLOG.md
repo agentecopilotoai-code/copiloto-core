@@ -1135,9 +1135,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-009 — Wizard 5 pasos: endpoints `/face`, `/body`, `/identity`, `/voice`, `/platforms`
+### TASK-INFLU-009 — Wizard 5 pasos: endpoints `/face`, `/body`, `/identity`, `/voice`, `/platforms` — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** `03a _ Crear personaje _ Paso 1 Cara.html` + `03b _ Cuerpo` + `03c _ Identidad` + `03d _ Voz` + `03e _ Plataformas`.
 - **Alcance:**
   - 5 endpoints (uno por paso del wizard) que persisten incrementalmente en `personas.{face,body,identity,voice,platforms}` y validan el shape JSONB:
@@ -1155,9 +1155,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-010 — Generación de variaciones de cara (Paso 1 wizard) async
+### TASK-INFLU-010 — Generación de variaciones de cara (Paso 1 wizard) async — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** `03a _ Crear personaje _ Paso 1 Cara.html` — sección "Variaciones generadas · Generar 4 más".
 - **Alcance:**
   - `POST /v1/influencer/personas/{id}/face/variations` — genera N (default 4) variaciones de cara basadas en `face.{ethnicity,eye_color,...}`. Es async, retorna `202 Accepted` con `variation_request_id`.
@@ -1174,9 +1174,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-011 — Tabla `influencer.generations` + `assets` + `POST /personas/{id}/generate`
+### TASK-INFLU-011 — Tabla `influencer.generations` + `assets` + `POST /personas/{id}/generate` — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** `04 _ Generar contenido _con Sofía_.html` — composer + cola.
 - **Alcance:**
   - Migrations:
@@ -1200,9 +1200,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-012 — `generation_worker` async + persona consistency + safety filters
+### TASK-INFLU-012 — `generation_worker` async + persona consistency + safety filters — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** capa worker para `04 _ Generar contenido _con Sofía_.html`.
 - **Alcance:**
   - `app/workers/influencer_generation_worker.py`:
@@ -1222,9 +1222,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-013 — TTS de voz del personaje (Paso 4 wizard) + captions de prueba
+### TASK-INFLU-013 — TTS de voz del personaje (Paso 4 wizard) + captions de prueba — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** `03d _ Crear personaje _ Paso 4 Voz.html` — sample "Hola chicas, hoy os traigo mi look favorito del verano…" + 3 captions generados con la voz (IG/TikTok/Story).
 - **Alcance:**
   - `POST /v1/influencer/personas/{id}/voice/sample` — body `{sample_text?}` (default texto fijo del HTML). Genera audio via TTS provider con `voice_traits` derivados de `voice.{tone,energy_level,formality}`. Persiste asset `kind='voice_sample'`.

@@ -336,3 +336,152 @@ create policy personas_tenant_write
     tenant_id::text = current_setting('app.tenant_id', true)
     or current_setting('app.support_mode', true) = 'on'
   );
+
+-- ============================================================================
+-- TASK-INFLU-009 — Audit tables del wizard
+-- ============================================================================
+-- Cada PUT al wizard emite una fila aquí — útil para entender qué se editó
+-- antes del `activate`. Cada activate emite una fila en
+-- `persona_activated`.
+
+create table if not exists influencer.persona_step_updated (
+  id            bigserial primary key,
+  tenant_id     uuid not null references app.tenants(id) on delete cascade,
+  persona_id    uuid not null references influencer.personas(id) on delete cascade,
+  step          text not null check (step in ('face', 'body', 'identity', 'voice', 'platforms')),
+  fields_changed text[] not null default '{}',
+  occurred_at   timestamptz not null default now()
+);
+
+create index if not exists ix_persona_step_updated_persona_occurred
+  on influencer.persona_step_updated (persona_id, occurred_at desc);
+
+create table if not exists influencer.persona_activated (
+  id            bigserial primary key,
+  tenant_id     uuid not null references app.tenants(id) on delete cascade,
+  persona_id    uuid not null references influencer.personas(id) on delete cascade,
+  activated_by  uuid null references app.users(id) on delete set null,
+  occurred_at   timestamptz not null default now()
+);
+
+create index if not exists ix_persona_activated_tenant_occurred
+  on influencer.persona_activated (tenant_id, occurred_at desc);
+
+-- ============================================================================
+-- TASK-INFLU-010 — face_variation_requests
+-- ============================================================================
+-- Las variaciones de cara son async: el POST inserta una fila aquí con
+-- `status='queued'`; el generation_worker (TASK-INFLU-012) lo levanta, llama
+-- al image provider, persiste los assets en S3 + `influencer.assets`, y
+-- actualiza `status='completed'`. El UI hace WS / polling al endpoint
+-- GET .../face/variations/{id} para refresh.
+
+create table if not exists influencer.face_variation_requests (
+  id            uuid primary key default gen_random_uuid(),
+  tenant_id     uuid not null references app.tenants(id) on delete cascade,
+  persona_id    uuid not null references influencer.personas(id) on delete cascade,
+  requested_count int not null check (requested_count between 1 and 10) default 4,
+  status        text not null default 'queued'
+                  check (status in ('queued', 'in_progress', 'completed', 'failed')),
+  prompt_used   text null,
+  error_message text null,
+  requested_by  uuid null references app.users(id) on delete set null,
+  requested_at  timestamptz not null default now(),
+  started_at    timestamptz null,
+  completed_at  timestamptz null
+);
+
+create index if not exists ix_face_variation_requests_persona_requested
+  on influencer.face_variation_requests (persona_id, requested_at desc);
+
+create index if not exists ix_face_variation_requests_queued
+  on influencer.face_variation_requests (status, requested_at)
+  where status in ('queued', 'in_progress');
+
+alter table influencer.face_variation_requests enable row level security;
+
+drop policy if exists fvr_tenant_isolation on influencer.face_variation_requests;
+create policy fvr_tenant_isolation
+  on influencer.face_variation_requests
+  using (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  );
+
+-- ============================================================================
+-- TASK-INFLU-011 — generations + assets
+-- ============================================================================
+
+create table if not exists influencer.generations (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references app.tenants(id) on delete cascade,
+  persona_id      uuid not null references influencer.personas(id) on delete cascade,
+  kind            text not null
+                    check (kind in ('photo', 'reel', 'carousel', 'story', 'ad',
+                                     'face_variation', 'voice_sample')),
+  prompt          text not null default '',
+  format          text not null default '1:1',
+  count_requested int not null default 1 check (count_requested between 1 and 10),
+  status          text not null default 'queued'
+                    check (status in ('queued', 'running', 'succeeded', 'failed', 'canceled')),
+  provider_used   text null,
+  cost_credits    int not null default 0,
+  params          jsonb not null default '{}'::jsonb,
+  error_message   text null,
+  requested_by    uuid null references app.users(id) on delete set null,
+  created_at      timestamptz not null default now(),
+  started_at      timestamptz null,
+  completed_at    timestamptz null
+);
+
+create index if not exists ix_generations_persona_status_created
+  on influencer.generations (persona_id, status, created_at desc);
+
+create index if not exists ix_generations_tenant_status
+  on influencer.generations (tenant_id, status);
+
+create index if not exists ix_generations_queue
+  on influencer.generations (status, created_at)
+  where status in ('queued', 'running');
+
+alter table influencer.generations enable row level security;
+drop policy if exists generations_tenant_isolation on influencer.generations;
+create policy generations_tenant_isolation
+  on influencer.generations
+  using (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  );
+
+create table if not exists influencer.assets (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references app.tenants(id) on delete cascade,
+  persona_id      uuid not null references influencer.personas(id) on delete cascade,
+  generation_id   uuid null references influencer.generations(id) on delete set null,
+  kind            text not null
+                    check (kind in ('photo', 'reel', 'carousel', 'story', 'ad',
+                                     'face_variation', 'voice_sample')),
+  storage_key     text not null,
+  mime            text not null default 'application/octet-stream',
+  width           int null,
+  height          int null,
+  duration_s      double precision null,
+  bytes           bigint null,
+  marked_canonical boolean not null default false,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists ix_assets_persona_kind_created
+  on influencer.assets (persona_id, kind, created_at desc);
+
+create index if not exists ix_assets_generation
+  on influencer.assets (generation_id);
+
+alter table influencer.assets enable row level security;
+drop policy if exists assets_tenant_isolation on influencer.assets;
+create policy assets_tenant_isolation
+  on influencer.assets
+  using (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  );

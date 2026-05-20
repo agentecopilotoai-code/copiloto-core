@@ -15,6 +15,94 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-INFLU-013 — Voice sample (TTS) + captions preview
+
+- **Fecha:** 2026-05-19
+- **Resumen:** 2 endpoints sobre `/v1/influencer/personas/{id}/voice/`:
+  - `POST /sample` (202): encola un `generation` con `kind='voice_sample'`. El worker consume y dispatchea a `tts` modality. Texto default del HTML del paso 4 (`SAMPLE_DEFAULT_TEXT`); override via body opcional.
+  - `POST /captions-preview` (200): genera 3 captions inline (no async) — uno por plataforma (ig/tiktok/story). El system prompt se construye determinísticamente desde `personas.voice` (tone/formality/energy_level) — sirve para que el LLM produzca textos consistentes con la voz del personaje.
+- **Componentes:**
+  - **`app/influencer/voice_router.py`** (175 LOC): 2 endpoints + `build_caption_system_prompt(voice)` helper + placeholder de captions (TASK-INFLU-018 conecta el dispatcher LLM real desde el HTTP path).
+  - **Sin migración nueva** — reusa `influencer.generations` para el voice sample.
+- **Archivos:** `app/influencer/voice_router.py`, `app/main.py` mount, `tests/test_voice_sample_static.py` (8 tests).
+- **Validaciones:** 8/8 PASSED.
+- **Nota de seguridad:** mismo gate `authenticate_request` + `ensure_module_enabled` que los otros endpoints. La voz nunca incluye PII en `voice_traits` jsonb — solo características no identificables (tono/formality/energy). La voz clonada real (ElevenLabs voice_id_ref) es opaca.
+- **Limitaciones:** `captions-preview` devuelve strings hardcoded por plataforma (no LLM real todavía). El cableado al `provider_dispatcher` con modality='llm' va en sub-tarea de TASK-INFLU-018 cuando el dispatcher tenga un entrypoint factory.
+
+---
+
+### TASK-INFLU-012 — `generation_worker` async + persona anchor + safety
+
+- **Fecha:** 2026-05-19
+- **Resumen:** worker que consume `influencer.generations` con `status='queued'` y procesa cada job vía `provider_dispatcher`. Maneja todas las modalidades (image/video/tts/text) según el `kind`, persiste binarios via uploader inyectable (S3 o stub), inserta filas en `influencer.assets`, y maneja content rejection sin perder créditos.
+- **Componentes:**
+  - **`app/workers/influencer_generation_worker.py`** (270 LOC):
+    - `claim_next_generation(conn)` usa `select ... for update skip locked` (mismo patrón que TASK-0058/BUG-058) para multi-worker safety.
+    - `process_one_generation(conn, row, storage_upload)` end-to-end: marca running → carga persona → arma PersonaAnchor → llama `dispatch()` → uploader → inserta assets → marca succeeded/failed.
+    - `_KIND_TO_MODALITY`: mapping fijo (photo/carousel/story/ad/face_variation → image; reel → video; voice_sample → tts).
+    - `_build_persona_anchor(row)` extrae el anchor desde face/body/voice jsonb del persona.
+    - `_extract_asset_bytes(result)` mapea cada result dataclass a `(bytes, mime, dims)`.
+    - `StorageUploader` type alias para inyectar el cliente S3 real en producción; `_noop_uploader` devuelve un stub key (sin upload) para tests / dev local.
+- **Archivos:** `app/workers/influencer_generation_worker.py` (270 LOC), `tests/test_influencer_worker_static.py` (14 tests).
+- **Validaciones:** 14/14 PASSED.
+- **Nota de seguridad:** `ProviderContentRejected` → `status='failed'` + `error_message='content_rejected'` SIN subir bytes a S3. El refund del `cost_credits` lo formaliza TASK-INFLU-016 (esta tarea solo escribe error_message para que el flujo de credits actúe). `for update skip locked` garantiza que el mismo job no se procesa por 2 workers paralelos.
+- **Limitaciones:** el `call_fn` que el worker pasa a `dispatch()` lanza `NotImplementedError` por defecto — el entrypoint del worker (binario que ejecuta el loop) debe inyectar una factory `provider_name → adapter_instance`. Eso se hace cuando docker-compose monte el worker real (sub-tarea de TASK-INFLU-018). El S3 upload real también queda inyectado desde el entrypoint.
+
+---
+
+### TASK-INFLU-011 — `influencer.generations` + `assets` + POST /generate
+
+- **Fecha:** 2026-05-19
+- **Resumen:** 2 tablas core (`generations` + `assets`) + endpoint POST que encola generaciones de cualquier kind (photo/reel/carousel/story/ad/face_variation/voice_sample) + endpoints lookup (GET /generations/{id} con assets, GET /personas/{id}/generations paginado).
+- **Componentes:**
+  - **Migración SQL** (+90 LOC): `influencer.generations` con CHECK constraints sobre kind/status/count, indices `(persona_id, status, created_at)` para listing y `where status in ('queued','running')` parcial para queue del worker. `influencer.assets` con `storage_key` (S3 path), `marked_canonical` (para que el user elija el asset definitivo de la persona).
+  - **Endpoint POST** valida `kind`+`format` (reel/story solo `9:16`, carousel `1:1`/`4:5`, etc. via `_KIND_FORMAT_RULES`). Persona archivada → 409, no activa → 409, cross-tenant → 404. Cost provisional vía `_estimate_cost(kind, count)`.
+  - **GET lookup**: detalle devuelve generation + lista de assets. List paginado con filters `kind`, `status`.
+- **Archivos:** `app/influencer/generations_router.py` (305 LOC), migración +90 LOC, main.py mount, `tests/test_generations_static.py` (14 tests).
+- **Validaciones:** 14/14 PASSED.
+- **Nota de seguridad:** RLS por tenant en ambas tablas. El POST valida que la persona pertenece al tenant (404 si no). `cost_credits` se cobra al COMPLETION del worker (TASK-INFLU-012), no al encolar — el worker actualiza la fila con `cost_credits` real basado en `provider_used`. Esto permite refunds limpios si el provider falla.
+- **Limitaciones:** el debit real del `credit_ledger` se conecta en TASK-INFLU-016. El estimate actual es un map estático {photo: 2, reel: 10, ...}. Worker que consume queue → TASK-INFLU-012.
+
+---
+
+### TASK-INFLU-010 — Generación async de variaciones de cara
+
+- **Fecha:** 2026-05-19
+- **Resumen:** endpoint POST que encola variaciones (202 Accepted) + GET status. La generación real la hace el `generation_worker` (TASK-INFLU-012) consumiendo `face_variation_requests` con `status='queued'`.
+- **Componentes:**
+  - **Tabla `influencer.face_variation_requests`** con CHECK constraint sobre `requested_count between 1 and 10` y `status in ('queued', 'in_progress', 'completed', 'failed')`. Index parcial `where status in ('queued', 'in_progress')` para que el worker picke jobs O(1).
+  - **POST `/v1/influencer/personas/{id}/face/variations`**: inserta row con `status='queued'` + prompt determinista construido a partir de `personas.face` (ethnicity/eye_color/hair_*/skin_tone/age_range). Devuelve 202 con el id.
+  - **GET `/v1/influencer/personas/{id}/face/variations/{request_id}`**: lee el status (queued/in_progress/completed/failed). El cliente puede pollear; WebSocket push se agrega en TASK-INFLU-018.
+- **Archivos:** `app/influencer/face_variations_router.py` (160 LOC), migración `+47 LOC`, `app/main.py`, `tests/test_face_variations_static.py` (9 tests).
+- **Validaciones:** 9/9 tests PASSED, ci-local-fast OK.
+- **Nota de seguridad:** RLS estricta sobre `face_variation_requests`. El POST verifica que la persona pertenece al tenant (404 cross-tenant). `cost_credits` se debita SOLO al completion del worker (TASK-INFLU-012) — encolar es gratis para evitar timing attacks de "consultar precio sin pagar".
+- **Limitaciones:** worker real, S3 upload, WebSocket push se implementan en TASK-INFLU-012/-018. Este PR solo cabra el endpoint contract + DB shape.
+
+---
+
+### TASK-INFLU-009 — Wizard 5 pasos: endpoints face/body/identity/voice/platforms + activate
+
+- **Fecha:** 2026-05-19
+- **PR:** (batch 2 influencer-wizard-generations — pendiente de squash)
+- **Resumen:** 6 endpoints bajo `/v1/influencer/personas/{id}/` que persisten incrementalmente los sub-jsonb de personas. Cada PUT actualiza un paso + emite audit row; el POST `/activate` valida que los 5 pasos tienen contenido antes de cambiar `status='active'`.
+- **Componentes:**
+  - **`app/influencer/wizard_models.py`** (115 LOC): 5 Pydantic models (FaceStep/BodyStep/IdentityStep/VoiceStep/PlatformsStep) con Literal types para enums (eye_color, hair_style, tone, formality, posting mode, etc.) — el validator de Pydantic rechaza valores fuera del set. IdentityStep normaliza handle a lowercase.
+  - **`app/influencer/wizard_router.py`** (230 LOC): 5 PUTs + POST /activate. `put_identity` actualiza también la columna `handle` top-level (no solo el jsonb) para que el unique constraint enforce; UniqueViolationError → 409. `activate_persona` lee la fila, llama `_missing_steps()` que revisa los 5 sub-jsonb, devuelve 422 con la lista de pasos faltantes si alguno está vacío.
+  - **Migración SQL**: 2 tablas de audit (`influencer.persona_step_updated` con `step` CHECK constraint + `fields_changed text[]`, e `influencer.persona_activated`).
+- **Archivos modificados:**
+  - `app/influencer/wizard_models.py` (creado, 115 LOC)
+  - `app/influencer/wizard_router.py` (creado, 280 LOC)
+  - `app/main.py` (include_router + comentario)
+  - `infra/postgres/03-migrations.sql` (+25 LOC, 2 audit tables)
+  - `tests/test_influencer_wizard_static.py` (creado, 19 tests)
+- **Validaciones:**
+  - `pytest tests/test_influencer_wizard_static.py` → 19/19 PASSED en 0.27s
+  - `./scripts/ci-local-fast.sh` → OK
+- **Nota de seguridad:** edición permitida en cualquier estado (excepto `archived` → 404 sin filtrar). El `activate` no es idempotente con datos faltantes (422 + lista de pasos). Sin MFA: los PUTs son edición rutinaria del personaje, no operación sensible. El DELETE de TASK-INFLU-008 sí requiere MFA.
+- **Limitaciones:** integration tests con DB real quedan para iteración posterior. El `voice_id_ref` en VoiceStep es opcional — TASK-INFLU-013 lo conecta con el cloning real de ElevenLabs.
+
+---
+
 ### TASK-INFLU-008 — Tabla `influencer.personas` + CRUD
 
 - **Fecha:** 2026-05-19

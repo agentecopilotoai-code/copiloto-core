@@ -7,6 +7,13 @@ from app.admin.routes import router as admin_router
 from app.core.config import get_settings
 from app.influencer.router import influencer_router
 from app.influencer.personas_router import personas_router as influencer_personas_router
+from app.influencer.wizard_router import wizard_router as influencer_wizard_router
+from app.influencer.face_variations_router import face_variations_router as influencer_face_variations_router
+from app.influencer.generations_router import (
+    generate_router as influencer_generate_router,
+    generations_router as influencer_generations_router,
+)
+from app.influencer.voice_router import voice_router as influencer_voice_router
 # TASK-INFLU-002 — import side-effect que registra los endpoints
 # `/v1/platform/ai-providers*` sobre `platform_admin_router`. Sin este
 # import, los decoradores `@platform_admin_router.X` del archivo nunca
@@ -129,6 +136,16 @@ def create_app() -> FastAPI:
     # del módulo. Comparte las dependencies `authenticate_request` +
     # `ensure_module_enabled` configuradas en cada sub-router.
     api.include_router(influencer_personas_router)
+    # TASK-INFLU-009 — wizard endpoints (PUT /face /body /identity /voice
+    # /platforms + POST /activate) bajo el mismo prefix de personas.
+    api.include_router(influencer_wizard_router)
+    # TASK-INFLU-010 — face variations async (POST encola, GET status).
+    api.include_router(influencer_face_variations_router)
+    # TASK-INFLU-011 — generaciones genéricas + lookup de assets.
+    api.include_router(influencer_generate_router)
+    api.include_router(influencer_generations_router)
+    # TASK-INFLU-013 — voice sample + captions preview.
+    api.include_router(influencer_voice_router)
     return api
 
 
