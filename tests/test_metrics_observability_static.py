@@ -263,7 +263,7 @@ def test_event_worker_imports_metrics_helpers() -> None:
 
 
 def test_cloud_llm_call_provider_reports_metric_states() -> None:
-    from app.services import cloud_llm_answer
+    from app.chatbot import cloud_llm_answer
 
     source = inspect.getsource(cloud_llm_answer._call_provider)
     assert "record_llm_call" in source

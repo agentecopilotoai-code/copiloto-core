@@ -15,16 +15,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services.influencer.provider_dispatcher import (
+from app.ai.dispatcher import (
     CB_FAILURE_THRESHOLD,
     _breakers_reset,
     dispatch,
 )
-from app.services.influencer.provider_registry import (
+from app.ai.registry import (
     ResolvedProvider,
     _cache_invalidate,
 )
-from app.services.influencer.providers.base import (
+from app.ai.providers.base import (
     ProviderContentRejected,
     ProviderTimeoutError,
     ProviderUnavailable,

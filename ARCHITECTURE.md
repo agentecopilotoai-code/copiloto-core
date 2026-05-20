@@ -311,7 +311,7 @@ Componentes activos:
 
 | Componente | Archivo | Responsabilidad |
 |---|---|---|
-| Intent classifier | `app/services/intent_classifier.py` | 3 capas: rules → LLM (cloud o local) → fallback. Devuelve `(intent, confidence, resolved_by)`. |
+| Intent classifier | `app/chatbot/intent_classifier.py` | 3 capas: rules → LLM (cloud o local) → fallback. Devuelve `(intent, confidence, resolved_by)`. |
 | Policy engine | `app/services/policy_engine.py` | Risk keywords + triggers, ventana 24h Meta, `max_bot_turns`, `after_bot_turns` |
 | Qualification flow | `app/services/qualification_flow.py` | Lleva al cliente por preguntas; persiste en `contacts.qualification` |
 | Booking flow | `app/services/booking_flow.py` | Service → branch → resource → slot, con mensajes interactivos (listas/botones) |
@@ -320,8 +320,9 @@ Componentes activos:
 | Conversation flow | `app/services/conversation_flow.py` | Helpers de estado: pause/resume bot, release a humano, recompute window |
 | RAG retrieval | `app/services/rag_retrieval.py` | Hybrid: ANN HNSW + léxico, filtrado por `tenant_id + visibility` |
 | RAG indexing | `app/services/rag_indexing.py` | Pipeline upload → extract → sanitize → chunk → embed → store |
-| LLM answer | `app/services/llm_answer.py` | Ollama HTTP (local) |
-| Cloud LLM | `app/services/cloud_llm_answer.py` | Claude / OpenAI con circuit breaker por proveedor |
+| LLM answer | `app/chatbot/llm_answer.py` | Ollama HTTP (local) |
+| Cloud LLM | `app/chatbot/cloud_llm_answer.py` | Claude / OpenAI con circuit breaker por proveedor |
+| AI providers | `app/ai/{registry,dispatcher}.py` + `app/ai/providers/*` | Capa transversal: 7 adapters (Grok, Anthropic, OpenAI, ElevenLabs, Ollama, SDXL, Whisper) + dispatcher con fallback chain + circuit breaker, consumida por workers Influencer (TASK-INFLU-012) y disponible para chatbot (TASK-0088 follow-up) |
 | WhatsApp adapter | `app/services/whatsapp.py` | Meta Graph API outbound + template render + media |
 | Notifications | `app/services/notifications.py` | Builders de plantillas (confirmación, recordatorio, recall, post-cita) |
 | Promotions | `app/services/promotions.py` | Match de promociones activas con intent del cliente |
@@ -349,6 +350,8 @@ Configurable por `ANSWER_ENGINE` en `.env`:
 | `cascade` (default) | template → local_llm → cloud_llm → handoff | **producción recomendada** |
 
 En modo `cascade`, el orquestador instrumenta `cpi_response_latency_seconds{tier=...}` por capa que respondió. El circuit breaker protege a cada proveedor cloud (5 fallos consecutivos → `open` durante 30 s).
+
+Los archivos del answer-engine viven en `app/chatbot/` (movidos desde `app/services/` en TASK-0087): `llm_answer.py` (Ollama local), `cloud_llm_answer.py` (Claude/OpenAI directo vía `httpx`) e `intent_classifier.py` (3 capas). El follow-up TASK-0088 evaluará rewirearlos para que pasen por el dispatcher transversal de `app/ai/` y unificar el circuit breaker — opt-in, cambia comportamiento (métricas + audit).
 
 ## 8. Seguridad operativa
 
@@ -392,8 +395,25 @@ En modo `cascade`, el orquestador instrumenta `cpi_response_latency_seconds{tier
 │   ├── db/                       # pool asyncpg
 │   ├── api/v1/                   # routes.py (9.7k LOC) + schemas.py
 │   ├── admin/                    # proxy del admin-panel + static
-│   ├── services/                 # 31 servicios de dominio
-│   └── workers/                  # event, scheduler, retention, alerts, extraction
+│   ├── services/                 # servicios de dominio (RAG, booking,
+│   │                             #   policy, qualification, feedback, etc.)
+│   ├── ai/                       # TASK-0087 — módulo AI transversal:
+│   │   ├── providers/            #   7 adapters (Grok, Anthropic, OpenAI,
+│   │   │                         #     ElevenLabs, Ollama, SDXL, Whisper)
+│   │   │                         #     + base.py con 5 interfaces abstractas
+│   │   ├── registry.py           #   resolve_provider() + cache TTL 5min
+│   │   └── dispatcher.py         #   dispatch() + fallback chain + circuit
+│   │                             #     breaker + audit
+│   ├── chatbot/                  # TASK-0087 — answer-engine puro:
+│   │                             #   llm_answer.py / cloud_llm_answer.py /
+│   │                             #   intent_classifier.py (resto del flujo
+│   │                             #   conversacional vive en app/services/)
+│   ├── influencer/               # Módulo Ravit Studio: router +
+│   │                             #   personas/wizard/posts/credits + workers
+│   │                             #   y feature flag tenant_modules
+│   └── workers/                  # event, scheduler, retention, alerts,
+│                                 #   extraction, influencer_generation,
+│                                 #   influencer_publish
 ├── admin-panel/                  # SPA React (Vite)
 │   └── src/components/modules/   # analytics, audit, branches, campaigns,
 │                                 #   contacts, knowledge, media, operations,

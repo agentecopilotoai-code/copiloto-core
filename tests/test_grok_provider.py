@@ -23,7 +23,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app.services.influencer.providers.base import (
+from app.ai.providers.base import (
     AudioResult,
     ImageResult,
     PersonaAnchor,
@@ -35,7 +35,7 @@ from app.services.influencer.providers.base import (
     TranscriptResult,
     VideoResult,
 )
-from app.services.influencer.providers.grok import GROK_MODELS, GrokProvider
+from app.ai.providers.grok import GROK_MODELS, GrokProvider
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────

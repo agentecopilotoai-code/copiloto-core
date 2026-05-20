@@ -1,4 +1,4 @@
-"""Extra tests for app/services/llm_answer.py to push coverage."""
+"""Extra tests for app/chatbot/llm_answer.py to push coverage."""
 from __future__ import annotations
 
 import asyncio
@@ -66,7 +66,7 @@ def _patch(monkeypatch, **kw):
 
 
 def test_breaker_for_local_llm_falls_back_when_settings_unavailable(monkeypatch):
-    from app.services import llm_answer
+    from app.chatbot import llm_answer
 
     def _boom():
         raise RuntimeError('no settings')
@@ -77,14 +77,14 @@ def test_breaker_for_local_llm_falls_back_when_settings_unavailable(monkeypatch)
 
 
 def test_qa_system_prompt_appends_personality_block(monkeypatch):
-    from app.services import llm_answer
+    from app.chatbot import llm_answer
     out = llm_answer._qa_system_prompt(None)
     # default returns the base prompt
     assert 'asistente' in out.lower() or 'cliente' in out.lower()
 
 
 def test_qa_system_prompt_with_personality(monkeypatch):
-    from app.services import llm_answer
+    from app.chatbot import llm_answer
     # Patch build_personality_block to return a non-empty block
     import app.services.conversation_flow as cf
     monkeypatch.setattr(cf, 'build_personality_block', lambda p: 'BLOCK')
@@ -94,7 +94,7 @@ def test_qa_system_prompt_with_personality(monkeypatch):
 
 def test_build_llm_answer_raises_on_generic_exception(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch(monkeypatch, raise_runtime=True)
@@ -111,7 +111,7 @@ def test_build_llm_answer_raises_on_generic_exception(monkeypatch):
 def test_build_conversational_llm_answer_raises_on_http_error(monkeypatch):
     from app.services.circuit_breaker import reset_registry
     from app.services.conversation_flow import ConversationContext
-    from app.services.llm_answer import build_conversational_llm_answer
+    from app.chatbot.llm_answer import build_conversational_llm_answer
 
     reset_registry()
     _patch(monkeypatch, status_code=503)
@@ -129,7 +129,7 @@ def test_build_conversational_llm_answer_raises_on_http_error(monkeypatch):
 def test_build_conversational_llm_answer_raises_on_runtime(monkeypatch):
     from app.services.circuit_breaker import reset_registry
     from app.services.conversation_flow import ConversationContext
-    from app.services.llm_answer import build_conversational_llm_answer
+    from app.chatbot.llm_answer import build_conversational_llm_answer
 
     reset_registry()
     _patch(monkeypatch, raise_runtime=True)
@@ -147,7 +147,7 @@ def test_build_conversational_llm_answer_raises_on_runtime(monkeypatch):
 def test_build_conversational_llm_answer_circuit_open(monkeypatch):
     from app.services.circuit_breaker import CircuitOpenError, reset_registry
     from app.services.conversation_flow import ConversationContext
-    from app.services.llm_answer import build_conversational_llm_answer
+    from app.chatbot.llm_answer import build_conversational_llm_answer
 
     reset_registry()
     _patch(monkeypatch, raise_timeout=True)
@@ -172,7 +172,7 @@ def test_build_conversational_llm_answer_circuit_open(monkeypatch):
 
 def test_build_llm_answer_includes_section_path_in_context(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch(monkeypatch, payload={'message': {'content': 'respuesta'}})

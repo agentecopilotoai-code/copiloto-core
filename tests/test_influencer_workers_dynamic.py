@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 
-from app.services.influencer.providers.base import (
+from app.ai.providers.base import (
     ImageResult,
     ProviderContentRejected,
 )

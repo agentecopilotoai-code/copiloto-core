@@ -12,7 +12,7 @@ import base64
 import httpx
 import pytest
 
-from app.services.influencer.providers.base import (
+from app.ai.providers.base import (
     ImageResult,
     PersonaAnchor,
     ProviderContentRejected,
@@ -21,9 +21,9 @@ from app.services.influencer.providers.base import (
     TextResult,
     TranscriptResult,
 )
-from app.services.influencer.providers.local_sdxl import LocalSDXLProvider
-from app.services.influencer.providers.local_whisper import LocalWhisperProvider
-from app.services.influencer.providers.ollama import OllamaProvider
+from app.ai.providers.local_sdxl import LocalSDXLProvider
+from app.ai.providers.local_whisper import LocalWhisperProvider
+from app.ai.providers.ollama import OllamaProvider
 
 
 def _anchor() -> PersonaAnchor:

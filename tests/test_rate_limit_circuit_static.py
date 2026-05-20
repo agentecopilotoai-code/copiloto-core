@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from app.services import circuit_breaker as cb_module
-from app.services import cloud_llm_answer as cloud_llm_module
+from app.chatbot import cloud_llm_answer as cloud_llm_module
 from app.services import payment_provider as payment_module
 from app.services import rate_limit as rl_module
 from app.services.circuit_breaker import (

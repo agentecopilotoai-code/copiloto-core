@@ -19,8 +19,8 @@ import base64
 import httpx
 import pytest
 
-from app.services.influencer.providers.anthropic import AnthropicProvider, DEFAULT_MODEL
-from app.services.influencer.providers.base import (
+from app.ai.providers.anthropic import AnthropicProvider, DEFAULT_MODEL
+from app.ai.providers.base import (
     AudioResult,
     ImageResult,
     PersonaAnchor,
@@ -31,8 +31,8 @@ from app.services.influencer.providers.base import (
     TextResult,
     TranscriptResult,
 )
-from app.services.influencer.providers.elevenlabs import ElevenLabsProvider
-from app.services.influencer.providers.openai import OPENAI_MODELS, OpenAIProvider
+from app.ai.providers.elevenlabs import ElevenLabsProvider
+from app.ai.providers.openai import OPENAI_MODELS, OpenAIProvider
 
 
 def _anchor() -> PersonaAnchor:

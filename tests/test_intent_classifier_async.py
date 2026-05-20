@@ -24,9 +24,9 @@ from typing import Any
 
 import pytest  # noqa: F401
 
-from app.services.intent_classifier import _llm_classify, classify_intent
+from app.chatbot.intent_classifier import _llm_classify, classify_intent
 
-CLASSIFIER = Path('app/services/intent_classifier.py')
+CLASSIFIER = Path('app/chatbot/intent_classifier.py')
 
 
 # ── Source-level invariants ──────────────────────────────────────────────────

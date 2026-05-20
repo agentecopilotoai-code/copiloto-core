@@ -12,7 +12,7 @@ from typing import Final
 
 import httpx
 
-from app.services.influencer.providers.base import (
+from app.ai.providers.base import (
     LLMProvider,
     PersonaAnchor,
     ProviderTimeoutError,

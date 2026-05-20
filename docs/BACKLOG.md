@@ -1366,9 +1366,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-0087 — Refactor estructural: separar módulo AI transversal de Chatbot e Influencer
+### TASK-0087 — Refactor estructural: separar módulo AI transversal de Chatbot e Influencer — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Motivación:** La lógica de proveedores de IA (Grok, Anthropic, OpenAI, ElevenLabs, Ollama, SDXL, Whisper) vive hoy acoplada bajo `app/services/influencer/providers/` y `app/services/influencer/provider_{dispatcher,registry}.py`, pese a ser **transversal** a la aplicación. El answer-engine del chatbot (`app/services/{llm_answer,cloud_llm_answer,intent_classifier}.py`) habla con Ollama/Claude/OpenAI por su cuenta vía `httpx` directo, sin pasar por la capa de providers. El cliente puede querer comprar "solo Influencer" o "solo Chatbot" — la separación actual no permite empaquetar uno sin arrastrar la lógica de modelos del otro.
 - **Decisión de diseño (ya validada con el usuario):**
   - **Contrato AI:** API interna Python (no HTTP). Chatbot e Influencer importan `from app.ai import ...`. Sigue siendo un solo proceso FastAPI.

@@ -15,6 +15,31 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-0087 — Refactor estructural: módulo AI transversal + Chatbot + Influencer
+
+- **Fecha:** 2026-05-19
+- **Resumen:** desacopla la capa de proveedores IA (Grok/Anthropic/OpenAI/ElevenLabs/Ollama/SDXL/Whisper) del módulo Influencer y la expone como contrato Python interno `app.ai.*`. El answer-engine del chatbot se mueve a `app.chatbot.*`. La capa transversal sigue en el mismo proceso FastAPI (sin HTTP).
+- **Cambios de archivos (todo con `git mv` — historial preservado):**
+  - `app/services/influencer/providers/` → `app/ai/providers/` (7 adapters + base.py).
+  - `app/services/influencer/provider_registry.py` → `app/ai/registry.py`.
+  - `app/services/influencer/provider_dispatcher.py` → `app/ai/dispatcher.py`.
+  - `app/services/influencer/credits.py` → `app/influencer/credits.py`.
+  - `app/services/influencer/` eliminado completamente.
+  - `app/services/{llm_answer,cloud_llm_answer,intent_classifier}.py` → `app/chatbot/`.
+  - Nuevos: `app/ai/__init__.py` (35 nombres en `__all__`), `app/chatbot/__init__.py`.
+- **Imports reescritos:** 41 archivos (~17 producción + ~24 tests) con sed batch. `app.services.influencer.*` y `app.services.{llm_answer,cloud_llm_answer,intent_classifier}` → cero matches en `app/` y `tests/`.
+- **`ARCHITECTURE.md`:** §6 tabla de componentes (intent classifier + LLM answer + Cloud LLM + AI providers reubicados), §7 cascada de respuesta (paragraph nuevo explicando el split), §10 árbol de directorios (sub-secciones `ai/`, `chatbot/`, `influencer/`).
+- **Validaciones:**
+  - `python -c "import app.ai; print(len(app.ai.__all__))"` → **35** (≥28 requerido).
+  - `grep -r "app\.services\.influencer|app\.services\.(llm_answer|cloud_llm_answer|intent_classifier)" app/ tests/` → cero matches.
+  - `./scripts/ci-local-fast.sh` → ver commit.
+- **No-objetivos cumplidos:**
+  - Contrato de providers NO cambió (mismas signatures, mismas exceptions).
+  - Answer-engine sigue usando `httpx` directo (rewire al dispatcher queda como TASK-0088).
+  - `app/services/` solo perdió los 4 archivos mencionados.
+
+---
+
 ### UI-INFLU-016 — Landing público con tabs (Ravit Agent · Pulse + CopilotoIA)
 
 - **Fecha:** 2026-05-19

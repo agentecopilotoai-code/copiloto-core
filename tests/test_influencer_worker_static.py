@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.influencer.providers.base import (
+from app.ai.providers.base import (
     AudioResult,
     ImageResult,
     TextResult,
@@ -47,7 +47,7 @@ def test_content_rejected_marks_failed():
 
 def test_dispatch_uses_provider_dispatcher():
     """El worker invoca `dispatch()` (TASK-INFLU-007), no providers directos."""
-    assert 'from app.services.influencer.provider_dispatcher import dispatch' in SRC
+    assert 'from app.ai.dispatcher import dispatch' in SRC
     assert 'await dispatch(' in SRC
 
 

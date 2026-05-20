@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from app.influencer.credits_router import credits_router, pricing_router
-from app.services.influencer import credits as credits_module
-from app.services.influencer.credits import (
+from app.influencer import credits as credits_module
+from app.influencer.credits import (
     InsufficientCreditsError,
     credit,
     debit,

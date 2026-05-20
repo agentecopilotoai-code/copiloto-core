@@ -140,7 +140,7 @@ def test_main_passes_rate_limiter_cap_and_ttl_settings():
 
 
 def test_llm_answer_imports_and_uses_circuit_breaker():
-    src = (REPO_ROOT / 'app' / 'services' / 'llm_answer.py').read_text()
+    src = (REPO_ROOT / 'app' / 'chatbot' / 'llm_answer.py').read_text()
     assert 'from app.services.circuit_breaker import CircuitOpenError, get_breaker' in src
     # Both entry points wrap the call in a breaker
     assert src.count('breaker = _breaker_for_local_llm()') >= 2
@@ -153,7 +153,7 @@ def test_llm_answer_imports_and_uses_circuit_breaker():
 
 
 def test_llm_answer_records_rejected_on_circuit_open():
-    src = (REPO_ROOT / 'app' / 'services' / 'llm_answer.py').read_text()
+    src = (REPO_ROOT / 'app' / 'chatbot' / 'llm_answer.py').read_text()
     # Both flows record 'rejected' status when the breaker is open so the
     # metric distinguishes Ollama-down (rejected) from Ollama-slow (timeout).
     assert src.count("status='rejected'") >= 2

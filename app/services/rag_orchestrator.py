@@ -34,11 +34,11 @@ from app.services.conversation_flow import (
     has_booking_intent,
     stage_followup_prompt,
 )
-from app.services.cloud_llm_answer import (
+from app.chatbot.cloud_llm_answer import (
     build_cloud_llm_answer,
     build_conversational_cloud_llm_answer,
 )
-from app.services.llm_answer import build_conversational_llm_answer, build_llm_answer
+from app.chatbot.llm_answer import build_conversational_llm_answer, build_llm_answer
 from app.services.rag_retrieval import (
     END_USER_VISIBILITY,
     build_grounded_answer,
@@ -46,7 +46,7 @@ from app.services.rag_retrieval import (
     rank_chunks,
     retrieval_match_to_dict,
 )
-from app.services.intent_classifier import (
+from app.chatbot.intent_classifier import (
     INTENT_BOOK_APPOINTMENT,
     INTENT_GREETING,
     INTENT_OPT_OUT,

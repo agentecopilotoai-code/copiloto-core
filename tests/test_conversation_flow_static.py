@@ -3,7 +3,7 @@ from pathlib import Path
 
 CONV_FLOW = Path('app/services/conversation_flow.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
-LLM_ANSWER = Path('app/services/llm_answer.py')
+LLM_ANSWER = Path('app/chatbot/llm_answer.py')
 
 
 # ── Stage constants ───────────────────────────────────────────────────────────

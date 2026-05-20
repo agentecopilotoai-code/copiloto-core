@@ -3,7 +3,7 @@
 Covers:
 - app/services/promotions.py
 - app/services/payment_provider.py
-- app/services/intent_classifier.py
+- app/chatbot/intent_classifier.py
 - app/services/media_storage.py
 """
 from __future__ import annotations
@@ -370,7 +370,7 @@ def test_extract_payment_status_none_or_unknown():
 
 
 def test_compile_tenant_rules_filters_unknown_intents():
-    from app.services.intent_classifier import _compile_tenant_rules
+    from app.chatbot.intent_classifier import _compile_tenant_rules
     rules = _compile_tenant_rules({
         'book_appointment': ['agendar', 'reserva'],
         'unknown_intent': ['x'],  # filtered
@@ -383,7 +383,7 @@ def test_compile_tenant_rules_filters_unknown_intents():
 
 
 def test_compile_tenant_rules_compiles_word_boundaries():
-    from app.services.intent_classifier import _compile_tenant_rules
+    from app.chatbot.intent_classifier import _compile_tenant_rules
     rules = _compile_tenant_rules({'book_appointment': ['cita']})
     pat, intent, conf = rules[0]
     assert pat.search('quiero una cita') is not None
@@ -392,7 +392,7 @@ def test_compile_tenant_rules_compiles_word_boundaries():
 
 
 def test_rule_classify_greeting():
-    from app.services.intent_classifier import (
+    from app.chatbot.intent_classifier import (
         ALL_INTENTS,
         _rule_classify,
     )
@@ -403,7 +403,7 @@ def test_rule_classify_greeting():
 
 
 def test_rule_classify_book_appointment():
-    from app.services.intent_classifier import (
+    from app.chatbot.intent_classifier import (
         ALL_INTENTS,
         _rule_classify,
     )
@@ -413,7 +413,7 @@ def test_rule_classify_book_appointment():
 
 
 def test_rule_classify_complaint():
-    from app.services.intent_classifier import (
+    from app.chatbot.intent_classifier import (
         ALL_INTENTS,
         _rule_classify,
     )
@@ -424,7 +424,7 @@ def test_rule_classify_complaint():
 
 
 def test_rule_classify_no_match_returns_none():
-    from app.services.intent_classifier import (
+    from app.chatbot.intent_classifier import (
         ALL_INTENTS,
         _rule_classify,
     )
@@ -433,7 +433,7 @@ def test_rule_classify_no_match_returns_none():
 
 
 def test_rule_classify_respects_enabled_intents():
-    from app.services.intent_classifier import _rule_classify
+    from app.chatbot.intent_classifier import _rule_classify
     # Only allow `book_appointment`, but text is a greeting → returns None
     out = _rule_classify('hola', {'book_appointment'}, [])
     assert out is None
@@ -441,7 +441,7 @@ def test_rule_classify_respects_enabled_intents():
 
 def test_classify_intent_resolves_rule_no_llm():
     """High-confidence rule path → returns immediately without invoking LLM."""
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot.intent_classifier import classify_intent
 
     class _Settings:
         cloud_llm_provider = None
@@ -464,7 +464,7 @@ def test_classify_intent_resolves_rule_no_llm():
 
 def test_classify_intent_falls_back_to_faq_when_no_match():
     """No rule matches, no LLM configured → fallback faq."""
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot.intent_classifier import classify_intent
 
     class _Settings:
         cloud_llm_provider = None
@@ -487,7 +487,7 @@ def test_classify_intent_falls_back_to_faq_when_no_match():
 
 def test_classify_intent_with_tenant_custom_keywords():
     """A custom keyword maps to a high-confidence rule match."""
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot.intent_classifier import classify_intent
 
     class _Settings:
         cloud_llm_provider = None
@@ -513,7 +513,7 @@ def test_classify_intent_with_tenant_custom_keywords():
 
 def test_classify_intent_respects_enabled_intents_filter():
     """If `greeting` is disabled, a "hola" should NOT classify as greeting."""
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot.intent_classifier import classify_intent
 
     class _Settings:
         cloud_llm_provider = None
@@ -538,7 +538,7 @@ def test_classify_intent_respects_enabled_intents_filter():
 
 def test_classify_intent_empty_enabled_intents_uses_all():
     """An empty enabled_intents list → falls back to ALL_INTENTS."""
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot.intent_classifier import classify_intent
 
     class _Settings:
         cloud_llm_provider = None
@@ -561,7 +561,7 @@ def test_classify_intent_empty_enabled_intents_uses_all():
 
 
 def test_intent_result_dataclass_default_layer_detail():
-    from app.services.intent_classifier import IntentResult
+    from app.chatbot.intent_classifier import IntentResult
     ir = IntentResult(intent='greeting', confidence=0.9, resolved_by='rule')
     assert ir.layer_detail == ''
 

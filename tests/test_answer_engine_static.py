@@ -2,7 +2,7 @@
 from pathlib import Path
 
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
-LLM_ANSWER = Path('app/services/llm_answer.py')
+LLM_ANSWER = Path('app/chatbot/llm_answer.py')
 RAG_INDEXING = Path('app/services/rag_indexing.py')
 CONFIG = Path('app/core/config.py')
 
@@ -30,7 +30,7 @@ def test_config_exposes_local_llm_settings():
 
 def test_orchestrator_imports_llm_answer_service():
     source = ORCHESTRATOR.read_text()
-    assert 'from app.services.llm_answer import' in source
+    assert 'from app.chatbot.llm_answer import' in source
     assert 'build_llm_answer' in source
 
 

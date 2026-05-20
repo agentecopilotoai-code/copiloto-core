@@ -1,4 +1,4 @@
-"""Additional unit tests for app/services/intent_classifier.py to push coverage."""
+"""Additional unit tests for app/chatbot/intent_classifier.py to push coverage."""
 from __future__ import annotations
 
 import asyncio
@@ -13,19 +13,19 @@ def _run(coro):
 
 
 def test_compile_tenant_rules_skips_unknown_intent():
-    from app.services.intent_classifier import _compile_tenant_rules
+    from app.chatbot.intent_classifier import _compile_tenant_rules
     rules = _compile_tenant_rules({'totally_made_up': ['foo']})
     assert rules == []
 
 
 def test_compile_tenant_rules_skips_empty_list():
-    from app.services.intent_classifier import _compile_tenant_rules
+    from app.chatbot.intent_classifier import _compile_tenant_rules
     rules = _compile_tenant_rules({'faq': []})
     assert rules == []
 
 
 def test_compile_tenant_rules_strips_and_skips_blank():
-    from app.services.intent_classifier import _compile_tenant_rules
+    from app.chatbot.intent_classifier import _compile_tenant_rules
     rules = _compile_tenant_rules({'faq': ['  ', 'hola']})
     assert len(rules) == 1
     pat, intent, conf = rules[0]
@@ -35,7 +35,7 @@ def test_compile_tenant_rules_strips_and_skips_blank():
 
 
 def test_compile_tenant_rules_escapes_special_chars():
-    from app.services.intent_classifier import _compile_tenant_rules
+    from app.chatbot.intent_classifier import _compile_tenant_rules
     # special regex chars in the keyword shouldn't blow up
     rules = _compile_tenant_rules({'faq': ['hello.world+']})
     assert len(rules) == 1
@@ -45,19 +45,19 @@ def test_compile_tenant_rules_escapes_special_chars():
 
 
 def test_rule_classify_returns_none_when_no_match():
-    from app.services.intent_classifier import _rule_classify, ALL_INTENTS
+    from app.chatbot.intent_classifier import _rule_classify, ALL_INTENTS
     out = _rule_classify('xyz random gibberish 123', set(ALL_INTENTS), [])
     assert out is None
 
 
 def test_rule_classify_skips_disabled_intents():
-    from app.services.intent_classifier import _rule_classify
+    from app.chatbot.intent_classifier import _rule_classify
     out = _rule_classify('hola', set(), [])
     assert out is None
 
 
 def test_rule_classify_prefers_highest_confidence():
-    from app.services.intent_classifier import _rule_classify, ALL_INTENTS
+    from app.chatbot.intent_classifier import _rule_classify, ALL_INTENTS
     # 'cancelar cita' should hit the high-confidence cancel rule
     out = _rule_classify('quiero cancelar cita ya mismo', set(ALL_INTENTS), [])
     assert out is not None
@@ -65,7 +65,7 @@ def test_rule_classify_prefers_highest_confidence():
 
 
 def test_rule_classify_tenant_rules_apply():
-    from app.services.intent_classifier import _rule_classify, _compile_tenant_rules, ALL_INTENTS
+    from app.chatbot.intent_classifier import _rule_classify, _compile_tenant_rules, ALL_INTENTS
     tenant_rules = _compile_tenant_rules({'book_appointment': ['agéndame']})
     out = _rule_classify('agéndame por favor', set(ALL_INTENTS), tenant_rules)
     assert out is not None
@@ -77,7 +77,7 @@ def test_rule_classify_tenant_rules_apply():
 
 def test_llm_classify_no_provider_no_api_key_no_ollama(monkeypatch):
     """When cloud is gated and Ollama fails, returns None."""
-    from app.services import intent_classifier
+    from app.chatbot import intent_classifier
 
     class _FakeClient:
         def __init__(self, *a, **kw):
@@ -109,7 +109,7 @@ def test_llm_classify_no_provider_no_api_key_no_ollama(monkeypatch):
 
 def test_llm_classify_cloud_blocked_by_no_train(monkeypatch):
     """tenant_no_train=True blocks cloud and falls back to ollama (which we make fail)."""
-    from app.services import intent_classifier
+    from app.chatbot import intent_classifier
 
     class _FakeClient:
         def __init__(self, *a, **kw):
@@ -141,7 +141,7 @@ def test_llm_classify_cloud_blocked_by_no_train(monkeypatch):
 
 def test_llm_classify_ollama_returns_intent(monkeypatch):
     """Patch httpx.AsyncClient to simulate a successful Ollama response."""
-    from app.services import intent_classifier
+    from app.chatbot import intent_classifier
 
     class _FakeResponse:
         def json(self):
@@ -179,7 +179,7 @@ def test_llm_classify_ollama_returns_intent(monkeypatch):
 
 def test_llm_classify_ollama_returns_unknown_intent(monkeypatch):
     """An intent not in ALL_INTENTS returns None."""
-    from app.services import intent_classifier
+    from app.chatbot import intent_classifier
 
     class _FakeResponse:
         def json(self):
@@ -212,7 +212,7 @@ def test_llm_classify_ollama_returns_unknown_intent(monkeypatch):
 
 def test_llm_classify_cloud_claude_success(monkeypatch):
     """Patch anthropic.AsyncAnthropic to simulate a successful claude response."""
-    from app.services import intent_classifier
+    from app.chatbot import intent_classifier
 
     class _FakeMessage:
         def __init__(self, text):
@@ -242,7 +242,7 @@ def test_llm_classify_cloud_claude_success(monkeypatch):
 
 
 def test_llm_classify_cloud_openai_success(monkeypatch):
-    from app.services import intent_classifier
+    from app.chatbot import intent_classifier
 
     class _FakeChoice:
         def __init__(self, c):
@@ -281,7 +281,7 @@ def test_llm_classify_cloud_openai_success(monkeypatch):
 
 def test_llm_classify_cloud_provider_raises(monkeypatch):
     """An exception from the SDK is caught and returns None."""
-    from app.services import intent_classifier
+    from app.chatbot import intent_classifier
 
     class _Boom:
         def __init__(self, **kw):
@@ -301,7 +301,7 @@ def test_llm_classify_cloud_provider_raises(monkeypatch):
 
 def test_llm_classify_cloud_timeout(monkeypatch):
     """asyncio.TimeoutError from the SDK returns None."""
-    from app.services import intent_classifier
+    from app.chatbot import intent_classifier
 
     class _FakeMessages:
         async def create(self, **kw):
@@ -327,7 +327,7 @@ def test_llm_classify_cloud_timeout(monkeypatch):
 
 
 def test_classify_intent_rule_high_confidence_returns_immediately():
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot.intent_classifier import classify_intent
     settings = SimpleNamespace()
     # 'agendar' matches book_appointment with conf 0.93 (>= 0.78)
     out = _run(classify_intent('agendar', settings=settings))
@@ -336,7 +336,7 @@ def test_classify_intent_rule_high_confidence_returns_immediately():
 
 
 def test_classify_intent_complaint_forced_for_high_conf():
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot.intent_classifier import classify_intent
     settings = SimpleNamespace()
     out = _run(classify_intent('esto es un fraude horrible', settings=settings))
     assert out.intent == 'complaint_or_risk'
@@ -344,8 +344,8 @@ def test_classify_intent_complaint_forced_for_high_conf():
 
 def test_classify_intent_no_rule_no_llm_falls_back_to_faq(monkeypatch):
     """When nothing matches and Ollama is unreachable, fall back to faq."""
-    from app.services import intent_classifier
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot import intent_classifier
+    from app.chatbot.intent_classifier import classify_intent
 
     async def _none_llm(*a, **kw):
         return None
@@ -359,7 +359,7 @@ def test_classify_intent_no_rule_no_llm_falls_back_to_faq(monkeypatch):
 
 
 def test_classify_intent_uses_custom_tenant_keywords():
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot.intent_classifier import classify_intent
     settings = SimpleNamespace()
     out = _run(classify_intent(
         'hellokeyword random',
@@ -371,15 +371,15 @@ def test_classify_intent_uses_custom_tenant_keywords():
 
 
 def test_classify_intent_empty_enabled_intents_falls_back_to_all():
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot.intent_classifier import classify_intent
     settings = SimpleNamespace()
     out = _run(classify_intent('hola', settings=settings, tenant_config={'enabled_intents': []}))
     assert out.intent in {'greeting'}
 
 
 def test_classify_intent_falls_back_to_complaint_when_llm_says_so(monkeypatch):
-    from app.services import intent_classifier
-    from app.services.intent_classifier import classify_intent
+    from app.chatbot import intent_classifier
+    from app.chatbot.intent_classifier import classify_intent
 
     async def _fake_llm(text, enabled, settings, *, tenant_no_train=None):
         return intent_classifier.IntentResult(
@@ -399,8 +399,8 @@ def test_classify_intent_falls_back_to_complaint_when_llm_says_so(monkeypatch):
 def test_classify_intent_rule_meets_min_conf_below_llm_threshold(monkeypatch):
     """Rule layer returns a match between min_conf and LLM threshold; LLM returns None.
     Rule result wins as 'rule_min'."""
-    from app.services import intent_classifier
-    from app.services.intent_classifier import classify_intent, IntentResult
+    from app.chatbot import intent_classifier
+    from app.chatbot.intent_classifier import classify_intent, IntentResult
 
     # Mock _rule_classify to return mid-confidence result on first call (full set),
     # and None on second call (complaint check).
@@ -425,8 +425,8 @@ def test_classify_intent_rule_meets_min_conf_below_llm_threshold(monkeypatch):
 
 def test_classify_intent_llm_result_above_min_conf(monkeypatch):
     """LLM returns a high-confidence result and we don't have a high-conf rule match."""
-    from app.services import intent_classifier
-    from app.services.intent_classifier import classify_intent, IntentResult
+    from app.chatbot import intent_classifier
+    from app.chatbot.intent_classifier import classify_intent, IntentResult
 
     async def _fake_llm(text, enabled, settings, *, tenant_no_train=None):
         return IntentResult(

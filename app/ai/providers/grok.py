@@ -15,7 +15,7 @@ Diseño:
 - ``httpx.AsyncClient`` (no SDK oficial — el SDK xAI no es estable a
   fecha de TASK-INFLU-004 y este adapter usa la API REST documentada).
 - ``asyncio.wait_for`` con ``hard_deadline = timeout + 2s`` (mismo
-  patrón de ``app/services/intent_classifier.py``) — defensa contra
+  patrón de ``app/chatbot/intent_classifier.py``) — defensa contra
   SDKs que ignoran el timeout nativo.
 - ``transport`` inyectable para tests (``httpx.MockTransport``); mismo
   patrón que ``tests/test_payment_provider_static.py``.
@@ -46,7 +46,7 @@ from typing import Any, Final
 
 import httpx
 
-from app.services.influencer.providers.base import (
+from app.ai.providers.base import (
     AudioResult,
     ImageProvider,
     ImageResult,

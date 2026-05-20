@@ -12,13 +12,13 @@ declaradas en ``base``:
 
 La interfaz es la fuente de verdad — los adapters concretos (TASK-INFLU-004+)
 implementan estos métodos. El dispatcher de TASK-INFLU-007 resuelve el
-provider activo via ``app.services.influencer.provider_registry`` y lo invoca
+provider activo via ``app.ai.registry`` y lo invoca
 sin conocer detalles del SDK específico.
 
 Política D3: ningún adapter recibe ``tenant_id`` como parámetro. La config
 del proveedor es global a la plataforma; el tenant nunca decide modelos.
 """
-from app.services.influencer.providers.base import (
+from app.ai.providers.base import (
     AudioResult,
     ImageProvider,
     ImageResult,

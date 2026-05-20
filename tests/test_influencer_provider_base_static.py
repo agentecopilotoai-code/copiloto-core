@@ -19,7 +19,7 @@ def test_exception_hierarchy() -> None:
     """Las 4 excepciones específicas heredan de ``ProviderError`` para
     que un ``except ProviderError`` del dispatcher las capture todas.
     """
-    from app.services.influencer.providers.base import (
+    from app.ai.providers.base import (
         ProviderContentRejected,
         ProviderError,
         ProviderRateLimited,
@@ -44,7 +44,7 @@ def test_result_dataclasses_are_frozen() -> None:
     """Los results deben ser inmutables — el worker los persiste tal cual
     y un mutate accidental rompería el invariante.
     """
-    from app.services.influencer.providers.base import (
+    from app.ai.providers.base import (
         AudioResult,
         ImageResult,
         TextResult,
@@ -69,7 +69,7 @@ def test_result_dataclasses_carry_provider_meta_and_cost() -> None:
     """Todos los results comparten ``provider_meta``, ``cost_units``,
     ``elapsed_ms`` para auditoría y métrica Prometheus uniforme.
     """
-    from app.services.influencer.providers.base import (
+    from app.ai.providers.base import (
         AudioResult,
         ImageResult,
         TextResult,
@@ -92,7 +92,7 @@ def test_result_dataclasses_carry_provider_meta_and_cost() -> None:
 
 
 def test_text_result_shape() -> None:
-    from app.services.influencer.providers.base import TextResult
+    from app.ai.providers.base import TextResult
 
     result = TextResult(
         text='hola',
@@ -111,7 +111,7 @@ def test_text_result_shape() -> None:
 
 
 def test_image_result_shape() -> None:
-    from app.services.influencer.providers.base import ImageResult
+    from app.ai.providers.base import ImageResult
 
     result = ImageResult(
         image_bytes=b'\x89PNG\r\n',
@@ -127,21 +127,21 @@ def test_image_result_shape() -> None:
 
 
 def test_video_result_includes_duration() -> None:
-    from app.services.influencer.providers.base import VideoResult
+    from app.ai.providers.base import VideoResult
 
     result = VideoResult(video_bytes=b'fake-mp4', duration_s=15.0)
     assert result.duration_s == 15.0
 
 
 def test_audio_result_includes_sample_rate() -> None:
-    from app.services.influencer.providers.base import AudioResult
+    from app.ai.providers.base import AudioResult
 
     result = AudioResult(audio_bytes=b'fake-mp3', sample_rate=24000)
     assert result.sample_rate == 24000
 
 
 def test_transcript_result_includes_language_and_confidence() -> None:
-    from app.services.influencer.providers.base import TranscriptResult
+    from app.ai.providers.base import TranscriptResult
 
     result = TranscriptResult(text='hola', language='es', confidence=0.97)
     assert result.language == 'es'
@@ -156,7 +156,7 @@ def test_persona_anchor_frozen_with_minimal_fields() -> None:
     para que LLM-only adapters (que no necesitan face_embedding) puedan
     invocar generate_text sin armar el anchor completo.
     """
-    from app.services.influencer.providers.base import PersonaAnchor
+    from app.ai.providers.base import PersonaAnchor
 
     anchor = PersonaAnchor(persona_id='persona-abc')
     assert anchor.persona_id == 'persona-abc'
@@ -171,7 +171,7 @@ def test_persona_anchor_frozen_with_minimal_fields() -> None:
 
 
 def test_persona_anchor_full_shape() -> None:
-    from app.services.influencer.providers.base import PersonaAnchor
+    from app.ai.providers.base import PersonaAnchor
 
     anchor = PersonaAnchor(
         persona_id='persona-abc',
@@ -193,14 +193,14 @@ def test_iaprovider_is_abstract() -> None:
     """IAProvider no se puede instanciar directamente — los métodos
     abstractos fuerzan a los adapters a implementarlos.
     """
-    from app.services.influencer.providers.base import IAProvider
+    from app.ai.providers.base import IAProvider
 
     with pytest.raises(TypeError):
         IAProvider()  # type: ignore[abstract]
 
 
 def test_llm_provider_signature() -> None:
-    from app.services.influencer.providers.base import LLMProvider
+    from app.ai.providers.base import LLMProvider
 
     method = LLMProvider.generate_text
     assert inspect.iscoroutinefunction(method)
@@ -216,7 +216,7 @@ def test_image_provider_signature_requires_persona_anchor() -> None:
     mismo personaje. Si alguien lo deja default a None se rompe el
     invariante de producto.
     """
-    from app.services.influencer.providers.base import ImageProvider
+    from app.ai.providers.base import ImageProvider
 
     method = ImageProvider.generate_image
     assert inspect.iscoroutinefunction(method)
@@ -233,7 +233,7 @@ def test_video_provider_signature_requires_persona_anchor() -> None:
     """Mismo invariante que ImageProvider — sin persona_anchor el video
     no mantendría consistencia visual del personaje.
     """
-    from app.services.influencer.providers.base import VideoProvider
+    from app.ai.providers.base import VideoProvider
 
     method = VideoProvider.generate_video
     assert inspect.iscoroutinefunction(method)
@@ -242,7 +242,7 @@ def test_video_provider_signature_requires_persona_anchor() -> None:
 
 
 def test_tts_provider_signature() -> None:
-    from app.services.influencer.providers.base import TTSProvider
+    from app.ai.providers.base import TTSProvider
 
     method = TTSProvider.synthesize_speech
     assert inspect.iscoroutinefunction(method)
@@ -252,7 +252,7 @@ def test_tts_provider_signature() -> None:
 
 
 def test_stt_provider_signature() -> None:
-    from app.services.influencer.providers.base import STTProvider
+    from app.ai.providers.base import STTProvider
 
     method = STTProvider.transcribe
     assert inspect.iscoroutinefunction(method)
@@ -266,7 +266,7 @@ def test_all_providers_have_provider_name_and_health_check() -> None:
     (property abstracta) y ``health_check`` (async abstracta). Verifica
     que el AST de cada interfaz declara ambas explícitamente.
     """
-    from app.services.influencer.providers.base import (
+    from app.ai.providers.base import (
         IAProvider,
         ImageProvider,
         LLMProvider,
@@ -288,7 +288,7 @@ def test_safety_mode_defaults_to_true() -> None:
     instale default False sería un riesgo de seguridad — el invariante
     es "safety on by default, opt-out explícito".
     """
-    from app.services.influencer.providers.base import ImageProvider, VideoProvider
+    from app.ai.providers.base import ImageProvider, VideoProvider
 
     for cls, method_name in (
         (ImageProvider, 'generate_image'),
@@ -301,11 +301,11 @@ def test_safety_mode_defaults_to_true() -> None:
 
 
 def test_package_exports() -> None:
-    """`app.services.influencer.providers` exporta los nombres canónicos
+    """`app.ai.providers` exporta los nombres canónicos
     para que los adapters concretos puedan hacer
     ``from ... import LLMProvider`` sin profundizar al módulo `.base`.
     """
-    from app.services.influencer import providers
+    from app.ai import providers
 
     expected = {
         'LLMProvider', 'ImageProvider', 'VideoProvider', 'TTSProvider', 'STTProvider',

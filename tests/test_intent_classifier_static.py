@@ -8,7 +8,7 @@ from __future__ import annotations
 import types
 import pytest
 
-from app.services.intent_classifier import (
+from app.chatbot.intent_classifier import (
     INTENT_BOOK_APPOINTMENT,
     INTENT_CANCEL_APPOINTMENT,
     INTENT_CHECK_AVAILABILITY,

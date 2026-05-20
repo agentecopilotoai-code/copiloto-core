@@ -19,9 +19,9 @@ from uuid import UUID
 
 import asyncpg
 
-from app.services.influencer.provider_dispatcher import dispatch
-from app.services.influencer.provider_registry import ResolvedProvider
-from app.services.influencer.providers.base import (
+from app.ai.dispatcher import dispatch
+from app.ai.registry import ResolvedProvider
+from app.ai.providers.base import (
     AudioResult,
     ImageResult,
     PersonaAnchor,

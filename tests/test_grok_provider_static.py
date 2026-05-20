@@ -1,4 +1,4 @@
-"""Static checks para ``app/services/influencer/providers/grok.py`` —
+"""Static checks para ``app/ai/providers/grok.py`` —
 TASK-INFLU-004.
 
 Verifica que el código fuente del adapter cumple los invariantes
@@ -20,15 +20,15 @@ from pathlib import Path
 
 import pytest
 
-from app.services.influencer.providers import grok as grok_module
-from app.services.influencer.providers.base import (
+from app.ai.providers import grok as grok_module
+from app.ai.providers.base import (
     ImageProvider,
     LLMProvider,
     STTProvider,
     TTSProvider,
     VideoProvider,
 )
-from app.services.influencer.providers.grok import GROK_MODELS, GrokProvider
+from app.ai.providers.grok import GROK_MODELS, GrokProvider
 
 SOURCE = Path(grok_module.__file__).read_text(encoding='utf-8')
 

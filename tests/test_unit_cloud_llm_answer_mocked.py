@@ -1,4 +1,4 @@
-"""Mock-based tests for `app/services/cloud_llm_answer.py`.
+"""Mock-based tests for `app/chatbot/cloud_llm_answer.py`.
 
 Mocks the `anthropic.AsyncAnthropic` and `openai.AsyncOpenAI` clients so we
 can drive both providers without API keys. Currently 26% covered; this
@@ -100,7 +100,7 @@ def _install_openai_mock(monkeypatch, *, content='Te ayudo', raise_exc=None):
 
 def test_build_cloud_llm_answer_with_anthropic_returns_answer(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import build_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_cloud_llm_answer
 
     reset_registry()
     _install_anthropic_mock(monkeypatch, content='Respuesta cloud Claude')
@@ -122,7 +122,7 @@ def test_build_cloud_llm_answer_with_anthropic_returns_answer(monkeypatch):
 
 def test_build_cloud_llm_answer_with_openai_returns_answer(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import build_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_cloud_llm_answer
 
     reset_registry()
     _install_openai_mock(monkeypatch, content='Respuesta de OpenAI')
@@ -143,7 +143,7 @@ def test_build_cloud_llm_answer_with_openai_returns_answer(monkeypatch):
 
 def test_build_cloud_llm_answer_returns_handoff_when_no_context():
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import build_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_cloud_llm_answer
 
     reset_registry()
     result = asyncio.run(build_cloud_llm_answer(
@@ -161,7 +161,7 @@ def test_build_cloud_llm_answer_returns_handoff_when_no_context():
 
 def test_build_cloud_llm_answer_returns_handoff_when_no_information(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import build_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_cloud_llm_answer
 
     reset_registry()
     _install_anthropic_mock(
@@ -184,7 +184,7 @@ def test_build_cloud_llm_answer_returns_handoff_when_no_information(monkeypatch)
 
 def test_build_cloud_llm_answer_unknown_provider_raises():
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import build_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_cloud_llm_answer
 
     reset_registry()
     matches = [_FakeMatch(score=0.9)]
@@ -202,7 +202,7 @@ def test_build_cloud_llm_answer_unknown_provider_raises():
 
 def test_build_cloud_llm_answer_circuit_open_after_threshold(monkeypatch):
     from app.services.circuit_breaker import CircuitOpenError, reset_registry
-    from app.services.cloud_llm_answer import build_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_cloud_llm_answer
 
     reset_registry()
     _install_anthropic_mock(monkeypatch, raise_exc=RuntimeError('upstream blew up'))
@@ -239,7 +239,7 @@ def _real_ctx():
 
 def test_build_conversational_cloud_llm_answer_with_anthropic(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import build_conversational_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_conversational_cloud_llm_answer
 
     reset_registry()
     payload_text = (
@@ -264,7 +264,7 @@ def test_build_conversational_cloud_llm_answer_with_anthropic(monkeypatch):
 
 def test_build_conversational_cloud_llm_answer_escalates_on_request_human(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import build_conversational_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_conversational_cloud_llm_answer
 
     reset_registry()
     payload_text = (
@@ -289,7 +289,7 @@ def test_build_conversational_cloud_llm_answer_escalates_on_request_human(monkey
 
 def test_build_conversational_cloud_llm_answer_uses_history(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import build_conversational_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_conversational_cloud_llm_answer
 
     reset_registry()
     captured: dict[str, Any] = {}
@@ -335,7 +335,7 @@ def test_build_conversational_cloud_llm_answer_uses_history(monkeypatch):
 
 def test_build_conversational_cloud_llm_answer_with_openai(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import build_conversational_cloud_llm_answer
+    from app.chatbot.cloud_llm_answer import build_conversational_cloud_llm_answer
 
     reset_registry()
     payload_text = (

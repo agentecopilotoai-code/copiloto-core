@@ -11,8 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from app.services.cloud_llm_answer import _build_context as cloud_build_context
-from app.services.llm_answer import _build_context as local_build_context
+from app.chatbot.cloud_llm_answer import _build_context as cloud_build_context
+from app.chatbot.llm_answer import _build_context as local_build_context
 from app.services.rag_retrieval import (
     ALL_VISIBILITY,
     END_USER_VISIBILITY,

@@ -953,7 +953,7 @@ def test_orchestrate_inbound_opt_out_intent_skips(monkeypatch):
     """When the intent classifier returns INTENT_OPT_OUT, we update the
     contact and skip with reason='opt_out_registered'."""
     from app.services import rag_orchestrator
-    from app.services.intent_classifier import INTENT_OPT_OUT
+    from app.chatbot.intent_classifier import INTENT_OPT_OUT
 
     async def fake_enforce(conn, **kwargs):
         return None  # consent decision not handled
@@ -1003,7 +1003,7 @@ def test_orchestrate_inbound_already_processed_after_policy_skips(monkeypatch):
     """When the inbound message has already been processed (idempotency key
     exists), we skip with 'already_processed'."""
     from app.services import rag_orchestrator
-    from app.services.intent_classifier import INTENT_GREETING
+    from app.chatbot.intent_classifier import INTENT_GREETING
 
     async def fake_enforce(conn, **kwargs):
         return None
@@ -1058,7 +1058,7 @@ def test_orchestrate_inbound_already_processed_after_policy_skips(monkeypatch):
 def test_orchestrate_inbound_require_handoff_routes_via_policy(monkeypatch):
     """When policy_result.action == 'require_handoff', we trigger _do_handoff."""
     from app.services import rag_orchestrator
-    from app.services.intent_classifier import INTENT_GREETING
+    from app.chatbot.intent_classifier import INTENT_GREETING
 
     async def fake_enforce(conn, **kwargs):
         return None
@@ -1117,7 +1117,7 @@ def test_orchestrate_inbound_complaint_alert_enqueued(monkeypatch):
     """When the policy fires `intent_complaint_or_risk`, we also enqueue an
     operator alert (best-effort) alongside the handoff."""
     from app.services import rag_orchestrator
-    from app.services.intent_classifier import INTENT_GREETING
+    from app.chatbot.intent_classifier import INTENT_GREETING
 
     async def fake_enforce(conn, **kwargs):
         return None

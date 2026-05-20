@@ -19,8 +19,8 @@ CONV_FLOW = Path('app/services/conversation_flow.py')
 SCHEMA = Path('infra/postgres/01-schema.sql')
 ORCH = Path('app/services/rag_orchestrator.py')
 TENANT_SETUP_FEATURE = Path('admin-panel/src/features/owner-admin/tenant-setup')
-LLM_ANSWER = Path('app/services/llm_answer.py')
-CLOUD_LLM = Path('app/services/cloud_llm_answer.py')
+LLM_ANSWER = Path('app/chatbot/llm_answer.py')
+CLOUD_LLM = Path('app/chatbot/cloud_llm_answer.py')
 
 
 def _tenant_setup_source() -> str:

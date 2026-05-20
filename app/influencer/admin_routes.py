@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from app.api.v1.routes import platform_admin_router
 from app.db.pool import get_db
 from app.services.audit import audit
-from app.services.influencer.provider_registry import (
+from app.ai.registry import (
     MODALITIES,
     _cache_invalidate as _provider_cache_invalidate,
 )

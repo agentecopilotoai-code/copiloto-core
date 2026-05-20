@@ -21,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_intent_classifier_accepts_tenant_no_train_param():
-    src = (REPO_ROOT / 'app' / 'services' / 'intent_classifier.py').read_text()
+    src = (REPO_ROOT / 'app' / 'chatbot' / 'intent_classifier.py').read_text()
     # `_llm_classify` signature now includes the kw arg
     sig_idx = src.find('async def _llm_classify(')
     assert sig_idx > 0
@@ -41,7 +41,7 @@ def test_intent_classifier_blocks_cloud_when_no_train_true(monkeypatch):
     (provider/api_key cleared before the if branch)."""
     import importlib
 
-    from app.services import intent_classifier as ic
+    from app.chatbot import intent_classifier as ic
 
     # Settings with cloud configured
     class S:

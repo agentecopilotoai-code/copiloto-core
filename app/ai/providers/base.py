@@ -4,7 +4,7 @@ Influencer — TASK-INFLU-003.
 Cada adapter concreto (Grok, Anthropic, OpenAI, ElevenLabs, Ollama, SDXL,
 Whisper) implementa una o más de estas interfaces. El dispatcher de
 TASK-INFLU-007 selecciona el adapter activo via
-``app.services.influencer.provider_registry.resolve_provider`` y delega
+``app.ai.registry.resolve_provider`` y delega
 la llamada sin conocer el SDK específico — eso permite cambiar de Grok a
 OpenAI a nivel platform sin tocar el código de los workers de generación.
 

@@ -91,7 +91,7 @@ REAFFIRM_INTERVAL_MONTHS_DEFAULT = 12
 # BUG-153: subset del regex de opt-out del intent_classifier — necesitamos
 # detectar STOP/BAJA en `enforce_inbound_consent` ANTES del consent gate
 # para no bloquear el opt-out de contactos nuevos. Mantener sincronizado
-# con `app.services.intent_classifier::_BASE_RULES` (entrada `INTENT_OPT_OUT`).
+# con `app.chatbot.intent_classifier::_BASE_RULES` (entrada `INTENT_OPT_OUT`).
 _CONSENT_OPT_OUT_PATTERN = re.compile(
     r'\b('
     r'stop|baja|cancelar\s+suscripci[oó]n|no\s+me\s+env[íi]es|'

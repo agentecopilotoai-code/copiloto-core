@@ -6,7 +6,7 @@ Verifica:
   con shape correcto, CHECK constraint, FK opcional, seed de 5 modalidades
   con ``provider='unset'``, RLS habilitada en ambas (default-deny).
 - 01-schema.sql paridad.
-- `app/services/influencer/provider_registry.py`:
+- `app/ai/registry.py`:
     - Constantes `MODALITIES` y `PROVIDER_CACHE_TTL_SECONDS` declaradas.
     - `ResolvedProvider` dataclass frozen con los 6 campos correctos.
     - `resolve_provider` async, valida `modality` contra `MODALITIES`,
@@ -33,7 +33,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS_SQL = REPO_ROOT / 'infra' / 'postgres' / '03-migrations.sql'
 SCHEMA_SQL = REPO_ROOT / 'infra' / 'postgres' / '01-schema.sql'
-PROVIDER_REGISTRY = REPO_ROOT / 'app' / 'services' / 'influencer' / 'provider_registry.py'
+PROVIDER_REGISTRY = REPO_ROOT / 'app' / 'ai' / 'registry.py'
 ADMIN_ROUTES = REPO_ROOT / 'app' / 'influencer' / 'admin_routes.py'
 MAIN_PY = REPO_ROOT / 'app' / 'main.py'
 
@@ -109,19 +109,19 @@ def test_schema_sql_has_paridad(schema_source: str) -> None:
 
 
 def test_modalities_constant() -> None:
-    from app.services.influencer.provider_registry import MODALITIES
+    from app.ai.registry import MODALITIES
 
     assert MODALITIES == ('llm', 'image', 'video', 'tts', 'stt')
 
 
 def test_cache_ttl_is_five_minutes() -> None:
-    from app.services.influencer.provider_registry import PROVIDER_CACHE_TTL_SECONDS
+    from app.ai.registry import PROVIDER_CACHE_TTL_SECONDS
 
     assert 0 < PROVIDER_CACHE_TTL_SECONDS <= 300
 
 
 def test_resolved_provider_dataclass_shape() -> None:
-    from app.services.influencer.provider_registry import ResolvedProvider
+    from app.ai.registry import ResolvedProvider
 
     assert hasattr(ResolvedProvider, '__dataclass_fields__')
     expected = {'modality', 'provider', 'secret_ref', 'model', 'params', 'source'}
@@ -130,7 +130,7 @@ def test_resolved_provider_dataclass_shape() -> None:
 
 
 def test_resolve_provider_is_async_and_validates_modality() -> None:
-    from app.services.influencer.provider_registry import resolve_provider
+    from app.ai.registry import resolve_provider
 
     assert inspect.iscoroutinefunction(resolve_provider)
 
@@ -153,7 +153,7 @@ def test_env_fallback_present_and_unset_sentinel() -> None:
 
 
 def test_cache_invalidate_helper_exported() -> None:
-    from app.services.influencer.provider_registry import _cache_invalidate
+    from app.ai.registry import _cache_invalidate
 
     assert callable(_cache_invalidate)
 

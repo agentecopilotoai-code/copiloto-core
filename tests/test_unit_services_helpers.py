@@ -159,7 +159,7 @@ def test_rag_orchestrator_pending_recall_service_id():
 
 def test_llm_answer_breaker_factory_returns_named_breaker():
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import _breaker_for_local_llm
+    from app.chatbot.llm_answer import _breaker_for_local_llm
 
     reset_registry()
     breaker = _breaker_for_local_llm()
@@ -170,14 +170,14 @@ def test_llm_answer_breaker_factory_returns_named_breaker():
 
 
 def test_llm_answer_qa_system_prompt_with_default_personality():
-    from app.services.llm_answer import _qa_system_prompt
+    from app.chatbot.llm_answer import _qa_system_prompt
     prompt = _qa_system_prompt(None)
     assert isinstance(prompt, str)
     assert 'asistente' in prompt.lower() or 'cliente' in prompt.lower()
 
 
 def test_llm_answer_qa_system_prompt_includes_personality_when_non_default():
-    from app.services.llm_answer import _qa_system_prompt
+    from app.chatbot.llm_answer import _qa_system_prompt
     personality = {
         'tone': 'formal',
         'formality': 'usted',
@@ -192,7 +192,7 @@ def test_llm_answer_qa_system_prompt_includes_personality_when_non_default():
 
 
 def test_cloud_llm_extract_token_usage_for_anthropic():
-    from app.services.cloud_llm_answer import _extract_token_usage
+    from app.chatbot.cloud_llm_answer import _extract_token_usage
 
     class Usage:
         input_tokens = 100
@@ -208,7 +208,7 @@ def test_cloud_llm_extract_token_usage_for_anthropic():
 
 
 def test_cloud_llm_extract_token_usage_for_openai():
-    from app.services.cloud_llm_answer import _extract_token_usage
+    from app.chatbot.cloud_llm_answer import _extract_token_usage
 
     class Usage:
         prompt_tokens = 80
@@ -223,7 +223,7 @@ def test_cloud_llm_extract_token_usage_for_openai():
 
 def test_cloud_llm_breaker_for_each_provider():
     from app.services.circuit_breaker import reset_registry
-    from app.services.cloud_llm_answer import _breaker_for
+    from app.chatbot.cloud_llm_answer import _breaker_for
 
     reset_registry()
     breaker_claude = _breaker_for('claude')
@@ -235,7 +235,7 @@ def test_cloud_llm_breaker_for_each_provider():
 
 
 def test_cloud_llm_qa_system_prompt():
-    from app.services.cloud_llm_answer import _qa_system_prompt
+    from app.chatbot.cloud_llm_answer import _qa_system_prompt
     prompt = _qa_system_prompt(None)
     assert isinstance(prompt, str)
     assert len(prompt) > 0

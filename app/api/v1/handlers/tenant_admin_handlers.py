@@ -172,7 +172,7 @@ from app.services.campaigns import (
 )
 from app.services.maps import build_maps_url
 from app.services.circuit_breaker import CircuitOpenError
-from app.services.intent_classifier import classify_intent
+from app.chatbot.intent_classifier import classify_intent
 from app.services.knowledge_storage import (
     delete_knowledge_file,
     is_binary_extractable,

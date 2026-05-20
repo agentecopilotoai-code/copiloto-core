@@ -14,8 +14,8 @@ from app.services.rag_orchestrator import (
 
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 CONVERSATION_FLOW = Path('app/services/conversation_flow.py')
-LLM_ANSWER = Path('app/services/llm_answer.py')
-CLOUD_LLM_ANSWER = Path('app/services/cloud_llm_answer.py')
+LLM_ANSWER = Path('app/chatbot/llm_answer.py')
+CLOUD_LLM_ANSWER = Path('app/chatbot/cloud_llm_answer.py')
 
 
 def test_current_datetime_label_uses_tenant_timezone():

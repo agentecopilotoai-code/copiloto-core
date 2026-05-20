@@ -12,7 +12,7 @@ from app.core.security import authenticate_request, require_mfa_for_privileged
 from app.db.pool import get_db
 from app.influencer import ensure_module_enabled
 from app.influencer.personas_router import _set_tenant_scope
-from app.services.influencer.credits import (
+from app.influencer.credits import (
     InsufficientCreditsError,
     credit,
     current_balance,

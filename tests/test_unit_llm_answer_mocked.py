@@ -1,4 +1,4 @@
-"""Mock-based tests for `app/services/llm_answer.py`.
+"""Mock-based tests for `app/chatbot/llm_answer.py`.
 
 The module is currently 26% covered. By mocking the Ollama HTTP client we
 exercise the entire happy path + timeout + HTTP-error + circuit-open
@@ -85,7 +85,7 @@ def _patch_httpx(monkeypatch, **kw):
 
 def test_build_llm_answer_returns_handoff_when_no_context(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch_httpx(monkeypatch)
@@ -103,7 +103,7 @@ def test_build_llm_answer_returns_handoff_when_no_context(monkeypatch):
 
 def test_build_llm_answer_returns_answer_when_ollama_responds_ok(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch_httpx(monkeypatch, payload={'message': {'content': 'Aqui esta tu respuesta'}})
@@ -123,7 +123,7 @@ def test_build_llm_answer_returns_answer_when_ollama_responds_ok(monkeypatch):
 
 def test_build_llm_answer_falls_back_when_no_information(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch_httpx(monkeypatch, payload={
@@ -144,7 +144,7 @@ def test_build_llm_answer_falls_back_when_no_information(monkeypatch):
 
 def test_build_llm_answer_raises_on_timeout(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch_httpx(monkeypatch, raise_timeout=True)
@@ -162,7 +162,7 @@ def test_build_llm_answer_raises_on_timeout(monkeypatch):
 
 def test_build_llm_answer_raises_on_http_error(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch_httpx(monkeypatch, status_code=500)
@@ -182,7 +182,7 @@ def test_build_llm_answer_circuit_open_after_threshold(monkeypatch):
     """5 timeouts trip the breaker; the 6th call raises CircuitOpenError before
     even hitting httpx."""
     from app.services.circuit_breaker import CircuitOpenError, reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch_httpx(monkeypatch, raise_timeout=True)
@@ -221,7 +221,7 @@ def _real_ctx():
 
 def test_build_conversational_llm_answer_returns_answer(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_conversational_llm_answer
+    from app.chatbot.llm_answer import build_conversational_llm_answer
 
     reset_registry()
     # The conversational flow parses JSON from the LLM response. Return a
@@ -245,7 +245,7 @@ def test_build_conversational_llm_answer_returns_answer(monkeypatch):
 
 def test_build_conversational_llm_answer_escalates_on_request_human(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_conversational_llm_answer
+    from app.chatbot.llm_answer import build_conversational_llm_answer
 
     reset_registry()
     payload_text = '{"message": "Te conecto con un agente", "next_stage": "collecting", "action": "request_human"}'
@@ -269,7 +269,7 @@ def test_build_conversational_llm_answer_uses_history_block(monkeypatch):
     """When history is non-empty, the conversational call includes the prior
     turn — verify the request payload structure."""
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_conversational_llm_answer
+    from app.chatbot.llm_answer import build_conversational_llm_answer
 
     reset_registry()
     holder = _patch_httpx(monkeypatch, payload={
@@ -294,7 +294,7 @@ def test_build_conversational_llm_answer_uses_history_block(monkeypatch):
 
 def test_build_conversational_llm_answer_raises_on_timeout(monkeypatch):
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_conversational_llm_answer
+    from app.chatbot.llm_answer import build_conversational_llm_answer
 
     reset_registry()
     _patch_httpx(monkeypatch, raise_timeout=True)
@@ -316,7 +316,7 @@ def test_build_llm_answer_context_filter_excludes_low_score_matches(monkeypatch)
     """The `_build_context` helper skips matches below min_score. With no
     survivors, the function should return handoff (insufficient context)."""
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch_httpx(monkeypatch)
@@ -336,7 +336,7 @@ def test_build_llm_answer_context_filter_excludes_low_score_matches(monkeypatch)
 def test_build_llm_answer_context_filter_excludes_agents_only_visibility(monkeypatch):
     """Matches with visibility=agents_only are skipped (defense in depth)."""
     from app.services.circuit_breaker import reset_registry
-    from app.services.llm_answer import build_llm_answer
+    from app.chatbot.llm_answer import build_llm_answer
 
     reset_registry()
     _patch_httpx(monkeypatch)

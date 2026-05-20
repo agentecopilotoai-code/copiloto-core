@@ -39,8 +39,8 @@ from typing import Any, Final
 
 import asyncpg
 
-from app.services.influencer.provider_registry import ResolvedProvider, resolve_provider
-from app.services.influencer.providers.base import (
+from app.ai.registry import ResolvedProvider, resolve_provider
+from app.ai.providers.base import (
     ProviderContentRejected,
     ProviderError,
     ProviderRateLimited,

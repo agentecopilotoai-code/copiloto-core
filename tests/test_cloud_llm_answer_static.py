@@ -1,7 +1,7 @@
 """Static tests for cloud LLM answer service (Anthropic/OpenAI) and cascade integration."""
 from pathlib import Path
 
-CLOUD_LLM = Path('app/services/cloud_llm_answer.py')
+CLOUD_LLM = Path('app/chatbot/cloud_llm_answer.py')
 ORCHESTRATOR = Path('app/services/rag_orchestrator.py')
 CONFIG = Path('app/core/config.py')
 ENV_EXAMPLE = Path('.env.example')
@@ -124,7 +124,7 @@ def test_cloud_llm_normalizes_openai_token_usage():
 
 def test_orchestrator_imports_cloud_llm_answer():
     source = ORCHESTRATOR.read_text()
-    assert 'from app.services.cloud_llm_answer import' in source
+    assert 'from app.chatbot.cloud_llm_answer import' in source
     assert 'build_cloud_llm_answer' in source
     assert 'build_conversational_cloud_llm_answer' in source
 

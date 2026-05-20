@@ -31,7 +31,7 @@ from app.influencer.wizard_models import (
     PlatformsStep,
     VoiceStep,
 )
-from app.services.influencer import credits as credits_helper
+from app.influencer import credits as credits_helper
 
 
 def _req(tenant_id=None, user_id=None, is_platform_owner=False):
