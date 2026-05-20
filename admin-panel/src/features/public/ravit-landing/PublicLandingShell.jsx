@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { adminPath } from '../../../services/adminSession.js';
 import { Landing } from '../landing/Landing.jsx';
 import { RavitAgentPulse } from './RavitAgentPulse.jsx';
 
@@ -13,11 +14,16 @@ const TABS = [
   { id: 'copiloto', label: 'CopilotoIA', href: '/copiloto' },
 ];
 
+// Misma ruta de Auth0 que usa el Landing histórico (LandingHeader.jsx);
+// `/login` en el SPA solo redirige a `/`, así que un href directo
+// dispararía un loop. El flow real vive en el backend en `/admin/login`.
+const DEFAULT_LOGIN_HREF = adminPath('/admin/login');
+
 
 export function PublicLandingShell({
   activeTab = 'ravit',
   demoMailto = 'mailto:demo@ravit.studio',
-  loginHref = '/login',
+  loginHref = DEFAULT_LOGIN_HREF,
   onDemoRequest,
 }) {
   const [demoModalOpen, setDemoModalOpen] = useState(false);

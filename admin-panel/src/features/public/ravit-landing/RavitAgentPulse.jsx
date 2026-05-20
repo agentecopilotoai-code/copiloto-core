@@ -9,6 +9,7 @@
  * Secciones: Hero · Stats · Cómo funciona · Casting de ejemplo · Pricing ·
  * Afiliados · CTA final · Footer.
  */
+import { adminPath } from '../../../services/adminSession.js';
 import styles from './RavitAgentPulse.module.css';
 import {
   CastingIcon,
@@ -19,6 +20,9 @@ import {
   RavitMark,
   ScheduleIcon,
 } from './assets/illustrations.jsx';
+
+
+const DEFAULT_LOGIN_HREF = adminPath('/admin/login');
 
 
 const PERSONAJES_EJEMPLO = [
@@ -79,7 +83,10 @@ const PRICING = [
 ];
 
 
-export function RavitAgentPulse({ demoMailto = 'mailto:demo@ravit.studio', loginHref = '/login' }) {
+export function RavitAgentPulse({
+  demoMailto = 'mailto:demo@ravit.studio',
+  loginHref = DEFAULT_LOGIN_HREF,
+}) {
   return (
     <article className={styles.page} data-testid="ravit-agent-pulse">
       <section className={styles.hero}>
