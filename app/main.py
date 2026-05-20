@@ -14,6 +14,13 @@ from app.influencer.generations_router import (
     generations_router as influencer_generations_router,
 )
 from app.influencer.voice_router import voice_router as influencer_voice_router
+from app.influencer.instagram_router import instagram_router as influencer_instagram_router
+from app.influencer.posts_router import posts_router as influencer_posts_router
+from app.influencer.credits_router import (
+    credits_router as influencer_credits_router,
+    pricing_router as influencer_pricing_router,
+)
+from app.influencer.casting_router import casting_router as influencer_casting_router
 # TASK-INFLU-002 — import side-effect que registra los endpoints
 # `/v1/platform/ai-providers*` sobre `platform_admin_router`. Sin este
 # import, los decoradores `@platform_admin_router.X` del archivo nunca
@@ -146,6 +153,15 @@ def create_app() -> FastAPI:
     api.include_router(influencer_generations_router)
     # TASK-INFLU-013 — voice sample + captions preview.
     api.include_router(influencer_voice_router)
+    # TASK-INFLU-014 — Instagram OAuth (primer plataforma).
+    api.include_router(influencer_instagram_router)
+    # TASK-INFLU-015 — posts + calendar + publish queue.
+    api.include_router(influencer_posts_router)
+    # TASK-INFLU-016 — credit ledger + pricing.
+    api.include_router(influencer_credits_router)
+    api.include_router(influencer_pricing_router)
+    # TASK-INFLU-017 — casting home + studio detail.
+    api.include_router(influencer_casting_router)
     return api
 
 

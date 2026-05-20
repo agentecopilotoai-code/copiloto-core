@@ -1237,9 +1237,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-014 — `influencer.platform_connections` + OAuth Instagram (primer plataforma)
+### TASK-INFLU-014 — `influencer.platform_connections` + OAuth Instagram (primer plataforma) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** `03e _ Crear personaje _ Paso 5 Plataformas.html` — sección "Cuentas conectadas · Instagram @sofiavega.studio".
 - **Alcance:**
   - Migración `influencer.platform_connections(id uuid pk, tenant_id, persona_id fk, platform text check (platform in ('instagram','tiktok','youtube','threads','x','facebook')), external_account_id text, external_handle text, oauth_token_ref text fk app.platform_secrets, refresh_token_ref text, expires_at timestamptz, scopes text[], posts_per_week int, status text check (status in ('connected','expired','disconnected','pending')) default 'pending', connected_at, last_used_at)`. **`oauth_token_ref`** apunta a `platform_secrets` (no token en claro).
@@ -1257,9 +1257,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-015 — `influencer.posts` + `publish_worker` (Instagram)
+### TASK-INFLU-015 — `influencer.posts` + `publish_worker` (Instagram) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** `05 _ Calendario _todos los personajes_.html` — calendario semanal + "Aprobar y publicar".
 - **Alcance:**
   - Migración `influencer.posts(id uuid pk, tenant_id, persona_id fk, generation_id fk, kind text check (kind in ('photo','reel','carousel','story','ad')), caption text, hashtags text[], scheduled_at timestamptz not null, platforms text[] check (cardinality(platforms) > 0), status text check (status in ('scheduled','approved','publishing','published','failed','canceled')) default 'scheduled', approved_at, approved_by fk app.users, published_at, external_post_ids jsonb default '{}', error text, created_at)`.
@@ -1280,9 +1280,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-016 — `influencer.credit_ledger` + `generation_pricing` + top-up
+### TASK-INFLU-016 — `influencer.credit_ledger` + `generation_pricing` + top-up — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** sidebar `Créditos 248` en todos los HTMLs + recap costos en `04 _ Generar contenido _con Sofía_.html` ("3 créditos · 4 imágenes = 12 créditos").
 - **Alcance:**
   - Migraciones:
@@ -1302,9 +1302,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-017 — Casting home + studio detail (read endpoints con stats)
+### TASK-INFLU-017 — Casting home + studio detail (read endpoints con stats) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** `01 _ Casting _Home_.html` (KPIs globales: Personajes activos, Posts este mes, Alcance total, Engagement medio) + `02 _ Estudio de Sofía _detalle_.html` (stats por personaje).
 - **Alcance:**
   - `GET /v1/influencer/casting` — body devuelve `{kpis: {active_personas, posts_this_month, total_reach, avg_engagement}, personas: [...con stats por personaje]}`. Filters por `category`, `sort`.
@@ -1318,9 +1318,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-018 — Observabilidad, métricas, etiqueta IA visible + runbook
+### TASK-INFLU-018 — Observabilidad, métricas, etiqueta IA visible + runbook — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** transversal — compliance + ops.
 - **Alcance:**
   - Métricas Prometheus en `app/services/metrics.py`:
@@ -1342,9 +1342,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-019 — Endpoints `platform_admin` para `app.tenant_modules` (enable/disable per tenant)
+### TASK-INFLU-019 — Endpoints `platform_admin` para `app.tenant_modules` (enable/disable per tenant) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** sin HTML directo — backend admin de plataforma. La UI consumidora es UI-INFLU-017 (`src/features/platform/modules-control/`).
 - **Motivación:** TASK-INFLU-001 entregó la tabla `app.tenant_modules` + el gate `ensure_module_enabled`, pero **no hay endpoint REST** para que Platform Owner active/desactive el módulo de un tenant. Hoy la activación requiere `INSERT` directo en la DB como `copiloto_admin` (las RLS policies `tenant_modules_support_*` exigen `app.support_mode()=true`). Esa fricción no es viable para onboarding comercial — necesitamos un PATCH con audit + MFA.
 - **Alcance:**

@@ -15,6 +15,110 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-INFLU-019 — platform_admin endpoints para tenant_modules
+
+- **Fecha:** 2026-05-19
+- **Resumen:** 2 endpoints sobre `platform_admin_router` para que platform_owner active/desactive el módulo `influencer` (u otros opt-in) por tenant. Bypassa RLS de `app.tenant_modules` via `set_local app.support_mode='on'` transaction-local.
+- **Componentes (extiende `app/influencer/admin_routes.py`):**
+  - `GET /v1/platform/tenant-modules` (filters `module`, `enabled`, `tenant_search`). LEFT JOIN tenants + tenant_modules para listar todos los tenants aunque no tengan filas en `tenant_modules`.
+  - `PATCH /v1/platform/tenant-modules/{tenant_id}/{module}` con body `{enabled, plan?, notes?}`:
+    - Verifica tenant existe (404 si no).
+    - **Preflight check para `module='influencer'` + `enabled=True`**: si no hay providers configurados (LLM e Image al mínimo, vía `app.platform_ai_providers.secret_ref IS NOT NULL`), devuelve 409 con detail `'ai_providers_not_configured: missing [...]'`.
+    - Si la fila no existe o `enabled` cambia → INSERT/UPDATE con `activated_at=now()`. Si NO cambia → UPDATE solo `plan`/`notes` (idempotente, no toca `activated_at`).
+    - Emite audit `platform.tenant_module.activated|_deactivated` solo cuando `activated_changed`. **`notes` NUNCA en metadata** — solo `notes_provided: bool` (puede contener PII del cliente).
+    - Invalida cache local del module gate (`app.influencer._cache_invalidate()`). Otros workers vencen por TTL 5min.
+- **Archivos:** `app/influencer/admin_routes.py` +200 LOC, `tests/test_tenant_modules_admin_static.py` (13 tests).
+- **Validaciones:** 13/13 PASSED.
+- **Nota de seguridad:** heredado del `platform_admin_router` que ya aplica `require_platform_owner` + `require_mfa_for_privileged`. Defense-in-depth: las RLS policies `tenant_modules_support_*` exigen `support_mode='on'` — un actor sin support_mode falla a nivel DB aunque bypasee el dependency. El audit jamás incluye el contenido de `notes` (operador puede pegar info sensible del cliente).
+- **Limitaciones:** la matriz `CHECK module IN ('influencer')` actual solo soporta 1 módulo. Cuando se agregue un segundo opt-in, requiere migración nueva (sub-tarea aparte).
+
+---
+
+### TASK-INFLU-018 — Observabilidad + métricas + disclose_ai enforcer + runbooks
+
+- **Fecha:** 2026-05-19
+- **Resumen:** 5 métricas Prometheus + 3 alertas + 2 runbooks + enforcer del flag `disclose_ai` en el PATCH personas.
+- **Componentes:**
+  - **Métricas en `app/services/metrics.py`**:
+    - `influencer_generations_total{kind, status, provider}` (counter).
+    - `influencer_generation_duration_seconds{kind, provider}` (histogram con buckets 0.5..600s).
+    - `influencer_credits_balance{tenant_id}` (gauge).
+    - `influencer_posts_published_total{platform, status}` (counter).
+    - `influencer_provider_health{provider, modality}` (gauge 0/1).
+  - **Alertas en `infra/observability/alerts/influencer.yml`**: `InfluencerProviderDown`, `InfluencerGenerationP95High`, `InfluencerPublishFailures`. Cada una linkea al runbook correspondiente vía `annotations.runbook_url`.
+  - **Runbooks**:
+    - `docs/runbooks/influencer-generation-stuck.md` — cubre provider down, circuit breaker abierto, content rejection, hung jobs.
+    - `docs/runbooks/influencer-instagram-publish-failure.md` — cubre tokens expirados, rate limits IG (200/hr), content rejection por Meta.
+  - **Enforcer `disclose_ai`** en `personas_router.patch_persona`: si el body trae `disclose_ai=False` y el caller NO es `platform_owner` (request.state.is_platform_owner), devuelve 400 `'AI disclosure is required by platform policy'`. El platform_owner SÍ puede setear `False` por tenant (override documentado en el runbook).
+- **Archivos:** `app/services/metrics.py` +35 LOC, `infra/observability/alerts/influencer.yml` (creado), 2 runbooks (creados), `app/influencer/personas_router.py` +9 LOC, `tests/test_influencer_metrics_static.py` (12 tests).
+- **Validaciones:** 12/12 PASSED.
+- **Nota de seguridad:** `disclose_ai=False` es un override sensible (sin disclosure el contenido IA se hace pasar por humano). Solo platform_owner puede hacerlo, y el frontend (UI-INFLU-015) debe pedir confirmación adicional. Defense-in-depth: el endpoint chequea `is_platform_owner` desde request.state (poblado por `authenticate_request`), no acepta el flag desde body sin esta verificación.
+- **Limitaciones:** los metric increments (calls a `influencer_generations_total.labels(...).inc()`) van en los hooks del worker / endpoints — wiring final cuando el entrypoint del worker se monte (sub-tarea del despliegue, fuera de este PR).
+
+---
+
+### TASK-INFLU-017 — Casting home + studio detail
+
+- **Fecha:** 2026-05-19
+- **Resumen:** 2 GET endpoints read-only + cache TTL 1h en `influencer.persona_stats_cache`:
+  - `GET /v1/influencer/casting`: KPIs globales (active_personas, posts_this_month, total_reach, avg_engagement) + lista de personas con stats por personaje.
+  - `GET /v1/influencer/personas/{id}/studio`: bundle del estudio con persona + stats + next_post + platforms_connected + recent_generations (cap 12).
+- **Componentes:**
+  - **Tabla `persona_stats_cache`** con TTL 1h. `_get_or_refresh_stats()` lee cache; si está expirado/missing, calcula los counts baratos (posts_total, scheduled_count) inline y persiste. `reach_30d`/`engagement_rate` reales se actualizan por el cron horario de TASK-INFLU-018 (consume IG Insights).
+- **Archivos:** migración +20 LOC, `casting_router.py` (310 LOC), `tests/test_casting_static.py` (10 tests).
+- **Validaciones:** 10/10 PASSED.
+- **Nota de seguridad:** read-only — sin riesgo de mutations. Cross-tenant 404 via RLS (`_set_tenant_scope` antes de cada query). Archived personas excluidas del casting; disconnected platforms excluidas del studio.
+- **Limitaciones:** `reach_30d` y `engagement_rate` se devuelven 0.0 hasta que el cron real corra (TASK-INFLU-018). Counts inline (`posts_total`, `scheduled_count`) son siempre frescos.
+
+---
+
+### TASK-INFLU-016 — credit_ledger + generation_pricing + topup
+
+- **Fecha:** 2026-05-19
+- **Resumen:** ledger append-only de créditos por tenant + tabla pricing por kind. Helpers `debit`/`credit`/`current_balance`/`pricing_map`. 3 endpoints (balance + topup + pricing).
+- **Componentes:**
+  - **Tabla `credit_ledger`**: `(delta, balance_after, reason, ref, actor_id, created_at)`. CHECK `balance_after >= 0` (defensa contra overdraft a nivel DB). `balance_after` materializado = no SUM scan en cada lectura. Index `(tenant_id, id desc)` para lookup del último balance.
+  - **Tabla `generation_pricing`**: `(kind PK, cost_credits)` seedeada con los 7 kinds (photo=3, reel=8, carousel=10, story=2, ad=5, face_variation=1, voice_sample=2).
+  - **`app/services/influencer/credits.py`**: `debit(conn, tenant_id, amount, reason, ref, actor_id)` lee último `balance_after` con `FOR UPDATE` (lock fila) → calcula nuevo → lanza `InsufficientCreditsError` si < 0 → inserta nueva fila. `credit()` simétrico para top-up/refund. `pricing_map(conn)` devuelve `{kind: cost}` para el worker (TASK-INFLU-011/012).
+  - **Endpoints**: GET `/credits/balance` (balance + últimas 50 transacciones); POST `/credits/topup` (require MFA; amount + payment_ref); GET `/pricing` (mapa pricing).
+- **Archivos:** migración +56 LOC, `credits.py` (135 LOC), `credits_router.py` (180 LOC), main mount, `tests/test_credit_ledger_static.py` (17 tests).
+- **Validaciones:** 17/17 PASSED.
+- **Nota de seguridad:** double-defense contra overdraft: helper lanza `InsufficientCreditsError` antes del insert, Y el CHECK constraint `balance_after >= 0` impide a nivel DB. `FOR UPDATE` serializa concurrent debits — sin race conditions. `topup` requiere `require_mfa_for_privileged` + `payment_ref` validado upstream por TASK-0083 (Stripe/MercadoPago webhook fail-closed). El refund de generations failed se hace via `credit(reason='refund:gen:{id}')` desde el worker.
+- **Limitaciones:** la integración con TASK-INFLU-011/012 (debit en queue + refund en failed) se completa cuando el worker entrypoint se cablea (sub-tarea TASK-INFLU-018). El billing webhook → topup también necesita el wiring del entrypoint.
+
+---
+
+### TASK-INFLU-015 — `influencer.posts` + publish_worker
+
+- **Fecha:** 2026-05-19
+- **Resumen:** tabla `influencer.posts` (calendar + queue de publicación) + 4 endpoints CRUD + worker `publish_worker` que consume `status='approved' AND scheduled_at <= now()` con `for update skip locked`.
+- **Componentes:**
+  - **Migración**: tabla con CHECK status (6 estados), `cardinality(platforms) > 0`, indices para queue (`where status='approved'`) y calendar (`tenant + status + scheduled_at`). RLS tenant_isolation.
+  - **Endpoints**: POST /posts, PATCH /posts/{id}, POST /posts/{id}/cancel, GET /calendar (rango ≤ 90 días).
+  - **AI disclosure**: `apply_ai_disclosure(caption, disclose_ai)` agrega `#AI #generadoConIA` al final. Idempotente (no duplica si ya está). Compartido entre el endpoint y el worker para garantizar consistencia.
+  - **Worker** (`app/workers/influencer_publish_worker.py`): `claim_next_approved_post` con join `posts + personas` para leer `disclose_ai` en una sola query. `resolve_token` desde `platform_connections.oauth_token_ref` → `app.platform_secrets`. `process_one_post` publica en cada platform via `PublishFn` inyectable; si una falla, status='failed' + error_message; si todas OK, status='published' + external_post_ids.
+- **Archivos:** migración +45 LOC, 2 archivos nuevos (~430 LOC), main.py mount, `tests/test_influencer_posts_static.py` (14 tests).
+- **Validaciones:** 14/14 PASSED.
+- **Nota de seguridad:** RLS estricta. El worker NO trae tokens en logs (solo el `secret_ref`). AI disclosure forzada cuando `disclose_ai=true` — un platform_owner no puede saltarse esto desde el endpoint (la lógica vive en la función compartida que el worker usa).
+- **Limitaciones:** la `PublishFn` real (Instagram Graph: POST /me/media → POST /me/media_publish + manejo de rate limits 200/hr) la inyecta el entrypoint del worker (TASK-INFLU-018). El cron loop tampoco está aún — `process_one_post` se invoca desde el scheduler que monte el entrypoint.
+
+---
+
+### TASK-INFLU-014 — `platform_connections` + Instagram OAuth
+
+- **Fecha:** 2026-05-19
+- **Resumen:** tabla `influencer.platform_connections` + 3 endpoints OAuth (`/oauth/start`, `/oauth/callback`, `/disconnect`). HMAC-SHA256 state firmado con `JWT_SECRET` (anti-CSRF). Tokens NUNCA en claro: van a `app.platform_secrets` via `secret_ref` opaco. Solo Instagram en esta tarea — TikTok/YouTube/etc. son sub-tareas separadas.
+- **Componentes:**
+  - **Migración**: tabla con CHECK platform (6 plataformas), CHECK status (connected/expired/disconnected/pending), `oauth_token_ref` y `refresh_token_ref` FK a `platform_secrets`. Unique index parcial `(persona_id, platform) where status <> 'disconnected'` — un personaje no puede tener 2 conexiones activas a la misma platform.
+  - **`app/influencer/instagram_oauth.py`** (130 LOC): `build_oauth_state(persona_id, secret)` → `<pid>:<nonce>:<ts>:<hmac>`. `verify_oauth_state(state, secret, expected_persona_id)` valida HMAC con `hmac.compare_digest` (timing-safe) + TTL 10 min + persona match. `build_authorize_url(client_id, redirect_uri, state, scopes)` arma la URL Meta.
+  - **`app/influencer/instagram_router.py`** (210 LOC): `/oauth/start` (307 redirect a Meta), `/oauth/callback` (verifica state → exchange code → persiste token en `platform_secrets` → upsert connection row), `/disconnect` (requiere `require_mfa_for_privileged` — desconectar rompe campañas activas).
+- **Archivos:** migración +30 LOC, 2 archivos nuevos (~340 LOC), main.py mount, `tests/test_instagram_oauth_static.py` (16 tests).
+- **Validaciones:** 16/16 PASSED.
+- **Nota de seguridad:** state HMAC-SHA256 con TTL → impide CSRF + replay del callback. `hmac.compare_digest` previene timing attacks. Tokens persistidos via `_store_secret` con `hint` = últimos 4 chars (operator ID), `ciphertext=null` por ahora (backend env). El `disconnect` exige MFA porque desconectar Instagram rompe campañas activas + posts agendados.
+- **Limitaciones:** `_exchange_code(code)` y `_store_secret` son stubs que el entrypoint HTTP real (TASK-INFLU-018) cablea con httpx + el backend de secrets configurado. La refresh logic (long-lived tokens 60d → refresh diario) queda como sub-tarea aparte (background job).
+
+---
+
 ### TASK-INFLU-013 — Voice sample (TTS) + captions preview
 
 - **Fecha:** 2026-05-19

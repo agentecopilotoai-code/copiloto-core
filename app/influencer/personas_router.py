@@ -206,6 +206,16 @@ async def patch_persona(
 
     # Sólo campos provistos (omitir None y unset).
     updates = body.model_dump(exclude_unset=True)
+
+    # TASK-INFLU-018 — Enforcer disclose_ai: solo platform_owner puede
+    # desactivar la disclosure. Un tenant común no puede ocultar que su
+    # influencer es generado por IA.
+    if updates.get('disclose_ai') is False:
+        if not getattr(request.state, 'is_platform_owner', False):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                'AI disclosure is required by platform policy',
+            )
     if not updates:
         # Nada que actualizar — devolver fila actual.
         row = await conn.fetchrow(

@@ -485,3 +485,166 @@ create policy assets_tenant_isolation
     tenant_id::text = current_setting('app.tenant_id', true)
     or current_setting('app.support_mode', true) = 'on'
   );
+
+-- ============================================================================
+-- TASK-INFLU-014 — platform_connections (Instagram first)
+-- ============================================================================
+
+create table if not exists influencer.platform_connections (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references app.tenants(id) on delete cascade,
+  persona_id      uuid not null references influencer.personas(id) on delete cascade,
+  platform        text not null
+                    check (platform in ('instagram', 'tiktok', 'youtube',
+                                         'threads', 'x', 'facebook')),
+  external_account_id text null,
+  external_handle text null,
+  oauth_token_ref text null references app.platform_secrets(secret_ref)
+                    on delete set null,
+  refresh_token_ref text null references app.platform_secrets(secret_ref)
+                    on delete set null,
+  expires_at      timestamptz null,
+  scopes          text[] not null default '{}',
+  posts_per_week  int not null default 3 check (posts_per_week between 0 and 50),
+  status          text not null default 'pending'
+                    check (status in ('connected', 'expired', 'disconnected', 'pending')),
+  connected_at    timestamptz null,
+  last_used_at    timestamptz null,
+  created_at      timestamptz not null default now()
+);
+
+create unique index if not exists ux_platform_connections_persona_platform
+  on influencer.platform_connections (persona_id, platform)
+  where status <> 'disconnected';
+
+create index if not exists ix_platform_connections_tenant_platform_status
+  on influencer.platform_connections (tenant_id, platform, status);
+
+alter table influencer.platform_connections enable row level security;
+drop policy if exists platform_connections_tenant_isolation on influencer.platform_connections;
+create policy platform_connections_tenant_isolation
+  on influencer.platform_connections
+  using (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  );
+
+-- ============================================================================
+-- TASK-INFLU-015 — posts + publish queue
+-- ============================================================================
+
+create table if not exists influencer.posts (
+  id              uuid primary key default gen_random_uuid(),
+  tenant_id       uuid not null references app.tenants(id) on delete cascade,
+  persona_id      uuid not null references influencer.personas(id) on delete cascade,
+  generation_id   uuid null references influencer.generations(id) on delete set null,
+  kind            text not null
+                    check (kind in ('photo', 'reel', 'carousel', 'story', 'ad')),
+  caption         text not null default '',
+  hashtags        text[] not null default '{}',
+  scheduled_at    timestamptz not null,
+  platforms       text[] not null check (cardinality(platforms) > 0),
+  status          text not null default 'scheduled'
+                    check (status in ('scheduled', 'approved', 'publishing',
+                                       'published', 'failed', 'canceled')),
+  approved_by     uuid null references app.users(id) on delete set null,
+  approved_at     timestamptz null,
+  published_at    timestamptz null,
+  external_post_ids jsonb not null default '{}'::jsonb,
+  error_message   text null,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists ix_posts_tenant_status_scheduled
+  on influencer.posts (tenant_id, status, scheduled_at);
+
+create index if not exists ix_posts_publish_queue
+  on influencer.posts (scheduled_at)
+  where status = 'approved';
+
+create index if not exists ix_posts_persona_scheduled
+  on influencer.posts (persona_id, scheduled_at desc);
+
+alter table influencer.posts enable row level security;
+drop policy if exists posts_tenant_isolation on influencer.posts;
+create policy posts_tenant_isolation
+  on influencer.posts
+  using (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  );
+
+-- ============================================================================
+-- TASK-INFLU-016 — credit_ledger + generation_pricing
+-- ============================================================================
+
+create table if not exists influencer.credit_ledger (
+  id              bigserial primary key,
+  tenant_id       uuid not null references app.tenants(id) on delete cascade,
+  delta           int not null check (delta <> 0),
+  balance_after   int not null check (balance_after >= 0),
+  reason          text not null,
+  ref             text null,
+  actor_id        uuid null references app.users(id) on delete set null,
+  created_at      timestamptz not null default now()
+);
+
+create index if not exists ix_credit_ledger_tenant_created
+  on influencer.credit_ledger (tenant_id, created_at desc);
+
+create index if not exists ix_credit_ledger_tenant_id_id
+  on influencer.credit_ledger (tenant_id, id desc);
+
+alter table influencer.credit_ledger enable row level security;
+drop policy if exists credit_ledger_tenant_isolation on influencer.credit_ledger;
+create policy credit_ledger_tenant_isolation
+  on influencer.credit_ledger
+  using (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  );
+
+create table if not exists influencer.generation_pricing (
+  kind            text primary key
+                    check (kind in ('photo', 'reel', 'carousel', 'story', 'ad',
+                                     'face_variation', 'voice_sample')),
+  cost_credits    int not null check (cost_credits > 0),
+  updated_at      timestamptz not null default now()
+);
+
+-- Seed pricing inicial. PATCH del platform_owner lo override después.
+insert into influencer.generation_pricing (kind, cost_credits) values
+  ('photo',          3),
+  ('reel',           8),
+  ('carousel',      10),
+  ('story',          2),
+  ('ad',             5),
+  ('face_variation', 1),
+  ('voice_sample',   2)
+on conflict (kind) do nothing;
+
+-- ============================================================================
+-- TASK-INFLU-017 — persona_stats_cache (TTL 1h)
+-- ============================================================================
+
+create table if not exists influencer.persona_stats_cache (
+  persona_id      uuid primary key references influencer.personas(id) on delete cascade,
+  tenant_id       uuid not null references app.tenants(id) on delete cascade,
+  posts_total     int not null default 0,
+  reach_30d       bigint not null default 0,
+  engagement_rate double precision not null default 0,
+  scheduled_count int not null default 0,
+  computed_at     timestamptz not null default now()
+);
+
+create index if not exists ix_persona_stats_cache_tenant
+  on influencer.persona_stats_cache (tenant_id);
+
+alter table influencer.persona_stats_cache enable row level security;
+drop policy if exists persona_stats_cache_tenant_isolation on influencer.persona_stats_cache;
+create policy persona_stats_cache_tenant_isolation
+  on influencer.persona_stats_cache
+  using (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  );
