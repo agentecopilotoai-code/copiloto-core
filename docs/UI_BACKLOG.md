@@ -1741,9 +1741,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-009 — Wizard · Paso 2 · Cuerpo
+### UI-INFLU-009 — Wizard · Paso 2 · Cuerpo — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/03b _ Crear personaje _ Paso 2 Cuerpo.html`.
 - **Alcance:** `Step2Body.jsx`. Panel "Tipo de cuerpo" con 4 silhouette cards (Slim/Athletic/Curvy/Average) + slider de altura (140cm–200cm) + selector de postura. Vista previa "ATLÉTICA · 172CM" con 4 ángulos (Frontal · 3/4 · Perfil · Espalda) renderizados desde S3 (assets generados por TASK-INFLU-012 para el persona-anchor `body`).
 - **Criterios:** persiste en `PUT /personas/{id}/body`. Si el persona no tiene assets de cuerpo aún, las 4 vistas son placeholders + CTA "Generar vistas" (consume 4 créditos).
@@ -1754,9 +1754,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-010 — Wizard · Paso 3 · Identidad
+### UI-INFLU-010 — Wizard · Paso 3 · Identidad — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/03c _ Crear personaje _ Paso 3 Identidad.html`.
 - **Alcance:** `Step3Identity.jsx`. Form completo:
   - Nombre (required) + Handle (required, unique per tenant — valida vía API debounced `GET /personas?handle=...`).
@@ -1773,9 +1773,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-011 — Wizard · Paso 4 · Voz
+### UI-INFLU-011 — Wizard · Paso 4 · Voz — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/03d _ Crear personaje _ Paso 4 Voz.html`.
 - **Alcance:** `Step4Voice.jsx`. Slider/chips de tono (Cálida · Cercana · Aspiracional · Profesional · Divertida), formalidad (informal ↔ formal), nivel de energía (calmada ↔ enérgica). Sección "Voz de Sofía · sample" con player de audio (consume `POST /personas/{id}/voice/sample` — TASK-INFLU-013). Sección "Captions generados con esta voz" con 3 captions live para IG·Foto / TikTok·Reel / IG·Story (consume `POST /personas/{id}/voice/captions-preview`).
 - **Criterios:** los captions se regeneran (debounced 1s) cada vez que el user cambia tono. El audio sample se re-genera explícitamente con CTA "Re-generar sample" (consume 2 créditos).
@@ -1786,9 +1786,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-012 — Wizard · Paso 5 · Plataformas
+### UI-INFLU-012 — Wizard · Paso 5 · Plataformas — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/03e _ Crear personaje _ Paso 5 Plataformas.html`.
 - **Alcance:** `Step5Platforms.jsx`. Lista de 6 plataformas (Instagram · TikTok · YouTube · Threads · X · Facebook) con para cada una:
   - Toggle conectado/sin conectar.
@@ -1808,9 +1808,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-013 — Generar contenido (composer)
+### UI-INFLU-013 — Generar contenido (composer) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/04 _ Generar contenido _con Sof_a_.html`.
 - **Alcance:** `src/features/influencer/generate/Generate.jsx` + hook `useGenerateData` + componentes:
   - `KindSelector` (5 cards: Foto 3cr · Reel 8cr · Carrusel 10cr · Historia 2cr · Anuncio 5cr; badge HOT en reel).
@@ -1828,9 +1828,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-014 — Calendario semanal/mensual de todos los personajes
+### UI-INFLU-014 — Calendario semanal/mensual de todos los personajes — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/05 _ Calendario _todos los personajes_.html`.
 - **Alcance:** `src/features/influencer/calendar/Calendar.jsx` + hook `useCalendarData` + componentes:
   - `CalendarHeader` (rango "12 – 18 May 2026" + navegación prev/next + tabs Día/Semana/Mes + filtro de personajes "Camila · Valeria · Emma · Mia · Sofía"; cada filter chip con color asignado al personaje).

@@ -15,6 +15,62 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-INFLU-014 — Calendario semanal de personajes
+
+- **Fecha:** 2026-05-19
+- **Resumen:** `Calendar.jsx` + helpers `calendarData.js`. Header con rango "DD MMM – DD MMM YYYY" (locale es-CO), filter chips por personaje con color asignado (`personaColorMap`), grid Lun-Dom con posts agrupados por día y ordenados por hora. Click en post → drawer lateral con detalle + CTAs (Aprobar y publicar / Reprogramar / Cancelar). El "Cancelar" pasa por `useConfirm` (UI-011) antes de invocar `onCancel`. Posts `scheduled` con border punteado; `approved` con border sólido.
+- **Archivos:** `Calendar.jsx` (200 LOC), `calendarData.js` (75 LOC), 2 tests (6+5 = 11).
+- **Validaciones:** 11/11 PASSED.
+- **Nota de seguridad:** "Aprobar y publicar" gateado por `influencer.posts.approve_publish` — disabled+tooltip si el rol no tiene capability. Backend (TASK-INFLU-015 PATCH) también valida; defense-in-depth.
+
+---
+
+### UI-INFLU-013 — Composer "Generar contenido"
+
+- **Fecha:** 2026-05-19
+- **Resumen:** `Generate.jsx` + helpers `generateData.js`. 5 cards (Foto/Reel/Carrusel/Historia/Anuncio) con costos y badge HOT en Reel. Composer con textarea + formato/cantidad (gated por kind), toggle Modo seguro. Botón "Generar" muestra costo proyectado live; disabled+tooltip si balance bajo. Si `balance≤0` → `NoCreditsEmpty`; si `providerDown` → `ProviderUnavailableEmpty`. Sidebar con `recentGenerations` y CTA "Programar post" cuando succeeded.
+- **Archivos:** `Generate.jsx` (200 LOC), `generateData.js` (75 LOC), 2 tests (6+5 = 11).
+- **Validaciones:** 11/11 PASSED.
+- **Nota de seguridad:** doble protección de balance — botón disabled+tooltip + validate antes de onGenerate. Backend TASK-INFLU-016 también rechaza con InsufficientCreditsError.
+
+---
+
+### UI-INFLU-012 — Wizard · Paso 5 · Plataformas
+
+- **Fecha:** 2026-05-19
+- **Resumen:** `Step5Platforms.jsx` + helpers `step5PlatformsData.js`. 6 plataformas con toggle (solo Instagram operativo; resto disabled). Modo de publicación radio (auto/manual/hybrid), toggle auto_respond_dms, **checkbox "Etiqueta IA visible" checked+disabled** (TASK-INFLU-018 enforcer, no se puede desactivar). Recap "X posts/sem · Y créditos/sem". CTA "Crear personaje" dispara `onActivate` con `disclose_ai: true` forzado.
+- **Archivos:** `Step5Platforms.jsx` (200 LOC), `step5PlatformsData.js` (70 LOC), 2 tests (5+4 = 9).
+- **Validaciones:** 9/9 PASSED.
+
+---
+
+### UI-INFLU-011 — Wizard · Paso 4 · Voz
+
+- **Fecha:** 2026-05-19
+- **Resumen:** `Step4Voice.jsx` + helpers `step4VoiceData.js`. 5 chips de tono (Cálida/Cercana/Aspiracional/Profesional/Divertida), select de formalidad (Informal/Neutral/Formal), slider de energía 1-10. Sample de voz con player `<audio controls>` + CTA "Re-generar sample (2 créditos)" gateado por `influencer.generate`. Captions preview (IG/TikTok/Story) con debounce 1s al cambiar tono — invoca callback `onFetchCaptions(payload, hash)` inyectable. `captionPromptHash` para detectar cambios.
+- **Archivos:** `Step4Voice.jsx` (175 LOC), `step4VoiceData.js` (60 LOC), 2 tests (4+4 = 8).
+- **Validaciones:** 8/8 PASSED.
+
+---
+
+### UI-INFLU-010 — Wizard · Paso 3 · Identidad
+
+- **Fecha:** 2026-05-19
+- **Resumen:** `Step3Identity.jsx` + helpers puros `step3IdentityData.js` + sub-componente `ChipField`. Form completo: Nombre, Handle (con validation regex + chequeo de duplicado async via onCheckHandle prop), Edad, Ciudad/País, Brands (chips agregables), Categorías (chips toggle), Descripción (280 chars max). Sidebar preview live que actualiza nombre/handle/location/descripción/categorías en tiempo real.
+- **Archivos:** `Step3Identity.jsx` (240 LOC), `step3IdentityData.js` (62 LOC), 2 tests (5+4 = 9).
+- **Validaciones:** 9/9 PASSED.
+
+---
+
+### UI-INFLU-009 — Wizard · Paso 2 · Cuerpo
+
+- **Fecha:** 2026-05-19
+- **Resumen:** `Step2Body.jsx` + helpers puros `step2BodyData.js`. Stepper con paso 1 completado y 2 current. 4 silhouette cards (Slim/Athletic/Curvy/Average) radio + slider altura 140–210cm + selector postura (Segura/Casual/Elegante/Deportiva). Vista previa "ATHLETIC · 172CM" con 4 ángulos (Frontal/3-4/Perfil/Espalda) — placeholders + CTA "Generar vistas (4 créditos)" gateado por `influencer.generate`.
+- **Archivos:** `wizard/Step2Body.jsx` (160 LOC) + `step2BodyData.js` (45 LOC) + 2 archivos test (3+3 = 6 tests).
+- **Validaciones:** 6/6 PASSED.
+
+---
+
 ### UI-INFLU-008 — Wizard · Paso 1 · Cara
 
 - **Fecha:** 2026-05-19
