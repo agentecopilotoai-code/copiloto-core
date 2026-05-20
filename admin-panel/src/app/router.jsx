@@ -24,6 +24,7 @@ import {
 import { ContactProfile } from '../features/agente/contact-profile/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 import { Landing } from '../features/public/landing/index.js';
+import { PublicLandingShell } from '../features/public/ravit-landing/PublicLandingShell.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { adminModules } from './modules.js';
 import { ModulePlaceholder } from './ModulePlaceholder.jsx';
@@ -160,14 +161,16 @@ function RootLayout() {
  * pintamos un `StateScreen` "Sin acceso a ningún módulo" con CTA de logout
  * en lugar de hacer redirect a un módulo roto.
  */
-function IndexRedirect() {
+function IndexRedirect({ publicTab = 'ravit' }) {
   const { session, profile, tenantOptions, tenantsLoading } = useTenantContext();
   const platformPermissions = usePermissions({ profile, tenant: null });
   const defaultTenant = pickDefaultTenant(tenantOptions);
   const tenantPermissions = usePermissions({ profile, tenant: defaultTenant });
 
-  // Usuario anónimo → landing pública. Sin RequirePermission (es público).
-  if (!session) return <Landing />;
+  // Usuario anónimo → landing pública con shell de tabs (UI-INFLU-016).
+  // `/` muestra tab Ravit por default; `/copiloto` muestra tab CopilotoIA.
+  // Sin RequirePermission (es público).
+  if (!session) return <PublicLandingShell activeTab={publicTab} />;
 
   if (tenantsLoading) return <LoadingScreen />;
   if (platformPermissions.role === 'platform_owner') {
@@ -579,7 +582,13 @@ export const routes = [
   {
     element: <RootLayout />,
     children: [
-      { index: true, element: <IndexRedirect /> },
+      { index: true, element: <IndexRedirect publicTab="ravit" /> },
+      // UI-INFLU-016 — /copiloto reusa el mismo IndexRedirect pero con
+      // tab CopilotoIA activo. Si hay sesión, delega al mismo flujo de
+      // home redirect (igual que `/no-tenant`).
+      { path: 'copiloto', element: <IndexRedirect publicTab="copiloto" /> },
+      // Back-compat de la spec previa de UI-INFLU-016 que mencionaba /ravit.
+      { path: 'ravit', element: <Navigate to="/" replace /> },
       { path: 'login', element: <Navigate to="/" replace /> },
       { path: 'no-tenant', element: <NoTenantRoute /> },
       { path: 'onboarding', element: <OnboardingRoute /> },

@@ -166,14 +166,23 @@ describe('router por rol', () => {
     });
   });
 
-  it('UI-016.4 — usuario anónimo en `/` ve la landing pública (no redirect)', async () => {
-    // Sin sesión activa → IndexRedirect renderiza <Landing /> en lugar de
-    // hacer Navigate a /no-tenant o /platform. La ruta permanece en `/`.
+  it('UI-INFLU-016 — usuario anónimo en `/` ve el PublicLandingShell con tab Ravit activo', async () => {
+    // Sin sesión activa → IndexRedirect renderiza <PublicLandingShell
+    // activeTab="ravit" /> en lugar de hacer Navigate a /no-tenant o
+    // /platform. La ruta permanece en `/`. El landing histórico
+    // CopilotoIA queda accesible via `/copiloto` (mismo shell).
     const router = renderAt('/', { session: null, tenants: [] });
     const heading = await screen.findByRole('heading', { level: 1 });
-    expect(heading.textContent).toMatch(/Responde, califica y agenda/);
-    expect(heading.textContent).toMatch(/en segundos/);
+    expect(heading.textContent).toMatch(/Influencers de IA/);
     expect(router.state.location.pathname).toBe('/');
+  });
+
+  it('UI-INFLU-016 — usuario anónimo en `/copiloto` ve el shell con tab CopilotoIA activo', async () => {
+    const router = renderAt('/copiloto', { session: null, tenants: [] });
+    const heading = await screen.findByRole('heading', { level: 1 });
+    // El tab CopilotoIA monta <Landing embedded /> que mantiene su h1 original.
+    expect(heading.textContent).toMatch(/Responde, califica y agenda/);
+    expect(router.state.location.pathname).toBe('/copiloto');
   });
 
   it('UI-017 — el splash legacy ya no se muestra: el copy MVP no aparece para anónimos', async () => {
