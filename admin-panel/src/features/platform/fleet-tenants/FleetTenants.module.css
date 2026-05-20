@@ -177,3 +177,135 @@
   font-size: var(--fs-body);
   font-weight: var(--fw-medium);
 }
+
+/* PLATFORM-MODULES-EXPAND — Panel "Módulos contratados" del FleetDrawer. */
+
+.modulesPanel {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.modulesHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.modulesTitle {
+  margin: 0;
+  font-size: var(--fs-h4);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.modulesHelp {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.modulesHelp code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0 4px;
+  background: var(--bg-deep);
+  border-radius: var(--r-xs);
+}
+
+.modulesError {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--danger-soft, var(--bg-deep));
+  color: var(--danger-ink, var(--ink));
+  border-radius: var(--r-sm);
+  font-size: var(--fs-body);
+}
+
+.modulesStatus {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--ok-soft, var(--bg-deep));
+  color: var(--ok-ink, var(--ink));
+  border-radius: var(--r-sm);
+  font-size: var(--fs-caption);
+}
+
+.modulesList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.moduleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--panel-alt);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.moduleMeta {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  flex: 1;
+}
+
+.moduleLabel {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.moduleCode {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}
+
+.moduleDescription {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+
+.moduleSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  color: var(--ink);
+}
+
+.moduleSwitch input[type="checkbox"] {
+  /* Mantenemos el input nativo accesible para teclado/screen readers.
+     El visual es el span hermano con texto "ON"/"OFF" — defensivo:
+     si el reset global del proyecto oculta el input, el label sigue
+     siendo clickable. */
+  cursor: pointer;
+}
+
+.moduleSwitch input[type="checkbox"]:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.muted {
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}

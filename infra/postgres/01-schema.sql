@@ -1584,7 +1584,18 @@ alter default privileges in schema influencer
 
 create table if not exists app.tenant_modules (
   tenant_id     uuid not null references app.tenants(id) on delete cascade,
-  module        text not null check (module in ('influencer')),
+  -- Catálogo extendido por PLATFORM-MODULES-EXPAND. Si añades un módulo aquí,
+  -- replica el cambio en `03-migrations.sql` (constraint `tenant_modules_module_check`)
+  -- y en el catálogo de la UI `admin-panel/src/features/platform/fleet-tenants/components/TenantModulesPanel.jsx`.
+  module        text not null check (module in (
+    'influencer',
+    'chatbot',
+    'widget_web',
+    'campaigns',
+    'analytics',
+    'payments',
+    'gestion_documental'
+  )),
   enabled       boolean not null default false,
   plan          text null,
   activated_at  timestamptz null,
