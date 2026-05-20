@@ -1847,9 +1847,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-015 — Platform Owner · Config de proveedores IA del módulo
+### UI-INFLU-015 — Platform Owner · Config de proveedores IA del módulo — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** sin HTML directo del diseñador (es admin de plataforma; estilo se hereda de `features/platform/*` existente, UI-006).
 - **Alcance:** `src/features/platform/influencer-ai-providers/AIProviders.jsx` montado bajo `/platform/influencer-ai-providers` (gate `<RequirePermission capability="influencer.ai_providers.configure">`, MFA enforced).
   - Tabla con 5 filas (una por modalidad: LLM · Image · Video · TTS · STT).
@@ -1864,9 +1864,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-016 — Landing público pre-login: shell con tabs (Ravit Agent · Pulse + CopilotoIA)
+### UI-INFLU-016 — Landing público pre-login: shell con tabs (Ravit Agent · Pulse + CopilotoIA) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML de referencia:**
   - Tab default → `docs/Agent/_ Ravit Agent _ Pulse.html` (estructura y secciones del nuevo hero/agente).
   - Paleta y tipografía → `docs/influencer/Ravit Studio Landing _standalone_.html` (tokens Ravit Studio: bg `#F1EDE3`, brand `#2DBB6A`, accent `#0F7A3F`, texto `#1B2542`, fuente Geist — todos ya disponibles vía `var(--ra-*)` de UI-INFLU-001).

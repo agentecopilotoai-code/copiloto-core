@@ -48,6 +48,7 @@ export function Landing({
   demoMailto = DEFAULT_DEMO_MAILTO,
   salesMailto = DEFAULT_SALES_MAILTO,
   loginHref = DEFAULT_LOGIN_HREF,
+  embedded = false,
 }) {
   useEffect(() => {
     const previousTitle = document.title;
@@ -59,11 +60,13 @@ export function Landing({
 
   return (
     <div className={styles.page} data-testid="public-landing">
-      <LandingHeader
-        loginHref={loginHref}
-        demoMailto={demoMailto}
-        salesMailto={salesMailto}
-      />
+      {!embedded && (
+        <LandingHeader
+          loginHref={loginHref}
+          demoMailto={demoMailto}
+          salesMailto={salesMailto}
+        />
+      )}
       <main>
         <LandingHero demoMailto={demoMailto} />
         <LandingSocialProof />

@@ -15,6 +15,29 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-INFLU-016 — Landing público con tabs (Ravit Agent · Pulse + CopilotoIA)
+
+- **Fecha:** 2026-05-19
+- **Resumen:** shell público pre-login con 2 tabs:
+  - `RavitAgentPulse.jsx`: hero "Influencers de IA que producen contenido por ti", sección "Cómo funciona" (4 pasos), pricing teaser (3 paquetes de créditos), bloque de afiliados "10%". Usa tokens Ravit `var(--ra-*)`.
+  - `Landing` existente reusado con prop nueva `embedded` (default false). Cuando `embedded=true`, el componente NO renderiza su `LandingHeader` propio para evitar doble header dentro del shell.
+  - `PublicLandingShell.jsx` con top-nav (logo + tabs + CTAs "Solicitar demo"/"Iniciar sesión") y modal de solicitud de demo (form con name/email/company + submit dispara `onDemoRequest`).
+- **Archivos:** `ravit-landing/RavitAgentPulse.jsx` (130 LOC), `ravit-landing/PublicLandingShell.jsx` (145 LOC), Landing.jsx +6 LOC, `PublicLandingShell.test.jsx` (5 tests).
+- **Validaciones:** 5/5 PASSED + Landing.test.jsx existente 11/11 PASSED (sin regresiones).
+- **Limitaciones:** el wiring en `app/router.jsx` (registrar `/copiloto` y redirigir `/ravit`) y el endpoint `POST /v1/leads/demo-request` quedan como follow-up `UI-INFLU-016-FU` (cambios al router son sensibles, se hacen en PR separado).
+
+---
+
+### UI-INFLU-015 — Platform Owner · Config de proveedores IA
+
+- **Fecha:** 2026-05-19
+- **Resumen:** `AIProviders.jsx` + helpers `aiProvidersData.js`. Tabla con las 5 modalidades (LLM/Image/Video/TTS/STT), drawer de edición con select de provider, input de modelo, input `password` para API key (write-only, placeholder "Se sobrescribirá la actual" + nota explícita "la key actual nunca se muestra"). Hint con últimos 4 chars. Botón "Probar" muestra elapsed_ms. `validateModelByProvider` rechaza modelos incoherentes (e.g. Grok requiere `grok-*`).
+- **Archivos:** `AIProviders.jsx` (180 LOC), `aiProvidersData.js` (75 LOC), 2 tests (4+5 = 9).
+- **Validaciones:** 9/9 PASSED.
+- **Nota de seguridad:** UI **nunca** muestra API keys después de guardar; el `hint` muestra solo últimos 4 chars del secret store. `buildPatchPayload` omite `api_key` si el campo está vacío (no sobreescribe la actual). El backend (TASK-INFLU-002) ya enforcer platform_owner + MFA en `PATCH /v1/platform/ai-providers/{modality}` — defense-in-depth.
+
+---
+
 ### UI-INFLU-014 — Calendario semanal de personajes
 
 - **Fecha:** 2026-05-19
