@@ -39,7 +39,7 @@ describe('<PublicLandingShell/> (UI-INFLU-016)', () => {
     expect(copTab).toHaveAttribute('aria-current', 'page');
   });
 
-  it('CTA "Solicitar demo" abre modal con form + submit dispara onDemoRequest', async () => {
+  it('CTA "Empezar gratis" abre modal con form + submit dispara onDemoRequest', async () => {
     const onDemoRequest = vi.fn().mockResolvedValue();
     const user = userEvent.setup();
     render(
@@ -49,7 +49,7 @@ describe('<PublicLandingShell/> (UI-INFLU-016)', () => {
         </Routes>
       </MemoryRouter>,
     );
-    const buttons = screen.getAllByRole('button', { name: /Solicitar demo/i });
+    const buttons = screen.getAllByRole('button', { name: /Empezar gratis/i });
     await user.click(buttons[0]);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     await user.type(screen.getByLabelText(/Nombre/i), 'Sofia');

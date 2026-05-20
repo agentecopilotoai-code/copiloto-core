@@ -1,0 +1,77 @@
+/*
+ * Ravit Studio — tokens canónicos del landing público.
+ *
+ * Único punto de verdad para colores, tipografía, espaciado y radios
+ * del landing público (Ravit Pulse + CopilotoIA embedded). Cualquier
+ * vista que se renderiza bajo `<PublicLandingShell>` consume estas vars
+ * — el tab CopilotoIA hereda exactamente los mismos colores.
+ *
+ * Scoped al data-testid para no contaminar el resto del admin-panel
+ * (las vistas autenticadas usan los tokens --influencer-* en
+ * src/styles/tokens.css).
+ */
+
+[data-testid="public-landing-shell"] {
+  /* ─── Paleta ──────────────────────────────────────────────────── */
+  --ra-bg:           #F1EDE3;
+  --ra-bg-soft:      #FBF8EE;
+  --ra-bg-card:      #FFFFFF;
+  --ra-bg-card-alt:  #FAF6E9;
+  --ra-bg-emphasis:  #1B2542;
+
+  --ra-text:         #1B2542;
+  --ra-text-mid:     rgba(27, 37, 66, 0.78);
+  --ra-text-soft:    rgba(27, 37, 66, 0.55);
+  --ra-text-faint:   rgba(27, 37, 66, 0.32);
+
+  --ra-brand:        #2DBB6A;
+  --ra-brand-dim:    #0F7A3F;
+  --ra-brand-soft:   rgba(45, 187, 106, 0.14);
+  --ra-brand-border: rgba(45, 187, 106, 0.36);
+
+  --ra-coral:        #E45D4A;
+  --ra-amber:        #D99536;
+
+  /* ─── Tipografía ──────────────────────────────────────────────── */
+  --ra-font-sans:    'Geist', 'Inter Tight', 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --ra-font-mono:    'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --ra-font-italic:  'Geist', 'Inter Tight', serif;
+
+  --ra-fs-display-xl: clamp(3rem, 7vw, 5.5rem);
+  --ra-fs-display-l:  clamp(2rem, 4vw, 3.25rem);
+  --ra-fs-display-m:  clamp(1.5rem, 2.5vw, 2.25rem);
+  --ra-fs-h2:         clamp(1.25rem, 2vw, 1.75rem);
+  --ra-fs-body-l:     1.0625rem;
+  --ra-fs-body-m:     0.9375rem;
+  --ra-fs-body-s:     0.8125rem;
+  --ra-fs-caption:    0.6875rem;
+  --ra-fs-eyebrow:    0.75rem;
+
+  --ra-ls-display-xl: -0.045em;
+  --ra-ls-display-l:  -0.035em;
+  --ra-ls-display-m:  -0.025em;
+
+  /* ─── Espaciado, radios, sombras ──────────────────────────────── */
+  --ra-radius-sm:    8px;
+  --ra-radius-md:    14px;
+  --ra-radius-lg:    20px;
+  --ra-radius-xl:    28px;
+  --ra-radius-pill:  999px;
+
+  --ra-shadow-sm: 0 2px 8px rgba(27, 37, 66, 0.08);
+  --ra-shadow-md: 0 8px 24px rgba(27, 37, 66, 0.10);
+  --ra-shadow-lg: 0 24px 64px rgba(27, 37, 66, 0.18);
+  --ra-shadow-brand: 0 6px 18px rgba(45, 187, 106, 0.32);
+
+  /* Color scheme — texto base + bg */
+  color: var(--ra-text);
+  font-family: var(--ra-font-sans);
+  background: var(--ra-bg);
+}
+
+/* CopilotoIA tab — el <Landing embedded /> hereda los tokens y override
+ * de su propio backgrounds para que combine con el cream */
+[data-testid="public-landing-shell"] [data-testid="public-landing"] {
+  background: var(--ra-bg);
+  color: var(--ra-text);
+}

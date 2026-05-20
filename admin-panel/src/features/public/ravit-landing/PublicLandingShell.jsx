@@ -1,5 +1,8 @@
 /**
  * UI-INFLU-016 — Shell público con tabs (Ravit Agent · Pulse / CopilotoIA).
+ *
+ * Tokens canónicos en `ravit-tokens.css` (scoped al data-testid del
+ * shell). Ambos tabs consumen las mismas vars `--ra-*`.
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -9,6 +12,7 @@ import { Landing } from '../landing/Landing.jsx';
 import { RavitAgentPulse } from './RavitAgentPulse.jsx';
 import { RavitMark } from './assets/illustrations.jsx';
 import styles from './PublicLandingShell.module.css';
+import './ravit-tokens.css';
 
 
 const TABS = [
@@ -16,9 +20,6 @@ const TABS = [
   { id: 'copiloto', label: 'CopilotoIA', href: '/copiloto' },
 ];
 
-// Misma ruta de Auth0 que usa el Landing histórico (LandingHeader.jsx);
-// `/login` en el SPA solo redirige a `/`, así que un href directo
-// dispararía un loop. El flow real vive en el backend en `/admin/login`.
 const DEFAULT_LOGIN_HREF = adminPath('/admin/login');
 
 
@@ -34,9 +35,12 @@ export function PublicLandingShell({
     <div data-testid="public-landing-shell" className={styles.shell}>
       <header role="banner" className={styles.header}>
         <Link to="/" className={styles.brand} aria-label="Ravit Studio">
-          <RavitMark size={32} />
-          <span className={styles.brandText}>Ravit Studio</span>
+          <RavitMark size={36} />
+          <span className={styles.brandText}>
+            Ravit <span className={styles.brandSub}>STUDIO</span>
+          </span>
         </Link>
+
         <nav aria-label="Tabs principales" className={styles.tabs}>
           {TABS.map((tab) => {
             const isActive = activeTab === tab.id;
@@ -52,15 +56,16 @@ export function PublicLandingShell({
             );
           })}
         </nav>
+
         <div className={styles.headerCtas}>
+          <a href={loginHref} className={styles.btnText}>Entrar</a>
           <button
             type="button"
             onClick={() => setDemoModalOpen(true)}
             className={styles.btnPrimary}
-          >Solicitar demo</button>
-          <a href={loginHref} className={styles.btnGhost}>
-            Iniciar sesión
-          </a>
+          >
+            Empezar gratis <span aria-hidden="true">→</span>
+          </button>
         </div>
       </header>
 
@@ -97,47 +102,36 @@ function DemoRequestModal({ onClose, onSubmit }) {
       role="dialog"
       aria-labelledby="demo-dialog-title"
       aria-modal="true"
-      style={{
-        position: 'fixed', inset: 0,
-        background: 'rgba(0,0,0,0.5)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 1000,
-      }}
+      className={styles.modalBackdrop}
     >
-      <form onSubmit={handleSubmit} style={{
-        background: '#fff', padding: 'var(--space-4)', borderRadius: 12,
-        maxWidth: 400, width: '90%',
-      }}>
-        <h2 id="demo-dialog-title">Solicitar demo</h2>
-        <label style={{ display: 'block' }}>
+      <form onSubmit={handleSubmit} className={styles.modalCard}>
+        <h2 id="demo-dialog-title" className={styles.modalTitle}>Empezar gratis</h2>
+        <label className={styles.field}>
           <span>Nombre</span>
           <input
             required
             value={form.name}
             onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-            style={{ width: '100%' }}
           />
         </label>
-        <label style={{ display: 'block', marginTop: 'var(--space-1)' }}>
+        <label className={styles.field}>
           <span>Email</span>
           <input
             required type="email"
             value={form.email}
             onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-            style={{ width: '100%' }}
           />
         </label>
-        <label style={{ display: 'block', marginTop: 'var(--space-1)' }}>
-          <span>Empresa</span>
+        <label className={styles.field}>
+          <span>Empresa (opcional)</span>
           <input
             value={form.company}
             onChange={(e) => setForm((p) => ({ ...p, company: e.target.value }))}
-            style={{ width: '100%' }}
           />
         </label>
-        <div style={{ display: 'flex', gap: 'var(--space-1)', justifyContent: 'flex-end', marginTop: 'var(--space-3)' }}>
-          <button type="button" onClick={onClose}>Cancelar</button>
-          <button type="submit">Enviar</button>
+        <div className={styles.modalActions}>
+          <button type="button" onClick={onClose} className={styles.btnText}>Cancelar</button>
+          <button type="submit" className={styles.btnPrimary}>Enviar</button>
         </div>
       </form>
     </div>
