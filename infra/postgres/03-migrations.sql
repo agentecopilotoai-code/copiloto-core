@@ -265,3 +265,74 @@ values
   ('tts',   'unset', null),
   ('stt',   'unset', null)
 on conflict (modality) do nothing;
+
+-- ============================================================================
+-- TASK-INFLU-008 — `influencer.personas` + CRUD
+-- ============================================================================
+-- Tabla principal del módulo Ravit Studio: cada fila representa un personaje
+-- (influencer virtual) que el tenant ha creado mediante el wizard de 5 pasos
+-- (UI-INFLU-008..012). Los 5 jsonb (face/body/identity/voice/platforms) se
+-- llenan progresivamente — un persona en estado 'draft' puede tener algunos
+-- vacíos. El estado pasa a 'active' cuando completa el wizard.
+--
+-- RLS: aislamiento estricto por tenant. Endpoints leen via `authenticate_request`
+-- que populates `tenant_id` en `request.state`; las queries usan SET LOCAL
+-- `app.tenant_id` para que las policies funcionen.
+--
+-- Soft delete via `archived_at` (no DELETE físico): protege el handle de
+-- reuso accidental y mantiene referencias de assets/generations vivas.
+
+create table if not exists influencer.personas (
+  id            uuid primary key default gen_random_uuid(),
+  tenant_id     uuid not null references app.tenants(id) on delete cascade,
+  name          text not null,
+  handle        text not null,
+  status        text not null default 'draft'
+                  check (status in ('draft', 'active', 'paused', 'archived')),
+  category      text null,
+  face          jsonb not null default '{}'::jsonb,
+  body          jsonb not null default '{}'::jsonb,
+  identity      jsonb not null default '{}'::jsonb,
+  voice         jsonb not null default '{}'::jsonb,
+  platforms     jsonb not null default '{}'::jsonb,
+  mode          text not null default 'manual_approval'
+                  check (mode in ('auto_generate', 'manual_approval', 'hybrid')),
+  disclose_ai   boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  created_by    uuid null references app.users(id) on delete set null,
+  archived_at   timestamptz null
+);
+
+-- Handle único por tenant (case-insensitive).
+create unique index if not exists ux_personas_tenant_handle_lower
+  on influencer.personas (tenant_id, lower(handle));
+
+-- Lookup primario: lista por tenant filtrada por status, ordenada por
+-- created_at desc.
+create index if not exists ix_personas_tenant_status_created
+  on influencer.personas (tenant_id, status, created_at desc);
+
+-- RLS: aislamiento por tenant + bypass para support_mode (platform_owner).
+alter table influencer.personas enable row level security;
+
+drop policy if exists personas_tenant_isolation on influencer.personas;
+create policy personas_tenant_isolation
+  on influencer.personas
+  using (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  );
+
+drop policy if exists personas_tenant_write on influencer.personas;
+create policy personas_tenant_write
+  on influencer.personas
+  for all
+  using (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  )
+  with check (
+    tenant_id::text = current_setting('app.tenant_id', true)
+    or current_setting('app.support_mode', true) = 'on'
+  );

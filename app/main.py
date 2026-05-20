@@ -6,6 +6,7 @@ from app.api.v1.routes import router as v1_router
 from app.admin.routes import router as admin_router
 from app.core.config import get_settings
 from app.influencer.router import influencer_router
+from app.influencer.personas_router import personas_router as influencer_personas_router
 # TASK-INFLU-002 — import side-effect que registra los endpoints
 # `/v1/platform/ai-providers*` sobre `platform_admin_router`. Sin este
 # import, los decoradores `@platform_admin_router.X` del archivo nunca
@@ -122,6 +123,12 @@ def create_app() -> FastAPI:
     # enabled=true`. No filtramos la existencia del módulo a tenants sin
     # acceso (decisión D2 del backlog).
     api.include_router(influencer_router)
+    # TASK-INFLU-008 — CRUD de personajes. Sub-router montado al lado del
+    # router principal (`/v1/influencer/_health` vs
+    # `/v1/influencer/personas/*`) para mantener flat el árbol de rutas
+    # del módulo. Comparte las dependencies `authenticate_request` +
+    # `ensure_module_enabled` configuradas en cada sub-router.
+    api.include_router(influencer_personas_router)
     return api
 
 

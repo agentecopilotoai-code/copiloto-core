@@ -1040,9 +1040,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-004 — `GrokProvider` (LLM + IMAGE + VIDEO + TTS + STT)
+### TASK-INFLU-004 — `GrokProvider` (LLM + IMAGE + VIDEO + TTS + STT) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** se invoca desde `04 _ Generar contenido _con Sofía_.html` y `03d _ Crear personaje _ Paso 4 Voz.html`.
 - **Alcance:**
   - `app/services/influencer/providers/grok.py` implementando las 5 interfaces de TASK-INFLU-003. Modelos por modalidad (de la imagen de pricing que el usuario compartió):
@@ -1065,9 +1065,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-005 — `AnthropicProvider` + `OpenAIProvider` + `ElevenLabsProvider` (cloud fallbacks)
+### TASK-INFLU-005 — `AnthropicProvider` + `OpenAIProvider` + `ElevenLabsProvider` (cloud fallbacks) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** transversal — alternativas a Grok que el platform_owner puede seleccionar por modalidad.
 - **Alcance:**
   - `providers/anthropic.py` (LLM): reusa `AsyncAnthropic` ya en deps. Para captions y descripciones de identidad.
@@ -1080,9 +1080,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-006 — Providers locales: `OllamaProvider` + `LocalSDXLProvider` + `LocalWhisperProvider`
+### TASK-INFLU-006 — Providers locales: `OllamaProvider` + `LocalSDXLProvider` + `LocalWhisperProvider` — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** opción off-cloud para tenants regulados / con datos sensibles.
 - **Alcance:**
   - `providers/ollama.py` (LLM local): reusa cliente Ollama existente del backend (TASK-0025 / RAG). Modelos `llama3.1:8b`, `qwen2.5:14b`.
@@ -1095,9 +1095,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-007 — Provider fallback chain + circuit breaker + audit
+### TASK-INFLU-007 — Provider fallback chain + circuit breaker + audit — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** robustez transversal.
 - **Alcance:**
   - `app/services/influencer/provider_dispatcher.py::dispatch(modality, call_fn, fallback_chain)`:
@@ -1112,9 +1112,9 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
 
 ---
 
-### TASK-INFLU-008 — Tabla `influencer.personas` + CRUD
+### TASK-INFLU-008 — Tabla `influencer.personas` + CRUD — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **Diseño:** `02 _ Estudio de Sof_a _detalle_.html` (vista de detalle del personaje creado).
 - **Alcance:**
   - Migración:

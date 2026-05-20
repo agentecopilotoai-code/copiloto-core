@@ -15,6 +15,116 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### TASK-INFLU-008 — Tabla `influencer.personas` + CRUD
+
+- **Fecha:** 2026-05-19
+- **PR:** (batch 1 influencer-providers-backend — pendiente de squash a develop)
+- **Resumen:** tabla principal del módulo Ravit Studio (`influencer.personas`) + 5 endpoints CRUD bajo `/v1/influencer/personas`. Soft delete via `archived_at` (el handle queda reservado). RLS estricta por tenant; cross-tenant 404 incluso con UUID adivinado.
+- **Componentes:**
+  - **Migración SQL** en `infra/postgres/03-migrations.sql` (+72 LOC): tabla con `face/body/identity/voice/platforms` como `jsonb` (cada paso del wizard de UI-INFLU-008..012 popula uno). CHECK constraints sobre `status` (draft/active/paused/archived) y `mode` (auto_generate/manual_approval/hybrid). Unique index `(tenant_id, lower(handle))` — handle case-insensitive por tenant. Index `(tenant_id, status, created_at desc)` para el listing. RLS con policies `personas_tenant_isolation` (select) + `personas_tenant_write` (insert/update/delete). Bypass `support_mode` para platform_owner.
+  - **`app/influencer/personas_models.py`** (95 LOC): Pydantic models. `handle` validator normaliza a lowercase y rechaza valores fuera de `^[a-z0-9][a-z0-9_]{2,29}$`.
+  - **`app/influencer/personas_router.py`** (235 LOC): 5 endpoints (`GET /` con filters status/category/search/include_archived, `GET /{id}`, `POST /` con 409 en handle conflict, `PATCH /{id}`, `DELETE /{id}`). Cada query setea `app.tenant_id` via `select set_config(...)` para que RLS aplique.
+  - **`app/main.py`**: `include_router(influencer_personas_router)` con comentario explicando la decisión de mantener flat el tree.
+- **Archivos modificados:**
+  - `infra/postgres/03-migrations.sql` (+72 LOC, sección TASK-INFLU-008)
+  - `app/influencer/personas_models.py` (creado, 95 LOC)
+  - `app/influencer/personas_router.py` (creado, 235 LOC)
+  - `app/main.py` (+9 LOC: import + include_router + comentario)
+  - `tests/test_influencer_personas_static.py` (creado, 16 tests)
+- **Validaciones:**
+  - `pytest tests/test_influencer_personas_static.py` → 16/16 PASSED en 0.18s
+  - `./scripts/ci-local-fast.sh` → OK
+- **Nota de seguridad:** `DELETE` (archivar) requiere `require_mfa_for_privileged` dependency — archivar un personaje rompe analytics + bot routing, es operación sensible. El DELETE setea `archived_at` (no DROP físico): protege el handle de reuso accidental y mantiene FKs vivas para assets/generations que apunten al persona. Cross-tenant lookup imposible (RLS + `_set_tenant_scope` antes de cada query); soft-deleted no aparece en listing default.
+- **Limitaciones:** integration tests con DB real quedan para una iteración posterior (suite E2E del módulo, una vez que TASK-INFLU-009/-011 estén montados). Los tests estáticos cubren shape del router + modelos + migración + permisos.
+
+---
+
+### TASK-INFLU-007 — Provider fallback chain + circuit breaker + audit
+
+- **Fecha:** 2026-05-19
+- **PR:** (batch 1 influencer-providers-backend — pendiente de squash a develop)
+- **Resumen:** dispatcher único desde el cual los workers de generación invocan providers. Encadena fallbacks ante errores retryables (Timeout/Unavailable/RateLimited), abre circuit breakers por provider tras 5 fallos consecutivos en 60s (cooldown 5 min), y persiste auditoría en `influencer.provider_dispatch`.
+- **Componentes:**
+  - **`provider_dispatcher.dispatch(conn, modality, call_fn, audit_conn=None)`**: API principal. El caller pasa un `call_fn` que conoce cómo instanciar el adapter y resolver el secret_ref — el dispatcher solo orquesta. `ProviderContentRejected` NO se reintenta (el filter rechazará también con el siguiente provider). Si todo el chain falla, lanza `ProviderUnavailable` con el último error en el detail.
+  - **Circuit breaker module-level**: `_BREAKERS: dict[provider_name, _CircuitState]` por worker process. Threshold 5 fallos / ventana 60s / cooldown 300s. Configurables como constantes. Coordinación cross-worker se agregará vía Redis después si es necesario.
+  - **Audit dataclass `DispatchAudit`**: `{modality, provider_primary, provider_used, fallback_depth, elapsed_ms, success, error_class}`. Se inserta en `influencer.provider_dispatch` si la tabla existe (defensa: si conn falla en audit, NO bloquea el dispatch real — solo se loguea).
+- **Archivos modificados:**
+  - `app/services/influencer/provider_dispatcher.py` (creado, 285 LOC)
+  - `tests/test_provider_dispatcher.py` (creado, 8 tests con AsyncMock)
+- **Validaciones:**
+  - `pytest tests/test_provider_dispatcher.py` → 8/8 PASSED en 0.05s
+  - `./scripts/ci-local-fast.sh` → OK
+- **Nota de seguridad:** el `generation_id` y `cost_credits` no cambian entre fallbacks — el tenant siempre paga el costo del provider PRIMARIO según `generation_pricing` (TASK-INFLU-016), no se sube si el fallback era más caro. Esto previene cross-provider price gaming.
+- **Limitaciones:** la tabla `influencer.provider_dispatch` aún no se crea en migraciones — el audit cae a logger si la tabla no existe. La migración SQL se agregará en TASK-INFLU-018 (observabilidad/runbook) o cuando un consumer real necesite consultar el audit. El `_shadow_resolve` para fallbacks asume que el `call_fn` resuelve el secret_ref desde env vars o tabla separada (`fallback_secrets`) — TASK-INFLU-016 formaliza ese contrato.
+
+---
+
+### TASK-INFLU-006 — Providers locales: `OllamaProvider` + `LocalSDXLProvider` + `LocalWhisperProvider`
+
+- **Fecha:** 2026-05-19
+- **PR:** (batch 1 influencer-providers-backend — pendiente de squash a develop)
+- **Resumen:** opción off-cloud para tenants regulados / con datos sensibles. 3 adapters HTTP locales (mismo patrón de los cloud — `transport` inyectable + `asyncio.wait_for`):
+  - **OllamaProvider** (LLM local): `llama3.1:8b` default vía `http://localhost:11434/api/generate`. Health check con `/api/tags`.
+  - **LocalSDXLProvider** (Image local): AUTOMATIC1111 WebUI default `http://localhost:7860/sdapi/v1/txt2img`. IP-Adapter inyectado vía `alwayson_scripts` cuando la persona tiene `reference_image_urls` (consistencia cara/cuerpo).
+  - **LocalWhisperProvider** (STT local): faster-whisper-server o whisper.cpp server con endpoint OpenAI-compatible `/v1/audio/transcriptions`. CPU/GPU autodetect server-side.
+- **Archivos modificados:**
+  - `app/services/influencer/providers/ollama.py` (creado, 117 LOC)
+  - `app/services/influencer/providers/local_sdxl.py` (creado, 180 LOC)
+  - `app/services/influencer/providers/local_whisper.py` (creado, 109 LOC)
+  - `tests/test_local_providers.py` (creado, 9 tests)
+- **Validaciones:**
+  - `pytest tests/test_local_providers.py` → 9/9 PASSED en 3.1s
+  - `./scripts/ci-local-fast.sh` → OK
+- **Nota de seguridad:** providers locales NO usan API key (asume isolation por red — el endpoint local debe estar accesible solo desde el host del backend). Si en el futuro se expone fuera de localhost, agregar auth.
+- **Limitaciones:** estos adapters asumen que los servicios locales están instalados/corriendo en el host del backend (Ollama, AUTOMATIC1111, faster-whisper-server). No incluye scripts de bootstrap — eso se cubrirá en docker-compose extensions (no en este PR para mantener el batch enfocado en el SDK del módulo).
+
+---
+
+### TASK-INFLU-005 — `AnthropicProvider` + `OpenAIProvider` + `ElevenLabsProvider` (cloud fallbacks)
+
+- **Fecha:** 2026-05-19
+- **PR:** (batch 1 influencer-providers-backend — pendiente de squash a develop)
+- **Resumen:** 3 adapters cloud que complementan a Grok según pueda configurarlos el platform_owner por modalidad:
+  - **AnthropicProvider** (LLM): `claude-sonnet-4-6` vía `/v1/messages` con header `anthropic-version: 2023-06-01`.
+  - **OpenAIProvider** (LLM + Image + TTS + STT): `gpt-4o-mini`, `dall-e-3`, `tts-1-hd`, `whisper-1` vía endpoints OpenAI estándar. TTS devuelve binario directo; transcribe usa multipart.
+  - **ElevenLabsProvider** (TTS premium): `eleven_multilingual_v2` con voice cloning vía `/v1/text-to-speech/{voice_id}` — si la persona tiene `voice_id_ref`, lo usa; si no, cae al voice stock "Rachel".
+- **Patrón compartido con Grok** (consistencia):
+  - `httpx.AsyncClient` con `transport` inyectable (MockTransport).
+  - `asyncio.wait_for` con `hard_deadline = timeout + 2s`.
+  - `Idempotency-Key` en POSTs.
+  - Excepciones tipadas: 429→RateLimited, 5xx→Unavailable, 4xx con marker de content/safety→ContentRejected.
+- **Archivos modificados:**
+  - `app/services/influencer/providers/anthropic.py` (creado, 162 LOC)
+  - `app/services/influencer/providers/openai.py` (creado, 295 LOC)
+  - `app/services/influencer/providers/elevenlabs.py` (creado, 137 LOC)
+  - `tests/test_cloud_providers.py` (creado, 14 tests con httpx.MockTransport)
+- **Validaciones:**
+  - `pytest tests/test_cloud_providers.py` → 14/14 PASSED en 3.1s
+  - `./scripts/ci-local-fast.sh` → OK
+- **Nota de seguridad:** mismo patrón que Grok — API keys solo en headers (`x-api-key` / `Authorization: Bearer` / `xi-api-key`), nunca en `provider_meta`, logs o repr. Cada POST envía `Idempotency-Key` UUID v4 para retry safety del dispatcher (TASK-INFLU-007).
+- **Limitaciones:** OpenAI no ofrece video (a fecha de TASK-INFLU-005), por lo que el dispatcher debe ir directo a Grok / SDXL local para esa modalidad. Las duraciones de audio en TTS no las devuelve la API directamente — se dejan en 0.0 y el worker (TASK-INFLU-012) las calcula post-decode.
+
+---
+
+### TASK-INFLU-004 — `GrokProvider` (LLM + IMAGE + VIDEO + TTS + STT)
+
+- **Fecha:** 2026-05-19
+- **PR:** (batch 1 influencer-providers-backend — pendiente de squash a develop)
+- **Resumen:** adapter xAI Grok que implementa las 5 interfaces de TASK-INFLU-003 (LLM/Image/Video/TTS/STT) contra la API REST de xAI. Modelos cableados según el pricing compartido. Patrón ``asyncio.wait_for`` + ``hard_deadline`` (timeout + 2s) para fail-closed contra SDKs que ignoran timeouts (mismo patrón de ``app/services/intent_classifier.py``). Excepciones tipadas (TimeoutError / RateLimited / ContentRejected / Unavailable) mapeadas desde status codes — el dispatcher de TASK-INFLU-007 distingue retry vs no-retry vs circuit-breaker.
+- **Componentes:**
+  - **`app/services/influencer/providers/grok.py`** (382 LOC): clase `GrokProvider` multi-modalidad. Constructor con ``transport`` inyectable para tests (httpx.MockTransport, mismo patrón del repo). Helper `_post()` centraliza el wrap `asyncio.wait_for` + `Idempotency-Key` + traducción de errores. Constantes `GROK_MODELS` con los 5 modelos del pricing (grok-4.3, grok-imagine-image-quality, grok-imagine-video, grok-tts-1, grok-stt-1). `SAFETY_PREFIX = '[SAFE-FOR-WORK, BRAND-SAFE] '` aplicado cuando `safety_mode=True`.
+- **Archivos modificados:**
+  - `app/services/influencer/providers/grok.py` (creado, 382 LOC)
+  - `tests/test_grok_provider_static.py` (creado, 11 tests)
+  - `tests/test_grok_provider.py` (creado, 13 tests con httpx.MockTransport)
+- **Validaciones:**
+  - `pytest tests/test_grok_provider*.py` → 24/24 PASSED en 4.1s
+  - `./scripts/ci-local-fast.sh` → OK
+- **Nota de seguridad:** API key se envía solo en `Authorization: Bearer <key>` header — nunca aparece en `provider_meta`, ni en logs, ni en repr/format strings. Test estático `test_api_key_not_logged` falla si algún `logger.*(...api_key...)` aparece en el módulo. `Idempotency-Key` (UUID por request) en cada POST para retry safety del dispatcher (TASK-INFLU-007).
+- **Limitaciones:** la API REST de xAI Grok aún no tiene SDK oficial estable; las URLs / shapes asumidos (`/chat/completions`, `/imagine/images`, `/imagine/videos`, `/tts`, `/stt`) reflejan la convención OpenAI-compatible documentada por xAI. Cualquier divergencia se detectará en integration tests reales (no incluidos — los tests aquí son unitarios con MockTransport).
+
+---
+
 ### TASK-INFLU-001 — Infraestructura del módulo Influencer (schema + gate)
 
 - **Fecha:** 2026-05-19
