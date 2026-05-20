@@ -167,9 +167,9 @@ function IndexRedirect({ publicTab = 'ravit' }) {
   const defaultTenant = pickDefaultTenant(tenantOptions);
   const tenantPermissions = usePermissions({ profile, tenant: defaultTenant });
 
-  // Usuario anónimo → landing pública con shell de tabs (UI-INFLU-016).
-  // `/` muestra tab Ravit por default; `/copiloto` muestra tab CopilotoIA.
-  // Sin RequirePermission (es público).
+  // Usuario anónimo → landing pública con shell de tabs.
+  // `/` = Personajes AI · `/copiloto` = Chatbot AI · `/documentos` =
+  // Gestión Documental AI. Sin RequirePermission (es público).
   if (!session) return <PublicLandingShell activeTab={publicTab} />;
 
   if (tenantsLoading) return <LoadingScreen />;
@@ -583,10 +583,11 @@ export const routes = [
     element: <RootLayout />,
     children: [
       { index: true, element: <IndexRedirect publicTab="ravit" /> },
-      // UI-INFLU-016 — /copiloto reusa el mismo IndexRedirect pero con
-      // tab CopilotoIA activo. Si hay sesión, delega al mismo flujo de
-      // home redirect (igual que `/no-tenant`).
-      { path: 'copiloto', element: <IndexRedirect publicTab="copiloto" /> },
+      // Tabs públicas: cada ruta reusa el mismo IndexRedirect pero
+      // activando el tab correspondiente. Si hay sesión, delegan al
+      // mismo flujo de home redirect (igual que `/no-tenant`).
+      { path: 'copiloto',   element: <IndexRedirect publicTab="copiloto" /> },
+      { path: 'documentos', element: <IndexRedirect publicTab="documentos" /> },
       // Back-compat de la spec previa de UI-INFLU-016 que mencionaba /ravit.
       { path: 'ravit', element: <Navigate to="/" replace /> },
       { path: 'login', element: <Navigate to="/" replace /> },

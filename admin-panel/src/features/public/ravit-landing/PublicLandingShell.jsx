@@ -1,14 +1,20 @@
 /**
- * UI-INFLU-016 — Shell público con tabs (Ravit Agent · Pulse / CopilotoIA).
+ * Shell público con tabs por producto (Personajes AI · Chatbot AI ·
+ * Gestión Documental AI). Tokens canónicos en `ravit-tokens.css` (scoped
+ * al data-testid del shell). Los tres tabs consumen las mismas vars
+ * `--ra-*` y el mismo módulo CSS compartido `landing-shared.module.css`.
  *
- * Tokens canónicos en `ravit-tokens.css` (scoped al data-testid del
- * shell). Ambos tabs consumen las mismas vars `--ra-*`.
+ * Labels = acción del producto, no carpeta interna:
+ *   - Personajes AI       → casting de personajes virtuales (Ravit)
+ *   - Chatbot AI          → asistente conversacional (CopilotoIA legacy)
+ *   - Gestión Documental AI → procesamiento de documentos con IA
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { adminPath } from '../../../services/adminSession.js';
 import { Landing } from '../landing/Landing.jsx';
+import { DocumentsLanding } from './DocumentsLanding.jsx';
 import { RavitAgentPulse } from './RavitAgentPulse.jsx';
 import { RavitMark } from './assets/illustrations.jsx';
 import styles from './PublicLandingShell.module.css';
@@ -16,8 +22,9 @@ import './ravit-tokens.css';
 
 
 const TABS = [
-  { id: 'ravit', label: 'Ravit Agent · Pulse', href: '/' },
-  { id: 'copiloto', label: 'CopilotoIA', href: '/copiloto' },
+  { id: 'ravit',      label: 'Personajes AI',        href: '/' },
+  { id: 'copiloto',   label: 'Chatbot AI',           href: '/copiloto' },
+  { id: 'documentos', label: 'Gestión Documental AI', href: '/documentos' },
 ];
 
 const DEFAULT_LOGIN_HREF = adminPath('/admin/login');
@@ -70,10 +77,14 @@ export function PublicLandingShell({
       </header>
 
       <main role="main">
-        {activeTab === 'ravit' ? (
+        {activeTab === 'ravit' && (
           <RavitAgentPulse demoMailto={demoMailto} loginHref={loginHref} />
-        ) : (
+        )}
+        {activeTab === 'copiloto' && (
           <Landing embedded demoMailto={demoMailto} loginHref={loginHref} />
+        )}
+        {activeTab === 'documentos' && (
+          <DocumentsLanding demoMailto={demoMailto} loginHref={loginHref} />
         )}
       </main>
 

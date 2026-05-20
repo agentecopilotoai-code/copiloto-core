@@ -12,31 +12,42 @@ function renderShell(initialPath = '/') {
       <Routes>
         <Route path="/" element={<PublicLandingShell activeTab="ravit" />} />
         <Route path="/copiloto" element={<PublicLandingShell activeTab="copiloto" />} />
+        <Route path="/documentos" element={<PublicLandingShell activeTab="documentos" />} />
       </Routes>
     </MemoryRouter>,
   );
 }
 
 
-describe('<PublicLandingShell/> (UI-INFLU-016)', () => {
-  it('/ renderiza shell con tab Ravit activo y hero del Pulse', () => {
+describe('<PublicLandingShell/> (3 tabs: Personajes AI / Chatbot AI / Gestión Documental AI)', () => {
+  it('/ renderiza shell con tab Personajes AI activo y hero del Pulse', () => {
     renderShell('/');
     expect(screen.getByTestId('public-landing-shell')).toBeInTheDocument();
     expect(screen.getByTestId('ravit-agent-pulse')).toBeInTheDocument();
-    // Hero del rediseño UI-INFLU-016-FU: h1 "Tu marca, con cara propia.".
+    // Hero del rediseño: h1 "Tu marca, con cara propia.".
     const h1 = screen.getByRole('heading', { level: 1 });
     expect(h1).toHaveTextContent(/Tu marca/i);
     expect(h1).toHaveTextContent(/cara propia/i);
-    const ravitTab = screen.getByRole('link', { name: /Ravit Agent · Pulse/i });
+    const ravitTab = screen.getByRole('link', { name: 'Personajes AI' });
     expect(ravitTab).toHaveAttribute('aria-current', 'page');
   });
 
-  it('/copiloto renderiza shell con tab CopilotoIA activo y monta Landing embedded', () => {
+  it('/copiloto renderiza shell con tab Chatbot AI activo y monta Landing embedded', () => {
     renderShell('/copiloto');
     expect(screen.getByTestId('public-landing')).toBeInTheDocument();
     expect(screen.queryByTestId('ravit-agent-pulse')).not.toBeInTheDocument();
-    const copTab = screen.getByRole('link', { name: 'CopilotoIA' });
+    expect(screen.queryByTestId('documents-landing')).not.toBeInTheDocument();
+    const copTab = screen.getByRole('link', { name: 'Chatbot AI' });
     expect(copTab).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('/documentos renderiza shell con tab Gestión Documental AI activo y monta DocumentsLanding', () => {
+    renderShell('/documentos');
+    expect(screen.getByTestId('documents-landing')).toBeInTheDocument();
+    expect(screen.queryByTestId('ravit-agent-pulse')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('public-landing')).not.toBeInTheDocument();
+    const docTab = screen.getByRole('link', { name: 'Gestión Documental AI' });
+    expect(docTab).toHaveAttribute('aria-current', 'page');
   });
 
   it('CTA "Empezar gratis" abre modal con form + submit dispara onDemoRequest', async () => {
@@ -69,9 +80,10 @@ describe('<PublicLandingShell/> (UI-INFLU-016)', () => {
     expect(loginLinks[0]).toHaveAttribute('href', '/login-test');
   });
 
-  it('tabs son visibles en ambas pestañas', () => {
+  it('los 3 tabs son visibles en cualquier pestaña', () => {
     renderShell('/copiloto');
-    expect(screen.getByRole('link', { name: /Ravit Agent · Pulse/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'CopilotoIA' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Personajes AI' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Chatbot AI' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Gestión Documental AI' })).toBeInTheDocument();
   });
 });

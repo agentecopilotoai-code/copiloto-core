@@ -1,9 +1,15 @@
 /*
- * Landing público Ravit Studio — estilos del contenido principal.
+ * Estilos compartidos para los landings públicos (Personajes AI · Chatbot
+ * AI · Gestión Documental AI). Espejo CSS de
+ * `docs/influencer/Ravit Studio Landing _pure HTML.html`.
  *
- * Espejo CSS de `docs/influencer/Ravit Studio Landing _pure HTML.html`.
- * Consume tokens `--ra-*` definidos en `ravit-tokens.css`. El header +
- * tabs viven en `PublicLandingShell.module.css`.
+ * Consume tokens `--ra-*` definidos en `ravit-tokens.css`. El header con
+ * tabs vive en `PublicLandingShell.module.css`.
+ *
+ * Los tres landings reusan este módulo via:
+ *   import styles from '.../ravit-landing/landing-shared.module.css';
+ * Clases específicas de un producto se añaden con prefijo (chat*, channel*,
+ * doc*, etc).
  */
 
 .page {
@@ -1166,3 +1172,216 @@
   .finalH2 { font-size: 40px; }
   .footerInner { grid-template-columns: 1fr; }
 }
+
+/* ─── Chatbot AI (CopilotoIA) — chat demo card ───────────────────── */
+
+.chatCard {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 100%;
+  max-width: 460px;
+  background: var(--ra-bg-card);
+  border-radius: 24px;
+  border: 1px solid var(--ra-line);
+  box-shadow: 0 30px 60px rgba(10, 15, 31, 0.18);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  z-index: 3;
+}
+.chatCardCompact {
+  position: static;
+  max-width: 360px;
+  box-shadow: 0 24px 50px rgba(10, 15, 31, 0.25);
+}
+
+.chatHeader {
+  padding: 18px 22px;
+  background: var(--ra-text);
+  color: var(--ra-bg);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.chatAvatar {
+  width: 38px; height: 38px;
+  border-radius: 999px;
+  background: var(--ra-brand);
+  color: #0A1530;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(45, 187, 106, 0.4);
+}
+.chatTitle {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.chatStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: rgba(241, 237, 227, 0.65);
+}
+.chatStatusDot {
+  width: 6px; height: 6px;
+  border-radius: 999px;
+  background: var(--ra-brand);
+  box-shadow: 0 0 6px var(--ra-brand);
+}
+
+.chatBody {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: linear-gradient(180deg, var(--ra-bg-soft) 0%, var(--ra-bg-card) 100%);
+}
+
+.chatBubble {
+  padding: 11px 14px;
+  border-radius: 16px;
+  font-size: 13.5px;
+  line-height: 1.4;
+  max-width: 86%;
+  word-break: break-word;
+}
+.chatBubbleUser {
+  align-self: flex-end;
+  background: var(--ra-text);
+  color: var(--ra-bg);
+  border-bottom-right-radius: 4px;
+}
+.chatBubbleBot {
+  align-self: flex-start;
+  background: var(--ra-brand-soft);
+  color: var(--ra-text);
+  border: 1px solid var(--ra-brand-border);
+  border-bottom-left-radius: 4px;
+}
+.chatBubbleHighlight {
+  background: var(--ra-brand);
+  color: #0A1530;
+  border-color: var(--ra-brand);
+  font-weight: 500;
+}
+.chatBubbleHighlight strong {
+  display: inline-block;
+  margin-top: 4px;
+  font-weight: 700;
+}
+
+.chatMeta {
+  align-self: flex-start;
+  font-family: var(--ra-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--ra-text-faint);
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.chatFooter {
+  padding: 14px 18px;
+  border-top: 1px solid var(--ra-line);
+  background: var(--ra-bg-card);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chatChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--ra-bg-soft);
+  border: 1px solid var(--ra-line);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ra-text-mid);
+}
+
+/* ─── Channels grid (4 canales) ──────────────────────────────────── */
+
+.channelsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.channelCard {
+  padding: 28px;
+  border-radius: 18px;
+  background: var(--ra-bg-card);
+  border: 1px solid var(--ra-line);
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.channelCardHighlight {
+  background: var(--ra-text);
+  color: var(--ra-bg);
+  border-color: var(--ra-text);
+  box-shadow: 0 24px 50px rgba(10, 15, 31, 0.18);
+}
+.channelIcon {
+  width: 52px; height: 52px;
+  border-radius: 14px;
+  background: var(--ra-brand-soft);
+  color: var(--ra-brand-dim);
+  border: 1px solid var(--ra-brand-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+.channelCardHighlight .channelIcon {
+  background: rgba(45, 187, 106, 0.22);
+  color: var(--ra-brand);
+}
+.channelName {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+.channelDesc {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ra-text-soft);
+}
+.channelCardHighlight .channelDesc { color: rgba(241, 237, 227, 0.7); }
+
+/* Caso placeholder cuando no hay foto (texto sobre fondo de marca) */
+.casePlaceholder {
+  background: linear-gradient(135deg, var(--ra-brand-dim) 0%, var(--ra-text) 100%);
+  display: flex;
+  align-items: flex-end;
+  padding: 18px;
+}
+.casePlaceholder .caseIndustry { top: 16px; left: 16px; }
+
+/* ─── Responsive: chat + channels ────────────────────────────────── */
+
+@media (max-width: 1100px) {
+  .chatCard {
+    position: relative;
+    margin: 0 auto;
+  }
+  .channelsGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 720px) {
+  .channelsGrid { grid-template-columns: 1fr; }
+  .chatCard { max-width: 100%; }
+}
+

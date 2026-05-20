@@ -7,8 +7,8 @@ afterEach(() => {
   cleanup();
 });
 
-describe('Landing (UI-016.4)', () => {
-  it('renderiza el H1 del hero', () => {
+describe('Landing — Chatbot AI (refactor look Ravit)', () => {
+  it('renderiza el H1 del hero con el copy original', () => {
     render(<Landing />);
     const heading = screen.getByRole('heading', { level: 1 });
     expect(heading.textContent).toMatch(/Responde, califica y agenda/);
@@ -16,14 +16,11 @@ describe('Landing (UI-016.4)', () => {
     expect(heading.textContent).toMatch(/no en horas/);
   });
 
-  it('renderiza las burbujas del demo de conversación', () => {
+  it('renderiza el chat demo card con la conversación de muestra', () => {
     render(<Landing />);
     expect(screen.getByText(/disponibilidad para limpieza dental/i)).toBeInTheDocument();
     expect(screen.getByText(/Sí, tengo cupos con el Dr\. García/)).toBeInTheDocument();
-    // "Mañana 10am" aparece dos veces (usuario + recordatorio bot). Validamos
-    // que ambas instancias existan en el demo card.
-    const manana = screen.getAllByText(/Mañana 10am/i);
-    expect(manana.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Mañana 10am\./)).toBeInTheDocument();
     expect(screen.getByText(/Cita confirmada/i)).toBeInTheDocument();
     expect(screen.getByText(/responde tu cliente · 14 may/i)).toBeInTheDocument();
   });
@@ -37,12 +34,7 @@ describe('Landing (UI-016.4)', () => {
     });
   });
 
-  it('UI-017 — "Iniciar sesión" usa por defecto el BFF redirect a Auth0', () => {
-    // Sin override, `loginHref` debe terminar en `/admin/login` — la ruta del
-    // backend que dispara el Authorization Code Flow vs Auth0 (app/admin/routes.py).
-    // `adminPath()` puede prefijar un origin (`VITE_ADMIN_BACKEND_ORIGIN`) cuando
-    // el SPA corre detrás de un host distinto; en tests vitest el env es vacío
-    // y el href queda como `/admin/login`.
+  it('"Iniciar sesión" usa por defecto el BFF redirect a Auth0', () => {
     render(<Landing />);
     const loginLinks = screen.getAllByRole('link', { name: /Iniciar sesión/i });
     expect(loginLinks.length).toBeGreaterThan(0);
@@ -76,31 +68,31 @@ describe('Landing (UI-016.4)', () => {
     });
   });
 
-  it('renderiza el social proof con los logos del HTML del diseñador', () => {
+  it('renderiza el trust strip con el copy "60 negocios en 7 países"', () => {
     render(<Landing />);
     expect(
       screen.getByText(/Más de 60 negocios en 7 países LatAm confían en CopilotoIA/i),
     ).toBeInTheDocument();
-    expect(screen.getByText('Clínica Norte')).toBeInTheDocument();
-    expect(screen.getByText('Dental Lima')).toBeInTheDocument();
-    expect(screen.getByText('Estética Quito')).toBeInTheDocument();
+    // Brand wordmarks (en MAYÚSCULAS post-refactor, paleta Ravit).
+    expect(screen.getByText('CLÍNICA NORTE')).toBeInTheDocument();
+    expect(screen.getByText('DENTAL LIMA')).toBeInTheDocument();
+    expect(screen.getByText('ESTÉTICA QUITO')).toBeInTheDocument();
   });
 
-  it('renderiza la sección de pricing con los 3 planes', () => {
+  it('renderiza la sección de pricing con los 3 planes Starter/Pro/Enterprise', () => {
     render(<Landing />);
     expect(screen.getByRole('heading', { name: 'Starter', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Pro', level: 3 })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Enterprise', level: 3 })).toBeInTheDocument();
     expect(screen.getByText('USD $180')).toBeInTheDocument();
     expect(screen.getByText('USD $480')).toBeInTheDocument();
-    expect(screen.getByText(/Más elegido/)).toBeInTheDocument();
+    expect(screen.getByText('Más elegido')).toBeInTheDocument();
   });
 
-  it('anchor "Ver cómo funciona" apunta a #features (CTA secundario del hero)', () => {
+  it('anchor "Ver cómo funciona" apunta a #features', () => {
     render(<Landing />);
     const ctaLink = screen.getByRole('link', { name: /Ver cómo funciona/i });
     expect(ctaLink.getAttribute('href')).toBe('#features');
-    // El target del anchor existe en la página.
     const featuresSection = document.getElementById('features');
     expect(featuresSection).not.toBeNull();
   });
@@ -117,9 +109,8 @@ describe('Landing (UI-016.4)', () => {
 
   it('renderiza la sección final de CTA con ambos botones', () => {
     render(<Landing />);
-    const finalSection = screen.getByLabelText(/Agenda una demo de 25 minutos/i);
+    const finalSection = screen.getByLabelText(/Te mostramos tu propio negocio/i);
     expect(finalSection).toBeInTheDocument();
-    // El bloque final contiene "Solicitar demo →" + "Contactar ventas".
     const finalContent = within(finalSection.closest('section'));
     expect(finalContent.getByText(/Solicitar demo →/)).toBeInTheDocument();
   });

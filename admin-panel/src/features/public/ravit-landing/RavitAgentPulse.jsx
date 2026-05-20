@@ -9,7 +9,7 @@
  * Las tokens `--ra-*` viven en `ravit-tokens.css` (scoped al shell).
  */
 import { adminPath } from '../../../services/adminSession.js';
-import styles from './RavitAgentPulse.module.css';
+import styles from './landing-shared.module.css';
 import sofiaKitchen from './assets/images/sofia-kitchen.png';
 import sofiaBedroom from './assets/images/sofia-bedroom.png';
 import sofiaCar from './assets/images/sofia-car.png';

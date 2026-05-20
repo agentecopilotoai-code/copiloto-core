@@ -1,155 +1,143 @@
 /**
- * Landing público CopilotoIA — Chatbot AI omnicanal.
+ * Landing público Gestión Documental AI.
  *
- * Refactor visual alineado con `RavitAgentPulse.jsx`: misma paleta `--ra-*`,
- * misma tipografía Geist, misma estructura de secciones (hero bento → trust →
- * shift → cómo funciona → casos → pricing → final CTA → footer). El copy
- * conserva el producto: chatbot que conecta WhatsApp/Instagram/Messenger
- * para responder, calificar y agendar.
+ * Estructura visual idéntica a `Landing.jsx` (Chatbot AI) y
+ * `RavitAgentPulse.jsx` (Personajes AI). Copy genérico inventado —
+ * pendiente de revisión con el producto real.
  *
- * Se monta dentro de `PublicLandingShell` (con tabs Personajes AI / Chatbot
- * AI / Gestión Documental AI) y reusa los tokens declarados en
- * `../ravit-landing/ravit-tokens.css`.
+ * Reusa el módulo CSS compartido `landing-shared.module.css`.
  */
-import { useEffect } from 'react';
-
 import { adminPath } from '../../../services/adminSession.js';
-import styles from '../ravit-landing/landing-shared.module.css';
+import styles from './landing-shared.module.css';
 
 
 const DEFAULT_DEMO_MAILTO =
-  'mailto:ventas@copilotoia.com?subject=Solicito%20demo%20CopilotoIA';
+  'mailto:ventas@copilotoia.com?subject=Solicito%20demo%20Gesti%C3%B3n%20Documental';
 const DEFAULT_SALES_MAILTO =
-  'mailto:ventas@copilotoia.com?subject=Contacto%20ventas%20CopilotoIA';
+  'mailto:ventas@copilotoia.com?subject=Contacto%20ventas%20Gesti%C3%B3n%20Documental';
 const DEFAULT_LOGIN_HREF = adminPath('/admin/login');
-
-const LANDING_PAGE_TITLE =
-  'CopilotoIA — Agendamiento por IA · WhatsApp, Instagram y Messenger';
 
 
 const HERO_STATS = [
-  { label: 'setup completo', value: '30 min' },
-  { label: 'conversaciones automatizadas', value: '84%' },
-  { label: 'no-shows reducidos', value: '−60%' },
+  { label: 'procesar un documento', value: '12 seg' },
+  { label: 'extracción correcta', value: '99.2%' },
+  { label: 'reducción tiempo manual', value: '−85%' },
 ];
 
 const TRUST_BRANDS = [
-  'CLÍNICA NORTE', 'SPA POLANCO', 'DENTAL LIMA',
-  'VET SANTIAGO', 'MOTOS BA', 'ESTÉTICA QUITO', 'BIENESTAR MVD',
+  'CONTADOR ASOC', 'LEGAL & CO', 'PYME PRO',
+  'FACTURA HUB', 'AUDITA MX', 'NÓMINA AR', 'TAX BOGOTÁ',
 ];
 
 const SHIFT_OLD_ROWS = [
-  ['Tiempo de respuesta', '4–12 horas'],
-  ['Horario', 'Sólo días hábiles'],
-  ['Personal', 'CSR humano por canal'],
-  ['Recordatorios', 'Llamadas manuales'],
-  ['No-shows', '25–40% en promedio'],
-  ['Trazabilidad', 'Hilos sueltos sin contexto'],
+  ['Tiempo por documento', '8–15 minutos manual'],
+  ['Errores de tipeo', '2–5% inevitable'],
+  ['Búsqueda', 'Carpetas, Excel, memoria'],
+  ['Validación', 'Ojo humano página por página'],
+  ['Auditoría', 'Re-revisión completa anual'],
+  ['Volumen', 'Limita la operación'],
 ];
 
 const SHIFT_NEW_ROWS = [
-  ['Tiempo de respuesta', '< 30 segundos'],
-  ['Horario', '24 / 7 · todos los canales'],
-  ['Personal', 'Bot atiende, humano sólo escala'],
-  ['Recordatorios', 'Automáticos con confirmación'],
-  ['No-shows', 'Hasta 60% menos'],
-  ['Trazabilidad', 'CRM 360° con historial completo'],
+  ['Tiempo por documento', '< 15 segundos automático'],
+  ['Errores de tipeo', '0% en campos validados'],
+  ['Búsqueda', 'Texto libre · semántica IA'],
+  ['Validación', 'Cross-check con reglas + ledger'],
+  ['Auditoría', 'Trazabilidad continua en tiempo real'],
+  ['Volumen', 'Miles de docs/día sin sumar gente'],
 ];
 
 const HOW_STEPS = [
-  { eyebrow: 'Paso 1 · Conectar', n: '01', title: 'Conectas tus canales',
-    desc: 'WhatsApp Cloud, Instagram DM, Messenger y widget web. Onboarding guiado.' },
-  { eyebrow: 'Paso 2 · Entrenar', n: '02', title: 'Lo entrenas con tu catálogo',
-    desc: 'Servicios, sedes, profesionales, políticas. El bot aprende tu negocio.' },
-  { eyebrow: 'Paso 3 · Atender', n: '03', title: 'Responde, califica, agenda',
-    desc: 'Conversa con cada cliente, califica leads y agenda en la misma charla.' },
-  { eyebrow: 'Paso 4 · Escalar', n: '04', title: 'Escala sólo lo importante',
-    desc: 'El 16% complejo entra al Operations Desk con contexto completo.' },
+  { eyebrow: 'Paso 1 · Subir', n: '01', title: 'Subes el documento',
+    desc: 'PDF, foto del celular, escaneo, email entrante. Cualquier formato.' },
+  { eyebrow: 'Paso 2 · Extraer', n: '02', title: 'La IA extrae los datos',
+    desc: 'Campos clave, totales, fechas, RUT/NIT, partidas, firmas. OCR + LLM.' },
+  { eyebrow: 'Paso 3 · Validar', n: '03', title: 'Valida contra tus reglas',
+    desc: 'Cross-check con catálogos, montos límite, duplicados, anti-fraude.' },
+  { eyebrow: 'Paso 4 · Archivar', n: '04', title: 'Archiva y notifica',
+    desc: 'A tu ERP, contable, repositorio fiscal — con búsqueda semántica.' },
+];
+
+const DOC_TYPES = [
+  { name: 'Facturas',         desc: 'Electrónicas, PDF, foto. Captura totales, retenciones, ítems.', highlight: true },
+  { name: 'Contratos',        desc: 'Cláusulas, fechas clave, partes, vencimientos, anexos.' },
+  { name: 'Recibos / Boletas', desc: 'Conciliación contra gastos de tarjeta, viáticos, caja chica.' },
+  { name: 'Estados de cuenta', desc: 'Movimientos bancarios, conciliación, alertas de anomalía.' },
 ];
 
 const CASES = [
-  { industry: 'Clínicas', img: null,
-    caption: 'Limpieza dental · agenda con el Dr. García',
-    result: '+47% conversión', cadence: '−60% no-shows' },
-  { industry: 'Spas', img: null,
-    caption: 'Paquete relax · reserva mismo día',
-    result: '24/7 sin staff', cadence: '3× recompra' },
-  { industry: 'Talleres', img: null,
-    caption: 'Cita técnica · cotización por foto',
-    result: '+38% tickets', cadence: '92% CSAT' },
+  { industry: 'Contables',
+    caption: 'Cierre mensual sin horas extra',
+    result: '−85% tiempo manual', cadence: '2,400 facturas/mes' },
+  { industry: 'Legal',
+    caption: 'Revisión de contratos en minutos',
+    result: '40× más rápido', cadence: '99.4% precisión' },
+  { industry: 'Auditoría',
+    caption: 'Trazabilidad continua sin re-trabajo',
+    result: 'SOC 2 ready', cadence: 'Audit log inmutable' },
 ];
 
 const PLANS = [
   {
-    label: 'Starter', price: 'USD $180', per: '/mes',
-    desc: 'Para negocios que arrancan a digitalizar su atención.',
+    label: 'Starter', price: 'USD $99', per: '/mes',
+    desc: 'Para PYMEs que empiezan a digitalizar su backoffice.',
     features: [
-      '1 sede · 2 usuarios',
-      'WhatsApp + Web widget',
-      'Hasta 2,000 conversaciones/mes',
-      '1 idioma · 1 país',
+      '1 usuario · 1 tipo de documento',
+      'Hasta 200 documentos / mes',
+      'Extracción + validación básica',
+      'Export CSV / Excel',
       'Soporte por email',
     ],
-    cta: 'Empezar prueba', featured: false,
+    cta: 'Empezar gratis', featured: false,
   },
   {
-    label: 'Pro', price: 'USD $480', per: '/mes',
-    desc: 'El plan que usa el 80% de nuestros clientes.',
+    label: 'Business', price: 'USD $299', per: '/mes',
+    desc: 'Para equipos de contabilidad, legal y operaciones.',
     features: [
-      'Hasta 3 sedes · 8 usuarios',
-      'Todos los canales (WA · IG · FB · Web)',
-      'Conversaciones ilimitadas',
-      'Multi-sede + multi-país',
-      'Campañas + segmentos + analítica',
-      'Onboarding asistido + soporte prioritario',
+      'Hasta 10 usuarios',
+      '2,000 documentos / mes',
+      'Todos los tipos de documento',
+      'Reglas custom + cross-check ERP',
+      'Búsqueda semántica + audit log',
+      'Integraciones (QuickBooks, Siigo, SAP)',
     ],
-    cta: 'Empezar prueba', featured: true,
+    cta: 'Probar 14 días', featured: true,
   },
   {
     label: 'Enterprise', price: 'A medida', per: null,
-    desc: 'Cadenas, franquicias y operaciones multi-país.',
+    desc: 'Operaciones reguladas, volumen alto y compliance estricto.',
     features: [
-      'Sedes y usuarios sin límite',
-      'Dedicated Success Manager',
-      'SLA 99.9% contractual',
-      'SSO + Auth0 federation',
-      'Integración con tu PMS o ERP',
-      'Roadmap conjunto',
+      'Usuarios ilimitados · multi-tenant',
+      'Documentos ilimitados',
+      'On-premise / data residency',
+      'SLA 99.9% + SSO + audit forense',
+      'Modelos custom entrenados con tu data',
+      'Roadmap conjunto + CSM dedicado',
     ],
-    cta: 'Contactar ventas', featured: false, isEnterprise: true,
+    cta: 'Hablar con ventas', featured: false, isEnterprise: true,
   },
 ];
 
 const FOOTER_COLS = [
-  { title: 'Producto',  links: ['Canales', 'Agenda', 'CRM 360°', 'Campañas', 'Analítica'] },
-  { title: 'Soluciones', links: ['Clínicas', 'Spas', 'Talleres', 'Veterinarias', 'Estética'] },
-  { title: 'Empresa',   links: ['Sobre nosotros', 'Casos de éxito', 'Blog', 'Contacto'] },
-  { title: 'Legal',     links: ['Términos', 'Privacidad', 'Política IA', 'Ley 1581 / GDPR'] },
+  { title: 'Producto',     links: ['Extracción', 'Validación', 'Búsqueda IA', 'Audit log', 'Integraciones'] },
+  { title: 'Documentos',   links: ['Facturas', 'Contratos', 'Recibos', 'Estados de cuenta', 'Nóminas'] },
+  { title: 'Empresa',      links: ['Sobre nosotros', 'Casos de éxito', 'Blog', 'Contacto'] },
+  { title: 'Legal',        links: ['Términos', 'Privacidad', 'Política IA', 'Compliance'] },
 ];
 
 
-export function Landing({
+export function DocumentsLanding({
   demoMailto = DEFAULT_DEMO_MAILTO,
   salesMailto = DEFAULT_SALES_MAILTO,
   loginHref = DEFAULT_LOGIN_HREF,
-  // eslint-disable-next-line no-unused-vars
-  embedded = true,
 }) {
-  useEffect(() => {
-    const previousTitle = document.title;
-    document.title = LANDING_PAGE_TITLE;
-    return () => {
-      document.title = previousTitle;
-    };
-  }, []);
-
   return (
-    <article className={styles.page} data-testid="public-landing">
+    <article className={styles.page} data-testid="documents-landing">
       <HeroSection demoMailto={demoMailto} />
       <TrustSection />
       <ShiftSection />
       <HowItWorksSection demoMailto={demoMailto} />
-      <ChatDemoSection />
+      <DocTypesSection />
       <UseCasesSection />
       <PricingSection demoMailto={demoMailto} salesMailto={salesMailto} />
       <FinalCtaSection
@@ -192,34 +180,46 @@ const IconCheck = ({ size = 12 }) => (
     <path d="M5 12.5l4.5 4.5L19 7" />
   </svg>
 );
-const IconWhatsapp = ({ size = 14 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M12 2C6.48 2 2 6.48 2 12c0 1.85.51 3.58 1.39 5.06L2 22l5.06-1.32A9.96 9.96 0 0012 22c5.52 0 10-4.48 10-10S17.52 2 12 2zm5.18 14.18c-.22.62-1.3 1.18-1.78 1.22-.45.04-.99.27-3.31-.69-2.79-1.16-4.59-3.98-4.73-4.16-.14-.18-1.13-1.5-1.13-2.87 0-1.36.71-2.03.96-2.31.25-.27.55-.34.73-.34.18 0 .37 0 .53.01.17.01.4-.06.62.47.22.55.76 1.91.83 2.05.07.14.12.31.02.49-.1.18-.15.29-.29.45-.14.16-.3.36-.43.49-.14.13-.29.28-.13.55.16.27.71 1.18 1.53 1.91 1.05.94 1.94 1.23 2.21 1.37.27.14.43.12.59-.07.16-.19.68-.79.86-1.06.18-.27.36-.22.61-.13.25.09 1.59.75 1.86.89.27.13.45.2.52.31.07.11.07.64-.15 1.26z" fill="currentColor" />
-  </svg>
-);
-const IconIg = ({ size = 14 }) => (
+const IconDoc = ({ size = 28 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-    <rect x="3" y="3" width="18" height="18" rx="5" />
-    <circle cx="12" cy="12" r="4" />
-    <circle cx="17.5" cy="6.5" r="1" fill="currentColor" />
+       stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+       strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <path d="M14 2v6h6" />
+    <path d="M8 13h8M8 17h6" />
   </svg>
 );
-const IconFb = ({ size = 14 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M14 8h3V4h-3c-2 0-3.5 1.5-3.5 3.5V10H8v4h2.5v8h4v-8H17l1-4h-3.5V8.5c0-.3.2-.5.5-.5z" fill="currentColor" />
-  </svg>
-);
-const IconWeb = ({ size = 14 }) => (
+const IconContract = ({ size = 28 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-    <circle cx="12" cy="12" r="9" />
-    <path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18" />
+       stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+       strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <path d="M14 2v6h6M8 13h8M8 17h4M16 20l3-3-1.5-1.5L14.5 19v1.5H16v-.5z" />
+  </svg>
+);
+const IconReceipt = ({ size = 28 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+       strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 2l2 2 2-2 2 2 2-2 2 2 2-2 2 2 2-2v20l-2-2-2 2-2-2-2 2-2-2-2 2-2-2-2 2z" />
+    <path d="M8 10h8M8 14h8M8 18h5" />
+  </svg>
+);
+const IconBank = ({ size = 28 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+       strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 21h18M5 21V10M19 21V10M3 10l9-7 9 7M8 14v3M12 14v3M16 14v3" />
   </svg>
 );
 const IconX = ({ size = 12 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
     <path d="M18.244 3H21.5L14.06 11.55 22.83 21H16.06l-5.29-6.21L4.76 21H1.5l7.94-9.13L1.17 3h6.93l4.78 5.69L18.244 3z" fill="currentColor" />
+  </svg>
+);
+const IconLn = ({ size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M4 4h4v16H4zM6 2a2 2 0 110 4 2 2 0 010-4zM10 8h4v2.2c.7-1.2 2-2.4 4-2.4 3 0 4 2 4 5V20h-4v-6c0-1.4-.5-2.6-2-2.6S14 12.5 14 14v6h-4V8z" fill="currentColor" />
   </svg>
 );
 
@@ -244,33 +244,32 @@ function SectionHead({ eyebrow, h2, sub }) {
 }
 
 
-/* ─── Hero con chat demo ──────────────────────────────────────────── */
+/* ─── Hero con doc preview card ──────────────────────────────────── */
 
 function HeroSection({ demoMailto }) {
   return (
-    <section className={styles.hero} aria-labelledby="landing-hero-title">
+    <section className={styles.hero} aria-labelledby="doc-hero-title">
       <div className={styles.heroGrid}>
         <div className={styles.heroCopy}>
-          <Eyebrow>Chatbot AI · WhatsApp · Instagram · Messenger</Eyebrow>
-          <h1 id="landing-hero-title" className={styles.heroH1}>
-            Responde, califica y agenda{' '}
-            <span className={styles.heroAccent}>en segundos</span>,
+          <Eyebrow>Gestión Documental AI · OCR + LLM + Audit</Eyebrow>
+          <h1 id="doc-hero-title" className={styles.heroH1}>
+            Sube un PDF.
             <br />
-            no en horas.
+            Lo demás lo hace{' '}
+            <span className={styles.heroAccent}>la IA.</span>
           </h1>
           <p className={styles.heroLede}>
-            CopilotoIA conecta tu WhatsApp, Instagram y Messenger con un
-            asistente que entiende a tus clientes, agenda citas, manda
-            recordatorios y escala a tu equipo cuando hace falta. Sin
-            perder leads. Sin horarios.
+            Extracción de datos, validación contra tus reglas, búsqueda
+            semántica y archivo automático. Facturas, contratos, recibos
+            o estados de cuenta — en segundos, con trazabilidad completa.
           </p>
 
           <div className={styles.heroCtaRow}>
             <a href={demoMailto} className={[styles.btn, styles.btnPrimary, styles.btnXl].join(' ')}>
-              Solicitar demo gratuita <IconArrow />
+              Procesar mi primer documento <IconArrow />
             </a>
             <a href="#features" className={[styles.btn, styles.btnGhost, styles.btnXl].join(' ')}>
-              <IconPlay /> Ver cómo funciona
+              <IconPlay /> Ver demo · 90s
             </a>
           </div>
 
@@ -285,7 +284,7 @@ function HeroSection({ demoMailto }) {
         </div>
 
         <div className={styles.heroBento}>
-          <ChatDemoCard />
+          <DocPreviewCard />
         </div>
       </div>
     </section>
@@ -293,51 +292,50 @@ function HeroSection({ demoMailto }) {
 }
 
 
-/* ─── Chat demo: card de conversación tipo WhatsApp ──────────────── */
-
-function ChatDemoCard() {
+function DocPreviewCard() {
   return (
-    <div className={styles.chatCard} aria-label="Demo de conversación">
+    <div className={styles.chatCard} aria-label="Preview de documento procesado">
       <div className={styles.chatHeader}>
         <div className={styles.chatAvatar} aria-hidden="true">
-          <IconWhatsapp size={18} />
+          <IconDoc size={20} />
         </div>
         <div>
-          <div className={styles.chatTitle}>CopilotoIA · Clínica Norte</div>
+          <div className={styles.chatTitle}>Factura · ACME S.A.S.</div>
           <div className={styles.chatStatus}>
             <span className={styles.chatStatusDot} aria-hidden="true" />
-            En línea · 24 / 7
+            Procesada · 12 segundos · 99.4% confianza
           </div>
         </div>
       </div>
 
       <div className={styles.chatBody}>
-        <ChatBubble side="user">
-          ¿Tienen disponibilidad para limpieza dental esta semana?
+        <ChatBubble side="bot">
+          📄 <strong>Documento detectado:</strong> Factura electrónica<br />
+          <strong>RUT emisor:</strong> 900.123.456-7<br />
+          <strong>Fecha:</strong> 14 mayo 2026
         </ChatBubble>
 
         <ChatBubble side="bot">
-          ¡Hola! Sí, tengo cupos con el Dr. García. ¿Te sirve mañana 10am o el jueves 4pm?
+          <strong>12 ítems</strong> extraídos · subtotal $4,820,000<br />
+          IVA 19%: $915,800 · <strong>Total: $5,735,800</strong>
         </ChatBubble>
 
-        <ChatBubble side="user">Mañana 10am.</ChatBubble>
-
         <ChatBubble side="bot" highlight>
-          ✓ Cita confirmada<br />
-          <strong>Mañana 10am · Dr. García · Sede Centro</strong><br />
-          Te recuerdo el día anterior. ¿Necesitas algo más?
+          ✓ Cross-check OK · sin duplicados<br />
+          ✓ Dentro de límite del proveedor<br />
+          ✓ Enviado a QuickBooks · archivada
         </ChatBubble>
 
         <div className={styles.chatMeta}>
-          responde tu cliente · 14 may · 10:42
+          ledger · 14 may 11:08 utc
         </div>
       </div>
 
       <div className={styles.chatFooter}>
-        <span className={styles.chatChip}><IconWhatsapp size={11} /> WhatsApp</span>
-        <span className={styles.chatChip}><IconIg size={11} /> Instagram</span>
-        <span className={styles.chatChip}><IconFb size={11} /> Messenger</span>
-        <span className={styles.chatChip}><IconWeb size={11} /> Web</span>
+        <span className={styles.chatChip}><IconDoc size={11} /> Factura</span>
+        <span className={styles.chatChip}><IconContract size={11} /> Contrato</span>
+        <span className={styles.chatChip}><IconReceipt size={11} /> Recibo</span>
+        <span className={styles.chatChip}><IconBank size={11} /> Bancario</span>
       </div>
     </div>
   );
@@ -357,11 +355,11 @@ function ChatBubble({ side, highlight, children }) {
 
 function TrustSection() {
   return (
-    <section className={styles.trust} aria-label="Negocios que confían en CopilotoIA" id="clientes">
+    <section className={styles.trust} aria-label="Equipos que procesan documentos con IA">
       <div className={styles.trustRow}>
         <div className={styles.trustIntro}>
-          <span className={styles.monoLabel}>Más de 60 negocios en 7 países LatAm confían en CopilotoIA</span>
-          Clínicas, spas, talleres, veterinarias y centros de estética.
+          <span className={styles.monoLabel}>Contadores, equipos legales y operaciones que ya automatizan</span>
+          Más de 40 firmas procesan documentos críticos con nosotros.
         </div>
         <div className={styles.trustBrands}>
           {TRUST_BRANDS.map((b) => <span key={b}>{b}</span>)}
@@ -372,24 +370,24 @@ function TrustSection() {
 }
 
 
-/* ─── Shift (old vs new) ──────────────────────────────────────────── */
+/* ─── Shift ───────────────────────────────────────────────────────── */
 
 function ShiftSection() {
   return (
-    <section className={styles.shift} id="shift" aria-labelledby="copiloto-shift-title">
+    <section className={styles.shift} aria-labelledby="doc-shift-title">
       <SectionHead
         eyebrow="El shift"
-        h2={<span id="copiloto-shift-title">De 4 horas a 30 segundos.</span>}
-        sub="Lo que antes tomaba un CSR de turno completo, ahora pasa solo. Tu equipo atiende sólo lo que importa."
+        h2={<span id="doc-shift-title">De 10 minutos a 12 segundos.</span>}
+        sub="Lo que antes ocupaba un asistente toda la tarde, ahora pasa solo. Tu equipo dedica el tiempo a decidir, no a tipear."
       />
 
       <div className={styles.shiftGrid}>
         <div className={[styles.shiftCard, styles.shiftCardOld].join(' ')}>
           <div className={styles.shiftHeader}>
-            <span className={styles.monoLabel}>Operación tradicional</span>
+            <span className={styles.monoLabel}>Backoffice tradicional</span>
             <span className={styles.shiftRule} aria-hidden="true" />
           </div>
-          <h3 className={styles.shiftH3Old}>Atención manual</h3>
+          <h3 className={styles.shiftH3Old}>Captura manual</h3>
           <div className={styles.shiftRows}>
             {SHIFT_OLD_ROWS.map(([k, v]) => (
               <div key={k} className={styles.shiftRow}>
@@ -403,11 +401,11 @@ function ShiftSection() {
         <div className={[styles.shiftCard, styles.shiftCardNew].join(' ')}>
           <span className={styles.shiftGlow} aria-hidden="true" />
           <div className={styles.shiftHeader}>
-            <span className={[styles.monoLabel, styles.monoGreenBright].join(' ')}>Con CopilotoIA</span>
+            <span className={[styles.monoLabel, styles.monoGreenBright].join(' ')}>Con Gestión Documental AI</span>
             <span className={styles.shiftRule} aria-hidden="true" />
             <span style={{ color: 'var(--ra-brand)' }}><IconSparkle size={16} /></span>
           </div>
-          <h3 className={styles.shiftH3New}>Tu chatbot omnicanal</h3>
+          <h3 className={styles.shiftH3New}>Tu pipeline automatizado</h3>
           <div className={styles.shiftRows}>
             {SHIFT_NEW_ROWS.map(([k, v]) => (
               <div key={k} className={styles.shiftRow}>
@@ -423,15 +421,15 @@ function ShiftSection() {
 }
 
 
-/* ─── How it works ────────────────────────────────────────────────── */
+/* ─── How it works ───────────────────────────────────────────────── */
 
 function HowItWorksSection({ demoMailto }) {
   return (
-    <section className={styles.how} id="features" aria-labelledby="copiloto-how-title">
+    <section className={styles.how} id="features" aria-labelledby="doc-how-title">
       <SectionHead
         eyebrow="Cómo funciona"
-        h2={<span id="copiloto-how-title">De cero a citas agendadas en 30 minutos.</span>}
-        sub="Sin código, sin onboarding eterno. Conectas, entrenas con tu catálogo y el bot empieza a atender."
+        h2={<span id="doc-how-title">De PDF a archivado en menos de un minuto.</span>}
+        sub="Cuatro pasos automatizados con humano en el loop sólo cuando hay duda. Auditoría continua incluida."
       />
 
       <div className={styles.howSteps}>
@@ -455,15 +453,15 @@ function HowItWorksSection({ demoMailto }) {
           <span className={[styles.monoLabel, styles.monoGreenBright, styles.monoInline].join(' ')}>
             <IconSparkle size={13} /> Bonus
           </span>
-          <h3 className={styles.howBonusH3}>El bot mejora con cada conversación.</h3>
+          <h3 className={styles.howBonusH3}>El modelo aprende tus reglas de negocio.</h3>
           <p className={styles.howBonusP}>
-            Cada intent corregido, cada respuesta aprobada, cada nuevo
-            servicio se vuelve aprendizaje. En 2 semanas atiende casi todo
-            sin que tengas que tocar nada.
+            Cada corrección manual, cada excepción aprobada, cada nuevo
+            tipo de documento entrena al sistema. En 30 días la tasa de
+            intervención humana baja del 15% al 2%.
           </p>
         </div>
         <a href={demoMailto} className={[styles.btn, styles.btnPrimary, styles.btnLg].join(' ')}>
-          Solicitar demo <IconArrow />
+          Probar gratis <IconArrow />
         </a>
       </div>
     </section>
@@ -471,64 +469,47 @@ function HowItWorksSection({ demoMailto }) {
 }
 
 
-/* ─── Chat embedded showcase ──────────────────────────────────────── */
+/* ─── Tipos de documento ──────────────────────────────────────────── */
 
-function ChatDemoSection() {
+function DocTypesSection() {
+  const icons = [IconDoc, IconContract, IconReceipt, IconBank];
   return (
-    <section className={styles.casting} aria-labelledby="copiloto-channels-title">
+    <section className={styles.casting} aria-labelledby="doc-types-title">
       <SectionHead
-        eyebrow="Omnicanal"
-        h2={<span id="copiloto-channels-title">Donde tus clientes ya están conversando.</span>}
-        sub="Tu cliente escribe por WhatsApp, sigue por Instagram, vuelve por el widget web — y el contexto se mantiene."
+        eyebrow="Tipos de documento"
+        h2={<span id="doc-types-title">Procesa todo lo que pase por tu mesa.</span>}
+        sub="Modelos pre-entrenados + plantillas custom. Si tu documento existe, lo entendemos."
       />
 
       <div className={styles.channelsGrid}>
-        <ChannelCard
-          icon={<IconWhatsapp size={28} />}
-          name="WhatsApp Cloud API"
-          desc="Templates aprobados, ventana 24h, multi-número, multimedia."
-          highlight
-        />
-        <ChannelCard
-          icon={<IconIg size={28} />}
-          name="Instagram DM"
-          desc="Mensajes directos + comentarios + Stories replies."
-        />
-        <ChannelCard
-          icon={<IconFb size={28} />}
-          name="Facebook Messenger"
-          desc="Atención por la página corporativa + ads click-to-message."
-        />
-        <ChannelCard
-          icon={<IconWeb size={28} />}
-          name="Web widget embebible"
-          desc="Un snippet y queda en tu sitio. Identifica al cliente logueado."
-        />
+        {DOC_TYPES.map((doc, i) => {
+          const Icon = icons[i] || IconDoc;
+          return (
+            <div
+              key={doc.name}
+              className={[styles.channelCard, doc.highlight && styles.channelCardHighlight].filter(Boolean).join(' ')}
+            >
+              <span className={styles.channelIcon}><Icon size={28} /></span>
+              <div className={styles.channelName}>{doc.name}</div>
+              <p className={styles.channelDesc}>{doc.desc}</p>
+            </div>
+          );
+        })}
       </div>
     </section>
   );
 }
 
-function ChannelCard({ icon, name, desc, highlight }) {
-  return (
-    <div className={[styles.channelCard, highlight && styles.channelCardHighlight].filter(Boolean).join(' ')}>
-      <span className={styles.channelIcon}>{icon}</span>
-      <div className={styles.channelName}>{name}</div>
-      <p className={styles.channelDesc}>{desc}</p>
-    </div>
-  );
-}
 
-
-/* ─── Use cases / Industries ──────────────────────────────────────── */
+/* ─── Use cases ───────────────────────────────────────────────────── */
 
 function UseCasesSection() {
   return (
-    <section className={styles.cases} id="cases" aria-labelledby="copiloto-cases-title">
+    <section className={styles.cases} aria-labelledby="doc-cases-title">
       <SectionHead
         eyebrow="Casos de uso"
-        h2={<span id="copiloto-cases-title">Hecho para negocios que viven del agendamiento.</span>}
-        sub="Clínicas, spas, talleres, veterinarias y cualquier servicio donde la cita es la venta."
+        h2={<span id="doc-cases-title">Hecho para equipos que procesan documentos críticos.</span>}
+        sub="Contabilidad, jurídico, auditoría, compliance, operaciones reguladas."
       />
 
       <div className={styles.casesGrid}>
@@ -562,11 +543,11 @@ function UseCasesSection() {
 
 function PricingSection({ demoMailto, salesMailto }) {
   return (
-    <section className={styles.pricing} id="precios" aria-labelledby="copiloto-pricing-title">
+    <section className={styles.pricing} aria-labelledby="doc-pricing-title">
       <SectionHead
         eyebrow="Precios"
-        h2={<span id="copiloto-pricing-title">Sin sorpresas. Cancela cuando quieras.</span>}
-        sub="14 días de prueba sin tarjeta. Costo de mensajes WhatsApp se factura aparte por Meta."
+        h2={<span id="doc-pricing-title">Pagas por documento procesado, no por sentarte.</span>}
+        sub="14 días de prueba sin tarjeta. Documentos no usados no se acumulan, pero el plan se ajusta cada mes."
       />
 
       <div className={styles.pricingGrid}>
@@ -574,11 +555,11 @@ function PricingSection({ demoMailto, salesMailto }) {
           <div
             key={p.label}
             className={[styles.plan, p.featured && styles.planBest].filter(Boolean).join(' ')}
-            aria-labelledby={`plan-${p.label}`}
+            aria-labelledby={`doc-plan-${p.label}`}
           >
             {p.featured && <span className={styles.bestBadge}>Más elegido</span>}
             <h3
-              id={`plan-${p.label}`}
+              id={`doc-plan-${p.label}`}
               className={[styles.monoLabel, p.featured ? styles.monoGreenBright : styles.monoGreen].join(' ')}
               style={{ margin: 0 }}
             >
@@ -615,8 +596,8 @@ function PricingSection({ demoMailto, salesMailto }) {
       </div>
 
       <div className={styles.pricingFoot}>
-        Todos los planes incluyen <strong>cumplimiento Ley 1581 / GDPR</strong>,{' '}
-        <strong>ledger auditable</strong> y <strong>exportes para derecho de acceso</strong>.
+        Todos los planes incluyen <strong>cifrado en tránsito y reposo</strong>,{' '}
+        <strong>audit log inmutable</strong> y <strong>compliance SOC 2 ready</strong>.
       </div>
     </section>
   );
@@ -627,27 +608,27 @@ function PricingSection({ demoMailto, salesMailto }) {
 
 function FinalCtaSection({ demoMailto, salesMailto, loginHref }) {
   return (
-    <section className={styles.final} aria-labelledby="copiloto-final-title">
+    <section className={styles.final} aria-labelledby="doc-final-title">
       <div className={styles.finalCard}>
         <span className={styles.finalGlow} aria-hidden="true" />
 
         <div className={styles.finalCopy}>
-          <Eyebrow>Agenda una demo de 25 minutos</Eyebrow>
-          <h2 id="copiloto-final-title" className={styles.finalH2}>
-            Te mostramos tu propio negocio{' '}
-            <span className={styles.finalAccent}>adentro.</span>
+          <Eyebrow>14 días gratis · sin tarjeta</Eyebrow>
+          <h2 id="doc-final-title" className={styles.finalH2}>
+            Deja de tipear.<br />
+            <span className={styles.finalAccent}>Empieza a decidir.</span>
           </h2>
           <p className={styles.finalP}>
-            Sin compromiso. Si te convence, lo dejamos andando en menos de
-            una semana. Setup en 30 minutos, conversaciones automáticas
-            desde el primer día.
+            Sube tu primer documento en menos de 30 segundos. Si te
+            sirve, sigue. Si no, no nos debes nada. Setup completo en
+            una mañana.
           </p>
           <div className={styles.finalCtaRow}>
             <a href={demoMailto} className={[styles.btn, styles.btnPrimary, styles.btnXl].join(' ')}>
-              Solicitar demo → <IconArrow />
+              Probar gratis <IconArrow />
             </a>
             <a href={salesMailto} className={[styles.btn, styles.btnGhost, styles.btnXl].join(' ')}>
-              Contactar ventas
+              Hablar con ventas
             </a>
             <span className={styles.finalAlt}>
               ó <a href={loginHref}>Iniciar sesión →</a>
@@ -659,19 +640,19 @@ function FinalCtaSection({ demoMailto, salesMailto, loginHref }) {
           <div className={[styles.chatCard, styles.chatCardCompact].join(' ')}>
             <div className={styles.chatHeader}>
               <div className={styles.chatAvatar} aria-hidden="true">
-                <IconWhatsapp size={18} />
+                <IconDoc size={18} />
               </div>
               <div>
-                <div className={styles.chatTitle}>+184 leads</div>
+                <div className={styles.chatTitle}>+2,847 documentos</div>
                 <div className={styles.chatStatus}>
                   <span className={styles.chatStatusDot} aria-hidden="true" />
-                  esta semana · sin staff humano
+                  procesados este mes · 99.2% precisión
                 </div>
               </div>
             </div>
             <div className={styles.chatBody}>
               <ChatBubble side="bot">
-                127 citas agendadas. 38 leads calificados. 19 escalados al equipo.
+                2,634 facturas · 142 contratos · 71 recibos. Sin un solo error de tipeo.
               </ChatBubble>
             </div>
           </div>
@@ -696,16 +677,16 @@ function FooterSection() {
             </svg>
             <div className={styles.footerWord}>
               <div className={styles.footerWordRavit}>CopilotoIA</div>
-              <div className={styles.footerWordStudio}>CHATBOT AI</div>
+              <div className={styles.footerWordStudio}>DOCS AI</div>
             </div>
           </div>
           <p className={styles.footerBlurb}>
-            El asistente conversacional para negocios que viven del
-            agendamiento. WhatsApp, Instagram, Messenger y Web — un solo
-            equipo, un solo CRM.
+            Procesamiento documental con IA para contadores, equipos
+            legales y operaciones reguladas. Extracción, validación y
+            archivo — con audit log y compliance.
           </p>
           <div className={styles.footerTransparency}>
-            <IconSparkle size={12} /> Cumple Ley 1581 / GDPR · doble opt-in auditable
+            <IconSparkle size={12} /> SOC 2 ready · audit log inmutable
           </div>
         </div>
 
@@ -720,9 +701,9 @@ function FooterSection() {
       </div>
 
       <div className={styles.footerBottom}>
-        <span>© {new Date().getFullYear()} CopilotoIA · LatAm</span>
+        <span>© {new Date().getFullYear()} CopilotoIA · Documental AI</span>
         <div className={styles.footerSocials}>
-          <IconIg /><IconFb /><IconX />
+          <IconLn /><IconX />
         </div>
       </div>
     </footer>
