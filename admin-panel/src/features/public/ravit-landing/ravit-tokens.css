@@ -14,7 +14,9 @@
 [data-testid="public-landing-shell"] {
   /* ─── Paleta ──────────────────────────────────────────────────── */
   --ra-bg:           #F1EDE3;
+  --ra-bg-alt:       #E8E2D3;
   --ra-bg-soft:      #FBF8EE;
+  --ra-bg-inset:     #FBF9F2;
   --ra-bg-card:      #FFFFFF;
   --ra-bg-card-alt:  #FAF6E9;
   --ra-bg-emphasis:  #1B2542;
@@ -23,6 +25,10 @@
   --ra-text-mid:     rgba(27, 37, 66, 0.78);
   --ra-text-soft:    rgba(27, 37, 66, 0.55);
   --ra-text-faint:   rgba(27, 37, 66, 0.32);
+
+  --ra-line:         rgba(27, 37, 66, 0.08);
+  --ra-line-mid:     rgba(27, 37, 66, 0.16);
+  --ra-line-strong:  rgba(27, 37, 66, 0.24);
 
   --ra-brand:        #2DBB6A;
   --ra-brand-dim:    #0F7A3F;
