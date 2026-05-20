@@ -173,7 +173,8 @@ describe('router por rol', () => {
     // CopilotoIA queda accesible via `/copiloto` (mismo shell).
     const router = renderAt('/', { session: null, tenants: [] });
     const heading = await screen.findByRole('heading', { level: 1 });
-    expect(heading.textContent).toMatch(/Influencers de IA/);
+    expect(heading.textContent).toMatch(/Tu marca/);
+    expect(heading.textContent).toMatch(/cara propia/);
     expect(router.state.location.pathname).toBe('/');
   });
 

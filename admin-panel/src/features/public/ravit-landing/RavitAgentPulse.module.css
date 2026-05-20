@@ -1,0 +1,458 @@
+/* UI-INFLU-016 — Landing público Ravit Studio.
+   Paleta confirmada del HTML standalone:
+     --ra-bg:           #F1EDE3
+     --ra-brand:        #2DBB6A
+     --ra-accent:       #0F7A3F
+     --ra-text:         #1B2542
+     --ra-text-subtle:  #4b5563
+   Tipografía:          'Geist', system fallback. */
+
+.page {
+  background: var(--ra-bg, #F1EDE3);
+  color: var(--ra-text, #1B2542);
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh;
+  padding-bottom: 64px;
+}
+
+/* ─── Hero ──────────────────────────────────────────────────────────── */
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 48px;
+  align-items: center;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 80px 32px 64px;
+}
+
+.heroText {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.eyebrow {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  color: var(--ra-accent, #0F7A3F);
+  text-transform: uppercase;
+}
+
+.heroTitle {
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  line-height: 1.05;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.heroAccent {
+  color: var(--ra-accent, #0F7A3F);
+}
+
+.heroSub {
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--ra-text-subtle, #4b5563);
+  max-width: 520px;
+}
+
+.heroCtas {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.heroBadges {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.badge {
+  font-size: 13px;
+  color: var(--ra-text-subtle, #4b5563);
+}
+
+.heroArt {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+@media (max-width: 900px) {
+  .hero {
+    grid-template-columns: 1fr;
+    padding: 48px 20px 32px;
+    gap: 32px;
+  }
+  .heroArt { order: -1; }
+}
+
+/* ─── Botones ───────────────────────────────────────────────────────── */
+
+.btnPrimary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 28px;
+  background: var(--ra-brand, #2DBB6A);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  box-shadow: 0 4px 14px rgba(45, 187, 106, 0.3);
+}
+.btnPrimary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(45, 187, 106, 0.4);
+}
+
+.btnGhost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 28px;
+  background: transparent;
+  color: var(--ra-text, #1B2542);
+  border: 1.5px solid var(--ra-text, #1B2542);
+  border-radius: 10px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.btnGhost:hover {
+  background: rgba(27, 37, 66, 0.05);
+}
+
+/* ─── Stats strip ───────────────────────────────────────────────────── */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 24px;
+  max-width: 1200px;
+  margin: 0 auto 80px;
+  padding: 32px;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 8px 32px rgba(27, 37, 66, 0.06);
+  margin-inline: max(20px, calc((100vw - 1200px) / 2));
+}
+
+.statCard {
+  text-align: center;
+}
+.statNumber {
+  font-size: 2.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--ra-accent, #0F7A3F);
+}
+.statLabel {
+  font-size: 14px;
+  color: var(--ra-text-subtle, #4b5563);
+  margin-top: 4px;
+}
+
+/* ─── Section headers ───────────────────────────────────────────────── */
+
+.sectionTitle {
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 12px;
+  text-align: center;
+}
+
+.sectionSub {
+  font-size: 1.05rem;
+  color: var(--ra-text-subtle, #4b5563);
+  text-align: center;
+  margin: 0 auto 48px;
+  max-width: 560px;
+}
+
+/* ─── Cómo funciona ─────────────────────────────────────────────────── */
+
+.howSection {
+  max-width: 1200px;
+  margin: 0 auto 96px;
+  padding: 0 32px;
+}
+
+.stepsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 24px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stepCard {
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px;
+  box-shadow: 0 4px 16px rgba(27, 37, 66, 0.05);
+  transition: transform 200ms ease;
+}
+.stepCard:hover { transform: translateY(-4px); }
+
+.stepHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.stepNumber {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--ra-text-subtle, #cbd5e1);
+}
+
+.stepTitle {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.stepDesc {
+  font-size: 0.95rem;
+  color: var(--ra-text-subtle, #4b5563);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* ─── Casting ───────────────────────────────────────────────────────── */
+
+.castingSection {
+  max-width: 1200px;
+  margin: 0 auto 96px;
+  padding: 0 32px;
+}
+
+.personaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 24px;
+}
+
+.personaCard {
+  border-radius: 16px;
+  overflow: hidden;
+  transition: transform 200ms ease;
+}
+.personaCard:hover { transform: scale(1.03); }
+
+/* ─── Pricing ───────────────────────────────────────────────────────── */
+
+.pricingSection {
+  max-width: 1200px;
+  margin: 0 auto 96px;
+  padding: 0 32px;
+}
+
+.pricingGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+.pricingCard {
+  background: #fff;
+  border-radius: 20px;
+  padding: 32px;
+  border: 1px solid rgba(15, 122, 63, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  transition: transform 200ms ease, box-shadow 200ms ease;
+}
+.pricingCard:hover { transform: translateY(-6px); }
+
+.pricingCardFeatured {
+  border: 2px solid var(--ra-brand, #2DBB6A);
+  box-shadow: 0 12px 36px rgba(45, 187, 106, 0.2);
+  transform: translateY(-8px);
+}
+
+.pricingTag {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ra-brand, #2DBB6A);
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.pricingLabel {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ra-text-subtle, #4b5563);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.pricingPrice {
+  font-size: 3rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--ra-accent, #0F7A3F);
+  line-height: 1;
+}
+
+.pricingCreditos {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.pricingDetail {
+  font-size: 0.875rem;
+  color: var(--ra-text-subtle, #4b5563);
+}
+
+.pricingFeatures {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pricingFeatures li {
+  font-size: 14px;
+  padding-left: 24px;
+  position: relative;
+}
+.pricingFeatures li::before {
+  content: '✓';
+  color: var(--ra-brand, #2DBB6A);
+  position: absolute;
+  left: 0;
+  font-weight: 700;
+}
+
+/* ─── Afiliados ─────────────────────────────────────────────────────── */
+
+.affiliateSection {
+  max-width: 1200px;
+  margin: 0 auto 96px;
+  padding: 0 32px;
+}
+
+.affiliateCard {
+  background: var(--ra-text, #1B2542);
+  color: #fff;
+  border-radius: 24px;
+  padding: 40px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 32px;
+  align-items: center;
+}
+
+.affiliateText {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.affiliateTitle {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.affiliateDesc {
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.8);
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .affiliateCard {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+}
+
+/* ─── CTA final ─────────────────────────────────────────────────────── */
+
+.ctaFinal {
+  max-width: 720px;
+  margin: 0 auto 64px;
+  padding: 0 32px;
+  text-align: center;
+}
+
+.ctaFinalTitle {
+  font-size: clamp(1.75rem, 3vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 12px;
+}
+
+.ctaFinalSub {
+  font-size: 1.05rem;
+  color: var(--ra-text-subtle, #4b5563);
+  margin: 0 auto 32px;
+  max-width: 520px;
+}
+.ctaFinal .heroCtas {
+  justify-content: center;
+}
+
+/* ─── Footer ────────────────────────────────────────────────────────── */
+
+.footer {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px;
+  border-top: 1px solid rgba(15, 122, 63, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.footerLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--ra-text-subtle, #4b5563);
+}
+
+.footerLinks {
+  display: flex;
+  gap: 24px;
+}
+.footerLinks a {
+  color: var(--ra-text-subtle, #4b5563);
+  text-decoration: none;
+  font-size: 14px;
+}
+.footerLinks a:hover {
+  color: var(--ra-text, #1B2542);
+}

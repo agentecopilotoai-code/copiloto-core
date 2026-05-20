@@ -23,7 +23,10 @@ describe('<PublicLandingShell/> (UI-INFLU-016)', () => {
     renderShell('/');
     expect(screen.getByTestId('public-landing-shell')).toBeInTheDocument();
     expect(screen.getByTestId('ravit-agent-pulse')).toBeInTheDocument();
-    expect(screen.getByText(/Influencers de IA/i)).toBeInTheDocument();
+    // Hero del rediseño UI-INFLU-016-FU: h1 "Tu marca, con cara propia.".
+    const h1 = screen.getByRole('heading', { level: 1 });
+    expect(h1).toHaveTextContent(/Tu marca/i);
+    expect(h1).toHaveTextContent(/cara propia/i);
     const ravitTab = screen.getByRole('link', { name: /Ravit Agent · Pulse/i });
     expect(ravitTab).toHaveAttribute('aria-current', 'page');
   });
