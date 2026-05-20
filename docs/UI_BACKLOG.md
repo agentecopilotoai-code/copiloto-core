@@ -1653,9 +1653,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-003 — Casting · Home · primera vez (empty state)
+### UI-INFLU-003 — Casting · Home · primera vez (empty state) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/01 _ Casting _Home_ _ primera vez.html`.
 - **Alcance:** componente `CastingEmptyState.jsx` en `src/features/influencer/casting/` que se renderiza cuando `GET /v1/influencer/casting` devuelve `personas=[]`. Hero + ilustración + CTA primario "Crear personaje" → router push a `/influencer/personas/new/step-1`. Reusa `PageHeader`, `Card`, `Button` (variant primary), `EmptyState` (UI-001).
 - **Criterios:** sin acciones write a menos que el rol tenga `influencer.personas.write` (CTA renderiza pero deshabilitado con tooltip si no).
@@ -1664,9 +1664,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-004 — Casting · Home (con personajes)
+### UI-INFLU-004 — Casting · Home (con personajes) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/01 _ Casting _Home_.html`.
 - **Alcance:** orquestador `Casting.jsx` + hook `useCastingData` + helper puro `castingData.js` + componentes `CastingKpis` (4 KPI tiles: Personajes activos, Posts este mes, Alcance total, Engagement medio — usa `KpiCardWithDelta` del dominio), `CastingFilters` (chips: Todos · Lifestyle · Fashion · Beauty · Editorial · Beach · Travel + sort selector "Ordenar: actividad/posts/alcance"), `PersonaCard` (avatar+nombre+handle+status+stats foto+alcance+engagement+CTA "Abrir estudio"), `PersonaGrid`. Consume `GET /v1/influencer/casting` (TASK-INFLU-017).
 - **Criterios:** `PersonaCard` extraído a `components/domain/` porque también se reusa en UI-INFLU-014 (calendario filter). Cada card ≤ 200 LOC.
@@ -1677,9 +1677,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-005 — Estudio del personaje (detalle)
+### UI-INFLU-005 — Estudio del personaje (detalle) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/02 _ Estudio de Sof_a _detalle_.html`.
 - **Alcance:** orquestador `PersonaStudio.jsx` + hook `usePersonaStudioData` + componentes:
   - `PersonaHeader` (avatar grande + nombre + status badge "ACTIVO · 12 PROGRAMADOS" + CTAs "Editar cara" / "Generar contenido con Sofía" / "Ver feed").
@@ -1697,9 +1697,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-006 — Empty states transversal del módulo
+### UI-INFLU-006 — Empty states transversal del módulo — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/02 _ Empty states _ transversal.html`.
 - **Alcance:** suite de empty states reusables en `src/features/influencer/components/empty/`:
   - `NoGenerationsEmpty` (cuando una persona no tiene generaciones aún).
@@ -1713,9 +1713,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-007 — Toasts del módulo (variantes)
+### UI-INFLU-007 — Toasts del módulo (variantes) — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/03 _ Toasts _ todos los tipos.html`.
 - **Alcance:** auditar el `Toast` global de UI-016.5 contra los 4 tipos del HTML (success/info/warn/error) + casos específicos del módulo: "Generación completada · 4 imágenes listas" (success con thumbnail), "Crédito insuficiente · faltan N" (warn con CTA top-up), "Provider Grok temporalmente caído · usando OpenAI" (info con auto-dismiss 8s), "Publicación a Instagram falló · token expirado" (error con CTA reconectar). Si los specs visuales del HTML divergen del Toast global, agregar variantes `withThumbnail` y `withCta` al primitive sin romper consumers.
 - **Tests:** `Toast.test.jsx` extendido con (3): success con thumbnail renderiza img; warn con CTA dispara handler; error con CTA "Reconectar" navega al flow de OAuth.
@@ -1723,9 +1723,9 @@ Las tablas siguen el orden de severidad y luego por PR ascendente. La columna **
 
 ---
 
-### UI-INFLU-008 — Wizard · Paso 1 · Cara
+### UI-INFLU-008 — Wizard · Paso 1 · Cara — DONE (2026-05-19)
 
-- **Estado:** PENDING
+- **Estado:** DONE — ver `docs/DONE.md`.
 - **HTML:** `docs/influencer/03a _ Crear personaje _ Paso 1 Cara.html`.
 - **Alcance:** `src/features/influencer/wizard/Step1Face.jsx` + hook `useStep1Face` + helpers puros. Contenido del HTML:
   - Stepper visual de 5 pasos (reusa `Stepper` de UI-007.2).

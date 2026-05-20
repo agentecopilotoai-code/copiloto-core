@@ -15,6 +15,84 @@ Cada entrada debe incluir:
 
 ## Tareas completadas
 
+### UI-INFLU-008 — Wizard · Paso 1 · Cara
+
+- **Fecha:** 2026-05-19
+- **Resumen:** componente `Step1Face` + helpers puros `step1FaceData.js`. Stepper visual de 5 pasos (reusa primitive UI-007.2), panel "Punto de partida" (3 radios), 6 selectores (etnia/ojos/pelo/estilo/tono/edad), grid de variaciones generadas con click para marcar canonical, footer "Paso 1 de 5" con guardar borrador + siguiente.
+- **Archivos:** `wizard/Step1Face.jsx` (190 LOC) + `wizard/step1FaceData.js` (75 LOC) + 2 archivos de test (4 + 5 = 9 tests).
+- **Validaciones:** 9/9 PASSED.
+- **Nota de seguridad:** las acciones de generación (`onGenerateVariations`) son callbacks inyectables — el caller (rute wizard) las cablea con `coreApi.requestFaceVariations()` que ya tiene gating por capability. AlertBanner bloquea avance si no hay canonical o si faltan campos mínimos (etnia + ojos + pelo).
+
+---
+
+### UI-INFLU-007 — Toasts del módulo (4 variantes)
+
+- **Fecha:** 2026-05-19
+- **Resumen:** extiende el primitive `Toast` (UI-016.5) con soporte `thumbnail` (img URL o React node) sin romper consumers. Crea 4 helpers para los toasts específicos del módulo:
+  - `generationCompletedToast({count, thumbnailUrl, onOpen})` — success con thumbnail.
+  - `insufficientCreditsToast({shortBy, onTopUp})` — warn con CTA top-up.
+  - `providerFallbackToast({failedProvider, usingProvider})` — info con auto-dismiss 8s.
+  - `publishFailedToast({platform, reason, onReconnect})` — error con CTA reconectar OAuth.
+- **Archivos:** `Toast.jsx` (+25 LOC) — agrega `thumbnail` y branching img/icon. `influencerToasts.js` (60 LOC) + `influencerToasts.test.jsx` (4 tests).
+- **Validaciones:** 4/4 PASSED.
+- **Limitaciones:** la integración con los workers reales (TASK-INFLU-012 succeeded → toast; TASK-INFLU-015 published failure → toast) se cablea cuando UI-INFLU-013 (composer) consuma la WebSocket bus de TASK-INFLU-018.
+
+---
+
+### UI-INFLU-006 — Empty states transversales del módulo Influencer
+
+- **Fecha:** 2026-05-19
+- **Resumen:** 5 empty states reusables en `features/influencer/components/empty/`: NoGenerations, NoScheduledPosts, NoPlatformsConnected, NoCredits, ProviderUnavailable. Cada uno reusa la primitiva `EmptyState` (UI-001) con título + descripción + 1 CTA primario.
+- **Archivos:** `EmptyStates.jsx` (75 LOC), `index.js` barrel, `EmptyStates.test.jsx` (5 tests).
+- **Validaciones:** 5/5 PASSED.
+- **Nota de seguridad:** `NoCreditsEmpty` con CTA "Comprar créditos" gateado por `influencer.credits.topup` (Admin/Owner únicamente) — el botón queda disabled con tooltip explicativo para roles inferiores.
+
+---
+
+### UI-INFLU-005 — Estudio del personaje (detalle)
+
+- **Fecha:** 2026-05-19
+- **Resumen:** orquestador `PersonaStudio` + helpers puros `personaStudioData.js`. 6 secciones inline: header con CTAs (Editar cara / Generar contenido / Ver feed), bio con tags de voz, platforms_connected, KPIs (Posts/Alcance/Engagement), próximo post, strip horizontal de generaciones recientes.
+- **Archivos:**
+  - `admin-panel/src/features/influencer/studio/PersonaStudio.jsx` (170 LOC).
+  - `admin-panel/src/features/influencer/studio/personaStudioData.js` (78 LOC).
+  - `personaStudioData.test.js` (4) + `PersonaStudio.test.jsx` (5) = 9 tests.
+- **Validaciones:** 9/9 PASSED.
+- **Nota de seguridad:** CTAs gateadas por capability — "Editar cara" requiere `influencer.personas.write`, "Generar contenido" requiere `influencer.generate`. Ambas se ocultan (no se renderizan) si el rol no tiene el permiso.
+- **Limitaciones:** los CTAs navegan a rutas que aún no existen (`/edit/face`, `/generate`, `/feed`) — UI-INFLU-008+ y UI-INFLU-013 las crearán.
+
+---
+
+### UI-INFLU-004 — Casting · Home (con personajes)
+
+- **Fecha:** 2026-05-19
+- **Resumen:** orquestador `Casting.jsx` + helper puro `castingData.js` + componentes `CastingKpis`/`CastingFilters`/`PersonaGrid` (inline en Casting.jsx, < 200 LOC c/u) + `PersonaCard` en `components/domain/` (reusado luego en UI-INFLU-014 calendario filter). Consume el shape de `GET /v1/influencer/casting` (TASK-INFLU-017).
+- **Archivos:**
+  - `admin-panel/src/features/influencer/casting/castingData.js` (84 LOC) — helpers puros: `categoryLabel`, `formatReach`, `formatEngagementRate`, `sortPersonas`, `filterByCategory`, `CATEGORY_FILTER_OPTIONS`, `SORT_OPTIONS`.
+  - `admin-panel/src/features/influencer/casting/Casting.jsx` (158 LOC) — orquestador con KPIs, filters chip-style, sort selector y grid responsivo.
+  - `admin-panel/src/components/domain/PersonaCard.jsx` (95 LOC) — avatar+nombre+handle+status+stats foto/alcance/engagement+CTA "Abrir estudio".
+  - `castingData.test.js` (5 tests) + `Casting.test.jsx` (4 tests).
+- **Validaciones:** 9/9 PASSED (vitest). 12/12 tests del feature `casting/` totales (incluyendo UI-INFLU-003).
+- **Nota de seguridad:** sin `influencer.personas.read` el componente devuelve el empty state (mismo gate que la CTA primary). El navigate al studio usa el persona.id sin asumir que el caller tenga acceso al detalle — el route component de UI-INFLU-005 valida nuevamente.
+- **Limitaciones:** el fetch de `/v1/influencer/casting` aún se hace en `InfluencerCasting.jsx` con stub (siempre vacío). Cablear `coreApi.getCasting()` real cuando aterrice UI-INFLU-013 (que agrega los API clients de generación).
+
+---
+
+### UI-INFLU-003 — Casting · empty state (primera vez)
+
+- **Fecha:** 2026-05-19
+- **Resumen:** componente `CastingEmptyState` en `src/features/influencer/casting/` con hero + CTA "Crear personaje" → navega a `/t/:slug/influencer/personas/new/step-1`. Permission gate: CTA deshabilitada con tooltip si el rol no tiene `influencer.personas.write`. Wrapper `InfluencerCasting` decide entre empty/full data según `personas=[]` (full view llega en UI-INFLU-004).
+- **Componentes:**
+  - `admin-panel/src/features/influencer/casting/CastingEmptyState.jsx` (45 LOC).
+  - `admin-panel/src/features/influencer/casting/InfluencerCasting.jsx` (40 LOC) — wrapper que decide entre vacío y lleno.
+  - `admin-panel/src/features/influencer/casting/index.js` (barrel).
+  - `admin-panel/src/features/influencer/placeholders.jsx` reescrito: `InfluencerCasting` re-exporta desde `./casting/` en lugar del placeholder "Próximamente".
+- **Archivos:** 4 nuevos en `casting/` + actualizar `placeholders.jsx`, `CastingEmptyState.test.jsx` (3 tests).
+- **Validaciones:** 3/3 PASSED (vitest).
+- **Nota de seguridad:** la CTA se renderiza para TODOS los roles, pero solo es operable cuando `can('influencer.personas.write')`. Esto cumple el criterio del backlog (mostrar el path pero indicar el permiso requerido). El navigate apunta a una ruta del wizard que aún no existe — UI-INFLU-008+ creará el wizard real; mientras tanto, el caller verá 404 o el redirect del shell.
+
+---
+
 ### TASK-INFLU-019 — platform_admin endpoints para tenant_modules
 
 - **Fecha:** 2026-05-19

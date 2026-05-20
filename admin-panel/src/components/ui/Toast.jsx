@@ -106,6 +106,10 @@ export function ToastProvider({ children }) {
         title: toast?.title || '',
         message: toast?.message || '',
         action: toast?.action || null,
+        // UI-INFLU-007 — variantes del módulo Influencer: thumbnail
+        // permite renderizar un preview (URL o React node) en el
+        // success de "Generación completada · N imágenes listas".
+        thumbnail: toast?.thumbnail || null,
         timeout: timeoutFor(tone, toast?.timeout),
       };
       setVisible((prev) => {
@@ -196,9 +200,27 @@ function ToastItem({ toast, onDismiss }) {
       aria-live={live}
       data-tone={toast.tone}
     >
-      <span className={styles.icon} aria-hidden="true">
-        {ICON_BY_TONE[toast.tone] ?? ICON_BY_TONE.neutral}
-      </span>
+      {toast.thumbnail ? (
+        typeof toast.thumbnail === 'string' ? (
+          <img
+            src={toast.thumbnail}
+            alt=""
+            aria-hidden="true"
+            style={{
+              width: 32, height: 32, borderRadius: 4, objectFit: 'cover',
+              flexShrink: 0, marginRight: 8,
+            }}
+          />
+        ) : (
+          <span style={{ marginRight: 8, flexShrink: 0 }} aria-hidden="true">
+            {toast.thumbnail}
+          </span>
+        )
+      ) : (
+        <span className={styles.icon} aria-hidden="true">
+          {ICON_BY_TONE[toast.tone] ?? ICON_BY_TONE.neutral}
+        </span>
+      )}
       <div className={styles.body}>
         {toast.title ? <p className={styles.title}>{toast.title}</p> : null}
         {toast.message ? <p className={styles.message}>{toast.message}</p> : null}

@@ -31,16 +31,11 @@ function Placeholder({ title, eyebrow, description, htmlRef }) {
   );
 }
 
-export function InfluencerCasting() {
-  return (
-    <Placeholder
-      eyebrow="Ravit Studio"
-      title="Tu casting"
-      description="Los personajes que serán la cara de tu marca en cada post, reel y anuncio."
-      htmlRef="docs/influencer/01 _ Casting _Home_.html"
-    />
-  );
-}
+// UI-INFLU-003 — `InfluencerCasting` ya tiene implementación real en
+// `./casting/InfluencerCasting.jsx` (empty state). Reexportamos desde
+// el barrel para mantener compatibilidad con `moduleRegistry.js`. La
+// vista con personajes llega en UI-INFLU-004.
+export { InfluencerCasting } from './casting/InfluencerCasting.jsx';
 
 export function InfluencerCalendar() {
   return (
