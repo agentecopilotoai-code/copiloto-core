@@ -961,7 +961,14 @@ async def update_tenant_module(
             await audit(
                 conn,
                 tenant_id=None,
-                actor_type='platform_owner',
+                # `platform_owner` es un ROL (verificado en require_platform_owner
+                # del router), no un actor_type. El CHECK constraint de
+                # `audit_logs.actor_type` solo acepta {anonymous, contact, bot,
+                # agent, user, service, system, support}. Mantenemos `'user'`
+                # consistente con la otra llamada audit() de este mismo archivo
+                # (línea 351, TASK-INFLU-002). El rol queda capturado en el JWT
+                # y en `actor_id` para la traza.
+                actor_type='user',
                 actor_id=str(actor_id) if actor_id else None,
                 action=action,
                 entity_type='tenant_module',

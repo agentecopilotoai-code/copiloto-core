@@ -42,8 +42,10 @@ def test_audit_metadata_excludes_notes_content():
     marker = 'platform.tenant_module.activated'
     idx = SRC.find(marker)
     assert idx > 0
-    # 600 chars alrededor del action cubren todo el metadata dict.
-    block = SRC[idx:idx + 800]
+    # 1500 chars alrededor del action cubren todo el metadata dict aún con
+    # comentarios largos sobre actor_type entremedio (ver BUGFIX en
+    # `update_tenant_module`).
+    block = SRC[idx:idx + 1500]
     assert 'notes_provided' in block
     # El contenido NO debe aparecer como key 'notes': en el metadata
     assert "'notes':" not in block
