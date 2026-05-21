@@ -116,6 +116,73 @@ export function listFleetTenants(session, { status, country, vertical, search, l
   return request(`/tenants${qs ? `?${qs}` : ''}`, { session });
 }
 
+// PLATFORM-MODULES-EXPAND ──────────────────────────────────────────────────
+// Lista cruzada de `app.tenant_modules`. El backend (TASK-INFLU-019) expone
+// el endpoint genérico con filtros server-side por `module`, `enabled` y
+// `tenant_search` (busca en slug + name, like-case-insensitive).
+// Para uso por tenant exacto (el caso del FleetDrawer) el caller pasa el
+// `tenantSlug` y luego filtra client-side por `tenant_id` exacto — el
+// backend no soporta filtro por id, así que el slug es la ruta más estrecha
+// disponible (puede traer matches parciales).
+export function listTenantModules(session, { module, enabled, tenantSearch } = {}) {
+  const params = new URLSearchParams();
+  if (module) params.set('module', module);
+  if (enabled !== undefined && enabled !== null) params.set('enabled', String(enabled));
+  if (tenantSearch) params.set('tenant_search', tenantSearch);
+  const qs = params.toString();
+  return request(`/platform/tenant-modules${qs ? `?${qs}` : ''}`, { session });
+}
+
+// Activa o desactiva un módulo opt-in para un tenant.
+// Backend valida `require_platform_owner` + MFA y deja audit
+// `platform.tenant_module.activated|deactivated`.
+export function updateTenantModule(session, tenantId, moduleCode, { enabled, plan, notes } = {}) {
+  return request(`/platform/tenant-modules/${tenantId}/${moduleCode}`, {
+    method: 'PATCH',
+    session,
+    body: {
+      enabled: Boolean(enabled),
+      plan: plan ?? null,
+      notes: notes ?? null,
+    },
+  });
+}
+
+// Catálogo cross-modalidad de proveedores IA — recurso transversal de
+// plataforma usado por Influencer, Gestión Documental y futuros módulos.
+// Backend resuelve `platform_admin_router` + MFA. La response nunca
+// incluye `ciphertext` ni `secret_value`: solo `hint` (últimos 4 chars).
+export function listAIProviders(session) {
+  return request('/platform/ai-providers', { session });
+}
+
+// Actualiza la config de una modalidad (`llm`/`image`/`video`/`tts`/`stt`).
+// Si `secret_value` viene presente, el backend rota la key — guarda solo el
+// hint en DB y emite audit `platform.ai_provider_updated` con
+// `secret_rotated=true`. Sin `secret_value`, el PATCH solo cambia
+// `provider`/`model`/`params`.
+export function updateAIProvider(session, modality, payload) {
+  return request(`/platform/ai-providers/${modality}`, {
+    method: 'PATCH',
+    session,
+    body: payload,
+  });
+}
+
+// Smoke test contra el provider configurado. El backend resuelve el API key
+// del env var `AI_PROVIDER_SECRET_<hint>`, instancia el adapter, llama al
+// modelo y devuelve el output uniforme. Cuerpo del payload depende de la
+// modalidad — ver `aiProvidersData.buildTestPayload`. Errores del provider
+// (rate-limit, content-filter, etc.) llegan como 200 con `ok:false` y
+// `error_class` para que la UI muestre el detalle granular.
+export function testAIProvider(session, modality, body) {
+  return request(`/platform/ai-providers/${modality}/test`, {
+    method: 'POST',
+    session,
+    body,
+  });
+}
+
 export function getTenant(session, tenantId) {
   return request(`/tenants/${tenantId}`, { session, tenantId });
 }

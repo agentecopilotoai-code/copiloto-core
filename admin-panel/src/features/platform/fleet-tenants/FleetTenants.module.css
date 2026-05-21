@@ -177,3 +177,186 @@
   font-size: var(--fs-body);
   font-weight: var(--fw-medium);
 }
+
+/* PLATFORM-MODULES-EXPAND — Panel "Módulos contratados" del FleetDrawer. */
+
+.modulesPanel {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.modulesHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.modulesTitle {
+  margin: 0;
+  font-size: var(--fs-h4);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.modulesHelp {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.modulesHelp code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0 4px;
+  background: var(--bg-deep);
+  border-radius: var(--r-xs);
+}
+
+.modulesError {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--danger-soft, var(--bg-deep));
+  color: var(--danger-ink, var(--ink));
+  border-radius: var(--r-sm);
+  font-size: var(--fs-body);
+}
+
+.modulesStatus {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--ok-soft, var(--bg-deep));
+  color: var(--ok-ink, var(--ink));
+  border-radius: var(--r-sm);
+  font-size: var(--fs-caption);
+}
+
+.modulesList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.moduleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--panel-alt);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.moduleMeta {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  flex: 1;
+}
+
+.moduleLabel {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.moduleCode {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}
+
+.moduleDescription {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+
+.moduleSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  color: var(--ink);
+}
+
+/* Slider toggle. El checkbox nativo se mantiene accesible (teclado y screen
+   readers leen `role="switch"`), pero se oculta visualmente. El track+thumb
+   adyacentes son los que se ven. Animación con sibling selector — los nombres
+   con hash de CSS modules siguen funcionando porque están en el mismo
+   `composes`/scope. */
+.moduleSwitch input[type="checkbox"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.moduleSwitchTrack {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--ink-3, #cbd5e1);
+  transition: background 140ms ease;
+  flex: 0 0 auto;
+}
+
+.moduleSwitchThumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface, #fff);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
+  transition: transform 140ms ease;
+}
+
+.moduleSwitch input[type="checkbox"]:checked + .moduleSwitchTrack {
+  background: var(--accent);
+}
+
+.moduleSwitch input[type="checkbox"]:checked + .moduleSwitchTrack .moduleSwitchThumb {
+  transform: translateX(16px);
+}
+
+.moduleSwitch input[type="checkbox"]:focus-visible + .moduleSwitchTrack {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.moduleSwitch input[type="checkbox"]:disabled + .moduleSwitchTrack {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.moduleSwitchValue {
+  min-width: 2.25rem;
+  text-align: left;
+  color: var(--ink-2);
+}
+
+.muted {
+  font-size: var(--fs-caption);
+  color: var(--muted);
+}

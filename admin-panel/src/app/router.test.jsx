@@ -42,6 +42,10 @@ vi.mock('../context/AuthContext.jsx', () => ({
 let mockTenants;
 vi.mock('../services/coreApi.js', () => ({
   listMyTenants: vi.fn(() => Promise.resolve(mockTenants)),
+  // UI-INFLU-MENU — `TenantShellRoute` consulta este endpoint al montar para
+  // decidir si mostrar el item `influencer-entry` en el sidebar. Default `false`
+  // en estos tests porque ningún test específico necesita el item.
+  isInfluencerEnabled: vi.fn(() => Promise.resolve(false)),
 }));
 
 // eslint-disable-next-line import/first

@@ -244,7 +244,12 @@ def test_lookup_by_email_returns_single_verified_match(monkeypatch):
     reset_registry()
 
 
-def test_lookup_by_email_raises_ambiguous_when_multiple_matches(monkeypatch):
+def test_lookup_by_email_raises_ambiguous_only_when_enforce_single_strict(monkeypatch):
+    """BUG-219: el modo strict (opt-in) sigue levantando Auth0AmbiguousUserMatch
+    para callers que necesitan desambiguar manualmente. El default ahora es
+    `enforce_single=False` y resuelve eligiendo el preferred — ese
+    comportamiento se cubre en `test_lookup_by_email_resolves_ambiguous_preferring_recent_login`.
+    """
     _set_auth0_env(monkeypatch)
     from app.services.auth0_admin import (
         Auth0AmbiguousUserMatch,
@@ -261,6 +266,106 @@ def test_lookup_by_email_raises_ambiguous_when_multiple_matches(monkeypatch):
         ]),
     ])
     with pytest.raises(Auth0AmbiguousUserMatch):
+        asyncio.run(lookup_auth0_user_by_email('x@y.z', enforce_single=True))
+    reset_registry()
+
+
+def test_lookup_by_email_resolves_ambiguous_preferring_recent_login(monkeypatch):
+    """BUG-219: ante múltiples cuentas Auth0 con el mismo email (caso real:
+    database connection + Google OAuth), el default elige la verificada con
+    `last_login` más reciente.
+
+    Esto desbloquea el flujo de invite a un email que tiene cuentas en
+    distintas connections sin pedirle al operador que borre duplicados en
+    Auth0 — ambas cuentas son legítimas del dueño del email cuando ambas
+    están `email_verified=true`.
+    """
+    _set_auth0_env(monkeypatch)
+    from app.services.auth0_admin import lookup_auth0_user_by_email
+    from app.services.circuit_breaker import reset_registry
+
+    reset_registry()
+    _patch_httpx(monkeypatch, [
+        _MockResp(json_payload={'access_token': 'tok', 'expires_in': 3600}),
+        _MockResp(json_payload=[
+            {
+                'user_id': 'auth0|older',
+                'email_verified': True,
+                'last_login': '2026-05-01T10:00:00.000Z',
+                'created_at': '2025-01-01T00:00:00.000Z',
+            },
+            {
+                'user_id': 'google-oauth2|newer',
+                'email_verified': True,
+                'last_login': '2026-05-20T10:00:00.000Z',  # más reciente
+                'created_at': '2025-06-01T00:00:00.000Z',
+            },
+        ]),
+    ])
+    user = asyncio.run(lookup_auth0_user_by_email('x@y.z'))
+    assert user is not None
+    assert user['user_id'] == 'google-oauth2|newer', (
+        'Debe elegir el match con `last_login` más reciente entre los verificados'
+    )
+    reset_registry()
+
+
+def test_lookup_by_email_resolves_ambiguous_skipping_unverified(monkeypatch):
+    """BUG-219: si una de las cuentas no está verificada, se descarta
+    completamente — incluso si es la más reciente (defensa contra atacante
+    que registra el email antes que la víctima en una connection sin
+    verificación obligatoria)."""
+    _set_auth0_env(monkeypatch)
+    from app.services.auth0_admin import lookup_auth0_user_by_email
+    from app.services.circuit_breaker import reset_registry
+
+    reset_registry()
+    _patch_httpx(monkeypatch, [
+        _MockResp(json_payload={'access_token': 'tok', 'expires_in': 3600}),
+        _MockResp(json_payload=[
+            {
+                'user_id': 'auth0|attacker',
+                'email_verified': False,  # ← sin verificar
+                'last_login': '2026-05-20T10:00:00.000Z',
+                'created_at': '2026-05-19T00:00:00.000Z',
+            },
+            {
+                'user_id': 'auth0|victim',
+                'email_verified': True,
+                'last_login': '2026-05-15T10:00:00.000Z',
+                'created_at': '2025-01-01T00:00:00.000Z',
+            },
+        ]),
+    ])
+    user = asyncio.run(lookup_auth0_user_by_email('x@y.z'))
+    assert user is not None
+    assert user['user_id'] == 'auth0|victim', (
+        'Debe descartar el attacker sin verificar aunque sea más reciente'
+    )
+    reset_registry()
+
+
+def test_lookup_by_email_raises_unverified_when_all_ambiguous_unverified(monkeypatch):
+    """BUG-219: si NINGUNO de los múltiples matches tiene email_verified=true,
+    fail-closed con Auth0UserNotVerified — ninguna cuenta es de fiar para
+    bindear roles.
+    """
+    _set_auth0_env(monkeypatch)
+    from app.services.auth0_admin import (
+        Auth0UserNotVerified,
+        lookup_auth0_user_by_email,
+    )
+    from app.services.circuit_breaker import reset_registry
+
+    reset_registry()
+    _patch_httpx(monkeypatch, [
+        _MockResp(json_payload={'access_token': 'tok', 'expires_in': 3600}),
+        _MockResp(json_payload=[
+            {'user_id': 'auth0|a', 'email_verified': False},
+            {'user_id': 'google|b', 'email_verified': False},
+        ]),
+    ])
+    with pytest.raises(Auth0UserNotVerified):
         asyncio.run(lookup_auth0_user_by_email('x@y.z'))
     reset_registry()
 

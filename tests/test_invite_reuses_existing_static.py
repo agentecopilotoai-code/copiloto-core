@@ -70,18 +70,26 @@ def test_lookup_helper_returns_first_match_or_none():
     """El endpoint Auth0 retorna un array. Si está vacío → None. Si hay 1
     match válido (single + email_verified) lo retornamos.
 
-    BUG-193 (fix-group-35): el patrón anterior `return response[0]` blindly
-    se reemplazó por una validación que (a) levanta `Auth0AmbiguousUserMatch`
-    si `enforce_single` y hay >1 match, y (b) levanta `Auth0UserNotVerified`
-    si `require_email_verified` y el match no tiene `email_verified=true`.
-    El "return del candidato" sigue presente — solo está gateado por los
-    chequeos de seguridad.
+    BUG-193 (fix-group-35) — patrón anterior: levantar
+    `Auth0AmbiguousUserMatch` ante >1 match (fail-closed).
+
+    BUG-219 — nueva política default `enforce_single=False`: ante múltiples
+    matches, filtrar por `email_verified=true` y elegir el preferred
+    (`last_login` más reciente, tie-break `created_at` más antiguo) vía
+    `_select_preferred_auth0_match`. El modo strict sigue accesible vía
+    `enforce_single=True`. La excepción `Auth0AmbiguousUserMatch` aún se
+    levanta en ese modo.
     """
     src = _handler_source('lookup_auth0_user_by_email')
     # El path "lista vacía → None" sigue presente.
     assert 'return None' in src
     # El "return del candidato validado" sigue siendo terminal en el happy path.
     assert 'return candidate' in src or 'return response[0]' in src
+    # BUG-219: el helper debe invocar el selector preferred ante ambiguous.
+    assert '_select_preferred_auth0_match' in src, (
+        'Ante múltiples matches, debe usar `_select_preferred_auth0_match` '
+        'para elegir el más activo verificado (BUG-219).'
+    )
 
 
 # ───── invite_user integra el lookup en el catch del 409 ──────────────────

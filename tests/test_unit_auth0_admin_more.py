@@ -320,7 +320,8 @@ def test_lookup_auth0_user_by_email_empty_list(monkeypatch):
     assert out is None
 
 
-def test_lookup_auth0_user_by_email_ambiguous(monkeypatch):
+def test_lookup_auth0_user_by_email_ambiguous_strict_opt_in(monkeypatch):
+    """BUG-219: el modo strict sigue disponible vía `enforce_single=True`."""
     _set_auth0_env(monkeypatch)
     _patch_httpx(monkeypatch, [
         _token_resp(),
@@ -331,7 +332,7 @@ def test_lookup_auth0_user_by_email_ambiguous(monkeypatch):
     ])
     from app.services.auth0_admin import lookup_auth0_user_by_email, Auth0AmbiguousUserMatch
     with pytest.raises(Auth0AmbiguousUserMatch):
-        asyncio.run(lookup_auth0_user_by_email('a@b.com'))
+        asyncio.run(lookup_auth0_user_by_email('a@b.com', enforce_single=True))
 
 
 def test_lookup_auth0_user_by_email_unverified(monkeypatch):

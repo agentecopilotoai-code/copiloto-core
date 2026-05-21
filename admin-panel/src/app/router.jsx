@@ -51,14 +51,19 @@ const PLATFORM_MODULE_IDS = adminModules
 // UI-INFLU-002: los módulos `influencer-*` viven bajo un shell distinto
 // (`InfluencerShell` con su propio `INFLUENCER_NAV`), por eso los excluimos
 // de `TENANT_MODULE_IDS` para que `TenantShellRoute` no intente renderizarlos.
+// EXCEPCIÓN: `influencer-entry` SÍ vive en el shell del tenant — es solo un
+// item de nav que redirige al InfluencerShell. Necesita una route para que
+// el deep-link directo `/t/{slug}/influencer-entry` resuelva al component
+// `InfluencerEntryRedirect` (que hace `<Navigate to=".../influencer"/>`).
 const INFLUENCER_MODULE_IDS = adminModules
-  .filter((module) => module.id.startsWith('influencer-'))
+  .filter((module) => module.id.startsWith('influencer-') && module.id !== 'influencer-entry')
   .map((module) => module.id);
 
 const TENANT_MODULE_IDS = adminModules
   .filter(
     (module) =>
-      !module.id.startsWith('platform-') && !module.id.startsWith('influencer-'),
+      !module.id.startsWith('platform-') &&
+      (!module.id.startsWith('influencer-') || module.id === 'influencer-entry'),
   )
   .map((module) => module.id);
 
@@ -357,6 +362,31 @@ function TenantShellRoute() {
   const segments = location.pathname.split('/').filter(Boolean); // ['t', slug, moduleId]
   const activeModuleId = segments[2] || permissions.home;
 
+  // UI-INFLU-MENU — `influencer-entry` aparece en `TENANT_NAV` SOLO si el
+  // tenant tiene el módulo influencer habilitado en `app.tenant_modules`.
+  // Consultamos `isInfluencerEnabled` al montar (mismo patrón que
+  // `InfluencerShellRoute`) y filtramos `adminModules` antes de pasarlos al
+  // shell — `resolveNav` excluye los items cuyo `id` no esté en `modules`,
+  // así el item desaparece del sidebar sin tocar `resolveNav` ni el shell.
+  //
+  // `null` = loading (asumimos NO habilitado para no flickear el item);
+  // `true` = mostrar; `false` = ocultar.
+  const [influencerEnabled, setInfluencerEnabled] = useState(null);
+  useEffect(() => {
+    if (!session || !activeTenant?.id) return undefined;
+    let cancelled = false;
+    isInfluencerEnabled(session, activeTenant.id)
+      .then((enabled) => {
+        if (!cancelled) setInfluencerEnabled(enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setInfluencerEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, activeTenant?.id]);
+
   // Un viewer nunca entra al shell con CTAs de escritura: aunque el módulo
   // permita lectura (ej. analytics, contacts), se redirige al subárbol
   // read-only que aplica el chrome de solo lectura y oculta las acciones.
@@ -367,14 +397,34 @@ function TenantShellRoute() {
   const activeModule =
     adminModules.find((item) => item.id === activeModuleId) ?? adminModules[0];
 
+  // Si el módulo influencer NO está habilitado (o aún cargando), filtramos
+  // el `influencer-entry` de la lista que recibe el shell — así el nav no
+  // lo renderiza. La capability `influencer.module.access` (ya definida en
+  // el módulo) sigue aplicándose por `resolveNav` para roles sin acceso.
+  const modulesForShell = influencerEnabled
+    ? adminModules
+    : adminModules.filter((m) => m.id !== 'influencer-entry');
+
   return (
     <TenantShell
       profile={profile}
       permissions={permissions}
-      modules={adminModules}
+      modules={modulesForShell}
       activeModule={activeModule}
       activeModuleId={activeModuleId}
-      onModuleSelect={(id) => navigate(`/t/${activeTenant.slug}/${id}`)}
+      onModuleSelect={(id) => {
+        // `influencer-entry` no es un módulo del shell del tenant — es un
+        // entry-point al `InfluencerShell`. Navegamos al sub-tree del shell
+        // del influencer en lugar de a `/t/{slug}/influencer-entry`. El
+        // path `influencer-entry` SÍ tiene route registrada (`TENANT_MODULE_IDS`
+        // lo incluye) que monta `InfluencerEntryRedirect` para deep-links
+        // directos; este shortcut evita el redirect intermedio.
+        if (id === 'influencer-entry') {
+          navigate(`/t/${activeTenant.slug}/influencer`);
+          return;
+        }
+        navigate(`/t/${activeTenant.slug}/${id}`);
+      }}
       tenantOptions={tenantOptions}
       activeTenantId={activeTenant.id}
       onTenantChange={(id) => {

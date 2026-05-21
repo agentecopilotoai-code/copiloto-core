@@ -1392,3 +1392,44 @@ _TASK-0086 — Clasificador LLM cloud asíncrono con timeout efectivo: COMPLETAD
   - NO rewirear el answer-engine al dispatcher (TASK-0088).
   - NO reorganizar `app/services/` más allá de los 4 archivos mencionados.
 - **Antecedente:** intentado y ejecutado por error en PR #16 (cerrado el 2026-05-19 sin merge — el usuario solo quería un ítem de backlog, no la ejecución inmediata). El commit del intento queda en reflog por si se quiere recuperar como base.
+
+---
+
+### TASK-0089 — Email automático al invitar miembro existente en Auth0 + endpoint `resend-invitation`
+
+- **Estado:** PENDING
+- **Motivación:** `POST /v1/tenants/{id}/members` asigna correctamente el rol Auth0 + la fila en `app.user_tenant_roles` cuando el email ya existe en Auth0 (BUG-013, refinado por BUG-219 en PR #45), pero **no manda email al invitado** — el invitado no se entera de que tiene acceso al tenant nuevo a menos que el admin se lo comunique por otro canal (WhatsApp, Slack, etc.).
+  - Auth0 NO manda email automático en este flow: el evento `PATCH /users/{id}` + `POST /users/{id}/roles` no dispara ninguno de los templates predefinidos (verification email solo aplica a users nuevos; password-change ticket solo a database connection).
+  - Para users con identidad social (`google-oauth2|...`, LinkedIn, etc.), aunque quisiéramos emitir un password-change ticket, no aplica — no tienen password.
+  - El comentario en `app/services/auth0_admin.py:668-675` reconoce el gap explícitamente: *"Si el operador quiere notificar al user, puede hacerlo por su canal preferido"*. Eso era aceptable para alfa privada; no escala a SaaS comercial donde el invite debe ser autosuficiente.
+- **Alcance del fix:**
+  1. **Email helper en `app/services/tenant_invitations_email.py`**:
+     - Función `send_tenant_invitation_email(to_email, to_name, tenant_name, role, login_url, inviter_name)`.
+     - Reusa la infra SMTP existente (`aiosmtplib`) que usa `app/services/operator_alerts.py::_send_email_smtp`.
+     - Template HTML simple en español: subject `[{tenant_name}] Has sido invitado como {role}`, body con link al admin panel.
+     - Si SMTP no está configurado (`ALERTS_SMTP_HOST` vacío) → log warning y retornar `{'sent': False, 'reason': 'smtp_not_configured'}`. NO levantar excepción — best-effort, no romper el invite.
+  2. **Integración en `invite_user` (`app/services/auth0_admin.py`)**:
+     - Cuando `reused_existing=True`, invocar el sender después del PATCH user/roles.
+     - Cuando `reused_existing=False`, NO mandar (Auth0 ya manda verification email vía `verify_email=true` + password-change ticket — duplicaría).
+     - Capturar errores del sender (network, SMTP) y loguear sin abortar el invite.
+  3. **Nuevo endpoint `POST /v1/tenants/{tid}/members/{uid}/resend-invitation`**:
+     - Auth: `team.write` (mismo permiso que invitar).
+     - Lee el user en `app.users`. Si `status='invited'`, manda email vía `send_tenant_invitation_email`. Si `status='active'` ya, retorna 409 `already_active`.
+     - Audit `tenant.member.invitation_resent`.
+  4. **Fix del claim query (`app/api/v1/routes.py:725`)**:
+     - Edge case: si el invitado loguea pero ya tenía `auth_subject` real (no `pending|...`), el `WHERE auth_subject LIKE 'pending|%'` falla y `status` nunca pasa a `'active'`. Resultado: el UI muestra "PENDIENTE" forever aunque el user haya logueado.
+     - Cambio: agregar un branch que matchea por `email=$2 AND status='invited'` (sin requisito de `pending|%`) y haga el mismo update (`status='active'`, `last_login_at=now()`).
+- **Frontend (UI-CHANGE)**:
+  - En `admin-panel/src/features/owner-admin/team/components/TeamTable.jsx`, agregar botón "Reenviar invitación" en la fila de miembros con `status='invited'`, al lado de "Revocar".
+  - Handler dispara el endpoint nuevo. Toast de éxito/error.
+  - Gated por `team.write` (mismo que el invite).
+- **Tests:**
+  - `tests/test_unit_tenant_invitations_email.py`: send con SMTP mock OK; SMTP_HOST vacío → returns `not_sent` sin raise; SMTP timeout → returns `error` sin raise.
+  - `tests/test_invite_user_sends_email_when_reused.py`: assertion de que `invite_user` invoca el sender en el path `reused_existing=True` y NO en el path `verify_email=true`.
+  - `tests/test_resend_invitation_endpoint.py`: 200 con audit; 409 si user ya `status='active'`; 403 sin `team.write`; 404 si user no es miembro del tenant.
+  - `tests/test_claim_user_on_login_with_real_auth_subject.py`: user con `auth_subject` real + `status='invited'` que loguea → `status='active'` post-claim.
+- **Seguridad:**
+  - El email no incluye datos sensibles (no token de auto-login). Solo nombre del tenant + rol + link genérico al admin panel.
+  - El endpoint `resend-invitation` audita cada envío para detectar abuso (rate limit opcional en follow-up).
+- **Dependencias:** ninguna. PR #45 (BUG-219) ya está mergeado. Los PRs #43 y #44 no son blockers (solo afectan otros flows).
+- **Antecedente:** detectado en la sesión del 2026-05-21 al probar el invite de `deepdreamgenerator26@gmail.com` (Google OAuth). El user fue agregado al tenant `demo-taller` pero la UI sigue mostrando "PENDIENTE" porque (a) no recibió email para abrir el admin panel y disparar el primer login, y (b) aunque loguee, el claim query no transiciona su status si su `auth_subject` ya es real.

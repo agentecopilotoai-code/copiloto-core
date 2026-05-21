@@ -1,4 +1,5 @@
 import { Modal, StatusBadge } from '../../../../components/ui/index.js';
+import { TenantModulesPanel } from './TenantModulesPanel.jsx';
 import styles from '../FleetTenants.module.css';
 
 const STATUS_TONE = {
@@ -88,6 +89,9 @@ export function FleetDrawer({ tenant, onClose, onSupportInto }) {
           </div>
         ))}
       </dl>
+
+      {/* PLATFORM-MODULES-EXPAND — Panel toggleable platform-owner only. */}
+      <TenantModulesPanel tenant={tenant} />
     </Modal>
   );
 }

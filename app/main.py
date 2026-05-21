@@ -21,11 +21,13 @@ from app.influencer.credits_router import (
     pricing_router as influencer_pricing_router,
 )
 from app.influencer.casting_router import casting_router as influencer_casting_router
-# TASK-INFLU-002 — import side-effect que registra los endpoints
-# `/v1/platform/ai-providers*` sobre `platform_admin_router`. Sin este
-# import, los decoradores `@platform_admin_router.X` del archivo nunca
-# corren y las rutas no aparecen en la app.
-from app.influencer import admin_routes as _influencer_admin_routes  # noqa: F401
+# NOTA — el import side-effect que registra los endpoints
+# `/v1/platform/ai-providers*` y `/v1/platform/tenant-modules*` sobre
+# `platform_admin_router` (TASK-INFLU-002 + TASK-INFLU-019) ya se ejecuta
+# desde dentro de `app/api/v1/routes.py` antes del `router.include_router(
+# platform_admin_router)` final. Importarlo aquí ahora es redundante y
+# además es tardío (FastAPI ya copió las rutas en el include_router).
+# Ver el comentario en `app/api/v1/routes.py:1695` para el detalle.
 from app.core.logging import configure_logging
 from app.db.pool import db
 from app.services.metrics import (

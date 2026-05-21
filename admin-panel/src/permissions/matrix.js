@@ -107,6 +107,15 @@ export const PERMISSIONS = Object.freeze({
   'platform.roles_acl.write':    { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
   'platform.feature_flags.read': { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: R },
   'platform.feature_flags.write':{ viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
+  // PLATFORM-MODULES-EXPAND — toggleo de módulos opt-in por tenant.
+  // El backend exige `require_platform_owner` + MFA en
+  // `PATCH /platform/tenant-modules/{tenant_id}/{module}`. La matriz frontend
+  // refleja la misma regla: solo platform_owner puede ver y modificar el
+  // panel "Módulos" del FleetDrawer. Owner del tenant no ve nada
+  // (decisión D2=A: el owner ni siquiera percibe que existe el toggle;
+  // si un módulo está OFF, simplemente no aparece en su menú).
+  'platform.tenant_modules.read':  { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: R },
+  'platform.tenant_modules.write': { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
 
   // ─────────────────────────────────── MÓDULO INFLUENCER / Ravit Studio ────────────────────
   // UI-INFLU-002. Activación opt-in por tenant (D2 backlog). El gate
@@ -136,7 +145,11 @@ export const PERMISSIONS = Object.freeze({
   'influencer.posts.approve_publish': { viewer: null, agent: null, manager: RW, admin: RW, owner: RW, platform_owner: null },
   'influencer.credits.read':        { viewer: null, agent: null, manager: R,  admin: R,  owner: R,  platform_owner: null },
   'influencer.credits.topup':       { viewer: null, agent: null, manager: null, admin: RW, owner: RW, platform_owner: null },
-  'influencer.ai_providers.configure': { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
+  // Refactor — Proveedores IA son transversales (Influencer, Gestión
+  // Documental, futuros módulos). La capability vive bajo el namespace
+  // `platform.*` y NO `influencer.*` para reflejar que es config de
+  // plataforma compartida, no del módulo Ravit Studio.
+  'platform.ai_providers.configure': { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
 });
 
 const LEVEL_RANK = Object.freeze({

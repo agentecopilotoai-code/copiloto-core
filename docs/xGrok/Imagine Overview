@@ -1,0 +1,420 @@
+Imagine Overview
+
+Copy for LLM
+View as Markdown
+Manage API keys
+The Imagine API lets you generate and edit images and videos with Grok Imagine models. Use it for image generation, image editing with up to 3 reference images, video generation from text or still images, video editing, and more.
+
+Image Editing
+Edit images with natural language. Supports up to 3 reference images per request.
+
+Pricing
+$0.02 / image
+Resolution
+1K & 2K
+Read docsTry in playground
+Image Generation
+Generate images from text prompts with configurable aspect ratio, resolution, and count.
+
+Pricing
+$0.02 / image
+Resolution
+1K & 2K
+Read docsTry in playground
+Image-to-Video
+Animate a still image with a text prompt. The source image becomes the first frame.
+
+Pricing
+$0.05 / sec
+Resolution
+480p & 720p
+Read docsTry in playground
+Pricing
+Image generation uses flat per-image pricing regardless of prompt length. Each generated image incurs a fixed fee. Image edits are billed for both the input image and the generated output image. Video generation uses per-second pricing where both duration and resolution affect the total cost. For full pricing details, see the models page.
+
+Image Editing
+Edit a source image with natural language. Provide a public image URL or base64-encoded data URI, then describe the change you want Grok Imagine to apply. Multi-image editing supports up to 3 source images in a single request for combining subjects, transferring styles, and composing scenes.
+
+View docs
+
+Python
+Bash
+
+Javascript
+
+import base64
+import xai_sdk
+client = xai_sdk.Client()
+# Load image from file and encode as base64
+with open("photo.png", "rb") as f:
+    image_data = base64.b64encode(f.read()).decode("utf-8")
+response = client.image.sample(
+    prompt="Render this as a pencil sketch with detailed shading",
+    model="grok-imagine-image-quality",
+    image_url=f"data:image/png;base64,{image_data}",
+)
+print(response.url)
+Image Generation
+Generate new images from text prompts with Grok Imagine models. Configure output count (up to 10 images per request), aspect ratio, resolution, and response format.
+
+View docs
+
+Python
+Bash
+Python (OpenAI)
+
+Javascript
+
+import xai_sdk
+client = xai_sdk.Client()
+response = client.image.sample(
+    prompt="A collage of London landmarks in a stenciled street‑art style",
+    model="grok-imagine-image-quality",
+)
+print(response.url)
+Image-to-Video
+Animate a still image with a text prompt. The source image becomes the starting point for the generated video. Video requests are asynchronous: start a request, poll with the returned request ID, and use the completed video URL when ready. The xAI SDK and AI SDK handle polling for you.
+
+View docs
+
+Python
+
+Javascript
+Bash
+
+import os
+import xai_sdk
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+response = client.video.generate(
+    prompt="Make the water crash down and slowly pan out the camera",
+    model="grok-imagine-video",
+    image_url="https://docs.x.ai/assets/api-examples/video/waterfall-still.png",
+    duration=12,
+)
+print(response.url)
+More Capabilities
+Beyond the top use cases above, the Imagine API supports several additional workflows:
+
+Multi-Image Editing — Combine up to 3 source images in a single edit for compositing subjects, transferring styles, and building scenes from multiple references.
+Video Generation — Generate videos from text prompts with configurable duration (up to 15s), aspect ratio, and resolution.
+Video Editing — Modify an existing video with a text prompt while preserving the rest of the scene.
+Reference-to-Video — Guide a generated video with one or more reference images that influence the output without forcing the first frame.
+Video Extension — Continue an existing video from its last frame, combining the original and extension into one clip.
+Enterprise Compliance & Security
+The Imagine APIs are built for production workloads with strict security and compliance requirements. Generated media is subject to content policy review and is not used for training.
+
+✓
+SOC 2 Type II
+Audited controls for security, availability, and confidentiality
+✓
+HIPAA Eligible
+BAA available for healthcare applications handling PHI
+✓
+GDPR Compliant
+Data processing agreements and EU data residency options
+✓
+Data Residency
+Regional processing for compliance requirements
+✓
+High Availability
+Multi-region infrastructure with custom SLAs for enterprise workloads
+✓
+SSO & RBAC
+SAML SSO, role-based access, and audi
+
+
+Image Editing
+
+Copy for LLM
+View as Markdown
+Manage API keys
+Try Playground
+Edit an existing image by providing a source image along with your prompt. The model understands the image content and applies your requested changes.
+
+The OpenAI SDK's images.edit() method is not supported for image editing because it uses multipart/form-data, while the xAI API requires application/json. Use the xAI SDK, Vercel AI SDK, or direct HTTP requests instead.
+
+With the xAI SDK, use the same sample() method; just add the image_url parameter:
+
+
+Python
+Bash
+
+Javascript
+
+import base64
+import xai_sdk
+client = xai_sdk.Client()
+# Load image from file and encode as base64
+with open("photo.png", "rb") as f:
+    image_data = base64.b64encode(f.read()).decode("utf-8")
+response = client.image.sample(
+    prompt="Render this as a pencil sketch with detailed shading",
+    model="grok-imagine-image-quality",
+    image_url=f"data:image/png;base64,{image_data}",
+)
+print(response.url)
+You can provide the source image as:
+
+A public URL pointing to an image
+A base64-encoded data URI (e.g., data:image/jpeg;base64,...)
+Multi-turn editing
+Chain multiple edits together by using each output as the input for the next. This enables iterative refinement; start with a base image and progressively add details, adjust styles, or make corrections.
+
+1. Initial2. Modify Furniture3. Adjust lighting
+
+Python
+Bash
+
+import xai_sdk
+client = xai_sdk.Client()
+response = client.image.sample(
+    prompt="A modern living room with large windows overlooking the city",
+    model="grok-imagine-image-quality",
+)
+print(response.url)
+1. Initial
+2. Modify Furniture
+3. Adjust lighting
+Style transfer
+The grok-imagine-image-quality model supports a wide range of visual styles, from ultra-realistic photography to anime, oil paintings, and pencil sketches. Transform existing images by describing the desired aesthetic in your prompt.
+
+
+Python
+Bash
+
+import xai_sdk
+client = xai_sdk.Client()
+response = client.image.sample(
+    prompt="Render this image as an oil painting in the style of impressionism",
+    model="grok-imagine-image-quality",
+    image_url="https://docs.x.ai/assets/api-examples/images/style-realistic.png",
+)
+print(response.url)
+Oil Painting
+Pencil Sketch
+Pop Art
+Anime
+Watercolor
+Related
+Image Generation — Generate images from text prompts
+Multi-Image Editing — Edit with multiple source images
+API Reference — Full endpoint documentation
+Imagine API Landing Page — Showcase of the Imagine API in action
+Last updated: May 13, 2026
+
+
+Multi-Image Editing
+
+Copy for LLM
+View as Markdown
+Manage API keys
+Try Playground
+Use up to three source images for a single image edit. You can specify images in the order they are sent in the request. By default, the output aspect ratio follows the first input image. You can override this by setting the aspect_ratio parameter to a specific ratio, such as "1:1" or "16:9".
+
+Click to selectYoung woman in leather jacket standing outdoors
+Young man portrait outdoors
+Golden retriever puppy on grass
+Merged result combining man and puppyMerged result combining man and womanMerged result combining puppy and womanMerged result combining man and puppy and woman
+Select at least 2 source images
+
+Python
+Bash
+
+import xai_sdk
+client = xai_sdk.Client()
+response = client.image.sample(
+    prompt="Show all subjects sitting together on the grass in a sunny park. Casual relaxed mood, natural daylight, warm tones. No additional people or animals.",
+    model="grok-imagine-image-quality",
+    image_urls=[
+        "https://docs.x.ai/assets/api-examples/images/image-merge/woman.jpg",
+        "https://docs.x.ai/assets/api-examples/images/image-merge/man.jpg",
+        # "<image_url>",
+    ],
+    aspect_ratio="3:2",
+)
+print(response.url)
+Related
+Image Generation — Generate images from text prompts
+Image Editing — Edit a source image with natural language
+API Reference — Full endpoint documentation
+Imagine API Landing Page — Showcase of the Imagine API in action
+Last updated: March 23, 2026
+
+
+Image Generation
+
+Copy for LLM
+View as Markdown
+Manage API keys
+Try Playground
+Generate images from text prompts with Grok Imagine models. The API supports batch generation of multiple images, and control over aspect ratio and resolution.
+
+grok-imagine-image-pro will be deprecated as of May 15, 2026. Use grok-imagine-image-quality for all new image generation requests. Existing -pro requests will continue to work during a transition period, but we recommend migrating promptly.
+
+Quick Start
+Generate an image with a single API call:
+
+
+Python
+Bash
+Python (OpenAI)
+Javascript (OpenAI)
+
+Javascript
+
+import xai_sdk
+client = xai_sdk.Client()
+response = client.image.sample(
+    prompt="A collage of London landmarks in a stenciled street‑art style",
+    model="grok-imagine-image-quality",
+)
+print(response.url)
+Images are returned as URLs by default. URLs are temporary, so download or process promptly. You can also request base64 output for embedding images directly.
+
+Configuration
+Multiple Images
+Generate multiple images in a single request using the sample_batch() method and the n parameter. This returns a list of ImageResponse objects.
+
+
+Python
+Python (OpenAI)
+Javascript (OpenAI)
+
+Javascript
+Bash
+
+import xai_sdk
+client = xai_sdk.Client()
+responses = client.image.sample_batch(
+    prompt="A futuristic city skyline at night",
+    model="grok-imagine-image-quality",
+    n=4,
+)
+for i, image in enumerate(responses):
+    print(f"Variation {i + 1}: {image.url}")
+Aspect Ratio
+Control image dimensions with the aspect_ratio parameter. This works for image generation and image editing with multiple images. For image editing with a single image, the output aspect ratio respects the input image's aspect ratio.
+
+Ratio   Use case
+1:1 Social media, thumbnails
+16:9 / 9:16 Widescreen, mobile, stories
+4:3 / 3:4   Presentations, portraits
+3:2 / 2:3   Photography
+2:1 / 1:2   Banners, headers
+19.5:9 / 9:19.5 Modern smartphone displays
+20:9 / 9:20 Ultra-wide displays
+auto    Model auto-selects the best ratio for the prompt
+
+Python
+Python (OpenAI)
+Javascript (OpenAI)
+
+Javascript
+Bash
+
+import xai_sdk
+client = xai_sdk.Client()
+response = client.image.sample(
+    prompt="Mountain landscape at sunrise",
+    model="grok-imagine-image-quality",
+    aspect_ratio="16:9",
+)
+print(response.url)
+Resolution
+You can specify different resolutions of the output image. Currently supported image resolutions are:
+
+1k
+2k
+
+Python
+Python (OpenAI)
+Javascript (OpenAI)
+
+Javascript
+Bash
+
+import xai_sdk
+client = xai_sdk.Client()
+response = client.image.sample(
+    prompt="An astronaut performing EVA in LEO.",
+    model="grok-imagine-image-quality",
+    resolution="2k"
+)
+print(response.url)
+Base64 Output
+For embedding images directly without downloading, request base64:
+
+
+Python
+Python (OpenAI)
+Javascript (OpenAI)
+
+Javascript
+Bash
+
+import xai_sdk
+client = xai_sdk.Client()
+response = client.image.sample(
+    prompt="A serene Japanese garden",
+    model="grok-imagine-image-quality",
+    image_format="base64",
+)
+# Save to file
+with open("garden.jpg", "wb") as f:
+    f.write(response.image)
+Response Details
+The xAI SDK exposes additional metadata on the response object beyond the image URL or base64 data.
+
+Moderation — Check whether the generated image passed content moderation:
+
+Python
+
+
+if response.respect_moderation:
+    print(response.url)
+else:
+    print("Image filtered by moderation")
+Model — Get the actual model used (resolving any aliases):
+
+Python
+
+
+print(f"Model: {response.model}")
+Concurrent Requests
+When you need to generate multiple images with different prompts, such as generating unrelated images in parallel, use AsyncClient with asyncio.gather to fire requests concurrently. This is significantly faster than issuing them one at a time.
+
+If you want multiple variations from the same prompt, use sample_batch() with the n parameter` instead. That generates all images in a single request and is the most efficient approach for same-prompt generation.
+
+Python
+
+
+import asyncio
+import xai_sdk
+async def generate_concurrently():
+    client = xai_sdk.AsyncClient()
+    # Each request uses a different prompt
+    prompts = [
+        "A futuristic city skyline at sunset",
+        "A serene Japanese garden in winter",
+        "An astronaut floating above Earth",
+        "A medieval castle on a misty mountain",
+    ]
+    # Fire all requests concurrently
+    tasks = [
+        client.image.sample(
+            prompt=prompt,
+            model="grok-imagine-image-quality",
+        )
+        for prompt in prompts
+    ]
+    results = await asyncio.gather(*tasks)
+    for prompt, result in zip(prompts, results):
+        print(f"{prompt}: {result.url}")
+asyncio.run(generate_concurrently())
+Related
+Models — Available image models
+Image Editing — Edit images with natural language
+Video Generation — Generate videos from text prompts
+API Reference — Full endpoint documentation
+Imagine API Landing Page — Showcase of the Imagine API in action
+Last updated: May 14, 2026

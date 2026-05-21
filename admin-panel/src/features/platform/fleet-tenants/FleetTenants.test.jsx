@@ -4,8 +4,14 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
 // Avoid importing the real coreApi (which would drag in the full module graph).
+// PLATFORM-MODULES-EXPAND — el drawer ahora renderiza TenantModulesPanel,
+// que dispara `listTenantModules` cuando el user es platform_owner. Mockeamos
+// los dos endpoints nuevos con valores neutros para que el test del drawer
+// no rompa por fetch unhandled.
 vi.mock('../../../services/coreApi.js', () => ({
   listFleetTenants: vi.fn(),
+  listTenantModules: vi.fn().mockResolvedValue({ items: [] }),
+  updateTenantModule: vi.fn(),
 }));
 
 const mockNavigate = vi.fn();

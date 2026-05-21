@@ -43,6 +43,15 @@ const TASK_CODE_RE = /\b(?:TASK|BUG|SEC|UI)-\d+/i;
 // "digest_daily_v1", "subscription_payment_failed_v1".
 const TEMPLATE_NAME_RE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+_v\d+\b/;
 
+// Allowlist de IDs de modelos de proveedores IA (third-party) que matchean
+// el patrón anterior pero son legítimos — son las strings canónicas que
+// el operador platform_owner debe usar exactas al configurar el provider
+// (ver UI-INFLU-015). No son nombres internos de templates; son IDs
+// públicos del vendor.
+const VENDOR_MODEL_ALLOWLIST = [
+  /\beleven_[a-z0-9_]+\b/,  // ElevenLabs: eleven_multilingual_v2, eleven_turbo_v2_5
+];
+
 // Jerga puramente técnica que no debe aparecer en la UI. Lista corta y
 // conservadora — no bloquea palabras que sí pueden aparecer en contextos
 // legítimos para el usuario (ej. "email", "WhatsApp", "API").
@@ -124,6 +133,10 @@ describe('UI copy — referencias internas prohibidas', () => {
       const cleaned = stripComments(source);
       const match = cleaned.match(TEMPLATE_NAME_RE);
       if (match) {
+        // Skipear si el match es un ID público de modelo de vendor IA
+        // (ver `VENDOR_MODEL_ALLOWLIST`). Esos sí pertenecen en el code:
+        // son los identificadores que el operador platform_owner usa.
+        if (VENDOR_MODEL_ALLOWLIST.some((re) => re.test(match[0]))) continue;
         const rel = relative(SRC_DIR, file);
         const lineNumber = cleaned.slice(0, match.index).split('\n').length;
         const snippet = cleaned.split('\n')[lineNumber - 1]?.trim().slice(0, 120);

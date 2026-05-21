@@ -35,6 +35,13 @@ export const TENANT_NAV = Object.freeze([
       'media-library',
     ],
   },
+  // Módulo Ravit Studio (Influencer) — opt-in por tenant. `influencer-entry`
+  // es un nav item especial: el `TenantShellRoute` lo filtra dinámicamente
+  // según `tenant_modules.influencer.enabled` (consultado vía
+  // `isInfluencerEnabled`) y al clickearlo navega a `/t/{slug}/influencer`
+  // (en lugar de `/t/{slug}/influencer-entry`), abriendo el sub-shell con
+  // su sub-nav propia (INFLUENCER_NAV).
+  { section: 'Ravit Studio', items: ['influencer-entry'] },
   { section: 'Operación', items: ['outbound-dlq', 'go-live-readiness'] },
   { section: 'Configuración', items: ['tenant-setup', 'team', 'legal', 'audit'] },
 ]);
@@ -55,6 +62,12 @@ export const PLATFORM_NAV = Object.freeze([
   {
     section: 'Acceso',
     items: ['platform-roles-acl', 'platform-feature-flags'],
+  },
+  // Proveedores IA — config transversal de plataforma (no del módulo
+  // Influencer). El shell filtra por capability `platform.ai_providers.configure`.
+  {
+    section: 'Proveedores IA',
+    items: ['platform-ai-providers'],
   },
 ]);
 

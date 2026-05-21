@@ -1584,7 +1584,18 @@ alter default privileges in schema influencer
 
 create table if not exists app.tenant_modules (
   tenant_id     uuid not null references app.tenants(id) on delete cascade,
-  module        text not null check (module in ('influencer')),
+  -- Catálogo extendido por PLATFORM-MODULES-EXPAND. Si añades un módulo aquí,
+  -- replica el cambio en `03-migrations.sql` (constraint `tenant_modules_module_check`)
+  -- y en el catálogo de la UI `admin-panel/src/features/platform/fleet-tenants/components/TenantModulesPanel.jsx`.
+  module        text not null check (module in (
+    'influencer',
+    'chatbot',
+    'widget_web',
+    'campaigns',
+    'analytics',
+    'payments',
+    'gestion_documental'
+  )),
   enabled       boolean not null default false,
   plan          text null,
   activated_at  timestamptz null,
@@ -1643,3 +1654,49 @@ values
   ('tts',   'unset', null),
   ('stt',   'unset', null)
 on conflict (modality) do nothing;
+
+-- BUGFIX-AI-PROVIDERS-RLS: policies que permiten CRUD bajo support_mode.
+-- Ver comentario completo en 03-migrations.sql.
+drop policy if exists platform_ai_providers_support_select on app.platform_ai_providers;
+create policy platform_ai_providers_support_select
+  on app.platform_ai_providers
+  for select
+  using (current_setting('app.support_mode', true) = 'true');
+drop policy if exists platform_ai_providers_support_insert on app.platform_ai_providers;
+create policy platform_ai_providers_support_insert
+  on app.platform_ai_providers
+  for insert
+  with check (current_setting('app.support_mode', true) = 'true');
+drop policy if exists platform_ai_providers_support_update on app.platform_ai_providers;
+create policy platform_ai_providers_support_update
+  on app.platform_ai_providers
+  for update
+  using (current_setting('app.support_mode', true) = 'true')
+  with check (current_setting('app.support_mode', true) = 'true');
+drop policy if exists platform_ai_providers_support_delete on app.platform_ai_providers;
+create policy platform_ai_providers_support_delete
+  on app.platform_ai_providers
+  for delete
+  using (current_setting('app.support_mode', true) = 'true');
+
+drop policy if exists platform_secrets_support_select on app.platform_secrets;
+create policy platform_secrets_support_select
+  on app.platform_secrets
+  for select
+  using (current_setting('app.support_mode', true) = 'true');
+drop policy if exists platform_secrets_support_insert on app.platform_secrets;
+create policy platform_secrets_support_insert
+  on app.platform_secrets
+  for insert
+  with check (current_setting('app.support_mode', true) = 'true');
+drop policy if exists platform_secrets_support_update on app.platform_secrets;
+create policy platform_secrets_support_update
+  on app.platform_secrets
+  for update
+  using (current_setting('app.support_mode', true) = 'true')
+  with check (current_setting('app.support_mode', true) = 'true');
+drop policy if exists platform_secrets_support_delete on app.platform_secrets;
+create policy platform_secrets_support_delete
+  on app.platform_secrets
+  for delete
+  using (current_setting('app.support_mode', true) = 'true');

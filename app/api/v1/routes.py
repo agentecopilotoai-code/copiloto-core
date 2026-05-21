@@ -1693,6 +1693,25 @@ from app.api.v1.handlers.webhook_handlers import (  # noqa: F401, E402
 )
 
 
+# BUGFIX — Cargar los módulos que registran endpoints en `platform_admin_router`
+# y `tenant_admin_router` ANTES de incluir esos sub-routers en `router`.
+#
+# FastAPI `include_router(child)` **copia** `child.routes` en el momento de la
+# llamada, no por referencia. Si un módulo externo (ej. `app.influencer.admin_routes`)
+# usa decoradores `@platform_admin_router.X` para registrar endpoints, esos
+# decoradores deben haber corrido ANTES de `router.include_router(platform_admin_router)`.
+# Si no, los endpoints quedan en `platform_admin_router.routes` pero nunca llegan
+# a `app.routes` y devuelven 404 en runtime.
+#
+# El módulo de Influencer (`app.influencer.admin_routes`, TASK-INFLU-019) declara
+# 4 endpoints así: `/platform/ai-providers`, `/platform/ai-providers/{modality}`,
+# `/platform/tenant-modules`, `/platform/tenant-modules/{tenant_id}/{module}`.
+# Antes de este fix, `main.py` importaba `admin_routes` en línea 28, pero línea 5
+# ya había importado `v1_router` (este archivo) — el `include_router` de línea 1699
+# de abajo se ejecutaba con rutas vacías, así que los endpoints nunca aparecían
+# en la app.
+from app.influencer import admin_routes as _influencer_admin_routes  # noqa: F401, E402
+
 router.include_router(public_router)
 router.include_router(web_router)
 router.include_router(webhook_router)

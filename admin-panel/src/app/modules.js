@@ -56,6 +56,17 @@ export const adminModules = [
     capability: 'platform.feature_flags.read',
   },
   {
+    // Proveedores IA transversales — alimentan Influencer, Gestión
+    // Documental y futuros módulos que requieran LLM/Image/Video/TTS/STT.
+    // platform_owner only. El operador configura provider + modelo + rota
+    // la key por modalidad desde un único panel central.
+    id: 'platform-ai-providers',
+    label: 'Proveedores IA',
+    summary: 'Configuración cross-modalidad (llm/image/video/tts/stt) de los proveedores IA. Recurso transversal usado por Influencer, Gestión Documental y otros módulos. Solo platform_owner.',
+    scope: ['Catálogo de modalidades', 'Provider + modelo por modalidad', 'Rotación de secret (write-only)', 'Hint público (últimos 4 chars)'],
+    capability: 'platform.ai_providers.configure',
+  },
+  {
     id: 'dashboard',
     label: 'Dashboard',
     summary: 'Página de entrada para Owner / Admin: KPIs con variación semanal, alertas operativas y accesos rápidos.',
@@ -273,6 +284,26 @@ export const adminModules = [
   // UI-INFLU-002. Las 6 vistas materializadas viven en `src/features/influencer/` y
   // se implementan en UI-INFLU-003+. Aquí solo declaramos el catálogo + capability;
   // el `moduleRegistry` apunta a placeholders mientras se construye cada vista.
+  //
+  // `influencer-entry` es un ITEM DE NAV en `TENANT_NAV` que sirve como
+  // entry-point al sub-tree `/t/{slug}/influencer/*` (que vive en su propio
+  // shell `InfluencerShell` con sub-nav distinta). NO renderiza un módulo:
+  // cuando el shell del tenant detecta este id en `onModuleSelect`, navega
+  // a la URL del influencer shell. Si alguien aterriza directo en
+  // `/t/{slug}/influencer-entry`, el componente registrado en
+  // `moduleRegistry` redirige al InfluencerShell con `<Navigate replace/>`.
+  // La visibilidad de este item en el menú depende de DOS gates:
+  //   1. capability `influencer.module.access` (matriz de permisos).
+  //   2. `tenant_modules.influencer.enabled=true` (consultado por el
+  //      `TenantShellRoute` vía `isInfluencerEnabled` y materializado
+  //      filtrando este id de `adminModules` cuando NO está activo).
+  {
+    id: 'influencer-entry',
+    label: 'Ravit Studio',
+    summary: 'Ravit Studio · entry-point al módulo de influencers de IA (personajes, contenido, calendario, créditos). Abre el sub-shell con su propia sub-nav.',
+    scope: ['Acceso al InfluencerShell', 'Sub-nav: Casting / Calendario / Biblioteca / Créditos', 'Visibilidad gated por `tenant_modules.influencer.enabled=true`'],
+    capability: 'influencer.module.access',
+  },
   {
     id: 'influencer-casting',
     label: 'Casting',
