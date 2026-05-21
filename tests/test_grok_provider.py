@@ -183,9 +183,19 @@ def test_timeout_maps_to_provider_timeout_error():
 
 
 def test_generate_image_happy_path():
+    """xAI Imagine es OpenAI-compatible: endpoint `/v1/images/generations`,
+    payload con `response_format='b64_json'`, response `{data: [{b64_json}]}`.
+    El test también captura el path para garantizar que el provider golpea
+    la URL correcta (regression contra el 404 del path histórico
+    `/imagine/images`).
+    """
     img_bytes = _png_bytes()
+    captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        captured['path'] = request.url.path
+        captured['payload'] = json.loads(request.content.decode())
         return httpx.Response(
             200,
             json={
@@ -193,7 +203,7 @@ def test_generate_image_happy_path():
                 'model': GROK_MODELS['image'],
                 'data': [
                     {
-                        'b64_image': _b64(img_bytes),
+                        'b64_json': _b64(img_bytes),
                         'mime': 'image/png',
                         'width': 1024,
                         'height': 1024,
@@ -208,6 +218,13 @@ def test_generate_image_happy_path():
     results = asyncio.run(
         provider.generate_image(prompt='girl in resort', persona_anchor=_anchor()),
     )
+
+    # Path correcto — OpenAI-compatible en xAI.
+    assert captured['path'].endswith('/images/generations')
+    # Payload OpenAI-shape + extensión xAI `aspect_ratio`.
+    assert captured['payload']['response_format'] == 'b64_json'
+    assert captured['payload']['aspect_ratio'] == '1:1'
+    assert captured['payload']['n'] == 1
 
     assert len(results) == 1
     img = results[0]
@@ -225,6 +242,32 @@ def test_generate_image_content_flags_raises():
         return httpx.Response(
             200,
             json={'data': [], 'content_flags': ['nudity']},
+        )
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderContentRejected):
+        asyncio.run(
+            provider.generate_image(prompt='x', persona_anchor=_anchor()),
+        )
+
+
+def test_generate_image_respect_moderation_false_raises():
+    """xAI marca imágenes filtradas por moderation con
+    `respect_moderation=False` en el item. Si todas las imágenes vienen
+    así, no hay output usable → ProviderContentRejected.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                'id': 'img-xyz',
+                'data': [
+                    {
+                        'b64_json': _b64(b'irrelevant'),
+                        'respect_moderation': False,
+                    },
+                ],
+            },
         )
 
     provider = _make_provider(handler)

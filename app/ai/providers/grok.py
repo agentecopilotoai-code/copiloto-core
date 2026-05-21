@@ -234,6 +234,18 @@ class GrokProvider(LLMProvider, ImageProvider, VideoProvider, TTSProvider, STTPr
         safety_mode: bool = True,
         reference_image_url: str | None = None,
     ) -> list[ImageResult]:
+        """Genera imágenes via la API REST de xAI Imagine.
+
+        xAI expone un endpoint OpenAI-compatible: `POST /v1/images/generations`.
+        El payload base es OpenAI-shape (`model`, `prompt`, `n`,
+        `response_format`); `aspect_ratio` es una extensión propia de xAI
+        documentada en `docs/xGrok/Imagine Overview`. Soporta opcionalmente
+        `image_url` / `image_urls` para edits con reference images.
+
+        Response shape: `{data: [{url, b64_json?}, ...]}`. Pedimos
+        `response_format='b64_json'` para obtener los bytes inline (URLs
+        son temporales y exigirían un fetch extra).
+        """
         full_prompt = (SAFETY_PREFIX if safety_mode else '') + prompt
         refs: list[str] = list(persona_anchor.reference_image_urls or ())
         if reference_image_url:
@@ -243,25 +255,45 @@ class GrokProvider(LLMProvider, ImageProvider, VideoProvider, TTSProvider, STTPr
             'model': self._models['image'],
             'prompt': full_prompt,
             'n': max(1, int(count)),
-            'aspect_ratio': format,
-            'reference_image_urls': refs,
-            'style_tokens': list(persona_anchor.style_tokens or ()),
-            'safety_mode': bool(safety_mode),
+            'response_format': 'b64_json',
         }
+        # `aspect_ratio` es opcional en xAI; default 'auto'. Solo enviamos
+        # si el caller pidió algo distinto del wildcard.
+        if format and format != 'auto':
+            payload['aspect_ratio'] = format
+        # Reference images: el doc menciona `image_url` (1 ref, para edits
+        # de una sola imagen) y `image_urls` (hasta 3 para multi-edit).
+        if refs:
+            if len(refs) == 1:
+                payload['image_url'] = refs[0]
+            else:
+                payload['image_urls'] = refs[:3]
 
         t0 = time.monotonic()
-        body, _ = await self._post('/imagine/images', payload)
+        body, _ = await self._post('/images/generations', payload)
         elapsed_ms = (time.monotonic() - t0) * 1000.0
 
-        if body.get('content_flags'):
+        # xAI puede devolver content moderation en el item, no en root.
+        # Si todos los items vienen marcados como respect_moderation=False,
+        # tratamos como rejection (el cliente no puede usar la imagen).
+        data = body.get('data') or []
+        if not data and body.get('content_flags'):
             raise ProviderContentRejected(
                 f'grok rejected image generation: {body["content_flags"]}',
             )
+        all_filtered = data and all(
+            item.get('respect_moderation') is False for item in data
+        )
+        if all_filtered:
+            raise ProviderContentRejected(
+                'grok content_moderation rejected all generated images',
+            )
 
         results: list[ImageResult] = []
-        data = body.get('data') or []
         for item in data:
-            img_b64 = item.get('b64_image') or ''
+            # OpenAI shape: `b64_json`. Algunos endpoints xAI también
+            # devuelven `b64_image` — aceptamos ambos por defensa.
+            img_b64 = item.get('b64_json') or item.get('b64_image') or ''
             results.append(
                 ImageResult(
                     image_bytes=_decode_b64(img_b64),
