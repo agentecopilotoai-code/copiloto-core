@@ -148,6 +148,26 @@ export function updateTenantModule(session, tenantId, moduleCode, { enabled, pla
   });
 }
 
+// TASK-INFLU-002 — Catálogo cross-modalidad de proveedores IA del módulo
+// Influencer. Backend resuelve `platform_admin_router` + MFA. La response
+// nunca incluye `ciphertext` ni `secret_value`: solo `hint` (últimos 4 chars).
+export function listAIProviders(session) {
+  return request('/platform/ai-providers', { session });
+}
+
+// Actualiza la config de una modalidad (`llm`/`image`/`video`/`tts`/`stt`).
+// Si `secret_value` viene presente, el backend rota la key — guarda solo el
+// hint en DB y emite audit `platform.ai_provider_updated` con
+// `secret_rotated=true`. Sin `secret_value`, el PATCH solo cambia
+// `provider`/`model`/`params`.
+export function updateAIProvider(session, modality, payload) {
+  return request(`/platform/ai-providers/${modality}`, {
+    method: 'PATCH',
+    session,
+    body: payload,
+  });
+}
+
 export function getTenant(session, tenantId) {
   return request(`/tenants/${tenantId}`, { session, tenantId });
 }

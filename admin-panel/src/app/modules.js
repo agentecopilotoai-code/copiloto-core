@@ -56,6 +56,15 @@ export const adminModules = [
     capability: 'platform.feature_flags.read',
   },
   {
+    // TASK-INFLU-002 — Config de proveedores IA del módulo Influencer.
+    // platform_owner only. El componente vivía huérfano hasta ahora.
+    id: 'platform-influencer-ai-providers',
+    label: 'Proveedores IA · Influencer',
+    summary: 'Configuración cross-modalidad (llm/image/video/tts/stt) de los proveedores IA que alimentan el módulo Influencer. Solo platform_owner.',
+    scope: ['Catálogo de modalidades', 'Provider + modelo por modalidad', 'Rotación de secret (write-only)', 'Hint público (últimos 4 chars)'],
+    capability: 'influencer.ai_providers.configure',
+  },
+  {
     id: 'dashboard',
     label: 'Dashboard',
     summary: 'Página de entrada para Owner / Admin: KPIs con variación semanal, alertas operativas y accesos rápidos.',

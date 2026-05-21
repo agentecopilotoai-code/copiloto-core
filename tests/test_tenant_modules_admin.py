@@ -37,6 +37,35 @@ def _request(user_id=None):
     return SimpleNamespace(state=SimpleNamespace(user_id=user_id or uuid4()))
 
 
+class _NoOpTxn:
+    """Async context manager no-op para mockear ``conn.transaction()``.
+
+    Los handlers ahora abren ``async with conn.transaction():`` para anclar
+    ``set_config('app.support_mode', 'on', true)`` (transaction-local) a la
+    misma transacción que el resto de queries. ``AsyncMock`` no provee
+    ``__aenter__``/``__aexit__`` por defecto en métodos sync (que es como
+    asyncpg expone ``.transaction()``), entonces el test plumbea este stub.
+    """
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+
+def _async_conn(**kwargs):
+    """AsyncMock con ``conn.transaction()`` simulado como CM no-op.
+
+    El handler real corre todo dentro de ``async with conn.transaction()``
+    para que ``set_config(..., true)`` persista; los tests no necesitan
+    semántica transaccional real, solo que el CM no rompa.
+    """
+    conn = AsyncMock(**kwargs)
+    conn.transaction = lambda *a, **kw: _NoOpTxn()
+    return conn
+
+
 def _module_row(*, tenant_id, slug, name, module, enabled, when=None):
     """Una fila típica del JOIN en list_tenant_modules."""
     return {
@@ -76,7 +105,7 @@ def _patch_set_support_mode():
 
 def test_list_tenant_modules_empty():
     """Lista sin filtros y DB vacía retorna response con items=[]."""
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetch = AsyncMock(return_value=[])
 
     result = asyncio.run(list_tenant_modules(_request(), conn=conn))
@@ -90,7 +119,7 @@ def test_list_tenant_modules_returns_rows_with_display_name():
     `tenant_name` viene del SELECT con la columna correcta.
     """
     tenant_id = uuid4()
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetch = AsyncMock(return_value=[
         _module_row(
             tenant_id=tenant_id, slug='clinica-x', name='Clínica X',
@@ -113,7 +142,7 @@ def test_list_tenant_modules_returns_rows_with_display_name():
 
 def test_list_tenant_modules_filters_by_module():
     """Pasar `module='influencer'` añade un WHERE."""
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetch = AsyncMock(return_value=[])
 
     asyncio.run(list_tenant_modules(_request(), module='influencer', conn=conn))
@@ -126,7 +155,7 @@ def test_list_tenant_modules_filters_by_module():
 
 def test_list_tenant_modules_filters_by_enabled_bool():
     """`enabled=True` se traduce a `tm.enabled = $N`."""
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetch = AsyncMock(return_value=[])
 
     asyncio.run(list_tenant_modules(_request(), enabled=True, conn=conn))
@@ -141,7 +170,7 @@ def test_list_tenant_modules_filters_by_tenant_search_uses_display_name():
     """BUGFIX-PLATFORM-ROUTES — el WHERE de búsqueda usa
     `lower(t.display_name)` (antes era `t.name`). Verificamos el SQL.
     """
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetch = AsyncMock(return_value=[])
 
     asyncio.run(list_tenant_modules(_request(), tenant_search='Clinica', conn=conn))
@@ -159,7 +188,7 @@ def test_list_tenant_modules_filters_by_tenant_search_uses_display_name():
 
 def test_update_tenant_module_404_when_tenant_not_found():
     """Si `app.tenants` no tiene el id, devuelve 404 con detail explícito."""
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetchrow = AsyncMock(return_value=None)  # tenant lookup retorna None
 
     with pytest.raises(HTTPException) as exc:
@@ -181,7 +210,7 @@ def test_update_tenant_module_activates_new_module():
     tenant_id = uuid4()
     tenant_row = {'id': tenant_id, 'slug': 'demo', 'display_name': 'Demo Org'}
 
-    conn = AsyncMock()
+    conn = _async_conn()
     # 1ra llamada: SELECT del tenant. 2da: SELECT existing (None → activated_changed=True).
     # 3ra: INSERT ... ON CONFLICT ... RETURNING * → row final.
     conn.fetchrow = AsyncMock(side_effect=[
@@ -219,7 +248,7 @@ def test_update_tenant_module_deactivates_module():
     tenant_id = uuid4()
     tenant_row = {'id': tenant_id, 'slug': 'demo', 'display_name': 'Demo Org'}
 
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetchrow = AsyncMock(side_effect=[
         tenant_row,
         {'enabled': True},  # existía enabled=true, vamos a desactivar
@@ -252,7 +281,7 @@ def test_update_tenant_module_only_metadata_no_state_change():
     tenant_id = uuid4()
     tenant_row = {'id': tenant_id, 'slug': 'demo', 'display_name': 'Demo Org'}
 
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetchrow = AsyncMock(side_effect=[
         tenant_row,
         {'enabled': True},  # existía igual
@@ -285,7 +314,7 @@ def test_update_tenant_module_influencer_requires_ai_providers():
     tenant_id = uuid4()
     tenant_row = {'id': tenant_id, 'slug': 'demo', 'display_name': 'Demo Org'}
 
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetchrow = AsyncMock(return_value=tenant_row)
     conn.fetch = AsyncMock(return_value=[])  # ninguna modalidad configurada
 
@@ -308,7 +337,7 @@ def test_update_tenant_module_influencer_ok_when_providers_present():
     tenant_id = uuid4()
     tenant_row = {'id': tenant_id, 'slug': 'demo', 'display_name': 'Demo Org'}
 
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetchrow = AsyncMock(side_effect=[
         tenant_row,
         None,  # no existía fila previa
@@ -345,7 +374,7 @@ def test_update_tenant_module_influencer_ok_when_providers_present():
 
 def test_list_platform_ai_providers_empty():
     """Sin filas en la DB el response trae rows=[]."""
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetch = AsyncMock(return_value=[])
 
     result = asyncio.run(list_platform_ai_providers(conn=conn))
@@ -356,7 +385,7 @@ def test_list_platform_ai_providers_returns_rows_without_secrets():
     """El response solo expone `hint` (últimos 4 chars), nunca `secret_value`
     ni `ciphertext`. Confirmación de la defensa contra leak via API.
     """
-    conn = AsyncMock()
+    conn = _async_conn()
     conn.fetch = AsyncMock(return_value=[
         {
             'modality': 'llm',
@@ -396,7 +425,7 @@ def test_list_platform_ai_providers_returns_rows_without_secrets():
 
 def test_update_platform_ai_provider_rejects_unknown_modality():
     """Si la modalidad no está en MODALITIES, 400 con mensaje claro."""
-    conn = AsyncMock()
+    conn = _async_conn()
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(update_platform_ai_provider(
@@ -413,7 +442,7 @@ def test_update_platform_ai_provider_rejects_empty_payload():
     """Si NO se pasa ningún campo, 400 con 'at least one field must be
     provided'.
     """
-    conn = AsyncMock()
+    conn = _async_conn()
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(update_platform_ai_provider(
@@ -431,7 +460,7 @@ def test_update_platform_ai_provider_404_when_row_missing():
     porque la migración seedea 5 modalidades, pero el handler maneja el
     caso), responde 404.
     """
-    conn = AsyncMock()
+    conn = _async_conn()
     # actor lookup → None (no resolvemos UUID), UPDATE → None.
     conn.fetchrow = AsyncMock(return_value=None)
     conn.execute = AsyncMock(return_value=None)
@@ -445,3 +474,71 @@ def test_update_platform_ai_provider_404_when_row_missing():
         ))
     assert exc.value.status_code == 404
     assert 'llm' in exc.value.detail
+
+
+# ─── BUGFIX-RLS-TXN: `update_tenant_module` debe correr todo dentro de un
+#     `async with conn.transaction():`. Sin esa transacción explícita,
+#     `set_config('app.support_mode', 'on', true)` es transaction-local y se
+#     descarta antes del INSERT → RLS rechaza el INSERT con
+#     `InsufficientPrivilegeError: new row violates row-level security
+#     policy for table "tenant_modules"`. Estos tests son defensivos para
+#     que un refactor futuro no rompa ese contrato sin que falle CI.
+
+
+def test_update_tenant_module_runs_inside_transaction():
+    """``conn.transaction()`` se invoca exactamente una vez al activar un
+    módulo. Garantiza que el handler abre la transacción explícita —
+    requerida para que ``set_config('app.support_mode', 'on', true)``
+    persista a lo largo del SELECT/INSERT.
+    """
+    tenant_id = uuid4()
+    tenant_row = {'id': tenant_id, 'slug': 'demo', 'display_name': 'Demo Org'}
+
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(side_effect=[
+        tenant_row,
+        None,
+        {
+            'tenant_id': tenant_id, 'module': 'chatbot', 'enabled': True,
+            'plan': None, 'activated_at': datetime.now(timezone.utc),
+            'activated_by': uuid4(), 'notes': None,
+        },
+    ])
+
+    txn_calls = []
+    original_transaction = conn.transaction
+    def _spy(*a, **kw):
+        txn_calls.append((a, kw))
+        return original_transaction(*a, **kw)
+    conn.transaction = _spy
+
+    asyncio.run(update_tenant_module(
+        tenant_id=str(tenant_id),
+        module='chatbot',
+        body=TenantModuleUpdate(enabled=True),
+        request=_request(),
+        conn=conn,
+    ))
+    assert len(txn_calls) == 1, (
+        'update_tenant_module debe abrir exactamente un `async with '
+        'conn.transaction():` que envuelve `set_config` + INSERT/UPDATE.'
+    )
+
+
+def test_list_tenant_modules_runs_inside_transaction():
+    """Mismo contrato para ``list_tenant_modules`` — aunque el SELECT no
+    dispare RLS de escritura, mantener el patrón consistente facilita razonar
+    sobre el lifecycle del config session-local.
+    """
+    conn = _async_conn()
+    conn.fetch = AsyncMock(return_value=[])
+
+    txn_calls = []
+    original_transaction = conn.transaction
+    def _spy(*a, **kw):
+        txn_calls.append((a, kw))
+        return original_transaction(*a, **kw)
+    conn.transaction = _spy
+
+    asyncio.run(list_tenant_modules(_request(), conn=conn))
+    assert len(txn_calls) == 1

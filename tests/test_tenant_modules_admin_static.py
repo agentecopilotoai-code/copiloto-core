@@ -104,4 +104,37 @@ def test_idempotent_patch_does_not_reset_activated_at():
     """Si enabled no cambia, solo update plan/notes — NO activated_at."""
     assert 'activated_changed' in SRC
     # En el branch idempotente, solo update plan y notes (no activated_at).
-    assert 'update app.tenant_modules\n            set plan' in SRC
+    # BUGFIX-RLS-TXN — el cuerpo ahora vive dentro de
+    # `async with conn.transaction():`, así que la indentación del SQL
+    # subió un nivel. Comparamos modulo whitespace para no acoplar el test
+    # a la profundidad exacta de indentación.
+    import re
+    normalised = re.sub(r'\s+', ' ', SRC)
+    assert 'update app.tenant_modules set plan' in normalised
+
+
+def test_update_tenant_module_runs_inside_explicit_transaction():
+    """BUGFIX-RLS-TXN — el handler ``update_tenant_module`` debe envolver
+    ``set_config('app.support_mode', 'on', true)`` + INSERT/UPDATE en un
+    ``async with conn.transaction():``. Sin la transacción explícita el
+    setting es transaction-local y se descarta antes del INSERT, así que
+    RLS rechaza la escritura con ``InsufficientPrivilegeError``. Verificamos
+    la presencia del bloque en el código fuente del handler.
+    """
+    idx = SRC.find('async def update_tenant_module')
+    assert idx > 0
+    # 2500 chars cubren el cuerpo entero del handler.
+    body = SRC[idx:idx + 2500]
+    assert 'async with conn.transaction():' in body, (
+        'update_tenant_module DEBE correr todo dentro de '
+        '`async with conn.transaction():` para anclar `set_config(..., true)` '
+        'al ciclo de vida del INSERT.'
+    )
+
+
+def test_list_tenant_modules_runs_inside_explicit_transaction():
+    """Mismo contrato para el GET — mantiene patrón consistente con el PATCH."""
+    idx = SRC.find('async def list_tenant_modules')
+    assert idx > 0
+    body = SRC[idx:idx + 2500]
+    assert 'async with conn.transaction():' in body

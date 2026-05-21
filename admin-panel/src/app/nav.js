@@ -56,6 +56,13 @@ export const PLATFORM_NAV = Object.freeze([
     section: 'Acceso',
     items: ['platform-roles-acl', 'platform-feature-flags'],
   },
+  // TASK-INFLU-002 — Config de proveedores IA del módulo Influencer (vivía
+  // huérfana sin entrada en sidebar). Solo platform_owner ve esta sección;
+  // el shell la filtra por capability `influencer.ai_providers.configure`.
+  {
+    section: 'Módulo Influencer',
+    items: ['platform-influencer-ai-providers'],
+  },
 ]);
 
 // Viewer — shell read-only. Reusa los módulos de lectura del tenant; el shell

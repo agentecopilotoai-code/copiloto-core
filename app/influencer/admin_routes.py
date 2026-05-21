@@ -310,6 +310,13 @@ class TenantModuleUpdate(BaseModel):
 
 
 async def _set_support_mode(conn: asyncpg.Connection, on: bool) -> None:
+    # `is_local=true` ata el setting al *current transaction*. asyncpg corre
+    # cada `conn.execute`/`fetch` en autocommit (transacción implícita de un
+    # sólo statement), entonces sin un `BEGIN` explícito el `set_config(...,
+    # true)` se descarta al cerrar la transacción implícita y la siguiente
+    # query corre sin `app.support_mode='on'` → RLS rechaza el INSERT con
+    # `InsufficientPrivilegeError`. El caller DEBE envolver el bloque en
+    # `async with conn.transaction()` para que el config sobreviva.
     await conn.execute(
         'select set_config($1, $2, true)',
         'app.support_mode', 'on' if on else 'off',
@@ -328,38 +335,42 @@ async def list_tenant_modules(
     tenant_search: str | None = None,
     conn: asyncpg.Connection = Depends(get_db),
 ) -> TenantModuleListResponse:
-    await _set_support_mode(conn, True)
+    # Transacción explícita para que `set_config('app.support_mode', 'on',
+    # true)` siga vigente cuando corra el `fetch` siguiente (ver comentario
+    # en `_set_support_mode`).
+    async with conn.transaction():
+        await _set_support_mode(conn, True)
 
-    where: list[str] = ['tm.tenant_id is not null']
-    params: list = []
-    if module:
-        params.append(module)
-        where.append(f'tm.module = ${len(params)}')
-    if enabled is not None:
-        params.append(enabled)
-        where.append(f'tm.enabled = ${len(params)}')
-    if tenant_search:
-        params.append(f'%{tenant_search.lower()}%')
-        # BUGFIX — el query usaba `t.name` que no existe en `app.tenants`.
-        # Las columnas reales son `legal_name` y `display_name`. Buscamos
-        # contra `display_name` (lo que ve el operador en la UI) además del
-        # slug.
-        where.append(
-            f'(lower(t.slug) like ${len(params)} or lower(t.display_name) like ${len(params)})',
+        where: list[str] = ['tm.tenant_id is not null']
+        params: list = []
+        if module:
+            params.append(module)
+            where.append(f'tm.module = ${len(params)}')
+        if enabled is not None:
+            params.append(enabled)
+            where.append(f'tm.enabled = ${len(params)}')
+        if tenant_search:
+            params.append(f'%{tenant_search.lower()}%')
+            # BUGFIX — el query usaba `t.name` que no existe en `app.tenants`.
+            # Las columnas reales son `legal_name` y `display_name`. Buscamos
+            # contra `display_name` (lo que ve el operador en la UI) además del
+            # slug.
+            where.append(
+                f'(lower(t.slug) like ${len(params)} or lower(t.display_name) like ${len(params)})',
+            )
+
+        rows = await conn.fetch(
+            f'''
+            select t.id as tenant_id, t.slug as tenant_slug, t.display_name as tenant_name,
+                   tm.module, tm.enabled, tm.plan, tm.activated_at, tm.activated_by,
+                   tm.notes
+            from app.tenants t
+            left join app.tenant_modules tm on tm.tenant_id = t.id
+            where {' and '.join(where)}
+            order by t.slug, tm.module
+            ''',
+            *params,
         )
-
-    rows = await conn.fetch(
-        f'''
-        select t.id as tenant_id, t.slug as tenant_slug, t.display_name as tenant_name,
-               tm.module, tm.enabled, tm.plan, tm.activated_at, tm.activated_by,
-               tm.notes
-        from app.tenants t
-        left join app.tenant_modules tm on tm.tenant_id = t.id
-        where {' and '.join(where)}
-        order by t.slug, tm.module
-        ''',
-        *params,
-    )
     items = [
         TenantModuleRow(
             tenant_id=str(r['tenant_id']),
@@ -390,100 +401,108 @@ async def update_tenant_module(
     conn: asyncpg.Connection = Depends(get_db),
 ) -> TenantModuleRow:
     actor_id = getattr(request.state, 'user_id', None)
-    await _set_support_mode(conn, True)
 
-    # Verifica que el tenant existe.
-    # BUGFIX — la columna `name` no existe; usar `display_name`.
-    tenant = await conn.fetchrow(
-        'select id, slug, display_name from app.tenants where id = $1', tenant_id,
-    )
-    if tenant is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, 'tenant not found')
+    # Toda la operación en una transacción única: `set_config('app.support_mode',
+    # 'on', true)` es transaction-local; sin este `BEGIN` explícito, el setting
+    # se descarta antes del INSERT/UPDATE y RLS rechaza la escritura con
+    # `InsufficientPrivilegeError: new row violates row-level security policy for
+    # table "tenant_modules"`. Audit + invalidate cache también caen dentro: si
+    # algo falla, no queremos una fila escrita sin audit trail.
+    async with conn.transaction():
+        await _set_support_mode(conn, True)
 
-    # Pre-flight check para el módulo influencer: providers configurados.
-    if module == 'influencer' and body.enabled is True:
-        configured = await conn.fetch(
-            '''
-            select modality from app.platform_ai_providers
-            where modality = any($1) and secret_ref is not null
-            ''',
-            list(_REQUIRED_MODALITIES_FOR_INFLUENCER),
+        # Verifica que el tenant existe.
+        # BUGFIX — la columna `name` no existe; usar `display_name`.
+        tenant = await conn.fetchrow(
+            'select id, slug, display_name from app.tenants where id = $1', tenant_id,
         )
-        configured_modalities = {r['modality'] for r in configured}
-        missing = set(_REQUIRED_MODALITIES_FOR_INFLUENCER) - configured_modalities
-        if missing:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail=f'ai_providers_not_configured: missing {sorted(missing)}',
+        if tenant is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, 'tenant not found')
+
+        # Pre-flight check para el módulo influencer: providers configurados.
+        if module == 'influencer' and body.enabled is True:
+            configured = await conn.fetch(
+                '''
+                select modality from app.platform_ai_providers
+                where modality = any($1) and secret_ref is not null
+                ''',
+                list(_REQUIRED_MODALITIES_FOR_INFLUENCER),
             )
+            configured_modalities = {r['modality'] for r in configured}
+            missing = set(_REQUIRED_MODALITIES_FOR_INFLUENCER) - configured_modalities
+            if missing:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    detail=f'ai_providers_not_configured: missing {sorted(missing)}',
+                )
 
-    # Lee la fila existente para decidir si activated_at debe cambiar.
-    existing = await conn.fetchrow(
-        '''
-        select enabled from app.tenant_modules
-        where tenant_id = $1 and module = $2
-        ''',
-        tenant_id, module,
-    )
-
-    # Si no existía o cambia el toggle, activated_at = now()
-    activated_changed = existing is None or bool(existing['enabled']) != body.enabled
-
-    if activated_changed:
-        sql = '''
-            insert into app.tenant_modules
-              (tenant_id, module, enabled, plan, activated_at, activated_by, notes)
-            values ($1, $2, $3, $4, now(), $5, $6)
-            on conflict (tenant_id, module) do update set
-              enabled = excluded.enabled,
-              plan = excluded.plan,
-              activated_at = now(),
-              activated_by = excluded.activated_by,
-              notes = excluded.notes
-            returning *
-        '''
-        params = (tenant_id, module, body.enabled, body.plan, actor_id, body.notes)
-    else:
-        sql = '''
-            update app.tenant_modules
-            set plan = $1, notes = $2
-            where tenant_id = $3 and module = $4
-            returning *
-        '''
-        params = (body.plan, body.notes, tenant_id, module)
-
-    try:
-        row = await conn.fetchrow(sql, *params)
-    except asyncpg.CheckViolationError as exc:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f'module {module!r} not in CHECK constraint: {exc}',
-        ) from exc
-
-    if activated_changed:
-        # Audit (sin `notes` — puede contener PII).
-        action = (
-            'platform.tenant_module.activated' if body.enabled
-            else 'platform.tenant_module.deactivated'
+        # Lee la fila existente para decidir si activated_at debe cambiar.
+        existing = await conn.fetchrow(
+            '''
+            select enabled from app.tenant_modules
+            where tenant_id = $1 and module = $2
+            ''',
+            tenant_id, module,
         )
-        await audit(
-            conn,
-            tenant_id=None,
-            actor_type='platform_owner',
-            actor_id=str(actor_id) if actor_id else None,
-            action=action,
-            entity_type='tenant_module',
-            entity_id=f'{tenant_id}:{module}',
-            metadata={
-                'tenant_id': str(tenant_id),
-                'module': module,
-                'enabled': body.enabled,
-                'plan': body.plan,
-                'notes_provided': bool(body.notes),
-            },
-        )
-        # Invalidate gate cache (mismo worker; otros workers vencen por TTL 5min).
-        _module_gate_cache_invalidate()
+
+        # Si no existía o cambia el toggle, activated_at = now()
+        activated_changed = existing is None or bool(existing['enabled']) != body.enabled
+
+        if activated_changed:
+            sql = '''
+                insert into app.tenant_modules
+                  (tenant_id, module, enabled, plan, activated_at, activated_by, notes)
+                values ($1, $2, $3, $4, now(), $5, $6)
+                on conflict (tenant_id, module) do update set
+                  enabled = excluded.enabled,
+                  plan = excluded.plan,
+                  activated_at = now(),
+                  activated_by = excluded.activated_by,
+                  notes = excluded.notes
+                returning *
+            '''
+            params = (tenant_id, module, body.enabled, body.plan, actor_id, body.notes)
+        else:
+            sql = '''
+                update app.tenant_modules
+                set plan = $1, notes = $2
+                where tenant_id = $3 and module = $4
+                returning *
+            '''
+            params = (body.plan, body.notes, tenant_id, module)
+
+        try:
+            row = await conn.fetchrow(sql, *params)
+        except asyncpg.CheckViolationError as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f'module {module!r} not in CHECK constraint: {exc}',
+            ) from exc
+
+        if activated_changed:
+            # Audit (sin `notes` — puede contener PII).
+            action = (
+                'platform.tenant_module.activated' if body.enabled
+                else 'platform.tenant_module.deactivated'
+            )
+            await audit(
+                conn,
+                tenant_id=None,
+                actor_type='platform_owner',
+                actor_id=str(actor_id) if actor_id else None,
+                action=action,
+                entity_type='tenant_module',
+                entity_id=f'{tenant_id}:{module}',
+                metadata={
+                    'tenant_id': str(tenant_id),
+                    'module': module,
+                    'enabled': body.enabled,
+                    'plan': body.plan,
+                    'notes_provided': bool(body.notes),
+                },
+            )
+            # Invalidate gate cache (mismo worker; otros workers vencen por TTL 5min).
+            _module_gate_cache_invalidate()
 
     return TenantModuleRow(
         tenant_id=str(row['tenant_id']),

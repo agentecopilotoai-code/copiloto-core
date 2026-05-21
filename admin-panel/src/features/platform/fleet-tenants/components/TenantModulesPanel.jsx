@@ -145,7 +145,12 @@ function TenantModulesContent({ tenant, permissions }) {
                     onChange={(event) => handleToggle(row.code, event.target.checked)}
                     aria-label={`${row.enabled ? 'Desactivar' : 'Activar'} ${row.label}`}
                   />
-                  <span aria-hidden="true">{row.enabled ? 'ON' : 'OFF'}</span>
+                  <span className={styles.moduleSwitchTrack} aria-hidden="true">
+                    <span className={styles.moduleSwitchThumb} />
+                  </span>
+                  <span className={styles.moduleSwitchValue} aria-hidden="true">
+                    {row.enabled ? 'ON' : 'OFF'}
+                  </span>
                 </label>
               ) : null}
             </li>

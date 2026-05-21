@@ -6,6 +6,7 @@ import { Incidents } from '../features/platform/incidents/index.js';
 import { RolesAcl } from '../features/platform/roles-acl/index.js';
 import { Runbooks } from '../features/platform/runbooks/index.js';
 import { SystemHealth } from '../features/platform/system-health/index.js';
+import { AIProvidersContainer } from '../features/platform/influencer-ai-providers/AIProvidersContainer.jsx';
 import { Dashboard } from '../features/owner-admin/dashboard/index.js';
 import { Onboarding } from '../features/owner-admin/onboarding/index.js';
 import { ConversationsContacts } from '../features/owner-admin/conversations-contacts/index.js';
@@ -70,6 +71,13 @@ export const MODULE_REGISTRY = Object.freeze({
   'platform-feature-flags': {
     Component: FeatureFlags,
     capability: 'platform.feature_flags.read',
+  },
+  // TASK-INFLU-002 — Container del módulo Proveedores IA (Influencer). El
+  // capability `influencer.ai_providers.configure` solo lo tiene platform_owner.
+  'platform-influencer-ai-providers': {
+    Component: AIProvidersContainer,
+    capability: 'influencer.ai_providers.configure',
+    mode: 'RW',
   },
   // BUG-188 (codex P2 sobre BUG-117): `modules.js` ya cambió la capability
   // a `dashboard.read` (Owner/Admin only), pero `moduleRegistry` seguía
