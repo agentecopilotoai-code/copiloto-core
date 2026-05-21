@@ -1,0 +1,80 @@
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  border-collapse: collapse;
+  font-size: var(--fs-small);
+  min-width: 100%;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid var(--line);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.table th {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.table tbody tr:hover {
+  background: var(--bg-deep);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.modalityCell {
+  font-weight: var(--fw-semibold);
+  color: var(--ink);
+}
+
+.hintMono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  letter-spacing: 0.04em;
+}
+
+.rotatedAt {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+}
+
+.actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.testLine {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  margin-top: var(--space-1);
+}
+
+.testLine--ok {
+  color: var(--ok-ink, var(--success));
+}
+
+.testLine--fail {
+  color: var(--danger-ink, var(--ink));
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  margin: 0;
+}

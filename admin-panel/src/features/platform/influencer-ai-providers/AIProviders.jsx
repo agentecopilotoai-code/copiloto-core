@@ -1,10 +1,23 @@
 /**
  * UI-INFLU-015 — Config de proveedores IA del módulo Influencer
  * (platform_owner only).
+ *
+ * Modal de edición (no side-panel). El form usa nombres de campos opacos +
+ * `autoComplete="off"` + `data-1p-ignore`/`data-lpignore` para evitar que
+ * los password managers (1Password, LastPass, Chrome autofill) ofrezcan
+ * credenciales del usuario en estos campos — esto NO es un login.
  */
 import { useState } from 'react';
 
-import { AlertBanner, Card, PageHeader, StatusBadge } from '../../../components/ui/index.js';
+import {
+  AlertBanner,
+  Button,
+  Card,
+  FormField,
+  Modal,
+  PageHeader,
+  StatusBadge,
+} from '../../../components/ui/index.js';
 import {
   MODALITIES,
   PROVIDERS_BY_MODALITY,
@@ -13,6 +26,7 @@ import {
   providerLabel,
   validateModelByProvider,
 } from './aiProvidersData.js';
+import styles from './AIProviders.module.css';
 
 
 export function AIProviders({
@@ -24,6 +38,7 @@ export function AIProviders({
   const [editing, setEditing] = useState(null);  // modality o null
   const [form, setForm] = useState(null);
   const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [testResults, setTestResults] = useState({});
 
   const startEdit = (row) => {
@@ -34,21 +49,42 @@ export function AIProviders({
       api_key: '',  // siempre vacío (write-only)
       params: row.params || {},
     });
+    setError(null);
     setEditing(row.modality);
   };
 
-  const handleSave = async () => {
+  const closeModal = () => {
+    if (saving) return;
+    setEditing(null);
+    setForm(null);
+    setError(null);
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     const v = validateModelByProvider(form.provider, form.model);
     if (!v.valid) { setError(v.error); return; }
     setError(null);
-    await onSave?.(form.modality, buildPatchPayload(form));
-    setEditing(null);
+    setSaving(true);
+    try {
+      await onSave?.(form.modality, buildPatchPayload(form));
+      setEditing(null);
+      setForm(null);
+    } catch (err) {
+      setError(err?.message || 'No se pudo guardar el cambio.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleTest = async (row) => {
     const result = await onTestProvider?.(row.modality);
     setTestResults((prev) => ({ ...prev, [row.modality]: result }));
   };
+
+  // Nombres de campos opacos — no usan `email`/`password`/`username` para
+  // que los browsers no autofilleen credenciales del usuario aquí.
+  const formId = 'ai-providers-edit';
 
   return (
     <div data-feature="platform-influencer-ai-providers">
@@ -59,115 +95,183 @@ export function AIProviders({
       />
 
       <Card padding="md">
-        <table aria-label="Proveedores AI" style={{ width: '100%' }}>
-          <thead>
-            <tr>
-              <th scope="col" align="left">Modalidad</th>
-              <th scope="col" align="left">Provider</th>
-              <th scope="col" align="left">Modelo</th>
-              <th scope="col" align="left">Hint</th>
-              <th scope="col" align="left">Health</th>
-              <th scope="col" align="left">Última rotación</th>
-              <th scope="col" align="left">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {MODALITIES.map((m) => {
-              const row = rows.find((r) => r.modality === m.value) || { modality: m.value, provider: 'unset' };
-              const healthState = health[m.value];
-              const test = testResults[m.value];
-              return (
-                <tr key={m.value} style={{ borderTop: '1px solid var(--color-border-subtle, #e5e7eb)' }}>
-                  <td>{modalityLabel(m.value)}</td>
-                  <td>{providerLabel(row.provider)}</td>
-                  <td>{row.model || '—'}</td>
-                  <td>{row.hint ? `••••${row.hint}` : '—'}</td>
-                  <td>
-                    <StatusBadge tone={healthState === 'healthy' ? 'success' : healthState === 'degraded' ? 'warning' : 'neutral'}>
-                      {healthState || 'unknown'}
-                    </StatusBadge>
-                  </td>
-                  <td style={{ fontSize: 11, color: 'var(--color-text-subtle, #6b7280)' }}>
-                    {row.rotated_at || '—'}
-                  </td>
-                  <td>
-                    <button type="button" onClick={() => startEdit(row)}>Editar</button>
-                    <button type="button" onClick={() => handleTest(row)} style={{ marginLeft: 4 }}>
-                      Probar
-                    </button>
-                    {test && (
-                      <div style={{ fontSize: 11, marginTop: 2 }}>
-                        {test.ok ? `OK · ${test.elapsed_ms}ms` : `FAIL · ${test.error}`}
+        <div className={styles.tableWrap}>
+          <table aria-label="Proveedores AI" className={styles.table}>
+            <thead>
+              <tr>
+                <th scope="col">Modalidad</th>
+                <th scope="col">Provider</th>
+                <th scope="col">Modelo</th>
+                <th scope="col">Hint</th>
+                <th scope="col">Health</th>
+                <th scope="col">Última rotación</th>
+                <th scope="col">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {MODALITIES.map((m) => {
+                const row = rows.find((r) => r.modality === m.value) || {
+                  modality: m.value, provider: 'unset',
+                };
+                const healthState = health[m.value];
+                const test = testResults[m.value];
+                return (
+                  <tr key={m.value}>
+                    <td className={styles.modalityCell}>{modalityLabel(m.value)}</td>
+                    <td>{providerLabel(row.provider)}</td>
+                    <td>{row.model || <span className={styles.muted}>—</span>}</td>
+                    <td>
+                      {row.hint ? (
+                        <span className={styles.hintMono}>••••{row.hint}</span>
+                      ) : (
+                        <span className={styles.muted}>—</span>
+                      )}
+                    </td>
+                    <td>
+                      <StatusBadge
+                        tone={
+                          healthState === 'healthy' ? 'success'
+                            : healthState === 'degraded' ? 'warning'
+                            : 'neutral'
+                        }
+                      >
+                        {healthState || 'unknown'}
+                      </StatusBadge>
+                    </td>
+                    <td className={styles.rotatedAt}>{row.rotated_at || '—'}</td>
+                    <td>
+                      <div className={styles.actions}>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => startEdit(row)}
+                        >
+                          Editar
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleTest(row)}
+                        >
+                          Probar
+                        </Button>
                       </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                      {test ? (
+                        <div className={[
+                          styles.testLine,
+                          test.ok ? styles['testLine--ok'] : styles['testLine--fail'],
+                        ].filter(Boolean).join(' ')}>
+                          {test.ok ? `OK · ${test.elapsed_ms}ms` : `FAIL · ${test.error}`}
+                        </div>
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
-      {editing && form && (
-        <aside aria-label="Editar provider" style={{
-          position: 'fixed', top: 0, right: 0, height: '100vh', width: 360,
-          background: 'var(--color-surface, #fff)',
-          borderLeft: '1px solid var(--color-border, #d1d5db)',
-          padding: 'var(--space-3)',
-          overflowY: 'auto',
-          zIndex: 100,
-        }}>
-          <button type="button" onClick={() => setEditing(null)} aria-label="Cerrar" style={{ float: 'right' }}>×</button>
-          <h2>Editar {modalityLabel(editing)}</h2>
-
-          <label style={{ display: 'block', marginTop: 'var(--space-2)' }}>
-            <span style={{ fontWeight: 600 }}>Provider</span>
-            <select
-              value={form.provider}
-              onChange={(e) => setForm((p) => ({ ...p, provider: e.target.value }))}
-              aria-label="Provider"
-              style={{ width: '100%' }}
+      <Modal
+        open={Boolean(editing && form)}
+        onClose={closeModal}
+        title={editing ? `Editar ${modalityLabel(editing)}` : ''}
+        description="Cambia el provider, modelo o rota la API key. La key actual nunca se muestra."
+        size="sm"
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={closeModal} disabled={saving}>
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              form={formId}
+              variant="primary"
+              loading={saving}
+              disabled={saving}
             >
-              <option value="unset">— sin configurar —</option>
-              {(PROVIDERS_BY_MODALITY[editing] || []).map((p) => (
-                <option key={p} value={p}>{providerLabel(p)}</option>
-              ))}
-            </select>
-          </label>
+              Guardar
+            </Button>
+          </>
+        }
+      >
+        {form ? (
+          <form
+            id={formId}
+            className={styles.form}
+            onSubmit={handleSubmit}
+            // `name` opaco + autoComplete off a nivel form para silenciar
+            // password managers. No es un form de login.
+            name="ai_provider_settings"
+            autoComplete="off"
+            spellCheck={false}
+          >
+            {/* Honeypot oculto: algunos managers buscan un par username/password
+                en cualquier form. Si nuestros campos reales NO matchean, evitan
+                la sugerencia. No renderizamos un honeypot real porque podría
+                quedar tabbable; preferimos sólo nombres opacos + autoComplete off. */}
+            <FormField label="Provider">
+              <select
+                name="provider_choice"
+                value={form.provider}
+                onChange={(e) => setForm((p) => ({ ...p, provider: e.target.value }))}
+                aria-label="Provider"
+                autoComplete="off"
+              >
+                <option value="unset">— sin configurar —</option>
+                {(PROVIDERS_BY_MODALITY[editing] || []).map((p) => (
+                  <option key={p} value={p}>{providerLabel(p)}</option>
+                ))}
+              </select>
+            </FormField>
 
-          <label style={{ display: 'block', marginTop: 'var(--space-2)' }}>
-            <span style={{ fontWeight: 600 }}>Modelo</span>
-            <input
-              value={form.model}
-              onChange={(e) => setForm((p) => ({ ...p, model: e.target.value }))}
-              placeholder="e.g. grok-4.3"
-              style={{ width: '100%' }}
-            />
-          </label>
+            <FormField label="Modelo" hint="Ej. grok-4.3, gpt-4o-mini, claude-sonnet-4-6">
+              <input
+                type="text"
+                name="model_identifier"
+                value={form.model}
+                onChange={(e) => setForm((p) => ({ ...p, model: e.target.value }))}
+                placeholder="e.g. grok-4.3"
+                autoComplete="off"
+                spellCheck={false}
+                data-1p-ignore="true"
+                data-lpignore="true"
+              />
+            </FormField>
 
-          <label style={{ display: 'block', marginTop: 'var(--space-2)' }}>
-            <span style={{ fontWeight: 600 }}>API Key (write-only)</span>
-            <input
-              type="password"
-              value={form.api_key}
-              onChange={(e) => setForm((p) => ({ ...p, api_key: e.target.value }))}
-              placeholder="Se sobrescribirá la actual"
-              autoComplete="off"
-              style={{ width: '100%' }}
-            />
-            <span style={{ fontSize: 11, color: 'var(--color-text-subtle, #6b7280)' }}>
-              La key actual nunca se muestra; deja vacío para no cambiarla.
-            </span>
-          </label>
+            <FormField
+              label="API Key (write-only)"
+              hint="La key actual nunca se muestra; deja vacío para no cambiarla."
+            >
+              {/* type="text" intencional — type="password" dispara el flujo
+                  de autofill de credenciales del navegador. Como no se trata
+                  de una password personal del usuario sino de un token de
+                  servicio, lo tratamos como un texto opaco. El backend
+                  igualmente sólo persiste hint (últimos 4 chars). */}
+              <input
+                type="text"
+                name="provider_token_rotation"
+                value={form.api_key}
+                onChange={(e) => setForm((p) => ({ ...p, api_key: e.target.value }))}
+                placeholder="Se sobrescribirá la actual"
+                autoComplete="off"
+                spellCheck={false}
+                data-1p-ignore="true"
+                data-lpignore="true"
+                aria-label="API Key del provider"
+                style={{ fontFamily: 'var(--font-mono)' }}
+              />
+            </FormField>
 
-          {error && <AlertBanner tone="warn" style={{ marginTop: 'var(--space-2)' }}>{error}</AlertBanner>}
-
-          <div style={{ marginTop: 'var(--space-3)', display: 'flex', gap: 4 }}>
-            <button type="button" onClick={handleSave}>Guardar</button>
-            <button type="button" onClick={() => setEditing(null)}>Cancelar</button>
-          </div>
-        </aside>
-      )}
+            {error ? (
+              <AlertBanner tone="warn">{error}</AlertBanner>
+            ) : null}
+          </form>
+        ) : null}
+      </Modal>
     </div>
   );
 }
