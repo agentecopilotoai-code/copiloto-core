@@ -235,32 +235,10 @@ class GrokProvider(LLMProvider, ImageProvider, VideoProvider, TTSProvider, STTPr
         body, _ = _translate_response(resp, path)
         return body
 
-    async def _download(self, url: str) -> bytes:
-        """GET de una URL externa (típicamente la URL temporal del video
-        generado). Sin Authorization header — la URL ya viene firmada por
-        xAI. Sin Idempotency-Key.
-        """
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(self._timeout, connect=5.0),
-            transport=self._transport,
-        ) as client:
-            try:
-                resp = await asyncio.wait_for(
-                    client.get(url),
-                    timeout=self._hard_deadline,
-                )
-            except asyncio.TimeoutError as exc:
-                raise ProviderTimeoutError(
-                    f'grok download {url} exceeded {self._hard_deadline:.1f}s',
-                ) from exc
-            except httpx.HTTPError as exc:
-                raise ProviderUnavailable(f'grok download {url}: {exc}') from exc
-
-        if resp.status_code >= 400:
-            raise ProviderUnavailable(
-                f'grok download {url}: HTTP {resp.status_code}',
-            )
-        return resp.content
+    # `_download` (descarga de URL externa) se removió cuando `generate_video`
+    # dejó de bajar los bytes inline (el smoke test usa la URL temporal de xAI
+    # directamente). Si en el futuro un caller necesita bytes — para subir a
+    # S3, p.ej. — se puede re-introducir o usar httpx ad-hoc desde el caller.
 
     # ── IAProvider ────────────────────────────────────────────────────────
 
@@ -673,12 +651,37 @@ def _translate_response_status(resp: httpx.Response, path: str) -> None:
             body = resp.json()
         except ValueError:
             body = {}
-        err = (body.get('error') or {}).get('code') or ''
-        if 'content' in err.lower() or 'safety' in err.lower():
+        err = _extract_error_code(body)
+        if err and ('content' in err.lower() or 'safety' in err.lower()):
             raise ProviderContentRejected(f'grok {path}: {err}')
-        raise ProviderUnavailable(f'grok {path}: HTTP {resp.status_code} {err}')
+        raise ProviderUnavailable(f'grok {path}: HTTP {resp.status_code} {err}'.rstrip())
     if resp.status_code >= 400:
         raise ProviderUnavailable(f'grok {path}: HTTP {resp.status_code}')
+
+
+def _extract_error_code(body: Any) -> str:
+    """Best-effort: extrae código/mensaje de error de un body JSON 4xx.
+
+    xAI no garantiza un shape único para errores. Vimos en producción:
+
+      - OpenAI-shape:     ``{"error": {"code": "...", "message": "..."}}``
+      - String plano:     ``{"error": "Invalid request"}``
+      - Detail estilo FastAPI: ``{"detail": "..."}`` o ``{"message": "..."}``
+
+    Sin esta defensa, el caller crasheaba con
+    ``AttributeError: 'str' object has no attribute 'get'`` cuando xAI
+    enviaba el segundo shape.
+    """
+    if not isinstance(body, dict):
+        return ''
+    err = body.get('error')
+    if isinstance(err, dict):
+        return str(err.get('code') or err.get('message') or '')
+    if isinstance(err, str):
+        return err
+    # Fallbacks comunes — xAI/FastAPI/etc.
+    detail = body.get('detail') or body.get('message')
+    return str(detail) if detail else ''
 
 
 def _translate_response(resp: httpx.Response, path: str) -> tuple[dict, dict]:

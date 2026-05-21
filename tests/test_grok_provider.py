@@ -169,6 +169,195 @@ def test_4xx_content_safety_maps_to_content_rejected():
         asyncio.run(provider.generate_text(prompt='hola'))
 
 
+def test_4xx_error_body_as_plain_string_does_not_crash():
+    """BUGFIX — xAI a veces devuelve `{"error": "string plana"}` (no
+    `{"error": {"code": "..."}}`). El parser asumía siempre dict y
+    crasheaba con `AttributeError: 'str' object has no attribute 'get'`.
+    Ahora tolera ambos shapes y traduce a ProviderUnavailable con el
+    mensaje en el detail.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={'error': 'Invalid model: grok-imagine-image'},
+        )
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable, match='Invalid model'):
+        asyncio.run(provider.generate_text(prompt='hola'))
+
+
+def test_4xx_error_body_as_top_level_detail():
+    """FastAPI-style `{"detail": "..."}` también se procesa."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={'detail': 'Request validation failed'},
+        )
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable, match='Request validation failed'):
+        asyncio.run(provider.generate_text(prompt='hola'))
+
+
+def test_4xx_with_non_json_body_does_not_crash():
+    """Si el response no es JSON (xAI puede devolver HTML/text para 4xx),
+    NO crash — solo HTTP <code> en el detail.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            content=b'<html><body>Bad Request</body></html>',
+            headers={'content-type': 'text/html'},
+        )
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable, match='HTTP 400'):
+        asyncio.run(provider.generate_text(prompt='hola'))
+
+
+def test_extract_error_code_handles_all_shapes():
+    """Unit test directo del helper — cubre los 4 paths del `isinstance`
+    chain sin pasar por el handler completo.
+    """
+    from app.ai.providers.grok import _extract_error_code
+
+    # Non-dict input → ''
+    assert _extract_error_code('a string') == ''
+    assert _extract_error_code(['a', 'list']) == ''
+    assert _extract_error_code(None) == ''
+    # error dict con code
+    assert _extract_error_code({'error': {'code': 'X', 'message': 'm'}}) == 'X'
+    # error dict sin code, con message
+    assert _extract_error_code({'error': {'message': 'm only'}}) == 'm only'
+    # error string plano
+    assert _extract_error_code({'error': 'plain string'}) == 'plain string'
+    # fallback a detail
+    assert _extract_error_code({'detail': 'fastapi detail'}) == 'fastapi detail'
+    # fallback a message top-level
+    assert _extract_error_code({'message': 'top msg'}) == 'top msg'
+    # body sin nada → ''
+    assert _extract_error_code({}) == ''
+
+
+def test_decode_b64_handles_invalid_input():
+    """`_decode_b64` cubre 3 paths: empty → b'', valid → bytes, invalid
+    → ProviderUnavailable. Defensa contra responses corruptos de xAI.
+    """
+    from app.ai.providers.grok import _decode_b64
+
+    assert _decode_b64('') == b''
+    assert _decode_b64('aGVsbG8=') == b'hello'
+    # Padding inválido (len % 4 != 0) — base64 con `validate=False` igual
+    # rechaza la longitud incorrecta y levanta binascii.Error.
+    with pytest.raises(ProviderUnavailable, match='invalid base64'):
+        _decode_b64('abc')
+
+
+def test_post_translates_network_error_to_unavailable():
+    """Errores de red (DNS/connect/etc) → ProviderUnavailable, no crash.
+    Cubre la rama `except httpx.HTTPError` de `_post`.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError('connection refused')
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable, match='connection refused'):
+        asyncio.run(provider.generate_text(prompt='hola'))
+
+
+def test_post_binary_translates_network_error_to_unavailable():
+    """Mismo contrato para `_post_binary` (TTS)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError('boom')
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable):
+        asyncio.run(provider.synthesize_speech(
+            text='hola', persona_anchor=_anchor(),
+        ))
+
+
+def test_post_multipart_translates_network_error_to_unavailable():
+    """Mismo contrato para `_post_multipart` (STT)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError('boom')
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable):
+        asyncio.run(provider.transcribe(audio_bytes=b'audio'))
+
+
+def test_get_json_translates_network_error_during_polling():
+    """`_get_json` se usa SOLO para polling de video. Si la conexión cae
+    en mitad del poll, levanta ProviderUnavailable. Cubre la rama
+    `except httpx.HTTPError` de `_get_json`.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            return httpx.Response(200, json={'request_id': 'vid-net-1'})
+        raise httpx.ConnectError('poll connection dropped')
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable, match='poll connection dropped'):
+        asyncio.run(provider.generate_video(
+            prompt='x', persona_anchor=_anchor(),
+            poll_interval_s=0.0, poll_max_attempts=2,
+        ))
+
+
+def test_post_binary_translates_timeout_to_provider_timeout_error():
+    """`asyncio.TimeoutError` en `_post_binary` → ProviderTimeoutError.
+    Cubre el branch del except específico de timeout.
+    """
+    async def slow_handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(10)  # excede hard_deadline=4.0s del fixture
+        return httpx.Response(200, content=b'audio')
+
+    provider = _make_provider(slow_handler)
+    with pytest.raises(ProviderTimeoutError):
+        asyncio.run(provider.synthesize_speech(
+            text='hola', persona_anchor=_anchor(),
+        ))
+
+
+def test_post_multipart_translates_timeout_to_provider_timeout_error():
+    """Mismo contrato para `_post_multipart` (STT)."""
+    async def slow_handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(10)
+        return httpx.Response(200, json={'text': 'never'})
+
+    provider = _make_provider(slow_handler)
+    with pytest.raises(ProviderTimeoutError):
+        asyncio.run(provider.transcribe(audio_bytes=b'audio'))
+
+
+def test_get_json_translates_timeout_during_polling():
+    """`asyncio.TimeoutError` en el poll de video → ProviderTimeoutError."""
+    async def slow_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            return httpx.Response(200, json={'request_id': 'vid-tt-1'})
+        await asyncio.sleep(10)  # poll cuelga
+        return httpx.Response(200, json={'status': 'done'})
+
+    provider = _make_provider(slow_handler)
+    with pytest.raises(ProviderTimeoutError):
+        asyncio.run(provider.generate_video(
+            prompt='x', persona_anchor=_anchor(),
+            poll_interval_s=0.0, poll_max_attempts=2,
+        ))
+
+
+def test_grok_provider_rejects_empty_api_key():
+    """El constructor levanta ValueError si la api_key es vacía o None.
+    Cubre la guarda del `__init__`.
+    """
+    with pytest.raises(ValueError, match='non-empty api_key'):
+        GrokProvider(api_key='')
+    with pytest.raises(ValueError, match='non-empty api_key'):
+        GrokProvider(api_key=None)  # type: ignore[arg-type]
+
+
 def test_timeout_maps_to_provider_timeout_error():
     async def slow_handler(request: httpx.Request) -> httpx.Response:
         await asyncio.sleep(10)  # excede el timeout=2.0 + 2s deadline
@@ -345,6 +534,157 @@ def test_generate_video_failed_status_raises():
 
     provider = _make_provider(handler)
     with pytest.raises(ProviderUnavailable, match='internal_error'):
+        asyncio.run(provider.generate_video(
+            prompt='x', persona_anchor=_anchor(),
+            poll_interval_s=0.0, poll_max_attempts=2,
+        ))
+
+
+def test_generate_video_expired_status_raises():
+    """status='expired' → ProviderUnavailable. Cubre el branch del poll
+    que distinge entre los 4 estados documentados (pending/done/expired/failed).
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            return httpx.Response(200, json={'request_id': 'vid-exp-1'})
+        return httpx.Response(200, json={'status': 'expired'})
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable, match='expired'):
+        asyncio.run(provider.generate_video(
+            prompt='x', persona_anchor=_anchor(),
+            poll_interval_s=0.0, poll_max_attempts=2,
+        ))
+
+
+def test_generate_video_failed_content_moderation_raises_content_rejected():
+    """status='failed' con error.code=invalid_argument + mensaje con
+    'moderation' → ProviderContentRejected (no ProviderUnavailable). xAI
+    documenta este patrón cuando el prompt rompe content policy.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            return httpx.Response(200, json={'request_id': 'vid-cr-1'})
+        return httpx.Response(
+            200,
+            json={
+                'status': 'failed',
+                'error': {
+                    'code': 'invalid_argument',
+                    'message': 'Prompt blocked by content moderation policy',
+                },
+            },
+        )
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderContentRejected, match='moderation'):
+        asyncio.run(provider.generate_video(
+            prompt='x', persona_anchor=_anchor(),
+            poll_interval_s=0.0, poll_max_attempts=2,
+        ))
+
+
+def test_generate_video_pending_then_done_completes_polling():
+    """Cubre el camino: 1er poll status='pending', 2do poll status='done'.
+    Verifica que el loop sigue iterando hasta done — sin esto solo
+    cubriríamos el caso done-en-1er-poll.
+    """
+    poll_count = {'n': 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            return httpx.Response(200, json={'request_id': 'vid-p-1'})
+        poll_count['n'] += 1
+        if poll_count['n'] == 1:
+            return httpx.Response(200, json={'status': 'pending'})
+        return httpx.Response(
+            200,
+            json={
+                'status': 'done',
+                'video': {'url': 'https://vid/x.mp4', 'duration': 5,
+                          'respect_moderation': True},
+            },
+        )
+
+    provider = _make_provider(handler)
+    result = asyncio.run(provider.generate_video(
+        prompt='x', persona_anchor=_anchor(),
+        poll_interval_s=0.0, poll_max_attempts=3,
+    ))
+    assert result.provider_meta['video_url'] == 'https://vid/x.mp4'
+    assert poll_count['n'] == 2
+
+
+def test_generate_video_timeout_when_polling_exhausts_attempts():
+    """Si el poll nunca llega a done en `poll_max_attempts`, levanta
+    ProviderTimeoutError con el tiempo total mencionado en el detail.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            return httpx.Response(200, json={'request_id': 'vid-t-1'})
+        return httpx.Response(200, json={'status': 'pending'})
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderTimeoutError, match='still pending'):
+        asyncio.run(provider.generate_video(
+            prompt='x', persona_anchor=_anchor(),
+            poll_interval_s=0.0, poll_max_attempts=2,
+        ))
+
+
+def test_generate_video_missing_request_id_raises():
+    """xAI MUST devolver `request_id` en el POST. Si no viene, no podemos
+    pollear → ProviderUnavailable explícito en lugar de TypeError luego.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})  # sin request_id
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable, match='missing request_id'):
+        asyncio.run(provider.generate_video(
+            prompt='x', persona_anchor=_anchor(),
+            poll_interval_s=0.0, poll_max_attempts=1,
+        ))
+
+
+def test_generate_video_done_without_url_raises():
+    """xAI debería devolver `video.url` cuando status='done'. Si no viene,
+    no hay output usable → ProviderUnavailable.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            return httpx.Response(200, json={'request_id': 'vid-nu-1'})
+        return httpx.Response(200, json={'status': 'done', 'video': {}})
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderUnavailable, match='done without url'):
+        asyncio.run(provider.generate_video(
+            prompt='x', persona_anchor=_anchor(),
+            poll_interval_s=0.0, poll_max_attempts=2,
+        ))
+
+
+def test_generate_video_respect_moderation_false_raises():
+    """status='done' pero `video.respect_moderation=False` (xAI marca el
+    output como filtrado post-generación) → ProviderContentRejected.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == 'POST':
+            return httpx.Response(200, json={'request_id': 'vid-rm-1'})
+        return httpx.Response(
+            200,
+            json={
+                'status': 'done',
+                'video': {
+                    'url': 'https://vid/x.mp4',
+                    'duration': 5,
+                    'respect_moderation': False,
+                },
+            },
+        )
+
+    provider = _make_provider(handler)
+    with pytest.raises(ProviderContentRejected, match='content_moderation'):
         asyncio.run(provider.generate_video(
             prompt='x', persona_anchor=_anchor(),
             poll_interval_s=0.0, poll_max_attempts=2,
