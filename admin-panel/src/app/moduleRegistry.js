@@ -43,6 +43,10 @@ import {
   InfluencerCredits,
   InfluencerLibrary,
 } from '../features/influencer/placeholders.jsx';
+// `InfluencerEntryRedirect` vive en su propio `.jsx` (no inline aquí) porque
+// `moduleRegistry.js` es `.js` y `@vitejs/plugin-react` no procesa JSX en
+// archivos `.js` — un JSX inline rompería el build con "Expression expected".
+import { InfluencerEntryRedirect } from '../features/influencer/InfluencerEntryRedirect.jsx';
 
 /**
  * Registro `module id → { Component, capability, mode }`.
@@ -131,6 +135,11 @@ export const MODULE_REGISTRY = Object.freeze({
   // shell vía 404 del backend (TASK-INFLU-001) — el capability adicional
   // protege contra rol que no debe ver el módulo aún teniendo el tenant
   // activado.
+  // Entry-point del módulo en `TENANT_NAV`. Si el user clickea desde el menú
+  // del tenant, `TenantShellRoute.onModuleSelect` redirige antes de montar
+  // este componente. Este componente solo se ejecuta en deep-links directos
+  // a `/t/{slug}/influencer-entry` — redirige al shell real para consistencia.
+  'influencer-entry': { Component: InfluencerEntryRedirect, capability: 'influencer.module.access' },
   'influencer-casting': { Component: InfluencerCasting, capability: 'influencer.module.access' },
   'influencer-calendar': { Component: InfluencerCalendar, capability: 'influencer.posts.schedule', mode: 'RW' },
   'influencer-library': { Component: InfluencerLibrary, capability: 'influencer.module.access' },
