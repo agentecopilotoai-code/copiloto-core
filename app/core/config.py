@@ -114,6 +114,17 @@ class Settings(BaseSettings):
     extraction_max_attempts: int = 3
     s3_access_key_id: str = 'copilotoia-minio'
     s3_secret_access_key: str
+    # Master key (Fernet) usada para cifrar/descifrar las API keys de los
+    # proveedores IA transversales en `app.platform_secrets.ciphertext`. Si
+    # falta, los endpoints `/v1/platform/ai-providers*` rechazan rotaciones
+    # y smoke tests con un mensaje claro. Generar con:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # En dev local lo crea `scripts/generate-local-secrets.sh`.
+    ai_provider_master_key: str | None = Field(
+        default=None,
+        validation_alias='AI_PROVIDER_MASTER_KEY',
+        min_length=44,  # Fernet keys son 32-byte base64-urlsafe → 44 chars
+    )
     rag_embedding_provider: str = 'local_hash'
     rag_embedding_model: str = 'copilotoia-local-hash-v1'
     rag_embedding_dimensions: int = 1536

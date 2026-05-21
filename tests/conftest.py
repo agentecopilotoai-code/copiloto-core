@@ -29,6 +29,13 @@ os.environ.setdefault('DATABASE_URL', 'postgresql://x:x@localhost/x')
 os.environ.setdefault('JWT_SECRET', 'x' * 32)
 os.environ.setdefault('SERVICE_TOKEN', 'x' * 32)
 os.environ.setdefault('S3_SECRET_ACCESS_KEY', 'x' * 32)
+# Fernet key estable para tests — el helper `_get_secret_cipher` la usa al
+# cifrar/descifrar API keys de proveedores IA. Generada vía Fernet.generate_key()
+# y hardcoded para que los tests reproduzcan bytes idénticos.
+os.environ.setdefault(
+    'AI_PROVIDER_MASTER_KEY',
+    'zmWmIxJtxg8Cu0AYJ0jZeXqGNbRkW9pTfLqo3GqAFEY=',
+)
 
 import app.main  # noqa: F401, E402  — side-effect: dispara el wiring completo.
 

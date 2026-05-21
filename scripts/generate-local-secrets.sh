@@ -33,6 +33,11 @@ whatsapp_app_secret="$(random_token 48)"
 minio_password="$(random_token 32)"
 meta_access_token="local-mock-token-replace-in-production"
 
+# Master key (Fernet) para cifrar API keys de proveedores IA en
+# `app.platform_secrets.ciphertext`. Fernet requiere 32 bytes random
+# codificados en url-safe base64 (44 chars incluyendo el padding `=`).
+ai_provider_master_key="$(openssl rand 32 | base64 | tr '+/' '-_' | tr -d '\n')"
+
 cat > .env <<EOF_ENV
 # Archivo local generado por scripts/generate-local-secrets.sh.
 # No lo subas a git. Cambia estos valores antes de producción.
@@ -58,6 +63,7 @@ S3_BUCKET=copilotoia-local
 S3_ACCESS_KEY_ID=copilotoia-minio
 S3_SECRET_ACCESS_KEY=${minio_password}
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+AI_PROVIDER_MASTER_KEY=${ai_provider_master_key}
 EOF_ENV
 
 chmod 600 .env

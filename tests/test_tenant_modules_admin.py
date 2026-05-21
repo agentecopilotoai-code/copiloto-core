@@ -757,13 +757,28 @@ def test_smoke_test_platform_ai_provider_404_when_modality_row_missing():
     assert exc.value.status_code == 404
 
 
+def _provider_row(*, provider='grok', model='grok-4.3', hint='AB12', ciphertext=b'fake-ciphertext'):
+    """Helper: fila típica del SELECT en `smoke_test_platform_ai_provider`.
+    `ciphertext` defaultea a bytes opacos — el test que ejerce la cadena
+    real mockea `_decrypt_secret` para no exigir un blob Fernet válido.
+    """
+    return {
+        'provider': provider,
+        'model': model,
+        'params': {},
+        'hint': hint,
+        'ciphertext': ciphertext,
+    }
+
+
 def test_smoke_test_platform_ai_provider_400_when_unconfigured():
-    """Si provider='unset' o hint=None, no hay nada que probar — 400 con
-    mensaje accionable para el operador.
+    """Si provider='unset' o hint=None o ciphertext=None, no hay nada
+    que probar — 400 con mensaje accionable para el operador.
     """
     conn = _async_conn()
     conn.fetchrow = AsyncMock(return_value={
-        'provider': 'unset', 'model': None, 'params': {}, 'hint': None,
+        'provider': 'unset', 'model': None, 'params': {},
+        'hint': None, 'ciphertext': None,
     })
     with pytest.raises(HTTPException) as exc:
         asyncio.run(smoke_test_platform_ai_provider(
@@ -776,17 +791,13 @@ def test_smoke_test_platform_ai_provider_400_when_unconfigured():
     assert 'not fully configured' in exc.value.detail
 
 
-def test_smoke_test_platform_ai_provider_400_when_env_var_missing(monkeypatch):
-    """Si la env var AI_PROVIDER_SECRET_<hint> no está set (ni el fallback
-    histórico INFLUENCER_SECRET_<hint>), 400 con la env var canónica en el
-    detail — el operador sabe exactamente qué setear.
+def test_smoke_test_platform_ai_provider_400_when_ciphertext_missing():
+    """Si hay provider+hint pero el ciphertext está null (caso de DB
+    corrupta o rotación interrumpida), 400 con el mismo mensaje
+    'not fully configured' — el operador debe rotar la key.
     """
-    monkeypatch.delenv('AI_PROVIDER_SECRET_AB12', raising=False)
-    monkeypatch.delenv('INFLUENCER_SECRET_AB12', raising=False)
     conn = _async_conn()
-    conn.fetchrow = AsyncMock(return_value={
-        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
-    })
+    conn.fetchrow = AsyncMock(return_value=_provider_row(ciphertext=None))
     with pytest.raises(HTTPException) as exc:
         asyncio.run(smoke_test_platform_ai_provider(
             modality='llm',
@@ -795,101 +806,56 @@ def test_smoke_test_platform_ai_provider_400_when_env_var_missing(monkeypatch):
             conn=conn,
         ))
     assert exc.value.status_code == 400
-    # El detail menciona SOLO la canónica — `INFLUENCER_*` es fallback no
-    # promocionado para que no se cree masa crítica de usos del nombre legacy.
-    assert 'AI_PROVIDER_SECRET_AB12' in exc.value.detail
-    assert 'INFLUENCER_SECRET' not in exc.value.detail
+    assert 'not fully configured' in exc.value.detail
 
 
-def test_smoke_test_platform_ai_provider_legacy_env_var_fallback(monkeypatch):
-    """Backward compat: si la nueva env var falta pero la legacy
-    `INFLUENCER_SECRET_<hint>` está set (deploys previos al rename),
-    se usa la legacy y el test sigue corriendo.
-    """
-    monkeypatch.delenv('AI_PROVIDER_SECRET_AB12', raising=False)
-    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'xai-from-legacy-env')
-    conn = _async_conn()
-    conn.fetchrow = AsyncMock(return_value={
-        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
-    })
-
-    class _FakeProvider:
-        _models: dict = {}
-        async def generate_text(self, **kwargs):
-            from app.ai.providers.base import TextResult
-            return TextResult(
-                text='ok', finish_reason='stop',
-                provider_meta={}, cost_units=0.0, elapsed_ms=1.0,
-            )
-
-    with patch('app.influencer.admin_routes._build_test_provider') as build:
-        build.return_value = _FakeProvider()
-        result = asyncio.run(smoke_test_platform_ai_provider(
-            modality='llm',
-            body=TestProviderRequest(prompt='hi'),
-            request=_request(),
-            conn=conn,
-        ))
-        assert result.ok is True
-        # Verifica que la key resuelta vino del fallback legacy.
-        called_kwargs = build.call_args.kwargs
-        assert called_kwargs.get('api_key') == 'xai-from-legacy-env'
-
-
-def test_smoke_test_platform_ai_provider_501_for_unsupported_provider(monkeypatch):
+def test_smoke_test_platform_ai_provider_501_for_unsupported_provider():
     """Hoy solo grok está cableado — providers no implementados responden
     501 explícito (no 500 opaco).
     """
-    monkeypatch.setenv('AI_PROVIDER_SECRET_AB12', 'sk-fake-key-for-testing')
     conn = _async_conn()
-    conn.fetchrow = AsyncMock(return_value={
-        'provider': 'anthropic', 'model': 'claude-sonnet-4-6', 'params': {}, 'hint': 'AB12',
-    })
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(smoke_test_platform_ai_provider(
-            modality='llm',
-            body=TestProviderRequest(prompt='hi'),
-            request=_request(),
-            conn=conn,
-        ))
+    conn.fetchrow = AsyncMock(return_value=_provider_row(
+        provider='anthropic', model='claude-sonnet-4-6',
+    ))
+    with patch('app.influencer.admin_routes._decrypt_secret', return_value='sk-fake'):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(smoke_test_platform_ai_provider(
+                modality='llm',
+                body=TestProviderRequest(prompt='hi'),
+                request=_request(),
+                conn=conn,
+            ))
     assert exc.value.status_code == 501
     assert 'anthropic' in exc.value.detail
 
 
-def test_smoke_test_platform_ai_provider_400_when_required_body_field_missing(monkeypatch):
+def test_smoke_test_platform_ai_provider_400_when_required_body_field_missing():
     """LLM exige `prompt`; sin él, el adapter ni se llama — devolvemos un
     response con ok=false y error claro (no 5xx).
     """
-    monkeypatch.setenv('AI_PROVIDER_SECRET_AB12', 'xai-fake')
     conn = _async_conn()
-    conn.fetchrow = AsyncMock(return_value={
-        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
-    })
+    conn.fetchrow = AsyncMock(return_value=_provider_row())
     # `prompt` ausente — el `_run_smoke_call` levanta ValueError que el
     # handler captura y mapea a ok=false (200 con error embebido).
-    result = asyncio.run(smoke_test_platform_ai_provider(
-        modality='llm',
-        body=TestProviderRequest(),
-        request=_request(),
-        conn=conn,
-    ))
+    with patch('app.influencer.admin_routes._decrypt_secret', return_value='xai-fake'):
+        result = asyncio.run(smoke_test_platform_ai_provider(
+            modality='llm',
+            body=TestProviderRequest(),
+            request=_request(),
+            conn=conn,
+        ))
     assert result.ok is False
     assert 'prompt' in (result.error or '')
     assert result.error_class == 'ValueError'
 
 
-def test_smoke_test_platform_ai_provider_happy_path_grok_llm(monkeypatch):
-    """Camino feliz: provider=grok configurado, env var set, adapter
-    devuelve un TextResult. La respuesta es ok=true con output.kind='text'.
+def test_smoke_test_platform_ai_provider_happy_path_grok_llm():
+    """Camino feliz: provider=grok configurado, ciphertext descifra a la
+    key real, adapter devuelve un TextResult. ok=true + output.kind='text'.
     """
-    monkeypatch.setenv('AI_PROVIDER_SECRET_AB12', 'xai-fake-key')
     conn = _async_conn()
-    conn.fetchrow = AsyncMock(return_value={
-        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
-    })
+    conn.fetchrow = AsyncMock(return_value=_provider_row())
 
-    # Mockeamos GrokProvider para no hacer red. `_models` debe ser un dict
-    # mutable porque el handler hace `provider._models[modality] = model`.
     class _FakeProvider:
         provider_name = 'grok'
         _models: dict = {}
@@ -901,13 +867,18 @@ def test_smoke_test_platform_ai_provider_happy_path_grok_llm(monkeypatch):
                 elapsed_ms=12.3,
             )
 
-    with patch('app.influencer.admin_routes._build_test_provider', return_value=_FakeProvider()):
+    with patch('app.influencer.admin_routes._decrypt_secret', return_value='xai-fake-key'), \
+         patch('app.influencer.admin_routes._build_test_provider', return_value=_FakeProvider()) as build:
         result = asyncio.run(smoke_test_platform_ai_provider(
             modality='llm',
             body=TestProviderRequest(prompt='hola grok'),
             request=_request(),
             conn=conn,
         ))
+        # Verificamos que el handler pasó la key DESCIFRADA al factory
+        # (no el ciphertext crudo) — defensa contra regresiones que
+        # rompan la cadena encrypt → store → fetch → decrypt → use.
+        assert build.call_args.kwargs['api_key'] == 'xai-fake-key'
 
     assert result.ok is True
     assert result.modality == 'llm'
@@ -917,16 +888,13 @@ def test_smoke_test_platform_ai_provider_happy_path_grok_llm(monkeypatch):
     assert result.output['tokens_used'] == 7
 
 
-def test_smoke_test_platform_ai_provider_translates_provider_error_to_ok_false(monkeypatch):
+def test_smoke_test_platform_ai_provider_translates_provider_error_to_ok_false():
     """ProviderRateLimited / ProviderContentRejected / etc → ok=false con
     `error_class` poblado. Nunca 5xx — la UI quiere mostrar el motivo
     granular sin un toast opaco.
     """
-    monkeypatch.setenv('AI_PROVIDER_SECRET_AB12', 'xai-fake')
     conn = _async_conn()
-    conn.fetchrow = AsyncMock(return_value={
-        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
-    })
+    conn.fetchrow = AsyncMock(return_value=_provider_row())
 
     from app.ai.providers.base import ProviderRateLimited
 
@@ -935,7 +903,8 @@ def test_smoke_test_platform_ai_provider_translates_provider_error_to_ok_false(m
         async def generate_text(self, **kwargs):
             raise ProviderRateLimited('grok rate-limited (retry-after=30)')
 
-    with patch('app.influencer.admin_routes._build_test_provider', return_value=_FakeProvider()):
+    with patch('app.influencer.admin_routes._decrypt_secret', return_value='xai-fake'), \
+         patch('app.influencer.admin_routes._build_test_provider', return_value=_FakeProvider()):
         result = asyncio.run(smoke_test_platform_ai_provider(
             modality='llm',
             body=TestProviderRequest(prompt='hi'),
@@ -946,3 +915,45 @@ def test_smoke_test_platform_ai_provider_translates_provider_error_to_ok_false(m
     assert result.ok is False
     assert result.error_class == 'ProviderRateLimited'
     assert 'rate-limited' in (result.error or '')
+
+
+def test_encrypt_decrypt_roundtrip():
+    """Encryption/decryption round-trip — la fixture `AI_PROVIDER_MASTER_KEY`
+    set en conftest provee una Fernet key válida. El test garantiza que
+    cifrar+descifrar devuelve el plaintext exacto. Defensa contra cambios
+    en el formato del cipher (e.g. switching a AES-GCM vs Fernet).
+    """
+    from app.influencer.admin_routes import _encrypt_secret, _decrypt_secret
+    original = 'xai-this-is-a-real-looking-grok-key-1234567890'
+    ct = _encrypt_secret(original)
+    assert isinstance(ct, bytes)
+    assert original.encode() not in ct  # no debe aparecer en claro
+    assert _decrypt_secret(ct) == original
+
+
+def test_decrypt_with_wrong_key_raises_500(monkeypatch):
+    """Si AI_PROVIDER_MASTER_KEY cambia entre encrypt y decrypt (rotación
+    de master key mal hecha), el handler responde 500 con mensaje claro
+    en lugar de un crash opaco. Esto es CRÍTICO para que el operador
+    detecte el problema sin ver ``InvalidToken`` en logs.
+    """
+    from cryptography.fernet import Fernet
+    from app.influencer.admin_routes import _encrypt_secret, _decrypt_secret
+
+    # Cifrar con la key actual del conftest…
+    ct = _encrypt_secret('xai-key-1')
+
+    # …y descifrar con OTRA key (rotación mal hecha).
+    new_key = Fernet.generate_key().decode()
+    monkeypatch.setenv('AI_PROVIDER_MASTER_KEY', new_key)
+    # `get_settings` está cacheado con @lru_cache; invalidamos.
+    from app.core.config import get_settings
+    get_settings.cache_clear()
+
+    with pytest.raises(HTTPException) as exc:
+        _decrypt_secret(ct)
+    assert exc.value.status_code == 500
+    assert 'master key' in exc.value.detail.lower()
+
+    # Restaurar para no contaminar otros tests.
+    get_settings.cache_clear()

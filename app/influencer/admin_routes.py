@@ -53,18 +53,16 @@ class PlatformAIProviderUpdate(BaseModel):
     """Body del PATCH. Todos los campos son opt-in — el caller manda solo
     lo que quiere actualizar.
 
-    Si ``secret_value`` viene set, se genera un ``secret_ref`` opaco,
-    se persiste en ``app.platform_secrets`` con backend ``env`` y hint =
-    últimos 4 chars del valor en claro. La columna ``ciphertext`` queda en
-    NULL — el operador es responsable de proveer el valor real al runtime
-    vía env var ``AI_PROVIDER_SECRET_<HINT>`` o vía un backend externo
-    (AWS Secrets Manager, Vault) referenciado por ``secret_ref``. **El
-    ``secret_value`` nunca se persiste en claro en la DB.**
+    Si ``secret_value`` viene set, se cifra con la master key
+    (`AI_PROVIDER_MASTER_KEY`, Fernet) y se persiste en
+    ``app.platform_secrets.ciphertext``. ``hint`` (últimos 4 chars) queda
+    visible para el operador como identificador del key activo. **El
+    ``secret_value`` nunca se persiste en claro en la DB** — solo el
+    ciphertext encriptado at-rest.
 
-    Nota — el prefijo `AI_PROVIDER_*` es deliberadamente neutro al módulo:
-    los providers IA son transversales (Influencer, Gestión Documental,
-    futuros). El nombre histórico `INFLUENCER_SECRET_*` sigue aceptado
-    como fallback para retro-compat en deploys que aún no rotaron.
+    La key descifrada vive solo en memoria del request que la consume
+    (PATCH para guardar, POST /test para probar). Sin la master key
+    configurada los endpoints fallan con un mensaje claro.
 
     Como alternativa a ``secret_value``, ``reuse_from_modality`` permite
     apuntar el ``secret_ref`` actual al ``secret_ref`` de OTRA modalidad
@@ -95,11 +93,6 @@ def _generate_secret_ref(modality: str, backend: str) -> str:
     """Genera un secret_ref opaco único. Formato:
     ``ai:{backend}:{modality}:{token}`` — el ``token`` es random 12-char
     hex; no se reusa cross-modality ni cross-backend.
-
-    El prefijo ``ai:`` reemplazó al histórico ``infl:`` como parte del
-    refactor que aclara que estos providers son transversales (no del
-    módulo Influencer). Filas existentes con prefijo ``infl:`` siguen
-    siendo válidas — el prefix es opaco, solo importa la unicidad.
     """
     token = secrets_module.token_hex(6)
     return f'ai:{backend}:{modality}:{token}'
@@ -242,16 +235,20 @@ async def update_platform_ai_provider(
         if payload.secret_value is not None:
             backend = payload.secret_backend or 'env'
             secret_ref = _generate_secret_ref(modality, backend)
+            # Cifrar al guardar — la key plaintext muere con el request.
+            ciphertext = _encrypt_secret(payload.secret_value)
             await conn.execute(
                 """
-                insert into app.platform_secrets (secret_ref, backend, hint, created_by)
-                values ($1, $2, $3, $4)
+                insert into app.platform_secrets (secret_ref, backend, ciphertext, hint, created_by)
+                values ($1, $2, $3, $4, $5)
                 on conflict (secret_ref) do update
-                  set hint = excluded.hint,
+                  set ciphertext = excluded.ciphertext,
+                      hint = excluded.hint,
                       rotated_at = now()
                 """,
                 secret_ref,
                 backend,
+                ciphertext,
                 _hint_of(payload.secret_value),
                 actor_id,
             )
@@ -388,12 +385,11 @@ async def update_platform_ai_provider(
 # de entrada y una respuesta uniforme. El resultado se renderiza inline en
 # el modal de prueba (texto, imagen, video, audio o transcript).
 #
-# Secrets: se resuelven leyendo la env var ``AI_PROVIDER_SECRET_<HINT>`` con
-# el hint de la fila. Esto matchea la convención del schema (ver comentario
-# de `PlatformAIProviderUpdate`). Si la env var falta, devolvemos 400 con
-# instrucción explícita al operador. El nombre histórico
-# ``INFLUENCER_SECRET_<HINT>`` sigue siendo consultado como fallback para
-# que deploys existentes no rompan durante la transición.
+# Secrets: la key plaintext se cifra al guardar y se descifra al usar.
+# `app.platform_secrets.ciphertext` guarda el blob Fernet; la master key
+# (`AI_PROVIDER_MASTER_KEY` en env) vive solo en el proceso de la API.
+# Esto evita el footgun previo donde el operador debía pegar la key dos
+# veces (UI + env var) y reiniciar el container para cada rotación.
 #
 # Cobertura: hoy solo `grok` está cableado vía `GrokProvider`. Otros
 # providers responden 501 con un mensaje claro hasta que se integren.
@@ -401,8 +397,9 @@ async def update_platform_ai_provider(
 
 import base64 as _base64_module  # noqa: E402
 import binascii as _binascii_module  # noqa: E402
-import os as _os_module  # noqa: E402
 import time as _time_module  # noqa: E402
+
+from cryptography.fernet import Fernet, InvalidToken  # noqa: E402
 
 from app.ai.providers.base import (  # noqa: E402
     PersonaAnchor,
@@ -412,6 +409,7 @@ from app.ai.providers.base import (  # noqa: E402
     ProviderTimeoutError,
     ProviderUnavailable,
 )
+from app.core.config import get_settings  # noqa: E402
 
 
 class TestProviderRequest(BaseModel):
@@ -459,22 +457,49 @@ class TestProviderResponse(BaseModel):
     error_class: str | None = None
 
 
-def _resolve_test_secret(hint: str | None) -> str | None:
-    """Lee `AI_PROVIDER_SECRET_<HINT>` del env. El hint son los últimos 4
-    chars de la key original — único entre las rotaciones esperadas. Si
-    el operador rotó la key pero olvidó setear la env var nueva, esto
-    devuelve None y el endpoint responde 400 con la env var esperada.
-
-    Fallback ``INFLUENCER_SECRET_<HINT>``: aceptado para retro-compat con
-    deploys previos al rename. El nombre canónico es ``AI_PROVIDER_*``
-    porque los providers son transversales al módulo Influencer.
+def _get_secret_cipher() -> Fernet:
+    """Instancia Fernet con la master key del env. Centraliza el error
+    cuando la key no está configurada para que tanto el PATCH (cifrar)
+    como el smoke test (descifrar) compartan el mismo mensaje.
     """
-    if not hint:
-        return None
-    primary = _os_module.environ.get(f'AI_PROVIDER_SECRET_{hint}')
-    if primary:
-        return primary
-    return _os_module.environ.get(f'INFLUENCER_SECRET_{hint}')
+    settings = get_settings()
+    key = settings.ai_provider_master_key
+    if not key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                'AI_PROVIDER_MASTER_KEY no configurada en el proceso de la API. '
+                'Genera una con: '
+                'python -c "from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())" '
+                'y agrégala al .env del backend.'
+            ),
+        )
+    return Fernet(key.encode('ascii') if isinstance(key, str) else key)
+
+
+def _encrypt_secret(plaintext: str) -> bytes:
+    """Encripta la API key plaintext con Fernet → bytes para guardar en
+    `platform_secrets.ciphertext`. La key plaintext muere con el request.
+    """
+    return _get_secret_cipher().encrypt(plaintext.encode('utf-8'))
+
+
+def _decrypt_secret(ciphertext: bytes) -> str:
+    """Descifra el ciphertext leído de DB → API key plaintext. Solo se
+    invoca desde el request que está por llamar al provider.
+    """
+    try:
+        return _get_secret_cipher().decrypt(bytes(ciphertext)).decode('utf-8')
+    except InvalidToken as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                'Stored secret cannot be decrypted with the current master key. '
+                'This usually means AI_PROVIDER_MASTER_KEY was rotated without '
+                're-encrypting existing rows.'
+            ),
+        ) from exc
 
 
 def _build_test_provider(provider_name: str, *, api_key: str, model: str | None):
@@ -521,12 +546,13 @@ async def smoke_test_platform_ai_provider(
             detail=f'modality must be one of {sorted(MODALITIES)}',
         )
 
-    # Lee la fila configurada bajo support_mode (RLS).
+    # Lee la fila configurada bajo support_mode (RLS). Trae `ciphertext`
+    # para descifrar la key sin obligar al operador a una env var manual.
     async with conn.transaction():
         await _set_support_mode(conn, True)
         row = await conn.fetchrow(
             """
-            select p.provider, p.model, p.params, s.hint
+            select p.provider, p.model, p.params, s.hint, s.ciphertext
             from app.platform_ai_providers p
             left join app.platform_secrets s on s.secret_ref = p.secret_ref
             where p.modality = $1
@@ -543,8 +569,9 @@ async def smoke_test_platform_ai_provider(
     provider_name = row['provider']
     model = row['model']
     hint = row['hint']
+    ciphertext = row['ciphertext']
 
-    if provider_name == 'unset' or hint is None:
+    if provider_name == 'unset' or hint is None or not ciphertext:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -553,15 +580,9 @@ async def smoke_test_platform_ai_provider(
             ),
         )
 
-    api_key = _resolve_test_secret(hint)
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f'secret not available at runtime: set env var '
-                f'AI_PROVIDER_SECRET_{hint} on the API process and restart'
-            ),
-        )
+    # Descifrado in-memory — la key plaintext vive solo dentro de este
+    # request, no se logea ni se devuelve por API.
+    api_key = _decrypt_secret(ciphertext)
 
     # Instanciar adapter — los providers no-grok aún no están cableados.
     try:
