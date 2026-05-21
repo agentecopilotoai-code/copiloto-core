@@ -1,0 +1,564 @@
+Video Generation
+
+Copy for LLM
+View as Markdown
+Manage API keys
+Try Playground
+Generate videos from text prompts with Grok video models. The API supports configurable duration, aspect ratio, and resolution, and the SDK handles asynchronous polling automatically.
+
+Quick Start
+Generate a video with a single API call:
+
+
+Python
+Python (Requests)
+
+Javascript
+Bash
+
+import os
+import xai_sdk
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+response = client.video.generate(
+    prompt="A glowing crystal-powered rocket launching from the red dunes of Mars, ancient alien ruins lighting up in the background as it soars into a sky full of unfamiliar constellations",
+    model="grok-imagine-video",
+    duration=10,
+    aspect_ratio="16:9",
+    resolution="720p",
+)
+print(response.url)
+Video generation is an asynchronous process that typically takes up to several minutes to complete. The exact time varies based on:
+
+Prompt complexity — More detailed scenes require additional processing
+Duration — Longer videos take more time to generate
+Resolution — Higher resolutions (720p vs 480p) increase processing time
+Video editing — Editing existing videos adds overhead compared to image-to-video or text-to-video
+Video workflows
+Use the page that matches the kind of video output you want to create:
+
+Video Generation — Generate videos from text prompts.
+Image-to-Video — Animate a still image.
+Video Editing — Modify an existing video.
+Reference-to-Video — Guide a generated video with one or more reference images.
+Video Extension — Continue an existing video from its last frame.
+How it works
+Under the hood, video generation is a two-step process:
+
+Start — Submit a generation request and receive a request_id
+Poll — Repeatedly check the status using the request_id until the video is ready
+The xAI SDK's generate() and extend() methods abstract this entirely; they submit your request, poll for the result, and return the completed video response. You don't need to manage request IDs or implement polling logic. For long-running generations, you can customize the polling behavior with timeout and interval parameters, or handle polling manually for full control over the generation lifecycle.
+
+REST API users must implement this two-step flow manually:
+
+Step 1: Start the generation request
+
+Bash
+
+
+curl -X POST https://api.x.ai/v1/videos/generations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $XAI_API_KEY" \
+  -d '{
+    "model": "grok-imagine-video",
+    "prompt": "A glowing crystal-powered rocket launching from Mars"
+  }'
+Response:
+
+JSON
+
+
+{"request_id": "d97415a1-5796-b7ec-379f-4e6819e08fdf"}
+Step 2: Poll for the result
+
+Use the request_id to check the status. Keep polling every few seconds until the video is ready:
+
+Bash
+
+
+curl -X GET "https://api.x.ai/v1/videos/{request_id}" \
+  -H "Authorization: Bearer $XAI_API_KEY"
+The response includes a status field with one of these values:
+
+Status	Description
+pending	Video is still being generated
+done	Video is ready
+expired	Request has expired
+failed	Video generation failed
+Response (when complete):
+
+JSON
+
+
+{
+  "status": "done",
+  "video": {
+    "url": "https://vidgen.x.ai/.../video.mp4",
+    "duration": 8,
+    "respect_moderation": true
+  },
+  "model": "grok-imagine-video"
+}
+Videos are returned as temporary URLs. Access the xAI-hosted URL directly when you need it, or download/process it promptly if you need to keep a copy.
+
+Configuration
+The video generation API lets you control the output format of your generated videos. You can specify the duration, aspect ratio, and resolution to match your specific use case.
+
+Duration
+Control video length with the duration parameter. The allowed range is 1–15 seconds.
+
+Video editing does not support custom duration. The edited video retains the duration of the original, which is capped at 8.7 seconds.
+
+Aspect Ratio
+Ratio	Use case
+1:1	Social media, thumbnails
+16:9 / 9:16	Widescreen, mobile, stories (default: 16:9)
+4:3 / 3:4	Presentations, portraits
+3:2 / 2:3	Photography
+For image-to-video generation, the output defaults to the input image's aspect ratio. If you specify the aspect_ratio parameter, it will override this and stretch the image to the desired aspect ratio.
+
+Video editing does not support custom aspect_ratio — the output matches the input video's aspect ratio.
+
+Resolution
+Resolution	Description
+720p	HD quality
+480p	Standard definition, faster processing (default)
+Video editing does not support custom resolution. The output resolution matches the input video's resolution, capped at 720p (e.g., a 1080p input will be downsized to 720p).
+
+Example
+
+Python
+Python (Requests)
+
+Javascript
+Bash
+
+import os
+import xai_sdk
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+response = client.video.generate(
+    prompt="Timelapse of a flower blooming in a sunlit garden",
+    model="grok-imagine-video",
+    duration=10,
+    aspect_ratio="16:9",
+    resolution="720p",
+)
+print(f"Video URL: {response.url}")
+print(f"Duration: {response.duration}s")
+Request Modes
+The video generation endpoint supports multiple modes, determined by which fields are set. Only one mode can be active per request:
+
+Mode	REST API fields	AI SDK shape	Description
+Text-to-video	prompt only	prompt: "..."	Generates video from a text prompt alone.
+Image-to-video	prompt + image	prompt: { image, text }	Generates video with the provided image as the starting frame.
+Reference-to-video	prompt + reference_images	prompt: "..." + providerOptions.xai.{ mode: "reference-to-video", referenceImageUrls }	Generates video guided by one or more reference images.
+Edit-video	/v1/videos/edits + video	prompt: "..." + providerOptions.xai.{ mode: "edit-video", videoUrl }	Modifies an existing video based on the prompt.
+Extend-video	/v1/videos/extensions + video	prompt: "..." + providerOptions.xai.{ mode: "extend-video", videoUrl }	Extends an existing video from its last frame.
+The following combination is not allowed and will return a 400 Bad Request error:
+
+image + reference_images — use one or the other
+Mixing mode values in the AI SDK — each request supports exactly one of "edit-video", "extend-video", or "reference-to-video"
+When you omit mode, the AI SDK uses standard generation.
+
+Customize Polling Behavior
+When using the SDK's generate() or extend() methods, you can control how long to wait and how frequently to check for results:
+
+Python SDK	AI SDK (providerOptions.xai)	Description	Default
+timeout	pollTimeoutMs	Maximum time to wait for the video to complete	10 minutes
+interval	pollIntervalMs	Time between status checks	100 milliseconds
+
+Python
+
+Javascript
+
+import os
+from datetime import timedelta
+import xai_sdk
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+response = client.video.generate(
+    prompt="Epic cinematic drone shot flying through mountain peaks",
+    model="grok-imagine-video",
+    duration=15,
+    timeout=timedelta(minutes=15),  # Wait up to 15 minutes
+    interval=timedelta(seconds=5),  # Check every 5 seconds
+)
+print(response.url)
+If the video isn't ready within the timeout period, the Python SDK raises a TimeoutError and the AI SDK aborts via its AbortSignal. For even finer control, use the manual polling approach; the Python SDK provides start() and get() methods, while the AI SDK supports a custom abortSignal for cancellation.
+
+Handle Polling Manually
+For fine-grained control over the generation lifecycle, use start() or extend_start() to initiate generation/extension requests respectively and get() to check status.
+
+The get() method returns a response with a status field. Import the status enum from the SDK:
+
+
+Python
+Python (Requests)
+Javascript
+Bash
+
+import os
+import time
+import xai_sdk
+from xai_sdk.proto import deferred_pb2
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+# Start the generation request
+start_response = client.video.start(
+    prompt="A cat lounging in a sunbeam, tail gently swishing",
+    model="grok-imagine-video",
+    duration=5,
+)
+print(f"Request ID: {start_response.request_id}")
+# Poll for results
+while True:
+    result = client.video.get(start_response.request_id)
+    
+    if result.status == deferred_pb2.DeferredStatus.DONE:
+        print(f"Video URL: {result.response.video.url}")
+        break
+    elif result.status == deferred_pb2.DeferredStatus.EXPIRED:
+        print("Request expired")
+        break
+    elif result.status == deferred_pb2.DeferredStatus.FAILED:
+        print("Video generation failed")
+        break
+    elif result.status == deferred_pb2.DeferredStatus.PENDING:
+        print("Still processing...")
+        time.sleep(5)
+The available status values are:
+
+Proto Value	Description
+deferred_pb2.DeferredStatus.PENDING	Video is still being generated
+deferred_pb2.DeferredStatus.DONE	Video is ready
+deferred_pb2.DeferredStatus.EXPIRED	Request has expired
+deferred_pb2.DeferredStatus.FAILED	Video generation failed
+Error Handling
+When using the SDK's generate() or extend() methods, video generation failures are raised as a VideoGenerationError exception. This exception includes a code and message describing what went wrong. Import it from xai_sdk.video:
+
+Python
+
+
+import os
+import xai_sdk
+from xai_sdk.video import VideoGenerationError
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+try:
+    response = client.video.generate(
+        prompt="A cat lounging in a sunbeam, tail gently swishing",
+        model="grok-imagine-video",
+        duration=5,
+    )
+    print(response.url)
+except VideoGenerationError as e:
+    print(f"Error code: {e.code}")
+    print(f"Error message: {e.message}")
+The VideoGenerationError exception has the following attributes:
+
+Attribute	Type	Description
+code	str	An error code identifying the failure reason
+message	str	A human-readable message describing the failure
+When polling manually, a failed generation returns status: "failed" with an error object:
+
+JSON
+
+
+{
+  "status": "failed",
+  "error": {
+    "code": "invalid_argument",
+    "message": "Prompt cannot be empty. Please provide a prompt."
+  }
+}
+The possible error.code values are:
+
+Code	Meaning	What to do
+invalid_argument	The request input is invalid, such as an unsupported duration, an invalid image or video input, a prompt that is too long, conflicting request modes, or content blocked by moderation.	Fix the request parameters or input media, then submit a new request.
+permission_denied	The API key or team does not have permission for the requested video operation.	Confirm the API key belongs to the right team and that the team has access to the requested capability.
+failed_precondition	The requested operation is not available for the selected model or settings, such as video editing, video extension, or a requested resolution that the model cannot process.	Change the model, mode, resolution, or other request settings.
+internal_error	The service could not complete the generation because of an internal failure.	Retry the request. If the error persists, contact xAI support with the request_id.
+Authentication errors, missing models, and rate limits are returned synchronously as standard API errors before a video job is created, so they do not appear in the error.code field of a failed video result.
+
+You can combine this with TimeoutError handling for comprehensive error coverage:
+
+Python
+
+
+import os
+import xai_sdk
+from xai_sdk.video import VideoGenerationError
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+try:
+    response = client.video.generate(
+        prompt="A cat lounging in a sunbeam, tail gently swishing",
+        model="grok-imagine-video",
+        duration=5,
+    )
+    print(response.url)
+except VideoGenerationError as e:
+    print(f"Generation failed [{e.code}]: {e.message}")
+except TimeoutError:
+    print("Generation timed out — try increasing the timeout or simplifying the prompt")
+Response Details
+The SDK response includes the generated video and provider-specific metadata. In the AI SDK, the xAI-hosted output URL is available at providerMetadata.xai.videoUrl.
+
+
+Python
+
+Javascript
+
+if response.respect_moderation:
+    print(response.url)
+else:
+    print("Video filtered by moderation")
+print(f"Duration: {response.duration} seconds")
+print(f"Model: {response.model}")
+Concurrent Requests
+When you need to generate multiple videos, run requests concurrently. This is especially useful for comparing prompts or creating multiple variations.
+
+Python
+
+
+import os
+import asyncio
+import xai_sdk
+async def generate_concurrently():
+    client = xai_sdk.AsyncClient(api_key=os.getenv("XAI_API_KEY"))
+    prompts = [
+        "A cat sitting on a sunlit windowsill, tail gently swishing.",
+        "A dog sprinting through a field of tall grass at golden hour.",
+        "A hummingbird hovering near a red flower in slow motion.",
+    ]
+    tasks = [
+        client.video.generate(
+            prompt=prompt,
+            model="grok-imagine-video",
+            duration=5,
+        )
+        for prompt in prompts
+    ]
+    results = await asyncio.gather(*tasks)
+    for prompt, result in zip(prompts, results):
+        print(f"{prompt}: {result.url}")
+asyncio.run(generate_concurrently())
+Related
+Models — Available video models and pricing
+Image-to-Video — Animate a still image
+Reference-to-Video — Guide a video with reference images
+Video Editing — Edit existing videos
+Video Extension — Extend existing videos
+Image Generation — Generate still images from text
+API Reference — Full endpoint documentation
+Imagine API Landing Page — Showcase of the Imagine API in action
+Last updated: May 13, 2026
+
+
+
+Image-to-Video
+
+Copy for LLM
+View as Markdown
+Manage API keys
+Try Playground
+Transform a still image into a video by providing a source image along with your prompt. The model animates the image content based on your instructions.
+
+You can provide the source image as:
+
+A public URL pointing to an image
+A base64-encoded data URI (e.g., data:image/jpeg;base64,...)
+The demo below shows this in action; hold to animate a still image:
+
+
+Python
+Python (Requests)
+
+Javascript
+Bash
+
+import os
+import xai_sdk
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+response = client.video.generate(
+    prompt="Generate a slow and serene time-lapse",
+    model="grok-imagine-video",
+    image_url="https://docs.x.ai/assets/api-examples/video/milkyway-still.png",
+    duration=12,
+)
+print(response.url)
+Time-lapse
+Motion
+Nature
+Portrait
+In the Vercel AI SDK, the prompt parameter accepts an object with image and text fields for image-to-video generation. The image field can be a URL string, base64-encoded string, Uint8Array, ArrayBuffer, or Buffer.
+
+Related
+Video Generation — Generate videos from text prompts
+Reference-to-Video — Guide a video with reference images
+Video Editing — Edit existing videos
+API Reference — Full endpoint documentation
+Imagine API Landing Page — Showcase of the Imagine API in action
+Last updated: April 2, 2026
+
+
+Video Editing
+
+Copy for LLM
+View as Markdown
+Manage API keys
+Try Playground
+Edit an existing video by providing a source video along with your prompt. The model understands the video content and applies your requested changes.
+
+The input video must have the .mp4 extension and be encoded with .mp4 supported codecs such as H.265 / H.264 / AV1, etc.
+The maximum length of the input video provided via the video parameter is 8.7 seconds.
+The duration, aspect_ratio, and resolution parameters are not supported for video editing; the output retains the duration and aspect ratio of the input, and matches its resolution, capped at 720p.
+The demo below shows video editing in action. grok-imagine-video delivers high-fidelity edits with strong scene preservation, modifying only what you ask for while keeping the rest of the video intact:
+
+Necklace
+Outfit color
+Hat
+Video preview
+
+Press play
+
+Python
+
+Javascript
+Bash
+
+import os
+import xai_sdk
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+response = client.video.generate(
+    prompt="Give the woman a silver necklace",
+    model="grok-imagine-video",
+    video_url="https://data.x.ai/docs/video-generation/portrait-wave.mp4",
+)
+print(response.url)
+In the Vercel AI SDK, video editing is triggered by setting providerOptions.xai.mode to "edit-video" and passing providerOptions.xai.videoUrl with a source video URL. The prompt describes the desired modifications; duration, aspectRatio, and resolution are ignored because the output inherits these properties from the input video, capped at 720p.
+
+Concurrent Requests
+When you need to apply several edits to the same source video, run requests concurrently. This is useful for branching multiple edits from the same intermediate result.
+
+
+Python
+
+Javascript
+
+import os
+import asyncio
+import xai_sdk
+async def edit_concurrently():
+    client = xai_sdk.AsyncClient(api_key=os.getenv("XAI_API_KEY"))
+    source_video = "https://data.x.ai/docs/video-generation/portrait-wave.mp4"
+    prompts = [
+        "Give the woman a silver necklace",
+        "Change the color of the woman's outfit to red",
+        "Give the woman a wide-brimmed black hat",
+    ]
+    tasks = [
+        client.video.generate(
+            prompt=prompt,
+            model="grok-imagine-video",
+            video_url=source_video,
+        )
+        for prompt in prompts
+    ]
+    results = await asyncio.gather(*tasks)
+    for prompt, result in zip(prompts, results):
+        print(f"{prompt}: {result.url}")
+asyncio.run(edit_concurrently())
+Related
+Video Generation — Generate videos from text prompts
+Image-to-Video — Animate a still image
+Video Extension — Extend existing videos
+API Reference — Full endpoint documentation
+Imagine API Landing Page — Showcase of the Imagine API in action
+Last updated: May 12, 2026
+
+
+Reference-to-Video
+
+Copy for LLM
+View as Markdown
+Manage API keys
+Try Playground
+Provide one or more reference images to incorporate specific people, objects, clothing, or other visual elements into the generated video. The model uses the reference images as a visual guide, producing a video that features the content from those images. This is useful for virtual try-on, product placement, and character-consistent storytelling.
+
+Unlike image-to-video, where the source image becomes the starting frame, reference images influence what appears in the video without locking in the first frame.
+
+Each reference image can be provided as a public HTTPS URL or a base64-encoded data URI. In the AI SDK, set providerOptions.xai.mode to "reference-to-video" and pass the images with providerOptions.xai.referenceImageUrls.
+
+A non-empty prompt is required when using reference images.
+A maximum of 7 reference images can be provided per request.
+The maximum duration allowed when using reference images is 10 seconds.
+Reference images cannot be combined with image-to-video or video editing. Only one mode can be active per request, determined by the parameters on the request.
+
+Python
+Python (Requests)
+
+Javascript
+Bash
+
+import os
+import xai_sdk
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+response = client.video.generate(
+    prompt="slow zoom in on the white fashion runway stage. then, the model from <IMAGE_1> walks in from the back of the shot from the white opening, and gracefully walk out onto the front of the white stage platform. they wear the shirt from <IMAGE_2> and black flared jeans. they look dramatically at the camera. high quality slow motion shot. fun, playful. skin pores. highly detailed faces. perfect shot. they reach the end of the runway and look at the camera as the camera slowly zooms. subtle smile.",
+    model="grok-imagine-video",
+    reference_image_urls=[
+        "<IMAGE_URL_1>",
+        "<IMAGE_URL_2>",
+        "<IMAGE_URL_3>",
+    ],
+    duration=10,
+    aspect_ratio="16:9",
+    resolution="720p",
+)
+print(response.url)
+Related
+Video Generation — Generate videos from text prompts
+Image-to-Video — Animate a still image
+Video Editing — Edit existing videos
+API Reference — Full endpoint documentation
+Imagine API Landing Page — Showcase of the Imagine API in action
+Last updated: May 13, 2026
+
+
+Video Extension
+
+Copy for LLM
+View as Markdown
+Manage API keys
+Try Playground
+Extend an existing video by providing a source video and a text prompt describing what should happen next. The result is a single video that picks up seamlessly from the last frame of the input and continues with the generated content.
+
+The input video must have the .mp4 extension and be encoded with .mp4 supported codecs such as H.265 / H.264 / AV1, etc.
+The input video duration must be between 2 and 15 seconds.
+The extension duration range is 2–10 seconds (default: 6).
+The aspect_ratio and resolution parameters are not supported for video extension; the output matches the aspect ratio and resolution of the input, capped at 720p.
+The duration parameter controls the length of the extended portion only, not the total output. For example, if your input video is 10 seconds and you set duration to 5, the returned video will be 15 seconds long (10s original + 5s extension).
+
+
+Python
+Python (Requests)
+
+Javascript
+Bash
+
+import os
+import xai_sdk
+client = xai_sdk.Client(api_key=os.getenv("XAI_API_KEY"))
+response = client.video.extend(
+    prompt="The shot pans to an over the shoulder perspective. Calm controlled scene.",
+    model="grok-imagine-video",
+    video_url="<VIDEO_URL>",
+    duration=10,
+)
+print(response.url)
+Video editing uses the /v1/videos/edits endpoint and client.video.generate(video_url=...) in the Python SDK. In the AI SDK, set providerOptions.xai.mode to "edit-video" or "extend-video" and pass providerOptions.xai.videoUrl. The same asynchronous polling pattern applies to both flows, and the AI SDK returns the xAI-hosted output URL in providerMetadata.xai.videoUrl.
+
+Related
+Video Generation — Generate videos from text prompts
+Video Editing — Edit existing videos
+Image-to-Video — Animate a still image
+API Reference — Full endpoint documentation
+Imagine API Landing Page — Showcase of the Imagine API in action
+Last updated: May 13, 2026
+
