@@ -342,34 +342,95 @@ def _invitation_connection(settings) -> str:
     return getattr(settings, 'auth0_invitation_connection', None) or 'Username-Password-Authentication'
 
 
+def _select_preferred_auth0_match(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """BUG-219 — Elige el "preferred" entre múltiples cuentas Auth0 que comparten
+    el mismo email a través de connections distintas (database + Google OAuth +
+    LinkedIn, etc.).
+
+    Algoritmo determinístico + fail-closed contra cuentas no verificadas:
+
+    1. **Filtrar por ``email_verified=true``.** Una cuenta sin verificar puede
+       ser un atacante que registró el email antes que la víctima. Las
+       descartamos completamente. Si NINGUNA queda verificada, devolvemos
+       ``None`` (el caller traduce a ``Auth0UserNotVerified``).
+
+    2. **Preferir ``last_login`` más reciente.** Indica la cuenta más activa —
+       la que el usuario realmente usa para loguear. Si todas tienen el mismo
+       o ninguna tiene ``last_login``, pasa al siguiente criterio.
+
+    3. **Preferir ``created_at`` más antiguo.** La cuenta "primary" del usuario
+       — la primera vez que se registró, antes de agregar identidades sociales.
+
+    El supuesto de seguridad: si dos cuentas comparten el mismo email Y ambas
+    tienen ``email_verified=true``, ambas son del dueño legítimo del email
+    (Google OAuth verifica via Google; la database connection requiere que
+    Auth0 envíe email de verificación). En ese caso, cualquier match es
+    aceptable como identidad — preferimos el más activo.
+
+    Si solo UNA está verificada, esa gana sin importar quién es la más
+    reciente — la otra es sospechosa.
+    """
+    verified = [c for c in candidates if isinstance(c, dict) and c.get('email_verified')]
+    if not verified:
+        return None
+
+    def _sort_key(user: dict[str, Any]) -> tuple[str, str]:
+        # Tuple ordering: primero (negativo de last_login para que el MAYOR
+        # ordene primero), luego created_at (el más antiguo primero). Como
+        # `sorted()` es ascending, invertimos last_login con un truco: usar
+        # el string negado (empty string ordena primero, asi que usamos el
+        # mismo valor pero con flip que la cuenta más reciente quede primero).
+        # Más simple: ordenamos descending por last_login con `reverse=True`
+        # y luego de esa ronda hacemos un break-tie por created_at ascending.
+        # Para lograrlo en un solo sort: usamos `last_login_reverse_key` que
+        # es el valor original ordenado descending via negación de comparación,
+        # pero strings no soportan negación → usamos un wrapper.
+        return (user.get('last_login') or '', user.get('created_at') or '9999')
+
+    # Two-pass sort: primero ordenamos ascending por created_at (tie-breaker)
+    # y luego descending por last_login. Python's sort es stable.
+    by_created = sorted(verified, key=lambda u: u.get('created_at') or '9999')
+    by_last_login_desc = sorted(by_created, key=lambda u: u.get('last_login') or '', reverse=True)
+    return by_last_login_desc[0]
+
+
 async def lookup_auth0_user_by_email(
     email: str,
     *,
-    enforce_single: bool = True,
+    enforce_single: bool = False,
     require_email_verified: bool = True,
 ) -> dict[str, Any] | None:
-    """BUG-013 + BUG-193: GET /api/v2/users-by-email con validaciones de seguridad.
+    """BUG-013 + BUG-193 + BUG-219: GET /api/v2/users-by-email.
 
     Necesario cuando ``POST /api/v2/users`` devuelve 409 (el email ya tiene
     cuenta Auth0 — típicamente porque fue invitado a otro tenant antes, o
-    porque hizo signup user-side). En lugar de propagar 409 al caller,
-    buscamos el ``user_id`` real y lo reutilizamos para attach al nuevo
-    tenant.
+    porque hizo signup user-side, o porque el usuario tiene cuentas en
+    múltiples connections como database + Google OAuth). En lugar de propagar
+    409 al caller, buscamos el ``user_id`` real y lo reutilizamos para attach
+    al nuevo tenant.
 
-    BUG-193 (codex HIGH) — Auth0 permite que el mismo email viva en
-    múltiples connections, y un atacante puede registrar una cuenta sin
-    verificar para hijacking de invites. Por defecto:
+    BUG-219 (decisión de producto): Auth0 permite que el mismo email viva en
+    múltiples connections, y eso es legítimo en SaaS multi-tenant — el dueño
+    del email puede haberse registrado con password Y con Google OAuth. La
+    política anterior (BUG-193) fallaba con ``Auth0AmbiguousUserMatch`` ante
+    cualquier multiplicidad, lo que rompía el flujo de invite para users
+    legítimos. La nueva política:
 
-    - ``enforce_single=True``: si el array tiene >1 user, levanta
-      ``Auth0AmbiguousUserMatch`` en vez de tomar silenciosamente
-      ``response[0]``. El operador debe desambiguar en el dashboard.
-    - ``require_email_verified=True``: si el único match tiene
-      ``email_verified=false``, levanta ``Auth0UserNotVerified``. Una
-      cuenta no verificada puede ser de un atacante que registró el email
-      antes que la víctima.
+    - **``enforce_single=False`` (default)**: ante múltiples matches,
+      :func:`_select_preferred_auth0_match` filtra por ``email_verified=true``
+      (las cuentas no verificadas se descartan — protección contra atacantes
+      que registran el email sin acceso al inbox) y elige la más activa
+      (``last_login`` más reciente, tie-break por ``created_at`` más antiguo).
 
-    Pasar ambos en ``False`` desactiva las guards (solo para flows internos
-    no críticos, p. ej. mostrar metadata de debug).
+    - **``enforce_single=True``**: vuelve al comportamiento estricto y
+      levanta ``Auth0AmbiguousUserMatch`` si hay >1 match. Mantenemos esta
+      opción por si algún flow administrativo requiere desambiguar
+      explícitamente.
+
+    - **``require_email_verified=True`` (default)**: si el match seleccionado
+      no tiene ``email_verified=true``, levanta ``Auth0UserNotVerified``. Es
+      doblemente defensivo cuando solo hay 1 match (no entró por
+      ``_select_preferred_auth0_match``).
 
     URL-encodea el email — un `+` literal en alias-style emails
     (``foo+bar@gmail.com``) se rompe sin encode.
@@ -386,16 +447,53 @@ async def lookup_auth0_user_by_email(
         return None
     if not isinstance(response, list) or not response:
         return None
-    if enforce_single and len(response) > 1:
+
+    # Multi-match path
+    if len(response) > 1:
+        if enforce_single:
+            # Modo estricto opt-in (algún admin tool puede necesitarlo).
+            log.warning(
+                'auth0_admin.lookup_ambiguous_match_strict',
+                email=email,
+                match_count=len(response),
+                user_ids=[u.get('user_id') for u in response if isinstance(u, dict)][:5],
+            )
+            raise Auth0AmbiguousUserMatch(
+                f'Email {email} matches {len(response)} Auth0 users across connections'
+            )
+        # BUG-219 — modo default: elegir el preferred entre los verificados.
+        candidate = _select_preferred_auth0_match(response)
+        if candidate is None:
+            # Ningún match estaba verificado — fail-closed contra atacantes
+            # que registran el email antes que la víctima.
+            log.warning(
+                'auth0_admin.lookup_no_verified_match',
+                email=email,
+                match_count=len(response),
+                user_ids=[u.get('user_id') for u in response if isinstance(u, dict)][:5],
+            )
+            raise Auth0UserNotVerified(
+                f'None of the {len(response)} Auth0 users for {email} have email_verified=true'
+            )
         log.warning(
-            'auth0_admin.lookup_ambiguous_match',
+            'auth0_admin.lookup_ambiguous_resolved',
             email=email,
             match_count=len(response),
-            user_ids=[u.get('user_id') for u in response if isinstance(u, dict)][:5],
+            chosen_user_id=candidate.get('user_id'),
+            chosen_connection=(
+                candidate.get('identities', [{}])[0].get('connection')
+                if candidate.get('identities') else None
+            ),
+            other_user_ids=[
+                u.get('user_id') for u in response
+                if isinstance(u, dict) and u.get('user_id') != candidate.get('user_id')
+            ][:5],
         )
-        raise Auth0AmbiguousUserMatch(
-            f'Email {email} matches {len(response)} Auth0 users across connections'
-        )
+        # `_select_preferred_auth0_match` ya filtró por email_verified=true,
+        # así que el guard de `require_email_verified` es no-op aquí.
+        return candidate
+
+    # Single-match path
     candidate = response[0]
     if not isinstance(candidate, dict):
         return None

@@ -56,19 +56,26 @@ def test_bug_193_lookup_defines_unverified_exception():
     )
 
 
-def test_bug_193_lookup_enforces_single_match_by_default():
+def test_bug_219_lookup_resolves_ambiguous_with_preferred_default():
+    """BUG-219: el default ahora es `enforce_single=False`. Ante múltiples
+    matches, en lugar de fail-closed, se elige el preferred (verificado +
+    más activo). El modo strict sigue accesible vía `enforce_single=True`."""
     src = AUTH0_ADMIN.read_text()
     fn_idx = src.find('async def lookup_auth0_user_by_email(')
     assert fn_idx > 0
     next_fn = src.find('\nasync def ', fn_idx + 1)
     block = src[fn_idx:next_fn]
-    assert 'enforce_single: bool = True' in block, (
-        'BUG-193: `lookup_auth0_user_by_email` debe aceptar `enforce_single` '
-        'con default True.'
+    assert 'enforce_single: bool = False' in block, (
+        'BUG-219: `lookup_auth0_user_by_email` debe tener `enforce_single` '
+        'con default False (resolver ambiguous eligiendo preferred).'
     )
     assert 'raise Auth0AmbiguousUserMatch(' in block, (
-        'BUG-193: cuando hay >1 match y `enforce_single`, debe levantar '
-        '`Auth0AmbiguousUserMatch`.'
+        'BUG-193 (legacy): cuando `enforce_single=True` y hay >1 match, '
+        'sigue levantando `Auth0AmbiguousUserMatch` para callers strict.'
+    )
+    assert '_select_preferred_auth0_match' in block, (
+        'BUG-219: el helper debe invocar `_select_preferred_auth0_match` '
+        'ante múltiples matches en modo default.'
     )
 
 
