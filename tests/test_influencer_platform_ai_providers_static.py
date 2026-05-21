@@ -105,6 +105,37 @@ def test_schema_sql_has_paridad(schema_source: str) -> None:
     assert 'insert into app.platform_ai_providers' in schema_source
 
 
+def test_migrations_declare_rls_policies_under_support_mode(
+    migrations_source: str,
+) -> None:
+    """BUGFIX-AI-PROVIDERS-RLS — sin policies sobre `platform_ai_providers`
+    y `platform_secrets`, RLS deny-all bloquea al rol `copiloto_app` y los
+    endpoints `/v1/platform/ai-providers*` responden 404. Las 8 policies
+    abren CRUD bajo ``app.support_mode='on'``, alineado con el resto del
+    schema (tenant_modules, personas, etc.).
+    """
+    for verb in ('select', 'insert', 'update', 'delete'):
+        assert (
+            f'platform_ai_providers_support_{verb}\n  on app.platform_ai_providers'
+            in migrations_source
+        ), f'falta policy {verb} sobre platform_ai_providers en 03-migrations.sql'
+        assert (
+            f'platform_secrets_support_{verb}\n  on app.platform_secrets'
+            in migrations_source
+        ), f'falta policy {verb} sobre platform_secrets en 03-migrations.sql'
+    # Las policies condicionan sobre el GUC `app.support_mode`.
+    assert "current_setting('app.support_mode', true) = 'on'" in migrations_source
+
+
+def test_schema_sql_paridad_rls_policies(schema_source: str) -> None:
+    """`01-schema.sql` también debe declarar las mismas policies — fresh
+    install no aplica `03-migrations.sql`.
+    """
+    for verb in ('select', 'insert', 'update', 'delete'):
+        assert f'platform_ai_providers_support_{verb}' in schema_source
+        assert f'platform_secrets_support_{verb}' in schema_source
+
+
 # ─── provider_registry helper ──────────────────────────────────────────────
 
 
@@ -313,6 +344,7 @@ EXPECTED_ENDPOINTS_FROM_ADMIN_ROUTES = {
     # TASK-INFLU-002 — AI providers
     '/v1/platform/ai-providers',
     '/v1/platform/ai-providers/{modality}',
+    '/v1/platform/ai-providers/{modality}/test',
     # TASK-INFLU-019 — tenant modules
     '/v1/platform/tenant-modules',
     '/v1/platform/tenant-modules/{tenant_id}/{module}',
@@ -362,8 +394,17 @@ def test_admin_routes_endpoints_respond_not_404(fastapi_app) -> None:
         concrete_path = path.replace('{modality}', 'llm') \
                             .replace('{tenant_id}', '00000000-0000-0000-0000-000000000000') \
                             .replace('{module}', 'influencer')
-        method = 'PATCH' if '{' in path else 'GET'
-        body = {'enabled': True} if method == 'PATCH' else None
+        # El smoke test endpoint es POST; los path-param endpoints sin
+        # `/test` son PATCH; los plain GET listings sin params.
+        if path.endswith('/test'):
+            method = 'POST'
+            body = {'prompt': 'hi'}
+        elif '{' in path:
+            method = 'PATCH'
+            body = {'enabled': True}
+        else:
+            method = 'GET'
+            body = None
         resp = client.request(method, concrete_path, json=body)
         assert resp.status_code != 404, (
             f'{method} {concrete_path} respondió 404. La ruta no está '

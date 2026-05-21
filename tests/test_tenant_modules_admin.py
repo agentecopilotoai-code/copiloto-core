@@ -25,8 +25,10 @@ from fastapi import HTTPException
 from app.influencer.admin_routes import (
     PlatformAIProviderUpdate,
     TenantModuleUpdate,
+    TestProviderRequest,
     list_platform_ai_providers,
     list_tenant_modules,
+    smoke_test_platform_ai_provider,
     update_platform_ai_provider,
     update_tenant_module,
 )
@@ -542,3 +544,365 @@ def test_list_tenant_modules_runs_inside_transaction():
 
     asyncio.run(list_tenant_modules(_request(), conn=conn))
     assert len(txn_calls) == 1
+
+
+def test_list_platform_ai_providers_runs_inside_transaction():
+    """BUGFIX-AI-PROVIDERS-RLS — el SELECT necesita ``app.support_mode='on'``
+    persistente porque las policies de `platform_ai_providers` y
+    `platform_secrets` condicionan sobre ese GUC. Sin transacción explícita
+    el setting se descarta y el response viene vacío (la UI pinta
+    placeholders "sin configurar").
+    """
+    conn = _async_conn()
+    conn.fetch = AsyncMock(return_value=[])
+
+    txn_calls = []
+    original_transaction = conn.transaction
+    def _spy(*a, **kw):
+        txn_calls.append((a, kw))
+        return original_transaction(*a, **kw)
+    conn.transaction = _spy
+
+    asyncio.run(list_platform_ai_providers(conn=conn))
+    assert len(txn_calls) == 1
+
+
+def test_update_platform_ai_provider_runs_inside_transaction():
+    """Mismo contrato para el PATCH — sin la transacción, RLS rechaza el
+    UPDATE y `row is None` dispara un 404 "modality not found" engañoso.
+    """
+    conn = _async_conn()
+    # `_request()` no setea `state.actor_id`, así que el actor lookup queda
+    # short-circuited (no `conn.fetchrow` para users). La única fetchrow es
+    # el UPDATE ... RETURNING.
+    conn.fetchrow = AsyncMock(return_value={
+        'modality': 'llm', 'provider': 'unset', 'model': 'grok-4.3',
+        'params': {}, 'secret_ref': None,
+        'updated_at': datetime.now(timezone.utc),
+    })
+
+    txn_calls = []
+    original_transaction = conn.transaction
+    def _spy(*a, **kw):
+        txn_calls.append((a, kw))
+        return original_transaction(*a, **kw)
+    conn.transaction = _spy
+
+    asyncio.run(update_platform_ai_provider(
+        modality='llm',
+        payload=PlatformAIProviderUpdate(provider='unset', model='grok-4.3'),
+        request=_request(),
+        conn=conn,
+    ))
+    assert len(txn_calls) == 1
+
+
+# ─── reuse_from_modality (reusar key cross-modality) ─────────────────────────
+
+
+def test_update_platform_ai_provider_rejects_secret_value_and_reuse_together():
+    """`secret_value` y `reuse_from_modality` son mutuamente excluyentes —
+    pasar las dos es ambiguo y casi seguro un bug en el cliente.
+    """
+    conn = _async_conn()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_platform_ai_provider(
+            modality='llm',
+            payload=PlatformAIProviderUpdate(
+                secret_value='xai-12345678',
+                reuse_from_modality='image',
+            ),
+            request=_request(),
+            conn=conn,
+        ))
+    assert exc.value.status_code == 400
+    assert 'mutually exclusive' in exc.value.detail
+
+
+def test_update_platform_ai_provider_rejects_reuse_from_self():
+    """reuse_from_modality == target_modality es siempre un no-op caro."""
+    conn = _async_conn()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_platform_ai_provider(
+            modality='llm',
+            payload=PlatformAIProviderUpdate(reuse_from_modality='llm'),
+            request=_request(),
+            conn=conn,
+        ))
+    assert exc.value.status_code == 400
+    assert 'cannot equal the target modality' in exc.value.detail
+
+
+def test_update_platform_ai_provider_reuse_400_when_source_has_no_secret():
+    """Si la modalidad fuente no tiene `secret_ref`, no hay key que reusar."""
+    conn = _async_conn()
+    # 1ra fetchrow: source modality lookup → existe pero secret_ref=None.
+    conn.fetchrow = AsyncMock(return_value={'provider': 'grok', 'secret_ref': None})
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_platform_ai_provider(
+            modality='llm',
+            payload=PlatformAIProviderUpdate(reuse_from_modality='image'),
+            request=_request(),
+            conn=conn,
+        ))
+    assert exc.value.status_code == 400
+    assert 'has no secret configured' in exc.value.detail
+
+
+def test_update_platform_ai_provider_reuse_400_on_provider_mismatch():
+    """No se permite reusar la key de un provider distinto al target —
+    aunque pegue técnicamente, en runtime fallaría 401 con el otro vendor.
+    """
+    conn = _async_conn()
+    # source (image) tiene provider=openai, target (llm) trae provider=grok.
+    conn.fetchrow = AsyncMock(side_effect=[
+        # 1) source lookup
+        {'provider': 'openai', 'secret_ref': 'infl:env:image:abc123'},
+    ])
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_platform_ai_provider(
+            modality='llm',
+            payload=PlatformAIProviderUpdate(
+                provider='grok',
+                reuse_from_modality='image',
+            ),
+            request=_request(),
+            conn=conn,
+        ))
+    assert exc.value.status_code == 400
+    assert 'provider mismatch' in exc.value.detail
+
+
+def test_update_platform_ai_provider_reuse_happy_path_copies_secret_ref():
+    """Camino feliz: fuente con secret_ref, mismo provider → UPDATE copia
+    el secret_ref de la fuente al target. Audit con secret_rotated=True
+    y reused_from = fuente.
+    """
+    conn = _async_conn()
+    # Sin `request.state.actor_id`, el actor lookup queda short-circuited.
+    # Las fetchrow del handler en orden:
+    #   1) source modality (image) → tiene secret_ref + provider=grok
+    #   2) target current provider lookup (porque payload.provider es None)
+    #   3) UPDATE ... RETURNING
+    conn.fetchrow = AsyncMock(side_effect=[
+        # source
+        {'provider': 'grok', 'secret_ref': 'infl:env:image:abc123'},
+        # current target provider (para validar match)
+        {'provider': 'grok'},
+        # UPDATE returning
+        {
+            'modality': 'llm', 'provider': 'grok', 'model': 'grok-4.3',
+            'params': {}, 'secret_ref': 'infl:env:image:abc123',
+            'updated_at': datetime.now(timezone.utc),
+        },
+        # hint lookup (secret_ref != None → handler busca el hint)
+        {'hint': 'AB12'},
+    ])
+
+    with patch('app.influencer.admin_routes._provider_cache_invalidate'):
+        result = asyncio.run(update_platform_ai_provider(
+            modality='llm',
+            payload=PlatformAIProviderUpdate(reuse_from_modality='image'),
+            request=_request(),
+            conn=conn,
+        ))
+
+    assert result.modality == 'llm'
+    assert result.hint == 'AB12'
+
+
+def test_audit_metadata_includes_reused_from_field():
+    """AST: la metadata de audit incluye `reused_from` para distinguir
+    rotaciones con key nueva (None) vs reuse cross-modality (modality
+    fuente). Útil para el operador en el log.
+    """
+    from pathlib import Path
+    src = Path('app/influencer/admin_routes.py').read_text(encoding='utf-8')
+    # Hay UN único bloque metadata en el audit del provider — buscamos la key.
+    assert "'reused_from': reused_from" in src
+
+
+# ─── smoke_test_platform_ai_provider — smoke test endpoint ────────────────────────
+
+
+def test_smoke_test_platform_ai_provider_rejects_unknown_modality():
+    """Modalidad fuera de MODALITIES → 400."""
+    conn = _async_conn()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(smoke_test_platform_ai_provider(
+            modality='nonexistent',
+            body=TestProviderRequest(prompt='hi'),
+            request=_request(),
+            conn=conn,
+        ))
+    assert exc.value.status_code == 400
+    assert 'modality must be one of' in exc.value.detail
+
+
+def test_smoke_test_platform_ai_provider_404_when_modality_row_missing():
+    """Si la fila de la modalidad no existe (no debería pasar por el seed,
+    pero el handler defensivo lo cubre), responde 404.
+    """
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(smoke_test_platform_ai_provider(
+            modality='llm',
+            body=TestProviderRequest(prompt='hi'),
+            request=_request(),
+            conn=conn,
+        ))
+    assert exc.value.status_code == 404
+
+
+def test_smoke_test_platform_ai_provider_400_when_unconfigured():
+    """Si provider='unset' o hint=None, no hay nada que probar — 400 con
+    mensaje accionable para el operador.
+    """
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(return_value={
+        'provider': 'unset', 'model': None, 'params': {}, 'hint': None,
+    })
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(smoke_test_platform_ai_provider(
+            modality='llm',
+            body=TestProviderRequest(prompt='hi'),
+            request=_request(),
+            conn=conn,
+        ))
+    assert exc.value.status_code == 400
+    assert 'not fully configured' in exc.value.detail
+
+
+def test_smoke_test_platform_ai_provider_400_when_env_var_missing(monkeypatch):
+    """Si la env var INFLUENCER_SECRET_<hint> no está set, 400 con la env
+    var esperada en el detail — el operador sabe exactamente qué hacer.
+    """
+    monkeypatch.delenv('INFLUENCER_SECRET_AB12', raising=False)
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(return_value={
+        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
+    })
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(smoke_test_platform_ai_provider(
+            modality='llm',
+            body=TestProviderRequest(prompt='hi'),
+            request=_request(),
+            conn=conn,
+        ))
+    assert exc.value.status_code == 400
+    assert 'INFLUENCER_SECRET_AB12' in exc.value.detail
+
+
+def test_smoke_test_platform_ai_provider_501_for_unsupported_provider(monkeypatch):
+    """Hoy solo grok está cableado — providers no implementados responden
+    501 explícito (no 500 opaco).
+    """
+    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'sk-fake-key-for-testing')
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(return_value={
+        'provider': 'anthropic', 'model': 'claude-sonnet-4-6', 'params': {}, 'hint': 'AB12',
+    })
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(smoke_test_platform_ai_provider(
+            modality='llm',
+            body=TestProviderRequest(prompt='hi'),
+            request=_request(),
+            conn=conn,
+        ))
+    assert exc.value.status_code == 501
+    assert 'anthropic' in exc.value.detail
+
+
+def test_smoke_test_platform_ai_provider_400_when_required_body_field_missing(monkeypatch):
+    """LLM exige `prompt`; sin él, el adapter ni se llama — devolvemos un
+    response con ok=false y error claro (no 5xx).
+    """
+    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'xai-fake')
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(return_value={
+        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
+    })
+    # `prompt` ausente — el `_run_smoke_call` levanta ValueError que el
+    # handler captura y mapea a ok=false (200 con error embebido).
+    result = asyncio.run(smoke_test_platform_ai_provider(
+        modality='llm',
+        body=TestProviderRequest(),
+        request=_request(),
+        conn=conn,
+    ))
+    assert result.ok is False
+    assert 'prompt' in (result.error or '')
+    assert result.error_class == 'ValueError'
+
+
+def test_smoke_test_platform_ai_provider_happy_path_grok_llm(monkeypatch):
+    """Camino feliz: provider=grok configurado, env var set, adapter
+    devuelve un TextResult. La respuesta es ok=true con output.kind='text'.
+    """
+    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'xai-fake-key')
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(return_value={
+        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
+    })
+
+    # Mockeamos GrokProvider para no hacer red. `_models` debe ser un dict
+    # mutable porque el handler hace `provider._models[modality] = model`.
+    class _FakeProvider:
+        provider_name = 'grok'
+        _models: dict = {}
+        async def generate_text(self, *, prompt, system=None, max_tokens=512, temperature=0.7):
+            from app.ai.providers.base import TextResult
+            return TextResult(
+                text=f'echo: {prompt}', finish_reason='stop',
+                provider_meta={'tokens_used': 7}, cost_units=7.0,
+                elapsed_ms=12.3,
+            )
+
+    with patch('app.influencer.admin_routes._build_test_provider', return_value=_FakeProvider()):
+        result = asyncio.run(smoke_test_platform_ai_provider(
+            modality='llm',
+            body=TestProviderRequest(prompt='hola grok'),
+            request=_request(),
+            conn=conn,
+        ))
+
+    assert result.ok is True
+    assert result.modality == 'llm'
+    assert result.provider == 'grok'
+    assert result.output['kind'] == 'text'
+    assert result.output['text'] == 'echo: hola grok'
+    assert result.output['tokens_used'] == 7
+
+
+def test_smoke_test_platform_ai_provider_translates_provider_error_to_ok_false(monkeypatch):
+    """ProviderRateLimited / ProviderContentRejected / etc → ok=false con
+    `error_class` poblado. Nunca 5xx — la UI quiere mostrar el motivo
+    granular sin un toast opaco.
+    """
+    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'xai-fake')
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(return_value={
+        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
+    })
+
+    from app.ai.providers.base import ProviderRateLimited
+
+    class _FakeProvider:
+        _models: dict = {}
+        async def generate_text(self, **kwargs):
+            raise ProviderRateLimited('grok rate-limited (retry-after=30)')
+
+    with patch('app.influencer.admin_routes._build_test_provider', return_value=_FakeProvider()):
+        result = asyncio.run(smoke_test_platform_ai_provider(
+            modality='llm',
+            body=TestProviderRequest(prompt='hi'),
+            request=_request(),
+            conn=conn,
+        ))
+
+    assert result.ok is False
+    assert result.error_class == 'ProviderRateLimited'
+    assert 'rate-limited' in (result.error or '')

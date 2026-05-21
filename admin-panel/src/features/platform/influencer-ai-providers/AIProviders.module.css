@@ -78,3 +78,107 @@
   font-size: var(--fs-caption);
   margin: 0;
 }
+
+.reuseGroup {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+}
+
+.reuseLegend {
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  padding: 0 var(--space-2);
+}
+
+.reuseHelp {
+  color: var(--muted);
+  font-size: var(--fs-caption);
+  margin: 0 0 var(--space-1);
+}
+
+.reuseItem {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-size: var(--fs-small);
+  gap: var(--space-2);
+}
+
+.reuseLabel {
+  color: var(--ink);
+}
+
+/* ── render del resultado de "Probar" ──────────────────────────────── */
+
+.resultBox {
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+
+.resultHeader {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.resultText {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: var(--space-3);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.resultErrorClass {
+  color: var(--danger-ink, var(--ink));
+  font-weight: var(--fw-semibold);
+  margin: 0;
+}
+
+.resultErrorBody {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: var(--space-3);
+  white-space: pre-wrap;
+}
+
+.resultImage {
+  border-radius: var(--r-sm);
+  display: block;
+  max-height: 360px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.resultVideo {
+  border-radius: var(--r-sm);
+  display: block;
+  max-height: 360px;
+  max-width: 100%;
+}

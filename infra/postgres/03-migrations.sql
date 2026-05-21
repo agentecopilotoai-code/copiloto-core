@@ -266,6 +266,67 @@ values
   ('stt',   'unset', null)
 on conflict (modality) do nothing;
 
+-- BUGFIX-AI-PROVIDERS-RLS: con `enable row level security` y CERO policies,
+-- la tabla queda en deny-all para `copiloto_app` (no owner, no BYPASSRLS).
+-- Resultado: GET /v1/platform/ai-providers devolvía 0 filas (la UI las
+-- pintaba con fallback "— sin configurar") y PATCH devolvía 404 "modality
+-- llm not found" porque el UPDATE no afectaba filas. Estas policies abren
+-- el acceso CRUD bajo `app.support_mode='on'` — el gate efectivo sigue
+-- siendo `require_platform_owner` + MFA en el dependency del endpoint, que
+-- corre antes de setear el config y entrar a la transacción.
+drop policy if exists platform_ai_providers_support_select on app.platform_ai_providers;
+create policy platform_ai_providers_support_select
+  on app.platform_ai_providers
+  for select
+  using (current_setting('app.support_mode', true) = 'on');
+
+drop policy if exists platform_ai_providers_support_insert on app.platform_ai_providers;
+create policy platform_ai_providers_support_insert
+  on app.platform_ai_providers
+  for insert
+  with check (current_setting('app.support_mode', true) = 'on');
+
+drop policy if exists platform_ai_providers_support_update on app.platform_ai_providers;
+create policy platform_ai_providers_support_update
+  on app.platform_ai_providers
+  for update
+  using (current_setting('app.support_mode', true) = 'on')
+  with check (current_setting('app.support_mode', true) = 'on');
+
+drop policy if exists platform_ai_providers_support_delete on app.platform_ai_providers;
+create policy platform_ai_providers_support_delete
+  on app.platform_ai_providers
+  for delete
+  using (current_setting('app.support_mode', true) = 'on');
+
+-- `platform_secrets` requiere el mismo tratamiento: el PATCH inserta/upserta
+-- una fila en `platform_secrets` cuando rota la key, y luego lee `hint`
+-- para devolverlo en el response.
+drop policy if exists platform_secrets_support_select on app.platform_secrets;
+create policy platform_secrets_support_select
+  on app.platform_secrets
+  for select
+  using (current_setting('app.support_mode', true) = 'on');
+
+drop policy if exists platform_secrets_support_insert on app.platform_secrets;
+create policy platform_secrets_support_insert
+  on app.platform_secrets
+  for insert
+  with check (current_setting('app.support_mode', true) = 'on');
+
+drop policy if exists platform_secrets_support_update on app.platform_secrets;
+create policy platform_secrets_support_update
+  on app.platform_secrets
+  for update
+  using (current_setting('app.support_mode', true) = 'on')
+  with check (current_setting('app.support_mode', true) = 'on');
+
+drop policy if exists platform_secrets_support_delete on app.platform_secrets;
+create policy platform_secrets_support_delete
+  on app.platform_secrets
+  for delete
+  using (current_setting('app.support_mode', true) = 'on');
+
 -- ============================================================================
 -- TASK-INFLU-008 — `influencer.personas` + CRUD
 -- ============================================================================

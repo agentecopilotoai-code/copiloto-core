@@ -1654,3 +1654,49 @@ values
   ('tts',   'unset', null),
   ('stt',   'unset', null)
 on conflict (modality) do nothing;
+
+-- BUGFIX-AI-PROVIDERS-RLS: policies que permiten CRUD bajo support_mode.
+-- Ver comentario completo en 03-migrations.sql.
+drop policy if exists platform_ai_providers_support_select on app.platform_ai_providers;
+create policy platform_ai_providers_support_select
+  on app.platform_ai_providers
+  for select
+  using (current_setting('app.support_mode', true) = 'on');
+drop policy if exists platform_ai_providers_support_insert on app.platform_ai_providers;
+create policy platform_ai_providers_support_insert
+  on app.platform_ai_providers
+  for insert
+  with check (current_setting('app.support_mode', true) = 'on');
+drop policy if exists platform_ai_providers_support_update on app.platform_ai_providers;
+create policy platform_ai_providers_support_update
+  on app.platform_ai_providers
+  for update
+  using (current_setting('app.support_mode', true) = 'on')
+  with check (current_setting('app.support_mode', true) = 'on');
+drop policy if exists platform_ai_providers_support_delete on app.platform_ai_providers;
+create policy platform_ai_providers_support_delete
+  on app.platform_ai_providers
+  for delete
+  using (current_setting('app.support_mode', true) = 'on');
+
+drop policy if exists platform_secrets_support_select on app.platform_secrets;
+create policy platform_secrets_support_select
+  on app.platform_secrets
+  for select
+  using (current_setting('app.support_mode', true) = 'on');
+drop policy if exists platform_secrets_support_insert on app.platform_secrets;
+create policy platform_secrets_support_insert
+  on app.platform_secrets
+  for insert
+  with check (current_setting('app.support_mode', true) = 'on');
+drop policy if exists platform_secrets_support_update on app.platform_secrets;
+create policy platform_secrets_support_update
+  on app.platform_secrets
+  for update
+  using (current_setting('app.support_mode', true) = 'on')
+  with check (current_setting('app.support_mode', true) = 'on');
+drop policy if exists platform_secrets_support_delete on app.platform_secrets;
+create policy platform_secrets_support_delete
+  on app.platform_secrets
+  for delete
+  using (current_setting('app.support_mode', true) = 'on');
