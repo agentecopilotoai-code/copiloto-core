@@ -57,9 +57,14 @@ class PlatformAIProviderUpdate(BaseModel):
     se persiste en ``app.platform_secrets`` con backend ``env`` y hint =
     últimos 4 chars del valor en claro. La columna ``ciphertext`` queda en
     NULL — el operador es responsable de proveer el valor real al runtime
-    vía env var ``INFLUENCER_SECRET_<HINT>`` o vía un backend externo
+    vía env var ``AI_PROVIDER_SECRET_<HINT>`` o vía un backend externo
     (AWS Secrets Manager, Vault) referenciado por ``secret_ref``. **El
     ``secret_value`` nunca se persiste en claro en la DB.**
+
+    Nota — el prefijo `AI_PROVIDER_*` es deliberadamente neutro al módulo:
+    los providers IA son transversales (Influencer, Gestión Documental,
+    futuros). El nombre histórico `INFLUENCER_SECRET_*` sigue aceptado
+    como fallback para retro-compat en deploys que aún no rotaron.
 
     Como alternativa a ``secret_value``, ``reuse_from_modality`` permite
     apuntar el ``secret_ref`` actual al ``secret_ref`` de OTRA modalidad
@@ -88,11 +93,16 @@ def _hint_of(secret_value: str) -> str:
 
 def _generate_secret_ref(modality: str, backend: str) -> str:
     """Genera un secret_ref opaco único. Formato:
-    ``infl:{backend}:{modality}:{token}`` — el ``token`` es random 12-char
+    ``ai:{backend}:{modality}:{token}`` — el ``token`` es random 12-char
     hex; no se reusa cross-modality ni cross-backend.
+
+    El prefijo ``ai:`` reemplazó al histórico ``infl:`` como parte del
+    refactor que aclara que estos providers son transversales (no del
+    módulo Influencer). Filas existentes con prefijo ``infl:`` siguen
+    siendo válidas — el prefix es opaco, solo importa la unicidad.
     """
     token = secrets_module.token_hex(6)
-    return f'infl:{backend}:{modality}:{token}'
+    return f'ai:{backend}:{modality}:{token}'
 
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────
@@ -378,10 +388,12 @@ async def update_platform_ai_provider(
 # de entrada y una respuesta uniforme. El resultado se renderiza inline en
 # el modal de prueba (texto, imagen, video, audio o transcript).
 #
-# Secrets: se resuelven leyendo la env var ``INFLUENCER_SECRET_<HINT>`` con
+# Secrets: se resuelven leyendo la env var ``AI_PROVIDER_SECRET_<HINT>`` con
 # el hint de la fila. Esto matchea la convención del schema (ver comentario
 # de `PlatformAIProviderUpdate`). Si la env var falta, devolvemos 400 con
-# instrucción explícita al operador.
+# instrucción explícita al operador. El nombre histórico
+# ``INFLUENCER_SECRET_<HINT>`` sigue siendo consultado como fallback para
+# que deploys existentes no rompan durante la transición.
 #
 # Cobertura: hoy solo `grok` está cableado vía `GrokProvider`. Otros
 # providers responden 501 con un mensaje claro hasta que se integren.
@@ -448,13 +460,20 @@ class TestProviderResponse(BaseModel):
 
 
 def _resolve_test_secret(hint: str | None) -> str | None:
-    """Lee `INFLUENCER_SECRET_<HINT>` del env. El hint son los últimos 4
+    """Lee `AI_PROVIDER_SECRET_<HINT>` del env. El hint son los últimos 4
     chars de la key original — único entre las rotaciones esperadas. Si
     el operador rotó la key pero olvidó setear la env var nueva, esto
     devuelve None y el endpoint responde 400 con la env var esperada.
+
+    Fallback ``INFLUENCER_SECRET_<HINT>``: aceptado para retro-compat con
+    deploys previos al rename. El nombre canónico es ``AI_PROVIDER_*``
+    porque los providers son transversales al módulo Influencer.
     """
     if not hint:
         return None
+    primary = _os_module.environ.get(f'AI_PROVIDER_SECRET_{hint}')
+    if primary:
+        return primary
     return _os_module.environ.get(f'INFLUENCER_SECRET_{hint}')
 
 
@@ -540,7 +559,7 @@ async def smoke_test_platform_ai_provider(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f'secret not available at runtime: set env var '
-                f'INFLUENCER_SECRET_{hint} on the API process and restart'
+                f'AI_PROVIDER_SECRET_{hint} on the API process and restart'
             ),
         )
 

@@ -11,7 +11,7 @@ const ROWS = [
 ];
 
 
-describe('<AIProviders/> (UI-INFLU-015)', () => {
+describe('<AIProviders/> — proveedores IA transversales (platform_owner only)', () => {
   it('render tabla con las 5 modalidades', () => {
     render(<AIProviders rows={ROWS} />);
     expect(screen.getByText('LLM')).toBeInTheDocument();

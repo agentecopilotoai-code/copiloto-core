@@ -658,7 +658,7 @@ def test_update_platform_ai_provider_reuse_400_on_provider_mismatch():
     # source (image) tiene provider=openai, target (llm) trae provider=grok.
     conn.fetchrow = AsyncMock(side_effect=[
         # 1) source lookup
-        {'provider': 'openai', 'secret_ref': 'infl:env:image:abc123'},
+        {'provider': 'openai', 'secret_ref': 'ai:env:image:abc123'},
     ])
 
     with pytest.raises(HTTPException) as exc:
@@ -688,13 +688,13 @@ def test_update_platform_ai_provider_reuse_happy_path_copies_secret_ref():
     #   3) UPDATE ... RETURNING
     conn.fetchrow = AsyncMock(side_effect=[
         # source
-        {'provider': 'grok', 'secret_ref': 'infl:env:image:abc123'},
+        {'provider': 'grok', 'secret_ref': 'ai:env:image:abc123'},
         # current target provider (para validar match)
         {'provider': 'grok'},
         # UPDATE returning
         {
             'modality': 'llm', 'provider': 'grok', 'model': 'grok-4.3',
-            'params': {}, 'secret_ref': 'infl:env:image:abc123',
+            'params': {}, 'secret_ref': 'ai:env:image:abc123',
             'updated_at': datetime.now(timezone.utc),
         },
         # hint lookup (secret_ref != None → handler busca el hint)
@@ -777,9 +777,11 @@ def test_smoke_test_platform_ai_provider_400_when_unconfigured():
 
 
 def test_smoke_test_platform_ai_provider_400_when_env_var_missing(monkeypatch):
-    """Si la env var INFLUENCER_SECRET_<hint> no está set, 400 con la env
-    var esperada en el detail — el operador sabe exactamente qué hacer.
+    """Si la env var AI_PROVIDER_SECRET_<hint> no está set (ni el fallback
+    histórico INFLUENCER_SECRET_<hint>), 400 con la env var canónica en el
+    detail — el operador sabe exactamente qué setear.
     """
+    monkeypatch.delenv('AI_PROVIDER_SECRET_AB12', raising=False)
     monkeypatch.delenv('INFLUENCER_SECRET_AB12', raising=False)
     conn = _async_conn()
     conn.fetchrow = AsyncMock(return_value={
@@ -793,14 +795,52 @@ def test_smoke_test_platform_ai_provider_400_when_env_var_missing(monkeypatch):
             conn=conn,
         ))
     assert exc.value.status_code == 400
-    assert 'INFLUENCER_SECRET_AB12' in exc.value.detail
+    # El detail menciona SOLO la canónica — `INFLUENCER_*` es fallback no
+    # promocionado para que no se cree masa crítica de usos del nombre legacy.
+    assert 'AI_PROVIDER_SECRET_AB12' in exc.value.detail
+    assert 'INFLUENCER_SECRET' not in exc.value.detail
+
+
+def test_smoke_test_platform_ai_provider_legacy_env_var_fallback(monkeypatch):
+    """Backward compat: si la nueva env var falta pero la legacy
+    `INFLUENCER_SECRET_<hint>` está set (deploys previos al rename),
+    se usa la legacy y el test sigue corriendo.
+    """
+    monkeypatch.delenv('AI_PROVIDER_SECRET_AB12', raising=False)
+    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'xai-from-legacy-env')
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(return_value={
+        'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
+    })
+
+    class _FakeProvider:
+        _models: dict = {}
+        async def generate_text(self, **kwargs):
+            from app.ai.providers.base import TextResult
+            return TextResult(
+                text='ok', finish_reason='stop',
+                provider_meta={}, cost_units=0.0, elapsed_ms=1.0,
+            )
+
+    with patch('app.influencer.admin_routes._build_test_provider') as build:
+        build.return_value = _FakeProvider()
+        result = asyncio.run(smoke_test_platform_ai_provider(
+            modality='llm',
+            body=TestProviderRequest(prompt='hi'),
+            request=_request(),
+            conn=conn,
+        ))
+        assert result.ok is True
+        # Verifica que la key resuelta vino del fallback legacy.
+        called_kwargs = build.call_args.kwargs
+        assert called_kwargs.get('api_key') == 'xai-from-legacy-env'
 
 
 def test_smoke_test_platform_ai_provider_501_for_unsupported_provider(monkeypatch):
     """Hoy solo grok está cableado — providers no implementados responden
     501 explícito (no 500 opaco).
     """
-    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'sk-fake-key-for-testing')
+    monkeypatch.setenv('AI_PROVIDER_SECRET_AB12', 'sk-fake-key-for-testing')
     conn = _async_conn()
     conn.fetchrow = AsyncMock(return_value={
         'provider': 'anthropic', 'model': 'claude-sonnet-4-6', 'params': {}, 'hint': 'AB12',
@@ -820,7 +860,7 @@ def test_smoke_test_platform_ai_provider_400_when_required_body_field_missing(mo
     """LLM exige `prompt`; sin él, el adapter ni se llama — devolvemos un
     response con ok=false y error claro (no 5xx).
     """
-    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'xai-fake')
+    monkeypatch.setenv('AI_PROVIDER_SECRET_AB12', 'xai-fake')
     conn = _async_conn()
     conn.fetchrow = AsyncMock(return_value={
         'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
@@ -842,7 +882,7 @@ def test_smoke_test_platform_ai_provider_happy_path_grok_llm(monkeypatch):
     """Camino feliz: provider=grok configurado, env var set, adapter
     devuelve un TextResult. La respuesta es ok=true con output.kind='text'.
     """
-    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'xai-fake-key')
+    monkeypatch.setenv('AI_PROVIDER_SECRET_AB12', 'xai-fake-key')
     conn = _async_conn()
     conn.fetchrow = AsyncMock(return_value={
         'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',
@@ -882,7 +922,7 @@ def test_smoke_test_platform_ai_provider_translates_provider_error_to_ok_false(m
     `error_class` poblado. Nunca 5xx — la UI quiere mostrar el motivo
     granular sin un toast opaco.
     """
-    monkeypatch.setenv('INFLUENCER_SECRET_AB12', 'xai-fake')
+    monkeypatch.setenv('AI_PROVIDER_SECRET_AB12', 'xai-fake')
     conn = _async_conn()
     conn.fetchrow = AsyncMock(return_value={
         'provider': 'grok', 'model': 'grok-4.3', 'params': {}, 'hint': 'AB12',

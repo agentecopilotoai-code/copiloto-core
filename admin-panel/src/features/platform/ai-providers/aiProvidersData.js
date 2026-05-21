@@ -1,5 +1,9 @@
 /**
- * UI-INFLU-015 — Helpers puros para la config de proveedores IA del módulo.
+ * Helpers puros para la config de proveedores IA transversales.
+ *
+ * Los providers IA (LLM/Image/Video/TTS/STT) son un recurso de plataforma
+ * usado por múltiples módulos (Influencer, Gestión Documental, futuros).
+ * Este archivo NO depende de ningún módulo en particular.
  */
 
 export const MODALITIES = [

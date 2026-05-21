@@ -56,13 +56,15 @@ export const adminModules = [
     capability: 'platform.feature_flags.read',
   },
   {
-    // TASK-INFLU-002 — Config de proveedores IA del módulo Influencer.
-    // platform_owner only. El componente vivía huérfano hasta ahora.
-    id: 'platform-influencer-ai-providers',
-    label: 'Proveedores IA · Influencer',
-    summary: 'Configuración cross-modalidad (llm/image/video/tts/stt) de los proveedores IA que alimentan el módulo Influencer. Solo platform_owner.',
+    // Proveedores IA transversales — alimentan Influencer, Gestión
+    // Documental y futuros módulos que requieran LLM/Image/Video/TTS/STT.
+    // platform_owner only. El operador configura provider + modelo + rota
+    // la key por modalidad desde un único panel central.
+    id: 'platform-ai-providers',
+    label: 'Proveedores IA',
+    summary: 'Configuración cross-modalidad (llm/image/video/tts/stt) de los proveedores IA. Recurso transversal usado por Influencer, Gestión Documental y otros módulos. Solo platform_owner.',
     scope: ['Catálogo de modalidades', 'Provider + modelo por modalidad', 'Rotación de secret (write-only)', 'Hint público (últimos 4 chars)'],
-    capability: 'influencer.ai_providers.configure',
+    capability: 'platform.ai_providers.configure',
   },
   {
     id: 'dashboard',

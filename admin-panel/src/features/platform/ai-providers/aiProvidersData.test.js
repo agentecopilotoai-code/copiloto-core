@@ -10,7 +10,7 @@ import {
 } from './aiProvidersData.js';
 
 
-describe('aiProvidersData (UI-INFLU-015)', () => {
+describe('aiProvidersData (proveedores IA transversales)', () => {
   it('modalityLabel mapea modalidades', () => {
     expect(modalityLabel('llm')).toBe('LLM');
     expect(modalityLabel('image')).toBe('Image');

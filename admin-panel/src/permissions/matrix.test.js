@@ -443,10 +443,12 @@ describe('UI-INFLU-002 — Módulo Influencer capabilities', () => {
     'influencer.posts.approve_publish',
     'influencer.credits.read',
     'influencer.credits.topup',
-    'influencer.ai_providers.configure',
+    // Nota: `platform.ai_providers.configure` NO está aquí — los providers IA
+    // son transversales (Influencer, Gestión Documental, futuros), no del
+    // módulo Ravit Studio. Se valida en su propio bloque más abajo.
   ];
 
-  it('declara las 11 capabilities del módulo', () => {
+  it('declara las 10 capabilities del módulo Influencer', () => {
     for (const cap of INFLU_CAPS) {
       expect(PERMISSIONS[cap], `${cap} no declarada`).toBeDefined();
     }
@@ -474,8 +476,11 @@ describe('UI-INFLU-002 — Módulo Influencer capabilities', () => {
     }
   });
 
-  it('platform_owner es el ÚNICO que configura proveedores IA (D3 del backlog)', () => {
-    const row = PERMISSIONS['influencer.ai_providers.configure'];
+  it('platform_owner es el ÚNICO que configura proveedores IA (capability transversal)', () => {
+    // Capability namespace: `platform.*`. Los providers IA NO son del
+    // módulo Influencer — los usan Influencer, Gestión Documental, y
+    // futuros módulos transversales.
+    const row = PERMISSIONS['platform.ai_providers.configure'];
     expect(row.platform_owner).toBe('RW');
     for (const role of ['viewer', 'agent', 'manager', 'admin', 'owner']) {
       expect(row[role], `${role} no debe configurar providers`).toBeNull();

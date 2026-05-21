@@ -1,5 +1,5 @@
 /**
- * UI-INFLU-015 — Modal "Probar" del provider por modalidad.
+ * Modal "Probar" del provider por modalidad (transversal).
  *
  * Cada modalidad tiene su propio form (input) y render de output:
  *   - LLM   → prompt (+ system opcional)             → texto generado

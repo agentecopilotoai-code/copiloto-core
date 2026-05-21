@@ -1,6 +1,9 @@
 /**
- * UI-INFLU-015 — Config de proveedores IA del módulo Influencer
- * (platform_owner only).
+ * Config de proveedores IA — recurso transversal (platform_owner only).
+ *
+ * Alimenta múltiples módulos verticales (Influencer, Gestión Documental,
+ * futuros) desde un único panel central. El operador rota keys, elige
+ * provider+modelo y prueba la config sin entrar a cada módulo.
  *
  * Modal de edición (no side-panel). El form usa nombres de campos opacos +
  * `autoComplete="off"` + `data-1p-ignore`/`data-lpignore` para evitar que
@@ -94,11 +97,11 @@ export function AIProviders({
   const formId = 'ai-providers-edit';
 
   return (
-    <div data-feature="platform-influencer-ai-providers">
+    <div data-feature="platform-ai-providers">
       <PageHeader
         eyebrow="Platform Owner"
-        title="Proveedores IA · módulo Influencer"
-        description="Config exclusiva de la plataforma — los tenants nunca ven estos modelos."
+        title="Proveedores IA"
+        description="Configuración transversal usada por Influencer, Gestión Documental y demás módulos. Los tenants nunca ven estos modelos."
       />
 
       <Card padding="md">

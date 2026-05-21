@@ -145,7 +145,11 @@ export const PERMISSIONS = Object.freeze({
   'influencer.posts.approve_publish': { viewer: null, agent: null, manager: RW, admin: RW, owner: RW, platform_owner: null },
   'influencer.credits.read':        { viewer: null, agent: null, manager: R,  admin: R,  owner: R,  platform_owner: null },
   'influencer.credits.topup':       { viewer: null, agent: null, manager: null, admin: RW, owner: RW, platform_owner: null },
-  'influencer.ai_providers.configure': { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
+  // Refactor — Proveedores IA son transversales (Influencer, Gestión
+  // Documental, futuros módulos). La capability vive bajo el namespace
+  // `platform.*` y NO `influencer.*` para reflejar que es config de
+  // plataforma compartida, no del módulo Ravit Studio.
+  'platform.ai_providers.configure': { viewer: null, agent: null, manager: null, admin: null, owner: null, platform_owner: RW },
 });
 
 const LEVEL_RANK = Object.freeze({

@@ -1,5 +1,5 @@
 /**
- * UI-INFLU-015 — Container del módulo "Proveedores IA" (platform_owner only).
+ * Container del módulo Proveedores IA (transversal, platform_owner only).
  *
  * `AIProviders.jsx` es presentacional puro (recibe `rows`/`health`/`onSave`/
  * `onTestProvider` por props). Este container conecta esas props al backend:

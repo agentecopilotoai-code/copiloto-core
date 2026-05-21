@@ -148,9 +148,10 @@ export function updateTenantModule(session, tenantId, moduleCode, { enabled, pla
   });
 }
 
-// TASK-INFLU-002 — Catálogo cross-modalidad de proveedores IA del módulo
-// Influencer. Backend resuelve `platform_admin_router` + MFA. La response
-// nunca incluye `ciphertext` ni `secret_value`: solo `hint` (últimos 4 chars).
+// Catálogo cross-modalidad de proveedores IA — recurso transversal de
+// plataforma usado por Influencer, Gestión Documental y futuros módulos.
+// Backend resuelve `platform_admin_router` + MFA. La response nunca
+// incluye `ciphertext` ni `secret_value`: solo `hint` (últimos 4 chars).
 export function listAIProviders(session) {
   return request('/platform/ai-providers', { session });
 }
@@ -169,11 +170,12 @@ export function updateAIProvider(session, modality, payload) {
 }
 
 // Smoke test contra el provider configurado. El backend resuelve el API key
-// del env var `INFLUENCER_SECRET_<hint>`, instancia el adapter, llama al
-// modelo y devuelve el output uniforme. Cuerpo del payload depende de la
-// modalidad — ver `aiProvidersData.buildTestPayload`. Errores del provider
-// (rate-limit, content-filter, etc.) llegan como 200 con `ok:false` y
-// `error_class` para que la UI muestre el detalle granular.
+// del env var `AI_PROVIDER_SECRET_<hint>` (con fallback retro-compat al
+// nombre histórico `INFLUENCER_SECRET_<hint>`), instancia el adapter,
+// llama al modelo y devuelve el output uniforme. Cuerpo del payload depende
+// de la modalidad — ver `aiProvidersData.buildTestPayload`. Errores del
+// provider (rate-limit, content-filter, etc.) llegan como 200 con `ok:false`
+// y `error_class` para que la UI muestre el detalle granular.
 export function testAIProvider(session, modality, body) {
   return request(`/platform/ai-providers/${modality}/test`, {
     method: 'POST',
