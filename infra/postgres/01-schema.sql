@@ -1661,42 +1661,42 @@ drop policy if exists platform_ai_providers_support_select on app.platform_ai_pr
 create policy platform_ai_providers_support_select
   on app.platform_ai_providers
   for select
-  using (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true');
 drop policy if exists platform_ai_providers_support_insert on app.platform_ai_providers;
 create policy platform_ai_providers_support_insert
   on app.platform_ai_providers
   for insert
-  with check (current_setting('app.support_mode', true) = 'on');
+  with check (current_setting('app.support_mode', true) = 'true');
 drop policy if exists platform_ai_providers_support_update on app.platform_ai_providers;
 create policy platform_ai_providers_support_update
   on app.platform_ai_providers
   for update
-  using (current_setting('app.support_mode', true) = 'on')
-  with check (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true')
+  with check (current_setting('app.support_mode', true) = 'true');
 drop policy if exists platform_ai_providers_support_delete on app.platform_ai_providers;
 create policy platform_ai_providers_support_delete
   on app.platform_ai_providers
   for delete
-  using (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true');
 
 drop policy if exists platform_secrets_support_select on app.platform_secrets;
 create policy platform_secrets_support_select
   on app.platform_secrets
   for select
-  using (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true');
 drop policy if exists platform_secrets_support_insert on app.platform_secrets;
 create policy platform_secrets_support_insert
   on app.platform_secrets
   for insert
-  with check (current_setting('app.support_mode', true) = 'on');
+  with check (current_setting('app.support_mode', true) = 'true');
 drop policy if exists platform_secrets_support_update on app.platform_secrets;
 create policy platform_secrets_support_update
   on app.platform_secrets
   for update
-  using (current_setting('app.support_mode', true) = 'on')
-  with check (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true')
+  with check (current_setting('app.support_mode', true) = 'true');
 drop policy if exists platform_secrets_support_delete on app.platform_secrets;
 create policy platform_secrets_support_delete
   on app.platform_secrets
   for delete
-  using (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true');

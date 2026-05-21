@@ -117,7 +117,7 @@ async def list_platform_ai_providers(
 
     BUGFIX-AI-PROVIDERS-RLS — `platform_ai_providers` y `platform_secrets`
     tienen RLS habilitada con policies que requieren
-    ``app.support_mode='on'``. Sin la transacción explícita el
+    ``app.support_mode='true'``. Sin la transacción explícita el
     ``set_config(..., true)`` se descarta antes del SELECT y RLS oculta
     todas las filas → la UI pinta 5 placeholders "sin configurar".
     """
@@ -210,7 +210,7 @@ async def update_platform_ai_provider(
     # BUGFIX-AI-PROVIDERS-RLS — ver comentario en `list_platform_ai_providers`.
     # Toda la cadena (insert en `platform_secrets` → UPDATE de
     # `platform_ai_providers` → SELECT del hint → audit) corre dentro de la
-    # misma transacción para que `set_config('app.support_mode', 'on', true)`
+    # misma transacción para que `set_config('app.support_mode', 'true', true)`
     # siga vigente; sin esto, RLS rechaza el UPDATE y el handler responde 404
     # aunque la fila exista (seed de la migración).
     async with conn.transaction():
@@ -779,12 +779,20 @@ async def _set_support_mode(conn: asyncpg.Connection, on: bool) -> None:
     # cada `conn.execute`/`fetch` en autocommit (transacción implícita de un
     # sólo statement), entonces sin un `BEGIN` explícito el `set_config(...,
     # true)` se descarta al cerrar la transacción implícita y la siguiente
-    # query corre sin `app.support_mode='on'` → RLS rechaza el INSERT con
+    # query corre sin `app.support_mode='true'` → RLS rechaza el INSERT con
     # `InsufficientPrivilegeError`. El caller DEBE envolver el bloque en
     # `async with conn.transaction()` para que el config sobreviva.
+    #
+    # BUGFIX: el valor canónico es `'true'`/`'false'` (no `'on'`/`'off'`).
+    # La función SQL `app.support_mode()` definida en `01-schema.sql:13-16`
+    # compara contra `'true'`, y todos los demás setters del codebase
+    # (`app/db/pool.py`, `app/workers/*`, `app/api/v1/handlers/web_handlers.py`)
+    # usan `'true'`/`'false'`. Setear `'on'` aquí causaba
+    # `InsufficientPrivilegeError` al PATCH `/v1/platform/tenant-modules/{id}/{m}`
+    # porque las RLS de `app.tenant_modules` invocan `app.support_mode()`.
     await conn.execute(
         'select set_config($1, $2, true)',
-        'app.support_mode', 'on' if on else 'off',
+        'app.support_mode', 'true' if on else 'false',
     )
 
 
@@ -800,7 +808,7 @@ async def list_tenant_modules(
     tenant_search: str | None = None,
     conn: asyncpg.Connection = Depends(get_db),
 ) -> TenantModuleListResponse:
-    # Transacción explícita para que `set_config('app.support_mode', 'on',
+    # Transacción explícita para que `set_config('app.support_mode', 'true',
     # true)` siga vigente cuando corra el `fetch` siguiente (ver comentario
     # en `_set_support_mode`).
     async with conn.transaction():
@@ -868,7 +876,7 @@ async def update_tenant_module(
     actor_id = getattr(request.state, 'user_id', None)
 
     # Toda la operación en una transacción única: `set_config('app.support_mode',
-    # 'on', true)` es transaction-local; sin este `BEGIN` explícito, el setting
+    # 'true', true)` es transaction-local; sin este `BEGIN` explícito, el setting
     # se descarta antes del INSERT/UPDATE y RLS rechaza la escritura con
     # `InsufficientPrivilegeError: new row violates row-level security policy for
     # table "tenant_modules"`. Audit + invalidate cache también caen dentro: si

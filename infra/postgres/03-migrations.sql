@@ -271,33 +271,33 @@ on conflict (modality) do nothing;
 -- Resultado: GET /v1/platform/ai-providers devolvía 0 filas (la UI las
 -- pintaba con fallback "— sin configurar") y PATCH devolvía 404 "modality
 -- llm not found" porque el UPDATE no afectaba filas. Estas policies abren
--- el acceso CRUD bajo `app.support_mode='on'` — el gate efectivo sigue
+-- el acceso CRUD bajo `app.support_mode='true'` — el gate efectivo sigue
 -- siendo `require_platform_owner` + MFA en el dependency del endpoint, que
 -- corre antes de setear el config y entrar a la transacción.
 drop policy if exists platform_ai_providers_support_select on app.platform_ai_providers;
 create policy platform_ai_providers_support_select
   on app.platform_ai_providers
   for select
-  using (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true');
 
 drop policy if exists platform_ai_providers_support_insert on app.platform_ai_providers;
 create policy platform_ai_providers_support_insert
   on app.platform_ai_providers
   for insert
-  with check (current_setting('app.support_mode', true) = 'on');
+  with check (current_setting('app.support_mode', true) = 'true');
 
 drop policy if exists platform_ai_providers_support_update on app.platform_ai_providers;
 create policy platform_ai_providers_support_update
   on app.platform_ai_providers
   for update
-  using (current_setting('app.support_mode', true) = 'on')
-  with check (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true')
+  with check (current_setting('app.support_mode', true) = 'true');
 
 drop policy if exists platform_ai_providers_support_delete on app.platform_ai_providers;
 create policy platform_ai_providers_support_delete
   on app.platform_ai_providers
   for delete
-  using (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true');
 
 -- `platform_secrets` requiere el mismo tratamiento: el PATCH inserta/upserta
 -- una fila en `platform_secrets` cuando rota la key, y luego lee `hint`
@@ -306,26 +306,26 @@ drop policy if exists platform_secrets_support_select on app.platform_secrets;
 create policy platform_secrets_support_select
   on app.platform_secrets
   for select
-  using (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true');
 
 drop policy if exists platform_secrets_support_insert on app.platform_secrets;
 create policy platform_secrets_support_insert
   on app.platform_secrets
   for insert
-  with check (current_setting('app.support_mode', true) = 'on');
+  with check (current_setting('app.support_mode', true) = 'true');
 
 drop policy if exists platform_secrets_support_update on app.platform_secrets;
 create policy platform_secrets_support_update
   on app.platform_secrets
   for update
-  using (current_setting('app.support_mode', true) = 'on')
-  with check (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true')
+  with check (current_setting('app.support_mode', true) = 'true');
 
 drop policy if exists platform_secrets_support_delete on app.platform_secrets;
 create policy platform_secrets_support_delete
   on app.platform_secrets
   for delete
-  using (current_setting('app.support_mode', true) = 'on');
+  using (current_setting('app.support_mode', true) = 'true');
 
 -- ============================================================================
 -- TASK-INFLU-008 — `influencer.personas` + CRUD
@@ -382,7 +382,7 @@ create policy personas_tenant_isolation
   on influencer.personas
   using (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   );
 
 drop policy if exists personas_tenant_write on influencer.personas;
@@ -391,11 +391,11 @@ create policy personas_tenant_write
   for all
   using (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   )
   with check (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   );
 
 -- ============================================================================
@@ -466,7 +466,7 @@ create policy fvr_tenant_isolation
   on influencer.face_variation_requests
   using (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   );
 
 -- ============================================================================
@@ -511,7 +511,7 @@ create policy generations_tenant_isolation
   on influencer.generations
   using (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   );
 
 create table if not exists influencer.assets (
@@ -544,7 +544,7 @@ create policy assets_tenant_isolation
   on influencer.assets
   using (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   );
 
 -- ============================================================================
@@ -587,7 +587,7 @@ create policy platform_connections_tenant_isolation
   on influencer.platform_connections
   using (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   );
 
 -- ============================================================================
@@ -632,7 +632,7 @@ create policy posts_tenant_isolation
   on influencer.posts
   using (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   );
 
 -- ============================================================================
@@ -662,7 +662,7 @@ create policy credit_ledger_tenant_isolation
   on influencer.credit_ledger
   using (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   );
 
 create table if not exists influencer.generation_pricing (
@@ -707,7 +707,7 @@ create policy persona_stats_cache_tenant_isolation
   on influencer.persona_stats_cache
   using (
     tenant_id::text = current_setting('app.tenant_id', true)
-    or current_setting('app.support_mode', true) = 'on'
+    or current_setting('app.support_mode', true) = 'true'
   );
 
 

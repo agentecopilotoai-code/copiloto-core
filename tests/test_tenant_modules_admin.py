@@ -43,7 +43,7 @@ class _NoOpTxn:
     """Async context manager no-op para mockear ``conn.transaction()``.
 
     Los handlers ahora abren ``async with conn.transaction():`` para anclar
-    ``set_config('app.support_mode', 'on', true)`` (transaction-local) a la
+    ``set_config('app.support_mode', 'true', true)`` (transaction-local) a la
     misma transacción que el resto de queries. ``AsyncMock`` no provee
     ``__aenter__``/``__aexit__`` por defecto en métodos sync (que es como
     asyncpg expone ``.transaction()``), entonces el test plumbea este stub.
@@ -480,7 +480,7 @@ def test_update_platform_ai_provider_404_when_row_missing():
 
 # ─── BUGFIX-RLS-TXN: `update_tenant_module` debe correr todo dentro de un
 #     `async with conn.transaction():`. Sin esa transacción explícita,
-#     `set_config('app.support_mode', 'on', true)` es transaction-local y se
+#     `set_config('app.support_mode', 'true', true)` es transaction-local y se
 #     descarta antes del INSERT → RLS rechaza el INSERT con
 #     `InsufficientPrivilegeError: new row violates row-level security
 #     policy for table "tenant_modules"`. Estos tests son defensivos para
@@ -490,7 +490,7 @@ def test_update_platform_ai_provider_404_when_row_missing():
 def test_update_tenant_module_runs_inside_transaction():
     """``conn.transaction()`` se invoca exactamente una vez al activar un
     módulo. Garantiza que el handler abre la transacción explícita —
-    requerida para que ``set_config('app.support_mode', 'on', true)``
+    requerida para que ``set_config('app.support_mode', 'true', true)``
     persista a lo largo del SELECT/INSERT.
     """
     tenant_id = uuid4()
@@ -547,7 +547,7 @@ def test_list_tenant_modules_runs_inside_transaction():
 
 
 def test_list_platform_ai_providers_runs_inside_transaction():
-    """BUGFIX-AI-PROVIDERS-RLS — el SELECT necesita ``app.support_mode='on'``
+    """BUGFIX-AI-PROVIDERS-RLS — el SELECT necesita ``app.support_mode='true'``
     persistente porque las policies de `platform_ai_providers` y
     `platform_secrets` condicionan sobre ese GUC. Sin transacción explícita
     el setting se descarta y el response viene vacío (la UI pinta

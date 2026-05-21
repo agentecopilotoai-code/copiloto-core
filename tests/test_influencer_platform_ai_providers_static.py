@@ -111,7 +111,7 @@ def test_migrations_declare_rls_policies_under_support_mode(
     """BUGFIX-AI-PROVIDERS-RLS — sin policies sobre `platform_ai_providers`
     y `platform_secrets`, RLS deny-all bloquea al rol `copiloto_app` y los
     endpoints `/v1/platform/ai-providers*` responden 404. Las 8 policies
-    abren CRUD bajo ``app.support_mode='on'``, alineado con el resto del
+    abren CRUD bajo ``app.support_mode='true'``, alineado con el resto del
     schema (tenant_modules, personas, etc.).
     """
     for verb in ('select', 'insert', 'update', 'delete'):
@@ -124,7 +124,7 @@ def test_migrations_declare_rls_policies_under_support_mode(
             in migrations_source
         ), f'falta policy {verb} sobre platform_secrets en 03-migrations.sql'
     # Las policies condicionan sobre el GUC `app.support_mode`.
-    assert "current_setting('app.support_mode', true) = 'on'" in migrations_source
+    assert "current_setting('app.support_mode', true) = 'true'" in migrations_source
 
 
 def test_schema_sql_paridad_rls_policies(schema_source: str) -> None:

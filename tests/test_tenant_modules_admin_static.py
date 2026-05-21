@@ -22,7 +22,7 @@ def test_endpoints_mounted_on_platform_admin_router():
 
 
 def test_set_support_mode_before_queries():
-    """Ambos endpoints setean app.support_mode='on' para bypassear RLS."""
+    """Ambos endpoints setean app.support_mode='true' para bypassear RLS."""
     assert '_set_support_mode(conn, True)' in SRC
     assert "'app.support_mode'" in SRC
 
@@ -115,7 +115,7 @@ def test_idempotent_patch_does_not_reset_activated_at():
 
 def test_update_tenant_module_runs_inside_explicit_transaction():
     """BUGFIX-RLS-TXN — el handler ``update_tenant_module`` debe envolver
-    ``set_config('app.support_mode', 'on', true)`` + INSERT/UPDATE en un
+    ``set_config('app.support_mode', 'true', true)`` + INSERT/UPDATE en un
     ``async with conn.transaction():``. Sin la transacción explícita el
     setting es transaction-local y se descarta antes del INSERT, así que
     RLS rechaza la escritura con ``InsufficientPrivilegeError``. Verificamos
