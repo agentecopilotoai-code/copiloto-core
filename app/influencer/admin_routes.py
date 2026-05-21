@@ -680,14 +680,24 @@ async def _run_smoke_call(provider, modality: str, body: TestProviderRequest) ->
             format=body.aspect_ratio or '16:9',
             safety_mode=True,
         )
-        return {
+        # Para video preferimos URL sobre bytes (xAI Imagine devuelve URL
+        # temporal; los videos pesan megabytes y no queremos inline-b64 en
+        # el JSON). El frontend usa `<video src>` directo. Si el provider
+        # downloadeó bytes (cualquier caller que lo necesite), también
+        # los exponemos como fallback.
+        out: dict = {
             'kind': 'video',
-            'video_b64': _base64_module.b64encode(res.video_bytes).decode('ascii'),
             'mime': res.mime,
             'duration_s': res.duration_s,
             'width': res.width,
             'height': res.height,
         }
+        video_url = res.provider_meta.get('video_url') if res.provider_meta else None
+        if video_url:
+            out['video_url'] = video_url
+        if res.video_bytes:
+            out['video_b64'] = _base64_module.b64encode(res.video_bytes).decode('ascii')
+        return out
 
     if modality == 'tts':
         if not body.text:

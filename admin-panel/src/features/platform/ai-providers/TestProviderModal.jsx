@@ -381,12 +381,14 @@ function TestResult({ result }) {
       ) : null}
       {out.kind === 'video' ? (
         <>
-          {/* controls habilitados — el operador valida visualmente que el
-              video se generó. `data:` URL es válido para video src. */}
+          {/* Preferimos URL directa (xAI hostea el video temporalmente)
+              sobre inline base64 — los videos pesan megabytes y stream
+              desde URL es más fluido. Fallback a data URL si el backend
+              decidió enviarnos bytes (operadores con S3 pipeline, etc). */}
           <video
             className={styles.resultVideo}
             controls
-            src={`data:${out.mime};base64,${out.video_b64}`}
+            src={out.video_url || `data:${out.mime};base64,${out.video_b64}`}
           />
           <p className={styles.muted}>
             {out.duration_s}s · {out.width}×{out.height} · {out.mime}

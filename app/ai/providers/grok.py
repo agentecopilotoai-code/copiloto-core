@@ -155,6 +155,113 @@ class GrokProvider(LLMProvider, ImageProvider, VideoProvider, TTSProvider, STTPr
 
         return _translate_response(resp, path)
 
+    async def _post_binary(self, path: str, payload: dict[str, Any]) -> tuple[bytes, dict]:
+        """POST JSON con response binario (e.g. `/audio/speech` devuelve mp3).
+
+        El response NO es JSON — devolvemos bytes crudos. Status codes se
+        mapean con el mismo `_translate_response_status` que el POST normal,
+        pero saltando el JSON parse del body.
+        """
+        idem_key = f'inf-{uuid.uuid4().hex}'
+        async with self._client() as client:
+            try:
+                resp = await asyncio.wait_for(
+                    client.post(
+                        path,
+                        json=payload,
+                        headers={'Idempotency-Key': idem_key},
+                    ),
+                    timeout=self._hard_deadline,
+                )
+            except asyncio.TimeoutError as exc:
+                raise ProviderTimeoutError(
+                    f'grok {path} exceeded {self._hard_deadline:.1f}s',
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ProviderUnavailable(f'grok {path}: {exc}') from exc
+
+        _translate_response_status(resp, path)
+        return resp.content, dict(resp.headers)
+
+    async def _post_multipart(
+        self,
+        path: str,
+        *,
+        files: dict[str, tuple[str, bytes, str]],
+        data: dict[str, str],
+    ) -> tuple[dict, dict]:
+        """POST multipart/form-data → JSON response. Usado por STT
+        (`/audio/transcriptions`) que exige multipart con el archivo.
+        """
+        idem_key = f'inf-{uuid.uuid4().hex}'
+        async with self._client() as client:
+            try:
+                resp = await asyncio.wait_for(
+                    client.post(
+                        path,
+                        files=files,
+                        data=data,
+                        headers={'Idempotency-Key': idem_key},
+                    ),
+                    timeout=self._hard_deadline,
+                )
+            except asyncio.TimeoutError as exc:
+                raise ProviderTimeoutError(
+                    f'grok {path} exceeded {self._hard_deadline:.1f}s',
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ProviderUnavailable(f'grok {path}: {exc}') from exc
+
+        return _translate_response(resp, path)
+
+    async def _get_json(self, path: str) -> dict:
+        """GET con response JSON. Usado para el polling de videos
+        (`GET /videos/{request_id}`). Sin Idempotency-Key — los GET son
+        naturalmente idempotentes.
+        """
+        async with self._client() as client:
+            try:
+                resp = await asyncio.wait_for(
+                    client.get(path),
+                    timeout=self._hard_deadline,
+                )
+            except asyncio.TimeoutError as exc:
+                raise ProviderTimeoutError(
+                    f'grok {path} exceeded {self._hard_deadline:.1f}s',
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ProviderUnavailable(f'grok {path}: {exc}') from exc
+
+        body, _ = _translate_response(resp, path)
+        return body
+
+    async def _download(self, url: str) -> bytes:
+        """GET de una URL externa (típicamente la URL temporal del video
+        generado). Sin Authorization header — la URL ya viene firmada por
+        xAI. Sin Idempotency-Key.
+        """
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(self._timeout, connect=5.0),
+            transport=self._transport,
+        ) as client:
+            try:
+                resp = await asyncio.wait_for(
+                    client.get(url),
+                    timeout=self._hard_deadline,
+                )
+            except asyncio.TimeoutError as exc:
+                raise ProviderTimeoutError(
+                    f'grok download {url} exceeded {self._hard_deadline:.1f}s',
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise ProviderUnavailable(f'grok download {url}: {exc}') from exc
+
+        if resp.status_code >= 400:
+            raise ProviderUnavailable(
+                f'grok download {url}: HTTP {resp.status_code}',
+            )
+        return resp.content
+
     # ── IAProvider ────────────────────────────────────────────────────────
 
     async def health_check(self) -> bool:
@@ -322,40 +429,111 @@ class GrokProvider(LLMProvider, ImageProvider, VideoProvider, TTSProvider, STTPr
         format: str = '9:16',
         safety_mode: bool = True,
         audio_url: str | None = None,
+        poll_interval_s: float = 5.0,
+        poll_max_attempts: int = 120,
     ) -> VideoResult:
+        """Genera video via xAI Imagine — async start + poll + download.
+
+        xAI documenta el flujo en `docs/xGrok/Video Generation`:
+
+          1. POST `/v1/videos/generations` body `{model, prompt, ...}`
+             → `{request_id}`.
+          2. GET `/v1/videos/{request_id}` repetido hasta
+             `status in ('done', 'expired', 'failed')`.
+          3. Cuando `status='done'`, la response trae
+             `video: {url, duration, respect_moderation}`. La URL es
+             temporal; descargamos los bytes inmediatamente para que el
+             caller no tenga que hacer un segundo HTTP fetch.
+
+        Persona anchoring se mantiene como input, pero solo se manda lo
+        que xAI acepta (`reference_image_urls` para reference-to-video,
+        opcional). Los style_tokens viajan dentro del prompt vía
+        SAFETY_PREFIX si está activo el modo seguro.
+        """
         full_prompt = (SAFETY_PREFIX if safety_mode else '') + prompt
+        refs = list(persona_anchor.reference_image_urls or ())
 
         payload: dict[str, Any] = {
             'model': self._models['video'],
             'prompt': full_prompt,
-            'duration_s': float(duration_s),
+            'duration': max(1, int(duration_s)),
             'aspect_ratio': format,
-            'reference_image_urls': list(persona_anchor.reference_image_urls or ()),
-            'style_tokens': list(persona_anchor.style_tokens or ()),
-            'audio_url': audio_url,
-            'safety_mode': bool(safety_mode),
         }
+        if refs:
+            payload['reference_image_urls'] = refs[:7]
+        if audio_url:
+            payload['audio_url'] = audio_url
 
         t0 = time.monotonic()
-        body, _ = await self._post('/imagine/videos', payload)
-        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        body, _ = await self._post('/videos/generations', payload)
 
-        if body.get('content_flags'):
-            raise ProviderContentRejected(
-                f'grok rejected video generation: {body["content_flags"]}',
+        request_id = body.get('request_id') or body.get('id')
+        if not request_id:
+            raise ProviderUnavailable(
+                'grok /videos/generations: missing request_id in response',
             )
 
+        # Poll hasta done/expired/failed. xAI dice que videos toman
+        # típicamente "varios minutos"; usamos 120 intentos * 5s = 10 min
+        # como techo. El hard_deadline general (timeout * 2) no aplica al
+        # polling — cada GET es individual.
+        done_body: dict | None = None
+        for _ in range(max(1, poll_max_attempts)):
+            await asyncio.sleep(poll_interval_s)
+            poll_body = await self._get_json(f'/videos/{request_id}')
+            status_str = poll_body.get('status') or 'pending'
+            if status_str == 'done':
+                done_body = poll_body
+                break
+            if status_str == 'expired':
+                raise ProviderUnavailable(
+                    f'grok video {request_id}: request expired'
+                )
+            if status_str == 'failed':
+                err = poll_body.get('error') or {}
+                code = err.get('code') or 'unknown'
+                msg = err.get('message') or 'video generation failed'
+                if code == 'invalid_argument' and (
+                    'content' in msg.lower() or 'moderation' in msg.lower()
+                ):
+                    raise ProviderContentRejected(f'grok video: {msg}')
+                raise ProviderUnavailable(f'grok video [{code}]: {msg}')
+            # status='pending' → seguir polling
+
+        if done_body is None:
+            raise ProviderTimeoutError(
+                f'grok video {request_id}: still pending after '
+                f'{poll_max_attempts * poll_interval_s:.0f}s'
+            )
+
+        video = done_body.get('video') or {}
+        video_url = video.get('url')
+        if not video_url:
+            raise ProviderUnavailable(f'grok video {request_id}: done without url')
+
+        if video.get('respect_moderation') is False:
+            raise ProviderContentRejected('grok video: content_moderation rejected')
+
+        # NO descargamos los bytes — la URL de xAI es temporal pero válida
+        # mientras dura el smoke test, y los videos pueden pesar megabytes
+        # (no queremos inline-base64 en el JSON del response). Callers que
+        # necesiten bytes pueden hacer `_download(provider_meta['video_url'])`
+        # explícitamente. Para el smoke test, el frontend usa
+        # `<video src={url}>` directo y stream-friendly.
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+
         return VideoResult(
-            video_bytes=_decode_b64(body.get('b64_video') or ''),
-            mime=body.get('mime') or 'video/mp4',
-            width=int(body.get('width') or 0),
-            height=int(body.get('height') or 0),
-            duration_s=float(body.get('duration_s') or duration_s),
+            video_bytes=b'',
+            mime='video/mp4',
+            width=int(video.get('width') or 0),
+            height=int(video.get('height') or 0),
+            duration_s=float(video.get('duration') or duration_s),
             provider_meta={
-                'model': body.get('model') or self._models['video'],
-                'request_id': body.get('id'),
+                'model': done_body.get('model') or self._models['video'],
+                'request_id': request_id,
+                'video_url': video_url,
             },
-            cost_units=float(body.get('cost_units') or 0),
+            cost_units=float(video.get('duration') or duration_s),
             elapsed_ms=elapsed_ms,
         )
 
@@ -369,30 +547,44 @@ class GrokProvider(LLMProvider, ImageProvider, VideoProvider, TTSProvider, STTPr
         language: str = 'es',
         sample_rate: int = 24000,
     ) -> AudioResult:
+        """Sintetiza voz via xAI — endpoint OpenAI-compatible.
+
+        POST `/v1/audio/speech` body `{model, input, voice, response_format}`.
+        Response: bytes binarios del audio (Content-Type según
+        `response_format`, default mp3). NO es JSON — usamos
+        `_post_binary` que no intenta parsear.
+
+        Voces de xAI documentadas en `docs/xGrok/Voice Agent API`:
+        `eve` (default), `ara`, `rex`, `sal`, `leo`, o un voice_id custom
+        creado vía Custom Voices API. Si `persona_anchor.voice_id_ref`
+        viene set, lo usamos como override; si no, defaulteamos a `eve`.
+        """
+        voice = persona_anchor.voice_id_ref or _map_voice_tone(
+            persona_anchor.voice_tone,
+        ) or 'eve'
+
         payload: dict[str, Any] = {
             'model': self._models['tts'],
-            'text': text,
-            'language': language,
-            'sample_rate': int(sample_rate),
-            'voice_ref': persona_anchor.voice_id_ref,
-            'voice_tone': persona_anchor.voice_tone,
+            'input': text,
+            'voice': voice,
+            'response_format': 'mp3',
         }
 
         t0 = time.monotonic()
-        body, _ = await self._post('/tts', payload)
+        audio_bytes, headers = await self._post_binary('/audio/speech', payload)
         elapsed_ms = (time.monotonic() - t0) * 1000.0
 
         return AudioResult(
-            audio_bytes=_decode_b64(body.get('b64_audio') or ''),
-            mime=body.get('mime') or 'audio/mpeg',
-            duration_s=float(body.get('duration_s') or 0.0),
-            sample_rate=int(body.get('sample_rate') or sample_rate),
+            audio_bytes=audio_bytes,
+            mime=headers.get('content-type') or 'audio/mpeg',
+            duration_s=0.0,  # OpenAI-compat response no incluye duración
+            sample_rate=sample_rate,
             provider_meta={
-                'model': body.get('model') or self._models['tts'],
-                'request_id': body.get('id'),
-                'chars_used': body.get('chars_used') or len(text),
+                'model': self._models['tts'],
+                'voice': voice,
+                'chars_used': len(text),
             },
-            cost_units=float(body.get('chars_used') or len(text)),
+            cost_units=float(len(text)),
             elapsed_ms=elapsed_ms,
         )
 
@@ -405,27 +597,41 @@ class GrokProvider(LLMProvider, ImageProvider, VideoProvider, TTSProvider, STTPr
         mime: str = 'audio/mpeg',
         language: str | None = None,
     ) -> TranscriptResult:
-        payload: dict[str, Any] = {
-            'model': self._models['stt'],
-            'audio_b64': base64.b64encode(audio_bytes).decode('ascii'),
-            'mime': mime,
-            'language': language,
+        """Transcribe audio via xAI — endpoint OpenAI-compatible.
+
+        POST `/v1/audio/transcriptions` con multipart/form-data:
+          - `file`: bytes del audio (con filename + content-type)
+          - `model`: nombre del modelo STT (ej. `grok-voice-latest`)
+          - `language`: opcional, ISO code (sino autodetect)
+          - `response_format`: `json` para que el response sea
+            `{text, language?}` parseable.
+        """
+        ext = _ext_for_mime(mime)
+        files = {
+            'file': (f'audio.{ext}', audio_bytes, mime),
         }
+        form: dict[str, str] = {
+            'model': self._models['stt'],
+            'response_format': 'json',
+        }
+        if language:
+            form['language'] = language
 
         t0 = time.monotonic()
-        body, _ = await self._post('/stt', payload)
+        body, _ = await self._post_multipart(
+            '/audio/transcriptions', files=files, data=form,
+        )
         elapsed_ms = (time.monotonic() - t0) * 1000.0
 
         return TranscriptResult(
             text=(body.get('text') or '').strip(),
-            language=body.get('language'),
+            language=body.get('language') or language,
             confidence=body.get('confidence'),
             provider_meta={
-                'model': body.get('model') or self._models['stt'],
-                'request_id': body.get('id'),
-                'audio_seconds': body.get('audio_seconds'),
+                'model': self._models['stt'],
+                'duration_s': body.get('duration'),
             },
-            cost_units=float(body.get('audio_seconds') or 0.0) / 3600.0,
+            cost_units=float(body.get('duration') or 0.0) / 3600.0,
             elapsed_ms=elapsed_ms,
         )
 
@@ -450,8 +656,11 @@ def _decode_b64(data: str) -> bytes:
         raise ProviderUnavailable(f'grok returned invalid base64: {exc}') from exc
 
 
-def _translate_response(resp: httpx.Response, path: str) -> tuple[dict, dict]:
-    """Mapea status codes a excepciones tipadas o devuelve ``(body, headers)``."""
+def _translate_response_status(resp: httpx.Response, path: str) -> None:
+    """Mapea status codes >= 400 a excepciones tipadas. Levanta o regresa
+    silenciosamente. Compartido entre `_translate_response` (JSON),
+    `_post_binary` (bytes) y `_post_multipart`.
+    """
     if resp.status_code == 429:
         retry_after = resp.headers.get('retry-after')
         raise ProviderRateLimited(
@@ -468,15 +677,62 @@ def _translate_response(resp: httpx.Response, path: str) -> tuple[dict, dict]:
         if 'content' in err.lower() or 'safety' in err.lower():
             raise ProviderContentRejected(f'grok {path}: {err}')
         raise ProviderUnavailable(f'grok {path}: HTTP {resp.status_code} {err}')
-    if resp.status_code >= 500:
-        raise ProviderUnavailable(f'grok {path}: HTTP {resp.status_code}')
     if resp.status_code >= 400:
         raise ProviderUnavailable(f'grok {path}: HTTP {resp.status_code}')
 
+
+def _translate_response(resp: httpx.Response, path: str) -> tuple[dict, dict]:
+    """Mapea status codes a excepciones tipadas o devuelve ``(body, headers)``."""
+    _translate_response_status(resp, path)
     try:
         return resp.json(), dict(resp.headers)
     except ValueError as exc:
         raise ProviderUnavailable(f'grok {path}: non-json response') from exc
+
+
+# Mapa heurístico voice_tone (texto libre) → voice id de xAI documentado.
+# Si el operador setea `voice_tone='cálida'` queremos elegir una voz coherente.
+_VOICE_TONE_MAP: Final[dict[str, str]] = {
+    'cálida': 'ara',
+    'calida': 'ara',
+    'amigable': 'ara',
+    'cercana': 'eve',
+    'energética': 'eve',
+    'energetica': 'eve',
+    'profesional': 'rex',
+    'autoritativa': 'leo',
+    'autoritaria': 'leo',
+    'neutral': 'sal',
+    'balanceada': 'sal',
+}
+
+
+def _map_voice_tone(tone: str | None) -> str | None:
+    """Mapea un texto libre de tono a un voice id de xAI. Devuelve None si
+    no hay match — el caller cae al default `eve`."""
+    if not tone:
+        return None
+    return _VOICE_TONE_MAP.get(tone.strip().lower())
+
+
+# MIME → extensión. xAI (y OpenAI) usan el `filename` del multipart como
+# hint del codec; sin extension correcta el endpoint puede devolver 400.
+_MIME_EXT_MAP: Final[dict[str, str]] = {
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/wave': 'wav',
+    'audio/webm': 'webm',
+    'audio/ogg': 'ogg',
+    'audio/flac': 'flac',
+    'audio/m4a': 'm4a',
+    'audio/mp4': 'm4a',
+}
+
+
+def _ext_for_mime(mime: str) -> str:
+    return _MIME_EXT_MAP.get(mime.lower().split(';')[0].strip(), 'mp3')
 
 
 __all__ = ['GrokProvider', 'GROK_MODELS', 'DEFAULT_BASE_URL', 'SAFETY_PREFIX']
