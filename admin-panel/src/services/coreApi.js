@@ -1918,21 +1918,38 @@ export async function getPricing(session, tenantId) {
 }
 
 // ─── Instagram OAuth (TASK-INFLU-014) ────────────────────────────────────
+// Backend monta `instagram_router` con prefix
+// `/v1/influencer/personas/{persona_id}/platforms/instagram`. El flow real
+// requiere REDIRECT del navegador (no fetch):
+//
+//   1. UI hace `window.location.href = buildInstagramOAuthStartUrl(...)`.
+//   2. Backend `/oauth/start` devuelve 307 redirect a Meta.
+//   3. Meta redirige a `INSTAGRAM_REDIRECT_URI` (configurado en .env, apunta
+//      a `/oauth/callback?code=...&state=...`).
+//   4. Backend `/oauth/callback` hace exchange, persiste tokens, devuelve
+//      `ConnectionResponse` (JSON). El navegador queda en esa página de
+//      callback — el frontend la maneja en una ruta dedicada.
+//
+// Las funciones JSON-fetch que existían acá (getInstagramAuthUrl /
+// completeInstagramOAuth / getInstagramConnection) apuntaban a paths que
+// NO existen en backend; eran dead code (ningún caller las invocaba). Las
+// reemplazamos por un único helper sync que arma el URL de start.
+//
+// Estado de conexión (connected/disconnected/expires_at) se lee desde el
+// jsonb `platforms.instagram` que devuelve `getPersona(personaId)` — el
+// backend persiste la connection en una tabla aparte pero también refleja
+// el estado en el row de la persona vía trigger / wizard PUT.
 
-export async function getInstagramAuthUrl(session, tenantId, personaId) {
-  return request(`/influencer/instagram/auth-url?persona_id=${personaId}`, {
-    session, tenantId,
-  });
+export function buildInstagramOAuthStartUrl(session, personaId) {
+  const baseUrl = session?.api?.baseUrl || '/admin/api/core/v1';
+  return adminPath(
+    `${baseUrl}/influencer/personas/${personaId}/platforms/instagram/oauth/start`,
+  );
 }
 
-export async function completeInstagramOAuth(session, tenantId, body) {
-  return request('/influencer/instagram/callback', {
-    method: 'POST', body, session, tenantId,
-  });
-}
-
-export async function getInstagramConnection(session, tenantId, personaId) {
-  return request(`/influencer/personas/${personaId}/instagram-connection`, {
-    session, tenantId,
-  });
+export async function disconnectInstagram(session, tenantId, personaId) {
+  return request(
+    `/influencer/personas/${personaId}/platforms/instagram/disconnect`,
+    { method: 'POST', session, tenantId },
+  );
 }
