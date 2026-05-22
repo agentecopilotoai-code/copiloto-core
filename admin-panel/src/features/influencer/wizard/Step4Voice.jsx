@@ -3,7 +3,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 
-import { AlertBanner, Card, PageHeader, Stepper } from '../../../components/ui/index.js';
+import { AlertBanner, Card, PageHeader } from '../../../components/ui/index.js';
 import { usePermissions } from '../../../permissions/index.js';
 import {
   FORMALITIES,
@@ -13,14 +13,15 @@ import {
   toneLabel,
   validateMinimum,
 } from './step4VoiceData.js';
+import { WizardStepper } from './WizardStepper.jsx';
 
 
 const STEPS = [
-  { key: 'face', label: 'Cara', status: 'done' },
-  { key: 'body', label: 'Cuerpo', status: 'done' },
-  { key: 'identity', label: 'Identidad', status: 'done' },
-  { key: 'voice', label: 'Voz', status: 'current' },
-  { key: 'platforms', label: 'Plataformas', status: 'pending' },
+  { key: 'face', label: 'Cara', description: 'Rasgos visuales', status: 'done' },
+  { key: 'body', label: 'Cuerpo', description: 'Constitución', status: 'done' },
+  { key: 'identity', label: 'Identidad', description: 'Nombre y mundo', status: 'done' },
+  { key: 'voice', label: 'Voz', description: 'Tono y carácter', status: 'current' },
+  { key: 'platforms', label: 'Plataformas', description: 'Dónde publica', status: 'pending' },
 ];
 
 
@@ -77,7 +78,7 @@ export function Step4Voice({
   return (
     <div data-module="influencer" data-view="wizard-step-4">
       <PageHeader eyebrow="Crear personaje · Paso 4 de 5" title="Voz" />
-      <Stepper steps={STEPS} />
+      <WizardStepper steps={STEPS} />
 
       <Card padding="md" style={{ marginTop: 'var(--space-3)' }}>
         <div style={{ fontWeight: 600 }}>Tono</div>

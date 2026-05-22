@@ -3,7 +3,7 @@
  */
 import { useState } from 'react';
 
-import { AlertBanner, Card, PageHeader, Stepper } from '../../../components/ui/index.js';
+import { AlertBanner, Card, PageHeader } from '../../../components/ui/index.js';
 import { usePermissions } from '../../../permissions/index.js';
 import {
   HEIGHT_MAX_CM,
@@ -14,14 +14,15 @@ import {
   silhouetteLabel,
   validateHeight,
 } from './step2BodyData.js';
+import { WizardStepper } from './WizardStepper.jsx';
 
 
 const STEPS = [
-  { key: 'face', label: 'Cara', status: 'done' },
-  { key: 'body', label: 'Cuerpo', status: 'current' },
-  { key: 'identity', label: 'Identidad', status: 'pending' },
-  { key: 'voice', label: 'Voz', status: 'pending' },
-  { key: 'platforms', label: 'Plataformas', status: 'pending' },
+  { key: 'face', label: 'Cara', description: 'Rasgos visuales', status: 'done' },
+  { key: 'body', label: 'Cuerpo', description: 'Constitución', status: 'current' },
+  { key: 'identity', label: 'Identidad', description: 'Nombre y mundo', status: 'pending' },
+  { key: 'voice', label: 'Voz', description: 'Tono y carácter', status: 'pending' },
+  { key: 'platforms', label: 'Plataformas', description: 'Dónde publica', status: 'pending' },
 ];
 
 
@@ -53,7 +54,7 @@ export function Step2Body({
   return (
     <div data-module="influencer" data-view="wizard-step-2">
       <PageHeader eyebrow="Crear personaje · Paso 2 de 5" title="Cuerpo" />
-      <Stepper steps={STEPS} />
+      <WizardStepper steps={STEPS} />
 
       <Card padding="md" style={{ marginTop: 'var(--space-3)' }}>
         <fieldset>

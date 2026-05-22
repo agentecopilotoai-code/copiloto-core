@@ -30,7 +30,7 @@
  */
 import { useState } from 'react';
 
-import { AlertBanner, Stepper } from '../../../components/ui/index.js';
+import { AlertBanner } from '../../../components/ui/index.js';
 import styles from '../_shared/RavitStyles.module.css';
 import {
   ETHNICITIES,
@@ -44,16 +44,14 @@ import {
   defaultsForRandom,
   validateMinimum,
 } from './step1FaceData.js';
+import { WizardStepper } from './WizardStepper.jsx';
 
-// El componente Stepper espera { key, label, status } con status ∈
-// 'done'|'current'|'blocked'|'pending'. Pasar { id, state } o
-// 'upcoming'/'complete' deja todos los pasos en estado default → render gris.
 const STEPS = [
-  { key: 'face', label: 'Cara', status: 'current' },
-  { key: 'body', label: 'Cuerpo', status: 'pending' },
-  { key: 'identity', label: 'Identidad', status: 'pending' },
-  { key: 'voice', label: 'Voz', status: 'pending' },
-  { key: 'platforms', label: 'Plataformas', status: 'pending' },
+  { key: 'face', label: 'Cara', description: 'Rasgos visuales', status: 'current' },
+  { key: 'body', label: 'Cuerpo', description: 'Constitución', status: 'pending' },
+  { key: 'identity', label: 'Identidad', description: 'Nombre y mundo', status: 'pending' },
+  { key: 'voice', label: 'Voz', description: 'Tono y carácter', status: 'pending' },
+  { key: 'platforms', label: 'Plataformas', description: 'Dónde publica', status: 'pending' },
 ];
 
 const STARTING_POINTS = [
@@ -336,7 +334,7 @@ export function Step1Face({
 
       {/* STEPPER */}
       <div style={{ marginTop: 16, marginBottom: 24 }}>
-        <Stepper steps={STEPS} />
+        <WizardStepper steps={STEPS} />
       </div>
 
       {/* LAYOUT 2 COLUMNAS */}

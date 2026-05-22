@@ -3,7 +3,7 @@
  */
 import { useState } from 'react';
 
-import { AlertBanner, Card, PageHeader, Stepper } from '../../../components/ui/index.js';
+import { AlertBanner, Card, PageHeader } from '../../../components/ui/index.js';
 import {
   CATEGORIES,
   DESCRIPTION_MAX,
@@ -11,14 +11,15 @@ import {
   previewCardData,
   validateHandle,
 } from './step3IdentityData.js';
+import { WizardStepper } from './WizardStepper.jsx';
 
 
 const STEPS = [
-  { key: 'face', label: 'Cara', status: 'done' },
-  { key: 'body', label: 'Cuerpo', status: 'done' },
-  { key: 'identity', label: 'Identidad', status: 'current' },
-  { key: 'voice', label: 'Voz', status: 'pending' },
-  { key: 'platforms', label: 'Plataformas', status: 'pending' },
+  { key: 'face', label: 'Cara', description: 'Rasgos visuales', status: 'done' },
+  { key: 'body', label: 'Cuerpo', description: 'Constitución', status: 'done' },
+  { key: 'identity', label: 'Identidad', description: 'Nombre y mundo', status: 'current' },
+  { key: 'voice', label: 'Voz', description: 'Tono y carácter', status: 'pending' },
+  { key: 'platforms', label: 'Plataformas', description: 'Dónde publica', status: 'pending' },
 ];
 
 
@@ -68,7 +69,7 @@ export function Step3Identity({ initialForm = {}, onNext, onSaveDraft, onCheckHa
   return (
     <div data-module="influencer" data-view="wizard-step-3">
       <PageHeader eyebrow="Crear personaje · Paso 3 de 5" title="Identidad" />
-      <Stepper steps={STEPS} />
+      <WizardStepper steps={STEPS} />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
         <div>

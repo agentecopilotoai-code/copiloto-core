@@ -3,7 +3,7 @@
  */
 import { useState } from 'react';
 
-import { AlertBanner, Card, PageHeader, Stepper } from '../../../components/ui/index.js';
+import { AlertBanner, Card, PageHeader } from '../../../components/ui/index.js';
 import {
   MODES,
   PLATFORMS,
@@ -11,14 +11,15 @@ import {
   computeWeeklyCredits,
   validateAtLeastOnePlatform,
 } from './step5PlatformsData.js';
+import { WizardStepper } from './WizardStepper.jsx';
 
 
 const STEPS = [
-  { key: 'face', label: 'Cara', status: 'done' },
-  { key: 'body', label: 'Cuerpo', status: 'done' },
-  { key: 'identity', label: 'Identidad', status: 'done' },
-  { key: 'voice', label: 'Voz', status: 'done' },
-  { key: 'platforms', label: 'Plataformas', status: 'current' },
+  { key: 'face', label: 'Cara', description: 'Rasgos visuales', status: 'done' },
+  { key: 'body', label: 'Cuerpo', description: 'Constitución', status: 'done' },
+  { key: 'identity', label: 'Identidad', description: 'Nombre y mundo', status: 'done' },
+  { key: 'voice', label: 'Voz', description: 'Tono y carácter', status: 'done' },
+  { key: 'platforms', label: 'Plataformas', description: 'Dónde publica', status: 'current' },
 ];
 
 
@@ -78,7 +79,7 @@ export function Step5Platforms({
   return (
     <div data-module="influencer" data-view="wizard-step-5">
       <PageHeader eyebrow="Crear personaje · Paso 5 de 5" title="Plataformas" />
-      <Stepper steps={STEPS} />
+      <WizardStepper steps={STEPS} />
 
       <Card padding="md" style={{ marginTop: 'var(--space-3)' }}>
         <ul aria-label="Lista de plataformas" style={{ listStyle: 'none', padding: 0, margin: 0 }}>

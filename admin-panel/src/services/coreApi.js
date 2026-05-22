@@ -1819,17 +1819,20 @@ export async function wizardSubmit(session, tenantId, personaId) {
 
 // ─── Face variations (TASK-INFLU-010) ────────────────────────────────────
 // Generación async de variaciones de cara durante el step 1 del wizard.
+// Backend monta el router con prefix `/v1/influencer/personas/{persona_id}/face`
+// y los endpoints relativos son `/variations` y `/variations/{request_id}`.
 
 export async function generateFaceVariations(session, tenantId, personaId, body) {
-  return request(`/influencer/personas/${personaId}/face-variations`, {
+  return request(`/influencer/personas/${personaId}/face/variations`, {
     method: 'POST', body, session, tenantId,
   });
 }
 
-export async function getFaceVariations(session, tenantId, personaId) {
-  return request(`/influencer/personas/${personaId}/face-variations`, {
-    session, tenantId,
-  });
+export async function getFaceVariationStatus(session, tenantId, personaId, variationRequestId) {
+  return request(
+    `/influencer/personas/${personaId}/face/variations/${variationRequestId}`,
+    { session, tenantId },
+  );
 }
 
 // ─── Voice (TASK-INFLU-013) ──────────────────────────────────────────────
