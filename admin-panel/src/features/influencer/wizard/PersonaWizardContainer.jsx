@@ -40,6 +40,7 @@ import {
   createPersona,
   generateFaceVariations,
   generateVoiceSample,
+  getPersona,
   wizardSaveBody,
   wizardSaveFace,
   wizardSaveIdentity,
@@ -139,7 +140,24 @@ export function PersonaWizardContainer() {
   // el user hace "Siguiente" en step 1. Si ya existe en el draft, reuse.
   // ──────────────────────────────────────────────────────────────────────
   const ensurePersona = useCallback(async (handle) => {
-    if (draft.personaId) return draft.personaId;
+    // Si tenemos un personaId en sessionStorage, validar que aún existe en
+    // backend antes de reutilizarlo. Si no existe (404) — caso típico
+    // cuando el INSERT fallaba por el bug de jsonb encoding y dejó stale
+    // state en el navegador, o si el draft fue archivado/borrado en otra
+    // pestaña — limpiamos y creamos uno nuevo abajo.
+    if (draft.personaId) {
+      try {
+        await getPersona(session, tenantId, draft.personaId);
+        return draft.personaId;
+      } catch (err) {
+        if (err?.status === 404) {
+          updateDraft({ personaId: null });
+          // Continuamos al create de abajo.
+        } else {
+          throw err;
+        }
+      }
+    }
     // Backend (`PersonaCreate` en `personas_models.py`) exige:
     //   - `name: str` (NO `display_name`).
     //   - `handle: str` con regex `[a-z0-9][a-z0-9_]{2,29}` (lowercase,

@@ -1779,40 +1779,42 @@ export async function archivePersona(session, tenantId, personaId) {
 
 // ─── Wizard (TASK-INFLU-009) ─────────────────────────────────────────────
 // Cada PUT actualiza el JSONB del paso correspondiente en el row de la
-// persona. El POST /submit cambia status='draft' → 'active'.
+// persona. El POST /activate cambia status='draft' → 'active'.
+// Backend monta wizard_router con prefix `/v1/influencer/personas/{persona_id}`
+// (no `/wizard/{id}` — ese era el path histórico que ya no existe).
 
 export async function wizardSaveFace(session, tenantId, personaId, body) {
-  return request(`/influencer/wizard/${personaId}/face`, {
+  return request(`/influencer/personas/${personaId}/face`, {
     method: 'PUT', body, session, tenantId,
   });
 }
 
 export async function wizardSaveBody(session, tenantId, personaId, body) {
-  return request(`/influencer/wizard/${personaId}/body`, {
+  return request(`/influencer/personas/${personaId}/body`, {
     method: 'PUT', body, session, tenantId,
   });
 }
 
 export async function wizardSaveIdentity(session, tenantId, personaId, body) {
-  return request(`/influencer/wizard/${personaId}/identity`, {
+  return request(`/influencer/personas/${personaId}/identity`, {
     method: 'PUT', body, session, tenantId,
   });
 }
 
 export async function wizardSaveVoice(session, tenantId, personaId, body) {
-  return request(`/influencer/wizard/${personaId}/voice`, {
+  return request(`/influencer/personas/${personaId}/voice`, {
     method: 'PUT', body, session, tenantId,
   });
 }
 
 export async function wizardSavePlatforms(session, tenantId, personaId, body) {
-  return request(`/influencer/wizard/${personaId}/platforms`, {
+  return request(`/influencer/personas/${personaId}/platforms`, {
     method: 'PUT', body, session, tenantId,
   });
 }
 
 export async function wizardSubmit(session, tenantId, personaId) {
-  return request(`/influencer/wizard/${personaId}/submit`, {
+  return request(`/influencer/personas/${personaId}/activate`, {
     method: 'POST', session, tenantId,
   });
 }
