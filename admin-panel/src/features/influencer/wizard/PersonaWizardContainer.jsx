@@ -30,7 +30,7 @@
  * Key: `influencer.wizardDraft.{tenantId}`. Se limpia tras submit exitoso
  * o si el user navega a `/personas/new/reset`.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 
 import { AlertBanner, StateScreen } from '../../../components/ui/index.js';
@@ -40,7 +40,6 @@ import {
   createPersona,
   generateFaceVariations,
   generateVoiceSample,
-  getFaceVariationStatus,
   getPersona,
   wizardSaveBody,
   wizardSaveFace,
@@ -127,7 +126,9 @@ export function PersonaWizardContainer() {
   const [submitting, setSubmitting] = useState(false);
   const [globalError, setGlobalError] = useState(null);
   // UI-INFLU-014.2: face_variation_request IDs en vuelo (polling).
-  const [pendingRequests, setPendingRequests] = useState([]);
+  // UI-INFLU-014.3: el endpoint es síncrono — no hay polling ni
+  // pendingRequests. `optimisticPending` (definido más abajo) controla
+  // el spinner local mientras el POST está en vuelo.
 
   // Sincronizar a sessionStorage cada vez que cambia el draft.
   useEffect(() => {
@@ -186,110 +187,53 @@ export function PersonaWizardContainer() {
     navigate(`/t/${tenantSlug}/influencer/personas/new/step-${n}`);
   }, [navigate, tenantSlug]);
 
-  // STEP 1 — Face. UI-INFLU-014.2:
+  // STEP 1 — Face. UI-INFLU-014.3 SÍNCRONO:
   //   * Cada click = 1 crédito = 1 variación (count=1).
-  //   * Persistimos el face actual antes de generar para que el prompt
-  //     del backend incluya lo más reciente.
-  //   * Agregamos el request_id al pendingRequests; el useEffect de
-  //     polling lo procesa hasta status='completed' y mueve los assets
-  //     a draft.faceVariations.
+  //   * Persistimos el face antes de generar para que el prompt del
+  //     backend incluya lo más reciente.
+  //   * El POST del backend ahora es SÍNCRONO (mismo patrón que el
+  //     smoke test): llama a Grok, espera la imagen, persiste el asset
+  //     y devuelve la URL inmediato. CERO polling. Anexamos la nueva
+  //     variación directamente a `draft.faceVariations`.
+  const [optimisticPending, setOptimisticPending] = useState(0);
   const handleGenerateVariations = useCallback(async (payload) => {
     setGlobalError(null);
+    setOptimisticPending((n) => n + 1);
     try {
       const personaId = await ensurePersona(null);
       // Persistir el face primero (best-effort) para que el prompt del
       // backend use los valores actuales del usuario.
       const facePayload = (() => {
         const clone = { ...(payload || {}) };
-        delete clone.count;  // count va por separado a la API.
+        delete clone.count;
         return clone;
       })();
       try {
         await wizardSaveFace(session, tenantId, personaId, facePayload);
         updateDraft({ face: facePayload });
       } catch {
-        // Si falla el save, igual seguimos — el prompt usará lo último
-        // que estaba en backend.
+        // Si falla el save, igual seguimos.
       }
       const result = await generateFaceVariations(
         session, tenantId, personaId, { count: payload?.count ?? 1 },
       );
-      // El POST devuelve { id, status, ... } — agregamos al pending y
-      // el polling se encarga.
-      if (result?.id) {
-        setPendingRequests((prev) => [...prev, result.id]);
-      }
+      // Response síncrono: assets ya pobladas — anexar al draft.
+      const incoming = (result?.assets || []).map((a) => ({
+        id: a.id, url: a.url, status: 'ready',
+        marked_canonical: a.marked_canonical,
+      }));
+      setDraft((prev) => {
+        const existing = prev.faceVariations || [];
+        const existingIds = new Set(existing.map((v) => v.id));
+        const fresh = incoming.filter((a) => !existingIds.has(a.id));
+        return { ...prev, faceVariations: [...existing, ...fresh] };
+      });
     } catch (err) {
       setGlobalError(`No se pudo generar la variación: ${err.message}`);
+    } finally {
+      setOptimisticPending((n) => Math.max(0, n - 1));
     }
   }, [ensurePersona, session, tenantId, updateDraft]);
-
-  // ─── Polling de face_variation_requests ──────────────────────────────
-  // FIX del loop infinito (reportado por el usuario):
-  //   1. La dependencia del useEffect es `pendingRequests.length > 0`
-  //      (boolean), NO `pendingRequests` (array). Sin esto, cada mutación
-  //      del array re-corría el effect, creando un setInterval nuevo
-  //      acumulado además del existente → poll cada milisegundos.
-  //   2. Usamos un ref para leer el array actualizado dentro del tick.
-  //      El closure capturaría el array inicial; sin el ref, no veríamos
-  //      requests agregados después de armar el interval.
-  const pendingRef = useRef(pendingRequests);
-  useEffect(() => { pendingRef.current = pendingRequests; }, [pendingRequests]);
-
-  const hasPending = pendingRequests.length > 0;
-  useEffect(() => {
-    if (!hasPending || !draft.personaId) return undefined;
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      const snapshot = pendingRef.current;
-      if (snapshot.length === 0) return;
-      const stillPending = [];
-      const newAssets = [];
-      for (const reqId of snapshot) {
-        try {
-          const resp = await getFaceVariationStatus(
-            session, tenantId, draft.personaId, reqId,
-          );
-          if (resp.status === 'completed') {
-            for (const a of resp.assets || []) {
-              newAssets.push({
-                id: a.id, url: a.url, status: 'ready',
-                marked_canonical: a.marked_canonical,
-              });
-            }
-          } else if (resp.status === 'failed') {
-            setGlobalError(
-              `La generación falló: ${resp.error_message || 'error desconocido'}`,
-            );
-          } else {
-            stillPending.push(reqId);
-          }
-        } catch {
-          stillPending.push(reqId);
-        }
-      }
-      if (cancelled) return;
-      if (newAssets.length > 0) {
-        setDraft((prev) => {
-          const existingIds = new Set((prev.faceVariations || []).map((v) => v.id));
-          const fresh = newAssets.filter((a) => !existingIds.has(a.id));
-          return {
-            ...prev,
-            faceVariations: [...(prev.faceVariations || []), ...fresh],
-          };
-        });
-      }
-      if (stillPending.length !== snapshot.length) {
-        setPendingRequests(stillPending);
-      }
-    };
-    const interval = setInterval(tick, 2000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [hasPending, draft.personaId, session, tenantId]);
 
   const handleNextFace = useCallback(async (payload) => {
     setGlobalError(null);
@@ -430,7 +374,7 @@ export function PersonaWizardContainer() {
           onGenerateVariations={handleGenerateVariations}
           onNext={handleNextFace}
           onSaveDraft={handleSaveDraftFace}
-          pendingCount={pendingRequests.length}
+          pendingCount={optimisticPending}
         />
       ) : null}
       {stepNum === 2 ? (

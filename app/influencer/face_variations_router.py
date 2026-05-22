@@ -1,11 +1,25 @@
-"""Generación async de variaciones de cara — TASK-INFLU-010.
+"""Generación de variaciones de cara — TASK-INFLU-010 / UI-INFLU-014.3.
 
-Endpoint POST que encola un request; un worker (TASK-INFLU-012) lo
-procesa con el `provider_dispatcher`. Cliente refresca con GET o
-WebSocket (TASK-INFLU-018 monta el bus de eventos).
+**Refactor síncrono (2026-05-22):** el endpoint POST ahora llama al
+provider configurado directamente (mismo patrón que el smoke test
+``POST /platform/ai-providers/image/test``), espera la respuesta,
+persiste los assets, y devuelve la response con ``status='completed'``
+y ``assets=[...]`` poblada.
+
+Razón: el flujo async previo (encolar en ``face_variation_requests`` +
+worker dedicado + polling del frontend) era operacionalmente complejo
+(requería un worker corriendo) y producía consumo excesivo (polling
+infinito si el worker no procesaba). Para el wizard el usuario espera
+respuesta inmediata; síncrono cumple ese contrato 1:1 con el smoke test.
+
+Se mantiene la tabla ``influencer.face_variation_requests`` y el GET
+status para historia/auditoría; el GET siempre devolverá ``'completed'``
+para requests nuevos (no hay más estado intermedio).
 """
 from __future__ import annotations
 
+import base64
+import json
 import logging
 from typing import Literal
 from uuid import UUID
@@ -14,9 +28,19 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from app.ai.providers.base import (
+    PersonaAnchor,
+    ProviderContentRejected,
+    ProviderError,
+)
 from app.core.security import authenticate_request
 from app.db.pool import get_db
 from app.influencer import ensure_module_enabled
+from app.influencer.admin_routes import (
+    _build_test_provider,
+    _decrypt_secret,
+    _set_support_mode,
+)
 from app.influencer.personas_router import _set_tenant_scope
 
 logger = logging.getLogger(__name__)
@@ -161,11 +185,73 @@ def _build_prompt(
 # ─── Endpoints ─────────────────────────────────────────────────────────────
 
 
+def _to_dict(value: object) -> dict:
+    """asyncpg sin codec global devuelve jsonb como string serializado;
+    decodificamos defensivamente igual que en personas_router._jsonb_to_dict.
+    """
+    if value is None or value == '':
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        return json.loads(value)
+    return {}
+
+
+async def _resolve_image_provider_config(conn: asyncpg.Connection) -> tuple[str, str | None, str]:
+    """Lee la config del provider de imagen y descifra la API key.
+
+    Mismo patrón usado por el smoke test (``smoke_test_platform_ai_provider``):
+    SELECT + Fernet decrypt. Setea ``app.support_mode=true`` localmente
+    en la transacción actual para bypasar RLS (la tabla
+    ``platform_ai_providers`` es global y solo platform_owner /
+    support_mode la lee).
+
+    Returns: ``(provider_name, model, api_key)``.
+    """
+    await _set_support_mode(conn, True)
+    row = await conn.fetchrow(
+        """
+        select p.provider, p.model, s.hint, s.ciphertext
+        from app.platform_ai_providers p
+        left join app.platform_secrets s on s.secret_ref = p.secret_ref
+        where p.modality = 'image'
+        """,
+    )
+    if row is None or row['provider'] == 'unset' or not row['ciphertext']:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                'El proveedor de imagen no está configurado. '
+                'Configúralo en /platform/ai-providers/image (provider + API key).'
+            ),
+        )
+    api_key = _decrypt_secret(row['ciphertext'])
+    return row['provider'], row['model'], api_key
+
+
+def _build_persona_anchor(persona_id: UUID, face: dict, body: dict, voice: dict) -> PersonaAnchor:
+    """Mínimo viable para Grok: solo persona_id es obligatorio.
+    Le pasamos style hints derivados de los jsonb para consistencia.
+    """
+    style_tokens = []
+    if (e := face.get('ethnicity')):
+        style_tokens.append(str(e))
+    if (s := body.get('silhouette')):
+        style_tokens.append(f'{s} build')
+    return PersonaAnchor(
+        persona_id=str(persona_id),
+        body_traits=body,
+        style_tokens=tuple(style_tokens),
+        voice_tone=voice.get('tone'),
+    )
+
+
 @face_variations_router.post(
     '/variations',
     response_model=VariationRequestResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary='Encola N variaciones de cara (async)',
+    status_code=status.HTTP_201_CREATED,
+    summary='Genera N variaciones de cara síncronamente (1 click = 1 crédito)',
 )
 async def create_face_variations(
     persona_id: UUID,
@@ -173,12 +259,24 @@ async def create_face_variations(
     body: VariationRequest = VariationRequest(),
     conn: asyncpg.Connection = Depends(get_db),
 ) -> VariationRequestResponse:
+    """Refactor UI-INFLU-014.3 — síncrono.
+
+    1. Lee persona + jsonb completos.
+    2. Construye prompt.
+    3. INSERT row en face_variation_requests (status='in_progress').
+    4. Lee config del provider de imagen + descifra key.
+    5. Llama provider.generate_image() sincrono (mismo patrón que el
+       smoke test).
+    6. Persiste cada result en influencer.assets (URL = data:image/...;base64).
+    7. UPDATE request → status='completed'.
+    8. Devuelve response con assets pobladas — el frontend muestra
+       las thumbnails inmediato sin polling.
+    """
     tenant_id = _require_tenant_id(request)
     user_id = getattr(request.state, 'user_id', None)
     await _set_tenant_scope(conn, tenant_id)
 
-    # Lee TODOS los jsonb que el usuario haya pre-seleccionado para
-    # construir un prompt rico (face + body + identity + voice).
+    # 1. Lee persona + jsonb.
     persona = await conn.fetchrow(
         '''
         select id, face, body, identity, voice, status
@@ -193,45 +291,133 @@ async def create_face_variations(
             status.HTTP_409_CONFLICT, 'cannot generate for archived persona',
         )
 
-    # asyncpg sin codec global devuelve jsonb como string serializado;
-    # decodificamos defensivamente igual que en personas_router._jsonb_to_dict.
-    def _to_dict(value: object) -> dict:
-        if value is None or value == '':
-            return {}
-        if isinstance(value, dict):
-            return value
-        if isinstance(value, str):
-            import json
-            return json.loads(value)
-        return {}  # tipo inesperado → tratamos como vacío
+    face = _to_dict(persona['face'])
+    body_jsonb = _to_dict(persona['body'])
+    identity = _to_dict(persona['identity'])
+    voice = _to_dict(persona['voice'])
+    prompt = _build_prompt(face=face, body=body_jsonb, identity=identity, voice=voice)
 
-    prompt = _build_prompt(
-        face=_to_dict(persona['face']),
-        body=_to_dict(persona['body']),
-        identity=_to_dict(persona['identity']),
-        voice=_to_dict(persona['voice']),
-    )
-    row = await conn.fetchrow(
+    # 3. INSERT request marcado in_progress (lo cerramos al final).
+    req_row = await conn.fetchrow(
         '''
         insert into influencer.face_variation_requests
           (tenant_id, persona_id, requested_count, status, prompt_used, requested_by)
-        values ($1, $2, $3, 'queued', $4, $5)
+        values ($1, $2, $3, 'in_progress', $4, $5)
         returning *
         ''',
         tenant_id, persona_id, body.count, prompt, user_id,
     )
-    logger.info(
-        'face_variation queued tenant=%s persona=%s count=%d req_id=%s',
-        tenant_id, persona_id, body.count, row['id'],
+    req_id = req_row['id']
+
+    # 4. Resolver provider + key (mismo patrón que smoke test).
+    try:
+        provider_name, model, api_key = await _resolve_image_provider_config(conn)
+        # Re-set tenant scope tras la sub-transacción del resolve.
+        await _set_tenant_scope(conn, tenant_id)
+    except HTTPException:
+        # Marca el request como failed y propaga el error claro.
+        await conn.execute(
+            "update influencer.face_variation_requests set status='failed', "
+            "error_message=$1, completed_at=now() where id=$2",
+            'image provider not configured', req_id,
+        )
+        raise
+
+    # 5. Llamar al provider sincrono.
+    try:
+        adapter = _build_test_provider(provider_name, api_key=api_key, model=model)
+    except NotImplementedError as exc:
+        await conn.execute(
+            "update influencer.face_variation_requests set status='failed', "
+            "error_message=$1, completed_at=now() where id=$2",
+            f'provider {provider_name} not wired yet: {exc}', req_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=f'image provider {provider_name!r} not implemented',
+        ) from exc
+
+    if model:
+        adapter._models['image'] = model  # noqa: SLF001
+
+    anchor = _build_persona_anchor(persona_id, face, body_jsonb, voice)
+    try:
+        results = await adapter.generate_image(
+            prompt=prompt,
+            persona_anchor=anchor,
+            count=body.count,
+            format='1:1',
+            safety_mode=True,
+        )
+    except ProviderContentRejected as exc:
+        await conn.execute(
+            "update influencer.face_variation_requests set status='failed', "
+            "error_message=$1, completed_at=now() where id=$2",
+            f'content_rejected: {exc}', req_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'content rejected by provider: {exc}',
+        ) from exc
+    except ProviderError as exc:
+        await conn.execute(
+            "update influencer.face_variation_requests set status='failed', "
+            "error_message=$1, completed_at=now() where id=$2",
+            f'provider_error: {exc}', req_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f'image provider error: {exc}',
+        ) from exc
+
+    # 6. Persistir cada result como asset. URL = data: inline para no
+    # depender de storage externo en este momento.
+    assets_out: list[VariationAsset] = []
+    for img in results:
+        b64 = base64.b64encode(img.image_bytes).decode('ascii')
+        data_url = f'data:{img.mime};base64,{b64}'
+        # storage_key = data URL completa (autocontenida; el frontend la usa
+        # como `src` directo en <img>).
+        asset_row = await conn.fetchrow(
+            '''
+            insert into influencer.assets
+              (tenant_id, persona_id, face_variation_request_id, kind,
+               storage_key, mime, width, height, bytes)
+            values ($1, $2, $3, 'face_variation', $4, $5, $6, $7, $8)
+            returning id, marked_canonical
+            ''',
+            tenant_id, persona_id, req_id, data_url, img.mime,
+            img.width, img.height, len(img.image_bytes),
+        )
+        assets_out.append(VariationAsset(
+            id=asset_row['id'],
+            storage_key=data_url,
+            url=data_url,
+            mime=img.mime,
+            width=img.width,
+            height=img.height,
+            marked_canonical=asset_row['marked_canonical'],
+        ))
+
+    # 7. Cerrar request.
+    await conn.execute(
+        "update influencer.face_variation_requests set status='completed', "
+        "completed_at=now() where id=$1",
+        req_id,
     )
+    logger.info(
+        'face_variation completed tenant=%s persona=%s req=%s count=%d provider=%s',
+        tenant_id, persona_id, req_id, len(assets_out), provider_name,
+    )
+
     return VariationRequestResponse(
-        id=row['id'],
-        persona_id=row['persona_id'],
-        requested_count=row['requested_count'],
-        status=row['status'],
-        prompt_used=row['prompt_used'],
-        error_message=row['error_message'],
-        assets=[],  # recién encolado, todavía no hay assets.
+        id=req_id,
+        persona_id=persona_id,
+        requested_count=body.count,
+        status='completed',
+        prompt_used=prompt,
+        error_message=None,
+        assets=assets_out,
     )
 
 

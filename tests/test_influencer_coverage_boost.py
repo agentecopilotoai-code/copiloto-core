@@ -344,7 +344,23 @@ def test_pricing_endpoint():
 # ─── face_variations ───────────────────────────────────────────────────────
 
 
-def test_create_face_variations_happy():
+def test_create_face_variations_happy(monkeypatch):
+    """UI-INFLU-014.3 — endpoint ahora SÍNCRONO: llama al provider, espera
+    la imagen, persiste el asset, devuelve status='completed' con assets.
+    Mockea provider builder + decrypt_secret + adapter.
+    """
+    from unittest.mock import MagicMock
+    from app.ai.providers.base import ImageResult
+
+    fake_adapter = MagicMock()
+    fake_adapter._models = {}
+    fake_adapter.generate_image = AsyncMock(return_value=[
+        ImageResult(image_bytes=b'\x89PNG-x', mime='image/png',
+                    width=512, height=512),
+    ])
+    monkeypatch.setattr(fv_mod, '_build_test_provider', lambda *a, **kw: fake_adapter)
+    monkeypatch.setattr(fv_mod, '_decrypt_secret', lambda c: 'fake-key')
+
     request = _req()
     conn = AsyncMock()
     conn.execute = AsyncMock(return_value=None)
@@ -352,16 +368,25 @@ def test_create_face_variations_happy():
     fvr_row = {
         'id': uuid4(),
         'persona_id': persona['id'],
-        'requested_count': 4,
-        'status': 'queued',
+        'requested_count': 1,
+        'status': 'in_progress',
         'prompt_used': 'prompt',
         'error_message': None,
     }
-    conn.fetchrow = AsyncMock(side_effect=[persona, fvr_row])
+    provider_row = {
+        'provider': 'grok', 'model': 'grok-2-image',
+        'hint': 'abcd', 'ciphertext': b'fake-cipher',
+    }
+    asset_row = {'id': uuid4(), 'marked_canonical': False}
+    conn.fetchrow = AsyncMock(side_effect=[
+        persona, fvr_row, provider_row, asset_row,
+    ])
     result = asyncio.run(
         fv_mod.create_face_variations(uuid4(), request, conn=conn),
     )
-    assert result.status == 'queued'
+    assert result.status == 'completed'
+    assert len(result.assets) == 1
+    assert result.assets[0].url.startswith('data:image/png;base64,')
 
 
 def test_get_face_variation_status_happy():

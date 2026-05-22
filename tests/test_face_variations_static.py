@@ -13,11 +13,12 @@ ROUTER_SRC = Path('app/influencer/face_variations_router.py').read_text(encoding
 SCHEMA_SRC = Path('infra/postgres/03-migrations.sql').read_text(encoding='utf-8')
 
 
-def test_post_returns_202():
-    """El endpoint POST declara status_code=202 (async accept)."""
+def test_post_returns_201_synchronous():
+    """UI-INFLU-014.3: el endpoint ahora es SÍNCRONO — devuelve 201
+    Created con assets pobladas (no 202 Accepted con polling)."""
     for route in face_variations_router.routes:
         if route.path.endswith('/variations') and 'POST' in route.methods:
-            assert route.status_code == 202
+            assert route.status_code == 201
             return
     raise AssertionError('POST /variations no encontrado')
 
@@ -225,26 +226,37 @@ def test_require_tenant_id_coerces_string_to_uuid():
     assert _require_tenant_id(fake_request) == tid
 
 
-def test_create_face_variations_handler_happy_path():
+def test_create_face_variations_handler_happy_path(monkeypatch):
     """Test directo del handler async — sin TestClient para velocidad.
-    Verifica: 1) lee la persona con todos los jsonb, 2) construye prompt,
-    3) inserta en face_variation_requests, 4) devuelve VariationRequestResponse
-    con assets=[]."""
+    UI-INFLU-014.3 SÍNCRONO: el handler llama al provider, espera, y
+    devuelve assets pobladas + status='completed'.
+    Mockeamos: provider resolve, adapter, decrypt_secret.
+    """
     import asyncio
     from uuid import uuid4
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, MagicMock
     from types import SimpleNamespace
-    from app.influencer.face_variations_router import (
-        create_face_variations,
-        VariationRequest,
-    )
+    from app.influencer import face_variations_router as fvr
+    from app.ai.providers.base import ImageResult
 
     tenant_id = uuid4()
     persona_id = uuid4()
     req_id = uuid4()
+    asset_id = uuid4()
     request = SimpleNamespace(state=SimpleNamespace(
         tenant_id=tenant_id, user_id=uuid4(),
     ))
+
+    # Mock del adapter: devuelve 1 ImageResult con bytes PNG.
+    fake_adapter = MagicMock()
+    fake_adapter._models = {}
+    fake_adapter.generate_image = AsyncMock(return_value=[
+        ImageResult(image_bytes=b'\x89PNG-test', mime='image/png',
+                    width=1024, height=1024),
+    ])
+    monkeypatch.setattr(fvr, '_build_test_provider', lambda *a, **kw: fake_adapter)
+    monkeypatch.setattr(fvr, '_decrypt_secret', lambda c: 'fake-key')
+
     conn = AsyncMock()
     conn.execute = AsyncMock(return_value=None)
     persona_row = {
@@ -257,21 +269,29 @@ def test_create_face_variations_handler_happy_path():
     }
     created_row = {
         'id': req_id, 'persona_id': persona_id, 'requested_count': 1,
-        'status': 'queued', 'prompt_used': 'whatever', 'error_message': None,
+        'status': 'in_progress', 'prompt_used': 'whatever', 'error_message': None,
     }
-    conn.fetchrow = AsyncMock(side_effect=[persona_row, created_row])
+    provider_row = {
+        'provider': 'grok', 'model': 'grok-2-image',
+        'hint': 'abcd', 'ciphertext': b'fake-cipher',
+    }
+    asset_row = {'id': asset_id, 'marked_canonical': False}
+    conn.fetchrow = AsyncMock(side_effect=[
+        persona_row, created_row, provider_row, asset_row,
+    ])
 
-    resp = asyncio.run(create_face_variations(
+    resp = asyncio.run(fvr.create_face_variations(
         persona_id=persona_id, request=request,
-        body=VariationRequest(count=1), conn=conn,
+        body=fvr.VariationRequest(count=1), conn=conn,
     ))
     assert resp.id == req_id
-    assert resp.status == 'queued'
-    assert resp.assets == []
-    # El INSERT vio el prompt construido con face+body (no solo face).
-    insert_args = conn.fetchrow.await_args_list[1].args
-    # args[3] es el placeholder $4 = prompt
-    prompt_arg = insert_args[4]
+    assert resp.status == 'completed'  # síncrono: ya completed
+    assert len(resp.assets) == 1
+    assert resp.assets[0].id == asset_id
+    assert resp.assets[0].url.startswith('data:image/png;base64,')
+    # El prompt debe incluir face+body.
+    fake_adapter.generate_image.assert_awaited_once()
+    prompt_arg = fake_adapter.generate_image.call_args.kwargs['prompt']
     assert 'latina' in prompt_arg
     assert 'athletic' in prompt_arg
 
@@ -370,6 +390,83 @@ def test_get_face_variation_status_includes_assets():
     assert len(resp.assets) == 1
     assert resp.assets[0].id == asset_id
     assert resp.assets[0].url.startswith('/admin/api/core/v1/influencer/storage/')
+
+
+def test_create_face_variations_unconfigured_provider_503(monkeypatch):
+    """Si el provider no está configurado, el handler levanta 503."""
+    import asyncio
+    from uuid import uuid4
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.influencer import face_variations_router as fvr
+    import pytest as _pytest
+
+    request = SimpleNamespace(state=SimpleNamespace(
+        tenant_id=uuid4(), user_id=uuid4(),
+    ))
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=None)
+    persona_row = {
+        'id': uuid4(), 'face': {}, 'body': {}, 'identity': {}, 'voice': {},
+        'status': 'draft',
+    }
+    created_row = {
+        'id': uuid4(), 'persona_id': uuid4(), 'requested_count': 1,
+        'status': 'in_progress', 'prompt_used': '', 'error_message': None,
+    }
+    # provider_row: provider='unset' → falla con 503
+    conn.fetchrow = AsyncMock(side_effect=[
+        persona_row, created_row,
+        {'provider': 'unset', 'model': None, 'hint': None, 'ciphertext': None},
+    ])
+
+    with _pytest.raises(HTTPException) as exc:
+        asyncio.run(fvr.create_face_variations(
+            persona_id=uuid4(), request=request,
+            body=fvr.VariationRequest(), conn=conn,
+        ))
+    assert exc.value.status_code == 503
+
+
+def test_create_face_variations_provider_content_rejected_422(monkeypatch):
+    """ProviderContentRejected → 422 + marca request failed."""
+    import asyncio
+    from uuid import uuid4
+    from unittest.mock import AsyncMock, MagicMock
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.influencer import face_variations_router as fvr
+    from app.ai.providers.base import ProviderContentRejected
+    import pytest as _pytest
+
+    adapter = MagicMock()
+    adapter._models = {}
+    adapter.generate_image = AsyncMock(side_effect=ProviderContentRejected('nsfw'))
+    monkeypatch.setattr(fvr, '_build_test_provider', lambda *a, **kw: adapter)
+    monkeypatch.setattr(fvr, '_decrypt_secret', lambda c: 'fake-key')
+
+    request = SimpleNamespace(state=SimpleNamespace(
+        tenant_id=uuid4(), user_id=uuid4(),
+    ))
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(side_effect=[
+        {'id': uuid4(), 'face': {}, 'body': {}, 'identity': {}, 'voice': {},
+         'status': 'draft'},
+        {'id': uuid4(), 'persona_id': uuid4(), 'requested_count': 1,
+         'status': 'in_progress', 'prompt_used': '', 'error_message': None},
+        {'provider': 'grok', 'model': 'grok-2-image',
+         'hint': 'abcd', 'ciphertext': b'fake-cipher'},
+    ])
+
+    with _pytest.raises(HTTPException) as exc:
+        asyncio.run(fvr.create_face_variations(
+            persona_id=uuid4(), request=request,
+            body=fvr.VariationRequest(), conn=conn,
+        ))
+    assert exc.value.status_code == 422
+    assert 'content rejected' in str(exc.value.detail).lower()
 
 
 def test_get_face_variation_status_404_when_request_missing():
