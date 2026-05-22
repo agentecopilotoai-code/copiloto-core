@@ -1702,3 +1702,232 @@ export async function isInfluencerEnabled(session, tenantId) {
     throw err;
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// MÓDULO INFLUENCER — API client (TASK-INFLU-009..017 backend, frontend
+// wiring de UI-INFLU-008..014). Cada función mapea 1:1 con un endpoint
+// del backend y usa el helper `request()` con el patrón estándar
+// `(session, tenantId, ...args)` que comparten el resto de funciones del
+// módulo de tenant.
+//
+// Convención de paths: el backend monta todos los routers bajo
+// `/v1/influencer/*` (gateado por `ensure_module_enabled('influencer')`).
+// Los responses se devuelven como objetos JS (no envueltos en `{ data }`)
+// — siguen el shape que el handler retorna.
+// ─────────────────────────────────────────────────────────────────────────
+
+// ─── Casting (TASK-INFLU-017) ────────────────────────────────────────────
+
+/**
+ * GET /v1/influencer/casting — home del rol Casting con KPIs cross-personajes
+ * + grid de personajes activos. Acepta filtros opcionales `category` y `sort`.
+ *
+ * @returns `{ kpis: {active_personas, posts_this_month, total_reach, avg_engagement}, personas: [...] }`
+ */
+export async function getCasting(session, tenantId, { category, sort } = {}) {
+  const params = new URLSearchParams();
+  if (category) params.set('category', category);
+  if (sort) params.set('sort', sort);
+  const qs = params.toString();
+  return request(`/influencer/casting${qs ? `?${qs}` : ''}`, { session, tenantId });
+}
+
+/**
+ * GET /v1/influencer/personas/{personaId}/studio — bundle de la vista
+ * detalle del personaje (stats + next_post + platforms_connected +
+ * recent_generations).
+ */
+export async function getPersonaStudio(session, tenantId, personaId) {
+  return request(`/influencer/personas/${personaId}/studio`, { session, tenantId });
+}
+
+// ─── Personas (TASK-INFLU-008) ───────────────────────────────────────────
+
+export async function listPersonas(session, tenantId, { status, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (limit != null) params.set('limit', String(limit));
+  if (offset != null) params.set('offset', String(offset));
+  const qs = params.toString();
+  return request(`/influencer/personas${qs ? `?${qs}` : ''}`, { session, tenantId });
+}
+
+export async function getPersona(session, tenantId, personaId) {
+  return request(`/influencer/personas/${personaId}`, { session, tenantId });
+}
+
+/**
+ * POST /v1/influencer/personas — crea un personaje en estado `draft`.
+ * Es el primer paso del wizard: devuelve `persona_id` que se usa en los
+ * 5 PUTs de los steps siguientes.
+ */
+export async function createPersona(session, tenantId, body) {
+  return request('/influencer/personas', { method: 'POST', body, session, tenantId });
+}
+
+export async function updatePersona(session, tenantId, personaId, body) {
+  return request(`/influencer/personas/${personaId}`, {
+    method: 'PATCH', body, session, tenantId,
+  });
+}
+
+export async function archivePersona(session, tenantId, personaId) {
+  return request(`/influencer/personas/${personaId}`, {
+    method: 'DELETE', session, tenantId,
+  });
+}
+
+// ─── Wizard (TASK-INFLU-009) ─────────────────────────────────────────────
+// Cada PUT actualiza el JSONB del paso correspondiente en el row de la
+// persona. El POST /submit cambia status='draft' → 'active'.
+
+export async function wizardSaveFace(session, tenantId, personaId, body) {
+  return request(`/influencer/wizard/${personaId}/face`, {
+    method: 'PUT', body, session, tenantId,
+  });
+}
+
+export async function wizardSaveBody(session, tenantId, personaId, body) {
+  return request(`/influencer/wizard/${personaId}/body`, {
+    method: 'PUT', body, session, tenantId,
+  });
+}
+
+export async function wizardSaveIdentity(session, tenantId, personaId, body) {
+  return request(`/influencer/wizard/${personaId}/identity`, {
+    method: 'PUT', body, session, tenantId,
+  });
+}
+
+export async function wizardSaveVoice(session, tenantId, personaId, body) {
+  return request(`/influencer/wizard/${personaId}/voice`, {
+    method: 'PUT', body, session, tenantId,
+  });
+}
+
+export async function wizardSavePlatforms(session, tenantId, personaId, body) {
+  return request(`/influencer/wizard/${personaId}/platforms`, {
+    method: 'PUT', body, session, tenantId,
+  });
+}
+
+export async function wizardSubmit(session, tenantId, personaId) {
+  return request(`/influencer/wizard/${personaId}/submit`, {
+    method: 'POST', session, tenantId,
+  });
+}
+
+// ─── Face variations (TASK-INFLU-010) ────────────────────────────────────
+// Generación async de variaciones de cara durante el step 1 del wizard.
+
+export async function generateFaceVariations(session, tenantId, personaId, body) {
+  return request(`/influencer/personas/${personaId}/face-variations`, {
+    method: 'POST', body, session, tenantId,
+  });
+}
+
+export async function getFaceVariations(session, tenantId, personaId) {
+  return request(`/influencer/personas/${personaId}/face-variations`, {
+    session, tenantId,
+  });
+}
+
+// ─── Voice (TASK-INFLU-013) ──────────────────────────────────────────────
+
+export async function generateVoiceSample(session, tenantId, personaId, body) {
+  return request(`/influencer/personas/${personaId}/voice/sample`, {
+    method: 'POST', body, session, tenantId,
+  });
+}
+
+// ─── Generations (TASK-INFLU-011..012) ───────────────────────────────────
+// `generateContent` dispara un job async; el worker
+// `influencer_generation_worker` lo procesa y deja el resultado en
+// `influencer.generations` + `influencer.assets`.
+
+export async function generateContent(session, tenantId, personaId, body) {
+  return request(`/influencer/personas/${personaId}/generate`, {
+    method: 'POST', body, session, tenantId,
+  });
+}
+
+export async function listGenerations(session, tenantId, personaId, { limit, status } = {}) {
+  const params = new URLSearchParams();
+  if (limit != null) params.set('limit', String(limit));
+  if (status) params.set('status', status);
+  const qs = params.toString();
+  return request(`/influencer/personas/${personaId}/generations${qs ? `?${qs}` : ''}`, {
+    session, tenantId,
+  });
+}
+
+export async function getGeneration(session, tenantId, generationId) {
+  return request(`/influencer/generations/${generationId}`, { session, tenantId });
+}
+
+// ─── Posts + calendar (TASK-INFLU-015) ───────────────────────────────────
+
+export async function createPost(session, tenantId, body) {
+  return request('/influencer/posts', { method: 'POST', body, session, tenantId });
+}
+
+export async function updatePost(session, tenantId, postId, body) {
+  return request(`/influencer/posts/${postId}`, {
+    method: 'PATCH', body, session, tenantId,
+  });
+}
+
+export async function cancelPost(session, tenantId, postId) {
+  return request(`/influencer/posts/${postId}/cancel`, {
+    method: 'POST', session, tenantId,
+  });
+}
+
+/**
+ * GET /v1/influencer/calendar — vista calendario semanal/mensual
+ * cross-personajes. `from`/`to` ISO date (YYYY-MM-DD). `personaId` opcional.
+ */
+export async function getCalendar(session, tenantId, { from, to, personaId } = {}) {
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (personaId) params.set('persona_id', personaId);
+  const qs = params.toString();
+  return request(`/influencer/calendar${qs ? `?${qs}` : ''}`, { session, tenantId });
+}
+
+// ─── Credits (TASK-INFLU-016) ────────────────────────────────────────────
+
+export async function getCreditsBalance(session, tenantId) {
+  return request('/influencer/credits/balance', { session, tenantId });
+}
+
+export async function topUpCredits(session, tenantId, body) {
+  return request('/influencer/credits/topup', {
+    method: 'POST', body, session, tenantId,
+  });
+}
+
+export async function getPricing(session, tenantId) {
+  return request('/influencer/pricing', { session, tenantId });
+}
+
+// ─── Instagram OAuth (TASK-INFLU-014) ────────────────────────────────────
+
+export async function getInstagramAuthUrl(session, tenantId, personaId) {
+  return request(`/influencer/instagram/auth-url?persona_id=${personaId}`, {
+    session, tenantId,
+  });
+}
+
+export async function completeInstagramOAuth(session, tenantId, body) {
+  return request('/influencer/instagram/callback', {
+    method: 'POST', body, session, tenantId,
+  });
+}
+
+export async function getInstagramConnection(session, tenantId, personaId) {
+  return request(`/influencer/personas/${personaId}/instagram-connection`, {
+    session, tenantId,
+  });
+}

@@ -1,19 +1,14 @@
 /**
  * UI-INFLU-002 — Placeholders de las vistas del módulo Influencer.
  *
- * Cada una de las 4 vistas del módulo (Casting, Calendar, Library, Credits)
- * se materializa en sub-tareas posteriores:
+ * Vistas materializadas (importadas desde sus features reales):
+ *   - `InfluencerCasting`  → `./casting/InfluencerCasting.jsx` (UI-INFLU-003+004)
+ *   - `InfluencerCalendar` → `./calendar/CalendarContainer.jsx`
+ *     (UI-INFLU-014, wireado en moduleRegistry directamente)
  *
- *   - `InfluencerCasting`  → UI-INFLU-003 (empty state) + UI-INFLU-004 (con personas)
- *   - `InfluencerCalendar` → UI-INFLU-014
+ * Aún placeholder (TODO):
  *   - `InfluencerLibrary`  → reusa `media-library` con filtros del módulo
- *   - `InfluencerCredits`  → vista de balance + history (parte de UI-INFLU-013+)
- *
- * Mientras tanto, cada placeholder muestra una `<Card>` con el nombre de la vista
- * y un hint del HTML del diseñador. El shell del módulo (InfluencerShell) se
- * encarga del sub-nav, gating y banners. Cuando se implemente cada vista,
- * se reemplazará el placeholder por el componente real importado desde
- * `./casting/index.js`, etc.
+ *   - `InfluencerCredits`  → vista de balance + history (UI-INFLU-016)
  */
 import { Card, PageHeader } from '../../components/ui/index.js';
 
@@ -37,17 +32,6 @@ function Placeholder({ title, eyebrow, description, htmlRef }) {
 // vista con personajes llega en UI-INFLU-004.
 export { InfluencerCasting } from './casting/InfluencerCasting.jsx';
 
-export function InfluencerCalendar() {
-  return (
-    <Placeholder
-      eyebrow="Ravit Studio"
-      title="Calendario de publicación"
-      description="Una semana, todos tus personajes, todas las redes."
-      htmlRef="docs/influencer/05 _ Calendario _todos los personajes_.html"
-    />
-  );
-}
-
 export function InfluencerLibrary() {
   return (
     <Placeholder
@@ -59,13 +43,3 @@ export function InfluencerLibrary() {
   );
 }
 
-export function InfluencerCredits() {
-  return (
-    <Placeholder
-      eyebrow="Ravit Studio"
-      title="Créditos"
-      description="Balance del tenant + historial de movimientos."
-      htmlRef="docs/influencer/01 _ Casting _Home_.html (sidebar `Créditos · 248`)"
-    />
-  );
-}

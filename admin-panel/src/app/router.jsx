@@ -43,6 +43,9 @@ import { ReadOnlyShell } from './shells/ReadOnlyShell.jsx';
 import { TenantShell } from './shells/TenantShell.jsx';
 import { InfluencerShell } from './shells/InfluencerShell.jsx';
 import { isInfluencerEnabled } from '../services/coreApi.js';
+import { PersonaWizardContainer } from '../features/influencer/wizard/PersonaWizardContainer.jsx';
+import { PersonaStudioContainer } from '../features/influencer/studio/PersonaStudioContainer.jsx';
+import { GenerateContainer } from '../features/influencer/generate/GenerateContainer.jsx';
 import {
   ACTIVE_TENANT_STORAGE_KEY,
   pickDefaultTenant,
@@ -710,6 +713,30 @@ export const routes = [
                 element: <Navigate to="influencer-casting" replace />,
               },
               ...INFLUENCER_MODULE_IDS.map(moduleRoute),
+              // UI-INFLU-008..012 wiring — wizard de creación de personaje.
+              // `personas/new` redirige a `step-1`; cada step se monta con
+              // `PersonaWizardContainer` que orquesta state + API.
+              {
+                path: 'personas/new',
+                element: <Navigate to="personas/new/step-1" replace />,
+              },
+              {
+                path: 'personas/new/:stepSlug',
+                element: <PersonaWizardContainer />,
+              },
+              // UI-INFLU-005 wiring — vista de detalle del personaje.
+              // El componente `PersonaStudio` recibe el bundle del
+              // endpoint `GET /personas/{id}/studio` resuelto por
+              // `PersonaStudioContainer`.
+              {
+                path: 'personas/:personaId/studio',
+                element: <PersonaStudioContainer />,
+              },
+              // UI-INFLU-013 wiring — composer "Generar contenido".
+              {
+                path: 'personas/:personaId/generate',
+                element: <GenerateContainer />,
+              },
             ],
           },
           {

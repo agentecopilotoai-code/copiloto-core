@@ -38,11 +38,13 @@ import { ViewerAppointments } from '../features/viewer/appointments/index.js';
 import { ViewerConversations } from '../features/viewer/conversations/index.js';
 import { ViewerSummary } from '../features/viewer/summary/index.js';
 import {
-  InfluencerCalendar,
   InfluencerCasting,
-  InfluencerCredits,
   InfluencerLibrary,
 } from '../features/influencer/placeholders.jsx';
+// UI-INFLU-014 wiring — Calendar real (no más placeholder).
+import { CalendarContainer as InfluencerCalendar } from '../features/influencer/calendar/CalendarContainer.jsx';
+// UI-INFLU-016 wiring — Credits real (balance + history + topup).
+import { CreditsModule as InfluencerCredits } from '../features/influencer/credits/CreditsModule.jsx';
 // `InfluencerEntryRedirect` vive en su propio `.jsx` (no inline aquí) porque
 // `moduleRegistry.js` es `.js` y `@vitejs/plugin-react` no procesa JSX en
 // archivos `.js` — un JSX inline rompería el build con "Expression expected".
