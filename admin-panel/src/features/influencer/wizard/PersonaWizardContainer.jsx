@@ -30,7 +30,7 @@
  * Key: `influencer.wizardDraft.{tenantId}`. Se limpia tras submit exitoso
  * o si el user navega a `/personas/new/reset`.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 
 import { AlertBanner, StateScreen } from '../../../components/ui/index.js';
@@ -40,6 +40,7 @@ import {
   createPersona,
   generateFaceVariations,
   generateVoiceSample,
+  getFaceVariationStatus,
   getPersona,
   wizardSaveBody,
   wizardSaveFace,
@@ -53,6 +54,7 @@ import { Step2Body } from './Step2Body.jsx';
 import { Step3Identity } from './Step3Identity.jsx';
 import { Step4Voice } from './Step4Voice.jsx';
 import { Step5Platforms } from './Step5Platforms.jsx';
+import { WizardPreview } from './WizardPreview.jsx';
 
 const TOTAL_STEPS = 5;
 const STORAGE_PREFIX = 'influencer.wizardDraft';
@@ -125,6 +127,17 @@ export function PersonaWizardContainer() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [globalError, setGlobalError] = useState(null);
+  // UI-INFLU-014.1 — state del WizardPreview persistente:
+  //   pendingRequests: array de UUIDs de face_variation_requests en vuelo.
+  //   selectedVariationIndex: índice de la variación visible en el preview
+  //     grande (null = auto-select de la última).
+  //   pendingCount: derivado de pendingRequests, pero lo mantenemos
+  //     separado para optimistic UI (al apretar Generar incrementamos
+  //     antes de tener el ID del request).
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [optimisticPending, setOptimisticPending] = useState(0);
+  const [selectedVariationIndex, setSelectedVariationIndex] = useState(null);
+  const [liveFormState, setLiveFormState] = useState({}); // form en vuelo del step actual
 
   // Sincronizar a sessionStorage cada vez que cambia el draft.
   useEffect(() => {
@@ -151,6 +164,10 @@ export function PersonaWizardContainer() {
         return draft.personaId;
       } catch (err) {
         if (err?.status === 404) {
+          // UI-INFLU-014.1: silencioso — el draft viejo no existe en
+          // backend (típicamente porque el INSERT falló antes del fix
+          // de jsonb, o el draft fue archivado en otra pestaña). Limpiamos
+          // y recreamos sin mostrar toast — es ruido para el usuario.
           updateDraft({ personaId: null });
           // Continuamos al create de abajo.
         } else {
@@ -187,29 +204,130 @@ export function PersonaWizardContainer() {
     navigate(`/t/${tenantSlug}/influencer/personas/new/step-${n}`);
   }, [navigate, tenantSlug]);
 
-  // STEP 1 — Face
-  const handleGenerateVariations = useCallback(async (payload) => {
+  // UI-INFLU-014.1 — Generación de UNA variación (=1 crédito). El botón
+  // "Generar +1" del WizardPreview llama a esta función. El backend
+  // construye el prompt con todos los jsonb pre-seleccionados (face +
+  // body + identity + voice del draft); el frontend no manda el prompt,
+  // solo el payload de overrides (vacío por ahora).
+  const handleGenerateOneVariation = useCallback(async () => {
     setGlobalError(null);
+    // Optimistic UI: incrementamos el contador de pending antes de
+    // tener el ID del request — el WizardPreview muestra un thumbnail
+    // con spinner inmediatamente.
+    setOptimisticPending((n) => n + 1);
     try {
       const personaId = await ensurePersona(null);
-      const result = await generateFaceVariations(session, tenantId, personaId, payload);
-      // Auto-marca la PRIMERA variación como canonical si ninguna lo es.
-      // Sin esto, el "Siguiente paso" exige que el user click manual en una
-      // miniatura — UX confusa para flujos como "Aleatorio IA al azar".
-      // El user puede cambiar la canonical clickeando otra miniatura.
-      const rawVariations = result?.variations || result || [];
-      const variations = Array.isArray(rawVariations) ? rawVariations : [];
-      const hasCanonical = variations.some((v) => v?.canonical);
-      const withDefault = hasCanonical || variations.length === 0
-        ? variations
-        : variations.map((v, i) => ({ ...v, canonical: i === 0 }));
-      updateDraft({ faceVariations: withDefault });
-      return { ...result, variations: withDefault };
+      // Antes de generar, persiste el form del step actual al jsonb
+      // correspondiente, así el prompt del backend incluye lo que el
+      // usuario acaba de editar (no solo lo del último save).
+      try {
+        await flushLiveFormState(personaId);
+      } catch {
+        // Si el save falla, igual seguimos — el prompt usará lo que
+        // ya estaba en backend, no es bloqueante para la generación.
+      }
+      const result = await generateFaceVariations(
+        session, tenantId, personaId, { count: 1 },
+      );
+      // El POST devuelve el id del request; lo agregamos a pending y
+      // descontamos el optimistic — el polling toma el relevo.
+      setPendingRequests((prev) => [...prev, result.id]);
+      setOptimisticPending((n) => Math.max(0, n - 1));
     } catch (err) {
-      setGlobalError(`No se pudieron generar variaciones: ${err.message}`);
-      throw err;
+      setOptimisticPending((n) => Math.max(0, n - 1));
+      setGlobalError(`No se pudo generar la variación: ${err.message}`);
     }
-  }, [ensurePersona, session, tenantId, updateDraft]);
+  }, [ensurePersona, session, tenantId]);
+
+  // Persistir el form en vuelo del step actual ANTES de generar. Cada
+  // step llama a `onFormChange` con su state cada vez que cambia, y el
+  // container lo guarda en `liveFormState` con el campo correspondiente.
+  const flushLiveFormState = useCallback(async (personaId) => {
+    const entries = Object.entries(liveFormState || {});
+    for (const [field, payload] of entries) {
+      if (!payload) continue;
+      try {
+        if (field === 'face') {
+          await wizardSaveFace(session, tenantId, personaId, payload);
+        } else if (field === 'body') {
+          await wizardSaveBody(session, tenantId, personaId, payload);
+        } else if (field === 'identity') {
+          await wizardSaveIdentity(session, tenantId, personaId, payload);
+        } else if (field === 'voice') {
+          await wizardSaveVoice(session, tenantId, personaId, payload);
+        }
+      } catch {
+        // Best-effort — si un PUT falla, seguimos con los demás.
+      }
+    }
+  }, [liveFormState, session, tenantId]);
+
+  // ─── Polling de face_variation_requests ──────────────────────────────
+  // Cada 2s revisa cada request en `pendingRequests`. Cuando uno
+  // completa, mueve los assets al draft.faceVariations y lo remueve
+  // del pending. El polling se detiene cuando no hay nada pendiente.
+  const pollIntervalRef = useRef(null);
+  useEffect(() => {
+    if (pendingRequests.length === 0 || !draft.personaId) {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      return undefined;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      const stillPending = [];
+      for (const reqId of pendingRequests) {
+        try {
+          const resp = await getFaceVariationStatus(
+            session, tenantId, draft.personaId, reqId,
+          );
+          if (resp.status === 'completed') {
+            // Anexar los assets al draft (sin duplicar por id).
+            setDraft((prev) => {
+              const existing = prev.faceVariations || [];
+              const existingIds = new Set(existing.map((v) => v.id));
+              const incoming = (resp.assets || [])
+                .filter((a) => !existingIds.has(a.id))
+                .map((a) => ({
+                  id: a.id, url: a.url, status: 'ready',
+                  marked_canonical: a.marked_canonical,
+                }));
+              return {
+                ...prev,
+                faceVariations: [...existing, ...incoming],
+              };
+            });
+            // El nuevo asset se auto-selecciona — el preview grande
+            // muestra la última variación generada automáticamente.
+            setSelectedVariationIndex(null);
+          } else if (resp.status === 'failed') {
+            setGlobalError(
+              `La generación falló: ${resp.error_message || 'error desconocido'}`,
+            );
+          } else {
+            stillPending.push(reqId);
+          }
+        } catch {
+          // Si el GET falla, mantenemos el ID en pending para retry.
+          stillPending.push(reqId);
+        }
+      }
+      if (!cancelled) setPendingRequests(stillPending);
+    };
+    pollIntervalRef.current = setInterval(tick, 2000);
+    // Tick inmediato para no esperar 2s al primer poll.
+    tick();
+    return () => {
+      cancelled = true;
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, [pendingRequests, draft.personaId, session, tenantId]);
 
   const handleNextFace = useCallback(async (payload) => {
     setGlobalError(null);
@@ -336,56 +454,98 @@ export function PersonaWizardContainer() {
     );
   }
 
+  // Captura el form del step actual cada vez que cambia, para que el
+  // botón "Generar +1" pueda usar el estado más reciente en el prompt.
+  const captureFormState = useCallback((field) => (formState) => {
+    setLiveFormState((prev) => ({ ...prev, [field]: formState }));
+  }, []);
+
+  const personaName = draft.identity?.name
+    || draft.face?.display_name
+    || 'Personaje en construcción';
+  const variationsForPreview = (draft.faceVariations || []).map((v) => ({
+    id: v.id,
+    url: v.url || v.thumbnail_url,
+    status: v.status || 'ready',
+    marked_canonical: v.marked_canonical,
+  }));
+  const generationNumber = Math.max(1, variationsForPreview.length);
+  const previewBusy = pendingRequests.length > 0 || optimisticPending > 0;
+
   return (
-    <div data-module="influencer" data-view="wizard">
+    <div data-module="influencer" data-view="wizard" style={{ padding: 16 }}>
       {globalError ? (
         <AlertBanner tone="warning" style={{ marginBottom: 16 }}>
           {globalError}
         </AlertBanner>
       ) : null}
-      {stepNum === 1 ? (
-        <Step1Face
-          initialForm={draft.face || {}}
-          initialVariations={draft.faceVariations || []}
-          onGenerateVariations={handleGenerateVariations}
-          onNext={handleNextFace}
-          onSaveDraft={handleSaveDraftFace}
+
+      {/* UI-INFLU-014.1 — Layout 2 columnas persistente. La columna
+          izquierda (WizardPreview) es la misma para los 5 steps; solo
+          cambia la derecha (formulario del step actual). */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(280px, 1fr) minmax(0, 1.4fr)',
+        gap: 24,
+        alignItems: 'start',
+      }}>
+        <WizardPreview
+          personaName={personaName}
+          generationNumber={generationNumber}
+          variations={variationsForPreview}
+          selectedIndex={selectedVariationIndex}
+          onSelectVariation={(idx) => setSelectedVariationIndex(idx)}
+          onGenerate={handleGenerateOneVariation}
+          pendingCount={pendingRequests.length + optimisticPending}
+          creditCost={1}
+          disabled={previewBusy && optimisticPending > 0}
         />
-      ) : null}
-      {stepNum === 2 ? (
-        <Step2Body
-          initialForm={draft.body || {}}
-          onNext={step2Handlers.onNext}
-          onSaveDraft={step2Handlers.onSaveDraft}
-        />
-      ) : null}
-      {stepNum === 3 ? (
-        <Step3Identity
-          initialForm={draft.identity || {}}
-          onNext={step3Handlers.onNext}
-          onSaveDraft={step3Handlers.onSaveDraft}
-          onCheckHandle={step3Handlers.onCheckHandle}
-        />
-      ) : null}
-      {stepNum === 4 ? (
-        <Step4Voice
-          initialForm={draft.voice || {}}
-          sampleUrl={draft.voiceSampleUrl}
-          onGenerateSample={handleGenerateVoiceSample}
-          onNext={step4Handlers.onNext}
-          onSaveDraft={step4Handlers.onSaveDraft}
-        />
-      ) : null}
-      {stepNum === 5 ? (
-        <Step5Platforms
-          initialAccounts={draft.platforms?.accounts || []}
-          initialMode={draft.platforms?.mode || 'manual_approval'}
-          initialAutoRespondDms={draft.platforms?.auto_respond_dms || false}
-          onConnectInstagram={handleConnectInstagram}
-          onActivate={handleActivate}
-          onSaveDraft={(p) => updateDraft({ platforms: p })}
-        />
-      ) : null}
+
+        <div>
+          {stepNum === 1 ? (
+            <Step1Face
+              initialForm={draft.face || {}}
+              onFormChange={captureFormState('face')}
+              onNext={handleNextFace}
+              onSaveDraft={handleSaveDraftFace}
+            />
+          ) : null}
+          {stepNum === 2 ? (
+            <Step2Body
+              initialForm={draft.body || {}}
+              onNext={step2Handlers.onNext}
+              onSaveDraft={step2Handlers.onSaveDraft}
+            />
+          ) : null}
+          {stepNum === 3 ? (
+            <Step3Identity
+              initialForm={draft.identity || {}}
+              onNext={step3Handlers.onNext}
+              onSaveDraft={step3Handlers.onSaveDraft}
+              onCheckHandle={step3Handlers.onCheckHandle}
+            />
+          ) : null}
+          {stepNum === 4 ? (
+            <Step4Voice
+              initialForm={draft.voice || {}}
+              sampleUrl={draft.voiceSampleUrl}
+              onGenerateSample={handleGenerateVoiceSample}
+              onNext={step4Handlers.onNext}
+              onSaveDraft={step4Handlers.onSaveDraft}
+            />
+          ) : null}
+          {stepNum === 5 ? (
+            <Step5Platforms
+              initialAccounts={draft.platforms?.accounts || []}
+              initialMode={draft.platforms?.mode || 'manual_approval'}
+              initialAutoRespondDms={draft.platforms?.auto_respond_dms || false}
+              onConnectInstagram={handleConnectInstagram}
+              onActivate={handleActivate}
+              onSaveDraft={(p) => updateDraft({ platforms: p })}
+            />
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }

@@ -747,3 +747,23 @@ alter table app.tenant_modules
 -- No se siembra ninguna fila. Cada tenant decide qué módulos activa.
 -- La activación se hace vía `PATCH /admin/api/core/v1/platform/tenant-modules/{tenant_id}/{module}`
 -- (require_platform_owner + MFA).
+
+
+-- ============================================================================
+-- UI-INFLU-014.1 — assets.face_variation_request_id
+-- ============================================================================
+-- Las variaciones de cara generadas viven en `influencer.assets` con
+-- `kind='face_variation'`, pero antes no había FK al request original
+-- (`face_variation_requests`): `generation_id` apunta a `generations` y es
+-- null para variaciones de cara. Sin esta FK el frontend no puede saber
+-- "qué imágenes pertenecen a este request" para mostrarlas en el wizard.
+-- Migración additive (nullable + on delete set null).
+-- ============================================================================
+
+alter table influencer.assets
+  add column if not exists face_variation_request_id uuid
+    references influencer.face_variation_requests(id) on delete set null;
+
+create index if not exists ix_assets_face_variation_request
+  on influencer.assets (face_variation_request_id)
+  where face_variation_request_id is not null;

@@ -359,3 +359,111 @@ def test_call_fn_wrong_interface_raises_provider_error(monkeypatch):
     result = _run_call_fn_through_worker(monkeypatch, 'photo', 'image', adapter)
     assert result.status == 'failed'
     assert result.error == 'provider_error'
+
+
+# ─── face_variation_request worker (UI-INFLU-014.1) ────────────────────────
+# Tabla separada de `generations`. El wizard step 1 encola aquí y el
+# worker debe procesarla. Antes no había worker para esta cola —
+# los jobs quedaban en status='queued' para siempre.
+
+
+def _fvr_row(**overrides):
+    row = {
+        'id': uuid4(),
+        'tenant_id': uuid4(),
+        'persona_id': uuid4(),
+        'requested_count': 1,
+        'status': 'queued',
+        'prompt_used': 'portrait headshot, latin, brown eyes',
+        'error_message': None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_claim_next_face_variation_request_returns_row():
+    conn = AsyncMock()
+    expected = _fvr_row()
+    conn.fetchrow = AsyncMock(return_value=expected)
+    result = asyncio.run(gen_worker.claim_next_face_variation_request(conn))
+    assert result is expected
+
+
+def test_claim_next_face_variation_request_uses_skip_locked():
+    """La query del claim DEBE incluir `for update skip locked` para evitar
+    que múltiples workers procesen el mismo job."""
+    import inspect
+    src = inspect.getsource(gen_worker.claim_next_face_variation_request)
+    assert 'for update skip locked' in src.lower()
+
+
+def test_process_one_face_variation_persona_missing():
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value=None)  # persona disappeared
+    result = asyncio.run(gen_worker.process_one_face_variation_request(
+        conn=conn, request_row=_fvr_row(),
+    ))
+    assert result.status == 'failed'
+    assert 'persona disappeared' in (result.error or '')
+
+
+def test_process_one_face_variation_success_inserts_assets(monkeypatch):
+    """Happy path: dispatch devuelve N imágenes → inserta N rows en assets
+    con face_variation_request_id FK + status='completed'."""
+    from app.ai.providers.base import ImageResult
+    captured_uploads: list[tuple[str, bytes, str]] = []
+
+    async def fake_uploader(key, data, mime):
+        captured_uploads.append((key, data, mime))
+        return f's3://test/{key}'
+
+    async def fake_dispatch(**kwargs):
+        return [
+            ImageResult(image_bytes=b'\x89PNG-img1', mime='image/png', width=1024, height=1024),
+            ImageResult(image_bytes=b'\x89PNG-img2', mime='image/png', width=1024, height=1024),
+        ]
+
+    monkeypatch.setattr(
+        'app.workers.influencer_generation_worker.dispatch', fake_dispatch,
+    )
+
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value=_persona_row())
+
+    result = asyncio.run(gen_worker.process_one_face_variation_request(
+        conn=conn,
+        request_row=_fvr_row(requested_count=2),
+        storage_upload=fake_uploader,
+    ))
+    assert result.status == 'succeeded'
+    assert result.assets_created == 2
+    assert len(captured_uploads) == 2
+    # Storage keys correctamente versionados por request.
+    assert 'face_variations' in captured_uploads[0][0]
+    # Verifica que se hizo UPDATE final a 'completed'.
+    completed_calls = [
+        call for call in conn.execute.await_args_list
+        if 'completed' in str(call)
+    ]
+    assert completed_calls, 'no se marcó status=completed'
+
+
+def test_process_one_face_variation_content_rejected(monkeypatch):
+    from app.ai.providers.base import ProviderContentRejected
+
+    async def fake_dispatch(**kwargs):
+        raise ProviderContentRejected('nsfw flagged')
+
+    monkeypatch.setattr(
+        'app.workers.influencer_generation_worker.dispatch', fake_dispatch,
+    )
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value=_persona_row())
+    result = asyncio.run(gen_worker.process_one_face_variation_request(
+        conn=conn, request_row=_fvr_row(),
+    ))
+    assert result.status == 'failed'
+    assert result.error == 'content_rejected'

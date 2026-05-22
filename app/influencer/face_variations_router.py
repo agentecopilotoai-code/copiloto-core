@@ -36,7 +36,21 @@ face_variations_router = APIRouter(
 
 
 class VariationRequest(BaseModel):
-    count: int = Field(default=4, ge=1, le=10)
+    # UI-INFLU-014.1: cada click del usuario en "Generar +1" cuesta 1 crédito
+    # y produce 1 variación. El range mantiene hasta 10 para herramientas
+    # internas / scripts / smoke tests.
+    count: int = Field(default=1, ge=1, le=10)
+
+
+class VariationAsset(BaseModel):
+    """Una imagen generada asociada a un face_variation_request."""
+    id: UUID
+    storage_key: str
+    url: str  # URL pública/firmada para el frontend; deriva de storage_key.
+    mime: str
+    width: int | None = None
+    height: int | None = None
+    marked_canonical: bool = False
 
 
 class VariationRequestResponse(BaseModel):
@@ -46,6 +60,24 @@ class VariationRequestResponse(BaseModel):
     status: Literal['queued', 'in_progress', 'completed', 'failed']
     prompt_used: str | None = None
     error_message: str | None = None
+    # UI-INFLU-014.1: cuando status='completed', estos son los assets
+    # generados — el wizard hace polling y muestra las thumbnails.
+    assets: list[VariationAsset] = Field(default_factory=list)
+
+
+def _storage_key_to_url(storage_key: str) -> str:
+    """Convierte el storage_key opaco en una URL accesible por el frontend.
+
+    En producción esto firma con S3/CloudFront. En dev (storage_upload
+    devuelve `s3://stub/...`), el frontend recibe la misma key prefijada
+    y la sirve desde su CDN/proxy. La función centraliza el mapeo para
+    que cuando exista S3 real solo cambie este helper.
+    """
+    if storage_key.startswith(('http://', 'https://')):
+        return storage_key
+    # Default: mapeo idempotente — el frontend admin sabe interpretar
+    # `tenants/.../face_variations/...` y servirlo via su proxy.
+    return f'/admin/api/core/v1/influencer/storage/{storage_key}'
 
 
 def _require_tenant_id(request: Request) -> UUID:
@@ -55,24 +87,74 @@ def _require_tenant_id(request: Request) -> UUID:
     return tenant_id if isinstance(tenant_id, UUID) else UUID(str(tenant_id))
 
 
-def _build_prompt(face: dict) -> str:
-    """Construye un prompt determinista a partir del jsonb face del paso 1.
+def _build_prompt(
+    face: dict | None,
+    body: dict | None = None,
+    identity: dict | None = None,
+    voice: dict | None = None,
+) -> str:
+    """Construye un prompt determinista usando TODOS los jsonb que el usuario
+    haya pre-seleccionado hasta ahora (face + body + identity + voice).
 
-    El image provider (Grok / OpenAI / SDXL local) recibe este prompt;
-    el persona_anchor + reference_image_urls va aparte vía
-    PersonaAnchor.
+    Cada campo se incluye solo si tiene valor — el wizard puede llamar a
+    "Generar +1" en cualquier paso (el preview es persistente), así que
+    los pasos posteriores al actual pueden estar vacíos. El prompt se
+    enriquece progresivamente conforme el usuario avanza.
+
+    El image provider (configurado en ``platform_ai_providers.image``)
+    recibe este prompt; el ``persona_anchor`` + ``reference_image_urls``
+    van aparte vía PersonaAnchor para mantener consistencia de cara
+    entre generaciones.
     """
-    if not isinstance(face, dict) or not face:
-        return 'portrait headshot, neutral background, professional photography'
-    parts = [
-        'portrait headshot',
-        face.get('ethnicity', ''),
-        f"{face.get('eye_color', '')} eyes",
-        f"{face.get('hair_color', '')} {face.get('hair_style', '')} hair",
-        f"skin tone {face.get('skin_tone', '')}",
-        f"age range {face.get('age_range', '')}",
-        'consistent identity, professional photography, neutral background',
-    ]
+    face = face if isinstance(face, dict) else {}
+    body = body if isinstance(body, dict) else {}
+    identity = identity if isinstance(identity, dict) else {}
+    voice = voice if isinstance(voice, dict) else {}
+
+    parts: list[str] = ['portrait headshot']
+
+    # ── Cara ────────────────────────────────────────────────────────────
+    if (ethnicity := face.get('ethnicity')):
+        parts.append(str(ethnicity))
+    if (eye_color := face.get('eye_color')):
+        parts.append(f'{eye_color} eyes')
+    hair_color = face.get('hair_color', '')
+    hair_style = face.get('hair_style', '')
+    if hair_color or hair_style:
+        parts.append(f'{hair_color} {hair_style} hair'.strip())
+    if (skin_tone := face.get('skin_tone')):
+        parts.append(f'skin tone {skin_tone}')
+    if (age_range := face.get('age_range')):
+        parts.append(f'age range {age_range}')
+
+    # ── Cuerpo ──────────────────────────────────────────────────────────
+    if (silhouette := body.get('silhouette')):
+        parts.append(f'{silhouette} build')
+    if (posture := body.get('posture')):
+        parts.append(f'{posture} posture')
+    if (height_cm := body.get('height_cm')):
+        parts.append(f'{height_cm}cm tall')
+
+    # ── Identidad (location + categorías como context visual) ───────────
+    # Solo agregamos pistas visuales (city/country/categories) que
+    # ayudan al provider a elegir wardrobe/scenery. El name/handle/age
+    # numérico NO van al prompt — son metadata del personaje.
+    if (city := identity.get('city')) and (country := identity.get('country')):
+        parts.append(f'{city} {country} setting')
+    elif country := identity.get('country'):
+        parts.append(f'{country} setting')
+    categories = identity.get('categories') or []
+    if isinstance(categories, list) and categories:
+        # Limit a 3 para no saturar el prompt.
+        parts.append(f"style: {', '.join(str(c) for c in categories[:3])}")
+
+    # ── Voz (tone como pista de expresión facial) ───────────────────────
+    if (tone := voice.get('tone')):
+        parts.append(f'{tone} expression')
+
+    # Cola siempre — instrucciones de safety + estilo profesional.
+    parts.append('consistent identity, professional photography, neutral background')
+
     return ', '.join(p.strip() for p in parts if p.strip())
 
 
@@ -95,9 +177,13 @@ async def create_face_variations(
     user_id = getattr(request.state, 'user_id', None)
     await _set_tenant_scope(conn, tenant_id)
 
-    # Lee el face del persona para construir el prompt.
+    # Lee TODOS los jsonb que el usuario haya pre-seleccionado para
+    # construir un prompt rico (face + body + identity + voice).
     persona = await conn.fetchrow(
-        'select id, face, status from influencer.personas where id = $1',
+        '''
+        select id, face, body, identity, voice, status
+        from influencer.personas where id = $1
+        ''',
         persona_id,
     )
     if persona is None:
@@ -107,7 +193,24 @@ async def create_face_variations(
             status.HTTP_409_CONFLICT, 'cannot generate for archived persona',
         )
 
-    prompt = _build_prompt(persona['face'] or {})
+    # asyncpg sin codec global devuelve jsonb como string serializado;
+    # decodificamos defensivamente igual que en personas_router._jsonb_to_dict.
+    def _to_dict(value: object) -> dict:
+        if value is None or value == '':
+            return {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            import json
+            return json.loads(value)
+        return {}  # tipo inesperado → tratamos como vacío
+
+    prompt = _build_prompt(
+        face=_to_dict(persona['face']),
+        body=_to_dict(persona['body']),
+        identity=_to_dict(persona['identity']),
+        voice=_to_dict(persona['voice']),
+    )
     row = await conn.fetchrow(
         '''
         insert into influencer.face_variation_requests
@@ -128,7 +231,36 @@ async def create_face_variations(
         status=row['status'],
         prompt_used=row['prompt_used'],
         error_message=row['error_message'],
+        assets=[],  # recién encolado, todavía no hay assets.
     )
+
+
+async def _fetch_request_assets(
+    conn: asyncpg.Connection, request_id: UUID,
+) -> list[VariationAsset]:
+    """Devuelve los assets generados para un face_variation_request."""
+    rows = await conn.fetch(
+        '''
+        select id, storage_key, mime, width, height, marked_canonical
+        from influencer.assets
+        where face_variation_request_id = $1
+          and kind = 'face_variation'
+        order by created_at
+        ''',
+        request_id,
+    )
+    return [
+        VariationAsset(
+            id=r['id'],
+            storage_key=r['storage_key'],
+            url=_storage_key_to_url(r['storage_key']),
+            mime=r['mime'],
+            width=r['width'],
+            height=r['height'],
+            marked_canonical=r['marked_canonical'],
+        )
+        for r in rows
+    ]
 
 
 @face_variations_router.get(
@@ -153,6 +285,7 @@ async def get_face_variation_status(
     )
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'variation request not found')
+    assets = await _fetch_request_assets(conn, row['id'])
     return VariationRequestResponse(
         id=row['id'],
         persona_id=row['persona_id'],
@@ -160,6 +293,7 @@ async def get_face_variation_status(
         status=row['status'],
         prompt_used=row['prompt_used'],
         error_message=row['error_message'],
+        assets=assets,
     )
 
 

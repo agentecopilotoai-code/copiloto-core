@@ -327,6 +327,145 @@ async def _mark_failed(
     )
 
 
+# ─── Worker para face_variation_requests (UI-INFLU-014.1) ──────────────────
+# La tabla `influencer.face_variation_requests` es separada de
+# `influencer.generations` (decisión histórica de TASK-INFLU-010 para
+# permitir variaciones rápidas en el wizard sin afectar el catálogo de
+# generaciones). Este worker procesa SOLO esa cola y persiste assets con
+# `kind='face_variation'` + FK `face_variation_request_id`.
+
+
+async def claim_next_face_variation_request(
+    conn: asyncpg.Connection,
+) -> asyncpg.Record | None:
+    """Toma un request pendiente de face_variation_requests con SKIP LOCKED."""
+    return await conn.fetchrow(
+        '''
+        select * from influencer.face_variation_requests
+        where status = 'queued'
+        order by requested_at
+        for update skip locked
+        limit 1
+        '''
+    )
+
+
+async def process_one_face_variation_request(
+    *,
+    conn: asyncpg.Connection,
+    request_row: asyncpg.Record,
+    storage_upload: StorageUploader | None = None,
+) -> WorkerResult:
+    """Procesa un face_variation_request end-to-end (image modality).
+
+    Mismo patrón que ``process_one_generation`` pero:
+    - lee de ``face_variation_requests`` (no de ``generations``)
+    - usa el ``prompt_used`` ya construido por el endpoint POST
+    - persiste assets con ``kind='face_variation'`` +
+      ``face_variation_request_id`` para que el frontend pueda hacer GET
+      del status y obtener las URLs.
+    """
+    req_id: UUID = request_row['id']
+    persona_id: UUID = request_row['persona_id']
+    tenant_id: UUID = request_row['tenant_id']
+    count: int = request_row['requested_count']
+    prompt: str = request_row['prompt_used'] or ''
+    uploader: StorageUploader = storage_upload or _noop_uploader
+
+    await conn.execute(
+        '''
+        update influencer.face_variation_requests
+        set status = 'in_progress', started_at = now()
+        where id = $1
+        ''',
+        req_id,
+    )
+
+    persona = await conn.fetchrow(
+        'select * from influencer.personas where id = $1',
+        persona_id,
+    )
+    if persona is None:
+        await _mark_fvr_failed(conn, req_id, 'persona disappeared')
+        return WorkerResult(req_id, 'failed', 'persona disappeared', 0)
+
+    anchor = _build_persona_anchor(persona)
+
+    async def call_fn(provider: ResolvedProvider) -> Any:
+        adapter = make_adapter_for_provider(provider)
+        if not isinstance(adapter, ImageProvider):
+            raise ProviderError(
+                f'{provider.provider} no implementa ImageProvider para '
+                f'face_variation (modality=image)',
+            )
+        return await adapter.generate_image(
+            prompt=prompt,
+            persona_anchor=anchor,
+            count=count,
+            format='1:1',
+            safety_mode=True,
+        )
+
+    try:
+        results = await dispatch(
+            conn=conn, modality='image', call_fn=call_fn, audit_conn=conn,
+        )
+    except ProviderContentRejected as exc:
+        await _mark_fvr_failed(conn, req_id, f'content_rejected: {exc}')
+        return WorkerResult(req_id, 'failed', 'content_rejected', 0)
+    except ProviderError as exc:
+        await _mark_fvr_failed(conn, req_id, f'provider_error: {exc}')
+        return WorkerResult(req_id, 'failed', 'provider_error', 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('face_variation worker unexpected req_id=%s', req_id)
+        await _mark_fvr_failed(conn, req_id, f'unexpected: {exc!r}')
+        return WorkerResult(req_id, 'failed', 'unexpected', 0)
+
+    items = results if isinstance(results, list) else [results]
+    assets_created = 0
+    for idx, item in enumerate(items):
+        payload, mime, dims = _extract_asset_bytes(item)
+        storage_key = (
+            f'tenants/{tenant_id}/influencer/personas/{persona_id}/'
+            f'face_variations/{req_id}/{idx}'
+        )
+        await uploader(storage_key, payload, mime)
+        await conn.execute(
+            '''
+            insert into influencer.assets
+              (tenant_id, persona_id, face_variation_request_id, kind,
+               storage_key, mime, width, height, bytes)
+            values ($1, $2, $3, 'face_variation', $4, $5, $6, $7, $8)
+            ''',
+            tenant_id, persona_id, req_id, storage_key, mime,
+            dims.get('width'), dims.get('height'), len(payload),
+        )
+        assets_created += 1
+
+    await conn.execute(
+        '''
+        update influencer.face_variation_requests
+        set status = 'completed', completed_at = now()
+        where id = $1
+        ''',
+        req_id,
+    )
+    return WorkerResult(req_id, 'succeeded', None, assets_created)
+
+
+async def _mark_fvr_failed(
+    conn: asyncpg.Connection, req_id: UUID, error: str,
+) -> None:
+    await conn.execute(
+        '''
+        update influencer.face_variation_requests
+        set status = 'failed', error_message = $1, completed_at = now()
+        where id = $2
+        ''',
+        error, req_id,
+    )
+
+
 __all__ = [
     'StorageUploader',
     'WorkerResult',
@@ -335,5 +474,7 @@ __all__ = [
     '_extract_asset_bytes',
     '_noop_uploader',
     'claim_next_generation',
+    'claim_next_face_variation_request',
     'process_one_generation',
+    'process_one_face_variation_request',
 ]
