@@ -254,3 +254,108 @@ def test_resolve_token_returns_none_without_connection():
         pub_worker.resolve_token(conn, persona_id=uuid4(), platform='instagram'),
     )
     assert result is None
+
+
+# ─── generation_worker call_fn wire-up (factory + adapter dispatch) ────────
+# Estos tests verifican que el call_fn ya NO levanta NotImplementedError
+# (commit que conectó la factory) y que para cada modality llama al método
+# correcto del adapter. Cubren el "último kilómetro" del flow:
+# provider config → ResolvedProvider → factory → adapter → método correcto.
+
+
+def _resolved(modality: str):
+    from app.ai.registry import ResolvedProvider
+    return ResolvedProvider(
+        modality=modality, provider='grok',
+        secret_ref='secrets/test-key', model=None, params={},
+        source='db',
+    )
+
+
+def _run_call_fn_through_worker(monkeypatch, kind: str, modality: str, adapter_mock):
+    """Setup común: corre process_one_generation con un dispatch que
+    invoca el call_fn real con un ResolvedProvider stub, y patchea la
+    factory para devolver el adapter mock provisto.
+
+    Devuelve el WorkerResult para que el caller assert al status final.
+    """
+    monkeypatch.setattr(
+        gen_worker, 'make_adapter_for_provider', lambda r: adapter_mock,
+    )
+
+    async def fake_dispatch(*, conn, modality, call_fn, audit_conn):
+        # Simula el dispatcher invocando call_fn con un provider stub.
+        return await call_fn(_resolved(modality))
+
+    monkeypatch.setattr(gen_worker, 'dispatch', fake_dispatch)
+
+    async def fake_uploader(key, data, mime):
+        return f's3://test/{key}'
+
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value=_persona_row())
+    return asyncio.run(gen_worker.process_one_generation(
+        conn=conn,
+        generation_row=_gen_row(kind=kind),
+        storage_upload=fake_uploader,
+    ))
+
+
+def test_call_fn_image_invokes_generate_image(monkeypatch):
+    from app.ai.providers.base import ImageProvider, ImageResult
+    adapter = AsyncMock(spec=ImageProvider)
+    adapter.generate_image = AsyncMock(return_value=[
+        ImageResult(image_bytes=b'\x89PNG', mime='image/png', width=1024, height=1024),
+    ])
+    result = _run_call_fn_through_worker(monkeypatch, 'photo', 'image', adapter)
+    assert result.status == 'succeeded'
+    adapter.generate_image.assert_awaited_once()
+    kwargs = adapter.generate_image.call_args.kwargs
+    assert kwargs['prompt'] == 'a girl'
+    assert kwargs['count'] == 1
+    assert kwargs['format'] == '1:1'
+    assert kwargs['safety_mode'] is True
+    assert kwargs['persona_anchor'] is not None
+
+
+def test_call_fn_video_invokes_generate_video(monkeypatch):
+    from app.ai.providers.base import VideoProvider, VideoResult
+    adapter = AsyncMock(spec=VideoProvider)
+    adapter.generate_video = AsyncMock(return_value=VideoResult(
+        video_bytes=b'', mime='video/mp4', provider_meta={'video_url': 'https://s3/v.mp4'},
+        duration_s=15.0, width=720, height=1280,
+    ))
+    result = _run_call_fn_through_worker(monkeypatch, 'reel', 'video', adapter)
+    assert result.status == 'succeeded'
+    adapter.generate_video.assert_awaited_once()
+    kwargs = adapter.generate_video.call_args.kwargs
+    assert kwargs['prompt'] == 'a girl'
+    assert kwargs['safety_mode'] is True
+
+
+def test_call_fn_tts_invokes_synthesize_speech(monkeypatch):
+    from app.ai.providers.base import AudioResult, TTSProvider
+    adapter = AsyncMock(spec=TTSProvider)
+    adapter.synthesize_speech = AsyncMock(return_value=AudioResult(
+        audio_bytes=b'fake-mp3', mime='audio/mpeg', duration_s=2.5,
+        sample_rate=24000,
+    ))
+    result = _run_call_fn_through_worker(monkeypatch, 'voice_sample', 'tts', adapter)
+    assert result.status == 'succeeded'
+    adapter.synthesize_speech.assert_awaited_once()
+    kwargs = adapter.synthesize_speech.call_args.kwargs
+    assert kwargs['text'] == 'a girl'
+    assert kwargs['persona_anchor'] is not None
+
+
+def test_call_fn_wrong_interface_raises_provider_error(monkeypatch):
+    """Si el adapter no implementa la interface de la modality,
+    el call_fn debe levantar ProviderError (no NotImplementedError ni
+    AttributeError silencioso). El worker lo trata como provider_error."""
+    from app.ai.providers.base import LLMProvider
+    # Adapter solo implementa LLM, pero el row pide modality='image'.
+    adapter = AsyncMock(spec=LLMProvider)
+    result = _run_call_fn_through_worker(monkeypatch, 'photo', 'image', adapter)
+    assert result.status == 'failed'
+    assert result.error == 'provider_error'

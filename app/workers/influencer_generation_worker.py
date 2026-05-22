@@ -20,14 +20,19 @@ from uuid import UUID
 import asyncpg
 
 from app.ai.dispatcher import dispatch
+from app.ai.providers.factory import make_adapter_for_provider
 from app.ai.registry import ResolvedProvider
 from app.ai.providers.base import (
     AudioResult,
+    ImageProvider,
     ImageResult,
+    LLMProvider,
     PersonaAnchor,
     ProviderContentRejected,
     ProviderError,
+    TTSProvider,
     TextResult,
+    VideoProvider,
     VideoResult,
 )
 
@@ -188,19 +193,74 @@ async def process_one_generation(
     count: int = generation_row['count_requested']
 
     async def call_fn(provider: ResolvedProvider) -> Any:
-        # En producción esta factory mapearía provider.provider →
-        # adapter instance (Grok/OpenAI/Ollama/...) y llamaría al método
-        # apropiado según `modality`. Aquí dejamos la firma con todos
-        # los parámetros que el adapter va a necesitar (anchor + prompt +
-        # fmt + count) y un error claro hasta que el entrypoint del
-        # worker la inyecte.
-        raise NotImplementedError(
-            'call_fn must be overridden by the worker entrypoint that '
-            f'knows how to instantiate adapters from provider names '
-            f'(modality={modality}, provider={provider.provider}, '
-            f'kind={kind}, count={count}, format={fmt}, prompt_len={len(prompt)}, '
-            f'anchor_persona_id={anchor.persona_id})',
-        )
+        """Instancia adapter via factory y llama el método correcto.
+
+        El dispatcher invoca este closure por cada intento (primary +
+        fallbacks). Cada llamada construye una instancia fresca del
+        adapter — los adapters son stateless (httpx.AsyncClient lo crea
+        cada `_post`), así que no hay costo de recrear.
+
+        Mapping modality → método:
+            llm   → generate_text
+            image → generate_image (devuelve list, el worker itera)
+            video → generate_video
+            tts   → synthesize_speech
+
+        STT no llega a este worker (no está en _KIND_TO_MODALITY) —
+        se procesa en otro flow (mensajes de voz inbound).
+        """
+        adapter = make_adapter_for_provider(provider)
+
+        if modality == 'image':
+            if not isinstance(adapter, ImageProvider):
+                raise ProviderError(
+                    f'{provider.provider} no implementa ImageProvider '
+                    f'(modality={modality})',
+                )
+            return await adapter.generate_image(
+                prompt=prompt,
+                persona_anchor=anchor,
+                count=count,
+                format=fmt,
+                safety_mode=True,
+            )
+
+        if modality == 'video':
+            if not isinstance(adapter, VideoProvider):
+                raise ProviderError(
+                    f'{provider.provider} no implementa VideoProvider '
+                    f'(modality={modality})',
+                )
+            return await adapter.generate_video(
+                prompt=prompt,
+                persona_anchor=anchor,
+                format=fmt,
+                safety_mode=True,
+            )
+
+        if modality == 'tts':
+            if not isinstance(adapter, TTSProvider):
+                raise ProviderError(
+                    f'{provider.provider} no implementa TTSProvider '
+                    f'(modality={modality})',
+                )
+            return await adapter.synthesize_speech(
+                text=prompt,
+                persona_anchor=anchor,
+            )
+
+        if modality == 'llm':
+            if not isinstance(adapter, LLMProvider):
+                raise ProviderError(
+                    f'{provider.provider} no implementa LLMProvider '
+                    f'(modality={modality})',
+                )
+            return await adapter.generate_text(
+                prompt=prompt,
+                persona_anchor=anchor,
+            )
+
+        raise ProviderError(f'modality no soportada en el worker: {modality}')
 
     try:
         results = await dispatch(
