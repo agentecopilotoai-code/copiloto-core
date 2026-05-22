@@ -45,12 +45,15 @@ import {
   validateMinimum,
 } from './step1FaceData.js';
 
+// El componente Stepper espera { key, label, status } con status ∈
+// 'done'|'current'|'blocked'|'pending'. Pasar { id, state } o
+// 'upcoming'/'complete' deja todos los pasos en estado default → render gris.
 const STEPS = [
-  { id: 'face', label: 'Cara', state: 'current' },
-  { id: 'body', label: 'Cuerpo', state: 'upcoming' },
-  { id: 'identity', label: 'Identidad', state: 'upcoming' },
-  { id: 'voice', label: 'Voz', state: 'upcoming' },
-  { id: 'platforms', label: 'Plataformas', state: 'upcoming' },
+  { key: 'face', label: 'Cara', status: 'current' },
+  { key: 'body', label: 'Cuerpo', status: 'pending' },
+  { key: 'identity', label: 'Identidad', status: 'pending' },
+  { key: 'voice', label: 'Voz', status: 'pending' },
+  { key: 'platforms', label: 'Plataformas', status: 'pending' },
 ];
 
 const STARTING_POINTS = [

@@ -17,11 +17,11 @@ import {
 
 
 const STEPS = [
-  { id: 'face', label: 'Cara', state: 'complete' },
-  { id: 'body', label: 'Cuerpo', state: 'current' },
-  { id: 'identity', label: 'Identidad', state: 'upcoming' },
-  { id: 'voice', label: 'Voz', state: 'upcoming' },
-  { id: 'platforms', label: 'Plataformas', state: 'upcoming' },
+  { key: 'face', label: 'Cara', status: 'done' },
+  { key: 'body', label: 'Cuerpo', status: 'current' },
+  { key: 'identity', label: 'Identidad', status: 'pending' },
+  { key: 'voice', label: 'Voz', status: 'pending' },
+  { key: 'platforms', label: 'Plataformas', status: 'pending' },
 ];
 
 

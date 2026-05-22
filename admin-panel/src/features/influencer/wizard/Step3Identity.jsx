@@ -14,11 +14,11 @@ import {
 
 
 const STEPS = [
-  { id: 'face', label: 'Cara', state: 'complete' },
-  { id: 'body', label: 'Cuerpo', state: 'complete' },
-  { id: 'identity', label: 'Identidad', state: 'current' },
-  { id: 'voice', label: 'Voz', state: 'upcoming' },
-  { id: 'platforms', label: 'Plataformas', state: 'upcoming' },
+  { key: 'face', label: 'Cara', status: 'done' },
+  { key: 'body', label: 'Cuerpo', status: 'done' },
+  { key: 'identity', label: 'Identidad', status: 'current' },
+  { key: 'voice', label: 'Voz', status: 'pending' },
+  { key: 'platforms', label: 'Plataformas', status: 'pending' },
 ];
 
 
