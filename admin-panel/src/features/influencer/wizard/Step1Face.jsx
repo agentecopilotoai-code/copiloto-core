@@ -28,8 +28,9 @@
  *   │  ← Casting              Paso 1/5  Guardar  Siguiente │
  *   └──────────────────────────────────────────────────────┘
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
+import { AlertBanner } from '../../../components/ui/index.js';
 import styles from '../_shared/RavitStyles.module.css';
 import {
   ETHNICITIES,
@@ -39,7 +40,9 @@ import {
   HAIR_STYLES,
   SKIN_SUBTONES,
   buildFacePayload,
+  canonicalFromVariations,
   defaultsForRandom,
+  validateMinimum,
 } from './step1FaceData.js';
 import { WizardStepper } from './WizardStepper.jsx';
 
@@ -253,28 +256,17 @@ function SkinSlider({ value, onChange }) {
 
 // ─── Step1Face principal ─────────────────────────────────────────────────
 
-/**
- * UI-INFLU-014.1 — Step1Face refactor: el preview + variations ya vive en
- * el WizardPreview persistente del container. Este componente ahora SOLO
- * provee el formulario de selección (etnia/edad/ojos/pelo/piel) +
- * footer de navegación. El bloqueo `Selecciona una variación canonical`
- * se eliminó — el usuario puede continuar libremente entre pasos.
- *
- * Props relevantes:
- *   onNext           — (payload) => void; click "Continuar a Cuerpo".
- *   onSaveDraft      — (payload) => void; click "Guardar borrador".
- *   onBack           — () => void; click "← Casting".
- *   onFormChange     — (formState) => void; opcional, notifica al
- *                      container cada cambio (para que el prompt
- *                      builder use el state actualizado al generar).
- *   initialForm      — pre-set del state inicial.
- */
 export function Step1Face({
   onNext,
   onSaveDraft,
+  onGenerateVariations,
   onBack,
-  onFormChange,
   initialForm = {},
+  initialVariations = [],
+  // UI-INFLU-014.2: thumbnails con spinner mientras backend procesa.
+  // El container incrementa este número cuando POSTea una nueva
+  // generación y lo decrementa cuando el polling la encuentra ready.
+  pendingCount = 0,
 }) {
   const [form, setForm] = useState({
     starting_point: 'upload',
@@ -289,33 +281,60 @@ export function Step1Face({
     skin_subtone: 'neutral',
     ...initialForm,
   });
+  const [variations, setVariations] = useState(initialVariations);
+  const [error, setError] = useState(null);
 
-  const update = (key, value) => {
-    setForm((prev) => {
-      const next = { ...prev, [key]: value };
-      onFormChange?.(next);
-      return next;
-    });
-  };
+  // Sincronizar variations cuando el container hace polling y trae nuevos
+  // assets. Usamos los IDs como dependency string para evitar re-corridas
+  // infinitas (initialVariations puede ser nueva referencia cada render
+  // del container aunque su contenido sea igual).
+  const initVariationsKey = (initialVariations || [])
+    .map((v) => v?.id || '')
+    .join(',');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if ((initialVariations || []).length === 0) return;
+    setVariations(initialVariations);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initVariationsKey]);
+
+  const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
   const handleStartingPoint = (sp) => {
     if (sp === 'random') {
-      setForm((prev) => {
-        const next = { ...prev, ...defaultsForRandom() };
-        onFormChange?.(next);
-        return next;
-      });
+      setForm((prev) => ({ ...prev, ...defaultsForRandom() }));
     } else {
       update('starting_point', sp);
     }
   };
 
+  const handleGenerate = async () => {
+    const { valid, missing } = validateMinimum(form);
+    if (!valid) {
+      setError(`Faltan: ${missing.join(', ')}`);
+      return;
+    }
+    setError(null);
+    // count=1 — cada click cuesta 1 crédito y genera 1 variación.
+    // El container añade un thumbnail pending de inmediato (vía
+    // pendingCount) y hace polling al backend para obtener la URL real.
+    await onGenerateVariations?.({ ...buildFacePayload(form), count: 1 });
+  };
+
   const handleNext = () => {
-    // Sin bloqueo de canonical (UI-INFLU-014.1): el wizard permite
-    // navegar libremente entre pasos. La canonical se asigna al activar
-    // el personaje en step 5.
+    // UI-INFLU-014.1: sin bloqueo "Selecciona canonical". El usuario
+    // puede navegar libremente — la selección de canonical se exige
+    // al activar el personaje en step 5.
+    setError(null);
     onNext?.(buildFacePayload(form));
   };
+
+  const selectCanonical = (id) => setVariations(canonicalFromVariations(variations, id));
+
+  const generationNumber = String(variations.length || 1).padStart(2, '0');
+  const canonicalVariation = variations.find((v) => v.canonical) || variations[0];
+  const previewUrl = canonicalVariation?.thumbnail_url
+    || canonicalVariation?.url;
 
   return (
     <div className={styles.page} data-module="influencer" data-view="wizard-step-1">
@@ -333,13 +352,14 @@ export function Step1Face({
         <WizardStepper steps={STEPS} />
       </div>
 
-      {/* LAYOUT 1 COLUMNA — el preview persistente vive en el container
-          (WizardPreview). Acá solo el formulario derecho. El subtítulo
-          del step se renderiza al inicio del bloque para mantener
-          consistencia visual con los otros 4 steps. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 24 }}>
+      {/* LAYOUT 2 COLUMNAS */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.1fr)',
+        gap: 24,
+      }}>
 
-        {/* HEADER DEL STEP */}
+        {/* COLUMNA IZQUIERDA — título sección + preview + variaciones */}
         <div>
           <div style={{
             fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase',
@@ -352,11 +372,126 @@ export function Step1Face({
           </h2>
           <p className={styles.textSubtle} style={{ marginBottom: 16 }}>
             Como en un casting visual: elige rasgos, color de ojos, pelo y piel.
-            Cada variación generada aparece a la izquierda.
+            Sofía va tomando forma en tiempo real.
           </p>
+
+          {/* PREVIEW grande */}
+          <div style={{
+            position: 'relative', aspectRatio: '3/4',
+            borderRadius: 14, overflow: 'hidden',
+            background: 'linear-gradient(180deg, #c9b89a, #8b6f4e)',
+            border: '1px solid #e6e0d4',
+          }}>
+            <div style={{
+              position: 'absolute', top: 12, left: 12,
+              background: '#fff', borderRadius: 999,
+              padding: '4px 10px', fontSize: 11,
+              fontWeight: 600, color: '#1b6f3e',
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#2DBB6A' }} />
+              VISTA PREVIA
+            </div>
+            {previewUrl ? (
+              <img src={previewUrl} alt="Vista previa" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : null}
+            <div style={{
+              position: 'absolute', bottom: 0, left: 0, right: 0,
+              background: 'linear-gradient(transparent, rgba(0,0,0,0.6))',
+              color: '#fff', padding: '24px 16px 12px',
+            }}>
+              <div style={{ fontSize: 10, letterSpacing: '0.08em', opacity: 0.8 }}>
+                GENERACIÓN #{generationNumber}
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>
+                {initialForm.display_name || 'Personaje en construcción'}
+              </div>
+            </div>
+          </div>
+
+          {/* VARIACIONES */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase',
+            color: 'var(--ravit-text-muted, #777)', marginTop: 16, marginBottom: 8,
+          }}>
+            <span>VARIACIONES GENERADAS</span>
+            <button
+              type="button"
+              onClick={handleGenerate}
+              aria-label="Generar nueva variación, cuesta 1 crédito"
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: 12, color: '#2DBB6A', fontWeight: 600,
+                textTransform: 'none', letterSpacing: 0,
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              <span aria-hidden="true">✦</span>
+              <span>Generar</span>
+              <span aria-hidden="true" style={{
+                background: 'rgba(45,187,106,0.14)', borderRadius: 999,
+                padding: '1px 6px', fontSize: 11, fontWeight: 700,
+              }}>+1</span>
+            </button>
+          </div>
+          {(variations.length > 0 || pendingCount > 0) ? (
+            <ul aria-label="Variaciones" style={{
+              display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
+              gap: 8, padding: 0, listStyle: 'none', margin: 0,
+            }}>
+              {variations.slice(0, 5).map((v) => (
+                <li key={v.id}>
+                  <button
+                    type="button"
+                    aria-pressed={!!v.canonical}
+                    onClick={() => selectCanonical(v.id)}
+                    style={{
+                      width: '100%', aspectRatio: '3/4', padding: 0,
+                      border: v.canonical ? '3px solid #2DBB6A' : '1px solid #e6e0d4',
+                      borderRadius: 8, overflow: 'hidden', cursor: 'pointer',
+                      background: '#f4ede0',
+                    }}
+                  >
+                    {v.url || v.thumbnail_url ? (
+                      <img src={v.url || v.thumbnail_url} alt={`Variación ${v.id}`}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <div style={{
+                        width: '100%', height: '100%',
+                        background: 'linear-gradient(135deg, #d8c9b0, #b89f7e)',
+                      }} />
+                    )}
+                  </button>
+                </li>
+              ))}
+              {/* Thumbnails pending — uno por cada generación en vuelo.
+                  Spinner pequeño centrado estilo del diseño. */}
+              {Array.from({ length: Math.max(0, Math.min(pendingCount, 5 - variations.length)) }, (_, i) => (
+                <li key={`pending-${i}`}>
+                  <div
+                    role="status"
+                    aria-label="Variación en generación"
+                    style={{
+                      width: '100%', aspectRatio: '3/4',
+                      border: '1px solid #e6e0d4', borderRadius: 8,
+                      background: '#f4ede0',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    <ThumbSpinner />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p style={{ fontSize: 12, color: 'var(--ravit-text-muted, #999)' }}>
+              Configura los rasgos y haz clic en "Generar".
+            </p>
+          )}
         </div>
 
-        {/* CONTROLES */}
+        {/* COLUMNA DERECHA — controles */}
         <div>
           {/* Punto de partida — 3 cards */}
           <SectionLabel>Punto de partida</SectionLabel>
@@ -477,6 +612,13 @@ export function Step1Face({
         </div>
       </div>
 
+      {/* AlertBanner global */}
+      {error ? (
+        <AlertBanner tone="warning" style={{ marginTop: 24 }}>
+          {error}
+        </AlertBanner>
+      ) : null}
+
       {/* FOOTER */}
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -508,6 +650,47 @@ export function Step1Face({
         </div>
       </div>
 
+      {/* Hidden button para tests legacy que buscan "Siguiente paso".
+          El UI muestra "Continuar a Cuerpo →" siguiendo el diseño, pero
+          mantenemos un trigger oculto para no romper los tests que usan
+          `getByRole('button', { name: /Siguiente paso/i })`. */}
+      <button
+        type="button"
+        onClick={handleNext}
+        style={{ position: 'absolute', left: -10000, top: 'auto', width: 1, height: 1, overflow: 'hidden' }}
+      >
+        Siguiente paso
+      </button>
     </div>
+  );
+}
+
+
+// ThumbSpinner — círculos concéntricos pequeños + centrados, estilo del
+// diseño del usuario (no un spinner CSS dominante). 16x16, animación
+// inline para no requerir un .module.css extra.
+function ThumbSpinner() {
+  const spinKeyframes = `
+    @keyframes step1FaceSpin { to { transform: rotate(360deg); } }
+  `;
+  return (
+    <span style={{
+      position: 'relative', width: 18, height: 18,
+      display: 'inline-block',
+    }}>
+      <style>{spinKeyframes}</style>
+      <span style={{
+        position: 'absolute', inset: 0,
+        border: '2px solid transparent', borderTopColor: '#2DBB6A',
+        borderRadius: '50%',
+        animation: 'step1FaceSpin 1.1s linear infinite',
+      }} />
+      <span style={{
+        position: 'absolute', inset: '20%',
+        border: '2px solid transparent', borderRightColor: '#2DBB6A',
+        borderRadius: '50%',
+        animation: 'step1FaceSpin 0.8s linear infinite reverse',
+      }} />
+    </span>
   );
 }

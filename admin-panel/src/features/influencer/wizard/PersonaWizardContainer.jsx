@@ -54,7 +54,6 @@ import { Step2Body } from './Step2Body.jsx';
 import { Step3Identity } from './Step3Identity.jsx';
 import { Step4Voice } from './Step4Voice.jsx';
 import { Step5Platforms } from './Step5Platforms.jsx';
-import { WizardPreview } from './WizardPreview.jsx';
 
 const TOTAL_STEPS = 5;
 const STORAGE_PREFIX = 'influencer.wizardDraft';
@@ -127,17 +126,8 @@ export function PersonaWizardContainer() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [globalError, setGlobalError] = useState(null);
-  // UI-INFLU-014.1 — state del WizardPreview persistente:
-  //   pendingRequests: array de UUIDs de face_variation_requests en vuelo.
-  //   selectedVariationIndex: índice de la variación visible en el preview
-  //     grande (null = auto-select de la última).
-  //   pendingCount: derivado de pendingRequests, pero lo mantenemos
-  //     separado para optimistic UI (al apretar Generar incrementamos
-  //     antes de tener el ID del request).
+  // UI-INFLU-014.2: face_variation_request IDs en vuelo (polling).
   const [pendingRequests, setPendingRequests] = useState([]);
-  const [optimisticPending, setOptimisticPending] = useState(0);
-  const [selectedVariationIndex, setSelectedVariationIndex] = useState(null);
-  const [liveFormState, setLiveFormState] = useState({}); // form en vuelo del step actual
 
   // Sincronizar a sessionStorage cada vez que cambia el draft.
   useEffect(() => {
@@ -153,26 +143,18 @@ export function PersonaWizardContainer() {
   // el user hace "Siguiente" en step 1. Si ya existe en el draft, reuse.
   // ──────────────────────────────────────────────────────────────────────
   const ensurePersona = useCallback(async (handle) => {
-    // Si tenemos un personaId en sessionStorage, validar que aún existe en
-    // backend antes de reutilizarlo. Si no existe (404) — caso típico
-    // cuando el INSERT fallaba por el bug de jsonb encoding y dejó stale
-    // state en el navegador, o si el draft fue archivado/borrado en otra
-    // pestaña — limpiamos y creamos uno nuevo abajo.
+    // Si tenemos un personaId cacheado, validamos que aún exista. El 404
+    // se silencia (sin toast) — el draft viejo se considera stale y
+    // recreamos uno nuevo abajo. Esto cubre el caso donde un INSERT
+    // anterior falló o el draft fue archivado en otra pestaña.
     if (draft.personaId) {
       try {
         await getPersona(session, tenantId, draft.personaId);
         return draft.personaId;
       } catch (err) {
-        if (err?.status === 404) {
-          // UI-INFLU-014.1: silencioso — el draft viejo no existe en
-          // backend (típicamente porque el INSERT falló antes del fix
-          // de jsonb, o el draft fue archivado en otra pestaña). Limpiamos
-          // y recreamos sin mostrar toast — es ruido para el usuario.
-          updateDraft({ personaId: null });
-          // Continuamos al create de abajo.
-        } else {
-          throw err;
-        }
+        if (err?.status !== 404) throw err;
+        updateDraft({ personaId: null });
+        // fall-through al create.
       }
     }
     // Backend (`PersonaCreate` en `personas_models.py`) exige:
@@ -204,105 +186,78 @@ export function PersonaWizardContainer() {
     navigate(`/t/${tenantSlug}/influencer/personas/new/step-${n}`);
   }, [navigate, tenantSlug]);
 
-  // UI-INFLU-014.1 — Generación de UNA variación (=1 crédito). El botón
-  // "Generar +1" del WizardPreview llama a esta función. El backend
-  // construye el prompt con todos los jsonb pre-seleccionados (face +
-  // body + identity + voice del draft); el frontend no manda el prompt,
-  // solo el payload de overrides (vacío por ahora).
-  const handleGenerateOneVariation = useCallback(async () => {
+  // STEP 1 — Face. UI-INFLU-014.2:
+  //   * Cada click = 1 crédito = 1 variación (count=1).
+  //   * Persistimos el face actual antes de generar para que el prompt
+  //     del backend incluya lo más reciente.
+  //   * Agregamos el request_id al pendingRequests; el useEffect de
+  //     polling lo procesa hasta status='completed' y mueve los assets
+  //     a draft.faceVariations.
+  const handleGenerateVariations = useCallback(async (payload) => {
     setGlobalError(null);
-    // Optimistic UI: incrementamos el contador de pending antes de
-    // tener el ID del request — el WizardPreview muestra un thumbnail
-    // con spinner inmediatamente.
-    setOptimisticPending((n) => n + 1);
     try {
       const personaId = await ensurePersona(null);
-      // Antes de generar, persiste el form del step actual al jsonb
-      // correspondiente, así el prompt del backend incluye lo que el
-      // usuario acaba de editar (no solo lo del último save).
+      // Persistir el face primero (best-effort) para que el prompt del
+      // backend use los valores actuales del usuario.
+      const facePayload = (() => {
+        const clone = { ...(payload || {}) };
+        delete clone.count;  // count va por separado a la API.
+        return clone;
+      })();
       try {
-        await flushLiveFormState(personaId);
+        await wizardSaveFace(session, tenantId, personaId, facePayload);
+        updateDraft({ face: facePayload });
       } catch {
-        // Si el save falla, igual seguimos — el prompt usará lo que
-        // ya estaba en backend, no es bloqueante para la generación.
+        // Si falla el save, igual seguimos — el prompt usará lo último
+        // que estaba en backend.
       }
       const result = await generateFaceVariations(
-        session, tenantId, personaId, { count: 1 },
+        session, tenantId, personaId, { count: payload?.count ?? 1 },
       );
-      // El POST devuelve el id del request; lo agregamos a pending y
-      // descontamos el optimistic — el polling toma el relevo.
-      setPendingRequests((prev) => [...prev, result.id]);
-      setOptimisticPending((n) => Math.max(0, n - 1));
+      // El POST devuelve { id, status, ... } — agregamos al pending y
+      // el polling se encarga.
+      if (result?.id) {
+        setPendingRequests((prev) => [...prev, result.id]);
+      }
     } catch (err) {
-      setOptimisticPending((n) => Math.max(0, n - 1));
       setGlobalError(`No se pudo generar la variación: ${err.message}`);
     }
-  }, [ensurePersona, session, tenantId]);
-
-  // Persistir el form en vuelo del step actual ANTES de generar. Cada
-  // step llama a `onFormChange` con su state cada vez que cambia, y el
-  // container lo guarda en `liveFormState` con el campo correspondiente.
-  const flushLiveFormState = useCallback(async (personaId) => {
-    const entries = Object.entries(liveFormState || {});
-    for (const [field, payload] of entries) {
-      if (!payload) continue;
-      try {
-        if (field === 'face') {
-          await wizardSaveFace(session, tenantId, personaId, payload);
-        } else if (field === 'body') {
-          await wizardSaveBody(session, tenantId, personaId, payload);
-        } else if (field === 'identity') {
-          await wizardSaveIdentity(session, tenantId, personaId, payload);
-        } else if (field === 'voice') {
-          await wizardSaveVoice(session, tenantId, personaId, payload);
-        }
-      } catch {
-        // Best-effort — si un PUT falla, seguimos con los demás.
-      }
-    }
-  }, [liveFormState, session, tenantId]);
+  }, [ensurePersona, session, tenantId, updateDraft]);
 
   // ─── Polling de face_variation_requests ──────────────────────────────
-  // Cada 2s revisa cada request en `pendingRequests`. Cuando uno
-  // completa, mueve los assets al draft.faceVariations y lo remueve
-  // del pending. El polling se detiene cuando no hay nada pendiente.
-  const pollIntervalRef = useRef(null);
+  // FIX del loop infinito (reportado por el usuario):
+  //   1. La dependencia del useEffect es `pendingRequests.length > 0`
+  //      (boolean), NO `pendingRequests` (array). Sin esto, cada mutación
+  //      del array re-corría el effect, creando un setInterval nuevo
+  //      acumulado además del existente → poll cada milisegundos.
+  //   2. Usamos un ref para leer el array actualizado dentro del tick.
+  //      El closure capturaría el array inicial; sin el ref, no veríamos
+  //      requests agregados después de armar el interval.
+  const pendingRef = useRef(pendingRequests);
+  useEffect(() => { pendingRef.current = pendingRequests; }, [pendingRequests]);
+
+  const hasPending = pendingRequests.length > 0;
   useEffect(() => {
-    if (pendingRequests.length === 0 || !draft.personaId) {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-      return undefined;
-    }
+    if (!hasPending || !draft.personaId) return undefined;
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
+      const snapshot = pendingRef.current;
+      if (snapshot.length === 0) return;
       const stillPending = [];
-      for (const reqId of pendingRequests) {
+      const newAssets = [];
+      for (const reqId of snapshot) {
         try {
           const resp = await getFaceVariationStatus(
             session, tenantId, draft.personaId, reqId,
           );
           if (resp.status === 'completed') {
-            // Anexar los assets al draft (sin duplicar por id).
-            setDraft((prev) => {
-              const existing = prev.faceVariations || [];
-              const existingIds = new Set(existing.map((v) => v.id));
-              const incoming = (resp.assets || [])
-                .filter((a) => !existingIds.has(a.id))
-                .map((a) => ({
-                  id: a.id, url: a.url, status: 'ready',
-                  marked_canonical: a.marked_canonical,
-                }));
-              return {
-                ...prev,
-                faceVariations: [...existing, ...incoming],
-              };
-            });
-            // El nuevo asset se auto-selecciona — el preview grande
-            // muestra la última variación generada automáticamente.
-            setSelectedVariationIndex(null);
+            for (const a of resp.assets || []) {
+              newAssets.push({
+                id: a.id, url: a.url, status: 'ready',
+                marked_canonical: a.marked_canonical,
+              });
+            }
           } else if (resp.status === 'failed') {
             setGlobalError(
               `La generación falló: ${resp.error_message || 'error desconocido'}`,
@@ -311,23 +266,30 @@ export function PersonaWizardContainer() {
             stillPending.push(reqId);
           }
         } catch {
-          // Si el GET falla, mantenemos el ID en pending para retry.
           stillPending.push(reqId);
         }
       }
-      if (!cancelled) setPendingRequests(stillPending);
-    };
-    pollIntervalRef.current = setInterval(tick, 2000);
-    // Tick inmediato para no esperar 2s al primer poll.
-    tick();
-    return () => {
-      cancelled = true;
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
+      if (cancelled) return;
+      if (newAssets.length > 0) {
+        setDraft((prev) => {
+          const existingIds = new Set((prev.faceVariations || []).map((v) => v.id));
+          const fresh = newAssets.filter((a) => !existingIds.has(a.id));
+          return {
+            ...prev,
+            faceVariations: [...(prev.faceVariations || []), ...fresh],
+          };
+        });
+      }
+      if (stillPending.length !== snapshot.length) {
+        setPendingRequests(stillPending);
       }
     };
-  }, [pendingRequests, draft.personaId, session, tenantId]);
+    const interval = setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [hasPending, draft.personaId, session, tenantId]);
 
   const handleNextFace = useCallback(async (payload) => {
     setGlobalError(null);
@@ -454,98 +416,57 @@ export function PersonaWizardContainer() {
     );
   }
 
-  // Captura el form del step actual cada vez que cambia, para que el
-  // botón "Generar +1" pueda usar el estado más reciente en el prompt.
-  const captureFormState = useCallback((field) => (formState) => {
-    setLiveFormState((prev) => ({ ...prev, [field]: formState }));
-  }, []);
-
-  const personaName = draft.identity?.name
-    || draft.face?.display_name
-    || 'Personaje en construcción';
-  const variationsForPreview = (draft.faceVariations || []).map((v) => ({
-    id: v.id,
-    url: v.url || v.thumbnail_url,
-    status: v.status || 'ready',
-    marked_canonical: v.marked_canonical,
-  }));
-  const generationNumber = Math.max(1, variationsForPreview.length);
-  const previewBusy = pendingRequests.length > 0 || optimisticPending > 0;
-
   return (
-    <div data-module="influencer" data-view="wizard" style={{ padding: 16 }}>
+    <div data-module="influencer" data-view="wizard">
       {globalError ? (
         <AlertBanner tone="warning" style={{ marginBottom: 16 }}>
           {globalError}
         </AlertBanner>
       ) : null}
-
-      {/* UI-INFLU-014.1 — Layout 2 columnas persistente. La columna
-          izquierda (WizardPreview) es la misma para los 5 steps; solo
-          cambia la derecha (formulario del step actual). */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(280px, 1fr) minmax(0, 1.4fr)',
-        gap: 24,
-        alignItems: 'start',
-      }}>
-        <WizardPreview
-          personaName={personaName}
-          generationNumber={generationNumber}
-          variations={variationsForPreview}
-          selectedIndex={selectedVariationIndex}
-          onSelectVariation={(idx) => setSelectedVariationIndex(idx)}
-          onGenerate={handleGenerateOneVariation}
-          pendingCount={pendingRequests.length + optimisticPending}
-          creditCost={1}
-          disabled={previewBusy && optimisticPending > 0}
+      {stepNum === 1 ? (
+        <Step1Face
+          initialForm={draft.face || {}}
+          initialVariations={draft.faceVariations || []}
+          onGenerateVariations={handleGenerateVariations}
+          onNext={handleNextFace}
+          onSaveDraft={handleSaveDraftFace}
+          pendingCount={pendingRequests.length}
         />
-
-        <div>
-          {stepNum === 1 ? (
-            <Step1Face
-              initialForm={draft.face || {}}
-              onFormChange={captureFormState('face')}
-              onNext={handleNextFace}
-              onSaveDraft={handleSaveDraftFace}
-            />
-          ) : null}
-          {stepNum === 2 ? (
-            <Step2Body
-              initialForm={draft.body || {}}
-              onNext={step2Handlers.onNext}
-              onSaveDraft={step2Handlers.onSaveDraft}
-            />
-          ) : null}
-          {stepNum === 3 ? (
-            <Step3Identity
-              initialForm={draft.identity || {}}
-              onNext={step3Handlers.onNext}
-              onSaveDraft={step3Handlers.onSaveDraft}
-              onCheckHandle={step3Handlers.onCheckHandle}
-            />
-          ) : null}
-          {stepNum === 4 ? (
-            <Step4Voice
-              initialForm={draft.voice || {}}
-              sampleUrl={draft.voiceSampleUrl}
-              onGenerateSample={handleGenerateVoiceSample}
-              onNext={step4Handlers.onNext}
-              onSaveDraft={step4Handlers.onSaveDraft}
-            />
-          ) : null}
-          {stepNum === 5 ? (
-            <Step5Platforms
-              initialAccounts={draft.platforms?.accounts || []}
-              initialMode={draft.platforms?.mode || 'manual_approval'}
-              initialAutoRespondDms={draft.platforms?.auto_respond_dms || false}
-              onConnectInstagram={handleConnectInstagram}
-              onActivate={handleActivate}
-              onSaveDraft={(p) => updateDraft({ platforms: p })}
-            />
-          ) : null}
-        </div>
-      </div>
+      ) : null}
+      {stepNum === 2 ? (
+        <Step2Body
+          initialForm={draft.body || {}}
+          onNext={step2Handlers.onNext}
+          onSaveDraft={step2Handlers.onSaveDraft}
+        />
+      ) : null}
+      {stepNum === 3 ? (
+        <Step3Identity
+          initialForm={draft.identity || {}}
+          onNext={step3Handlers.onNext}
+          onSaveDraft={step3Handlers.onSaveDraft}
+          onCheckHandle={step3Handlers.onCheckHandle}
+        />
+      ) : null}
+      {stepNum === 4 ? (
+        <Step4Voice
+          initialForm={draft.voice || {}}
+          sampleUrl={draft.voiceSampleUrl}
+          onGenerateSample={handleGenerateVoiceSample}
+          onNext={step4Handlers.onNext}
+          onSaveDraft={step4Handlers.onSaveDraft}
+        />
+      ) : null}
+      {stepNum === 5 ? (
+        <Step5Platforms
+          initialAccounts={draft.platforms?.accounts || []}
+          initialMode={draft.platforms?.mode || 'manual_approval'}
+          initialAutoRespondDms={draft.platforms?.auto_respond_dms || false}
+          onConnectInstagram={handleConnectInstagram}
+          onActivate={handleActivate}
+          onSaveDraft={(p) => updateDraft({ platforms: p })}
+        />
+      ) : null}
     </div>
   );
 }
