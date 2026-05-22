@@ -48,6 +48,7 @@ const OVERVIEW = {
 };
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <ViewerAnalytics module={MODULE} session={SESSION} tenant={tenant} />
@@ -57,7 +58,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: VIEWER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: VIEWER_PROFILE, activeTenant: ACME };
   coreApi.getAnalyticsOverview.mockResolvedValue(OVERVIEW);
   coreApi.getAnalyticsConversations.mockResolvedValue({ daily_evolution: [] });
   coreApi.getAnalyticsAppointments.mockResolvedValue({ daily_evolution: [] });

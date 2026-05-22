@@ -28,7 +28,7 @@ import styles from './Incidents.module.css';
  */
 export function Incidents() {
   const { session, profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: null });
+  const permissions = usePermissions();
   const [filters, setFilters] = useState({});
   const [selected, setSelected] = useState(null);
 

@@ -32,6 +32,7 @@ const ACME = { id: 'tenant-acme', slug: 'acme', roles: ['owner'] };
 const SESSION = { accessToken: 'tok' };
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <Onboarding session={SESSION} tenant={tenant} onNavigateToModule={vi.fn()} />
@@ -41,7 +42,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   getTenantOnboarding.mockResolvedValue({
     progress: { last_completed_step: 3, total: 7, complete: false },
   });

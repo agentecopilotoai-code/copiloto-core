@@ -25,7 +25,7 @@ const NOTICE_TONE = { success: 'success', error: 'danger', info: 'info', warning
  */
 export function ConversationsContacts({ module, session, tenant }) {
   const { profile: userProfile } = useTenantContext();
-  const permissions = usePermissions({ profile: userProfile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useContactsData({ session, tenantId: tenant?.id });
 
   return (

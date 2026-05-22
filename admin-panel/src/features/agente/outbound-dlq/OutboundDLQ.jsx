@@ -24,7 +24,7 @@ import styles from './OutboundDLQ.module.css';
  */
 export function OutboundDLQ({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useOutboundDlqData({ session, tenant });
 
   return (

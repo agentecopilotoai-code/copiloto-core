@@ -29,7 +29,7 @@ import styles from './FleetDlq.module.css';
  */
 export function FleetDlq() {
   const { session, profile, handleTenantCreated } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: null });
+  const permissions = usePermissions();
   const navigate = useNavigate();
 
   const [filters, setFilters] = useState({ windowMinutes: 60 });

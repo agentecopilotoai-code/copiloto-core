@@ -28,7 +28,7 @@ import styles from './AuditPanel.module.css';
  */
 export function AuditPanel({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useAuditData({ session, tenant });
 
   return (

@@ -68,6 +68,7 @@ const SUBSCRIBERS = [
 ];
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <Subscriptions module={MODULE} session={SESSION} tenant={tenant} />
@@ -77,7 +78,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listSubscriptionPlans.mockResolvedValue(PLANS);
   coreApi.listContactSubscriptions.mockResolvedValue(SUBSCRIBERS);
 });

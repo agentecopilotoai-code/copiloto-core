@@ -28,7 +28,7 @@ import styles from './Runbooks.module.css';
  */
 export function Runbooks() {
   const { session, profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: null });
+  const permissions = usePermissions();
   const { runbooks, categories, loading, error, refresh } = useRunbooks({ session });
 
   const [search, setSearch] = useState('');

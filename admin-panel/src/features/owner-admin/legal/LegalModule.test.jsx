@@ -55,6 +55,7 @@ const DOCS = {
 };
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <LegalModule module={MODULE} session={SESSION} tenant={tenant} />
@@ -64,7 +65,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listLegalDocuments.mockResolvedValue(DOCS);
 });
 

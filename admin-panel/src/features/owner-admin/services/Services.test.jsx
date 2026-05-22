@@ -56,6 +56,7 @@ const SERVICES = [
 ];
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <Services module={MODULE} session={SESSION} tenant={tenant} />
@@ -65,7 +66,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listServices.mockResolvedValue(SERVICES);
   coreApi.listPromotions.mockResolvedValue([]);
   coreApi.getTenantSettings.mockResolvedValue({ escalation_policy: {} });

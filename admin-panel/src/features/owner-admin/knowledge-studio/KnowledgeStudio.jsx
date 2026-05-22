@@ -39,7 +39,7 @@ import styles from './KnowledgeStudio.module.css';
 // Body monta el hook solo cuando el render del gate procede.
 export function KnowledgeStudio(props) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: props.tenant });
+  const permissions = usePermissions();
   return (
     <RequirePermission permissions={permissions} capability="knowledge.read">
       <KnowledgeStudioBody {...props} />

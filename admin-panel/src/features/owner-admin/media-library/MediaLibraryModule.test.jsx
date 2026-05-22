@@ -54,6 +54,7 @@ const PROMOS = [
 const SERVICES = [{ id: 'svc-1', name: 'Limpieza facial' }];
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <MediaLibraryModule module={MODULE} session={SESSION} tenant={tenant} />
@@ -63,7 +64,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listMediaAssets.mockResolvedValue(ASSETS);
   coreApi.listPromotions.mockResolvedValue(PROMOS);
   coreApi.listServices.mockResolvedValue(SERVICES);

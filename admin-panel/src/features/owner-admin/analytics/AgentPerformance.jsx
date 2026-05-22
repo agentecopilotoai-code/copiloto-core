@@ -63,7 +63,7 @@ export function AgentPerformance({ module, session, tenant, range, readOnly = fa
   // datos. Sin esta prop, ViewerAnalytics heredaba el CTA de write y
   // rompía el contrato read-only de UI-010.2.
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const tenantId = tenant?.id;
 
   const [preset, setPreset] = useState(DEFAULT_PRESET);

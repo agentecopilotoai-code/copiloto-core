@@ -27,7 +27,7 @@ import styles from './CampaignsModule.module.css';
  */
 export function CampaignsModule({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useCampaignsData({ session, tenant });
 
   return (

@@ -75,7 +75,7 @@ const CONVERSATIONS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: AGENT_PROFILE };
+  mockTenantContext = { session: SESSION, profile: AGENT_PROFILE, activeTenant: ACME };
   coreApi.listConversations.mockResolvedValue(CONVERSATIONS);
   coreApi.listComplaintConversations.mockResolvedValue([]);
   coreApi.getConversation.mockResolvedValue({

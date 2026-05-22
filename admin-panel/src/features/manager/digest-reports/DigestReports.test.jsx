@@ -49,6 +49,7 @@ const SUBSCRIPTIONS = {
 };
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <DigestReports module={MODULE} session={SESSION} tenant={tenant} />
@@ -58,7 +59,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: MANAGER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: MANAGER_PROFILE, activeTenant: ACME };
   coreApi.listDigestSubscriptions.mockResolvedValue(SUBSCRIPTIONS);
 });
 

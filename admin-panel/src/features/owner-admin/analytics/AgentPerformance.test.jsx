@@ -78,6 +78,7 @@ const AGENTS = {
 };
 
 function setup({ tenant = ACME, ...rest } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <AgentPerformance module={MODULE} session={SESSION} tenant={tenant} {...rest} />
@@ -87,7 +88,7 @@ function setup({ tenant = ACME, ...rest } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.getAnalyticsAgents.mockResolvedValue(AGENTS);
 });
 

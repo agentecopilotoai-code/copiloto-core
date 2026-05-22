@@ -70,7 +70,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.getWhatsAppChannelHealth.mockResolvedValue(HEALTH);
   coreApi.listWhatsappTemplates.mockResolvedValue(TEMPLATES);
   coreApi.getWebChannel.mockResolvedValue(null);
@@ -123,7 +123,7 @@ describe('WhatsAppOnboarding', () => {
   });
 
   it('renders AccessDenied when the active tenant role lacks whatsapp.read', () => {
-    mockTenantContext = { session: SESSION, profile: { sub: 'u-x' } };
+    mockTenantContext = { session: SESSION, profile: { sub: 'u-x', activeTenant: ACME } };
     setup({ tenant: { id: 'tenant-acme', slug: 'acme', roles: [] } });
     expect(screen.getByText(/Acceso restringido/i)).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'WhatsApp', level: 1 })).toBeNull();

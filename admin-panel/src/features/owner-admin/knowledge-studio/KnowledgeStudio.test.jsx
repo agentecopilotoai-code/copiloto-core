@@ -89,6 +89,7 @@ const STORAGE = {
 };
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <KnowledgeStudio module={MODULE} session={SESSION} tenant={tenant} />
@@ -98,7 +99,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listKnowledgeDocuments.mockResolvedValue(DOCUMENTS);
   coreApi.getKnowledgeStorageSettings.mockResolvedValue(STORAGE);
 });

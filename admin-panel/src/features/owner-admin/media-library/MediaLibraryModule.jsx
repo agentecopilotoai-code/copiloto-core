@@ -28,7 +28,7 @@ import styles from './MediaLibraryModule.module.css';
  */
 export function MediaLibraryModule({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useMediaLibraryData({ session, tenant });
 
   return (

@@ -48,6 +48,7 @@ const TEMPLATES = [
 const SEGMENTS = [{ id: 'seg-1', name: 'Inactivos 90d', contact_count: 120 }];
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <CampaignsModule module={MODULE} session={SESSION} tenant={tenant} />
@@ -57,7 +58,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listCampaigns.mockResolvedValue(CAMPAIGNS);
   coreApi.listWhatsappTemplates.mockResolvedValue(TEMPLATES);
   coreApi.listContactSegments.mockResolvedValue(SEGMENTS);

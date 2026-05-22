@@ -43,7 +43,7 @@ const NOTICE_TONE = { success: 'success', warning: 'warning', error: 'danger', i
  */
 export function Onboarding({ session, tenant, onNavigateToModule }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const tenantId = tenant?.id;
 
   const [progress, setProgress] = useState(null);

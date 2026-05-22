@@ -53,7 +53,7 @@ import styles from './TenantSetupWizard.module.css';
 export function TenantSetupWizard(props) {
   const { tenant, initialSignup = false } = props;
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
 
   // Signup inicial bypassa permission check — el caller (anon o sin tenant)
   // no tiene roles aún; el backend tiene su propio gate en /v1/tenant-signup.

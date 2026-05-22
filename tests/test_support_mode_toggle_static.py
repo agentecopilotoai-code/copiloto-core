@@ -380,8 +380,16 @@ def test_use_permissions_passes_effective_override_to_resolve_active_roles():
     """El `effectiveOverride` (mezcla de prop + context) debe propagarse
     a `resolveActiveRoles`. Sin esto, el hook calcularía `isSystemOwner`
     con el override pero los `roles` con `null` — UI inconsistente.
+
+    BUG-220: `usePermissions` ahora delega en `computePermissions` (función
+    pura) que internamente invoca `resolveActiveRoles`. Verificamos que
+    `effectiveOverride` viaja como `supportModeOverride` hasta el helper.
     """
     use_perms = Path('admin-panel/src/permissions/usePermissions.js').read_text()
-    assert (
-        'resolveActiveRoles({ profile, tenant, supportModeOverride: effectiveOverride })'
-    ) in use_perms
+    # Normalizamos whitespace para no acoplar al formato multilínea.
+    import re
+    normalized = re.sub(r'\s+', ' ', use_perms)
+    assert 'supportModeOverride: effectiveOverride' in normalized, (
+        'usePermissions debe propagar `effectiveOverride` como '
+        '`supportModeOverride` al pipeline de computePermissions/resolveActiveRoles.'
+    )

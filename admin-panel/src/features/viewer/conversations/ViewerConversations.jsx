@@ -44,7 +44,7 @@ import styles from './ViewerConversations.module.css';
 export function ViewerConversations(props) {
   const { tenant } = props;
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
 
   return (
     <RequirePermission permissions={permissions} capability="conversations.view" mode="R">

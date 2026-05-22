@@ -31,7 +31,7 @@ import styles from './TodayAppointments.module.css';
  */
 export function TodayAppointments({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useTodayAppointmentsData({ session, tenant });
   const dayLabel = dayNavLabel(state.selectedDay);
 

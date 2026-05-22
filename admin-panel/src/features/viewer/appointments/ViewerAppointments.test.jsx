@@ -52,6 +52,7 @@ const APPOINTMENTS = [
 ];
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <ViewerAppointments module={MODULE} session={SESSION} tenant={tenant} />
@@ -61,7 +62,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: VIEWER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: VIEWER_PROFILE, activeTenant: ACME };
   coreApi.listAppointments.mockResolvedValue(APPOINTMENTS);
 });
 

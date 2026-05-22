@@ -39,6 +39,7 @@ const PREVIOUS_OVERVIEW = {
 };
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <ViewerSummary module={MODULE} session={SESSION} tenant={tenant} />
@@ -48,7 +49,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: VIEWER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: VIEWER_PROFILE, activeTenant: ACME };
   // current + previous windows en ese orden (igual que `useDashboardData`).
   coreApi.getAnalyticsOverview
     .mockResolvedValueOnce(CURRENT_OVERVIEW)

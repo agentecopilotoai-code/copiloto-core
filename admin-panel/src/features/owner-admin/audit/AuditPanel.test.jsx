@@ -39,6 +39,7 @@ const LOGS = [
 ];
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <AuditPanel module={MODULE} session={SESSION} tenant={tenant} />
@@ -48,7 +49,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listAuditLogsFiltered.mockResolvedValue(LOGS);
 });
 

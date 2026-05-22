@@ -35,7 +35,7 @@ function greeting() {
  */
 export function Dashboard({ session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const navigate = useNavigate();
   const { current, previous, loading, error, refresh } = useDashboardData({
     session,

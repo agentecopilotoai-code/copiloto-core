@@ -55,7 +55,7 @@ function formatDateTime(value) {
  */
 export function TenantModulesPanel({ tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: null });
+  const permissions = usePermissions();
 
   const canRead = permissions?.can?.('platform.tenant_modules.read', 'R') ?? false;
 

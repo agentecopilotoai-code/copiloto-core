@@ -67,6 +67,7 @@ const CONVERSATIONS = [
 ];
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <MyHandoffs module={MODULE} session={SESSION} tenant={tenant} />
@@ -76,7 +77,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: AGENT_PROFILE };
+  mockTenantContext = { session: SESSION, profile: AGENT_PROFILE, activeTenant: ACME };
   coreApi.listConversations.mockResolvedValue(CONVERSATIONS);
   coreApi.listComplaintConversations.mockResolvedValue([]);
   coreApi.getConversation.mockImplementation((_session, _tenantId, conversationId) =>

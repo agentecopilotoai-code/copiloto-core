@@ -58,6 +58,11 @@ const PROFILE = {
 const CONSENT = { contact: { opt_in_status: 'opted_in' }, items: [] };
 
 function renderAt({ tenant = ACME, contactId = 'c-1' } = {}) {
+  // BUG-220: el componente ahora resuelve el tenant activo via context
+  // (useActiveTenant). Sincronizamos `mockTenantContext.activeTenant`
+  // con el `tenant` del test para que los override de rol (ej. `roles=[]`)
+  // se propaguen al hook usePermissions.
+  mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter initialEntries={[`/t/acme/contacts/${contactId}`]}>
       <Routes>
@@ -71,7 +76,7 @@ function renderAt({ tenant = ACME, contactId = 'c-1' } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: AGENT_PROFILE };
+  mockTenantContext = { session: SESSION, profile: AGENT_PROFILE, activeTenant: ACME };
   coreApi.getContactProfile.mockResolvedValue(PROFILE);
   coreApi.listContactConsent.mockResolvedValue(CONSENT);
 });

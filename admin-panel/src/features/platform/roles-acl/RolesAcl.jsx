@@ -27,7 +27,7 @@ import styles from './RolesAcl.module.css';
  */
 export function RolesAcl() {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: null });
+  const permissions = usePermissions();
   const [search, setSearch] = useState('');
 
   const groups = useMemo(() => buildMatrixGroups(search), [search]);

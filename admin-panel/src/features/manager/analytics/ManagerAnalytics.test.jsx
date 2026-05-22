@@ -68,6 +68,7 @@ const CAMPAIGNS = {
 };
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <ManagerAnalytics module={MODULE} session={SESSION} tenant={tenant} />
@@ -77,7 +78,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: MANAGER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: MANAGER_PROFILE, activeTenant: ACME };
   coreApi.getAnalyticsOverview.mockResolvedValue(OVERVIEW);
   coreApi.getAnalyticsFunnel.mockResolvedValue(FUNNEL);
   coreApi.getAnalyticsAgents.mockResolvedValue(AGENTS);

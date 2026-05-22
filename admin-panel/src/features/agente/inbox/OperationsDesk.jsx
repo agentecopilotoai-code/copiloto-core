@@ -40,7 +40,7 @@ import { formatDate } from './inboxData.js';
 export function OperationsDesk(props) {
   const { tenant } = props;
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   return (
     <RequirePermission permissions={permissions} capability="conversations.view">
       <OperationsDeskBody {...props} />

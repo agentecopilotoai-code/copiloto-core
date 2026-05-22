@@ -26,7 +26,7 @@ import styles from './Subscriptions.module.css';
  */
 export function Subscriptions({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useSubscriptionsData({ session, tenant });
 
   return (

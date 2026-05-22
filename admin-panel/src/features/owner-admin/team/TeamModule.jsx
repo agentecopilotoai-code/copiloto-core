@@ -41,7 +41,7 @@ const ROLE_TILES = [
 export function TeamModule(props) {
   const { tenant } = props;
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   return (
     <RequirePermission permissions={permissions} capability="team.write" mode="RW">
       <TeamModuleBody {...props} />

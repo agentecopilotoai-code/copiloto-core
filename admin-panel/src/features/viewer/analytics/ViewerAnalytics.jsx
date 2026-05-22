@@ -34,7 +34,7 @@ import { useTenantContext } from '../../../app/TenantProvider.jsx';
  */
 export function ViewerAnalytics({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
 
   return (
     <RequirePermission permissions={permissions} capability="analytics.tenant.read" mode="R">

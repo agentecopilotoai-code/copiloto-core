@@ -40,7 +40,7 @@ function formatTime(value) {
  */
 export function BillingMrr() {
   const { session, profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: null });
+  const permissions = usePermissions();
   const { data, loading, error, refresh } = usePlatformBilling({ session });
 
   return (

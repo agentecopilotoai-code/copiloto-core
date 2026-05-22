@@ -42,7 +42,7 @@ import styles from './GoLiveReadiness.module.css';
  */
 export function GoLiveReadiness({ module, session, tenant, onGoToEscalation }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
 
   return (
     <RequirePermission permissions={permissions} capability="go_live_readiness.read" mode="R">

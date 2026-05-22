@@ -37,7 +37,7 @@
  * que rompe la inicialización ESM en Vitest. Por eso lo dejamos en `app/`,
  * que es además donde viven sus dependencias.
  *
- * @param {object} permissions Resultado de `usePermissions({ profile, tenant })`.
+ * @param {object} permissions Resultado de `usePermissions()`.
  * @returns {string|null} module id seguro o `null` si no hay ninguno accesible.
  */
 import { ROLE_HOME } from '../permissions/matrix.js';

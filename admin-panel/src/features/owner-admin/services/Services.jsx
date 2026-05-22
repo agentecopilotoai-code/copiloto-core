@@ -32,7 +32,7 @@ const NOTICE_TONE = { success: 'success', error: 'danger', info: 'info', warning
  */
 export function Services({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useServicesData({ session, tenant });
 
   const previewText = useMemo(() => buildPreview(state.form, tenant), [state.form, tenant]);

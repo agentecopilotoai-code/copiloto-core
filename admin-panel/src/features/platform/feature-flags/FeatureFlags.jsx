@@ -27,7 +27,7 @@ import styles from './FeatureFlags.module.css';
  */
 export function FeatureFlags() {
   const { session, profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: null });
+  const permissions = usePermissions();
   const { flags, flagTypes, summary, note, loading, error, refresh } = useFeatureFlags({
     session,
   });

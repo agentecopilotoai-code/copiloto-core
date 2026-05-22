@@ -7,6 +7,6 @@ export {
   levelFor,
   resolveActiveRoles,
 } from './matrix.js';
-export { usePermissions } from './usePermissions.js';
+export { computePermissions, usePermissions } from './usePermissions.js';
 export { RequirePermission } from './RequirePermission.jsx';
 export { AccessDenied } from './AccessDenied.jsx';

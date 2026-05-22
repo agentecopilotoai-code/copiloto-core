@@ -30,7 +30,7 @@ import styles from './MyHandoffs.module.css';
  */
 export function MyHandoffs({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useMyHandoffsData({ session, tenant, profile });
 
   const selectedRow = state.selectedConversation

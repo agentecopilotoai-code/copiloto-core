@@ -55,7 +55,7 @@ const BRANCHES = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listBranches.mockResolvedValue(BRANCHES);
 });
 
@@ -101,6 +101,9 @@ describe('BranchesManager', () => {
 
 describe('Branches (gated entry)', () => {
   it('renders AccessDenied when the active tenant role lacks branches.write', () => {
+    // BUG-220: el componente lee el tenant del context (useActiveTenant)
+    // — el override del rol debe propagarse via mockTenantContext.
+    mockTenantContext.activeTenant = { id: 'tenant-acme', slug: 'acme', roles: ['agent'] };
     render(
       <MemoryRouter>
         <Branches

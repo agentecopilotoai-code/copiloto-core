@@ -31,7 +31,7 @@ import styles from './WhatsAppOnboarding.module.css';
  */
 export function WhatsAppOnboarding({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const [activeTab, setActiveTab] = useState('whatsapp');
   const { state, actions } = useWhatsAppData({ session, tenant });
 

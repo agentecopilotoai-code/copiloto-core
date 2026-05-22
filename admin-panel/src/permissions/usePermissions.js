@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 
 import { useOptionalTenantContext } from '../app/TenantProvider.jsx';
+import { useActiveTenant } from '../hooks/useActiveTenant.js';
 import {
   can as canFn,
   highestRole,
@@ -15,13 +16,24 @@ import {
  * por aquí — NUNCA decide accesos sensibles (los rechazará el backend con
  * 403). El hook sólo sirve para no dibujar lo que el server denegará.
  *
- * @param {{ profile?: object, tenant?: object, supportModeOverride?: object }} ctx
- *   `profile`: el `session.profile` del usuario autenticado.
- *   `tenant`:  el tenant activo (con `roles` o `role`).
- *   `supportModeOverride`: BUG-008 — `{ tenantId, expiresAt }` o `null`.
- *     Si está presente y matchea `tenant.id`, OR-ea con `profile.support_mode`
- *     para que el rol global aplique en el contexto del tenant. El backend
- *     valida independientemente con el cookie scoped (no es bypass).
+ * **Fuente única**: el hook lee TODO desde el context (no acepta
+ * `profile`/`tenant` como argumentos). El mandato del proyecto (CLAUDE.md
+ * `MANDATO IRREVOCABLE`) prohíbe paths backwards-compat — solo existe
+ * UNA forma de resolver permisos:
+ *
+ *   - `profile` ← `useOptionalTenantContext().profile` (lo provee el
+ *     `<TenantProvider session={...}>` montado en `router.jsx`).
+ *   - `tenant`  ← `useActiveTenant()` (deriva del slug del URL).
+ *   - `supportModeOverride` ← `useOptionalTenantContext().supportModeOverride`
+ *     por default; se acepta como param SOLO para casos custom (tests
+ *     aislados que necesitan simular distinto override del que está en
+ *     el context).
+ *
+ * Tests aislados que necesiten profile/tenant distinto deben mockear
+ * `useTenantContext` y `useActiveTenant` con `vi.mock(...)`, no pasar
+ * args al hook.
+ *
+ * @param {{ supportModeOverride?: object }} [overrides]
  * @returns {{
  *   roles: string[],            // roles efectivos en el tenant activo
  *   role: string,               // rol más alto (para badges, default views)
@@ -31,50 +43,63 @@ import {
  *   level: (cap: string) => ('RW'|'R'|'partial'|'own_only'|null),
  * }}
  */
-export function usePermissions({ profile, tenant, supportModeOverride } = {}) {
-  // BUG-008 (codex P1 fix): si el caller no pasa `supportModeOverride`
-  // explícito, leerlo del contexto del provider. Sin esto, TODOS los
-  // callsites de usePermissions (router + 30+ componentes de módulo)
-  // tendrían que recordar pasarlo cada vez — y al primero que se le
-  // olvide, el platform_owner que activó support_mode ve "Sin acceso a
-  // ningún módulo" en esa vista aunque la activación haya sido exitosa.
-  // El context es opt-in (devuelve null fuera del provider, ej. tests
-  // aislados) así que callers que pasan `supportModeOverride={...}`
-  // explícito (tests existentes, casos custom) siguen funcionando igual.
-  //
+/**
+ * Función pura: computa el mismo shape que devuelve `usePermissions`,
+ * pero recibiendo `profile`/`tenant`/`supportModeOverride` como args.
+ *
+ * Útil en casos donde necesitamos evaluar permisos en un tenant DISTINTO
+ * al activo del URL (ej. `IndexRedirect` que evalúa el safe home del
+ * `defaultTenant` antes de redirigir). Esos casos NO pueden usar
+ * `usePermissions()` porque el hook está atado al tenant del URL via
+ * `useActiveTenant()`.
+ *
+ * No es un hook (no llama hooks internos), así que se puede invocar
+ * múltiples veces, en condicionales, etc. Sin embargo el resultado NO
+ * está memoizado — el caller lo memoiza si lo necesita.
+ */
+export function computePermissions({ profile, tenant, supportModeOverride } = {}) {
+  const roles = resolveActiveRoles({ profile, tenant, supportModeOverride });
+  const role = highestRole(roles);
+  const overrideMatchesTenant = Boolean(
+    supportModeOverride
+    && tenant?.id
+    && String(supportModeOverride.tenantId) === String(tenant.id),
+  );
+  const supportMode = Boolean(profile?.support_mode) || overrideMatchesTenant;
+  const isSystemOwner =
+    supportMode &&
+    Array.isArray(profile?.roles) &&
+    profile.roles.some((r) => r === 'owner' || r === 'platform_owner');
+  return {
+    roles,
+    role,
+    home: ROLE_HOME[role] || ROLE_HOME.viewer,
+    isSystemOwner,
+    can: (cap, mode = 'R') => canFn(roles, cap, mode),
+    level: (cap) => levelFor(roles, cap),
+  };
+}
+
+export function usePermissions({ supportModeOverride } = {}) {
   // `useOptionalTenantContext?.()` tolera que el módulo esté mockeado en
   // tests sin que el mock exporte la función nueva — 45 tests existentes
   // hacen `vi.mock('.../TenantProvider.jsx', {useTenantContext: ...})`
-  // sin incluir `useOptionalTenantContext`. Hacerlos explícitos es
-  // tedioso; el `?.()` los mantiene verdes y solo afecta el path test.
+  // sin incluir `useOptionalTenantContext`. El `?.()` los mantiene verdes.
   const ctx = useOptionalTenantContext?.();
+  const profile = ctx?.profile ?? null;
+  const tenant = useActiveTenant?.() ?? null;
+  // BUG-008 — el override permite override per-call (tests, casos custom);
+  // si no se pasa, se toma del context. Diferente a profile/tenant que
+  // NO se aceptan como args (single source: context).
   const effectiveOverride =
     supportModeOverride === undefined ? (ctx?.supportModeOverride ?? null) : supportModeOverride;
-  return useMemo(() => {
-    const roles = resolveActiveRoles({ profile, tenant, supportModeOverride: effectiveOverride });
-    const role = highestRole(roles);
-    // BUG-008 — `isSystemOwner` ahora considera ambas fuentes de support_mode:
-    // el claim permanente del JWT o el override temporal (cookie) scoped al
-    // tenant activo. Esto permite que el badge "Operando como soporte" se
-    // muestre correctamente cuando el platform_owner activó el toggle.
-    const overrideMatchesTenant = Boolean(
-      effectiveOverride
-      && tenant?.id
-      && String(effectiveOverride.tenantId) === String(tenant.id),
-    );
-    const supportMode = Boolean(profile?.support_mode) || overrideMatchesTenant;
-    const isSystemOwner =
-      supportMode &&
-      Array.isArray(profile?.roles) &&
-      profile.roles.some((r) => r === 'owner' || r === 'platform_owner');
 
-    return {
-      roles,
-      role,
-      home: ROLE_HOME[role] || ROLE_HOME.viewer,
-      isSystemOwner,
-      can: (cap, mode = 'R') => canFn(roles, cap, mode),
-      level: (cap) => levelFor(roles, cap),
-    };
-  }, [profile, tenant, effectiveOverride]);
+  return useMemo(
+    () => computePermissions({
+      profile,
+      tenant,
+      supportModeOverride: effectiveOverride,
+    }),
+    [profile, tenant, effectiveOverride],
+  );
 }

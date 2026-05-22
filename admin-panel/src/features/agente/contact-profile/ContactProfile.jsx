@@ -39,7 +39,7 @@ export function ContactProfile() {
   const outletContext = useOutletContext();
   const activeTenant = outletContext?.activeTenant ?? null;
   const { profile: userProfile } = useTenantContext();
-  const permissions = usePermissions({ profile: userProfile, tenant: activeTenant });
+  const permissions = usePermissions();
 
   return (
     <RequirePermission permissions={permissions} capability="contacts.view" mode="R">

@@ -36,7 +36,7 @@ import styles from './ViewerSummary.module.css';
  */
 export function ViewerSummary({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { current, previous, loading, error, periodLabel } = useSummaryData({
     session,
     tenantId: tenant?.id,

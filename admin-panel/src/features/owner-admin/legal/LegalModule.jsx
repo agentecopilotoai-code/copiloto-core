@@ -26,7 +26,7 @@ import styles from './LegalModule.module.css';
  */
 export function LegalModule({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, publicUrl, actions } = useLegalData({ session, tenant });
 
   return (

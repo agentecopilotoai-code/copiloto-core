@@ -47,7 +47,7 @@ const SERVICES = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listServices.mockResolvedValue(SERVICES);
   coreApi.listPromotions.mockResolvedValue([]);
   coreApi.getTenantSettings.mockResolvedValue({ escalation_policy: {} });

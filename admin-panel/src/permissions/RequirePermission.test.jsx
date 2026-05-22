@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 import { RequirePermission } from './RequirePermission.jsx';
-import { usePermissions } from './usePermissions.js';
+import { computePermissions } from './usePermissions.js';
 
 describe('<RequirePermission/>', () => {
+  // `RequirePermission` recibe `permissions` como prop (no usa el hook).
+  // Resolvemos con `computePermissions` (función pura) para evitar tener
+  // que envolver con providers en cada test.
   function PermsHarness({ profile, tenant, capability, mode, hidden, fallback, children }) {
-    const permissions = usePermissions({ profile, tenant });
+    const permissions = computePermissions({ profile, tenant });
     return (
       <RequirePermission
         permissions={permissions}

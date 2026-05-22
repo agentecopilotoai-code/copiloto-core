@@ -63,6 +63,7 @@ const DLQ = {
 };
 
 function setup({ tenant = ACME } = {}) {
+    mockTenantContext.activeTenant = tenant;
   return render(
     <MemoryRouter>
       <OutboundDLQ module={MODULE} session={SESSION} tenant={tenant} />
@@ -72,7 +73,7 @@ function setup({ tenant = ACME } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE };
+  mockTenantContext = { session: SESSION, profile: OWNER_PROFILE, activeTenant: ACME };
   coreApi.listOutboundDlq.mockResolvedValue(DLQ);
 });
 

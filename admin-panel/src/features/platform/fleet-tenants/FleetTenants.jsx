@@ -26,7 +26,7 @@ import styles from './FleetTenants.module.css';
  */
 export function FleetTenants() {
   const { session, profile, handleTenantCreated, activateSupportMode } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: null });
+  const permissions = usePermissions();
   const navigate = useNavigate();
   const [filters, setFilters] = useState({});
   const [selected, setSelected] = useState(null);

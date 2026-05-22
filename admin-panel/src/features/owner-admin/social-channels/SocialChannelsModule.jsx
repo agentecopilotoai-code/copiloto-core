@@ -27,7 +27,7 @@ import styles from './SocialChannelsModule.module.css';
  */
 export function SocialChannelsModule({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useSocialChannelsData({ session, tenant });
 
   const tabItems = PROVIDER_OPTIONS.map((opt) => ({ value: opt.id, label: opt.label }));

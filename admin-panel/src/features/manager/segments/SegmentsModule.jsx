@@ -27,7 +27,7 @@ import styles from './SegmentsModule.module.css';
  */
 export function SegmentsModule({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useSegmentsData({ session, tenant });
 
   const ruleActions = {

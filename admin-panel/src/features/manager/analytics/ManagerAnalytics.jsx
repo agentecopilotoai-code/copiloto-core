@@ -29,7 +29,7 @@ import styles from './ManagerAnalytics.module.css';
  */
 export function ManagerAnalytics({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = useManagerAnalyticsData({
     session,
     tenantId: tenant?.id,

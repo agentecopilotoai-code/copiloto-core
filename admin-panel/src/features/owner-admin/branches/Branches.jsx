@@ -15,7 +15,7 @@ import { BranchesManager } from './BranchesManager.jsx';
  */
 export function Branches({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
 
   return (
     <RequirePermission permissions={permissions} capability="branches.write" mode="RW">

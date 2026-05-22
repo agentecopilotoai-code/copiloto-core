@@ -28,7 +28,7 @@ import styles from './DigestReports.module.css';
  */
 export function DigestReports({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   // BUG-104: extraer `actions.refresh` además del state. El summary header
   // (counts: destinos / diarios / semanales) se calcula desde el list
   // que useDigestReportsData fetcha al mount. Cuando el panel hijo hace

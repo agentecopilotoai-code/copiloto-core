@@ -21,7 +21,7 @@ import styles from './Packages.module.css';
  */
 export function Packages({ module, session, tenant }) {
   const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant });
+  const permissions = usePermissions();
   const { state, actions } = usePackagesData({ session, tenant });
 
   return (

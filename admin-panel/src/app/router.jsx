@@ -28,7 +28,13 @@ import { PublicLandingShell } from '../features/public/ravit-landing/PublicLandi
 import { useAuth } from '../context/AuthContext.jsx';
 import { adminModules } from './modules.js';
 import { ModulePlaceholder } from './ModulePlaceholder.jsx';
-import { AccessDenied, RequirePermission, ROLE_HOME, usePermissions } from '../permissions/index.js';
+import {
+  AccessDenied,
+  computePermissions,
+  RequirePermission,
+  ROLE_HOME,
+  usePermissions,
+} from '../permissions/index.js';
 import { MODULE_REGISTRY } from './moduleRegistry.js';
 import { NoModuleAccessScreen } from './NoModuleAccessScreen.jsx';
 import { resolveSafeHomeModule } from './resolveSafeHomeModule.js';
@@ -79,7 +85,7 @@ function ModuleScreen({ moduleId }) {
   const outletContext = useOutletContext();
   const activeTenant = outletContext?.activeTenant ?? null;
   const { profile, session, handleTenantCreated } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: activeTenant });
+  const permissions = usePermissions();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -168,9 +174,15 @@ function RootLayout() {
  */
 function IndexRedirect({ publicTab = 'ravit' }) {
   const { session, profile, tenantOptions, tenantsLoading } = useTenantContext();
-  const platformPermissions = usePermissions({ profile, tenant: null });
+  // Caso especial: evaluamos permisos en DOS contextos:
+  //   (a) sin tenant — para decidir si es platform_owner y va a `/platform`.
+  //   (b) en el `defaultTenant` — para resolver el safe-home tenant-scoped.
+  // El hook `usePermissions()` está atado al tenant del URL (vía
+  // `useActiveTenant()`), pero acá el URL es `/` (sin slug). Por eso usamos
+  // `computePermissions` (función pura, no-hook) con args explícitos.
+  const platformPermissions = computePermissions({ profile, tenant: null });
   const defaultTenant = pickDefaultTenant(tenantOptions);
-  const tenantPermissions = usePermissions({ profile, tenant: defaultTenant });
+  const tenantPermissions = computePermissions({ profile, tenant: defaultTenant });
 
   // Usuario anónimo → landing pública con shell de tabs.
   // `/` = Personajes AI · `/copiloto` = Chatbot AI · `/documentos` =
@@ -254,7 +266,10 @@ function OnboardingRoute() {
 /** `/platform`: shell de flota. Guard: rol efectivo `platform_owner`. */
 function PlatformRoute() {
   const { session, profile, tenantsLoading } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: null });
+  // En `PlatformRoute` la URL es `/platform/...` (sin `tenantSlug`), así que
+  // `useActiveTenant()` retorna `null` automáticamente — equivalente al
+  // `tenant: null` explícito que se pasaba antes.
+  const permissions = usePermissions();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -320,9 +335,11 @@ function TenantScope() {
  * ESTE tenant en particular (puede diferir del default tenant).
  */
 function TenantHomeRedirect() {
-  const { activeTenant } = useOutletContext();
-  const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: activeTenant });
+  // `usePermissions()` auto-resuelve profile (del TenantContext) y tenant
+  // (del slug del URL). El outlet context se conserva por si algún hijo
+  // del Route lo necesita downstream.
+  useOutletContext();
+  const permissions = usePermissions();
   const safeHome = resolveSafeHomeModule(permissions);
   if (!safeHome) return <NoModuleAccessScreen />;
   if (permissions.role === 'viewer') return <Navigate to={`read/${safeHome}`} replace />;
@@ -341,9 +358,8 @@ function TenantHomeRedirect() {
  * que `TenantHomeRedirect`.
  */
 function ReadHomeRedirect() {
-  const { activeTenant } = useOutletContext();
-  const { profile } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: activeTenant });
+  useOutletContext();
+  const permissions = usePermissions();
   const safeHome = resolveSafeHomeModule(permissions);
   if (!safeHome) return <NoModuleAccessScreen />;
   return <Navigate to={safeHome} replace />;
@@ -355,7 +371,7 @@ function TenantShellRoute() {
   // BUG-191: extraer `session` del contexto para threadearlo al shell →
   // ShellTopbar → TenantBrandLogo (fetch del logo proxy con Bearer auth).
   const { profile, tenantOptions, session } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: activeTenant });
+  const permissions = usePermissions();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -457,7 +473,7 @@ function TenantShellRoute() {
 function InfluencerShellRoute() {
   const { activeTenant } = useOutletContext();
   const { profile, tenantOptions, session } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: activeTenant });
+  const permissions = usePermissions();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -521,7 +537,7 @@ function ReadOnlyShellRoute() {
   // BUG-191: thread `session` para que `TenantBrandLogo` pueda fetchear el
   // logo proxy con auth headers (Bearer + X-Tenant-Id).
   const { profile, tenantOptions, session } = useTenantContext();
-  const permissions = usePermissions({ profile, tenant: activeTenant });
+  const permissions = usePermissions();
   const navigate = useNavigate();
   const location = useLocation();
 
