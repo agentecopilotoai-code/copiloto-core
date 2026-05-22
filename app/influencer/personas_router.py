@@ -17,6 +17,7 @@ Política:
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Annotated
 from uuid import UUID
@@ -56,6 +57,22 @@ async def _set_tenant_scope(conn: asyncpg.Connection, tenant_id: UUID) -> None:
     await conn.execute('select set_config($1, $2, true)', 'app.tenant_id', str(tenant_id))
 
 
+def _jsonb_to_dict(value: object) -> dict:
+    """asyncpg sin codec global devuelve jsonb como string serializado.
+
+    Acepta dict (codec registrado), str (default sin codec) o None.
+    Devuelve siempre dict — vacío si la columna era NULL/empty.
+    """
+    if value is None or value == '':
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        return json.loads(value)
+    # Fallback defensivo: si llega otro tipo, dejar que Pydantic falle claro.
+    return value  # type: ignore[return-value]
+
+
 def _row_to_response(row: asyncpg.Record) -> PersonaResponse:
     return PersonaResponse(
         id=row['id'],
@@ -64,11 +81,11 @@ def _row_to_response(row: asyncpg.Record) -> PersonaResponse:
         handle=row['handle'],
         status=row['status'],
         category=row['category'],
-        face=row['face'] or {},
-        body=row['body'] or {},
-        identity=row['identity'] or {},
-        voice=row['voice'] or {},
-        platforms=row['platforms'] or {},
+        face=_jsonb_to_dict(row['face']),
+        body=_jsonb_to_dict(row['body']),
+        identity=_jsonb_to_dict(row['identity']),
+        voice=_jsonb_to_dict(row['voice']),
+        platforms=_jsonb_to_dict(row['platforms']),
         mode=row['mode'],
         disclose_ai=row['disclose_ai'],
         created_at=row['created_at'],
@@ -170,17 +187,24 @@ async def create_persona(
     user_id = getattr(request.state, 'user_id', None)
     await _set_tenant_scope(conn, tenant_id)
     try:
+        # JSONB columns: asyncpg requires a JSON-encoded string + explicit
+        # ``::jsonb`` cast (passing a dict raises DataError "expected str,
+        # got dict"). Mirrors the pattern in wizard_router / admin_routes.
         row = await conn.fetchrow(
             '''
             insert into influencer.personas
               (tenant_id, name, handle, status, category, face, body,
                identity, voice, platforms, mode, disclose_ai, created_by)
             values
-              ($1, $2, $3, 'draft', $4, $5, $6, $7, $8, $9, $10, $11, $12)
+              ($1, $2, $3, 'draft', $4,
+               $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb,
+               $10, $11, $12)
             returning *
             ''',
             tenant_id, body.name, body.handle, body.category,
-            body.face, body.body, body.identity, body.voice, body.platforms,
+            json.dumps(body.face), json.dumps(body.body),
+            json.dumps(body.identity), json.dumps(body.voice),
+            json.dumps(body.platforms),
             body.mode, body.disclose_ai, user_id,
         )
     except asyncpg.UniqueViolationError as exc:
@@ -225,11 +249,17 @@ async def patch_persona(
             raise HTTPException(status.HTTP_404_NOT_FOUND, 'persona not found')
         return _row_to_response(row)
 
+    # JSONB columns must be JSON-encoded + casted (see create_persona note).
+    _JSONB_COLS = {'face', 'body', 'identity', 'voice', 'platforms'}
     set_clauses: list[str] = []
     params: list = []
     for col, val in updates.items():
-        params.append(val)
-        set_clauses.append(f'{col} = ${len(params)}')
+        if col in _JSONB_COLS:
+            params.append(json.dumps(val) if val is not None else None)
+            set_clauses.append(f'{col} = ${len(params)}::jsonb')
+        else:
+            params.append(val)
+            set_clauses.append(f'{col} = ${len(params)}')
     set_clauses.append('updated_at = now()')
     params.append(persona_id)
     sql = (

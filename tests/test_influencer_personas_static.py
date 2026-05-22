@@ -61,6 +61,48 @@ def test_router_inherits_auth_and_module_gate():
     assert 'ensure_module_enabled' in ROUTER_SOURCE
 
 
+def test_create_persona_casts_jsonb_columns():
+    """create_persona pasa los 5 campos jsonb como `::jsonb` casts.
+
+    Regression: asyncpg rechaza dicts crudos con
+    `DataError: expected str, got dict` cuando la columna es jsonb.
+    El INSERT debe declarar `$N::jsonb` para face/body/identity/voice/platforms
+    y usar `json.dumps()` para serializar los valores.
+    """
+    insert_start = ROUTER_SOURCE.find('insert into influencer.personas')
+    assert insert_start != -1, 'INSERT de create_persona no encontrado'
+    insert_end = ROUTER_SOURCE.find('returning *', insert_start)
+    insert_block = ROUTER_SOURCE[insert_start:insert_end]
+    # Debe haber 5 casts ::jsonb (uno por cada columna jsonb).
+    assert insert_block.count('::jsonb') >= 5, (
+        f'Esperaba 5 casts ::jsonb, encontré {insert_block.count("::jsonb")}'
+    )
+    # Y el módulo debe importar json para serializar.
+    assert 'import json' in ROUTER_SOURCE
+    assert 'json.dumps(body.face)' in ROUTER_SOURCE
+
+
+def test_patch_persona_casts_jsonb_columns_when_updated():
+    """patch_persona también debe castear jsonb (mismo bug de asyncpg)."""
+    # El loop de updates debe detectar columnas jsonb y emitir `::jsonb`.
+    assert "_JSONB_COLS" in ROUTER_SOURCE or "'face', 'body', 'identity'" in ROUTER_SOURCE
+    assert '::jsonb' in ROUTER_SOURCE
+
+
+def test_jsonb_to_dict_decodes_string_payloads():
+    """Regression: asyncpg sin codec global devuelve jsonb como string,
+    y PersonaResponse rechaza str con `Input should be a valid dictionary`.
+    _jsonb_to_dict debe normalizar str → dict, None → {}, dict → dict.
+    """
+    from app.influencer.personas_router import _jsonb_to_dict
+
+    assert _jsonb_to_dict(None) == {}
+    assert _jsonb_to_dict('') == {}
+    assert _jsonb_to_dict('{}') == {}
+    assert _jsonb_to_dict('{"a": 1}') == {'a': 1}
+    assert _jsonb_to_dict({'a': 1}) == {'a': 1}
+
+
 def test_router_mounted_in_app_main():
     """El router debe estar incluido en `app/main.py`."""
     main_src = Path('app/main.py').read_text(encoding='utf-8')
