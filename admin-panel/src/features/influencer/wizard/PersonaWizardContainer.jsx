@@ -140,13 +140,21 @@ export function PersonaWizardContainer() {
   // ──────────────────────────────────────────────────────────────────────
   const ensurePersona = useCallback(async (handle) => {
     if (draft.personaId) return draft.personaId;
+    // Backend (`PersonaCreate` en `personas_models.py`) exige:
+    //   - `name: str` (NO `display_name`).
+    //   - `handle: str` con regex `[a-z0-9][a-z0-9_]{2,29}` (lowercase,
+    //     alfanumérico o underscore, 3-30 chars, primer char letra/dígito).
+    // El step 3 (Identity) sobrescribe ambos con los valores reales que
+    // el user elija. Acá generamos placeholders válidos para que el
+    // backend acepte la creación del draft.
+    const draftHandle = handle && /^[a-z0-9][a-z0-9_]{2,29}$/.test(handle)
+      ? handle
+      // 13 dígitos de timestamp + prefijo `draft_` = 19 chars, dentro del
+      // límite 3-30 y respeta regex (sin guion).
+      : `draft_${Date.now()}`;
     const created = await createPersona(session, tenantId, {
-      // Backend exige handle/display_name mínimos al crear; en step 1
-      // todavía no los tenemos, así que usamos placeholders que el step 3
-      // (Identity) sobreescribe. La unique constraint es `(tenant, handle)`
-      // — usamos un sufijo único para no colisionar con otros drafts.
-      handle: handle || `draft-${Date.now()}`,
-      display_name: handle || 'Personaje en construcción',
+      handle: draftHandle,
+      name: handle || 'Personaje en construcción',
       status: 'draft',
     });
     updateDraft({ personaId: created.id });
@@ -167,8 +175,18 @@ export function PersonaWizardContainer() {
     try {
       const personaId = await ensurePersona(null);
       const result = await generateFaceVariations(session, tenantId, personaId, payload);
-      updateDraft({ faceVariations: result.variations || result });
-      return result;
+      // Auto-marca la PRIMERA variación como canonical si ninguna lo es.
+      // Sin esto, el "Siguiente paso" exige que el user click manual en una
+      // miniatura — UX confusa para flujos como "Aleatorio IA al azar".
+      // El user puede cambiar la canonical clickeando otra miniatura.
+      const rawVariations = result?.variations || result || [];
+      const variations = Array.isArray(rawVariations) ? rawVariations : [];
+      const hasCanonical = variations.some((v) => v?.canonical);
+      const withDefault = hasCanonical || variations.length === 0
+        ? variations
+        : variations.map((v, i) => ({ ...v, canonical: i === 0 }));
+      updateDraft({ faceVariations: withDefault });
+      return { ...result, variations: withDefault };
     } catch (err) {
       setGlobalError(`No se pudieron generar variaciones: ${err.message}`);
       throw err;
