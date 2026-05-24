@@ -46,6 +46,11 @@ vi.mock('../services/coreApi.js', () => ({
   // decidir si mostrar el item `influencer-entry` en el sidebar. Default `false`
   // en estos tests porque ningún test específico necesita el item.
   isInfluencerEnabled: vi.fn(() => Promise.resolve(false)),
+  // GD-MENU — análogo a `isInfluencerEnabled` pero para el módulo de
+  // Gestión Documental. Default `false`: el item `gd-entry` no aparece
+  // en el sidebar en los tests, y `GdShellRoute` redirige a la home
+  // del tenant si se intenta acceder directamente.
+  isGdEnabled: vi.fn(() => Promise.resolve(false)),
 }));
 
 // eslint-disable-next-line import/first

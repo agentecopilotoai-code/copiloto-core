@@ -42,7 +42,8 @@ import { PlatformOwnerShell } from './shells/PlatformOwnerShell.jsx';
 import { ReadOnlyShell } from './shells/ReadOnlyShell.jsx';
 import { TenantShell } from './shells/TenantShell.jsx';
 import { InfluencerShell } from './shells/InfluencerShell.jsx';
-import { isInfluencerEnabled } from '../services/coreApi.js';
+import { isInfluencerEnabled, isGdEnabled } from '../services/coreApi.js';
+import { resolveGdRoute } from '../features/gd/routeMap.js';
 import { PersonaWizardContainer } from '../features/influencer/wizard/PersonaWizardContainer.jsx';
 import { CreatePersonaAndRedirect } from '../features/influencer/wizard/CreatePersonaAndRedirect.jsx';
 import { PersonaStudioContainer } from '../features/influencer/studio/PersonaStudioContainer.jsx';
@@ -407,6 +408,26 @@ function TenantShellRoute() {
     };
   }, [session, activeTenant?.id]);
 
+  // GD-MENU — mismo patrón que influencer: el item `gd-entry` aparece
+  // en `TENANT_NAV` SOLO si el tenant tiene Gestión Documental
+  // habilitada en `app.tenant_modules.gestion_documental`. Sin esto,
+  // el sidebar mostraría una opción que choca con un 404 al entrar.
+  const [gdEnabled, setGdEnabled] = useState(null);
+  useEffect(() => {
+    if (!session || !activeTenant?.id) return undefined;
+    let cancelled = false;
+    isGdEnabled(session, activeTenant.id)
+      .then((enabled) => {
+        if (!cancelled) setGdEnabled(enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setGdEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, activeTenant?.id]);
+
   // Un viewer nunca entra al shell con CTAs de escritura: aunque el módulo
   // permita lectura (ej. analytics, contacts), se redirige al subárbol
   // read-only que aplica el chrome de solo lectura y oculta las acciones.
@@ -417,13 +438,18 @@ function TenantShellRoute() {
   const activeModule =
     adminModules.find((item) => item.id === activeModuleId) ?? adminModules[0];
 
-  // Si el módulo influencer NO está habilitado (o aún cargando), filtramos
-  // el `influencer-entry` de la lista que recibe el shell — así el nav no
-  // lo renderiza. La capability `influencer.module.access` (ya definida en
-  // el módulo) sigue aplicándose por `resolveNav` para roles sin acceso.
-  const modulesForShell = influencerEnabled
-    ? adminModules
-    : adminModules.filter((m) => m.id !== 'influencer-entry');
+  // Si los módulos opt-in NO están habilitados (o aún cargando),
+  // filtramos sus entries de la lista que recibe el shell — así el
+  // nav no los renderiza. Las capabilities (`influencer.module.access`,
+  // `gd.module.access`) ya definidas siguen aplicándose por `resolveNav`
+  // para roles sin acceso.
+  let modulesForShell = adminModules;
+  if (!influencerEnabled) {
+    modulesForShell = modulesForShell.filter((m) => m.id !== 'influencer-entry');
+  }
+  if (!gdEnabled) {
+    modulesForShell = modulesForShell.filter((m) => m.id !== 'gd-entry');
+  }
 
   return (
     <TenantShell
@@ -441,6 +467,12 @@ function TenantShellRoute() {
         // directos; este shortcut evita el redirect intermedio.
         if (id === 'influencer-entry') {
           navigate(`/t/${activeTenant.slug}/influencer`);
+          return;
+        }
+        // `gd-entry`: mismo shortcut que influencer — el sub-shell
+        // del módulo GD vive en `/t/{slug}/gd`, no en `/t/{slug}/gd-entry`.
+        if (id === 'gd-entry') {
+          navigate(`/t/${activeTenant.slug}/gd`);
           return;
         }
         navigate(`/t/${activeTenant.slug}/${id}`);
@@ -532,6 +564,114 @@ function InfluencerShellRoute() {
     >
       <Outlet context={{ activeTenant }} />
     </InfluencerShell>
+  );
+}
+
+/**
+ * Layout del módulo Gestión Documental (GD).
+ *
+ * Vive PARALELO a `TenantShellRoute` (no anidado dentro) porque el
+ * módulo es autocontenido: usa su propio `GdShell` con `GdSidebar`
+ * y `GdTopBar` rol-aware. La activación se chequea con
+ * `isGdEnabled(session, tenantId)` (mismo patrón que Influencer).
+ *
+ * Resolución del sub-tree `/t/{slug}/gd/...`:
+ *  - El path interno (todo lo que sigue a `/t/{slug}/gd`) se mapea a
+ *    un componente con `resolveGdRoute()` (ver `features/gd/routeMap.js`).
+ *  - El gate primario es el backend (404 → módulo no activo). El
+ *    frontend traduce 404 a UX amistosa sin filtrar la existencia.
+ *  - `null` inicial = loading; mostramos `<LoadingScreen />` para
+ *    evitar el flash de "no habilitado" en el primer render.
+ *
+ * Decisión D-WIRE-01: `GdShellRoute` usa el sub-shell completo del
+ * módulo (con su sidebar) en lugar de embedar las vistas dentro de
+ * `TenantShell`. Razón: el módulo GD tiene 94 vistas y un sidebar
+ * rol-aware muy distinto al del producto principal (CopilotoIA);
+ * fusionarlos contaminaría ambos. El item `gd-entry` del sidebar
+ * tenant simplemente redirige acá.
+ */
+function GdShellRoute() {
+  const { activeTenant } = useOutletContext();
+  const { profile, session } = useTenantContext();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // null = loading; true = activo; false = 404 del backend.
+  const [moduleEnabled, setModuleEnabled] = useState(null);
+
+  useEffect(() => {
+    if (!session || !activeTenant?.id) return undefined;
+    let cancelled = false;
+    isGdEnabled(session, activeTenant.id)
+      .then((enabled) => {
+        if (!cancelled) setModuleEnabled(enabled);
+      })
+      .catch(() => {
+        if (!cancelled) setModuleEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, activeTenant?.id]);
+
+  if (moduleEnabled === null) return <LoadingScreen />;
+
+  if (moduleEnabled === false) {
+    // Mismo patrón que `InfluencerShell`: mostramos un aviso dentro
+    // del shell del tenant. Aquí redirigimos al home del tenant para
+    // no dejar al usuario en una página vacía — el filtro de nav
+    // (más abajo) ya impide que el item aparezca, así que aterrizar
+    // acá significa deep-link manual o palanca apagada después de
+    // entrar. Redirigir + log mantiene la UX limpia.
+    return <Navigate to={`/t/${activeTenant.slug}`} replace />;
+  }
+
+  // Roles GD del usuario (vienen en la sesión vía `gd_profile.roles`,
+  // que el backend resuelve por usuario+tenant). Si la sesión aún no
+  // los tiene cargados, pasamos array vacío — los componentes hijos
+  // muestran su propio warning de permisos.
+  const gdRoles = session?.gd_profile?.roles
+    || session?.gd_roles
+    || profile?.gd_roles
+    || [];
+
+  // Path relativo al módulo. Para `/t/{slug}/gd/pqrsd/mias` →
+  // `subPath = '/pqrsd/mias'`. Para `/t/{slug}/gd` o `/t/{slug}/gd/` →
+  // `subPath = ''` (landing).
+  const basePath = `/t/${activeTenant.slug}/gd`;
+  let subPath = location.pathname.startsWith(basePath)
+    ? location.pathname.slice(basePath.length)
+    : '';
+  // Normaliza trailing slash (`'/'` → `''`).
+  if (subPath === '/') subPath = '';
+
+  const { Component, extraProps } = resolveGdRoute(subPath);
+
+  // `onNavigate` recibe rutas del módulo (`/gd/...`) desde GdSidebar y
+  // los componentes hijos. Las traducimos a la ruta completa del
+  // tenant (`/t/{slug}/gd/...`) antes de hacer `navigate()`.
+  const onNavigate = (path) => {
+    if (!path) return;
+    if (path.startsWith('/gd')) {
+      navigate(`/t/${activeTenant.slug}${path}`);
+    } else if (path.startsWith('/t/')) {
+      navigate(path);
+    } else {
+      // Path relativo dentro del módulo (sin /gd prefix).
+      navigate(`${basePath}${path.startsWith('/') ? '' : '/'}${path}`);
+    }
+  };
+
+  return (
+    <Component
+      session={session}
+      roles={gdRoles}
+      user={profile}
+      tenantSlug={activeTenant.slug}
+      currentPath={`/gd${subPath}`}
+      onNavigate={onNavigate}
+      {...extraProps}
+    />
   );
 }
 
@@ -755,6 +895,22 @@ export const routes = [
                 element: <GenerateContainer />,
               },
             ],
+          },
+          {
+            // Sub-tree del módulo Gestión Documental — PARALELO al
+            // tenant shell. Resolución del path interno se hace en
+            // `GdShellRoute` mediante `resolveGdRoute(subPath)`. El
+            // catch-all `gd/*` cubre todas las vistas (94 vistas + N
+            // rutas con UUID), así no tenemos que enumerar cada una
+            // acá. El gate por tenant (`isGdEnabled`) y el filtro de
+            // permisos por rol se aplican dentro de la route + el
+            // sidebar del módulo.
+            path: 'gd',
+            element: <GdShellRoute />,
+          },
+          {
+            path: 'gd/*',
+            element: <GdShellRoute />,
           },
           {
             element: <TenantShellRoute />,

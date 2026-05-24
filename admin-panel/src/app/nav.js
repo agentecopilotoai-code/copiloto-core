@@ -42,6 +42,13 @@ export const TENANT_NAV = Object.freeze([
   // (en lugar de `/t/{slug}/influencer-entry`), abriendo el sub-shell con
   // su sub-nav propia (INFLUENCER_NAV).
   { section: 'Ravit Studio', items: ['influencer-entry'] },
+  // Módulo Gestión Documental — opt-in por tenant (gobierno colombiano).
+  // Mismo patrón que Ravit Studio: `gd-entry` es nav item especial filtrado
+  // dinámicamente según `tenant_modules.gestion_documental.enabled`
+  // (consultado vía `isGdEnabled`). Al clickearlo navega a `/t/{slug}/gd` y
+  // abre el `GdShell` con su propia sub-nav rol-aware (definida en
+  // `features/gd/shell/GdSidebar.jsx`, no acá — el módulo es autocontenido).
+  { section: 'Gestión Documental', items: ['gd-entry'] },
   { section: 'Operación', items: ['outbound-dlq', 'go-live-readiness'] },
   { section: 'Configuración', items: ['tenant-setup', 'team', 'legal', 'audit'] },
 ]);

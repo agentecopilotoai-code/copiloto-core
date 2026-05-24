@@ -1795,6 +1795,33 @@ export async function isInfluencerEnabled(session, tenantId) {
   }
 }
 
+/**
+ * Gate de activación del módulo Gestión Documental (GD) por tenant.
+ *
+ * El backend del módulo GD vive bajo `/api/v1/gd/*`; un endpoint de salud
+ * `/gd/_health` responde 200 cuando el tenant tiene activa la palanca
+ * `tenant_modules.gestion_documental` y 404 cuando no la tiene.
+ *
+ * Esta función se llama en `GdShellRoute` para mostrar/ocultar el shell
+ * y en `TenantShellRoute` para filtrar el item `gd-entry` del sidebar.
+ *
+ * @param {object} session - Sesión activa (usa Bearer JWT).
+ * @param {string} tenantId - UUID del tenant activo.
+ * @returns {Promise<boolean>} `true` si el módulo está activo para el tenant,
+ *   `false` si el backend respondió 404 (módulo no habilitado).
+ */
+export async function isGdEnabled(session, tenantId) {
+  try {
+    await request('/gd/_health', { session, tenantId });
+    return true;
+  } catch (err) {
+    if (err?.status === 404) {
+      return false;
+    }
+    throw err;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // MÓDULO INFLUENCER — API client (TASK-INFLU-009..017 backend, frontend
 // wiring de UI-INFLU-008..014). Cada función mapea 1:1 con un endpoint

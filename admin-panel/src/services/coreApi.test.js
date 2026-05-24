@@ -1661,3 +1661,52 @@ describe('/me/* endpoints + namespace shape', () => {
     }
   });
 });
+
+describe('module-enabled gates (isInfluencerEnabled, isGdEnabled)', () => {
+  // Patrón compartido: GET /<modulo>/_health con tenantId.
+  //   - 200 → true.
+  //   - 404 → false (módulo no habilitado para el tenant).
+  //   - cualquier otro error → re-throw.
+
+  it('isGdEnabled → true cuando _health responde 200', async () => {
+    mockJson({ status: 'ok' });
+    const out = await core.isGdEnabled(SESSION, TENANT_ID);
+    expect(out).toBe(true);
+    expect(lastUrl()).toContain('/gd/_health');
+  });
+
+  it('isGdEnabled → false cuando _health responde 404', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 404, statusText: 'Not Found',
+      json: async () => ({ detail: 'module not enabled' }),
+    });
+    const out = await core.isGdEnabled(SESSION, TENANT_ID);
+    expect(out).toBe(false);
+  });
+
+  it('isGdEnabled re-throw cuando _health responde 500', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 500, statusText: 'Internal Server Error',
+      json: async () => ({ detail: 'boom' }),
+    });
+    await expect(core.isGdEnabled(SESSION, TENANT_ID)).rejects.toMatchObject({
+      status: 500,
+    });
+  });
+
+  it('isInfluencerEnabled → true cuando _health responde 200', async () => {
+    mockJson({ status: 'ok' });
+    const out = await core.isInfluencerEnabled(SESSION, TENANT_ID);
+    expect(out).toBe(true);
+    expect(lastUrl()).toContain('/influencer/_health');
+  });
+
+  it('isInfluencerEnabled → false con 404', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false, status: 404, statusText: 'Not Found',
+      json: async () => ({}),
+    });
+    const out = await core.isInfluencerEnabled(SESSION, TENANT_ID);
+    expect(out).toBe(false);
+  });
+});
