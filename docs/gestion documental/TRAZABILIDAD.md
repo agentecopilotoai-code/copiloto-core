@@ -8,6 +8,8 @@
 > - **Doc 3** = `03-matriz-roles-permisos-funciones-v0.1.pdf` (Matriz de Roles, Permisos y Funciones)
 > - **Doc 4** = `04-mapa-modulos-arquitectura-logica-v0.1.pdf` (Mapa de Módulos y Arquitectura Lógica)
 > - **Doc 5** = `05-modelo-datos-conceptual-v0.1.pdf` (Modelo de Datos Conceptual)
+> - **Doc 5-rev1** = `05-modelo-datos-conceptual-v0.1-rev1-perifericos.pdf` (Modelo de Datos Conceptual — **revisión 1**, agrega § 28 sobre interacción con periféricos: nuevas entidades `Periferico`, `PuntoAtencion`, `ImpresionRadicado`, `DigitalizacionDocumento`, `CodigoBarrasRadicado` + permisos PERM-PER-001..010)
+> - **Doc 6** = `06-componente-perifericos-v0.1.pdf` (Documento Técnico Especial — Componente de Comunicación con Periféricos para Ventanilla Única — define arquitectura agente local/servicio puente/plugin navegador, RFP-001..008, RNFP-001..006, permisos PERM-PER-011..012, entidad `EventoPeriferico`)
 
 ---
 
@@ -444,10 +446,11 @@ Durante esta auditoría se detectaron **7 gaps** que se añaden al backlog como 
 - **Estado actual:** GD-API-0012 menciona `dependencia_padre_id` pero no documenta cómo se versiona la jerarquía completa cuando hay fusiones/divisiones.
 - **Corrección:** GD-API-0124 — tabla `gd.relacion_dependencia_historica` para fusiones/divisiones documentadas.
 
-### 6.4 GAP-4 — Política de contraseñas + reuso histórico
+### 6.4 GAP-4 — Política de contraseñas + reuso histórico ✅ CERRADO 2026-05-23 (bloque 2)
 - **Origen:** RNF-005 ("política de complejidad", "bloqueo o protección ante intentos fallidos").
 - **Estado actual:** GD-API-0007 menciona la tabla pero no especifica el **historial de las últimas N contraseñas**.
 - **Corrección:** ajuste a GD-API-0007 — agregar tabla `gd.historico_contrasena(user_id, hash, creada_en)` con política de no-reuso.
+- **Implementación final:** `infra/postgres/04-gd-schema.sql` § 3 crea `gd.politica_contrasena` (versionable, una activa por tenant), `gd.historico_contrasena` (append-only por trigger) y `gd.proveedor_identidad_externo` (stub SSO). Endpoints `GET/PATCH /api/v1/gd/seguridad/politica` (PERM-USR-001). Helper `app/gd/services/politica_contrasena.py` con `validar_contrasena_contra_politica()`, `registrar_hash_historico()`, `listar_hashes_recientes()` para que el flujo de change-password del producto principal pueda validar no-reuso contra los últimos N. **Política versionada** (cada PATCH crea nueva fila y marca la anterior como reemplazada, RNF-009).
 
 ### 6.5 GAP-5 — Procedimiento de contingencia para radicación manual ante caída del sistema
 - **Origen:** RNF-002 ("Deben existir procedimientos de contingencia para radicación manual en caso de caída del sistema").
@@ -466,6 +469,88 @@ Durante esta auditoría se detectaron **7 gaps** que se añaden al backlog como 
 
 ---
 
+## 6.b GAPs cerrados tras revisión 2026-05-23 (Doc 5-rev1 + Doc 6 — Periféricos)
+
+El cliente entregó dos documentos nuevos que introducen una capa operativa completa de interacción con hardware físico en Ventanilla Única. La auditoría detectó **cobertura 0%** en el backlog v0.1 previo — toda la funcionalidad quedaba implícita en menciones de "constancia con QR" sin entidad ni endpoint que la soportara.
+
+### 6.b.1 GAP-8 — Registro de hardware (impresoras, escáneres, lectores)
+- **Origen:** Doc 5-rev1 § 28.1 (`Periferico`) + Doc 6 § 7 RFP-001.
+- **Estado v0.1:** entidad y endpoints inexistentes.
+- **Corrección:** **GD-API-0128** (DDL completo de 6 entidades), **GD-API-0129** (CRUD periféricos).
+
+### 6.b.2 GAP-9 — Puntos de atención presenciales
+- **Origen:** Doc 5-rev1 § 28.2 (`PuntoAtencion`).
+- **Estado v0.1:** sin entidad — los radicados presenciales no podían declarar dónde se generaron físicamente.
+- **Corrección:** **GD-API-0130** (CRUD puntos de atención) + extensión de `gd.radicado` y `gd.canal` para registrar el punto físico.
+
+### 6.b.3 GAP-10 — Códigos de barras y QR institucionales por radicado
+- **Origen:** Doc 5-rev1 § 28.5 + Doc 6 § 14 (regla absoluta: no datos sensibles).
+- **Estado v0.1:** GD-API-0030 generaba "código de verificación" textual pero no imagen de QR/código barras lista para impresión.
+- **Corrección:** **GD-API-0131** — generación de imagen + token opaco verificable. Linter en CI verifica RNF-017 (sin datos personales en el código).
+
+### 6.b.4 GAP-11 — Impresión auditada de etiquetas y constancias
+- **Origen:** Doc 5-rev1 § 28.3 + Doc 6 RFP-002, RFP-003, RFP-004.
+- **Estado v0.1:** no había contrato con hardware ni registro de impresiones.
+- **Corrección:** **GD-API-0132** (etiqueta), **GD-API-0133** (reimpresión controlada con motivo y aprobación al cuarto intento), **GD-API-0134** (constancia formal con plantilla institucional).
+
+### 6.b.5 GAP-12 — Digitalización con trazabilidad (individual y por lote)
+- **Origen:** Doc 5-rev1 § 28.4 + Doc 6 RFP-005, RFP-006, RFP-007.
+- **Estado v0.1:** OCR (GD-API-0111) existía como worker, pero sin entrypoint operativo desde Ventanilla Única ni asociación a radicado.
+- **Corrección:** **GD-API-0135** (individual), **GD-API-0136** (lote con separación por código de barras), **GD-API-0137** (asociación automática vía contexto activo), **GD-API-0142** (validación calidad + reemplazo con motivo). Se integra con EP-018 (`core.archivo_digital`) y dispara OCR de GD-API-0111.
+
+### 6.b.6 GAP-13 — Salud, fallos y mantenimiento de periféricos
+- **Origen:** Doc 5-rev1 § 28.7 + Doc 6 RFP-008.
+- **Estado v0.1:** sin observabilidad de hardware.
+- **Corrección:** **GD-API-0138** (registro de eventos + dashboard de fallos + auto-protección al detectar > 5 fallos/hora).
+
+### 6.b.7 GAP-14 — Autenticación segura del agente local (cliente del backend)
+- **Origen:** Doc 6 § 4.1 (Agente local) + Doc 6 § 8 RNFP-001.
+- **Estado v0.1:** sin contrato con clientes locales; el backend asumía consumo exclusivamente desde navegador autenticado.
+- **Corrección:** **GD-API-0139** — emparejamiento con token one-shot, JWT de larga duración + HMAC del body firmado con clave pública del agente; revocación inmediata por admin.
+
+### 6.b.8 GAP-15 — Permisos específicos de periféricos
+- **Origen:** Doc 5-rev1 § 28.8 + Doc 6 § 9 (12 permisos `PERM-PER-001..012`).
+- **Estado v0.1:** matriz de permisos no incluía ningún permiso de periféricos.
+- **Corrección:** **GD-API-0140** (seed de los 12 permisos + matriz inicial: Admin Sistema todo, Coordinador VU operación + monitoreo, Radicador operación básica, Auditor consulta).
+
+### 6.b.9 GAP-16 — Historial unificado para auditoría
+- **Origen:** Doc 6 § 8 RNFP-002.
+- **Estado v0.1:** `core.evento_auditoria` solo cubría operaciones de dominio funcional.
+- **Corrección:** **GD-API-0141** — vista unificada cruzando impresiones + digitalizaciones + eventos técnicos + mantenimientos por periférico, exportable para Auditor.
+
+### 6.b.10 GAP-17 (UI) — Pantallas de operación y administración de periféricos
+- **Origen:** todos los GAPs anteriores requieren UI.
+- **Estado v0.1:** ninguna pantalla.
+- **Corrección:** nueva **épica EP-013 UI** con **8 tickets** (GD-UI-0087..0094):
+  - GD-UI-0087: Admin periféricos.
+  - GD-UI-0088: Puntos de atención.
+  - GD-UI-0089: Botones impresión en ficha radicado.
+  - GD-UI-0090: Componente escaneo en wizard radicado.
+  - GD-UI-0091: Lote digitalización.
+  - GD-UI-0092: Modal reimpresión con motivo.
+  - GD-UI-0093: Bandeja huérfanos (escaneos pendientes de asociación).
+  - GD-UI-0094: Dashboard salud + fallos.
+
+### 6.b.11 GAP-18 — Activación opcional por tipo de organización
+- **Origen:** Doc 1 § 6 + Doc 5-rev1 § 28 introducción (operación presencial es opcional).
+- **Estado v0.1:** GD-API-0011.b lista 13 módulos activables, ninguno cubre periféricos.
+- **Corrección:** GD-API-0011.b extendido con módulo `ventanilla_presencial_con_perifericos` — empresa privada que opera solo online lo desactiva y no ve menús de EP-013.
+
+### 6.b.12 GAP-19 — Documentación de integración UI ↔ Backend
+- **Origen:** revisión 2026-05-23 detectó que los contratos request/response estaban dispersos entre BACKLOG.md (perspectiva backend) y UI_BACKLOG.md (perspectiva UX). No había documento canónico de payloads.
+- **Estado v0.1:** sin documento de integración.
+- **Corrección:** nueva carpeta [`integracion/`](integracion/) con:
+  - [`README.md`](integracion/README.md) — índice maestro + convenciones (errores comunes, paginación, snapshots, archivos transversales).
+  - [`INTEGRACION_E1_IDENTIDAD.md`](integracion/INTEGRACION_E1_IDENTIDAD.md) — contratos EP-001 + EP-002 + EP-019 (~50 endpoints).
+  - [`INTEGRACION_E2_VENTANILLA.md`](integracion/INTEGRACION_E2_VENTANILLA.md) — contratos EP-004 + EP-005 + EP-021 (~45 endpoints, incluye periféricos completos + tabla de mapeo ticket UI ↔ endpoints).
+  - Entregas 3 a 8 + RPA: pendientes (siguiente iteración).
+
+**Cobertura tras revisión 2026-05-23:**
+- Doc 5-rev1 § 28: **100%** (5 entidades + 10 reglas operativas + 10 permisos + impacto en entidades existentes — todo cubierto en EP-021 + EP-013 UI).
+- Doc 6 completo: **100%** (RFP-001..008 → 12 tareas API; RNFP-001..006 → 4 RNF nuevos al Anexo B; permisos PERM-PER-011..012 → GD-API-0140).
+
+---
+
 ## 7. Resumen ejecutivo de cobertura
 
 | Documento | Sección/ítem auditado | Cobertura |
@@ -475,10 +560,21 @@ Durante esta auditoría se detectaron **7 gaps** que se añaden al backlog como 
 | Doc 3 Roles | 5 estados + 7 vinculaciones + 6 alcances + 19 roles + ~140 permisos + 7 menús + 6 reglas + 22 acciones críticas + 24 historias | **100%** |
 | Doc 4 Mapa | 20 módulos + 30 eventos + 5 capas + 4 flujos end-to-end + 6 límites | **100%** |
 | Doc 5 Modelo | 36 entidades + 10 principios + reglas históricas + 15 recomendaciones | **100%** |
+| Doc 5-rev1 Periféricos (§28) | 5 entidades nuevas + 10 reglas operativas + 10 permisos + impacto en entidades existentes | **100%** |
+| Doc 6 Componente Periféricos | 8 RFP + 6 RNFP + 12 permisos + 6 entidades sugeridas + arquitectura agente local + 4 alternativas técnicas + flujos operativos | **100%** |
 
-**Resultado final:** cobertura **100%** tras añadir las 7 tareas correctivas (GD-API-0122..0127).
+**Resultado final:** cobertura **100%** tras añadir 7 tareas correctivas (GD-API-0122..0127) + nueva épica EP-021 (GD-API-0128..0142, 15 tareas) + nueva épica UI EP-013 (GD-UI-0087..0094, 8 tareas) + carpeta `integracion/` con contratos de payload por endpoint.
+
+**Trabajo restante (no es gap funcional, es deuda de documentación de integración):**
+- Generar `INTEGRACION_E3_BUZON.md` (EP-006).
+- Generar `INTEGRACION_E4_PQRSD.md` (EP-007).
+- Generar `INTEGRACION_E5_CORRESPONDENCIA.md` (EP-008).
+- Generar `INTEGRACION_E6_DOCUMENTOS.md` (EP-009 + EP-010 + EP-011 + EP-018).
+- Generar `INTEGRACION_E7_CORREO_IA_REPORTES.md` (EP-012 + EP-013 + EP-014).
+- Generar `INTEGRACION_E8_TRD_EXPEDIENTES.md` (EP-015 + EP-016).
+- Generar `INTEGRACION_FUTURO_RPA.md` (EP-017).
 
 ---
 
-**Última actualización:** 2026-05-20
+**Última actualización:** 2026-05-23 (rev. EP-021 — periféricos + carpeta `integracion/`)
 **Auditoría realizada por:** revisión cruzada PDF × backlog tarea por tarea, sección por sección.

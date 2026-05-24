@@ -44,6 +44,7 @@ import { TenantShell } from './shells/TenantShell.jsx';
 import { InfluencerShell } from './shells/InfluencerShell.jsx';
 import { isInfluencerEnabled } from '../services/coreApi.js';
 import { PersonaWizardContainer } from '../features/influencer/wizard/PersonaWizardContainer.jsx';
+import { CreatePersonaAndRedirect } from '../features/influencer/wizard/CreatePersonaAndRedirect.jsx';
 import { PersonaStudioContainer } from '../features/influencer/studio/PersonaStudioContainer.jsx';
 import { GenerateContainer } from '../features/influencer/generate/GenerateContainer.jsx';
 import {
@@ -714,14 +715,30 @@ export const routes = [
               },
               ...INFLUENCER_MODULE_IDS.map(moduleRoute),
               // UI-INFLU-008..012 wiring — wizard de creación de personaje.
-              // `personas/new` redirige a `step-1`; cada step se monta con
-              // `PersonaWizardContainer` que orquesta state + API.
+              // UI-INFLU-014.11: cada personaje tiene su propio URL con
+              // `personaId`. Esto permite que el usuario tenga N drafts
+              // en paralelo, cada uno con su propia "página".
+              //
+              //   `personas/new` → CastingNewPersona (crea draft + redirige).
+              //   `personas/:personaId/wizard/:stepSlug` → wizard del draft.
+              //
+              // Ruta legacy `personas/new/:stepSlug` se mantiene por
+              // compat de bookmarks; redirige al casting si no hay un
+              // personaId activo en sessionStorage.
               {
                 path: 'personas/new',
-                element: <Navigate to="personas/new/step-1" replace />,
+                element: <CreatePersonaAndRedirect />,
               },
               {
                 path: 'personas/new/:stepSlug',
+                element: <PersonaWizardContainer />,
+              },
+              {
+                path: 'personas/:personaId/wizard',
+                element: <Navigate to="step-1" replace />,
+              },
+              {
+                path: 'personas/:personaId/wizard/:stepSlug',
                 element: <PersonaWizardContainer />,
               },
               // UI-INFLU-005 wiring — vista de detalle del personaje.

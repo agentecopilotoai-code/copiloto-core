@@ -18,14 +18,13 @@ para requests nuevos (no hay más estado intermedio).
 """
 from __future__ import annotations
 
-import base64
 import json
 import logging
 from typing import Literal
 from uuid import UUID
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.ai.providers.base import (
@@ -33,6 +32,10 @@ from app.ai.providers.base import (
     ProviderContentRejected,
     ProviderError,
 )
+from app.api.v1._helpers.knowledge_storage_db import (
+    fetch_tenant_knowledge_storage_config,
+)
+from app.core.config import get_settings
 from app.core.security import authenticate_request
 from app.db.pool import get_db
 from app.influencer import ensure_module_enabled
@@ -42,6 +45,12 @@ from app.influencer.admin_routes import (
     _set_support_mode,
 )
 from app.influencer.personas_router import _set_tenant_scope
+from app.services.influencer_storage import (
+    read_local_asset,
+    s3_get_asset_bytes,
+    store_face_variation_asset,
+    store_reference_asset,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +62,18 @@ face_variations_router = APIRouter(
         Depends(authenticate_request),
         Depends(ensure_module_enabled),
     ],
+)
+
+
+# UI-INFLU-014.7 — Router separado para servir archivos del storage.
+# Path: `GET /v1/influencer/storage/{key:path}`. Auth requerido +
+# tenant_scope: la key SIEMPRE empieza con `tenants/{tenant_id}/...`
+# y solo se sirve si el `tenant_id` del path matchea el del request
+# (RLS de aplicación).
+storage_router = APIRouter(
+    prefix='/v1/influencer/storage',
+    tags=['influencer-storage'],
+    dependencies=[Depends(authenticate_request)],
 )
 
 
@@ -97,7 +118,12 @@ def _storage_key_to_url(storage_key: str) -> str:
     y la sirve desde su CDN/proxy. La función centraliza el mapeo para
     que cuando exista S3 real solo cambie este helper.
     """
-    if storage_key.startswith(('http://', 'https://')):
+    if storage_key.startswith(('http://', 'https://', 'data:')):
+        # UI-INFLU-014.7: `data:` URLs (base64 inline) son auto-contenidas;
+        # el navegador las renderiza directo en <img src=>. NO las
+        # prefijamos con el path del proxy — eso causaba que el frontend
+        # hiciera GET /admin/api/core/v1/influencer/storage/data:image/...
+        # con el data URL como path (404 / 200 inválido).
         return storage_key
     # Default: mapeo idempotente — el frontend admin sabe interpretar
     # `tenants/.../face_variations/...` y servirlo via su proxy.
@@ -370,14 +396,33 @@ async def create_face_variations(
             detail=f'image provider error: {exc}',
         ) from exc
 
-    # 6. Persistir cada result como asset. URL = data: inline para no
-    # depender de storage externo en este momento.
+    # 6. Persistir cada result como asset usando el storage del tenant
+    # (mismo backend que knowledge: local Docker volume o S3 según
+    # `app.tenant_settings.knowledge_storage`).
+    storage_config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    settings_obj = get_settings()
     assets_out: list[VariationAsset] = []
-    for img in results:
-        b64 = base64.b64encode(img.image_bytes).decode('ascii')
-        data_url = f'data:{img.mime};base64,{b64}'
-        # storage_key = data URL completa (autocontenida; el frontend la usa
-        # como `src` directo en <img>).
+    for idx, img in enumerate(results):
+        try:
+            stored = store_face_variation_asset(
+                data=img.image_bytes,
+                tenant_id=str(tenant_id),
+                request_id=str(req_id),
+                idx=idx,
+                mime=img.mime,
+                settings=settings_obj,
+                config=storage_config,
+            )
+        except Exception as exc:  # noqa: BLE001
+            await conn.execute(
+                "update influencer.face_variation_requests set status='failed', "
+                "error_message=$1, completed_at=now() where id=$2",
+                f'storage_error: {exc}', req_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f'failed to persist asset: {exc}',
+            ) from exc
         asset_row = await conn.fetchrow(
             '''
             insert into influencer.assets
@@ -386,13 +431,13 @@ async def create_face_variations(
             values ($1, $2, $3, 'face_variation', $4, $5, $6, $7, $8)
             returning id, marked_canonical
             ''',
-            tenant_id, persona_id, req_id, data_url, img.mime,
-            img.width, img.height, len(img.image_bytes),
+            tenant_id, persona_id, req_id, stored.object_key, img.mime,
+            img.width, img.height, stored.size_bytes,
         )
         assets_out.append(VariationAsset(
             id=asset_row['id'],
-            storage_key=data_url,
-            url=data_url,
+            storage_key=stored.object_key,
+            url=_storage_key_to_url(stored.object_key),
             mime=img.mime,
             width=img.width,
             height=img.height,
@@ -483,4 +528,226 @@ async def get_face_variation_status(
     )
 
 
-__all__ = ['face_variations_router', '_build_prompt']
+# ─── Upload de referencia (UI-INFLU-014.13) ────────────────────────────────
+#
+# El composer del studio permite al usuario subir una foto de referencia
+# que el provider usa como condicionador visual (la escena, no la cara).
+# El upload se persiste en el mismo storage que face-variations/generations,
+# bajo el prefix `references/{persona_id}/`. Devolvemos `url` lista para
+# pasar como `params.reference_image_url` en el POST /generate.
+
+
+_REFERENCE_MIME_ALLOWLIST = {
+    'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+}
+_REFERENCE_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+class ReferenceUploadResponse(BaseModel):
+    storage_key: str
+    url: str
+    mime: str
+    size_bytes: int
+
+
+@face_variations_router.post(
+    '/reference',
+    response_model=ReferenceUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary='Sube una foto de referencia para el composer del studio',
+)
+async def upload_reference_image(
+    persona_id: UUID,
+    request: Request,
+    file: UploadFile = File(...),
+    conn: asyncpg.Connection = Depends(get_db),
+) -> ReferenceUploadResponse:
+    tenant_id = _require_tenant_id(request)
+    await _set_tenant_scope(conn, tenant_id)
+
+    # Verifica que la persona exista y pertenezca al tenant — RLS adicional.
+    persona = await conn.fetchrow(
+        'select id from influencer.personas where id = $1', persona_id,
+    )
+    if persona is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, 'persona not found')
+
+    mime = (file.content_type or '').lower().split(';', 1)[0].strip()
+    if mime not in _REFERENCE_MIME_ALLOWLIST:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            f'mime {mime!r} no soportado; permitidos: {sorted(_REFERENCE_MIME_ALLOWLIST)}',
+        )
+
+    data = await file.read()
+    if len(data) == 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, 'archivo vacío')
+    if len(data) > _REFERENCE_MAX_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f'archivo excede {_REFERENCE_MAX_BYTES // (1024 * 1024)}MB',
+        )
+
+    # Cada upload genera un idx incremental — usamos timestamp simple para
+    # evitar colisiones sin tener que hacer un count() previo.
+    from time import time
+    idx = int(time() * 1000) % 1_000_000
+
+    storage_config = await fetch_tenant_knowledge_storage_config(conn, tenant_id)
+    settings_obj = get_settings()
+    try:
+        stored = store_reference_asset(
+            data=data,
+            tenant_id=str(tenant_id),
+            persona_id=str(persona_id),
+            idx=idx,
+            mime=mime,
+            settings=settings_obj,
+            config=storage_config,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f'failed to persist reference: {exc}',
+        ) from exc
+
+    # No persistimos el reference en `influencer.assets` — el CHECK
+    # constraint del schema solo permite kinds de output del provider
+    # (photo, reel, face_variation, etc.) y un upload del usuario no
+    # encaja semánticamente. La referencia vive solo en storage; el
+    # frontend incluye su URL en `params.reference_image_url` al hacer
+    # POST /generate. Cuando el personaje se archive, una limpieza
+    # periódica del prefix `references/{persona_id}/` se encarga.
+    logger.info(
+        'reference uploaded tenant=%s persona=%s key=%s bytes=%d',
+        tenant_id, persona_id, stored.object_key, stored.size_bytes,
+    )
+
+    return ReferenceUploadResponse(
+        storage_key=stored.object_key,
+        url=_storage_key_to_url(stored.object_key),
+        mime=mime,
+        size_bytes=stored.size_bytes,
+    )
+
+
+# ─── Storage server (UI-INFLU-014.7) ───────────────────────────────────────
+
+
+def _key_belongs_to_tenant(object_key: str, tenant_id: UUID) -> bool:
+    """Valida que la key empiece con `tenants/{tenant_id}/`."""
+    expected = f'tenants/{tenant_id}/'
+    return object_key.startswith(expected)
+
+
+def _extract_tenant_id_from_key(object_key: str) -> UUID | None:
+    """Las keys del storage siempre empiezan con `tenants/{uuid}/...`.
+    Devuelve el UUID parseado o None si el path es inválido.
+    """
+    parts = object_key.split('/', 2)
+    if len(parts) < 2 or parts[0] != 'tenants':
+        return None
+    try:
+        return UUID(parts[1])
+    except ValueError:
+        return None
+
+
+@storage_router.get('/{object_key:path}', summary='Sirve un asset del storage del tenant')
+async def serve_storage_asset(
+    object_key: str,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+):
+    """Sirve un archivo del storage del tenant (local Docker volume o S3).
+
+    UI-INFLU-014.7.1: el navegador renderiza `<img src="...">` SIN
+    el header `X-Tenant-Id`, así que NO podemos depender de
+    `request.state.tenant_id`. En su lugar:
+
+    1. Extraemos `tenant_id` del path (`tenants/{tid}/...`).
+    2. Validamos que el caller autenticado tiene acceso al tenant:
+       - support_mode=true (platform_owner) → permitido.
+       - sino, verificar fila en `app.user_tenant_roles`.
+    3. Cargamos la config storage del tenant y servimos.
+    """
+    from fastapi.responses import FileResponse, Response
+
+    actor_id = getattr(request.state, 'actor_id', None)
+    if actor_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='authentication required',
+        )
+
+    path_tenant_id = _extract_tenant_id_from_key(object_key)
+    if path_tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='invalid object_key — must start with tenants/{uuid}/',
+        )
+
+    # Defensa anti-traversal: la key del path no puede contener `..`.
+    if '..' in object_key.split('/'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='object_key contains forbidden path segments',
+        )
+
+    # Validar acceso al tenant. support_mode bypasa (platform_owner en
+    # modo soporte). Sino, requiere fila en user_tenant_roles.
+    support_mode = bool(getattr(request.state, 'support_mode', False))
+    if not support_mode:
+        membership = await conn.fetchrow(
+            'select 1 from app.user_tenant_roles where user_id=$1 and tenant_id=$2',
+            actor_id, path_tenant_id,
+        )
+        if membership is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail='user has no access to this tenant',
+            )
+
+    # Set tenant scope para que `fetch_tenant_knowledge_storage_config`
+    # pueda leer la fila (la tabla tiene RLS basada en `app.tenant_id`).
+    await conn.execute(
+        'select set_config($1, $2, true)', 'app.tenant_id', str(path_tenant_id),
+    )
+
+    storage_config = await fetch_tenant_knowledge_storage_config(conn, path_tenant_id)
+    settings_obj = get_settings()
+    backend = (storage_config.get('backend') or 'local').lower()
+
+    if backend == 'local':
+        path = read_local_asset(settings=settings_obj, object_key=object_key)
+        if path is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, 'asset not found')
+        # mime by extension — basta para image/png|jpeg|webp.
+        import mimetypes as _mt
+        mime = _mt.guess_type(str(path))[0] or 'application/octet-stream'
+        return FileResponse(
+            str(path),
+            media_type=mime,
+            headers={'Cache-Control': 'private, max-age=3600'},
+        )
+
+    if backend == 's3':
+        result = s3_get_asset_bytes(
+            settings=settings_obj, object_key=object_key, config=storage_config,
+        )
+        if result is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, 'asset not found')
+        body, mime = result
+        return Response(
+            content=body,
+            media_type=mime,
+            headers={'Cache-Control': 'private, max-age=3600'},
+        )
+
+    raise HTTPException(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f'unsupported storage backend: {backend!r}',
+    )
+
+
+__all__ = ['face_variations_router', 'storage_router', '_build_prompt']

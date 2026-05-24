@@ -172,6 +172,119 @@ def test_storage_key_to_url_passthrough_http():
     assert _storage_key_to_url('http://localhost/x.png') == 'http://localhost/x.png'
 
 
+def test_storage_router_mounted_in_main():
+    """UI-INFLU-014.7: el storage_router debe estar registrado en main.py
+    para servir GET /v1/influencer/storage/{key:path}."""
+    main_src = Path('app/main.py').read_text(encoding='utf-8')
+    assert 'storage_router as influencer_storage_router' in main_src
+    assert 'include_router(influencer_storage_router)' in main_src
+
+
+def test_storage_key_belongs_to_tenant():
+    """Regla de seguridad: la key DEBE empezar con tenants/{tid}/..."""
+    from uuid import uuid4
+    from app.influencer.face_variations_router import _key_belongs_to_tenant
+    tid = uuid4()
+    assert _key_belongs_to_tenant(f'tenants/{tid}/influencer/x.png', tid) is True
+    # Cross-tenant rechazado.
+    other = uuid4()
+    assert _key_belongs_to_tenant(f'tenants/{other}/influencer/x.png', tid) is False
+    # Path absoluto rechazado.
+    assert _key_belongs_to_tenant('/etc/passwd', tid) is False
+    # Traversal rechazado por el prefijo (no empieza con `tenants/{tid}/`).
+    assert _key_belongs_to_tenant('../../../etc/passwd', tid) is False
+
+
+def test_serve_storage_asset_401_when_no_auth():
+    """Sin actor_id en el request → 401 (auth required)."""
+    import asyncio
+    from uuid import uuid4
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.influencer.face_variations_router import serve_storage_asset
+    import pytest as _pytest
+
+    request = SimpleNamespace(state=SimpleNamespace(actor_id=None))
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=None)
+    with _pytest.raises(HTTPException) as exc:
+        asyncio.run(serve_storage_asset(
+            object_key=f'tenants/{uuid4()}/influencer/x.png',
+            request=request, conn=conn,
+        ))
+    assert exc.value.status_code == 401
+
+
+def test_serve_storage_asset_400_when_invalid_key():
+    """Path que no empieza con tenants/{uuid}/ → 400."""
+    import asyncio
+    from uuid import uuid4
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.influencer.face_variations_router import serve_storage_asset
+    import pytest as _pytest
+
+    request = SimpleNamespace(state=SimpleNamespace(
+        actor_id=uuid4(), support_mode=False,
+    ))
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=None)
+    with _pytest.raises(HTTPException) as exc:
+        asyncio.run(serve_storage_asset(
+            object_key='not-a-tenants-path/x.png',
+            request=request, conn=conn,
+        ))
+    assert exc.value.status_code == 400
+
+
+def test_serve_storage_asset_403_when_user_not_member():
+    """User autenticado pero sin row en user_tenant_roles → 403."""
+    import asyncio
+    from uuid import uuid4
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.influencer.face_variations_router import serve_storage_asset
+    import pytest as _pytest
+
+    request = SimpleNamespace(state=SimpleNamespace(
+        actor_id=uuid4(), support_mode=False,
+    ))
+    conn = AsyncMock()
+    conn.execute = AsyncMock(return_value=None)
+    conn.fetchrow = AsyncMock(return_value=None)  # no membership
+    with _pytest.raises(HTTPException) as exc:
+        asyncio.run(serve_storage_asset(
+            object_key=f'tenants/{uuid4()}/influencer/x.png',
+            request=request, conn=conn,
+        ))
+    assert exc.value.status_code == 403
+
+
+def test_extract_tenant_id_from_key():
+    """Helper interno: extracción del tenant_id desde el path."""
+    from uuid import uuid4
+    from app.influencer.face_variations_router import _extract_tenant_id_from_key
+    tid = uuid4()
+    assert _extract_tenant_id_from_key(f'tenants/{tid}/influencer/x.png') == tid
+    assert _extract_tenant_id_from_key('foo/bar/baz.png') is None
+    assert _extract_tenant_id_from_key('tenants/not-a-uuid/x.png') is None
+    assert _extract_tenant_id_from_key('') is None
+
+
+def test_storage_key_to_url_passthrough_data_url():
+    """UI-INFLU-014.7: data URLs (base64 inline) son auto-contenidas y
+    el navegador las renderiza directo — no las prefijamos."""
+    from app.influencer.face_variations_router import _storage_key_to_url
+    data_url = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA=='
+    assert _storage_key_to_url(data_url) == data_url
+    # También funciona con image/jpeg, image/webp, etc.
+    jpeg = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAA'
+    assert _storage_key_to_url(jpeg) == jpeg
+
+
 def test_storage_key_to_url_wraps_opaque_key():
     """Keys opacas se prefijan con el proxy del admin para que el browser
     autenticado las pueda servir."""
@@ -230,7 +343,7 @@ def test_create_face_variations_handler_happy_path(monkeypatch):
     """Test directo del handler async — sin TestClient para velocidad.
     UI-INFLU-014.3 SÍNCRONO: el handler llama al provider, espera, y
     devuelve assets pobladas + status='completed'.
-    Mockeamos: provider resolve, adapter, decrypt_secret.
+    UI-INFLU-014.7: storage real (mockeamos store_face_variation_asset).
     """
     import asyncio
     from uuid import uuid4
@@ -238,6 +351,7 @@ def test_create_face_variations_handler_happy_path(monkeypatch):
     from types import SimpleNamespace
     from app.influencer import face_variations_router as fvr
     from app.ai.providers.base import ImageResult
+    from app.services.influencer_storage import StoredInfluencerAsset
 
     tenant_id = uuid4()
     persona_id = uuid4()
@@ -256,6 +370,23 @@ def test_create_face_variations_handler_happy_path(monkeypatch):
     ])
     monkeypatch.setattr(fvr, '_build_test_provider', lambda *a, **kw: fake_adapter)
     monkeypatch.setattr(fvr, '_decrypt_secret', lambda c: 'fake-key')
+    # Mock storage para no escribir a disco real durante el test.
+    fake_key = f'tenants/{tenant_id}/influencer/face-variations/{req_id}/0.png'
+    monkeypatch.setattr(
+        fvr, 'store_face_variation_asset',
+        lambda **kw: StoredInfluencerAsset(
+            storage_backend='local', bucket=None,
+            object_key=fake_key,
+            source_uri=f'file:///tmp/{fake_key}',
+            size_bytes=len(kw['data']), mime='image/png',
+        ),
+    )
+    # Mock storage config fetch: devuelve config local mínima.
+    async def _fake_fetch_config(conn, tid):
+        return {'backend': 'local', 'bucket': None, 'prefix': None}
+    monkeypatch.setattr(
+        fvr, 'fetch_tenant_knowledge_storage_config', _fake_fetch_config,
+    )
 
     conn = AsyncMock()
     conn.execute = AsyncMock(return_value=None)
@@ -288,7 +419,11 @@ def test_create_face_variations_handler_happy_path(monkeypatch):
     assert resp.status == 'completed'  # síncrono: ya completed
     assert len(resp.assets) == 1
     assert resp.assets[0].id == asset_id
-    assert resp.assets[0].url.startswith('data:image/png;base64,')
+    # UI-INFLU-014.7: la URL es ahora el endpoint del storage proxy
+    # (no data: inline), porque store_face_variation_asset devolvió
+    # una key opaca tipo `tenants/.../influencer/face-variations/...`.
+    assert resp.assets[0].url.startswith('/admin/api/core/v1/influencer/storage/')
+    assert 'tenants/' in resp.assets[0].url
     # El prompt debe incluir face+body.
     fake_adapter.generate_image.assert_awaited_once()
     prompt_arg = fake_adapter.generate_image.call_args.kwargs['prompt']

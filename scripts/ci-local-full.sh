@@ -3,7 +3,7 @@
 #
 # Cubre los 4 jobs del CI:
 #   1. api               (compile + ruff + pytest unit)
-#   2. coverage-gate     (pytest --cov-fail-under=90 con Postgres ephemeral)
+#   2. coverage-gate     (pytest --cov-fail-under=93 con Postgres ephemeral)
 #   3. tests-e2e         (journey + HTTP boundary E2E con Postgres ephemeral)
 #   4. admin-panel       (npm install + lint + test + a11y + coverage + build)
 #
@@ -122,10 +122,10 @@ fi
 
 # ── Job 2: coverage-gate ──────────────────────────────────────────────────
 if [[ $SKIP_COVERAGE == 0 ]]; then
-  section "Job 2/4 — coverage-gate (≥90% backend)"
+  section "Job 2/4 — coverage-gate (≥93% backend)"
   # MISMOS --ignore que el CI (ver ci.yml para el detalle de por qué).
   pytest --cov=app --cov-report=xml --cov-report=term \
-    --cov-fail-under=90 \
+    --cov-fail-under=93 \
     --ignore=tests/test_auth0_admin_service_credentials.py \
     --ignore=tests/test_auth0_invite.py \
     --ignore=tests/test_mfa_enforcement.py \

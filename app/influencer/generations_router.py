@@ -204,10 +204,14 @@ async def create_generation(
         raise HTTPException(
             status.HTTP_409_CONFLICT, 'cannot generate for archived persona',
         )
-    if persona['status'] != 'active':
+    # UI-INFLU-014.13 — permitimos generar para drafts también; antes
+    # solo se permitía status='active', lo que bloqueaba el flujo del
+    # estudio al iterar sobre un personaje recién creado. Solo `archived`
+    # bloquea ahora; pausados/drafts pueden generar.
+    if persona['status'] not in ('active', 'draft', 'paused'):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            f'persona is in status={persona["status"]!r}, must be active',
+            f'persona is in status={persona["status"]!r}, must be active/draft/paused',
         )
 
     # cost_credits provisional — TASK-INFLU-016 lo conecta con

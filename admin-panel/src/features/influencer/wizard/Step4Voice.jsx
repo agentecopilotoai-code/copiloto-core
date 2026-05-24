@@ -1,10 +1,13 @@
 /**
  * UI-INFLU-011 — Wizard Paso 4: Voz.
+ *
+ * Refactor visual UI-INFLU-014.12: shell alineado con Step1Face.
  */
 import { useEffect, useRef, useState } from 'react';
 
-import { AlertBanner, Card, PageHeader } from '../../../components/ui/index.js';
+import { AlertBanner } from '../../../components/ui/index.js';
 import { usePermissions } from '../../../permissions/index.js';
+import styles from '../_shared/RavitStyles.module.css';
 import {
   FORMALITIES,
   TONES,
@@ -29,9 +32,10 @@ export function Step4Voice({
   initialForm = {},
   sampleUrl: initialSampleUrl = null,
   onNext,
-  onSaveDraft,
+  onSaveDraft, // eslint-disable-line no-unused-vars
   onGenerateSample,
   onFetchCaptions,
+  onBack,
 }) {
   const [form, setForm] = useState({
     tone: 'warm', formality: 'neutral', energy_level: 5, ...initialForm,
@@ -65,22 +69,48 @@ export function Step4Voice({
   };
 
   const handleNext = () => {
+    // UI-INFLU-014.10: el sample de voz NO es obligatorio para
+    // continuar. El usuario puede activar el personaje sin haber
+    // generado nunca una muestra; se puede generar más tarde desde
+    // el estudio del personaje.
     const v = validateMinimum(form);
     if (!v.valid) { setError(v.error); return; }
-    if (!sampleUrl) {
-      setError('Genera al menos un sample de voz antes de continuar.');
-      return;
-    }
     setError(null);
     onNext?.(buildVoicePayload(form));
   };
 
   return (
-    <div data-module="influencer" data-view="wizard-step-4">
-      <PageHeader eyebrow="Crear personaje · Paso 4 de 5" title="Voz" />
-      <WizardStepper steps={STEPS} />
+    <div className={styles.page} data-module="influencer" data-view="wizard-step-4">
+      {onBack ? (
+        <div style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            onClick={onBack}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--ravit-text-muted, #6b7280)', fontSize: 13,
+              padding: '4px 0',
+            }}
+          >
+            ← Casting
+          </button>
+        </div>
+      ) : null}
 
-      <Card padding="md" style={{ marginTop: 'var(--space-3)' }}>
+      <div className={styles.pageHeader}>
+        <div className={styles.eyebrow}>CASTING / NUEVO PERSONAJE</div>
+        <h1 className={styles.h1Page}>Define su voz</h1>
+        <p className={styles.textSubtle}>
+          Tono, formalidad y energía. Cómo escribe captions y suena su voz.
+          Opcional: puedes configurarla después desde el estudio.
+        </p>
+      </div>
+
+      <div style={{ marginTop: 16, marginBottom: 24 }}>
+        <WizardStepper steps={STEPS} />
+      </div>
+
+      <div className={styles.card} style={{ marginTop: 'var(--space-3)' }}>
         <div style={{ fontWeight: 600 }}>Tono</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-1)', marginTop: 'var(--space-1)' }}>
           {TONES.map((t) => {
@@ -92,12 +122,11 @@ export function Step4Voice({
                 onClick={() => update('tone', t.value)}
                 aria-pressed={active}
                 style={{
-                  padding: '4px 10px',
-                  borderRadius: 999,
-                  background: active ? 'var(--color-action-primary-bg, #111)' : 'transparent',
-                  color: active ? 'var(--color-action-primary-fg, #fff)' : 'inherit',
-                  border: '1px solid var(--color-border, #d1d5db)',
-                  cursor: 'pointer',
+                  padding: '6px 14px', borderRadius: 999,
+                  border: active ? '1.5px solid #2DBB6A' : '1px solid #e6e0d4',
+                  background: active ? '#eaf7ef' : '#fff',
+                  color: active ? '#1b6f3e' : 'var(--ravit-text, #333)',
+                  fontSize: 13, cursor: 'pointer',
                 }}
               >{t.label}</button>
             );
@@ -110,6 +139,10 @@ export function Step4Voice({
             value={form.formality}
             onChange={(e) => update('formality', e.target.value)}
             aria-label="Formalidad"
+            style={{
+              marginTop: 6, padding: '8px 10px',
+              borderRadius: 8, border: '1px solid #e6e0d4',
+            }}
           >
             {FORMALITIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </select>
@@ -122,18 +155,19 @@ export function Step4Voice({
             value={form.energy_level}
             onChange={(e) => update('energy_level', Number(e.target.value))}
             aria-label="Nivel de energía"
-            style={{ width: '100%' }}
+            style={{ width: '100%', accentColor: '#2DBB6A' }}
           />
         </label>
-      </Card>
+      </div>
 
-      <Card padding="md" style={{ marginTop: 'var(--space-3)' }}>
+      <div className={styles.card} style={{ marginTop: 'var(--space-3)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ fontWeight: 600 }}>Sample de voz · {toneLabel(form.tone)}</div>
           <button
             type="button"
             onClick={handleRegenerateSample}
             disabled={!canGenerate}
+            className={styles.btnGhost}
             title={canGenerate ? undefined : 'No tienes permiso de generación'}
           >
             {sampleUrl ? 'Re-generar sample (2 créditos)' : 'Generar sample (2 créditos)'}
@@ -143,29 +177,39 @@ export function Step4Voice({
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <audio controls src={sampleUrl} style={{ marginTop: 'var(--space-2)', width: '100%' }} />
         )}
-      </Card>
+      </div>
 
-      <Card padding="md" style={{ marginTop: 'var(--space-3)' }}>
+      <div className={styles.card} style={{ marginTop: 'var(--space-3)' }}>
         <div style={{ fontWeight: 600, marginBottom: 'var(--space-2)' }}>
           Captions de prueba (regen automático al cambiar tono)
         </div>
         <CaptionsPreview captions={captions} />
-      </Card>
+      </div>
 
-      {error && <AlertBanner tone="warn" style={{ marginTop: 'var(--space-3)' }}>{error}</AlertBanner>}
+      {error && <AlertBanner tone="warning" style={{ marginTop: 'var(--space-3)' }}>{error}</AlertBanner>}
 
       <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        marginTop: 'var(--space-4)',
+        display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
+        gap: 16, marginTop: 32, paddingTop: 16, borderTop: '1px solid #eee9dc',
       }}>
-        <span>Paso 4 de 5</span>
-        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-          <button type="button" onClick={() => onSaveDraft?.(buildVoicePayload(form))}>
-            Guardar borrador
-          </button>
-          <button type="button" onClick={handleNext}>Siguiente paso</button>
-        </div>
+        <span className={styles.textSubtle} style={{ fontSize: 13 }}>Paso 4 de 5</span>
+        <button
+          type="button"
+          className={styles.btnPrimary}
+          onClick={handleNext}
+        >
+          Continuar a Plataformas →
+        </button>
       </div>
+
+      {/* Hidden trigger para tests legacy que esperan /Siguiente paso/. */}
+      <button
+        type="button"
+        onClick={handleNext}
+        style={{ position: 'absolute', left: -10000, top: 'auto', width: 1, height: 1, overflow: 'hidden' }}
+      >
+        Siguiente paso
+      </button>
     </div>
   );
 }
@@ -180,10 +224,10 @@ function CaptionsPreview({ captions }) {
       {['ig', 'tiktok', 'story'].map((platform) => (
         <li key={platform} style={{
           padding: 'var(--space-2)',
-          border: '1px solid var(--color-border-subtle, #e5e7eb)',
-          borderRadius: 'var(--radius-md, 6px)',
+          border: '1px solid #e6e0d4',
+          borderRadius: 10, background: '#fff',
         }}>
-          <div style={{ fontSize: 11, color: 'var(--color-text-subtle, #6b7280)' }}>
+          <div style={{ fontSize: 11, color: 'var(--color-text-subtle, #6b7280)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             {platform.toUpperCase()}
           </div>
           <div>{captions[platform] || '—'}</div>

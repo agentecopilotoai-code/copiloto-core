@@ -79,7 +79,7 @@ function CastingFilters({ category, sort, onCategoryChange, onSortChange }) {
 }
 
 
-function PersonaGrid({ personas, onOpenStudio }) {
+function PersonaGrid({ personas, onOpenStudio, onCreate }) {
   if (personas.length === 0) {
     return (
       <p role="status" className={shared.textSubtle}>
@@ -94,7 +94,53 @@ function PersonaGrid({ personas, onOpenStudio }) {
           <PersonaCard persona={p} onOpenStudio={onOpenStudio} />
         </li>
       ))}
+      {/* UI-INFLU-014.8: card "Crear nuevo personaje" al final del grid */}
+      <li>
+        <CreateNewPersonaCard onClick={onCreate} />
+      </li>
     </ul>
+  );
+}
+
+
+function CreateNewPersonaCard({ onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: '100%', minHeight: 300,
+        background: '#eaf7ef', border: '2px dashed #2DBB6A',
+        borderRadius: 14, cursor: 'pointer',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', gap: 12,
+        padding: 24,
+      }}
+    >
+      <div style={{
+        width: 56, height: 56, borderRadius: '50%',
+        background: '#2DBB6A', color: '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 28, fontWeight: 700,
+      }}>+</div>
+      <div style={{ fontWeight: 700, fontSize: 16, color: '#0a0f1f' }}>
+        Crear nuevo personaje
+      </div>
+      <p style={{
+        margin: 0, fontSize: 13, textAlign: 'center',
+        color: 'var(--ravit-text-muted, #6b7280)',
+        maxWidth: 220,
+      }}>
+        Sube una cara, define identidad y plataformas. Listo para postear en 5 minutos.
+      </p>
+      <div style={{
+        marginTop: 4, padding: '8px 16px', borderRadius: 8,
+        background: '#2DBB6A', color: '#fff', fontWeight: 600, fontSize: 13,
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+      }}>
+        <span aria-hidden="true">✦</span> Empezar
+      </div>
+    </button>
   );
 }
 
@@ -121,6 +167,13 @@ export function Casting({ casting }) {
   }
 
   const openStudio = (persona) => {
+    // UI-INFLU-014.11: cada personaje tiene su propio URL con su ID.
+    // - Drafts → /personas/{id}/wizard/step-1 (continúa configurándolo).
+    // - Activos/pausados → /personas/{id}/studio.
+    if (persona.status === 'draft') {
+      navigate(`/t/${tenantSlug}/influencer/personas/${persona.id}/wizard/step-1`);
+      return;
+    }
     navigate(`/t/${tenantSlug}/influencer/personas/${persona.id}/studio`);
   };
 
@@ -142,7 +195,11 @@ export function Casting({ casting }) {
           onCategoryChange={setCategory}
           onSortChange={setSort}
         />
-        <PersonaGrid personas={filtered} onOpenStudio={openStudio} />
+        <PersonaGrid
+          personas={filtered}
+          onOpenStudio={openStudio}
+          onCreate={() => navigate(`/t/${tenantSlug}/influencer/personas/new`)}
+        />
       </div>
     </div>
   );

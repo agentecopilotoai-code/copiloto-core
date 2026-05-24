@@ -69,9 +69,9 @@ jobs:
           path: pytest-report.xml
 
   coverage-gate:
-    name: "API — coverage ≥92% (gate de merge)"
+    name: "API — coverage ≥93% (gate de merge)"
     # Política PR-merge: el agregado de cobertura backend (unit + E2E con DB)
-    # debe estar ≥92%. Si baja, este job falla con exit 1 → branch protection
+    # debe estar ≥93%. Si baja, este job falla con exit 1 → branch protection
     # bloquea el merge. Mantener alineado con docs/DONE.md.
     # `needs: [api]` → no arranca si lint/compile/unit fallaron (ahorra ~5min
     # de runner + skip de Postgres ephemeral).
@@ -113,7 +113,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run full suite with coverage
-        # --cov-fail-under=92 hace exit 1 si la cobertura total cae bajo 92%.
+        # --cov-fail-under=93 hace exit 1 si la cobertura total cae bajo 93%.
         # Excluimos tests con env / settings cache conflicts pre-existentes:
         #   - test_auth0_admin_service_credentials.py
         #   - test_auth0_invite.py
@@ -138,7 +138,7 @@ jobs:
         # tarea aparte.
         run: |
           pytest --cov=app --cov-report=xml --cov-report=term \
-            --cov-fail-under=92 \
+            --cov-fail-under=93 \
             --ignore=tests/test_auth0_admin_service_credentials.py \
             --ignore=tests/test_auth0_invite.py \
             --ignore=tests/test_mfa_enforcement.py \

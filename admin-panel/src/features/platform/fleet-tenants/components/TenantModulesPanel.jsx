@@ -54,7 +54,8 @@ function formatDateTime(value) {
  * "consulta denegada").
  */
 export function TenantModulesPanel({ tenant }) {
-  const { profile } = useTenantContext();
+  // BUG-220: usePermissions() auto-resuelve profile/tenant del TenantContext;
+  // pasarlos explícito quedó deprecado.
   const permissions = usePermissions();
 
   const canRead = permissions?.can?.('platform.tenant_modules.read', 'R') ?? false;

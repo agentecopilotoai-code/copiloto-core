@@ -49,10 +49,19 @@ export function PersonaCard({ persona, onOpenStudio }) {
               width: 48, height: 48, borderRadius: '50%',
               background: 'var(--color-surface-emphasis, #eee)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontWeight: 600, fontSize: 18,
+              fontWeight: 600, fontSize: 18, overflow: 'hidden',
             }}
           >
-            {persona.name?.[0]?.toUpperCase() ?? '?'}
+            {persona.avatar_url ? (
+              // UI-INFLU-014.8: thumbnail = última variación generada.
+              <img
+                src={persona.avatar_url}
+                alt={`Avatar de ${persona.name}`}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            ) : (
+              persona.name?.[0]?.toUpperCase() ?? '?'
+            )}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 600 }}>{persona.name}</div>

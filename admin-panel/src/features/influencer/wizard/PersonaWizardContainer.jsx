@@ -53,38 +53,42 @@ import { Step2Body } from './Step2Body.jsx';
 import { Step3Identity } from './Step3Identity.jsx';
 import { Step4Voice } from './Step4Voice.jsx';
 import { Step5Platforms } from './Step5Platforms.jsx';
+import { WizardPreview } from './WizardPreview.jsx';
 
 const TOTAL_STEPS = 5;
 const STORAGE_PREFIX = 'influencer.wizardDraft';
 
-function storageKey(tenantId) {
-  return `${STORAGE_PREFIX}.${tenantId}`;
+// UI-INFLU-014.11: el key del sessionStorage ahora es por personaId,
+// no por tenantId. Esto permite que el usuario tenga N drafts en
+// paralelo (cada draft cachea su propio form state). Cuando aprieta
+// "Crear nuevo" desde casting, se crea un draft con su propio key.
+function storageKey(personaId) {
+  return `${STORAGE_PREFIX}.${personaId}`;
 }
 
-function loadDraft(tenantId) {
-  if (!tenantId || typeof sessionStorage === 'undefined') return null;
+function loadDraft(personaId) {
+  if (!personaId || typeof sessionStorage === 'undefined') return null;
   try {
-    const raw = sessionStorage.getItem(storageKey(tenantId));
+    const raw = sessionStorage.getItem(storageKey(personaId));
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
 }
 
-function saveDraft(tenantId, draft) {
-  if (!tenantId || typeof sessionStorage === 'undefined') return;
+function saveDraft(personaId, draft) {
+  if (!personaId || typeof sessionStorage === 'undefined') return;
   try {
-    sessionStorage.setItem(storageKey(tenantId), JSON.stringify(draft));
+    sessionStorage.setItem(storageKey(personaId), JSON.stringify(draft));
   } catch {
-    // Cuotas de storage llenas o private browsing: ignoramos, el wizard
-    // sigue funcionando contra backend pero pierde el resume local.
+    // Cuotas de storage llenas o private browsing: ignoramos.
   }
 }
 
-function clearDraft(tenantId) {
-  if (!tenantId || typeof sessionStorage === 'undefined') return;
+function clearDraft(personaId) {
+  if (!personaId || typeof sessionStorage === 'undefined') return;
   try {
-    sessionStorage.removeItem(storageKey(tenantId));
+    sessionStorage.removeItem(storageKey(personaId));
   } catch {
     /* ignore */
   }
@@ -101,20 +105,25 @@ function parseStepNum(stepSlug) {
 }
 
 export function PersonaWizardContainer() {
-  const { tenantSlug, stepSlug } = useParams();
+  // UI-INFLU-014.11: el `personaId` ahora viene del URL
+  // (`/personas/:personaId/wizard/:stepSlug`). Si no viene (caller
+  // usó la ruta legacy `/personas/new/:stepSlug`), redirigimos al
+  // flow "Crear personaje" que hace POST y nos manda con un ID.
+  const { tenantSlug, stepSlug, personaId: personaIdFromUrl } = useParams();
   const { activeTenant } = useOutletContext() ?? {};
   const { session } = useAuth();
   const navigate = useNavigate();
 
   const stepNum = parseStepNum(stepSlug);
   const tenantId = activeTenant?.id;
+  const personaId = personaIdFromUrl || null;
 
   // ──────────────────────────────────────────────────────────────────────
-  // State: draft local persistido en sessionStorage. `personaId` se setea
-  // tras el primer POST /personas (al apretar "Siguiente" en step 1).
+  // State: draft local persistido en sessionStorage por personaId.
+  // Inicializa con cache del personaId del URL (si existe).
   // ──────────────────────────────────────────────────────────────────────
-  const [draft, setDraft] = useState(() => loadDraft(tenantId) ?? {
-    personaId: null,
+  const [draft, setDraft] = useState(() => loadDraft(personaId) ?? {
+    personaId,
     face: null,
     body: null,
     identity: null,
@@ -125,59 +134,39 @@ export function PersonaWizardContainer() {
   });
   const [submitting, setSubmitting] = useState(false);
   const [globalError, setGlobalError] = useState(null);
-  // UI-INFLU-014.2: face_variation_request IDs en vuelo (polling).
-  // UI-INFLU-014.3: el endpoint es síncrono — no hay polling ni
-  // pendingRequests. `optimisticPending` (definido más abajo) controla
-  // el spinner local mientras el POST está en vuelo.
+
+  // Si el personaId del URL cambia, recargar el draft desde su cache.
+  useEffect(() => {
+    if (!personaId) return;
+    if (draft.personaId === personaId) return;
+    const stored = loadDraft(personaId);
+    setDraft(stored || {
+      personaId, face: null, body: null, identity: null,
+      voice: null, platforms: null, voiceSampleUrl: null,
+      faceVariations: [],
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [personaId]);
 
   // Sincronizar a sessionStorage cada vez que cambia el draft.
   useEffect(() => {
-    if (tenantId) saveDraft(tenantId, draft);
-  }, [tenantId, draft]);
+    if (personaId) saveDraft(personaId, draft);
+  }, [personaId, draft]);
 
   const updateDraft = useCallback((patch) => {
     setDraft((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  // ──────────────────────────────────────────────────────────────────────
-  // Persona creation (lazy): el row se crea en backend la primera vez que
-  // el user hace "Siguiente" en step 1. Si ya existe en el draft, reuse.
-  // ──────────────────────────────────────────────────────────────────────
-  const ensurePersona = useCallback(async (handle) => {
-    // Si tenemos un personaId cacheado, validamos que aún exista. El 404
-    // se silencia (sin toast) — el draft viejo se considera stale y
-    // recreamos uno nuevo abajo. Esto cubre el caso donde un INSERT
-    // anterior falló o el draft fue archivado en otra pestaña.
-    if (draft.personaId) {
-      try {
-        await getPersona(session, tenantId, draft.personaId);
-        return draft.personaId;
-      } catch (err) {
-        if (err?.status !== 404) throw err;
-        updateDraft({ personaId: null });
-        // fall-through al create.
-      }
+  // UI-INFLU-014.11: el personaId viene del URL. Esta función SOLO
+  // devuelve el ID (el create se hizo en `CreatePersonaAndRedirect`).
+  // Si el ID del URL no existe en backend (404), navigate al casting.
+  const ensurePersona = useCallback(async () => {
+    if (!personaId) {
+      navigate(`/t/${tenantSlug}/influencer/influencer-casting`, { replace: true });
+      throw new Error('no personaId in URL');
     }
-    // Backend (`PersonaCreate` en `personas_models.py`) exige:
-    //   - `name: str` (NO `display_name`).
-    //   - `handle: str` con regex `[a-z0-9][a-z0-9_]{2,29}` (lowercase,
-    //     alfanumérico o underscore, 3-30 chars, primer char letra/dígito).
-    // El step 3 (Identity) sobrescribe ambos con los valores reales que
-    // el user elija. Acá generamos placeholders válidos para que el
-    // backend acepte la creación del draft.
-    const draftHandle = handle && /^[a-z0-9][a-z0-9_]{2,29}$/.test(handle)
-      ? handle
-      // 13 dígitos de timestamp + prefijo `draft_` = 19 chars, dentro del
-      // límite 3-30 y respeta regex (sin guion).
-      : `draft_${Date.now()}`;
-    const created = await createPersona(session, tenantId, {
-      handle: draftHandle,
-      name: handle || 'Personaje en construcción',
-      status: 'draft',
-    });
-    updateDraft({ personaId: created.id });
-    return created.id;
-  }, [draft.personaId, session, tenantId, updateDraft]);
+    return personaId;
+  }, [personaId, navigate, tenantSlug]);
 
   // ──────────────────────────────────────────────────────────────────────
   // Step callbacks. Cada `handleNextN` persiste el step en backend y
@@ -284,7 +273,11 @@ export function PersonaWizardContainer() {
     ...makeStepHandlers(wizardSaveIdentity, 'identity', 4),
     // Step 3 también acepta `onCheckHandle` para validar handle único —
     // por ahora dejamos un stub local; el backend valida en el PUT.
-    onCheckHandle: () => Promise.resolve({ available: true }),
+    // UI-INFLU-014.8: el step espera un BOOLEAN (`taken`). Antes
+    // devolvíamos `{ available: true }` que como object es truthy →
+    // siempre marcaba "Handle ya en uso". Devolvemos `false` (no taken)
+    // — el backend valida unicidad real en el PUT/POST.
+    onCheckHandle: () => Promise.resolve(false),
   };
   const step4Handlers = makeStepHandlers(wizardSaveVoice, 'voice', 5);
 
@@ -374,42 +367,80 @@ export function PersonaWizardContainer() {
           onGenerateVariations={handleGenerateVariations}
           onNext={handleNextFace}
           onSaveDraft={handleSaveDraftFace}
+          onBack={() => navigate(`/t/${tenantSlug}/influencer/influencer-casting`)}
           pendingCount={optimisticPending}
         />
       ) : null}
-      {stepNum === 2 ? (
-        <Step2Body
-          initialForm={draft.body || {}}
-          onNext={step2Handlers.onNext}
-          onSaveDraft={step2Handlers.onSaveDraft}
-        />
-      ) : null}
-      {stepNum === 3 ? (
-        <Step3Identity
-          initialForm={draft.identity || {}}
-          onNext={step3Handlers.onNext}
-          onSaveDraft={step3Handlers.onSaveDraft}
-          onCheckHandle={step3Handlers.onCheckHandle}
-        />
-      ) : null}
-      {stepNum === 4 ? (
-        <Step4Voice
-          initialForm={draft.voice || {}}
-          sampleUrl={draft.voiceSampleUrl}
-          onGenerateSample={handleGenerateVoiceSample}
-          onNext={step4Handlers.onNext}
-          onSaveDraft={step4Handlers.onSaveDraft}
-        />
-      ) : null}
-      {stepNum === 5 ? (
-        <Step5Platforms
-          initialAccounts={draft.platforms?.accounts || []}
-          initialMode={draft.platforms?.mode || 'manual_approval'}
-          initialAutoRespondDms={draft.platforms?.auto_respond_dms || false}
-          onConnectInstagram={handleConnectInstagram}
-          onActivate={handleActivate}
-          onSaveDraft={(p) => updateDraft({ platforms: p })}
-        />
+      {/* UI-INFLU-014.8: steps 2-5 envueltos en grid 2-col con
+          WizardPreview persistente a la izquierda. Step1Face mantiene
+          su propio preview interno (no se duplica). */}
+      {stepNum >= 2 && stepNum <= 5 ? (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(280px, 1fr) minmax(0, 1.4fr)',
+          gap: 24, alignItems: 'start',
+        }}>
+          <WizardPreview
+            personaName={draft.identity?.name || 'Personaje en construcción'}
+            variations={draft.faceVariations || []}
+            onSelectVariation={(id) => {
+              // Marca canonical la seleccionada (local — el backend
+              // persiste cuando se activa el personaje en step 5).
+              const next = (draft.faceVariations || []).map((v) => ({
+                ...v, canonical: v.id === id,
+              }));
+              updateDraft({ faceVariations: next });
+            }}
+            onGenerate={() => {
+              // Reutiliza handleGenerateVariations con el último face
+              // payload conocido del draft.
+              handleGenerateVariations({
+                ...(draft.face || {}), count: 1,
+              });
+            }}
+            pendingCount={optimisticPending}
+          />
+          <div>
+            {stepNum === 2 ? (
+              <Step2Body
+                initialForm={draft.body || {}}
+                onNext={step2Handlers.onNext}
+                onSaveDraft={step2Handlers.onSaveDraft}
+                onBack={() => navigate(`/t/${tenantSlug}/influencer/influencer-casting`)}
+              />
+            ) : null}
+            {stepNum === 3 ? (
+              <Step3Identity
+                initialForm={draft.identity || {}}
+                onNext={step3Handlers.onNext}
+                onSaveDraft={step3Handlers.onSaveDraft}
+                onCheckHandle={step3Handlers.onCheckHandle}
+                onBack={() => navigate(`/t/${tenantSlug}/influencer/influencer-casting`)}
+              />
+            ) : null}
+            {stepNum === 4 ? (
+              <Step4Voice
+                initialForm={draft.voice || {}}
+                sampleUrl={draft.voiceSampleUrl}
+                onGenerateSample={handleGenerateVoiceSample}
+                onNext={step4Handlers.onNext}
+                onSaveDraft={step4Handlers.onSaveDraft}
+                onBack={() => navigate(`/t/${tenantSlug}/influencer/influencer-casting`)}
+              />
+            ) : null}
+            {stepNum === 5 ? (
+              <Step5Platforms
+                initialAccounts={draft.platforms?.accounts || []}
+                initialMode={draft.platforms?.mode || 'manual_approval'}
+                initialAutoRespondDms={draft.platforms?.auto_respond_dms || false}
+                onConnectInstagram={handleConnectInstagram}
+                onActivate={handleActivate}
+                onSaveDraft={(p) => updateDraft({ platforms: p })}
+                onBack={() => navigate(`/t/${tenantSlug}/influencer/influencer-casting`)}
+              />
+            ) : null}
+          </div>
+        </div>
       ) : null}
     </div>
   );

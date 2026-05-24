@@ -1,31 +1,63 @@
 /**
- * UI-INFLU-003 — wrapper que carga `/v1/influencer/casting` y decide
- * entre `CastingEmptyState` (personas=[]) y la vista con personajes
- * (`CastingWithPersonas`, montado en UI-INFLU-004).
+ * UI-INFLU-014.6 — `InfluencerCasting` carga `/v1/influencer/casting`
+ * con `coreApi.getCasting()` y renderiza:
+ *   - `CastingEmptyState` cuando `personas=[]`,
+ *   - `Casting` cuando hay al menos un personaje (incluyendo drafts).
  *
- * Mientras UI-INFLU-004 no aterrice, este componente siempre renderiza
- * el empty state — el HTTP request se evita si el caller ya sabe que
- * el casting está vacío (caso primera vez en el tenant).
+ * Antes este componente NUNCA llamaba al backend (el comentario lo
+ * decía: "UI-INFLU-004 inyectará el fetch real"). Resultado: aunque
+ * existían personas en DB, el UI siempre mostraba empty state. Bug
+ * reportado por el usuario el 2026-05-22.
+ *
+ * El prop `casting` se mantiene para que los tests existentes (que
+ * inyectan un mock) sigan funcionando sin red.
  */
 import { useEffect, useState } from 'react';
 
-import { Card } from '../../../components/ui/index.js';
+import { Card, AlertBanner } from '../../../components/ui/index.js';
+import { useAuth } from '../../../context/AuthContext.jsx';
+import { useActiveTenant } from '../../../hooks/useActiveTenant.js';
+import { getCasting } from '../../../services/coreApi.js';
 import { Casting } from './Casting.jsx';
 import { CastingEmptyState } from './CastingEmptyState.jsx';
 
 export function InfluencerCasting({ casting: castingProp = null, loading: loadingProp = false }) {
+  const { session } = useAuth();
+  const activeTenant = useActiveTenant();
+  const tenantId = activeTenant?.id;
+
   const [casting, setCasting] = useState(castingProp);
-  const [loading, setLoading] = useState(loadingProp);
+  const [loading, setLoading] = useState(loadingProp || castingProp === null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    // UI-INFLU-004 inyectará el fetch real (coreApi.getCasting). Por
-    // ahora aceptamos `casting` como prop para que el caller (o tests)
-    // puedan inyectar un valor; sin prop, asumimos lista vacía.
-    if (castingProp === null) {
-      setCasting({ kpis: { active_personas: 0 }, personas: [] });
+    if (castingProp !== null) {
+      // Caller ya inyectó datos (tests, server-side render preflight, etc.).
+      setCasting(castingProp);
       setLoading(false);
+      return undefined;
     }
-  }, [castingProp]);
+    if (!session || !tenantId) return undefined;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      try {
+        const data = await getCasting(session, tenantId);
+        if (!cancelled) {
+          setCasting(data);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err?.message || 'No se pudo cargar el casting');
+          setCasting({ kpis: { active_personas: 0 }, personas: [] });
+          setLoading(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [castingProp, session, tenantId]);
 
   if (loading) {
     return (
@@ -37,10 +69,17 @@ export function InfluencerCasting({ casting: castingProp = null, loading: loadin
     );
   }
 
+  if (error) {
+    return (
+      <AlertBanner tone="warning">
+        {error}
+      </AlertBanner>
+    );
+  }
+
   if (!casting || (casting.personas?.length ?? 0) === 0) {
     return <CastingEmptyState />;
   }
 
-  // UI-INFLU-004 — vista con personajes (KPIs + filtros + grid).
   return <Casting casting={casting} />;
 }

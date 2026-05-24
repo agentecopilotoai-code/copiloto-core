@@ -338,6 +338,22 @@ export function Step1Face({
 
   return (
     <div className={styles.page} data-module="influencer" data-view="wizard-step-1">
+      {/* UI-INFLU-014.7: "← Casting" arriba (era footer). Permite
+          volver al listado sin tener que scrollear al final del form. */}
+      <div style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          className={styles.btnGhost}
+          onClick={onBack}
+          style={{
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: 'var(--ravit-text-muted, #6b7280)', fontSize: 13,
+            padding: '4px 0',
+          }}
+        >
+          ← Casting
+        </button>
+      </div>
       {/* HEADER */}
       <div className={styles.pageHeader}>
         <div className={styles.eyebrow}>CASTING / NUEVO PERSONAJE</div>
@@ -437,10 +453,14 @@ export function Step1Face({
           </div>
           {(variations.length > 0 || pendingCount > 0) ? (
             <ul aria-label="Variaciones" style={{
-              display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
+              // UI-INFLU-014.8: muestra TODAS las variaciones generadas
+              // (antes hardcoded a 5). Grid responsive con auto-fill que
+              // hace wrap cuando no caben en una línea.
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))',
               gap: 8, padding: 0, listStyle: 'none', margin: 0,
             }}>
-              {variations.slice(0, 5).map((v) => (
+              {variations.map((v) => (
                 <li key={v.id}>
                   <button
                     type="button"
@@ -467,7 +487,7 @@ export function Step1Face({
               ))}
               {/* Thumbnails pending — uno por cada generación en vuelo.
                   Spinner pequeño centrado estilo del diseño. */}
-              {Array.from({ length: Math.max(0, Math.min(pendingCount, 5 - variations.length)) }, (_, i) => (
+              {Array.from({ length: Math.max(0, pendingCount) }, (_, i) => (
                 <li key={`pending-${i}`}>
                   <div
                     role="status"
@@ -619,35 +639,21 @@ export function Step1Face({
         </AlertBanner>
       ) : null}
 
-      {/* FOOTER */}
+      {/* UI-INFLU-014.7: footer simplificado — el "← Casting" se movió
+          al header; el "Guardar borrador" se eliminó (auto-save al
+          generar variación + al hacer Siguiente). */}
       <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        marginTop: 32, paddingTop: 16, borderTop: '1px solid #eee9dc',
+        display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
+        gap: 16, marginTop: 32, paddingTop: 16, borderTop: '1px solid #eee9dc',
       }}>
+        <span className={styles.textSubtle} style={{ fontSize: 13 }}>Paso 1 de 5</span>
         <button
           type="button"
-          className={styles.btnGhost}
-          onClick={onBack}
+          className={styles.btnPrimary}
+          onClick={handleNext}
         >
-          ← Casting
+          Continuar a Cuerpo →
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span className={styles.textSubtle} style={{ fontSize: 13 }}>Paso 1 de 5</span>
-          <button
-            type="button"
-            className={styles.btnGhost}
-            onClick={() => onSaveDraft?.(buildFacePayload(form))}
-          >
-            Guardar borrador
-          </button>
-          <button
-            type="button"
-            className={styles.btnPrimary}
-            onClick={handleNext}
-          >
-            Continuar a Cuerpo →
-          </button>
-        </div>
       </div>
 
       {/* Hidden button para tests legacy que buscan "Siguiente paso".

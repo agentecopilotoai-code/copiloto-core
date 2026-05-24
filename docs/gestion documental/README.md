@@ -30,6 +30,8 @@ Este módulo implementa la plataforma institucional descrita en los cinco docume
 | [`03-matriz-roles-permisos-funciones-v0.1.pdf`](source-documents/03-matriz-roles-permisos-funciones-v0.1.pdf) | 19 roles (ROL-001..ROL-019) + ~140 permisos (PERM-*) + reglas especiales de seguridad. |
 | [`04-mapa-modulos-arquitectura-logica-v0.1.pdf`](source-documents/04-mapa-modulos-arquitectura-logica-v0.1.pdf) | 20 módulos (MOD-001..MOD-020) + dependencias + eventos del sistema. |
 | [`05-modelo-datos-conceptual-v0.1.pdf`](source-documents/05-modelo-datos-conceptual-v0.1.pdf) | 36 entidades críticas para v1 + reglas de persistencia histórica + estados conceptuales. |
+| [`05-modelo-datos-conceptual-v0.1-rev1-perifericos.pdf`](source-documents/05-modelo-datos-conceptual-v0.1-rev1-perifericos.pdf) | **Revisión 1 del Doc 5** entregada 2026-05-23 — agrega § 28 con 5 entidades de periféricos (`Periferico`, `PuntoAtencion`, `ImpresionRadicado`, `DigitalizacionDocumento`, `CodigoBarrasRadicado`) + 10 permisos PERM-PER-001..010. Cubierto por EP-021. |
+| [`06-componente-perifericos-v0.1.pdf`](source-documents/06-componente-perifericos-v0.1.pdf) | **Documento técnico especial** entregado 2026-05-23 — define arquitectura agente local / servicio puente / plugin / API fabricante; 8 requisitos funcionales (RFP-001..008) + 6 no funcionales (RNFP-001..006); permisos PERM-PER-011..012; flujos de radicación presencial + escaneo por lote. Cubierto por EP-021 + EP-013 UI. |
 
 Los PDFs originales no se versionan en el repo (vienen del cliente). Cualquier ambigüedad se resuelve por el orden de prelación:
 
@@ -72,11 +74,16 @@ No reutilizar números: si una tarea se mueve a un futuro `docs/gestion document
 
 ## 4. Cómo se navega este backlog
 
-- [`BACKLOG.md`](BACKLOG.md) → tareas de **backend / API / base de datos / workers / integraciones / IA**. Agrupadas en 20 épicas (EP-001..EP-020) alineadas a los 20 módulos (MOD-001..MOD-020) del Mapa de Arquitectura más dos servicios transversales (EP-018 archivos, EP-019 auditoría) y una de cierre de gaps (EP-020).
-- [`UI_BACKLOG.md`](UI_BACKLOG.md) → tareas de **frontend (admin-panel)** para todos los roles. Agrupadas en 12 épicas alineadas a los menús por rol que define la Matriz de Roles.
+- [`BACKLOG.md`](BACKLOG.md) → tareas de **backend / API / base de datos / workers / integraciones / IA**. Agrupadas en **21 épicas** (EP-001..EP-021) alineadas a los 20 módulos (MOD-001..MOD-020) del Mapa de Arquitectura más dos servicios transversales (EP-018 archivos, EP-019 auditoría), una de cierre de gaps (EP-020) y una para **periféricos de Ventanilla Única** (EP-021 — Doc 5-rev1 + Doc 6). Total ≈142 tareas (GD-API-0001..GD-API-0142).
+- [`UI_BACKLOG.md`](UI_BACKLOG.md) → tareas de **frontend (admin-panel)** para todos los roles. Agrupadas en **13 épicas** alineadas a los menús por rol que define la Matriz de Roles, incluyendo EP-013 para operación de periféricos. Total ≈94 tareas (GD-UI-0001..GD-UI-0094).
+- [`integracion/`](integracion/) → **carpeta de contratos UI ↔ Backend** (nueva, 2026-05-23). Por cada endpoint REST documenta request payload, response (2xx + errores específicos), permisos, eventos emitidos y qué ticket UI lo consume. Organizada por entrega:
+  - [`integracion/README.md`](integracion/README.md) — índice maestro + convenciones (errores, paginación, snapshots, headers obligatorios, reglas IA/archivos/anulación).
+  - [`integracion/INTEGRACION_E1_IDENTIDAD.md`](integracion/INTEGRACION_E1_IDENTIDAD.md) — EP-001 + EP-002 + EP-019 (~50 endpoints).
+  - [`integracion/INTEGRACION_E2_VENTANILLA.md`](integracion/INTEGRACION_E2_VENTANILLA.md) — EP-004 + EP-005 + EP-021 (~45 endpoints, incluye periféricos completos + webhooks del agente local + tabla de mapeo ticket UI ↔ endpoints).
+  - Entregas E3 a E8 + RPA: pendientes (siguiente iteración, ver TRAZABILIDAD § 7).
 - [`ARQUITECTURA.md`](ARQUITECTURA.md) → cinco mermaids: ER tenant↔perfil↔módulos, arquitectura completa core/app/knowledge/gd, flujo end-to-end de PDF escaneado con OCR, activación de módulos por tipo de organización, patrones de tenancy.
-- [`TRAZABILIDAD.md`](TRAZABILIDAD.md) → auditoría cruzada: cada sección de cada PDF mapeada a la tarea que la cubre, con identificación explícita de gaps (cerrados en EP-020).
-- [`source-documents/`](source-documents/) → los cinco PDFs originales del cliente versionados en el repo.
+- [`TRAZABILIDAD.md`](TRAZABILIDAD.md) → auditoría cruzada: cada sección de cada PDF (incluidos Doc 5-rev1 y Doc 6) mapeada a la tarea que la cubre, con identificación explícita de gaps (cerrados en EP-020 y EP-021).
+- [`source-documents/`](source-documents/) → los **siete PDFs** del cliente versionados en el repo (5 originales + rev1 de Doc 5 + Doc 6 nuevo).
 
 Cada tarea declara:
 - **Épica padre.**
@@ -98,9 +105,12 @@ Entrega 1 — Base institucional y seguridad
     ├─ Épicas API: EP-001 (Identidad), EP-002 (Configuración + Estructura orgánica), EP-003 (Auditoría base)
     └─ Épicas UI:  EP-001 (Design system + routing), EP-008 (Administración)
 
-Entrega 2 — Ventanilla Única
-    ├─ Épicas API: EP-004 (Ventanilla + Radicación), EP-005 (Terceros)
-    └─ Épicas UI:  EP-002 (Ventanilla Única)
+Entrega 2 — Ventanilla Única (con periféricos opcionales)
+    ├─ Épicas API: EP-004 (Ventanilla + Radicación), EP-005 (Terceros), EP-021 (Periféricos — opcional)
+    └─ Épicas UI:  EP-002 (Ventanilla Única), EP-013 (Periféricos — opcional)
+    └─ Nota: EP-021 / EP-013 solo se activan si la organización marca
+       `ventanilla_presencial_con_perifericos=true` (default sí para tipo_organizacion='publica'
+       o 'mixta', no para 'privada' que opera solo digital).
 
 Entrega 3 — Buzón y tareas
     ├─ Épicas API: EP-006 (Buzón + Tareas + Notificaciones + Alertas)
@@ -153,5 +163,5 @@ Toda tarea (`GD-API-NNNN` o `GD-UI-NNNN`) se considera terminada solo si:
 
 ---
 
-**Última actualización:** 2026-05-20
-**Versión:** 0.1 (borrador inicial — pendiente de validación por el cliente antes de iniciar ejecución)
+**Última actualización:** 2026-05-23 (rev. EP-021 — periféricos + carpeta `integracion/`)
+**Versión:** 0.1.1 (revisión incremental — incorpora Doc 5-rev1 y Doc 6 entregados por el cliente; pendiente de validación final por el cliente antes de iniciar ejecución de EP-021)

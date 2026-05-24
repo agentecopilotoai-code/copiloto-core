@@ -14,14 +14,14 @@ export default defineConfig({
     },
     include: ['src/**/*.test.{js,jsx}'],
     // Cobertura del admin-panel.
-    // **Umbral global: ≥85%** statements/lines (política PR-merge).
-    //   - Si el total cae bajo 85%, `npm run test:coverage` exit 1 → CI rojo
+    // **Umbral global: ≥86%** statements/lines (política PR-merge).
+    //   - Si el total cae bajo 86%, `npm run test:coverage` exit 1 → CI rojo
     //     → branch protection bloquea el merge.
     //   - Mantener este número alineado con docs/DONE.md y la regla de
     //     `Required status checks` en GitHub.
     //
     // Mínimos por directorio (más estrictos donde ya tenemos cobertura
-    // alta, para evitar regresiones puntuales aun cuando el total siga ≥85%):
+    // alta, para evitar regresiones puntuales aun cuando el total siga ≥86%):
     //   - components/ui    ≥ 85%
     //   - permissions      ≥ 85%
     //   - services         ≥ 85%
@@ -40,9 +40,9 @@ export default defineConfig({
       ],
       thresholds: {
         // Umbral global — el más importante para la regla "PR no mergeable
-        // si frontend coverage < 85%".
-        lines: 85,
-        statements: 85,
+        // si frontend coverage < 86%".
+        lines: 86,
+        statements: 86,
         functions: 75,
         branches: 75,
         // Umbrales por carpeta — más estrictos donde ya hay cobertura alta
