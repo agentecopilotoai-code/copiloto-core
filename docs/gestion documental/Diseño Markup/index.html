@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portal · Gestión Documental</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  :root {
+    --slate-50: #F8FAFC; --slate-100: #F1F5F9; --slate-200: #E2E8F0;
+    --slate-300: #CBD5E1; --slate-400: #94A3B8; --slate-500: #64748B;
+    --slate-600: #475569; --slate-700: #334155; --slate-800: #1E293B; --slate-900: #0F172A;
+    --sky-50: #F0F9FF; --sky-100: #E0F2FE; --sky-500: #0EA5E9; --sky-600: #0284C7; --sky-700: #0369A1;
+    --emerald-700: #047857; --amber-700: #B45309; --red-700: #B91C1C; --violet-700: #6D28D9;
+    --font-display: "Source Serif 4", Georgia, serif;
+    --font-sans: "Source Sans 3", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+    --r-md: 6px; --r-lg: 8px; --r-xl: 12px;
+    --shadow-xs: 0 1px 0 rgba(15, 23, 42, 0.04);
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+    --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--slate-900);
+    background: var(--slate-50);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Topbar */
+  .topbar {
+    background: white;
+    border-bottom: 1px solid var(--slate-200);
+    padding: 16px 48px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    position: sticky; top: 0; z-index: 10;
+  }
+  .topbar .brand { display: flex; align-items: center; gap: 12px; }
+  .topbar .mark {
+    width: 32px; height: 32px;
+    background: var(--slate-900);
+    border-radius: var(--r-md);
+    display: grid; place-items: center;
+    color: white;
+    font-family: var(--font-display); font-weight: 600; font-size: 16px;
+  }
+  .topbar .title-block .title {
+    font-family: var(--font-display); font-weight: 600; font-size: 15px; line-height: 1.1;
+  }
+  .topbar .title-block .subtitle {
+    font-size: 11px; color: var(--slate-500);
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .topbar .meta {
+    margin-left: auto;
+    display: flex; gap: 24px;
+    font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--slate-500);
+  }
+
+  /* Hero */
+  .hero {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 80px 48px 64px;
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 64px;
+    align-items: center;
+  }
+  .hero .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--sky-700);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    margin-bottom: 20px;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .hero .eyebrow::before {
+    content: ""; width: 18px; height: 1px; background: var(--sky-700);
+  }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 56px;
+    line-height: 1.06;
+    letter-spacing: -0.022em;
+    margin: 0 0 24px;
+    color: var(--slate-900);
+    text-wrap: balance;
+  }
+  .hero h1 em {
+    font-style: italic;
+    color: var(--sky-700);
+    font-weight: 600;
+  }
+  .hero .lede {
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--slate-600);
+    max-width: 540px;
+    text-wrap: pretty;
+    margin-bottom: 36px;
+  }
+  .hero .cta-row { display: flex; gap: 12px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 44px; padding: 0 20px;
+    border-radius: var(--r-md);
+    font-size: 14.5px; font-weight: 600;
+    border: 1px solid transparent;
+    cursor: pointer; text-decoration: none;
+    font-family: var(--font-sans);
+  }
+  .btn svg { width: 16px; height: 16px; }
+  .btn-primary { background: var(--slate-900); color: white; border-color: var(--slate-900); }
+  .btn-primary:hover { background: var(--slate-800); }
+  .btn-secondary { background: white; color: var(--slate-900); border-color: var(--slate-300); box-shadow: var(--shadow-xs); }
+  .btn-secondary:hover { background: var(--slate-50); border-color: var(--slate-400); }
+
+  /* Hero illustration: mini-mockup */
+  .hero-aside {
+    position: relative;
+    aspect-ratio: 5 / 4;
+    background: white;
+    border: 1px solid var(--slate-200);
+    border-radius: var(--r-lg);
+    box-shadow: 0 24px 48px -16px rgba(15, 23, 42, 0.18), 0 4px 12px rgba(15, 23, 42, 0.06);
+    overflow: hidden;
+    transform: rotate(-1.5deg);
+  }
+  .hero-aside::before {
+    content: "";
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(180deg, var(--slate-50) 0 32px, transparent 32px);
+  }
+  .hero-aside .titlebar {
+    position: absolute; top: 0; left: 0; right: 0; height: 32px;
+    background: white; border-bottom: 1px solid var(--slate-200);
+    display: flex; align-items: center; gap: 6px; padding: 0 12px;
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--slate-500);
+  }
+  .hero-aside .titlebar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--slate-300); }
+  .hero-aside .body {
+    padding: 56px 24px 24px;
+    height: 100%;
+  }
+  .hero-aside .stub {
+    height: 12px; background: var(--slate-100); border-radius: 3px; margin-bottom: 8px;
+  }
+  .hero-aside .stub.short { width: 50%; }
+  .hero-aside .stub.mid { width: 75%; }
+  .hero-aside .stub.dark { background: var(--slate-200); height: 14px; width: 60%; margin-bottom: 16px; }
+  .hero-aside .row {
+    display: grid; grid-template-columns: 1fr 80px;
+    align-items: center; gap: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--slate-100);
+  }
+  .hero-aside .row .pill {
+    height: 18px; padding: 0 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; display: inline-flex; align-items: center;
+    justify-self: end;
+  }
+  .hero-aside .pill-info { background: var(--sky-50); color: var(--sky-700); border: 1px solid #BAE6FD; }
+  .hero-aside .pill-warn { background: #FFFBEB; color: var(--amber-700); border: 1px solid #FCD34D; }
+  .hero-aside .pill-ok   { background: #ECFDF5; color: var(--emerald-700); border: 1px solid #A7F3D0; }
+  .hero-aside .num {
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--slate-700);
+  }
+
+  /* Section anchor */
+  section.section {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 48px 48px;
+    border-top: 1px solid var(--slate-200);
+  }
+  section.section h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 32px;
+    line-height: 1.15;
+    margin: 0 0 8px;
+    letter-spacing: -0.015em;
+  }
+  section.section .desc {
+    color: var(--slate-600);
+    font-size: 15px;
+    max-width: 640px;
+    margin: 0 0 32px;
+  }
+  .section-head {
+    display: flex; align-items: baseline; gap: 16px; margin-bottom: 12px;
+  }
+  .section-head .num {
+    font-family: var(--font-mono); font-size: 12px; color: var(--sky-700); font-weight: 500;
+  }
+
+  /* View grid */
+  .view-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .view-card {
+    background: white;
+    border: 1px solid var(--slate-200);
+    border-radius: var(--r-lg);
+    padding: 24px;
+    text-decoration: none;
+    color: inherit;
+    display: flex; flex-direction: column;
+    gap: 12px;
+    transition: border-color 150ms, box-shadow 150ms, transform 150ms;
+    position: relative;
+    min-height: 180px;
+  }
+  .view-card.ready { border-color: var(--slate-300); }
+  .view-card.ready:hover {
+    border-color: var(--slate-900);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+  .view-card.coming { opacity: 0.75; cursor: not-allowed; }
+  .view-card .head { display: flex; align-items: center; gap: 12px; }
+  .view-card .head .glyph {
+    width: 32px; height: 32px;
+    background: var(--slate-100);
+    border: 1px solid var(--slate-200);
+    border-radius: var(--r-md);
+    display: grid; place-items: center;
+    color: var(--slate-700);
+  }
+  .view-card.ready .head .glyph { background: var(--slate-900); border-color: var(--slate-900); color: white; }
+  .view-card .head .glyph svg { width: 16px; height: 16px; }
+  .view-card .head .code {
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--slate-500);
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin-left: auto;
+  }
+  .view-card h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 17px;
+    margin: 0;
+    line-height: 1.25;
+    color: var(--slate-900);
+  }
+  .view-card p {
+    font-size: 13px;
+    color: var(--slate-500);
+    line-height: 1.5;
+    margin: 0;
+    flex: 1;
+  }
+  .view-card .foot {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600;
+    font-family: var(--font-mono);
+    color: var(--slate-500);
+    margin-top: 4px;
+  }
+  .view-card.ready .foot { color: var(--sky-700); }
+  .view-card .foot svg { width: 12px; height: 12px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 18px; padding: 0 6px;
+    border-radius: 3px;
+    font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .badge.done { background: #ECFDF5; color: var(--emerald-700); border: 1px solid #A7F3D0; }
+  .badge.todo { background: var(--slate-100); color: var(--slate-600); border: 1px solid var(--slate-200); }
+
+  /* Stats strip */
+  .stats {
+    background: var(--slate-900);
+    color: white;
+    padding: 48px;
+    border-radius: var(--r-lg);
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 32px;
+    max-width: 1200px;
+    margin: 32px auto 0;
+  }
+  .stats .stat .value {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 44px;
+    line-height: 1;
+    letter-spacing: -0.015em;
+    margin-bottom: 8px;
+  }
+  .stats .stat .label {
+    font-size: 12px;
+    color: var(--slate-400);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
+  }
+  .stats .stat .desc {
+    color: var(--slate-300);
+    font-size: 13px;
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  /* Roadmap */
+  .roadmap {
+    background: white;
+    border: 1px solid var(--slate-200);
+    border-radius: var(--r-lg);
+    padding: 0;
+    overflow: hidden;
+  }
+  .roadmap-row {
+    display: grid;
+    grid-template-columns: 80px 1fr 200px 120px;
+    align-items: center;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--slate-100);
+    gap: 16px;
+  }
+  .roadmap-row:last-child { border-bottom: 0; }
+  .roadmap-row.head {
+    background: var(--slate-50);
+    color: var(--slate-600);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .roadmap-row .code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--slate-700);
+    font-weight: 500;
+  }
+  .roadmap-row .name { font-weight: 600; color: var(--slate-900); font-size: 14px; }
+  .roadmap-row .name .desc { font-weight: 400; color: var(--slate-500); font-size: 12.5px; margin-top: 2px; }
+  .roadmap-row .roles { font-size: 12.5px; color: var(--slate-500); font-family: var(--font-mono); }
+
+  footer {
+    max-width: 1200px;
+    margin: 48px auto 0;
+    padding: 32px 48px 64px;
+    border-top: 1px solid var(--slate-200);
+    color: var(--slate-500);
+    font-size: 12.5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  footer .legal { font-family: var(--font-mono); }
+
+  @media (max-width: 960px) {
+    .hero { grid-template-columns: 1fr; padding: 48px 24px; }
+    .hero-aside { display: none; }
+    .view-grid { grid-template-columns: 1fr 1fr; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .roadmap-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body data-screen-label="Portal Index">
+
+<header class="topbar">
+  <div class="brand">
+    <div class="mark">G</div>
+    <div class="title-block">
+      <div class="title">Gestión Documental</div>
+      <div class="subtitle">Portal de Diseño · v0.1</div>
+    </div>
+  </div>
+  <div class="meta">
+    <span>19 roles</span>
+    <span>13 épicas</span>
+    <span>94+ vistas</span>
+  </div>
+</header>
+
+<section class="hero">
+  <div>
+    <span class="eyebrow">Sistema de Gestión Documental con IA</span>
+    <h1>Un portal institucional para <em>radicar, gestionar y firmar</em> cada documento de la entidad.</h1>
+    <p class="lede">Diseño de la interfaz para los 19 roles del módulo: desde el radicador en ventanilla hasta el auditor que revisa la trazabilidad. Empezamos por el sistema de diseño — los componentes y patrones que sostendrán las 94+ vistas del backlog.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="design-system.html">
+        <i data-lucide="palette"></i> Ver sistema de diseño
+        <i data-lucide="arrow-right"></i>
+      </a>
+      <a class="btn btn-secondary" href="#vistas">
+        <i data-lucide="layout-dashboard"></i> Vistas planificadas
+      </a>
+    </div>
+  </div>
+  <aside class="hero-aside" aria-hidden="true">
+    <div class="titlebar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span style="margin-left: 12px;">gd / ventanilla / radicados</span>
+    </div>
+    <div class="body">
+      <div class="stub dark"></div>
+      <div class="row">
+        <div>
+          <div class="num">RAD-2026-001234</div>
+          <div class="stub mid" style="margin-top: 6px; margin-bottom: 0;"></div>
+        </div>
+        <span class="pill pill-info">En gestión</span>
+      </div>
+      <div class="row">
+        <div>
+          <div class="num">RAD-2026-001232</div>
+          <div class="stub short" style="margin-top: 6px; margin-bottom: 0;"></div>
+        </div>
+        <span class="pill pill-warn">Por vencer</span>
+      </div>
+      <div class="row">
+        <div>
+          <div class="num">RAD-2026-001230</div>
+          <div class="stub mid" style="margin-top: 6px; margin-bottom: 0;"></div>
+        </div>
+        <span class="pill pill-ok">Firmada</span>
+      </div>
+      <div class="row">
+        <div>
+          <div class="num">RAD-2026-001228</div>
+          <div class="stub short" style="margin-top: 6px; margin-bottom: 0;"></div>
+        </div>
+        <span class="pill pill-info">Asignada</span>
+      </div>
+    </div>
+  </aside>
+</section>
+
+<div class="stats">
+  <div class="stat">
+    <div class="value">19</div>
+    <div class="label">Roles del sistema</div>
+    <div class="desc">Desde Radicador hasta Auditor, cada uno con su landing y permisos.</div>
+  </div>
+  <div class="stat">
+    <div class="value">13</div>
+    <div class="label">Épicas funcionales</div>
+    <div class="desc">Ventanilla, PQRSD, Buzón, Correspondencia, Documentos, TRD, Admin…</div>
+  </div>
+  <div class="stat">
+    <div class="value">94<span style="font-size:24px; vertical-align: top; color: var(--slate-400)">+</span></div>
+    <div class="label">Vistas en backlog</div>
+    <div class="desc">Numeradas como <span style="font-family:var(--font-mono); color:#94A3B8">GD-UI-NNNN</span> según el documento maestro.</div>
+  </div>
+  <div class="stat">
+    <div class="value">152</div>
+    <div class="label">Permisos × rol</div>
+    <div class="desc">Matriz auditable con alcance configurable por dependencia.</div>
+  </div>
+</div>
+
+<section class="section" id="vistas">
+  <div class="section-head">
+    <span class="num">01</span>
+    <h2>Vistas del portal</h2>
+  </div>
+  <p class="desc">El sistema de diseño está listo y se publica como primera entrega. Las pantallas funcionales se construyen sobre él en las siguientes iteraciones, priorizando ventanilla, buzón y PQRSD.</p>
+
+  <div class="view-grid">
+
+    <a class="view-card ready" href="design-system.html">
+      <div class="head">
+        <div class="glyph"><i data-lucide="palette"></i></div>
+        <span class="code">DS · v0.1</span>
+      </div>
+      <h3>Sistema de diseño</h3>
+      <p>Color, tipografía, espaciado, componentes base y componentes de dominio (RadicadoCard, TerminoVencimientoBadge, WorkflowTimeline, IASuggestionInline, Constancia, ConfirmModal).</p>
+      <div class="foot"><span class="badge done">Disponible</span> <i data-lucide="arrow-right"></i> Abrir documento</div>
+    </a>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="log-in"></i></div>
+        <span class="code">EP-001</span>
+      </div>
+      <h3>Login + Shell institucional</h3>
+      <p>Sidebar por rol, topbar con buscador global, breadcrumbs auto-generados y selector de alcance (mi dependencia / mis dependencias autorizadas / toda la entidad).</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="file-plus-2"></i></div>
+        <span class="code">EP-002 · GD-UI-0007</span>
+      </div>
+      <h3>Nuevo radicado de entrada</h3>
+      <p>Wizard de 5 pasos: canal y remitente, asunto con sugerencia IA, anexos con digitalización opcional, clasificación inicial y confirmación con constancia + QR.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="list-checks"></i></div>
+        <span class="code">EP-002 · GD-UI-0015</span>
+      </div>
+      <h3>Cola + ficha de radicado</h3>
+      <p>Cola de pendientes con filtros y semáforo. Ficha con tabs General / Anexos / Clasificación / Trazabilidad / Notas / Acciones.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="inbox"></i></div>
+        <span class="code">EP-003 · GD-UI-0016</span>
+      </div>
+      <h3>Mi buzón</h3>
+      <p>Layout tipo correo con carpetas para PQRSD asignadas, correspondencia, tareas, borradores, documentos por revisar/aprobar/firmar y notificaciones.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="message-square-warning"></i></div>
+        <span class="code">EP-004 · GD-UI-0020/0022</span>
+      </div>
+      <h3>PQRSD · panel + ficha</h3>
+      <p>Panel del administrador con KPIs y semáforo. Ficha completa con flujo de proyección, revisión, aprobación y firma. Sugerencias de IA inline.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="send"></i></div>
+        <span class="code">EP-005</span>
+      </div>
+      <h3>Correspondencia interna y externa</h3>
+      <p>Editor formal con destinatarios, anexos, workflow de revisión/aprobación/firma. Bandejas recibidas/enviadas y registro de soporte de envío.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="signature"></i></div>
+        <span class="code">EP-006 · GD-UI-0041</span>
+      </div>
+      <h3>Documentos &amp; firmas</h3>
+      <p>Biblioteca con historial de versiones, bandeja "Por firmar", evidencia de firma con metadata completa, registro de firma escaneada.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="folder-tree"></i></div>
+        <span class="code">EP-007 · GD-UI-0047</span>
+      </div>
+      <h3>TRD/TVD · editor jerárquico</h3>
+      <p>Editor drag &amp; drop de Series → Subseries → Tipos documentales con versiones, vigencias y asociación a dependencias.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="users"></i></div>
+        <span class="code">EP-008 · GD-UI-0058/0059</span>
+      </div>
+      <h3>Admin · usuarios, roles y estructura</h3>
+      <p>CRUD de usuarios con asignación de roles + alcance + dependencia. Editor de estructura orgánica versionada con vista histórica.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="shield-check"></i></div>
+        <span class="code">EP-009 · GD-UI-0067/0069</span>
+      </div>
+      <h3>Auditoría · consulta y dashboard</h3>
+      <p>Consulta de eventos con filtros avanzados y diff de valores. Dashboard del auditor con KPIs institucionales y eventos críticos.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+    <div class="view-card coming">
+      <div class="head">
+        <div class="glyph"><i data-lucide="printer"></i></div>
+        <span class="code">EP-013 · GD-UI-0091/0094</span>
+      </div>
+      <h3>Periféricos · lote &amp; dashboard</h3>
+      <p>Digitalización por lote con separación por código de barras. Dashboard de salud de impresoras y escáneres con fallos en tiempo real.</p>
+      <div class="foot"><span class="badge todo">Próxima</span></div>
+    </div>
+
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-head">
+    <span class="num">02</span>
+    <h2>Hoja de ruta por entrega</h2>
+  </div>
+  <p class="desc">Orden de entrega derivado de la sección 5 del documento maestro. Cada entrega habilita un conjunto de roles operativos.</p>
+
+  <div class="roadmap">
+    <div class="roadmap-row head">
+      <div>Entrega</div>
+      <div>Épicas UI</div>
+      <div>Roles habilitados</div>
+      <div>Estado</div>
+    </div>
+    <div class="roadmap-row">
+      <div class="code">E1</div>
+      <div class="name">Design system, identidad y administración base
+        <div class="desc">Login, sidebar por rol, estructura orgánica versionada, usuarios y roles.</div>
+      </div>
+      <div class="roles">ROL-001 · ROL-002</div>
+      <div><span class="badge done">DS listo</span></div>
+    </div>
+    <div class="roadmap-row">
+      <div class="code">E2</div>
+      <div class="name">Ventanilla Única + Periféricos
+        <div class="desc">Radicado de entrada/salida con QR, cola, impresión y digitalización.</div>
+      </div>
+      <div class="roles">ROL-004 · ROL-005</div>
+      <div><span class="badge todo">Pendiente</span></div>
+    </div>
+    <div class="roadmap-row">
+      <div class="code">E3</div>
+      <div class="name">Buzón unificado + Notificaciones
+        <div class="desc">Buzón tipo correo para todos los roles operativos.</div>
+      </div>
+      <div class="roles">Todos los operativos</div>
+      <div><span class="badge todo">Pendiente</span></div>
+    </div>
+    <div class="roadmap-row">
+      <div class="code">E4</div>
+      <div class="name">PQRSD completo
+        <div class="desc">Ciclo desde clasificación hasta cierre con semáforo de vencimientos.</div>
+      </div>
+      <div class="roles">ROL-006 · 007 · 008 · 009</div>
+      <div><span class="badge todo">Pendiente</span></div>
+    </div>
+    <div class="roadmap-row">
+      <div class="code">E5</div>
+      <div class="name">Correspondencia interna y externa
+        <div class="desc">Workflow completo de borrador → revisión → firma → envío.</div>
+      </div>
+      <div class="roles">ROL-010 · 012 · 013</div>
+      <div><span class="badge todo">Pendiente</span></div>
+    </div>
+    <div class="roadmap-row">
+      <div class="code">E6</div>
+      <div class="name">Documentos + Plantillas + Firmas
+        <div class="desc">Biblioteca, generación desde plantilla y firma electrónica.</div>
+      </div>
+      <div class="roles">ROL-014 · 017</div>
+      <div><span class="badge todo">Pendiente</span></div>
+    </div>
+    <div class="roadmap-row">
+      <div class="code">E7</div>
+      <div class="name">Auditoría + IA + Correo institucional
+        <div class="desc">Consulta de eventos, reportes, IA embebida y bandeja de correo.</div>
+      </div>
+      <div class="roles">ROL-016 + transversal</div>
+      <div><span class="badge todo">Pendiente</span></div>
+    </div>
+    <div class="roadmap-row">
+      <div class="code">E8</div>
+      <div class="name">TRD/TVD + Expedientes
+        <div class="desc">Versionado de tablas de retención y expedientes electrónicos.</div>
+      </div>
+      <div class="roles">ROL-003</div>
+      <div><span class="badge todo">Pendiente</span></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div>
+    <div style="font-weight: 600; color: var(--slate-700);">Gestión Documental con IA</div>
+    <div style="margin-top: 4px;">Portal de diseño construido sobre el backlog del 23 de mayo de 2026.</div>
+  </div>
+  <div class="legal">v0.1 · DS-2026.05</div>
+</footer>
+
+<script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

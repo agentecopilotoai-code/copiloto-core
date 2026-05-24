@@ -1,0 +1,2638 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sistema de diseño · Gestión Documental</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  :root {
+    /* ── Color · Primary (Slate) ─────────────────────────────── */
+    --slate-25:  #FAFBFC;
+    --slate-50:  #F8FAFC;
+    --slate-100: #F1F5F9;
+    --slate-200: #E2E8F0;
+    --slate-300: #CBD5E1;
+    --slate-400: #94A3B8;
+    --slate-500: #64748B;
+    --slate-600: #475569;
+    --slate-700: #334155;
+    --slate-800: #1E293B;
+    --slate-900: #0F172A;
+
+    /* ── Color · Accent (Sky) ────────────────────────────────── */
+    --sky-50:  #F0F9FF;
+    --sky-100: #E0F2FE;
+    --sky-200: #BAE6FD;
+    --sky-400: #38BDF8;
+    --sky-500: #0EA5E9;
+    --sky-600: #0284C7;
+    --sky-700: #0369A1;
+    --sky-900: #0C4A6E;
+
+    /* ── Color · Semantic ────────────────────────────────────── */
+    --emerald-50:  #ECFDF5;
+    --emerald-100: #D1FAE5;
+    --emerald-600: #059669;
+    --emerald-700: #047857;
+
+    --amber-50:  #FFFBEB;
+    --amber-100: #FEF3C7;
+    --amber-500: #F59E0B;
+    --amber-600: #D97706;
+    --amber-700: #B45309;
+
+    --red-50:  #FEF2F2;
+    --red-100: #FEE2E2;
+    --red-500: #EF4444;
+    --red-600: #DC2626;
+    --red-700: #B91C1C;
+
+    --violet-50:  #F5F3FF;
+    --violet-100: #EDE9FE;
+    --violet-600: #7C3AED;
+    --violet-700: #6D28D9;
+
+    /* ── Semantic tokens ─────────────────────────────────────── */
+    --bg-app: var(--slate-50);
+    --bg-surface: #FFFFFF;
+    --bg-subtle: var(--slate-100);
+    --bg-muted: var(--slate-50);
+
+    --fg-primary: var(--slate-900);
+    --fg-secondary: var(--slate-700);
+    --fg-tertiary: var(--slate-500);
+    --fg-disabled: var(--slate-400);
+    --fg-on-dark: #FFFFFF;
+
+    --border-default: var(--slate-200);
+    --border-strong: var(--slate-300);
+    --border-subtle: var(--slate-100);
+    --border-focus: var(--sky-500);
+
+    --accent-base: var(--sky-600);
+    --accent-strong: var(--sky-700);
+    --accent-soft: var(--sky-50);
+
+    /* ── Type ────────────────────────────────────────────────── */
+    --font-display: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --font-sans: "Source Sans 3", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    /* ── Spacing ─────────────────────────────────────────────── */
+    --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+    --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 40px;
+    --s-9: 48px; --s-10: 64px; --s-11: 80px; --s-12: 96px;
+
+    /* ── Radius ──────────────────────────────────────────────── */
+    --r-xs: 3px;
+    --r-sm: 4px;
+    --r-md: 6px;
+    --r-lg: 8px;
+    --r-xl: 12px;
+    --r-pill: 999px;
+
+    /* ── Shadow ──────────────────────────────────────────────── */
+    --shadow-xs: 0 1px 0 rgba(15, 23, 42, 0.04);
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 1px rgba(15, 23, 42, 0.04);
+    --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04);
+    --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12), 0 4px 8px rgba(15, 23, 42, 0.06);
+    --shadow-focus: 0 0 0 3px rgba(14, 165, 233, 0.18);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--fg-primary);
+    background: var(--bg-app);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "kern";
+  }
+  a { color: var(--accent-base); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Page shell ──────────────────────────────────────────── */
+  .shell {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    min-height: 100vh;
+  }
+  .sidenav {
+    background: #FFFFFF;
+    border-right: 1px solid var(--border-default);
+    padding: var(--s-6) var(--s-4);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .sidenav .brand {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: 0 var(--s-3) var(--s-6);
+    border-bottom: 1px solid var(--border-default);
+    margin-bottom: var(--s-4);
+  }
+  .sidenav .brand .mark {
+    width: 32px; height: 32px;
+    border-radius: var(--r-md);
+    background: var(--slate-900);
+    display: grid; place-items: center;
+    color: white;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 16px;
+  }
+  .sidenav .brand .title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--fg-primary);
+    line-height: 1.2;
+  }
+  .sidenav .brand .subtitle {
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .sidenav .nav-group {
+    margin-bottom: var(--s-5);
+  }
+  .sidenav .nav-group-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-tertiary);
+    padding: 0 var(--s-3) var(--s-2);
+  }
+  .sidenav .nav-link {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: 7px var(--s-3);
+    border-radius: var(--r-sm);
+    color: var(--fg-secondary);
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+  .sidenav .nav-link:hover { background: var(--slate-100); text-decoration: none; }
+  .sidenav .nav-link svg { width: 14px; height: 14px; color: var(--fg-tertiary); }
+
+  .content {
+    padding: var(--s-9) var(--s-10);
+    max-width: 1200px;
+  }
+
+  /* ── Typography for the doc itself ───────────────────────── */
+  .hero {
+    padding: var(--s-7) 0 var(--s-9);
+    border-bottom: 1px solid var(--border-default);
+    margin-bottom: var(--s-9);
+  }
+  .hero .eyebrow {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-base);
+    margin-bottom: var(--s-4);
+  }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 52px;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--s-5);
+    color: var(--slate-900);
+    text-wrap: balance;
+  }
+  .hero .lede {
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--fg-secondary);
+    max-width: 720px;
+    text-wrap: pretty;
+  }
+  .hero .meta {
+    display: flex;
+    gap: var(--s-7);
+    margin-top: var(--s-7);
+    padding-top: var(--s-5);
+    border-top: 1px dashed var(--border-default);
+  }
+  .hero .meta dt {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg-tertiary);
+    margin-bottom: var(--s-1);
+  }
+  .hero .meta dd {
+    margin: 0;
+    font-size: 13px;
+    color: var(--fg-secondary);
+  }
+  .hero .meta dd code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-primary);
+  }
+
+  section.chapter {
+    padding: var(--s-9) 0;
+    border-bottom: 1px solid var(--border-default);
+  }
+  section.chapter:last-child { border-bottom: 0; }
+  .chapter-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-4);
+    margin-bottom: var(--s-7);
+  }
+  .chapter-head .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent-base);
+    font-weight: 500;
+  }
+  .chapter h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 32px;
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    margin: 0;
+    color: var(--slate-900);
+  }
+  .chapter .lede {
+    font-size: 15px;
+    color: var(--fg-secondary);
+    max-width: 640px;
+    margin-top: var(--s-3);
+  }
+  .subhead {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 18px;
+    margin: var(--s-9) 0 var(--s-4);
+    color: var(--slate-900);
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+  }
+  .subhead::before {
+    content: "";
+    width: 4px; height: 16px;
+    background: var(--accent-base);
+    border-radius: 1px;
+  }
+  .subhead-note {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 13px;
+    color: var(--fg-tertiary);
+    margin-left: auto;
+  }
+  p.note {
+    color: var(--fg-secondary);
+    font-size: 13.5px;
+    max-width: 680px;
+    margin: 0 0 var(--s-5);
+  }
+  p.note code {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--fg-primary);
+    background: var(--slate-100);
+    padding: 1px 5px;
+    border-radius: var(--r-xs);
+  }
+
+  /* ── Tokens & swatches ───────────────────────────────────── */
+  .palette {
+    display: grid;
+    grid-template-columns: repeat(11, 1fr);
+    gap: var(--s-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-2);
+    background: var(--bg-surface);
+    margin-bottom: var(--s-5);
+  }
+  .swatch {
+    aspect-ratio: 1 / 1.05;
+    border-radius: var(--r-sm);
+    padding: var(--s-2);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    font-size: 10.5px;
+    line-height: 1.2;
+  }
+  .swatch .step {
+    font-weight: 600;
+    font-family: var(--font-mono);
+  }
+  .swatch .hex {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    opacity: 0.8;
+  }
+  .swatch.dark { color: white; }
+  .swatch.light { color: var(--slate-700); }
+
+  .semantic-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--s-4);
+    margin-bottom: var(--s-5);
+  }
+  .sem-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+  .sem-card .stripe {
+    height: 56px;
+    display: flex; align-items: flex-end;
+    padding: var(--s-3);
+    color: white;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .sem-card .meta {
+    padding: var(--s-3) var(--s-4) var(--s-4);
+  }
+  .sem-card .meta .name {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--fg-primary);
+    margin-bottom: 2px;
+  }
+  .sem-card .meta .desc {
+    font-size: 12px;
+    color: var(--fg-tertiary);
+    line-height: 1.4;
+    margin-bottom: var(--s-3);
+  }
+  .sem-card .tokens {
+    border-top: 1px solid var(--border-subtle);
+    padding-top: var(--s-3);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-secondary);
+    line-height: 1.7;
+  }
+  .sem-card .tokens span { display: block; }
+
+  /* ── Estados (badge mapping) ─────────────────────────────── */
+  .estados-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+  .estados-table th, .estados-table td {
+    padding: var(--s-3) var(--s-4);
+    text-align: left;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: middle;
+  }
+  .estados-table th {
+    background: var(--slate-50);
+    font-weight: 600;
+    color: var(--fg-secondary);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .estados-table tr:last-child td { border-bottom: 0; }
+  .estados-table td.estado-cell { width: 200px; }
+  .estados-table td.desc { color: var(--fg-secondary); }
+  .estados-table td code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-tertiary);
+  }
+
+  /* ── Badges ──────────────────────────────────────────────── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .badge::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.85;
+  }
+  .badge.neutral { background: var(--slate-100); color: var(--slate-700); border-color: var(--slate-200); }
+  .badge.info    { background: var(--sky-50); color: var(--sky-700); border-color: #BAE6FD; }
+  .badge.ok      { background: var(--emerald-50); color: var(--emerald-700); border-color: #A7F3D0; }
+  .badge.warn    { background: var(--amber-50); color: var(--amber-700); border-color: #FCD34D; }
+  .badge.danger  { background: var(--red-50); color: var(--red-700); border-color: #FECACA; }
+  .badge.violet  { background: var(--violet-50); color: var(--violet-700); border-color: #DDD6FE; }
+
+  /* ── Typography specimens ────────────────────────────────── */
+  .type-specimen {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-7);
+    margin-bottom: var(--s-5);
+  }
+  .type-specimen .label {
+    display: flex;
+    gap: var(--s-4);
+    margin-bottom: var(--s-3);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    text-transform: none;
+  }
+  .type-specimen .label span:first-child { color: var(--accent-base); font-weight: 600; }
+  .type-display-48 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 48px;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    color: var(--slate-900);
+    margin: 0;
+  }
+  .type-display-32 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 32px;
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    color: var(--slate-900);
+    margin: 0;
+  }
+  .type-display-24 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 24px;
+    line-height: 1.25;
+    color: var(--slate-900);
+    margin: 0;
+  }
+  .type-ui-18 { font-size: 18px; font-weight: 600; line-height: 1.4; margin: 0; }
+  .type-ui-15 { font-size: 15px; font-weight: 500; line-height: 1.45; margin: 0; }
+  .type-ui-14 { font-size: 14px; font-weight: 400; line-height: 1.5; margin: 0; color: var(--fg-secondary); }
+  .type-ui-13 { font-size: 13px; font-weight: 400; line-height: 1.5; margin: 0; color: var(--fg-secondary); }
+  .type-ui-12 { font-size: 12px; font-weight: 500; line-height: 1.4; margin: 0; color: var(--fg-tertiary); letter-spacing: 0.02em; }
+  .type-mono {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--fg-primary);
+    font-feature-settings: "tnum", "zero";
+  }
+
+  .type-stack {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--s-6);
+  }
+
+  /* ── Spacing scale visual ────────────────────────────────── */
+  .scale-grid {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-6);
+    display: grid;
+    grid-template-columns: 80px 80px 1fr;
+    gap: 0 var(--s-6);
+    align-items: center;
+  }
+  .scale-grid > div { padding: 6px 0; font-size: 13px; }
+  .scale-grid .token { font-family: var(--font-mono); font-size: 12px; color: var(--accent-base); }
+  .scale-grid .px { font-family: var(--font-mono); font-size: 12px; color: var(--fg-tertiary); }
+  .scale-grid .bar { background: var(--slate-200); height: 14px; border-radius: 2px; }
+
+  /* ── Radius/Shadow grid ──────────────────────────────────── */
+  .demos-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--s-4);
+  }
+  .demo-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    padding: var(--s-5);
+    border-radius: var(--r-lg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s-4);
+  }
+  .demo-shape {
+    width: 80px; height: 80px;
+    background: var(--slate-100);
+    border: 1px solid var(--slate-200);
+  }
+  .demo-card .name { font-size: 13px; font-weight: 600; }
+  .demo-card .token { font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary); }
+
+  /* ── Buttons ─────────────────────────────────────────────── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: var(--r-md);
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    font-weight: 600;
+    line-height: 1;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 120ms, border-color 120ms, color 120ms, box-shadow 120ms;
+    white-space: nowrap;
+  }
+  .btn svg { width: 14px; height: 14px; }
+  .btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+  .btn-primary {
+    background: var(--slate-900);
+    color: white;
+    border-color: var(--slate-900);
+  }
+  .btn-primary:hover { background: var(--slate-800); border-color: var(--slate-800); }
+
+  .btn-accent {
+    background: var(--accent-base);
+    color: white;
+    border-color: var(--accent-base);
+  }
+  .btn-accent:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+
+  .btn-secondary {
+    background: white;
+    color: var(--fg-primary);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-xs);
+  }
+  .btn-secondary:hover { background: var(--slate-50); border-color: var(--slate-400); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--fg-secondary);
+    border-color: transparent;
+  }
+  .btn-ghost:hover { background: var(--slate-100); color: var(--fg-primary); }
+
+  .btn-danger {
+    background: white;
+    color: var(--red-700);
+    border-color: #FECACA;
+  }
+  .btn-danger:hover { background: var(--red-50); border-color: var(--red-500); }
+
+  .btn-danger-solid {
+    background: var(--red-600);
+    color: white;
+    border-color: var(--red-600);
+  }
+  .btn-danger-solid:hover { background: var(--red-700); border-color: var(--red-700); }
+
+  .btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
+  .btn-sm svg { width: 12px; height: 12px; }
+  .btn-lg { height: 44px; padding: 0 20px; font-size: 14.5px; }
+  .btn-lg svg { width: 16px; height: 16px; }
+  .btn-icon-only { width: 32px; padding: 0; }
+
+  .btn-row {
+    display: flex; gap: var(--s-3); flex-wrap: wrap;
+    align-items: center;
+    padding: var(--s-5);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    margin-bottom: var(--s-4);
+  }
+
+  /* ── Inputs ──────────────────────────────────────────────── */
+  .form-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s-5);
+    padding: var(--s-6);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--fg-secondary);
+    display: flex; align-items: center; gap: 5px;
+  }
+  .field .hint { font-size: 11.5px; color: var(--fg-tertiary); }
+  .field .req { color: var(--red-600); font-size: 13px; }
+
+  .input, .select, .textarea {
+    width: 100%;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    background: white;
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    color: var(--fg-primary);
+    box-shadow: var(--shadow-xs);
+    transition: border-color 120ms, box-shadow 120ms;
+  }
+  .textarea { height: auto; padding: 8px 12px; resize: vertical; min-height: 80px; }
+  .input:focus, .select:focus, .textarea:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: var(--shadow-focus);
+  }
+  .input::placeholder, .textarea::placeholder { color: var(--fg-disabled); }
+  .input.with-icon { padding-left: 36px; }
+
+  .field.has-icon { position: relative; }
+  .field.has-icon .icon-left {
+    position: absolute; left: 12px; top: 30px;
+    color: var(--fg-tertiary);
+    width: 14px; height: 14px;
+    pointer-events: none;
+  }
+  .select {
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 32px;
+  }
+
+  .input.error { border-color: var(--red-500); box-shadow: 0 0 0 3px rgba(239,68,68,0.12); }
+  .field .err {
+    font-size: 12px;
+    color: var(--red-700);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+
+  .check-row { display: flex; flex-direction: column; gap: 10px; }
+  .check {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 13.5px;
+    cursor: pointer;
+  }
+  .check input { accent-color: var(--accent-base); width: 16px; height: 16px; }
+
+  .switch {
+    position: relative;
+    width: 32px; height: 18px;
+    background: var(--slate-300);
+    border-radius: var(--r-pill);
+    cursor: pointer;
+    transition: background 150ms;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    width: 14px; height: 14px;
+    background: white;
+    border-radius: 50%;
+    top: 2px; left: 2px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    transition: left 150ms;
+  }
+  .switch.on { background: var(--accent-base); }
+  .switch.on::after { left: 16px; }
+
+  /* ── Table ───────────────────────────────────────────────── */
+  .data-table-wrap {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+  }
+  .data-table thead th {
+    background: var(--slate-50);
+    text-align: left;
+    padding: var(--s-3) var(--s-4);
+    font-weight: 600;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-secondary);
+    border-bottom: 1px solid var(--border-default);
+    white-space: nowrap;
+  }
+  .data-table tbody td {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--fg-primary);
+    vertical-align: middle;
+  }
+  .data-table tbody tr:hover { background: var(--slate-25); }
+  .data-table tbody tr:last-child td { border-bottom: 0; }
+  .data-table .num { font-family: var(--font-mono); font-size: 12.5px; font-feature-settings: "tnum"; }
+  .data-table .muted { color: var(--fg-tertiary); }
+  .data-table .row-actions {
+    display: inline-flex; gap: 2px;
+  }
+  .icon-btn {
+    width: 26px; height: 26px;
+    border-radius: var(--r-sm);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--fg-tertiary);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--slate-100); color: var(--fg-primary); border-color: var(--border-default); }
+  .icon-btn svg { width: 14px; height: 14px; }
+
+  .table-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border-default);
+    background: white;
+  }
+  .table-toolbar .search { flex: 1; max-width: 320px; position: relative; }
+  .table-toolbar .search input {
+    width: 100%; height: 30px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    padding: 0 10px 0 30px;
+    font-size: 13px;
+    font-family: var(--font-sans);
+  }
+  .table-toolbar .search svg {
+    position: absolute; left: 9px; top: 8px;
+    width: 14px; height: 14px; color: var(--fg-tertiary);
+  }
+
+  /* ── Tabs ────────────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    padding: 0 var(--s-5);
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+  }
+  .tab {
+    padding: var(--s-3) var(--s-4);
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--fg-secondary);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--fg-primary); }
+  .tab.active { color: var(--accent-strong); border-bottom-color: var(--accent-base); font-weight: 600; }
+  .tab .count {
+    background: var(--slate-100);
+    color: var(--fg-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: var(--r-pill);
+    font-family: var(--font-mono);
+  }
+  .tab.active .count { background: var(--sky-100); color: var(--sky-700); }
+
+  /* ── Breadcrumbs ─────────────────────────────────────────── */
+  .breadcrumb {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px;
+    color: var(--fg-tertiary);
+    padding: var(--s-4) var(--s-5);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+  }
+  .breadcrumb a { color: var(--fg-secondary); }
+  .breadcrumb svg { width: 12px; height: 12px; }
+  .breadcrumb .here { color: var(--fg-primary); font-weight: 600; }
+
+  /* ── Pagination ──────────────────────────────────────────── */
+  .pagination {
+    display: flex; align-items: center; gap: 4px;
+    padding: var(--s-3) var(--s-4);
+    border-top: 1px solid var(--border-default);
+    background: white;
+    font-size: 13px;
+  }
+  .pagination .summary { color: var(--fg-tertiary); margin-right: auto; }
+  .page-btn {
+    min-width: 28px; height: 28px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-default);
+    background: white;
+    color: var(--fg-secondary);
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    cursor: pointer;
+    padding: 0 8px;
+  }
+  .page-btn:hover { background: var(--slate-50); }
+  .page-btn.active { background: var(--slate-900); color: white; border-color: var(--slate-900); }
+
+  /* ── Alerts/Toasts ───────────────────────────────────────── */
+  .alert {
+    display: flex; align-items: flex-start; gap: var(--s-3);
+    padding: var(--s-4);
+    border-radius: var(--r-md);
+    border: 1px solid;
+    font-size: 13.5px;
+    line-height: 1.5;
+    margin-bottom: var(--s-3);
+  }
+  .alert .icon { flex: 0 0 18px; padding-top: 1px; }
+  .alert .body { flex: 1; }
+  .alert .title { font-weight: 600; margin-bottom: 2px; }
+  .alert .actions { margin-top: 8px; display: flex; gap: var(--s-3); }
+  .alert .actions a { font-size: 13px; font-weight: 600; }
+
+  .alert.info    { background: var(--sky-50); border-color: #BAE6FD; color: var(--sky-900); }
+  .alert.success { background: var(--emerald-50); border-color: #A7F3D0; color: var(--emerald-700); }
+  .alert.warning { background: var(--amber-50); border-color: #FCD34D; color: var(--amber-700); }
+  .alert.danger  { background: var(--red-50); border-color: #FECACA; color: var(--red-700); }
+
+  /* ── KPI ─────────────────────────────────────────────────── */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--s-4); }
+  .kpi {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-5);
+  }
+  .kpi .label {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--fg-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: var(--s-2);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .kpi .value {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 32px;
+    line-height: 1;
+    color: var(--slate-900);
+    font-feature-settings: "tnum";
+    letter-spacing: -0.01em;
+  }
+  .kpi .delta {
+    font-size: 12px;
+    font-family: var(--font-mono);
+    margin-top: var(--s-2);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .kpi .delta.up { color: var(--emerald-700); }
+  .kpi .delta.down { color: var(--red-700); }
+  .kpi .delta svg { width: 12px; height: 12px; }
+
+  /* ── Cards ───────────────────────────────────────────────── */
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-xs);
+  }
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: var(--s-4) var(--s-5);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .card-title { font-weight: 600; font-size: 15px; }
+  .card-body { padding: var(--s-5); }
+
+  /* ── Domain · RadicadoCard ───────────────────────────────── */
+  .radicado-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-5);
+    box-shadow: var(--shadow-xs);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--s-4);
+  }
+  .radicado-card .num-block {
+    display: flex; flex-direction: column; gap: 2px;
+    margin-bottom: var(--s-3);
+  }
+  .radicado-card .num {
+    font-family: var(--font-mono);
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--slate-900);
+    letter-spacing: 0.01em;
+  }
+  .radicado-card .num-meta {
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    font-family: var(--font-mono);
+  }
+  .radicado-card .asunto {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 16px;
+    color: var(--slate-900);
+    line-height: 1.3;
+    margin-bottom: var(--s-2);
+    text-wrap: pretty;
+  }
+  .radicado-card .meta-row {
+    display: flex; gap: var(--s-5); flex-wrap: wrap;
+    font-size: 12.5px;
+    color: var(--fg-tertiary);
+    margin-bottom: var(--s-3);
+  }
+  .radicado-card .meta-row span { display: inline-flex; align-items: center; gap: 5px; }
+  .radicado-card .meta-row svg { width: 12px; height: 12px; color: var(--fg-tertiary); }
+  .radicado-card .meta-row b { color: var(--fg-secondary); font-weight: 600; }
+  .radicado-card .footer {
+    display: flex; gap: var(--s-2); align-items: center;
+    padding-top: var(--s-3);
+    border-top: 1px dashed var(--border-default);
+  }
+  .radicado-card .footer .avatar {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--slate-200);
+    color: var(--slate-700);
+    font-size: 10.5px;
+    font-weight: 600;
+    display: grid; place-items: center;
+  }
+  .radicado-card .footer .assignee {
+    font-size: 12px;
+    color: var(--fg-secondary);
+  }
+  .radicado-card .footer .assignee b { color: var(--fg-primary); font-weight: 600; }
+  .radicado-card .right-col {
+    display: flex; flex-direction: column; gap: var(--s-2);
+    align-items: flex-end;
+  }
+
+  /* ── Domain · TerminoVencimientoBadge (semáforo) ─────────── */
+  .vto-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: 6px 10px;
+    border-radius: var(--r-md);
+    background: white;
+    border: 1px solid var(--border-default);
+    font-size: 12px;
+    font-family: var(--font-mono);
+    min-width: 160px;
+  }
+  .vto-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .vto-bar {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--slate-200);
+    overflow: hidden;
+    position: relative;
+  }
+  .vto-bar > i {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    display: block;
+    border-radius: 2px;
+  }
+  .vto-text {
+    font-weight: 600;
+    color: var(--fg-secondary);
+    min-width: 56px;
+    text-align: right;
+  }
+  .vto-ok .vto-dot, .vto-ok .vto-bar > i { background: var(--emerald-600); }
+  .vto-ok .vto-text { color: var(--emerald-700); }
+  .vto-warn .vto-dot, .vto-warn .vto-bar > i { background: var(--amber-500); }
+  .vto-warn .vto-text { color: var(--amber-700); }
+  .vto-danger .vto-dot, .vto-danger .vto-bar > i { background: var(--red-500); }
+  .vto-danger .vto-text { color: var(--red-700); }
+  .vto-vencida { background: var(--red-50); border-color: #FECACA; }
+
+  /* ── Domain · PQRSDStatusChip ────────────────────────────── */
+  .pqrsd-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 22px;
+    padding: 0 8px 0 4px;
+    border-radius: var(--r-sm);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fg-primary);
+    background: var(--slate-100);
+    border: 1px solid var(--border-default);
+  }
+  .pqrsd-chip .glyph {
+    width: 16px; height: 16px;
+    border-radius: 2px;
+    background: var(--slate-700);
+    color: white;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    font-weight: 700;
+    display: grid; place-items: center;
+  }
+  .pqrsd-chip.tipo-P .glyph { background: var(--sky-600); }
+  .pqrsd-chip.tipo-Q .glyph { background: var(--amber-600); }
+  .pqrsd-chip.tipo-R .glyph { background: var(--red-600); }
+  .pqrsd-chip.tipo-S .glyph { background: var(--violet-600); }
+  .pqrsd-chip.tipo-D .glyph { background: var(--emerald-600); }
+
+  /* ── Domain · WorkflowTimeline ───────────────────────────── */
+  .timeline {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-6);
+  }
+  .timeline-item {
+    display: grid;
+    grid-template-columns: 32px 1fr auto;
+    gap: var(--s-3);
+    position: relative;
+    padding-bottom: var(--s-5);
+  }
+  .timeline-item:last-child { padding-bottom: 0; }
+  .timeline-item:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 15px; top: 32px; bottom: -4px;
+    width: 2px;
+    background: var(--border-default);
+  }
+  .timeline-node {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--slate-100);
+    border: 1px solid var(--border-default);
+    display: grid; place-items: center;
+    color: var(--fg-tertiary);
+    z-index: 1;
+    position: relative;
+  }
+  .timeline-node svg { width: 14px; height: 14px; }
+  .timeline-item.is-current .timeline-node {
+    background: var(--accent-base);
+    border-color: var(--accent-base);
+    color: white;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .timeline-item.is-warning .timeline-node {
+    background: var(--amber-50);
+    border-color: var(--amber-500);
+    color: var(--amber-700);
+  }
+  .timeline-item.is-danger .timeline-node {
+    background: var(--red-50);
+    border-color: var(--red-500);
+    color: var(--red-700);
+  }
+  .timeline-item.is-success .timeline-node {
+    background: var(--emerald-50);
+    border-color: var(--emerald-600);
+    color: var(--emerald-700);
+  }
+  .timeline-content .action {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--fg-primary);
+    margin-bottom: 2px;
+  }
+  .timeline-content .actor {
+    font-size: 12.5px;
+    color: var(--fg-secondary);
+    margin-bottom: 4px;
+  }
+  .timeline-content .actor b { color: var(--fg-primary); font-weight: 600; }
+  .timeline-content .snapshot {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    background: var(--slate-50);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-sm);
+    padding: 4px 8px;
+    margin-top: 6px;
+    display: inline-block;
+  }
+  .timeline-content .observation {
+    font-size: 12.5px;
+    color: var(--fg-secondary);
+    margin-top: 6px;
+    padding-left: var(--s-3);
+    border-left: 2px solid var(--border-default);
+    font-style: italic;
+  }
+  .timeline-time {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    white-space: nowrap;
+  }
+
+  /* ── Domain · IASuggestionInline ─────────────────────────── */
+  .ia-suggestion {
+    border: 1px solid #BAE6FD;
+    background: linear-gradient(180deg, var(--sky-50), white 60%);
+    border-radius: var(--r-lg);
+    padding: var(--s-4) var(--s-5);
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: var(--s-4);
+    align-items: flex-start;
+  }
+  .ia-suggestion .ia-mark {
+    width: 32px; height: 32px;
+    border-radius: var(--r-md);
+    background: var(--sky-600);
+    color: white;
+    display: grid; place-items: center;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
+  }
+  .ia-suggestion .ia-body { padding-top: 2px; }
+  .ia-suggestion .ia-eyebrow {
+    display: flex; align-items: center; gap: var(--s-2);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--sky-700);
+    margin-bottom: var(--s-2);
+  }
+  .ia-suggestion .ia-eyebrow .conf {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: white;
+    color: var(--sky-700);
+    border: 1px solid #BAE6FD;
+    padding: 1px 6px;
+    border-radius: var(--r-sm);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .ia-suggestion .ia-text {
+    font-size: 14px;
+    color: var(--fg-primary);
+    line-height: 1.5;
+    margin-bottom: var(--s-2);
+  }
+  .ia-suggestion .ia-text b { font-weight: 600; }
+  .ia-suggestion .ia-explain {
+    font-size: 12.5px;
+    color: var(--fg-tertiary);
+    line-height: 1.5;
+  }
+  .ia-suggestion .ia-actions {
+    display: flex; flex-direction: column; gap: 6px;
+    align-items: stretch;
+  }
+
+  /* ── Domain · Constancia (letterhead preview) ───────────── */
+  .constancia-frame {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: 0;
+    overflow: hidden;
+    box-shadow: var(--shadow-md);
+    font-family: var(--font-sans);
+  }
+  .constancia-frame .head {
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    gap: var(--s-4);
+    padding: var(--s-5) var(--s-6);
+    border-bottom: 2px solid var(--slate-900);
+    align-items: center;
+  }
+  .constancia-frame .head .seal {
+    width: 56px; height: 56px;
+    background: var(--slate-900);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    color: white;
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+  }
+  .constancia-frame .head .entity {
+    line-height: 1.2;
+  }
+  .constancia-frame .head .entity .name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--slate-900);
+    letter-spacing: -0.005em;
+  }
+  .constancia-frame .head .entity .legal {
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    margin-top: 2px;
+  }
+  .constancia-frame .head .number-block {
+    text-align: right;
+    border-left: 1px solid var(--border-default);
+    padding-left: var(--s-4);
+  }
+  .constancia-frame .head .number-block .label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-tertiary);
+    margin-bottom: 2px;
+  }
+  .constancia-frame .head .number-block .num {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--slate-900);
+  }
+  .constancia-frame .body {
+    padding: var(--s-6);
+    display: grid;
+    grid-template-columns: 1fr 110px;
+    gap: var(--s-5);
+  }
+  .constancia-frame h3 {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 var(--s-3);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--slate-900);
+  }
+  .constancia-frame .legend {
+    font-size: 11.5px;
+    color: var(--fg-secondary);
+    line-height: 1.55;
+    margin-bottom: var(--s-4);
+    text-wrap: pretty;
+  }
+  .constancia-frame .data-grid {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    row-gap: 6px;
+    column-gap: var(--s-3);
+    font-size: 12px;
+  }
+  .constancia-frame .data-grid dt {
+    text-transform: uppercase;
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    color: var(--fg-tertiary);
+    font-weight: 600;
+    padding-top: 2px;
+  }
+  .constancia-frame .data-grid dd { margin: 0; color: var(--fg-primary); }
+  .constancia-frame .data-grid dd code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .constancia-frame .qr-block {
+    text-align: center;
+    font-size: 9.5px;
+    color: var(--fg-tertiary);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .constancia-frame .qr {
+    width: 110px; height: 110px;
+    background:
+      conic-gradient(from 0deg at 25% 25%, var(--slate-900) 0 90deg, transparent 0 360deg),
+      conic-gradient(from 0deg at 75% 25%, var(--slate-900) 0 90deg, transparent 0 360deg),
+      conic-gradient(from 0deg at 25% 75%, var(--slate-900) 0 90deg, transparent 0 360deg),
+      repeating-linear-gradient(45deg, var(--slate-900) 0 4px, white 4px 8px);
+    background-size: 36px 36px, 36px 36px, 36px 36px, 100% 100%;
+    background-position: top left, top right, bottom left, center;
+    background-repeat: no-repeat;
+    border: 1px solid var(--slate-900);
+    margin-bottom: 6px;
+  }
+  .constancia-frame .foot {
+    padding: var(--s-3) var(--s-6);
+    background: var(--slate-50);
+    border-top: 1px solid var(--border-default);
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--fg-tertiary);
+    font-family: var(--font-mono);
+  }
+
+  /* ── Domain · Confirm Modal ──────────────────────────────── */
+  .modal {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-lg);
+    max-width: 520px;
+    overflow: hidden;
+  }
+  .modal-head {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--s-4);
+    padding: var(--s-5) var(--s-6);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .modal-head .icon-block {
+    width: 40px; height: 40px;
+    border-radius: var(--r-md);
+    background: var(--amber-50);
+    color: var(--amber-700);
+    display: grid; place-items: center;
+    border: 1px solid #FCD34D;
+  }
+  .modal-head .icon-block svg { width: 18px; height: 18px; }
+  .modal-head .title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 18px;
+    color: var(--slate-900);
+    margin-bottom: 2px;
+  }
+  .modal-head .subtitle {
+    font-size: 13px;
+    color: var(--fg-tertiary);
+  }
+  .modal-body { padding: var(--s-5) var(--s-6); }
+  .modal-body p { margin: 0 0 var(--s-3); font-size: 13.5px; color: var(--fg-secondary); line-height: 1.55; }
+  .modal-summary {
+    background: var(--slate-50);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    padding: var(--s-3) var(--s-4);
+    margin-bottom: var(--s-4);
+    font-size: 12.5px;
+    color: var(--fg-secondary);
+  }
+  .modal-summary dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    row-gap: 4px;
+    column-gap: var(--s-3);
+  }
+  .modal-summary dt {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-tertiary);
+    font-weight: 600;
+  }
+  .modal-summary dd { margin: 0; color: var(--fg-primary); }
+  .modal-summary dd code { font-family: var(--font-mono); font-size: 12px; }
+  .modal-foot {
+    padding: var(--s-4) var(--s-6);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--slate-25);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s-3);
+  }
+
+  /* ── Empty state ─────────────────────────────────────────── */
+  .empty {
+    background: var(--bg-surface);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--r-lg);
+    padding: var(--s-9) var(--s-6);
+    text-align: center;
+  }
+  .empty .glyph {
+    width: 48px; height: 48px;
+    background: var(--slate-100);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    margin: 0 auto var(--s-4);
+    display: grid; place-items: center;
+    color: var(--fg-tertiary);
+  }
+  .empty .glyph svg { width: 22px; height: 22px; }
+  .empty h4 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 18px;
+    margin: 0 0 var(--s-2);
+    color: var(--slate-900);
+  }
+  .empty p { font-size: 13.5px; color: var(--fg-tertiary); margin: 0 0 var(--s-4); max-width: 360px; margin-left: auto; margin-right: auto; }
+
+  /* ── Misc helpers ────────────────────────────────────────── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-5); }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-5); }
+  .stack { display: flex; flex-direction: column; gap: var(--s-5); }
+  .hstack { display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap; }
+
+  .pattern-row {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-5);
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: var(--s-5);
+    margin-bottom: var(--s-4);
+  }
+  .pattern-row h5 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    margin: 0 0 6px;
+    color: var(--slate-900);
+  }
+  .pattern-row p { margin: 0; font-size: 13px; color: var(--fg-secondary); line-height: 1.5; }
+  .pattern-row .pattern-rule {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-base);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+    display: inline-block;
+  }
+
+  .topbar-back {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: rgba(255,255,255,0.85);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border-default);
+    padding: var(--s-3) var(--s-10);
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    font-size: 13px;
+    color: var(--fg-secondary);
+  }
+  .topbar-back a {
+    display: inline-flex; align-items: center; gap: 5px;
+    color: var(--fg-secondary);
+    font-weight: 500;
+  }
+  .topbar-back a:hover { color: var(--accent-base); text-decoration: none; }
+
+</style>
+</head>
+<body>
+
+<div class="shell" data-screen-label="Design System">
+  <aside class="sidenav">
+    <div class="brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="title">Gestión Documental</div>
+        <div class="subtitle">Design System · v0.1</div>
+      </div>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Fundamentos</div>
+      <a class="nav-link" href="#color"><i data-lucide="palette"></i> Color</a>
+      <a class="nav-link" href="#tipografia"><i data-lucide="type"></i> Tipografía</a>
+      <a class="nav-link" href="#espaciado"><i data-lucide="move-3d"></i> Espaciado</a>
+      <a class="nav-link" href="#elevacion"><i data-lucide="square-stack"></i> Elevación &amp; radios</a>
+      <a class="nav-link" href="#iconografia"><i data-lucide="shapes"></i> Iconografía</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Componentes base</div>
+      <a class="nav-link" href="#buttons"><i data-lucide="mouse-pointer-click"></i> Botones</a>
+      <a class="nav-link" href="#forms"><i data-lucide="form-input"></i> Inputs &amp; campos</a>
+      <a class="nav-link" href="#badges"><i data-lucide="badge-check"></i> Badges &amp; estados</a>
+      <a class="nav-link" href="#tables"><i data-lucide="table"></i> Tablas &amp; paginación</a>
+      <a class="nav-link" href="#nav"><i data-lucide="navigation"></i> Navegación</a>
+      <a class="nav-link" href="#feedback"><i data-lucide="alert-octagon"></i> Feedback</a>
+      <a class="nav-link" href="#kpi"><i data-lucide="bar-chart-3"></i> KPIs &amp; cards</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Componentes de dominio</div>
+      <a class="nav-link" href="#radicado-card"><i data-lucide="file-text"></i> RadicadoCard</a>
+      <a class="nav-link" href="#vto-badge"><i data-lucide="timer"></i> TérminoVencimiento</a>
+      <a class="nav-link" href="#pqrsd-chip"><i data-lucide="message-square-warning"></i> PQRSDStatusChip</a>
+      <a class="nav-link" href="#timeline"><i data-lucide="git-commit-horizontal"></i> WorkflowTimeline</a>
+      <a class="nav-link" href="#ia-inline"><i data-lucide="sparkles"></i> IASuggestionInline</a>
+      <a class="nav-link" href="#constancia"><i data-lucide="award"></i> Constancia</a>
+      <a class="nav-link" href="#confirm"><i data-lucide="shield-alert"></i> ConfirmModal</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">Patrones</div>
+      <a class="nav-link" href="#patrones"><i data-lucide="book-open"></i> Mandato UI</a>
+    </div>
+  </aside>
+
+  <main>
+    <div class="topbar-back">
+      <a href="index.html"><i data-lucide="arrow-left"></i> Volver al portal</a>
+      <span style="color: var(--fg-tertiary);">/</span>
+      <span>Sistema de diseño</span>
+    </div>
+
+    <div class="content">
+
+      <!-- ─────────────────── HERO ─────────────────── -->
+      <header class="hero">
+        <span class="eyebrow">Documento maestro · v0.1</span>
+        <h1>Un lenguaje visual para sistemas de información institucional.</h1>
+        <p class="lede">El módulo de Gestión Documental atiende 19 roles, 13 épicas funcionales y procesos auditables en organizaciones públicas y privadas. Este sistema define los tokens, componentes y patrones que mantienen una voz formal, densa y predecible a lo largo de todo el portal — desde la radicación en ventanilla hasta la firma electrónica de un acto administrativo.</p>
+        <dl class="meta">
+          <div>
+            <dt>Tono</dt>
+            <dd>Institucional sobrio · tercera persona · sin emoji</dd>
+          </div>
+          <div>
+            <dt>Mandato</dt>
+            <dd>Trazabilidad visible · acciones reversibles · IA inline</dd>
+          </div>
+          <div>
+            <dt>Tokens</dt>
+            <dd><code>--slate-*</code> · <code>--sky-*</code> · <code>--font-display</code> · <code>--r-md</code></dd>
+          </div>
+        </dl>
+      </header>
+
+      <!-- ─────────────────── COLOR ─────────────────── -->
+      <section class="chapter" id="color">
+        <div class="chapter-head">
+          <span class="num">01</span>
+          <div>
+            <h2>Color</h2>
+            <p class="lede">Una paleta neutra con un solo acento. El gris-azulado <em>slate</em> hace todo el trabajo estructural; <em>sky</em> aparece sólo en acciones primarias, enlaces y focus. Los colores semánticos no se usan decorativamente — sólo para comunicar estado.</p>
+          </div>
+        </div>
+
+        <div class="subhead">Slate <span class="subhead-note">Base estructural · texto, fondos, bordes</span></div>
+        <div class="palette" id="palette-slate"></div>
+
+        <div class="subhead">Sky <span class="subhead-note">Acento único · acciones primarias, links, IA</span></div>
+        <div class="palette" id="palette-sky"></div>
+
+        <div class="subhead">Semántica de estado <span class="subhead-note">Reservado para feedback — nunca decorativo</span></div>
+        <div class="semantic-grid">
+          <div class="sem-card">
+            <div class="stripe" style="background: var(--emerald-600);">success</div>
+            <div class="meta">
+              <div class="name">Aprobado · Firmado · Cerrado</div>
+              <div class="desc">El proceso se completó correctamente.</div>
+              <div class="tokens">
+                <span>--emerald-50 / 100 / 600 / 700</span>
+              </div>
+            </div>
+          </div>
+          <div class="sem-card">
+            <div class="stripe" style="background: var(--sky-600);">info</div>
+            <div class="meta">
+              <div class="name">En gestión · Asignada · En revisión</div>
+              <div class="desc">El recurso está en flujo de trabajo activo.</div>
+              <div class="tokens">
+                <span>--sky-50 / 100 / 600 / 700</span>
+              </div>
+            </div>
+          </div>
+          <div class="sem-card">
+            <div class="stripe" style="background: var(--amber-500);">warning</div>
+            <div class="meta">
+              <div class="name">Próxima a vencer · Devuelta</div>
+              <div class="desc">Requiere atención dentro de un plazo.</div>
+              <div class="tokens">
+                <span>--amber-50 / 100 / 500 / 700</span>
+              </div>
+            </div>
+          </div>
+          <div class="sem-card">
+            <div class="stripe" style="background: var(--red-600);">danger</div>
+            <div class="meta">
+              <div class="name">Vencida · Anulada · Bloqueado</div>
+              <div class="desc">Incumplimiento o acción destructiva.</div>
+              <div class="tokens">
+                <span>--red-50 / 100 / 600 / 700</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="subhead">Mapeo de estados de negocio <span class="subhead-note">Mandato UI · sección 2.9</span></div>
+        <p class="note">Toda entidad (radicado, PQRSD, documento, correspondencia, tarea) usa estos cinco mapeos. No se inventan nuevos colores por estado — si un estado nuevo aparece, se agrupa bajo uno existente.</p>
+        <table class="estados-table">
+          <thead>
+            <tr>
+              <th style="width:200px">Badge</th>
+              <th>Estados que cubre</th>
+              <th>Cuándo aparece</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="estado-cell"><span class="badge neutral">Nueva</span></td>
+              <td><code>nueva</code> · <code>registrado</code> · <code>borrador</code></td>
+              <td class="desc">Recurso creado sin actuación todavía.</td>
+            </tr>
+            <tr>
+              <td class="estado-cell"><span class="badge info">En gestión</span></td>
+              <td><code>en gestión</code> · <code>en revisión</code> · <code>en análisis</code> · <code>en proyección</code> · <code>asignada</code></td>
+              <td class="desc">Hay un funcionario actuando sobre el recurso.</td>
+            </tr>
+            <tr>
+              <td class="estado-cell"><span class="badge ok">Cerrada</span></td>
+              <td><code>aprobada</code> · <code>firmada</code> · <code>enviada</code> · <code>cerrada</code></td>
+              <td class="desc">Ciclo completado con éxito.</td>
+            </tr>
+            <tr>
+              <td class="estado-cell"><span class="badge warn">Por vencer</span></td>
+              <td><code>próxima a vencer</code> · <code>devuelta</code></td>
+              <td class="desc">Aún recuperable pero con presión temporal.</td>
+            </tr>
+            <tr>
+              <td class="estado-cell"><span class="badge danger">Vencida</span></td>
+              <td><code>vencida</code> · <code>anulada</code> · <code>bloqueado</code> · <code>inactivo</code></td>
+              <td class="desc">Incumplimiento o cierre forzoso.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ─────────────────── TIPOGRAFÍA ─────────────────── -->
+      <section class="chapter" id="tipografia">
+        <div class="chapter-head">
+          <span class="num">02</span>
+          <div>
+            <h2>Tipografía</h2>
+            <p class="lede">Dos familias con roles claramente separados. <strong>Source Serif 4</strong> aporta autoridad en encabezados, KPIs y elementos institucionales. <strong>Source Sans 3</strong> hace el trabajo pesado de UI. <strong>IBM Plex Mono</strong> aparece sólo en datos tabulares: números de radicado, IDs, fechas técnicas.</p>
+          </div>
+        </div>
+
+        <div class="type-stack">
+          <div class="type-specimen">
+            <div class="label"><span>Display · 48</span> <span>Source Serif 4 · 600 · −2% letter-spacing</span></div>
+            <h1 class="type-display-48">Constancia oficial de radicación.</h1>
+          </div>
+          <div class="type-specimen">
+            <div class="label"><span>Display · 32</span> <span>Source Serif 4 · 600 · −1.5% letter-spacing</span></div>
+            <h2 class="type-display-32">Panel de PQRSD del administrador</h2>
+          </div>
+          <div class="type-specimen">
+            <div class="label"><span>Display · 24</span> <span>Source Serif 4 · 600 · sección dentro de página</span></div>
+            <h3 class="type-display-24">Trazabilidad del radicado</h3>
+          </div>
+          <div class="type-specimen">
+            <div class="label"><span>UI · 18</span> <span>Source Sans 3 · 600 · títulos de tarjeta</span></div>
+            <p class="type-ui-18">Petición ciudadana asignada a la Oficina Asesora Jurídica</p>
+          </div>
+          <div class="type-specimen">
+            <div class="label"><span>UI · 15</span> <span>Source Sans 3 · 500 · etiquetas, ítems destacados</span></div>
+            <p class="type-ui-15">Profesional Responsable · vence en 3 días hábiles</p>
+          </div>
+          <div class="type-specimen">
+            <div class="label"><span>UI · 14</span> <span>Source Sans 3 · 400 · cuerpo de texto estándar</span></div>
+            <p class="type-ui-14">La solicitud fue clasificada inicialmente como petición de interés general en la Oficina de Ventanilla Única. La sugerencia automática de dependencia responsable fue aceptada por el coordinador a las 14:32:11 UTC.</p>
+          </div>
+          <div class="type-specimen">
+            <div class="label"><span>UI · 13</span> <span>Source Sans 3 · 400 · texto secundario, metadatos</span></div>
+            <p class="type-ui-13">Anexo de 3 páginas · PDF · OCR ejecutado · 87% de confianza</p>
+          </div>
+          <div class="type-specimen">
+            <div class="label"><span>UI · 12 micro</span> <span>Source Sans 3 · 500 · eyebrows, labels, captions</span></div>
+            <p class="type-ui-12">DEPENDENCIA RESPONSABLE</p>
+          </div>
+          <div class="type-specimen">
+            <div class="label"><span>Mono · 13</span> <span>IBM Plex Mono · 500 · tabular numerals · "tnum"</span></div>
+            <p class="type-mono">RAD-2026-001234 · 2026-05-24T14:32:11.000Z · req_b7d9e0f1c2a3</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── ESPACIADO ─────────────────── -->
+      <section class="chapter" id="espaciado">
+        <div class="chapter-head">
+          <span class="num">03</span>
+          <div>
+            <h2>Escala de espaciado</h2>
+            <p class="lede">Base de 4&thinsp;px. Las pantallas de buzón y tablas usan los tokens cortos (1–4); las landings y constancias usan los altos (6–11). El padding interno de los componentes nunca baja de <code>--s-3</code>.</p>
+          </div>
+        </div>
+
+        <div class="scale-grid">
+          <div class="token">--s-1</div><div class="px">4 px</div><div><div class="bar" style="width:4px"></div></div>
+          <div class="token">--s-2</div><div class="px">8 px</div><div><div class="bar" style="width:8px"></div></div>
+          <div class="token">--s-3</div><div class="px">12 px</div><div><div class="bar" style="width:12px"></div></div>
+          <div class="token">--s-4</div><div class="px">16 px</div><div><div class="bar" style="width:16px"></div></div>
+          <div class="token">--s-5</div><div class="px">20 px</div><div><div class="bar" style="width:20px"></div></div>
+          <div class="token">--s-6</div><div class="px">24 px</div><div><div class="bar" style="width:24px"></div></div>
+          <div class="token">--s-7</div><div class="px">32 px</div><div><div class="bar" style="width:32px"></div></div>
+          <div class="token">--s-8</div><div class="px">40 px</div><div><div class="bar" style="width:40px"></div></div>
+          <div class="token">--s-9</div><div class="px">48 px</div><div><div class="bar" style="width:48px"></div></div>
+          <div class="token">--s-10</div><div class="px">64 px</div><div><div class="bar" style="width:64px"></div></div>
+          <div class="token">--s-11</div><div class="px">80 px</div><div><div class="bar" style="width:80px"></div></div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── ELEVACIÓN ─────────────────── -->
+      <section class="chapter" id="elevacion">
+        <div class="chapter-head">
+          <span class="num">04</span>
+          <div>
+            <h2>Radios &amp; elevación</h2>
+            <p class="lede">Bordes definidos sobre sombras. La jerarquía visual se gana con color y peso tipográfico, no con drop-shadows pesados. La sombra grande (<code>--shadow-lg</code>) está reservada para modales y overlays.</p>
+          </div>
+        </div>
+
+        <div class="subhead">Radios</div>
+        <div class="demos-grid">
+          <div class="demo-card"><div class="demo-shape" style="border-radius: 3px;"></div><div class="name">XS</div><div class="token">--r-xs · 3 px</div></div>
+          <div class="demo-card"><div class="demo-shape" style="border-radius: 4px;"></div><div class="name">SM</div><div class="token">--r-sm · 4 px · inputs</div></div>
+          <div class="demo-card"><div class="demo-shape" style="border-radius: 6px;"></div><div class="name">MD</div><div class="token">--r-md · 6 px · botones</div></div>
+          <div class="demo-card"><div class="demo-shape" style="border-radius: 8px;"></div><div class="name">LG</div><div class="token">--r-lg · 8 px · cards</div></div>
+          <div class="demo-card"><div class="demo-shape" style="border-radius: 12px;"></div><div class="name">XL</div><div class="token">--r-xl · 12 px · modales</div></div>
+          <div class="demo-card"><div class="demo-shape" style="border-radius: 999px;"></div><div class="name">Pill</div><div class="token">--r-pill</div></div>
+        </div>
+
+        <div class="subhead">Sombras</div>
+        <div class="demos-grid">
+          <div class="demo-card"><div class="demo-shape" style="background:white; border:1px solid var(--border-default); box-shadow: var(--shadow-xs);"></div><div class="name">XS</div><div class="token">--shadow-xs</div></div>
+          <div class="demo-card"><div class="demo-shape" style="background:white; border:1px solid var(--border-default); box-shadow: var(--shadow-sm);"></div><div class="name">SM · controles</div><div class="token">--shadow-sm</div></div>
+          <div class="demo-card"><div class="demo-shape" style="background:white; border:1px solid var(--border-default); box-shadow: var(--shadow-md);"></div><div class="name">MD · dropdowns</div><div class="token">--shadow-md</div></div>
+          <div class="demo-card"><div class="demo-shape" style="background:white; border:1px solid var(--border-default); box-shadow: var(--shadow-lg);"></div><div class="name">LG · modales</div><div class="token">--shadow-lg</div></div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── ICONOGRAFÍA ─────────────────── -->
+      <section class="chapter" id="iconografia">
+        <div class="chapter-head">
+          <span class="num">05</span>
+          <div>
+            <h2>Iconografía</h2>
+            <p class="lede">Lucide a línea, peso 1.5 px, tamaños 12 / 14 / 16 / 20 px. Los iconos acompañan etiquetas — nunca van solos a menos que sean acciones universalmente reconocibles (cerrar, descargar, más opciones). Mismo color que el texto que acompañan.</p>
+          </div>
+        </div>
+        <div class="card" style="padding: var(--s-6);">
+          <div class="hstack" style="gap: var(--s-6);">
+            <div class="hstack" style="gap: var(--s-3); color: var(--fg-secondary);">
+              <i data-lucide="file-text"></i><i data-lucide="inbox"></i><i data-lucide="users"></i><i data-lucide="building-2"></i><i data-lucide="folder-tree"></i><i data-lucide="signature"></i><i data-lucide="shield-check"></i><i data-lucide="bar-chart-3"></i><i data-lucide="message-square-warning"></i><i data-lucide="printer"></i><i data-lucide="scan-line"></i><i data-lucide="qr-code"></i><i data-lucide="bell"></i><i data-lucide="search"></i><i data-lucide="filter"></i><i data-lucide="download"></i><i data-lucide="more-horizontal"></i><i data-lucide="check"></i><i data-lucide="x"></i><i data-lucide="clock"></i><i data-lucide="sparkles"></i><i data-lucide="paperclip"></i><i data-lucide="history"></i><i data-lucide="settings"></i>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── BOTONES ─────────────────── -->
+      <section class="chapter" id="buttons">
+        <div class="chapter-head">
+          <span class="num">06</span>
+          <div>
+            <h2>Botones</h2>
+            <p class="lede">Sólo una acción primaria por pantalla. Acciones secundarias en estilo outline; ghost para acciones terciarias en barras densas. Las acciones destructivas son rojas — pero las que abren un flujo de aprobación (anular, inactivar, retirar) usan el estilo outline-danger, no sólido.</p>
+          </div>
+        </div>
+
+        <div class="subhead">Variantes</div>
+        <div class="btn-row">
+          <button class="btn btn-primary"><i data-lucide="check"></i> Primario</button>
+          <button class="btn btn-accent"><i data-lucide="send"></i> Acento</button>
+          <button class="btn btn-secondary"><i data-lucide="download"></i> Secundario</button>
+          <button class="btn btn-ghost">Ghost</button>
+          <button class="btn btn-danger"><i data-lucide="ban"></i> Solicitar anulación</button>
+          <button class="btn btn-danger-solid"><i data-lucide="alert-triangle"></i> Confirmar anulación</button>
+        </div>
+
+        <div class="subhead">Tamaños</div>
+        <div class="btn-row">
+          <button class="btn btn-primary btn-sm"><i data-lucide="plus"></i> Pequeño</button>
+          <button class="btn btn-primary"><i data-lucide="plus"></i> Mediano (default)</button>
+          <button class="btn btn-primary btn-lg"><i data-lucide="plus"></i> Grande</button>
+          <button class="btn btn-secondary btn-icon-only" aria-label="Más"><i data-lucide="more-horizontal"></i></button>
+          <button class="btn btn-ghost btn-icon-only" aria-label="Cerrar"><i data-lucide="x"></i></button>
+        </div>
+
+        <div class="subhead">Estados</div>
+        <div class="btn-row">
+          <button class="btn btn-primary">Default</button>
+          <button class="btn btn-primary" style="background: var(--slate-800);">Hover</button>
+          <button class="btn btn-primary" style="box-shadow: var(--shadow-focus);">Focus</button>
+          <button class="btn btn-primary" disabled style="opacity:.4; cursor: not-allowed;">Disabled</button>
+          <button class="btn btn-primary" style="opacity:.7;"><i data-lucide="loader-2" style="animation: spin 1s linear infinite;"></i> Cargando</button>
+        </div>
+        <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+      </section>
+
+      <!-- ─────────────────── FORMS ─────────────────── -->
+      <section class="chapter" id="forms">
+        <div class="chapter-head">
+          <span class="num">07</span>
+          <div>
+            <h2>Campos &amp; controles</h2>
+            <p class="lede">Labels arriba, hints debajo, errores inline. El campo de justificación obligatoria (RNF-058 / RNF-009) aparece en cualquier acción que altere estado oficial — anular, reclasificar, reasignar, suspender término, cerrar PQRSD.</p>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="field">
+            <label for="f1">Asunto del radicado <span class="req">*</span></label>
+            <input id="f1" class="input" value="Solicitud de licencia de construcción para predio sector La Esperanza" />
+            <div class="hint">Mínimo 10 caracteres. Máximo 500.</div>
+          </div>
+          <div class="field">
+            <label for="f2">Canal de recepción <span class="req">*</span></label>
+            <select id="f2" class="select">
+              <option>Presencial — Ventanilla Única</option>
+              <option>Correo electrónico institucional</option>
+              <option>Página web</option>
+              <option>Correo postal</option>
+            </select>
+            <div class="hint">Catálogo definido por Admin del Sistema.</div>
+          </div>
+          <div class="field has-icon">
+            <label for="f3">Buscar tercero remitente</label>
+            <i class="icon-left" data-lucide="search"></i>
+            <input id="f3" class="input with-icon" placeholder="Documento, nombre o razón social…" />
+            <div class="hint">Si no existe, se crea inline (RNF-044).</div>
+          </div>
+
+          <div class="field">
+            <label for="f4">Fecha de radicación</label>
+            <input id="f4" class="input" value="2026-05-24" type="date" />
+          </div>
+          <div class="field">
+            <label for="f5">Dependencia responsable</label>
+            <input id="f5" class="input error" value="" placeholder="Seleccionar…" />
+            <div class="err"><i data-lucide="alert-circle" style="width:12px;height:12px"></i> Debe seleccionar una dependencia.</div>
+          </div>
+          <div class="field">
+            <label for="f6">Justificación <span class="req">*</span></label>
+            <textarea id="f6" class="textarea" placeholder="Describa el motivo de la reclasificación (mínimo 10 caracteres)…"></textarea>
+            <div class="hint">Queda registrado en la auditoría del recurso (RNF-058).</div>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-top: var(--s-5);">
+          <div class="card">
+            <div class="card-head"><div class="card-title">Checkboxes &amp; radios</div></div>
+            <div class="card-body">
+              <div class="check-row">
+                <label class="check"><input type="checkbox" checked /> Incluir QR de verificación en la constancia</label>
+                <label class="check"><input type="checkbox" /> Notificar al ciudadano por correo electrónico</label>
+                <label class="check"><input type="checkbox" /> Imprimir etiqueta automáticamente al radicar</label>
+              </div>
+              <div style="height: var(--s-4);"></div>
+              <div class="check-row">
+                <label class="check"><input type="radio" name="r" checked /> Mi dependencia</label>
+                <label class="check"><input type="radio" name="r" /> Mis dependencias autorizadas</label>
+                <label class="check"><input type="radio" name="r" /> Toda la entidad</label>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div class="card-title">Switches (preferencias)</div></div>
+            <div class="card-body">
+              <div class="stack" style="gap: var(--s-3);">
+                <div class="hstack" style="justify-content: space-between;">
+                  <div>
+                    <div style="font-weight: 600; font-size: 13.5px;">Sugerencias de IA al clasificar</div>
+                    <div style="font-size: 12.5px; color: var(--fg-tertiary);">Muestra propuestas inline en el wizard de radicado.</div>
+                  </div>
+                  <div class="switch on"></div>
+                </div>
+                <div class="hstack" style="justify-content: space-between;">
+                  <div>
+                    <div style="font-weight: 600; font-size: 13.5px;">Notificar por correo electrónico</div>
+                    <div style="font-size: 12.5px; color: var(--fg-tertiary);">Resumen diario de tareas vencidas.</div>
+                  </div>
+                  <div class="switch"></div>
+                </div>
+                <div class="hstack" style="justify-content: space-between;">
+                  <div>
+                    <div style="font-weight: 600; font-size: 13.5px;">Modo denso de tabla</div>
+                    <div style="font-size: 12.5px; color: var(--fg-tertiary);">Reduce padding en filas (–4px).</div>
+                  </div>
+                  <div class="switch on"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── BADGES ─────────────────── -->
+      <section class="chapter" id="badges">
+        <div class="chapter-head">
+          <span class="num">08</span>
+          <div>
+            <h2>Badges &amp; chips</h2>
+            <p class="lede">Píldoras de 22 px de alto, peso 500, mayúscula inicial. Cada badge tiene un punto de color que duplica la información para usuarios con baja distinción cromática.</p>
+          </div>
+        </div>
+        <div class="card" style="padding: var(--s-5);">
+          <div class="hstack" style="gap: var(--s-3); margin-bottom: var(--s-4);">
+            <span class="badge neutral">Borrador</span>
+            <span class="badge info">En gestión</span>
+            <span class="badge info">Asignada</span>
+            <span class="badge info">En revisión</span>
+            <span class="badge ok">Aprobada</span>
+            <span class="badge ok">Firmada</span>
+            <span class="badge ok">Cerrada</span>
+            <span class="badge warn">Próxima a vencer</span>
+            <span class="badge warn">Devuelta</span>
+            <span class="badge danger">Vencida</span>
+            <span class="badge danger">Anulada</span>
+            <span class="badge violet">Reservado</span>
+          </div>
+          <div class="hstack" style="gap: var(--s-3);">
+            <span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span>
+            <span class="pqrsd-chip tipo-Q"><span class="glyph">Q</span> Queja</span>
+            <span class="pqrsd-chip tipo-R"><span class="glyph">R</span> Reclamo</span>
+            <span class="pqrsd-chip tipo-S"><span class="glyph">S</span> Sugerencia</span>
+            <span class="pqrsd-chip tipo-D"><span class="glyph">D</span> Denuncia</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── TABLES ─────────────────── -->
+      <section class="chapter" id="tables">
+        <div class="chapter-head">
+          <span class="num">09</span>
+          <div>
+            <h2>Tablas</h2>
+            <p class="lede">Toolbar superior con búsqueda + filtros, filas con altura cómoda (44 px), acciones contextuales como íconos al hover. Números siempre con <em>tabular-nums</em>. Vacío con call-to-action explícito.</p>
+          </div>
+        </div>
+
+        <div class="data-table-wrap">
+          <div class="table-toolbar">
+            <div class="search">
+              <i data-lucide="search"></i>
+              <input placeholder="Buscar por número, asunto o tercero…" />
+            </div>
+            <button class="btn btn-secondary btn-sm"><i data-lucide="filter"></i> Filtros · 2</button>
+            <button class="btn btn-secondary btn-sm"><i data-lucide="calendar"></i> Últimos 30 días</button>
+            <div style="flex:1"></div>
+            <button class="btn btn-secondary btn-sm"><i data-lucide="download"></i> Exportar</button>
+            <button class="btn btn-primary btn-sm"><i data-lucide="plus"></i> Nuevo radicado</button>
+          </div>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:32px"><input type="checkbox" /></th>
+                <th>Número</th>
+                <th>Asunto</th>
+                <th>Tercero</th>
+                <th>Dependencia</th>
+                <th>Estado</th>
+                <th>Vencimiento</th>
+                <th style="width:80px"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><input type="checkbox" /></td>
+                <td><span class="num">RAD-2026-001234</span><div class="muted" style="font-size:11px;">24 May · 14:32</div></td>
+                <td>Solicitud de licencia de construcción</td>
+                <td>Constructora El Roble S.A.S.</td>
+                <td>Of. Asesora Jurídica</td>
+                <td><span class="badge info">En gestión</span></td>
+                <td><span class="vto-badge vto-warn"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 42%"></i></span><span class="vto-text">3 días</span></span></td>
+                <td><div class="row-actions"><button class="icon-btn" title="Ver"><i data-lucide="eye"></i></button><button class="icon-btn" title="Más"><i data-lucide="more-horizontal"></i></button></div></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" /></td>
+                <td><span class="num">RAD-2026-001233</span><div class="muted" style="font-size:11px;">24 May · 11:08</div></td>
+                <td>Petición de copia de acto administrativo 2024-815</td>
+                <td>María Helena Rojas Pérez</td>
+                <td>Sec. General</td>
+                <td><span class="badge info">Asignada</span></td>
+                <td><span class="vto-badge vto-ok"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 78%"></i></span><span class="vto-text">12 días</span></span></td>
+                <td><div class="row-actions"><button class="icon-btn"><i data-lucide="eye"></i></button><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" /></td>
+                <td><span class="num">RAD-2026-001232</span><div class="muted" style="font-size:11px;">23 May · 17:54</div></td>
+                <td>Reclamo por demora en respuesta de tutela radicada en marzo</td>
+                <td>Juan Camilo Restrepo</td>
+                <td>Of. Control Interno</td>
+                <td><span class="badge danger">Vencida</span></td>
+                <td><span class="vto-badge vto-danger vto-vencida"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 100%"></i></span><span class="vto-text">−2 días</span></span></td>
+                <td><div class="row-actions"><button class="icon-btn"><i data-lucide="eye"></i></button><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" /></td>
+                <td><span class="num">RAD-2026-001231</span><div class="muted" style="font-size:11px;">23 May · 16:22</div></td>
+                <td>Sugerencia sobre el procedimiento de atención presencial</td>
+                <td>Anónimo</td>
+                <td>Sec. de Servicios al Ciudadano</td>
+                <td><span class="badge ok">Cerrada</span></td>
+                <td><span class="vto-badge vto-ok"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 100%"></i></span><span class="vto-text">Finalizada</span></span></td>
+                <td><div class="row-actions"><button class="icon-btn"><i data-lucide="eye"></i></button><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div></td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" /></td>
+                <td><span class="num">RAD-2026-001230</span><div class="muted" style="font-size:11px;">23 May · 14:10</div></td>
+                <td>Borrador de oficio de respuesta a tutela 2026-001100</td>
+                <td>—</td>
+                <td>Of. Asesora Jurídica</td>
+                <td><span class="badge neutral">Borrador</span></td>
+                <td><span class="muted">—</span></td>
+                <td><div class="row-actions"><button class="icon-btn"><i data-lucide="eye"></i></button><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></div></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="pagination">
+            <div class="summary">Mostrando 1–5 de 1.247 radicados</div>
+            <button class="page-btn"><i data-lucide="chevron-left" style="width:12px;height:12px;display:block"></i></button>
+            <button class="page-btn active">1</button>
+            <button class="page-btn">2</button>
+            <button class="page-btn">3</button>
+            <button class="page-btn">…</button>
+            <button class="page-btn">25</button>
+            <button class="page-btn"><i data-lucide="chevron-right" style="width:12px;height:12px;display:block"></i></button>
+          </div>
+        </div>
+
+        <div style="margin-top: var(--s-5);">
+          <div class="empty">
+            <div class="glyph"><i data-lucide="inbox"></i></div>
+            <h4>No hay radicados que mostrar</h4>
+            <p>Ajuste los filtros o cambie el rango de fechas. También puede crear un nuevo radicado desde la ventanilla.</p>
+            <button class="btn btn-primary"><i data-lucide="plus"></i> Nuevo radicado de entrada</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── NAV ─────────────────── -->
+      <section class="chapter" id="nav">
+        <div class="chapter-head">
+          <span class="num">10</span>
+          <div>
+            <h2>Navegación</h2>
+            <p class="lede">Breadcrumbs auto-generados desde la ruta (RNF-039). Tabs con contador para grandes listas. La barra de búsqueda global vive en el topbar y acepta números de radicado desde cualquier vista.</p>
+          </div>
+        </div>
+
+        <div class="subhead">Breadcrumb</div>
+        <div class="breadcrumb">
+          <a href="#"><i data-lucide="home"></i></a>
+          <i data-lucide="chevron-right"></i>
+          <a href="#">Gestión Documental</a>
+          <i data-lucide="chevron-right"></i>
+          <a href="#">Ventanilla Única</a>
+          <i data-lucide="chevron-right"></i>
+          <a href="#">Radicados</a>
+          <i data-lucide="chevron-right"></i>
+          <span class="here">RAD-2026-001234</span>
+        </div>
+
+        <div style="height: var(--s-5)"></div>
+
+        <div class="subhead">Tabs con contador</div>
+        <div class="card" style="overflow:hidden">
+          <div class="tabs">
+            <div class="tab active"><i data-lucide="file-text"></i> General</div>
+            <div class="tab"><i data-lucide="paperclip"></i> Anexos <span class="count">3</span></div>
+            <div class="tab"><i data-lucide="folder-tree"></i> Clasificación</div>
+            <div class="tab"><i data-lucide="history"></i> Trazabilidad <span class="count">12</span></div>
+            <div class="tab"><i data-lucide="message-square"></i> Notas internas <span class="count">2</span></div>
+            <div class="tab"><i data-lucide="settings-2"></i> Acciones</div>
+          </div>
+          <div style="padding: var(--s-7); font-size: 14px; color: var(--fg-tertiary);">Contenido de la pestaña activa.</div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── FEEDBACK ─────────────────── -->
+      <section class="chapter" id="feedback">
+        <div class="chapter-head">
+          <span class="num">11</span>
+          <div>
+            <h2>Alertas &amp; feedback</h2>
+            <p class="lede">Cuatro variantes semánticas; cada una incluye icono + título + descripción + acción opcional. Las alertas críticas (banner global) van anchadas arriba con CTA al detalle.</p>
+          </div>
+        </div>
+        <div class="alert info">
+          <div class="icon"><i data-lucide="info"></i></div>
+          <div class="body">
+            <div class="title">El módulo de Periféricos requiere agente local activo</div>
+            <div>Counter-1 reporta agente offline desde hace 8 minutos. Las acciones de impresión y digitalización están deshabilitadas en este punto.</div>
+            <div class="actions"><a href="#">Ver estado del agente</a><a href="#">Reintentar conexión</a></div>
+          </div>
+        </div>
+        <div class="alert success">
+          <div class="icon"><i data-lucide="check-circle-2"></i></div>
+          <div class="body">
+            <div class="title">Radicado <code style="font-family:var(--font-mono); font-size:12.5px;">RAD-2026-001234</code> creado correctamente</div>
+            <div>La constancia con QR fue generada. Puede imprimirla o enviarla por correo al remitente.</div>
+          </div>
+        </div>
+        <div class="alert warning">
+          <div class="icon"><i data-lucide="alert-triangle"></i></div>
+          <div class="body">
+            <div class="title">Tres PQRSD asignadas a su dependencia vencen en menos de 48 horas</div>
+            <div>Como Jefe de la Oficina Asesora Jurídica, puede reasignarlas o escalarlas al Administrador PQRSD.</div>
+            <div class="actions"><a href="#">Ver PQRSD por vencer</a></div>
+          </div>
+        </div>
+        <div class="alert danger">
+          <div class="icon"><i data-lucide="alert-octagon"></i></div>
+          <div class="body">
+            <div class="title">Acción no autorizada</div>
+            <div>Su usuario no tiene el permiso <code style="font-family:var(--font-mono); font-size:12.5px;">PERM-VU-016</code> con alcance institucional para aprobar anulaciones de radicado. Contacte al Administrador del Sistema.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── KPI / CARDS ─────────────────── -->
+      <section class="chapter" id="kpi">
+        <div class="chapter-head">
+          <span class="num">12</span>
+          <div>
+            <h2>KPIs &amp; tarjetas</h2>
+            <p class="lede">Métricas clave usan Source Serif a 32 px para el valor. Variaciones positivas en verde, negativas en rojo — la dirección depende del contexto: bajar "vencidas" es bueno, bajar "radicados" puede no serlo.</p>
+          </div>
+        </div>
+        <div class="kpis">
+          <div class="kpi">
+            <div class="label"><i data-lucide="file-plus" style="width:12px;height:12px;color:var(--fg-tertiary)"></i> Radicados de hoy</div>
+            <div class="value">1.247</div>
+            <div class="delta up"><i data-lucide="trending-up"></i> +12.4% vs. ayer</div>
+          </div>
+          <div class="kpi">
+            <div class="label"><i data-lucide="message-square-warning" style="width:12px;height:12px;color:var(--fg-tertiary)"></i> PQRSD sin asignar</div>
+            <div class="value">37</div>
+            <div class="delta down"><i data-lucide="trending-down"></i> −8 desde el lunes</div>
+          </div>
+          <div class="kpi">
+            <div class="label"><i data-lucide="timer" style="width:12px;height:12px;color:var(--fg-tertiary)"></i> Próximas a vencer</div>
+            <div class="value" style="color: var(--amber-700);">14</div>
+            <div class="delta" style="color:var(--fg-tertiary)"><i data-lucide="alert-circle"></i> Plazo &lt; 48h</div>
+          </div>
+          <div class="kpi">
+            <div class="label"><i data-lucide="ban" style="width:12px;height:12px;color:var(--fg-tertiary)"></i> Vencidas</div>
+            <div class="value" style="color: var(--red-700);">3</div>
+            <div class="delta up"><i data-lucide="trending-down"></i> −2 vs. semana pasada</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── DOMAIN · RadicadoCard ─────────────────── -->
+      <section class="chapter" id="radicado-card">
+        <div class="chapter-head">
+          <span class="num">13</span>
+          <div>
+            <h2>RadicadoCard</h2>
+            <p class="lede">Tarjeta de uso transversal en buzones, búsquedas y resultados de IA. Muestra número canónico, asunto, metadatos, asignatario y estado en una sola unidad clicable.</p>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="radicado-card">
+            <div>
+              <div class="num-block">
+                <div class="num">RAD-2026-001234</div>
+                <div class="num-meta">Entrada · Canal: Presencial · 24 May 2026</div>
+              </div>
+              <div class="asunto">Solicitud de licencia de construcción para predio sector La Esperanza</div>
+              <div class="meta-row">
+                <span><i data-lucide="user"></i> <b>Constructora El Roble S.A.S.</b></span>
+                <span><i data-lucide="building-2"></i> Of. Asesora Jurídica</span>
+                <span><i data-lucide="paperclip"></i> 3 anexos</span>
+              </div>
+              <div class="footer">
+                <div class="avatar">JR</div>
+                <div class="assignee">Asignado a <b>Juana Restrepo</b> · Profesional Especializado</div>
+              </div>
+            </div>
+            <div class="right-col">
+              <span class="badge info">En gestión</span>
+              <span class="vto-badge vto-warn" style="font-size:11px"><span class="vto-dot"></span><span class="vto-text">3 días</span></span>
+            </div>
+          </div>
+
+          <div class="radicado-card">
+            <div>
+              <div class="num-block">
+                <div class="num">RAD-2026-001232</div>
+                <div class="num-meta">Entrada · Canal: Correo · 23 May 2026</div>
+              </div>
+              <div class="asunto">Reclamo por demora en respuesta de tutela radicada en marzo</div>
+              <div class="meta-row">
+                <span><i data-lucide="user"></i> <b>Juan Camilo Restrepo</b></span>
+                <span><i data-lucide="building-2"></i> Of. Control Interno</span>
+                <span><i data-lucide="paperclip"></i> 1 anexo</span>
+                <span><i data-lucide="sparkles" style="color:var(--sky-600)"></i> Clasificado por IA</span>
+              </div>
+              <div class="footer">
+                <div class="avatar" style="background: var(--red-50); color: var(--red-700);">CG</div>
+                <div class="assignee">Asignado a <b>Carlos Granados</b> · Jefe de Dependencia</div>
+              </div>
+            </div>
+            <div class="right-col">
+              <span class="badge danger">Vencida</span>
+              <span class="vto-badge vto-danger vto-vencida" style="font-size:11px"><span class="vto-dot"></span><span class="vto-text">−2 días</span></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── DOMAIN · TerminoVencimiento ─────────────────── -->
+      <section class="chapter" id="vto-badge">
+        <div class="chapter-head">
+          <span class="num">14</span>
+          <div>
+            <h2>TérminoVencimientoBadge</h2>
+            <p class="lede">Semáforo de plazo (RNF-023 / GD-API-0042). Verde cuando queda más del 50% del término, ámbar entre 25–50%, rojo bajo 25% o vencido. La barra muestra el avance temporal; el número, los días hábiles restantes.</p>
+          </div>
+        </div>
+        <div class="card" style="padding: var(--s-6);">
+          <div class="hstack" style="gap: var(--s-5);">
+            <span class="vto-badge vto-ok"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 22%"></i></span><span class="vto-text">12 días</span></span>
+            <span class="vto-badge vto-ok"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 48%"></i></span><span class="vto-text">8 días</span></span>
+            <span class="vto-badge vto-warn"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 65%"></i></span><span class="vto-text">5 días</span></span>
+            <span class="vto-badge vto-warn"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 78%"></i></span><span class="vto-text">3 días</span></span>
+            <span class="vto-badge vto-danger"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 92%"></i></span><span class="vto-text">1 día</span></span>
+            <span class="vto-badge vto-danger vto-vencida"><span class="vto-dot"></span><span class="vto-bar"><i style="width: 100%"></i></span><span class="vto-text">−2 días</span></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── DOMAIN · PQRSDStatusChip ─────────────────── -->
+      <section class="chapter" id="pqrsd-chip">
+        <div class="chapter-head">
+          <span class="num">15</span>
+          <div>
+            <h2>PQRSDStatusChip</h2>
+            <p class="lede">Identifica el subtipo de PQRSD con un glifo monocromático y la etiqueta completa. Aparece en listas, fichas y notificaciones — nunca abreviado a sólo la letra.</p>
+          </div>
+        </div>
+        <div class="card" style="padding: var(--s-6);">
+          <div class="hstack" style="gap: var(--s-3);">
+            <span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span>
+            <span class="pqrsd-chip tipo-Q"><span class="glyph">Q</span> Queja</span>
+            <span class="pqrsd-chip tipo-R"><span class="glyph">R</span> Reclamo</span>
+            <span class="pqrsd-chip tipo-S"><span class="glyph">S</span> Sugerencia</span>
+            <span class="pqrsd-chip tipo-D"><span class="glyph">D</span> Denuncia</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── DOMAIN · WorkflowTimeline ─────────────────── -->
+      <section class="chapter" id="timeline">
+        <div class="chapter-head">
+          <span class="num">16</span>
+          <div>
+            <h2>WorkflowTimeline</h2>
+            <p class="lede">Línea de tiempo vertical de eventos auditables (GD-API-0019). Cada evento muestra usuario + rol + dependencia + cargo al momento de la actuación (RNF-006 · snapshots). Visible en la ficha de cada recurso institucional.</p>
+          </div>
+        </div>
+        <div class="timeline">
+
+          <div class="timeline-item is-current">
+            <div class="timeline-node"><i data-lucide="user-check"></i></div>
+            <div class="timeline-content">
+              <div class="action">PQRSD asignada al profesional responsable</div>
+              <div class="actor"><b>Juana Restrepo</b> aceptó la asignación · Profesional Especializado</div>
+              <div class="snapshot">snapshot · rol=gd.profesional · dep=Of. Asesora Jurídica · cargo=Profesional Esp.</div>
+              <div class="observation">"Recibido. Inicio análisis de antecedentes esta tarde."</div>
+            </div>
+            <div class="timeline-time">24 May · 15:08</div>
+          </div>
+
+          <div class="timeline-item is-success">
+            <div class="timeline-node"><i data-lucide="sparkles"></i></div>
+            <div class="timeline-content">
+              <div class="action">Sugerencia de dependencia aceptada</div>
+              <div class="actor"><b>Carolina Méndez</b> · Coordinadora Ventanilla Única · 87% de confianza</div>
+              <div class="snapshot">solicitud_ia · gd.ia.sugerencias/abc123 · decision=aceptar</div>
+            </div>
+            <div class="timeline-time">24 May · 14:45</div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-node"><i data-lucide="folder-tree"></i></div>
+            <div class="timeline-content">
+              <div class="action">Clasificación inicial</div>
+              <div class="actor"><b>Carolina Méndez</b> · Tipo: Petición · Serie 240 — Subserie 240.12</div>
+              <div class="snapshot">trd_version=2026.1 · vigencia=2026-01-01..—</div>
+            </div>
+            <div class="timeline-time">24 May · 14:38</div>
+          </div>
+
+          <div class="timeline-item is-warning">
+            <div class="timeline-node"><i data-lucide="scan-line"></i></div>
+            <div class="timeline-content">
+              <div class="action">Digitalización con baja confianza de OCR</div>
+              <div class="actor"><b>Agente local · Counter-1</b> · Tesseract spa+eng · 67% confianza promedio</div>
+              <div class="snapshot">archivo_digital_id=…f4a2 · 3 páginas · 4.2 MB</div>
+            </div>
+            <div class="timeline-time">24 May · 14:35</div>
+          </div>
+
+          <div class="timeline-item">
+            <div class="timeline-node"><i data-lucide="file-plus"></i></div>
+            <div class="timeline-content">
+              <div class="action">Radicado creado en Ventanilla Única</div>
+              <div class="actor"><b>Carolina Méndez</b> · Canal: Presencial · Tercero verificado</div>
+              <div class="snapshot">request_id=req_b7d9e0f1c2a3 · audit_event_id=01HX8…</div>
+            </div>
+            <div class="timeline-time">24 May · 14:32</div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ─────────────────── DOMAIN · IA Inline ─────────────────── -->
+      <section class="chapter" id="ia-inline">
+        <div class="chapter-head">
+          <span class="num">17</span>
+          <div>
+            <h2>IASuggestionInline</h2>
+            <p class="lede">Componente único para todas las sugerencias automatizadas (RNF-029). Siempre inline dentro del formulario donde aplica — nunca como modal flotante. Tres acciones explícitas: <strong>Aceptar</strong>, <strong>Modificar</strong>, <strong>Rechazar</strong>. La confianza se muestra siempre; la explicación es expandible.</p>
+          </div>
+        </div>
+
+        <div class="stack">
+          <div class="ia-suggestion">
+            <div class="ia-mark"><i data-lucide="sparkles" style="width:16px;height:16px"></i></div>
+            <div class="ia-body">
+              <div class="ia-eyebrow">Sugerencia · Clasificación inicial <span class="conf">87% confianza</span></div>
+              <div class="ia-text">Tipo: <b>Petición de interés general</b> · Serie <b>240</b> · Subserie <b>240.12 — Licencias urbanísticas</b></div>
+              <div class="ia-explain">El asunto menciona explícitamente "licencia de construcción" y el anexo principal corresponde al formato F-LU-001. La dependencia responsable habitual para este subtipo es la Oficina Asesora Jurídica.</div>
+            </div>
+            <div class="ia-actions">
+              <button class="btn btn-accent btn-sm"><i data-lucide="check"></i> Aceptar</button>
+              <button class="btn btn-secondary btn-sm"><i data-lucide="pencil"></i> Modificar</button>
+              <button class="btn btn-ghost btn-sm"><i data-lucide="x"></i> Rechazar</button>
+            </div>
+          </div>
+
+          <div class="ia-suggestion">
+            <div class="ia-mark"><i data-lucide="sparkles" style="width:16px;height:16px"></i></div>
+            <div class="ia-body">
+              <div class="ia-eyebrow">Posible duplicado detectado <span class="conf">93% similitud</span></div>
+              <div class="ia-text">El asunto y el remitente coinciden con el radicado <b style="font-family:var(--font-mono)">RAD-2026-001188</b>, creado hace 9 días por el mismo tercero.</div>
+              <div class="ia-explain">Considere asociar este nuevo documento como anexo del radicado existente en lugar de crear un radicado nuevo. Si se trata de un caso distinto, puede ignorar esta sugerencia.</div>
+            </div>
+            <div class="ia-actions">
+              <button class="btn btn-secondary btn-sm"><i data-lucide="link-2"></i> Asociar al existente</button>
+              <button class="btn btn-ghost btn-sm"><i data-lucide="x"></i> Continuar como nuevo</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── DOMAIN · Constancia ─────────────────── -->
+      <section class="chapter" id="constancia">
+        <div class="chapter-head">
+          <span class="num">18</span>
+          <div>
+            <h2>Constancia institucional</h2>
+            <p class="lede">Documento generado al radicar (GD-UI-0010 + RNF-014). Cabecera con logo + nombre + identificación legal de la entidad (recuperados de <code>GET /api/v1/gd/entidad</code>), número canónico, QR de verificación y leyenda imprimible. Pensada para hoja A4 — esta es la vista previa en pantalla.</p>
+          </div>
+        </div>
+        <div class="constancia-frame">
+          <div class="head">
+            <div class="seal">⚖</div>
+            <div class="entity">
+              <div class="name">ALCALDÍA MUNICIPAL DE EJEMPLO</div>
+              <div class="legal">NIT 800.123.456-7 · Cra. 15 No. 4-23 · Centro Administrativo · Tel. (601) 555-0100</div>
+            </div>
+            <div class="number-block">
+              <div class="label">Radicado N°</div>
+              <div class="num">RAD-2026-001234</div>
+            </div>
+          </div>
+          <div class="body">
+            <div>
+              <h3>Constancia de radicación</h3>
+              <p class="legend">El presente documento certifica la radicación oficial del trámite descrito a continuación, conforme al artículo 5 de la Ley 1437 de 2011 y al procedimiento interno de gestión documental de la entidad. El número de radicación es único, secuencial y no reutilizable.</p>
+              <dl class="data-grid">
+                <dt>Fecha</dt><dd>24 de mayo de 2026 · 14:32:11 hora local</dd>
+                <dt>Canal</dt><dd>Presencial — Ventanilla Única, Punto Principal</dd>
+                <dt>Tercero</dt><dd>Constructora El Roble S.A.S. · NIT 900.555.222-1</dd>
+                <dt>Asunto</dt><dd>Solicitud de licencia de construcción para predio sector La Esperanza</dd>
+                <dt>Anexos</dt><dd>3 documentos (4.2 MB)</dd>
+                <dt>Verificación</dt><dd><code>https://gd.example.gov.co/verificar/HX8K-2QV3-9RNM</code></dd>
+              </dl>
+            </div>
+            <div class="qr-block">
+              <div class="qr"></div>
+              <div>HX8K-2QV3-9RNM</div>
+            </div>
+          </div>
+          <div class="foot">
+            <span>Documento generado automáticamente por el sistema de Gestión Documental</span>
+            <span>Página 1 de 1</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── DOMAIN · Confirm Modal ─────────────────── -->
+      <section class="chapter" id="confirm">
+        <div class="chapter-head">
+          <span class="num">19</span>
+          <div>
+            <h2>ConfirmModal con justificación</h2>
+            <p class="lede">Patrón obligatorio para cualquier acción que altere estado oficial (RNF-058 / RNF-009): anular, reclasificar, suspender término, cerrar PQRSD, retirar, reasignar. Resumen del recurso afectado + campo de justificación obligatorio + separación visual de la acción destructiva.</p>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:center; padding: var(--s-7); background: rgba(15,23,42,0.06); border-radius: var(--r-lg); border: 1px solid var(--border-default);">
+          <div class="modal">
+            <div class="modal-head">
+              <div class="icon-block"><i data-lucide="alert-triangle"></i></div>
+              <div>
+                <div class="title">Solicitar anulación del radicado</div>
+                <div class="subtitle">La anulación requiere aprobación del Coordinador de Ventanilla Única.</div>
+              </div>
+            </div>
+            <div class="modal-body">
+              <p>Esta acción crea una solicitud que debe ser aprobada por un usuario distinto al solicitante (separación de funciones — RNF-008). El radicado permanecerá visible con el estado <span class="badge warn" style="vertical-align: middle">Anulación pendiente</span> hasta que se resuelva.</p>
+              <div class="modal-summary">
+                <dl>
+                  <dt>Radicado</dt><dd><code>RAD-2026-001234</code></dd>
+                  <dt>Asunto</dt><dd>Solicitud de licencia de construcción…</dd>
+                  <dt>Estado actual</dt><dd><span class="badge info">En gestión</span></dd>
+                </dl>
+              </div>
+              <div class="field">
+                <label for="just">Motivo de la anulación <span class="req">*</span></label>
+                <textarea id="just" class="textarea" placeholder="Describa el motivo (mínimo 10 caracteres). Este texto queda registrado en la auditoría."></textarea>
+                <div class="hint">El motivo es visible para el aprobador y queda en la trazabilidad pública del recurso.</div>
+              </div>
+            </div>
+            <div class="modal-foot">
+              <button class="btn btn-ghost">Cancelar</button>
+              <button class="btn btn-danger-solid"><i data-lucide="alert-triangle"></i> Solicitar anulación</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────── PATRONES ─────────────────── -->
+      <section class="chapter" id="patrones">
+        <div class="chapter-head">
+          <span class="num">20</span>
+          <div>
+            <h2>Patrones transversales</h2>
+            <p class="lede">Reglas no negociables que rigen el comportamiento de la UI. Cualquier vista nueva debe pasar estas pruebas antes de declararse terminada (DoD).</p>
+          </div>
+        </div>
+
+        <div class="pattern-row">
+          <div>
+            <div class="pattern-rule">M-1 · Tono</div>
+            <h5>Lenguaje institucional formal</h5>
+          </div>
+          <p>Tercera persona, sin emoji, sin exclamaciones. "Se ha radicado", "El documento se encuentra…". El ciudadano lee constancias y reportes — el copy debe sonar a Estado.</p>
+        </div>
+
+        <div class="pattern-row">
+          <div>
+            <div class="pattern-rule">M-2 · Privacidad</div>
+            <h5>Cero datos sensibles en URL</h5>
+          </div>
+          <p>Identificadores por UUID. Nunca número de cédula, NIT ni número de radicado en la barra. Los logs y referencias usan <code>request_id</code>. RNF-017.</p>
+        </div>
+
+        <div class="pattern-row">
+          <div>
+            <div class="pattern-rule">M-3 · Reversibilidad</div>
+            <h5>Confirmar acciones irreversibles</h5>
+          </div>
+          <p>Toda acción que altere estado oficial abre un <em>ConfirmModal</em> con resumen y campo de justificación. Anular, reclasificar, firmar, aprobar, cerrar PQRSD, reasignar. RNF-058 + RNF-009.</p>
+        </div>
+
+        <div class="pattern-row">
+          <div>
+            <div class="pattern-rule">M-4 · Trazabilidad</div>
+            <h5>Timeline visible en cada ficha</h5>
+          </div>
+          <p>Radicado, PQRSD, documento, correspondencia, expediente. Cada uno muestra <em>WorkflowTimeline</em> con snapshots de usuario/rol/dependencia/cargo al momento de la actuación.</p>
+        </div>
+
+        <div class="pattern-row">
+          <div>
+            <div class="pattern-rule">M-5 · IA</div>
+            <h5>Sugerencias siempre inline</h5>
+          </div>
+          <p>Nunca un modal flotante. <em>Aceptar / Modificar / Rechazar</em> son los tres botones permitidos. No existe un botón "Usar IA" que mute sin confirmar. RNF-029.</p>
+        </div>
+
+        <div class="pattern-row">
+          <div>
+            <div class="pattern-rule">M-6 · Alcance</div>
+            <h5>Selector de alcance visible</h5>
+          </div>
+          <p>Mi dependencia · Mis dependencias autorizadas · Toda la entidad. Persistido por usuario. Filtra todas las queries de la pantalla.</p>
+        </div>
+
+        <div class="pattern-row">
+          <div>
+            <div class="pattern-rule">M-7 · Sin DELETE</div>
+            <h5>Inactivar, anular, cerrar — nunca eliminar</h5>
+          </div>
+          <p>La UI no expone botones "Eliminar" sobre recursos institucionales. Sólo "Inactivar", "Anular", "Cerrar vigencia", "Reasignar" o "Versionar". Mandato #3.</p>
+        </div>
+
+        <div class="pattern-row">
+          <div>
+            <div class="pattern-rule">M-8 · Marca</div>
+            <h5>Constancias y reportes con marca institucional</h5>
+          </div>
+          <p>Los PDFs generados (constancias, reportes) usan logo + nombre + identificación legal recuperados de la API — nunca branding del SaaS. RNF-040.</p>
+        </div>
+      </section>
+
+      <footer style="padding: var(--s-9) 0 var(--s-10); border-top: 1px solid var(--border-default); margin-top: var(--s-9);">
+        <div class="hstack" style="justify-content: space-between;">
+          <div>
+            <div style="font-family: var(--font-display); font-weight: 600; font-size: 16px; color: var(--slate-900);">Sistema de diseño · Gestión Documental</div>
+            <div style="font-size: 12.5px; color: var(--fg-tertiary); margin-top: 4px; font-family: var(--font-mono);">v0.1 · 2026-05-24 · Base para 19 roles, 13 épicas, 94+ vistas</div>
+          </div>
+          <a class="btn btn-secondary" href="index.html"><i data-lucide="arrow-left"></i> Volver al portal</a>
+        </div>
+      </footer>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  // Build slate / sky palettes programmatically
+  const buildPalette = (id, steps, varName) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = steps.map(step => {
+      const val = getComputedStyle(document.documentElement).getPropertyValue(`--${varName}-${step}`).trim();
+      const isDark = step >= 500;
+      return `
+        <div class="swatch ${isDark ? 'dark' : 'light'}" style="background: ${val}">
+          <div class="step">${step}</div>
+          <div class="hex">${val.toUpperCase()}</div>
+        </div>`;
+    }).join('');
+  };
+  buildPalette('palette-slate', [25, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900], 'slate');
+  buildPalette('palette-sky', [50, 100, 200, 400, 500, 600, 700, 900], 'sky');
+
+  // Lucide icons
+  if (window.lucide) lucide.createIcons();
+</script>
+
+</body>
+</html>
