@@ -569,6 +569,22 @@ describe('gdApi — endpoints UI-3..UI-9 smoke', () => {
     ['crearReglaAlerta', [{}]],
     ['actualizarReglaAlerta', ['r1', {}]],
     ['inactivarReglaAlerta', ['r1', 'motivo']],
+    // UI-14/15 periféricos
+    ['listPerifericos', [{}]],
+    ['getPeriferico', ['p1']],
+    ['crearPeriferico', [{}]],
+    ['actualizarPeriferico', ['p1', {}]],
+    ['inactivarPeriferico', ['p1', 'motivo']],
+    ['getEstadoPerifericos', []],
+    ['imprimirEtiqueta', [{}]],
+    ['imprimirConstancia', [{}]],
+    ['reimprimir', ['t1', 'motivo']],
+    ['listTrabajosImpresion', [{}]],
+    ['digitalizarIndividual', [{}]],
+    ['digitalizarLote', [{}]],
+    ['listColaDigitalizacion', [{}]],
+    ['asociarDigitalizacionARadicado', [{}]],
+    ['reemplazarDigitalizacion', ['d1', {}]],
   ];
 
   it.each(SMOKE_ENDPOINTS)('%s exporta y llama fetch', async (fnName, args) => {

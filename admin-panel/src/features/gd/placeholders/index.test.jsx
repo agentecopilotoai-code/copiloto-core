@@ -5,9 +5,8 @@ import * as placeholders from './index.jsx';
 
 // Solo placeholders aún sin implementación real (UI-2 y UI-3 ya
 // reemplazaron toda Ventanilla incluyendo ficha + búsqueda).
-const PLACEHOLDER_NAMES = [
-  'GdAdminPerifericos',
-];
+// Todos los placeholders reemplazados por vistas reales (UI-1..UI-14).
+const PLACEHOLDER_NAMES = [];
 
 describe('placeholders de bloques posteriores', () => {
   it('exporta GdHome (landing rol-aware)', () => {

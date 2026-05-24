@@ -563,6 +563,56 @@ ROL-001 Admin Sistema.
 - Functions 75.05% ≥ 75% ✅
 - Lint OK (0 errores)
 
+### Bloque UI-14 (Periféricos parte 1 — admin + impresión) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0087..0090 (Doc 6 EP-012 parte 1). 4 vistas.
+**Roles primarios:** ROL-001 Admin Sistema, ROL-004 Radicador,
+ROL-005 Coordinador VU.
+
+**Archivos nuevos (`perifericos/`, ~1140 LOC componentes + 180 LOC hooks):**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `AdminPerifericos.jsx` (inventario + estado + CRUD) | ~470 | GD-UI-0087 |
+| `Impresion.jsx` (centro impresión: 2 tabs Imprimir + Cola) | ~430 | GD-UI-0088/0089/0090 |
+| `useGdPerifericos.js` (5 readers + 10 mutators, comparte con UI-15) | ~180 | hooks |
+| `index.js` | 10 | |
+
+**Extensiones `services/gdApi.js` (+17 endpoints GD-API-0157..0173)**
+(cubre también UI-15: digitalización).
+
+**Permisos:** reusa `PER-001..012` existentes en gd-matrix.
+
+**Placeholders nuevos:** `GdImpresion`. `GdAdminPerifericos` ahora
+apunta a vista real.
+
+**Decisiones (D-UI-45..D-UI-46):**
+
+- **D-UI-45 (Estado de periféricos en KPIs en la cabecera)**: el
+  admin ve en-línea / fuera-de-línea / pendientes-mantenimiento
+  antes de la tabla. Esto permite detección visual inmediata de
+  problemas operativos en ventanilla (la impresora caída es el
+  bloqueador más común). Auto-refresh manual con botón.
+- **D-UI-46 (Reimpresión SIEMPRE con motivo, sin excepción)**: PER-004
+  exige `JustificacionRequiredField` para cada reimpresión, incluso
+  si el trabajo previo falló. Motivo: en la operación real es común
+  reimprimir por daño físico, atasco de papel o error humano; sin
+  motivo registrado, no hay forma de identificar fraude
+  (reimpresión de constancia para suplantar un radicado).
+
+**Métricas:**
+- **2566/2566 tests admin-panel ✅** (+69 nuevos UI-14)
+- **1091/1091 tests features/gd ✅**
+- Coverage `features/gd/perifericos` = **98.06% lines / 85.48% functions** ✅
+- Global admin-panel = **89.87% ≥ 86% gate** ✅
+- Functions 79.72% ≥ 75% ✅
+- Lint OK (0 errores)
+
+**Periféricos parte 1 CERRADA** — 4 vistas: AdminPerifericos con
+inventario, estado en-línea y CRUD + Centro de impresión con form
+de etiquetas (3 formatos) y constancias + cola de trabajos +
+reimprimir con motivo auditable.
+
 ### Bloque UI-13 (Correo + notificaciones + alertas — CIERRE EP-011) — ✅ COMPLETADO 2026-05-24
 
 **Tareas:** GD-UI-0079..0086 (EP-011). 8 vistas.

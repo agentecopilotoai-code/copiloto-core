@@ -1210,5 +1210,78 @@ export function inactivarReglaAlerta(session, id, motivo) {
   });
 }
 
+// ─── UI-14/UI-15: Periféricos (GD-API-0157..0173) ─────────────────────────
+
+// --- Admin periféricos ---
+export function listPerifericos(session, filtros = {}) {
+  return gdFetch(session, '/gd/perifericos', { params: filtros });
+}
+export function getPeriferico(session, id) {
+  return gdFetch(session, `/gd/perifericos/${id}`);
+}
+export function crearPeriferico(session, payload) {
+  return gdFetch(session, '/gd/perifericos', {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarPeriferico(session, id, payload) {
+  return gdFetch(session, `/gd/perifericos/${id}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function inactivarPeriferico(session, id, motivo) {
+  return gdFetch(session, `/gd/perifericos/${id}/inactivar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+export function getEstadoPerifericos(session) {
+  return gdFetch(session, '/gd/perifericos/estado');
+}
+
+// --- Impresión ---
+export function imprimirEtiqueta(session, payload) {
+  return gdFetch(session, '/gd/perifericos/imprimir/etiqueta', {
+    method: 'POST', body: payload,
+  });
+}
+export function imprimirConstancia(session, payload) {
+  return gdFetch(session, '/gd/perifericos/imprimir/constancia', {
+    method: 'POST', body: payload,
+  });
+}
+export function reimprimir(session, trabajoId, motivo) {
+  return gdFetch(session, `/gd/perifericos/imprimir/${trabajoId}/reimprimir`, {
+    method: 'POST', body: { motivo },
+  });
+}
+export function listTrabajosImpresion(session, filtros = {}) {
+  return gdFetch(session, '/gd/perifericos/trabajos-impresion', { params: filtros });
+}
+
+// --- Digitalización ---
+export function digitalizarIndividual(session, payload) {
+  return gdFetch(session, '/gd/perifericos/digitalizar/individual', {
+    method: 'POST', body: payload,
+  });
+}
+export function digitalizarLote(session, payload) {
+  return gdFetch(session, '/gd/perifericos/digitalizar/lote', {
+    method: 'POST', body: payload,
+  });
+}
+export function listColaDigitalizacion(session, filtros = {}) {
+  return gdFetch(session, '/gd/perifericos/digitalizar/cola', { params: filtros });
+}
+export function asociarDigitalizacionARadicado(session, payload) {
+  return gdFetch(session, '/gd/perifericos/digitalizar/asociar', {
+    method: 'POST', body: payload,
+  });
+}
+export function reemplazarDigitalizacion(session, digitalizacionId, payload) {
+  return gdFetch(session, `/gd/perifericos/digitalizar/${digitalizacionId}/reemplazar`, {
+    method: 'POST', body: payload,
+  });
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

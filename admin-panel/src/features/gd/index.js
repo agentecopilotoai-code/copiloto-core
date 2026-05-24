@@ -36,3 +36,4 @@ export * from './admin/index.js';
 export * from './auditoria/index.js';
 export * from './ia/index.js';
 export * from './comunicaciones/index.js';
+export * from './perifericos/index.js';

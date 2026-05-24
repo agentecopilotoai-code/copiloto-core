@@ -93,6 +93,10 @@ import {
   Notificaciones,
   Alertas,
 } from '../comunicaciones/index.js';
+import {
+  AdminPerifericos,
+  Impresion,
+} from '../perifericos/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -191,10 +195,9 @@ export const GdIntegraciones = (p) => <Integraciones {...p} />;
 export const GdSeguridad = (p) => <Seguridad {...p} />;
 export const GdSaludSistema = (p) => <SaludSistema {...p} />;
 
-// Periféricos (UI-14) — pendiente:
-export const GdAdminPerifericos = (p) => (
-  <ShellWrapper {...p} title="Periféricos autorizados" bloqueNum={14} />
-);
+// Periféricos parte 1 (UI-14) — vistas reales:
+export const GdAdminPerifericos = (p) => <AdminPerifericos {...p} />;
+export const GdImpresion = (p) => <Impresion {...p} />;
 
 // Auditoría + Reportes consolidados (UI-11) — vistas reales:
 export const GdAuditoria = (p) => <BandejaAuditoria {...p} />;
