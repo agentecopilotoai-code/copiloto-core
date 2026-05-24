@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from app.core.security import authenticate_request
 from app.gd import ensure_gd_module_enabled
 from app.gd.handlers import (
     alertas_handlers,
@@ -61,10 +62,22 @@ router = APIRouter(prefix='/api/v1/gd', tags=['gd'])
 # significa que el tenant tiene `tenant_modules.gestion_documental.enabled=true`
 # y la auth funcionó. Si responde 404, el módulo no está activo para el
 # tenant (D2 — 404 en lugar de 403 para no filtrar la existencia del feature).
+#
+# CRÍTICO: `authenticate_request` DEBE estar declarado ANTES de
+# `ensure_gd_module_enabled` en la lista `dependencies`. Razón:
+# `ensure_gd_module_enabled` usa `Depends(get_db)` internamente, y `get_db`
+# lee `request.state.tenant_id` para configurar la conexión RLS. Si auth
+# no corrió primero, `tenant_id` es None, la conexión no tiene tenant
+# scope, la RLS bloquea TODOS los rows de `app.tenant_modules`, y la
+# gate retorna 404 incluso cuando el módulo SÍ está activo. Mismo orden
+# que usa influencer en su router (`influencer_router`).
 @router.get(
     '/_health',
     summary='Internal: verifica que el módulo GD está activo para el tenant',
-    dependencies=[Depends(ensure_gd_module_enabled)],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(ensure_gd_module_enabled),
+    ],
 )
 async def gd_module_health() -> dict[str, str]:
     """Si llega aquí, el tenant tiene el módulo activo."""
@@ -83,7 +96,10 @@ router_health_alias = APIRouter(prefix='/v1/gd', tags=['gd'])
 @router_health_alias.get(
     '/_health',
     summary='Internal: verifica que el módulo GD está activo para el tenant (BFF alias)',
-    dependencies=[Depends(ensure_gd_module_enabled)],
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(ensure_gd_module_enabled),
+    ],
 )
 async def gd_module_health_alias() -> dict[str, str]:
     """Idéntico a `/api/v1/gd/_health` — alias para el BFF admin."""
