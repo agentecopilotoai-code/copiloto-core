@@ -34,6 +34,7 @@ from app.gd.routes import (
     router as gd_router,
     router_core as gd_router_core,
     router_public as gd_router_public,
+    router_health_alias as gd_router_health_alias,
 )
 # NOTA — el import side-effect que registra los endpoints
 # `/v1/platform/ai-providers*` y `/v1/platform/tenant-modules*` sobre
@@ -186,6 +187,12 @@ def create_app() -> FastAPI:
     # sub-routers por épica. Los handlers usan require_gd_perfil para gating;
     # tenants sin perfil GD activo reciben 403 con code claro.
     api.include_router(gd_router)
+    # GD-WIRE-01 — alias `/v1/gd/_health` accesible vía el BFF
+    # `admin_core_api_proxy` (que strippea `/admin/api/core/` y forwardea
+    # a upstream sin el prefijo `/api`). Sin este alias, el frontend
+    # `isGdEnabled` recibe 404 y el item "Gestión Documental" no aparece
+    # en el sidebar del tenant. Mismo patrón que `/v1/influencer/_health`.
+    api.include_router(gd_router_health_alias)
     # EP-018 — servicio transversal /api/v1/core/* (archivos compartido).
     api.include_router(gd_router_core)
     # GD-API-0122 — endpoint público SIN auth para verificación QR

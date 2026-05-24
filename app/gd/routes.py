@@ -13,8 +13,9 @@ y agrega aquí. Ejemplos:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.gd import ensure_gd_module_enabled
 from app.gd.handlers import (
     alertas_handlers,
     archivos_handlers,
@@ -53,6 +54,40 @@ from app.gd.handlers import (
 
 # El router raíz del módulo. Se monta en main.py con prefix='/api/v1/gd'.
 router = APIRouter(prefix='/api/v1/gd', tags=['gd'])
+
+
+# ─── Health-check del módulo ───────────────────────────────────────────────
+# Endpoint mínimo gateado por `ensure_gd_module_enabled`: si responde 200
+# significa que el tenant tiene `tenant_modules.gestion_documental.enabled=true`
+# y la auth funcionó. Si responde 404, el módulo no está activo para el
+# tenant (D2 — 404 en lugar de 403 para no filtrar la existencia del feature).
+@router.get(
+    '/_health',
+    summary='Internal: verifica que el módulo GD está activo para el tenant',
+    dependencies=[Depends(ensure_gd_module_enabled)],
+)
+async def gd_module_health() -> dict[str, str]:
+    """Si llega aquí, el tenant tiene el módulo activo."""
+    return {'module': 'gestion_documental', 'status': 'active'}
+
+
+# Alias del health-check accesible via el BFF (`admin_core_api_proxy`). El
+# BFF strippea `/admin/api/core/` y forwardea a upstream — por eso necesita
+# el endpoint disponible en `/v1/gd/_health` (sin el prefijo `/api`). Sin
+# este alias, el frontend `isGdEnabled` (en `services/coreApi.js`) recibe
+# 404 incluso cuando el tenant SÍ tiene el módulo activo, y el item del
+# sidebar nunca aparece. Mismo patrón que `/v1/influencer/_health`.
+router_health_alias = APIRouter(prefix='/v1/gd', tags=['gd'])
+
+
+@router_health_alias.get(
+    '/_health',
+    summary='Internal: verifica que el módulo GD está activo para el tenant (BFF alias)',
+    dependencies=[Depends(ensure_gd_module_enabled)],
+)
+async def gd_module_health_alias() -> dict[str, str]:
+    """Idéntico a `/api/v1/gd/_health` — alias para el BFF admin."""
+    return {'module': 'gestion_documental', 'status': 'active'}
 
 # Router transversal /api/v1/core/* — servicios compartidos con Knowledge.
 # Se monta en main.py separado de `router`. EP-018 archivos vive aquí.
