@@ -13,6 +13,12 @@ import React from 'react';
 
 import { GdShell } from '../shell/GdShell.jsx';
 import { GdLanding } from '../landing/GdLanding.jsx';
+import {
+  VentanillaHome,
+  NuevoRadicadoEntrada,
+  NuevoRadicadoSalida,
+  ColaVentanilla,
+} from '../ventanilla/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -42,16 +48,12 @@ function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   );
 }
 
-// Ventanilla (UI-2/UI-3)
-export const GdVentanillaHome = (p) => (
-  <ShellWrapper {...p} title="Ventanilla Única" bloqueNum={2} />
-);
-export const GdNuevoRadicado = (p) => (
-  <ShellWrapper {...p} title="Nuevo radicado de entrada" bloqueNum={2} />
-);
-export const GdColaVU = (p) => (
-  <ShellWrapper {...p} title="Cola Ventanilla" bloqueNum={2} />
-);
+// Ventanilla — vistas reales (bloque UI-2):
+export const GdVentanillaHome = (p) => <VentanillaHome {...p} />;
+export const GdNuevoRadicado = (p) => <NuevoRadicadoEntrada {...p} />;
+export const GdNuevoRadicadoSalida = (p) => <NuevoRadicadoSalida {...p} />;
+export const GdColaVU = (p) => <ColaVentanilla {...p} />;
+// Ficha de radicado pendiente para bloque UI-3.
 export const GdRadicadoFicha = (p) => (
   <ShellWrapper {...p} title="Ficha de radicado" bloqueNum={3} />
 );

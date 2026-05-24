@@ -108,11 +108,82 @@ export function listMyBuzon(session, { scope, limit = 50 } = {}) {
   return gdFetch(session, '/gd/me/buzon', { params: { scope, limit } });
 }
 
-/** POST /api/v1/gd/ventanilla/radicados — crear radicado de entrada. */
+/** POST /api/v1/gd/ventanilla/radicados/entrada — radicado de entrada (GD-API-0024). */
 export function crearRadicadoEntrada(session, payload) {
-  return gdFetch(session, '/gd/ventanilla/radicados', {
+  return gdFetch(session, '/gd/ventanilla/radicados/entrada', {
     method: 'POST',
     body: payload,
+  });
+}
+
+/** POST /api/v1/gd/ventanilla/radicados/salida (GD-API-0025). */
+export function crearRadicadoSalida(session, payload) {
+  return gdFetch(session, '/gd/ventanilla/radicados/salida', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+/** POST /api/v1/gd/ventanilla/radicados/{id}/clasificar (GD-API-0026). */
+export function clasificarRadicado(session, radicadoId, payload) {
+  return gdFetch(
+    session,
+    `/gd/ventanilla/radicados/${radicadoId}/clasificar`,
+    { method: 'POST', body: payload },
+  );
+}
+
+/** GET /api/v1/gd/ventanilla/cola/pendientes-clasificacion (GD-API-0031). */
+export function listColaPendientesClasificacion(session, { limit = 50, canal_id, desde } = {}) {
+  return gdFetch(session, '/gd/ventanilla/cola/pendientes-clasificacion', {
+    params: { limit, canal_id, desde },
+  });
+}
+
+/**
+ * GET /api/v1/gd/ventanilla/constancias/{codigo} (PÚBLICO sin auth — GD-API-0030).
+ * Permite verificar autenticidad de un radicado escaneando el QR. Devuelve
+ * datos NO sensibles (numero_radicado, fecha, estado, asunto_resumido).
+ */
+export function verificarConstanciaPublica(codigo, baseUrl = '/api/v1') {
+  return fetch(`${baseUrl}/gd/ventanilla/constancias/${encodeURIComponent(codigo)}`, {
+    headers: { 'Content-Type': 'application/json' },
+  }).then(async (res) => {
+    const text = await res.text();
+    const body = text ? safeJson(text) : null;
+    if (!res.ok) throw new GdHttpError(res.status, body);
+    return body;
+  });
+}
+
+/** GET /api/v1/gd/catalogos/canales — catálogo de canales activos. */
+export function listCanales(session) {
+  return gdFetch(session, '/gd/catalogos/canales');
+}
+
+/** GET /api/v1/gd/terceros?q=... — búsqueda de terceros (GD-API-0033). */
+export function buscarTerceros(session, q, { limit = 10 } = {}) {
+  return gdFetch(session, '/gd/terceros', { params: { q, limit } });
+}
+
+/** POST /api/v1/gd/terceros — crear tercero inline (con dedupe del backend). */
+export function crearTercero(session, payload) {
+  return gdFetch(session, '/gd/terceros', { method: 'POST', body: payload });
+}
+
+/** GET /api/v1/gd/estructura/dependencias — para selector destino. */
+export function listDependencias(session) {
+  return gdFetch(session, '/gd/estructura/dependencias');
+}
+
+/**
+ * POST /api/v1/gd/ia/extraer — sugerencia IA opcional (GD-API-0079).
+ * Devuelve `{ resumen, tipo_clasificacion_sugerido, dependencia_sugerida }`.
+ * Si IA está deshabilitada o el backend no responde, swallow → null.
+ */
+export function sugerenciaIaExtraer(session, payload) {
+  return gdFetch(session, '/gd/ia/extraer', {
+    method: 'POST', body: payload,
   });
 }
 

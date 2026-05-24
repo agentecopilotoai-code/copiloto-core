@@ -3,8 +3,10 @@ import { render, screen } from '@testing-library/react';
 
 import * as placeholders from './index.jsx';
 
+// Solo placeholders aún sin implementación real (los de Ventanilla ya
+// fueron reemplazados en bloque UI-2).
 const PLACEHOLDER_NAMES = [
-  'GdVentanillaHome', 'GdNuevoRadicado', 'GdColaVU', 'GdRadicadoFicha',
+  'GdRadicadoFicha',
   'GdBuzonHome', 'GdBuzonDependencia',
   'GdPqrsdPanel', 'GdPqrsdFicha',
   'GdCorrespondenciaInterna', 'GdCorrespondenciaExterna',

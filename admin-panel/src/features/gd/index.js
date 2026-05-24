@@ -23,3 +23,4 @@ export { useGdScope, GD_SCOPE_LABELS } from './hooks/useGdScope.js';
 export { useGdAudit } from './hooks/useGdAudit.js';
 
 export * from './placeholders/index.jsx';
+export * from './ventanilla/index.js';

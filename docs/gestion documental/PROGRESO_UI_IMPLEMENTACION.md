@@ -118,3 +118,70 @@
 - Global admin-panel: **86.49% ≥ 86% gate** ✅
 - 1446/1446 tests admin-panel ✅
 - Build OK
+
+### Bloque UI-2 (Ventanilla Única parte 1) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0007..0010 (EP-002). Roles primarios: ROL-004 Radicador,
+ROL-005 Coordinador VU.
+
+**Archivos nuevos en `admin-panel/src/features/gd/ventanilla/`:**
+
+| Archivo | LOC | Cov |
+|---------|-----|-----|
+| `VentanillaHome.jsx` (landing del módulo) | 116 | 100% |
+| `NuevoRadicadoEntrada.jsx` (wizard 5 pasos) | ~520 | 98.32% |
+| `NuevoRadicadoSalida.jsx` | ~210 | 84.5% |
+| `ColaVentanilla.jsx` (DataTable + drawer clasificar) | ~245 | 97.34% |
+| `RadicadoConstanciaPreview.jsx` (QR SVG inline) | ~155 | 98.48% |
+| `VerificarConstanciaPublica.jsx` (sin auth) | ~160 | 100% |
+| `useGdRadicados.js` (4 hooks) | ~110 | 100% |
+| `index.js` (barrel) | 16 | 100% |
+
+**Extensiones en `services/gdApi.js` (8 endpoints nuevos):**
+- `crearRadicadoEntrada/Salida`, `clasificarRadicado` (GD-API-0024..0026)
+- `listColaPendientesClasificacion` (GD-API-0031)
+- `verificarConstanciaPublica` (GD-API-0030 público, sin auth)
+- `listCanales`, `buscarTerceros`, `crearTercero`, `listDependencias`
+- `sugerenciaIaExtraer` (GD-API-0079 opcional)
+
+**Placeholders reemplazados:**
+- `GdVentanillaHome` → `<VentanillaHome />`
+- `GdNuevoRadicado` → `<NuevoRadicadoEntrada />`
+- `GdNuevoRadicadoSalida` (nuevo) → `<NuevoRadicadoSalida />`
+- `GdColaVU` → `<ColaVentanilla />`
+
+**Decisiones (D-UI-7..D-UI-10):**
+
+- **D-UI-7 (Wizard como state local, no router)**: el wizard de nuevo
+  radicado mantiene los 5 pasos en `useState` interno (no en URL). Permite
+  validación cliente sin afectar deep-links + el progreso se pierde si el
+  usuario navega fuera (esperado para un wizard transaccional). El
+  `stepCanAdvance` por paso evita avanzar con datos incompletos.
+- **D-UI-8 (Sugerencia IA inline + Aceptar/Rechazar)**: la IA en paso 2
+  es OPT-IN — el operador debe hacer click "Pedir sugerencia". Una vez
+  llega, los botones "Aceptar" (copia el resumen al campo descripción)
+  y "Rechazar" (limpia la sugerencia sin tocar el campo) son explícitos.
+  Sigue RNF-029: la IA nunca muta state sin confirmación humana.
+- **D-UI-9 (QR como SVG inline determinista)**: el QR de la constancia
+  se renderiza inline en SVG sin dependencias externas. Es un placeholder
+  visual (no decodificable real) — el backend ya genera la URL+token con
+  GD-API-0131. Para producción se reemplazará por una lib JS de QR pero
+  el contrato (props `radicado.codigo_verificacion` + `verifyBaseUrl`) ya
+  está estable. **Cero PII** en el QR (solo URL + token opaco) — D71 del
+  backend.
+- **D-UI-10 (Vista pública verificar sin auth + GdShell-root parcial)**:
+  `VerificarConstanciaPublica` se monta sin sidebar/topbar — es una
+  página standalone que importa solo `portal.css` y usa el wrapper
+  `.gd-shell-root` para heredar tokens. Devuelve datos NO sensibles
+  (sin tercero, sin descripción del trámite) — GD-API-0030 backend
+  ya lo enforce.
+
+**Métricas:**
+- 47 tests nuevos (4 archivos): hooks (15) + wizard (13) + cola (7) +
+  constancia (5) + verificar pública (4) + home VU (5) + salida (3
+  útiles, 2 setup) + gdApi extendido (11 nuevos)
+- Tests totales features/gd: **183/183** ✅
+- Coverage features/gd = **97.55% statements**
+- Coverage `features/gd/ventanilla/**` = **96.71%**
+- `services/gdApi.js` = **100%**
+- Global admin-panel = **86.89% ≥ 86% gate** ✅
