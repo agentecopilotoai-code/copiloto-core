@@ -327,6 +327,95 @@ export function reasignarTareasLote(session, userId, payload) {
   });
 }
 
+// ─── UI-5: PQRSD (GD-API-0041..0051) ──────────────────────────────────────
+
+/** GET /api/v1/gd/pqrsd con filtros (lista). */
+export function listPQRSDFiltrados(session, filtros = {}) {
+  return gdFetch(session, '/gd/pqrsd', { params: filtros });
+}
+
+/** GET /api/v1/gd/pqrsd/dashboard?dependencia_id=&desde=&hasta= (GD-API-0051). */
+export function getPQRSDDashboard(session, { dependencia_id, desde, hasta } = {}) {
+  return gdFetch(session, '/gd/pqrsd/dashboard', {
+    params: { dependencia_id, desde, hasta },
+  });
+}
+
+/** GET /api/v1/gd/pqrsd/{id} — ficha completa. */
+export function getPQRSD(session, id) {
+  return gdFetch(session, `/gd/pqrsd/${id}`);
+}
+
+/** POST /api/v1/gd/pqrsd/{id}/asignar-dependencia (GD-API-0044). */
+export function asignarDependenciaPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/asignar-dependencia`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /api/v1/gd/pqrsd/{id}/asignar-funcionario (GD-API-0044). */
+export function asignarFuncionarioPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/asignar-funcionario`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /api/v1/gd/pqrsd/{id}/reasignar (GD-API-0045). */
+export function reasignarPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/reasignar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /api/v1/gd/pqrsd/{id}/respuestas — proyectar respuesta (GD-API-0046). */
+export function proyectarRespuestaPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/respuestas`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /api/v1/gd/respuestas/{id}/enviar-a-revision (GD-API-0047). */
+export function enviarRespuestaARevision(session, respuestaId) {
+  return gdFetch(session, `/gd/respuestas/${respuestaId}/enviar-a-revision`, {
+    method: 'POST', body: {},
+  });
+}
+
+/** POST /api/v1/gd/respuestas/{id}/revisar (GD-API-0047). */
+export function revisarRespuestaPQRSD(session, respuestaId, payload) {
+  return gdFetch(session, `/gd/respuestas/${respuestaId}/revisar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /api/v1/gd/respuestas/{id}/aprobar (GD-API-0047). */
+export function aprobarRespuestaPQRSD(session, respuestaId, payload = {}) {
+  return gdFetch(session, `/gd/respuestas/${respuestaId}/aprobar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /api/v1/gd/respuestas/{id}/firmar (GD-API-0047 delega EP-011). */
+export function firmarRespuestaPQRSD(session, respuestaId, payload = {}) {
+  return gdFetch(session, `/gd/respuestas/${respuestaId}/firmar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /api/v1/gd/respuestas/{id}/radicar-salida (GD-API-0047). */
+export function radicarSalidaRespuesta(session, respuestaId, payload = {}) {
+  return gdFetch(session, `/gd/respuestas/${respuestaId}/radicar-salida`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /api/v1/gd/respuestas/{id}/enviar (GD-API-0047). */
+export function enviarRespuestaPQRSD(session, respuestaId, payload = {}) {
+  return gdFetch(session, `/gd/respuestas/${respuestaId}/enviar`, {
+    method: 'POST', body: payload,
+  });
+}
+
 /** GET /api/v1/gd/pqrsd — listar PQRSD. */
 export function listPQRSD(session, { scope, estado, vencimiento, limit = 50 } = {}) {
   return gdFetch(session, '/gd/pqrsd', {

@@ -29,6 +29,11 @@ import {
   TareaFicha,
   ReasignacionMasiva,
 } from '../buzon/index.js';
+import {
+  PanelPQRSD,
+  ListaPQRSD,
+  FichaPQRSD,
+} from '../pqrsd/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -74,12 +79,22 @@ export const GdBuzonDependencia = (p) => <BuzonDependencia {...p} />;
 export const GdTareaFicha = (p) => <TareaFicha {...p} />;
 export const GdReasignacionMasiva = (p) => <ReasignacionMasiva {...p} />;
 
-// PQRSD (UI-5/UI-6)
-export const GdPqrsdPanel = (p) => (
-  <ShellWrapper {...p} title="Panel PQRSD" bloqueNum={5} />
+// PQRSD (UI-5) — vistas reales:
+export const GdPqrsdPanel = (p) => <PanelPQRSD {...p} />;
+export const GdPqrsdLista = (p) => <ListaPQRSD {...p} />;
+export const GdPqrsdFicha = (p) => <FichaPQRSD {...p} />;
+// Variantes con filtros pre-seleccionados (los rolesusan estas).
+export const GdPqrsdMias = (p) => (
+  <ListaPQRSD {...p} titulo="Mis PQRSD" filtrosIniciales={{ responsable: 'me' }} />
 );
-export const GdPqrsdFicha = (p) => (
-  <ShellWrapper {...p} title="Ficha PQRSD" bloqueNum={5} />
+export const GdPqrsdSinAsignar = (p) => (
+  <ListaPQRSD {...p} titulo="Sin asignar" filtrosIniciales={{ estado: 'nueva' }} />
+);
+export const GdPqrsdVencimientos = (p) => (
+  <ListaPQRSD {...p} titulo="Por vencer" filtrosIniciales={{ vencimiento: 'proximo' }} />
+);
+export const GdPqrsdVencidas = (p) => (
+  <ListaPQRSD {...p} titulo="Vencidas" filtrosIniciales={{ vencimiento: 'vencido' }} />
 );
 
 // Correspondencia (UI-7)

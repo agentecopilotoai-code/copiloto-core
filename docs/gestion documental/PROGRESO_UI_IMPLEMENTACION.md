@@ -311,3 +311,62 @@ para gating UI), `useReportesVentanilla` (con `exportar` helper).
 - Coverage features/gd buzón = 92-100% por sub-archivo
 - Global admin-panel = **87.36% ≥ 86% gate** ✅
 - Build OK
+
+### Bloque UI-5 (PQRSD parte 1) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0020..0024 (EP-004 parte 1).
+**Roles primarios:** ROL-006 Admin PQRSD, ROL-007 Profesional,
+ROL-008 Revisor, ROL-009 Jefe Dependencia, ROL-014 Firmante.
+
+**Archivos nuevos en `admin-panel/src/features/gd/pqrsd/`:**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `PanelPQRSD.jsx` (dashboard admin) | ~180 | GD-UI-0020 |
+| `ListaPQRSD.jsx` (tabla + semáforo) | ~190 | GD-UI-0021 |
+| `FichaPQRSD.jsx` (5 tabs + workflow modal) | ~525 | GD-UI-0022/0023/0024 |
+| `useGdPQRSD.js` (3 readers + 10 mutators) | ~135 | hooks |
+| `index.js` (barrel) | 22 | |
+
+**Extensiones `services/gdApi.js` (+13 endpoints):**
+- `listPQRSDFiltrados`, `getPQRSDDashboard`, `getPQRSD` (lectura)
+- `asignarDependenciaPQRSD`, `asignarFuncionarioPQRSD`,
+  `reasignarPQRSD` (asignación — GD-API-0044/0045)
+- `proyectarRespuestaPQRSD` (GD-API-0046)
+- `enviarRespuestaARevision`, `revisarRespuestaPQRSD`,
+  `aprobarRespuestaPQRSD`, `firmarRespuestaPQRSD`,
+  `radicarSalidaRespuesta`, `enviarRespuestaPQRSD` (workflow — GD-API-0047)
+
+**Placeholders reemplazados:**
+- `GdPqrsdPanel` → `<PanelPQRSD />`
+- `GdPqrsdFicha` → `<FichaPQRSD />`
+- Nuevos exports: `GdPqrsdLista`, `GdPqrsdMias`, `GdPqrsdSinAsignar`,
+  `GdPqrsdVencimientos`, `GdPqrsdVencidas` (variantes con
+  `filtrosIniciales` distintos).
+
+**Decisiones (D-UI-18..D-UI-20):**
+
+- **D-UI-18 (Mutadores genéricos vía `useMutator` factory)**: 10 hooks
+  de acción del workflow comparten el mismo state shape
+  (`{submitting, error, submit}`) mediante un helper interno
+  `useMutator(session, fn)`. Reduce ~100 LOC de duplicación y
+  garantiza comportamiento consistente (rejection rethrows, captura
+  en `error`, etc.).
+- **D-UI-19 (`ACCIONES_META` declarativo para modales del workflow)**:
+  el componente `ActionModal` recibe `accion` (string) e indexa una
+  tabla `ACCIONES_META` con la metadata: `title`, `help`, `cta`,
+  `requireJustif`, `requireContenido`, `tone`, `useHook`, `scope`
+  (pqrsd vs respuesta), `extra` (payload extra). Patrón paralelo al
+  D-UI-17 de TareaFicha. Permite agregar acciones nuevas sin tocar
+  el render lógico.
+- **D-UI-20 (ListaPQRSD reusable con `filtrosIniciales`)**: la misma
+  lista se usa como /mias, /sin-asignar, /vencimientos, /vencidas
+  pre-cargando filtros. Evita 4 componentes casi idénticos.
+  Cambio de filtros local re-fetches con `JSON.stringify` en deps.
+
+**Métricas:**
+- 1658/1658 tests admin-panel ✅ (+104 nuevos bloque UI-5)
+- 336/336 tests features/gd ✅
+- Coverage features/gd/pqrsd 92-100% por sub-archivo
+- Global admin-panel = **87.46% ≥ 86% gate** ✅
+- Build OK
