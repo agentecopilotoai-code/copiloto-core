@@ -1068,5 +1068,76 @@ export function verificarHashRegistro(session, entidadTipo, entidadId) {
   return gdFetch(session, `/gd/auditor/integridad/${entidadTipo}/${entidadId}`);
 }
 
+// ─── UI-12: IA embebida (GD-API-0126..0140) ──────────────────────────────
+
+// --- Sugerencia de clasificación (TRD + tipo + dependencia) ---
+export function sugerirClasificacionIA(session, payload) {
+  return gdFetch(session, '/gd/ia/clasificacion/sugerir', {
+    method: 'POST', body: payload,
+  });
+}
+export function feedbackSugerenciaClasificacionIA(session, sugerenciaId, payload) {
+  return gdFetch(session, `/gd/ia/clasificacion/sugerencias/${sugerenciaId}/feedback`, {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Resumen automático ---
+export function generarResumenIA(session, payload) {
+  return gdFetch(session, '/gd/ia/resumen', {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Búsqueda semántica ---
+export function buscarSemanticoIA(session, payload) {
+  return gdFetch(session, '/gd/ia/busqueda-semantica', {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Asistente conversacional ---
+export function enviarMensajeAsistenteIA(session, payload) {
+  return gdFetch(session, '/gd/ia/asistente/mensajes', {
+    method: 'POST', body: payload,
+  });
+}
+export function listConversacionesAsistente(session) {
+  return gdFetch(session, '/gd/ia/asistente/conversaciones');
+}
+export function getConversacionAsistente(session, id) {
+  return gdFetch(session, `/gd/ia/asistente/conversaciones/${id}`);
+}
+
+// --- Detección de PII (Ley 1581/2012) ---
+export function detectarPiiIA(session, payload) {
+  return gdFetch(session, '/gd/ia/pii/detectar', {
+    method: 'POST', body: payload,
+  });
+}
+export function listAlertasPii(session, filtros = {}) {
+  return gdFetch(session, '/gd/ia/pii/alertas', { params: filtros });
+}
+export function marcarAlertaPiiAtendida(session, id, payload) {
+  return gdFetch(session, `/gd/ia/pii/alertas/${id}/atender`, {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Uso + costos ---
+export function getUsoIA(session, filtros = {}) {
+  return gdFetch(session, '/gd/ia/uso', { params: filtros });
+}
+
+// --- Configuración de modelos ---
+export function getConfigModelosIA(session) {
+  return gdFetch(session, '/gd/ia/config');
+}
+export function actualizarConfigModelosIA(session, payload) {
+  return gdFetch(session, '/gd/ia/config', {
+    method: 'PATCH', body: payload,
+  });
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

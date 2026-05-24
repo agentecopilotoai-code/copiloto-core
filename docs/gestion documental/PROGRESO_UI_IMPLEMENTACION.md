@@ -563,6 +563,93 @@ ROL-001 Admin Sistema.
 - Functions 75.05% ≥ 75% ✅
 - Lint OK (0 errores)
 
+### Bloque UI-12 (IA embebida — CIERRE EP-010) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0072..0078 (EP-010). 7 vistas/utilitarios.
+**Roles primarios:** ROL-007 Profesional, ROL-005 Coordinador VU,
+ROL-006 Admin PQRSD, ROL-001 Admin Sistema.
+
+**Archivos nuevos (`ia/`, ~2400 LOC componentes + 190 LOC hooks):**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `SugerenciaClasificacion.jsx` (inline embebible) | ~165 | GD-UI-0072 |
+| `ResumenDocumento.jsx` (inline + autoGenerar) | ~175 | GD-UI-0073 |
+| `BusquedaSemantica.jsx` (página completa con scopes) | ~210 | GD-UI-0074 |
+| `Asistente.jsx` (chat 2-col con citas) | ~265 | GD-UI-0075 |
+| `DeteccionPII.jsx` (alertas + analizar inline) | ~395 | GD-UI-0076 |
+| `PanelUsoIA.jsx` (KPIs + por funcionalidad/usuario) | ~205 | GD-UI-0077 |
+| `ConfigModelosIA.jsx` (5 funcs + guardrails + límite) | ~265 | GD-UI-0078 |
+| `useGdIA.js` (5 readers + 7 mutators) | ~190 | hooks |
+| `index.js` | 12 | |
+
+**Extensiones `services/gdApi.js` (+13 endpoints, GD-API-0126..0140):**
+- Clasificación: `sugerirClasificacionIA`, `feedbackSugerenciaClasificacionIA`.
+- Resumen: `generarResumenIA`.
+- Búsqueda semántica: `buscarSemanticoIA`.
+- Asistente: `enviarMensajeAsistenteIA`, `listConversacionesAsistente`,
+  `getConversacionAsistente`.
+- PII: `detectarPiiIA`, `listAlertasPii`, `marcarAlertaPiiAtendida`.
+- Uso / Config: `getUsoIA`, `getConfigModelosIA`,
+  `actualizarConfigModelosIA`.
+
+**Extensiones `permissions/gd-matrix.js` (+7 perms IA-001..IA-007):**
+- IA-001 sugerencia clasificación (operativos + VU + admin pqrsd/doc R)
+- IA-002 resumen (operativos + VU + admin doc + auditor + consulta R)
+- IA-003 búsqueda semántica (operativos + VU + consulta + auditor R)
+- IA-004 asistente (operativos + VU + admin pqrsd/doc + consulta R)
+- IA-005 detección PII (operativos + VU R, admin sistema RW)
+- IA-006 panel uso/costos (admin sistema + seguridad + auditor R)
+- IA-007 config modelos (admin sistema RW)
+
+**Placeholders nuevos:** `GdBuscarSemantico`, `GdAsistente`,
+`GdDeteccionPII`, `GdPanelUsoIA`, `GdConfigModelosIA`.
+
+**Decisiones (D-UI-39..D-UI-41):**
+
+- **D-UI-39 (Componentes IA embebibles vs. páginas completas)**:
+  `SugerenciaClasificacion` y `ResumenDocumento` se diseñaron como
+  componentes inline reutilizables (no páginas), pensados para
+  embeberse en `CargarDocumentoModal`, `DocumentoFicha`,
+  `ExpedienteFicha`, etc. Las demás (Asistente, BúsquedaSemantica,
+  PanelUsoIA, ConfigModelos, DeteccionPII) son páginas top-level
+  porque tienen su propio flujo. Esto evita duplicar lógica de IA
+  cuando un workflow ya tiene contexto suficiente.
+- **D-UI-40 (Feedback de sugerencias entrenamiento-aware)**: cada
+  sugerencia de clasificación devuelve un `id` y la UI permite
+  Aceptar/Rechazar, generando un evento de feedback al backend.
+  Esto cierra el loop de mejora continua del modelo sin requerir
+  herramientas externas. Cuando se acepta, el resultado se pasa al
+  `onAceptar` callback para que el flujo padre lo aplique
+  (ej. pre-llenar el form de clasificación con TRD).
+- **D-UI-41 (Guardrails de seguridad UI + auditoría server-side)**:
+  `ConfigModelosIA` expone tres guardrails configurables:
+  bloquear PII en salida, bloquear lenguaje ofensivo, registrar
+  prompts en auditoría. Los tres están ON por default y el cambio
+  requiere `JustificacionRequiredField` con motivo ≥10 chars. Esta
+  configuración alimenta el backend de IA que aplica los filtros
+  antes y después de cada llamada (defensa en profundidad).
+  Cumplimiento Ley 1581/2012 (datos personales) + RNF-009.
+
+**Métricas:**
+- **2424/2424 tests admin-panel ✅** (+88 nuevos UI-12)
+- **974/974 tests features/gd ✅**
+- Coverage `features/gd/ia` = **98.33% lines / 91.46% functions** ✅
+- Global admin-panel = **89.61% ≥ 86% gate** ✅
+- Functions 79.42% ≥ 75% ✅
+- Lint OK (0 errores)
+
+**EP-010 IA embebida CERRADA** — 7 vistas/componentes:
+SugerenciaClasificacion inline con feedback de entrenamiento +
+ResumenDocumento con longitud variable y autoGenerar + Búsqueda
+Semántica con 3 scopes y citas de fragmento + Asistente
+conversacional 2-col con historial de conversaciones y citas
+verificables + Detección de PII (Ley 1581/2012) con alertas
+priorizadas por severidad + analizador de texto inline +
+Panel de uso/costos por funcionalidad y usuario con % sobre
+límite + Configuración de 5 funcionalidades × modelo/temperatura/
+guardrails con cambios auditables.
+
 ### Bloque UI-11 (Auditoría + Reportes consolidados — CIERRE EP-009) — ✅ COMPLETADO 2026-05-24
 
 **Tareas:** GD-UI-0067..0071 (EP-009). 5 vistas.

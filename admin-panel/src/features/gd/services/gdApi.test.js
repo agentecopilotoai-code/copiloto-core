@@ -539,6 +539,20 @@ describe('gdApi — endpoints UI-3..UI-9 smoke', () => {
     ['exportarReporteEjecutivoPdf', [{}]],
     ['getResumenIntegridadAuditor', []],
     ['verificarHashRegistro', ['pqrsd', 'p1']],
+    // UI-12 IA
+    ['sugerirClasificacionIA', [{}]],
+    ['feedbackSugerenciaClasificacionIA', ['s1', {}]],
+    ['generarResumenIA', [{}]],
+    ['buscarSemanticoIA', [{}]],
+    ['enviarMensajeAsistenteIA', [{}]],
+    ['listConversacionesAsistente', []],
+    ['getConversacionAsistente', ['c1']],
+    ['detectarPiiIA', [{}]],
+    ['listAlertasPii', [{}]],
+    ['marcarAlertaPiiAtendida', ['a1', {}]],
+    ['getUsoIA', [{}]],
+    ['getConfigModelosIA', []],
+    ['actualizarConfigModelosIA', [{}]],
   ];
 
   it.each(SMOKE_ENDPOINTS)('%s exporta y llama fetch', async (fnName, args) => {

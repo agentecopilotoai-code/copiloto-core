@@ -225,6 +225,35 @@ export const GD_PERMISSIONS = Object.freeze({
   'SEG-SES': row({ 'gd.admin_seguridad': RW, 'gd.admin_sistema': R }),
   'SEG-MFA': row({ 'gd.admin_seguridad': RW, 'gd.admin_sistema': R }),
 
+  // ────────────────── IA embebida (EP-010) ─────────────────────────────
+  'IA-001': row({  // sugerencia de clasificación
+    ...any(OPERATIVOS, R), ...any(VU, R),
+    'gd.admin_pqrsd': R, 'gd.admin_documental': R,
+  }),
+  'IA-002': row({  // resumen automático
+    ...any(OPERATIVOS, R), ...any(VU, R),
+    'gd.admin_documental': R, 'gd.auditor': R, 'gd.usuario_consulta': R,
+  }),
+  'IA-003': row({  // búsqueda semántica
+    ...any(OPERATIVOS, R), ...any(VU, R),
+    'gd.usuario_consulta': R, 'gd.auditor': R,
+  }),
+  'IA-004': row({  // asistente conversacional
+    ...any(OPERATIVOS, R), ...any(VU, R),
+    'gd.admin_pqrsd': R, 'gd.admin_documental': R,
+    'gd.usuario_consulta': R,
+  }),
+  'IA-005': row({  // detección PII (lectura para todos los operativos
+                    // que cargan contenido; admins ven panel completo)
+    ...any(OPERATIVOS, R), ...any(VU, R), 'gd.admin_sistema': RW,
+  }),
+  'IA-006': row({  // panel de uso/costos
+    'gd.admin_sistema': R, 'gd.admin_seguridad': R, 'gd.auditor': R,
+  }),
+  'IA-007': row({  // configuración de modelos
+    'gd.admin_sistema': RW,
+  }),
+
   // ────────────────── admin sistema (EP-008) ───────────────────────────
   'EST-001': row({ 'gd.admin_sistema': RW }),    // estructura orgánica
   'EST-READ': row({ ...any(OPERATIVOS, R), 'gd.admin_sistema': R,
