@@ -35,6 +35,11 @@ import {
   FichaPQRSD,
   ReportesPQRSD,
 } from '../pqrsd/index.js';
+import {
+  CorrespondenciaInterna,
+  CorrespondenciaExterna,
+  CorrespondenciaFicha,
+} from '../correspondencia/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -99,13 +104,10 @@ export const GdPqrsdVencidas = (p) => (
 );
 export const GdPqrsdReportes = (p) => <ReportesPQRSD {...p} />;
 
-// Correspondencia (UI-7)
-export const GdCorrespondenciaInterna = (p) => (
-  <ShellWrapper {...p} title="Correspondencia interna" bloqueNum={7} />
-);
-export const GdCorrespondenciaExterna = (p) => (
-  <ShellWrapper {...p} title="Correspondencia externa" bloqueNum={7} />
-);
+// Correspondencia (UI-7) — vistas reales:
+export const GdCorrespondenciaInterna = (p) => <CorrespondenciaInterna {...p} />;
+export const GdCorrespondenciaExterna = (p) => <CorrespondenciaExterna {...p} />;
+export const GdCorrespondenciaFicha = (p) => <CorrespondenciaFicha {...p} />;
 
 // Documentos + plantillas + firmas (UI-8)
 export const GdBiblioteca = (p) => (

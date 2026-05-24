@@ -491,5 +491,122 @@ export function exportarReportePQRSD(session, { formato = 'csv', desde, hasta } 
   });
 }
 
+// ─── UI-7: Correspondencia interna + externa (GD-API-0052..0056) ──────────
+
+/** POST /gd/correspondencia/interna (GD-API-0052). */
+export function crearCorrespondenciaInterna(session, payload) {
+  return gdFetch(session, '/gd/correspondencia/interna', {
+    method: 'POST', body: payload,
+  });
+}
+
+/** GET /gd/correspondencia con filtros (tipo, bandeja, scope). */
+export function listCorrespondencia(session, filtros = {}) {
+  return gdFetch(session, '/gd/correspondencia', { params: filtros });
+}
+
+/** GET /gd/correspondencia/{id} — ficha. */
+export function getCorrespondencia(session, id) {
+  return gdFetch(session, `/gd/correspondencia/${id}`);
+}
+
+/** POST /gd/correspondencia/{id}/marcar-leida (GD-API-0052). */
+export function marcarLeidaCorrespondencia(session, id) {
+  return gdFetch(session, `/gd/correspondencia/${id}/marcar-leida`, {
+    method: 'POST', body: {},
+  });
+}
+
+/** POST /gd/correspondencia/{id}/responder. */
+export function responderCorrespondencia(session, id, payload) {
+  return gdFetch(session, `/gd/correspondencia/${id}/responder`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /gd/correspondencia/{id}/reenviar. */
+export function reenviarCorrespondencia(session, id, payload) {
+  return gdFetch(session, `/gd/correspondencia/${id}/reenviar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /gd/correspondencia/externa/borrador (GD-API-0054). */
+export function crearBorradorCorrespondenciaExterna(session, payload) {
+  return gdFetch(session, '/gd/correspondencia/externa/borrador', {
+    method: 'POST', body: payload,
+  });
+}
+
+/** Workflow CE — enviar a revisión. */
+export function enviarCorrespondenciaARevision(session, id) {
+  return gdFetch(session, `/gd/correspondencia/${id}/enviar-a-revision`, {
+    method: 'POST', body: {},
+  });
+}
+
+/** Workflow CE — revisar. */
+export function revisarCorrespondencia(session, id, payload) {
+  return gdFetch(session, `/gd/correspondencia/${id}/revisar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** Workflow CE — aprobar. */
+export function aprobarCorrespondencia(session, id, payload = {}) {
+  return gdFetch(session, `/gd/correspondencia/${id}/aprobar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** Workflow CE — firmar. */
+export function firmarCorrespondencia(session, id, payload = {}) {
+  return gdFetch(session, `/gd/correspondencia/${id}/firmar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** Workflow CE — radicar salida. */
+export function radicarSalidaCorrespondencia(session, id, payload = {}) {
+  return gdFetch(session, `/gd/correspondencia/${id}/radicar-salida`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** Workflow CE — enviar al destinatario externo. */
+export function enviarCorrespondencia(session, id, payload = {}) {
+  return gdFetch(session, `/gd/correspondencia/${id}/enviar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /gd/correspondencia/{id}/registrar-soporte-envio (GD-API-0054, PERM-CE-011). */
+export function registrarSoporteEnvio(session, id, payload) {
+  return gdFetch(session, `/gd/correspondencia/${id}/registrar-soporte-envio`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /gd/correspondencia/{id}/destinatarios — agregar (GD-API-0055). */
+export function agregarDestinatarioCorrespondencia(session, id, payload) {
+  return gdFetch(session, `/gd/correspondencia/${id}/destinatarios`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** DELETE /gd/correspondencia/{id}/destinatarios/{destId} — quitar. */
+export function quitarDestinatarioCorrespondencia(session, id, destId) {
+  return gdFetch(session, `/gd/correspondencia/${id}/destinatarios/${destId}`, {
+    method: 'DELETE',
+  });
+}
+
+/** POST /gd/correspondencia/{id}/anular (GD-API-0056). */
+export function solicitarAnulacionCorrespondencia(session, id, motivo) {
+  return gdFetch(session, `/gd/correspondencia/${id}/anular`, {
+    method: 'POST', body: { motivo },
+  });
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

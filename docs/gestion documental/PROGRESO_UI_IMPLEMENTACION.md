@@ -419,3 +419,68 @@ vencidas, panel) + Ficha 6-tabs con workflow 7-pasos completo + 8
 acciones contextuales (proyectar/enviar revisión/revisar/aprobar/
 firmar/radicar/enviar/cerrar/reabrir/trasladar/info-adicional/
 suspender/reanudar/reasignar) + Reportes con 4 tableros + exportar.
+
+### Bloque UI-7 (Correspondencia interna + externa — CIERRE EP-005) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0029..0034 (EP-005).
+**Roles primarios:** ROL-010 Usuario CI, ROL-013 Usuario Radicación Externa,
+ROL-007 Profesional, ROL-009 Jefe Dependencia, ROL-005 Coordinador VU.
+
+**Archivos nuevos en `admin-panel/src/features/gd/correspondencia/`:**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `CorrespondenciaInterna.jsx` (tabs + form nueva) | ~230 | GD-UI-0029/0030 |
+| `CorrespondenciaExterna.jsx` (6 tabs + form borrador) | ~225 | GD-UI-0031 |
+| `CorrespondenciaFicha.jsx` (5-6 tabs + workflow + soporte + destinatarios + anular) | ~575 | GD-UI-0031/0032/0033/0034 |
+| `useGdCorrespondencia.js` (2 readers + 15 mutators) | ~115 | hooks |
+| `index.js` (barrel) | 8 | |
+
+**Extensiones `services/gdApi.js` (+17 endpoints):**
+- CI: `crearCorrespondenciaInterna`, `marcarLeida`, `responder`, `reenviar` (GD-API-0052)
+- Listar/get: `listCorrespondencia`, `getCorrespondencia`
+- CE workflow (GD-API-0054): `crearBorradorCorrespondenciaExterna`,
+  `enviarCorrespondenciaARevision`, `revisarCorrespondencia`,
+  `aprobarCorrespondencia`, `firmarCorrespondencia`,
+  `radicarSalidaCorrespondencia`, `enviarCorrespondencia`
+- Soportes: `registrarSoporteEnvio` (PERM-CE-011)
+- Destinatarios (GD-API-0055): `agregarDestinatarioCorrespondencia`,
+  `quitarDestinatarioCorrespondencia`
+- Anulación: `solicitarAnulacionCorrespondencia` (GD-API-0056)
+
+**Placeholders reemplazados:**
+- `GdCorrespondenciaInterna` → `<CorrespondenciaInterna />`
+- `GdCorrespondenciaExterna` → `<CorrespondenciaExterna />`
+- Nuevo: `GdCorrespondenciaFicha`.
+
+**Decisiones (D-UI-24..D-UI-26):**
+
+- **D-UI-24 (Ficha unificada interna/externa con tabs condicionales)**:
+  un solo componente `CorrespondenciaFicha` maneja ambos tipos. Las
+  tabs "Workflow" y "Soporte de envío" aparecen solo si `c.tipo ===
+  'externa'`. Reduce duplicación vs tener 2 fichas separadas — los
+  datos comunes (asunto, estado, trazabilidad, destinatarios,
+  acciones) son ~80% del componente.
+- **D-UI-25 (TabDestinatarios edita inline con form append-and-clear)**:
+  el form de "Agregar destinatario" se muestra dentro del tab cuando
+  el rol tiene CI-001/CE-001 y el estado NO es enviada/anulada.
+  Permite manejar las 3 categorías (principal/copia/copia_oculta) sin
+  un modal aparte. Cada add limpia el form para encadenar.
+- **D-UI-26 (Soportes de envío con histórico + form nuevo)**: en lugar
+  de un modal único, mostramos la tabla histórica + un form de
+  "Registrar nuevo soporte" siempre visible (medio: postal/email/fax/
+  entrega/otro + guía + fecha + obs). Refleja la realidad operativa:
+  una correspondencia puede tener varios soportes (ej. email + guía
+  postal de respaldo).
+
+**Métricas:**
+- **1762/1762 tests admin-panel ✅** (+69 nuevos UI-7)
+- **431/431 tests features/gd ✅**
+- Coverage features/gd/correspondencia 85-100% (Ficha 92% lines)
+- Global admin-panel = **87.53% ≥ 86% gate** ✅
+- Functions 75.17% ≥ 75% ✅
+- Build OK
+
+**EP-005 Correspondencia CERRADA** — 3 vistas + ficha unificada con
+6 tabs + 13 acciones contextuales del workflow + gestión de
+destinatarios múltiples + soportes de envío con histórico + anulación.

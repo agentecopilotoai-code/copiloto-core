@@ -26,3 +26,4 @@ export * from './placeholders/index.jsx';
 export * from './ventanilla/index.js';
 export * from './buzon/index.js';
 export * from './pqrsd/index.js';
+export * from './correspondencia/index.js';
