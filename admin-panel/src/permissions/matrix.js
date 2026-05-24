@@ -145,6 +145,14 @@ export const PERMISSIONS = Object.freeze({
   'influencer.posts.approve_publish': { viewer: null, agent: null, manager: RW, admin: RW, owner: RW, platform_owner: null },
   'influencer.credits.read':        { viewer: null, agent: null, manager: R,  admin: R,  owner: R,  platform_owner: null },
   'influencer.credits.topup':       { viewer: null, agent: null, manager: null, admin: RW, owner: RW, platform_owner: null },
+
+  // ─────────────────────────────────── MÓDULO GESTIÓN DOCUMENTAL ──────────────────────────────
+  // Gate de visibilidad del módulo en la sidebar del producto principal.
+  // Manager+ pueden VER el item; el rol GD interno (gd.admin_*, gd.profesional, etc.)
+  // lo decide la matriz paralela `gd-matrix.js` una vez dentro del GdShell.
+  // El backend gd hace doble verificación con `require_gd_perfil` (403 si el
+  // usuario no tiene perfil GD activo).
+  'gd.module.access':               { viewer: null, agent: null, manager: R,  admin: R,  owner: R,  platform_owner: null },
   // Refactor — Proveedores IA son transversales (Influencer, Gestión
   // Documental, futuros módulos). La capability vive bajo el namespace
   // `platform.*` y NO `influencer.*` para reflejar que es config de

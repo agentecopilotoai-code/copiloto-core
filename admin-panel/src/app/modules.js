@@ -332,4 +332,17 @@ export const adminModules = [
     scope: ['Balance actual + últimas 50 transacciones', 'Histórico de generaciones × créditos', 'CTA "Comprar créditos" (gate por topup)'],
     capability: 'influencer.credits.read',
   },
+  // ─── Módulo Gestión Documental (GD-UI EP-001..EP-013) ──────────────────
+  // Entry-point en la sidebar del producto principal. Visible solo si el
+  // tenant tiene `tenant_modules.gestion_documental.enabled=true` Y el
+  // usuario tiene al menos un rol GD (verificado por `hasAnyGdAccess`
+  // contra `gd-matrix.js`). Aparece como item top-level con su propio
+  // sub-shell `<GdShell />` y sub-navegación contextual al rol.
+  {
+    id: 'gd-entry',
+    label: 'Gestión Documental',
+    summary: 'Módulo de gestión documental institucional con IA asistida (radicación, PQRSD, correspondencia, firmas, TRD, expedientes, auditoría). Cumple Decreto 1166/2016 y Ley 1581/2012.',
+    scope: ['Acceso al GdShell', 'Sidebar rol-aware', 'Sub-routing /gd/*', 'Gate por tenant_modules.gestion_documental + rol GD'],
+    capability: 'gd.module.access',
+  },
 ];

@@ -69,6 +69,11 @@ const _GROUP_BY_DOMAIN = {
   // UI-006.7). El módulo es opcional por tenant — la matriz refleja
   // el rol × acción asumiendo que el tenant tiene el módulo activo.
   influencer: 'Módulo Influencer / Ravit Studio',
+  // GD-UI-0001: capability `gd.*` agrupada en su propia sección. La matriz
+  // detallada por rol GD (19 roles) vive en `gd-matrix.js` y se muestra
+  // dentro del GdShell, no aquí. Esta entrada en Roles · ACL solo refleja
+  // el gate top-level `gd.module.access` (manager+ pueden VER el módulo).
+  gd: 'Módulo Gestión Documental',
 };
 
 // Stable render order for the groups.
@@ -79,6 +84,7 @@ export const GROUP_ORDER = [
   'Canales e IA',
   'Administración del tenant',
   'Módulo Influencer / Ravit Studio',
+  'Módulo Gestión Documental',
   'Platform Owner · fleet',
 ];
 

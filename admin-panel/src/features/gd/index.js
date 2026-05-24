@@ -1,0 +1,25 @@
+/**
+ * Punto de entrada del módulo Gestión Documental.
+ *
+ * Reexporta el shell + componentes de dominio + placeholders para que el
+ * resto del admin-panel los consuma sin acoplarse a la estructura interna.
+ */
+export { GdShell } from './shell/GdShell.jsx';
+export { GdSidebar } from './shell/GdSidebar.jsx';
+export { GdTopBar } from './shell/GdTopBar.jsx';
+export { GdLanding } from './landing/GdLanding.jsx';
+
+export { RadicadoCard } from './components/RadicadoCard.jsx';
+export { PQRSDStatusChip } from './components/PQRSDStatusChip.jsx';
+export {
+  TerminoVencimientoBadge,
+  computeStatus,
+} from './components/TerminoVencimientoBadge.jsx';
+export { WorkflowTimeline } from './components/WorkflowTimeline.jsx';
+export { JustificacionRequiredField } from './components/JustificacionRequiredField.jsx';
+export { InstitutionalLetterhead } from './components/InstitutionalLetterhead.jsx';
+
+export { useGdScope, GD_SCOPE_LABELS } from './hooks/useGdScope.js';
+export { useGdAudit } from './hooks/useGdAudit.js';
+
+export * from './placeholders/index.jsx';

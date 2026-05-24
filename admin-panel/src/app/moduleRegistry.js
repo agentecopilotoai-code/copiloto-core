@@ -49,6 +49,8 @@ import { CreditsModule as InfluencerCredits } from '../features/influencer/credi
 // `moduleRegistry.js` es `.js` y `@vitejs/plugin-react` no procesa JSX en
 // archivos `.js` — un JSX inline rompería el build con "Expression expected".
 import { InfluencerEntryRedirect } from '../features/influencer/InfluencerEntryRedirect.jsx';
+// Módulo Gestión Documental (UI-1 foundation + placeholders por bloque).
+import { GdHome } from '../features/gd/placeholders/index.jsx';
 
 /**
  * Registro `module id → { Component, capability, mode }`.
@@ -146,4 +148,11 @@ export const MODULE_REGISTRY = Object.freeze({
   'influencer-calendar': { Component: InfluencerCalendar, capability: 'influencer.posts.schedule', mode: 'RW' },
   'influencer-library': { Component: InfluencerLibrary, capability: 'influencer.module.access' },
   'influencer-credits': { Component: InfluencerCredits, capability: 'influencer.credits.read' },
+
+  // ─── Módulo Gestión Documental ─────────────────────────────────────────
+  // Punto de entrada al GdShell. El doble gate (tenant_modules.
+  // gestion_documental.enabled + perfil GD activo) lo verifica el shell.
+  // Este registro garantiza que el item de nav del producto principal
+  // funcione y monte el GdHome (landing rol-aware).
+  'gd-entry': { Component: GdHome, capability: 'gd.module.access' },
 });
