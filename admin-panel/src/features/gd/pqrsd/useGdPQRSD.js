@@ -17,6 +17,15 @@ import {
   firmarRespuestaPQRSD,
   radicarSalidaRespuesta,
   enviarRespuestaPQRSD,
+  cerrarPQRSD,
+  reabrirPQRSD,
+  trasladarPQRSD,
+  solicitarInfoAdicionalPQRSD,
+  suspenderTerminoPQRSD,
+  reanudarTerminoPQRSD,
+  listSuspensionesPQRSD,
+  getReportesPQRSD,
+  exportarReportePQRSD,
 } from '../services/gdApi.js';
 
 /** usePQRSDDashboard — KPIs del admin (GD-UI-0020). */
@@ -111,3 +120,56 @@ export const useAprobarRespuesta = (s) => useMutator(s, aprobarRespuestaPQRSD);
 export const useFirmarRespuesta = (s) => useMutator(s, firmarRespuestaPQRSD);
 export const useRadicarSalidaRespuesta = (s) => useMutator(s, radicarSalidaRespuesta);
 export const useEnviarRespuesta = (s) => useMutator(s, enviarRespuestaPQRSD);
+
+// UI-6 mutators (cierre, traslado, info_adicional, suspensión).
+export const useCerrarPQRSD = (s) => useMutator(s, cerrarPQRSD);
+export const useReabrirPQRSD = (s) => useMutator(s, reabrirPQRSD);
+export const useTrasladarPQRSD = (s) => useMutator(s, trasladarPQRSD);
+export const useSolicitarInfoAdicional = (s) => useMutator(s, solicitarInfoAdicionalPQRSD);
+export const useSuspenderTermino = (s) => useMutator(s, suspenderTerminoPQRSD);
+export const useReanudarTermino = (s) => useMutator(s, reanudarTerminoPQRSD);
+
+// UI-6 readers.
+
+/** useSuspensionesPQRSD — historial de eventos de suspensión del término. */
+export function useSuspensionesPQRSD(session, id, { enabled = true } = {}) {
+  const [state, setState] = useState({
+    items: [], loading: false, error: null,
+  });
+  const exec = useCallback(async () => {
+    if (!enabled || !session || !id) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const data = await listSuspensionesPQRSD(session, id);
+      const items = Array.isArray(data?.items) ? data.items
+        : Array.isArray(data) ? data : [];
+      setState({ items, loading: false, error: null });
+    } catch (err) {
+      setState({ items: [], loading: false, error: err });
+    }
+  }, [session, id, enabled]);
+  useEffect(() => { exec(); }, [exec]);
+  return { ...state, refresh: exec };
+}
+
+/** useReportesPQRSD — tableros agregados (GD-UI-0028). */
+export function useReportesPQRSD(session, { desde, hasta, dependencia_id } = {}) {
+  const [state, setState] = useState({
+    data: null, loading: false, error: null,
+  });
+  const exec = useCallback(async () => {
+    if (!session) return;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const data = await getReportesPQRSD(session, { desde, hasta, dependencia_id });
+      setState({ data, loading: false, error: null });
+    } catch (err) {
+      setState({ data: null, loading: false, error: err });
+    }
+  }, [session, desde, hasta, dependencia_id]);
+  useEffect(() => { exec(); }, [exec]);
+  const exportar = useCallback(async (formato = 'csv') => {
+    return exportarReportePQRSD(session, { formato, desde, hasta });
+  }, [session, desde, hasta]);
+  return { ...state, refresh: exec, exportar };
+}

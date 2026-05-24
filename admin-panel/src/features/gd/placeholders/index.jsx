@@ -33,6 +33,7 @@ import {
   PanelPQRSD,
   ListaPQRSD,
   FichaPQRSD,
+  ReportesPQRSD,
 } from '../pqrsd/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
@@ -96,6 +97,7 @@ export const GdPqrsdVencimientos = (p) => (
 export const GdPqrsdVencidas = (p) => (
   <ListaPQRSD {...p} titulo="Vencidas" filtrosIniciales={{ vencimiento: 'vencido' }} />
 );
+export const GdPqrsdReportes = (p) => <ReportesPQRSD {...p} />;
 
 // Correspondencia (UI-7)
 export const GdCorrespondenciaInterna = (p) => (

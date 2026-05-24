@@ -428,5 +428,68 @@ export function fetchEntidad(session, ruta) {
   return gdFetch(session, ruta);
 }
 
+// ─── UI-6: PQRSD cierre + traslado + suspensión + reportes ────────────────
+
+/** POST /gd/pqrsd/{id}/cerrar (GD-API-0048). */
+export function cerrarPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/cerrar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /gd/pqrsd/{id}/reabrir (GD-API-0048). */
+export function reabrirPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/reabrir`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /gd/pqrsd/{id}/trasladar-competencia (GD-API-0049). */
+export function trasladarPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/trasladar-competencia`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /gd/pqrsd/{id}/solicitar-info-adicional (GD-API-0050). */
+export function solicitarInfoAdicionalPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/solicitar-info-adicional`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /gd/pqrsd/{id}/suspender (GD-API-0042). */
+export function suspenderTerminoPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/suspender`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** POST /gd/pqrsd/{id}/reanudar (GD-API-0042). */
+export function reanudarTerminoPQRSD(session, id, payload) {
+  return gdFetch(session, `/gd/pqrsd/${id}/reanudar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** GET /gd/pqrsd/{id}/suspensiones — historial de suspensiones del término. */
+export function listSuspensionesPQRSD(session, id) {
+  return gdFetch(session, `/gd/pqrsd/${id}/suspensiones`);
+}
+
+/** GET /gd/pqrsd/reportes — tableros agregados (KPIs por dep/tipo/canal/tiempos). */
+export function getReportesPQRSD(session, { desde, hasta, dependencia_id } = {}) {
+  return gdFetch(session, '/gd/pqrsd/reportes', {
+    params: { desde, hasta, dependencia_id },
+  });
+}
+
+/** POST /gd/pqrsd/reportes/exportar — encola export (PERM-REP-004). */
+export function exportarReportePQRSD(session, { formato = 'csv', desde, hasta } = {}) {
+  return gdFetch(session, '/gd/pqrsd/reportes/exportar', {
+    method: 'POST', body: { formato, desde, hasta },
+  });
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

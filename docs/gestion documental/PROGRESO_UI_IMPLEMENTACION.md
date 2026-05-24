@@ -370,3 +370,52 @@ ROL-008 Revisor, ROL-009 Jefe Dependencia, ROL-014 Firmante.
 - Coverage features/gd/pqrsd 92-100% por sub-archivo
 - Global admin-panel = **87.46% ≥ 86% gate** ✅
 - Build OK
+
+### Bloque UI-6 (PQRSD parte 2 — CIERRE EP-004) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0025..0028 (EP-004 parte 2 → cierre épica).
+
+**Archivos nuevos / modificados:**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `ReportesPQRSD.jsx` (4 tableros + exportar) | ~225 | GD-UI-0028 |
+| `FichaPQRSD.jsx` (+TabSuspensiones, +6 entradas ACCIONES_META, +badge "⏸ Suspendido") | +180 | GD-UI-0025/0026/0027 |
+| `useGdPQRSD.js` (+8 hooks UI-6) | +60 | hooks |
+
+**Extensiones `services/gdApi.js` (+9 endpoints):**
+- `cerrarPQRSD`, `reabrirPQRSD` (GD-API-0048)
+- `trasladarPQRSD` (GD-API-0049)
+- `solicitarInfoAdicionalPQRSD` (GD-API-0050)
+- `suspenderTerminoPQRSD`, `reanudarTerminoPQRSD` (GD-API-0042)
+- `listSuspensionesPQRSD` (historial)
+- `getReportesPQRSD`, `exportarReportePQRSD` (GD-API-0051)
+
+**Decisiones (D-UI-21..D-UI-23):**
+
+- **D-UI-21 (Tab "Suspensiones" como vista dedicada)**: 6º tab que
+  lista el historial de pausas del término legal. Badge "⏸ Suspendido"
+  en header visibiliza el estado y permite suspender/reanudar in-place
+  (gated por PERM-PQRSD-022).
+- **D-UI-22 (`ACCIONES_META` ampliado con `requireTipoCierre` +
+  `requireEntidadDestino`)**: `ActionModal` maneja 3 tipos de campos
+  extra (justificación, tipo_cierre, entidad_destino) sin cambios al
+  render principal. Patrón consistente con D-UI-19.
+- **D-UI-23 (Tab Acciones rol+estado aware)**: CTAs desaparecen según
+  `pq.estado` (Cerrar oculto si cerrada, Reabrir solo si cerrada) y
+  según `pq.termino_suspendido` (Suspender vs Reanudar). Evita 4xx
+  del backend y reduce ruido visual.
+
+**Métricas:**
+- **1693/1693 tests admin-panel ✅** (+35 nuevos UI-6)
+- **371/371 tests features/gd ✅**
+- Coverage features/gd/pqrsd 92-100% por sub-archivo
+- Global admin-panel = **87.43% ≥ 86% gate** ✅
+- Build OK
+
+**EP-004 PQRSD CERRADA** — 9 vistas funcionales:
+Panel + Lista + 5 variantes de lista (mias, sin-asignar, vencimientos,
+vencidas, panel) + Ficha 6-tabs con workflow 7-pasos completo + 8
+acciones contextuales (proyectar/enviar revisión/revisar/aprobar/
+firmar/radicar/enviar/cerrar/reabrir/trasladar/info-adicional/
+suspender/reanudar/reasignar) + Reportes con 4 tableros + exportar.

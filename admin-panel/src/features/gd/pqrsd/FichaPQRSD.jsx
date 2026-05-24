@@ -26,10 +26,17 @@ import {
   useFirmarRespuesta,
   useRadicarSalidaRespuesta,
   useEnviarRespuesta,
+  useCerrarPQRSD,
+  useReabrirPQRSD,
+  useTrasladarPQRSD,
+  useSolicitarInfoAdicional,
+  useSuspenderTermino,
+  useReanudarTermino,
+  useSuspensionesPQRSD,
 } from './useGdPQRSD.js';
 import { gdCanAny } from '../../../permissions/gd-matrix.js';
 
-const TABS = ['General', 'Documentos', 'Workflow', 'Trazabilidad', 'Acciones'];
+const TABS = ['General', 'Documentos', 'Workflow', 'Suspensiones', 'Trazabilidad', 'Acciones'];
 
 export function FichaPQRSD({
   session,
@@ -79,6 +86,15 @@ export function FichaPQRSD({
                     compact
                   />
                 )}
+                {pq.termino_suspendido && (
+                  <span
+                    className="badge warn"
+                    data-testid="badge-suspendido"
+                    title="El término legal está suspendido. Reanude antes de continuar."
+                  >
+                    ⏸ Suspendido
+                  </span>
+                )}
               </p>
             </div>
           </div>
@@ -109,6 +125,15 @@ export function FichaPQRSD({
             )}
             {tab === 'Trazabilidad' && (
               <WorkflowTimeline events={audit.events} loading={audit.loading} error={audit.error} />
+            )}
+            {tab === 'Suspensiones' && (
+              <TabSuspensiones
+                session={session}
+                pqrsdId={pqrsdId}
+                pq={pq}
+                roles={roles}
+                onAction={setModal}
+              />
             )}
             {tab === 'Acciones' && (
               <TabAcciones
@@ -277,28 +302,120 @@ function TabWorkflow({ pq, roles, onAction }) {
   );
 }
 
-function TabAcciones({ roles, onOpen }) {
+function TabAcciones({ roles, pq, onOpen }) {
+  const cerrada = pq?.estado === 'cerrada';
   return (
     <div data-testid="pqrsd-tab-Acciones">
       <h3 style={{ fontSize: 14, marginTop: 0 }}>Operaciones disponibles</h3>
       <div style={{ display: 'flex', gap: 'var(--s-2)', flexWrap: 'wrap' }}>
-        {gdCanAny(roles, 'PQRSD-008', 'RW') && (
+        {gdCanAny(roles, 'PQRSD-008', 'RW') && !cerrada && (
           <button type="button" className="btn btn-secondary"
             onClick={() => onOpen('reasignar')}
             data-testid="acc-reasignar"
           >Reasignar</button>
         )}
-        {gdCanAny(roles, 'PQRSD-019', 'RW') && (
-          <button type="button" className="btn btn-secondary"
+        {gdCanAny(roles, 'PQRSD-019', 'RW') && !cerrada && (
+          <button type="button" className="btn btn-danger"
             onClick={() => onOpen('cerrar')}
             data-testid="acc-cerrar"
           >Cerrar PQRSD</button>
         )}
+        {gdCanAny(roles, 'PQRSD-020', 'RW') && cerrada && (
+          <button type="button" className="btn btn-accent"
+            onClick={() => onOpen('reabrir')}
+            data-testid="acc-reabrir"
+          >Reabrir PQRSD</button>
+        )}
+        {gdCanAny(roles, 'PQRSD-021', 'RW') && !cerrada && (
+          <button type="button" className="btn btn-secondary"
+            onClick={() => onOpen('trasladar')}
+            data-testid="acc-trasladar"
+          >Trasladar por competencia</button>
+        )}
+        {gdCanAny(roles, 'PQRSD-022', 'RW') && !cerrada && (
+          <button type="button" className="btn btn-secondary"
+            onClick={() => onOpen('info-adicional')}
+            data-testid="acc-info-adic"
+          >Solicitar información adicional</button>
+        )}
+        {gdCanAny(roles, 'PQRSD-022', 'RW') && !cerrada && !pq?.termino_suspendido && (
+          <button type="button" className="btn btn-secondary"
+            onClick={() => onOpen('suspender')}
+            data-testid="acc-suspender"
+          >Suspender término</button>
+        )}
+        {gdCanAny(roles, 'PQRSD-022', 'RW') && pq?.termino_suspendido && (
+          <button type="button" className="btn btn-accent"
+            onClick={() => onOpen('reanudar')}
+            data-testid="acc-reanudar"
+          >Reanudar término</button>
+        )}
       </div>
-      <p className="muted" style={{ fontSize: 12, marginTop: 'var(--s-3)' }}>
-        Más acciones (traslado, suspensión, reapertura) en el siguiente
-        bloque de implementación.
-      </p>
+      {Object.keys({}).length === 0 && (
+        <p className="muted" style={{ fontSize: 12, marginTop: 'var(--s-3)' }}>
+          Las acciones disponibles dependen del estado actual del PQRSD y
+          de los permisos asignados a su rol.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function TabSuspensiones({ session, pqrsdId, pq, roles, onAction }) {
+  const { items, loading, error } = useSuspensionesPQRSD(session, pqrsdId);
+  const puedeGestionar = gdCanAny(roles, 'PQRSD-022', 'RW');
+
+  return (
+    <div data-testid="pqrsd-tab-Suspensiones">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--s-3)' }}>
+        <h3 style={{ fontSize: 14, margin: 0 }}>Historial de suspensiones del término</h3>
+        {puedeGestionar && pq.estado !== 'cerrada' && (
+          pq.termino_suspendido ? (
+            <button type="button" className="btn btn-sm btn-accent"
+              onClick={() => onAction('reanudar')}
+              data-testid="susp-reanudar"
+            >Reanudar</button>
+          ) : (
+            <button type="button" className="btn btn-sm btn-secondary"
+              onClick={() => onAction('suspender')}
+              data-testid="susp-suspender"
+            >Suspender</button>
+          )
+        )}
+      </div>
+      {loading && <p className="muted">Cargando…</p>}
+      {error && (
+        <div className="alert danger" role="alert">
+          <div className="body">{error.message || 'Error.'}</div>
+        </div>
+      )}
+      {!loading && !error && items.length === 0 && (
+        <div className="empty" data-testid="susp-empty">
+          <p className="muted">Sin suspensiones registradas.</p>
+        </div>
+      )}
+      {items.length > 0 && (
+        <table className="data-table" data-testid="susp-table">
+          <thead>
+            <tr>
+              <th>Inicio</th>
+              <th>Fin</th>
+              <th>Motivo</th>
+              <th>Usuario</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((s) => (
+              <tr key={s.id}>
+                <td>{fmtFecha(s.fecha_inicio)}</td>
+                <td>{s.fecha_fin ? fmtFecha(s.fecha_fin) : <em className="muted">Activa</em>}</td>
+                <td>{s.motivo}</td>
+                <td>{s.usuario_nombre}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
@@ -312,12 +429,16 @@ function ActionModal({ accion, session, pq, onClose, onSuccess }) {
   const [justif, setJustif] = useState('');
   const [valid, setValid] = useState(!META.requireJustif);
   const [contenido, setContenido] = useState('');
+  const [tipoCierre, setTipoCierre] = useState('cerrada');
+  const [entidadDestino, setEntidadDestino] = useState('');
 
   async function handle() {
     if (!hook) return;
     const payload = {
       ...(META.requireJustif ? { justificacion: justif } : {}),
       ...(META.requireContenido ? { contenido_borrador: contenido } : {}),
+      ...(META.requireTipoCierre ? { tipo_cierre: tipoCierre } : {}),
+      ...(META.requireEntidadDestino ? { entidad_destino: entidadDestino } : {}),
       ...(META.extra || {}),
     };
     try {
@@ -353,6 +474,35 @@ function ActionModal({ accion, session, pq, onClose, onSuccess }) {
           </div>
         )}
 
+        {META.requireTipoCierre && (
+          <div className="field" style={{ marginTop: 'var(--s-3)' }}>
+            <label>Tipo de cierre</label>
+            <select
+              className="select"
+              value={tipoCierre}
+              onChange={(e) => setTipoCierre(e.target.value)}
+              data-testid="modal-tipo-cierre"
+            >
+              <option value="cerrada">Cerrada — respuesta enviada</option>
+              <option value="cerrada_anticipada">Cerrada anticipadamente (con causal)</option>
+            </select>
+          </div>
+        )}
+
+        {META.requireEntidadDestino && (
+          <div className="field" style={{ marginTop: 'var(--s-3)' }}>
+            <label>Entidad destino del traslado <span className="req">*</span></label>
+            <input
+              type="text"
+              className="input"
+              placeholder="Nombre o NIT de la entidad competente"
+              value={entidadDestino}
+              onChange={(e) => setEntidadDestino(e.target.value)}
+              data-testid="modal-entidad-destino"
+            />
+          </div>
+        )}
+
         {META.requireJustif && (
           <div style={{ marginTop: 'var(--s-3)' }}>
             <JustificacionRequiredField
@@ -374,7 +524,12 @@ function ActionModal({ accion, session, pq, onClose, onSuccess }) {
           <button
             type="button"
             className={`btn btn-${META.tone || 'accent'}`}
-            disabled={!valid || (META.requireContenido && !contenido.trim()) || hook?.submitting}
+            disabled={
+              !valid
+              || (META.requireContenido && !contenido.trim())
+              || (META.requireEntidadDestino && !entidadDestino.trim())
+              || hook?.submitting
+            }
             onClick={handle}
             data-testid="modal-confirm"
           >
@@ -476,12 +631,59 @@ const ACCIONES_META = {
   },
   cerrar: {
     title: 'Cerrar PQRSD',
-    help: 'Solo cuando la respuesta esté enviada o haya causal de cierre.',
+    help: 'Solo cuando la respuesta esté enviada o haya causal de cierre. Indique motivo y tipo de cierre.',
     cta: 'Cerrar',
     requireJustif: true,
+    requireTipoCierre: true,
     scope: 'pqrsd',
-    useHook: () => ({ submit: async () => {}, submitting: false, error: null }),
+    useHook: useCerrarPQRSD,
     tone: 'danger',
+  },
+  reabrir: {
+    title: 'Reabrir PQRSD',
+    help: 'La reapertura queda auditada y deja el caso nuevamente en gestión.',
+    cta: 'Reabrir',
+    requireJustif: true,
+    scope: 'pqrsd',
+    useHook: useReabrirPQRSD,
+    tone: 'accent',
+  },
+  trasladar: {
+    title: 'Trasladar por competencia',
+    help: 'Genera oficio de traslado a otra entidad. Indique destinatario y motivo.',
+    cta: 'Trasladar',
+    requireJustif: true,
+    requireEntidadDestino: true,
+    scope: 'pqrsd',
+    useHook: useTrasladarPQRSD,
+    tone: 'secondary',
+  },
+  'info-adicional': {
+    title: 'Solicitar información adicional',
+    help: 'Pausa el término legal mientras espera respuesta del solicitante (RNF-058).',
+    cta: 'Solicitar',
+    requireJustif: true,
+    scope: 'pqrsd',
+    useHook: useSolicitarInfoAdicional,
+    tone: 'secondary',
+  },
+  suspender: {
+    title: 'Suspender término',
+    help: 'Pausa el término legal del PQRSD. Quedará registrado en el historial de suspensiones.',
+    cta: 'Suspender',
+    requireJustif: true,
+    scope: 'pqrsd',
+    useHook: useSuspenderTermino,
+    tone: 'secondary',
+  },
+  reanudar: {
+    title: 'Reanudar término',
+    help: 'Restablece el conteo del término legal desde donde se pausó.',
+    cta: 'Reanudar',
+    requireJustif: true,
+    scope: 'pqrsd',
+    useHook: useReanudarTermino,
+    tone: 'accent',
   },
 };
 
