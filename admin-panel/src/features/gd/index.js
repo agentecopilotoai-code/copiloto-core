@@ -24,3 +24,4 @@ export { useGdAudit } from './hooks/useGdAudit.js';
 
 export * from './placeholders/index.jsx';
 export * from './ventanilla/index.js';
+export * from './buzon/index.js';

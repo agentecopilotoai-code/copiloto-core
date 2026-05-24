@@ -255,6 +255,78 @@ export function exportarReporteVentanilla(session, { formato = 'csv', desde, has
   });
 }
 
+// ─── UI-4: Buzón de trabajo (GD-API-0038/0039) ────────────────────────────
+
+/**
+ * GET /api/v1/gd/me/buzon?carpeta=...&scope=...&limit=...
+ *
+ * Devuelve `{items: [{id, tipo, titulo, sub_titulo, fecha, ...}],
+ *           contadores: {pqrsd, correspondencia, ...}, total}`.
+ * Las carpetas son IDs simbólicas: pqrsd | correspondencia_in |
+ * correspondencia_out | tareas | borradores | docs_revisar | docs_aprobar |
+ * docs_firmar | notificaciones | alertas.
+ */
+export function getMiBuzon(session, { carpeta, scope, limit = 50 } = {}) {
+  return gdFetch(session, '/gd/me/buzon', {
+    params: { carpeta, scope, limit },
+  });
+}
+
+/** GET /api/v1/gd/dependencias/me/buzon — buzón de mi dependencia. */
+export function getBuzonDependencia(session, { carpeta, scope = 'dependencia', limit = 50 } = {}) {
+  return gdFetch(session, '/gd/dependencias/me/buzon', {
+    params: { carpeta, scope, limit },
+  });
+}
+
+/** GET /api/v1/gd/dependencias/me/carga-equipo (PERM-REP-009). */
+export function getCargaEquipo(session) {
+  return gdFetch(session, '/gd/dependencias/me/carga-equipo');
+}
+
+/** GET /api/v1/gd/tareas/{id} — ficha de tarea. */
+export function getTarea(session, id) {
+  return gdFetch(session, `/gd/tareas/${id}`);
+}
+
+/**
+ * POST /api/v1/gd/tareas/{id}/accion (GD-API-0038) — acciones del workflow.
+ * Action ∈ {iniciar, devolver, finalizar, reasignar, escalar}.
+ * Reasignar requiere `nuevo_responsable_user_id` + `justificacion`.
+ */
+export function ejecutarAccionTarea(session, id, accion, payload = {}) {
+  return gdFetch(session, `/gd/tareas/${id}/${accion}`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** GET /api/v1/gd/dependencias/{depId}/usuarios?rol= — selector. */
+export function listUsuariosDependencia(session, dependenciaId, { rol } = {}) {
+  return gdFetch(
+    session,
+    `/gd/estructura/dependencias/${dependenciaId}/usuarios`,
+    { params: { rol } },
+  );
+}
+
+/**
+ * GET /api/v1/gd/usuarios/{userId}/tareas-pendientes (GD-API-0039).
+ * Usado por el wizard de reasignación masiva al inactivar un usuario.
+ */
+export function getTareasPendientesUsuario(session, userId) {
+  return gdFetch(session, `/gd/perfil-usuario/${userId}/tareas-pendientes`);
+}
+
+/**
+ * POST /api/v1/gd/perfil-usuario/{userId}/tareas/reasignar — lote.
+ * body: { tareas: [{id, nuevo_responsable_user_id}], justificacion }
+ */
+export function reasignarTareasLote(session, userId, payload) {
+  return gdFetch(session, `/gd/perfil-usuario/${userId}/tareas/reasignar`, {
+    method: 'POST', body: payload,
+  });
+}
+
 /** GET /api/v1/gd/pqrsd — listar PQRSD. */
 export function listPQRSD(session, { scope, estado, vencimiento, limit = 50 } = {}) {
   return gdFetch(session, '/gd/pqrsd', {

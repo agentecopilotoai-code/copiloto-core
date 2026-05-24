@@ -249,3 +249,65 @@ para gating UI), `useReportesVentanilla` (con `exportar` helper).
 - Coverage features/gd subió aprox a 92-95% según sub-carpeta
 - Global admin-panel = **87.17% ≥ 86% gate** ✅
 - Build OK
+
+### Bloque UI-4 (Buzón de trabajo) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0016..0019 (EP-003). Roles primarios: ROL-007..ROL-011
+(operativos) + ROL-009 Jefe Dependencia para buzón scope=dependencia.
+
+**Archivos nuevos en `admin-panel/src/features/gd/buzon/`:**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `MiBuzon.jsx` (layout 3-col Gmail) | ~225 | GD-UI-0016 |
+| `BuzonDependencia.jsx` (tabs Buzón / Carga equipo) | ~245 | GD-UI-0017 |
+| `TareaFicha.jsx` (5 acciones + modal + UsuarioPicker) | ~265 | GD-UI-0018 |
+| `ReasignacionMasiva.jsx` (wizard lote) | ~210 | GD-UI-0019 |
+| `UsuarioPicker.jsx` (reusable) | ~55 | helper de 0018 + 0019 |
+| `useGdBuzon.js` (8 hooks + CARPETAS const) | ~210 | data layer |
+| `index.js` (barrel) | 18 | |
+
+**Extensiones `services/gdApi.js` (+9 endpoints):**
+`getMiBuzon`, `getBuzonDependencia`, `getCargaEquipo`, `getTarea`,
+`ejecutarAccionTarea`, `listUsuariosDependencia`,
+`getTareasPendientesUsuario`, `reasignarTareasLote`.
+
+**Hooks añadidos:** `useMiBuzon`, `useBuzonDependencia`, `useCargaEquipo`,
+`useTarea`, `useAccionTarea`, `useUsuariosDependencia`,
+`useTareasPendientesUsuario`, `useReasignarTareasLote`.
+
+**Placeholders reemplazados:** `GdBuzonHome` → `<MiBuzon />`,
+`GdBuzonDependencia` → `<BuzonDependencia />`. Nuevos:
+`GdTareaFicha`, `GdReasignacionMasiva`.
+
+**Decisiones (D-UI-14..D-UI-17):**
+
+- **D-UI-14 (Layout 3-col estilo Gmail con state local)**: `MiBuzon`
+  usa CSS Grid `220px 380px 1fr`. Carpetas a la izquierda con conteos
+  del backend, lista en el centro con selección visual, detalle a la
+  derecha con CTAs contextuales (abrir ficha / ver tarea). Selección
+  por `useState(selectedId)`. Cambio de carpeta resetea selección.
+- **D-UI-15 (Carpetas como constante exportada)**: `CARPETAS` en
+  `useGdBuzon.js` es la fuente de verdad — UI las renderiza, backend
+  las recibe como query param `carpeta`. 10 valores: pqrsd,
+  correspondencia_in/out, tareas, borradores, docs_revisar/aprobar/
+  firmar, notificaciones, alertas. Cada una con `icon` (emoji para
+  no depender de lib).
+- **D-UI-16 (Tab "Carga del equipo" gated por PERM-REP-009 visual)**:
+  en BuzonDependencia el tab aparece DISABLED visualmente (no hidden)
+  para roles sin permiso, con `title` explicativo. Si lo tienen,
+  carga vía `useCargaEquipo` con KPIs por usuario.
+- **D-UI-17 (Acciones del workflow declarativas con `requireJustif` +
+  `requirePicker`)**: TareaFicha define `ACCIONES` como array con
+  metadata `{requireJustif, requirePicker, tone}`. `AccionModal`
+  renderiza condicionalmente `JustificacionRequiredField` o
+  `UsuarioPicker` según las flags, y deshabilita el submit hasta que
+  ambas validen. Patrón reusable para otras fichas (PQRSD ficha en
+  bloque UI-5 lo reusará).
+
+**Métricas:**
+- 1606+/1606+ tests admin-panel ✅ (+52 nuevos bloque UI-4)
+- 284/284 tests features/gd ✅
+- Coverage features/gd buzón = 92-100% por sub-archivo
+- Global admin-panel = **87.36% ≥ 86% gate** ✅
+- Build OK

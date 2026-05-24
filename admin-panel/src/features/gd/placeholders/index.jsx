@@ -23,6 +23,12 @@ import {
   BuscarRadicados,
   ReportesVentanilla,
 } from '../ventanilla/index.js';
+import {
+  MiBuzon,
+  BuzonDependencia,
+  TareaFicha,
+  ReasignacionMasiva,
+} from '../buzon/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -62,13 +68,11 @@ export const GdAnulacionesPendientes = (p) => <AnulacionesPendientes {...p} />;
 export const GdBuscarRadicados = (p) => <BuscarRadicados {...p} />;
 export const GdReportesVentanilla = (p) => <ReportesVentanilla {...p} />;
 
-// Buzón (UI-4)
-export const GdBuzonHome = (p) => (
-  <ShellWrapper {...p} title="Mi buzón" bloqueNum={4} />
-);
-export const GdBuzonDependencia = (p) => (
-  <ShellWrapper {...p} title="Buzón de dependencia" bloqueNum={4} />
-);
+// Buzón (UI-4) — vistas reales:
+export const GdBuzonHome = (p) => <MiBuzon {...p} />;
+export const GdBuzonDependencia = (p) => <BuzonDependencia {...p} />;
+export const GdTareaFicha = (p) => <TareaFicha {...p} />;
+export const GdReasignacionMasiva = (p) => <ReasignacionMasiva {...p} />;
 
 // PQRSD (UI-5/UI-6)
 export const GdPqrsdPanel = (p) => (
