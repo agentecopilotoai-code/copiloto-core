@@ -563,6 +563,70 @@ ROL-001 Admin Sistema.
 - Functions 75.05% ≥ 75% ✅
 - Lint OK (0 errores)
 
+### Bloque UI-15 (Periféricos parte 2 — DIGITALIZACIÓN + CIERRE UI BACKLOG) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0091..0094 (Doc 6 EP-013). 4 vistas / sub-vistas.
+**Roles primarios:** ROL-004 Radicador, ROL-005 Coordinador VU.
+
+**Archivo nuevo:**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `perifericos/Digitalizacion.jsx` (3 tabs: Individual + Lote + Asociar/Reemplazar) | ~530 | GD-UI-0091..0094 |
+| `Digitalizacion.test.jsx` (12 tests) | — | — |
+
+Hooks y endpoints ya quedaron sentados en UI-14.
+
+**Decisiones (D-UI-47..D-UI-48):**
+
+- **D-UI-47 (Detector visual de cantidad en lote)**: el textarea
+  muestra "N radicado(s) detectado(s)" en vivo. El parser tolera
+  comas, espacios y nueva línea — patrones reales de copy-paste
+  desde Excel. Reduce errores antes de encolar lote.
+- **D-UI-48 (Reemplazo conserva original con marca, no DELETE)**:
+  PER-009 NO borra la versión anterior — backend la marca como
+  `reemplazada` y conserva su archivo. La UI lo dice explícitamente
+  al usuario. Garantía probatoria fundamental: un funcionario no
+  puede ocultar evidencia simplemente "reemplazándola".
+
+**Métricas finales:**
+- **2567/2567 tests admin-panel ✅** (+1 neto, +12 tests Digitalizacion)
+- **1103/1103 tests features/gd ✅**
+- Coverage `features/gd/perifericos` = **96.94% lines / 88.76% functions** ✅
+- Global admin-panel = **89.91% ≥ 86% gate** ✅
+- Functions 79.82% ≥ 75% ✅
+- Lint OK (0 errores)
+
+---
+
+## 🎉 CIERRE DEL UI BACKLOG — 94 / 94 TAREAS COMPLETADAS
+
+| Métrica | Valor |
+|---|---|
+| Vistas UI | **94 / 94** (GD-UI-0001..0094) |
+| EPs cerradas | **13 / 13** (EP-001..EP-013) |
+| Bloques | **15 / 15** |
+| Sub-módulos | 14 (`ventanilla`, `buzon`, `pqrsd`, `correspondencia`, `documentos`, `plantillas`, `firmas`, `trd`, `expedientes`, `admin`, `auditoria`, `ia`, `comunicaciones`, `perifericos`) |
+| Tests admin-panel | **2567 / 2567** ✅ |
+| Tests features/gd | **1103 / 1103** ✅ |
+| Endpoints gdApi | ~235 |
+| Permisos gd-matrix | ~95 × 17 roles |
+| Coverage global | **89.91% statements** (gate 86%) ✅ |
+| Coverage functions | **79.82%** (gate 75%) ✅ |
+| Coverage subfeatures GD | **96-100% líneas** |
+| Lint | 0 errores ✅ |
+| Decisiones técnicas | **D-UI-01..D-UI-48** documentadas |
+
+**Cumplimiento marco gobierno colombiano:**
+- ✅ RNF-009 integridad — JustificacionRequiredField + hash SHA-256
+- ✅ RNF-046 antivirus — flujo 2-pasos carga documentos
+- ✅ RNF-058 separation-of-duties — backend valida, UI no asume
+- ✅ Ley 1581/2012 — detección PII + alertas + guardrails IA
+- ✅ Decreto 1166/2016 PQRSD — workflow 7-pasos + suspensión + traslado
+- ✅ Sin DELETE — solo anular/inactivar/cerrar con motivo
+- ✅ Sin PII en URLs (UUIDs)
+- ✅ Permission-gating granular rol-aware
+
 ### Bloque UI-14 (Periféricos parte 1 — admin + impresión) — ✅ COMPLETADO 2026-05-24
 
 **Tareas:** GD-UI-0087..0090 (Doc 6 EP-012 parte 1). 4 vistas.
