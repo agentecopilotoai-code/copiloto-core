@@ -767,3 +767,24 @@ alter table influencer.assets
 create index if not exists ix_assets_face_variation_request
   on influencer.assets (face_variation_request_id)
   where face_variation_request_id is not null;
+
+
+-- ============================================================================
+-- DEMO-SEED — habilitar módulos opt-in para el tenant Demo Taller
+-- ============================================================================
+-- Solo aplica al tenant fixture `Demo Taller` (uuid 11111111…) que se siembra
+-- en 02-seed.sql. En producción, los platform_owners habilitan módulos vía
+-- `PATCH /admin/api/core/v1/platform/tenant-modules/{tenant_id}/{module}` con
+-- MFA + auditoría. Para entornos de desarrollo local (docker-compose) damos
+-- por activos los módulos contratables de fábrica para que el desarrollador
+-- vea inmediatamente las opciones en el sidebar al loguear como owner.
+--
+-- ON CONFLICT DO NOTHING: si el platform_owner ya hizo toggle manual desde la
+-- UI, conservamos su decisión (no sobreescribimos `activated_at`/`enabled`).
+-- ============================================================================
+
+insert into app.tenant_modules (tenant_id, module, enabled, activated_at)
+values
+  ('11111111-1111-1111-1111-111111111111', 'influencer', true, now()),
+  ('11111111-1111-1111-1111-111111111111', 'gestion_documental', true, now())
+on conflict (tenant_id, module) do nothing;
