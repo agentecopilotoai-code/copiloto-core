@@ -6,4 +6,5 @@
  */
 export { AdminPerifericos } from './AdminPerifericos.jsx';
 export { Impresion } from './Impresion.jsx';
+export { Digitalizacion } from './Digitalizacion.jsx';
 export * from './useGdPerifericos.js';

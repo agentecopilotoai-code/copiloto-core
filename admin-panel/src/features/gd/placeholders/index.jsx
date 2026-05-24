@@ -96,6 +96,7 @@ import {
 import {
   AdminPerifericos,
   Impresion,
+  Digitalizacion,
 } from '../perifericos/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
@@ -198,6 +199,9 @@ export const GdSaludSistema = (p) => <SaludSistema {...p} />;
 // Periféricos parte 1 (UI-14) — vistas reales:
 export const GdAdminPerifericos = (p) => <AdminPerifericos {...p} />;
 export const GdImpresion = (p) => <Impresion {...p} />;
+
+// Periféricos parte 2 (UI-15) — vista real:
+export const GdDigitalizacion = (p) => <Digitalizacion {...p} />;
 
 // Auditoría + Reportes consolidados (UI-11) — vistas reales:
 export const GdAuditoria = (p) => <BandejaAuditoria {...p} />;
