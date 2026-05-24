@@ -7,7 +7,6 @@ import * as placeholders from './index.jsx';
 // reemplazaron toda Ventanilla incluyendo ficha + búsqueda).
 const PLACEHOLDER_NAMES = [
   'GdAdminPerifericos',
-  'GdAuditoria', 'GdReportes',
 ];
 
 describe('placeholders de bloques posteriores', () => {

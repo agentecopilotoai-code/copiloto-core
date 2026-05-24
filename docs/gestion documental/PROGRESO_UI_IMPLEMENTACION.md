@@ -563,6 +563,78 @@ ROL-001 Admin Sistema.
 - Functions 75.05% ≥ 75% ✅
 - Lint OK (0 errores)
 
+### Bloque UI-11 (Auditoría + Reportes consolidados — CIERRE EP-009) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0067..0071 (EP-009). 5 vistas.
+**Roles primarios:** ROL-016 Auditor Externo, ROL-001 Admin Sistema,
+ROL-002 Admin Seguridad, ROL-009 Jefe Dependencia.
+
+**Archivos nuevos (`auditoria/`, ~1500 LOC componentes + 150 LOC hooks):**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `BandejaAuditoria.jsx` (lista filtrable + export CSV/Excel) | ~280 | GD-UI-0067 |
+| `EventoAuditoriaFicha.jsx` (datos + diff + verificar hash) | ~270 | GD-UI-0068 |
+| `ReportesConsolidados.jsx` (KPIs cruzados + 3 export) | ~260 | GD-UI-0069/0070 |
+| `VistaAuditor.jsx` (resumen integridad + accesos rápidos) | ~205 | GD-UI-0071 |
+| `useGdAuditoria.js` (5 readers + 4 mutators) | ~150 | hooks |
+| `index.js` | 8 | |
+
+**Extensiones `services/gdApi.js` (+10 endpoints, GD-API-0116..0125):**
+- Auditoría: `buscarAuditoria`, `getEventoAuditoria`, `exportarAuditoria`,
+  `listCatalogoEntidadesAuditoria`, `listCatalogoAccionesAuditoria`.
+- Reportes consolidados: `getReportesConsolidados`,
+  `exportarReporteConsolidado`, `exportarReporteEjecutivoPdf`.
+- Auditor (integridad): `getResumenIntegridadAuditor`,
+  `verificarHashRegistro`.
+
+**Placeholders reemplazados:**
+- `GdAuditoria` → `<BandejaAuditoria />`
+- `GdReportes` → `<ReportesConsolidados />`
+- Nuevos: `GdAuditoriaEvento`, `GdVistaAuditor`.
+
+**Decisiones (D-UI-36..D-UI-38):**
+
+- **D-UI-36 (DiffView genérico antes/después con resaltado)**: el
+  detalle del evento renderiza una tabla `Campo | Antes | Después`
+  con fondo rojo claro para "antes" y verde claro para "después",
+  filtrando campos sin cambios. Si `payload_antes` y
+  `payload_despues` son ambos null la vista declara explícitamente
+  "operación de solo-lectura" — esto distingue eventos de
+  consulta (que deben quedar auditados) de eventos de mutación.
+- **D-UI-37 (Verificar integridad inline desde la ficha del
+  evento)**: en vez de delegar la verificación de hash a un proceso
+  batch, el auditor puede pulsar "Verificar integridad" sobre
+  cualquier evento individual y el backend retorna `{ integro: bool,
+  detalle? }`. La UI lo reporta con alert tipo `success`/`danger`.
+  Esto es fundamental para que el auditor pueda demostrar de
+  inmediato (ante un tercero) que un registro específico NO fue
+  alterado desde su creación.
+- **D-UI-38 (Vista Auditor con hash raíz Merkle del módulo)**: la
+  landing del rol Auditor Externo (GD-UI-0071) muestra explícitamente
+  el `hash_raiz` consolidado del módulo (sello Merkle de todos los
+  registros sellados) + un breakdown por entidad. Esto da una
+  prueba probatoria global: si dos auditores ejecutan
+  `getResumenIntegridadAuditor` en el mismo instante y obtienen el
+  mismo hash raíz, la integridad del módulo es verificable
+  matemáticamente.
+
+**Métricas:**
+- **2336/2336 tests admin-panel ✅** (+61 nuevos UI-11)
+- **886/886 tests features/gd ✅**
+- Coverage `features/gd/auditoria` = **99.12% lines / 87.5% functions** ✅
+- Global admin-panel = **89.38% ≥ 86% gate** ✅
+- Functions 79.15% ≥ 75% ✅
+- Lint OK (0 errores)
+
+**EP-009 Auditoría + Reportes CERRADA** — 5 vistas:
+Bandeja de auditoría filtrable con 7 criterios + export CSV/Excel +
+ficha de evento con verificación de integridad inline + diff visual
+antes/después + reportes consolidados cruzando ventanilla/PQRSD/
+documentos/expedientes con 8 KPIs + 3 exportadores (CSV/Excel/PDF
+ejecutivo con firma institucional) + landing del Auditor Externo
+mostrando hash raíz Merkle del módulo y breakdown por entidad.
+
 ### Bloque UI-10 (Admin del sistema GD — CIERRE EP-008) — ✅ COMPLETADO 2026-05-24
 
 **Tareas:** GD-UI-0052..0066 (EP-008). 15 vistas.

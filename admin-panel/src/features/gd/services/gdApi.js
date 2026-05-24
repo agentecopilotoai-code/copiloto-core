@@ -1024,5 +1024,49 @@ export function getSaludSistema(session) {
   return gdFetch(session, '/gd/admin/salud');
 }
 
+// ─── UI-11: Auditoría + Reportes consolidados (GD-API-0116..0125) ────────
+
+// --- Auditoría (extiende `listAuditoria` ya existente) ---
+export function buscarAuditoria(session, filtros = {}) {
+  return gdFetch(session, '/gd/auditoria', { params: filtros });
+}
+export function getEventoAuditoria(session, id) {
+  return gdFetch(session, `/gd/auditoria/${id}`);
+}
+export function exportarAuditoria(session, payload) {
+  return gdFetch(session, '/gd/auditoria/exportar', {
+    method: 'POST', body: payload,
+  });
+}
+export function listCatalogoEntidadesAuditoria(session) {
+  return gdFetch(session, '/gd/auditoria/entidades');
+}
+export function listCatalogoAccionesAuditoria(session) {
+  return gdFetch(session, '/gd/auditoria/acciones');
+}
+
+// --- Reportes consolidados ---
+export function getReportesConsolidados(session, filtros = {}) {
+  return gdFetch(session, '/gd/reportes/consolidados', { params: filtros });
+}
+export function exportarReporteConsolidado(session, payload) {
+  return gdFetch(session, '/gd/reportes/consolidados/exportar', {
+    method: 'POST', body: payload,
+  });
+}
+export function exportarReporteEjecutivoPdf(session, payload) {
+  return gdFetch(session, '/gd/reportes/ejecutivo/pdf', {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Auditor: integridad de registros ---
+export function getResumenIntegridadAuditor(session) {
+  return gdFetch(session, '/gd/auditor/integridad');
+}
+export function verificarHashRegistro(session, entidadTipo, entidadId) {
+  return gdFetch(session, `/gd/auditor/integridad/${entidadTipo}/${entidadId}`);
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

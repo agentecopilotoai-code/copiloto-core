@@ -75,6 +75,12 @@ import {
   Seguridad,
   SaludSistema,
 } from '../admin/index.js';
+import {
+  BandejaAuditoria,
+  EventoAuditoriaFicha,
+  ReportesConsolidados,
+  VistaAuditor,
+} from '../auditoria/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -178,13 +184,11 @@ export const GdAdminPerifericos = (p) => (
   <ShellWrapper {...p} title="Periféricos autorizados" bloqueNum={14} />
 );
 
-// Auditoría (UI-11)
-export const GdAuditoria = (p) => (
-  <ShellWrapper {...p} title="Auditoría" bloqueNum={11} />
-);
-export const GdReportes = (p) => (
-  <ShellWrapper {...p} title="Reportes consolidados" bloqueNum={11} />
-);
+// Auditoría + Reportes consolidados (UI-11) — vistas reales:
+export const GdAuditoria = (p) => <BandejaAuditoria {...p} />;
+export const GdAuditoriaEvento = (p) => <EventoAuditoriaFicha {...p} />;
+export const GdReportes = (p) => <ReportesConsolidados {...p} />;
+export const GdVistaAuditor = (p) => <VistaAuditor {...p} />;
 
 // Búsqueda global → vista real bloque UI-3
 export const GdBuscar = (p) => <BuscarRadicados {...p} />;

@@ -528,6 +528,17 @@ describe('gdApi — endpoints UI-3..UI-9 smoke', () => {
     ['listSesionesActivas', [{}]],
     ['revocarSesion', ['ses1', 'motivo']],
     ['getSaludSistema', []],
+    // UI-11 auditoría + reportes consolidados
+    ['buscarAuditoria', [{}]],
+    ['getEventoAuditoria', ['e1']],
+    ['exportarAuditoria', [{}]],
+    ['listCatalogoEntidadesAuditoria', []],
+    ['listCatalogoAccionesAuditoria', []],
+    ['getReportesConsolidados', [{}]],
+    ['exportarReporteConsolidado', [{}]],
+    ['exportarReporteEjecutivoPdf', [{}]],
+    ['getResumenIntegridadAuditor', []],
+    ['verificarHashRegistro', ['pqrsd', 'p1']],
   ];
 
   it.each(SMOKE_ENDPOINTS)('%s exporta y llama fetch', async (fnName, args) => {
