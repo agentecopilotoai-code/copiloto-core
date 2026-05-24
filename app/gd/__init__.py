@@ -19,7 +19,7 @@ import asyncpg
 from fastapi import Depends, HTTPException, Request, status
 
 from app.core.security import authenticate_request
-from app.db.deps import get_db
+from app.db.pool import get_db
 
 
 # Nombre canónico del módulo en `app.tenant_modules.module`. Mirror del
