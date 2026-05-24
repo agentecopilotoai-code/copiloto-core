@@ -22,6 +22,7 @@ Prefijo de consecutivos: **`GD-UI-NNNN`**. Prefijo de épicas: **`GD-UI-EP-NNN`*
 | EP-010 | IA asistida embebida en flujos | Todos los operativos | Entrega 7 |
 | EP-011 | Bandeja de correo importado | ROL-004, ROL-005 | Entrega 7 |
 | EP-012 | Notificaciones, alertas y comunicaciones | Todos | Entrega 3 |
+| EP-013 | Periféricos de Ventanilla Única (impresión + digitalización + códigos) | ROL-001, ROL-004, ROL-005, ROL-016 | Entrega 2 (extiende EP-002) |
 
 ---
 
@@ -481,12 +482,115 @@ Cada `GD-UI-NNNN` debe entregar:
 
 ---
 
+## EP-013 — Periféricos de Ventanilla Única (impresión + digitalización + códigos)
+
+**Roles:** ROL-001 Admin Sistema (registra hardware), ROL-005 Coordinador VU (configura puntos), ROL-004 Radicador (opera), ROL-016 Auditor (consulta historial).
+**Endpoints consumidos:** GD-API-0128 a GD-API-0142.
+**Doc fuente:** Doc 5 v0.1-rev1 § 28 + Doc 6 v0.1 completo (RFP-001..008).
+**Mandato específico:**
+- **Esta épica solo se renderiza** cuando `gd.organizacion_modulo_activacion.modulo_codigo='ventanilla_presencial_con_perifericos'`. Si la organización no lo activa, los menús, botones y rutas de esta épica no existen.
+- **El agente local** se instala fuera de este admin-panel. Esta UI envía instrucciones al backend; el backend las enruta al agente local autenticado. La UI no habla directamente con hardware.
+- **Estado del agente visible:** el header de Ventanilla Única muestra un indicador (verde / ámbar / rojo) del agente local del punto actual. Si el agente está offline, los botones de impresión/digitalización se deshabilitan con tooltip explicativo.
+
+### GD-UI-0087 — Pantalla de administración de periféricos
+- **Ruta:** `/gd/admin/perifericos`.
+- **Rol:** ROL-001 Admin Sistema. Permiso PERM-PER-001.
+- **Vista:** `DataTable` con columnas: Nombre, Tipo (impresora etiquetas / impresora térmica / escáner plano / escáner automático / lector códigos), Marca, Modelo, Serial, Punto de atención, Dependencia, Estado (badge semántico), Última operación.
+- **Filtros:** punto de atención, tipo, estado.
+- **Acciones:** Registrar nuevo (modal con form), Editar configuración (drawer lateral), Activar/Inactivar/Mantenimiento/Retirar (con motivo), Ver historial (link a GD-UI-0094).
+- **Endpoints:** `GET/POST /api/v1/gd/perifericos`, `PATCH /api/v1/gd/perifericos/{id}`, `POST /api/v1/gd/perifericos/{id}/activar|inactivar|poner-mantenimiento|retirar`.
+- **Componente nuevo:** `<PerifericoStatusBadge />` con semáforo (activo=verde, mantenimiento=ámbar, inactivo/retirado=rojo, registrado pero no probado=neutral).
+- **Validaciones:** serial único por organización (feedback inline al teclear); al inactivar muestra warning si tiene operaciones del último día.
+- **Aceptación:** un admin registra una Zebra GK420t en el "Punto Principal"; aparece en la tabla; intentar registrar otra con el mismo serial falla con mensaje claro.
+
+### GD-UI-0088 — Pantalla de puntos de atención
+- **Ruta:** `/gd/admin/puntos-atencion`.
+- **Rol:** ROL-001, ROL-005. Permiso PERM-PER-001.
+- **Vista:** lista de puntos con expansión para mostrar periféricos asignados. Cada punto muestra dirección, dependencia responsable, número de periféricos activos y estado del agente local.
+- **Acciones:** Crear/Editar punto, Asignar periféricos (modal de transferencia), Cerrar punto (con flujo de reasignación de periféricos).
+- **Endpoints:** `GET/POST/PATCH /api/v1/gd/puntos-atencion`, `GET /api/v1/gd/puntos-atencion/{id}/perifericos`.
+- **Aceptación:** crear "Sede Sur"; asignar 2 impresoras y 1 escáner; cerrar el punto pide reasignar/desactivar los periféricos antes (no permite huérfanos).
+
+### GD-UI-0089 — Botones de impresión en ficha de radicado
+- **Ubicación:** ficha de radicado (GD-UI-0015) — barra de acciones lateral.
+- **Rol:** ROL-004 (con PERM-PER-003 y PERM-PER-005).
+- **Botones:**
+  - **"Imprimir etiqueta"** → modal con selector de periférico activo del punto actual + selector de formato (estándar/compacta/sticker) + checkboxes QR/código barras → llama `POST /api/v1/gd/perifericos/{id}/imprimir-etiqueta`.
+  - **"Imprimir constancia"** → modal con selector de periférico + formato → llama `POST /api/v1/gd/perifericos/{id}/imprimir-constancia`.
+  - **"Generar código QR/barras"** → modal con tipo → llama `POST /api/v1/gd/radicados/{id}/codigo-barras` y muestra preview.
+- **Componente nuevo:** `<EtiquetaPreview />` que renderiza cómo se verá la etiqueta (basado en el `archivo_digital_id` que devuelve el backend).
+- **Estados visibles:** toast "Enviando a impresora..." → "Impresa correctamente" (success) o "Fallo de impresión" (error con detalle).
+- **Validaciones:** si no hay periférico activo del tipo correcto, el botón se deshabilita con tooltip "No hay impresoras de etiquetas configuradas en este punto".
+- **Aceptación:** radicador imprime etiqueta de `RAD-2026-001234` desde Counter-1; aparece toast de éxito; al escanear el QR de la etiqueta resuelve al radicado.
+
+### GD-UI-0090 — Componente de digitalización en wizard de radicado entrada
+- **Ubicación:** paso 3 (Anexos) del wizard de GD-UI-0007.
+- **Rol:** ROL-004. Permiso PERM-PER-006.
+- **Funcionalidad:**
+  - Botón **"Escanear documento"** además del "drag & drop" tradicional.
+  - Modal con selector de escáner del punto + calidad DPI (200/300/600) + observación opcional.
+  - Al confirmar, llama `POST /api/v1/gd/perifericos/{id}/digitalizar` y muestra spinner "Escaneando..." con barra de progreso.
+  - Cuando el agente local reporta resultado (vía webhook procesado en backend), el archivo aparece en la lista de anexos del wizard automáticamente.
+  - Si el resultado es `incompleta` (atasco de papel), muestra modal con opción "Reintentar" o "Continuar sin este anexo".
+- **Contexto activo:** la UI llama `POST /api/v1/gd/perifericos/contexto-activo` al abrir el wizard para que el agente local sepa a qué radicado asociar.
+- **Endpoints:** `POST /api/v1/gd/perifericos/{id}/digitalizar`, `POST /api/v1/gd/perifericos/contexto-activo`.
+- **Componente nuevo:** `<EscanerStatusIndicator />` con estados: ready / scanning / processing / done / error.
+- **Aceptación:** radicador escanea oficio físico durante creación de radicado; el PDF aparece en la lista de anexos sin clicks extra; el OCR se ejecuta en background.
+
+### GD-UI-0091 — Pantalla de digitalización por lote
+- **Ruta:** `/gd/ventanilla/digitalizacion/lote`.
+- **Rol:** ROL-004, ROL-005. Permiso PERM-PER-007.
+- **Flujo:**
+  1. Wizard paso 1: seleccionar escáner automático + modo separación (por código de barras / por página / manual) + DPI + observación.
+  2. Paso 2: cargar documentos en el escáner físico, presionar "Iniciar lote". Vista muestra páginas digitalizadas en tiempo real (polling sobre `GET /api/v1/gd/perifericos/lotes/{lote_id}`).
+  3. Paso 3: revisión del lote — si separación por código de barras: cada documento aparece pre-asociado al radicado detectado; usuario puede confirmar o reasignar. Si separación manual: usuario asocia rangos de páginas a radicados.
+  4. Paso 4: finalizar lote → `POST /api/v1/gd/perifericos/lotes/{lote_id}/finalizar`.
+- **Componente nuevo:** `<LoteDigitalizacionViewer />` con grid de thumbnails de páginas, selección múltiple, asignación a radicados.
+- **Endpoints:** `POST /api/v1/gd/perifericos/{id}/digitalizar-lote`, `GET /api/v1/gd/perifericos/lotes/{lote_id}`, `POST /api/v1/gd/perifericos/lotes/{lote_id}/finalizar`.
+- **Validaciones:** páginas no asociadas no permiten finalizar (warning); usuario puede dejarlas pendientes para asociar después (PERM-PER-008).
+- **Aceptación:** procesar lote de 50 páginas con códigos intercalados; el sistema separa en 5 documentos correctos; usuario confirma y finaliza; los 5 radicados reciben sus anexos.
+
+### GD-UI-0092 — Modal de reimpresión controlada con motivo
+- **Ubicación:** ficha del radicado, sección "Impresiones previas" (lista de `gd.impresion_radicado`).
+- **Rol:** ROL-004, ROL-005. Permiso PERM-PER-004.
+- **Funcionalidad:**
+  - Cada impresión previa muestra botón **"Reimprimir"** que abre modal con:
+    - Resumen de la impresión original (fecha, periférico, usuario, número intentos previos).
+    - **Campo motivo obligatorio** (textarea, mínimo 10 caracteres).
+    - Selector de periférico para la reimpresión.
+  - Si `intentos_reimpresion > 3`, modal advierte que requiere aprobación del coordinador y la acción crea una solicitud en lugar de imprimir directamente.
+- **Endpoints:** `POST /api/v1/gd/perifericos/{id}/reimprimir-etiqueta`.
+- **Componente:** `<MotivoReimpresionModal />`.
+- **Aceptación:** reimprimir etiqueta sin motivo falla con feedback inline; reimprimir con motivo válido funciona; al cuarto intento abre flujo de aprobación.
+
+### GD-UI-0093 — Bandeja de "pendientes de asociación" (escaneos huérfanos)
+- **Ruta:** `/gd/ventanilla/digitalizacion/pendientes`.
+- **Rol:** ROL-004, ROL-005. Permiso PERM-PER-008.
+- **Vista:** lista de digitalizaciones con `estado='correcta'` pero sin radicado asociado (típicamente lotes abandonados o digitalizaciones sin contexto activo).
+- **Acciones:** asociar a radicado existente (con buscador) o descartar con motivo.
+- **Endpoints:** `GET /api/v1/gd/digitalizaciones?estado=pendiente_asociacion`, `POST /api/v1/gd/digitalizaciones/{id}/asociar`, `POST /api/v1/gd/digitalizaciones/{id}/descartar`.
+- **Aceptación:** un lote abandonado de ayer aparece en la bandeja; el coordinador asocia los 3 documentos a sus radicados correctos.
+
+### GD-UI-0094 — Dashboard de salud y fallos de periféricos
+- **Ruta:** `/gd/admin/perifericos/dashboard`.
+- **Rol:** ROL-001, ROL-005, ROL-016. Permiso PERM-PER-011.
+- **Vista:**
+  - KPIs arriba: periféricos activos / en mantenimiento / con fallos en últimas 24h.
+  - Tarjetas por periférico con: estado, número de operaciones del día, número de fallos, latencia promedio, link "Ver historial".
+  - Tabla de eventos críticos recientes (`autenticacion_fallida_agente`, fallos consecutivos, periféricos auto-protegidos).
+  - Sección "Mantenimientos próximos" con fechas estimadas.
+- **Acciones:** programar mantenimiento, marcar mantenimiento finalizado, revocar agente local comprometido (PERM-PER-001).
+- **Endpoints:** `GET /api/v1/gd/perifericos/eventos/fallos`, `GET /api/v1/gd/perifericos/{id}/historial`, `POST /api/v1/gd/perifericos/{id}/mantenimiento`, `POST /api/v1/gd/agentes-locales/{id}/revocar`.
+- **Aceptación:** el coordinador ve que Counter-2 ha tenido 6 fallos hoy y está en `mantenimiento` automático; agenda mantenimiento correctivo para mañana.
+
+---
+
 ## Anexo — Cobertura de Definition of Done por entrega
 
 | Entrega | Épicas UI completadas | Hitos |
 |---|---|---|
 | Entrega 1 | EP-001 + EP-008 | Login, sidebar por rol, administración base, configuración institucional, estructura orgánica versionada. Habilita Admin Sistema y Admin Seguridad. |
-| Entrega 2 | EP-002 | Radicador puede crear radicados de entrada/salida con QR; coordinador supervisa cola. |
+| Entrega 2 | EP-002 + EP-013 | Radicador puede crear radicados de entrada/salida con QR; coordinador supervisa cola; operación presencial con periféricos (impresión etiqueta/constancia + digitalización + bandeja de huérfanos) si la organización lo activa. |
 | Entrega 3 | EP-003 + EP-012 | Buzón unificado funcionando para todos los roles operativos; notificaciones y alertas activas. |
 | Entrega 4 | EP-004 | Ciclo completo de PQRSD desde clasificación hasta cierre, con semáforo de vencimientos. |
 | Entrega 5 | EP-005 | Correspondencia interna y externa con workflow completo. |
@@ -496,5 +600,5 @@ Cada `GD-UI-NNNN` debe entregar:
 
 ---
 
-**Última actualización:** 2026-05-20
+**Última actualización:** 2026-05-23 (rev. EP-013 UI — periféricos)
 **Versión:** 0.1 (borrador — pendiente de validación)

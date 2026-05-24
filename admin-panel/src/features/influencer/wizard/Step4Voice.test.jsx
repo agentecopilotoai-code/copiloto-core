@@ -47,13 +47,14 @@ describe('<Step4Voice/> (UI-INFLU-011)', () => {
     expect(audio.getAttribute('src')).toBe('https://s3/sample.mp3');
   });
 
-  it('siguiente sin sample → bloqueado', async () => {
+  it('UI-INFLU-014.10: siguiente SIN sample ya NO bloquea (voz no obligatoria)', async () => {
     usePermissions.mockReturnValue({ can: () => true });
     const onNext = vi.fn();
     const user = userEvent.setup();
     render(<Step4Voice onNext={onNext} />);
     await user.click(screen.getByRole('button', { name: /Siguiente paso/i }));
-    expect(onNext).not.toHaveBeenCalled();
-    expect(screen.getByText(/Genera al menos un sample/i)).toBeInTheDocument();
+    // El usuario puede continuar sin generar sample — la voz se puede
+    // configurar después desde el estudio del personaje.
+    expect(onNext).toHaveBeenCalledOnce();
   });
 });

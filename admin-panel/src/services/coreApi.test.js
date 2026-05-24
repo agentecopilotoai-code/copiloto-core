@@ -279,6 +279,57 @@ describe('request() transport branches', () => {
     await expect(getMyProfile(SESSION)).rejects.toThrow(/"code":"X"/);
   });
 
+  it('UI-INFLU-014.9: formatea detail Pydantic 422 a "Campo: razón"', async () => {
+    // Caso reportado por el usuario: paso 3 del wizard con city y
+    // country vacíos. FastAPI 422 devuelve un array de errores.
+    mockJson({
+      detail: [
+        {
+          type: 'string_too_short',
+          loc: ['body', 'city'],
+          msg: 'String should have at least 1 character',
+          ctx: { min_length: 1 },
+        },
+        {
+          type: 'string_too_short',
+          loc: ['body', 'country'],
+          msg: 'String should have at least 2 characters',
+          ctx: { min_length: 2 },
+        },
+      ],
+    }, { ok: false, status: 422 });
+    try {
+      await getMyProfile(SESSION);
+      throw new Error('should not reach');
+    } catch (err) {
+      expect(err.status).toBe(422);
+      // Cada item se formatea con label en español del campo + razón.
+      expect(err.message).toContain('Ciudad: debe tener al menos 1 carácter');
+      expect(err.message).toContain('País: debe tener al menos 2 caracteres');
+      // Mantiene el array crudo en error.detail para inspección.
+      expect(Array.isArray(err.detail)).toBe(true);
+      expect(err.detail).toHaveLength(2);
+    }
+  });
+
+  it('UI-INFLU-014.9: traduce type=missing como "es obligatorio"', async () => {
+    mockJson({
+      detail: [
+        { type: 'missing', loc: ['body', 'handle'], msg: 'Field required' },
+      ],
+    }, { ok: false, status: 422 });
+    await expect(getMyProfile(SESSION)).rejects.toThrow(/Handle: es obligatorio/);
+  });
+
+  it('UI-INFLU-014.9: campo desconocido cae al raw key', async () => {
+    mockJson({
+      detail: [
+        { type: 'missing', loc: ['body', 'unknown_field'], msg: 'Field required' },
+      ],
+    }, { ok: false, status: 422 });
+    await expect(getMyProfile(SESSION)).rejects.toThrow(/unknown_field: es obligatorio/);
+  });
+
   it('stringifies the whole payload when no detail key is present', async () => {
     mockJson({ foo: 'bar' }, { ok: false, status: 400 });
     await expect(getMyProfile(SESSION)).rejects.toThrow(/"foo":"bar"/);

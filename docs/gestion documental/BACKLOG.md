@@ -30,6 +30,7 @@ Prefijo de consecutivos: **`GD-API-NNNN`**. Prefijo de épicas: **`GD-API-EP-NNN
 | EP-018 | Servicio transversal de archivos, extracción y OCR | Compartido con Knowledge | Entrega 6 (precede EP-009) |
 | EP-019 | Auditoría transversal `core.evento_auditoria` | Compartido con app/Knowledge/gd | Entrega 1 (precede EP-001) |
 | EP-020 | Gaps de cobertura cerrados tras auditoría 2026-05-20 | Múltiples | Distribuida (cada tarea entra en la entrega donde corresponde su dominio) |
+| EP-021 | Periféricos de Ventanilla Única (impresoras, escáneres, códigos de barras/QR, agente local) | MOD-004, MOD-016 | Entrega 2 (extiende EP-004) |
 
 ---
 
@@ -887,6 +888,213 @@ Prefijo de consecutivos: **`GD-API-NNNN`**. Prefijo de épicas: **`GD-API-EP-NNN
 
 ---
 
+## EP-021 — Periféricos de Ventanilla Única (impresoras, escáneres, códigos de barras/QR, agente local)
+
+**Módulos:** MOD-004 (Ventanilla), MOD-016 (Auditoría — eventos de hardware).
+**Entidades nuevas:** `gd.periferico`, `gd.punto_atencion`, `gd.impresion_radicado`, `gd.digitalizacion_documento`, `gd.codigo_barras_radicado`, `gd.evento_periferico`.
+**Doc fuente:** Doc 5 v0.1-rev1 § 28 (Interacción con periféricos) + Doc 6 v0.1 (Componente de Comunicación con Periféricos — completo).
+**RNF objetivo:** RNF-002 (continuidad operativa con periférico alterno), RNF-009 (auditoría exhaustiva de uso de hardware), RNF-011 (integridad del radicado impreso ≡ radicado digital), RNF-018 (protección de canal local), RNF-039 (búsqueda de archivos digitalizados), RNF-045/046 (validación de anexos escaneados), RNFP-001..006 (los seis específicos del Doc 6).
+**Roles primarios:** ROL-004 (Radicador VU — usa periféricos), ROL-005 (Coordinador VU — configura puntos), ROL-001 (Admin Sistema — registra hardware), ROL-016 (Auditor — consulta historial).
+**Permisos nuevos:** `PERM-PER-001..PERM-PER-012` (12 permisos del Doc 6 § 9).
+**Eventos nuevos:** `gd.periferico.registrado`, `gd.periferico.estado_cambiado`, `gd.impresion.generada`, `gd.impresion.reimpresion`, `gd.impresion.fallida`, `gd.digitalizacion.completada`, `gd.digitalizacion.fallida`, `gd.digitalizacion.reemplazada`, `gd.agente_local.handshake`, `gd.agente_local.intento_no_autorizado`.
+
+**Mandato de la épica.** La plataforma web no puede acceder de forma confiable a impresoras de etiquetas, escáneres profesionales o lectores de código de barras directamente desde el navegador (Doc 6 § 2). Por eso esta épica define **dos capas**:
+1. **Capa servidor (`/api/v1/gd/perifericos/*`)** — registra hardware, autoriza operaciones, audita todo, almacena artefactos generados (etiquetas como PDF, archivos digitalizados).
+2. **Capa de "agente local"** — proceso instalado en el equipo de Ventanilla Única que recibe instrucciones firmadas del servidor y las traduce a comandos del periférico físico. La autenticación entre servidor y agente local vive en GD-API-0139. El binario del agente es responsabilidad de un proyecto/repositorio aparte; este backlog solo define el contrato.
+
+> **Importante para neutralidad de sector.** Esta épica solo se activa cuando la organización marca `gd.organizacion_modulo_activacion.modulo_codigo='ventanilla_presencial_con_perifericos'`. Una empresa privada que opera solo por correo y web puede tener el módulo Ventanilla Única activo pero esta sub-funcionalidad desactivada — no la verá en menús ni endpoints (404).
+
+### GD-API-0128 — DDL completo de entidades de periféricos
+- **Estado:** PENDING
+- **Por qué:** sin las tablas no se puede registrar hardware, asociar impresiones a radicados ni auditar uso. La operación presencial es de muy alta trazabilidad (cada etiqueta impresa equivale a un acto oficial).
+- **Crea (schema `gd`):**
+  - `gd.punto_atencion(id UUID PK, tenant_id FK, nombre, direccion, dependencia_responsable_id FK→gd.dependencia, estado ∈ {activo, inactivo}, creado_en, creado_por_user_id)`.
+  - `gd.periferico(id UUID PK, tenant_id FK, tipo_periferico ∈ {impresora_etiquetas, impresora_termica, impresora_convencional, escaner_plano, escaner_automatico, lector_codigo_barras, otro}, nombre, marca, modelo, serial, dependencia_id FK?, punto_atencion_id FK?, estado ∈ {activo, inactivo, mantenimiento, retirado}, configuracion jsonb, fecha_registro, registrado_por_user_id FK)`.
+  - `gd.impresion_radicado(id UUID PK, tenant_id FK, radicado_id FK→gd.radicado, documento_id FK?, periferico_id FK→gd.periferico, usuario_id FK, tipo_impresion ∈ {etiqueta_codigo_barras, etiqueta_qr, constancia_radicacion, sello_documento, sticker, comprobante}, contenido_impreso jsonb (snapshot de qué se imprimió — no el bitmap, los datos), archivo_digital_id FK→core.archivo_digital? (PDF/PNG de la etiqueta o constancia), fecha_impresion, estado ∈ {generada, fallida, anulada, reemplazada}, motivo_reimpresion text?, intentos_reimpresion smallint default 0)`.
+  - `gd.digitalizacion_documento(id UUID PK, tenant_id FK, radicado_id FK, documento_id FK?, archivo_digital_id FK→core.archivo_digital, periferico_id FK→gd.periferico, usuario_id FK, tipo_digitalizacion ∈ {plano, automatico, lote, individual}, numero_paginas int, calidad_dpi int?, fecha_digitalizacion, estado ∈ {correcta, fallida, incompleta, reemplazada}, observacion text?, lote_id UUID?)`.
+  - `gd.codigo_barras_radicado(id UUID PK, tenant_id FK, tipo_codigo ∈ {codigo_barras, qr, otro}, radicado_id FK?, documento_id FK?, expediente_id FK?, valor_codigo text (URL de verificación + token, nunca datos sensibles), fecha_generacion, generado_por_user_id FK, estado ∈ {activo, anulado, reemplazado})`.
+  - `gd.evento_periferico(id UUID PK, tenant_id FK, periferico_id FK, usuario_id FK?, tipo_evento ∈ {comando_enviado, comando_exitoso, comando_fallido, conexion_perdida, conexion_recuperada, mantenimiento_iniciado, mantenimiento_finalizado, autenticacion_fallida_agente, configuracion_modificada}, entidad_relacionada_tipo text?, entidad_relacionada_id UUID?, resultado ∈ {exito, fallo, timeout, parcial}, mensaje_error text?, latencia_ms int?, fecha_hora)`.
+- **Reglas obligatorias:**
+  - FK con `ON DELETE RESTRICT` siempre; trigger `BEFORE DELETE` que prohíbe DELETE en `gd.impresion_radicado`, `gd.digitalizacion_documento`, `gd.codigo_barras_radicado` y `gd.evento_periferico` (son registros históricos de actos oficiales, equivalentes a `gd.radicado`).
+  - UNIQUE `(tenant_id, periferico.serial)` para evitar registrar dos veces el mismo equipo físico.
+  - RLS por `tenant_id` en las 6 tablas. `gd.periferico` y `gd.punto_atencion` adicionalmente con política por dependencia para roles no admin.
+  - Índices: `gd.impresion_radicado(radicado_id, fecha_impresion DESC)`, `gd.digitalizacion_documento(radicado_id)`, `gd.evento_periferico(periferico_id, fecha_hora DESC)`, `gd.evento_periferico(resultado, fecha_hora DESC)` (para dashboard de fallos).
+- **Aceptación:** migración limpia; intentar `DELETE FROM gd.impresion_radicado` falla; `INSERT` con `serial` repetido para el mismo tenant falla con conflicto.
+
+### GD-API-0129 — CRUD de periféricos autorizados (RFP-001)
+- **Crea:**
+  - `POST /api/v1/gd/perifericos` body `{ tipo_periferico, nombre, marca?, modelo?, serial, dependencia_id?, punto_atencion_id?, configuracion? }` (PERM-PER-001).
+  - `GET /api/v1/gd/perifericos?dependencia_id=&punto_atencion_id=&estado=&tipo_periferico=` (PERM-PER-010).
+  - `GET /api/v1/gd/perifericos/{id}` retorna detalle + últimas 10 operaciones.
+  - `PATCH /api/v1/gd/perifericos/{id}` modifica nombre, configuración o asignación (PERM-PER-001).
+  - `POST /api/v1/gd/perifericos/{id}/activar | inactivar | poner-mantenimiento | retirar` con `{ motivo }` (PERM-PER-002).
+- **Reglas:**
+  - Inactivar un periférico que tiene impresiones/digitalizaciones en curso devuelve `409 periferico_en_uso` con lista de operaciones; el admin debe esperar o forzar con flag `forzar=true` (audited critical).
+  - El cambio de `configuracion jsonb` no afecta operaciones pasadas (las impresiones históricas guardan snapshot suficiente en `contenido_impreso`).
+- **Permisos:** PERM-PER-001 (config), PERM-PER-002 (estado), PERM-PER-010 (consultar).
+- **Eventos:** `gd.periferico.registrado`, `gd.periferico.estado_cambiado`, `gd.periferico.configuracion_modificada` — todos en `core.evento_auditoria`.
+- **Aceptación:** registrar impresora Zebra GK420t en el "Punto de Atención Principal" con `serial='ZB-12345'`; listar periféricos del punto retorna 1; intentar registrar otra con el mismo serial falla; inactivar la impresora bloquea nuevos comandos pero las impresiones históricas siguen consultables.
+
+### GD-API-0130 — CRUD de puntos de atención
+- **Crea:**
+  - `POST/GET/PATCH /api/v1/gd/puntos-atencion` (PERM-PER-001).
+  - `POST /api/v1/gd/puntos-atencion/{id}/activar | inactivar` con motivo.
+  - `GET /api/v1/gd/puntos-atencion/{id}/perifericos` retorna lista de periféricos asignados al punto.
+- **Reglas:**
+  - Un punto de atención inactivo no acepta crear radicados con `punto_atencion_id` apuntando a él (validación en GD-API-0024).
+  - Al cerrar un punto se debe reasignar o desactivar los periféricos (igual que dependencia → usuarios — GD-API-0008).
+- **Eventos:** `gd.punto_atencion.creado`, `gd.punto_atencion.cerrado`.
+- **Aceptación:** crear punto "Sede Sur", asignar 2 impresoras + 1 escáner, listar perifericos del punto retorna los 3; inactivar el punto sin reasignar periféricos retorna `409 perifericos_huerfanos`.
+
+### GD-API-0131 — Generación de códigos de barras y QR por radicado (RFP-002, § 14)
+- **Crea:**
+  - `POST /api/v1/gd/radicados/{id}/codigo-barras` body `{ tipo_codigo: "codigo_barras"|"qr" }` → genera entrada en `gd.codigo_barras_radicado` con `valor_codigo` que sigue el patrón **URL de verificación + token opaco** (ej. `https://entidad.gov.co/v/RAD-2026-001234?t=ab12cd34ef56`). El token resuelve al radicado vía GD-API-0030.
+  - `GET /api/v1/gd/radicados/{id}/codigo-barras` retorna el último código vigente.
+  - `POST /api/v1/gd/radicados/{id}/codigo-barras/{cod_id}/anular` body `{ motivo }` — marca como anulado y opcionalmente genera reemplazo.
+- **Regla absoluta (Doc 6 § 14):** el `valor_codigo` **nunca contiene datos personales del solicitante, cédula, teléfono, ni la descripción de la PQRSD**. Solo el identificador del radicado y un token de verificación. Esto se valida con un linter en CI sobre la implementación.
+- **Permisos:** PERM-VU-001 (generación implícita al radicar) + PERM-PER-003 (regenerar manualmente).
+- **Eventos:** `gd.codigo_barras.generado`, `gd.codigo_barras.anulado`.
+- **Aceptación:** generar QR de radicado `RAD-2026-001234`; decodificar la imagen produce solo la URL + token; visitar la URL (pública, sin auth) muestra fecha de radicación + asunto enmascarado + estado, no datos del solicitante.
+
+### GD-API-0132 — Impresión de etiqueta de radicado (RFP-002)
+- **Crea:**
+  - `POST /api/v1/gd/perifericos/{periferico_id}/imprimir-etiqueta` body `{ radicado_id, formato_etiqueta?: "estandar"|"compacta"|"sticker", incluir_qr?: bool default true, incluir_codigo_barras?: bool default true }`.
+  - Devuelve `{ impresion_id, estado: "encolada", archivo_digital_id }` donde `archivo_digital_id` apunta al PDF/PNG renderizado de la etiqueta lista para enviar al agente local.
+  - El servidor **no habla** con el periférico directamente. Encola el job; el agente local autenticado (GD-API-0139) hace polling o suscripción de jobs y reporta resultado vía `POST /api/v1/gd/perifericos/{periferico_id}/impresiones/{impresion_id}/resultado` body `{ estado: "generada"|"fallida", mensaje_error?, latencia_ms? }`.
+- **Reglas (Doc 6 § 7 RFP-002):**
+  - El periférico debe estar `estado='activo'`; si no, `409 periferico_no_disponible`.
+  - El radicado debe existir y no estar `anulado`; si está anulado, **se permite la impresión pero la etiqueta lleva marca visible "RADICADO ANULADO"** (Doc 5 § 28.3 regla 4) — esto se renderiza en el PDF generado.
+  - El usuario debe tener `PERM-PER-003` y alcance sobre la dependencia del radicado.
+- **Permisos:** PERM-PER-003.
+- **Eventos:** `gd.impresion.generada` (cuando agente reporta éxito) o `gd.impresion.fallida` (con mensaje_error). Criticidad `media`.
+- **Aceptación:** imprimir etiqueta de `RAD-2026-001234` desde Zebra GK420t; aparece registro en `gd.impresion_radicado` con `estado='generada'`; el agente local reporta `latencia_ms=850`; el QR de la etiqueta resuelve correctamente al radicado.
+
+### GD-API-0133 — Reimpresión controlada de etiqueta con motivo (RFP-003)
+- **Crea:**
+  - `POST /api/v1/gd/perifericos/{periferico_id}/reimprimir-etiqueta` body `{ radicado_id, motivo (obligatorio, mínimo 10 caracteres), impresion_original_id? }`.
+  - Reusa la lógica de GD-API-0132 pero **exige motivo** y **incrementa contador** `intentos_reimpresion` en `gd.impresion_radicado` original (o crea nueva fila con FK a la original).
+- **Reglas:**
+  - Permiso separado `PERM-PER-004` (reimprimir) ≠ `PERM-PER-003` (imprimir por primera vez). Un radicador puede tener uno sin el otro.
+  - Si `intentos_reimpresion > 3`, requerir aprobación del coordinador VU antes de imprimir (flujo similar a anulación).
+  - El historial de reimpresiones es consultable desde la ficha del radicado.
+- **Eventos:** `gd.impresion.reimpresion` con criticidad `alta` si `intentos_reimpresion > 1`.
+- **Aceptación:** reimprimir etiqueta sin motivo falla con 422; reimprimir con motivo "Etiqueta original se dañó al pegar" funciona; al cuarto intento exige aprobación del coordinador.
+
+### GD-API-0134 — Impresión de constancia de radicación (RFP-004)
+- **Crea:**
+  - `POST /api/v1/gd/perifericos/{periferico_id}/imprimir-constancia` body `{ radicado_id, formato?: "estandar"|"compacta", incluir_qr?: bool default true }`.
+  - Reusa el motor de plantillas de EP-010 — la plantilla "Constancia de Radicación" (seed mínima GD-API-0067) se renderiza con datos del radicado + entidad institucional + QR.
+  - Devuelve `archivo_digital_id` del PDF generado, lo encola al agente local para impresión.
+- **Diferencia vs etiqueta (GD-API-0132):** la constancia es un **documento institucional formal** que se entrega al ciudadano. La etiqueta es **identificación física** del documento que se queda en el sistema.
+- **Reglas:** la constancia incluye obligatoriamente: número de radicado, fecha y hora, datos del remitente (con consentimiento), asunto, canal de recepción, QR de verificación, código alfanumérico de verificación. **No incluye** detalles internos como dependencia destino o clasificación.
+- **Permisos:** PERM-PER-005.
+- **Eventos:** `gd.impresion.generada` con `tipo_impresion='constancia_radicacion'`.
+- **Aceptación:** imprimir constancia para ciudadano que radicó presencialmente; el PDF generado es A4, contiene QR escaneable + código `R2X9F4`; al consultar `GET /gd/verificar/R2X9F4` (público, sin auth) se muestra estado del radicado.
+
+### GD-API-0135 — Registro de digitalización individual (RFP-005)
+- **Crea:**
+  - `POST /api/v1/gd/perifericos/{periferico_id}/digitalizar` body `{ radicado_id, tipo_digitalizacion: "individual", calidad_dpi?: int default 300, observacion? }`. Encola comando al agente local que opera el escáner.
+  - Webhook desde agente local: `POST /api/v1/gd/perifericos/{periferico_id}/digitalizaciones/{op_id}/resultado` body `{ estado: "correcta"|"fallida"|"incompleta", archivo_digital_id? (si éxito), numero_paginas?, mensaje_error? }`. El `archivo_digital_id` lo crea el agente subiendo el PDF/imagen al endpoint compartido `POST /api/v1/core/archivos` (EP-018) con `proposito='gd.digitalizacion'`.
+  - Al recibir resultado exitoso, el servidor:
+    1. Inserta fila en `gd.digitalizacion_documento` con FK a `archivo_digital`.
+    2. Crea `gd.anexo` asociado al radicado (vía GD-API-0060).
+    3. Si el archivo es PDF escaneado o imagen, dispara `OCRRequested` (GD-API-0111).
+    4. Emite evento `gd.digitalizacion.completada`.
+- **Permisos:** PERM-PER-006.
+- **Reglas:**
+  - El radicado debe existir y no estar cerrado; digitalizar sobre un radicado cerrado requiere `PERM-PER-008` adicional (asociar a radicados cerrados).
+  - El archivo digitalizado pasa por las mismas validaciones que cualquier anexo: antivirus, MIME whitelist, tamaño máximo (GD-API-0058).
+  - Si el agente local reporta `incompleta` (ej. atasco de papel en escáner automático), el sistema deja la digitalización registrada con `estado='incompleta'` y permite reintentar (nueva digitalización, no se sobreescribe la anterior).
+- **Eventos:** `gd.digitalizacion.completada`, `gd.digitalizacion.fallida`, `gd.digitalizacion.incompleta`.
+- **Aceptación:** digitalizar un oficio físico recibido en VU; el PDF resultante queda como anexo del radicado, OCR se ejecuta y el texto extraído alimenta sugerencia IA de clasificación.
+
+### GD-API-0136 — Digitalización por lote con escáner automático (RFP-006)
+- **Crea:**
+  - `POST /api/v1/gd/perifericos/{periferico_id}/digitalizar-lote` body `{ radicado_id_default?, modo_separacion: "por_pagina"|"por_codigo_barras"|"manual", calidad_dpi?, observacion? }` — inicia un lote y devuelve `lote_id`.
+  - Agente local procesa lote y reporta cada documento vía webhook con `lote_id`:
+    - Si `modo_separacion='por_codigo_barras'`, el agente intenta leer códigos de barras intercalados y separa documentos por radicado.
+    - Si `modo_separacion='por_pagina'`, cada página es un documento.
+    - Si `modo_separacion='manual'`, el usuario asocia páginas después en GD-UI-0092.
+  - `GET /api/v1/gd/perifericos/lotes/{lote_id}` retorna progreso + lista de digitalizaciones individuales.
+  - `POST /api/v1/gd/perifericos/lotes/{lote_id}/finalizar` confirma asociación final al radicado(s).
+- **Permisos:** PERM-PER-007.
+- **Reglas:**
+  - Si `modo_separacion='por_codigo_barras'` y se detectan radicados anulados o inexistentes, las páginas correspondientes quedan en estado `pendiente_asociacion` (no se asocian automáticamente).
+  - El lote tiene un timeout configurable (default 30 min); si el usuario no finaliza, queda como `abandonado` y los archivos digitalizados quedan disponibles pero no asociados (auditable).
+- **Eventos:** `gd.digitalizacion.lote_iniciado`, `gd.digitalizacion.lote_finalizado`, `gd.digitalizacion.lote_abandonado`.
+- **Aceptación:** lote de 50 páginas con 5 códigos de barras intercalados se separa correctamente en 5 digitalizaciones individuales, cada una asociada a su radicado.
+
+### GD-API-0137 — Asociación automática de scan a radicado activo (RFP-007)
+- **Crea:**
+  - El cliente UI mantiene un `radicado_activo_id` (el que está siendo radicado/consultado en ese momento). Al disparar digitalización (GD-API-0135 o 0136), el sistema usa este contexto.
+  - Endpoint helper `POST /api/v1/gd/perifericos/contexto-activo` body `{ usuario_id, radicado_activo_id, periferico_id, expira_en (seg, default 300) }` — registra el contexto temporalmente. El agente local lee este contexto al iniciar digitalización sin requerir input manual del usuario.
+  - `DELETE /api/v1/gd/perifericos/contexto-activo` libera el contexto.
+  - Si el usuario digitaliza sin contexto activo y sin `radicado_id` en el body, el archivo queda en estado `pendiente_asociacion` y se muestra en una bandeja para asociar después (con permiso PERM-PER-008).
+- **Reglas:** la corrección posterior de asociación requiere `PERM-PER-009` (reemplazar/corregir digitalización) + justificación.
+- **Eventos:** `gd.digitalizacion.contexto_asignado`, `gd.digitalizacion.asociacion_corregida`.
+- **Aceptación:** radicador escanea un oficio mientras tiene abierto `RAD-2026-001234`; el archivo queda automáticamente asociado a ese radicado sin clicks adicionales.
+
+### GD-API-0138 — Registro de fallos de periféricos y dashboard de salud (RFP-008)
+- **Crea:**
+  - `GET /api/v1/gd/perifericos/{id}/eventos?desde=&hasta=&resultado=` retorna lista paginada de `gd.evento_periferico` (PERM-PER-011).
+  - `GET /api/v1/gd/perifericos/eventos/fallos?desde=` retorna agregado de fallos por periférico (PERM-PER-011) — útil para soporte técnico.
+  - `POST /api/v1/gd/perifericos/{id}/mantenimiento` body `{ tipo: "preventivo"|"correctivo", descripcion, fecha_estimada_fin? }` (PERM-PER-012) — marca el periférico en mantenimiento y agenda recordatorio.
+  - `POST /api/v1/gd/perifericos/{id}/mantenimiento/{mant_id}/finalizar` body `{ observacion_final, costo?, repuestos? }`.
+- **Permisos:** PERM-PER-011 (consultar), PERM-PER-012 (mantenimiento).
+- **Reglas:**
+  - Si un periférico acumula > 5 fallos en 1 hora, el sistema lo pasa automáticamente a `mantenimiento` y notifica al admin (auto-protección).
+  - Los eventos de fallo persisten indefinidamente (no se purgan) — son evidencia de operación.
+- **Eventos:** `gd.periferico.auto_protegido`, `gd.mantenimiento.programado`, `gd.mantenimiento.finalizado`.
+- **Aceptación:** simular 6 fallos consecutivos de impresión; el periférico pasa a `mantenimiento` automáticamente; el dashboard muestra al periférico en rojo.
+
+### GD-API-0139 — Protocolo de autenticación y autorización del agente local (RNFP-001)
+- **Crea:**
+  - DDL `gd.agente_local_registro(id UUID PK, tenant_id, periferico_ids UUID[] (uno o varios periféricos que el agente controla), nombre_equipo, version_agente, fingerprint_publico bytea (clave pública del agente), token_emparejamiento_hash text, ultimo_handshake timestamptz, estado ∈ {pendiente, activo, revocado}, registrado_por_user_id FK)`.
+  - `POST /api/v1/gd/agentes-locales/emparejar` body `{ nombre_equipo, perifericos: [id], fingerprint_publico }` retorna `{ agente_id, token_emparejamiento (one-shot, expira 10 min) }` — debe ejecutarlo el Admin Sistema desde la consola, no el agente.
+  - El agente local usa el `token_emparejamiento` en su primer handshake; tras éxito recibe un JWT de larga duración (configurable, default 30 días) firmado con clave del servidor. Renovación automática con refresh token.
+  - Cada llamada del agente al backend incluye el JWT + firma HMAC del body usando su `fingerprint_publico` (defense in depth).
+  - `POST /api/v1/gd/agentes-locales/{id}/revocar` (PERM-PER-001) invalida todas las sesiones del agente — útil si el equipo se compromete.
+- **Reglas (Doc 6 § 8 RNFP-001):**
+  - Intentos de autenticación fallidos se registran en `gd.evento_periferico(tipo_evento='autenticacion_fallida_agente')`.
+  - Si un mismo `fingerprint_publico` intenta conectarse desde 2 IPs diferentes en 5 min, se bloquea automáticamente y notifica al admin (posible ataque).
+  - **Nunca** se acepta un comando del agente que no esté firmado con el HMAC esperado, aunque el JWT sea válido — protege contra exfiltración de tokens.
+- **Eventos:** `gd.agente_local.emparejado`, `gd.agente_local.handshake`, `gd.agente_local.intento_no_autorizado` (criticidad `alta`), `gd.agente_local.revocado`.
+- **RNF:** RNF-005, RNF-018, RNFP-001, RNFP-003.
+- **Aceptación:** emparejar agente "Counter-1" con 2 periféricos; el agente se conecta y obtiene JWT; revocar al agente invalida el JWT inmediatamente (próxima llamada falla con 401); un atacante con el JWT pero sin la clave privada no puede enviar comandos válidos.
+
+### GD-API-0140 — Seed de permisos PERM-PER-001..012 y matriz rol↔permiso
+- **Crea:** inserta los 12 permisos `PERM-PER-001..012` en `gd.permiso` con `modulo='perifericos'`, los marca como críticos `PERM-PER-001`, `PERM-PER-002`, `PERM-PER-004`, `PERM-PER-009`, `PERM-PER-012`.
+- **Matriz inicial:**
+  - ROL-001 Admin Sistema: todos los 12.
+  - ROL-005 Coordinador VU: 002, 003, 004, 005, 006, 007, 008, 010, 011.
+  - ROL-004 Radicador VU: 003, 005, 006, 007, 008, 010.
+  - ROL-016 Auditor: 010, 011.
+  - ROL-002 Admin Seguridad: 010, 011, 012.
+- **Actualiza:** `MATRIZ_PERMISOS.md` con los 12 nuevos permisos.
+- **Aceptación:** un radicador puede imprimir etiquetas/constancias y digitalizar, pero no configurar periféricos; un auditor solo consulta historial.
+
+### GD-API-0141 — Historial de uso de periféricos auditable (consultas para auditor)
+- **Crea:**
+  - `GET /api/v1/gd/perifericos/{id}/historial?desde=&hasta=&tipo_operacion=` retorna lista cronológica unificada de impresiones, digitalizaciones, eventos técnicos.
+  - `GET /api/v1/gd/perifericos/historial-uso-global?usuario_id=&periferico_id=&desde=` (PERM-AUD-005 + PERM-PER-011) — vista cruzada para Auditor.
+  - Exportable como CSV vía `POST /api/v1/gd/perifericos/historial/exportar?formato=csv|excel` (PERM-PER-011 + PERM-REP-008).
+- **Permisos:** PERM-PER-010 (su propio uso), PERM-PER-011 (uso de otros — coordinador/auditor).
+- **Eventos:** `gd.perifericos.historial_consultado` con criticidad `media`.
+- **Aceptación:** auditor consulta historial de impresora "Counter-1" en febrero; obtiene 1247 impresiones + 89 digitalizaciones + 3 fallos; exporta a Excel y la exportación queda registrada.
+
+### GD-API-0142 — Validación de archivos digitalizados (calidad mínima + integridad)
+- **Crea:**
+  - Worker `validar_calidad_digitalizacion(archivo_digital_id)` que se dispara tras `OCRCompleted` y verifica: confianza OCR > 60%, resolución mínima 200 DPI, sin páginas en blanco contiguas > 2, hash íntegro.
+  - Si la calidad es baja, emite `gd.digitalizacion.calidad_baja` y notifica al radicador para que decida si re-digitalizar o aceptar.
+  - Endpoint `POST /api/v1/gd/digitalizaciones/{id}/reemplazar` body `{ motivo, archivo_digital_id_nuevo }` (PERM-PER-009) — marca la digitalización original como `reemplazada` y crea la nueva con FK al original (no pierde trazabilidad).
+- **Reglas (Doc 6 § 7 RFP-005, RNFP-006):**
+  - El archivo original digitalizado **nunca se borra**, incluso si se reemplaza — queda en `core.archivo_digital` con `estado='reemplazado'`.
+  - La razón del reemplazo es obligatoria.
+- **Eventos:** `gd.digitalizacion.calidad_baja`, `gd.digitalizacion.reemplazada`.
+- **Aceptación:** digitalizar un oficio con calidad pobre (DPI=100); el sistema avisa al radicador; el radicador re-digitaliza a 300 DPI; ambas digitalizaciones coexisten en la tabla, la primera marcada como reemplazada.
+
+---
+
 ## Anexo A — Resumen de eventos de dominio (referencia)
 
 ```
@@ -900,6 +1108,14 @@ UsuarioCreado · UsuarioInactivado · UsuarioBloqueado · RolAsignado · RolReti
 IASolicitada · IASugerenciaGenerada · IASugerenciaAceptada · IASugerenciaModificada · IASugerenciaRechazada
 ArchivoCargado · ArchivoAnalizadoAntivirus · ArchivoBloqueado · OCRRequested · OCRCompleted · OCRFailed · ExtraccionXLSXCompletada · BytesPurgadosPorRetencion
 RadicadoContingencia · DependenciaFusionada · DependenciaDividida · TerminoSuspendido · TerminoReanudado · VerificacionPublicaConstancia
+gd.periferico.registrado · gd.periferico.estado_cambiado · gd.periferico.configuracion_modificada · gd.periferico.auto_protegido
+gd.punto_atencion.creado · gd.punto_atencion.cerrado
+gd.codigo_barras.generado · gd.codigo_barras.anulado
+gd.impresion.generada · gd.impresion.reimpresion · gd.impresion.fallida
+gd.digitalizacion.completada · gd.digitalizacion.fallida · gd.digitalizacion.incompleta · gd.digitalizacion.calidad_baja · gd.digitalizacion.reemplazada · gd.digitalizacion.contexto_asignado · gd.digitalizacion.asociacion_corregida · gd.digitalizacion.lote_iniciado · gd.digitalizacion.lote_finalizado · gd.digitalizacion.lote_abandonado
+gd.agente_local.emparejado · gd.agente_local.handshake · gd.agente_local.intento_no_autorizado · gd.agente_local.revocado
+gd.mantenimiento.programado · gd.mantenimiento.finalizado
+gd.perifericos.historial_consultado
 ```
 
 ## Anexo B — Trazabilidad RNF cubiertos
@@ -958,8 +1174,14 @@ RadicadoContingencia · DependenciaFusionada · DependenciaDividida · TerminoSu
 | RNF-058 Control anulación | EP-004 | flujo aprobación |
 | RNF-059 Lectura sensible | EP-003, EP-009 | auditoría de consulta |
 | RNF-060 Expediente | EP-016 | tablas base |
+| RNFP-001 Seguridad comunicación local | EP-021 | JWT + HMAC + handshake firmado |
+| RNFP-002 Trazabilidad uso periféricos | EP-021 | `gd.evento_periferico` + historial auditor |
+| RNFP-003 Operación controlada por permisos | EP-021 | PERM-PER-001..012 + matriz rol-permiso |
+| RNFP-004 Independencia del hardware | EP-021 | Abstracción agente local + tipos genéricos |
+| RNFP-005 Continuidad operativa | EP-021 | Periférico alterno + carga manual trazable |
+| RNFP-006 Protección archivos digitalizados | EP-021 + EP-018 | Validación + antivirus + repositorio controlado |
 
 ---
 
-**Última actualización:** 2026-05-20
+**Última actualización:** 2026-05-23 (rev. EP-021 — periféricos)
 **Versión:** 0.1 (borrador — pendiente de validación)

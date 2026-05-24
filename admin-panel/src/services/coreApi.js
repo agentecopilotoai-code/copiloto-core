@@ -36,6 +36,92 @@ function coreApiPath(session, path) {
   return adminPath(`${baseUrl}${path}`);
 }
 
+// UI-INFLU-014.9 — Mapa de nombres de campo → label en español.
+// Cuando FastAPI/Pydantic 422 devuelve `detail: [{loc:['body','city'],...}]`,
+// el frontend lo traduce a "Ciudad: debe tener al menos 1 carácter".
+// Mantener compacto; si un campo no está, cae al raw del backend.
+const FIELD_LABELS_ES = {
+  // Influencer wizard
+  name: 'Nombre',
+  handle: 'Handle',
+  age: 'Edad',
+  city: 'Ciudad',
+  country: 'País',
+  languages: 'Idiomas',
+  brands: 'Marcas',
+  categories: 'Categorías',
+  description: 'Descripción',
+  latitude: 'Latitud',
+  longitude: 'Longitud',
+  // Face / Body / Voice
+  ethnicity: 'Etnia',
+  eye_color: 'Color de ojos',
+  hair_color: 'Color de pelo',
+  hair_style: 'Estilo de pelo',
+  skin_tone: 'Tono de piel',
+  age_range: 'Rango de edad',
+  silhouette: 'Silueta',
+  height_cm: 'Altura',
+  posture: 'Postura',
+  tone: 'Tono de voz',
+  formality: 'Formalidad',
+  energy_level: 'Energía',
+  // Platforms
+  platform: 'Plataforma',
+  posts_per_week: 'Posts por semana',
+  mode: 'Modo',
+};
+
+function _humanizeField(loc) {
+  if (!Array.isArray(loc)) return 'Campo';
+  // Quita prefijos genéricos ('body', índices numéricos como 0 los dejamos
+  // como "#0" para identificar items en arrays).
+  const parts = loc
+    .filter((p, i) => !(i === 0 && p === 'body'))
+    .map((p) => (typeof p === 'number' ? `#${p}` : (FIELD_LABELS_ES[p] || p)));
+  return parts.join(' › ') || 'Campo';
+}
+
+function _humanizePydanticMsg(item) {
+  const t = item?.type || '';
+  const ctx = item?.ctx || {};
+  if (t === 'string_too_short') {
+    const n = ctx.min_length ?? 1;
+    return `debe tener al menos ${n} ${n === 1 ? 'carácter' : 'caracteres'}`;
+  }
+  if (t === 'string_too_long') {
+    const n = ctx.max_length ?? '?';
+    return `no debe exceder ${n} caracteres`;
+  }
+  if (t === 'missing') return 'es obligatorio';
+  if (t === 'value_error') return item.msg || 'valor inválido';
+  if (t.startsWith('greater_than')) {
+    return `debe ser mayor que ${ctx.gt ?? ctx.ge ?? '?'}`;
+  }
+  if (t.startsWith('less_than')) {
+    return `debe ser menor que ${ctx.lt ?? ctx.le ?? '?'}`;
+  }
+  if (t === 'int_parsing' || t === 'float_parsing') {
+    return 'debe ser un número válido';
+  }
+  if (t === 'string_pattern_mismatch' || t === 'string_type') {
+    return item.msg || 'formato inválido';
+  }
+  // Fallback: el mensaje crudo del backend (mejor algo que nada).
+  return item?.msg || 'valor inválido';
+}
+
+function formatPydanticError(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  const lines = arr.map((item) => {
+    const field = _humanizeField(item?.loc);
+    const msg = _humanizePydanticMsg(item);
+    return `${field}: ${msg}`;
+  });
+  // Si son varios errores, los separa con " · " (UI compact).
+  return lines.join(' · ');
+}
+
 async function request(path, { body, method = 'GET', session, tenantId } = {}) {
   const response = await fetch(coreApiPath(session, path), {
     credentials: 'include',
@@ -52,6 +138,12 @@ async function request(path, { body, method = 'GET', session, tenantId } = {}) {
       rawDetail = payload?.detail ?? payload ?? null;
       if (typeof payload?.detail === 'string') {
         detail = payload.detail;
+      } else if (Array.isArray(payload?.detail)) {
+        // UI-INFLU-014.9: FastAPI/Pydantic 422 devuelve un array de
+        // `{type, loc, msg, ctx}`. Lo formateamos a "Campo: razón ·
+        // Otro: razón" en español. Mantenemos el array crudo en
+        // `error.detail` para inspección.
+        detail = formatPydanticError(payload.detail) || JSON.stringify(payload.detail);
       } else if (payload?.detail && typeof payload.detail === 'object') {
         // UI-016.1-FU: backend may return a structured detail (e.g. 409
         // with {message, reasons, checks}). Surface the human message in
@@ -1868,6 +1960,22 @@ export async function listGenerations(session, tenantId, personaId, { limit, sta
 
 export async function getGeneration(session, tenantId, generationId) {
   return request(`/influencer/generations/${generationId}`, { session, tenantId });
+}
+
+/**
+ * UI-INFLU-014.13 — Sube una foto de referencia para el composer del
+ * studio. Devuelve `{storage_key, url, mime, size_bytes}`. El caller
+ * incluye `url` en `params.reference_image_url` al hacer POST /generate.
+ */
+export async function uploadPersonaReference(session, tenantId, personaId, file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return uploadMultipart(`/influencer/personas/${personaId}/face/reference`, {
+    formData,
+    method: 'POST',
+    session,
+    tenantId,
+  });
 }
 
 // ─── Posts + calendar (TASK-INFLU-015) ───────────────────────────────────

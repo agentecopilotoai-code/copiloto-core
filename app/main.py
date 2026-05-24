@@ -8,7 +8,10 @@ from app.core.config import get_settings
 from app.influencer.router import influencer_router
 from app.influencer.personas_router import personas_router as influencer_personas_router
 from app.influencer.wizard_router import wizard_router as influencer_wizard_router
-from app.influencer.face_variations_router import face_variations_router as influencer_face_variations_router
+from app.influencer.face_variations_router import (
+    face_variations_router as influencer_face_variations_router,
+    storage_router as influencer_storage_router,
+)
 from app.influencer.generations_router import (
     generate_router as influencer_generate_router,
     generations_router as influencer_generations_router,
@@ -21,6 +24,17 @@ from app.influencer.credits_router import (
     pricing_router as influencer_pricing_router,
 )
 from app.influencer.casting_router import casting_router as influencer_casting_router
+# GD-API-0002 — Módulo Gestión Documental. Router raíz que monta sub-routers
+# por épica (identidad, ventanilla, pqrsd, etc.). El gate de visibilidad de
+# rutas se hace dentro de cada handler vía `require_gd_perfil` (devuelve 403
+# con code='gd_profile_missing_or_inactive' para usuarios sin perfil GD activo
+# en el tenant). El router siempre se monta; tenants sin GD simplemente
+# reciben 403 — análogo al patrón del módulo influencer.
+from app.gd.routes import (
+    router as gd_router,
+    router_core as gd_router_core,
+    router_public as gd_router_public,
+)
 # NOTA — el import side-effect que registra los endpoints
 # `/v1/platform/ai-providers*` y `/v1/platform/tenant-modules*` sobre
 # `platform_admin_router` (TASK-INFLU-002 + TASK-INFLU-019) ya se ejecuta
@@ -150,6 +164,10 @@ def create_app() -> FastAPI:
     api.include_router(influencer_wizard_router)
     # TASK-INFLU-010 — face variations async (POST encola, GET status).
     api.include_router(influencer_face_variations_router)
+    # UI-INFLU-014.7 — GET /v1/influencer/storage/{key:path} sirve los
+    # archivos del storage del tenant (local Docker volume o S3) con
+    # auth + tenant_scope.
+    api.include_router(influencer_storage_router)
     # TASK-INFLU-011 — generaciones genéricas + lookup de assets.
     api.include_router(influencer_generate_router)
     api.include_router(influencer_generations_router)
@@ -164,6 +182,15 @@ def create_app() -> FastAPI:
     api.include_router(influencer_pricing_router)
     # TASK-INFLU-017 — casting home + studio detail.
     api.include_router(influencer_casting_router)
+    # GD-API-0002 — Módulo Gestión Documental. Monta /api/v1/gd/* con sus
+    # sub-routers por épica. Los handlers usan require_gd_perfil para gating;
+    # tenants sin perfil GD activo reciben 403 con code claro.
+    api.include_router(gd_router)
+    # EP-018 — servicio transversal /api/v1/core/* (archivos compartido).
+    api.include_router(gd_router_core)
+    # GD-API-0122 — endpoint público SIN auth para verificación QR
+    # constancia. Vive en /gd/verificar/{codigo}, NO bajo /api/v1.
+    api.include_router(gd_router_public)
     return api
 
 

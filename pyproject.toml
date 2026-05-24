@@ -26,7 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # `pytest-cov` es requerido por el job `coverage-gate` del CI
-# (.github/workflows/ci.yml) que corre `pytest --cov=app --cov-fail-under=90`.
+# (.github/workflows/ci.yml) que corre `pytest --cov=app --cov-fail-under=93`.
 # Sin él, pytest rechaza los flags `--cov*` con `unrecognized arguments` y
 # el CI bloquea cualquier PR (verificado en PR #1 del módulo Influencer).
 # Mantener pineado por compatibilidad determinista — bumpear junto al

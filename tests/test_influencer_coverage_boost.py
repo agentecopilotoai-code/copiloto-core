@@ -352,6 +352,10 @@ def test_create_face_variations_happy(monkeypatch):
     from unittest.mock import MagicMock
     from app.ai.providers.base import ImageResult
 
+    from app.services.influencer_storage import StoredInfluencerAsset
+
+    tenant_id = uuid4()
+    req_id = uuid4()
     fake_adapter = MagicMock()
     fake_adapter._models = {}
     fake_adapter.generate_image = AsyncMock(return_value=[
@@ -360,13 +364,29 @@ def test_create_face_variations_happy(monkeypatch):
     ])
     monkeypatch.setattr(fv_mod, '_build_test_provider', lambda *a, **kw: fake_adapter)
     monkeypatch.setattr(fv_mod, '_decrypt_secret', lambda c: 'fake-key')
+    # UI-INFLU-014.7: storage real (mockeado para no escribir disco).
+    fake_key = f'tenants/{tenant_id}/influencer/face-variations/{req_id}/0.png'
+    monkeypatch.setattr(
+        fv_mod, 'store_face_variation_asset',
+        lambda **kw: StoredInfluencerAsset(
+            storage_backend='local', bucket=None,
+            object_key=fake_key,
+            source_uri=f'file:///tmp/{fake_key}',
+            size_bytes=len(kw['data']), mime='image/png',
+        ),
+    )
+    async def _fake_fetch_config(conn, tid):
+        return {'backend': 'local', 'bucket': None, 'prefix': None}
+    monkeypatch.setattr(
+        fv_mod, 'fetch_tenant_knowledge_storage_config', _fake_fetch_config,
+    )
 
-    request = _req()
+    request = _req(tenant_id=tenant_id)
     conn = AsyncMock()
     conn.execute = AsyncMock(return_value=None)
     persona = _persona_row()
     fvr_row = {
-        'id': uuid4(),
+        'id': req_id,
         'persona_id': persona['id'],
         'requested_count': 1,
         'status': 'in_progress',
@@ -386,7 +406,7 @@ def test_create_face_variations_happy(monkeypatch):
     )
     assert result.status == 'completed'
     assert len(result.assets) == 1
-    assert result.assets[0].url.startswith('data:image/png;base64,')
+    assert result.assets[0].url.startswith('/admin/api/core/v1/influencer/storage/')
 
 
 def test_get_face_variation_status_happy():

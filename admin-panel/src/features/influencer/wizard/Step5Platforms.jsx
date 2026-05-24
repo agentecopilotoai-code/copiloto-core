@@ -1,9 +1,12 @@
 /**
  * UI-INFLU-012 — Wizard Paso 5: Plataformas.
+ *
+ * Refactor visual UI-INFLU-014.12: shell alineado con Step1Face.
  */
 import { useState } from 'react';
 
-import { AlertBanner, Card, PageHeader } from '../../../components/ui/index.js';
+import { AlertBanner } from '../../../components/ui/index.js';
+import styles from '../_shared/RavitStyles.module.css';
 import {
   MODES,
   PLATFORMS,
@@ -30,7 +33,8 @@ export function Step5Platforms({
   pricing,
   onConnectInstagram,
   onActivate,
-  onSaveDraft,
+  onSaveDraft, // eslint-disable-line no-unused-vars
+  onBack,
 }) {
   const [accounts, setAccounts] = useState(initialAccounts);
   const [mode, setMode] = useState(initialMode);
@@ -77,11 +81,37 @@ export function Step5Platforms({
   };
 
   return (
-    <div data-module="influencer" data-view="wizard-step-5">
-      <PageHeader eyebrow="Crear personaje · Paso 5 de 5" title="Plataformas" />
-      <WizardStepper steps={STEPS} />
+    <div className={styles.page} data-module="influencer" data-view="wizard-step-5">
+      {onBack ? (
+        <div style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            onClick={onBack}
+            style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'var(--ravit-text-muted, #6b7280)', fontSize: 13,
+              padding: '4px 0',
+            }}
+          >
+            ← Casting
+          </button>
+        </div>
+      ) : null}
 
-      <Card padding="md" style={{ marginTop: 'var(--space-3)' }}>
+      <div className={styles.pageHeader}>
+        <div className={styles.eyebrow}>CASTING / NUEVO PERSONAJE</div>
+        <h1 className={styles.h1Page}>Dónde vive</h1>
+        <p className={styles.textSubtle}>
+          Conecta sus plataformas y elige cadencia. Al activarlo empieza
+          a publicar según el modo seleccionado.
+        </p>
+      </div>
+
+      <div style={{ marginTop: 16, marginBottom: 24 }}>
+        <WizardStepper steps={STEPS} />
+      </div>
+
+      <div className={styles.card} style={{ marginTop: 'var(--space-3)' }}>
         <ul aria-label="Lista de plataformas" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {PLATFORMS.map((p) => {
             const account = accounts.find((a) => a.platform === p.value);
@@ -90,7 +120,7 @@ export function Step5Platforms({
               <li key={p.value} style={{
                 display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
                 padding: 'var(--space-2) 0',
-                borderBottom: '1px solid var(--color-border-subtle, #e5e7eb)',
+                borderBottom: '1px solid rgba(27, 37, 66, 0.06)',
               }}>
                 <div style={{ flex: 1, fontWeight: 600 }}>{p.label}</div>
                 {account ? (
@@ -100,6 +130,10 @@ export function Step5Platforms({
                       value={account.handle}
                       onChange={(e) => updateAccount(p.value, 'handle', e.target.value)}
                       aria-label={`Handle de ${p.label}`}
+                      style={{
+                        padding: '6px 10px', borderRadius: 8,
+                        border: '1px solid #e6e0d4',
+                      }}
                     />
                     <input
                       type="number"
@@ -108,10 +142,23 @@ export function Step5Platforms({
                       value={account.posts_per_week}
                       onChange={(e) => updateAccount(p.value, 'posts_per_week', Number(e.target.value))}
                       aria-label={`Posts por semana en ${p.label}`}
-                      style={{ width: 70 }}
+                      style={{
+                        width: 70, padding: '6px 10px',
+                        borderRadius: 8, border: '1px solid #e6e0d4',
+                      }}
                     />
                     <span style={{ fontSize: 12, color: 'var(--color-text-subtle, #6b7280)' }}>/sem</span>
-                    <button type="button" onClick={() => togglePlatform(p.value)}>Quitar</button>
+                    <button
+                      type="button"
+                      onClick={() => togglePlatform(p.value)}
+                      style={{
+                        padding: '6px 14px', borderRadius: 8,
+                        border: '1px solid #e6e0d4', background: '#fff',
+                        cursor: 'pointer', fontSize: 13,
+                      }}
+                    >
+                      Quitar
+                    </button>
                   </>
                 ) : (
                   <button
@@ -122,12 +169,20 @@ export function Step5Platforms({
                       handleConnect(p.value);
                     }}
                     title={p.available ? undefined : 'Próximamente'}
+                    style={{
+                      padding: '6px 14px', borderRadius: 8,
+                      border: p.available ? '1.5px solid #2DBB6A' : '1px solid #e6e0d4',
+                      background: p.available ? '#eaf7ef' : '#f3f3ee',
+                      color: p.available ? '#1b6f3e' : 'var(--color-text-subtle, #6b7280)',
+                      cursor: p.available ? 'pointer' : 'not-allowed',
+                      fontSize: 13, fontWeight: 600,
+                    }}
                   >
                     {p.available ? 'Conectar' : 'Próximamente'}
                   </button>
                 )}
                 {isConnected && (
-                  <span aria-label="Estado" style={{ fontSize: 11, color: 'var(--color-success-fg, #047857)' }}>
+                  <span aria-label="Estado" style={{ fontSize: 11, color: '#0F7A3F' }}>
                     Conectada
                   </span>
                 )}
@@ -135,10 +190,10 @@ export function Step5Platforms({
             );
           })}
         </ul>
-      </Card>
+      </div>
 
-      <Card padding="md" style={{ marginTop: 'var(--space-3)' }}>
-        <fieldset>
+      <div className={styles.card} style={{ marginTop: 'var(--space-3)' }}>
+        <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
           <legend style={{ fontWeight: 600 }}>Modo de publicación</legend>
           {MODES.map((m) => (
             <label key={m.value} style={{ display: 'block', marginTop: 'var(--space-1)' }}>
@@ -174,29 +229,30 @@ export function Step5Platforms({
             Etiqueta IA visible (recomendado · transparencia con tu audiencia)
           </span>
         </label>
-      </Card>
+      </div>
 
-      <Card padding="md" style={{ marginTop: 'var(--space-3)' }}>
+      <div className={styles.card} style={{ marginTop: 'var(--space-3)' }}>
         <div style={{ fontWeight: 600 }}>Recap</div>
         <div style={{ fontSize: 14, color: 'var(--color-text-subtle, #6b7280)', marginTop: 'var(--space-1)' }}>
           Cadencia · <strong>{totalPosts} posts / semana</strong> · ≈
           <strong style={{ marginLeft: 4 }}>{weeklyCredits} créditos/semana</strong>
         </div>
-      </Card>
+      </div>
 
-      {error && <AlertBanner tone="warn" style={{ marginTop: 'var(--space-3)' }}>{error}</AlertBanner>}
+      {error && <AlertBanner tone="warning" style={{ marginTop: 'var(--space-3)' }}>{error}</AlertBanner>}
 
       <div style={{
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        marginTop: 'var(--space-4)',
+        display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
+        gap: 16, marginTop: 32, paddingTop: 16, borderTop: '1px solid #eee9dc',
       }}>
-        <span>Paso 5 de 5</span>
-        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-          <button type="button" onClick={() => onSaveDraft?.({ accounts, mode, auto_respond_dms: autoRespondDms })}>
-            Guardar borrador
-          </button>
-          <button type="button" onClick={handleActivate}>Crear personaje</button>
-        </div>
+        <span className={styles.textSubtle} style={{ fontSize: 13 }}>Paso 5 de 5</span>
+        <button
+          type="button"
+          className={styles.btnPrimary}
+          onClick={handleActivate}
+        >
+          Crear personaje
+        </button>
       </div>
     </div>
   );

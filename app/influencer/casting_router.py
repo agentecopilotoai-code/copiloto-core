@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from app.core.security import authenticate_request
 from app.db.pool import get_db
 from app.influencer import ensure_module_enabled
+from app.influencer.face_variations_router import _storage_key_to_url
 from app.influencer.personas_router import _set_tenant_scope
 
 
@@ -37,6 +38,9 @@ class PersonaCard(BaseModel):
     posts_total: int
     reach_30d: int
     engagement_rate: float
+    # UI-INFLU-014.8: URL de la última variación generada (face_variation
+    # más reciente) o canonical si existe. Null para drafts sin variaciones.
+    avatar_url: str | None = None
 
 
 class CastingResponse(BaseModel):
@@ -64,11 +68,39 @@ class PlatformConn(BaseModel):
     status: str
 
 
+class GenerationAssetLite(BaseModel):
+    """Subset de `AssetResponse` con la URL ya resuelta para el frontend."""
+    id: UUID
+    storage_key: str
+    url: str
+    mime: str
+    width: int | None = None
+    height: int | None = None
+    duration_s: float | None = None
+
+
 class GenerationLite(BaseModel):
     id: UUID
     kind: str
     status: str
+    prompt: str | None = None
+    format: str | None = None
+    cost_credits: int | None = None
+    error_message: str | None = None
     created_at: datetime
+    completed_at: datetime | None = None
+    # UI-INFLU-014.13 — assets del job (vacío mientras status='queued').
+    # El frontend renderiza el thumbnail desde aquí.
+    assets: list[GenerationAssetLite] = Field(default_factory=list)
+
+
+class FaceVariationLite(BaseModel):
+    """Cada variación de cara del personaje, con URL renderizable."""
+    id: UUID
+    url: str
+    thumbnail_url: str
+    canonical: bool = False
+    mime: str | None = None
 
 
 class StudioResponse(BaseModel):
@@ -77,6 +109,9 @@ class StudioResponse(BaseModel):
     next_post: NextPost | None = None
     platforms_connected: list[PlatformConn] = Field(default_factory=list)
     recent_generations: list[GenerationLite] = Field(default_factory=list)
+    # UI-INFLU-014.13 — variaciones de cara para el persona switcher
+    # (avatar + thumbnails) en el header del studio.
+    face_variations: list[FaceVariationLite] = Field(default_factory=list)
 
 
 # ─── Router ────────────────────────────────────────────────────────────────
@@ -177,8 +212,13 @@ async def get_casting(
     tenant_id = _require_tenant_id(request)
     await _set_tenant_scope(conn, tenant_id)
 
-    where_p = ["status <> 'archived'"]
-    params: list = []
+    # UI-INFLU-014.8: filtrar `tenant_id` EXPLÍCITAMENTE en el WHERE.
+    # Sin esto, cuando el caller tiene `support_mode=true` (platform_owner),
+    # la RLS `tenant_id = current OR support_mode='true'` permitía leer
+    # personas de OTROS tenants (drafts viejos quedaban en el casting de
+    # cualquier tenant que el platform_owner visitaba con support_mode).
+    where_p = ['tenant_id = $1', "status <> 'archived'"]
+    params: list = [tenant_id]
     if category:
         params.append(category)
         where_p.append(f'category = ${len(params)}')
@@ -196,6 +236,22 @@ async def get_casting(
     cards: list[PersonaCard] = []
     for p in personas_rows:
         stats = await _get_or_refresh_stats(conn, p['id'], tenant_id)
+        # UI-INFLU-014.8: avatar = canonical primero, sino la última
+        # face_variation generada. Usa el mismo proxy endpoint que el
+        # wizard preview.
+        avatar_row = await conn.fetchrow(
+            '''
+            select storage_key
+            from influencer.assets
+            where persona_id = $1 and kind = 'face_variation'
+            order by marked_canonical desc, created_at desc
+            limit 1
+            ''',
+            p['id'],
+        )
+        avatar_url = None
+        if avatar_row:
+            avatar_url = _storage_key_to_url(avatar_row['storage_key'])
         cards.append(
             PersonaCard(
                 id=p['id'],
@@ -206,6 +262,7 @@ async def get_casting(
                 posts_total=stats['posts_total'],
                 reach_30d=stats['reach_30d'],
                 engagement_rate=stats['engagement_rate'],
+                avatar_url=avatar_url,
             ),
         )
 
@@ -284,7 +341,8 @@ async def get_studio(
 
     gens = await conn.fetch(
         '''
-        select id, kind, status, created_at
+        select id, kind, status, prompt, format, cost_credits,
+               error_message, created_at, completed_at
         from influencer.generations
         where persona_id = $1
         order by created_at desc
@@ -293,12 +351,67 @@ async def get_studio(
         persona_id,
     )
 
+    # UI-INFLU-014.13 — assets de cada generación. Una sola query
+    # batch (`generation_id = ANY($1)`) en lugar de N queries.
+    gen_ids = [g['id'] for g in gens]
+    assets_rows: list[asyncpg.Record] = []
+    if gen_ids:
+        assets_rows = await conn.fetch(
+            '''
+            select id, generation_id, storage_key, mime, width, height, duration_s
+            from influencer.assets
+            where generation_id = ANY($1::uuid[])
+            order by created_at
+            ''',
+            gen_ids,
+        )
+    assets_by_gen: dict[UUID, list[GenerationAssetLite]] = {}
+    for a in assets_rows:
+        assets_by_gen.setdefault(a['generation_id'], []).append(
+            GenerationAssetLite(
+                id=a['id'],
+                storage_key=a['storage_key'],
+                url=_storage_key_to_url(a['storage_key']),
+                mime=a['mime'],
+                width=a['width'],
+                height=a['height'],
+                duration_s=a['duration_s'],
+            ),
+        )
+
+    # UI-INFLU-014.13 — face_variations + avatar canonical para el
+    # persona switcher del studio. Devolvemos hasta 12; el frontend
+    # muestra las primeras 5 + un "+".
+    face_var_rows = await conn.fetch(
+        '''
+        select id, storage_key, mime, marked_canonical
+        from influencer.assets
+        where persona_id = $1 and kind = 'face_variation'
+        order by marked_canonical desc, created_at desc
+        limit 12
+        ''',
+        persona_id,
+    )
+    face_variations = [
+        FaceVariationLite(
+            id=fv['id'],
+            url=_storage_key_to_url(fv['storage_key']),
+            thumbnail_url=_storage_key_to_url(fv['storage_key']),
+            canonical=fv['marked_canonical'],
+            mime=fv['mime'],
+        )
+        for fv in face_var_rows
+    ]
+    avatar_url = face_variations[0].url if face_variations else None
+
     return StudioResponse(
         persona={
             'id': str(persona['id']),
             'name': persona['name'],
             'handle': persona['handle'],
             'status': persona['status'],
+            'category': persona.get('category') if isinstance(persona, dict) else persona['category'],
+            'avatar_url': avatar_url,
         },
         stats=StudioStats(**stats),
         next_post=(
@@ -318,12 +431,19 @@ async def get_studio(
             )
             for c in conns
         ],
+        face_variations=face_variations,
         recent_generations=[
             GenerationLite(
                 id=g['id'],
                 kind=g['kind'],
                 status=g['status'],
+                prompt=g['prompt'],
+                format=g['format'],
+                cost_credits=g['cost_credits'],
+                error_message=g['error_message'],
                 created_at=g['created_at'],
+                completed_at=g['completed_at'],
+                assets=assets_by_gen.get(g['id'], []),
             )
             for g in gens
         ],
