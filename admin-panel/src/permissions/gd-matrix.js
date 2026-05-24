@@ -220,6 +220,24 @@ export const GD_PERMISSIONS = Object.freeze({
   'NOT-READ': row(all(R)),
   'NOT-PREF': row(all(RW)),
 
+  // ────────────────── correo + notificaciones + alertas (EP-011) ───────
+  'COR-IN-001': row({  // bandeja correo importado
+    ...any(VU, RW), 'gd.coordinador_vu': RW,
+  }),
+  'COR-IN-002': row({  // descartar correo
+    ...any(VU, RW), 'gd.coordinador_vu': RW,
+  }),
+  'COR-IN-003': row({  // convertir correo a radicado
+    ...any(VU, RW),
+  }),
+  'ALERTA-001': row({  // ver alertas
+    ...any(OPERATIVOS, R), ...any(VU, R),
+    'gd.jefe_dependencia': RW, 'gd.admin_pqrsd': RW,
+  }),
+  'ALERTA-002': row({  // configurar reglas de alertas
+    'gd.admin_sistema': RW, 'gd.admin_pqrsd': RW,
+  }),
+
   // ────────────────── seguridad ────────────────────────────────────────
   'SEG-PWD': row({ 'gd.admin_seguridad': RW }),
   'SEG-SES': row({ 'gd.admin_seguridad': RW, 'gd.admin_sistema': R }),

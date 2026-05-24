@@ -563,6 +563,76 @@ ROL-001 Admin Sistema.
 - Functions 75.05% ≥ 75% ✅
 - Lint OK (0 errores)
 
+### Bloque UI-13 (Correo + notificaciones + alertas — CIERRE EP-011) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0079..0086 (EP-011). 8 vistas.
+**Roles primarios:** ROL-004 Radicador, ROL-005 Coordinador VU,
+ROL-009 Jefe Dependencia, ROL-006 Admin PQRSD, ROL-001 Admin Sistema,
++ todos los roles GD (notificaciones personales).
+
+**Archivos nuevos (`comunicaciones/`, ~1850 LOC + 200 LOC hooks):**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `CorreoImportado.jsx` (bandeja + detalle + convertir/descartar) | ~390 | GD-UI-0079/0080/0081 |
+| `Notificaciones.jsx` (Bandeja + Preferencias por canal/evento) | ~315 | GD-UI-0082/0083 |
+| `Alertas.jsx` (Mis alertas + CRUD reglas + atender) | ~485 | GD-UI-0084/0085/0086 |
+| `useGdComunicaciones.js` (8 readers + 9 mutators) | ~200 | hooks |
+| `index.js` | 8 | |
+
+**Extensiones `services/gdApi.js` (+15 endpoints GD-API-0141..0156):**
+- Correo: `listCorreosImportados`, `getCorreoImportado`,
+  `convertirCorreoARadicado`, `descartarCorreo`.
+- Notificaciones: `listMisNotificaciones`, `marcarNotificacionLeida`,
+  `marcarTodasNotificacionesLeidas`, `getPreferenciasNotificaciones`,
+  `actualizarPreferenciasNotificaciones`.
+- Alertas: `listAlertas`, `atenderAlerta`, `listReglasAlerta`,
+  `crearReglaAlerta`, `actualizarReglaAlerta`, `inactivarReglaAlerta`.
+
+**Extensiones `permissions/gd-matrix.js` (+5 perms):**
+- COR-IN-001/002/003 (bandeja, descartar, convertir)
+- ALERTA-001 (ver alertas), ALERTA-002 (configurar reglas)
+
+**Placeholders nuevos:** `GdCorreoImportado`, `GdNotificaciones`, `GdAlertas`.
+
+**Decisiones (D-UI-42..D-UI-44):**
+
+- **D-UI-42 (Convertir correo conserva metadatos automáticos)**: el
+  flujo convertir→radicado pre-llena asunto y email del remitente
+  desde el correo importado; el operador puede ajustar antes de
+  confirmar. Esto reduce errores de transcripción manual y acelera
+  la radicación de correos institucionales (uno de los principales
+  cuellos de botella de Ventanilla Única).
+- **D-UI-43 (Preferencias de notificación con in-app no-opcional)**:
+  el canal in-app está siempre activo y deshabilitado en la UI —
+  garantiza que toda notificación quede en la bandeja del usuario
+  aunque desactive email/SMS. Los canales secundarios (email, SMS)
+  son opcionales por tipo de evento (7 tipos: asignación, vencimiento,
+  vencida, por firmar, firmado, expediente cerrado, alerta PII).
+  Cumple RNF-009: la traza de notificaciones nunca se pierde.
+- **D-UI-44 (Reglas de alerta declarativas vs. cron jobs)**: en vez
+  de hard-codear alertas, el admin sistema configura reglas con
+  `tipo` + `severidad` + `umbral` (ej. "PQRSD vence en <N> horas"
+  con N configurable). El backend evalúa las reglas periódicamente y
+  genera alertas. Inactivar una regla con motivo deja las alertas
+  ya generadas intactas — separa configuración de evidencia.
+
+**Métricas:**
+- **2497/2497 tests admin-panel ✅** (+73 nuevos UI-13)
+- **1047/1047 tests features/gd ✅**
+- Coverage `features/gd/comunicaciones` = **98.05% lines / 85.55% functions** ✅
+- Global admin-panel = **89.79% ≥ 86% gate** ✅
+- Functions 79.60% ≥ 75% ✅
+- Lint OK (0 errores)
+
+**EP-011 Correo + notificaciones + alertas CERRADA** — 8 vistas:
+Bandeja de correo institucional importado con detalle + adjuntos +
+flujo convertir-a-radicado / descartar con motivo + Bandeja personal
+de notificaciones con filtro no-leídas + marcar leído individual /
+masivo + Preferencias por tipo de evento y canal (in-app obligatorio,
+email/SMS opcionales) + Alertas operacionales con atender con motivo +
+Configuración de reglas (CRUD + inactivar con motivo, requiere ALERTA-002).
+
 ### Bloque UI-12 (IA embebida — CIERRE EP-010) — ✅ COMPLETADO 2026-05-24
 
 **Tareas:** GD-UI-0072..0078 (EP-010). 7 vistas/utilitarios.

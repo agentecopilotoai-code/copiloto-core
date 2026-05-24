@@ -1139,5 +1139,76 @@ export function actualizarConfigModelosIA(session, payload) {
   });
 }
 
+// ─── UI-13: Correo + notificaciones + alertas (GD-API-0141..0156) ────────
+
+// --- Correo institucional importado ---
+export function listCorreosImportados(session, filtros = {}) {
+  return gdFetch(session, '/gd/correo/importados', { params: filtros });
+}
+export function getCorreoImportado(session, id) {
+  return gdFetch(session, `/gd/correo/importados/${id}`);
+}
+export function convertirCorreoARadicado(session, id, payload) {
+  return gdFetch(session, `/gd/correo/importados/${id}/convertir-radicado`, {
+    method: 'POST', body: payload,
+  });
+}
+export function descartarCorreo(session, id, motivo) {
+  return gdFetch(session, `/gd/correo/importados/${id}/descartar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+
+// --- Notificaciones internas (per-usuario) ---
+export function listMisNotificaciones(session, filtros = {}) {
+  return gdFetch(session, '/gd/me/notificaciones', { params: filtros });
+}
+export function marcarNotificacionLeida(session, id) {
+  return gdFetch(session, `/gd/me/notificaciones/${id}/leida`, {
+    method: 'POST',
+  });
+}
+export function marcarTodasNotificacionesLeidas(session) {
+  return gdFetch(session, '/gd/me/notificaciones/marcar-todas-leidas', {
+    method: 'POST',
+  });
+}
+export function getPreferenciasNotificaciones(session) {
+  return gdFetch(session, '/gd/me/notificaciones/preferencias');
+}
+export function actualizarPreferenciasNotificaciones(session, payload) {
+  return gdFetch(session, '/gd/me/notificaciones/preferencias', {
+    method: 'PATCH', body: payload,
+  });
+}
+
+// --- Alertas operacionales ---
+export function listAlertas(session, filtros = {}) {
+  return gdFetch(session, '/gd/alertas', { params: filtros });
+}
+export function atenderAlerta(session, id, payload) {
+  return gdFetch(session, `/gd/alertas/${id}/atender`, {
+    method: 'POST', body: payload,
+  });
+}
+export function listReglasAlerta(session) {
+  return gdFetch(session, '/gd/alertas/reglas');
+}
+export function crearReglaAlerta(session, payload) {
+  return gdFetch(session, '/gd/alertas/reglas', {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarReglaAlerta(session, id, payload) {
+  return gdFetch(session, `/gd/alertas/reglas/${id}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function inactivarReglaAlerta(session, id, motivo) {
+  return gdFetch(session, `/gd/alertas/reglas/${id}/inactivar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

@@ -88,6 +88,11 @@ import {
   PanelUsoIA,
   ConfigModelosIA,
 } from '../ia/index.js';
+import {
+  CorreoImportado,
+  Notificaciones,
+  Alertas,
+} from '../comunicaciones/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -203,6 +208,11 @@ export const GdAsistente = (p) => <Asistente {...p} />;
 export const GdDeteccionPII = (p) => <DeteccionPII {...p} />;
 export const GdPanelUsoIA = (p) => <PanelUsoIA {...p} />;
 export const GdConfigModelosIA = (p) => <ConfigModelosIA {...p} />;
+
+// Correo + notificaciones + alertas (UI-13) — vistas reales:
+export const GdCorreoImportado = (p) => <CorreoImportado {...p} />;
+export const GdNotificaciones = (p) => <Notificaciones {...p} />;
+export const GdAlertas = (p) => <Alertas {...p} />;
 
 // Búsqueda global → vista real bloque UI-3
 export const GdBuscar = (p) => <BuscarRadicados {...p} />;

@@ -553,6 +553,22 @@ describe('gdApi — endpoints UI-3..UI-9 smoke', () => {
     ['getUsoIA', [{}]],
     ['getConfigModelosIA', []],
     ['actualizarConfigModelosIA', [{}]],
+    // UI-13 correo + notificaciones + alertas
+    ['listCorreosImportados', [{}]],
+    ['getCorreoImportado', ['c1']],
+    ['convertirCorreoARadicado', ['c1', {}]],
+    ['descartarCorreo', ['c1', 'motivo']],
+    ['listMisNotificaciones', [{}]],
+    ['marcarNotificacionLeida', ['n1']],
+    ['marcarTodasNotificacionesLeidas', []],
+    ['getPreferenciasNotificaciones', []],
+    ['actualizarPreferenciasNotificaciones', [{}]],
+    ['listAlertas', [{}]],
+    ['atenderAlerta', ['a1', {}]],
+    ['listReglasAlerta', []],
+    ['crearReglaAlerta', [{}]],
+    ['actualizarReglaAlerta', ['r1', {}]],
+    ['inactivarReglaAlerta', ['r1', 'motivo']],
   ];
 
   it.each(SMOKE_ENDPOINTS)('%s exporta y llama fetch', async (fnName, args) => {
