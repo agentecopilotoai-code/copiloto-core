@@ -187,6 +187,74 @@ export function sugerenciaIaExtraer(session, payload) {
   });
 }
 
+// ─── UI-3: ficha + anulación + reclasif + búsqueda + reportes ────────────
+
+/** GET ficha completa del radicado. */
+export function getRadicado(session, id) {
+  return gdFetch(session, `/gd/ventanilla/radicados/${id}`);
+}
+
+/** POST /gd/ventanilla/radicados/{id}/reclasificar (GD-API-0027). */
+export function reclasificarRadicado(session, id, payload) {
+  return gdFetch(session, `/gd/ventanilla/radicados/${id}/reclasificar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+/** PATCH /gd/ventanilla/radicados/{id}/datos-menores (GD-API-0032). */
+export function corregirDatosMenores(session, id, payload) {
+  return gdFetch(session, `/gd/ventanilla/radicados/${id}/datos-menores`, {
+    method: 'PATCH', body: payload,
+  });
+}
+
+/** POST /gd/ventanilla/radicados/{id}/solicitar-anulacion (GD-API-0028). */
+export function solicitarAnulacionRadicado(session, id, motivo) {
+  return gdFetch(session, `/gd/ventanilla/radicados/${id}/solicitar-anulacion`, {
+    method: 'POST', body: { motivo },
+  });
+}
+
+/** GET /gd/ventanilla/anulaciones?estado=pendiente — solicitudes pendientes. */
+export function listAnulacionesPendientes(session, { estado = 'pendiente', limit = 50 } = {}) {
+  return gdFetch(session, '/gd/ventanilla/anulaciones', {
+    params: { estado, limit },
+  });
+}
+
+/** POST /gd/ventanilla/anulaciones/{id}/aprobar (GD-API-0028). */
+export function aprobarAnulacion(session, solicitudId, observacion) {
+  return gdFetch(session, `/gd/ventanilla/anulaciones/${solicitudId}/aprobar`, {
+    method: 'POST', body: { observacion },
+  });
+}
+
+/** POST /gd/ventanilla/anulaciones/{id}/rechazar (GD-API-0028). */
+export function rechazarAnulacion(session, solicitudId, observacion) {
+  return gdFetch(session, `/gd/ventanilla/anulaciones/${solicitudId}/rechazar`, {
+    method: 'POST', body: { observacion },
+  });
+}
+
+/** GET /gd/ventanilla/radicados con filtros completos (GD-API-0029). */
+export function buscarRadicados(session, filtros = {}) {
+  return gdFetch(session, '/gd/ventanilla/radicados', { params: filtros });
+}
+
+/** GET /gd/ventanilla/reportes — KPIs agregados de VU. */
+export function getReportesVentanilla(session, { desde, hasta, scope } = {}) {
+  return gdFetch(session, '/gd/ventanilla/reportes', {
+    params: { desde, hasta, scope },
+  });
+}
+
+/** POST /gd/ventanilla/reportes/exportar — encola exportación (PERM-REP-004). */
+export function exportarReporteVentanilla(session, { formato = 'csv', desde, hasta } = {}) {
+  return gdFetch(session, '/gd/ventanilla/reportes/exportar', {
+    method: 'POST', body: { formato, desde, hasta },
+  });
+}
+
 /** GET /api/v1/gd/pqrsd — listar PQRSD. */
 export function listPQRSD(session, { scope, estado, vencimiento, limit = 50 } = {}) {
   return gdFetch(session, '/gd/pqrsd', {

@@ -3,10 +3,9 @@ import { render, screen } from '@testing-library/react';
 
 import * as placeholders from './index.jsx';
 
-// Solo placeholders aún sin implementación real (los de Ventanilla ya
-// fueron reemplazados en bloque UI-2).
+// Solo placeholders aún sin implementación real (UI-2 y UI-3 ya
+// reemplazaron toda Ventanilla incluyendo ficha + búsqueda).
 const PLACEHOLDER_NAMES = [
-  'GdRadicadoFicha',
   'GdBuzonHome', 'GdBuzonDependencia',
   'GdPqrsdPanel', 'GdPqrsdFicha',
   'GdCorrespondenciaInterna', 'GdCorrespondenciaExterna',
@@ -15,7 +14,6 @@ const PLACEHOLDER_NAMES = [
   'GdAdminUsuarios', 'GdAdminEstructura', 'GdAdminCatalogos',
   'GdAdminParametros', 'GdAdminPerifericos', 'GdSeguridad',
   'GdAuditoria', 'GdReportes',
-  'GdBuscar', 'GdConsulta',
 ];
 
 describe('placeholders de bloques posteriores', () => {

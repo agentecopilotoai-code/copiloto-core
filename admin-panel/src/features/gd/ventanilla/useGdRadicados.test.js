@@ -6,6 +6,16 @@ vi.mock('../services/gdApi.js', () => ({
   crearRadicadoSalida: vi.fn(),
   clasificarRadicado: vi.fn(),
   listColaPendientesClasificacion: vi.fn(),
+  getRadicado: vi.fn(),
+  reclasificarRadicado: vi.fn(),
+  corregirDatosMenores: vi.fn(),
+  solicitarAnulacionRadicado: vi.fn(),
+  listAnulacionesPendientes: vi.fn(),
+  aprobarAnulacion: vi.fn(),
+  rechazarAnulacion: vi.fn(),
+  buscarRadicados: vi.fn(),
+  getReportesVentanilla: vi.fn(),
+  exportarReporteVentanilla: vi.fn(),
 }));
 
 import {
@@ -13,6 +23,16 @@ import {
   crearRadicadoSalida,
   clasificarRadicado,
   listColaPendientesClasificacion,
+  getRadicado,
+  reclasificarRadicado,
+  corregirDatosMenores,
+  solicitarAnulacionRadicado,
+  listAnulacionesPendientes,
+  aprobarAnulacion,
+  rechazarAnulacion,
+  buscarRadicados,
+  getReportesVentanilla,
+  exportarReporteVentanilla,
 } from '../services/gdApi.js';
 
 import {
@@ -20,6 +40,13 @@ import {
   useCrearRadicadoSalida,
   useColaPendientesClasificacion,
   useClasificarRadicado,
+  useGdRadicado,
+  useReclasificarRadicado,
+  useCorregirDatosMenores,
+  useSolicitarAnulacion,
+  useAnulacionesPendientes,
+  useBuscarRadicados,
+  useReportesVentanilla,
 } from './useGdRadicados.js';
 
 const SESSION = { token: 't' };
@@ -143,5 +170,157 @@ describe('useClasificarRadicado', () => {
       await expect(result.current.submit('r1', {})).rejects.toBeTruthy();
     });
     expect(result.current.error).toBeInstanceOf(Error);
+  });
+});
+
+describe('hooks ventanilla parte 2 (UI-3)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('useGdRadicado carga data por id', async () => {
+    getRadicado.mockResolvedValueOnce({ id: 'r1', numero_radicado: 'X' });
+    const { result } = renderHook(() => useGdRadicado(SESSION, 'r1'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data.id).toBe('r1');
+  });
+
+  it('useGdRadicado disabled NO fetch', async () => {
+    renderHook(() => useGdRadicado(SESSION, 'r1', { enabled: false }));
+    expect(getRadicado).not.toHaveBeenCalled();
+  });
+
+  it('useGdRadicado error', async () => {
+    getRadicado.mockRejectedValueOnce(new Error('404'));
+    const { result } = renderHook(() => useGdRadicado(SESSION, 'r1'));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeInstanceOf(Error);
+  });
+
+  it('useReclasificarRadicado submit OK + error', async () => {
+    reclasificarRadicado.mockResolvedValueOnce({ ok: true });
+    const { result } = renderHook(() => useReclasificarRadicado(SESSION));
+    await act(async () => {
+      await result.current.submit('r1', { tipo_clasificacion: 't' });
+    });
+    expect(reclasificarRadicado).toHaveBeenCalled();
+
+    reclasificarRadicado.mockRejectedValueOnce(new Error('x'));
+    await act(async () => {
+      await expect(result.current.submit('r1', {})).rejects.toBeTruthy();
+    });
+    expect(result.current.error).toBeInstanceOf(Error);
+  });
+
+  it('useCorregirDatosMenores submit OK + error', async () => {
+    corregirDatosMenores.mockResolvedValueOnce({ ok: true });
+    const { result } = renderHook(() => useCorregirDatosMenores(SESSION));
+    await act(async () => {
+      await result.current.submit('r1', { asunto: 'X', justificacion: 'corrijo' });
+    });
+    expect(corregirDatosMenores).toHaveBeenCalled();
+
+    corregirDatosMenores.mockRejectedValueOnce(new Error('x'));
+    await act(async () => {
+      await expect(result.current.submit('r1', {})).rejects.toBeTruthy();
+    });
+  });
+
+  it('useSolicitarAnulacion submit OK + error', async () => {
+    solicitarAnulacionRadicado.mockResolvedValueOnce({ ok: true });
+    const { result } = renderHook(() => useSolicitarAnulacion(SESSION));
+    await act(async () => { await result.current.submit('r1', 'motivo'); });
+    expect(solicitarAnulacionRadicado).toHaveBeenCalledWith(SESSION, 'r1', 'motivo');
+
+    solicitarAnulacionRadicado.mockRejectedValueOnce(new Error('x'));
+    await act(async () => {
+      await expect(result.current.submit('r1', 'm')).rejects.toBeTruthy();
+    });
+  });
+
+  it('useAnulacionesPendientes carga + aprobar + rechazar', async () => {
+    listAnulacionesPendientes.mockResolvedValue({ items: [{ id: 's1' }], total: 1 });
+    aprobarAnulacion.mockResolvedValue({});
+    rechazarAnulacion.mockResolvedValue({});
+    const { result } = renderHook(() => useAnulacionesPendientes(SESSION));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.items).toHaveLength(1);
+    await act(() => result.current.aprobar('s1', 'ok'));
+    expect(aprobarAnulacion).toHaveBeenCalledWith(SESSION, 's1', 'ok');
+    await act(() => result.current.rechazar('s1', 'no'));
+    expect(rechazarAnulacion).toHaveBeenCalledWith(SESSION, 's1', 'no');
+  });
+
+  it('useAnulacionesPendientes items raw array', async () => {
+    listAnulacionesPendientes.mockResolvedValue([{ id: 'x' }]);
+    const { result } = renderHook(() => useAnulacionesPendientes(SESSION));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.items).toHaveLength(1);
+  });
+
+  it('useAnulacionesPendientes error', async () => {
+    listAnulacionesPendientes.mockRejectedValue(new Error('e'));
+    const { result } = renderHook(() => useAnulacionesPendientes(SESSION));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeInstanceOf(Error);
+  });
+
+  it('useAnulacionesPendientes sin session NO fetch', () => {
+    renderHook(() => useAnulacionesPendientes(null));
+    expect(listAnulacionesPendientes).not.toHaveBeenCalled();
+  });
+
+  it('useBuscarRadicados respeta enabled', async () => {
+    buscarRadicados.mockResolvedValueOnce({ items: [], total: 0 });
+    renderHook(() => useBuscarRadicados(SESSION, {}, { enabled: false }));
+    expect(buscarRadicados).not.toHaveBeenCalled();
+  });
+
+  it('useBuscarRadicados enabled true fetch', async () => {
+    buscarRadicados.mockResolvedValue({ items: [{ id: 'r1' }], total: 1 });
+    const { result } = renderHook(() =>
+      useBuscarRadicados(SESSION, { q: 'x' }, { enabled: true }),
+    );
+    // Forzar refresh manual (cubre la ruta enabled=true).
+    await act(() => result.current.refresh());
+    expect(result.current.items).toHaveLength(1);
+  });
+
+  it('useBuscarRadicados items raw array', async () => {
+    buscarRadicados.mockResolvedValue([{ id: 'x' }]);
+    const { result } = renderHook(() =>
+      useBuscarRadicados(SESSION, { q: 'y' }, { enabled: true }),
+    );
+    await act(() => result.current.refresh());
+    expect(result.current.items).toHaveLength(1);
+  });
+
+  it('useBuscarRadicados error', async () => {
+    buscarRadicados.mockRejectedValue(new Error('e'));
+    const { result } = renderHook(() =>
+      useBuscarRadicados(SESSION, { q: 'z' }, { enabled: true }),
+    );
+    await act(() => result.current.refresh());
+    expect(result.current.error).toBeInstanceOf(Error);
+  });
+
+  it('useReportesVentanilla carga + exportar', async () => {
+    getReportesVentanilla.mockResolvedValue({ totales: { radicados: 1 } });
+    exportarReporteVentanilla.mockResolvedValue({ export_id: 'e1' });
+    const { result } = renderHook(() => useReportesVentanilla(SESSION, {}));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data.totales.radicados).toBe(1);
+    const r = await act(() => result.current.exportar('pdf'));
+    expect(r.export_id).toBe('e1');
+  });
+
+  it('useReportesVentanilla error', async () => {
+    getReportesVentanilla.mockRejectedValue(new Error('e'));
+    const { result } = renderHook(() => useReportesVentanilla(SESSION, {}));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBeInstanceOf(Error);
+  });
+
+  it('useReportesVentanilla sin session NO fetch', () => {
+    renderHook(() => useReportesVentanilla(null, {}));
+    expect(getReportesVentanilla).not.toHaveBeenCalled();
   });
 });

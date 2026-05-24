@@ -18,6 +18,10 @@ import {
   NuevoRadicadoEntrada,
   NuevoRadicadoSalida,
   ColaVentanilla,
+  RadicadoFicha,
+  AnulacionesPendientes,
+  BuscarRadicados,
+  ReportesVentanilla,
 } from '../ventanilla/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
@@ -48,15 +52,15 @@ function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   );
 }
 
-// Ventanilla — vistas reales (bloque UI-2):
+// Ventanilla — vistas reales (bloques UI-2 / UI-3):
 export const GdVentanillaHome = (p) => <VentanillaHome {...p} />;
 export const GdNuevoRadicado = (p) => <NuevoRadicadoEntrada {...p} />;
 export const GdNuevoRadicadoSalida = (p) => <NuevoRadicadoSalida {...p} />;
 export const GdColaVU = (p) => <ColaVentanilla {...p} />;
-// Ficha de radicado pendiente para bloque UI-3.
-export const GdRadicadoFicha = (p) => (
-  <ShellWrapper {...p} title="Ficha de radicado" bloqueNum={3} />
-);
+export const GdRadicadoFicha = (p) => <RadicadoFicha {...p} />;
+export const GdAnulacionesPendientes = (p) => <AnulacionesPendientes {...p} />;
+export const GdBuscarRadicados = (p) => <BuscarRadicados {...p} />;
+export const GdReportesVentanilla = (p) => <ReportesVentanilla {...p} />;
 
 // Buzón (UI-4)
 export const GdBuzonHome = (p) => (
@@ -129,15 +133,11 @@ export const GdReportes = (p) => (
   <ShellWrapper {...p} title="Reportes consolidados" bloqueNum={11} />
 );
 
-// Búsqueda global
-export const GdBuscar = (p) => (
-  <ShellWrapper {...p} title="Búsqueda global" bloqueNum={3} />
-);
+// Búsqueda global → vista real bloque UI-3
+export const GdBuscar = (p) => <BuscarRadicados {...p} />;
 
-// Consulta (rol consulta)
-export const GdConsulta = (p) => (
-  <ShellWrapper {...p} title="Consulta" bloqueNum={3} />
-);
+// Consulta (rol consulta) - reusa búsqueda en modo R
+export const GdConsulta = (p) => <BuscarRadicados {...p} />;
 
 // Landing (bienvenida)
 export function GdHome(props) {

@@ -185,3 +185,67 @@ ROL-005 Coordinador VU.
 - Coverage `features/gd/ventanilla/**` = **96.71%**
 - `services/gdApi.js` = **100%**
 - Global admin-panel = **86.89% ≥ 86% gate** ✅
+
+### Bloque UI-3 (Ventanilla Única parte 2) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0011..0015 (EP-002 cierre).
+
+**Archivos nuevos:**
+
+| Archivo | LOC | Cov |
+|---------|-----|-----|
+| `RadicadoFicha.jsx` (ficha tabs + 3 modales) | ~530 | alta |
+| `AnulacionesPendientes.jsx` (aprobar/rechazar con RNF-058) | ~205 | alta |
+| `BuscarRadicados.jsx` (10 filtros + scope) | ~280 | alta |
+| `ReportesVentanilla.jsx` (KPIs + bars + exportar) | ~250 | alta |
+
+**Extensiones `services/gdApi.js` (10 endpoints nuevos):**
+- `getRadicado` (ficha)
+- `reclasificarRadicado` (GD-API-0027)
+- `corregirDatosMenores` (GD-API-0032)
+- `solicitarAnulacionRadicado` / `listAnulacionesPendientes` /
+  `aprobarAnulacion` / `rechazarAnulacion` (GD-API-0028)
+- `buscarRadicados` (GD-API-0029 con todos los filtros)
+- `getReportesVentanilla` / `exportarReporteVentanilla` (PERM-REP-004)
+
+**Hooks añadidos (`useGdRadicados.js` +7):**
+`useGdRadicado`, `useReclasificarRadicado`, `useCorregirDatosMenores`,
+`useSolicitarAnulacion`, `useAnulacionesPendientes` (con `aprobar/rechazar`
+helpers que disparan refresh), `useBuscarRadicados` (con `enabled` flag
+para gating UI), `useReportesVentanilla` (con `exportar` helper).
+
+**Placeholders reemplazados:**
+- `GdRadicadoFicha` → `<RadicadoFicha />` (con tabs reales)
+- `GdBuscar` → `<BuscarRadicados />`
+- `GdConsulta` → `<BuscarRadicados />` (rol-consulta reusa el mismo
+  componente, server-side enforce R-only)
+- Nuevos exports: `GdAnulacionesPendientes`, `GdBuscarRadicados`,
+  `GdReportesVentanilla`.
+
+**Decisiones (D-UI-11..D-UI-13):**
+
+- **D-UI-11 (RadicadoFicha = 5 tabs + 3 modales reusables)**: la ficha
+  organiza todo el ciclo de vida del radicado en tabs (General / Anexos /
+  Clasificación / Trazabilidad / Acciones) + 3 modales accesibles
+  desde header y desde tab Acciones (reclasificar / corregir / anular).
+  La pestaña Trazabilidad usa `useGdAudit` con `enabled=true` solo
+  cuando se selecciona — evita fetch innecesario al abrir la ficha.
+  Cada modal cierra con click en backdrop + Escape.
+- **D-UI-12 (RNF-058 enforce dual server+client)**: en `AnulacionesPendientes`,
+  el botón "Aprobar/Rechazar" se OCULTA cuando
+  `solicitud.solicitante_user_id === currentUserId` (mensaje "No puede
+  aprobar la propia"). El backend igualmente valida (no nos confiamos
+  del frontend) pero esto evita el mal UX de mostrar un botón que
+  retornaría 403.
+- **D-UI-13 (BuscarRadicados con `enabled` flag inicial)**: el hook
+  `useBuscarRadicados` recibe `enabled` para EVITAR fetch inicial
+  cuando la pantalla acaba de abrirse sin filtros. La búsqueda solo
+  se dispara al click en "Buscar" → `setSubmitted(true)`. Esto evita
+  llamar al backend con resultset enorme (RNF-021). El alcance se
+  toma del `useGdScope` global y se inyecta en cada query.
+
+**Métricas:**
+- 1554/1554 tests admin-panel ✅ (+108 tests nuevos en bloque UI-3)
+- Coverage features/gd subió aprox a 92-95% según sub-carpeta
+- Global admin-panel = **87.17% ≥ 86% gate** ✅
+- Build OK
