@@ -27,3 +27,6 @@ export * from './ventanilla/index.js';
 export * from './buzon/index.js';
 export * from './pqrsd/index.js';
 export * from './correspondencia/index.js';
+export * from './documentos/index.js';
+export * from './plantillas/index.js';
+export * from './firmas/index.js';

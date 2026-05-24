@@ -40,6 +40,19 @@ import {
   CorrespondenciaExterna,
   CorrespondenciaFicha,
 } from '../correspondencia/index.js';
+import {
+  Biblioteca,
+  DocumentoFicha,
+} from '../documentos/index.js';
+import {
+  AdminPlantillas,
+  GenerarDocumento,
+} from '../plantillas/index.js';
+import {
+  PorFirmar,
+  EvidenciaFirma,
+  AdminFirmantes,
+} from '../firmas/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -109,16 +122,14 @@ export const GdCorrespondenciaInterna = (p) => <CorrespondenciaInterna {...p} />
 export const GdCorrespondenciaExterna = (p) => <CorrespondenciaExterna {...p} />;
 export const GdCorrespondenciaFicha = (p) => <CorrespondenciaFicha {...p} />;
 
-// Documentos + plantillas + firmas (UI-8)
-export const GdBiblioteca = (p) => (
-  <ShellWrapper {...p} title="Biblioteca documental" bloqueNum={8} />
-);
-export const GdPlantillas = (p) => (
-  <ShellWrapper {...p} title="Plantillas documentales" bloqueNum={8} />
-);
-export const GdPorFirmar = (p) => (
-  <ShellWrapper {...p} title="Documentos por firmar" bloqueNum={8} />
-);
+// Documentos + plantillas + firmas (UI-8) — vistas reales:
+export const GdBiblioteca = (p) => <Biblioteca {...p} />;
+export const GdDocumentoFicha = (p) => <DocumentoFicha {...p} />;
+export const GdPlantillas = (p) => <AdminPlantillas {...p} />;
+export const GdGenerarDocumento = (p) => <GenerarDocumento {...p} />;
+export const GdPorFirmar = (p) => <PorFirmar {...p} />;
+export const GdEvidenciaFirma = (p) => <EvidenciaFirma {...p} />;
+export const GdAdminFirmantes = (p) => <AdminFirmantes {...p} />;
 
 // TRD/TVD (UI-9)
 export const GdTrdHome = (p) => (

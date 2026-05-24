@@ -484,3 +484,91 @@ ROL-007 Profesional, ROL-009 Jefe Dependencia, ROL-005 Coordinador VU.
 **EP-005 Correspondencia CERRADA** — 3 vistas + ficha unificada con
 6 tabs + 13 acciones contextuales del workflow + gestión de
 destinatarios múltiples + soportes de envío con histórico + anulación.
+
+### Bloque UI-8 (Documentos + plantillas + firmas — CIERRE EP-006) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0035..0044 (EP-006). 10 vistas.
+**Roles primarios:** ROL-014 Firmante, ROL-017 Admin Plantillas,
+ROL-007 Profesional, ROL-009 Jefe Dependencia, ROL-003 Admin Documental,
+ROL-001 Admin Sistema.
+
+**Archivos nuevos:**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `documentos/Biblioteca.jsx` (lista filtrable) | ~175 | GD-UI-0035 |
+| `documentos/CargarDocumentoModal.jsx` (drag&drop) | ~200 | GD-UI-0037 |
+| `documentos/DocumentoFicha.jsx` (4 tabs + nueva ver. + anular) | ~365 | GD-UI-0036/0038 |
+| `documentos/useGdDocumentos.js` (3 readers + 4 mutators) | ~100 | hooks |
+| `documentos/index.js` (barrel) | 8 | |
+| `plantillas/AdminPlantillas.jsx` (CRUD + versionado) | ~430 | GD-UI-0039 |
+| `plantillas/GenerarDocumento.jsx` (variables + preview) | ~185 | GD-UI-0040 |
+| `plantillas/useGdPlantillas.js` (2 readers + 5 mutators) | ~80 | hooks |
+| `plantillas/index.js` (barrel) | 7 | |
+| `firmas/PorFirmar.jsx` (bandeja + 3 acciones) | ~265 | GD-UI-0041 |
+| `firmas/FirmaEscaneadaModal.jsx` (registro manuscrita) | ~150 | GD-UI-0042 |
+| `firmas/EvidenciaFirma.jsx` (hash + IP + geo + certif) | ~135 | GD-UI-0043 |
+| `firmas/AdminFirmantes.jsx` (CRUD firmantes autorizados) | ~330 | GD-UI-0044 |
+| `firmas/useGdFirmas.js` (3 readers + 6 mutators) | ~100 | hooks |
+| `firmas/index.js` (barrel) | 9 | |
+
+**Extensiones `services/gdApi.js` (+24 endpoints, GD-API-0057..0072):**
+- Documentos: `listDocumentos`, `getDocumento`, `listVersionesDocumento`,
+  `crearDocumento`, `nuevaVersionDocumento`, `anularDocumento`,
+  `subirArchivo` (`/core/archivos`).
+- Plantillas: `listPlantillas`, `getPlantilla`, `crearPlantilla`,
+  `actualizarPlantilla`, `nuevaVersionPlantilla`, `inactivarPlantilla`,
+  `generarDocumentoDePlantilla`.
+- Firmas: `listPorFirmar`, `getEvidenciaFirma`, `registrarFirmaEscaneada`,
+  `firmarDocumento`, `rechazarFirmaDocumento`, `listFirmantesAutorizados`,
+  `crearFirmanteAutorizado`, `actualizarFirmanteAutorizado`,
+  `inactivarFirmanteAutorizado`.
+
+**Placeholders reemplazados:**
+- `GdBiblioteca` → `<Biblioteca />`
+- `GdPlantillas` → `<AdminPlantillas />`
+- `GdPorFirmar` → `<PorFirmar />`
+- Nuevos: `GdDocumentoFicha`, `GdGenerarDocumento`, `GdEvidenciaFirma`,
+  `GdAdminFirmantes`.
+
+**Decisiones (D-UI-27..D-UI-29):**
+
+- **D-UI-27 (Carga de archivos en 2 pasos: `subirArchivo` →
+  `crearDocumento`)**: el modal de carga sube primero el binario a
+  `/core/archivos`, obtiene `archivo_digital_id`, y solo entonces crea
+  el registro documental con metadata. Esto permite que el antivirus
+  server-side (RNF-046) escanee el archivo antes de que exista el
+  documento referenciable. El cliente muestra estados secuenciales
+  (`subiendo` → `creando` → `listo`) para feedback explícito.
+- **D-UI-28 (Plantillas: layout 2-col con `mode` único)**: en vez de
+  rutas separadas para crear/editar/nueva-versión/inactivar, una sola
+  ruta muestra la lista a la izquierda y un panel a la derecha cuyo
+  contenido se rige por el `mode` (`view|edit|new|nuevaver|inactivar`).
+  Reduce navegación y mantiene contexto. `GenerarDocumento` SÍ es ruta
+  aparte porque cambia la audiencia (usuario operativo, no admin).
+- **D-UI-29 (Permisos cruzados PLA-001 + PLA-USE)**: descubrí en tests
+  que `gd.admin_plantillas` tiene PLA-001 (RW para administrar) pero
+  NO PLA-USE (R para generar) — son roles funcionalmente disjuntos
+  por diseño. Un usuario que administra plantillas y también las usa
+  debe tener ambos roles asignados (caso típico: jefe de dependencia
+  + admin plantillas en entidades pequeñas).
+
+**Métricas:**
+- **1882/1882 tests admin-panel ✅** (+120 nuevos UI-8)
+- **560/560 tests features/gd ✅**
+- Coverage features/gd/documentos = **97.00% lines** ✅
+- Coverage features/gd/plantillas = **97.57% lines** ✅
+- Coverage features/gd/firmas = **98.35% lines** ✅
+- Global admin-panel = **87.83% ≥ 86% gate** ✅
+- Functions 75.05% ≥ 75% ✅
+- Lint OK (0 errores)
+
+**EP-006 Documentos+plantillas+firmas CERRADA** — 10 vistas:
+Biblioteca filtrable + ficha de documento con 4 tabs (general /
+versiones / trazabilidad / acciones) + carga drag&drop con
+validación MIME+tamaño + reemplazo y anulación con motivo + admin
+de plantillas con versionado + generación con preview en vivo de
+sustitución `{{variable}}` + bandeja "Por firmar" con firma digital /
+escaneada / rechazo + evidencia técnica completa (hash SHA-256 + IP
++ geo + certif + user-agent) + admin de firmantes autorizados con
+tipos habilitados y vigencia.

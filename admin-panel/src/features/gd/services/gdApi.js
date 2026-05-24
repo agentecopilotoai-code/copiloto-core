@@ -608,5 +608,112 @@ export function solicitarAnulacionCorrespondencia(session, id, motivo) {
   });
 }
 
+// ─── UI-8: Documentos + Plantillas + Firmas (GD-API-0057..0072) ──────────
+
+// --- Documentos ---
+export function listDocumentos(session, filtros = {}) {
+  return gdFetch(session, '/gd/documentos', { params: filtros });
+}
+export function getDocumento(session, id) {
+  return gdFetch(session, `/gd/documentos/${id}`);
+}
+export function listVersionesDocumento(session, id) {
+  return gdFetch(session, `/gd/documentos/${id}/versiones`);
+}
+export function crearDocumento(session, payload) {
+  return gdFetch(session, '/gd/documentos', {
+    method: 'POST', body: payload,
+  });
+}
+export function nuevaVersionDocumento(session, id, payload) {
+  return gdFetch(session, `/gd/documentos/${id}/versiones`, {
+    method: 'POST', body: payload,
+  });
+}
+export function anularDocumento(session, id, motivo) {
+  return gdFetch(session, `/gd/documentos/${id}/anular`, {
+    method: 'POST', body: { motivo },
+  });
+}
+export function subirArchivo(session, payload) {
+  return gdFetch(session, '/core/archivos', {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Plantillas ---
+export function listPlantillas(session, filtros = {}) {
+  return gdFetch(session, '/gd/plantillas', { params: filtros });
+}
+export function getPlantilla(session, id) {
+  return gdFetch(session, `/gd/plantillas/${id}`);
+}
+export function crearPlantilla(session, payload) {
+  return gdFetch(session, '/gd/plantillas', {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarPlantilla(session, id, payload) {
+  return gdFetch(session, `/gd/plantillas/${id}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function nuevaVersionPlantilla(session, id, payload) {
+  return gdFetch(session, `/gd/plantillas/${id}/versiones`, {
+    method: 'POST', body: payload,
+  });
+}
+export function inactivarPlantilla(session, id, motivo) {
+  return gdFetch(session, `/gd/plantillas/${id}/inactivar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+export function generarDocumentoDePlantilla(session, id, variables) {
+  return gdFetch(session, `/gd/plantillas/${id}/generar`, {
+    method: 'POST', body: { variables },
+  });
+}
+
+// --- Firmas ---
+export function listPorFirmar(session, filtros = {}) {
+  return gdFetch(session, '/gd/firmas/por-firmar', { params: filtros });
+}
+export function getEvidenciaFirma(session, firmaId) {
+  return gdFetch(session, `/gd/firmas/${firmaId}/evidencia`);
+}
+export function registrarFirmaEscaneada(session, documentoId, payload) {
+  return gdFetch(session, `/gd/firmas/${documentoId}/escaneada`, {
+    method: 'POST', body: payload,
+  });
+}
+export function firmarDocumento(session, documentoId, payload = {}) {
+  return gdFetch(session, `/gd/firmas/${documentoId}/firmar`, {
+    method: 'POST', body: payload,
+  });
+}
+export function rechazarFirmaDocumento(session, documentoId, motivo) {
+  return gdFetch(session, `/gd/firmas/${documentoId}/rechazar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+export function listFirmantesAutorizados(session) {
+  return gdFetch(session, '/gd/firmantes-autorizados');
+}
+export function crearFirmanteAutorizado(session, payload) {
+  return gdFetch(session, '/gd/firmantes-autorizados', {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarFirmanteAutorizado(session, id, payload) {
+  return gdFetch(session, `/gd/firmantes-autorizados/${id}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function inactivarFirmanteAutorizado(session, id, motivo) {
+  return gdFetch(session, `/gd/firmantes-autorizados/${id}/inactivar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };
