@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PQR-2026-000487 · Proyectar respuesta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="../assets/portal.css" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  .doc-header {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-5) var(--s-6);
+    margin-bottom: var(--s-4);
+  }
+  .doc-header .top {
+    display: flex; align-items: center; gap: var(--s-3);
+    font-family: var(--font-mono); font-size: 12px; color: var(--fg-tertiary);
+    margin-bottom: 6px;
+  }
+  .doc-header .top .num { color: var(--fg-primary); font-weight: 600; font-size: 14px; }
+  .doc-header h1 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 26px; line-height: 1.2;
+    letter-spacing: -0.015em;
+    margin: 0 0 var(--s-3);
+    color: var(--slate-900);
+    text-wrap: pretty;
+  }
+  .doc-header .badges-row { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+
+  .ficha-layout {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: var(--s-4);
+    align-items: start;
+  }
+
+  /* Tabbed card */
+  .tabbed-card {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+  .tab-body { padding: var(--s-5) var(--s-6); }
+
+  /* Workflow strip (top of editor) */
+  .workflow-strip {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: var(--s-3) var(--s-5);
+    background: var(--slate-50);
+    border-bottom: 1px solid var(--border-default);
+    overflow-x: auto;
+  }
+  .wf-step {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 12px 4px 6px;
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-pill);
+    font-size: 11.5px;
+    color: var(--fg-secondary);
+    white-space: nowrap;
+    margin-right: 4px;
+  }
+  .wf-step .num {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--slate-100);
+    color: var(--fg-tertiary);
+    display: grid; place-items: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .wf-step.done { background: var(--emerald-50); color: var(--emerald-700); border-color: #A7F3D0; }
+  .wf-step.done .num { background: var(--emerald-600); color: white; }
+  .wf-step.done .num svg { width: 10px; height: 10px; }
+  .wf-step.active {
+    background: var(--slate-900); color: white; border-color: var(--slate-900);
+    font-weight: 600;
+  }
+  .wf-step.active .num { background: white; color: var(--slate-900); }
+  .wf-sep {
+    width: 14px; height: 1px;
+    background: var(--border-strong);
+    margin: 0 2px;
+  }
+
+  /* Editor toolbar */
+  .editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px var(--s-4);
+    background: white;
+    border-bottom: 1px solid var(--border-default);
+  }
+  .editor-toolbar .tool {
+    width: 26px; height: 26px;
+    border-radius: var(--r-sm);
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--fg-secondary);
+    display: grid; place-items: center;
+    cursor: pointer;
+  }
+  .editor-toolbar .tool:hover { background: var(--slate-100); color: var(--fg-primary); }
+  .editor-toolbar .tool.active { background: var(--slate-100); border-color: var(--border-default); }
+  .editor-toolbar .tool svg { width: 13px; height: 13px; }
+  .editor-toolbar .divider {
+    width: 1px; height: 18px; background: var(--border-default); margin: 0 4px;
+  }
+  .editor-toolbar select.style-select {
+    height: 26px;
+    border: 1px solid var(--border-default);
+    background: white;
+    border-radius: var(--r-sm);
+    padding: 0 24px 0 8px;
+    font-size: 12px;
+    color: var(--fg-secondary);
+    appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+  }
+
+  /* Document editor area */
+  .doc-editor {
+    background: var(--slate-50);
+    padding: var(--s-6);
+    min-height: 540px;
+  }
+  .doc-paper {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    padding: var(--s-9) var(--s-10);
+    max-width: 760px;
+    margin: 0 auto;
+    box-shadow: var(--shadow-sm);
+    font-family: var(--font-display);
+    color: var(--slate-900);
+    line-height: 1.65;
+  }
+  .doc-paper .header-strip {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding-bottom: var(--s-4);
+    border-bottom: 2px solid var(--slate-900);
+    margin-bottom: var(--s-6);
+  }
+  .doc-paper .header-strip .seal {
+    width: 44px; height: 44px;
+    background: var(--slate-900);
+    color: white;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .doc-paper .header-strip .entity-name {
+    font-family: var(--font-display); font-weight: 700; font-size: 14px;
+    letter-spacing: -0.005em;
+    color: var(--slate-900);
+  }
+  .doc-paper .header-strip .entity-legal {
+    font-family: var(--font-sans);
+    font-size: 10.5px;
+    color: var(--fg-tertiary);
+    margin-top: 2px;
+  }
+  .doc-paper .num-line {
+    display: flex; justify-content: space-between;
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--fg-tertiary);
+    margin-bottom: var(--s-5);
+  }
+  .doc-paper h2 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 17px;
+    margin: 0 0 var(--s-4);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--slate-900);
+  }
+  .doc-paper p { margin: 0 0 var(--s-3); font-size: 14px; }
+  .doc-paper p.dest { margin-bottom: var(--s-5); }
+  .doc-paper p strong { font-weight: 700; }
+  .doc-paper .ia-highlight {
+    background: linear-gradient(180deg, transparent 60%, var(--sky-100) 60%);
+    cursor: pointer;
+  }
+  .doc-paper .ia-highlight:hover { background: linear-gradient(180deg, transparent 60%, var(--sky-200) 60%); }
+  .doc-paper .signature-block {
+    margin-top: var(--s-9);
+    padding-top: var(--s-6);
+  }
+  .doc-paper .signature-block .line {
+    width: 240px;
+    border-top: 1px solid var(--slate-700);
+    margin-bottom: 6px;
+  }
+  .doc-paper .signature-block .who {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .doc-paper .signature-block .role {
+    font-family: var(--font-sans);
+    font-size: 12px;
+    color: var(--fg-tertiary);
+  }
+  .doc-paper .footer-note {
+    margin-top: var(--s-7);
+    padding-top: var(--s-3);
+    border-top: 1px dashed var(--border-default);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-tertiary);
+    text-align: center;
+  }
+
+  /* Bottom action bar */
+  .editor-foot {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-4) var(--s-5);
+    background: white;
+    border-top: 1px solid var(--border-default);
+  }
+  .editor-foot .meta {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    margin-right: auto;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .editor-foot .meta svg { width: 11px; height: 11px; }
+
+  /* Aside */
+  .aside-card {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    margin-bottom: var(--s-4);
+  }
+  .aside-card .head {
+    padding: 10px var(--s-4);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-tertiary);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .aside-card .head svg { width: 13px; height: 13px; color: var(--fg-tertiary); }
+  .aside-card .body { padding: var(--s-4); }
+
+  .meta-pairs { display: flex; flex-direction: column; gap: var(--s-3); }
+  .meta-pair .k {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--fg-tertiary); font-weight: 600; margin-bottom: 2px;
+  }
+  .meta-pair .v { font-size: 13px; color: var(--fg-primary); font-weight: 500; }
+  .meta-pair .v.with-avatar { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* History */
+  .hist-item {
+    display: grid;
+    grid-template-columns: 24px 1fr auto;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    align-items: flex-start;
+  }
+  .hist-item:last-child { border-bottom: 0; }
+  .hist-item .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--slate-300);
+    margin-top: 5px;
+    margin-left: 8px;
+  }
+  .hist-item.current .dot {
+    background: var(--accent-base);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .hist-item.draft .dot { background: var(--slate-400); }
+  .hist-item.signed .dot { background: var(--emerald-600); }
+  .hist-item .info { font-size: 12.5px; line-height: 1.4; }
+  .hist-item .info .label { font-weight: 600; color: var(--fg-primary); }
+  .hist-item .info .sub { color: var(--fg-tertiary); font-size: 11.5px; margin-top: 1px; }
+  .hist-item .info .badge { margin-top: 4px; font-size: 10px; height: 16px; padding: 0 5px; }
+  .hist-item .time { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-tertiary); }
+
+  /* Plantilla card / selector */
+  .tpl-row {
+    display: grid;
+    grid-template-columns: 32px 1fr auto;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    background: var(--slate-50);
+    align-items: center;
+    margin-bottom: 6px;
+    cursor: pointer;
+  }
+  .tpl-row:hover { background: white; border-color: var(--border-strong); }
+  .tpl-row.selected {
+    background: var(--sky-50); border-color: var(--sky-300, #93c5fd);
+  }
+  .tpl-row .ico {
+    width: 32px; height: 32px;
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-sm);
+    display: grid; place-items: center;
+    color: var(--accent-base);
+  }
+  .tpl-row .ico svg { width: 14px; height: 14px; }
+  .tpl-row .name { font-size: 12.5px; font-weight: 600; color: var(--fg-primary); }
+  .tpl-row .meta { font-size: 11px; color: var(--fg-tertiary); font-family: var(--font-mono); }
+  .tpl-row .arrow { color: var(--fg-tertiary); }
+  .tpl-row .arrow svg { width: 12px; height: 12px; }
+
+  /* Vto block */
+  .vto-block {
+    background: var(--amber-50);
+    border: 1px solid #FCD34D;
+    border-radius: var(--r-lg);
+    padding: var(--s-4);
+    margin-bottom: var(--s-4);
+  }
+  .vto-block .label {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--amber-700); font-weight: 600; margin-bottom: 4px;
+  }
+  .vto-block .value {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 26px; color: var(--amber-700);
+    line-height: 1; margin-bottom: 6px;
+  }
+  .vto-block .desc { font-size: 12px; color: var(--amber-700); opacity: 0.85; line-height: 1.45; }
+  .vto-block .progress {
+    height: 5px; background: rgba(217,119,6,0.18);
+    border-radius: 3px; margin-top: 10px; overflow: hidden;
+  }
+  .vto-block .progress > i { display: block; height: 100%; background: var(--amber-600); width: 78%; border-radius: 3px; }
+</style>
+</head>
+<body data-screen-label="07 PQRSD Ficha · Respuesta">
+
+<div class="app-shell">
+
+  <!-- Sidebar — Profesional -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="title">Gestión Documental</div>
+        <div class="subtitle">Alcaldía de Ejemplo</div>
+      </div>
+    </div>
+    <div class="sidebar-role">
+      <div class="avatar" style="background: var(--emerald-600);">JR</div>
+      <div>
+        <div class="name">Juana Restrepo</div>
+        <div class="rol">ROL-007 · Profesional</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">Trabajo</div>
+        <a class="nav-link" href="03-mi-buzon.html"><i data-lucide="inbox"></i> Mi buzón <span class="count">23</span></a>
+        <a class="nav-link active" href="#"><i data-lucide="message-square-warning"></i> PQRSD asignadas <span class="count">7</span></a>
+        <a class="nav-link" href="#"><i data-lucide="send"></i> Correspondencia</a>
+        <a class="nav-link" href="#"><i data-lucide="check-square"></i> Tareas <span class="count">4</span></a>
+        <a class="nav-link" href="#"><i data-lucide="file-edit"></i> Borradores <span class="count">2</span></a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Documentos</div>
+        <a class="nav-link" href="#"><i data-lucide="file-search"></i> Por revisar <span class="count">3</span></a>
+        <a class="nav-link" href="09-por-firmar.html"><i data-lucide="signature"></i> Por firmar <span class="count">1</span></a>
+        <a class="nav-link" href="#"><i data-lucide="library"></i> Biblioteca</a>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <span>Of. Asesora Jurídica</span>
+      <i data-lucide="building-2" style="width:11px; height:11px"></i>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar">
+      <div class="search">
+        <i data-lucide="search"></i>
+        <input placeholder="Buscar PQRSD por número, solicitante o asunto…" value="PQR-2026-000487" />
+        <span class="shortcut">⌘ K</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="scope">
+        <i data-lucide="layers"></i>
+        <span class="label">Alcance:</span>
+        <span class="value">Mi dependencia</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <button class="icon-btn"><i data-lucide="help-circle"></i></button>
+      <button class="icon-btn"><i data-lucide="bell"></i><span class="dot"></span></button>
+      <button class="user-chip">
+        <div class="avatar" style="background: var(--emerald-600);">JR</div>
+        <span class="name">Juana</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+    </header>
+
+    <div class="content">
+
+      <div class="breadcrumb">
+        <a href="06-dashboard.html"><i data-lucide="home"></i></a>
+        <i data-lucide="chevron-right"></i>
+        <a href="03-mi-buzon.html">Mi buzón</a>
+        <i data-lucide="chevron-right"></i>
+        <a href="04-pqrsd-panel.html">PQRSD</a>
+        <i data-lucide="chevron-right"></i>
+        <span class="here">PQR-2026-000487</span>
+      </div>
+
+      <!-- Header -->
+      <div class="doc-header">
+        <div class="top">
+          <span class="num">PQR-2026-000487</span>
+          <span>·</span>
+          <span>Recibida 06 May 2026</span>
+          <span>·</span>
+          <span>Canal: Página web</span>
+          <span style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px;">
+            <i data-lucide="link-2" style="width: 12px; height: 12px;"></i>
+            Vinculada a <a href="05-radicado-ficha.html">RAD-2026-001234</a>
+          </span>
+        </div>
+        <h1>Queja por demora injustificada en respuesta a solicitud radicada en abril</h1>
+        <div class="badges-row">
+          <span class="pqrsd-chip tipo-Q"><span class="glyph">Q</span> Queja</span>
+          <span class="badge info">En proyección</span>
+          <span class="badge warn">Vence en 3 días</span>
+          <span class="badge neutral no-dot" style="font-family: var(--font-mono); font-size: 11px;">Término: 15 días hábiles · Ley 1755/2015</span>
+          <span class="badge neutral no-dot">Serie 110 · Subserie 110.04</span>
+        </div>
+      </div>
+
+      <!-- 2 col layout -->
+      <div class="ficha-layout">
+
+        <!-- LEFT — Editor de respuesta -->
+        <section class="tabbed-card">
+          <div class="tabs">
+            <a class="tab" href="#"><i data-lucide="file-text"></i> General</a>
+            <a class="tab" href="#"><i data-lucide="paperclip"></i> Anexos <span class="count">2</span></a>
+            <a class="tab active" href="#"><i data-lucide="reply"></i> Respuesta <span class="count">v3</span></a>
+            <a class="tab" href="#"><i data-lucide="history"></i> Trazabilidad <span class="count">9</span></a>
+            <a class="tab" href="#"><i data-lucide="message-square"></i> Notas <span class="count">2</span></a>
+            <a class="tab" href="#"><i data-lucide="settings-2"></i> Acciones</a>
+          </div>
+
+          <!-- Workflow strip -->
+          <div class="workflow-strip">
+            <div class="wf-step done"><span class="num"><i data-lucide="check"></i></span> Asignación</div>
+            <div class="wf-sep"></div>
+            <div class="wf-step active"><span class="num">2</span> Proyección</div>
+            <div class="wf-sep"></div>
+            <div class="wf-step"><span class="num">3</span> Revisión VB</div>
+            <div class="wf-sep"></div>
+            <div class="wf-step"><span class="num">4</span> Aprobación</div>
+            <div class="wf-sep"></div>
+            <div class="wf-step"><span class="num">5</span> Firma</div>
+            <div class="wf-sep"></div>
+            <div class="wf-step"><span class="num">6</span> Radicación salida</div>
+            <div class="wf-sep"></div>
+            <div class="wf-step"><span class="num">7</span> Envío + Cierre</div>
+            <div style="flex: 1;"></div>
+            <span class="badge neutral no-dot" style="font-family: var(--font-mono); font-size: 10.5px; height: 20px; padding: 0 6px;">v3 · borrador</span>
+          </div>
+
+          <!-- IA suggestion -->
+          <div style="padding: var(--s-4) var(--s-5) 0; background: white;">
+            <div class="ia-suggestion">
+              <div class="ia-mark"><i data-lucide="sparkles"></i></div>
+              <div class="ia-body">
+                <div class="ia-eyebrow">Borrador asistido por IA <span class="conf">92% confianza</span></div>
+                <div class="ia-text">Plantilla detectada: <b>P-RESP-QJ-001 (Respuesta a queja con causa justificada)</b>. Cuerpo del oficio pre-redactado con base en el expediente.</div>
+                <div class="ia-explain">El sistema identificó que la solicitud original RAD-2026-000812 sí fue respondida el 28 de abril (oficio OFI-2026-000914), aunque sin notificación al ciudadano. La respuesta incluye disculpa institucional, adjunta el oficio omitido y propone medida de mejora.</div>
+              </div>
+              <div class="ia-actions">
+                <button class="btn btn-ghost btn-sm"><i data-lucide="rotate-cw"></i> Regenerar</button>
+                <button class="btn btn-secondary btn-sm"><i data-lucide="x"></i> Descartar</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Editor toolbar -->
+          <div class="editor-toolbar" style="margin-top: var(--s-4); border-top: 1px solid var(--border-default);">
+            <select class="style-select" style="min-width: 140px;">
+              <option>Plantilla institucional</option>
+            </select>
+            <div class="divider"></div>
+            <button class="tool" title="Bold"><i data-lucide="bold"></i></button>
+            <button class="tool" title="Italic"><i data-lucide="italic"></i></button>
+            <button class="tool" title="Underline"><i data-lucide="underline"></i></button>
+            <div class="divider"></div>
+            <button class="tool" title="Bullet list"><i data-lucide="list"></i></button>
+            <button class="tool" title="Numbered list"><i data-lucide="list-ordered"></i></button>
+            <div class="divider"></div>
+            <button class="tool" title="Quote"><i data-lucide="quote"></i></button>
+            <button class="tool" title="Link"><i data-lucide="link"></i></button>
+            <button class="tool" title="Reference"><i data-lucide="bookmark"></i></button>
+            <div class="divider"></div>
+            <button class="tool active" title="Resaltado IA"><i data-lucide="sparkles" style="color: var(--accent-base);"></i></button>
+            <button class="tool" title="Variables institucionales"><i data-lucide="braces"></i></button>
+            <button class="tool" title="Insertar tabla"><i data-lucide="table-2"></i></button>
+            <div style="flex: 1"></div>
+            <button class="btn btn-ghost btn-sm"><i data-lucide="eye"></i> Vista previa</button>
+            <button class="btn btn-ghost btn-sm"><i data-lucide="download"></i> DOCX</button>
+          </div>
+
+          <!-- Editor area -->
+          <div class="doc-editor">
+            <div class="doc-paper">
+              <div class="header-strip">
+                <div class="seal">⚖</div>
+                <div>
+                  <div class="entity-name">ALCALDÍA MUNICIPAL DE EJEMPLO · OFICINA ASESORA JURÍDICA</div>
+                  <div class="entity-legal">NIT 800.123.456-7 · Cra. 15 No. 4-23 · Tel. (601) 555-0100</div>
+                </div>
+              </div>
+              <div class="num-line">
+                <span>OFI-2026-PROY-{borrador}</span>
+                <span>Ejemplo, 24 de mayo de 2026</span>
+              </div>
+              <p class="dest">
+                <strong>Señora<br/>MARÍA HELENA ROJAS PÉREZ</strong><br/>
+                <span style="font-family: var(--font-mono); font-size: 12px; color: var(--fg-tertiary)">CC 52.123.456</span><br/>
+                Carrera 7 No. 24-18, Apto. 402<br/>
+                Ejemplo
+              </p>
+
+              <h2>Asunto: Respuesta a queja PQR-2026-000487</h2>
+
+              <p>Respetada señora Rojas:</p>
+
+              <p>Reciba un cordial saludo de parte de la Oficina Asesora Jurídica de la Alcaldía Municipal de Ejemplo. En atención a su queja radicada el pasado <strong>6 de mayo de 2026</strong> bajo el consecutivo de la referencia, en la que manifiesta haber esperado más de 30 días sin recibir respuesta a su petición original sobre el predio ubicado en la calle 24, nos permitimos pronunciarnos en los siguientes términos:</p>
+
+              <p><span class="ia-highlight">En primer lugar, ofrecemos disculpas institucionales por el inconveniente generado y reconocemos que existió una falla operativa en la notificación de la respuesta a su solicitud original (RAD-2026-000812).</span> Verificada la trazabilidad documental, se constató que el oficio de respuesta <strong>OFI-2026-000914</strong> fue suscrito el 28 de abril de 2026, pero no fue notificado oportunamente por canal electrónico ni por correo postal, lo que impidió que usted tuviera conocimiento de la decisión adoptada.</p>
+
+              <p><span class="ia-highlight">Anexamos al presente el oficio original de respuesta y la documentación que acompaña la decisión sobre su predio. Adicionalmente, esta dependencia ha activado un control adicional para evitar la repetición de la falla detectada, consistente en la verificación obligatoria del envío y acuse de recibo en todos los procesos con término legal.</span></p>
+
+              <p>De conformidad con el artículo 23 de la Constitución Política y los artículos 13 y siguientes de la Ley 1755 de 2015, queda atendida su queja. Si requiere información adicional puede contactar a la suscrita al teléfono institucional o al correo <strong><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="09637c7b606d606a68496c636c64796566276e667f276a66">[email&#160;protected]</a></strong>.</p>
+
+              <p>Atentamente,</p>
+
+              <div class="signature-block">
+                <div class="line"></div>
+                <div class="who">JUANA RESTREPO GÓMEZ</div>
+                <div class="role">Profesional Especializada · Oficina Asesora Jurídica</div>
+              </div>
+
+              <div class="footer-note">
+                Proyectó: J. Restrepo · Revisó: pendiente · Aprobó: pendiente · Firmó: pendiente<br/>
+                Anexos: 2 · OFI-2026-000914 · Soporte respuesta original (4 fol.)
+              </div>
+            </div>
+          </div>
+
+          <!-- Editor foot -->
+          <div class="editor-foot">
+            <div class="meta">
+              <i data-lucide="save"></i>
+              <span>Guardado · hace 14s</span>
+              <span style="margin: 0 var(--s-2)">·</span>
+              <i data-lucide="user"></i>
+              <span>Editado por Juana Restrepo</span>
+              <span style="margin: 0 var(--s-2)">·</span>
+              <i data-lucide="layers"></i>
+              <span>v3 · 412 palabras</span>
+            </div>
+            <button class="btn btn-secondary"><i data-lucide="message-square"></i> Agregar nota interna</button>
+            <button class="btn btn-secondary"><i data-lucide="file-edit"></i> Guardar borrador</button>
+            <button class="btn btn-primary"><i data-lucide="send"></i> Enviar a revisión del Jefe</button>
+          </div>
+        </section>
+
+        <!-- RIGHT — aside -->
+        <aside>
+
+          <!-- Vto -->
+          <div class="vto-block">
+            <div class="label">Plazo legal — Próxima a vencer</div>
+            <div class="value">3 días hábiles</div>
+            <div class="desc"><b>Vence: 27 mayo 17:00.</b> El término se consumió en 78%. Puede suspenderse si se requiere información adicional al solicitante.</div>
+            <div class="progress"><i></i></div>
+          </div>
+
+          <!-- Solicitante -->
+          <div class="aside-card">
+            <div class="head"><i data-lucide="user"></i> Solicitante</div>
+            <div class="body">
+              <div class="meta-pairs">
+                <div class="meta-pair">
+                  <div class="k">Nombre</div>
+                  <div class="v">María Helena Rojas Pérez</div>
+                </div>
+                <div class="meta-pair">
+                  <div class="k">Documento</div>
+                  <div class="v mono" style="font-size: 12px">CC 52.123.456</div>
+                </div>
+                <div class="meta-pair">
+                  <div class="k">Contacto</div>
+                  <div class="v" style="font-size: 12.5px"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="c1aca9b3aeaba0b281a2aeb3b3a4aeefa2aeac">[email&#160;protected]</a><br/><span class="mono" style="font-size: 11px; color: var(--fg-tertiary);">+57 312 555 0190</span></div>
+                </div>
+                <div class="meta-pair">
+                  <div class="k">Trámites anteriores</div>
+                  <div class="v"><a href="#">3 radicados activos →</a></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Plantilla -->
+          <div class="aside-card">
+            <div class="head"><i data-lucide="file-stack"></i> Plantilla aplicada</div>
+            <div class="body" style="padding-bottom: 6px;">
+              <div class="tpl-row selected">
+                <div class="ico"><i data-lucide="file-check"></i></div>
+                <div>
+                  <div class="name">P-RESP-QJ-001</div>
+                  <div class="meta">Respuesta a queja · v2.4</div>
+                </div>
+                <div class="arrow"><i data-lucide="chevron-right"></i></div>
+              </div>
+              <div class="tpl-row">
+                <div class="ico"><i data-lucide="file"></i></div>
+                <div>
+                  <div class="name">P-RESP-GEN-002</div>
+                  <div class="meta">Respuesta genérica · v1.8</div>
+                </div>
+                <div class="arrow"><i data-lucide="chevron-right"></i></div>
+              </div>
+              <a href="#" style="font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;">
+                <i data-lucide="search" style="width: 11px; height: 11px"></i> Buscar otra plantilla
+              </a>
+            </div>
+          </div>
+
+          <!-- Historial de versiones -->
+          <div class="aside-card">
+            <div class="head"><i data-lucide="history"></i> Versiones del documento</div>
+            <div class="body" style="padding-top: 6px;">
+              <div class="hist-item current draft">
+                <div class="dot"></div>
+                <div class="info">
+                  <div class="label">v3 · Borrador actual</div>
+                  <div class="sub">Editado por Juana Restrepo · 412 palabras</div>
+                  <span class="badge neutral no-dot" style="font-family: var(--font-mono);">en proyección</span>
+                </div>
+                <div class="time">hace 14s</div>
+              </div>
+              <div class="hist-item">
+                <div class="dot"></div>
+                <div class="info">
+                  <div class="label">v2 · Devuelta por el Jefe</div>
+                  <div class="sub">Falta antecedente normativo del Decreto 1232/2025</div>
+                </div>
+                <div class="time">hace 1h</div>
+              </div>
+              <div class="hist-item">
+                <div class="dot"></div>
+                <div class="info">
+                  <div class="label">v1 · Enviada a revisión</div>
+                  <div class="sub">Borrador inicial generado por IA</div>
+                </div>
+                <div class="time">hace 2h</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Anexos -->
+          <div class="aside-card">
+            <div class="head"><i data-lucide="paperclip"></i> Anexos disponibles · 4</div>
+            <div class="body" style="padding-top: 6px;">
+              <label class="check" style="font-size: 12.5px;"><input type="checkbox" checked /> OFI-2026-000914 (respuesta original)</label>
+              <label class="check" style="font-size: 12.5px; margin-top: 6px;"><input type="checkbox" checked /> Soporte radicación inicial</label>
+              <label class="check" style="font-size: 12.5px; margin-top: 6px;"><input type="checkbox" /> Decreto 1232/2025 (texto íntegro)</label>
+              <label class="check" style="font-size: 12.5px; margin-top: 6px;"><input type="checkbox" /> Concepto C-2026-114</label>
+            </div>
+          </div>
+
+        </aside>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

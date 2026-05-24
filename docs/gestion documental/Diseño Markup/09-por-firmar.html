@@ -1,0 +1,762 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Por firmar · Gestión Documental</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="../assets/portal.css" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  /* KPI strip */
+  .sign-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--s-3);
+    margin-bottom: var(--s-4);
+  }
+  .sign-kpi {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-3) var(--s-4);
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+  }
+  .sign-kpi .ico {
+    width: 36px; height: 36px;
+    border-radius: var(--r-md);
+    background: var(--slate-100);
+    color: var(--slate-700);
+    display: grid; place-items: center;
+  }
+  .sign-kpi .ico svg { width: 16px; height: 16px; }
+  .sign-kpi .ico.sky { background: var(--sky-50); color: var(--sky-700); }
+  .sign-kpi .ico.emerald { background: var(--emerald-50); color: var(--emerald-700); }
+  .sign-kpi .ico.amber { background: var(--amber-50); color: var(--amber-700); }
+  .sign-kpi .ico.red { background: var(--red-50); color: var(--red-700); }
+  .sign-kpi .label {
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+  .sign-kpi .v {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 22px; line-height: 1.1;
+    color: var(--slate-900);
+    font-feature-settings: "tnum";
+  }
+
+  /* 2-col layout */
+  .sign-layout {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: var(--s-4);
+    align-items: start;
+  }
+
+  /* List */
+  .sign-list {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    max-height: 720px;
+    overflow-y: auto;
+  }
+  .sign-list .head {
+    padding: 10px var(--s-4);
+    border-bottom: 1px solid var(--border-default);
+    display: flex;
+    align-items: center;
+    background: white;
+    position: sticky; top: 0;
+  }
+  .sign-list .head .title { font-weight: 600; font-size: 13px; }
+  .sign-list .head .count { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-tertiary); margin-left: 4px; }
+  .sign-list .head .right { margin-left: auto; display: flex; gap: 2px; }
+
+  .sign-row {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+  }
+  .sign-row:hover { background: var(--slate-25); }
+  .sign-row.selected {
+    background: var(--slate-100);
+    border-left: 3px solid var(--slate-900);
+    padding-left: calc(var(--s-4) - 3px);
+  }
+  .sign-row .top {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary);
+  }
+  .sign-row .top .num { color: var(--fg-secondary); font-weight: 600; }
+  .sign-row .top .priority {
+    margin-left: auto;
+    font-size: 10px; font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid;
+    font-family: var(--font-mono);
+  }
+  .sign-row .top .priority.high { background: var(--red-50); color: var(--red-700); border-color: #FECACA; }
+  .sign-row .top .priority.med { background: var(--amber-50); color: var(--amber-700); border-color: #FCD34D; }
+  .sign-row .top .priority.low { background: var(--slate-50); color: var(--slate-600); border-color: var(--slate-200); }
+  .sign-row .title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--slate-900);
+    line-height: 1.3;
+  }
+  .sign-row .meta {
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .sign-row .meta .pqrsd-chip { font-size: 10.5px; height: 18px; padding: 0 5px 0 2px; }
+  .sign-row .meta .pqrsd-chip .glyph { width: 13px; height: 13px; font-size: 8.5px; }
+  .sign-row .meta b { color: var(--fg-secondary); font-weight: 600; }
+
+  /* Preview pane */
+  .preview-pane {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+  .preview-pane .head {
+    padding: var(--s-3) var(--s-5);
+    border-bottom: 1px solid var(--border-default);
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    background: white;
+  }
+  .preview-pane .head .info { flex: 1; min-width: 0; }
+  .preview-pane .head .info .num {
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-tertiary);
+    margin-bottom: 2px;
+  }
+  .preview-pane .head .info .ti {
+    font-weight: 600;
+    font-family: var(--font-display);
+    font-size: 16px;
+    color: var(--slate-900);
+    line-height: 1.2;
+  }
+  .preview-pane .head .actions { display: flex; gap: 4px; }
+
+  /* Preview info bar */
+  .preview-info {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-5);
+    background: var(--slate-50);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .preview-info .k {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-tertiary);
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .preview-info .v { font-size: 12.5px; color: var(--fg-primary); font-weight: 500; }
+  .preview-info .v.with-avatar { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* Doc preview */
+  .doc-preview {
+    padding: var(--s-6);
+    background: var(--slate-50);
+    min-height: 480px;
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  .doc-paper {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    padding: var(--s-7) var(--s-9);
+    max-width: 720px;
+    margin: 0 auto;
+    box-shadow: var(--shadow-sm);
+    font-family: var(--font-display);
+    color: var(--slate-900);
+    line-height: 1.6;
+  }
+  .doc-paper .header-strip {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding-bottom: var(--s-3);
+    border-bottom: 2px solid var(--slate-900);
+    margin-bottom: var(--s-5);
+  }
+  .doc-paper .seal {
+    width: 40px; height: 40px;
+    background: var(--slate-900); color: white;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .doc-paper .entity {
+    font-family: var(--font-display); font-weight: 700; font-size: 13px;
+    color: var(--slate-900);
+  }
+  .doc-paper .entity-legal { font-family: var(--font-sans); font-size: 10px; color: var(--fg-tertiary); margin-top: 1px; }
+  .doc-paper .num-line {
+    display: flex; justify-content: space-between;
+    font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--fg-tertiary); margin-bottom: var(--s-4);
+  }
+  .doc-paper h2 {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 15px;
+    margin: 0 0 var(--s-3);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .doc-paper p { margin: 0 0 var(--s-3); font-size: 13.5px; }
+  .doc-paper .signature {
+    margin-top: var(--s-7);
+  }
+  .doc-paper .signature .line {
+    width: 220px; border-top: 1px solid var(--slate-700); margin-bottom: 4px;
+  }
+  .doc-paper .signature .who { font-family: var(--font-sans); font-weight: 700; font-size: 12.5px; }
+  .doc-paper .signature .role { font-family: var(--font-sans); font-size: 11.5px; color: var(--fg-tertiary); }
+
+  /* Preview foot — sign actions */
+  .sign-foot {
+    padding: var(--s-4) var(--s-5);
+    border-top: 1px solid var(--border-default);
+    background: white;
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+  }
+  .sign-foot .note {
+    font-size: 12px;
+    color: var(--fg-tertiary);
+    flex: 1;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .sign-foot .note svg { width: 13px; height: 13px; }
+
+  /* MFA modal (floating preview) */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    backdrop-filter: blur(4px);
+  }
+  .mfa-modal {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-lg);
+    width: 480px;
+    overflow: hidden;
+  }
+  .mfa-modal .head {
+    padding: var(--s-5) var(--s-6);
+    border-bottom: 1px solid var(--border-subtle);
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: var(--s-3);
+  }
+  .mfa-modal .head .ico {
+    width: 40px; height: 40px;
+    border-radius: var(--r-md);
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    display: grid; place-items: center;
+    border: 1px solid var(--sky-200);
+  }
+  .mfa-modal .head .ico svg { width: 18px; height: 18px; }
+  .mfa-modal .head .title {
+    font-family: var(--font-display); font-weight: 600;
+    font-size: 17px; color: var(--slate-900);
+  }
+  .mfa-modal .head .subtitle { font-size: 12px; color: var(--fg-tertiary); margin-top: 2px; }
+  .mfa-modal .head .x {
+    width: 28px; height: 28px;
+    border-radius: var(--r-sm);
+    display: grid; place-items: center;
+    color: var(--fg-tertiary);
+    cursor: pointer;
+  }
+  .mfa-modal .head .x:hover { background: var(--slate-100); color: var(--fg-primary); }
+  .mfa-modal .head .x svg { width: 16px; height: 16px; }
+
+  .mfa-body { padding: var(--s-5) var(--s-6); }
+  .mfa-body p { margin: 0 0 var(--s-4); font-size: 13px; color: var(--fg-secondary); line-height: 1.55; }
+  .mfa-body .summary {
+    background: var(--slate-50); border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    padding: var(--s-3) var(--s-4);
+    margin-bottom: var(--s-4);
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 6px var(--s-3);
+    font-size: 12.5px;
+  }
+  .mfa-body .summary .k {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-tertiary);
+    font-weight: 600;
+    padding-top: 2px;
+  }
+  .mfa-body .summary .v { color: var(--fg-primary); }
+
+  .mfa-otp {
+    display: flex;
+    gap: var(--s-2);
+    justify-content: center;
+    margin: var(--s-4) 0;
+  }
+  .mfa-otp input {
+    width: 44px; height: 52px;
+    border: 1.5px solid var(--border-strong);
+    border-radius: var(--r-md);
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--slate-900);
+    background: white;
+  }
+  .mfa-otp input:focus {
+    outline: none; border-color: var(--accent-base); box-shadow: var(--shadow-focus);
+  }
+  .mfa-otp input.filled { border-color: var(--accent-base); background: var(--accent-soft); }
+
+  .mfa-info {
+    background: var(--sky-50);
+    border: 1px solid var(--sky-200);
+    border-radius: var(--r-md);
+    padding: var(--s-3) var(--s-4);
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 12px;
+    color: var(--sky-900);
+    line-height: 1.5;
+  }
+  .mfa-info svg { width: 14px; height: 14px; color: var(--sky-700); flex-shrink: 0; margin-top: 1px; }
+
+  .mfa-foot {
+    padding: var(--s-4) var(--s-6);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--slate-25);
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s-3);
+  }
+
+  /* Hide modal toggle */
+  .show-modal-btn { cursor: pointer; }
+</style>
+</head>
+<body data-screen-label="09 Por Firmar">
+
+<div class="app-shell">
+
+  <!-- Sidebar — Firmante / Jefe -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="title">Gestión Documental</div>
+        <div class="subtitle">Alcaldía de Ejemplo</div>
+      </div>
+    </div>
+    <div class="sidebar-role">
+      <div class="avatar" style="background: var(--red-600);">CG</div>
+      <div>
+        <div class="name">Carlos Granados</div>
+        <div class="rol">ROL-014 · Firmante</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">Firmas</div>
+        <a class="nav-link active" href="#"><i data-lucide="signature"></i> Por firmar <span class="count">23</span></a>
+        <a class="nav-link" href="#"><i data-lucide="check-circle-2"></i> Firmadas (mes) <span class="count">147</span></a>
+        <a class="nav-link" href="#"><i data-lucide="x-circle"></i> Rechazadas <span class="count">4</span></a>
+        <a class="nav-link" href="#"><i data-lucide="shield-check"></i> Evidencia de firma</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Configuración</div>
+        <a class="nav-link" href="#"><i data-lucide="pen-tool"></i> Firma escaneada</a>
+        <a class="nav-link" href="#"><i data-lucide="users"></i> Delegaciones</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Otros roles</div>
+        <a class="nav-link" href="03-mi-buzon.html"><i data-lucide="inbox"></i> Mi buzón</a>
+        <a class="nav-link" href="05-radicado-ficha.html"><i data-lucide="file-text"></i> Radicados</a>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <span>Of. Asesora Jurídica</span>
+      <i data-lucide="building-2" style="width:11px; height:11px"></i>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar">
+      <div class="search">
+        <i data-lucide="search"></i>
+        <input placeholder="Buscar documento por número o asunto…" />
+        <span class="shortcut">⌘ K</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="scope">
+        <i data-lucide="layers"></i>
+        <span class="label">Alcance:</span>
+        <span class="value">Mi dependencia</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <button class="icon-btn"><i data-lucide="help-circle"></i></button>
+      <button class="icon-btn"><i data-lucide="bell"></i><span class="dot"></span></button>
+      <button class="user-chip">
+        <div class="avatar" style="background: var(--red-600);">CG</div>
+        <span class="name">Carlos</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+    </header>
+
+    <div class="content">
+
+      <div class="breadcrumb">
+        <a href="06-dashboard.html"><i data-lucide="home"></i></a>
+        <i data-lucide="chevron-right"></i>
+        <a href="#">Firmas</a>
+        <i data-lucide="chevron-right"></i>
+        <span class="here">Por firmar</span>
+      </div>
+
+      <div class="page-head">
+        <div class="title-block">
+          <h1>Documentos por firmar</h1>
+          <p class="subtitle">Bandeja personal del firmante. La firma electrónica deja evidencia con hash, IP, fecha y snapshot del rol y cargo en el momento de la actuación.</p>
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary"><i data-lucide="filter"></i> Filtros</button>
+          <button class="btn btn-primary"><i data-lucide="check-check"></i> Firmar selección (3)</button>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="sign-kpis">
+        <div class="sign-kpi">
+          <div class="ico amber"><i data-lucide="signature"></i></div>
+          <div>
+            <div class="label">Pendientes</div>
+            <div class="v">23</div>
+          </div>
+        </div>
+        <div class="sign-kpi">
+          <div class="ico red"><i data-lucide="alarm-clock"></i></div>
+          <div>
+            <div class="label">Plazo &lt; 24h</div>
+            <div class="v" style="color: var(--red-700)">5</div>
+          </div>
+        </div>
+        <div class="sign-kpi">
+          <div class="ico emerald"><i data-lucide="check-circle-2"></i></div>
+          <div>
+            <div class="label">Firmados hoy</div>
+            <div class="v" style="color: var(--emerald-700)">14</div>
+          </div>
+        </div>
+        <div class="sign-kpi">
+          <div class="ico sky"><i data-lucide="timer"></i></div>
+          <div>
+            <div class="label">Tiempo prom.</div>
+            <div class="v">1h 12m</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Layout -->
+      <div class="sign-layout">
+
+        <!-- LEFT — list -->
+        <div class="sign-list">
+          <div class="head">
+            <input type="checkbox" />
+            <div class="title">Por firmar</div>
+            <div class="count">· 23</div>
+            <div class="right">
+              <button class="icon-btn"><i data-lucide="arrow-down-up"></i></button>
+              <button class="icon-btn"><i data-lucide="more-horizontal"></i></button>
+            </div>
+          </div>
+
+          <div class="sign-row selected">
+            <div class="top">
+              <span class="num">OFI-2026-002154</span>
+              <span>·</span>
+              <span>v3</span>
+              <span class="priority high">URGENTE</span>
+            </div>
+            <div class="title">Respuesta a queja PQR-2026-000487 por demora injustificada</div>
+            <div class="meta">
+              <span class="pqrsd-chip tipo-Q"><span class="glyph">Q</span> Queja</span>
+              <span>Proyectó <b>Juana Restrepo</b></span>
+              <span class="vto-badge vto-danger" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">18h</span></span>
+            </div>
+          </div>
+
+          <div class="sign-row">
+            <div class="top">
+              <span class="num">OFI-2026-002153</span>
+              <span>·</span>
+              <span>v2</span>
+              <span class="priority high">URGENTE</span>
+            </div>
+            <div class="title">Concepto jurídico C-2026-114 sobre exoneración tributaria</div>
+            <div class="meta">
+              <span class="badge info" style="height: 17px; font-size: 10px; padding: 0 5px;">Concepto</span>
+              <span>Proyectó <b>Diego Acuña</b></span>
+              <span class="vto-badge vto-danger" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">22h</span></span>
+            </div>
+          </div>
+
+          <div class="sign-row">
+            <div class="top">
+              <span class="num">OFI-2026-002150</span>
+              <span>·</span>
+              <span>v1</span>
+              <span class="priority med">ALTA</span>
+            </div>
+            <div class="title">Respuesta a petición de información sobre contratos vigencia 2025</div>
+            <div class="meta">
+              <span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span>
+              <span>Proyectó <b>Juana Restrepo</b></span>
+              <span class="vto-badge vto-warn" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">2d</span></span>
+            </div>
+          </div>
+
+          <div class="sign-row">
+            <div class="top">
+              <span class="num">OFI-2026-002148</span>
+              <span>·</span>
+              <span>v1</span>
+              <span class="priority med">ALTA</span>
+            </div>
+            <div class="title">Oficio de traslado por competencia a Sec. de Hacienda</div>
+            <div class="meta">
+              <span class="badge info" style="height: 17px; font-size: 10px; padding: 0 5px;">Traslado</span>
+              <span>Proyectó <b>Diego Acuña</b></span>
+              <span class="vto-badge vto-warn" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">3d</span></span>
+            </div>
+          </div>
+
+          <div class="sign-row">
+            <div class="top">
+              <span class="num">OFI-2026-002145</span>
+              <span>·</span>
+              <span>v2</span>
+              <span class="priority low">NORMAL</span>
+            </div>
+            <div class="title">Acuerdo de confidencialidad — Proveedor consultoría jurídica</div>
+            <div class="meta">
+              <span class="badge violet no-dot" style="height: 17px; font-size: 10px; padding: 0 5px;">Acuerdo</span>
+              <span>Proyectó <b>Laura Pinzón</b></span>
+              <span class="vto-badge vto-ok" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">7d</span></span>
+            </div>
+          </div>
+
+          <div class="sign-row">
+            <div class="top">
+              <span class="num">OFI-2026-002144</span>
+              <span>·</span>
+              <span>v1</span>
+              <span class="priority low">NORMAL</span>
+            </div>
+            <div class="title">Comunicación oficial a la Personería Municipal sobre tutela 2026-001100</div>
+            <div class="meta">
+              <span class="badge info" style="height: 17px; font-size: 10px; padding: 0 5px;">Oficio</span>
+              <span>Proyectó <b>Juana Restrepo</b></span>
+              <span class="vto-badge vto-ok" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">9d</span></span>
+            </div>
+          </div>
+
+          <div class="sign-row">
+            <div class="top">
+              <span class="num">OFI-2026-002141</span>
+              <span>·</span>
+              <span>v3</span>
+              <span class="priority low">NORMAL</span>
+            </div>
+            <div class="title">Respuesta a derecho de petición de información pública</div>
+            <div class="meta">
+              <span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span>
+              <span>Proyectó <b>Diego Acuña</b></span>
+              <span class="vto-badge vto-ok" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">11d</span></span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- RIGHT — preview + actions -->
+        <section class="preview-pane">
+          <div class="head">
+            <div class="info">
+              <div class="num">OFI-2026-002154 · v3 · 412 palabras · 4 páginas · Aprobado por Carlos Granados</div>
+              <div class="ti">Respuesta a queja PQR-2026-000487 por demora injustificada</div>
+            </div>
+            <div class="actions">
+              <button class="icon-btn" title="Descargar"><i data-lucide="download"></i></button>
+              <button class="icon-btn" title="Versiones"><i data-lucide="history"></i></button>
+              <button class="icon-btn" title="Abrir"><i data-lucide="external-link"></i></button>
+            </div>
+          </div>
+
+          <div class="preview-info">
+            <div>
+              <div class="k">Proyectado por</div>
+              <div class="v with-avatar"><div class="avatar sm emerald">JR</div> Juana Restrepo</div>
+            </div>
+            <div>
+              <div class="k">Revisado por</div>
+              <div class="v with-avatar"><div class="avatar sm">DA</div> Diego Acuña</div>
+            </div>
+            <div>
+              <div class="k">Destinatario</div>
+              <div class="v">María Helena Rojas P.</div>
+            </div>
+            <div>
+              <div class="k">Plazo de envío</div>
+              <div class="v" style="color: var(--red-700); font-weight: 600;">en 18 horas</div>
+            </div>
+          </div>
+
+          <div class="doc-preview">
+            <div class="doc-paper">
+              <div class="header-strip">
+                <div class="seal">⚖</div>
+                <div>
+                  <div class="entity">ALCALDÍA MUNICIPAL DE EJEMPLO · OFICINA ASESORA JURÍDICA</div>
+                  <div class="entity-legal">NIT 800.123.456-7 · Cra. 15 No. 4-23 · Tel. (601) 555-0100</div>
+                </div>
+              </div>
+              <div class="num-line">
+                <span>OFI-2026-002154</span>
+                <span>Ejemplo, 25 de mayo de 2026</span>
+              </div>
+              <p>
+                <strong>Señora<br/>MARÍA HELENA ROJAS PÉREZ</strong><br/>
+                <span style="font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary);">CC 52.123.456</span>
+              </p>
+              <h2>Asunto: Respuesta a queja PQR-2026-000487</h2>
+              <p>Respetada señora Rojas: en atención a su queja del pasado 6 de mayo de 2026 sobre la falta de notificación de la respuesta a su petición original radicada bajo el número RAD-2026-000812, esta Oficina Asesora Jurídica le comunica lo siguiente:</p>
+              <p>En primer lugar, ofrecemos disculpas institucionales por la falla operativa en la notificación. Verificada la trazabilidad documental, el oficio de respuesta OFI-2026-000914 fue suscrito el 28 de abril de 2026 pero no fue notificado oportunamente, lo que impidió que usted tuviera conocimiento de la decisión adoptada.</p>
+              <p>Anexamos al presente el oficio original de respuesta y la documentación que acompaña la decisión sobre su predio. Adicionalmente, esta dependencia activó un control de verificación de envío y acuse de recibo en todos los procesos con término legal, a fin de evitar la repetición de la falla detectada.</p>
+              <p>De conformidad con el artículo 23 de la Constitución y los artículos 13 y siguientes de la Ley 1755 de 2015, queda atendida su queja. Si requiere información adicional puede contactar a la suscrita al teléfono institucional o al correo <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="244e51564d404d474564414e414954484b0a434b520a474b">[email&#160;protected]</a>.</p>
+              <div class="signature">
+                <div class="line"></div>
+                <div class="who">CARLOS GRANADOS MORA</div>
+                <div class="role">Jefe · Oficina Asesora Jurídica</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sign-foot">
+            <div class="note">
+              <i data-lucide="shield"></i>
+              Al firmar se solicitará un segundo factor enviado al correo institucional.
+            </div>
+            <button class="btn btn-danger"><i data-lucide="x"></i> Rechazar con observación</button>
+            <button class="btn btn-secondary"><i data-lucide="pencil"></i> Devolver para ajustes</button>
+            <button class="btn btn-accent show-modal-btn" onclick="document.getElementById('mfa-modal').style.display='grid'">
+              <i data-lucide="signature"></i> Firmar documento
+            </button>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MFA Modal (mostrar por defecto para visualizar el flujo) -->
+<div class="modal-overlay" id="mfa-modal">
+  <div class="mfa-modal">
+    <div class="head">
+      <div class="ico"><i data-lucide="shield-check"></i></div>
+      <div>
+        <div class="title">Confirmar firma electrónica</div>
+        <div class="subtitle">Acción crítica · requiere segundo factor de autenticación</div>
+      </div>
+      <div class="x" onclick="document.getElementById('mfa-modal').style.display='none'"><i data-lucide="x"></i></div>
+    </div>
+    <div class="mfa-body">
+      <p>Está a punto de firmar electrónicamente el siguiente documento. Esta acción es <strong>irreversible</strong> y genera evidencia con hash, IP, fecha y snapshot de su rol y cargo en este momento.</p>
+      <div class="summary">
+        <div class="k">Documento</div>
+        <div class="v"><span class="mono" style="font-size: 12px; color: var(--fg-primary); font-weight: 600;">OFI-2026-002154 · v3</span></div>
+        <div class="k">Asunto</div>
+        <div class="v">Respuesta a queja PQR-2026-000487</div>
+        <div class="k">Política firma</div>
+        <div class="v">Electrónica · Ley 527/1999</div>
+        <div class="k">Firmará como</div>
+        <div class="v">Carlos Granados — Jefe Oficina Asesora Jurídica</div>
+      </div>
+
+      <p style="font-size: 12.5px; margin-bottom: 12px;">Ingrese el código de 6 dígitos enviado a <strong><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="167577647a796538716477787772796556737c737b667a7938717960387579">[email&#160;protected]</a></strong>:</p>
+
+      <div class="mfa-otp">
+        <input value="4" class="filled" />
+        <input value="9" class="filled" />
+        <input value="2" class="filled" />
+        <input value="7" class="filled" />
+        <input value="" />
+        <input value="" />
+      </div>
+
+      <div class="mfa-info">
+        <i data-lucide="info"></i>
+        <div>
+          El código expira en <b>02:48</b>. Si no lo recibe en 30 segundos, presione "Reenviar". El sistema audita cada intento fallido y bloquea tras 3 intentos consecutivos (PERM-FIR-001 · RNF-005).
+        </div>
+      </div>
+    </div>
+    <div class="mfa-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('mfa-modal').style.display='none'">Cancelar</button>
+      <button class="btn btn-secondary">Reenviar código</button>
+      <button class="btn btn-accent"><i data-lucide="signature"></i> Confirmar y firmar</button>
+    </div>
+  </div>
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

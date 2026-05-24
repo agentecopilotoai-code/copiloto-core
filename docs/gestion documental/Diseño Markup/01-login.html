@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Acceso · Gestión Documental</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700;8..60,800&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="../assets/portal.css" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  body { background: white; min-height: 100vh; display: flex; }
+  .login-shell {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    width: 100%;
+    min-height: 100vh;
+  }
+
+  /* ── Marca · panel izquierdo ─────────────────────────────── */
+  .brand-panel {
+    background: var(--slate-900);
+    color: white;
+    padding: var(--s-9) var(--s-10);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    overflow: hidden;
+  }
+  .brand-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 90% 10%, rgba(14, 165, 233, 0.18) 0%, transparent 45%),
+      radial-gradient(circle at 10% 90%, rgba(14, 165, 233, 0.08) 0%, transparent 45%);
+    pointer-events: none;
+  }
+  .brand-panel::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+    background-size: 48px 48px;
+    background-position: -1px -1px;
+    pointer-events: none;
+  }
+  .brand-panel > * { position: relative; z-index: 1; }
+
+  .brand-top {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+  }
+  .brand-top .mark {
+    width: 40px; height: 40px;
+    border-radius: var(--r-md);
+    background: white;
+    color: var(--slate-900);
+    display: grid; place-items: center;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 20px;
+  }
+  .brand-top .name {
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .brand-top .sub {
+    font-size: 11px;
+    color: rgba(255,255,255,0.55);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 2px;
+  }
+
+  .brand-headline {
+    max-width: 480px;
+  }
+  .brand-headline .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--sky-400);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    margin-bottom: var(--s-5);
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .brand-headline .eyebrow::before {
+    content: ""; width: 24px; height: 1px; background: var(--sky-400);
+  }
+  .brand-headline h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 52px;
+    line-height: 1.05;
+    letter-spacing: -0.022em;
+    margin: 0 0 var(--s-5);
+    text-wrap: balance;
+  }
+  .brand-headline h1 em {
+    font-style: italic;
+    color: var(--sky-400);
+    font-weight: 600;
+  }
+  .brand-headline p {
+    font-size: 16px;
+    line-height: 1.6;
+    color: rgba(255,255,255,0.7);
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  .brand-footer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    font-size: 12px;
+    color: rgba(255,255,255,0.5);
+  }
+  .brand-footer .meta {
+    display: flex;
+    gap: var(--s-5);
+    font-family: var(--font-mono);
+  }
+  .brand-footer .meta span {
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .brand-footer .meta b {
+    color: white;
+    font-weight: 600;
+  }
+  .brand-footer .legal { font-size: 11px; line-height: 1.5; }
+
+  /* ── Form · panel derecho ────────────────────────────────── */
+  .form-panel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--s-9);
+    background: var(--slate-50);
+  }
+  .form-panel .container {
+    width: 100%;
+    max-width: 400px;
+  }
+  .form-panel h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 28px;
+    margin: 0 0 var(--s-2);
+    color: var(--slate-900);
+    letter-spacing: -0.015em;
+  }
+  .form-panel .lede {
+    font-size: 14px;
+    color: var(--fg-tertiary);
+    margin-bottom: var(--s-7);
+  }
+  .form-panel form { display: flex; flex-direction: column; gap: var(--s-4); }
+  .form-panel .divider-or {
+    display: flex; align-items: center; gap: var(--s-3);
+    margin: var(--s-5) 0;
+    color: var(--fg-tertiary);
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .form-panel .divider-or::before,
+  .form-panel .divider-or::after {
+    content: ""; flex: 1; height: 1px; background: var(--border-default);
+  }
+  .form-panel .sso {
+    display: flex; align-items: center; justify-content: center;
+    gap: var(--s-3);
+    background: white;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    height: 44px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--fg-primary);
+    cursor: pointer;
+    text-decoration: none;
+    box-shadow: var(--shadow-xs);
+  }
+  .form-panel .sso:hover { background: var(--slate-50); text-decoration: none; }
+  .form-panel .sso svg { width: 16px; height: 16px; color: var(--fg-secondary); }
+  .form-panel .help {
+    margin-top: var(--s-6);
+    padding-top: var(--s-4);
+    border-top: 1px solid var(--border-default);
+    display: flex;
+    justify-content: space-between;
+    font-size: 12.5px;
+    color: var(--fg-tertiary);
+  }
+  .form-panel .help a { color: var(--accent-base); font-weight: 600; }
+  .form-panel .lock-note {
+    background: var(--sky-50);
+    border: 1px solid var(--sky-200);
+    border-radius: var(--r-md);
+    padding: var(--s-3) var(--s-3);
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin-top: var(--s-5);
+    font-size: 12px;
+    color: var(--sky-900);
+    line-height: 1.5;
+  }
+  .form-panel .lock-note svg { width: 14px; height: 14px; color: var(--sky-700); flex-shrink: 0; margin-top: 1px; }
+  .form-panel .lock-note b { font-weight: 600; }
+
+  .field label.with-link {
+    display: flex; justify-content: space-between;
+  }
+  .field label.with-link a { font-size: 12px; font-weight: 600; }
+
+  @media (max-width: 900px) {
+    .login-shell { grid-template-columns: 1fr; }
+    .brand-panel { padding: var(--s-7); display: none; }
+  }
+</style>
+</head>
+<body data-screen-label="01 Login">
+
+<div class="login-shell">
+
+  <!-- ─────────── Panel marca ─────────── -->
+  <aside class="brand-panel">
+    <div class="brand-top">
+      <div class="mark">G</div>
+      <div>
+        <div class="name">Gestión Documental</div>
+        <div class="sub">Alcaldía Municipal de Ejemplo</div>
+      </div>
+    </div>
+
+    <div class="brand-headline">
+      <span class="eyebrow">Sistema institucional · v0.1</span>
+      <h1>Cada documento, <em>radicado</em> y <em>trazable</em> de extremo a extremo.</h1>
+      <p>Acceda con su cuenta institucional para radicar correspondencia, gestionar PQRSD, firmar electrónicamente o consultar la trazabilidad de cualquier trámite oficial de la entidad.</p>
+    </div>
+
+    <div class="brand-footer">
+      <div class="meta">
+        <span><i data-lucide="shield-check"></i> RLS por tenant</span>
+        <span><i data-lucide="lock-keyhole"></i> Auth0 · MFA</span>
+        <span><i data-lucide="history"></i> Auditoría append-only</span>
+      </div>
+      <div class="legal">
+        © 2026 Alcaldía Municipal de Ejemplo · NIT 800.123.456-7. El acceso no autorizado a este sistema es punible conforme a la Ley 1273 de 2009. Toda actividad queda registrada y es auditada con propósito de control interno.
+      </div>
+    </div>
+  </aside>
+
+  <!-- ─────────── Panel formulario ─────────── -->
+  <main class="form-panel">
+    <div class="container">
+
+      <h2>Acceder al sistema</h2>
+      <p class="lede">Use el correo institucional asignado por la oficina de Tecnología.</p>
+
+      <form onsubmit="event.preventDefault(); window.location.href='02-radicado-nuevo.html'">
+
+        <div class="field">
+          <label for="email">Correo institucional <span class="req">*</span></label>
+          <div class="input-wrap">
+            <i class="ic-left" data-lucide="mail"></i>
+            <input id="email" class="input input-lg with-icon" type="email" value="carolina.mendez@ejemplo.gov.co" autofocus />
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="pwd" class="with-link">
+            <span>Contraseña <span class="req">*</span></span>
+            <a href="#">¿Olvidó la contraseña?</a>
+          </label>
+          <div class="input-wrap">
+            <i class="ic-left" data-lucide="key-round"></i>
+            <input id="pwd" class="input input-lg with-icon" type="password" value="••••••••••••" />
+          </div>
+          <div class="hint">Debe contener mínimo 12 caracteres con mayúscula, número y símbolo.</div>
+        </div>
+
+        <label class="check" style="margin-top: 4px;">
+          <input type="checkbox" />
+          Mantener sesión abierta en este equipo (no recomendado en estaciones compartidas)
+        </label>
+
+        <button class="btn btn-primary btn-lg" type="submit" style="margin-top: var(--s-3); width: 100%;">
+          Continuar
+          <i data-lucide="arrow-right"></i>
+        </button>
+
+        <div class="divider-or">o continúe con</div>
+
+        <a class="sso" href="#">
+          <i data-lucide="building-2"></i> Cuenta institucional Microsoft Entra ID
+        </a>
+
+      </form>
+
+      <div class="lock-note">
+        <i data-lucide="shield"></i>
+        <div>
+          Se requerirá un <b>segundo factor</b> al primer acceso del día y al ejecutar acciones críticas. Si no recibe el código, contacte a Mesa de Servicio (Ext. 2300).
+        </div>
+      </div>
+
+      <div class="help">
+        <span>¿Problemas para acceder?</span>
+        <a href="#">Contactar Mesa de Servicio</a>
+      </div>
+
+    </div>
+  </main>
+
+</div>
+
+<script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

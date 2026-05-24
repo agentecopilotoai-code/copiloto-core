@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nuevo radicado · Ventanilla Única</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="../assets/portal.css" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  .wizard-layout {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: var(--s-5);
+    align-items: start;
+  }
+
+  /* Stepper variant — vertical labels under numbered circles */
+  .wizard-bar {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-4) var(--s-5);
+    margin-bottom: var(--s-5);
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+  }
+  .wizard-bar .progress {
+    flex: 1;
+    height: 4px;
+    background: var(--slate-100);
+    border-radius: 2px;
+    position: relative;
+    margin: 0 var(--s-3);
+  }
+  .wizard-bar .progress > i {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 70%;
+    background: var(--slate-900);
+    border-radius: 2px;
+  }
+  .wizard-bar .step-pill {
+    display: flex; flex-direction: column;
+    line-height: 1.2;
+    font-size: 12px;
+  }
+  .wizard-bar .step-pill .of { color: var(--fg-tertiary); font-family: var(--font-mono); font-size: 11px; }
+  .wizard-bar .step-pill .label { font-weight: 600; font-size: 13px; }
+
+  /* Form sections */
+  .section-card {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+  .section-card .head {
+    padding: var(--s-4) var(--s-5);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .section-card .head .title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 16px;
+    color: var(--slate-900);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section-card .head .title svg { width: 16px; height: 16px; color: var(--fg-tertiary); }
+  .section-card .head .subtitle { font-size: 12px; color: var(--fg-tertiary); margin-top: 1px; }
+  .section-card .body { padding: var(--s-5); }
+
+  /* Suggestion list */
+  .alt-suggestion {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    padding: var(--s-3) var(--s-4);
+    font-size: 12.5px;
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    cursor: pointer;
+  }
+  .alt-suggestion:hover { border-color: var(--border-strong); background: var(--slate-25); }
+  .alt-suggestion .code { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-tertiary); }
+  .alt-suggestion .label { font-weight: 600; color: var(--fg-primary); flex: 1; }
+  .alt-suggestion .conf { font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary); }
+
+  /* Anexo strip in summary */
+  .anexo-strip {
+    display: flex; align-items: center; gap: 10px;
+    padding: var(--s-2) var(--s-3);
+    background: var(--slate-50);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    font-size: 12px;
+  }
+  .anexo-strip .ico {
+    width: 28px; height: 28px;
+    border-radius: var(--r-sm);
+    background: var(--red-50);
+    color: var(--red-600);
+    display: grid; place-items: center;
+  }
+  .anexo-strip .ico.docx { background: var(--sky-50); color: var(--sky-700); }
+  .anexo-strip .ico svg { width: 14px; height: 14px; }
+  .anexo-strip .info { flex: 1; min-width: 0; }
+  .anexo-strip .name {
+    font-weight: 600; color: var(--fg-primary);
+    font-size: 12.5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .anexo-strip .meta { font-size: 11px; color: var(--fg-tertiary); font-family: var(--font-mono); }
+  .anexo-strip .status {
+    font-size: 10.5px;
+    font-family: var(--font-mono);
+    color: var(--emerald-700);
+    background: var(--emerald-50);
+    border: 1px solid #A7F3D0;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .anexo-strip .status.processing {
+    color: var(--amber-700); background: var(--amber-50); border-color: #FCD34D;
+  }
+
+  /* Summary panel */
+  .summary-card {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    position: sticky;
+    top: 72px;
+  }
+  .summary-card .head {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border-default);
+    background: var(--slate-50);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .summary-card .head .title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-tertiary);
+  }
+  .summary-card .body {
+    padding: var(--s-4) var(--s-5);
+  }
+  .summary-card .num {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--slate-900);
+    letter-spacing: 0.01em;
+  }
+  .summary-card .num.pending {
+    color: var(--fg-tertiary);
+    font-style: italic;
+  }
+  .summary-card .num-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    margin-top: 2px;
+  }
+  .summary-card .asunto {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 16px;
+    line-height: 1.3;
+    margin: var(--s-4) 0 var(--s-3);
+    color: var(--slate-900);
+  }
+  .summary-card .summary-row {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: var(--s-3);
+    padding: 6px 0;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .summary-card .summary-row:last-of-type { border-bottom: 0; }
+  .summary-card .summary-row .k {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-tertiary);
+    font-weight: 600;
+    padding-top: 2px;
+  }
+  .summary-card .summary-row .v { color: var(--fg-primary); font-weight: 500; }
+  .summary-card .summary-row .v.muted { color: var(--fg-tertiary); font-weight: 400; font-style: italic; }
+  .summary-card .anexos-stack { display: flex; flex-direction: column; gap: 4px; }
+
+  /* Footer action bar */
+  .wizard-foot {
+    position: sticky;
+    bottom: 0;
+    background: white;
+    border-top: 1px solid var(--border-default);
+    padding: var(--s-4) var(--s-7);
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    margin-top: var(--s-6);
+    margin-left: calc(-1 * var(--s-7));
+    margin-right: calc(-1 * var(--s-7));
+    margin-bottom: calc(-1 * var(--s-6));
+  }
+  .wizard-foot .progress-text {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    margin-right: auto;
+  }
+  .wizard-foot .progress-text b { color: var(--fg-secondary); font-weight: 600; }
+
+  .scope-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--slate-50);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    padding: 4px 8px;
+    font-size: 11.5px;
+    color: var(--fg-secondary);
+  }
+  .scope-pill svg { width: 11px; height: 11px; color: var(--fg-tertiary); }
+</style>
+</head>
+<body data-screen-label="02 Nuevo Radicado">
+
+<div class="app-shell">
+
+  <!-- ═══════ SIDEBAR — Radicador VU ═══════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="title">Gestión Documental</div>
+        <div class="subtitle">Alcaldía de Ejemplo</div>
+      </div>
+    </div>
+    <div class="sidebar-role">
+      <div class="avatar">CM</div>
+      <div>
+        <div class="name">Carolina Méndez</div>
+        <div class="rol">ROL-004 · Radicador VU</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">Ventanilla Única</div>
+        <a class="nav-link" href="#"><i data-lucide="layout-dashboard"></i> Panel del día <span class="count">42</span></a>
+        <a class="nav-link active" href="#"><i data-lucide="file-plus-2"></i> Nuevo radicado</a>
+        <a class="nav-link" href="#"><i data-lucide="list-checks"></i> Cola pendiente <span class="count">8</span></a>
+        <a class="nav-link" href="#"><i data-lucide="mail-search"></i> Correos por procesar <span class="count">17</span></a>
+        <a class="nav-link" href="#"><i data-lucide="search"></i> Buscar radicados</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Periféricos</div>
+        <a class="nav-link" href="#"><i data-lucide="scan-line"></i> Digitalización por lote</a>
+        <a class="nav-link" href="#"><i data-lucide="package"></i> Pendientes de asociación <span class="count">3</span></a>
+        <a class="nav-link" href="#"><i data-lucide="printer"></i> Estado del agente <span class="count" style="background: #ECFDF5; color: #047857">OK</span></a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Reportes</div>
+        <a class="nav-link" href="#"><i data-lucide="bar-chart-3"></i> Reportes VU</a>
+        <a class="nav-link" href="#"><i data-lucide="award"></i> Constancias del día</a>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <span>Counter-1 · Punto Principal</span>
+      <i data-lucide="circle-dot" style="width:11px; height:11px; color: var(--emerald-600)"></i>
+    </div>
+  </aside>
+
+  <!-- ═══════ MAIN ═══════ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="search">
+        <i data-lucide="search"></i>
+        <input placeholder="Buscar número de radicado, tercero o asunto…" />
+        <span class="shortcut">⌘ K</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="scope">
+        <i data-lucide="layers"></i>
+        <span class="label">Alcance:</span>
+        <span class="value">Punto Principal</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <button class="icon-btn" title="Ayuda"><i data-lucide="help-circle"></i></button>
+      <button class="icon-btn" title="Notificaciones"><i data-lucide="bell"></i><span class="dot"></span></button>
+      <button class="user-chip">
+        <div class="avatar">CM</div>
+        <span class="name">Carolina</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+    </header>
+
+    <div class="content">
+
+      <!-- Breadcrumb -->
+      <div class="breadcrumb">
+        <a href="#"><i data-lucide="home"></i></a>
+        <i data-lucide="chevron-right"></i>
+        <a href="#">Ventanilla Única</a>
+        <i data-lucide="chevron-right"></i>
+        <span class="here">Nuevo radicado de entrada</span>
+      </div>
+
+      <!-- Page head -->
+      <div class="page-head">
+        <div class="title-block">
+          <h1>Nuevo radicado de entrada</h1>
+          <p class="subtitle">Asistente en 5 pasos. Los datos se autoguardan como borrador cada 30 segundos. El número definitivo se asigna al confirmar el paso final.</p>
+        </div>
+        <div class="actions">
+          <span class="scope-pill"><i data-lucide="save"></i> Guardado · hace 12s</span>
+          <button class="btn btn-secondary"><i data-lucide="x"></i> Descartar</button>
+        </div>
+      </div>
+
+      <!-- Wizard steps -->
+      <div class="wizard-steps" style="margin-bottom: var(--s-5);">
+        <div class="wizard-step done">
+          <div class="step-num"><i data-lucide="check"></i></div>
+          <div class="step-text">
+            <div class="step-label">Paso 1</div>
+            <div class="step-name">Canal y remitente</div>
+          </div>
+        </div>
+        <div class="wizard-step done">
+          <div class="step-num"><i data-lucide="check"></i></div>
+          <div class="step-text">
+            <div class="step-label">Paso 2</div>
+            <div class="step-name">Asunto y descripción</div>
+          </div>
+        </div>
+        <div class="wizard-step done">
+          <div class="step-num"><i data-lucide="check"></i></div>
+          <div class="step-text">
+            <div class="step-label">Paso 3</div>
+            <div class="step-name">Anexos</div>
+          </div>
+        </div>
+        <div class="wizard-step active">
+          <div class="step-num">4</div>
+          <div class="step-text">
+            <div class="step-label">Paso 4</div>
+            <div class="step-name">Clasificación inicial</div>
+          </div>
+        </div>
+        <div class="wizard-step">
+          <div class="step-num">5</div>
+          <div class="step-text">
+            <div class="step-label">Paso 5</div>
+            <div class="step-name">Confirmación</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Two-column layout -->
+      <div class="wizard-layout">
+
+        <!-- LEFT — form -->
+        <div class="stack">
+
+          <!-- IA Suggestion -->
+          <div class="ia-suggestion">
+            <div class="ia-mark"><i data-lucide="sparkles"></i></div>
+            <div class="ia-body">
+              <div class="ia-eyebrow">Sugerencia · Clasificación inicial <span class="conf">87% confianza</span></div>
+              <div class="ia-text">
+                Tipo: <b>Petición de interés general</b> · Serie <b>240 — Trámites urbanísticos</b> · Subserie <b>240.12 — Licencias de construcción</b> · Dependencia responsable sugerida: <b>Oficina Asesora Jurídica</b>.
+              </div>
+              <div class="ia-explain">
+                El asunto menciona explícitamente "licencia de construcción" y el anexo principal corresponde al formato F-LU-001. La dependencia responsable habitual para este subtipo en esta vigencia TRD es la Oficina Asesora Jurídica.
+              </div>
+            </div>
+            <div class="ia-actions">
+              <button class="btn btn-accent btn-sm"><i data-lucide="check"></i> Aceptar</button>
+              <button class="btn btn-secondary btn-sm"><i data-lucide="pencil"></i> Modificar</button>
+              <button class="btn btn-ghost btn-sm"><i data-lucide="x"></i> Rechazar</button>
+            </div>
+          </div>
+
+          <!-- Alternativas IA expandida -->
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-title" style="display:flex; align-items:center; gap:6px;">
+                  <i data-lucide="list-tree" style="width:14px; height:14px; color:var(--fg-tertiary)"></i>
+                  Otras subseries con coincidencia parcial
+                </div>
+              </div>
+              <button class="btn btn-ghost btn-sm">Ver matriz TRD vigente <i data-lucide="external-link"></i></button>
+            </div>
+            <div class="card-body" style="padding: var(--s-3) var(--s-4);">
+              <div class="stack" style="gap: 6px;">
+                <div class="alt-suggestion">
+                  <span class="code">240.13</span>
+                  <span class="label">Licencias de urbanización</span>
+                  <span class="conf">62%</span>
+                </div>
+                <div class="alt-suggestion">
+                  <span class="code">240.21</span>
+                  <span class="label">Conceptos previos de planeación</span>
+                  <span class="conf">41%</span>
+                </div>
+                <div class="alt-suggestion">
+                  <span class="code">110.04</span>
+                  <span class="label">Peticiones generales</span>
+                  <span class="conf">28%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Form clasificación manual -->
+          <div class="section-card">
+            <div class="head">
+              <div>
+                <div class="title"><i data-lucide="folder-tree"></i> Clasificación documental</div>
+                <div class="subtitle">Define la TRD vigente aplicable y la dependencia responsable inicial.</div>
+              </div>
+              <span class="badge info no-dot" style="font-family: var(--font-mono)">TRD 2026.1 vigente</span>
+            </div>
+            <div class="body">
+              <div class="grid-2" style="gap: var(--s-4);">
+                <div class="field">
+                  <label for="tipo">Tipo de trámite <span class="req">*</span></label>
+                  <select id="tipo" class="select">
+                    <option>Petición de interés general</option>
+                    <option>Petición de interés particular</option>
+                    <option>Petición de información</option>
+                    <option>Queja</option>
+                    <option>Reclamo</option>
+                    <option>Sugerencia</option>
+                    <option>Denuncia</option>
+                    <option>Solicitud de copia</option>
+                    <option>Trámite administrativo</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="termino">Término aplicable</label>
+                  <select id="termino" class="select">
+                    <option>15 días hábiles · Petición general (Ley 1755/2015)</option>
+                    <option>10 días hábiles · Petición de información</option>
+                    <option>30 días hábiles · Trámite administrativo</option>
+                  </select>
+                  <div class="hint">Calculado sobre el calendario institucional, excluyendo feriados.</div>
+                </div>
+                <div class="field">
+                  <label for="serie">Serie <span class="req">*</span></label>
+                  <div class="input-wrap">
+                    <i class="ic-left" data-lucide="folder"></i>
+                    <input id="serie" class="input with-icon" value="240 — Trámites urbanísticos" />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="subserie">Subserie <span class="req">*</span></label>
+                  <div class="input-wrap">
+                    <i class="ic-left" data-lucide="folder-open"></i>
+                    <input id="subserie" class="input with-icon" value="240.12 — Licencias de construcción" />
+                  </div>
+                </div>
+                <div class="field" style="grid-column: span 2;">
+                  <label for="dep">Dependencia responsable inicial <span class="req">*</span></label>
+                  <div class="input-wrap">
+                    <i class="ic-left" data-lucide="building-2"></i>
+                    <input id="dep" class="input with-icon" value="Oficina Asesora Jurídica" />
+                  </div>
+                  <div class="hint">El jefe de dependencia podrá reasignar a un profesional responsable después del registro.</div>
+                </div>
+                <div class="field" style="grid-column: span 2;">
+                  <label>Marcaciones</label>
+                  <div class="hstack" style="gap: var(--s-4); padding-top: 2px;">
+                    <label class="check"><input type="checkbox" checked /> Notificar al ciudadano por correo</label>
+                    <label class="check"><input type="checkbox" /> Información reservada (Ley 1712/2014)</label>
+                    <label class="check"><input type="checkbox" checked /> Imprimir etiqueta automáticamente</label>
+                    <label class="check"><input type="checkbox" /> Incluir en consulta pública con QR</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Posible duplicado -->
+          <div class="alert warning">
+            <div class="icon"><i data-lucide="alert-triangle"></i></div>
+            <div class="body">
+              <div class="title">Posible duplicado detectado · 93% similitud</div>
+              <div>El asunto y el remitente coinciden con el radicado <b class="mono">RAD-2026-001188</b>, creado el 15 de mayo por el mismo tercero. Considere asociar este nuevo documento como anexo del radicado existente.</div>
+              <div class="actions">
+                <a href="#"><i data-lucide="link-2" style="width:12px; height:12px; vertical-align:-2px;"></i> Asociar al existente</a>
+                <a href="#">Continuar como radicado nuevo</a>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- RIGHT — summary -->
+        <aside class="summary-card">
+          <div class="head">
+            <div class="title">Vista previa del radicado</div>
+            <i data-lucide="eye" style="width:14px; height:14px; color: var(--fg-tertiary)"></i>
+          </div>
+          <div class="body">
+            <div>
+              <div class="num pending">RAD-2026-ASIGNAR</div>
+              <div class="num-meta">Entrada · Presencial · 24 May 2026</div>
+            </div>
+            <div class="asunto">Solicitud de licencia de construcción para predio sector La Esperanza</div>
+
+            <div>
+              <div class="summary-row">
+                <div class="k">Remitente</div>
+                <div class="v">Constructora El Roble S.A.S.<br/><span class="mono" style="font-size: 11px; color: var(--fg-tertiary)">NIT 900.555.222-1</span></div>
+              </div>
+              <div class="summary-row">
+                <div class="k">Canal</div>
+                <div class="v">Presencial · Punto Principal · Counter-1</div>
+              </div>
+              <div class="summary-row">
+                <div class="k">Clasificación</div>
+                <div class="v">
+                  <span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span>
+                  <div style="margin-top: 4px; font-size: 11.5px;">Serie 240 · Subserie 240.12</div>
+                </div>
+              </div>
+              <div class="summary-row">
+                <div class="k">Dependencia</div>
+                <div class="v">Oficina Asesora Jurídica</div>
+              </div>
+              <div class="summary-row">
+                <div class="k">Término</div>
+                <div class="v">15 días hábiles · vence el <b>16 jun 2026</b></div>
+              </div>
+              <div class="summary-row">
+                <div class="k">Anexos</div>
+                <div class="v">
+                  <div class="anexos-stack">
+                    <div class="anexo-strip">
+                      <div class="ico"><i data-lucide="file-text"></i></div>
+                      <div class="info">
+                        <div class="name">F-LU-001-firmado.pdf</div>
+                        <div class="meta">3 pág · 2.1 MB · OCR 87%</div>
+                      </div>
+                      <span class="status">listo</span>
+                    </div>
+                    <div class="anexo-strip">
+                      <div class="ico docx"><i data-lucide="file-text"></i></div>
+                      <div class="info">
+                        <div class="name">Plano-arquitectonico-v2.dwg</div>
+                        <div class="meta">1.8 MB · sin OCR</div>
+                      </div>
+                      <span class="status">listo</span>
+                    </div>
+                    <div class="anexo-strip">
+                      <div class="ico"><i data-lucide="file-text"></i></div>
+                      <div class="info">
+                        <div class="name">Certificado-libertad-2026.pdf</div>
+                        <div class="meta">2 pág · 312 KB · digitalizado</div>
+                      </div>
+                      <span class="status processing">extrayendo</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="summary-row">
+                <div class="k">Constancia</div>
+                <div class="v"><i data-lucide="qr-code" style="width:11px; height:11px; vertical-align:-1px; color: var(--fg-secondary)"></i> Con QR · imprimir al confirmar</div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+      </div>
+
+      <!-- Footer action bar -->
+      <div class="wizard-foot">
+        <div class="progress-text">Paso <b>4 de 5</b> · Datos válidos</div>
+        <button class="btn btn-ghost"><i data-lucide="arrow-left"></i> Anterior</button>
+        <button class="btn btn-secondary"><i data-lucide="save"></i> Guardar borrador</button>
+        <button class="btn btn-primary">
+          Continuar a confirmación
+          <i data-lucide="arrow-right"></i>
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

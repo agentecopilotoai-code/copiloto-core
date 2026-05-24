@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nueva correspondencia externa · Gestión Documental</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="../assets/portal.css" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  .ce-layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: var(--s-4);
+    align-items: start;
+  }
+
+  /* Compose card */
+  .compose {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+  .compose .ribbon {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-5);
+    background: var(--slate-50);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .compose .ribbon .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-tertiary);
+  }
+  .compose .ribbon .num b { color: var(--fg-primary); font-weight: 600; }
+  .compose .ribbon .save-state {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .compose .ribbon .save-state svg { width: 11px; height: 11px; color: var(--emerald-600); }
+
+  /* Form rows */
+  .ce-row {
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-5);
+    border-bottom: 1px solid var(--border-subtle);
+    min-height: 50px;
+  }
+  .ce-row.start { align-items: flex-start; padding-top: var(--s-4); padding-bottom: var(--s-4); }
+  .ce-row .key {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fg-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding-top: 8px;
+  }
+  .ce-row .val { min-width: 0; }
+  .ce-row .extras {
+    display: flex; gap: 6px;
+    font-size: 11.5px;
+  }
+  .ce-row .extras a { color: var(--fg-tertiary); font-weight: 500; }
+  .ce-row .extras a:hover { color: var(--fg-primary); }
+
+  /* Recipient chips */
+  .chip-input {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    background: white;
+    min-height: 36px;
+    align-items: center;
+  }
+  .chip-input:focus-within { border-color: var(--border-focus); box-shadow: var(--shadow-focus); }
+  .recipient-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 4px 3px 4px;
+    background: var(--slate-100);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-pill);
+    font-size: 12px;
+  }
+  .recipient-chip .avatar { width: 18px; height: 18px; font-size: 9px; }
+  .recipient-chip .name { font-weight: 600; color: var(--fg-primary); }
+  .recipient-chip .org { color: var(--fg-tertiary); font-size: 11px; }
+  .recipient-chip .x { cursor: pointer; color: var(--fg-tertiary); padding: 0 4px; }
+  .recipient-chip .x:hover { color: var(--red-600); }
+  .recipient-chip.tercero { background: var(--sky-50); border-color: var(--sky-200); }
+  .chip-input input {
+    border: none;
+    outline: none;
+    font-size: 13px;
+    flex: 1;
+    min-width: 100px;
+    padding: 4px;
+    font-family: var(--font-sans);
+    background: transparent;
+  }
+
+  /* Body editor */
+  .ce-body-area {
+    padding: 0;
+  }
+  .ce-body-area textarea {
+    width: 100%;
+    min-height: 220px;
+    border: none;
+    padding: var(--s-5);
+    font-family: var(--font-display);
+    font-size: 14.5px;
+    line-height: 1.65;
+    resize: vertical;
+    color: var(--fg-primary);
+  }
+  .ce-body-area textarea:focus { outline: none; }
+  .ce-body-area .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px var(--s-5);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--slate-25);
+  }
+  .ce-body-area .toolbar .tool {
+    width: 26px; height: 26px;
+    border-radius: var(--r-sm);
+    background: transparent; border: 1px solid transparent;
+    color: var(--fg-secondary);
+    display: grid; place-items: center;
+    cursor: pointer;
+  }
+  .ce-body-area .toolbar .tool:hover { background: white; border-color: var(--border-default); color: var(--fg-primary); }
+  .ce-body-area .toolbar .tool svg { width: 13px; height: 13px; }
+  .ce-body-area .toolbar .divider { width: 1px; height: 16px; background: var(--border-default); margin: 0 4px; }
+
+  /* Anexos block */
+  .anexos-block { padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--border-subtle); }
+  .anexos-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+  .anexo-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: var(--slate-50);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+  }
+  .anexo-card .ico {
+    width: 32px; height: 32px;
+    border-radius: var(--r-sm);
+    background: var(--red-50);
+    color: var(--red-600);
+    display: grid; place-items: center;
+  }
+  .anexo-card .ico.docx { background: var(--sky-50); color: var(--sky-700); }
+  .anexo-card .ico.xlsx { background: var(--emerald-50); color: var(--emerald-700); }
+  .anexo-card .ico svg { width: 14px; height: 14px; }
+  .anexo-card .info { flex: 1; min-width: 0; }
+  .anexo-card .name { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .anexo-card .meta { font-size: 10.5px; color: var(--fg-tertiary); font-family: var(--font-mono); }
+  .anexo-card .x {
+    width: 22px; height: 22px; display: grid; place-items: center;
+    cursor: pointer; color: var(--fg-tertiary); border-radius: 3px;
+  }
+  .anexo-card .x:hover { background: var(--red-50); color: var(--red-700); }
+  .anexo-card .x svg { width: 12px; height: 12px; }
+
+  .anexo-drop {
+    border: 1.5px dashed var(--border-strong);
+    border-radius: var(--r-md);
+    padding: var(--s-4);
+    text-align: center;
+    color: var(--fg-tertiary);
+    font-size: 12.5px;
+    background: var(--slate-25);
+    cursor: pointer;
+  }
+  .anexo-drop:hover { background: white; border-color: var(--accent-base); color: var(--accent-base); }
+  .anexo-drop svg { width: 18px; height: 18px; margin-bottom: 4px; }
+
+  /* Foot bar */
+  .ce-foot {
+    display: flex; align-items: center; gap: var(--s-3);
+    padding: var(--s-4) var(--s-5);
+    background: white;
+  }
+  .ce-foot .left { display: flex; gap: var(--s-2); align-items: center; }
+  .ce-foot .right { display: flex; gap: var(--s-2); margin-left: auto; }
+  .ce-foot .left .check { font-size: 12.5px; }
+
+  /* Aside */
+  .aside-card {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    margin-bottom: var(--s-4);
+  }
+  .aside-card .head {
+    padding: 10px var(--s-4);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-tertiary);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .aside-card .head svg { width: 13px; height: 13px; color: var(--fg-tertiary); }
+  .aside-card .body { padding: var(--s-4); }
+
+  /* Workflow vertical */
+  .wf-vert { display: flex; flex-direction: column; }
+  .wf-item {
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 10px;
+    padding-bottom: 12px;
+    position: relative;
+  }
+  .wf-item:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 11px; top: 24px; bottom: 4px;
+    width: 2px;
+    background: var(--border-default);
+  }
+  .wf-item .dot {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: var(--slate-100);
+    border: 1px solid var(--border-default);
+    color: var(--fg-tertiary);
+    display: grid; place-items: center;
+    z-index: 1; position: relative;
+    font-family: var(--font-mono); font-size: 10px; font-weight: 700;
+  }
+  .wf-item .dot svg { width: 12px; height: 12px; }
+  .wf-item.done .dot { background: var(--emerald-600); color: white; border-color: var(--emerald-600); }
+  .wf-item.current .dot { background: var(--accent-base); color: white; border-color: var(--accent-base); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .wf-item .info .lbl { font-size: 13px; font-weight: 600; color: var(--fg-primary); margin-bottom: 1px; }
+  .wf-item .info .who { font-size: 11.5px; color: var(--fg-tertiary); }
+  .wf-item.current .info .lbl { color: var(--accent-strong); }
+  .wf-item.done .info .lbl { color: var(--fg-secondary); }
+  .wf-item .info .when {
+    font-family: var(--font-mono); font-size: 10.5px;
+    color: var(--fg-tertiary); margin-top: 2px;
+  }
+
+  /* IA suggestion compact */
+  .ia-mini {
+    border: 1px solid var(--sky-200);
+    background: var(--sky-50);
+    border-radius: var(--r-md);
+    padding: 10px;
+    margin-bottom: var(--s-4);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 10px;
+  }
+  .ia-mini .mk {
+    width: 24px; height: 24px;
+    background: var(--sky-600);
+    color: white;
+    border-radius: var(--r-sm);
+    display: grid; place-items: center;
+  }
+  .ia-mini .mk svg { width: 12px; height: 12px; }
+  .ia-mini .t {
+    font-size: 11.5px;
+    color: var(--sky-700);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .ia-mini .d {
+    font-size: 12px;
+    color: var(--fg-primary);
+    line-height: 1.45;
+    margin-bottom: 6px;
+  }
+  .ia-mini .b {
+    display: flex; gap: 4px;
+  }
+</style>
+</head>
+<body data-screen-label="08 Correspondencia Externa">
+
+<div class="app-shell">
+
+  <!-- Sidebar — Usuario Radicación Externa -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="title">Gestión Documental</div>
+        <div class="subtitle">Alcaldía de Ejemplo</div>
+      </div>
+    </div>
+    <div class="sidebar-role">
+      <div class="avatar" style="background: var(--sky-700);">DA</div>
+      <div>
+        <div class="name">Diego Acuña</div>
+        <div class="rol">ROL-013 · Rad. Externa</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">Correspondencia externa</div>
+        <a class="nav-link active" href="#"><i data-lucide="pen-line"></i> Nueva</a>
+        <a class="nav-link" href="#"><i data-lucide="file-edit"></i> Borradores <span class="count">5</span></a>
+        <a class="nav-link" href="#"><i data-lucide="file-search"></i> Por revisar <span class="count">2</span></a>
+        <a class="nav-link" href="#"><i data-lucide="check-circle-2"></i> Por aprobar <span class="count">1</span></a>
+        <a class="nav-link" href="09-por-firmar.html"><i data-lucide="signature"></i> Por firmar <span class="count">1</span></a>
+        <a class="nav-link" href="#"><i data-lucide="send"></i> Enviadas</a>
+        <a class="nav-link" href="#"><i data-lucide="archive"></i> Cerradas</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Recibida</div>
+        <a class="nav-link" href="#"><i data-lucide="mail-open"></i> Bandeja externa <span class="count">12</span></a>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <span>Of. Asesora Jurídica</span>
+      <i data-lucide="building-2" style="width:11px; height:11px"></i>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar">
+      <div class="search">
+        <i data-lucide="search"></i>
+        <input placeholder="Buscar correspondencia…" />
+        <span class="shortcut">⌘ K</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="scope">
+        <i data-lucide="layers"></i>
+        <span class="label">Alcance:</span>
+        <span class="value">Mi dependencia</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <button class="icon-btn"><i data-lucide="help-circle"></i></button>
+      <button class="icon-btn"><i data-lucide="bell"></i><span class="dot"></span></button>
+      <button class="user-chip">
+        <div class="avatar" style="background: var(--sky-700);">DA</div>
+        <span class="name">Diego</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+    </header>
+
+    <div class="content">
+
+      <div class="breadcrumb">
+        <a href="06-dashboard.html"><i data-lucide="home"></i></a>
+        <i data-lucide="chevron-right"></i>
+        <a href="#">Correspondencia externa</a>
+        <i data-lucide="chevron-right"></i>
+        <span class="here">Nuevo oficio de salida</span>
+      </div>
+
+      <div class="page-head">
+        <div class="title-block">
+          <h1>Nuevo oficio de salida</h1>
+          <p class="subtitle">El número definitivo se asigna al solicitar radicación a Ventanilla Única. Puede guardar como borrador y continuar después.</p>
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary"><i data-lucide="file-stack"></i> Desde plantilla</button>
+          <button class="btn btn-secondary"><i data-lucide="x"></i> Descartar</button>
+        </div>
+      </div>
+
+      <div class="ce-layout">
+
+        <!-- LEFT — compose -->
+        <section class="compose">
+
+          <!-- Ribbon -->
+          <div class="ribbon">
+            <span class="num">Borrador <b>OFI-BORR-2026-00214</b></span>
+            <span class="muted" style="font-size: 12px;">·</span>
+            <span class="num">Asociado a <a href="05-radicado-ficha.html">RAD-2026-001234</a></span>
+            <div class="save-state">
+              <i data-lucide="check-circle-2"></i> Guardado · hace 22s
+            </div>
+          </div>
+
+          <!-- Para -->
+          <div class="ce-row start">
+            <div class="key">Para</div>
+            <div class="val">
+              <div class="chip-input">
+                <span class="recipient-chip tercero">
+                  <div class="avatar sky">CR</div>
+                  <span class="name">Constructora El Roble S.A.S.</span>
+                  <span class="org">· NIT 900.555.222-1 · <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="48223d3a212c212b29082d243a272a242d662b27">[email&#160;protected]</a></span>
+                  <span class="x"><i data-lucide="x" style="width:11px; height:11px"></i></span>
+                </span>
+                <input placeholder="Agregar destinatario…" />
+              </div>
+            </div>
+            <div class="extras">
+              <a href="#">+ Copia</a>
+              <a href="#">+ Copia oculta</a>
+            </div>
+          </div>
+
+          <!-- Copia (Cc) -->
+          <div class="ce-row">
+            <div class="key">Copia</div>
+            <div class="val">
+              <div class="chip-input">
+                <span class="recipient-chip">
+                  <div class="avatar">AT</div>
+                  <span class="name">Ana Tovar</span>
+                  <span class="org">· Secretaría General</span>
+                  <span class="x"><i data-lucide="x" style="width:11px; height:11px"></i></span>
+                </span>
+                <span class="recipient-chip">
+                  <div class="avatar amber">CV</div>
+                  <span class="name">Curaduría Urbana N° 2</span>
+                  <span class="org">· <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="77140205161302051e164537121d121a071b1859101801591418">[email&#160;protected]</a></span>
+                  <span class="x"><i data-lucide="x" style="width:11px; height:11px"></i></span>
+                </span>
+                <input placeholder="Agregar copia…" />
+              </div>
+            </div>
+            <div class="extras">
+              <span class="muted" style="color: var(--fg-tertiary)">2 destinatarios</span>
+            </div>
+          </div>
+
+          <!-- De -->
+          <div class="ce-row">
+            <div class="key">De</div>
+            <div class="val" style="display: flex; align-items: center; gap: 10px;">
+              <div class="avatar sm" style="background: var(--sky-700); color: white;">DA</div>
+              <div style="font-size: 13px; font-weight: 600;">Diego Acuña — Profesional Universitario</div>
+              <span class="muted" style="font-size: 12px; color: var(--fg-tertiary);">Oficina Asesora Jurídica</span>
+            </div>
+          </div>
+
+          <!-- Asunto -->
+          <div class="ce-row">
+            <div class="key">Asunto</div>
+            <div class="val">
+              <input class="input" style="border: none; box-shadow: none; padding: 0; height: auto; font-size: 15px; font-weight: 600;" value="Respuesta a solicitud de licencia de construcción — Predio sector La Esperanza" />
+            </div>
+            <div class="extras">
+              <span class="muted mono" style="color: var(--fg-tertiary); font-size: 11px;">68 / 200</span>
+            </div>
+          </div>
+
+          <!-- IA suggestion small inline -->
+          <div style="padding: var(--s-4) var(--s-5) 0;">
+            <div class="ia-suggestion">
+              <div class="ia-mark"><i data-lucide="sparkles"></i></div>
+              <div class="ia-body">
+                <div class="ia-eyebrow">Sugerencia de plantilla <span class="conf">88% match</span></div>
+                <div class="ia-text">Detectada como respuesta a trámite de licencia urbanística. La plantilla <b>P-OFI-LU-002</b> incluye los anexos típicos y el lenguaje formal requerido por la Ley 388/1997.</div>
+              </div>
+              <div class="ia-actions">
+                <button class="btn btn-accent btn-sm"><i data-lucide="check"></i> Aplicar plantilla</button>
+                <button class="btn btn-ghost btn-sm"><i data-lucide="x"></i> Rechazar</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Body -->
+          <div class="ce-body-area" style="margin-top: var(--s-4); border-top: 1px solid var(--border-subtle);">
+            <div class="toolbar">
+              <button class="tool"><i data-lucide="bold"></i></button>
+              <button class="tool"><i data-lucide="italic"></i></button>
+              <button class="tool"><i data-lucide="underline"></i></button>
+              <div class="divider"></div>
+              <button class="tool"><i data-lucide="list"></i></button>
+              <button class="tool"><i data-lucide="list-ordered"></i></button>
+              <button class="tool"><i data-lucide="quote"></i></button>
+              <div class="divider"></div>
+              <button class="tool"><i data-lucide="bookmark"></i></button>
+              <button class="tool"><i data-lucide="link"></i></button>
+              <button class="tool"><i data-lucide="braces"></i></button>
+              <div style="flex: 1"></div>
+              <button class="tool" title="Reemplazar variables institucionales"><i data-lucide="sparkles" style="color: var(--accent-base);"></i></button>
+              <button class="tool" title="Vista previa"><i data-lucide="eye"></i></button>
+            </div>
+            <textarea>Respetados señores:
+
+Reciban un cordial saludo de la Oficina Asesora Jurídica de la Alcaldía Municipal de Ejemplo. En atención a su solicitud radicada bajo el número RAD-2026-001234 del 24 de mayo de 2026, relativa a la licencia de construcción para el predio del sector La Esperanza, nos permitimos pronunciarnos en los siguientes términos:
+
+La revisión preliminar del expediente evidencia que la documentación presentada se encuentra completa y cumple con los requisitos formales establecidos en la Ley 388 de 1997 y el Decreto 1077 de 2015. No obstante, se requiere el concepto técnico previo de la Curaduría Urbana N° 2, conforme al procedimiento institucional vigente.
+
+Una vez obtenido dicho concepto, esta dependencia procederá con el análisis jurídico de fondo y la emisión del acto administrativo correspondiente, dentro del término legal de cuarenta y cinco (45) días hábiles establecido en la normativa.
+
+Atentamente,
+
+Diego Acuña — Profesional Universitario
+Oficina Asesora Jurídica</textarea>
+          </div>
+
+          <!-- Anexos -->
+          <div class="anexos-block">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-3);">
+              <div style="font-size: 12px; font-weight: 600; color: var(--fg-secondary); text-transform: uppercase; letter-spacing: 0.04em;">
+                <i data-lucide="paperclip" style="width: 13px; height: 13px; vertical-align: -2px;"></i> Anexos · 3 archivos · 5.4 MB
+              </div>
+              <button class="btn btn-ghost btn-sm"><i data-lucide="plus"></i> Agregar</button>
+            </div>
+            <div class="anexos-grid">
+              <div class="anexo-card">
+                <div class="ico"><i data-lucide="file-text"></i></div>
+                <div class="info">
+                  <div class="name">Acta-de-revisión-jurídica.pdf</div>
+                  <div class="meta">3 pág · 421 KB</div>
+                </div>
+                <div class="x"><i data-lucide="x"></i></div>
+              </div>
+              <div class="anexo-card">
+                <div class="ico docx"><i data-lucide="file-text"></i></div>
+                <div class="info">
+                  <div class="name">Concepto-C-2026-114.docx</div>
+                  <div class="meta">8 pág · 1.2 MB</div>
+                </div>
+                <div class="x"><i data-lucide="x"></i></div>
+              </div>
+              <div class="anexo-card">
+                <div class="ico xlsx"><i data-lucide="file-spreadsheet"></i></div>
+                <div class="info">
+                  <div class="name">Cálculo-tasa-urbana.xlsx</div>
+                  <div class="meta">3.8 MB · 4 hojas</div>
+                </div>
+                <div class="x"><i data-lucide="x"></i></div>
+              </div>
+              <div class="anexo-drop" style="grid-column: span 3;">
+                <div><i data-lucide="upload-cloud"></i></div>
+                <div>Arrastre archivos aquí o haga clic para seleccionar — PDF, DOCX, XLSX hasta 25 MB</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Footer -->
+          <div class="ce-foot">
+            <div class="left">
+              <label class="check"><input type="checkbox" checked /> Solicitar radicación de salida a Ventanilla</label>
+            </div>
+            <div class="right">
+              <button class="btn btn-ghost"><i data-lucide="save"></i> Guardar borrador</button>
+              <button class="btn btn-secondary"><i data-lucide="eye"></i> Vista previa</button>
+              <button class="btn btn-primary"><i data-lucide="send"></i> Enviar a revisión</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- RIGHT — aside -->
+        <aside>
+
+          <!-- IA mini -->
+          <div class="ia-mini">
+            <div class="mk"><i data-lucide="sparkles"></i></div>
+            <div>
+              <div class="t">Asistente IA disponible</div>
+              <div class="d">Puedo redactar el cuerpo, sugerir anexos según el tipo de trámite, o validar tono y normativa citada.</div>
+              <div class="b">
+                <button class="btn btn-accent btn-sm" style="font-size: 11.5px;"><i data-lucide="pen-line"></i> Redactar</button>
+                <button class="btn btn-ghost btn-sm" style="font-size: 11.5px;"><i data-lucide="shield-check"></i> Validar</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Workflow -->
+          <div class="aside-card">
+            <div class="head"><i data-lucide="git-pull-request"></i> Flujo de aprobación</div>
+            <div class="body">
+              <div class="wf-vert">
+                <div class="wf-item current">
+                  <div class="dot">1</div>
+                  <div class="info">
+                    <div class="lbl">Proyección</div>
+                    <div class="who">Diego Acuña · Profesional</div>
+                    <div class="when">en progreso · hace 12 min</div>
+                  </div>
+                </div>
+                <div class="wf-item">
+                  <div class="dot">2</div>
+                  <div class="info">
+                    <div class="lbl">Revisión VB</div>
+                    <div class="who">Pendiente — auto-asignado al Revisor</div>
+                  </div>
+                </div>
+                <div class="wf-item">
+                  <div class="dot">3</div>
+                  <div class="info">
+                    <div class="lbl">Aprobación</div>
+                    <div class="who">Carlos Granados · Jefe Dep.</div>
+                  </div>
+                </div>
+                <div class="wf-item">
+                  <div class="dot">4</div>
+                  <div class="info">
+                    <div class="lbl">Firma electrónica</div>
+                    <div class="who">Carlos Granados · firmante</div>
+                  </div>
+                </div>
+                <div class="wf-item">
+                  <div class="dot">5</div>
+                  <div class="info">
+                    <div class="lbl">Radicación de salida</div>
+                    <div class="who">Carolina Méndez · Ventanilla</div>
+                  </div>
+                </div>
+                <div class="wf-item">
+                  <div class="dot">6</div>
+                  <div class="info">
+                    <div class="lbl">Envío + soporte</div>
+                    <div class="who">Diego Acuña · acuse de recibo</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Datos asociados -->
+          <div class="aside-card">
+            <div class="head"><i data-lucide="link"></i> Información asociada</div>
+            <div class="body">
+              <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+                <div>
+                  <div style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-tertiary); font-weight: 600; margin-bottom: 2px;">Radicado de entrada</div>
+                  <div style="font-size: 12.5px;"><a href="05-radicado-ficha.html" class="mono" style="font-weight: 600;">RAD-2026-001234</a></div>
+                </div>
+                <div>
+                  <div style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-tertiary); font-weight: 600; margin-bottom: 2px;">Serie / Subserie</div>
+                  <div style="font-size: 12.5px; font-weight: 500;">240 — Trámites urbanísticos / 240.12 — Licencias</div>
+                </div>
+                <div>
+                  <div style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-tertiary); font-weight: 600; margin-bottom: 2px;">Expediente</div>
+                  <div style="font-size: 12.5px;"><a href="#" class="mono" style="font-weight: 600;">EXP-2026-LU-0089</a></div>
+                </div>
+                <div>
+                  <div style="font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-tertiary); font-weight: 600; margin-bottom: 2px;">Política de firma</div>
+                  <div style="font-size: 12.5px; font-weight: 500;">Electrónica · Ley 527/1999</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Reglas comunicación -->
+          <div class="alert info" style="font-size: 12.5px; padding: 10px 12px;">
+            <div class="icon"><i data-lucide="info"></i></div>
+            <div class="body">
+              <div class="title" style="font-size: 12.5px;">Regla de comunicación</div>
+              <div style="font-size: 11.5px;">La copia a la Curaduría Urbana N° 2 no requiere aprobación adicional. La copia a Secretaría General sí (regla CR-018).</div>
+            </div>
+          </div>
+
+        </aside>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

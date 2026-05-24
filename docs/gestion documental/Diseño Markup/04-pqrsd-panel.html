@@ -1,0 +1,729 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Panel PQRSD · Gestión Documental</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="../assets/portal.css" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  .kpi-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--s-3); margin-bottom: var(--s-5); }
+
+  /* Distribution cards with mini bars */
+  .dist-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: var(--s-4);
+    margin-bottom: var(--s-5);
+  }
+  .dist-card {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+  }
+  .dist-card .head {
+    padding: var(--s-3) var(--s-5);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .dist-card .head .title { font-weight: 600; font-size: 13px; color: var(--fg-primary); }
+  .dist-card .head .meta { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-tertiary); }
+  .dist-card .body { padding: var(--s-3) var(--s-5); }
+
+  .dist-row {
+    display: grid;
+    grid-template-columns: 180px 1fr 80px;
+    align-items: center;
+    gap: var(--s-3);
+    padding: 6px 0;
+    font-size: 12.5px;
+  }
+  .dist-row .label { color: var(--fg-primary); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dist-row .bar-track {
+    height: 8px;
+    background: var(--slate-100);
+    border-radius: 2px;
+    overflow: hidden;
+    display: flex;
+  }
+  .dist-row .bar-seg { height: 100%; }
+  .dist-row .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-secondary);
+    text-align: right;
+    font-weight: 600;
+  }
+  .dist-row .num small { font-weight: 400; color: var(--fg-tertiary); }
+
+  /* Pie / donut chart simulated with conic-gradient */
+  .donut-wrap {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: var(--s-4);
+    align-items: center;
+    padding: var(--s-2) 0;
+  }
+  .donut {
+    width: 140px; height: 140px;
+    border-radius: 50%;
+    position: relative;
+    background: conic-gradient(
+      var(--sky-600) 0deg 168deg,           /* Petición — 47% */
+      var(--amber-600) 168deg 252deg,        /* Queja    — 23% */
+      var(--red-600) 252deg 313deg,          /* Reclamo  — 17% */
+      var(--violet-600) 313deg 342deg,       /* Sugerencia — 8% */
+      var(--emerald-600) 342deg 360deg       /* Denuncia — 5% */
+    );
+  }
+  .donut::after {
+    content: "";
+    position: absolute;
+    inset: 22px;
+    background: white;
+    border-radius: 50%;
+  }
+  .donut-center {
+    position: absolute;
+    inset: 0;
+    display: grid; place-items: center;
+    text-align: center;
+    z-index: 1;
+    line-height: 1.1;
+  }
+  .donut-center .total {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 28px;
+    color: var(--slate-900);
+    font-feature-settings: "tnum";
+  }
+  .donut-center .lbl {
+    font-size: 9.5px;
+    color: var(--fg-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .donut-legend { display: flex; flex-direction: column; gap: 6px; }
+  .donut-legend-row {
+    display: grid;
+    grid-template-columns: 16px 1fr auto auto;
+    gap: 10px;
+    align-items: center;
+    font-size: 12px;
+  }
+  .donut-legend-row .swatch {
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    display: inline-block;
+  }
+  .donut-legend-row .label { color: var(--fg-secondary); }
+  .donut-legend-row .num {
+    font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--fg-primary);
+    font-weight: 600;
+  }
+  .donut-legend-row .pct {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--fg-tertiary);
+    min-width: 36px; text-align: right;
+  }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-3) var(--s-4);
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    margin-bottom: var(--s-3);
+  }
+  .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
+    background: var(--slate-50);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    font-size: 12px;
+    color: var(--fg-secondary);
+    cursor: pointer;
+  }
+  .filter-chip:hover { background: white; border-color: var(--border-strong); }
+  .filter-chip svg { width: 12px; height: 12px; color: var(--fg-tertiary); }
+  .filter-chip.active {
+    background: var(--slate-900); color: white; border-color: var(--slate-900);
+  }
+  .filter-chip.active svg { color: white; }
+  .filter-chip b { font-weight: 600; color: var(--fg-primary); }
+  .filter-chip.active b { color: white; }
+
+  /* Saved views */
+  .saved-views {
+    display: flex;
+    gap: 6px;
+    margin-bottom: var(--s-3);
+    flex-wrap: wrap;
+  }
+  .saved-view-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border-default);
+    background: white;
+    color: var(--fg-secondary);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .saved-view-pill:hover { border-color: var(--border-strong); }
+  .saved-view-pill.active {
+    background: var(--slate-900);
+    color: white;
+    border-color: var(--slate-900);
+    font-weight: 600;
+  }
+  .saved-view-pill .pill-count {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--slate-100);
+    color: var(--fg-secondary);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+  }
+  .saved-view-pill.active .pill-count {
+    background: rgba(255,255,255,0.18);
+    color: white;
+  }
+  .saved-view-pill.danger .pill-count {
+    background: var(--red-50); color: var(--red-700); border: 1px solid #FECACA;
+  }
+</style>
+</head>
+<body data-screen-label="04 Panel PQRSD">
+
+<div class="app-shell">
+
+  <!-- ═══════ SIDEBAR — Admin PQRSD ═══════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="title">Gestión Documental</div>
+        <div class="subtitle">Alcaldía de Ejemplo</div>
+      </div>
+    </div>
+    <div class="sidebar-role">
+      <div class="avatar" style="background: var(--violet-600);">DM</div>
+      <div>
+        <div class="name">Daniel Mora</div>
+        <div class="rol">ROL-006 · Admin PQRSD</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">PQRSD</div>
+        <a class="nav-link active" href="#"><i data-lucide="layout-dashboard"></i> Panel general</a>
+        <a class="nav-link" href="#"><i data-lucide="inbox"></i> Nuevas <span class="count">14</span></a>
+        <a class="nav-link danger" href="#"><i data-lucide="user-x"></i> Sin asignar <span class="count">7</span></a>
+        <a class="nav-link" href="#"><i data-lucide="cog"></i> En gestión <span class="count">82</span></a>
+        <a class="nav-link" href="#"><i data-lucide="alarm-clock"></i> Por vencer <span class="count">14</span></a>
+        <a class="nav-link danger" href="#"><i data-lucide="alert-octagon"></i> Vencidas <span class="count">3</span></a>
+        <a class="nav-link" href="#"><i data-lucide="archive"></i> Cerradas</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Operación</div>
+        <a class="nav-link" href="#"><i data-lucide="forward"></i> Traslados por competencia</a>
+        <a class="nav-link" href="#"><i data-lucide="pause-circle"></i> Suspensiones de término</a>
+        <a class="nav-link" href="#"><i data-lucide="user-plus"></i> Reasignaciones</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Reportes</div>
+        <a class="nav-link" href="#"><i data-lucide="bar-chart-3"></i> Reportes PQRSD</a>
+        <a class="nav-link" href="#"><i data-lucide="users"></i> Carga por dependencia</a>
+        <a class="nav-link" href="#"><i data-lucide="trending-up"></i> Cumplimiento</a>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <span>Tenant: alc-ejemplo</span>
+      <i data-lucide="check-circle-2" style="width:11px; height:11px; color: var(--emerald-600)"></i>
+    </div>
+  </aside>
+
+  <!-- ═══════ MAIN ═══════ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="search">
+        <i data-lucide="search"></i>
+        <input placeholder="Buscar PQRSD por número, solicitante o asunto…" />
+        <span class="shortcut">⌘ K</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="scope">
+        <i data-lucide="layers"></i>
+        <span class="label">Alcance:</span>
+        <span class="value">Toda la entidad</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <button class="icon-btn"><i data-lucide="help-circle"></i></button>
+      <button class="icon-btn"><i data-lucide="bell"></i><span class="dot"></span></button>
+      <button class="user-chip">
+        <div class="avatar" style="background: var(--violet-600);">DM</div>
+        <span class="name">Daniel</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+    </header>
+
+    <div class="content">
+
+      <!-- Breadcrumb -->
+      <div class="breadcrumb">
+        <a href="#"><i data-lucide="home"></i></a>
+        <i data-lucide="chevron-right"></i>
+        <a href="#">Gestión Documental</a>
+        <i data-lucide="chevron-right"></i>
+        <span class="here">Panel PQRSD</span>
+      </div>
+
+      <!-- Page head -->
+      <div class="page-head">
+        <div class="title-block">
+          <h1>Panel PQRSD</h1>
+          <p class="subtitle">Estado consolidado de Peticiones, Quejas, Reclamos, Sugerencias y Denuncias en gestión. Datos al 24 de mayo de 2026, 15:42 hora local.</p>
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary"><i data-lucide="calendar"></i> Mayo 2026</button>
+          <button class="btn btn-secondary"><i data-lucide="download"></i> Exportar</button>
+          <button class="btn btn-primary"><i data-lucide="plus"></i> Asignación masiva</button>
+        </div>
+      </div>
+
+      <!-- Alert banner -->
+      <div class="alert danger" style="margin-bottom: var(--s-5);">
+        <div class="icon"><i data-lucide="alert-octagon"></i></div>
+        <div class="body">
+          <div class="title">3 PQRSD están vencidas y requieren intervención inmediata</div>
+          <div>Dos pertenecen a la Oficina Asesora Jurídica y una a la Secretaría de Hacienda. La normativa exige justificar por escrito el incumplimiento y notificar al solicitante.</div>
+          <div class="actions">
+            <a href="#"><i data-lucide="eye" style="width:12px; height:12px; vertical-align:-2px;"></i> Ver vencidas</a>
+            <a href="#">Reasignar al Jefe de Dependencia</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="kpi-row">
+        <div class="kpi">
+          <div class="label"><i data-lucide="inbox" style="width:12px; height:12px"></i> Nuevas hoy</div>
+          <div class="value">14</div>
+          <div class="delta up"><i data-lucide="trending-up"></i> +21% vs ayer</div>
+        </div>
+        <div class="kpi">
+          <div class="label"><i data-lucide="user-x" style="width:12px; height:12px"></i> Sin asignar</div>
+          <div class="value warn">7</div>
+          <div class="delta"><i data-lucide="clock"></i> Asignación &gt; 1h</div>
+        </div>
+        <div class="kpi">
+          <div class="label"><i data-lucide="cog" style="width:12px; height:12px"></i> En gestión</div>
+          <div class="value">82</div>
+          <div class="delta"><i data-lucide="users"></i> 19 dependencias</div>
+        </div>
+        <div class="kpi">
+          <div class="label"><i data-lucide="alarm-clock" style="width:12px; height:12px"></i> Por vencer</div>
+          <div class="value warn">14</div>
+          <div class="delta down"><i data-lucide="trending-down"></i> −3 desde lunes</div>
+        </div>
+        <div class="kpi">
+          <div class="label"><i data-lucide="ban" style="width:12px; height:12px"></i> Vencidas</div>
+          <div class="value danger">3</div>
+          <div class="delta" style="color: var(--red-700)"><i data-lucide="alert-circle"></i> Acción urgente</div>
+        </div>
+      </div>
+
+      <!-- Distribution row -->
+      <div class="dist-grid">
+        <!-- By dependencia -->
+        <div class="dist-card">
+          <div class="head">
+            <div class="title">Carga por dependencia</div>
+            <div class="meta">Top 6 · vigentes en mayo</div>
+          </div>
+          <div class="body">
+            <div class="dist-row">
+              <div class="label">Of. Asesora Jurídica</div>
+              <div class="bar-track">
+                <div class="bar-seg" style="width: 38%; background: var(--sky-600)"></div>
+                <div class="bar-seg" style="width: 28%; background: var(--amber-500)"></div>
+                <div class="bar-seg" style="width: 14%; background: var(--red-500)"></div>
+              </div>
+              <div class="num">29 <small>/ 36</small></div>
+            </div>
+            <div class="dist-row">
+              <div class="label">Sec. de Hacienda</div>
+              <div class="bar-track">
+                <div class="bar-seg" style="width: 52%; background: var(--sky-600)"></div>
+                <div class="bar-seg" style="width: 18%; background: var(--amber-500)"></div>
+                <div class="bar-seg" style="width: 6%; background: var(--red-500)"></div>
+              </div>
+              <div class="num">22 <small>/ 29</small></div>
+            </div>
+            <div class="dist-row">
+              <div class="label">Sec. de Servicios al Ciudadano</div>
+              <div class="bar-track">
+                <div class="bar-seg" style="width: 60%; background: var(--sky-600)"></div>
+                <div class="bar-seg" style="width: 12%; background: var(--amber-500)"></div>
+              </div>
+              <div class="num">18 <small>/ 25</small></div>
+            </div>
+            <div class="dist-row">
+              <div class="label">Sec. de Infraestructura</div>
+              <div class="bar-track">
+                <div class="bar-seg" style="width: 65%; background: var(--sky-600)"></div>
+                <div class="bar-seg" style="width: 10%; background: var(--amber-500)"></div>
+              </div>
+              <div class="num">15 <small>/ 20</small></div>
+            </div>
+            <div class="dist-row">
+              <div class="label">Of. de Control Interno</div>
+              <div class="bar-track">
+                <div class="bar-seg" style="width: 80%; background: var(--sky-600)"></div>
+              </div>
+              <div class="num">8 <small>/ 10</small></div>
+            </div>
+            <div class="dist-row">
+              <div class="label">Sec. General</div>
+              <div class="bar-track">
+                <div class="bar-seg" style="width: 75%; background: var(--sky-600)"></div>
+                <div class="bar-seg" style="width: 12%; background: var(--amber-500)"></div>
+              </div>
+              <div class="num">6 <small>/ 8</small></div>
+            </div>
+
+            <div class="hstack" style="gap: var(--s-4); margin-top: var(--s-4); padding-top: var(--s-3); border-top: 1px dashed var(--border-default); font-size: 11px; color: var(--fg-tertiary);">
+              <span style="display: inline-flex; align-items: center; gap: 5px;"><span style="width:8px; height:8px; background: var(--sky-600); border-radius:2px;"></span> En gestión</span>
+              <span style="display: inline-flex; align-items: center; gap: 5px;"><span style="width:8px; height:8px; background: var(--amber-500); border-radius:2px;"></span> Por vencer</span>
+              <span style="display: inline-flex; align-items: center; gap: 5px;"><span style="width:8px; height:8px; background: var(--red-500); border-radius:2px;"></span> Vencidas</span>
+              <span style="margin-left: auto;">% de capacidad nominal</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- By tipo -->
+        <div class="dist-card">
+          <div class="head">
+            <div class="title">Distribución por tipo</div>
+            <div class="meta">Total · 99 vigentes</div>
+          </div>
+          <div class="body">
+            <div class="donut-wrap">
+              <div style="position: relative;">
+                <div class="donut"></div>
+                <div class="donut-center">
+                  <div>
+                    <div class="total">99</div>
+                    <div class="lbl">Vigentes</div>
+                  </div>
+                </div>
+              </div>
+              <div class="donut-legend">
+                <div class="donut-legend-row">
+                  <span class="swatch" style="background: var(--sky-600)"></span>
+                  <span class="label">Petición</span>
+                  <span class="num">47</span>
+                  <span class="pct">47%</span>
+                </div>
+                <div class="donut-legend-row">
+                  <span class="swatch" style="background: var(--amber-600)"></span>
+                  <span class="label">Queja</span>
+                  <span class="num">23</span>
+                  <span class="pct">23%</span>
+                </div>
+                <div class="donut-legend-row">
+                  <span class="swatch" style="background: var(--red-600)"></span>
+                  <span class="label">Reclamo</span>
+                  <span class="num">17</span>
+                  <span class="pct">17%</span>
+                </div>
+                <div class="donut-legend-row">
+                  <span class="swatch" style="background: var(--violet-600)"></span>
+                  <span class="label">Sugerencia</span>
+                  <span class="num">8</span>
+                  <span class="pct">8%</span>
+                </div>
+                <div class="donut-legend-row">
+                  <span class="swatch" style="background: var(--emerald-600)"></span>
+                  <span class="label">Denuncia</span>
+                  <span class="num">4</span>
+                  <span class="pct">4%</span>
+                </div>
+              </div>
+            </div>
+            <hr class="divider" />
+            <div class="hstack" style="justify-content: space-between; font-size: 12px;">
+              <div>
+                <div style="color: var(--fg-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;">Tiempo prom. respuesta</div>
+                <div style="font-family: var(--font-display); font-weight: 600; font-size: 22px; color: var(--slate-900); margin-top: 2px;">8.4<span style="font-size: 13px; color: var(--fg-tertiary); font-family: var(--font-sans); font-weight: 400; margin-left: 4px;">días hábiles</span></div>
+              </div>
+              <div>
+                <div style="color: var(--fg-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;">Cumplimiento</div>
+                <div style="font-family: var(--font-display); font-weight: 600; font-size: 22px; color: var(--emerald-700); margin-top: 2px;">97.2<span style="font-size: 13px; color: var(--fg-tertiary); font-family: var(--font-sans); font-weight: 400; margin-left: 4px;">%</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Saved views -->
+      <div class="saved-views">
+        <button class="saved-view-pill active">Todas las vigentes <span class="pill-count">99</span></button>
+        <button class="saved-view-pill danger">Vencidas <span class="pill-count">3</span></button>
+        <button class="saved-view-pill">Por vencer (≤ 3 días) <span class="pill-count">14</span></button>
+        <button class="saved-view-pill">Sin asignar <span class="pill-count">7</span></button>
+        <button class="saved-view-pill">Tutelas activas <span class="pill-count">2</span></button>
+        <button class="saved-view-pill">Información reservada</button>
+        <button class="saved-view-pill"><i data-lucide="plus" style="width:11px; height:11px"></i> Guardar vista</button>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="filter-bar">
+        <div class="filter-chip active"><i data-lucide="filter"></i> 2 filtros activos</div>
+        <div class="filter-chip"><i data-lucide="building-2"></i> Dependencia: <b>Todas</b><i data-lucide="chevron-down"></i></div>
+        <div class="filter-chip"><i data-lucide="tag"></i> Tipo: <b>Todos</b><i data-lucide="chevron-down"></i></div>
+        <div class="filter-chip"><i data-lucide="alarm-clock"></i> Vencimiento: <b>Cualquiera</b><i data-lucide="chevron-down"></i></div>
+        <div class="filter-chip"><i data-lucide="user"></i> Asignación: <b>Cualquiera</b><i data-lucide="chevron-down"></i></div>
+        <div class="filter-chip"><i data-lucide="globe"></i> Canal: <b>Todos</b><i data-lucide="chevron-down"></i></div>
+        <div style="flex: 1"></div>
+        <button class="btn btn-ghost btn-sm">Limpiar</button>
+      </div>
+
+      <!-- Table -->
+      <div class="data-table-wrap">
+        <div class="table-toolbar">
+          <input type="checkbox" />
+          <div class="search-mini">
+            <i data-lucide="search"></i>
+            <input placeholder="Buscar en resultados…" />
+          </div>
+          <button class="btn btn-secondary btn-sm"><i data-lucide="arrow-down-up"></i> Ordenar: Vencimiento ↑</button>
+          <div style="flex: 1"></div>
+          <span class="muted" style="font-size: 12px;">99 PQRSD · 1.247 total en el mes</span>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width:28px"><input type="checkbox" /></th>
+              <th>Número</th>
+              <th>Tipo</th>
+              <th>Asunto</th>
+              <th>Solicitante</th>
+              <th>Dependencia / Asignado a</th>
+              <th>Estado</th>
+              <th>Vencimiento</th>
+              <th style="width:48px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000465</div>
+                <div class="muted" style="font-size:11px;">21 Abr · 09:14</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-R"><span class="glyph">R</span> Reclamo</span></td>
+              <td>Reclamo por demora en respuesta de tutela radicada en marzo</td>
+              <td>Juan Camilo Restrepo<br/><span class="mono muted" style="font-size: 11px;">CC 1.012.…</span></td>
+              <td>
+                Of. Control Interno
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="avatar sm red">CG</div><span class="muted" style="font-size: 11px;">Carlos Granados</span></div>
+              </td>
+              <td><span class="badge danger">Vencida</span></td>
+              <td><span class="vto-badge vto-danger vto-vencida"><span class="vto-dot"></span><span class="vto-bar"><i style="width:100%"></i></span><span class="vto-text">−4d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000478</div>
+                <div class="muted" style="font-size:11px;">23 Abr · 11:22</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span></td>
+              <td>Solicitud de copia de contratos celebrados en vigencia 2025</td>
+              <td>Veedora Ciudadana</td>
+              <td>
+                Of. Asesora Jurídica
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="avatar sm emerald">JR</div><span class="muted" style="font-size: 11px;">Juana Restrepo</span></div>
+              </td>
+              <td><span class="badge danger">Vencida</span></td>
+              <td><span class="vto-badge vto-danger vto-vencida"><span class="vto-dot"></span><span class="vto-bar"><i style="width:100%"></i></span><span class="vto-text">−2d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000482</div>
+                <div class="muted" style="font-size:11px;">24 Abr · 16:08</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span></td>
+              <td>Acción de tutela — Derecho fundamental a la salud (caso menor de edad)</td>
+              <td>Yenny Lozano Pinto</td>
+              <td>
+                Of. Asesora Jurídica
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="avatar sm emerald">JR</div><span class="muted" style="font-size: 11px;">Juana Restrepo</span></div>
+              </td>
+              <td><span class="badge danger">Vencida</span></td>
+              <td><span class="vto-badge vto-danger vto-vencida"><span class="vto-dot"></span><span class="vto-bar"><i style="width:100%"></i></span><span class="vto-text">−1d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000487</div>
+                <div class="muted" style="font-size:11px;">06 May · 14:32</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-Q"><span class="glyph">Q</span> Queja</span></td>
+              <td>Queja por demora injustificada en respuesta a solicitud radicada en abril</td>
+              <td>María Helena Rojas Pérez</td>
+              <td>
+                Of. Asesora Jurídica
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="avatar sm emerald">JR</div><span class="muted" style="font-size: 11px;">Juana Restrepo</span></div>
+              </td>
+              <td><span class="badge info">En gestión</span></td>
+              <td><span class="vto-badge vto-warn"><span class="vto-dot"></span><span class="vto-bar"><i style="width:78%"></i></span><span class="vto-text">3d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000490</div>
+                <div class="muted" style="font-size:11px;">08 May · 10:45</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-R"><span class="glyph">R</span> Reclamo</span></td>
+              <td>Reclamo por cobro indebido del impuesto predial vigencia 2025</td>
+              <td>Sociedad Inversiones del Río S.A.</td>
+              <td>
+                Sec. de Hacienda
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="avatar sm" style="background: #FFFBEB; color: var(--amber-700)">AM</div><span class="muted" style="font-size: 11px;">Andrea Mejía</span></div>
+              </td>
+              <td><span class="badge info">En revisión</span></td>
+              <td><span class="vto-badge vto-warn"><span class="vto-dot"></span><span class="vto-bar"><i style="width:68%"></i></span><span class="vto-text">5d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000493</div>
+                <div class="muted" style="font-size:11px;">10 May · 08:11</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span></td>
+              <td>Petición de información sobre proyectos viales 2026</td>
+              <td>Asociación de Vecinos Vereda Alta</td>
+              <td>
+                Sec. de Infraestructura
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="muted" style="font-size: 11px; font-style: italic;">Sin asignar</div></div>
+              </td>
+              <td><span class="badge neutral">Sin asignar</span></td>
+              <td><span class="vto-badge vto-warn"><span class="vto-dot"></span><span class="vto-bar"><i style="width:58%"></i></span><span class="vto-text">6d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000496</div>
+                <div class="muted" style="font-size:11px;">12 May · 15:39</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-D"><span class="glyph">D</span> Denuncia</span></td>
+              <td>Denuncia por presunta irregularidad en proceso de contratación SAMC-002-2026</td>
+              <td><span class="muted">Reservado</span></td>
+              <td>
+                Of. Control Interno
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="avatar sm red">CG</div><span class="muted" style="font-size: 11px;">Carlos Granados</span></div>
+              </td>
+              <td><span class="badge info">En análisis</span></td>
+              <td><span class="vto-badge vto-ok"><span class="vto-dot"></span><span class="vto-bar"><i style="width:32%"></i></span><span class="vto-text">9d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000501</div>
+                <div class="muted" style="font-size:11px;">15 May · 09:50</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-Q"><span class="glyph">Q</span> Queja</span></td>
+              <td>Queja sobre atención presencial en el punto de Servicios al Ciudadano</td>
+              <td>Hernando Castro G.</td>
+              <td>
+                Sec. de Servicios al Ciudadano
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="avatar sm sky">LM</div><span class="muted" style="font-size: 11px;">Laura Marín</span></div>
+              </td>
+              <td><span class="badge info">En proyección</span></td>
+              <td><span class="vto-badge vto-ok"><span class="vto-dot"></span><span class="vto-bar"><i style="width:25%"></i></span><span class="vto-text">10d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000508</div>
+                <div class="muted" style="font-size:11px;">19 May · 12:04</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-S"><span class="glyph">S</span> Sugerencia</span></td>
+              <td>Sugerencia de digitalización de atención para personas con discapacidad</td>
+              <td>Fundación Movilidad Inclusiva</td>
+              <td>
+                Sec. de Servicios al Ciudadano
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="avatar sm sky">LM</div><span class="muted" style="font-size: 11px;">Laura Marín</span></div>
+              </td>
+              <td><span class="badge info">Asignada</span></td>
+              <td><span class="vto-badge vto-ok"><span class="vto-dot"></span><span class="vto-bar"><i style="width:18%"></i></span><span class="vto-text">12d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+            <tr>
+              <td><input type="checkbox" /></td>
+              <td>
+                <div class="num">PQR-2026-000512</div>
+                <div class="muted" style="font-size:11px;">22 May · 17:18</div>
+              </td>
+              <td><span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span></td>
+              <td>Petición para acceso a expedientes administrativos archivados (Ley 1712)</td>
+              <td>Periodista — Diario El Pulso</td>
+              <td>
+                Sec. General
+                <div class="hstack" style="gap: 4px; margin-top: 3px;"><div class="muted" style="font-size: 11px; font-style: italic;">Sin asignar</div></div>
+              </td>
+              <td><span class="badge neutral">Sin asignar</span></td>
+              <td><span class="vto-badge vto-ok"><span class="vto-dot"></span><span class="vto-bar"><i style="width:12%"></i></span><span class="vto-text">14d</span></span></td>
+              <td><button class="icon-btn"><i data-lucide="more-horizontal"></i></button></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="pagination">
+          <div class="summary">Mostrando 1–10 de 99 PQRSD vigentes</div>
+          <button class="page-btn"><i data-lucide="chevron-left" style="width:11px; height:11px;display:block"></i></button>
+          <button class="page-btn active">1</button>
+          <button class="page-btn">2</button>
+          <button class="page-btn">3</button>
+          <button class="page-btn">…</button>
+          <button class="page-btn">10</button>
+          <button class="page-btn"><i data-lucide="chevron-right" style="width:11px; height:11px;display:block"></i></button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

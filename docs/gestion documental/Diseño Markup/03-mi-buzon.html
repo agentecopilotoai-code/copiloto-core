@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mi buzón · Gestión Documental</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="../assets/portal.css" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  /* Override content padding for full-bleed buzón */
+  .main .content.buzon-content {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 56px);
+    overflow: hidden;
+  }
+  .buzon-header {
+    padding: var(--s-4) var(--s-6);
+    border-bottom: 1px solid var(--border-default);
+    background: white;
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+  }
+  .buzon-header h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    margin: 0;
+    line-height: 1.1;
+  }
+  .buzon-header .subtitle {
+    font-size: 12px;
+    color: var(--fg-tertiary);
+    margin-top: 2px;
+  }
+  .buzon-header .right { margin-left: auto; display: flex; gap: var(--s-2); align-items: center; }
+
+  /* 3-column layout */
+  .buzon-cols {
+    display: grid;
+    grid-template-columns: 240px 1fr 1.05fr;
+    flex: 1;
+    overflow: hidden;
+    background: var(--slate-50);
+  }
+
+  /* ── Folders column ─────────────────────────────────────── */
+  .folders {
+    background: white;
+    border-right: 1px solid var(--border-default);
+    overflow-y: auto;
+    padding: var(--s-3);
+  }
+  .folder-group { margin-bottom: var(--s-4); }
+  .folder-group-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-tertiary);
+    padding: var(--s-2) var(--s-3);
+  }
+  .folder-link {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px var(--s-3);
+    border-radius: var(--r-sm);
+    color: var(--fg-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    position: relative;
+  }
+  .folder-link:hover { background: var(--slate-50); text-decoration: none; color: var(--fg-primary); }
+  .folder-link svg { width: 14px; height: 14px; color: var(--fg-tertiary); flex-shrink: 0; }
+  .folder-link.active {
+    background: var(--slate-100);
+    color: var(--fg-primary);
+    font-weight: 600;
+  }
+  .folder-link.active::before {
+    content: ""; position: absolute;
+    left: 0; top: 6px; bottom: 6px; width: 3px;
+    background: var(--accent-base);
+    border-radius: 0 2px 2px 0;
+  }
+  .folder-link.active svg { color: var(--accent-base); }
+  .folder-link .count {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-tertiary);
+  }
+  .folder-link.active .count { color: var(--fg-secondary); font-weight: 600; }
+  .folder-link .danger-count {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    background: var(--red-50);
+    color: var(--red-700);
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid #FECACA;
+  }
+
+  /* ── List column ────────────────────────────────────────── */
+  .list-col {
+    background: white;
+    border-right: 1px solid var(--border-default);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .list-head {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border-default);
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    background: white;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .list-head .title { font-weight: 600; font-size: 13.5px; }
+  .list-head .count { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-tertiary); }
+  .list-head .right { margin-left: auto; display: flex; gap: 2px; }
+
+  .item {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+  }
+  .item:hover { background: var(--slate-25); }
+  .item.unread { background: var(--sky-50); }
+  .item.unread:hover { background: #E0F2FE; }
+  .item.unread::before {
+    content: "";
+    position: absolute;
+    left: 6px; top: 50%;
+    transform: translateY(-50%);
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent-base);
+  }
+  .item.selected {
+    background: var(--slate-100);
+    border-left: 3px solid var(--slate-900);
+    padding-left: calc(var(--s-4) - 3px);
+  }
+  .item .top-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    font-family: var(--font-mono);
+  }
+  .item .top-row .num { color: var(--fg-secondary); font-weight: 600; }
+  .item .top-row .time { margin-left: auto; }
+  .item .top-row .pqrsd-chip { font-size: 10.5px; height: 18px; padding: 0 6px 0 2px; }
+  .item .top-row .pqrsd-chip .glyph { width: 14px; height: 14px; font-size: 9px; }
+  .item .asunto {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--slate-900);
+    line-height: 1.3;
+  }
+  .item.unread .asunto { color: var(--sky-900); }
+  .item .preview {
+    font-size: 12px;
+    color: var(--fg-tertiary);
+    line-height: 1.4;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+  }
+  .item .footer-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    margin-top: 2px;
+  }
+  .item .footer-row .ico { color: var(--fg-tertiary); display: inline-flex; gap: 3px; align-items: center; }
+  .item .footer-row .ico svg { width: 11px; height: 11px; }
+  .item .footer-row .spacer { flex: 1; }
+  .item .footer-row .badge {
+    height: 18px; font-size: 10.5px; padding: 0 6px;
+  }
+
+  /* ── Detail column ──────────────────────────────────────── */
+  .detail-col {
+    background: var(--slate-50);
+    overflow-y: auto;
+    padding: var(--s-5) var(--s-6);
+  }
+  .detail-head {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-4) var(--s-5);
+    margin-bottom: var(--s-4);
+  }
+  .detail-head .toolbar {
+    display: flex;
+    gap: var(--s-2);
+    margin-bottom: var(--s-3);
+    padding-bottom: var(--s-3);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .detail-head .toolbar .spacer { flex: 1; }
+  .detail-head .ident {
+    display: flex; align-items: center; gap: var(--s-2);
+    margin-bottom: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-tertiary);
+  }
+  .detail-head .ident .num { color: var(--fg-primary); font-weight: 600; }
+  .detail-head h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 22px;
+    line-height: 1.25;
+    margin: 0 0 var(--s-3);
+    color: var(--slate-900);
+    letter-spacing: -0.01em;
+    text-wrap: pretty;
+  }
+  .detail-head .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s-3) var(--s-4);
+    margin-top: var(--s-3);
+  }
+  .detail-head .meta-grid .k {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-tertiary);
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .detail-head .meta-grid .v {
+    font-size: 13px;
+    color: var(--fg-primary);
+    font-weight: 500;
+  }
+  .detail-head .meta-grid .v.with-avatar {
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+
+  .detail-section {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    margin-bottom: var(--s-4);
+    overflow: hidden;
+  }
+  .detail-section .head {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .detail-section .head .title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg-primary);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .detail-section .head .title svg { width: 13px; height: 13px; color: var(--fg-tertiary); }
+  .detail-section .body { padding: var(--s-4); }
+  .detail-section .body p {
+    margin: 0 0 var(--s-3);
+    font-size: 13px;
+    color: var(--fg-secondary);
+    line-height: 1.6;
+  }
+  .detail-section .body p:last-child { margin-bottom: 0; }
+
+  .anexos-list { display: flex; flex-direction: column; gap: 6px; }
+  .anexo-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px;
+    background: var(--slate-50);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    font-size: 12.5px;
+  }
+  .anexo-row .ico {
+    width: 28px; height: 28px;
+    border-radius: var(--r-sm);
+    background: var(--red-50);
+    color: var(--red-600);
+    display: grid; place-items: center;
+  }
+  .anexo-row .ico svg { width: 14px; height: 14px; }
+  .anexo-row .info { flex: 1; min-width: 0; }
+  .anexo-row .name {
+    font-weight: 600; color: var(--fg-primary);
+    font-size: 12.5px;
+  }
+  .anexo-row .meta { font-size: 11px; color: var(--fg-tertiary); font-family: var(--font-mono); }
+
+  /* Vencimiento module */
+  .vto-module {
+    background: var(--amber-50);
+    border: 1px solid #FCD34D;
+    border-radius: var(--r-lg);
+    padding: var(--s-4);
+    margin-bottom: var(--s-4);
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: var(--s-4);
+    align-items: center;
+  }
+  .vto-module .ico {
+    width: 36px; height: 36px;
+    border-radius: var(--r-md);
+    background: white;
+    color: var(--amber-700);
+    border: 1px solid #FCD34D;
+    display: grid; place-items: center;
+  }
+  .vto-module .ico svg { width: 18px; height: 18px; }
+  .vto-module .title {
+    font-weight: 600;
+    color: var(--amber-700);
+    font-size: 13.5px;
+    margin-bottom: 1px;
+  }
+  .vto-module .detail {
+    font-size: 12.5px;
+    color: var(--amber-700);
+    opacity: 0.9;
+  }
+
+  /* Quick reply */
+  .quick-reply {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-4);
+  }
+  .quick-reply .reply-actions {
+    display: flex; gap: var(--s-2);
+    margin-bottom: var(--s-3);
+  }
+  .reply-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 9px;
+    background: var(--slate-50);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-pill);
+    font-size: 12px;
+    color: var(--fg-secondary);
+    cursor: pointer;
+  }
+  .reply-tag:hover { background: white; border-color: var(--border-strong); }
+  .reply-tag svg { width: 11px; height: 11px; }
+
+  /* Quick action stack */
+  .ax-stack { display: flex; flex-direction: column; gap: 6px; margin-top: var(--s-3); }
+  .ax-stack .check { font-size: 12.5px; }
+</style>
+</head>
+<body data-screen-label="03 Mi Buzon">
+
+<div class="app-shell">
+
+  <!-- ═══════ SIDEBAR — Profesional Responsable ═══════ -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="title">Gestión Documental</div>
+        <div class="subtitle">Alcaldía de Ejemplo</div>
+      </div>
+    </div>
+    <div class="sidebar-role">
+      <div class="avatar" style="background: var(--emerald-600);">JR</div>
+      <div>
+        <div class="name">Juana Restrepo</div>
+        <div class="rol">ROL-007 · Profesional</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">Trabajo</div>
+        <a class="nav-link active" href="#"><i data-lucide="inbox"></i> Mi buzón <span class="count">23</span></a>
+        <a class="nav-link" href="#"><i data-lucide="message-square-warning"></i> PQRSD asignadas <span class="count">7</span></a>
+        <a class="nav-link" href="#"><i data-lucide="send"></i> Correspondencia</a>
+        <a class="nav-link" href="#"><i data-lucide="check-square"></i> Tareas <span class="count">4</span></a>
+        <a class="nav-link" href="#"><i data-lucide="file-edit"></i> Borradores <span class="count">2</span></a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Documentos</div>
+        <a class="nav-link" href="#"><i data-lucide="file-search"></i> Por revisar <span class="count">3</span></a>
+        <a class="nav-link" href="#"><i data-lucide="signature"></i> Por firmar <span class="count">1</span></a>
+        <a class="nav-link" href="#"><i data-lucide="library"></i> Biblioteca</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Consulta</div>
+        <a class="nav-link" href="#"><i data-lucide="search"></i> Buscar radicados</a>
+        <a class="nav-link" href="#"><i data-lucide="history"></i> Trazabilidad</a>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <span>Of. Asesora Jurídica</span>
+      <i data-lucide="building-2" style="width:11px; height:11px"></i>
+    </div>
+  </aside>
+
+  <!-- ═══════ MAIN ═══════ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="search">
+        <i data-lucide="search"></i>
+        <input placeholder="Buscar en mi buzón…" />
+        <span class="shortcut">⌘ K</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="scope">
+        <i data-lucide="layers"></i>
+        <span class="label">Alcance:</span>
+        <span class="value">Mi dependencia</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <button class="icon-btn"><i data-lucide="help-circle"></i></button>
+      <button class="icon-btn"><i data-lucide="bell"></i><span class="dot"></span></button>
+      <button class="user-chip">
+        <div class="avatar" style="background: var(--emerald-600);">JR</div>
+        <span class="name">Juana</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+    </header>
+
+    <div class="content buzon-content">
+      <!-- Header dentro del buzón -->
+      <div class="buzon-header">
+        <div>
+          <h1>Mi buzón</h1>
+          <div class="subtitle">23 elementos · 3 PQRSD próximas a vencer · 1 documento por firmar</div>
+        </div>
+        <div class="right">
+          <button class="btn btn-secondary btn-sm"><i data-lucide="refresh-cw"></i> Actualizar</button>
+          <button class="btn btn-secondary btn-sm"><i data-lucide="filter"></i> Filtros</button>
+          <button class="btn btn-primary btn-sm"><i data-lucide="pen-line"></i> Nueva correspondencia</button>
+        </div>
+      </div>
+
+      <!-- 3-col layout -->
+      <div class="buzon-cols">
+
+        <!-- ── Folders ── -->
+        <aside class="folders">
+          <div class="folder-group">
+            <div class="folder-group-label">Entrada</div>
+            <a class="folder-link active" href="#">
+              <i data-lucide="inbox"></i> Todos los pendientes <span class="count">23</span>
+            </a>
+            <a class="folder-link" href="#">
+              <i data-lucide="message-square-warning"></i> PQRSD asignadas <span class="count">7</span>
+            </a>
+            <a class="folder-link" href="#">
+              <i data-lucide="alarm-clock"></i> Próximas a vencer <span class="danger-count">3</span>
+            </a>
+            <a class="folder-link" href="#">
+              <i data-lucide="mail-open"></i> Correspondencia <span class="count">9</span>
+            </a>
+            <a class="folder-link" href="#">
+              <i data-lucide="check-square"></i> Tareas <span class="count">4</span>
+            </a>
+          </div>
+          <div class="folder-group">
+            <div class="folder-group-label">Acción requerida</div>
+            <a class="folder-link" href="#">
+              <i data-lucide="file-search"></i> Por revisar <span class="count">3</span>
+            </a>
+            <a class="folder-link" href="#">
+              <i data-lucide="check-circle-2"></i> Por aprobar VB <span class="count">2</span>
+            </a>
+            <a class="folder-link" href="#">
+              <i data-lucide="signature"></i> Por firmar <span class="count">1</span>
+            </a>
+          </div>
+          <div class="folder-group">
+            <div class="folder-group-label">Propios</div>
+            <a class="folder-link" href="#">
+              <i data-lucide="file-edit"></i> Borradores <span class="count">2</span>
+            </a>
+            <a class="folder-link" href="#">
+              <i data-lucide="send"></i> Enviados
+            </a>
+            <a class="folder-link" href="#">
+              <i data-lucide="archive"></i> Cerrados
+            </a>
+          </div>
+          <div class="folder-group">
+            <div class="folder-group-label">Sistema</div>
+            <a class="folder-link" href="#">
+              <i data-lucide="bell"></i> Notificaciones <span class="count">12</span>
+            </a>
+            <a class="folder-link" href="#">
+              <i data-lucide="alert-octagon"></i> Alertas <span class="danger-count">2</span>
+            </a>
+          </div>
+        </aside>
+
+        <!-- ── List ── -->
+        <section class="list-col">
+          <div class="list-head">
+            <input type="checkbox" />
+            <div class="title">Todos los pendientes</div>
+            <div class="count">· 23</div>
+            <div class="right">
+              <button class="icon-btn" title="Ordenar"><i data-lucide="arrow-down-up"></i></button>
+              <button class="icon-btn" title="Más"><i data-lucide="more-horizontal"></i></button>
+            </div>
+          </div>
+
+          <!-- Selected item -->
+          <div class="item selected">
+            <div class="top-row">
+              <span class="pqrsd-chip tipo-Q"><span class="glyph">Q</span> Queja</span>
+              <span class="num">PQR-2026-000487</span>
+              <span class="time">hace 18 min</span>
+            </div>
+            <div class="asunto">Queja por demora injustificada en respuesta a solicitud radicada el 14 de abril</div>
+            <div class="preview">Solicitante: María Helena Rojas Pérez · "He esperado por más de 30 días una respuesta a mi petición sobre el predio de la calle 24…"</div>
+            <div class="footer-row">
+              <span class="ico"><i data-lucide="building-2"></i> Of. Asesora Jurídica</span>
+              <span class="ico"><i data-lucide="paperclip"></i> 2</span>
+              <span class="spacer"></span>
+              <span class="vto-badge vto-warn" style="padding: 2px 7px; font-size: 11px;"><span class="vto-dot"></span><span class="vto-text">3 días</span></span>
+            </div>
+          </div>
+
+          <!-- Other items -->
+          <div class="item unread">
+            <div class="top-row">
+              <span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span>
+              <span class="num">PQR-2026-000486</span>
+              <span class="time">hace 1h</span>
+            </div>
+            <div class="asunto">Solicitud de copia certificada de acta de posesión No. 2024-0815</div>
+            <div class="preview">Solicitante: Juan Camilo Restrepo · Adjunta cédula y poder. Solicita envío por correo electrónico…</div>
+            <div class="footer-row">
+              <span class="ico"><i data-lucide="building-2"></i> Sec. General</span>
+              <span class="ico"><i data-lucide="paperclip"></i> 3</span>
+              <span class="spacer"></span>
+              <span class="vto-badge vto-ok" style="padding: 2px 7px; font-size: 11px;"><span class="vto-dot"></span><span class="vto-text">12 días</span></span>
+            </div>
+          </div>
+
+          <div class="item unread">
+            <div class="top-row">
+              <span class="badge info no-dot" style="height: 18px; font-size: 10.5px; padding: 0 6px;">Correspondencia</span>
+              <span class="num">COR-2026-002214</span>
+              <span class="time">hace 2h</span>
+            </div>
+            <div class="asunto">Remisión de concepto técnico — Proyecto vías terciarias vereda San Antonio</div>
+            <div class="preview">De: Sec. de Infraestructura · Para revisión jurídica antes del 28 de mayo. Incluye 4 planos y memoria técnica…</div>
+            <div class="footer-row">
+              <span class="ico"><i data-lucide="building-2"></i> Sec. de Infraestructura</span>
+              <span class="ico"><i data-lucide="paperclip"></i> 5</span>
+              <span class="spacer"></span>
+              <span class="badge ok" style="height:18px; font-size: 10.5px; padding: 0 6px;">Acción</span>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="top-row">
+              <span class="badge violet no-dot" style="height: 18px; font-size: 10.5px; padding: 0 6px;">Tarea</span>
+              <span class="num">TSK-2026-000091</span>
+              <span class="time">hace 4h</span>
+            </div>
+            <div class="asunto">Proyectar respuesta para PQRSD-2026-000482 — Acción de tutela</div>
+            <div class="preview">Tarea asignada por Carlos Granados · Plazo: 26 de mayo · Requiere VB antes de firma…</div>
+            <div class="footer-row">
+              <span class="ico"><i data-lucide="user"></i> Asignado por Carlos G.</span>
+              <span class="spacer"></span>
+              <span class="vto-badge vto-warn" style="padding: 2px 7px; font-size: 11px;"><span class="vto-dot"></span><span class="vto-text">2 días</span></span>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="top-row">
+              <span class="pqrsd-chip tipo-R"><span class="glyph">R</span> Reclamo</span>
+              <span class="num">PQR-2026-000481</span>
+              <span class="time">ayer</span>
+            </div>
+            <div class="asunto">Reclamo por cobro indebido del impuesto predial vigencia 2025</div>
+            <div class="preview">Reasignada desde Sec. de Hacienda por traslado de competencia. Requiere análisis jurídico previo…</div>
+            <div class="footer-row">
+              <span class="ico"><i data-lucide="building-2"></i> Of. Asesora Jurídica</span>
+              <span class="ico"><i data-lucide="paperclip"></i> 4</span>
+              <span class="ico"><i data-lucide="sparkles" style="color:var(--sky-600)"></i> IA</span>
+              <span class="spacer"></span>
+              <span class="vto-badge vto-ok" style="padding: 2px 7px; font-size: 11px;"><span class="vto-dot"></span><span class="vto-text">8 días</span></span>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="top-row">
+              <span class="badge warn no-dot" style="height: 18px; font-size: 10.5px; padding: 0 6px;">Por firmar</span>
+              <span class="num">DOC-2026-001872</span>
+              <span class="time">ayer</span>
+            </div>
+            <div class="asunto">Concepto jurídico C-2026-114 sobre exoneración tributaria</div>
+            <div class="preview">Documento aprobado por Carlos Granados · Esperando firma del Profesional Responsable…</div>
+            <div class="footer-row">
+              <span class="ico"><i data-lucide="signature"></i> Firma electrónica</span>
+              <span class="spacer"></span>
+              <span class="badge warn" style="height:18px; font-size: 10.5px; padding: 0 6px;">1 acción</span>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="top-row">
+              <span class="pqrsd-chip tipo-P"><span class="glyph">P</span> Petición</span>
+              <span class="num">PQR-2026-000478</span>
+              <span class="time">22 May</span>
+            </div>
+            <div class="asunto">Solicitud de información sobre contratos celebrados en vigencia 2025</div>
+            <div class="preview">Solicitante: Veedora Ciudadana · Petición de información pública con término de 10 días hábiles…</div>
+            <div class="footer-row">
+              <span class="ico"><i data-lucide="building-2"></i> Of. Asesora Jurídica</span>
+              <span class="ico"><i data-lucide="paperclip"></i> 1</span>
+              <span class="spacer"></span>
+              <span class="vto-badge vto-ok" style="padding: 2px 7px; font-size: 11px;"><span class="vto-dot"></span><span class="vto-text">5 días</span></span>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="top-row">
+              <span class="badge neutral no-dot" style="height: 18px; font-size: 10.5px; padding: 0 6px;">Notificación</span>
+              <span class="num">NOT-2026-008</span>
+              <span class="time">22 May</span>
+            </div>
+            <div class="asunto">Nueva versión vigente de la TRD — versión 2026.1</div>
+            <div class="preview">Comunicado del Administrador Documental · Cambios en series 200, 240, 310. Aplica desde 1° de junio…</div>
+            <div class="footer-row">
+              <span class="ico"><i data-lucide="folder-tree"></i> TRD</span>
+              <span class="spacer"></span>
+            </div>
+          </div>
+
+          <div class="item">
+            <div class="top-row">
+              <span class="pqrsd-chip tipo-S"><span class="glyph">S</span> Sugerencia</span>
+              <span class="num">PQR-2026-000472</span>
+              <span class="time">20 May</span>
+            </div>
+            <div class="asunto">Sugerencia para mejorar la atención presencial en horarios de tarde</div>
+            <div class="preview">Solicitante anónimo · Sugerencia de gestión interna sin término legal estricto…</div>
+            <div class="footer-row">
+              <span class="ico"><i data-lucide="building-2"></i> Sec. de Serv. al Ciudadano</span>
+              <span class="spacer"></span>
+              <span class="badge ok" style="height:18px; font-size: 10.5px; padding: 0 6px;">Aceptada</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ── Detail ── -->
+        <section class="detail-col">
+
+          <!-- Vencimiento module -->
+          <div class="vto-module">
+            <div class="ico"><i data-lucide="alarm-clock"></i></div>
+            <div>
+              <div class="title">Próxima a vencer — 3 días hábiles</div>
+              <div class="detail">Plazo legal: 27 de mayo de 2026 · El término inició el 6 de mayo y se ha consumido el 78%.</div>
+            </div>
+            <button class="btn btn-secondary btn-sm"><i data-lucide="pause"></i> Suspender término</button>
+          </div>
+
+          <!-- Detail head -->
+          <div class="detail-head">
+            <div class="toolbar">
+              <button class="btn btn-secondary btn-sm"><i data-lucide="reply"></i> Proyectar respuesta</button>
+              <button class="btn btn-secondary btn-sm"><i data-lucide="user-plus"></i> Reasignar</button>
+              <button class="btn btn-secondary btn-sm"><i data-lucide="forward"></i> Trasladar por competencia</button>
+              <div class="spacer"></div>
+              <button class="icon-btn" title="Imprimir"><i data-lucide="printer"></i></button>
+              <button class="icon-btn" title="Descargar"><i data-lucide="download"></i></button>
+              <button class="icon-btn" title="Más"><i data-lucide="more-horizontal"></i></button>
+            </div>
+
+            <div class="ident">
+              <span class="pqrsd-chip tipo-Q"><span class="glyph">Q</span> Queja</span>
+              <span class="num">PQR-2026-000487</span>
+              <span>·</span>
+              <span>Vinculada a RAD-2026-001234</span>
+              <span>·</span>
+              <span class="badge info no-dot" style="height: 18px; font-size: 10.5px; padding: 0 6px;">En gestión</span>
+            </div>
+            <h2>Queja por demora injustificada en respuesta a solicitud radicada el 14 de abril</h2>
+            <div class="hstack" style="gap: var(--s-2);">
+              <span class="badge warn">Próxima a vencer · 3 días</span>
+              <span class="badge neutral no-dot" style="font-family: var(--font-mono); font-size: 11px;">Término: 15 días hábiles · Ley 1755/2015</span>
+            </div>
+
+            <div class="meta-grid">
+              <div>
+                <div class="k">Solicitante</div>
+                <div class="v">María Helena Rojas Pérez<br/><span class="mono" style="font-size: 11px; color: var(--fg-tertiary)">CC 52.123.456</span></div>
+              </div>
+              <div>
+                <div class="k">Dependencia</div>
+                <div class="v">Of. Asesora Jurídica</div>
+              </div>
+              <div>
+                <div class="k">Asignada a</div>
+                <div class="v with-avatar"><div class="avatar sm emerald">JR</div> Juana Restrepo</div>
+              </div>
+              <div>
+                <div class="k">Canal</div>
+                <div class="v">Página web institucional</div>
+              </div>
+              <div>
+                <div class="k">Recibida</div>
+                <div class="v">06 May 2026 · 14:32</div>
+              </div>
+              <div>
+                <div class="k">Vence</div>
+                <div class="v" style="color: var(--amber-700); font-weight: 600;">27 May 2026 · 17:00</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Description -->
+          <div class="detail-section">
+            <div class="head">
+              <div class="title"><i data-lucide="message-square"></i> Descripción de la queja</div>
+              <button class="btn btn-ghost btn-sm"><i data-lucide="sparkles" style="color:var(--sky-600)"></i> Resumir con IA</button>
+            </div>
+            <div class="body">
+              <p>"He esperado por más de 30 días una respuesta a mi petición sobre el predio de la calle 24, radicada el pasado 14 de abril bajo el número RAD-2026-000812. He acudido en dos ocasiones a la oficina y se me indica que el trámite sigue en curso, sin precisar plazo de resolución."</p>
+              <p>"Solicito respetuosamente una respuesta de fondo a mi solicitud original, e información sobre los responsables de la demora, conforme al derecho de petición consagrado en el artículo 23 de la Constitución y a la Ley 1755 de 2015."</p>
+            </div>
+          </div>
+
+          <!-- Anexos -->
+          <div class="detail-section">
+            <div class="head">
+              <div class="title"><i data-lucide="paperclip"></i> Anexos · 2 archivos</div>
+              <button class="btn btn-ghost btn-sm"><i data-lucide="download"></i> Descargar todo</button>
+            </div>
+            <div class="body">
+              <div class="anexos-list">
+                <div class="anexo-row">
+                  <div class="ico"><i data-lucide="file-text"></i></div>
+                  <div class="info">
+                    <div class="name">Constancia-radicacion-original.pdf</div>
+                    <div class="meta">1 pág · 124 KB · sin OCR requerido</div>
+                  </div>
+                  <button class="icon-btn"><i data-lucide="eye"></i></button>
+                </div>
+                <div class="anexo-row">
+                  <div class="ico"><i data-lucide="file-text"></i></div>
+                  <div class="info">
+                    <div class="name">Identificacion-solicitante.pdf</div>
+                    <div class="meta">2 pág · 312 KB · OCR 94%</div>
+                  </div>
+                  <button class="icon-btn"><i data-lucide="eye"></i></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick reply -->
+          <div class="quick-reply">
+            <div class="reply-actions">
+              <span class="reply-tag"><i data-lucide="sparkles" style="color:var(--sky-600)"></i> Generar borrador con IA</span>
+              <span class="reply-tag"><i data-lucide="file-text"></i> Desde plantilla</span>
+              <span class="reply-tag"><i data-lucide="pen-line"></i> Desde cero</span>
+            </div>
+            <textarea class="textarea" placeholder="Comience a redactar la respuesta, o use uno de los atajos arriba para generar un borrador inicial…" rows="3"></textarea>
+            <div class="ax-stack">
+              <label class="check"><input type="checkbox" /> Adjuntar copia del radicado original RAD-2026-000812</label>
+              <label class="check"><input type="checkbox" checked /> Enviar a revisión del Jefe de Dependencia</label>
+            </div>
+            <div style="display: flex; gap: var(--s-2); margin-top: var(--s-3); justify-content: flex-end;">
+              <button class="btn btn-ghost btn-sm">Guardar borrador</button>
+              <button class="btn btn-primary btn-sm"><i data-lucide="send"></i> Enviar a revisión</button>
+            </div>
+          </div>
+
+        </section>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

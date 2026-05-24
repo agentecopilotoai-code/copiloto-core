@@ -1,0 +1,868 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Administración · Usuarios y roles</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="../assets/portal.css" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  /* Admin tabs (full width) */
+  .admin-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border-default);
+    background: white;
+    padding: 0 var(--s-5);
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    border: 1px solid var(--border-default);
+    border-bottom: none;
+  }
+  .admin-tabs .tab {
+    padding: var(--s-3) var(--s-4);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fg-secondary);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-bottom: -1px;
+  }
+  .admin-tabs .tab:hover { color: var(--fg-primary); }
+  .admin-tabs .tab.active {
+    color: var(--accent-strong);
+    border-bottom-color: var(--accent-base);
+    font-weight: 600;
+  }
+  .admin-tabs .tab svg { width: 13px; height: 13px; }
+  .admin-tabs .tab .count {
+    background: var(--slate-100);
+    color: var(--fg-secondary);
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: var(--r-pill);
+    font-family: var(--font-mono);
+  }
+  .admin-tabs .tab.active .count { background: var(--sky-100); color: var(--sky-700); }
+
+  /* Layout: list + detail */
+  .users-layout {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 0;
+    background: white;
+    border: 1px solid var(--border-default);
+    border-top: 0;
+    border-radius: 0 0 var(--r-lg) var(--r-lg);
+    overflow: hidden;
+  }
+
+  /* List */
+  .users-col {
+    border-right: 1px solid var(--border-default);
+    display: flex;
+    flex-direction: column;
+  }
+  .users-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border-default);
+    background: white;
+  }
+  .users-toolbar .search-mini { flex: 1; max-width: 280px; position: relative; }
+  .users-toolbar .search-mini input {
+    width: 100%; height: 32px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-md);
+    padding: 0 10px 0 30px;
+    font-size: 13px;
+    background: white;
+  }
+  .users-toolbar .search-mini svg {
+    position: absolute; left: 10px; top: 9px;
+    width: 14px; height: 14px; color: var(--fg-tertiary);
+  }
+
+  .users-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  .users-table thead th {
+    background: var(--slate-50);
+    text-align: left;
+    padding: 9px var(--s-4);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-secondary);
+    border-bottom: 1px solid var(--border-default);
+    white-space: nowrap;
+  }
+  .users-table tbody td {
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--fg-primary);
+    vertical-align: middle;
+  }
+  .users-table tbody tr { cursor: pointer; }
+  .users-table tbody tr:hover { background: var(--slate-25); }
+  .users-table tbody tr.selected {
+    background: var(--sky-50);
+    border-left: 3px solid var(--accent-base);
+  }
+  .users-table tbody tr.selected td:first-child { padding-left: calc(var(--s-4) - 3px); }
+  .users-table tbody tr:last-child td { border-bottom: 0; }
+  .users-table .name-cell { display: flex; align-items: center; gap: 10px; min-width: 220px; }
+  .users-table .name-cell .info { min-width: 0; }
+  .users-table .name-cell .nm { font-weight: 600; }
+  .users-table .name-cell .em {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .users-table .roles-cell {
+    display: flex; flex-wrap: wrap; gap: 4px;
+  }
+  .users-table .role-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: var(--r-sm);
+    background: var(--slate-100);
+    color: var(--slate-700);
+    font-size: 10.5px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    border: 1px solid var(--border-default);
+  }
+  .users-table .role-pill.gd { background: var(--sky-50); color: var(--sky-700); border-color: var(--sky-200); }
+  .users-table .role-pill.admin { background: var(--violet-50); color: var(--violet-700); border-color: #DDD6FE; }
+  .users-table .role-pill.signer { background: var(--amber-50); color: var(--amber-700); border-color: #FCD34D; }
+  .users-table .role-pill.auditor { background: var(--emerald-50); color: var(--emerald-700); border-color: #A7F3D0; }
+
+  /* Detail panel */
+  .user-detail {
+    padding: var(--s-5);
+    overflow-y: auto;
+  }
+  .user-detail .head {
+    display: flex;
+    gap: var(--s-4);
+    padding-bottom: var(--s-4);
+    border-bottom: 1px solid var(--border-default);
+    margin-bottom: var(--s-4);
+  }
+  .user-detail .head .avatar.lg {
+    width: 56px; height: 56px;
+    font-size: 20px;
+    font-family: var(--font-display);
+  }
+  .user-detail .head h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 20px;
+    line-height: 1.15;
+    margin: 0 0 4px;
+    color: var(--slate-900);
+  }
+  .user-detail .head .email {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--fg-tertiary);
+    margin-bottom: 6px;
+  }
+  .user-detail .head .meta {
+    display: flex; gap: var(--s-2); flex-wrap: wrap;
+  }
+  .user-detail .head .actions {
+    margin-left: auto;
+    display: flex; gap: 4px;
+    align-self: flex-start;
+  }
+
+  /* Property strip */
+  .prop-strip {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s-4);
+    padding: var(--s-3) 0;
+    margin-bottom: var(--s-4);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .prop-strip .k {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-tertiary);
+    font-weight: 600;
+    margin-bottom: 3px;
+  }
+  .prop-strip .v {
+    font-size: 13px;
+    color: var(--fg-primary);
+    font-weight: 500;
+  }
+
+  /* Section block */
+  .blk-h {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-tertiary);
+    margin: var(--s-5) 0 var(--s-3);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .blk-h::before {
+    content: ""; width: 3px; height: 12px;
+    background: var(--accent-base);
+    border-radius: 1px;
+  }
+  .blk-h .right { margin-left: auto; }
+  .blk-h .right a { font-size: 11.5px; color: var(--accent-base); font-weight: 600; text-transform: none; letter-spacing: 0; }
+
+  /* Role assignment card */
+  .role-card {
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    padding: var(--s-3) var(--s-4);
+    margin-bottom: 8px;
+    background: white;
+  }
+  .role-card .top {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    margin-bottom: 6px;
+  }
+  .role-card .top .badge { font-size: 11px; height: 21px; }
+  .role-card .top .code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    margin-left: 4px;
+  }
+  .role-card .top .actions {
+    margin-left: auto;
+    display: flex; gap: 2px;
+  }
+  .role-card .name {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--slate-900);
+  }
+  .role-card .meta {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s-3);
+    margin-top: var(--s-3);
+    padding-top: var(--s-3);
+    border-top: 1px dashed var(--border-default);
+  }
+  .role-card .meta .k {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--fg-tertiary);
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .role-card .meta .v { font-size: 12px; color: var(--fg-primary); font-weight: 500; }
+  .role-card .meta .v.mono { font-family: var(--font-mono); }
+
+  .role-card.expired { opacity: 0.7; background: var(--slate-25); }
+
+  /* Permissions list compact */
+  .perm-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .perm-mini {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    background: var(--slate-50);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-secondary);
+  }
+  .perm-mini.critical {
+    background: var(--amber-50);
+    color: var(--amber-700);
+    border-color: #FCD34D;
+  }
+  .perm-mini svg { width: 9px; height: 9px; }
+
+  /* Add role button */
+  .add-role {
+    border: 1px dashed var(--border-strong);
+    background: var(--slate-25);
+    color: var(--fg-tertiary);
+    padding: var(--s-3) var(--s-4);
+    border-radius: var(--r-md);
+    text-align: center;
+    cursor: pointer;
+    font-size: 12.5px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .add-role:hover { background: white; border-color: var(--accent-base); color: var(--accent-base); }
+  .add-role svg { width: 14px; height: 14px; }
+
+  /* Activity mini */
+  .act-mini {
+    display: grid;
+    grid-template-columns: 22px 1fr auto;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 12px;
+    align-items: flex-start;
+  }
+  .act-mini:last-child { border-bottom: 0; }
+  .act-mini .ico {
+    width: 22px; height: 22px;
+    border-radius: var(--r-sm);
+    background: var(--slate-100);
+    color: var(--slate-700);
+    display: grid; place-items: center;
+  }
+  .act-mini .ico svg { width: 11px; height: 11px; }
+  .act-mini .text { line-height: 1.4; }
+  .act-mini .text b { font-weight: 600; }
+  .act-mini .time { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-tertiary); white-space: nowrap; }
+</style>
+</head>
+<body data-screen-label="11 Admin Usuarios">
+
+<div class="app-shell">
+
+  <!-- Sidebar — Admin Sistema -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="title">Gestión Documental</div>
+        <div class="subtitle">Alcaldía de Ejemplo</div>
+      </div>
+    </div>
+    <div class="sidebar-role">
+      <div class="avatar" style="background: var(--slate-900);">AT</div>
+      <div>
+        <div class="name">Ana Tovar</div>
+        <div class="rol">ROL-001 · Admin Sistema</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">Inicio</div>
+        <a class="nav-link" href="06-dashboard.html"><i data-lucide="layout-dashboard"></i> Tablero</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Identidad</div>
+        <a class="nav-link active" href="#"><i data-lucide="users"></i> Usuarios <span class="count">187</span></a>
+        <a class="nav-link" href="#"><i data-lucide="shield"></i> Roles y permisos</a>
+        <a class="nav-link" href="#"><i data-lucide="user-x"></i> Sesiones activas</a>
+        <a class="nav-link" href="#"><i data-lucide="bot"></i> Identidades técnicas</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Organización</div>
+        <a class="nav-link" href="#"><i data-lucide="building-2"></i> Estructura orgánica</a>
+        <a class="nav-link" href="#"><i data-lucide="briefcase"></i> Cargos</a>
+        <a class="nav-link" href="#"><i data-lucide="calendar"></i> Calendario hábil</a>
+        <a class="nav-link" href="10-trd-editor.html"><i data-lucide="folder-tree"></i> TRD / TVD</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Sistema</div>
+        <a class="nav-link" href="#"><i data-lucide="settings"></i> Parámetros</a>
+        <a class="nav-link" href="#"><i data-lucide="sparkles"></i> Proveedor IA</a>
+        <a class="nav-link" href="12-auditoria.html"><i data-lucide="shield-check"></i> Auditoría</a>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <span>v0.1 · 2026.05</span>
+      <i data-lucide="check-circle-2" style="width:11px; height:11px; color: var(--emerald-600)"></i>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar">
+      <div class="search">
+        <i data-lucide="search"></i>
+        <input placeholder="Buscar usuario, rol, dependencia…" />
+        <span class="shortcut">⌘ K</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="scope">
+        <i data-lucide="layers"></i>
+        <span class="label">Alcance:</span>
+        <span class="value">Toda la entidad</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <button class="icon-btn"><i data-lucide="help-circle"></i></button>
+      <button class="icon-btn"><i data-lucide="bell"></i><span class="dot"></span></button>
+      <button class="user-chip">
+        <div class="avatar" style="background: var(--slate-900);">AT</div>
+        <span class="name">Ana</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+    </header>
+
+    <div class="content">
+
+      <div class="breadcrumb">
+        <a href="06-dashboard.html"><i data-lucide="home"></i></a>
+        <i data-lucide="chevron-right"></i>
+        <a href="#">Administración</a>
+        <i data-lucide="chevron-right"></i>
+        <span class="here">Usuarios y roles</span>
+      </div>
+
+      <div class="page-head">
+        <div class="title-block">
+          <h1>Usuarios y roles</h1>
+          <p class="subtitle">Gestión de cuentas, asignación de roles con alcance por dependencia, y vigencias. Cambios críticos requieren justificación y quedan en auditoría.</p>
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary"><i data-lucide="upload"></i> Importar masivo</button>
+          <button class="btn btn-secondary"><i data-lucide="download"></i> Exportar</button>
+          <button class="btn btn-primary"><i data-lucide="user-plus"></i> Nuevo usuario</button>
+        </div>
+      </div>
+
+      <!-- KPI strip -->
+      <div class="grid-4" style="margin-bottom: var(--s-4);">
+        <div class="kpi">
+          <div class="label"><i data-lucide="users" style="width: 12px; height: 12px;"></i> Total usuarios</div>
+          <div class="value">187</div>
+        </div>
+        <div class="kpi">
+          <div class="label"><i data-lucide="user-check" style="width: 12px; height: 12px;"></i> Activos hoy</div>
+          <div class="value" style="color: var(--emerald-700)">142</div>
+        </div>
+        <div class="kpi">
+          <div class="label"><i data-lucide="user-x" style="width: 12px; height: 12px;"></i> Suspendidos</div>
+          <div class="value" style="color: var(--amber-700)">8</div>
+        </div>
+        <div class="kpi">
+          <div class="label"><i data-lucide="bot" style="width: 12px; height: 12px;"></i> Identidades técnicas</div>
+          <div class="value">3</div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="admin-tabs">
+        <a class="tab active" href="#"><i data-lucide="users"></i> Usuarios <span class="count">187</span></a>
+        <a class="tab" href="#"><i data-lucide="shield"></i> Roles <span class="count">19</span></a>
+        <a class="tab" href="#"><i data-lucide="grid-3x3"></i> Matriz permisos <span class="count">152</span></a>
+        <a class="tab" href="#"><i data-lucide="building-2"></i> Estructura orgánica</a>
+        <a class="tab" href="#"><i data-lucide="briefcase"></i> Cargos</a>
+        <a class="tab" href="#"><i data-lucide="bot"></i> Identidades técnicas</a>
+      </div>
+
+      <!-- Layout -->
+      <div class="users-layout">
+
+        <!-- LEFT — users table -->
+        <div class="users-col">
+          <div class="users-toolbar">
+            <div class="search-mini">
+              <i data-lucide="search"></i>
+              <input placeholder="Buscar por nombre o correo…" />
+            </div>
+            <button class="btn btn-secondary btn-sm"><i data-lucide="filter"></i> Filtros · 1</button>
+            <button class="btn btn-secondary btn-sm"><i data-lucide="building-2"></i> Dependencia: Of. Asesora Jurídica</button>
+            <div style="flex: 1"></div>
+            <button class="btn btn-secondary btn-sm"><i data-lucide="arrow-down-up"></i></button>
+          </div>
+          <div style="overflow-y: auto; max-height: 640px;">
+            <table class="users-table">
+              <thead>
+                <tr>
+                  <th>Usuario</th>
+                  <th>Cargo</th>
+                  <th>Roles GD</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="selected">
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar emerald">JR</div>
+                      <div class="info">
+                        <div class="nm">Juana Restrepo Gómez</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="f19b84909f90df839482858394819eb1949b949c819d9edf969e87df929e">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Profesional Esp.</span><br/><span class="mono muted" style="font-size: 11px;">CARG-PE-014</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill gd">profesional</span>
+                      <span class="role-pill signer">firmante</span>
+                    </div>
+                  </td>
+                  <td><span class="badge ok">Activo</span></td>
+                </tr>
+
+                <tr>
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar red">CG</div>
+                      <div class="info">
+                        <div class="nm">Carlos Granados Mora</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="ccafadbea0a3bfe2abbeada2ada8a3bf8ca9a6a9a1bca0a3e2aba3bae2afa3">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Jefe de Oficina</span><br/><span class="mono muted" style="font-size: 11px;">CARG-JF-002</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill gd">jefe_dep.</span>
+                      <span class="role-pill signer">firmante</span>
+                      <span class="role-pill gd">revisor</span>
+                    </div>
+                  </td>
+                  <td><span class="badge ok">Activo</span></td>
+                </tr>
+
+                <tr>
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar sky">DA</div>
+                      <div class="info">
+                        <div class="nm">Diego Acuña Pinto</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="f5919c90929adb9496809b94b5909f909885999adb929a83db969a">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Profesional Univ.</span><br/><span class="mono muted" style="font-size: 11px;">CARG-PU-008</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill gd">prof.</span>
+                      <span class="role-pill gd">rad_externa</span>
+                    </div>
+                  </td>
+                  <td><span class="badge ok">Activo</span></td>
+                </tr>
+
+                <tr>
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar">CM</div>
+                      <div class="info">
+                        <div class="nm">Carolina Méndez León</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="37545645585b5e5956195a525953524d77525d525a475b5819505841195458">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Aux. Administrativo</span><br/><span class="mono muted" style="font-size: 11px;">CARG-AA-021</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill gd">radicador</span>
+                      <span class="role-pill gd">coord_vu</span>
+                    </div>
+                  </td>
+                  <td><span class="badge ok">Activo</span></td>
+                </tr>
+
+                <tr>
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar violet">DM</div>
+                      <div class="info">
+                        <div class="nm">Daniel Mora Vélez</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="563237383f333a783b39243716333c333b263a3978313920783539">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Coordinador PQRSD</span><br/><span class="mono muted" style="font-size: 11px;">CARG-CO-005</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill admin">admin_pqrsd</span>
+                    </div>
+                  </td>
+                  <td><span class="badge ok">Activo</span></td>
+                </tr>
+
+                <tr>
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar amber">MV</div>
+                      <div class="info">
+                        <div class="nm">Marta Villamil Cano</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="2c414d5e584d025a4540404d4145406c494649415c4043024b435a024f43">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Profesional Esp.</span><br/><span class="mono muted" style="font-size: 11px;">CARG-PE-018</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill admin">admin_doc.</span>
+                    </div>
+                  </td>
+                  <td><span class="badge ok">Activo</span></td>
+                </tr>
+
+                <tr>
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar" style="background: var(--slate-700); color: white;">LP</div>
+                      <div class="info">
+                        <div class="nm">Laura Pinzón Restrepo</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="7e121f0b0c1f500e17100411103e1b141b130e121150191108501d11">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Secretaria Ejecutiva</span><br/><span class="mono muted" style="font-size: 11px;">CARG-SE-009</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill gd">secretario_dep</span>
+                    </div>
+                  </td>
+                  <td><span class="badge ok">Activo</span></td>
+                </tr>
+
+                <tr>
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar amber">YL</div>
+                      <div class="info">
+                        <div class="nm">Yenny López Caicedo</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="acd5c9c2c2d582c0c3dcc9d6ecc9c6c9c1dcc0c382cbc3da82cfc3">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Profesional Univ.</span><br/><span class="mono muted" style="font-size: 11px;">CARG-PU-031</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill gd">profesional</span>
+                    </div>
+                  </td>
+                  <td><span class="badge warn">Suspendido</span></td>
+                </tr>
+
+                <tr>
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar" style="background: var(--slate-400); color: white;">RT</div>
+                      <div class="info">
+                        <div class="nm">Roberto Tafur Mejía</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="abd9c4c9ced9dfc485dfcacdded9ebcec1cec6dbc7c485ccc4dd85c8c4">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Aux. Administrativo</span><br/><span class="mono muted" style="font-size: 11px;">CARG-AA-014</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill gd">usuario_dep</span>
+                    </div>
+                  </td>
+                  <td><span class="badge danger">Inactivo</span></td>
+                </tr>
+
+                <tr>
+                  <td>
+                    <div class="name-cell">
+                      <div class="avatar emerald">JT</div>
+                      <div class="info">
+                        <div class="nm">Jorge Torres Salazar</div>
+                        <div class="em"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="670d081500024913081515021427020d020a170b0849000811490408">[email&#160;protected]</a></div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="muted">Auditor Interno</span><br/><span class="mono muted" style="font-size: 11px;">CARG-AU-001</span></td>
+                  <td>
+                    <div class="roles-cell">
+                      <span class="role-pill auditor">auditor</span>
+                    </div>
+                  </td>
+                  <td><span class="badge ok">Activo</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="pagination" style="margin-top: auto;">
+            <div class="summary">Mostrando 1–10 de 187 · filtro: dependencia</div>
+            <button class="page-btn"><i data-lucide="chevron-left" style="width:11px; height:11px"></i></button>
+            <button class="page-btn active">1</button>
+            <button class="page-btn">2</button>
+            <button class="page-btn">…</button>
+            <button class="page-btn">19</button>
+            <button class="page-btn"><i data-lucide="chevron-right" style="width:11px; height:11px"></i></button>
+          </div>
+        </div>
+
+        <!-- RIGHT — user detail -->
+        <div class="user-detail">
+
+          <div class="head">
+            <div class="avatar emerald lg">JR</div>
+            <div style="min-width: 0;">
+              <h2>Juana Restrepo Gómez</h2>
+              <div class="email"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="f59f80949b94db879086818790859ab5909f909885999adb929a83db969a">[email&#160;protected]</a></div>
+              <div class="meta">
+                <span class="badge ok">Activo</span>
+                <span class="badge info no-dot"><i data-lucide="shield" style="width: 10px; height: 10px;"></i> MFA habilitado</span>
+                <span class="badge neutral no-dot mono" style="font-size: 11px;">CC 1.012.345.678</span>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="icon-btn" title="Editar"><i data-lucide="pencil"></i></button>
+              <button class="icon-btn" title="Más"><i data-lucide="more-horizontal"></i></button>
+            </div>
+          </div>
+
+          <!-- Properties -->
+          <div class="prop-strip">
+            <div>
+              <div class="k">Vinculación</div>
+              <div class="v">Planta</div>
+            </div>
+            <div>
+              <div class="k">Inicio</div>
+              <div class="v mono" style="font-family: var(--font-mono); font-size: 12px;">2024-03-14</div>
+            </div>
+            <div>
+              <div class="k">Fin de contrato</div>
+              <div class="v" style="color: var(--fg-tertiary);">— sin fin —</div>
+            </div>
+            <div>
+              <div class="k">Dependencia actual</div>
+              <div class="v">Of. Asesora Jurídica</div>
+            </div>
+            <div>
+              <div class="k">Cargo actual</div>
+              <div class="v">Profesional Esp.</div>
+            </div>
+            <div>
+              <div class="k">Último acceso</div>
+              <div class="v mono" style="font-family: var(--font-mono); font-size: 12px;">hace 18 min</div>
+            </div>
+          </div>
+
+          <!-- Active roles -->
+          <div class="blk-h">
+            Roles GD activos · 2
+            <div class="right"><a href="#">+ Asignar rol</a></div>
+          </div>
+
+          <div class="role-card">
+            <div class="top">
+              <span class="badge info no-dot" style="font-family: var(--font-mono); font-size: 11px;">gd.profesional</span>
+              <span class="code">PRINCIPAL</span>
+              <div class="actions">
+                <button class="icon-btn" title="Editar alcance"><i data-lucide="pencil"></i></button>
+                <button class="icon-btn" title="Cerrar"><i data-lucide="x"></i></button>
+              </div>
+            </div>
+            <div class="name">Profesional Responsable</div>
+            <div class="meta">
+              <div>
+                <div class="k">Alcance</div>
+                <div class="v">Dependencia</div>
+              </div>
+              <div>
+                <div class="k">Dependencia</div>
+                <div class="v">Of. Asesora Jurídica</div>
+              </div>
+              <div>
+                <div class="k">Vigencia</div>
+                <div class="v mono">14 mar 2024 — sin fin</div>
+              </div>
+            </div>
+            <div class="perm-strip">
+              <span class="perm-mini">PERM-PQRSD-009</span>
+              <span class="perm-mini">PERM-PQRSD-012</span>
+              <span class="perm-mini">PERM-CI-001</span>
+              <span class="perm-mini">PERM-CI-004</span>
+              <span class="perm-mini">PERM-DOC-005</span>
+              <span class="perm-mini">+ 14 más</span>
+            </div>
+          </div>
+
+          <div class="role-card">
+            <div class="top">
+              <span class="badge warn no-dot" style="font-family: var(--font-mono); font-size: 11px;">gd.firmante</span>
+              <span class="code">SECUNDARIO</span>
+              <div class="actions">
+                <button class="icon-btn"><i data-lucide="pencil"></i></button>
+                <button class="icon-btn"><i data-lucide="x"></i></button>
+              </div>
+            </div>
+            <div class="name">Firmante Autorizado</div>
+            <div class="meta">
+              <div>
+                <div class="k">Alcance</div>
+                <div class="v">Dependencia</div>
+              </div>
+              <div>
+                <div class="k">Dependencia</div>
+                <div class="v">Of. Asesora Jurídica</div>
+              </div>
+              <div>
+                <div class="k">Vigencia</div>
+                <div class="v mono">10 may 2025 — sin fin</div>
+              </div>
+            </div>
+            <div class="perm-strip">
+              <span class="perm-mini critical"><i data-lucide="alert-triangle"></i> PERM-FIR-001</span>
+              <span class="perm-mini">PERM-FIR-005</span>
+              <span class="perm-mini">PERM-FIR-004</span>
+            </div>
+          </div>
+
+          <div class="add-role"><i data-lucide="plus-circle"></i> Asignar otro rol con alcance</div>
+
+          <!-- Historial -->
+          <div class="blk-h">
+            Historial reciente
+            <div class="right"><a href="12-auditoria.html">Ver todo →</a></div>
+          </div>
+
+          <div class="act-mini">
+            <div class="ico" style="background: var(--sky-50); color: var(--sky-700)"><i data-lucide="signature"></i></div>
+            <div class="text">Envió a revisión el documento <b class="mono" style="font-size: 11.5px;">OFI-2026-002154</b></div>
+            <div class="time">hace 18 min</div>
+          </div>
+          <div class="act-mini">
+            <div class="ico" style="background: var(--emerald-50); color: var(--emerald-700)"><i data-lucide="check"></i></div>
+            <div class="text">Aceptó asignación de PQRSD <b class="mono" style="font-size: 11.5px;">PQR-2026-000487</b></div>
+            <div class="time">hace 1h</div>
+          </div>
+          <div class="act-mini">
+            <div class="ico" style="background: var(--violet-50); color: var(--violet-700)"><i data-lucide="sparkles"></i></div>
+            <div class="text">Aceptó borrador IA con modificación (92% confianza)</div>
+            <div class="time">hace 2h</div>
+          </div>
+          <div class="act-mini">
+            <div class="ico" style="background: var(--slate-100)"><i data-lucide="log-in"></i></div>
+            <div class="text">Inicio de sesión exitoso desde IP <b class="mono" style="font-size: 11.5px;">10.42.5.18</b></div>
+            <div class="time">hoy 08:14</div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

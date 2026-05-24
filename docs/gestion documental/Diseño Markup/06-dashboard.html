@@ -1,0 +1,903 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tablero institucional · Gestión Documental</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="../assets/portal.css" />
+<script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<style>
+  /* Greeting header */
+  .greeting {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-6) var(--s-7);
+    margin-bottom: var(--s-5);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--s-5);
+    align-items: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .greeting::after {
+    content: "";
+    position: absolute;
+    right: -120px; top: -80px;
+    width: 360px; height: 360px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--sky-100), transparent 65%);
+    pointer-events: none;
+  }
+  .greeting .left { position: relative; z-index: 1; }
+  .greeting .eyebrow {
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    margin-bottom: 6px;
+    font-family: var(--font-mono);
+  }
+  .greeting h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 32px;
+    line-height: 1.15;
+    letter-spacing: -0.018em;
+    color: var(--slate-900);
+    margin: 0 0 8px;
+  }
+  .greeting h1 .name { color: var(--sky-700); }
+  .greeting .sub {
+    font-size: 14px;
+    color: var(--fg-secondary);
+    max-width: 600px;
+  }
+  .greeting .stat-strip {
+    display: flex;
+    gap: var(--s-6);
+    padding-top: var(--s-5);
+    margin-top: var(--s-5);
+    border-top: 1px solid var(--border-subtle);
+  }
+  .greeting .stat-strip .stat .label {
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .greeting .stat-strip .stat .v {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--fg-primary);
+    font-weight: 600;
+  }
+  .greeting .right {
+    position: relative; z-index: 1;
+    display: flex; gap: var(--s-2);
+  }
+
+  /* KPI row */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--s-3);
+    margin-bottom: var(--s-5);
+  }
+  .kpi-card {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    padding: var(--s-4) var(--s-5);
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi-card .top { display: flex; justify-content: space-between; align-items: center; }
+  .kpi-card .name {
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+  .kpi-card .ico-circle {
+    width: 28px; height: 28px;
+    border-radius: var(--r-md);
+    background: var(--slate-100);
+    color: var(--slate-700);
+    display: grid; place-items: center;
+  }
+  .kpi-card .ico-circle svg { width: 14px; height: 14px; }
+  .kpi-card .ico-circle.sky { background: var(--sky-50); color: var(--sky-700); }
+  .kpi-card .ico-circle.amber { background: var(--amber-50); color: var(--amber-700); }
+  .kpi-card .ico-circle.red { background: var(--red-50); color: var(--red-700); }
+  .kpi-card .ico-circle.emerald { background: var(--emerald-50); color: var(--emerald-700); }
+
+  .kpi-card .v {
+    font-family: var(--font-display);
+    font-size: 36px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--slate-900);
+    margin: var(--s-3) 0 6px;
+    font-feature-settings: "tnum";
+    letter-spacing: -0.015em;
+  }
+  .kpi-card .v.warn { color: var(--amber-700); }
+  .kpi-card .v.danger { color: var(--red-700); }
+  .kpi-card .v.ok { color: var(--emerald-700); }
+  .kpi-card .meta {
+    display: flex; justify-content: space-between;
+    align-items: center;
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    font-family: var(--font-mono);
+  }
+  .kpi-card .delta {
+    display: inline-flex; gap: 4px; align-items: center;
+  }
+  .kpi-card .delta svg { width: 11px; height: 11px; }
+  .kpi-card .delta.up { color: var(--emerald-700); font-weight: 600; }
+  .kpi-card .delta.down { color: var(--red-700); font-weight: 600; }
+
+  /* Mini sparkline using gradient bars */
+  .kpi-card .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 22px;
+    margin-top: var(--s-3);
+  }
+  .kpi-card .spark span {
+    flex: 1;
+    background: var(--slate-200);
+    border-radius: 1px;
+    transition: background 200ms;
+  }
+  .kpi-card .spark span.hot { background: var(--accent-base); }
+
+  /* Two-col content */
+  .dash-layout {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: var(--s-4);
+    align-items: start;
+  }
+
+  /* Section card */
+  .sec {
+    background: white;
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-lg);
+    margin-bottom: var(--s-4);
+    overflow: hidden;
+  }
+  .sec .h {
+    padding: var(--s-3) var(--s-5);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sec .h .t { font-weight: 600; font-size: 13.5px; color: var(--fg-primary); display: inline-flex; align-items: center; gap: 8px; }
+  .sec .h .t svg { width: 14px; height: 14px; color: var(--fg-tertiary); }
+  .sec .h .meta { font-size: 11.5px; color: var(--fg-tertiary); font-family: var(--font-mono); }
+  .sec .b { padding: var(--s-5); }
+
+  /* Volume bar chart */
+  .vol-chart {
+    display: grid;
+    grid-template-columns: repeat(14, 1fr);
+    gap: 4px;
+    align-items: flex-end;
+    height: 180px;
+    padding-bottom: var(--s-3);
+    position: relative;
+  }
+  .vol-chart::before, .vol-chart::after {
+    content: "";
+    position: absolute;
+    left: 0; right: 0;
+    height: 1px;
+    background: var(--border-subtle);
+  }
+  .vol-chart::before { top: 33%; }
+  .vol-chart::after { top: 66%; }
+  .vol-chart .bar {
+    background: linear-gradient(180deg, var(--sky-200), var(--sky-500));
+    border-radius: 2px 2px 0 0;
+    position: relative;
+    cursor: pointer;
+  }
+  .vol-chart .bar:hover { background: linear-gradient(180deg, var(--sky-400), var(--sky-700)); }
+  .vol-chart .bar.today { background: linear-gradient(180deg, var(--slate-700), var(--slate-900)); }
+  .vol-chart .bar.weekend { opacity: 0.4; }
+  .vol-axis {
+    display: grid;
+    grid-template-columns: repeat(14, 1fr);
+    gap: 4px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-tertiary);
+    text-align: center;
+    margin-top: 4px;
+  }
+
+  /* Dependency mini bars */
+  .dep-row {
+    display: grid;
+    grid-template-columns: 220px 1fr 80px;
+    align-items: center;
+    gap: var(--s-3);
+    padding: 6px 0;
+    font-size: 12.5px;
+  }
+  .dep-row .name { color: var(--fg-primary); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dep-row .track { height: 8px; background: var(--slate-100); border-radius: 2px; overflow: hidden; display: flex; }
+  .dep-row .track .seg { height: 100%; }
+  .dep-row .num { font-family: var(--font-mono); font-size: 12px; color: var(--fg-secondary); text-align: right; font-weight: 600; }
+
+  /* Activity feed */
+  .activity { display: flex; flex-direction: column; }
+  .activity-item {
+    display: grid;
+    grid-template-columns: 32px 1fr auto;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    align-items: flex-start;
+  }
+  .activity-item:last-child { border-bottom: 0; }
+  .activity-item .ico {
+    width: 28px; height: 28px;
+    border-radius: var(--r-sm);
+    background: var(--slate-100);
+    color: var(--slate-700);
+    display: grid; place-items: center;
+  }
+  .activity-item .ico svg { width: 13px; height: 13px; }
+  .activity-item .ico.sky { background: var(--sky-50); color: var(--sky-700); }
+  .activity-item .ico.amber { background: var(--amber-50); color: var(--amber-700); }
+  .activity-item .ico.red { background: var(--red-50); color: var(--red-700); }
+  .activity-item .ico.emerald { background: var(--emerald-50); color: var(--emerald-700); }
+  .activity-item .ico.violet { background: var(--violet-50); color: var(--violet-700); }
+  .activity-item .text { font-size: 13px; color: var(--fg-primary); line-height: 1.4; }
+  .activity-item .text .who { font-weight: 600; }
+  .activity-item .text .ref {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--slate-50);
+    border: 1px solid var(--border-subtle);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--fg-secondary);
+  }
+  .activity-item .text .sub {
+    font-size: 11.5px;
+    color: var(--fg-tertiary);
+    margin-top: 2px;
+  }
+  .activity-item .time {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    white-space: nowrap;
+  }
+
+  /* Right column items */
+  .module-status {
+    display: flex; flex-direction: column;
+    gap: 0;
+  }
+  .module-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 13px;
+  }
+  .module-row:last-child { border-bottom: 0; }
+  .module-row .ico {
+    width: 24px; height: 24px;
+    border-radius: var(--r-sm);
+    background: var(--slate-50);
+    color: var(--fg-secondary);
+    display: grid; place-items: center;
+  }
+  .module-row .ico svg { width: 12px; height: 12px; }
+  .module-row .label { font-weight: 500; }
+  .module-row .status {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+  }
+  .module-row .status .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .module-row .status.ok .dot { background: var(--emerald-600); }
+  .module-row .status.ok { color: var(--emerald-700); }
+  .module-row .status.warn .dot { background: var(--amber-500); }
+  .module-row .status.warn { color: var(--amber-700); }
+  .module-row .status.off .dot { background: var(--slate-400); }
+  .module-row .status.off { color: var(--fg-tertiary); }
+
+  /* Quick links grid */
+  .quick-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .qlink {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border-default);
+    background: var(--slate-50);
+    color: var(--fg-secondary);
+    font-size: 12.5px;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .qlink:hover { background: white; border-color: var(--border-strong); text-decoration: none; color: var(--fg-primary); }
+  .qlink svg { width: 14px; height: 14px; color: var(--fg-tertiary); }
+
+  /* Mini PQRSD list */
+  .mini-pqr {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+  }
+  .mini-pqr:last-child { border-bottom: 0; }
+  .mini-pqr:hover .ti { color: var(--accent-strong); }
+  .mini-pqr .top-r {
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: 4px;
+    font-family: var(--font-mono); font-size: 11px; color: var(--fg-tertiary);
+  }
+  .mini-pqr .top-r .num { color: var(--fg-secondary); font-weight: 600; }
+  .mini-pqr .top-r .spacer { flex: 1; }
+  .mini-pqr .ti {
+    font-size: 13px; font-weight: 600; color: var(--fg-primary); line-height: 1.3;
+    overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .mini-pqr .who {
+    font-size: 11.5px; color: var(--fg-tertiary); margin-top: 4px;
+  }
+</style>
+</head>
+<body data-screen-label="06 Dashboard institucional">
+
+<div class="app-shell">
+
+  <!-- Sidebar — Admin Sistema -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="title">Gestión Documental</div>
+        <div class="subtitle">Alcaldía de Ejemplo</div>
+      </div>
+    </div>
+    <div class="sidebar-role">
+      <div class="avatar" style="background: var(--slate-900);">AT</div>
+      <div>
+        <div class="name">Ana Tovar</div>
+        <div class="rol">ROL-001 · Admin Sistema</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">Inicio</div>
+        <a class="nav-link active" href="#"><i data-lucide="layout-dashboard"></i> Tablero institucional</a>
+        <a class="nav-link" href="#"><i data-lucide="bell"></i> Notificaciones <span class="count">12</span></a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Operación</div>
+        <a class="nav-link" href="#"><i data-lucide="file-text"></i> Radicados</a>
+        <a class="nav-link" href="#"><i data-lucide="message-square-warning"></i> PQRSD</a>
+        <a class="nav-link" href="#"><i data-lucide="send"></i> Correspondencia</a>
+        <a class="nav-link" href="#"><i data-lucide="library"></i> Documentos</a>
+        <a class="nav-link" href="#"><i data-lucide="folder-archive"></i> Expedientes</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Administración</div>
+        <a class="nav-link" href="#"><i data-lucide="users"></i> Usuarios y roles</a>
+        <a class="nav-link" href="#"><i data-lucide="building-2"></i> Estructura orgánica</a>
+        <a class="nav-link" href="#"><i data-lucide="folder-tree"></i> TRD / TVD</a>
+        <a class="nav-link" href="#"><i data-lucide="settings"></i> Parámetros</a>
+        <a class="nav-link" href="#"><i data-lucide="printer"></i> Periféricos</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Control</div>
+        <a class="nav-link" href="#"><i data-lucide="shield-check"></i> Auditoría</a>
+        <a class="nav-link" href="#"><i data-lucide="bar-chart-3"></i> Reportes</a>
+      </div>
+    </nav>
+    <div class="sidebar-foot">
+      <span>v0.1 · 2026.05</span>
+      <i data-lucide="check-circle-2" style="width:11px; height:11px; color: var(--emerald-600)"></i>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar">
+      <div class="search">
+        <i data-lucide="search"></i>
+        <input placeholder="Buscar radicado, PQRSD, usuario, expediente…" />
+        <span class="shortcut">⌘ K</span>
+      </div>
+      <div class="spacer"></div>
+      <button class="scope">
+        <i data-lucide="layers"></i>
+        <span class="label">Alcance:</span>
+        <span class="value">Toda la entidad</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <button class="icon-btn"><i data-lucide="help-circle"></i></button>
+      <button class="icon-btn"><i data-lucide="bell"></i><span class="dot"></span></button>
+      <button class="user-chip">
+        <div class="avatar" style="background: var(--slate-900);">AT</div>
+        <span class="name">Ana</span>
+        <i data-lucide="chevron-down"></i>
+      </button>
+    </header>
+
+    <div class="content">
+
+      <!-- Greeting -->
+      <div class="greeting">
+        <div class="left">
+          <div class="eyebrow">Domingo · 24 de mayo de 2026 · 15:42</div>
+          <h1>Buenas tardes, <span class="name">Ana</span>.</h1>
+          <div class="sub">Resumen consolidado de la entidad. Hay 3 PQRSD vencidas que requieren acción inmediata y 14 próximas a vencer en las siguientes 48 horas.</div>
+          <div class="stat-strip">
+            <div class="stat">
+              <div class="label">Tenant activo</div>
+              <div class="v">alc-ejemplo · publica</div>
+            </div>
+            <div class="stat">
+              <div class="label">Última actividad</div>
+              <div class="v">hace 18s</div>
+            </div>
+            <div class="stat">
+              <div class="label">Eventos hoy</div>
+              <div class="v">8.421</div>
+            </div>
+            <div class="stat">
+              <div class="label">Usuarios activos</div>
+              <div class="v">142 / 187</div>
+            </div>
+          </div>
+        </div>
+        <div class="right">
+          <button class="btn btn-secondary"><i data-lucide="calendar"></i> Mayo 2026</button>
+          <button class="btn btn-primary"><i data-lucide="plus"></i> Nuevo radicado</button>
+        </div>
+      </div>
+
+      <!-- Alert -->
+      <div class="alert danger" style="margin-bottom: var(--s-5);">
+        <div class="icon"><i data-lucide="alert-octagon"></i></div>
+        <div class="body">
+          <div class="title">3 PQRSD vencidas en 2 dependencias</div>
+          <div>Of. Asesora Jurídica (2) y Sec. de Hacienda (1). El equipo de Control Interno fue notificado automáticamente.</div>
+          <div class="actions"><a href="04-pqrsd-panel.html">Abrir panel PQRSD</a></div>
+        </div>
+      </div>
+
+      <!-- KPIs -->
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="top">
+            <div class="name">Radicados hoy</div>
+            <div class="ico-circle sky"><i data-lucide="file-plus"></i></div>
+          </div>
+          <div class="v">87</div>
+          <div class="meta">
+            <span class="delta up"><i data-lucide="trending-up"></i> +12% vs ayer</span>
+            <span>1.247 mes</span>
+          </div>
+          <div class="spark">
+            <span style="height: 35%"></span>
+            <span style="height: 48%"></span>
+            <span style="height: 42%"></span>
+            <span style="height: 55%"></span>
+            <span style="height: 38%"></span>
+            <span style="height: 60%"></span>
+            <span style="height: 52%"></span>
+            <span style="height: 68%"></span>
+            <span style="height: 75%"></span>
+            <span class="hot" style="height: 90%"></span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="top">
+            <div class="name">PQRSD vigentes</div>
+            <div class="ico-circle"><i data-lucide="message-square-warning"></i></div>
+          </div>
+          <div class="v">99</div>
+          <div class="meta">
+            <span class="delta down"><i data-lucide="trending-down"></i> −5 vs lunes</span>
+            <span>Cumplimiento 97.2%</span>
+          </div>
+          <div class="spark">
+            <span style="height: 70%"></span>
+            <span style="height: 65%"></span>
+            <span style="height: 78%"></span>
+            <span style="height: 72%"></span>
+            <span style="height: 68%"></span>
+            <span style="height: 60%"></span>
+            <span style="height: 58%"></span>
+            <span style="height: 52%"></span>
+            <span style="height: 55%"></span>
+            <span class="hot" style="height: 50%"></span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="top">
+            <div class="name">Vencidas / por vencer</div>
+            <div class="ico-circle amber"><i data-lucide="alarm-clock"></i></div>
+          </div>
+          <div class="v warn">14 <span style="font-size: 18px; color: var(--red-700); font-weight: 600;">+3</span></div>
+          <div class="meta">
+            <span class="delta up" style="color: var(--red-700)"><i data-lucide="trending-up"></i> +2 hoy</span>
+            <span>Plazo &lt; 48h</span>
+          </div>
+          <div class="spark">
+            <span style="height: 25%"></span>
+            <span style="height: 28%"></span>
+            <span style="height: 35%"></span>
+            <span style="height: 32%"></span>
+            <span style="height: 40%"></span>
+            <span style="height: 38%"></span>
+            <span style="height: 45%"></span>
+            <span style="height: 52%"></span>
+            <span style="height: 60%"></span>
+            <span class="hot" style="background: var(--amber-500); height: 72%"></span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="top">
+            <div class="name">Por firmar</div>
+            <div class="ico-circle emerald"><i data-lucide="signature"></i></div>
+          </div>
+          <div class="v">23</div>
+          <div class="meta">
+            <span><i data-lucide="users" style="width: 11px; height: 11px;"></i> 7 firmantes</span>
+            <span>Promedio 1.2h</span>
+          </div>
+          <div class="spark">
+            <span style="height: 45%"></span>
+            <span style="height: 50%"></span>
+            <span style="height: 60%"></span>
+            <span style="height: 55%"></span>
+            <span style="height: 48%"></span>
+            <span style="height: 52%"></span>
+            <span style="height: 58%"></span>
+            <span style="height: 50%"></span>
+            <span style="height: 48%"></span>
+            <span class="hot" style="background: var(--emerald-600); height: 55%"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Two col -->
+      <div class="dash-layout">
+
+        <!-- LEFT col -->
+        <div>
+
+          <!-- Volume chart -->
+          <div class="sec">
+            <div class="h">
+              <div class="t"><i data-lucide="bar-chart-3"></i> Volumen de radicación · últimas 2 semanas</div>
+              <div class="meta">Total · 1.247 · 89 promedio diario</div>
+            </div>
+            <div class="b">
+              <div class="vol-chart">
+                <div class="bar" style="height: 48%"></div>
+                <div class="bar" style="height: 62%"></div>
+                <div class="bar" style="height: 58%"></div>
+                <div class="bar" style="height: 72%"></div>
+                <div class="bar" style="height: 80%"></div>
+                <div class="bar weekend" style="height: 22%"></div>
+                <div class="bar weekend" style="height: 14%"></div>
+                <div class="bar" style="height: 68%"></div>
+                <div class="bar" style="height: 75%"></div>
+                <div class="bar" style="height: 82%"></div>
+                <div class="bar" style="height: 92%"></div>
+                <div class="bar" style="height: 88%"></div>
+                <div class="bar weekend" style="height: 28%"></div>
+                <div class="bar today" style="height: 95%"></div>
+              </div>
+              <div class="vol-axis">
+                <span>11</span><span>12</span><span>13</span><span>14</span><span>15</span>
+                <span style="color: var(--fg-disabled)">16</span><span style="color: var(--fg-disabled)">17</span>
+                <span>18</span><span>19</span><span>20</span><span>21</span><span>22</span>
+                <span style="color: var(--fg-disabled)">23</span>
+                <span style="color: var(--slate-900); font-weight: 700">24</span>
+              </div>
+              <div class="hstack" style="margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--border-default); font-size: 11px; color: var(--fg-tertiary);">
+                <span class="hstack" style="gap: 5px;"><span style="width: 8px; height: 8px; background: var(--sky-500); border-radius: 2px;"></span> Días hábiles</span>
+                <span class="hstack" style="gap: 5px;"><span style="width: 8px; height: 8px; background: var(--sky-500); opacity: 0.4; border-radius: 2px;"></span> Fin de semana</span>
+                <span class="hstack" style="gap: 5px;"><span style="width: 8px; height: 8px; background: var(--slate-900); border-radius: 2px;"></span> Hoy · 87 radicados</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dependency load -->
+          <div class="sec">
+            <div class="h">
+              <div class="t"><i data-lucide="building-2"></i> Carga por dependencia · vigentes</div>
+              <div class="meta">19 dependencias activas</div>
+            </div>
+            <div class="b">
+              <div class="dep-row">
+                <div class="name">Of. Asesora Jurídica</div>
+                <div class="track">
+                  <div class="seg" style="width: 38%; background: var(--sky-600)"></div>
+                  <div class="seg" style="width: 28%; background: var(--amber-500)"></div>
+                  <div class="seg" style="width: 14%; background: var(--red-500)"></div>
+                </div>
+                <div class="num">29 <small style="color: var(--fg-tertiary)">/36</small></div>
+              </div>
+              <div class="dep-row">
+                <div class="name">Sec. de Hacienda</div>
+                <div class="track">
+                  <div class="seg" style="width: 52%; background: var(--sky-600)"></div>
+                  <div class="seg" style="width: 18%; background: var(--amber-500)"></div>
+                  <div class="seg" style="width: 6%; background: var(--red-500)"></div>
+                </div>
+                <div class="num">22 <small style="color: var(--fg-tertiary)">/29</small></div>
+              </div>
+              <div class="dep-row">
+                <div class="name">Sec. Servicios al Ciudadano</div>
+                <div class="track">
+                  <div class="seg" style="width: 60%; background: var(--sky-600)"></div>
+                  <div class="seg" style="width: 12%; background: var(--amber-500)"></div>
+                </div>
+                <div class="num">18 <small style="color: var(--fg-tertiary)">/25</small></div>
+              </div>
+              <div class="dep-row">
+                <div class="name">Sec. de Infraestructura</div>
+                <div class="track">
+                  <div class="seg" style="width: 65%; background: var(--sky-600)"></div>
+                  <div class="seg" style="width: 10%; background: var(--amber-500)"></div>
+                </div>
+                <div class="num">15 <small style="color: var(--fg-tertiary)">/20</small></div>
+              </div>
+              <div class="dep-row">
+                <div class="name">Of. Control Interno</div>
+                <div class="track">
+                  <div class="seg" style="width: 80%; background: var(--sky-600)"></div>
+                </div>
+                <div class="num">8 <small style="color: var(--fg-tertiary)">/10</small></div>
+              </div>
+              <div class="dep-row">
+                <div class="name">Sec. General</div>
+                <div class="track">
+                  <div class="seg" style="width: 75%; background: var(--sky-600)"></div>
+                  <div class="seg" style="width: 12%; background: var(--amber-500)"></div>
+                </div>
+                <div class="num">6 <small style="color: var(--fg-tertiary)">/8</small></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Activity feed -->
+          <div class="sec">
+            <div class="h">
+              <div class="t"><i data-lucide="activity"></i> Actividad reciente</div>
+              <a href="12-auditoria.html" style="font-size: 12px; font-weight: 600;">Ver auditoría completa →</a>
+            </div>
+            <div class="b" style="padding-top: 0;">
+              <div class="activity">
+                <div class="activity-item">
+                  <div class="ico sky"><i data-lucide="signature"></i></div>
+                  <div class="text">
+                    <span class="who">Carlos Granados</span> firmó electrónicamente el documento de respuesta para <span class="ref">PQR-2026-000487</span>
+                    <div class="sub">Of. Asesora Jurídica · Evidencia disponible</div>
+                  </div>
+                  <div class="time">hace 4 min</div>
+                </div>
+                <div class="activity-item">
+                  <div class="ico"><i data-lucide="file-plus"></i></div>
+                  <div class="text">
+                    <span class="who">Carolina Méndez</span> creó el radicado <span class="ref">RAD-2026-001234</span>
+                    <div class="sub">Solicitud de licencia de construcción · Constructora El Roble S.A.S.</div>
+                  </div>
+                  <div class="time">hace 12 min</div>
+                </div>
+                <div class="activity-item">
+                  <div class="ico violet"><i data-lucide="sparkles"></i></div>
+                  <div class="text">
+                    <span class="who">Sistema IA</span> aceptó sugerencia de dependencia para <span class="ref">PQR-2026-000512</span> con 89% de confianza
+                    <div class="sub">Aceptada por Carolina Méndez · Sec. General</div>
+                  </div>
+                  <div class="time">hace 25 min</div>
+                </div>
+                <div class="activity-item">
+                  <div class="ico amber"><i data-lucide="undo-2"></i></div>
+                  <div class="text">
+                    <span class="who">Carlos Granados</span> devolvió documento <span class="ref">DOC-2026-001872</span> para ajustes
+                    <div class="sub">"Falta incluir el antecedente normativo del Decreto 1232/2025"</div>
+                  </div>
+                  <div class="time">hace 41 min</div>
+                </div>
+                <div class="activity-item">
+                  <div class="ico red"><i data-lucide="ban"></i></div>
+                  <div class="text">
+                    <span class="who">Daniel Mora</span> aprobó la solicitud de anulación del radicado <span class="ref">RAD-2026-001102</span>
+                    <div class="sub">Motivo: duplicado · Solicitada por Carolina Méndez</div>
+                  </div>
+                  <div class="time">hace 1h 12m</div>
+                </div>
+                <div class="activity-item">
+                  <div class="ico emerald"><i data-lucide="user-plus"></i></div>
+                  <div class="text">
+                    <span class="who">Ana Tovar</span> asignó rol <span class="ref">gd.profesional</span> a Yenny López en Sec. de Hacienda
+                    <div class="sub">Alcance: dependencia · Vigencia: 24 May 2026 — sin fin</div>
+                  </div>
+                  <div class="time">hace 2h</div>
+                </div>
+                <div class="activity-item">
+                  <div class="ico amber"><i data-lucide="scan-line"></i></div>
+                  <div class="text">
+                    <span class="who">Counter-2</span> reportó digitalización con baja confianza OCR (62%)
+                    <div class="sub">Lote LOT-2026-0094 · 14 documentos · Coordinador notificado</div>
+                  </div>
+                  <div class="time">hace 2h 30m</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- RIGHT col -->
+        <div>
+
+          <!-- Quick actions -->
+          <div class="sec">
+            <div class="h">
+              <div class="t"><i data-lucide="zap"></i> Acciones rápidas</div>
+            </div>
+            <div class="b">
+              <div class="quick-grid">
+                <a class="qlink" href="02-radicado-nuevo.html"><i data-lucide="file-plus-2"></i> Nuevo radicado</a>
+                <a class="qlink" href="08-correspondencia-externa.html"><i data-lucide="pen-line"></i> Nuevo oficio</a>
+                <a class="qlink" href="11-admin-usuarios.html"><i data-lucide="user-plus"></i> Nuevo usuario</a>
+                <a class="qlink" href="10-trd-editor.html"><i data-lucide="folder-tree"></i> Editar TRD</a>
+                <a class="qlink" href="09-por-firmar.html"><i data-lucide="signature"></i> Por firmar (23)</a>
+                <a class="qlink" href="12-auditoria.html"><i data-lucide="shield-check"></i> Auditoría</a>
+              </div>
+            </div>
+          </div>
+
+          <!-- PQRSD próximas a vencer -->
+          <div class="sec">
+            <div class="h">
+              <div class="t"><i data-lucide="alarm-clock" style="color: var(--amber-600)"></i> PQRSD próximas a vencer</div>
+              <a href="04-pqrsd-panel.html" style="font-size: 12px; font-weight: 600;">14 →</a>
+            </div>
+            <div class="b" style="padding-top: 0;">
+              <div class="mini-pqr">
+                <div class="top-r">
+                  <span class="pqrsd-chip tipo-Q" style="height: 18px; font-size: 10px; padding: 0 5px 0 2px;"><span class="glyph" style="width: 13px; height: 13px; font-size: 8.5px;">Q</span></span>
+                  <span class="num">PQR-2026-000487</span>
+                  <span class="spacer"></span>
+                  <span class="vto-badge vto-warn" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">3d</span></span>
+                </div>
+                <div class="ti">Queja por demora injustificada en respuesta a solicitud radicada en abril</div>
+                <div class="who">Juana Restrepo · Of. Asesora Jurídica</div>
+              </div>
+              <div class="mini-pqr">
+                <div class="top-r">
+                  <span class="pqrsd-chip tipo-R" style="height: 18px; font-size: 10px; padding: 0 5px 0 2px;"><span class="glyph" style="width: 13px; height: 13px; font-size: 8.5px;">R</span></span>
+                  <span class="num">PQR-2026-000490</span>
+                  <span class="spacer"></span>
+                  <span class="vto-badge vto-warn" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">5d</span></span>
+                </div>
+                <div class="ti">Reclamo por cobro indebido del impuesto predial vigencia 2025</div>
+                <div class="who">Andrea Mejía · Sec. de Hacienda</div>
+              </div>
+              <div class="mini-pqr">
+                <div class="top-r">
+                  <span class="pqrsd-chip tipo-P" style="height: 18px; font-size: 10px; padding: 0 5px 0 2px;"><span class="glyph" style="width: 13px; height: 13px; font-size: 8.5px;">P</span></span>
+                  <span class="num">PQR-2026-000493</span>
+                  <span class="spacer"></span>
+                  <span class="vto-badge vto-warn" style="padding: 1px 6px; font-size: 10.5px;"><span class="vto-dot"></span><span class="vto-text">6d</span></span>
+                </div>
+                <div class="ti">Petición de información sobre proyectos viales 2026</div>
+                <div class="who"><i style="color: var(--red-600); font-style: normal;">⚠</i> Sin asignar · Sec. Infraestructura</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Estado del sistema -->
+          <div class="sec">
+            <div class="h">
+              <div class="t"><i data-lucide="server"></i> Estado del sistema</div>
+              <div class="meta">Refresco · 30s</div>
+            </div>
+            <div class="b">
+              <div class="module-status">
+                <div class="module-row">
+                  <div class="ico"><i data-lucide="message-square-warning"></i></div>
+                  <div class="label">Módulo PQRSD legal</div>
+                  <div class="status ok"><span class="dot"></span>activo</div>
+                </div>
+                <div class="module-row">
+                  <div class="ico"><i data-lucide="signature"></i></div>
+                  <div class="label">Firma electrónica</div>
+                  <div class="status ok"><span class="dot"></span>activo</div>
+                </div>
+                <div class="module-row">
+                  <div class="ico"><i data-lucide="folder-tree"></i></div>
+                  <div class="label">TRD / TVD</div>
+                  <div class="status ok"><span class="dot"></span>v2026.1</div>
+                </div>
+                <div class="module-row">
+                  <div class="ico"><i data-lucide="globe"></i></div>
+                  <div class="label">Consulta pública con QR</div>
+                  <div class="status ok"><span class="dot"></span>activo</div>
+                </div>
+                <div class="module-row">
+                  <div class="ico"><i data-lucide="printer"></i></div>
+                  <div class="label">Periféricos · 3 puntos</div>
+                  <div class="status warn"><span class="dot"></span>Counter-2 mant.</div>
+                </div>
+                <div class="module-row">
+                  <div class="ico"><i data-lucide="mail"></i></div>
+                  <div class="label">Buzón institucional</div>
+                  <div class="status ok"><span class="dot"></span>17 sin procesar</div>
+                </div>
+                <div class="module-row">
+                  <div class="ico"><i data-lucide="sparkles"></i></div>
+                  <div class="label">IA — Claude Haiku 4.5</div>
+                  <div class="status ok"><span class="dot"></span>342/día</div>
+                </div>
+                <div class="module-row">
+                  <div class="ico"><i data-lucide="bot"></i></div>
+                  <div class="label">RPA — Robot fiscal</div>
+                  <div class="status off"><span class="dot"></span>desactivado</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- TRD vigente note -->
+          <div class="alert info" style="margin: 0;">
+            <div class="icon"><i data-lucide="folder-tree"></i></div>
+            <div class="body">
+              <div class="title">Nueva versión de TRD disponible</div>
+              <div>La versión <b>2026.1</b> fue aprobada por el Comité y entra en vigencia desde el <b>1° de junio</b>. Cambios en series 200, 240 y 310.</div>
+              <div class="actions"><a href="10-trd-editor.html">Revisar cambios</a></div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  if (window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>
