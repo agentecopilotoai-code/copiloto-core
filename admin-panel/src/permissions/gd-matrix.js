@@ -223,6 +223,21 @@ export const GD_PERMISSIONS = Object.freeze({
   // ────────────────── seguridad ────────────────────────────────────────
   'SEG-PWD': row({ 'gd.admin_seguridad': RW }),
   'SEG-SES': row({ 'gd.admin_seguridad': RW, 'gd.admin_sistema': R }),
+  'SEG-MFA': row({ 'gd.admin_seguridad': RW, 'gd.admin_sistema': R }),
+
+  // ────────────────── admin sistema (EP-008) ───────────────────────────
+  'EST-001': row({ 'gd.admin_sistema': RW }),    // estructura orgánica
+  'EST-READ': row({ ...any(OPERATIVOS, R), 'gd.admin_sistema': R,
+                    'gd.auditor': R, 'gd.coordinador_vu': R }),
+  'CAT-001': row({ 'gd.admin_sistema': RW }),    // catálogos institucionales
+  'PAR-001': row({ 'gd.admin_sistema': RW }),    // parámetros sistema
+  'CAL-001': row({ 'gd.admin_sistema': RW }),    // calendario laboral
+  'NOT-TPL': row({ 'gd.admin_sistema': RW }),    // plantillas notificación
+  'LOG-001': row({ 'gd.admin_sistema': RW, 'gd.auditor': R }),  // retención logs
+  'BAK-001': row({ 'gd.admin_sistema': R }),     // backup (solo consulta)
+  'INT-001': row({ 'gd.admin_sistema': RW }),    // integraciones externas
+  'SAL-001': row({ 'gd.admin_sistema': R, 'gd.admin_seguridad': R,
+                    'gd.auditor': R }),           // salud del sistema
 });
 
 /**

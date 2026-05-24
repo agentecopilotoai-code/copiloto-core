@@ -32,3 +32,4 @@ export * from './plantillas/index.js';
 export * from './firmas/index.js';
 export * from './trd/index.js';
 export * from './expedientes/index.js';
+export * from './admin/index.js';

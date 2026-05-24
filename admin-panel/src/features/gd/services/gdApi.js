@@ -838,5 +838,191 @@ export function buscarExpedientes(session, filtros = {}) {
   return gdFetch(session, '/gd/expedientes/buscar', { params: filtros });
 }
 
+// ─── UI-10: Admin del sistema GD (GD-API-0086..0115) ─────────────────────
+
+// --- Usuarios GD ---
+export function listUsuariosGd(session, filtros = {}) {
+  return gdFetch(session, '/gd/admin/usuarios', { params: filtros });
+}
+export function getUsuarioGd(session, id) {
+  return gdFetch(session, `/gd/admin/usuarios/${id}`);
+}
+export function crearUsuarioGd(session, payload) {
+  return gdFetch(session, '/gd/admin/usuarios', {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarUsuarioGd(session, id, payload) {
+  return gdFetch(session, `/gd/admin/usuarios/${id}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function asignarRolUsuarioGd(session, id, payload) {
+  return gdFetch(session, `/gd/admin/usuarios/${id}/roles`, {
+    method: 'POST', body: payload,
+  });
+}
+export function removerRolUsuarioGd(session, id, rol, motivo) {
+  return gdFetch(session, `/gd/admin/usuarios/${id}/roles/${rol}`, {
+    method: 'DELETE', body: { motivo },
+  });
+}
+export function inactivarUsuarioGd(session, id, motivo) {
+  return gdFetch(session, `/gd/admin/usuarios/${id}/inactivar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+export function reactivarUsuarioGd(session, id, motivo) {
+  return gdFetch(session, `/gd/admin/usuarios/${id}/reactivar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+
+// --- Estructura orgánica ---
+export function getEstructuraOrganica(session) {
+  return gdFetch(session, '/gd/admin/estructura');
+}
+export function crearDependencia(session, payload) {
+  return gdFetch(session, '/gd/admin/dependencias', {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarDependencia(session, id, payload) {
+  return gdFetch(session, `/gd/admin/dependencias/${id}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function reubicarDependencia(session, id, nuevoPadreId, motivo) {
+  return gdFetch(session, `/gd/admin/dependencias/${id}/reubicar`, {
+    method: 'POST', body: { nuevo_padre_id: nuevoPadreId, motivo },
+  });
+}
+export function inactivarDependencia(session, id, motivo) {
+  return gdFetch(session, `/gd/admin/dependencias/${id}/inactivar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+
+// --- Catálogos ---
+export function listCatalogos(session) {
+  return gdFetch(session, '/gd/admin/catalogos');
+}
+export function listItemsCatalogo(session, codigo) {
+  return gdFetch(session, `/gd/admin/catalogos/${codigo}`);
+}
+export function crearItemCatalogo(session, codigo, payload) {
+  return gdFetch(session, `/gd/admin/catalogos/${codigo}`, {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarItemCatalogo(session, codigo, itemId, payload) {
+  return gdFetch(session, `/gd/admin/catalogos/${codigo}/${itemId}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function inactivarItemCatalogo(session, codigo, itemId, motivo) {
+  return gdFetch(session, `/gd/admin/catalogos/${codigo}/${itemId}/inactivar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+
+// --- Parámetros ---
+export function listParametros(session) {
+  return gdFetch(session, '/gd/admin/parametros');
+}
+export function actualizarParametro(session, codigo, payload) {
+  return gdFetch(session, `/gd/admin/parametros/${codigo}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+
+// --- Calendario laboral ---
+export function getCalendarioLaboral(session, anio) {
+  return gdFetch(session, '/gd/admin/calendario', { params: { anio } });
+}
+export function agregarDiaFestivo(session, payload) {
+  return gdFetch(session, '/gd/admin/calendario/festivos', {
+    method: 'POST', body: payload,
+  });
+}
+export function quitarDiaFestivo(session, id, motivo) {
+  return gdFetch(session, `/gd/admin/calendario/festivos/${id}`, {
+    method: 'DELETE', body: { motivo },
+  });
+}
+
+// --- Plantillas de notificación ---
+export function listPlantillasNotificacion(session) {
+  return gdFetch(session, '/gd/admin/notificaciones/plantillas');
+}
+export function actualizarPlantillaNotificacion(session, codigo, payload) {
+  return gdFetch(session, `/gd/admin/notificaciones/plantillas/${codigo}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function probarPlantillaNotificacion(session, codigo, payload) {
+  return gdFetch(session, `/gd/admin/notificaciones/plantillas/${codigo}/probar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Política de retención de logs ---
+export function getPoliticaRetencionLogs(session) {
+  return gdFetch(session, '/gd/admin/logs/retencion');
+}
+export function actualizarPoliticaRetencionLogs(session, payload) {
+  return gdFetch(session, '/gd/admin/logs/retencion', {
+    method: 'PATCH', body: payload,
+  });
+}
+
+// --- Backup / restauración ---
+export function getEstadoBackups(session) {
+  return gdFetch(session, '/gd/admin/backups');
+}
+export function dispararBackupManual(session, motivo) {
+  return gdFetch(session, '/gd/admin/backups/manual', {
+    method: 'POST', body: { motivo },
+  });
+}
+
+// --- Integraciones externas ---
+export function listIntegraciones(session) {
+  return gdFetch(session, '/gd/admin/integraciones');
+}
+export function actualizarIntegracion(session, codigo, payload) {
+  return gdFetch(session, `/gd/admin/integraciones/${codigo}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function probarIntegracion(session, codigo) {
+  return gdFetch(session, `/gd/admin/integraciones/${codigo}/probar`, {
+    method: 'POST',
+  });
+}
+
+// --- Seguridad ---
+export function getConfigSeguridad(session) {
+  return gdFetch(session, '/gd/admin/seguridad');
+}
+export function actualizarConfigSeguridad(session, payload) {
+  return gdFetch(session, '/gd/admin/seguridad', {
+    method: 'PATCH', body: payload,
+  });
+}
+export function listSesionesActivas(session, filtros = {}) {
+  return gdFetch(session, '/gd/admin/seguridad/sesiones', { params: filtros });
+}
+export function revocarSesion(session, sessionId, motivo) {
+  return gdFetch(session, `/gd/admin/seguridad/sesiones/${sessionId}`, {
+    method: 'DELETE', body: { motivo },
+  });
+}
+
+// --- Salud del sistema ---
+export function getSaludSistema(session) {
+  return gdFetch(session, '/gd/admin/salud');
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

@@ -563,6 +563,100 @@ ROL-001 Admin Sistema.
 - Functions 75.05% ≥ 75% ✅
 - Lint OK (0 errores)
 
+### Bloque UI-10 (Admin del sistema GD — CIERRE EP-008) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0052..0066 (EP-008). 15 vistas.
+**Roles primarios:** ROL-001 Admin Sistema, ROL-002 Admin Seguridad,
+ROL-003 Admin Documental, ROL-016 Auditor (lecturas).
+
+**Archivos nuevos (`admin/`, ~3200 LOC componentes + 380 LOC hooks):**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `AdminUsuarios.jsx` (lista + alta + roles + inactivar/reactivar) | ~525 | GD-UI-0052/0053/0054 |
+| `AdminEstructura.jsx` (árbol jerárquico + CRUD) | ~390 | GD-UI-0055/0056 |
+| `AdminCatalogos.jsx` (2-col + CRUD ítems) | ~310 | GD-UI-0057 |
+| `AdminParametros.jsx` (tabla editable por tipo) | ~180 | GD-UI-0058 |
+| `CalendarioLaboral.jsx` (días festivos por año) | ~290 | GD-UI-0059 |
+| `PlantillasNotificacion.jsx` (editor + probar) | ~240 | GD-UI-0060 |
+| `RetencionLogs.jsx` (4 tipos + motivo) | ~135 | GD-UI-0061 |
+| `Backup.jsx` (estado + backup manual) | ~195 | GD-UI-0062 |
+| `Integraciones.jsx` (CRUD JSON + probar) | ~280 | GD-UI-0063 |
+| `Seguridad.jsx` (3 tabs Política/MFA/Sesiones) | ~430 | GD-UI-0064/0065 |
+| `SaludSistema.jsx` (KPIs + servicios + alertas) | ~155 | GD-UI-0066 |
+| `useGdAdmin.js` (12 readers + 24 mutators) | ~380 | hooks |
+| `index.js` (barrel) | 17 | |
+
+**Extensiones `services/gdApi.js` (+38 endpoints, GD-API-0086..0123):**
+- Usuarios: 8 endpoints (list/get/crear/actualizar/asignarRol/removerRol/inactivar/reactivar)
+- Estructura: 5 endpoints (estructura + CRUD dependencia + reubicar)
+- Catálogos: 5 endpoints
+- Parámetros + Calendario: 5 endpoints
+- Notificaciones (plantillas): 3 endpoints
+- Logs (retención): 2 endpoints
+- Backup: 2 endpoints
+- Integraciones: 3 endpoints
+- Seguridad: 4 endpoints (config + sesiones)
+- Salud: 1 endpoint
+
+**Extensiones `permissions/gd-matrix.js` (+11 perms):**
+- `SEG-MFA` (admin seguridad RW, admin sistema R)
+- `EST-001` (estructura RW), `EST-READ` (operativos + auditor)
+- `CAT-001`, `PAR-001`, `CAL-001`, `NOT-TPL`, `LOG-001`, `BAK-001`,
+  `INT-001`, `SAL-001` — todos en admin sistema con scoping
+  específico (LOG-001 también auditor R, SAL-001 multi-rol R).
+
+**Placeholders reemplazados:**
+- `GdAdminUsuarios`, `GdAdminEstructura`, `GdAdminCatalogos`,
+  `GdAdminParametros`, `GdSeguridad` → componentes reales.
+- Nuevos: `GdCalendario`, `GdPlantillasNotif`, `GdRetencionLogs`,
+  `GdBackup`, `GdIntegraciones`, `GdSaludSistema`.
+
+**Decisiones (D-UI-33..D-UI-35):**
+
+- **D-UI-33 (Factory `makeListHook`/`makeReader` con thunk-deferred
+  api fn)**: para evitar que vitest fallara en tests de componentes
+  con mocks parciales (cada test sólo declara las funciones que usa
+  de gdApi.js), las factories reciben `() => apiFn` en vez de `apiFn`
+  directo. Esto difiere el lookup al runtime de la llamada, que es
+  cuando el mock ya está completamente instalado. Sin esto, importar
+  `useGdAdmin.js` desde cualquier componente colapsa todos los tests
+  no-mock-completo del módulo.
+- **D-UI-34 (Cambios sensibles requieren motivo aun fuera del flujo
+  de "anulación")**: la edición de parámetros del sistema, retención
+  de logs, política de seguridad, MFA, y reubicación de dependencias
+  exigen `JustificacionRequiredField` con motivo ≥10 chars. Esto
+  fortalece el audit trail más allá de operaciones obviamente
+  destructivas — un cambio de retención de logs (ej. bajar de 730 a
+  90 días) es operacionalmente reversible pero institucionalmente
+  crítico y requiere registro auditable.
+- **D-UI-35 (Backup manual también requiere motivo; backups quedan
+  con hash visible)**: el disparo manual de backup (BAK-001) captura
+  motivo en `JustificacionRequiredField` y la tabla muestra el hash
+  SHA-256 truncado a 16 chars de cada backup completado. Integridad
+  RNF-009: los backups del módulo deben ser verificables
+  criptográficamente contra alteraciones — sin esto un backup "sello
+  digital de respaldo" no tiene valor probatorio.
+
+**Métricas:**
+- **2275/2275 tests admin-panel ✅** (+183 nuevos UI-10)
+- **825/825 tests features/gd ✅**
+- Coverage `features/gd/admin` = **97.71% lines / 84.71% functions** ✅
+- Global admin-panel = **89.23% ≥ 86% gate** ✅
+- Functions 79.07% ≥ 75% ✅
+- Lint OK (0 errores)
+
+**EP-008 Admin del sistema CERRADA** — 15 vistas:
+Administración completa de usuarios GD + estructura orgánica
+jerárquica + catálogos institucionales + parámetros operativos +
+calendario laboral con días festivos + plantillas de notificación
+(email/SMS) con preview + probar + política de retención de logs
+por tipo + estado de backups con hash + disparo manual auditable +
+integraciones externas con configuración JSON y prueba de
+conectividad + tabs de seguridad (contraseñas + MFA + sesiones
+activas con revocación) + tablero de salud con KPIs, estado de
+servicios y alertas recientes.
+
 ### Bloque UI-9 (TRD/TVD + Expediente Electrónico — CIERRE EP-007) — ✅ COMPLETADO 2026-05-24
 
 **Tareas:** GD-UI-0045..0051 (EP-007). 7 vistas.

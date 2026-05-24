@@ -62,6 +62,19 @@ import {
   ExpedienteFicha,
   BuscarExpedientes,
 } from '../expedientes/index.js';
+import {
+  AdminUsuarios,
+  AdminEstructura,
+  AdminCatalogos,
+  AdminParametros,
+  CalendarioLaboral,
+  PlantillasNotificacion,
+  RetencionLogs,
+  Backup,
+  Integraciones,
+  Seguridad,
+  SaludSistema,
+} from '../admin/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -147,24 +160,22 @@ export const GdClasificarConTRD = (p) => <ClasificarConTRD {...p} />;
 export const GdExpedientes = (p) => <BuscarExpedientes {...p} />;
 export const GdExpedienteFicha = (p) => <ExpedienteFicha {...p} />;
 
-// Admin (UI-10)
-export const GdAdminUsuarios = (p) => (
-  <ShellWrapper {...p} title="Administración de usuarios" bloqueNum={10} />
-);
-export const GdAdminEstructura = (p) => (
-  <ShellWrapper {...p} title="Estructura orgánica" bloqueNum={10} />
-);
-export const GdAdminCatalogos = (p) => (
-  <ShellWrapper {...p} title="Catálogos institucionales" bloqueNum={10} />
-);
-export const GdAdminParametros = (p) => (
-  <ShellWrapper {...p} title="Parámetros institucionales" bloqueNum={10} />
-);
+// Admin sistema (UI-10) — vistas reales:
+export const GdAdminUsuarios = (p) => <AdminUsuarios {...p} />;
+export const GdAdminEstructura = (p) => <AdminEstructura {...p} />;
+export const GdAdminCatalogos = (p) => <AdminCatalogos {...p} />;
+export const GdAdminParametros = (p) => <AdminParametros {...p} />;
+export const GdCalendario = (p) => <CalendarioLaboral {...p} />;
+export const GdPlantillasNotif = (p) => <PlantillasNotificacion {...p} />;
+export const GdRetencionLogs = (p) => <RetencionLogs {...p} />;
+export const GdBackup = (p) => <Backup {...p} />;
+export const GdIntegraciones = (p) => <Integraciones {...p} />;
+export const GdSeguridad = (p) => <Seguridad {...p} />;
+export const GdSaludSistema = (p) => <SaludSistema {...p} />;
+
+// Periféricos (UI-14) — pendiente:
 export const GdAdminPerifericos = (p) => (
   <ShellWrapper {...p} title="Periféricos autorizados" bloqueNum={14} />
-);
-export const GdSeguridad = (p) => (
-  <ShellWrapper {...p} title="Seguridad" bloqueNum={10} />
 );
 
 // Auditoría (UI-11)

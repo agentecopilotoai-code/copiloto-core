@@ -262,7 +262,6 @@ describe('gdApi — endpoints UI-3..UI-9 smoke', () => {
 
   // Reservado para casos detallados específicos (no se usa actualmente
   // pero documenta endpoints relevantes con sus payloads).
-  // eslint-disable-next-line no-unused-vars
   const _DETAILED_ENDPOINT_HINTS = [
     // UI-4 buzón / tareas
     ['solicitarAnulacionRadicado', ['r1', 'motivo'], '/gd/ventanilla/radicados/r1/anular', 'POST'],
@@ -490,6 +489,45 @@ describe('gdApi — endpoints UI-3..UI-9 smoke', () => {
     ['getIndiceExpediente', ['e1']],
     ['getActaCierreExpediente', ['e1']],
     ['buscarExpedientes', [{}]],
+    // UI-10 admin
+    ['listUsuariosGd', [{}]],
+    ['getUsuarioGd', ['u1']],
+    ['crearUsuarioGd', [{}]],
+    ['actualizarUsuarioGd', ['u1', {}]],
+    ['asignarRolUsuarioGd', ['u1', {}]],
+    ['removerRolUsuarioGd', ['u1', 'r', 'motivo']],
+    ['inactivarUsuarioGd', ['u1', 'motivo']],
+    ['reactivarUsuarioGd', ['u1', 'motivo']],
+    ['getEstructuraOrganica', []],
+    ['crearDependencia', [{}]],
+    ['actualizarDependencia', ['d1', {}]],
+    ['reubicarDependencia', ['d1', 'd2', 'motivo']],
+    ['inactivarDependencia', ['d1', 'motivo']],
+    ['listCatalogos', []],
+    ['listItemsCatalogo', ['canales']],
+    ['crearItemCatalogo', ['canales', {}]],
+    ['actualizarItemCatalogo', ['canales', 'c1', {}]],
+    ['inactivarItemCatalogo', ['canales', 'c1', 'motivo']],
+    ['listParametros', []],
+    ['actualizarParametro', ['P1', {}]],
+    ['getCalendarioLaboral', [2026]],
+    ['agregarDiaFestivo', [{}]],
+    ['quitarDiaFestivo', ['f1', 'motivo']],
+    ['listPlantillasNotificacion', []],
+    ['actualizarPlantillaNotificacion', ['p1', {}]],
+    ['probarPlantillaNotificacion', ['p1', {}]],
+    ['getPoliticaRetencionLogs', []],
+    ['actualizarPoliticaRetencionLogs', [{}]],
+    ['getEstadoBackups', []],
+    ['dispararBackupManual', ['motivo']],
+    ['listIntegraciones', []],
+    ['actualizarIntegracion', ['smtp', {}]],
+    ['probarIntegracion', ['smtp']],
+    ['getConfigSeguridad', []],
+    ['actualizarConfigSeguridad', [{}]],
+    ['listSesionesActivas', [{}]],
+    ['revocarSesion', ['ses1', 'motivo']],
+    ['getSaludSistema', []],
   ];
 
   it.each(SMOKE_ENDPOINTS)('%s exporta y llama fetch', async (fnName, args) => {

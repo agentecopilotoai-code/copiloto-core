@@ -6,8 +6,7 @@ import * as placeholders from './index.jsx';
 // Solo placeholders aún sin implementación real (UI-2 y UI-3 ya
 // reemplazaron toda Ventanilla incluyendo ficha + búsqueda).
 const PLACEHOLDER_NAMES = [
-  'GdAdminUsuarios', 'GdAdminEstructura', 'GdAdminCatalogos',
-  'GdAdminParametros', 'GdAdminPerifericos', 'GdSeguridad',
+  'GdAdminPerifericos',
   'GdAuditoria', 'GdReportes',
 ];
 
