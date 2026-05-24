@@ -463,9 +463,17 @@ create index if not exists ix_gd_asignacion_alcance_dependencia
   on gd.asignacion_alcance(dependencia_id, rol_codigo, estado)
   where dependencia_id is not null;
 
+-- Índice parcial de asignaciones "activas". El predicado NO puede incluir
+-- `current_date` porque PostgreSQL exige funciones IMMUTABLE en predicados
+-- de índice (current_date es STABLE: cambia cada día). El filtro de
+-- vigencia por fecha (`fecha_fin is null or fecha_fin >= current_date`)
+-- se aplica en las queries que usan este índice. Mantener el predicado
+-- mínimo (`estado = 'activa'`) sigue siendo útil: ~95% de los registros
+-- históricamente quedan en estado != 'activa' al cabo de varios años,
+-- por lo que el índice parcial mantiene el tamaño bajo control.
 create index if not exists ix_gd_asignacion_alcance_vigentes
   on gd.asignacion_alcance(tenant_id, user_id)
-  where estado = 'activa' and (fecha_fin is null or fecha_fin >= current_date);
+  where estado = 'activa';
 
 alter table gd.asignacion_alcance enable row level security;
 
