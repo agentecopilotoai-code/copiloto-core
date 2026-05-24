@@ -563,6 +563,87 @@ ROL-001 Admin Sistema.
 - Functions 75.05% ≥ 75% ✅
 - Lint OK (0 errores)
 
+### Bloque UI-9 (TRD/TVD + Expediente Electrónico — CIERRE EP-007) — ✅ COMPLETADO 2026-05-24
+
+**Tareas:** GD-UI-0045..0051 (EP-007). 7 vistas.
+**Roles primarios:** ROL-003 Admin Documental, ROL-016 Comité Archivo,
+ROL-007 Profesional, ROL-002 Auditor Externo.
+
+**Archivos nuevos:**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `trd/TablaTRD.jsx` (árbol serie/subserie/tipo + nueva versión) | ~430 | GD-UI-0045/0046 |
+| `trd/TablaTVD.jsx` (retención AG/AC + disposición + editar) | ~210 | GD-UI-0047 |
+| `trd/ClasificarConTRD.jsx` (selector jerárquico + clasificar) | ~165 | GD-UI-0048 |
+| `trd/useGdTRD.js` (5 readers + 9 mutators) | ~155 | hooks |
+| `trd/index.js` | 8 | |
+| `expedientes/ExpedienteFicha.jsx` (4 tabs + foliación + acciones) | ~395 | GD-UI-0049 |
+| `expedientes/CerrarExpedienteModal.jsx` (acta + transferencia + hash) | ~190 | GD-UI-0050 |
+| `expedientes/BuscarExpedientes.jsx` (form + tabla + filtros) | ~190 | GD-UI-0051 |
+| `expedientes/useGdExpedientes.js` (6 readers + 7 mutators) | ~165 | hooks |
+| `expedientes/index.js` | 8 | |
+
+**Extensiones `services/gdApi.js` (+27 endpoints, GD-API-0073..0085):**
+- TRD: `listTRD`, `getSerie`, `getTRDVersionActual`, `listVersionesTRD`,
+  `crearSerie`, `actualizarSerie`, `eliminarSerie`, `crearSubserie`,
+  `crearTipoDocumental`, `nuevaVersionTRD`, `aprobarVersionTRD`.
+- TVD: `listTVD`, `actualizarTVD`.
+- Clasificación: `clasificarConTRD`.
+- Expedientes: `listExpedientes`, `getExpediente`, `crearExpediente`,
+  `actualizarExpediente`, `listDocumentosExpediente`,
+  `agregarDocumentoExpediente`, `quitarDocumentoExpediente`,
+  `cerrarExpediente`, `transferirExpediente`, `reabrirExpediente`,
+  `getIndiceExpediente`, `getActaCierreExpediente`, `buscarExpedientes`.
+
+**Placeholders reemplazados:**
+- `GdTrdHome` → `<TablaTRD />`
+- `GdExpedientes` → `<BuscarExpedientes />`
+- Nuevos: `GdTvdHome`, `GdClasificarConTRD`, `GdExpedienteFicha`.
+
+**Decisiones (D-UI-30..D-UI-32):**
+
+- **D-UI-30 (TRD jerárquica navegable con expand/collapse en vez de
+  páginas separadas)**: una sola vista `TablaTRD` muestra el árbol
+  serie→subserie→tipo con expand/collapse. Las acciones admin (crear
+  serie/subserie/tipo, inactivar, nueva versión + aprobación con
+  acta de comité) son modales contextuales. Reduce navegación y
+  preserva contexto jerárquico.
+- **D-UI-31 (Nueva versión TRD = crear + aprobar en un solo flujo)**:
+  la creación de versión consume internamente dos endpoints
+  (`nuevaVersionTRD` → `aprobarVersionTRD`). El usuario aporta acta
+  de comité en un único formulario. Esto refleja la realidad operativa:
+  toda nueva versión TRD requiere aprobación formal del Comité de
+  Archivo y nunca queda en "borrador" indefinido. La acta queda
+  registrada como audit trail.
+- **D-UI-32 (Cierre de expediente en 3 fases con hash visible)**: el
+  modal `CerrarExpedienteModal` opera en `form → cerrando → acta`.
+  Tras el cierre server-side genera el acta consolidada con
+  `hash_indice` (SHA-256) que la UI muestra explícitamente al
+  usuario antes de finalizar. Integridad RNF-009: el hash es la
+  prueba criptográfica de que el contenido del expediente no se
+  alteró tras el cierre. Si el usuario marca "transferir
+  inmediatamente", se encadena `transferirExpediente` y la nota
+  de transferencia queda en el acta.
+
+**Métricas:**
+- **2092/2092 tests admin-panel ✅** (+210 nuevos UI-9)
+- **675/675 tests features/gd ✅**
+- Coverage `features/gd/trd` = **97.99% lines / 88.75% functions** ✅
+- Coverage `features/gd/expedientes` = **95.34% lines / 89.55% functions** ✅
+- Coverage `features/gd/services` (gdApi) = **100% lines / 100% functions** ✅
+- Global admin-panel = **88.74% ≥ 86% gate** ✅
+- Functions 78.68% ≥ 75% ✅ (subió de 74.92 con smoke-tests de gdApi)
+- Lint OK (0 errores)
+
+**EP-007 TRD/TVD/Expedientes CERRADA** — 7 vistas:
+TablaTRD navegable con árbol jerárquico (serie/subserie/tipo) +
+versionado formal con acta de Comité + TablaTVD con retención AG/AC
+y disposición final (CT/E/S/M) + clasificación con TRD + Expediente
+electrónico con 4 tabs (general/documentos/trazabilidad/acciones) +
+foliación automática + cierre con acta hash-validada + transferencia
+al Archivo Central + reapertura justificada + búsqueda multi-filtro.
+
 **EP-006 Documentos+plantillas+firmas CERRADA** — 10 vistas:
 Biblioteca filtrable + ficha de documento con 4 tabs (general /
 versiones / trazabilidad / acciones) + carga drag&drop con

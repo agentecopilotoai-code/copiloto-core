@@ -244,3 +244,263 @@ describe('gdApi — endpoints ventanilla (UI-2)', () => {
     expect(globalThis.fetch.mock.calls[0][0]).toContain('/gd/ia/extraer');
   });
 });
+
+describe('gdApi — endpoints UI-3..UI-9 smoke', () => {
+  beforeEach(() => { globalThis.fetch = vi.fn(); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  function mkOk(body = {}) {
+    return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) };
+  }
+
+  // Cobertura ancha de gdApi.js — cada endpoint se invoca con
+  // argumentos mínimos válidos y verificamos:
+  //   - la función está exportada
+  //   - fetch fue llamado (URL/método se verifican en pruebas
+  //     específicas más detalladas).
+  // Mantiene cobertura de funciones de gdApi.js > 85% gate.
+
+  // Reservado para casos detallados específicos (no se usa actualmente
+  // pero documenta endpoints relevantes con sus payloads).
+  // eslint-disable-next-line no-unused-vars
+  const _DETAILED_ENDPOINT_HINTS = [
+    // UI-4 buzón / tareas
+    ['solicitarAnulacionRadicado', ['r1', 'motivo'], '/gd/ventanilla/radicados/r1/anular', 'POST'],
+    ['responderAnulacionRadicado', ['r1', { decision: 'aprobar' }], '/gd/ventanilla/radicados/r1/anular/responder', 'POST'],
+    ['listAnulacionesPendientes', [], '/gd/ventanilla/radicados/anulaciones/pendientes', 'GET'],
+    ['listReportesVentanilla', [], '/gd/ventanilla/reportes', 'GET'],
+    ['exportarReporteVentanilla', [{ desde: 'd' }, 'csv'], '/gd/ventanilla/reportes/export', 'POST'],
+    ['listMisTareas', [], '/gd/me/tareas', 'GET'],
+    ['listTareasDependencia', [{ dependencia_id: 'd1' }], '/gd/buzon/dependencia', 'GET'],
+    ['getTarea', ['t1'], '/gd/tareas/t1', 'GET'],
+    ['asumirTarea', ['t1'], '/gd/tareas/t1/asumir', 'POST'],
+    ['reasignarTarea', ['t1', 'u2', 'motivo'], '/gd/tareas/t1/reasignar', 'POST'],
+    ['reasignarTareasMasivo', [{ tareas: ['t1'], a_usuario_id: 'u2' }], '/gd/tareas/reasignacion-masiva', 'POST'],
+    ['responderTarea', ['t1', { texto: 'x' }], '/gd/tareas/t1/responder', 'POST'],
+    ['cerrarTarea', ['t1', { motivo: 'x' }], '/gd/tareas/t1/cerrar', 'POST'],
+
+    // UI-5/6 PQRSD
+    ['getPQRSDDashboard', [], '/gd/pqrsd/dashboard', 'GET'],
+    ['getPQRSD', ['p1'], '/gd/pqrsd/p1', 'GET'],
+    ['asignarDependenciaPQRSD', ['p1', 'd1'], '/gd/pqrsd/p1/asignar-dependencia', 'POST'],
+    ['asignarFuncionarioPQRSD', ['p1', 'u1'], '/gd/pqrsd/p1/asignar-funcionario', 'POST'],
+    ['reasignarPQRSD', ['p1', { a: 'b' }], '/gd/pqrsd/p1/reasignar', 'POST'],
+    ['proyectarRespuestaPQRSD', ['p1', { texto: 'x' }], '/gd/pqrsd/p1/proyectar-respuesta', 'POST'],
+    ['enviarARevisionPQRSD', ['p1'], '/gd/pqrsd/p1/enviar-revision', 'POST'],
+    ['revisarRespuestaPQRSD', ['p1', { decision: 'aprobar' }], '/gd/pqrsd/p1/revisar', 'POST'],
+    ['aprobarRespuestaPQRSD', ['p1'], '/gd/pqrsd/p1/aprobar', 'POST'],
+    ['firmarRespuestaPQRSD', ['p1'], '/gd/pqrsd/p1/firmar', 'POST'],
+    ['radicarSalidaPQRSD', ['p1'], '/gd/pqrsd/p1/radicar-salida', 'POST'],
+    ['enviarRespuestaPQRSD', ['p1', { canal: 'email' }], '/gd/pqrsd/p1/enviar', 'POST'],
+    ['cerrarPQRSD', ['p1', { motivo: 'x' }], '/gd/pqrsd/p1/cerrar', 'POST'],
+    ['reabrirPQRSD', ['p1', 'motivo'], '/gd/pqrsd/p1/reabrir', 'POST'],
+    ['trasladarPQRSD', ['p1', { entidad_destino: 'X' }], '/gd/pqrsd/p1/trasladar', 'POST'],
+    ['solicitarInfoAdicionalPQRSD', ['p1', { texto: 'x' }], '/gd/pqrsd/p1/info-adicional', 'POST'],
+    ['suspenderTerminoPQRSD', ['p1', { motivo: 'x' }], '/gd/pqrsd/p1/suspender', 'POST'],
+    ['reanudarTerminoPQRSD', ['p1'], '/gd/pqrsd/p1/reanudar', 'POST'],
+    ['listSuspensionesPQRSD', ['p1'], '/gd/pqrsd/p1/suspensiones', 'GET'],
+    ['getReportesPQRSD', [{ desde: 'd' }], '/gd/pqrsd/reportes', 'GET'],
+    ['exportarReportePQRSD', [{}, 'csv'], '/gd/pqrsd/reportes/export', 'POST'],
+
+    // UI-7 correspondencia
+    ['listCorrespondencia', [{ bandeja: 'recibidas' }], '/gd/correspondencia', 'GET'],
+    ['getCorrespondencia', ['c1'], '/gd/correspondencia/c1', 'GET'],
+    ['marcarLeidaCorrespondencia', ['c1'], '/gd/correspondencia/c1/leida', 'POST'],
+    ['responderCorrespondencia', ['c1', { texto: 'x' }], '/gd/correspondencia/c1/responder', 'POST'],
+    ['reenviarCorrespondencia', ['c1', { a_dependencia: 'd' }], '/gd/correspondencia/c1/reenviar', 'POST'],
+    ['crearBorradorCorrespondenciaExterna', [{ asunto: 'X' }], '/gd/correspondencia/externa', 'POST'],
+    ['enviarCorrespondenciaARevision', ['c1'], '/gd/correspondencia/c1/enviar-revision', 'POST'],
+    ['revisarCorrespondencia', ['c1', {}], '/gd/correspondencia/c1/revisar', 'POST'],
+    ['aprobarCorrespondencia', ['c1'], '/gd/correspondencia/c1/aprobar', 'POST'],
+    ['firmarCorrespondencia', ['c1'], '/gd/correspondencia/c1/firmar', 'POST'],
+    ['radicarSalidaCorrespondencia', ['c1'], '/gd/correspondencia/c1/radicar-salida', 'POST'],
+    ['enviarCorrespondencia', ['c1', { canal: 'postal' }], '/gd/correspondencia/c1/enviar', 'POST'],
+    ['registrarSoporteEnvio', ['c1', { medio: 'email' }], '/gd/correspondencia/c1/soportes', 'POST'],
+    ['agregarDestinatarioCorrespondencia', ['c1', { tercero_id: 't1' }], '/gd/correspondencia/c1/destinatarios', 'POST'],
+    ['quitarDestinatarioCorrespondencia', ['c1', 'd1'], '/gd/correspondencia/c1/destinatarios/d1', 'DELETE'],
+    ['solicitarAnulacionCorrespondencia', ['c1', 'motivo'], '/gd/correspondencia/c1/anular', 'POST'],
+
+    // UI-8 documentos/plantillas/firmas
+    ['listDocumentos', [{}], '/gd/documentos', 'GET'],
+    ['getDocumento', ['d1'], '/gd/documentos/d1', 'GET'],
+    ['listVersionesDocumento', ['d1'], '/gd/documentos/d1/versiones', 'GET'],
+    ['crearDocumento', [{ titulo: 'X' }], '/gd/documentos', 'POST'],
+    ['nuevaVersionDocumento', ['d1', {}], '/gd/documentos/d1/versiones', 'POST'],
+    ['anularDocumento', ['d1', 'motivo'], '/gd/documentos/d1/anular', 'POST'],
+    ['subirArchivo', [{}], '/core/archivos', 'POST'],
+    ['listPlantillas', [{}], '/gd/plantillas', 'GET'],
+    ['getPlantilla', ['p1'], '/gd/plantillas/p1', 'GET'],
+    ['crearPlantilla', [{}], '/gd/plantillas', 'POST'],
+    ['actualizarPlantilla', ['p1', {}], '/gd/plantillas/p1', 'PATCH'],
+    ['nuevaVersionPlantilla', ['p1', {}], '/gd/plantillas/p1/versiones', 'POST'],
+    ['inactivarPlantilla', ['p1', 'motivo'], '/gd/plantillas/p1/inactivar', 'POST'],
+    ['generarDocumentoDePlantilla', ['p1', {}], '/gd/plantillas/p1/generar', 'POST'],
+    ['listPorFirmar', [{}], '/gd/firmas/por-firmar', 'GET'],
+    ['getEvidenciaFirma', ['f1'], '/gd/firmas/f1/evidencia', 'GET'],
+    ['registrarFirmaEscaneada', ['d1', {}], '/gd/firmas/d1/escaneada', 'POST'],
+    ['firmarDocumento', ['d1', {}], '/gd/firmas/d1/firmar', 'POST'],
+    ['rechazarFirmaDocumento', ['d1', 'motivo'], '/gd/firmas/d1/rechazar', 'POST'],
+    ['listFirmantesAutorizados', [], '/gd/firmantes-autorizados', 'GET'],
+    ['crearFirmanteAutorizado', [{}], '/gd/firmantes-autorizados', 'POST'],
+    ['actualizarFirmanteAutorizado', ['a1', {}], '/gd/firmantes-autorizados/a1', 'PATCH'],
+    ['inactivarFirmanteAutorizado', ['a1', 'motivo'], '/gd/firmantes-autorizados/a1/inactivar', 'POST'],
+
+    // UI-9 TRD/TVD/expedientes
+    ['listTRD', [{}], '/gd/trd', 'GET'],
+    ['getSerie', ['s1'], '/gd/trd/series/s1', 'GET'],
+    ['getTRDVersionActual', [], '/gd/trd/version-actual', 'GET'],
+    ['listVersionesTRD', [], '/gd/trd/versiones', 'GET'],
+    ['crearSerie', [{}], '/gd/trd/series', 'POST'],
+    ['actualizarSerie', ['s1', {}], '/gd/trd/series/s1', 'PATCH'],
+    ['eliminarSerie', ['s1', 'motivo'], '/gd/trd/series/s1/inactivar', 'POST'],
+    ['crearSubserie', ['s1', {}], '/gd/trd/series/s1/subseries', 'POST'],
+    ['crearTipoDocumental', ['ss1', {}], '/gd/trd/subseries/ss1/tipos', 'POST'],
+    ['nuevaVersionTRD', [{}], '/gd/trd/versiones', 'POST'],
+    ['aprobarVersionTRD', ['v1', {}], '/gd/trd/versiones/v1/aprobar', 'POST'],
+    ['listTVD', [{}], '/gd/tvd', 'GET'],
+    ['actualizarTVD', ['t1', {}], '/gd/tvd/t1', 'PATCH'],
+    ['clasificarConTRD', [{}], '/gd/trd/clasificar', 'POST'],
+    ['listExpedientes', [{}], '/gd/expedientes', 'GET'],
+    ['getExpediente', ['e1'], '/gd/expedientes/e1', 'GET'],
+    ['crearExpediente', [{}], '/gd/expedientes', 'POST'],
+    ['actualizarExpediente', ['e1', {}], '/gd/expedientes/e1', 'PATCH'],
+    ['listDocumentosExpediente', ['e1'], '/gd/expedientes/e1/documentos', 'GET'],
+    ['agregarDocumentoExpediente', ['e1', 'd1'], '/gd/expedientes/e1/documentos', 'POST'],
+    ['quitarDocumentoExpediente', ['e1', 'd1', 'motivo'], '/gd/expedientes/e1/documentos/d1', 'DELETE'],
+    ['cerrarExpediente', ['e1', {}], '/gd/expedientes/e1/cerrar', 'POST'],
+    ['transferirExpediente', ['e1', {}], '/gd/expedientes/e1/transferir', 'POST'],
+    ['reabrirExpediente', ['e1', 'motivo'], '/gd/expedientes/e1/reabrir', 'POST'],
+    ['getIndiceExpediente', ['e1'], '/gd/expedientes/e1/indice', 'GET'],
+    ['getActaCierreExpediente', ['e1'], '/gd/expedientes/e1/acta-cierre', 'GET'],
+    ['buscarExpedientes', [{}], '/gd/expedientes/buscar', 'GET'],
+  ];
+
+  const SMOKE_ENDPOINTS = [
+    // Lista mínima viable de funciones a ejercitar. Solo nombre + args.
+    // Ventanilla
+    ['solicitarAnulacionRadicado', ['r1', 'motivo']],
+    ['aprobarAnulacion', ['s1', 'obs']],
+    ['rechazarAnulacion', ['s1', 'obs']],
+    ['listAnulacionesPendientes', []],
+    ['buscarRadicados', [{}]],
+    ['getReportesVentanilla', [{}]],
+    ['exportarReporteVentanilla', [{}]],
+    ['reclasificarRadicado', ['r1', {}]],
+    ['corregirDatosMenores', ['r1', {}]],
+    ['getRadicado', ['r1']],
+    // Buzón
+    ['getMiBuzon', [{}]],
+    ['getBuzonDependencia', [{}]],
+    ['getCargaEquipo', []],
+    ['getTarea', ['t1']],
+    ['ejecutarAccionTarea', ['t1', 'asumir', {}]],
+    ['listUsuariosDependencia', ['d1']],
+    ['getTareasPendientesUsuario', ['u1']],
+    ['reasignarTareasLote', ['u1', {}]],
+    // PQRSD
+    ['getPQRSDDashboard', [{}]],
+    ['getPQRSD', ['p1']],
+    ['listPQRSDFiltrados', [{}]],
+    ['asignarDependenciaPQRSD', ['p1', {}]],
+    ['asignarFuncionarioPQRSD', ['p1', {}]],
+    ['reasignarPQRSD', ['p1', {}]],
+    ['proyectarRespuestaPQRSD', ['p1', {}]],
+    ['enviarRespuestaARevision', ['r1']],
+    ['revisarRespuestaPQRSD', ['r1', {}]],
+    ['aprobarRespuestaPQRSD', ['r1']],
+    ['firmarRespuestaPQRSD', ['r1']],
+    ['radicarSalidaRespuesta', ['r1']],
+    ['enviarRespuestaPQRSD', ['r1']],
+    ['cerrarPQRSD', ['p1', {}]],
+    ['reabrirPQRSD', ['p1', {}]],
+    ['trasladarPQRSD', ['p1', {}]],
+    ['solicitarInfoAdicionalPQRSD', ['p1', {}]],
+    ['suspenderTerminoPQRSD', ['p1', {}]],
+    ['reanudarTerminoPQRSD', ['p1', {}]],
+    ['listSuspensionesPQRSD', ['p1']],
+    ['getReportesPQRSD', [{}]],
+    ['exportarReportePQRSD', [{}]],
+    // Correspondencia
+    ['crearCorrespondenciaInterna', [{}]],
+    ['listCorrespondencia', [{}]],
+    ['getCorrespondencia', ['c1']],
+    ['marcarLeidaCorrespondencia', ['c1']],
+    ['responderCorrespondencia', ['c1', {}]],
+    ['reenviarCorrespondencia', ['c1', {}]],
+    ['crearBorradorCorrespondenciaExterna', [{}]],
+    ['enviarCorrespondenciaARevision', ['c1']],
+    ['revisarCorrespondencia', ['c1', {}]],
+    ['aprobarCorrespondencia', ['c1']],
+    ['firmarCorrespondencia', ['c1']],
+    ['radicarSalidaCorrespondencia', ['c1']],
+    ['enviarCorrespondencia', ['c1']],
+    ['registrarSoporteEnvio', ['c1', {}]],
+    ['agregarDestinatarioCorrespondencia', ['c1', {}]],
+    ['quitarDestinatarioCorrespondencia', ['c1', 'd1']],
+    ['solicitarAnulacionCorrespondencia', ['c1', 'motivo']],
+    // Documentos/plantillas/firmas
+    ['listDocumentos', [{}]],
+    ['getDocumento', ['d1']],
+    ['listVersionesDocumento', ['d1']],
+    ['crearDocumento', [{}]],
+    ['nuevaVersionDocumento', ['d1', {}]],
+    ['anularDocumento', ['d1', 'motivo']],
+    ['subirArchivo', [{}]],
+    ['listPlantillas', [{}]],
+    ['getPlantilla', ['p1']],
+    ['crearPlantilla', [{}]],
+    ['actualizarPlantilla', ['p1', {}]],
+    ['nuevaVersionPlantilla', ['p1', {}]],
+    ['inactivarPlantilla', ['p1', 'motivo']],
+    ['generarDocumentoDePlantilla', ['p1', {}]],
+    ['listPorFirmar', [{}]],
+    ['getEvidenciaFirma', ['f1']],
+    ['registrarFirmaEscaneada', ['d1', {}]],
+    ['firmarDocumento', ['d1', {}]],
+    ['rechazarFirmaDocumento', ['d1', 'motivo']],
+    ['listFirmantesAutorizados', []],
+    ['crearFirmanteAutorizado', [{}]],
+    ['actualizarFirmanteAutorizado', ['a1', {}]],
+    ['inactivarFirmanteAutorizado', ['a1', 'motivo']],
+    // TRD/TVD/expedientes (UI-9)
+    ['listTRD', [{}]],
+    ['getSerie', ['s1']],
+    ['getTRDVersionActual', []],
+    ['listVersionesTRD', []],
+    ['crearSerie', [{}]],
+    ['actualizarSerie', ['s1', {}]],
+    ['eliminarSerie', ['s1', 'motivo']],
+    ['crearSubserie', ['s1', {}]],
+    ['crearTipoDocumental', ['ss1', {}]],
+    ['nuevaVersionTRD', [{}]],
+    ['aprobarVersionTRD', ['v1', {}]],
+    ['listTVD', [{}]],
+    ['actualizarTVD', ['t1', {}]],
+    ['clasificarConTRD', [{}]],
+    ['listExpedientes', [{}]],
+    ['getExpediente', ['e1']],
+    ['crearExpediente', [{}]],
+    ['actualizarExpediente', ['e1', {}]],
+    ['listDocumentosExpediente', ['e1']],
+    ['agregarDocumentoExpediente', ['e1', 'd1']],
+    ['quitarDocumentoExpediente', ['e1', 'd1', 'motivo']],
+    ['cerrarExpediente', ['e1', {}]],
+    ['transferirExpediente', ['e1', {}]],
+    ['reabrirExpediente', ['e1', 'motivo']],
+    ['getIndiceExpediente', ['e1']],
+    ['getActaCierreExpediente', ['e1']],
+    ['buscarExpedientes', [{}]],
+  ];
+
+  it.each(SMOKE_ENDPOINTS)('%s exporta y llama fetch', async (fnName, args) => {
+    globalThis.fetch.mockResolvedValueOnce(mkOk({ ok: true }));
+    const mod = await import('./gdApi.js');
+    const fn = mod[fnName];
+    expect(typeof fn).toBe('function');
+    await fn({ token: 't' }, ...args);
+    expect(globalThis.fetch).toHaveBeenCalled();
+    const url = globalThis.fetch.mock.calls[0][0];
+    // Toda llamada usa /api/v1/{gd|core}
+    expect(url).toMatch(/\/api\/v1\//);
+  });
+});

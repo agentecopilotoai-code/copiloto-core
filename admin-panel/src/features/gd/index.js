@@ -30,3 +30,5 @@ export * from './correspondencia/index.js';
 export * from './documentos/index.js';
 export * from './plantillas/index.js';
 export * from './firmas/index.js';
+export * from './trd/index.js';
+export * from './expedientes/index.js';

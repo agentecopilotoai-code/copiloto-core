@@ -715,5 +715,128 @@ export function inactivarFirmanteAutorizado(session, id, motivo) {
   });
 }
 
+// ─── UI-9: TRD/TVD + Expediente Electrónico (GD-API-0073..0085) ──────────
+
+// --- TRD (Tabla de Retención Documental) ---
+export function listTRD(session, filtros = {}) {
+  return gdFetch(session, '/gd/trd', { params: filtros });
+}
+export function getSerie(session, id) {
+  return gdFetch(session, `/gd/trd/series/${id}`);
+}
+export function getTRDVersionActual(session) {
+  return gdFetch(session, '/gd/trd/version-actual');
+}
+export function listVersionesTRD(session) {
+  return gdFetch(session, '/gd/trd/versiones');
+}
+export function crearSerie(session, payload) {
+  return gdFetch(session, '/gd/trd/series', {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarSerie(session, id, payload) {
+  return gdFetch(session, `/gd/trd/series/${id}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function eliminarSerie(session, id, motivo) {
+  return gdFetch(session, `/gd/trd/series/${id}/inactivar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+export function crearSubserie(session, serieId, payload) {
+  return gdFetch(session, `/gd/trd/series/${serieId}/subseries`, {
+    method: 'POST', body: payload,
+  });
+}
+export function crearTipoDocumental(session, subserieId, payload) {
+  return gdFetch(session, `/gd/trd/subseries/${subserieId}/tipos`, {
+    method: 'POST', body: payload,
+  });
+}
+export function nuevaVersionTRD(session, payload) {
+  return gdFetch(session, '/gd/trd/versiones', {
+    method: 'POST', body: payload,
+  });
+}
+export function aprobarVersionTRD(session, versionId, payload) {
+  return gdFetch(session, `/gd/trd/versiones/${versionId}/aprobar`, {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- TVD ---
+export function listTVD(session, filtros = {}) {
+  return gdFetch(session, '/gd/tvd', { params: filtros });
+}
+export function actualizarTVD(session, id, payload) {
+  return gdFetch(session, `/gd/tvd/${id}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+
+// --- Clasificación documental ---
+export function clasificarConTRD(session, payload) {
+  return gdFetch(session, '/gd/trd/clasificar', {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Expedientes electrónicos ---
+export function listExpedientes(session, filtros = {}) {
+  return gdFetch(session, '/gd/expedientes', { params: filtros });
+}
+export function getExpediente(session, id) {
+  return gdFetch(session, `/gd/expedientes/${id}`);
+}
+export function crearExpediente(session, payload) {
+  return gdFetch(session, '/gd/expedientes', {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarExpediente(session, id, payload) {
+  return gdFetch(session, `/gd/expedientes/${id}`, {
+    method: 'PATCH', body: payload,
+  });
+}
+export function listDocumentosExpediente(session, id) {
+  return gdFetch(session, `/gd/expedientes/${id}/documentos`);
+}
+export function agregarDocumentoExpediente(session, id, documentoId) {
+  return gdFetch(session, `/gd/expedientes/${id}/documentos`, {
+    method: 'POST', body: { documento_id: documentoId },
+  });
+}
+export function quitarDocumentoExpediente(session, id, documentoId, motivo) {
+  return gdFetch(session, `/gd/expedientes/${id}/documentos/${documentoId}`, {
+    method: 'DELETE', body: { motivo },
+  });
+}
+export function cerrarExpediente(session, id, payload) {
+  return gdFetch(session, `/gd/expedientes/${id}/cerrar`, {
+    method: 'POST', body: payload,
+  });
+}
+export function transferirExpediente(session, id, payload) {
+  return gdFetch(session, `/gd/expedientes/${id}/transferir`, {
+    method: 'POST', body: payload,
+  });
+}
+export function reabrirExpediente(session, id, motivo) {
+  return gdFetch(session, `/gd/expedientes/${id}/reabrir`, {
+    method: 'POST', body: { motivo },
+  });
+}
+export function getIndiceExpediente(session, id) {
+  return gdFetch(session, `/gd/expedientes/${id}/indice`);
+}
+export function getActaCierreExpediente(session, id) {
+  return gdFetch(session, `/gd/expedientes/${id}/acta-cierre`);
+}
+export function buscarExpedientes(session, filtros = {}) {
+  return gdFetch(session, '/gd/expedientes/buscar', { params: filtros });
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

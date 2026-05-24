@@ -53,6 +53,15 @@ import {
   EvidenciaFirma,
   AdminFirmantes,
 } from '../firmas/index.js';
+import {
+  TablaTRD,
+  TablaTVD,
+  ClasificarConTRD,
+} from '../trd/index.js';
+import {
+  ExpedienteFicha,
+  BuscarExpedientes,
+} from '../expedientes/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -131,13 +140,12 @@ export const GdPorFirmar = (p) => <PorFirmar {...p} />;
 export const GdEvidenciaFirma = (p) => <EvidenciaFirma {...p} />;
 export const GdAdminFirmantes = (p) => <AdminFirmantes {...p} />;
 
-// TRD/TVD (UI-9)
-export const GdTrdHome = (p) => (
-  <ShellWrapper {...p} title="TRD / TVD" bloqueNum={9} />
-);
-export const GdExpedientes = (p) => (
-  <ShellWrapper {...p} title="Expedientes electrónicos" bloqueNum={9} />
-);
+// TRD/TVD + Expedientes (UI-9) — vistas reales:
+export const GdTrdHome = (p) => <TablaTRD {...p} />;
+export const GdTvdHome = (p) => <TablaTVD {...p} />;
+export const GdClasificarConTRD = (p) => <ClasificarConTRD {...p} />;
+export const GdExpedientes = (p) => <BuscarExpedientes {...p} />;
+export const GdExpedienteFicha = (p) => <ExpedienteFicha {...p} />;
 
 // Admin (UI-10)
 export const GdAdminUsuarios = (p) => (
