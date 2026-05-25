@@ -15,18 +15,19 @@ import React, { useState } from 'react';
 
 import { GdSidebar } from './GdSidebar.jsx';
 import { GdTopBar } from './GdTopBar.jsx';
+import { useGdContext } from './GdContext.jsx';
 import { useGdScope } from '../hooks/useGdScope.js';
 import { SupportModeBanner } from '../../../components/domain/SupportModeBanner.jsx';
 import '../styles/portal.css';
 
 export function GdShell({
-  user,
-  roles = [],
-  tenantSlug,
+  user: userProp,
+  roles: rolesProp,
+  tenantSlug: tenantSlugProp,
   // `activeTenantId` (UUID) — distinto del `tenantSlug` que solo sirve
   // para componer rutas. SupportModeBanner lo necesita para decidir si
   // el override de support_mode corresponde a ESTE tenant.
-  activeTenantId,
+  activeTenantId: activeTenantIdProp,
   // Callback opcional que se dispara cuando el user hace "Salir de
   // support mode" desde el banner. Necesario porque sin navegación,
   // el user queda dentro del módulo GD sin permisos (la cookie ya no
@@ -39,6 +40,17 @@ export function GdShell({
   onOpenNotifications,
   children,
 }) {
+  // Fallback al context: si el componente padre no pasó props explícitas,
+  // tomamos los valores del GdProvider (montado en GdProfileLoader del
+  // router). Sin esto, cada componente del módulo tenía que pasar
+  // `roles={roles}` manualmente — fácil olvido, causa principal del
+  // "menú se borra y aparece SIN ROL" al navegar.
+  const ctx = useGdContext();
+  const user = userProp ?? ctx.user;
+  const roles = rolesProp ?? ctx.roles ?? [];
+  const tenantSlug = tenantSlugProp ?? ctx.tenantSlug;
+  const activeTenantId = activeTenantIdProp ?? ctx.activeTenantId;
+
   const { scope, setScope, scopes } = useGdScope(tenantSlug);
   const [search, setSearch] = useState('');
 

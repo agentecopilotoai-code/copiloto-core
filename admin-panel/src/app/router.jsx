@@ -46,6 +46,7 @@ import { InfluencerShell } from './shells/InfluencerShell.jsx';
 import { isInfluencerEnabled, isGdEnabled } from '../services/coreApi.js';
 import { resolveGdRoute } from '../features/gd/routeMap.js';
 import { getMyGdProfile } from '../features/gd/services/gdApi.js';
+import { GdProvider } from '../features/gd/shell/GdContext.jsx';
 import { PersonaWizardContainer } from '../features/influencer/wizard/PersonaWizardContainer.jsx';
 import { CreatePersonaAndRedirect } from '../features/influencer/wizard/CreatePersonaAndRedirect.jsx';
 import { PersonaStudioContainer } from '../features/influencer/studio/PersonaStudioContainer.jsx';
@@ -754,24 +755,39 @@ function GdProfileLoader({ session, activeTenant, profile, location, navigate })
   };
 
   return (
-    <Component
-      session={session}
-      roles={gdRoles}
+    // GdProvider envuelve TODO el módulo. Cualquier componente hijo
+    // (GdShell, GdSidebar, páginas) que necesite `roles`, `user`,
+    // `session`, `tenantSlug` o `activeTenantId` puede leerlos via
+    // `useGdContext()` sin que el componente intermedio tenga que
+    // pasarlos por prop. Esto elimina la clase de bug "el menú se
+    // borra al navegar a Eventos/Plantillas/Buzón" causado por
+    // componentes que olvidaban re-pasar `roles={roles}` a GdShell.
+    <GdProvider
       user={profile}
+      roles={gdRoles}
+      session={session}
       tenantSlug={activeTenant.slug}
-      // BUG-008 — `SupportModeBanner` necesita el UUID para decidir si
-      // el override de support_mode aplica al tenant actual. Se forwarda
-      // a `GdShell` vía `{...shellProps}` desde cada vista del módulo.
       activeTenantId={activeTenant.id}
-      // Cuando el user hace "Salir de support mode" desde el banner del
-      // GdShell, navegamos a /platform (home del platform_owner). Sin
-      // esto, queda dentro del módulo GD con la cookie ya removida →
-      // próximo fetch a /api/v1/gd/* da 404 y la página queda rota.
-      onExitSupportMode={() => navigate('/platform')}
-      currentPath={`/gd${subPath}`}
-      onNavigate={onNavigate}
-      {...extraProps}
-    />
+    >
+      <Component
+        session={session}
+        roles={gdRoles}
+        user={profile}
+        tenantSlug={activeTenant.slug}
+        // BUG-008 — `SupportModeBanner` necesita el UUID para decidir si
+        // el override de support_mode aplica al tenant actual. Se forwarda
+        // a `GdShell` vía `{...shellProps}` desde cada vista del módulo.
+        activeTenantId={activeTenant.id}
+        // Cuando el user hace "Salir de support mode" desde el banner del
+        // GdShell, navegamos a /platform (home del platform_owner). Sin
+        // esto, queda dentro del módulo GD con la cookie ya removida →
+        // próximo fetch a /api/v1/gd/* da 404 y la página queda rota.
+        onExitSupportMode={() => navigate('/platform')}
+        currentPath={`/gd${subPath}`}
+        onNavigate={onNavigate}
+        {...extraProps}
+      />
+    </GdProvider>
   );
 }
 
