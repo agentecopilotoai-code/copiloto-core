@@ -29,7 +29,7 @@ export function BackToPlatformButton() {
     <button
       type="button"
       className={styles.backToPlatformButton}
-      onClick={() => navigate('/platform')}
+      onClick={() => navigate('/admin')}
       title="Volver a la vista cross-tenant del platform owner"
     >
       ← Platform

@@ -47,7 +47,7 @@ describe('BackToPlatformButton (BUG-015)', () => {
       </MemoryRouter>,
     );
     await userEvent.click(screen.getByRole('button', { name: /Platform/i }));
-    expect(navigateMock).toHaveBeenCalledWith('/platform');
+    expect(navigateMock).toHaveBeenCalledWith('/admin');
     expect(navigateMock).toHaveBeenCalledTimes(1);
   });
 

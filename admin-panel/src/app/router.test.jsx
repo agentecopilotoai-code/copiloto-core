@@ -139,19 +139,18 @@ describe('router por rol', () => {
     expect(
       await screen.findByRole('heading', { name: 'Fleet · Tenants', level: 1 }),
     ).toBeInTheDocument();
-    // The PlatformOwnerShell renders the heading from `activeModule.label` as
-    // soon as `/platform` mounts (the index route resolves `segments[1]` to
-    // ROLE_HOME.platform_owner = 'platform-fleet' synchronously). The actual
-    // pathname only settles after the index `<Navigate>` completes — under
-    // Node 20 + coverage instrumentation that second hop can lag behind the
-    // DOM render. Wait for it explicitly.
+    // D-ROUTES-01: platform admin movido de `/platform` a `/admin`.
+    // El PlatformOwnerShell renderiza el heading desde `activeModule.label`
+    // tan pronto monta (`/admin` resuelve `segments[1]` a
+    // ROLE_HOME.platform_owner = 'platform-fleet' sync). El pathname
+    // solo asienta tras el `<Navigate>` del index — esperamos explícito.
     await waitFor(() => {
-      expect(router.state.location.pathname).toBe('/platform/platform-fleet');
+      expect(router.state.location.pathname).toBe('/admin/platform-fleet');
     });
   });
 
-  it('un usuario de tenant que entra a /platform recibe acceso restringido', async () => {
-    renderAt('/platform', { tenants: [ACME(['owner'])] });
+  it('un usuario de tenant que entra a /admin recibe acceso restringido', async () => {
+    renderAt('/admin', { tenants: [ACME(['owner'])] });
     expect(await screen.findByText('Acceso restringido')).toBeInTheDocument();
   });
 

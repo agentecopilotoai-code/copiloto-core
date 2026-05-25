@@ -51,7 +51,7 @@ services:
     volumes:
       - ./.secrets:/app/.secrets:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/admin/ >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/ >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
