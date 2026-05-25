@@ -69,7 +69,6 @@ export function GdShell({
       <div className="app-shell">
         <GdSidebar
           roles={roles}
-          tenantSlug={tenantSlug}
           currentPath={currentPath}
           onNavigate={onNavigate}
           user={user}

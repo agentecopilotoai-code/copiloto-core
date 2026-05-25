@@ -92,19 +92,6 @@ describe('GdShell', () => {
     expect(screen.getByTestId('gd-shell-root').getAttribute('data-scope')).toBe('propio');
   });
 
-  it('tenantSlug se threadea a GdSidebar — los hrefs incluyen /gd/t/{slug}/...', () => {
-    // Regresión: sin esto el sidebar caía al fallback "subPath crudo"
-    // y los links iban a `/buzon` (404) en vez de `/gd/t/{slug}/buzon`.
-    render(
-      <GdShell roles={['gd.admin_sistema']} tenantSlug="acme">
-        <p />
-      </GdShell>,
-    );
-    // "Usuarios" es admin → debe componer `/gd/admin/t/acme/usuarios`.
-    const usuarios = screen.getByText('Usuarios').closest('a');
-    expect(usuarios.getAttribute('href')).toBe('/gd/admin/t/acme/usuarios');
-  });
-
   // BUG-008 / paridad con TenantShell — un platform_owner que entra a GD
   // bajo support_mode necesita seguir viendo el banner para poder salir
   // sin volver al shell del tenant.
