@@ -28,6 +28,7 @@ export function Impresion({ session, roles = [], ...shellProps }) {
 
   return (
     <GdShell
+      roles={roles}
       {...shellProps}
       breadcrumbs={[
         { label: 'Gestión Documental', path: '/gd' },

@@ -35,11 +35,61 @@ export class GdNoProfileError extends Error {
 
 export class GdHttpError extends Error {
   constructor(status, body) {
-    super(`gd_http_${status}`);
+    super(humanizeGdError(status, body));
     this.status = status;
     this.body = body;
     this.name = 'GdHttpError';
   }
+}
+
+/**
+ * Traduce un response de error del backend GD a un mensaje legible
+ * para el usuario final. Cubre:
+ *
+ * - 422 Pydantic (lista de `{loc, msg, type}`): "Campo X es requerido"
+ *   o "Campo X inválido: ..." según el `type`.
+ * - 4xx con shape `{detail: {message, ...}}`: usa `message` directo.
+ * - 4xx con shape `{detail: "string"}`: usa el string.
+ * - cualquier otro: fallback genérico con el status code.
+ *
+ * NUNCA expone stack traces ni datos sensibles. El componente que muestra
+ * el error puede acceder al body completo via `err.body` si necesita más
+ * detalle (ej. para destacar el campo específico).
+ */
+function humanizeGdError(status, body) {
+  if (!body) return `Error HTTP ${status}.`;
+
+  // 422 Pydantic — body.detail es array de {loc, msg, type, input}
+  if (status === 422 && Array.isArray(body?.detail)) {
+    const campos = body.detail
+      .map((d) => {
+        const loc = Array.isArray(d.loc) ? d.loc.slice(1) : [];  // skip 'body'/'query'
+        const nombre = loc.join('.');
+        if (d.type === 'missing') {
+          return `· Falta el campo "${nombre}"`;
+        }
+        if (d.msg) {
+          return `· Campo "${nombre}": ${d.msg}`;
+        }
+        return `· Campo "${nombre}" inválido`;
+      })
+      .join('\n');
+    return `Datos incompletos o inválidos:\n${campos}`;
+  }
+
+  // 4xx con detail estructurado { code, message }
+  if (typeof body?.detail === 'object' && body.detail !== null) {
+    const msg = body.detail.message || body.detail.error || JSON.stringify(body.detail);
+    return msg;
+  }
+
+  // 4xx con detail string plano
+  if (typeof body?.detail === 'string') {
+    return body.detail;
+  }
+
+  // Fallback
+  return `Error HTTP ${status}.`;
 }
 
 function authHeaders(session) {
