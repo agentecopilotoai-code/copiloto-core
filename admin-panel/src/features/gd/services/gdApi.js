@@ -286,9 +286,14 @@ export function getMiBuzon(session, { carpeta, scope, limit = 50 } = {}) {
   });
 }
 
-/** GET /api/v1/gd/dependencias/me/buzon — buzón de mi dependencia. */
+/** GET /v1/gd/buzon — buzón del usuario actual (filtros opcionales).
+ *
+ * Backend canónico: `/gd/buzon` (sin sub-recurso `/dependencias/me/`).
+ * El `carpeta` / `scope` se pasan como query params; los handlers ignoran
+ * los que no entiendan — defensa contra evolución del API.
+ */
 export function getBuzonDependencia(session, { carpeta, scope = 'dependencia', limit = 50 } = {}) {
-  return gdFetch(session, '/gd/dependencias/me/buzon', {
+  return gdFetch(session, '/gd/buzon', {
     params: { carpeta, scope, limit },
   });
 }
@@ -853,41 +858,48 @@ export function buscarExpedientes(session, filtros = {}) {
 }
 
 // ─── UI-10: Admin del sistema GD (GD-API-0086..0115) ─────────────────────
+//
+// Paths canónicos backend: `/gd/perfil-usuario/*` y `/gd/usuarios/{id}/roles`.
+// El UI llama estos wrappers (que mantienen los nombres "lindos" de la UX)
+// pero internamente apuntan a las rutas REST que el backend efectivamente
+// expone — sin esto, todos los endpoints daban 404.
 
 // --- Usuarios GD ---
 export function listUsuariosGd(session, filtros = {}) {
-  return gdFetch(session, '/gd/admin/usuarios', { params: filtros });
+  return gdFetch(session, '/gd/perfil-usuario', { params: filtros });
 }
 export function getUsuarioGd(session, id) {
-  return gdFetch(session, `/gd/admin/usuarios/${id}`);
+  return gdFetch(session, `/gd/perfil-usuario/${id}`);
 }
 export function crearUsuarioGd(session, payload) {
-  return gdFetch(session, '/gd/admin/usuarios', {
+  return gdFetch(session, '/gd/perfil-usuario', {
     method: 'POST', body: payload,
   });
 }
 export function actualizarUsuarioGd(session, id, payload) {
-  return gdFetch(session, `/gd/admin/usuarios/${id}`, {
+  return gdFetch(session, `/gd/perfil-usuario/${id}`, {
     method: 'PATCH', body: payload,
   });
 }
 export function asignarRolUsuarioGd(session, id, payload) {
-  return gdFetch(session, `/gd/admin/usuarios/${id}/roles`, {
+  return gdFetch(session, `/gd/usuarios/${id}/roles`, {
     method: 'POST', body: payload,
   });
 }
-export function removerRolUsuarioGd(session, id, rol, motivo) {
-  return gdFetch(session, `/gd/admin/usuarios/${id}/roles/${rol}`, {
-    method: 'DELETE', body: { motivo },
+export function removerRolUsuarioGd(session, id, asignacionId, motivo) {
+  // Backend usa el id de la asignación (asignacion_alcance_id), NO el rol_codigo.
+  // El caller debe pasar `asignacionId` (que viene en `roles_gd_vigentes[].asignacion_alcance_id`).
+  return gdFetch(session, `/gd/usuarios/${id}/roles/${asignacionId}/cerrar`, {
+    method: 'POST', body: { motivo },
   });
 }
 export function inactivarUsuarioGd(session, id, motivo) {
-  return gdFetch(session, `/gd/admin/usuarios/${id}/inactivar`, {
+  return gdFetch(session, `/gd/perfil-usuario/${id}/inactivar`, {
     method: 'POST', body: { motivo },
   });
 }
 export function reactivarUsuarioGd(session, id, motivo) {
-  return gdFetch(session, `/gd/admin/usuarios/${id}/reactivar`, {
+  return gdFetch(session, `/gd/perfil-usuario/${id}/reactivar`, {
     method: 'POST', body: { motivo },
   });
 }
@@ -1040,23 +1052,29 @@ export function getSaludSistema(session) {
 
 // ─── UI-11: Auditoría + Reportes consolidados (GD-API-0116..0125) ────────
 
-// --- Auditoría (extiende `listAuditoria` ya existente) ---
+// --- Auditoría ---
+// Backend canónico: `/core/auditoria` (schema transversal `core.evento_auditoria`).
+// NO `/gd/auditoria` — la auditoría es shared service del core, no del módulo GD.
+// Ver `infra/postgres/modules/gd.sql` § 1 y `app/gd/routes.py` router_core.
 export function buscarAuditoria(session, filtros = {}) {
-  return gdFetch(session, '/gd/auditoria', { params: filtros });
+  return gdFetch(session, '/core/auditoria', { params: filtros });
 }
 export function getEventoAuditoria(session, id) {
-  return gdFetch(session, `/gd/auditoria/${id}`);
+  return gdFetch(session, `/core/auditoria/${id}`);
 }
 export function exportarAuditoria(session, payload) {
-  return gdFetch(session, '/gd/auditoria/exportar', {
+  // Backend usa /gd/reportes/auditoria/exportar (módulo GD-specific reporting).
+  return gdFetch(session, '/gd/reportes/auditoria/exportar', {
     method: 'POST', body: payload,
   });
 }
 export function listCatalogoEntidadesAuditoria(session) {
-  return gdFetch(session, '/gd/auditoria/entidades');
+  // Reutilizamos el catálogo de eventos del core — la UI extrae las
+  // entidades distintas client-side (el catálogo tiene { evento, entidad_tipo }).
+  return gdFetch(session, '/core/auditoria/catalogo-eventos');
 }
 export function listCatalogoAccionesAuditoria(session) {
-  return gdFetch(session, '/gd/auditoria/acciones');
+  return gdFetch(session, '/core/auditoria/catalogo-eventos');
 }
 
 // --- Reportes consolidados ---

@@ -441,4 +441,81 @@ async def detalle_generado(
     return ReporteGeneradoResponse(**row)
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Reportes "consolidados" — vista unificada que agrega los counters de
+# cada categoría (anulaciones, auditoria, cargas, correspondencia, pqrsd,
+# radicados, uso-ia) en una sola response. Útil para dashboards
+# ejecutivos donde no se necesita el detalle de cada tipo.
+# Stub mínimo: estructura coherente con counts en 0 cuando no hay data,
+# para que el UI no rompa y pueda iterar sin bloquearse en el backend.
+# Próxima iteración: query real agregando datos de cada svc.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@router.get(
+    '/consolidados',
+    dependencies=[Depends(require_gd_perfil)],
+    summary='Vista consolidada de reportes (counts por categoría)',
+)
+async def reportes_consolidados(
+    desde: str | None = Query(default=None, description='YYYY-MM-DD'),
+    hasta: str | None = Query(default=None, description='YYYY-MM-DD'),
+    perfil: GdPerfilContext = Depends(require_gd_perfil),  # noqa: B008
+    conn: asyncpg.Connection = Depends(get_db),  # noqa: B008
+) -> dict[str, Any]:
+    """Devuelve counters agregados por categoría — vista ejecutiva.
+
+    Response shape estable que la UI puede consumir aunque el desglose
+    interno cambie. Cada `count` es 0 cuando no hay data en la ventana.
+    """
+    # TODO(GD-API-future): reemplazar con query real cuando se priorice
+    # el dashboard ejecutivo. Por ahora respuesta estable + vacía.
+    return {
+        'desde': desde,
+        'hasta': hasta,
+        'categorias': {
+            'radicados': {'total': 0},
+            'pqrsd': {'total': 0},
+            'correspondencia': {'total': 0},
+            'cargas': {'total': 0},
+            'anulaciones': {'total': 0},
+            'auditoria': {'total': 0},
+            'uso_ia': {'total': 0, 'tokens': 0, 'costo_usd': 0},
+        },
+    }
+
+
+@router.post(
+    '/consolidados/exportar',
+    dependencies=[Depends(require_gd_perfil)],
+    summary='Exportar reporte consolidado (XLSX/CSV/PDF) — stub',
+)
+async def exportar_consolidado(
+    perfil: GdPerfilContext = Depends(require_gd_perfil),  # noqa: B008
+) -> dict[str, str]:
+    """Stub — devuelve estructura indicando que la exportación está
+    pendiente de implementar. UI debe mostrar mensaje informativo."""
+    return {
+        'status': 'not_implemented',
+        'message': 'Exportación consolidada pendiente. Use los exportadores '
+                   'individuales por categoría (anulaciones, pqrsd, etc).',
+    }
+
+
+@router.post(
+    '/ejecutivo/pdf',
+    dependencies=[Depends(require_gd_perfil)],
+    summary='PDF ejecutivo consolidado — stub',
+)
+async def reporte_ejecutivo_pdf(
+    perfil: GdPerfilContext = Depends(require_gd_perfil),  # noqa: B008
+) -> dict[str, str]:
+    """Stub del PDF ejecutivo. Responde 200 con marker para que la UI
+    no rompa; renderizado real queda como follow-up."""
+    return {
+        'status': 'not_implemented',
+        'message': 'Generación de PDF ejecutivo pendiente.',
+    }
+
+
 __all__ = ['router']

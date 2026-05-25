@@ -133,6 +133,30 @@ async def listar_trd(
 
 
 @router_trd.get(
+    '/version-actual',
+    response_model=VersionTRDResponse | None,
+    dependencies=[Depends(require_gd_perfil)],
+    summary='Versión TRD vigente del tenant (la primera con estado=activa).',
+)
+async def trd_version_actual(
+    perfil: GdPerfilContext = Depends(require_gd_perfil),  # noqa: B008
+    conn: asyncpg.Connection = Depends(get_db),  # noqa: B008
+) -> VersionTRDResponse | None:
+    """Conveniencia para la UI: devuelve la primera versión activa (la
+    "actual"). Si no hay ninguna activa todavía, devuelve null — la UI
+    debe mostrar un empty state "No hay TRD activa" en vez de explotar.
+
+    Para listar todas las versiones (historial), usar GET /versiones.
+    """
+    rows = await svc.listar_versiones_trd(
+        conn, tenant_id=perfil.tenant_id, estado='activa', limit=1,
+    )
+    if not rows:
+        return None
+    return VersionTRDResponse(**rows[0])
+
+
+@router_trd.get(
     '/versiones/{version_id}',
     response_model=VersionTRDResponse,
     dependencies=[Depends(require_gd_perfil)],
