@@ -155,8 +155,12 @@ export function legacyRedirectFor(pathname) {
   // /t/{slug}/read/... → no migra todavía (read-only shell aparte).
   if (moduleSegment === 'read') return null;
 
-  // /t/{slug}/gd o /t/{slug}/gd/... — único módulo migrado en Fase 1.
-  // Influencer y chatbot mantienen el esquema legacy hasta Fase 2.
+  // /t/{slug}/influencer/... → /influencer/t/{slug}/...
+  if (moduleSegment === 'influencer') {
+    return joinModule(`/influencer/t/${slug}`, '/' + rest.join('/'));
+  }
+
+  // /t/{slug}/gd o /t/{slug}/gd/... — operación o admin según subpath.
   if (moduleSegment === 'gd') {
     const sub = '/' + rest.join('/');
     if (sub.startsWith('/admin')) {
@@ -165,9 +169,9 @@ export function legacyRedirectFor(pathname) {
     return gdHome(slug, sub);
   }
 
-  // Influencer / chatbot / otros → NO migrar; el shell legacy sigue
-  // manejando estas URLs. Fase 2 los moverá a /{module}/t/{slug}/...
-  return null;
+  // /t/{slug}/{otro}/... → chatbot (núcleo CopilotoIA).
+  // El módulo legacy "tenant shell" se promueve al namespace chatbot.
+  return joinModule(`/chatbot/t/${slug}`, '/' + parts.slice(2).join('/'));
 }
 
 // =============================================================================

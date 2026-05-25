@@ -66,7 +66,7 @@ export function TenantShell({
   );
   const handleExitSupport = isMemberOfActiveTenant
     ? undefined
-    : () => navigate('/admin');
+    : () => navigate('/platform');
 
   return (
     <div className={styles.shell}>

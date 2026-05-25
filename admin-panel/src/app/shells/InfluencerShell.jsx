@@ -91,11 +91,11 @@ export function InfluencerShell({
             el recordatorio + botón "Salir de support mode" igual que en
             el resto del tenant. Se auto-oculta si el override no
             corresponde al `activeTenantId` actual.
-            `onExited` navega a /admin — sin esto el user queda en
+            `onExited` navega a /platform — sin esto el user queda en
             el módulo con la cookie ya removida y la página rota. */}
         <SupportModeBanner
           activeTenantId={activeTenantId}
-          onExited={() => navigate('/admin')}
+          onExited={() => navigate('/platform')}
         />
         <ShellTopbar
           eyebrow="Ravit Studio"

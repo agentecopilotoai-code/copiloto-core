@@ -115,11 +115,17 @@ describe('urls — legacyRedirectFor', () => {
     expect(legacyRedirectFor('/t/demo/gd/admin/estructura'))
       .toBe('/gd/admin/t/demo/estructura');
   });
-  it('FASE 1: NO migra influencer ni chatbot (solo GD)', () => {
-    // Influencer y chatbot se migran en Fase 2 del refactor.
-    expect(legacyRedirectFor('/t/demo/influencer')).toBeNull();
-    expect(legacyRedirectFor('/t/demo/contacts/abc')).toBeNull();
-    expect(legacyRedirectFor('/t/demo/agente')).toBeNull();
+  it('migra /t/{slug}/influencer/* → /influencer/t/{slug}/*', () => {
+    expect(legacyRedirectFor('/t/demo/influencer'))
+      .toBe('/influencer/t/demo');
+    expect(legacyRedirectFor('/t/demo/influencer/personas/abc/studio'))
+      .toBe('/influencer/t/demo/personas/abc/studio');
+  });
+  it('migra resto (chatbot) → /chatbot/t/{slug}/*', () => {
+    expect(legacyRedirectFor('/t/demo/contacts/abc'))
+      .toBe('/chatbot/t/demo/contacts/abc');
+    expect(legacyRedirectFor('/t/demo/agente'))
+      .toBe('/chatbot/t/demo/agente');
   });
   it('NO migra /t/{slug}/read/* (read-only shell aparte)', () => {
     expect(legacyRedirectFor('/t/demo/read/dashboard')).toBeNull();

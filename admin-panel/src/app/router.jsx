@@ -49,7 +49,7 @@ import { getMyGdProfile } from '../features/gd/services/gdApi.js';
 import { GdProvider } from '../features/gd/shell/GdContext.jsx';
 import {
   gdHome, gdAdmin,
-  chatbotHome,
+  influencerHome, chatbotHome,
   legacyRedirectFor,
 } from './urls.js';
 import { PersonaWizardContainer } from '../features/influencer/wizard/PersonaWizardContainer.jsx';
@@ -244,7 +244,7 @@ function IndexRedirect({ publicTab = 'ravit' }) {
 
   if (tenantsLoading) return <LoadingScreen />;
   if (platformPermissions.role === 'platform_owner') {
-    return <Navigate to="/admin" replace />;
+    return <Navigate to="/platform" replace />;
   }
   if (!defaultTenant) return <Navigate to="/no-tenant" replace />;
 
@@ -252,13 +252,12 @@ function IndexRedirect({ publicTab = 'ravit' }) {
   const safeHome = resolveSafeHomeModule(tenantPermissions);
 
   if (!safeHome) {
+    // UI-018 — rol efectivo sin acceso a NINGÚN módulo en el tenant activo.
+    // En vez de redirigir a una vista que va a fallar el guard, mostramos un
+    // estado claro con CTA para cerrar sesión y reintentar con otra cuenta.
     return <NoModuleAccessScreen />;
   }
 
-  // D-ROUTES-01 FASE 2 TODO: migrar chatbot+influencer al esquema nuevo
-  // (`/chatbot/t/{slug}/...`, `/influencer/t/{slug}/...`). Por ahora
-  // seguimos enviando al esquema legacy `/t/{slug}/...` — los items GD
-  // ya navegan al esquema nuevo desde el sidebar.
   if (tenantPermissions.role === 'viewer') {
     return <Navigate to={`${base}/read/${safeHome}`} replace />;
   }
@@ -338,8 +337,7 @@ function PlatformRoute() {
     return <AccessDenied capability="platform.tenants.read" mode="R" />;
   }
 
-  // D-ROUTES-01: pathname ahora `/admin/{moduleId}` (antes `/platform/...`).
-  const segments = location.pathname.split('/').filter(Boolean); // ['admin', moduleId]
+  const segments = location.pathname.split('/').filter(Boolean); // ['platform', moduleId]
   const activeModuleId = segments[1] || ROLE_HOME.platform_owner;
   const activeModule =
     adminModules.find((item) => item.id === activeModuleId) ?? adminModules[0];
@@ -351,7 +349,7 @@ function PlatformRoute() {
       modules={adminModules}
       activeModule={activeModule}
       activeModuleId={activeModuleId}
-      onModuleSelect={(id) => navigate(`/admin/${id}`)}
+      onModuleSelect={(id) => navigate(`/platform/${id}`)}
     >
       <Outlet />
     </PlatformOwnerShell>
@@ -509,14 +507,20 @@ function TenantShellRoute() {
       activeModule={activeModule}
       activeModuleId={activeModuleId}
       onModuleSelect={(id) => {
-        // D-ROUTES-01: GD ya está migrado al nuevo esquema, navegamos
-        // directo. Influencer + chatbot quedan en legacy hasta Fase 2.
-        if (id === 'gd-entry') {
-          navigate(gdHome(activeTenant.slug));
-          return;
-        }
+        // `influencer-entry` no es un módulo del shell del tenant — es un
+        // entry-point al `InfluencerShell`. Navegamos al sub-tree del shell
+        // del influencer en lugar de a `/t/{slug}/influencer-entry`. El
+        // path `influencer-entry` SÍ tiene route registrada (`TENANT_MODULE_IDS`
+        // lo incluye) que monta `InfluencerEntryRedirect` para deep-links
+        // directos; este shortcut evita el redirect intermedio.
         if (id === 'influencer-entry') {
           navigate(`/t/${activeTenant.slug}/influencer`);
+          return;
+        }
+        // `gd-entry`: mismo shortcut que influencer — el sub-shell
+        // del módulo GD vive en `/t/{slug}/gd`, no en `/t/{slug}/gd-entry`.
+        if (id === 'gd-entry') {
+          navigate(`/t/${activeTenant.slug}/gd`);
           return;
         }
         navigate(`/t/${activeTenant.slug}/${id}`);
@@ -949,20 +953,13 @@ export const routes = [
         ],
       },
       {
-        // D-ROUTES-01: platform admin vive bajo `/admin/*`. Antes era
-        // `/platform/*`. Mismo PlatformRoute, distinto prefix público
-        // — coherente con `/{module}/admin/t/{slug}/...` (todos los
-        // "admin" comparten el segmento `admin`).
-        path: 'admin',
+        path: 'platform',
         element: <PlatformRoute />,
         children: [
           { index: true, element: <Navigate to={ROLE_HOME.platform_owner} replace /> },
           ...PLATFORM_MODULE_IDS.map(moduleRoute),
         ],
       },
-      // Redirect legacy `/platform/*` → `/admin/*` (bookmarks).
-      { path: 'platform', element: <Navigate to="/admin" replace /> },
-      { path: 'platform/*', element: <Navigate to="/admin" replace /> },
       // ─── D-ROUTES-01: rutas top-level por módulo ─────────────────────────
       //
       // Esquema nuevo (canónico):
@@ -1102,11 +1099,5 @@ export const routes = [
   },
 ];
 
-/** Router de producción.
- *
- * D-ROUTES-01: vite base es `/`, así que el router se monta SIN basename.
- * Las URLs reales en el navegador empiezan con `/admin/`, `/gd/`,
- * `/influencer/`, `/chatbot/` según el módulo. Antes todo iba bajo
- * `/admin/` (basename) — ver memoria del refactor.
- */
-export const appRouter = createBrowserRouter(routes);
+/** Router de producción. `base` de Vite es `/admin/` → `basename: '/admin'`. */
+export const appRouter = createBrowserRouter(routes, { basename: '/admin' });

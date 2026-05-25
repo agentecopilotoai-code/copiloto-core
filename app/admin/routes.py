@@ -358,25 +358,18 @@ def _dist_file(path: str = 'index.html') -> FileResponse:
 
 
 @router.get('/', include_in_schema=False)
-async def admin_root() -> FileResponse:
-    # D-ROUTES-01: vite base es ahora '/', por eso `/` sirve el SPA
-    # directamente (en vez de redirigir a `/admin/`). React Router
-    # decide qué pantalla pintar (landing pública / IndexRedirect).
-    return _dist_file()
+async def admin_root() -> RedirectResponse:
+    return RedirectResponse('/admin/', status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
 
 @router.get('/admin', include_in_schema=False)
 @router.get('/admin/', include_in_schema=False)
 async def admin_index() -> FileResponse:
-    # `/admin/*` ahora es el namespace del PLATFORM ADMIN (no del SPA
-    # entero). El SPA decide qué pintar dentro del shell PlatformOwnerShell.
     return _dist_file()
 
 
-@router.get('/assets/{asset_path:path}', include_in_schema=False)
+@router.get('/admin/assets/{asset_path:path}', include_in_schema=False)
 async def admin_assets(asset_path: str) -> FileResponse:
-    # D-ROUTES-01: vite base '/' emite `<script src="/assets/...">`,
-    # por eso los assets viven en `/assets/*` (sin prefijo `/admin/`).
     return _dist_file(f'assets/{asset_path}')
 
 
@@ -388,9 +381,7 @@ async def admin_favicon() -> Response:
 @router.get('/admin/login', include_in_schema=False)
 async def admin_login(request: Request) -> RedirectResponse:
     if _active_session(request):
-        # D-ROUTES-01: ya autenticado → '/' deja al IndexRedirect decidir
-        # adónde ir según el rol (platform_owner → /admin, tenant → /t/...).
-        return RedirectResponse('/', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse('/admin/', status_code=status.HTTP_303_SEE_OTHER)
 
     settings = get_admin_settings()
     if not settings.auth0_admin_client_id or not settings.auth0_audience:
@@ -414,12 +405,7 @@ async def admin_login(request: Request) -> RedirectResponse:
     }
     authorization_url = f'{_auth0_base_url()}/authorize?{urlencode(authorization_params)}'
     response = RedirectResponse(authorization_url)
-    # D-ROUTES-01: path='/' para que el cookie viaje en TODOS los
-    # namespaces SPA (/admin/, /gd/, /influencer/, /chatbot/, /t/).
-    response.set_cookie(
-        STATE_COOKIE, state_cookie, httponly=True, samesite='lax',
-        max_age=600, path='/',
-    )
+    response.set_cookie(STATE_COOKIE, state_cookie, httponly=True, samesite='lax', max_age=600)
     return response
 
 
@@ -510,19 +496,14 @@ async def admin_callback(
             'mfa_verified': mfa_verified,
         },
     }
-    # D-ROUTES-01: tras login redirigimos a '/' — el SPA IndexRedirect
-    # decide si va a `/admin/` (platform_owner) o `/t/{slug}/...`
-    # (tenant user). Antes redirigía a `/admin/`, que sigue funcionando
-    # pero deja al usuario en una pantalla equívoca por un instante.
-    response = RedirectResponse('/')
-    response.delete_cookie(STATE_COOKIE, path='/')
+    response = RedirectResponse('/admin/')
+    response.delete_cookie(STATE_COOKIE)
     response.set_cookie(
         SESSION_COOKIE,
         session_id,
         httponly=True,
         samesite='lax',
         max_age=SESSION_TTL_SECONDS,
-        path='/',  # D-ROUTES-01: cookie disponible en TODOS los namespaces.
     )
     return response
 
@@ -538,10 +519,10 @@ async def admin_logout(request: Request) -> RedirectResponse:
     logout_url = (
         f'{_auth0_base_url()}/v2/logout?{urlencode(logout_params)}'
         if settings.auth0_domain and settings.auth0_admin_client_id
-        else '/'
+        else '/admin/'
     )
     response = RedirectResponse(logout_url, status_code=status.HTTP_303_SEE_OTHER)
-    response.delete_cookie(SESSION_COOKIE, path='/')
+    response.delete_cookie(SESSION_COOKIE)
     return response
 
 
@@ -727,60 +708,18 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
     return proxied
 
 
-# BUG-002 fix + D-ROUTES-01: SPA fallback para TODOS los namespaces del
-# nuevo esquema de rutas.
+# BUG-002 fix: SPA fallback. Any `/admin/<react-router-path>` that the user
+# hits via hard refresh, deep link or back-button hits this catch-all. The
+# specific routes above (`/admin/login`, `/admin/logout`, `/admin/callback`,
+# `/admin/assets/*`, `/admin/api/*`, websocket) match first per FastAPI's
+# registration order; everything else (`/admin/no-tenant`, `/admin/onboarding`,
+# `/admin/t/<slug>/<module>`, `/admin/account/profile`, ...) returns the SPA
+# index.html and React Router takes over client-side. Before this fix a hard
+# refresh on any non-root admin path returned `{"detail":"Not Found"}` and
+# the user had no way back without re-typing the URL.
 #
-# Cualquier path que el usuario tipee, comparta o refresque y que NO
-# coincida con un handler específico (auth, /api, /assets, websocket)
-# devuelve el SPA index.html — React Router decide qué pintar
-# client-side.
-#
-# Namespaces cubiertos:
-#   /admin/<spa_path>       → platform admin
-#   /gd/<spa_path>          → módulo Gestión Documental
-#   /influencer/<spa_path>  → módulo Influencer
-#   /chatbot/<spa_path>     → módulo Chatbot
-#   /t/<spa_path>           → legacy tenant (redirect transparente en SPA)
-#
-# Hay que registrarlas EXPLÍCITAMENTE (en vez de un catch-all `/{path}`)
-# porque FastAPI ya tiene rutas en `/v1/*` (API publica) que NO queremos
-# capturar acá. Listar los namespaces SPA es más seguro.
-#
-# Estas rutas DEBEN ir al final del módulo para no robar el match a las
-# rutas específicas (`/admin/login`, `/admin/api/*`, etc.) que se
-# registran arriba.
+# MUST be the LAST route registered in this module so that all the specific
+# `/admin/*` handlers (auth, proxy, assets) win the match-by-order race.
 @router.get('/admin/{spa_path:path}', include_in_schema=False)
 async def admin_spa_fallback(spa_path: str) -> FileResponse:
-    return _dist_file()
-
-
-@router.get('/gd/{spa_path:path}', include_in_schema=False)
-async def gd_spa_fallback(spa_path: str) -> FileResponse:
-    return _dist_file()
-
-
-@router.get('/influencer/{spa_path:path}', include_in_schema=False)
-async def influencer_spa_fallback(spa_path: str) -> FileResponse:
-    return _dist_file()
-
-
-@router.get('/chatbot/{spa_path:path}', include_in_schema=False)
-async def chatbot_spa_fallback(spa_path: str) -> FileResponse:
-    return _dist_file()
-
-
-@router.get('/t/{spa_path:path}', include_in_schema=False)
-async def legacy_tenant_spa_fallback(spa_path: str) -> FileResponse:
-    # El esquema viejo `/t/{slug}/{module}/...` sigue funcionando para
-    # bookmarks; el SPA hace el redirect a `/{module}/t/{slug}/...` via
-    # `legacyRedirectFor` (admin-panel/src/app/urls.js).
-    return _dist_file()
-
-
-# SPA single-page routes que no caben en un namespace de módulo (rutas
-# del shell raíz tipo `/no-tenant`, `/onboarding`, `/account/*`).
-@router.get('/no-tenant', include_in_schema=False)
-@router.get('/onboarding', include_in_schema=False)
-@router.get('/account/{spa_path:path}', include_in_schema=False)
-async def root_spa_fallback(spa_path: str = '') -> FileResponse:
     return _dist_file()

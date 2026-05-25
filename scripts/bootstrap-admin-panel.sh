@@ -145,13 +145,7 @@ fi
 cat <<'SUMMARY'
 
 ✅ Admin Panel listo
-URLs:
-  Platform admin:          http://localhost:3000/admin
-  Gestión Documental:      http://localhost:3000/gd/t/<slug>
-  GD admin del módulo:     http://localhost:3000/gd/admin/t/<slug>
-  Influencer:              http://localhost:3000/t/<slug>/influencer  (legacy)
-  Chatbot:                 http://localhost:3000/t/<slug>             (legacy)
-  Entry SPA (autoredir):   http://localhost:3000/
+URL: http://localhost:3000/admin/
 
 Recordá hacer hard refresh del navegador (Cmd+Shift+R o
 DevTools → click derecho en recargar → "Empty Cache and Hard Reload")
