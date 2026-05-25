@@ -905,8 +905,11 @@ export function reactivarUsuarioGd(session, id, motivo) {
 }
 
 // --- Estructura orgánica ---
+// Backend canónico: `/gd/admin/estructura/vigente` (devuelve el árbol
+// completo de la versión activa). El path plano `/gd/admin/estructura`
+// NO existe. Si hay más de una versión, usar `/gd/admin/estructura/versiones`.
 export function getEstructuraOrganica(session) {
-  return gdFetch(session, '/gd/admin/estructura');
+  return gdFetch(session, '/gd/admin/estructura/vigente');
 }
 export function crearDependencia(session, payload) {
   return gdFetch(session, '/gd/admin/dependencias', {
@@ -1267,7 +1270,11 @@ export function inactivarPeriferico(session, id, motivo) {
   });
 }
 export function getEstadoPerifericos(session) {
-  return gdFetch(session, '/gd/perifericos/estado');
+  // Backend NO tiene `/perifericos/estado` — el handler `/{periferico_id}`
+  // interpreta "estado" como UUID y devuelve 422. El listado real es
+  // `GET /gd/perifericos` (con filtros opcionales por query param);
+  // el "estado" en la UI se calcula client-side desde los items.
+  return gdFetch(session, '/gd/perifericos');
 }
 
 // --- Impresión ---

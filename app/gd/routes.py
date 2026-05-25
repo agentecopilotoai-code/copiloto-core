@@ -13,7 +13,7 @@ y agrega aquí. Ejemplos:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from app.core.security import authenticate_request
 from app.gd import ensure_gd_module_enabled
@@ -243,6 +243,100 @@ router_admin.include_router(parametros_handlers.router)
 # --- Seguridad (política de contraseñas) ---
 router_admin.include_router(politica_contrasena_handlers.router)
 
+# --- Catálogos unificados (vista de overview para la UI) ---
+# La UI tiene una pantalla "Catálogos" que lista los 6 catálogos
+# disponibles con un count cada uno. Es un endpoint de conveniencia
+# que NO existe individualmente — agrega counts de cargos, canales,
+# calendarios, tipos-pqrsd, tipos-correspondencia, reglas.
+from app.db.pool import get_db as _gd_get_db  # noqa: PLC0415, E402
+
+
+@router_admin.get(
+    '/catalogos',
+    summary='Vista unificada de los catálogos institucionales del módulo',
+    dependencies=[
+        Depends(authenticate_request),
+        Depends(ensure_gd_module_enabled),
+    ],
+)
+async def listar_catalogos_overview(
+    request: Request,
+    conn=Depends(_gd_get_db),
+) -> dict:
+    """Devuelve los catálogos disponibles con counts. Útil para la UI
+    de Administración → Catálogos. El detalle de cada uno se consulta
+    en su endpoint específico (`/admin/cargos`, `/admin/canales`, etc.).
+
+    Response shape estable; los counts son `null` si la query falla
+    (defensa contra schemas parcialmente inicializados — la UI muestra
+    el catálogo igual con un dash en lugar del contador).
+    """
+    tenant_id = getattr(request.state, 'tenant_id', None)
+
+    async def _safe_count(sql: str) -> int | None:
+        try:
+            return await conn.fetchval(sql, tenant_id)
+        except Exception:  # noqa: BLE001
+            return None
+
+    return {
+        'tenant_id': str(tenant_id) if tenant_id else None,
+        'catalogos': [
+            {
+                'codigo': 'cargos',
+                'label': 'Cargos institucionales',
+                'path': '/v1/gd/admin/cargos',
+                'count': await _safe_count(
+                    'select count(*) from gd.cargo where tenant_id=$1 and estado=\'activo\'',
+                ),
+            },
+            {
+                'codigo': 'canales',
+                'label': 'Canales de recepción',
+                'path': '/v1/gd/admin/canales',
+                'count': await _safe_count(
+                    'select count(*) from gd.canal where tenant_id=$1 and estado=\'activo\'',
+                ),
+            },
+            {
+                'codigo': 'calendarios',
+                'label': 'Calendarios institucionales',
+                'path': '/v1/gd/admin/calendarios',
+                'count': await _safe_count(
+                    'select count(*) from gd.calendario_institucional '
+                    'where tenant_id=$1 and estado=\'activo\'',
+                ),
+            },
+            {
+                'codigo': 'tipos-pqrsd',
+                'label': 'Tipos de PQRSD',
+                'path': '/v1/gd/admin/tipos-pqrsd',
+                'count': await _safe_count(
+                    'select count(*) from gd.tipo_pqrsd where tenant_id=$1 and estado=\'activo\'',
+                ),
+            },
+            {
+                'codigo': 'tipos-correspondencia',
+                'label': 'Tipos de correspondencia',
+                'path': '/v1/gd/admin/tipos-correspondencia',
+                'count': await _safe_count(
+                    'select count(*) from gd.tipo_correspondencia '
+                    'where tenant_id=$1 and estado=\'activo\'',
+                ),
+            },
+            {
+                'codigo': 'reglas-comunicacion',
+                'label': 'Reglas de comunicación interdependencia',
+                'path': '/v1/gd/admin/reglas/comunicacion',
+                'count': await _safe_count(
+                    'select count(*) from gd.regla_comunicacion_interdependencia '
+                    'where tenant_id=$1 and estado=\'activo\'',
+                ),
+            },
+        ],
+    }
+
+
 # El sub-router se incluye en el router raíz del módulo. Se monta DESPUÉS
 # de los routers planos para que la API queda como:
 #   /v1/gd/admin/dependencias        (nuevo, vía router_admin)
@@ -250,6 +344,7 @@ router_admin.include_router(politica_contrasena_handlers.router)
 #   /v1/gd/admin/parametros          (nuevo, vía router_admin)
 #   /v1/gd/admin/seguridad/politica  (nuevo, vía router_admin)
 #   /v1/gd/admin/canales             (nuevo, vía router_admin)
+#   /v1/gd/admin/catalogos           (overview unificado)
 #   ... y así
 router.include_router(router_admin)
 
