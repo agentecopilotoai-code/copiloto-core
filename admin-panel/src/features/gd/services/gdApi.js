@@ -961,6 +961,22 @@ export function reactivarUsuarioGd(session, id, motivo) {
 export function getEstructuraOrganica(session) {
   return gdFetch(session, '/gd/admin/estructura/vigente');
 }
+/**
+ * Crear primera versión (o nueva versión) de la estructura orgánica.
+ * Sin una versión vigente, NO se puede crear ninguna dependencia
+ * (DependenciaCreate.version_estructura_id es required).
+ *
+ * Schema backend: VersionEstructuraCreate
+ *   - numero_version: string (1..40)  — ej. "v1", "2026", "Decreto-001"
+ *   - descripcion: string? (≤2000)
+ *   - acto_administrativo: string? (≤500) — ej. "Decreto 001 de 2026"
+ *   - fecha_inicio_vigencia: ISO date
+ */
+export function crearVersionEstructura(session, payload) {
+  return gdFetch(session, '/gd/admin/estructura/versiones', {
+    method: 'POST', body: payload,
+  });
+}
 export function crearDependencia(session, payload) {
   return gdFetch(session, '/gd/admin/dependencias', {
     method: 'POST', body: payload,

@@ -10,6 +10,7 @@
 import React from 'react';
 
 import { gdCanAny } from '../../../permissions/gd-matrix.js';
+import { gdPrimaryRoleLabel } from './gdRoles.js';
 
 const NAV = Object.freeze([
   {
@@ -103,7 +104,11 @@ export function GdSidebar({
           </div>
           <div>
             <div className="name">{user.nombre || 'Usuario'}</div>
-            <div className="rol">{(roles[0] || 'sin rol').replace('gd.', '').toUpperCase()}</div>
+            {/* Rol mostrado: el "más fuerte" del usuario (`gdRolePrimary`)
+                con label humano (`gdRoleLabel`). Antes: "GD.ADMIN_SISTEMA"
+                — ilegible para usuarios no técnicos. Ahora: "Administrador
+                del sistema". Si tiene varios roles, prevalece el admin. */}
+            <div className="rol" title={roles.join(', ')}>{gdPrimaryRoleLabel(roles)}</div>
           </div>
         </div>
       )}

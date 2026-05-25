@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 
 vi.mock('../services/gdApi.js', () => ({
   getEstructuraOrganica: vi.fn(),
+  crearVersionEstructura: vi.fn(),
   crearDependencia: vi.fn(),
   actualizarDependencia: vi.fn(),
   reubicarDependencia: vi.fn(),
@@ -44,10 +45,42 @@ describe('AdminEstructura', () => {
     expect(screen.getAllByTestId('est-nodo').length).toBeGreaterThan(1);
   });
 
-  it('empty', async () => {
-    api.getEstructuraOrganica.mockResolvedValue({ dependencias: [] });
+  it('empty (con versión vigente, sin dependencias)', async () => {
+    // Mantiene `version_id` para entrar al branch "vacío con versión":
+    // hay versión pero aún no se cargaron dependencias.
+    api.getEstructuraOrganica.mockResolvedValue({
+      version_id: 'ver-est-uuid-1',
+      dependencias: [],
+    });
     render(<AdminEstructura session={{ token: 't' }} roles={ROLES} />);
     await waitFor(() => expect(screen.getByTestId('est-empty')).toBeInTheDocument());
+  });
+
+  it('sin versión vigente muestra CTA "Crear primera versión"', async () => {
+    // Tenant fresco — el backend devuelve null/sin version_id.
+    api.getEstructuraOrganica.mockResolvedValue({ dependencias: [] });
+    render(<AdminEstructura session={{ token: 't' }} roles={ROLES} />);
+    await waitFor(() => expect(screen.getByTestId('est-sin-version')).toBeInTheDocument());
+    expect(screen.getByTestId('est-sin-version-cta')).toBeInTheDocument();
+    // El CTA "Nueva dependencia raíz" debe estar OCULTO sin versión.
+    expect(screen.queryByTestId('est-nueva')).toBeNull();
+  });
+
+  it('crear primera versión llama API', async () => {
+    api.getEstructuraOrganica.mockResolvedValue({ dependencias: [] });
+    api.crearVersionEstructura.mockResolvedValue({ id: 'ver-x' });
+    const user = userEvent.setup();
+    render(<AdminEstructura session={{ token: 't' }} roles={ROLES} />);
+    await waitFor(() => screen.getByTestId('est-sin-version-cta'));
+    await user.click(screen.getByTestId('est-sin-version-cta'));
+    fireEvent.change(screen.getByTestId('est-version-numero'), { target: { value: 'v1' } });
+    fireEvent.change(screen.getByTestId('est-version-acto'), { target: { value: 'Decreto 001 de 2026' } });
+    await user.click(screen.getByTestId('est-version-submit'));
+    await waitFor(() => expect(api.crearVersionEstructura).toHaveBeenCalled());
+    const payload = api.crearVersionEstructura.mock.calls[0][1];
+    expect(payload.numero_version).toBe('v1');
+    expect(payload.acto_administrativo).toBe('Decreto 001 de 2026');
+    expect(payload.fecha_inicio_vigencia).toBeTruthy();
   });
 
   it('error', async () => {

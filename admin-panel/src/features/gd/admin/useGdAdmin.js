@@ -11,7 +11,8 @@ import {
   listUsuariosGd, getUsuarioGd, crearUsuarioGd, actualizarUsuarioGd,
   asignarRolUsuarioGd, removerRolUsuarioGd,
   inactivarUsuarioGd, reactivarUsuarioGd,
-  getEstructuraOrganica, crearDependencia, actualizarDependencia,
+  getEstructuraOrganica, crearVersionEstructura,
+  crearDependencia, actualizarDependencia,
   reubicarDependencia, inactivarDependencia,
   listCatalogos, listItemsCatalogo, crearItemCatalogo,
   actualizarItemCatalogo, inactivarItemCatalogo,
@@ -254,6 +255,7 @@ export const useInactivarUsuarioGd = (s) => useMutator(s, inactivarUsuarioGd);
 export const useReactivarUsuarioGd = (s) => useMutator(s, reactivarUsuarioGd);
 
 // Estructura
+export const useCrearVersionEstructura = (s) => useMutator(s, crearVersionEstructura);
 export const useCrearDependencia = (s) => useMutator(s, crearDependencia);
 export const useActualizarDependencia = (s) => useMutator(s, actualizarDependencia);
 export const useReubicarDependencia = (s) => useMutator(s, reubicarDependencia);

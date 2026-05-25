@@ -10,6 +10,7 @@ import { GdShell } from '../shell/GdShell.jsx';
 import { JustificacionRequiredField } from '../components/JustificacionRequiredField.jsx';
 import {
   useEstructuraOrganica,
+  useCrearVersionEstructura,
   useCrearDependencia, useActualizarDependencia,
   useReubicarDependencia, useInactivarDependencia,
 } from './useGdAdmin.js';
@@ -22,6 +23,13 @@ export function AdminEstructura({ session, roles = [], ...shellProps }) {
   const puedeEditar = gdCanAny(roles, 'EST-001', 'RW');
 
   const dependencias = data?.dependencias || data?.items || (Array.isArray(data) ? data : []);
+  // Versión vigente — el backend devuelve `version_estructura_id` en el
+  // shape de `/admin/estructura/vigente`. Si no existe, el tenant está
+  // arrancando "desde cero": NO se puede crear ninguna dependencia hasta
+  // que se cree la primera versión (DependenciaCreate.version_estructura_id
+  // es required).
+  const versionVigenteId = data?.version_estructura_id || data?.version_id || data?.id || null;
+  const sinVersion = !loading && !error && !versionVigenteId;
 
   function toggle(id) {
     setExpandidas((p) => ({ ...p, [id]: !p[id] }));
@@ -49,12 +57,27 @@ export function AdminEstructura({ session, roles = [], ...shellProps }) {
             onClick={refresh}
             data-testid="est-refresh"
           >Actualizar</button>
-          {puedeEditar && (
+          {puedeEditar && sinVersion && (
             <button
               type="button" className="btn btn-accent"
-              onClick={() => setModal({ tipo: 'nueva', padre_id: null })}
-              data-testid="est-nueva"
-            >+ Nueva dependencia raíz</button>
+              onClick={() => setModal({ tipo: 'nueva-version' })}
+              data-testid="est-nueva-version"
+            >+ Crear primera versión</button>
+          )}
+          {puedeEditar && !sinVersion && (
+            <>
+              <button
+                type="button" className="btn btn-secondary"
+                onClick={() => setModal({ tipo: 'nueva-version' })}
+                data-testid="est-nueva-version"
+                title="Versionar la estructura (apertura de nueva vigencia)"
+              >Nueva versión</button>
+              <button
+                type="button" className="btn btn-accent"
+                onClick={() => setModal({ tipo: 'nueva', padre_id: null })}
+                data-testid="est-nueva"
+              >+ Nueva dependencia raíz</button>
+            </>
           )}
         </div>
       </div>
@@ -65,7 +88,26 @@ export function AdminEstructura({ session, roles = [], ...shellProps }) {
           <div className="body">{error.message || 'Error.'}</div>
         </div>
       )}
-      {!loading && !error && dependencias.length === 0 && (
+      {sinVersion && (
+        <div className="empty" data-testid="est-sin-version" style={{ textAlign: 'center', padding: 'var(--s-6)' }}>
+          <h2 style={{ marginTop: 0 }}>Aún no hay estructura orgánica</h2>
+          <p className="muted">
+            La <strong>primera versión</strong> de la estructura orgánica
+            debe crearse antes de cargar dependencias. Tip: usá el número
+            de versión del acto administrativo que la aprueba
+            (ej. <em>"Decreto 001 de {new Date().getFullYear()}"</em>).
+          </p>
+          {puedeEditar && (
+            <button
+              type="button" className="btn btn-accent"
+              onClick={() => setModal({ tipo: 'nueva-version' })}
+              data-testid="est-sin-version-cta"
+              style={{ marginTop: 'var(--s-3)' }}
+            >+ Crear primera versión</button>
+          )}
+        </div>
+      )}
+      {!loading && !error && !sinVersion && dependencias.length === 0 && (
         <div className="empty" data-testid="est-empty">
           <p>No hay dependencias registradas.</p>
         </div>
@@ -89,15 +131,22 @@ export function AdminEstructura({ session, roles = [], ...shellProps }) {
         </div>
       )}
 
+      {modal?.tipo === 'nueva-version' && (
+        <NuevaVersionModal
+          session={session}
+          tieneVigente={!sinVersion}
+          onClose={() => setModal(null)}
+          onSuccess={() => { setModal(null); refresh(); }}
+        />
+      )}
       {modal?.tipo === 'nueva' && (
         <FormDepModal
           session={session}
           padreId={modal.padre_id}
           // version_estructura_id requerido por el backend
           // (DependenciaCreate). Lo leemos del response de
-          // /admin/estructura/vigente, que devuelve `version_id`
-          // (o `id`) según el shape del backend.
-          versionEstructuraId={data?.version_id || data?.id || null}
+          // /admin/estructura/vigente.
+          versionEstructuraId={versionVigenteId}
           onClose={() => setModal(null)}
           onSuccess={() => { setModal(null); refresh(); }}
         />
@@ -193,6 +242,93 @@ function DependenciaNodo({
         />
       ))}
     </div>
+  );
+}
+
+/**
+ * Modal "Crear primera/nueva versión de estructura orgánica".
+ *
+ * Llama POST /v1/gd/admin/estructura/versiones (VersionEstructuraCreate).
+ * Es el primer paso del "flujo desde cero" en un tenant recién activado:
+ * sin una versión vigente NO se puede crear ninguna dependencia.
+ */
+function NuevaVersionModal({ session, tieneVigente, onClose, onSuccess }) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const [form, setForm] = useState({
+    numero_version: '',
+    acto_administrativo: '',
+    descripcion: '',
+    fecha_inicio_vigencia: hoy,
+  });
+  const hook = useCrearVersionEstructura(session);
+
+  async function handle() {
+    try {
+      await hook.submit({
+        numero_version: form.numero_version.trim(),
+        acto_administrativo: form.acto_administrativo.trim() || null,
+        descripcion: form.descripcion.trim() || null,
+        fecha_inicio_vigencia: form.fecha_inicio_vigencia,
+      });
+      onSuccess?.();
+    } catch { /* hook */ }
+  }
+
+  const valid = form.numero_version.trim().length >= 1
+    && form.fecha_inicio_vigencia;
+
+  return (
+    <ModalShell
+      title={tieneVigente ? 'Nueva versión de estructura' : 'Crear primera versión de estructura'}
+      onClose={onClose}
+      testid="est-version-modal"
+    >
+      <p className="muted" style={{ fontSize: 13 }}>
+        {tieneVigente
+          ? 'Versionar abre una nueva vigencia. Las dependencias actuales se conservan; podés modificarlas dentro de la nueva versión.'
+          : 'La estructura orgánica es versionada: cada cambio mayor abre una nueva vigencia trazable al acto administrativo que la aprueba.'}
+      </p>
+      <div className="field">
+        <label>Número de versión <span className="req">*</span></label>
+        <input className="input" value={form.numero_version}
+          onChange={(e) => setForm({ ...form, numero_version: e.target.value })}
+          placeholder={`Ej. v1, ${new Date().getFullYear()}, Decreto-001`}
+          data-testid="est-version-numero" />
+      </div>
+      <div className="field" style={{ marginTop: 'var(--s-3)' }}>
+        <label>Acto administrativo</label>
+        <input className="input" value={form.acto_administrativo}
+          onChange={(e) => setForm({ ...form, acto_administrativo: e.target.value })}
+          placeholder={`Ej. Decreto 001 de ${new Date().getFullYear()}`}
+          data-testid="est-version-acto" />
+      </div>
+      <div className="field" style={{ marginTop: 'var(--s-3)' }}>
+        <label>Descripción</label>
+        <textarea className="input" rows={3} value={form.descripcion}
+          onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+          placeholder="Breve descripción del cambio estructural."
+          data-testid="est-version-descripcion" />
+      </div>
+      <div className="field" style={{ marginTop: 'var(--s-3)' }}>
+        <label>Fecha de inicio de vigencia <span className="req">*</span></label>
+        <input className="input" type="date" value={form.fecha_inicio_vigencia}
+          onChange={(e) => setForm({ ...form, fecha_inicio_vigencia: e.target.value })}
+          data-testid="est-version-fecha" />
+      </div>
+      {hook.error && (
+        <div className="alert danger" role="alert" style={{ marginTop: 12 }}>
+          <div className="body" style={{ whiteSpace: 'pre-line' }}>
+            {hook.error.message || 'Error.'}
+          </div>
+        </div>
+      )}
+      <ModalFoot onClose={onClose}>
+        <button type="button" className="btn btn-accent"
+          disabled={!valid || hook.submitting} onClick={handle}
+          data-testid="est-version-submit"
+        >{hook.submitting ? 'Creando…' : 'Crear versión'}</button>
+      </ModalFoot>
+    </ModalShell>
   );
 }
 

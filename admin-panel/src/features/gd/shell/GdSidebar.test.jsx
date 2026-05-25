@@ -72,7 +72,8 @@ describe('GdSidebar', () => {
       />,
     );
     expect(screen.getByText('Pedro González')).toBeInTheDocument();
-    expect(screen.getByText('RADICADOR')).toBeInTheDocument();
+    // Etiqueta humana (gdRoleLabel) — antes mostraba "RADICADOR".
+    expect(screen.getByText('Radicador (ventanilla)')).toBeInTheDocument();
   });
 
   it('_NAV_FOR_TEST expone la estructura para snapshot interno', () => {
