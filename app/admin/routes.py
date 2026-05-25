@@ -199,6 +199,36 @@ def _core_api_url(path: str, query: str = '') -> str:
 _CORE_API_FORWARDED_COOKIES = ('copilotoia_support_mode',)
 
 
+def _is_platform_scoped_path(path: str) -> bool:
+    """Decide si el path upstream requiere un token UNSCOPED (sin tenant).
+
+    Estos endpoints están gateados por `require_platform_owner` que
+    explícitamente rechaza requests con `request.state.tenant_id != None`
+    (porque la operación es cross-tenant, no de un tenant particular).
+    Por lo tanto el BFF NO debe inyectarles `X-Tenant-Id` desde el cookie
+    de support_mode — quedarían bloqueadas con 403 "requires an unscoped
+    token" aunque el platform_owner tenga sesión válida.
+
+    El cookie de support_mode SÍ debe seguir forwardeándose (en el
+    header `cookie`) — `authenticate_request` lo usa para bumpear
+    `support_mode=True` cuando el header X-Tenant-Id está presente,
+    pero IGNORA el cookie si el header no llega, exactamente el
+    comportamiento que necesitamos para endpoints platform-scoped.
+
+    `path` viene SIN el prefijo `/admin/api/core/` (el proxy ya lo
+    strippeó). Ej: `v1/tenants`, `v1/platform/incidents`, `v1/me/tenants`.
+    """
+    # Normaliza para comparar (puede o no empezar con slash).
+    p = path.lstrip('/')
+    if p.startswith('v1/tenants'):
+        return True
+    if p.startswith('v1/platform/'):
+        return True
+    if p.startswith('v1/me/') or p == 'v1/me':
+        return True
+    return False
+
+
 def _tenant_id_from_support_cookie(request: Request) -> str | None:
     """Lee el `tid` del cookie `copilotoia_support_mode` firmado.
 
@@ -225,7 +255,12 @@ def _tenant_id_from_support_cookie(request: Request) -> str | None:
 
 
 def _core_api_headers(
-    request: Request, session: dict[str, Any], has_body: bool
+    request: Request,
+    session: dict[str, Any],
+    has_body: bool,
+    *,
+    path: str = '',  # path upstream (sin /admin/api/core/) — usado para
+                     # decidir si inyectar X-Tenant-Id desde cookie o no.
 ) -> dict[str, str]:
     # The admin proxy is a backend-for-frontend protected by the HttpOnly
     # session cookie. Never trust or forward a browser-supplied Authorization
@@ -244,10 +279,20 @@ def _core_api_headers(
     # fetches de coreApi.js no agregan X-Tenant-Id automáticamente) llega
     # al backend sin tenant → `authenticate_request` no resuelve
     # `tenant_id` → cualquier dep que lo requiera devuelve 401/404.
+    #
+    # EXCEPCIÓN — endpoints platform-scoped: `/v1/tenants`, `/v1/platform/*`,
+    # `/v1/me/*` requieren un token UNSCOPED (sin tenant_id). Si inyectáramos
+    # el header desde la cookie, `require_platform_owner` los rechazaría con
+    # 403 "Platform administration requires an unscoped token". El SPA del
+    # platform_owner navegando en /admin/platform/* DEBE poder listar tenants
+    # aunque tenga cookie de support_mode activa para un tenant específico.
     if request.headers.get('x-tenant-id'):
         headers['x-tenant-id'] = request.headers['x-tenant-id']
-    else:
-        # Fallback: leer `tid` del cookie support_mode firmado.
+    elif not _is_platform_scoped_path(path):
+        # Fallback: leer `tid` del cookie support_mode firmado. SOLO para
+        # endpoints tenant-scoped (módulos opt-in). Para platform-scoped
+        # endpoints (`/v1/tenants`, `/v1/platform/*`, `/v1/me/*`), NO
+        # inyectamos — esos requieren un token UNSCOPED.
         cookie_tid = _tenant_id_from_support_cookie(request)
         if cookie_tid:
             headers['x-tenant-id'] = cookie_tid
@@ -623,7 +668,7 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
 
     body = await request.body()
     target_url = _core_api_url(path, request.url.query)
-    headers = _core_api_headers(request, session, has_body=bool(body))
+    headers = _core_api_headers(request, session, has_body=bool(body), path=path)
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             upstream_response = await client.request(
