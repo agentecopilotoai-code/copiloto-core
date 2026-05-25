@@ -272,3 +272,5 @@ class TestRequireGdPermission:
         # No debe lanzar.
         result = await check(request, perfil, conn)
         assert result is None
+
+

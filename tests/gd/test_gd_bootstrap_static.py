@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 
 from app.gd.bootstrap import (
+    _GD_PERMISOS_CATALOGO,
     _GD_SYSTEM_ROLES,
     _TENANT_ROLES_FOR_AUTO_BOOTSTRAP,
     bootstrap_gd_for_tenant,
@@ -27,7 +28,7 @@ from app.gd.bootstrap import (
 
 def _make_conn(
     *,
-    seed_inserted: int = 0,  # cuántos roles devuelven 'INSERT 0 1'
+    seed_inserted: int = 0,  # cuántos seeds (roles+permisos+matriz) devuelven 'INSERT 0 1'
     owners: list[dict] | None = None,
     actor_user_id: str | None = None,
     actor_exists_in_app_users: bool = True,
@@ -36,41 +37,63 @@ def _make_conn(
 ) -> AsyncMock:
     """Construye un AsyncMock que simula la secuencia de queries del bootstrap.
 
-    Secuencia esperada (ver `bootstrap_gd_for_tenant`):
-      1. execute(INSERT gd.rol) × len(_GD_SYSTEM_ROLES) — controlado por seed_inserted
-      2. fetch(SELECT owners) → owners
-      3. Si actor_user_id NO está en owners: fetchrow(SELECT 1 FROM app.users)
-         para verificar que el actor existe.
-      4. Por user (owners + posiblemente actor):
-         a. fetchrow(INSERT/UPDATE gd.perfil_usuario) → {'created': True/False}
-         b. fetchrow(SELECT gd.asignacion_alcance existente) → None o {'id': ...}
-         c. execute(INSERT gd.asignacion_alcance) — solo si no existía
+    SQL-aware: el `side_effect` de `execute` discrimina por el SQL para
+    devolver `'INSERT 0 1'` (insertó) o `'INSERT 0 0'` (idempotente, ya
+    existía) según el seed. Esto evita tener que adivinar el orden exacto
+    de cientos de calls (19 roles + 98 permisos + ~582 matriz + N asignaciones).
+
+    `seed_inserted` actúa como flag global: True → DB vacía (todo devuelve
+    'INSERT 0 1'), False → DB ya tenía catálogos seedeados (todo devuelve
+    'INSERT 0 0' excepto las asignaciones nuevas).
+
+    Secuencia conceptual (ver `bootstrap_gd_for_tenant`):
+      1. execute × 19  → seed gd.rol
+      2. execute × 98  → seed gd.permiso
+      3. execute × ~582→ seed gd.rol_permiso (matriz)
+      4. fetch         → listar owners del tenant
+      5. fetchrow      → (opcional) verificar actor_user_id existe
+      6. Por user:
+         a. fetchrow → UPSERT gd.perfil_usuario {'created': bool}
+         b. fetchrow → SELECT gd.asignacion_alcance existente
+         c. execute  → INSERT gd.asignacion_alcance (si no existía)
     """
     conn = AsyncMock()
 
-    # 1. execute para gd.rol: primero `seed_inserted` devuelven 'INSERT 0 1';
-    #    el resto devuelve 'INSERT 0 0'.
-    execute_results: list[str] = (
-        ['INSERT 0 1'] * seed_inserted
-        + ['INSERT 0 0'] * (len(_GD_SYSTEM_ROLES) - seed_inserted)
-    )
+    # Cantidad de roles/permisos/matriz que "se insertan" si seed_inserted>0.
+    # Si seed_inserted==0, todas las execute devuelven 'INSERT 0 0' (DB ya
+    # tenía los catálogos seedeados de antes).
+    seed_flag = seed_inserted > 0
+    seed_result = 'INSERT 0 1' if seed_flag else 'INSERT 0 0'
 
-    # 2. fetch para listar owners — un solo `fetch` en todo el flow.
+    # SQL-aware execute: devuelve seed_result para seeds del catálogo,
+    # 'INSERT 0 1' para INSERT asignacion_alcance nueva.
+    async def execute_smart(sql: str, *args, **kwargs):
+        # Las asignaciones se cuentan por separado (cada call que no
+        # encontró asignación existente hace un INSERT).
+        if 'insert into gd.asignacion_alcance' in sql:
+            return 'INSERT 0 1'
+        # Seeds del catálogo (gd.rol, gd.permiso, gd.rol_permiso).
+        return seed_result
+
+    conn.execute.side_effect = execute_smart
+
+    # fetch — siempre devuelve la lista de owners.
     fetch_results: list[list[dict]] = [owners or []]
+    conn.fetch.side_effect = fetch_results
 
     owner_ids = {str(o['user_id']) for o in (owners or [])}
 
     fetchrow_results: list[dict | None] = []
 
-    # 3. Si actor_user_id se pasa y NO está en owners, el bootstrap
-    #    pregunta a app.users si existe → fetchrow.
+    # Si actor_user_id se pasa y NO está en owners, el bootstrap
+    # pregunta a app.users si existe → fetchrow.
     will_bootstrap_actor = False
     if actor_user_id and actor_user_id not in owner_ids:
         fetchrow_results.append({'?column?': 1} if actor_exists_in_app_users else None)
         if actor_exists_in_app_users:
             will_bootstrap_actor = True
 
-    # 4. Por user (owners + actor si aplica) — UPSERT perfil + check asignación.
+    # Por user (owners + actor si aplica) — UPSERT perfil + check asignación.
     target_users = list(owner_ids)
     if will_bootstrap_actor:
         target_users.append(actor_user_id)
@@ -78,18 +101,12 @@ def _make_conn(
     perfil_created_for = perfil_created_for or set()
     asignacion_existing_for = asignacion_existing_for or set()
     for uid in target_users:
-        # a. UPSERT perfil_usuario.
         fetchrow_results.append({'created': uid in perfil_created_for})
-        # b. SELECT asignacion existente.
         if uid in asignacion_existing_for:
             fetchrow_results.append({'id': str(uuid4())})
         else:
             fetchrow_results.append(None)
-            # c. Si no existía, se hace INSERT (execute).
-            execute_results.append('INSERT 0 1')
 
-    conn.execute.side_effect = execute_results
-    conn.fetch.side_effect = fetch_results
     conn.fetchrow.side_effect = fetchrow_results
     return conn
 
@@ -97,18 +114,21 @@ def _make_conn(
 @pytest.mark.asyncio
 class TestBootstrapGdForTenant:
     async def test_seed_19_roles_cuando_db_vacia(self) -> None:
-        """Primera activación: los 19 roles se insertan, no hay owners
-        ni actor → no se bootstrappa ningún user."""
-        conn = _make_conn(seed_inserted=19, owners=[], actor_user_id=None)
+        """Primera activación: catálogo completo se siembra (roles +
+        permisos + matriz), no hay owners ni actor → no se bootstrappa
+        ningún user."""
+        conn = _make_conn(seed_inserted=1, owners=[], actor_user_id=None)
         result = await bootstrap_gd_for_tenant(
             conn, tenant_id=str(uuid4()), actor_user_id=None,
         )
-        assert result['roles_seeded'] == 19
+        # Con seed_flag=True, todas las execute devuelven 'INSERT 0 1':
+        # 19 roles + N permisos del catálogo + M filas de matriz.
+        assert result['roles_seeded'] == len(_GD_SYSTEM_ROLES)
+        assert result['permisos_seeded'] == len(_GD_PERMISOS_CATALOGO)
+        assert result['matriz_seeded'] > 500  # ~582 en el catálogo actual
         assert result['perfiles_creados'] == 0
         assert result['asignaciones_creadas'] == 0
         assert result['users_boostrapped'] == []
-        # 19 execute para gd.rol exactamente.
-        assert conn.execute.await_count == 19
 
     async def test_seed_idempotente_cuando_ya_existen(self) -> None:
         """Re-activación: los 19 roles ya están, 0 inserts."""
