@@ -719,7 +719,10 @@ function GdProfileLoader({ session, activeTenant, profile, location, navigate })
   // Lista plana de códigos de rol vigentes (ej. ['gd.admin_sistema',
   // 'gd.firmante']). El componente GdShell + GdSidebar usan este array
   // contra la matriz `gd-matrix.js` (`gdCanAny(roles, 'VU-001', 'RW')`).
-  const gdRoles = (gdMe?.roles_vigentes || [])
+  // El backend `/v1/gd/me` devuelve el campo como `roles_gd_vigentes`.
+  // Aceptamos también `roles_vigentes` como fallback por si algún
+  // entorno legacy responde con el nombre corto — defensa barata.
+  const gdRoles = (gdMe?.roles_gd_vigentes || gdMe?.roles_vigentes || [])
     .map((r) => r.rol_codigo)
     .filter(Boolean);
 
