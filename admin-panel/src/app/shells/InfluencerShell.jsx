@@ -1,4 +1,7 @@
+import { useNavigate } from 'react-router-dom';
+
 import { AlertBanner, ErrorBoundary } from '../../components/ui/index.js';
+import { SupportModeBanner } from '../../components/domain/SupportModeBanner.jsx';
 import { INFLUENCER_NAV } from '../nav.js';
 import { resolveNav } from './resolveNav.js';
 import { ShellBottomNav } from './components/ShellBottomNav.jsx';
@@ -61,6 +64,7 @@ export function InfluencerShell({
   const navGroups = resolveNav(INFLUENCER_NAV, modules, permissions);
   const activeTenant =
     tenantOptions?.find((tenant) => tenant.id === activeTenantId) ?? tenantOptions?.[0] ?? null;
+  const navigate = useNavigate();
 
   return (
     <div className={styles.shell} data-module="influencer">
@@ -82,6 +86,17 @@ export function InfluencerShell({
         }
       />
       <main className={styles.workspace} id="main-content" tabIndex={-1}>
+        {/* BUG-008 — mismo banner que TenantShell. Un platform_owner que
+            entra al sub-shell Influencer vía support_mode necesita ver
+            el recordatorio + botón "Salir de support mode" igual que en
+            el resto del tenant. Se auto-oculta si el override no
+            corresponde al `activeTenantId` actual.
+            `onExited` navega a /platform — sin esto el user queda en
+            el módulo con la cookie ya removida y la página rota. */}
+        <SupportModeBanner
+          activeTenantId={activeTenantId}
+          onExited={() => navigate('/platform')}
+        />
         <ShellTopbar
           eyebrow="Ravit Studio"
           title={activeModule?.label ?? 'Ravit Studio'}

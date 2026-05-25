@@ -43,7 +43,9 @@ export function RetencionLogs({ session, roles = [], ...shellProps }) {
     try {
       const payload = { motivo };
       for (const { key } of TIPOS) {
-        payload[key] = form[key] === '' ? null : Number(form[key]);
+        // Mismo merge que el render: si el user no tocó el field, usa data.
+        const raw = form[key] ?? data?.[key] ?? '';
+        payload[key] = raw === '' || raw === null ? null : Number(raw);
       }
       await editar.submit(payload);
       setInfo({ ok: true });
@@ -86,7 +88,11 @@ export function RetencionLogs({ session, roles = [], ...shellProps }) {
                 <label>{label} (días)</label>
                 <input
                   type="number" className="input"
-                  value={form[key] ?? ''}
+                  // form[key] gana cuando el user editó (incluso si lo dejó ''
+                  // — `??` solo fall-throughs en null/undefined). En el primer
+                  // render (effect no corrió aún) cae a data[key] → input
+                  // pre-llenado consistente sin race con el effect.
+                  value={form[key] ?? data[key] ?? ''}
                   disabled={!puedeEditar}
                   onChange={(e) => setForm({ ...form, [key]: e.target.value })}
                   data-testid={`log-${key}`}

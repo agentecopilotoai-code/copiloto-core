@@ -2,10 +2,29 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+// Mock del TenantProvider para alimentar supportModeOverride al banner
+// embebido — SupportModeBanner usa `useOptionalTenantContext()` para
+// resolver el override y el botón "Salir de support mode".
+let mockTenantContext = {
+  supportModeOverride: null,
+  deactivateSupportMode: vi.fn(),
+};
+vi.mock('../../../app/TenantProvider.jsx', () => ({
+  useTenantContext: () => mockTenantContext,
+  useOptionalTenantContext: () => mockTenantContext,
+}));
+
+// eslint-disable-next-line import/first
 import { GdShell } from './GdShell.jsx';
 
 describe('GdShell', () => {
-  beforeEach(() => window.localStorage.clear());
+  beforeEach(() => {
+    window.localStorage.clear();
+    mockTenantContext = {
+      supportModeOverride: null,
+      deactivateSupportMode: vi.fn(),
+    };
+  });
 
   it('renderiza wrapper data-testid + children', () => {
     render(
@@ -71,5 +90,43 @@ describe('GdShell', () => {
       </GdShell>,
     );
     expect(screen.getByTestId('gd-shell-root').getAttribute('data-scope')).toBe('propio');
+  });
+
+  // BUG-008 / paridad con TenantShell — un platform_owner que entra a GD
+  // bajo support_mode necesita seguir viendo el banner para poder salir
+  // sin volver al shell del tenant.
+  it('renderiza SupportModeBanner cuando hay override activo para el tenant', () => {
+    mockTenantContext = {
+      supportModeOverride: {
+        tenantId: 'tenant-acme',
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      },
+      deactivateSupportMode: vi.fn(),
+    };
+    render(
+      <GdShell roles={['gd.admin_sistema']} activeTenantId="tenant-acme">
+        <p />
+      </GdShell>,
+    );
+    expect(screen.getByText(/Operando en support_mode/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Salir de support mode/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('no renderiza SupportModeBanner si el override es de otro tenant', () => {
+    mockTenantContext = {
+      supportModeOverride: {
+        tenantId: 'tenant-other',
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      },
+      deactivateSupportMode: vi.fn(),
+    };
+    render(
+      <GdShell roles={['gd.admin_sistema']} activeTenantId="tenant-acme">
+        <p />
+      </GdShell>,
+    );
+    expect(screen.queryByText(/Operando en support_mode/i)).toBeNull();
   });
 });

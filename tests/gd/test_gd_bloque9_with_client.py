@@ -116,7 +116,7 @@ class TestListadoYDetalle:
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
-        r = client.get('/api/v1/gd/correspondencia')
+        r = client.get('/v1/gd/correspondencia')
         assert r.status_code == 200
         assert r.json()['total'] == 0
 
@@ -124,7 +124,7 @@ class TestListadoYDetalle:
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
         r = client.get(
-            '/api/v1/gd/correspondencia?tipo=interna&estado=enviada,leida'
+            '/v1/gd/correspondencia?tipo=interna&estado=enviada,leida'
             f'&dependencia_id={uuid4()}&tercero_id={uuid4()}&limit=10',
         )
         assert r.status_code == 200
@@ -132,14 +132,14 @@ class TestListadoYDetalle:
     def test_listar_externa_recibida(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
-        r = client.get('/api/v1/gd/correspondencia/externa/recibida')
+        r = client.get('/v1/gd/correspondencia/externa/recibida')
         assert r.status_code == 200
 
     def test_listar_externa_recibida_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
         r = client.get(
-            f'/api/v1/gd/correspondencia/externa/recibida?dependencia={uuid4()}'
+            f'/v1/gd/correspondencia/externa/recibida?dependencia={uuid4()}'
             '&estado=derivada,gestionada&limit=5',
         )
         assert r.status_code == 200
@@ -147,12 +147,12 @@ class TestListadoYDetalle:
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _corresp_dict(tipo='interna', estado='enviada')
         conn.fetch.return_value = []
-        r = client.get(f'/api/v1/gd/correspondencia/{uuid4()}')
+        r = client.get(f'/v1/gd/correspondencia/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_not_found(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/correspondencia/{uuid4()}')
+        r = client.get(f'/v1/gd/correspondencia/{uuid4()}')
         assert r.status_code == 404
 
 
@@ -167,7 +167,7 @@ class TestInternaHandlers:
             _dest_dict(),
         ]
         r = client.post(
-            '/api/v1/gd/correspondencia/interna',
+            '/v1/gd/correspondencia/interna',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'asunto': 'Test',
@@ -189,7 +189,7 @@ class TestInternaHandlers:
             _dest_dict(),
         ]
         r = client.post(
-            '/api/v1/gd/correspondencia/interna',
+            '/v1/gd/correspondencia/interna',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'asunto': 'Test', 'enviar_inmediato': False,
@@ -204,7 +204,7 @@ class TestInternaHandlers:
     def test_crear_interna_409_regla(self, conn, client):
         conn.fetchrow.return_value = {'permitido': False}
         r = client.post(
-            '/api/v1/gd/correspondencia/interna',
+            '/v1/gd/correspondencia/interna',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'asunto': 'Test',
@@ -220,7 +220,7 @@ class TestInternaHandlers:
     def test_crear_interna_422_destinatario_tercero(self, conn, client):
         # Schema valida: interna NO admite tercero
         r = client.post(
-            '/api/v1/gd/correspondencia/interna',
+            '/v1/gd/correspondencia/interna',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'asunto': 'Test',
@@ -240,7 +240,7 @@ class TestInternaHandlers:
         conn.fetchval.return_value = 0
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/marcar-leida',
+            f'/v1/gd/correspondencia/{uuid4()}/marcar-leida',
             json={'dependencia_id': str(uuid4())},
         )
         assert r.status_code == 200
@@ -248,7 +248,7 @@ class TestInternaHandlers:
     def test_marcar_leida_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/marcar-leida',
+            f'/v1/gd/correspondencia/{uuid4()}/marcar-leida',
             json={'dependencia_id': str(uuid4())},
         )
         assert r.status_code == 404
@@ -261,7 +261,7 @@ class TestInternaHandlers:
             _dest_dict(),
         ]
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/responder',
+            f'/v1/gd/correspondencia/{uuid4()}/responder',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'asunto': 'RE: X', 'contenido_borrador': 'resp',
@@ -272,7 +272,7 @@ class TestInternaHandlers:
     def test_responder_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/responder',
+            f'/v1/gd/correspondencia/{uuid4()}/responder',
             json={'dependencia_origen_id': str(uuid4()), 'asunto': 'RE: Asunto'},
         )
         assert r.status_code == 404
@@ -283,7 +283,7 @@ class TestInternaHandlers:
             'tipo': 'externa_recibida', 'estado': 'derivada',
         }
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/responder',
+            f'/v1/gd/correspondencia/{uuid4()}/responder',
             json={'dependencia_origen_id': str(uuid4()), 'asunto': 'RE: Asunto'},
         )
         assert r.status_code == 409
@@ -297,7 +297,7 @@ class TestInternaHandlers:
             _dest_dict(),
         ]
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/reenviar',
+            f'/v1/gd/correspondencia/{uuid4()}/reenviar',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'destinatarios': [{
@@ -312,7 +312,7 @@ class TestInternaHandlers:
     def test_reenviar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/reenviar',
+            f'/v1/gd/correspondencia/{uuid4()}/reenviar',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'destinatarios': [{
@@ -336,7 +336,7 @@ class TestExternaRecibidaHandler:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/gestionar',
+            f'/v1/gd/correspondencia/{uuid4()}/gestionar',
             json={'observaciones': 'gestionada por mí'},
         )
         assert r.status_code == 200
@@ -344,7 +344,7 @@ class TestExternaRecibidaHandler:
     def test_gestionar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/gestionar',
+            f'/v1/gd/correspondencia/{uuid4()}/gestionar',
             json={'observaciones': 'gestionada'},
         )
         assert r.status_code == 404
@@ -352,7 +352,7 @@ class TestExternaRecibidaHandler:
     def test_gestionar_409_tipo(self, conn, client):
         conn.fetchrow.return_value = {'tipo': 'interna', 'estado': 'enviada'}
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/gestionar',
+            f'/v1/gd/correspondencia/{uuid4()}/gestionar',
             json={'observaciones': 'gestionada'},
         )
         assert r.status_code == 409
@@ -368,7 +368,7 @@ class TestWorkflowHandlers:
             _dest_dict(tipo='tercero'),
         ]
         r = client.post(
-            '/api/v1/gd/correspondencia/externa/borrador',
+            '/v1/gd/correspondencia/externa/borrador',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'asunto': 'Oficio externo',
@@ -382,7 +382,7 @@ class TestWorkflowHandlers:
 
     def test_crear_externa_borrador_422_sin_tercero(self, conn, client):
         r = client.post(
-            '/api/v1/gd/correspondencia/externa/borrador',
+            '/v1/gd/correspondencia/externa/borrador',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'asunto': 'X',
@@ -402,7 +402,7 @@ class TestWorkflowHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/enviar-a-revision',
+            f'/v1/gd/correspondencia/{uuid4()}/enviar-a-revision',
             json={'observaciones': 'lista'},
         )
         assert r.status_code == 200
@@ -410,7 +410,7 @@ class TestWorkflowHandlers:
     def test_enviar_revision_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/enviar-a-revision', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/enviar-a-revision', json={},
         )
         assert r.status_code == 404
 
@@ -420,7 +420,7 @@ class TestWorkflowHandlers:
             'usuario_proyecta_id': uuid4(),
         }
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/enviar-a-revision', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/enviar-a-revision', json={},
         )
         assert r.status_code == 409
 
@@ -433,7 +433,7 @@ class TestWorkflowHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/revisar',
+            f'/v1/gd/correspondencia/{uuid4()}/revisar',
             json={'resultado': 'ok'},
         )
         assert r.status_code == 200
@@ -444,7 +444,7 @@ class TestWorkflowHandlers:
             'usuario_proyecta_id': ACTOR_USER_ID,
         }
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/revisar',
+            f'/v1/gd/correspondencia/{uuid4()}/revisar',
             json={'resultado': 'ok'},
         )
         assert r.status_code == 403
@@ -458,7 +458,7 @@ class TestWorkflowHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/aprobar', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/aprobar', json={},
         )
         assert r.status_code == 200
 
@@ -468,7 +468,7 @@ class TestWorkflowHandlers:
             'usuario_proyecta_id': ACTOR_USER_ID,
         }
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/aprobar', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/aprobar', json={},
         )
         assert r.status_code == 403
 
@@ -481,7 +481,7 @@ class TestWorkflowHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/firmar',
+            f'/v1/gd/correspondencia/{uuid4()}/firmar',
             json={'firma_id': str(uuid4())},
         )
         assert r.status_code == 200
@@ -489,7 +489,7 @@ class TestWorkflowHandlers:
     def test_firmar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/firmar', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/firmar', json={},
         )
         assert r.status_code == 404
 
@@ -509,14 +509,14 @@ class TestWorkflowHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/radicar-salida', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/radicar-salida', json={},
         )
         assert r.status_code == 200, r.text
 
     def test_radicar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/radicar-salida', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/radicar-salida', json={},
         )
         assert r.status_code == 404
 
@@ -528,14 +528,14 @@ class TestWorkflowHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/enviar', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/enviar', json={},
         )
         assert r.status_code == 200
 
     def test_enviar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/enviar', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/enviar', json={},
         )
         assert r.status_code == 404
 
@@ -545,7 +545,7 @@ class TestWorkflowHandlers:
             'usuario_proyecta_id': uuid4(),
         }
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/enviar', json={},
+            f'/v1/gd/correspondencia/{uuid4()}/enviar', json={},
         )
         assert r.status_code == 409
 
@@ -558,7 +558,7 @@ class TestWorkflowHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/registrar-soporte-envio',
+            f'/v1/gd/correspondencia/{uuid4()}/registrar-soporte-envio',
             json={'soporte_envio_uri': 's3://bucket/x.pdf',
                   'codigo_rastreo': 'ABC123'},
         )
@@ -567,7 +567,7 @@ class TestWorkflowHandlers:
     def test_registrar_soporte_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/registrar-soporte-envio',
+            f'/v1/gd/correspondencia/{uuid4()}/registrar-soporte-envio',
             json={'soporte_envio_uri': 's3://x'},
         )
         assert r.status_code == 404
@@ -587,7 +587,7 @@ class TestAnulacionHandlers:
             'fecha_solicitud': datetime.now(), 'fecha_decision': None,
         }
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/anular',
+            f'/v1/gd/correspondencia/{uuid4()}/anular',
             json={'motivo': 'fue duplicado del envío anterior'},
         )
         assert r.status_code == 201, r.text
@@ -595,7 +595,7 @@ class TestAnulacionHandlers:
     def test_solicitar_anulacion_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/anular',
+            f'/v1/gd/correspondencia/{uuid4()}/anular',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 404
@@ -603,7 +603,7 @@ class TestAnulacionHandlers:
     def test_solicitar_anulacion_409(self, conn, client):
         conn.fetchval.return_value = 'anulada'
         r = client.post(
-            f'/api/v1/gd/correspondencia/{uuid4()}/anular',
+            f'/v1/gd/correspondencia/{uuid4()}/anular',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 409
@@ -619,7 +619,7 @@ class TestAnulacionHandlers:
              'fecha_solicitud': datetime.now(), 'fecha_decision': datetime.now()},
         ]
         r = client.post(
-            f'/api/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/aprobar',
+            f'/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/aprobar',
             json={'observacion': 'aprobada'},
         )
         assert r.status_code == 200
@@ -627,7 +627,7 @@ class TestAnulacionHandlers:
     def test_aprobar_anulacion_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/aprobar',
+            f'/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/aprobar',
             json={},
         )
         assert r.status_code == 404
@@ -637,7 +637,7 @@ class TestAnulacionHandlers:
             'entidad_afectada_id': uuid4(), 'decision': 'aprobada',
         }
         r = client.post(
-            f'/api/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/aprobar',
+            f'/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/aprobar',
             json={},
         )
         assert r.status_code == 409
@@ -653,7 +653,7 @@ class TestAnulacionHandlers:
              'fecha_solicitud': datetime.now(), 'fecha_decision': datetime.now()},
         ]
         r = client.post(
-            f'/api/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/rechazar',
+            f'/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/rechazar',
             json={'observacion': 'no procede'},
         )
         assert r.status_code == 200
@@ -661,7 +661,7 @@ class TestAnulacionHandlers:
     def test_rechazar_anulacion_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/rechazar',
+            f'/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/rechazar',
             json={'observacion': 'no procede'},
         )
         assert r.status_code == 404
@@ -669,7 +669,7 @@ class TestAnulacionHandlers:
     def test_rechazar_anulacion_409(self, conn, client):
         conn.fetchrow.return_value = {'decision': 'aprobada'}
         r = client.post(
-            f'/api/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/rechazar',
+            f'/v1/gd/correspondencia/solicitudes-anulacion/{uuid4()}/rechazar',
             json={'observacion': 'no procede'},
         )
         assert r.status_code == 409

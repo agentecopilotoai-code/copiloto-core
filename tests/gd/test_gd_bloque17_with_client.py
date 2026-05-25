@@ -104,7 +104,7 @@ class TestCRUDHandlers:
     def test_crear_ok(self, conn, client):
         conn.fetchrow.return_value = _exp_dict()
         r = client.post(
-            '/api/v1/gd/expedientes',
+            '/v1/gd/expedientes',
             json={'codigo': 'EXP-001', 'titulo': 'Mi expediente'},
         )
         assert r.status_code == 201, r.text
@@ -113,7 +113,7 @@ class TestCRUDHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/api/v1/gd/expedientes',
+            '/v1/gd/expedientes',
             json={'codigo': 'DUP', 'titulo': 'Duplicado'},
         )
         assert r.status_code == 409
@@ -121,14 +121,14 @@ class TestCRUDHandlers:
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
-        r = client.get('/api/v1/gd/expedientes')
+        r = client.get('/v1/gd/expedientes')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
         r = client.get(
-            '/api/v1/gd/expedientes?estado=abierto'
+            '/v1/gd/expedientes?estado=abierto'
             f'&dependencia_id={uuid4()}&serie_id={uuid4()}'
             f'&subserie_id={uuid4()}&codigo=2026&q=proyecto&limit=10',
         )
@@ -136,19 +136,19 @@ class TestCRUDHandlers:
 
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _exp_dict()
-        r = client.get(f'/api/v1/gd/expedientes/{uuid4()}')
+        r = client.get(f'/v1/gd/expedientes/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/expedientes/{uuid4()}')
+        r = client.get(f'/v1/gd/expedientes/{uuid4()}')
         assert r.status_code == 404
 
     def test_patch_ok(self, conn, client):
         conn.fetchval.return_value = 'abierto'
         conn.fetchrow.return_value = _exp_dict(titulo='Renombrado')
         r = client.patch(
-            f'/api/v1/gd/expedientes/{uuid4()}',
+            f'/v1/gd/expedientes/{uuid4()}',
             json={'titulo': 'Renombrado'},
         )
         assert r.status_code == 200
@@ -156,7 +156,7 @@ class TestCRUDHandlers:
     def test_patch_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.patch(
-            f'/api/v1/gd/expedientes/{uuid4()}',
+            f'/v1/gd/expedientes/{uuid4()}',
             json={'titulo': 'Nuevo'},
         )
         assert r.status_code == 404
@@ -165,7 +165,7 @@ class TestCRUDHandlers:
         conn.fetchval.return_value = 'cerrado'
         conn.fetchrow.return_value = _exp_dict(estado='cerrado')
         r = client.patch(
-            f'/api/v1/gd/expedientes/{uuid4()}',
+            f'/v1/gd/expedientes/{uuid4()}',
             json={'metadata': {'k': 'v'}},
         )
         assert r.status_code == 200
@@ -173,7 +173,7 @@ class TestCRUDHandlers:
     def test_patch_cerrado_titulo_falla(self, conn, client):
         conn.fetchval.return_value = 'cerrado'
         r = client.patch(
-            f'/api/v1/gd/expedientes/{uuid4()}',
+            f'/v1/gd/expedientes/{uuid4()}',
             json={'titulo': 'Nuevo Título'},
         )
         assert r.status_code == 409
@@ -189,7 +189,7 @@ class TestLifecycleHandlers:
             _exp_dict(estado='cerrado'),
         ]
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/cerrar',
+            f'/v1/gd/expedientes/{uuid4()}/cerrar',
             json={'motivo': 'trámite completo'},
         )
         assert r.status_code == 200
@@ -197,7 +197,7 @@ class TestLifecycleHandlers:
     def test_cerrar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/cerrar',
+            f'/v1/gd/expedientes/{uuid4()}/cerrar',
             json={'motivo': 'X' * 6},
         )
         assert r.status_code == 404
@@ -205,7 +205,7 @@ class TestLifecycleHandlers:
     def test_cerrar_ya_cerrado(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'cerrado'}
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/cerrar',
+            f'/v1/gd/expedientes/{uuid4()}/cerrar',
             json={'motivo': 'X' * 6},
         )
         assert r.status_code == 409
@@ -216,7 +216,7 @@ class TestLifecycleHandlers:
             _exp_dict(estado='reabierto'),
         ]
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/reabrir',
+            f'/v1/gd/expedientes/{uuid4()}/reabrir',
             json={'motivo': 'apareció nueva información'},
         )
         assert r.status_code == 200
@@ -224,7 +224,7 @@ class TestLifecycleHandlers:
     def test_reabrir_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/reabrir',
+            f'/v1/gd/expedientes/{uuid4()}/reabrir',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 404
@@ -234,7 +234,7 @@ class TestLifecycleHandlers:
             'estado': 'abierto', 'fecha_reapertura': None,
         }
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/reabrir',
+            f'/v1/gd/expedientes/{uuid4()}/reabrir',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 409
@@ -244,7 +244,7 @@ class TestLifecycleHandlers:
             'estado': 'cerrado', 'fecha_reapertura': datetime.now(),
         }
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/reabrir',
+            f'/v1/gd/expedientes/{uuid4()}/reabrir',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 409
@@ -255,7 +255,7 @@ class TestLifecycleHandlers:
             _exp_dict(estado='transferido'),
         ]
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/transferir',
+            f'/v1/gd/expedientes/{uuid4()}/transferir',
             json={'destino': 'Archivo Central',
                   'motivo': 'transferencia documental'},
         )
@@ -264,7 +264,7 @@ class TestLifecycleHandlers:
     def test_transferir_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/transferir',
+            f'/v1/gd/expedientes/{uuid4()}/transferir',
             json={'destino': 'Destino', 'motivo': 'X' * 11},
         )
         assert r.status_code == 404
@@ -280,7 +280,7 @@ class TestItemsHandlers:
             _item_dict(),
         ]
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/items',
+            f'/v1/gd/expedientes/{uuid4()}/items',
             json={'item_tipo': 'documento',
                   'item_id': str(uuid4()), 'orden': 1},
         )
@@ -289,7 +289,7 @@ class TestItemsHandlers:
     def test_asociar_expediente_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/items',
+            f'/v1/gd/expedientes/{uuid4()}/items',
             json={'item_tipo': 'documento', 'item_id': str(uuid4())},
         )
         assert r.status_code == 404
@@ -297,7 +297,7 @@ class TestItemsHandlers:
     def test_asociar_expediente_cerrado(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'cerrado'}
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/items',
+            f'/v1/gd/expedientes/{uuid4()}/items',
             json={'item_tipo': 'radicado', 'item_id': str(uuid4())},
         )
         assert r.status_code == 409
@@ -309,7 +309,7 @@ class TestItemsHandlers:
             asyncpg.UniqueViolationError,
         ]
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/items',
+            f'/v1/gd/expedientes/{uuid4()}/items',
             json={'item_tipo': 'documento', 'item_id': str(uuid4())},
         )
         assert r.status_code == 409
@@ -320,7 +320,7 @@ class TestItemsHandlers:
             _item_dict(estado='retirado', motivo_retiro='error'),
         ]
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/items/documento/{uuid4()}/retirar',
+            f'/v1/gd/expedientes/{uuid4()}/items/documento/{uuid4()}/retirar',
             json={'motivo': 'error de asociación'},
         )
         assert r.status_code == 200
@@ -328,14 +328,14 @@ class TestItemsHandlers:
     def test_retirar_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/items/documento/{uuid4()}/retirar',
+            f'/v1/gd/expedientes/{uuid4()}/items/documento/{uuid4()}/retirar',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 404
 
     def test_retirar_tipo_invalido(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/items/invalido/{uuid4()}/retirar',
+            f'/v1/gd/expedientes/{uuid4()}/items/invalido/{uuid4()}/retirar',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 422
@@ -351,12 +351,12 @@ class TestContenidoHandler:
             _item_dict(item_tipo='documento'),
             _item_dict(item_tipo='radicado'),
         ]
-        r = client.get(f'/api/v1/gd/expedientes/{uuid4()}/contenido')
+        r = client.get(f'/v1/gd/expedientes/{uuid4()}/contenido')
         assert r.status_code == 200, r.text
         body = r.json()
         assert 'totales_por_tipo' in body
 
     def test_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/expedientes/{uuid4()}/contenido')
+        r = client.get(f'/v1/gd/expedientes/{uuid4()}/contenido')
         assert r.status_code == 404

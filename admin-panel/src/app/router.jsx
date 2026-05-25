@@ -12,6 +12,7 @@ import {
 
 import { MfaRequiredBlocker } from '../components/domain/MfaRequiredBlocker.jsx';
 import { NoTenantOnboarding } from '../components/domain/NoTenantOnboarding.jsx';
+import { adminPath } from '../services/adminSession.js';
 import { LoadingScreen } from '../components/layout/LoadingScreen.jsx';
 import { Button, StateScreen } from '../components/ui/index.js';
 import {
@@ -44,6 +45,7 @@ import { TenantShell } from './shells/TenantShell.jsx';
 import { InfluencerShell } from './shells/InfluencerShell.jsx';
 import { isInfluencerEnabled, isGdEnabled } from '../services/coreApi.js';
 import { resolveGdRoute } from '../features/gd/routeMap.js';
+import { getMyGdProfile } from '../features/gd/services/gdApi.js';
 import { PersonaWizardContainer } from '../features/influencer/wizard/PersonaWizardContainer.jsx';
 import { CreatePersonaAndRedirect } from '../features/influencer/wizard/CreatePersonaAndRedirect.jsx';
 import { PersonaStudioContainer } from '../features/influencer/studio/PersonaStudioContainer.jsx';
@@ -143,13 +145,53 @@ function RootLayout() {
     return <LoadingScreen />;
   }
   if (session?.mfa_required === true) {
-    return <MfaRequiredBlocker />;
+    // Dev-friendly behavior: en lugar de bloquear el panel con
+    // <MfaRequiredBlocker /> y su grace period de 7 días, hacemos auto-logout
+    // inmediato. Cada vez que se monte el admin con MFA pendiente, el usuario
+    // vuelve a la pantalla de login en lugar de quedarse "atascado" viendo el
+    // bloqueo (que en dev local se ve cada restart, no aporta nada nuevo).
+    //
+    // En producción la palanca real para conservar el blocker original es
+    // simplemente revertir este branch y dejar `return <MfaRequiredBlocker />;`.
+    return <MfaAutoLogout />;
   }
   return (
     <TenantProvider session={session}>
       <Outlet />
     </TenantProvider>
   );
+}
+
+/**
+ * Componente "auto-logout" para el caso `session.mfa_required === true`.
+ * Al montar, hace POST a `/admin/logout` (invalida la sesión BFF) y la
+ * página redirige a la pantalla de login. Mostramos `<LoadingScreen />`
+ * mientras tanto para que el usuario no vea un flash en blanco.
+ *
+ * NOTA: este componente reemplaza al `<MfaRequiredBlocker />` original
+ * por una mejor UX en dev: cada vez que se monta un admin fresco, en
+ * lugar de mostrar el bloqueo con 7 días de grace period, simplemente
+ * desloguea. El `MfaRequiredBlocker` sigue exportado y testeado — no
+ * lo elimino para no romper tests; solo cambio el punto de uso.
+ */
+function MfaAutoLogout() {
+  useEffect(() => {
+    // Submit oculto del form POST a `/admin/logout`. El BFF invalida la
+    // sesión y responde con redirect a la pantalla de login de Auth0
+    // (donde si configuran MFA, vuelven a entrar limpios).
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = adminPath('/admin/logout');
+    form.style.display = 'none';
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'mfa-auto-logout';
+    input.value = '1';
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+  }, []);
+  return <LoadingScreen />;
 }
 
 /**
@@ -626,14 +668,60 @@ function GdShellRoute() {
     return <Navigate to={`/t/${activeTenant.slug}`} replace />;
   }
 
-  // Roles GD del usuario (vienen en la sesión vía `gd_profile.roles`,
-  // que el backend resuelve por usuario+tenant). Si la sesión aún no
-  // los tiene cargados, pasamos array vacío — los componentes hijos
-  // muestran su propio warning de permisos.
-  const gdRoles = session?.gd_profile?.roles
-    || session?.gd_roles
-    || profile?.gd_roles
-    || [];
+  // Roles GD del usuario — se obtienen de `/api/v1/gd/me` (que ya valida
+  // tenant + perfil activo + roles vigentes en gd.asignacion_alcance).
+  // La session del BFF NO incluye los roles GD (vive en una matriz aparte
+  // de los roles app: owner/admin/etc); por eso necesitamos el fetch.
+  // Componente <GdProfileLoader/> hace el fetch y pasa los roles al
+  // componente de la ruta resuelta.
+  return (
+    <GdProfileLoader
+      session={session}
+      activeTenant={activeTenant}
+      profile={profile}
+      location={location}
+      navigate={navigate}
+    />
+  );
+}
+
+/**
+ * Loader que resuelve los roles GD del usuario actual antes de renderizar
+ * el componente de la ruta. Mientras carga muestra `<LoadingScreen />`.
+ * Si el usuario NO tiene perfil GD activo en el tenant, pasa `roles=[]`
+ * — el `GdShell` muestra el sidebar vacío y la landing dice "Sin permisos
+ * activos. Solicite activación a su administrador."
+ */
+function GdProfileLoader({ session, activeTenant, profile, location, navigate }) {
+  const [gdMe, setGdMe] = useState(undefined); // undefined=loading, null=sin perfil, {...}=ok
+
+  useEffect(() => {
+    if (!session || !activeTenant?.id) return undefined;
+    let cancelled = false;
+    getMyGdProfile(session)
+      .then((data) => {
+        if (!cancelled) setGdMe(data || null);
+      })
+      .catch(() => {
+        // 403 con `code='gd_profile_missing_or_inactive'` o cualquier otro
+        // error → tratamos como "sin perfil GD activo". El GdShell mostrará
+        // el mensaje de "Sin permisos" usando el sistema de capabilities
+        // interno del módulo (GD-matrix con 17 roles, ortogonal a esto).
+        if (!cancelled) setGdMe(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, activeTenant?.id]);
+
+  if (gdMe === undefined) return <LoadingScreen />;
+
+  // Lista plana de códigos de rol vigentes (ej. ['gd.admin_sistema',
+  // 'gd.firmante']). El componente GdShell + GdSidebar usan este array
+  // contra la matriz `gd-matrix.js` (`gdCanAny(roles, 'VU-001', 'RW')`).
+  const gdRoles = (gdMe?.roles_vigentes || [])
+    .map((r) => r.rol_codigo)
+    .filter(Boolean);
 
   // Path relativo al módulo. Para `/t/{slug}/gd/pqrsd/mias` →
   // `subPath = '/pqrsd/mias'`. Para `/t/{slug}/gd` o `/t/{slug}/gd/` →
@@ -668,6 +756,15 @@ function GdShellRoute() {
       roles={gdRoles}
       user={profile}
       tenantSlug={activeTenant.slug}
+      // BUG-008 — `SupportModeBanner` necesita el UUID para decidir si
+      // el override de support_mode aplica al tenant actual. Se forwarda
+      // a `GdShell` vía `{...shellProps}` desde cada vista del módulo.
+      activeTenantId={activeTenant.id}
+      // Cuando el user hace "Salir de support mode" desde el banner del
+      // GdShell, navegamos a /platform (home del platform_owner). Sin
+      // esto, queda dentro del módulo GD con la cookie ya removida →
+      // próximo fetch a /api/v1/gd/* da 404 y la página queda rota.
+      onExitSupportMode={() => navigate('/platform')}
       currentPath={`/gd${subPath}`}
       onNavigate={onNavigate}
       {...extraProps}

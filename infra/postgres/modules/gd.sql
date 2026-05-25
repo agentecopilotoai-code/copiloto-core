@@ -26,9 +26,29 @@
 -- =============================================================================
 
 -- =============================================================================
+-- 0. Extensiones requeridas
+-- =============================================================================
+-- pg_trgm — necesario para los índices GIN con `gin_trgm_ops` (búsqueda
+-- por similaridad / trigram). Sin esto, el init falla en línea ~2676
+-- con "operator class gin_trgm_ops does not exist", y todo lo que viene
+-- después (incluidos los GRANTs del § 24) NO se aplica.
+create extension if not exists pg_trgm;
+
+-- =============================================================================
 -- 1. Schema `core` — infraestructura transversal compartida
 -- =============================================================================
 create schema if not exists core;
+
+-- GRANTs para que `copiloto_app` (rol de la API) pueda leer/escribir las
+-- tablas core (`core.evento_auditoria`, etc.). Sin esto, los handlers
+-- que registran auditoría fallan con `permission denied for schema core`.
+grant usage on schema core to copiloto_app;
+grant select, insert, update, delete on all tables in schema core to copiloto_app;
+grant usage, select on all sequences in schema core to copiloto_app;
+alter default privileges in schema core
+  grant select, insert, update, delete on tables to copiloto_app;
+alter default privileges in schema core
+  grant usage, select on sequences to copiloto_app;
 
 -- 1.1 — GD-API-0115: core.evento_auditoria
 -- Tabla append-only de eventos auditables del sistema completo (no solo GD).
@@ -5849,5 +5869,44 @@ comment on column gd.digitalizacion_documento.reemplaza_a_id is
   'La original queda con estado=reemplazada (DELETE bloqueado).';
 
 -- =============================================================================
+-- 24. GRANTs para el rol `copiloto_app`
+-- =============================================================================
+-- El rol `copiloto_app` es el usuario de la API (asyncpg pool). Sin estos
+-- GRANTs cualquier query contra `gd.*` falla con `permission denied for
+-- schema gd` ANTES de evaluar RLS — el chequeo de privilegios de schema
+-- es previo al de policies. Mirror de los GRANTs de `app` y `influencer`
+-- en `01-schema.sql` y `03-migrations.sql`.
+--
+-- RLS sigue siendo el gate primario por-fila (cada tabla con tenant_id
+-- tiene su policy `tenant_id = app.current_tenant_id() or app.support_mode()`).
+-- `copiloto_app` NO tiene BYPASSRLS, así que las policies aplican incluso
+-- con estos GRANTs.
+-- =============================================================================
+grant usage on schema gd to copiloto_app;
+grant select, insert, update, delete on all tables in schema gd to copiloto_app;
+grant usage, select on all sequences in schema gd to copiloto_app;
+grant execute on all functions in schema gd to copiloto_app;
+
+-- Default privileges para tablas/sequences que se creen DESPUÉS de este
+-- punto (ej. migraciones futuras que agreguen tablas a `gd`). Sin esto,
+-- cada tabla nueva exigiría un GRANT explícito y se nos olvidaría.
+alter default privileges in schema gd
+  grant select, insert, update, delete on tables to copiloto_app;
+alter default privileges in schema gd
+  grant usage, select on sequences to copiloto_app;
+alter default privileges in schema gd
+  grant execute on functions to copiloto_app;
+
+-- =============================================================================
 -- Fin de bloque 21b. CIERRE EP-021. 142/142 tareas del backlog GD completadas.
 -- =============================================================================
+
+-- ============================================================================
+-- Activación automática del módulo para Demo Taller (dev local)
+-- ============================================================================
+-- ON CONFLICT DO NOTHING: si el platform_owner ya hizo toggle manual desde la
+-- UI, no sobreescribe. En prod este archivo NO debería cargarse — los
+-- modules se activan via PATCH /v1/platform/tenant-modules/{tenant}/gestion_documental.
+insert into app.tenant_modules (tenant_id, module, enabled, activated_at)
+values ('11111111-1111-1111-1111-111111111111', 'gestion_documental', true, now())
+on conflict (tenant_id, module) do nothing;

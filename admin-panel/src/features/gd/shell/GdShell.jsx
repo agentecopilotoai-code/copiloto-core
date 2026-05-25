@@ -16,12 +16,22 @@ import React, { useState } from 'react';
 import { GdSidebar } from './GdSidebar.jsx';
 import { GdTopBar } from './GdTopBar.jsx';
 import { useGdScope } from '../hooks/useGdScope.js';
+import { SupportModeBanner } from '../../../components/domain/SupportModeBanner.jsx';
 import '../styles/portal.css';
 
 export function GdShell({
   user,
   roles = [],
   tenantSlug,
+  // `activeTenantId` (UUID) — distinto del `tenantSlug` que solo sirve
+  // para componer rutas. SupportModeBanner lo necesita para decidir si
+  // el override de support_mode corresponde a ESTE tenant.
+  activeTenantId,
+  // Callback opcional que se dispara cuando el user hace "Salir de
+  // support mode" desde el banner. Necesario porque sin navegación,
+  // el user queda dentro del módulo GD sin permisos (la cookie ya no
+  // está, `/api/v1/gd/me` falla). El router pasa `() => navigate('/platform')`.
+  onExitSupportMode,
   currentPath = '',
   breadcrumbs = [],
   onNavigate,
@@ -52,6 +62,18 @@ export function GdShell({
           user={user}
         />
         <div className="main">
+          {/* Mismo banner que `TenantShell` (BUG-008). Sin esto, un
+              platform_owner que entra a GD vía support_mode no veía el
+              recordatorio + botón "Salir de support mode" y quedaba
+              "atrapado" operando con privilegios elevados sin UI para
+              salir. El componente se auto-oculta si el override no
+              corresponde al `activeTenantId` actual.
+              `onExitSupportMode` navega afuera del módulo (sino el user
+              ve la página rota: cookie ya no existe, queries 404). */}
+          <SupportModeBanner
+            activeTenantId={activeTenantId}
+            onExited={onExitSupportMode}
+          />
           <GdTopBar
             scope={scope}
             scopes={scopes}

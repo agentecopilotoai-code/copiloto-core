@@ -102,7 +102,7 @@ class TestEscaneadaHandlers:
     def test_registrar_ok(self, conn, client):
         conn.fetchrow.return_value = _esc_dict()
         r = client.post(
-            '/api/v1/gd/firmas/escaneadas',
+            '/v1/gd/firmas/escaneadas',
             json={'archivo_digital_id': str(uuid4()),
                   'mime_type': 'image/png'},
         )
@@ -112,20 +112,20 @@ class TestEscaneadaHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/api/v1/gd/firmas/escaneadas',
+            '/v1/gd/firmas/escaneadas',
             json={'archivo_digital_id': str(uuid4())},
         )
         assert r.status_code == 409
 
     def test_listar_sin_filtros(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/firmas/escaneadas')
+        r = client.get('/v1/gd/firmas/escaneadas')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/firmas/escaneadas?user_id={uuid4()}'
+            f'/v1/gd/firmas/escaneadas?user_id={uuid4()}'
             '&estado=activa&limit=10',
         )
         assert r.status_code == 200
@@ -136,14 +136,14 @@ class TestEscaneadaHandlers:
             _esc_dict(estado='activa'),
         ]
         r = client.post(
-            f'/api/v1/gd/firmas/escaneadas/{uuid4()}/autorizar', json={},
+            f'/v1/gd/firmas/escaneadas/{uuid4()}/autorizar', json={},
         )
         assert r.status_code == 200
 
     def test_autorizar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/firmas/escaneadas/{uuid4()}/autorizar', json={},
+            f'/v1/gd/firmas/escaneadas/{uuid4()}/autorizar', json={},
         )
         assert r.status_code == 404
 
@@ -152,7 +152,7 @@ class TestEscaneadaHandlers:
             'user_id': uuid4(), 'estado': 'activa',
         }
         r = client.post(
-            f'/api/v1/gd/firmas/escaneadas/{uuid4()}/autorizar', json={},
+            f'/v1/gd/firmas/escaneadas/{uuid4()}/autorizar', json={},
         )
         assert r.status_code == 409
 
@@ -161,7 +161,7 @@ class TestEscaneadaHandlers:
         conn.fetchrow.return_value = _esc_dict(estado='revocada',
                                                  motivo_revocacion='X')
         r = client.post(
-            f'/api/v1/gd/firmas/escaneadas/{uuid4()}/revocar',
+            f'/v1/gd/firmas/escaneadas/{uuid4()}/revocar',
             json={'motivo': 'ya no se usa'},
         )
         assert r.status_code == 200
@@ -169,7 +169,7 @@ class TestEscaneadaHandlers:
     def test_revocar_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/firmas/escaneadas/{uuid4()}/revocar',
+            f'/v1/gd/firmas/escaneadas/{uuid4()}/revocar',
             json={'motivo': 'X' * 6},
         )
         assert r.status_code == 404
@@ -177,7 +177,7 @@ class TestEscaneadaHandlers:
     def test_revocar_409(self, conn, client):
         conn.fetchval.return_value = 'revocada'
         r = client.post(
-            f'/api/v1/gd/firmas/escaneadas/{uuid4()}/revocar',
+            f'/v1/gd/firmas/escaneadas/{uuid4()}/revocar',
             json={'motivo': 'X' * 6},
         )
         assert r.status_code == 409
@@ -202,7 +202,7 @@ class TestFirmarElectronicaHandler:
     def test_firmar_ok(self, conn, client):
         self._setup_mocks_ok(conn)
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-electronica',
+            f'/v1/gd/documentos/{uuid4()}/firmar-electronica',
             json={'version_documento_id': str(uuid4()),
                   'step_up_satisfecho': True},
         )
@@ -211,7 +211,7 @@ class TestFirmarElectronicaHandler:
     def test_firmar_doc_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-electronica',
+            f'/v1/gd/documentos/{uuid4()}/firmar-electronica',
             json={'version_documento_id': str(uuid4())},
         )
         assert r.status_code == 404
@@ -222,7 +222,7 @@ class TestFirmarElectronicaHandler:
             'archivo_digital_id': uuid4(), 'documento_id': uuid4(),
         }
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-electronica',
+            f'/v1/gd/documentos/{uuid4()}/firmar-electronica',
             json={'version_documento_id': str(uuid4())},
         )
         assert r.status_code == 409
@@ -233,7 +233,7 @@ class TestFirmarElectronicaHandler:
             'archivo_digital_id': uuid4(), 'documento_id': uuid4(),
         }
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-electronica',
+            f'/v1/gd/documentos/{uuid4()}/firmar-electronica',
             json={'version_documento_id': str(uuid4())},
         )
         assert r.status_code == 409
@@ -245,7 +245,7 @@ class TestFirmarElectronicaHandler:
         }
         conn.fetchval.return_value = 'suspendido'
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-electronica',
+            f'/v1/gd/documentos/{uuid4()}/firmar-electronica',
             json={'version_documento_id': str(uuid4())},
         )
         assert r.status_code == 409
@@ -268,7 +268,7 @@ class TestFirmarDigitalHandler:
         ]
         conn.fetchval.return_value = 'activo'
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-digital',
+            f'/v1/gd/documentos/{uuid4()}/firmar-digital',
             json={'version_documento_id': str(uuid4()),
                   'certificado_id': 'cert1', 'proveedor': 'stub'},
             headers={'X-Signing-Pin': '0000'},
@@ -277,7 +277,7 @@ class TestFirmarDigitalHandler:
 
     def test_firmar_sin_pin(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-digital',
+            f'/v1/gd/documentos/{uuid4()}/firmar-digital',
             json={'version_documento_id': str(uuid4()),
                   'certificado_id': 'cert1', 'proveedor': 'stub'},
         )
@@ -295,7 +295,7 @@ class TestFirmarDigitalHandler:
         ]
         conn.fetchval.return_value = 'activo'
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-digital',
+            f'/v1/gd/documentos/{uuid4()}/firmar-digital',
             json={'version_documento_id': str(uuid4()),
                   'certificado_id': 'cert1', 'proveedor': 'stub'},
             headers={'X-Signing-Pin': 'WRONG'},
@@ -320,7 +320,7 @@ class TestFirmarEscaneadaAplicada:
         ]
         conn.fetchval.return_value = 'activo'
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-escaneada'
+            f'/v1/gd/documentos/{uuid4()}/firmar-escaneada'
             f'?version_documento_id={uuid4()}&firma_escaneada_id={uuid4()}',
         )
         assert r.status_code == 201, r.text
@@ -333,7 +333,7 @@ class TestFirmarEscaneadaAplicada:
         ]
         conn.fetchval.return_value = 'activo'
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/firmar-escaneada'
+            f'/v1/gd/documentos/{uuid4()}/firmar-escaneada'
             f'?version_documento_id={uuid4()}&firma_escaneada_id={uuid4()}',
         )
         assert r.status_code == 404
@@ -349,7 +349,7 @@ class TestRechazoEvidenciaHandlers:
             _firma_doc_dict(estado='rechazada'),
         ]
         r = client.post(
-            f'/api/v1/gd/firmas/{uuid4()}/rechazar',
+            f'/v1/gd/firmas/{uuid4()}/rechazar',
             json={'observacion': 'no acepto'},
         )
         assert r.status_code == 200
@@ -357,7 +357,7 @@ class TestRechazoEvidenciaHandlers:
     def test_rechazar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/firmas/{uuid4()}/rechazar',
+            f'/v1/gd/firmas/{uuid4()}/rechazar',
             json={'observacion': 'X' * 6},
         )
         assert r.status_code == 404
@@ -367,7 +367,7 @@ class TestRechazoEvidenciaHandlers:
             'estado': 'consumada', 'firmante_user_id': uuid4(),
         }
         r = client.post(
-            f'/api/v1/gd/firmas/{uuid4()}/rechazar',
+            f'/v1/gd/firmas/{uuid4()}/rechazar',
             json={'observacion': 'X' * 6},
         )
         assert r.status_code == 409
@@ -376,7 +376,7 @@ class TestRechazoEvidenciaHandlers:
         conn.fetchval.return_value = 'consumada'
         conn.fetchrow.return_value = _firma_doc_dict(estado='revocada')
         r = client.post(
-            f'/api/v1/gd/firmas/{uuid4()}/revocar',
+            f'/v1/gd/firmas/{uuid4()}/revocar',
             json={'motivo': 'compromiso seguridad'},
         )
         assert r.status_code == 200
@@ -384,7 +384,7 @@ class TestRechazoEvidenciaHandlers:
     def test_revocar_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/firmas/{uuid4()}/revocar',
+            f'/v1/gd/firmas/{uuid4()}/revocar',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 404
@@ -395,7 +395,7 @@ class TestRechazoEvidenciaHandlers:
         row['documento_version'] = 1
         conn.fetchrow.return_value = row
         r = client.get(
-            f'/api/v1/gd/firmas/{uuid4()}/evidencia',
+            f'/v1/gd/firmas/{uuid4()}/evidencia',
         )
         assert r.status_code == 200, r.text
         assert r.json()['documento_titulo'] == 'Doc X'
@@ -403,19 +403,19 @@ class TestRechazoEvidenciaHandlers:
     def test_evidencia_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.get(
-            f'/api/v1/gd/firmas/{uuid4()}/evidencia',
+            f'/v1/gd/firmas/{uuid4()}/evidencia',
         )
         assert r.status_code == 404
 
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/firmas')
+        r = client.get('/v1/gd/firmas')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/firmas?documento_id={uuid4()}'
+            f'/v1/gd/firmas?documento_id={uuid4()}'
             f'&firmante_user_id={uuid4()}&estado=consumada&limit=20',
         )
         assert r.status_code == 200

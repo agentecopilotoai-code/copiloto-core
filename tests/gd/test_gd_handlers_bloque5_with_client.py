@@ -79,7 +79,7 @@ class TestTercerosHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            '/api/v1/gd/terceros',
+            '/v1/gd/terceros',
             json={
                 'tipo_tercero': 'persona_natural',
                 'tipo_documento': 'CC',
@@ -93,7 +93,7 @@ class TestTercerosHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/api/v1/gd/terceros',
+            '/v1/gd/terceros',
             json={
                 'tipo_tercero': 'persona_natural', 'tipo_documento': 'CC',
                 'numero_documento': '12345678',
@@ -117,7 +117,7 @@ class TestTercerosHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            '/api/v1/gd/terceros',
+            '/v1/gd/terceros',
             json={
                 'tipo_tercero': 'anonimo',
                 'nombres_razon_social': 'Ciudadano Anónimo',
@@ -128,7 +128,7 @@ class TestTercerosHandlers:
     def test_post_tercero_persona_natural_sin_documento_falla(self, conn, client):
         """Persona natural exige tipo_documento + numero_documento."""
         r = client.post(
-            '/api/v1/gd/terceros',
+            '/v1/gd/terceros',
             json={
                 'tipo_tercero': 'persona_natural',
                 'nombres_razon_social': 'Juan',
@@ -138,7 +138,7 @@ class TestTercerosHandlers:
 
     def test_get_buscar_por_documento(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/terceros/buscar?documento=12345')
+        r = client.get('/v1/gd/terceros/buscar?documento=12345')
         assert r.status_code == 200
 
     def test_get_tercero_existe(self, conn, client):
@@ -151,12 +151,12 @@ class TestTercerosHandlers:
             'municipio': None, 'departamento': None, 'pais': 'CO',
             'estado': 'activo',
         }
-        r = client.get(f'/api/v1/gd/terceros/{uuid4()}')
+        r = client.get(f'/v1/gd/terceros/{uuid4()}')
         assert r.status_code == 200
 
     def test_get_tercero_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/terceros/{uuid4()}')
+        r = client.get(f'/v1/gd/terceros/{uuid4()}')
         assert r.status_code == 404
 
     def test_patch_tercero(self, conn, client):
@@ -173,7 +173,7 @@ class TestTercerosHandlers:
             {'id': uuid4()},
         ]
         r = client.patch(
-            f'/api/v1/gd/terceros/{uuid4()}',
+            f'/v1/gd/terceros/{uuid4()}',
             json={'correo': 'nuevo@x.com'},
         )
         assert r.status_code == 200
@@ -181,7 +181,7 @@ class TestTercerosHandlers:
     def test_patch_tercero_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.patch(
-            f'/api/v1/gd/terceros/{uuid4()}',
+            f'/v1/gd/terceros/{uuid4()}',
             json={'correo': 'x@y.com'},
         )
         assert r.status_code == 404
@@ -234,7 +234,7 @@ class TestRadicadoEntrada:
         conn.fetchval.return_value = None  # sin colisión codigo_verificacion
 
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/entrada',
+            '/v1/gd/ventanilla/radicados/entrada',
             json={
                 'canal_id': str(canal_id),
                 'asunto': 'Solicitud copia documento',
@@ -249,7 +249,7 @@ class TestRadicadoEntrada:
     def test_post_entrada_canal_inexistente(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/entrada',
+            '/v1/gd/ventanilla/radicados/entrada',
             json={
                 'canal_id': str(uuid4()),
                 'asunto': 'Solicitud',
@@ -263,7 +263,7 @@ class TestRadicadoEntrada:
             'requiere_punto_atencion': True,
         }
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/entrada',
+            '/v1/gd/ventanilla/radicados/entrada',
             json={'canal_id': str(uuid4()), 'asunto': 'Solicitud'},
         )
         assert r.status_code == 422
@@ -271,7 +271,7 @@ class TestRadicadoEntrada:
 
     def test_post_entrada_tercero_y_tercero_nuevo_excluyentes(self, conn, client):
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/entrada',
+            '/v1/gd/ventanilla/radicados/entrada',
             json={
                 'canal_id': str(uuid4()),
                 'asunto': 'Asunto válido',
@@ -329,7 +329,7 @@ class TestRadicadoEntrada:
         ]
         conn.fetchval.return_value = None
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/entrada',
+            '/v1/gd/ventanilla/radicados/entrada',
             json={
                 'canal_id': str(canal_id),
                 'asunto': 'Test tercero inline',
@@ -352,7 +352,7 @@ class TestRadicadoEntrada:
             asyncpg.UniqueViolationError,
         ]
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/entrada',
+            '/v1/gd/ventanilla/radicados/entrada',
             json={
                 'canal_id': str(canal_id),
                 'asunto': 'Solicitud test',
@@ -374,7 +374,7 @@ class TestRadicadoEntrada:
             None,  # tercero_id no existe
         ]
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/entrada',
+            '/v1/gd/ventanilla/radicados/entrada',
             json={
                 'canal_id': str(canal_id),
                 'asunto': 'Solicitud',
@@ -420,7 +420,7 @@ class TestRadicadoSalida:
         ]
         conn.fetchval.return_value = None
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/salida',
+            '/v1/gd/ventanilla/radicados/salida',
             json={
                 'asunto': 'Respuesta a oficio',
                 'dependencia_origen_id': str(uuid4()),
@@ -438,7 +438,7 @@ class TestRadicadoSalida:
             {'estado': 'anulado', 'tipo_radicado': 'entrada'},
         ]
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/salida',
+            '/v1/gd/ventanilla/radicados/salida',
             json={
                 'asunto': 'Respuesta',
                 'dependencia_origen_id': str(uuid4()),
@@ -466,7 +466,7 @@ class TestRadicadoConsulta:
             }
         ]
         conn.fetchrow.return_value = {'c': 1}
-        r = client.get('/api/v1/gd/ventanilla/radicados')
+        r = client.get('/v1/gd/ventanilla/radicados')
         assert r.status_code == 200
         assert len(r.json()['items']) == 1
 
@@ -474,7 +474,7 @@ class TestRadicadoConsulta:
         conn.fetch.return_value = []
         conn.fetchrow.return_value = {'c': 0}
         r = client.get(
-            '/api/v1/gd/ventanilla/radicados'
+            '/v1/gd/ventanilla/radicados'
             '?numero_radicado=RAD-2026-000001'
             '&q=oficio'
             '&tipo_radicado=entrada,salida'
@@ -506,7 +506,7 @@ class TestRadicadoConsulta:
             'es_radicacion_contingencia': False,
             'actor_snapshot': {'usuario_id': str(ACTOR_USER_ID), 'nombre_completo': 'X'},
         }
-        r = client.get(f'/api/v1/gd/ventanilla/radicados/{rid}')
+        r = client.get(f'/v1/gd/ventanilla/radicados/{rid}')
         assert r.status_code == 200
 
     def test_get_detalle_con_tercero(self, conn, client):
@@ -542,7 +542,7 @@ class TestRadicadoConsulta:
                 'estado': 'activo',
             },
         ]
-        r = client.get(f'/api/v1/gd/ventanilla/radicados/{rid}')
+        r = client.get(f'/v1/gd/ventanilla/radicados/{rid}')
         assert r.status_code == 200
         body = r.json()
         assert body['tercero'] is not None
@@ -551,7 +551,7 @@ class TestRadicadoConsulta:
 
     def test_get_detalle_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/ventanilla/radicados/{uuid4()}')
+        r = client.get(f'/v1/gd/ventanilla/radicados/{uuid4()}')
         assert r.status_code == 404
 
 
@@ -575,14 +575,14 @@ class TestClasificarHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{uuid4()}/clasificar',
+            f'/v1/gd/ventanilla/radicados/{uuid4()}/clasificar',
             json={'tipo_clasificacion': 'tramite'},
         )
         assert r.status_code == 200, r.text
 
     def test_clasificar_pqrsd_requiere_tipo_pqrsd_id(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{uuid4()}/clasificar',
+            f'/v1/gd/ventanilla/radicados/{uuid4()}/clasificar',
             json={'tipo_clasificacion': 'pqrsd'},
         )
         assert r.status_code == 422
@@ -590,7 +590,7 @@ class TestClasificarHandlers:
     def test_clasificar_ya_existe_409(self, conn, client):
         conn.fetchval.return_value = 1  # ya vigente
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{uuid4()}/clasificar',
+            f'/v1/gd/ventanilla/radicados/{uuid4()}/clasificar',
             json={
                 'tipo_clasificacion': 'tramite',
             },
@@ -610,7 +610,7 @@ class TestClasificarHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{uuid4()}/reclasificar',
+            f'/v1/gd/ventanilla/radicados/{uuid4()}/reclasificar',
             json={
                 'tipo_clasificacion': 'expediente',
                 'motivo': 'Cambio por solicitud del jefe de área',
@@ -621,7 +621,7 @@ class TestClasificarHandlers:
     def test_reclasificar_sin_previa_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{uuid4()}/reclasificar',
+            f'/v1/gd/ventanilla/radicados/{uuid4()}/reclasificar',
             json={
                 'tipo_clasificacion': 'tramite',
                 'motivo': 'Razón suficientemente larga',
@@ -648,7 +648,7 @@ class TestAnulacionHandlers:
         ]
         conn.fetchval.return_value = None  # sin pendiente previa
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{uuid4()}/solicitar-anulacion',
+            f'/v1/gd/ventanilla/radicados/{uuid4()}/solicitar-anulacion',
             json={'motivo': 'Error grave en datos del solicitante'},
         )
         assert r.status_code == 201, r.text
@@ -656,7 +656,7 @@ class TestAnulacionHandlers:
     def test_solicitar_anulacion_radicado_inexistente(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{uuid4()}/solicitar-anulacion',
+            f'/v1/gd/ventanilla/radicados/{uuid4()}/solicitar-anulacion',
             json={'motivo': 'Motivo lo suficientemente largo para pasar'},
         )
         assert r.status_code == 404
@@ -664,7 +664,7 @@ class TestAnulacionHandlers:
     def test_solicitar_anulacion_radicado_ya_anulado(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'anulado'}
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{uuid4()}/solicitar-anulacion',
+            f'/v1/gd/ventanilla/radicados/{uuid4()}/solicitar-anulacion',
             json={'motivo': 'Motivo lo suficientemente largo para pasar'},
         )
         assert r.status_code == 409
@@ -679,7 +679,7 @@ class TestAnulacionHandlers:
             {'estado': 'registrado'},  # radicado check
         ]
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{uuid4()}/solicitar-anulacion',
+            f'/v1/gd/ventanilla/radicados/{uuid4()}/solicitar-anulacion',
             json={'motivo': 'Motivo lo suficientemente largo'},
         )
         assert r.status_code == 422
@@ -696,7 +696,7 @@ class TestAnulacionHandlers:
             'fecha_solicitud': datetime.now(), 'fecha_decision': None,
         }
         r = client.post(
-            f'/api/v1/gd/ventanilla/anulaciones/{sid}/aprobar',
+            f'/v1/gd/ventanilla/anulaciones/{sid}/aprobar',
             json={'observacion_decision': 'Aprobado por mí mismo'},
         )
         assert r.status_code == 403
@@ -732,7 +732,7 @@ class TestAnulacionHandlers:
             },
         ]
         r = client.post(
-            f'/api/v1/gd/ventanilla/anulaciones/{sid}/aprobar',
+            f'/v1/gd/ventanilla/anulaciones/{sid}/aprobar',
             json={'observacion_decision': 'Aprobada por validación'},
         )
         assert r.status_code == 200, r.text
@@ -743,7 +743,7 @@ class TestAnulacionHandlers:
     def test_aprobar_anulacion_solicitud_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/ventanilla/anulaciones/{uuid4()}/aprobar',
+            f'/v1/gd/ventanilla/anulaciones/{uuid4()}/aprobar',
             json={'observacion_decision': None},
         )
         assert r.status_code == 404
@@ -758,7 +758,7 @@ class TestAnulacionHandlers:
             'fecha_solicitud': datetime.now(), 'fecha_decision': datetime.now(),
         }
         r = client.post(
-            f'/api/v1/gd/ventanilla/anulaciones/{uuid4()}/aprobar',
+            f'/v1/gd/ventanilla/anulaciones/{uuid4()}/aprobar',
             json={'observacion_decision': None},
         )
         assert r.status_code == 409
@@ -783,14 +783,14 @@ class TestAnulacionHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/ventanilla/anulaciones/{sid}/rechazar',
+            f'/v1/gd/ventanilla/anulaciones/{sid}/rechazar',
             json={'observacion_decision': 'No procede según política'},
         )
         assert r.status_code == 200
 
     def test_rechazar_sin_observacion(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/ventanilla/anulaciones/{uuid4()}/rechazar',
+            f'/v1/gd/ventanilla/anulaciones/{uuid4()}/rechazar',
             json={'observacion_decision': 'corta'},
         )
         assert r.status_code == 422
@@ -805,7 +805,7 @@ class TestAnulacionHandlers:
             'fecha_solicitud': datetime.now(), 'fecha_decision': None,
         }
         r = client.post(
-            f'/api/v1/gd/ventanilla/anulaciones/{uuid4()}/rechazar',
+            f'/v1/gd/ventanilla/anulaciones/{uuid4()}/rechazar',
             json={'observacion_decision': 'No procede por política institucional'},
         )
         assert r.status_code == 403

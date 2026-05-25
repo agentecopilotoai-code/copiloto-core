@@ -63,6 +63,44 @@ describe('SupportModeBanner (BUG-008)', () => {
     expect(deactivate).toHaveBeenCalledWith('tenant-acme');
   });
 
+  it('invoca onExited después de deactivateSupportMode exitoso', async () => {
+    // Sin esto, el platform_owner dentro de GdShell/InfluencerShell queda
+    // en una página rota porque la cookie ya no existe y las queries 404.
+    const deactivate = vi.fn().mockResolvedValue(undefined);
+    const onExited = vi.fn();
+    mockTenantContext = {
+      supportModeOverride: { tenantId: 'tenant-acme', expiresAt: FUTURE },
+      deactivateSupportMode: deactivate,
+    };
+    render(
+      <SupportModeBanner activeTenantId="tenant-acme" onExited={onExited} />,
+    );
+    await userEvent.click(
+      screen.getByRole('button', { name: /Salir de support mode/i }),
+    );
+    expect(deactivate).toHaveBeenCalledWith('tenant-acme');
+    expect(onExited).toHaveBeenCalledTimes(1);
+  });
+
+  it('no invoca onExited si deactivateSupportMode falla', async () => {
+    // Si el server rechaza el DELETE (ej. red caída), no navegamos —
+    // mejor dejar al user en la página con error visible que llevarlo
+    // a /platform "como si todo hubiera salido bien".
+    const deactivate = vi.fn().mockRejectedValue(new Error('network'));
+    const onExited = vi.fn();
+    mockTenantContext = {
+      supportModeOverride: { tenantId: 'tenant-acme', expiresAt: FUTURE },
+      deactivateSupportMode: deactivate,
+    };
+    render(
+      <SupportModeBanner activeTenantId="tenant-acme" onExited={onExited} />,
+    );
+    await userEvent.click(
+      screen.getByRole('button', { name: /Salir de support mode/i }),
+    );
+    expect(onExited).not.toHaveBeenCalled();
+  });
+
   it('compara tenantId como string — UUID-like distinto tipo igual matchea', () => {
     // Si el activeTenantId llega como number-ish y el override como string,
     // el banner debe matchear igual (ambos lados normalizan con String()).

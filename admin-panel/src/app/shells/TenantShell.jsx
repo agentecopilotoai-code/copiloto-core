@@ -1,3 +1,5 @@
+import { useNavigate } from 'react-router-dom';
+
 import { ErrorBoundary } from '../../components/ui/index.js';
 import { SupportModeBanner } from '../../components/domain/SupportModeBanner.jsx';
 import { TENANT_NAV } from '../nav.js';
@@ -53,6 +55,18 @@ export function TenantShell({
   const navGroups = resolveNav(TENANT_NAV, modules, permissions);
   const activeTenant =
     tenantOptions?.find((tenant) => tenant.id === activeTenantId) ?? tenantOptions?.[0] ?? null;
+  const navigate = useNavigate();
+  // Si el user es platform_owner Y NO es miembro real del tenant
+  // (`tenantOptions` excluye los tenants donde no tiene rol producto),
+  // al salir de support_mode debe navegar a /platform — sino queda
+  // mirando una página cuyas queries fallan. Si SÍ es miembro real
+  // (raro, pero posible), el banner se cae solo y se queda donde estaba.
+  const isMemberOfActiveTenant = Boolean(
+    tenantOptions?.find((tenant) => tenant.id === activeTenantId),
+  );
+  const handleExitSupport = isMemberOfActiveTenant
+    ? undefined
+    : () => navigate('/platform');
 
   return (
     <div className={styles.shell}>
@@ -76,8 +90,12 @@ export function TenantShell({
       <main className={styles.workspace} id="main-content" tabIndex={-1}>
         {/* BUG-008 — banner sticky cuando platform_owner opera bajo
             support_mode opt-in en ESTE tenant. El componente se auto-oculta
-            si supportModeOverride.tenantId no matchea con activeTenantId. */}
-        <SupportModeBanner activeTenantId={activeTenantId} />
+            si supportModeOverride.tenantId no matchea con activeTenantId.
+            `onExited` navega a /platform si el user no es miembro real. */}
+        <SupportModeBanner
+          activeTenantId={activeTenantId}
+          onExited={handleExitSupport}
+        />
         <ShellTopbar
           eyebrow="Tenant operations"
           title={activeModule.label}

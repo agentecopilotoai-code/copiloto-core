@@ -106,7 +106,7 @@ class TestBuzonHandlers:
     def test_crear_ok(self, conn, client):
         conn.fetchrow.return_value = _bz_dict()
         r = client.post(
-            '/api/v1/gd/correo/buzones',
+            '/v1/gd/correo/buzones',
             json={
                 'nombre': 'Mi Buzón',
                 'direccion_correo': 'inbox@org.gov.co',
@@ -118,7 +118,7 @@ class TestBuzonHandlers:
 
     def test_crear_email_invalido(self, conn, client):
         r = client.post(
-            '/api/v1/gd/correo/buzones',
+            '/v1/gd/correo/buzones',
             json={
                 'nombre': 'X',
                 'direccion_correo': 'sinarroba',
@@ -132,7 +132,7 @@ class TestBuzonHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/api/v1/gd/correo/buzones',
+            '/v1/gd/correo/buzones',
             json={
                 'nombre': 'Mi Buzón',
                 'direccion_correo': 'dup@org.gov.co',
@@ -144,32 +144,32 @@ class TestBuzonHandlers:
 
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/correo/buzones')
+        r = client.get('/v1/gd/correo/buzones')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/correo/buzones?estado=activa'
+            f'/v1/gd/correo/buzones?estado=activa'
             f'&dependencia_id={uuid4()}&limit=10',
         )
         assert r.status_code == 200
 
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _bz_dict()
-        r = client.get(f'/api/v1/gd/correo/buzones/{uuid4()}')
+        r = client.get(f'/v1/gd/correo/buzones/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/correo/buzones/{uuid4()}')
+        r = client.get(f'/v1/gd/correo/buzones/{uuid4()}')
         assert r.status_code == 404
 
     def test_patch_ok(self, conn, client):
         conn.fetchval.return_value = 1
         conn.fetchrow.return_value = _bz_dict(nombre='Renamed')
         r = client.patch(
-            f'/api/v1/gd/correo/buzones/{uuid4()}',
+            f'/v1/gd/correo/buzones/{uuid4()}',
             json={'nombre': 'Renamed', 'config': {'k': 'v'}},
         )
         assert r.status_code == 200
@@ -177,7 +177,7 @@ class TestBuzonHandlers:
     def test_patch_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.patch(
-            f'/api/v1/gd/correo/buzones/{uuid4()}',
+            f'/v1/gd/correo/buzones/{uuid4()}',
             json={'nombre': 'Renamed Plus'},
         )
         assert r.status_code == 404
@@ -185,7 +185,7 @@ class TestBuzonHandlers:
     def test_probar_conexion_ok(self, conn, client):
         conn.fetchrow.return_value = _bz_dict()
         r = client.post(
-            f'/api/v1/gd/correo/buzones/{uuid4()}/probar-conexion',
+            f'/v1/gd/correo/buzones/{uuid4()}/probar-conexion',
             json={},
         )
         assert r.status_code == 200, r.text
@@ -194,7 +194,7 @@ class TestBuzonHandlers:
     def test_probar_conexion_falla(self, conn, client):
         conn.fetchrow.return_value = _bz_dict(secret_vault_ref='invalid')
         r = client.post(
-            f'/api/v1/gd/correo/buzones/{uuid4()}/probar-conexion',
+            f'/v1/gd/correo/buzones/{uuid4()}/probar-conexion',
             json={},
         )
         assert r.status_code == 200
@@ -203,7 +203,7 @@ class TestBuzonHandlers:
     def test_probar_conexion_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correo/buzones/{uuid4()}/probar-conexion',
+            f'/v1/gd/correo/buzones/{uuid4()}/probar-conexion',
             json={},
         )
         assert r.status_code == 404
@@ -214,7 +214,7 @@ class TestBuzonHandlers:
         ]})
         conn.fetchrow.side_effect = [bz, {'id': uuid4()}]
         r = client.post(
-            f'/api/v1/gd/correo/buzones/{uuid4()}/ejecutar-worker',
+            f'/v1/gd/correo/buzones/{uuid4()}/ejecutar-worker',
             json={'max_correos': 10},
         )
         assert r.status_code == 200, r.text
@@ -223,7 +223,7 @@ class TestBuzonHandlers:
     def test_ejecutar_worker_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correo/buzones/{uuid4()}/ejecutar-worker',
+            f'/v1/gd/correo/buzones/{uuid4()}/ejecutar-worker',
             json={},
         )
         assert r.status_code == 404
@@ -231,7 +231,7 @@ class TestBuzonHandlers:
     def test_ejecutar_worker_buzon_inactivo(self, conn, client):
         conn.fetchrow.return_value = _bz_dict(estado='inactiva')
         r = client.post(
-            f'/api/v1/gd/correo/buzones/{uuid4()}/ejecutar-worker',
+            f'/v1/gd/correo/buzones/{uuid4()}/ejecutar-worker',
             json={},
         )
         assert r.status_code == 409
@@ -244,26 +244,26 @@ class TestCorreoHandlers:
     def test_listar_sin_filtros(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
-        r = client.get('/api/v1/gd/correo/correos')
+        r = client.get('/v1/gd/correo/correos')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
         r = client.get(
-            f'/api/v1/gd/correo/correos?buzon_id={uuid4()}'
+            f'/v1/gd/correo/correos?buzon_id={uuid4()}'
             '&estado=pendiente&remitente_email=a@x.com&limit=20',
         )
         assert r.status_code == 200
 
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _correo_dict()
-        r = client.get(f'/api/v1/gd/correo/correos/{uuid4()}')
+        r = client.get(f'/v1/gd/correo/correos/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/correo/correos/{uuid4()}')
+        r = client.get(f'/v1/gd/correo/correos/{uuid4()}')
         assert r.status_code == 404
 
     def test_asociar_radicado_ok(self, conn, client):
@@ -273,7 +273,7 @@ class TestCorreoHandlers:
         ]
         conn.fetchval.return_value = 1
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/asociar-radicado/{uuid4()}',
+            f'/v1/gd/correo/correos/{uuid4()}/asociar-radicado/{uuid4()}',
             json={'observaciones': 'ok'},
         )
         assert r.status_code == 200
@@ -282,7 +282,7 @@ class TestCorreoHandlers:
         conn.fetchrow.return_value = {'estado': 'pendiente'}
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/asociar-radicado/{uuid4()}',
+            f'/v1/gd/correo/correos/{uuid4()}/asociar-radicado/{uuid4()}',
             json={},
         )
         assert r.status_code == 404
@@ -291,7 +291,7 @@ class TestCorreoHandlers:
     def test_asociar_correo_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/asociar-radicado/{uuid4()}',
+            f'/v1/gd/correo/correos/{uuid4()}/asociar-radicado/{uuid4()}',
             json={},
         )
         assert r.status_code == 404
@@ -299,7 +299,7 @@ class TestCorreoHandlers:
     def test_asociar_estado_invalido(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'descartado'}
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/asociar-radicado/{uuid4()}',
+            f'/v1/gd/correo/correos/{uuid4()}/asociar-radicado/{uuid4()}',
             json={},
         )
         assert r.status_code == 409
@@ -310,7 +310,7 @@ class TestCorreoHandlers:
             _correo_dict(estado='descartado', motivo_descarte='spam'),
         ]
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/descartar',
+            f'/v1/gd/correo/correos/{uuid4()}/descartar',
             json={'motivo': 'es spam evidente del proveedor'},
         )
         assert r.status_code == 200
@@ -318,7 +318,7 @@ class TestCorreoHandlers:
     def test_descartar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/descartar',
+            f'/v1/gd/correo/correos/{uuid4()}/descartar',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 404
@@ -326,7 +326,7 @@ class TestCorreoHandlers:
     def test_descartar_estado_invalido(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'convertido_radicado'}
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/descartar',
+            f'/v1/gd/correo/correos/{uuid4()}/descartar',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 409
@@ -348,7 +348,7 @@ class TestCorreoHandlers:
             _correo_dict(estado='convertido_radicado', radicado_id=rad_id),
         ]
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/convertir-a-radicado',
+            f'/v1/gd/correo/correos/{uuid4()}/convertir-a-radicado',
             json={'canal_id': str(uuid4())},
         )
         assert r.status_code == 201, r.text
@@ -356,7 +356,7 @@ class TestCorreoHandlers:
     def test_convertir_correo_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/convertir-a-radicado',
+            f'/v1/gd/correo/correos/{uuid4()}/convertir-a-radicado',
             json={'canal_id': str(uuid4())},
         )
         assert r.status_code == 404
@@ -371,7 +371,7 @@ class TestCorreoHandlers:
             'secret_vault_ref': 'v', 'config': {},
         }
         r = client.post(
-            f'/api/v1/gd/correo/correos/{uuid4()}/convertir-a-radicado',
+            f'/v1/gd/correo/correos/{uuid4()}/convertir-a-radicado',
             json={'canal_id': str(uuid4())},
         )
         assert r.status_code == 409

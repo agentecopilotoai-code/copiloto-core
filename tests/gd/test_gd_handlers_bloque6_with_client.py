@@ -76,7 +76,7 @@ class TestContactosHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/terceros/{tid}/contactos',
+            f'/v1/gd/terceros/{tid}/contactos',
             json={'tipo_contacto': 'correo', 'valor': 'x@y.com', 'es_principal': True},
         )
         assert r.status_code == 201, r.text
@@ -85,14 +85,14 @@ class TestContactosHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.ForeignKeyViolationError
         r = client.post(
-            f'/api/v1/gd/terceros/{uuid4()}/contactos',
+            f'/v1/gd/terceros/{uuid4()}/contactos',
             json={'tipo_contacto': 'correo', 'valor': 'x@y.com'},
         )
         assert r.status_code == 404
 
     def test_get_contactos(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get(f'/api/v1/gd/terceros/{uuid4()}/contactos')
+        r = client.get(f'/v1/gd/terceros/{uuid4()}/contactos')
         assert r.status_code == 200
 
     def test_inactivar_contacto(self, conn, client):
@@ -105,7 +105,7 @@ class TestContactosHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            f'/api/v1/gd/terceros/{uuid4()}/contactos/{uuid4()}/inactivar',
+            f'/v1/gd/terceros/{uuid4()}/contactos/{uuid4()}/inactivar',
             json={'motivo': 'Ya no aplica'},
         )
         assert r.status_code == 200
@@ -113,7 +113,7 @@ class TestContactosHandlers:
     def test_inactivar_contacto_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/terceros/{uuid4()}/contactos/{uuid4()}/inactivar',
+            f'/v1/gd/terceros/{uuid4()}/contactos/{uuid4()}/inactivar',
             json={'motivo': 'Ya no aplica'},
         )
         assert r.status_code == 404
@@ -126,7 +126,7 @@ class TestContactosHandlers:
                 'asunto': 'X', 'estado': 'registrado',
             }
         ]
-        r = client.get(f'/api/v1/gd/terceros/{uuid4()}/historial')
+        r = client.get(f'/v1/gd/terceros/{uuid4()}/historial')
         assert r.status_code == 200
         body = r.json()
         assert body['totales']['radicados'] == 1
@@ -146,7 +146,7 @@ class TestTareasHandlers:
             'fecha_limite': None, 'prioridad': 'normal', 'estado': 'pendiente',
         }
         r = client.post(
-            '/api/v1/gd/tareas',
+            '/v1/gd/tareas',
             json={
                 'tipo_tarea': 'revisar', 'titulo': 'Test tarea',
                 'asignado_a_user_id': str(uuid4()),
@@ -156,14 +156,14 @@ class TestTareasHandlers:
 
     def test_post_tarea_sin_asignacion(self, conn, client):
         r = client.post(
-            '/api/v1/gd/tareas',
+            '/v1/gd/tareas',
             json={'tipo_tarea': 'revisar', 'titulo': 'Test tarea'},
         )
         assert r.status_code == 422
 
     def test_get_tareas(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/tareas?asignadas_a=me&estado=pendiente,en_proceso')
+        r = client.get('/v1/gd/tareas?asignadas_a=me&estado=pendiente,en_proceso')
         assert r.status_code == 200
 
     def test_aplicar_accion_iniciar(self, conn, client):
@@ -180,21 +180,21 @@ class TestTareasHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/tareas/{uuid4()}/iniciar',
+            f'/v1/gd/tareas/{uuid4()}/iniciar',
             json={},
         )
         assert r.status_code == 200
 
     def test_aplicar_accion_devolver_sin_observacion(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/tareas/{uuid4()}/devolver',
+            f'/v1/gd/tareas/{uuid4()}/devolver',
             json={},
         )
         assert r.status_code == 422
 
     def test_aplicar_accion_anular_sin_motivo(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/tareas/{uuid4()}/anular',
+            f'/v1/gd/tareas/{uuid4()}/anular',
             json={},
         )
         assert r.status_code == 422
@@ -202,7 +202,7 @@ class TestTareasHandlers:
     def test_aplicar_accion_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/tareas/{uuid4()}/iniciar',
+            f'/v1/gd/tareas/{uuid4()}/iniciar',
             json={},
         )
         assert r.status_code == 404
@@ -223,7 +223,7 @@ class TestTareasHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            f'/api/v1/gd/tareas/{uuid4()}/reasignar',
+            f'/v1/gd/tareas/{uuid4()}/reasignar',
             json={
                 'usuario_destino_id': str(uuid4()),
                 'motivo': 'Reasignación operativa',
@@ -233,7 +233,7 @@ class TestTareasHandlers:
 
     def test_reasignar_tarea_sin_destino(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/tareas/{uuid4()}/reasignar',
+            f'/v1/gd/tareas/{uuid4()}/reasignar',
             json={'motivo': 'Motivo válido suficientemente largo'},
         )
         assert r.status_code == 422
@@ -241,7 +241,7 @@ class TestTareasHandlers:
     def test_reasignar_destino_inactivo(self, conn, client):
         conn.fetchval.return_value = 'inactivo'
         r = client.post(
-            f'/api/v1/gd/tareas/{uuid4()}/reasignar',
+            f'/v1/gd/tareas/{uuid4()}/reasignar',
             json={
                 'usuario_destino_id': str(uuid4()),
                 'motivo': 'Reasignación operativa',
@@ -253,7 +253,7 @@ class TestTareasHandlers:
         conn.fetchval.return_value = 'activo'
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/tareas/{uuid4()}/reasignar',
+            f'/v1/gd/tareas/{uuid4()}/reasignar',
             json={
                 'usuario_destino_id': str(uuid4()),
                 'motivo': 'Reasignación operativa',
@@ -277,7 +277,7 @@ class TestBuzonHandlers:
             [],  # próximos
         ]
         conn.fetchrow.return_value = {'c': 2}  # no_leidas
-        r = client.get('/api/v1/gd/buzon')
+        r = client.get('/v1/gd/buzon')
         assert r.status_code == 200
         body = r.json()
         assert body['tareas_pendientes']['total'] == 3
@@ -289,7 +289,7 @@ class TestBuzonHandlers:
             [],  # pendientes
             [],  # carga_por_usuario
         ]
-        r = client.get(f'/api/v1/gd/buzon/dependencia/{uuid4()}')
+        r = client.get(f'/v1/gd/buzon/dependencia/{uuid4()}')
         assert r.status_code == 200
 
 
@@ -300,37 +300,37 @@ class TestNotificacionesHandlers:
     def test_get_notificaciones(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchrow.return_value = {'c': 0}
-        r = client.get('/api/v1/gd/notificaciones')
+        r = client.get('/v1/gd/notificaciones')
         assert r.status_code == 200
 
     def test_get_notificaciones_solo_no_leidas(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchrow.return_value = {'c': 0}
-        r = client.get('/api/v1/gd/notificaciones?solo_no_leidas=true')
+        r = client.get('/v1/gd/notificaciones?solo_no_leidas=true')
         assert r.status_code == 200
 
     def test_marcar_leida_ok(self, conn, client):
         conn.fetchrow.return_value = {
             'id': uuid4(), 'leida': True, 'fecha_lectura': datetime.now(),
         }
-        r = client.post(f'/api/v1/gd/notificaciones/{uuid4()}/marcar-leida')
+        r = client.post(f'/v1/gd/notificaciones/{uuid4()}/marcar-leida')
         assert r.status_code == 200
 
     def test_marcar_leida_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.post(f'/api/v1/gd/notificaciones/{uuid4()}/marcar-leida')
+        r = client.post(f'/v1/gd/notificaciones/{uuid4()}/marcar-leida')
         assert r.status_code == 404
 
     def test_get_preferencias(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/notificaciones/preferencias')
+        r = client.get('/v1/gd/notificaciones/preferencias')
         assert r.status_code == 200
 
     def test_patch_preferencias(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchrow.return_value = {'id': uuid4()}  # audit
         r = client.patch(
-            '/api/v1/gd/notificaciones/preferencias',
+            '/v1/gd/notificaciones/preferencias',
             json={
                 'preferencias': [
                     {'tipo_notificacion': 'tarea_asignada',
@@ -362,7 +362,7 @@ class TestTareasPendientesReactivado:
                 },
             ],
         ]
-        r = client.get(f'/api/v1/gd/perfil-usuario/{user_id}/tareas-pendientes')
+        r = client.get(f'/v1/gd/perfil-usuario/{user_id}/tareas-pendientes')
         assert r.status_code == 200
         body = r.json()
         assert body['total_pendientes'] == 5
@@ -382,7 +382,7 @@ class TestTareasPendientesReactivado:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/perfil-usuario/{uuid4()}/tareas/reasignar',
+            f'/v1/gd/perfil-usuario/{uuid4()}/tareas/reasignar',
             json={
                 'tareas': [str(tarea_id)],
                 'user_destino_id': str(user_dest),
@@ -401,7 +401,7 @@ class TestTareasPendientesReactivado:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/perfil-usuario/{uuid4()}/tareas/reasignar',
+            f'/v1/gd/perfil-usuario/{uuid4()}/tareas/reasignar',
             json={
                 'tareas': [str(uuid4())],
                 'user_destino_id': str(uuid4()),

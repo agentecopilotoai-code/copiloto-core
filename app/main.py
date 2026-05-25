@@ -34,7 +34,6 @@ from app.gd.routes import (
     router as gd_router,
     router_core as gd_router_core,
     router_public as gd_router_public,
-    router_health_alias as gd_router_health_alias,
 )
 # NOTA — el import side-effect que registra los endpoints
 # `/v1/platform/ai-providers*` y `/v1/platform/tenant-modules*` sobre
@@ -183,17 +182,15 @@ def create_app() -> FastAPI:
     api.include_router(influencer_pricing_router)
     # TASK-INFLU-017 — casting home + studio detail.
     api.include_router(influencer_casting_router)
-    # GD-API-0002 — Módulo Gestión Documental. Monta /api/v1/gd/* con sus
+    # GD-API-0002 — Módulo Gestión Documental. Monta /v1/gd/* con sus
     # sub-routers por épica. Los handlers usan require_gd_perfil para gating;
     # tenants sin perfil GD activo reciben 403 con code claro.
+    # FIX 2026-05-25: prefix `/v1/gd` (antes `/api/v1/gd`) para que el BFF
+    # admin (que reescribe `/admin/api/core/v1/*` → `/v1/*`) encuentre TODOS
+    # los endpoints del módulo, no solo `_health`. Alineado con el resto del
+    # backend (influencer, tenants, platform, contacts también usan `/v1/*`).
     api.include_router(gd_router)
-    # GD-WIRE-01 — alias `/v1/gd/_health` accesible vía el BFF
-    # `admin_core_api_proxy` (que strippea `/admin/api/core/` y forwardea
-    # a upstream sin el prefijo `/api`). Sin este alias, el frontend
-    # `isGdEnabled` recibe 404 y el item "Gestión Documental" no aparece
-    # en el sidebar del tenant. Mismo patrón que `/v1/influencer/_health`.
-    api.include_router(gd_router_health_alias)
-    # EP-018 — servicio transversal /api/v1/core/* (archivos compartido).
+    # EP-018 — servicio transversal /v1/core/* (archivos compartido).
     api.include_router(gd_router_core)
     # GD-API-0122 — endpoint público SIN auth para verificación QR
     # constancia. Vive en /gd/verificar/{codigo}, NO bajo /api/v1.

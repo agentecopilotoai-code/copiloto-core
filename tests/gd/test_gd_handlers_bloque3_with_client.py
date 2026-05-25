@@ -1,11 +1,11 @@
 """Tests TestClient para los handlers HTTP del bloque 3.
 
 Cubre:
-- /api/v1/gd/organizacion (GET, POST, PATCH)
-- /api/v1/gd/organizacion/modulos (GET, PATCH)
-- /api/v1/gd/dependencias (GET, POST, PATCH, /cerrar-vigencia)
-- /api/v1/gd/estructura/versiones (POST)
-- /api/v1/gd/estructura/vigente, /api/v1/gd/estructura/historica
+- /v1/gd/organizacion (GET, POST, PATCH)
+- /v1/gd/organizacion/modulos (GET, PATCH)
+- /v1/gd/dependencias (GET, POST, PATCH, /cerrar-vigencia)
+- /v1/gd/estructura/versiones (POST)
+- /v1/gd/estructura/vigente, /v1/gd/estructura/historica
 """
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ class TestOrganizacionHandlers:
             'dias_alerta_vencimiento_default': 3,
             'pais_iso': 'CO', 'zona_horaria_default': 'America/Bogota',
         }
-        r = client.get('/api/v1/gd/organizacion')
+        r = client.get('/v1/gd/organizacion')
         assert r.status_code == 200
         body = r.json()
         assert body['tipo_organizacion'] == 'publica'
@@ -107,13 +107,13 @@ class TestOrganizacionHandlers:
             'dias_alerta_vencimiento_default': 3,
             'pais_iso': 'CO', 'zona_horaria_default': 'America/Bogota',
         }
-        r = client.get('/api/v1/gd/organizacion')
+        r = client.get('/v1/gd/organizacion')
         assert r.status_code == 200
         assert r.json()['logo']['archivo_digital_id'] == str(logo_id)
 
     def test_get_perfil_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get('/api/v1/gd/organizacion')
+        r = client.get('/v1/gd/organizacion')
         assert r.status_code == 404
         assert r.json()['detail']['code'] == 'perfil_organizacion_no_existe'
 
@@ -138,7 +138,7 @@ class TestOrganizacionHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            '/api/v1/gd/organizacion',
+            '/v1/gd/organizacion',
             json={
                 'tipo_organizacion': 'privada',
                 'identificacion_fiscal': '111',
@@ -152,7 +152,7 @@ class TestOrganizacionHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/api/v1/gd/organizacion',
+            '/v1/gd/organizacion',
             json={
                 'tipo_organizacion': 'privada',
                 'identificacion_fiscal': '111',
@@ -180,7 +180,7 @@ class TestOrganizacionHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.patch(
-            '/api/v1/gd/organizacion',
+            '/v1/gd/organizacion',
             json={'razon_social_legal': 'Nuevo Nombre Legal'},
         )
         assert r.status_code == 200
@@ -189,7 +189,7 @@ class TestOrganizacionHandlers:
     def test_patch_perfil_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.patch(
-            '/api/v1/gd/organizacion',
+            '/v1/gd/organizacion',
             json={'razon_social_legal': 'Nuevo Nombre Legal'},
         )
         assert r.status_code == 404
@@ -203,7 +203,7 @@ class TestModulosHandlers:
         conn.fetch.return_value = [
             {'modulo_codigo': 'pqrsd_legal', 'activado': True, 'configuracion': None},
         ]
-        r = client.get('/api/v1/gd/organizacion/modulos')
+        r = client.get('/v1/gd/organizacion/modulos')
         assert r.status_code == 200
         body = r.json()
         # Lista canónica devuelve siempre 14.
@@ -216,7 +216,7 @@ class TestModulosHandlers:
         ]
         conn.fetchrow.return_value = {'id': uuid4()}  # audit
         r = client.patch(
-            '/api/v1/gd/organizacion/modulos',
+            '/v1/gd/organizacion/modulos',
             json={
                 'modulos': [
                     {'modulo_codigo': 'pqrsd_legal', 'activado': False},
@@ -241,7 +241,7 @@ class TestDependenciasHandlers:
                 'fecha_fin_vigencia': None,
             }
         ]
-        r = client.get('/api/v1/gd/dependencias')
+        r = client.get('/v1/gd/dependencias')
         assert r.status_code == 200
         assert len(r.json()['items']) == 1
 
@@ -265,7 +265,7 @@ class TestDependenciasHandlers:
                 'fecha_fin_vigencia': None,
             },
         ]
-        r = client.get('/api/v1/gd/dependencias?incluir_jerarquia=true')
+        r = client.get('/v1/gd/dependencias?incluir_jerarquia=true')
         assert r.status_code == 200
         body = r.json()
         assert 'raiz' in body
@@ -286,7 +286,7 @@ class TestDependenciasHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            '/api/v1/gd/dependencias',
+            '/v1/gd/dependencias',
             json={
                 'codigo_organico': 'JUR-001',
                 'nombre': 'Oficina Jurídica',
@@ -300,7 +300,7 @@ class TestDependenciasHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/api/v1/gd/dependencias',
+            '/v1/gd/dependencias',
             json={
                 'codigo_organico': 'JUR-001',
                 'nombre': 'Jurídica',
@@ -315,7 +315,7 @@ class TestDependenciasHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.ForeignKeyViolationError
         r = client.post(
-            '/api/v1/gd/dependencias',
+            '/v1/gd/dependencias',
             json={
                 'codigo_organico': 'JUR-001',
                 'nombre': 'Jurídica',
@@ -339,7 +339,7 @@ class TestDependenciasHandlers:
             {'id': uuid4()},
         ]
         r = client.patch(
-            f'/api/v1/gd/dependencias/{uuid4()}',
+            f'/v1/gd/dependencias/{uuid4()}',
             json={'nombre': 'Jurídica Renombrada'},
         )
         assert r.status_code == 200
@@ -347,7 +347,7 @@ class TestDependenciasHandlers:
     def test_patch_dependencia_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.patch(
-            f'/api/v1/gd/dependencias/{uuid4()}',
+            f'/v1/gd/dependencias/{uuid4()}',
             json={'nombre': 'Jurídica Nueva Larga'},
         )
         assert r.status_code == 404
@@ -365,7 +365,7 @@ class TestDependenciasHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            f'/api/v1/gd/dependencias/{uuid4()}/cerrar-vigencia',
+            f'/v1/gd/dependencias/{uuid4()}/cerrar-vigencia',
             json={
                 'motivo': 'Reestructura administrativa',
                 'fecha_fin': '2026-06-30',
@@ -377,7 +377,7 @@ class TestDependenciasHandlers:
     def test_cerrar_vigencia_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/dependencias/{uuid4()}/cerrar-vigencia',
+            f'/v1/gd/dependencias/{uuid4()}/cerrar-vigencia',
             json={
                 'motivo': 'Razón válida suficientemente larga',
                 'fecha_fin': '2026-06-30',
@@ -404,7 +404,7 @@ class TestEstructuraHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            '/api/v1/gd/estructura/versiones',
+            '/v1/gd/estructura/versiones',
             json={
                 'numero_version': 'v1.0',
                 'fecha_inicio_vigencia': '2026-01-01',
@@ -416,7 +416,7 @@ class TestEstructuraHandlers:
         import asyncpg
         conn.fetchrow.side_effect = [None, asyncpg.UniqueViolationError]
         r = client.post(
-            '/api/v1/gd/estructura/versiones',
+            '/v1/gd/estructura/versiones',
             json={
                 'numero_version': 'v1.0',
                 'fecha_inicio_vigencia': '2026-01-01',
@@ -431,13 +431,13 @@ class TestEstructuraHandlers:
             'fecha_inicio_vigencia': date(2026, 1, 1),
             'dependencias_count': 12,
         }
-        r = client.get('/api/v1/gd/estructura/vigente')
+        r = client.get('/v1/gd/estructura/vigente')
         assert r.status_code == 200
         assert r.json()['dependencias_count'] == 12
 
     def test_get_vigente_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get('/api/v1/gd/estructura/vigente')
+        r = client.get('/v1/gd/estructura/vigente')
         assert r.status_code == 404
 
     def test_get_historica_ok(self, conn, client):
@@ -447,11 +447,11 @@ class TestEstructuraHandlers:
             'fecha_inicio_vigencia': date(2024, 1, 1),
             'dependencias_count': 30,
         }
-        r = client.get('/api/v1/gd/estructura/historica?fecha=2024-06-15')
+        r = client.get('/v1/gd/estructura/historica?fecha=2024-06-15')
         assert r.status_code == 200
         assert r.json()['numero_version'] == 'v0.9'
 
     def test_get_historica_sin_resultado(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get('/api/v1/gd/estructura/historica?fecha=2020-01-01')
+        r = client.get('/v1/gd/estructura/historica?fecha=2020-01-01')
         assert r.status_code == 404

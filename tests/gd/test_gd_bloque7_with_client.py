@@ -67,13 +67,13 @@ class TestAlertasHandlers:
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchrow.return_value = {'total': 0, 'criticas': 0}
-        r = client.get('/api/v1/gd/alertas')
+        r = client.get('/v1/gd/alertas')
         assert r.status_code == 200
 
     def test_listar_solo_mis_false(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchrow.return_value = {'total': 0, 'criticas': 0}
-        r = client.get('/api/v1/gd/alertas?solo_mis=false&estado=activa&severidad=critica')
+        r = client.get('/v1/gd/alertas?solo_mis=false&estado=activa&severidad=critica')
         assert r.status_code == 200
 
     def test_escalar_ok(self, conn, client):
@@ -89,7 +89,7 @@ class TestAlertasHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/alertas/{uuid4()}/escalar',
+            f'/v1/gd/alertas/{uuid4()}/escalar',
             json={'user_destino_id': str(uuid4()), 'motivo': 'Escalación urgente'},
         )
         assert r.status_code == 200
@@ -97,7 +97,7 @@ class TestAlertasHandlers:
     def test_escalar_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/alertas/{uuid4()}/escalar',
+            f'/v1/gd/alertas/{uuid4()}/escalar',
             json={'user_destino_id': str(uuid4()), 'motivo': 'Escalación urgente'},
         )
         assert r.status_code == 404
@@ -115,7 +115,7 @@ class TestAlertasHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            f'/api/v1/gd/alertas/{uuid4()}/marcar-gestionada',
+            f'/v1/gd/alertas/{uuid4()}/marcar-gestionada',
             json={'observacion': 'OK gestionada'},
         )
         assert r.status_code == 200
@@ -123,7 +123,7 @@ class TestAlertasHandlers:
     def test_marcar_gestionada_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/alertas/{uuid4()}/marcar-gestionada',
+            f'/v1/gd/alertas/{uuid4()}/marcar-gestionada',
             json={},
         )
         assert r.status_code == 404
@@ -136,7 +136,7 @@ class TestPqrsdHandlers:
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchrow.return_value = {'c': 0}
-        r = client.get('/api/v1/gd/pqrsd')
+        r = client.get('/v1/gd/pqrsd')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
@@ -153,7 +153,7 @@ class TestPqrsdHandlers:
         ]
         conn.fetchrow.return_value = {'c': 1}
         r = client.get(
-            f'/api/v1/gd/pqrsd?estado=nueva,asignada&dependencia_id={uuid4()}'
+            f'/v1/gd/pqrsd?estado=nueva,asignada&dependencia_id={uuid4()}'
             f'&usuario_id={uuid4()}'
         )
         assert r.status_code == 200
@@ -169,12 +169,12 @@ class TestPqrsdHandlers:
             'fecha_limite_respuesta': None,
             'estado': 'nueva', 'prioridad': 'normal', 'reserva': False,
         }
-        r = client.get(f'/api/v1/gd/pqrsd/{uuid4()}')
+        r = client.get(f'/v1/gd/pqrsd/{uuid4()}')
         assert r.status_code == 200
 
     def test_obtener_pqrsd_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/pqrsd/{uuid4()}')
+        r = client.get(f'/v1/gd/pqrsd/{uuid4()}')
         assert r.status_code == 404
 
     def test_asignar_dependencia_ok(self, conn, client):
@@ -190,7 +190,7 @@ class TestPqrsdHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/asignar-dependencia',
+            f'/v1/gd/pqrsd/{uuid4()}/asignar-dependencia',
             json={'dependencia_id': str(uuid4())},
         )
         assert r.status_code == 201
@@ -198,7 +198,7 @@ class TestPqrsdHandlers:
     def test_asignar_dependencia_pqrsd_no_existe(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/asignar-dependencia',
+            f'/v1/gd/pqrsd/{uuid4()}/asignar-dependencia',
             json={'dependencia_id': str(uuid4())},
         )
         assert r.status_code == 404
@@ -206,7 +206,7 @@ class TestPqrsdHandlers:
     def test_asignar_funcionario_inactivo(self, conn, client):
         conn.fetchval.return_value = 'inactivo'
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/asignar-funcionario',
+            f'/v1/gd/pqrsd/{uuid4()}/asignar-funcionario',
             json={'usuario_id': str(uuid4())},
         )
         assert r.status_code == 422
@@ -224,7 +224,7 @@ class TestPqrsdHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/asignar-funcionario',
+            f'/v1/gd/pqrsd/{uuid4()}/asignar-funcionario',
             json={'usuario_id': str(uuid4())},
         )
         assert r.status_code == 201
@@ -232,14 +232,14 @@ class TestPqrsdHandlers:
     def test_asignar_funcionario_pqrsd_no_existe(self, conn, client):
         conn.fetchval.side_effect = ['activo', None]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/asignar-funcionario',
+            f'/v1/gd/pqrsd/{uuid4()}/asignar-funcionario',
             json={'usuario_id': str(uuid4())},
         )
         assert r.status_code == 404
 
     def test_reasignar_sin_destino(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/reasignar',
+            f'/v1/gd/pqrsd/{uuid4()}/reasignar',
             json={'motivo': 'Motivo válido suficientemente largo'},
         )
         assert r.status_code == 422
@@ -247,7 +247,7 @@ class TestPqrsdHandlers:
     def test_reasignar_destino_inactivo(self, conn, client):
         conn.fetchval.return_value = 'inactivo'
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/reasignar',
+            f'/v1/gd/pqrsd/{uuid4()}/reasignar',
             json={
                 'usuario_id': str(uuid4()),
                 'motivo': 'Reasignación operativa',
@@ -268,7 +268,7 @@ class TestPqrsdHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/reasignar',
+            f'/v1/gd/pqrsd/{uuid4()}/reasignar',
             json={
                 'usuario_id': str(uuid4()),
                 'motivo': 'Reasignación operativa',
@@ -282,7 +282,7 @@ class TestPqrsdHandlers:
         # que debe retornar None para indicar pqrsd no existe.
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/reasignar',
+            f'/v1/gd/pqrsd/{uuid4()}/reasignar',
             json={
                 'dependencia_id': str(uuid4()),
                 'motivo': 'Motivo válido suficientemente largo',
@@ -292,7 +292,7 @@ class TestPqrsdHandlers:
 
     def test_proyectar_respuesta_sin_contenido(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/respuestas',
+            f'/v1/gd/pqrsd/{uuid4()}/respuestas',
             json={},
         )
         assert r.status_code == 422
@@ -316,7 +316,7 @@ class TestPqrsdHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/respuestas',
+            f'/v1/gd/pqrsd/{uuid4()}/respuestas',
             json={'contenido_borrador': 'Borrador de respuesta test'},
         )
         assert r.status_code == 201
@@ -324,7 +324,7 @@ class TestPqrsdHandlers:
     def test_proyectar_respuesta_pqrsd_no_existe(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/respuestas',
+            f'/v1/gd/pqrsd/{uuid4()}/respuestas',
             json={'contenido_borrador': 'X'},
         )
         assert r.status_code == 404
@@ -343,7 +343,7 @@ class TestPqrsdHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/suspender-termino',
+            f'/v1/gd/pqrsd/{uuid4()}/suspender-termino',
             json={'motivo': 'Solicitud info adicional ciudadano'},
         )
         assert r.status_code == 200
@@ -351,7 +351,7 @@ class TestPqrsdHandlers:
     def test_suspender_termino_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/suspender-termino',
+            f'/v1/gd/pqrsd/{uuid4()}/suspender-termino',
             json={'motivo': 'Solicitud info adicional ciudadano'},
         )
         assert r.status_code == 404
@@ -372,7 +372,7 @@ class TestPqrsdHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/reanudar-termino',
+            f'/v1/gd/pqrsd/{uuid4()}/reanudar-termino',
             json={'motivo': 'Reanudación luego de info adicional'},
         )
         assert r.status_code == 200
@@ -380,7 +380,7 @@ class TestPqrsdHandlers:
     def test_reanudar_termino_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/reanudar-termino',
+            f'/v1/gd/pqrsd/{uuid4()}/reanudar-termino',
             json={'motivo': 'Reanudación operativa'},
         )
         assert r.status_code == 404
@@ -398,13 +398,13 @@ class TestPqrsdHandlers:
             'fecha_limite_respuesta': datetime.now(),
             'estado': 'nueva', 'prioridad': 'normal', 'reserva': False,
         }
-        r = client.get(f'/api/v1/gd/pqrsd/{uuid4()}/historial-terminos')
+        r = client.get(f'/v1/gd/pqrsd/{uuid4()}/historial-terminos')
         assert r.status_code == 200
 
     def test_historial_terminos_pqrsd_no_existe(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/pqrsd/{uuid4()}/historial-terminos')
+        r = client.get(f'/v1/gd/pqrsd/{uuid4()}/historial-terminos')
         assert r.status_code == 404
 
 
@@ -462,7 +462,7 @@ class TestHookReactivoPqrsd:
             {'id': uuid4()},  # audit PQRSDCreada
         ]
         r = client.post(
-            f'/api/v1/gd/ventanilla/radicados/{radicado_id}/clasificar',
+            f'/v1/gd/ventanilla/radicados/{radicado_id}/clasificar',
             json={
                 'tipo_clasificacion': 'pqrsd',
                 'sub_tipo': 'peticion',

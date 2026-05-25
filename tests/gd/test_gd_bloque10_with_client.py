@@ -106,7 +106,7 @@ class TestDocumentosHandlers:
             _doc_dict(version_vigente_id=ver_id),
         ]
         r = client.post(
-            '/api/v1/gd/documentos',
+            '/v1/gd/documentos',
             json={
                 'titulo': 'Mi documento',
                 'archivo_digital_id': str(uuid4()),
@@ -119,7 +119,7 @@ class TestDocumentosHandlers:
 
     def test_crear_415_mime(self, conn, client):
         r = client.post(
-            '/api/v1/gd/documentos',
+            '/v1/gd/documentos',
             json={
                 'titulo': 'Mi documento',
                 'archivo_digital_id': str(uuid4()),
@@ -131,7 +131,7 @@ class TestDocumentosHandlers:
 
     def test_crear_413_tamano(self, conn, client):
         r = client.post(
-            '/api/v1/gd/documentos',
+            '/v1/gd/documentos',
             json={
                 'titulo': 'Mi documento',
                 'archivo_digital_id': str(uuid4()),
@@ -144,14 +144,14 @@ class TestDocumentosHandlers:
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
-        r = client.get('/api/v1/gd/documentos')
+        r = client.get('/v1/gd/documentos')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
         r = client.get(
-            '/api/v1/gd/documentos?estado=activo&clasificacion=publica,interna'
+            '/v1/gd/documentos?estado=activo&clasificacion=publica,interna'
             '&trd_serie=S1&q=test&limit=10',
         )
         assert r.status_code == 200
@@ -159,12 +159,12 @@ class TestDocumentosHandlers:
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _doc_dict()
         conn.fetch.return_value = [_ver_dict()]
-        r = client.get(f'/api/v1/gd/documentos/{uuid4()}')
+        r = client.get(f'/v1/gd/documentos/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/documentos/{uuid4()}')
+        r = client.get(f'/v1/gd/documentos/{uuid4()}')
         assert r.status_code == 404
 
     def test_nueva_version_ok(self, conn, client):
@@ -173,7 +173,7 @@ class TestDocumentosHandlers:
             _ver_dict(numero=2),
         ]
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/versiones',
+            f'/v1/gd/documentos/{uuid4()}/versiones',
             json={
                 'archivo_digital_id': str(uuid4()),
                 'mime_type': 'application/pdf',
@@ -185,7 +185,7 @@ class TestDocumentosHandlers:
     def test_nueva_version_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/versiones',
+            f'/v1/gd/documentos/{uuid4()}/versiones',
             json={'archivo_digital_id': str(uuid4())},
         )
         assert r.status_code == 404
@@ -194,14 +194,14 @@ class TestDocumentosHandlers:
         conn.fetchrow.return_value = {'estado': 'anulado',
                                        'numero_version_vigente': 1}
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/versiones',
+            f'/v1/gd/documentos/{uuid4()}/versiones',
             json={'archivo_digital_id': str(uuid4())},
         )
         assert r.status_code == 409
 
     def test_nueva_version_415(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/versiones',
+            f'/v1/gd/documentos/{uuid4()}/versiones',
             json={
                 'archivo_digital_id': str(uuid4()),
                 'mime_type': 'application/x-exe',
@@ -211,7 +211,7 @@ class TestDocumentosHandlers:
 
     def test_listar_versiones(self, conn, client):
         conn.fetch.return_value = [_ver_dict(numero=2), _ver_dict(numero=1)]
-        r = client.get(f'/api/v1/gd/documentos/{uuid4()}/versiones')
+        r = client.get(f'/v1/gd/documentos/{uuid4()}/versiones')
         assert r.status_code == 200
         assert len(r.json()) == 2
 
@@ -222,7 +222,7 @@ class TestDocumentosHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/anular',
+            f'/v1/gd/documentos/{uuid4()}/anular',
             json={'motivo': 'duplicado por error'},
         )
         assert r.status_code == 200
@@ -230,7 +230,7 @@ class TestDocumentosHandlers:
     def test_anular_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/anular',
+            f'/v1/gd/documentos/{uuid4()}/anular',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 404
@@ -238,7 +238,7 @@ class TestDocumentosHandlers:
     def test_anular_409(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'anulado'}
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/anular',
+            f'/v1/gd/documentos/{uuid4()}/anular',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 409
@@ -250,7 +250,7 @@ class TestDocumentosHandlers:
             _ver_dict(numero=2),
         ]
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/reemplazar',
+            f'/v1/gd/documentos/{uuid4()}/reemplazar',
             json={
                 'archivo_digital_id': str(uuid4()),
                 'motivo': 'nueva versión final',
@@ -263,14 +263,14 @@ class TestDocumentosHandlers:
     def test_reemplazar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/reemplazar',
+            f'/v1/gd/documentos/{uuid4()}/reemplazar',
             json={'archivo_digital_id': str(uuid4()), 'motivo': 'XXXXX'},
         )
         assert r.status_code == 404
 
     def test_reemplazar_415(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/reemplazar',
+            f'/v1/gd/documentos/{uuid4()}/reemplazar',
             json={
                 'archivo_digital_id': str(uuid4()),
                 'motivo': 'XXXXX',
@@ -288,7 +288,7 @@ class TestDocumentosHandlers:
             'created_at': datetime.now(),
         }
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/relacionar',
+            f'/v1/gd/documentos/{uuid4()}/relacionar',
             json={
                 'entidad_tipo': 'radicado',
                 'entidad_id': str(uuid4()),
@@ -300,7 +300,7 @@ class TestDocumentosHandlers:
     def test_relacionar_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/documentos/{uuid4()}/relacionar',
+            f'/v1/gd/documentos/{uuid4()}/relacionar',
             json={
                 'entidad_tipo': 'pqrsd',
                 'entidad_id': str(uuid4()),
@@ -323,7 +323,7 @@ class TestAnexosHandlers:
             'creado_por_user_id': uuid4(), 'created_at': datetime.now(),
         }
         r = client.post(
-            '/api/v1/gd/anexos',
+            '/v1/gd/anexos',
             json={
                 'archivo_digital_id': str(uuid4()),
                 'entidad_relacionada_tipo': 'pqrsd',
@@ -338,14 +338,14 @@ class TestAnexosHandlers:
     def test_listar_anexos(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
-        r = client.get('/api/v1/gd/anexos')
+        r = client.get('/v1/gd/anexos')
         assert r.status_code == 200
 
     def test_listar_anexos_filtrado(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
         r = client.get(
-            f'/api/v1/gd/anexos?entidad_tipo=radicado&entidad_id={uuid4()}',
+            f'/v1/gd/anexos?entidad_tipo=radicado&entidad_id={uuid4()}',
         )
         assert r.status_code == 200
 
@@ -360,7 +360,7 @@ class TestDescargaHandler:
             'clasificacion_informacion': 'interna',
         }
         r = client.post(
-            f'/api/v1/gd/archivos/{uuid4()}/descargar',
+            f'/v1/gd/archivos/{uuid4()}/descargar',
         )
         assert r.status_code == 200, r.text
         assert r.json()['clasificacion_informacion'] == 'interna'
@@ -374,7 +374,7 @@ class TestDescargaHandler:
              'clasificacion_informacion': 'reservada'},
         ]
         r = client.post(
-            f'/api/v1/gd/archivos/{uuid4()}/descargar'
+            f'/v1/gd/archivos/{uuid4()}/descargar'
             f'?documento_id={uuid4()}',
         )
         assert r.status_code == 200
@@ -383,7 +383,7 @@ class TestDescargaHandler:
     def test_descargar_documento_no_existe(self, conn, client):
         conn.fetchrow.return_value = None  # documento no existe
         r = client.post(
-            f'/api/v1/gd/archivos/{uuid4()}/descargar'
+            f'/v1/gd/archivos/{uuid4()}/descargar'
             f'?documento_id={uuid4()}',
         )
         assert r.status_code == 404

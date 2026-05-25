@@ -25,6 +25,8 @@ from uuid import UUID
 import asyncpg
 from fastapi import Depends, HTTPException, Request, status
 
+from app.core.identity import resolve_user_id_from_request
+from app.core.security import authenticate_request
 from app.db.pool import get_db
 
 
@@ -91,15 +93,24 @@ async def _load_perfil(
 
 async def require_gd_perfil(
     request: Request,
+    # `_auth` ANTES de `conn` — fuerza a FastAPI a resolver
+    # `authenticate_request` PRIMERO, lo que setea
+    # `request.state.user_id` + `request.state.tenant_id`. Sin esta
+    # dep explícita, los handlers que solo declaran
+    # `Depends(require_gd_perfil)` (la mayoría) entraban acá con
+    # `request.state.user_id = None` → 401 espurio aunque el JWT y la
+    # cookie de support_mode fueran válidos. Mismo patrón que usamos en
+    # `ensure_gd_module_enabled` (gate de módulo).
+    _auth: None = Depends(authenticate_request),
     conn: asyncpg.Connection = Depends(get_db),  # noqa: B008 — FastAPI dependency pattern
 ) -> GdPerfilContext:
     """FastAPI dependency: exige perfil GD activo en el tenant.
 
     Cómo se obtiene `user_id` y `tenant_id` de la request:
-    - `request.state.user_id`: lo setea el middleware Auth0/JWT del producto
-      principal (ver `app/core/security.py:authenticate_request`).
-    - `request.state.tenant_id`: lo setea el mismo middleware al resolver el
-      header `X-Tenant-Id` contra el JWT.
+    - `request.state.user_id`: lo setea `authenticate_request` (declarado
+      arriba como dep explícita) al validar el JWT del session cookie.
+    - `request.state.tenant_id`: lo setea la misma dep al resolver el
+      header `X-Tenant-Id` (o el `tid` del cookie de support_mode).
 
     Raises:
         HTTPException 401: si la request no tiene contexto de usuario/tenant
@@ -109,15 +120,44 @@ async def require_gd_perfil(
           usuario el mensaje "Solicite a su administrador activarlo en
           Gestión Documental".
     """
-    user_id: UUID | None = getattr(request.state, 'user_id', None)
     tenant_id: UUID | None = getattr(request.state, 'tenant_id', None)
+    actor_id = getattr(request.state, 'actor_id', None)
+
+    # `authenticate_request` setea `actor_id` con el `sub` Auth0 (string
+    # como 'google-oauth2|...'), NO el UUID interno de `app.users`. El
+    # helper transversal `resolve_user_id_from_request` mapea uno al
+    # otro y cachea en `request.state.user_id`. Mismo patrón usado en
+    # influencer/admin_routes — ahora unificado en `app.core.identity`.
+    user_id: UUID | None = await resolve_user_id_from_request(request, conn)
+
     if user_id is None or tenant_id is None:
         # Defensive — el middleware Auth0 debió haber rechazado antes.
+        # Mensaje DIAGNÓSTICO: identifica EXACTAMENTE qué falta. Útil
+        # para que clientes (frontend, curl) vean si el problema es
+        # auth (sin JWT), tenant (sin X-Tenant-Id), o registro (Auth0
+        # `sub` no mapea a un user en `app.users`).
+        missing = []
+        if actor_id is None:
+            missing.append('actor_id (Authorization header / JWT)')
+        if tenant_id is None:
+            missing.append('tenant_id (X-Tenant-Id header)')
+        if actor_id is not None and user_id is None:
+            missing.append(
+                f"user_id (no hay usuario en app.users con auth_subject={actor_id!r})"
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
                 'error': 'unauthenticated',
                 'message': 'Token o tenant no resuelto.',
+                'missing': missing,
+                # Debug-friendly: el cliente puede ver qué LLEGÓ al backend
+                # vs qué se esperaba. NO incluye el JWT — solo metadata.
+                'received': {
+                    'has_actor_id': actor_id is not None,
+                    'has_tenant_id': tenant_id is not None,
+                    'has_user_id': user_id is not None,
+                },
             },
         )
 

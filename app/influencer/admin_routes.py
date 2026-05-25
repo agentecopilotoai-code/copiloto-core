@@ -747,6 +747,11 @@ async def _run_smoke_call(provider, modality: str, body: TestProviderRequest) ->
 
 
 from app.influencer import _cache_invalidate as _module_gate_cache_invalidate  # noqa: E402
+from app.gd import (  # noqa: E402
+    MODULE_NAME as _GD_MODULE_NAME,
+    _cache_invalidate as _gd_module_gate_cache_invalidate,
+)
+from app.gd.bootstrap import bootstrap_gd_for_tenant  # noqa: E402
 
 
 _REQUIRED_MODALITIES_FOR_INFLUENCER = ('llm', 'image')
@@ -952,12 +957,47 @@ async def update_tenant_module(
                 f'module {module!r} not in CHECK constraint: {exc}',
             ) from exc
 
+        # Bootstrap automático del módulo Gestión Documental al activarlo.
+        # Diseño: el platform_owner puede activar GD para cualquier tenant.
+        # Sin este hook, los owners del tenant entrarían al módulo "SIN ROL"
+        # porque gd.perfil_usuario y gd.asignacion_alcance estarían vacíos.
+        # Se ejecuta solo en la transición off→on (activated_changed + enabled).
+        # Idempotente — si el tenant se desactiva y reactiva, no duplica filas.
+        # Corre DENTRO de la misma transacción → si falla el bootstrap, el
+        # PATCH entero rollbackea (no quedan modules.enabled=true sin perfiles).
+        gd_bootstrap_metadata: dict | None = None
+        if (
+            activated_changed
+            and body.enabled is True
+            and module == _GD_MODULE_NAME
+        ):
+            gd_bootstrap_metadata = await bootstrap_gd_for_tenant(
+                conn,
+                tenant_id=str(tenant_id),
+                actor_user_id=str(actor_id) if actor_id else None,
+            )
+
         if activated_changed:
             # Audit (sin `notes` — puede contener PII).
             action = (
                 'platform.tenant_module.activated' if body.enabled
                 else 'platform.tenant_module.deactivated'
             )
+            audit_metadata: dict = {
+                'tenant_id': str(tenant_id),
+                'module': module,
+                'enabled': body.enabled,
+                'plan': body.plan,
+                'notes_provided': bool(body.notes),
+            }
+            if gd_bootstrap_metadata is not None:
+                # Solo counters — la lista users_boostrapped puede ser larga.
+                audit_metadata['gd_bootstrap'] = {
+                    'roles_seeded': gd_bootstrap_metadata['roles_seeded'],
+                    'perfiles_creados': gd_bootstrap_metadata['perfiles_creados'],
+                    'asignaciones_creadas': gd_bootstrap_metadata['asignaciones_creadas'],
+                    'users_count': len(gd_bootstrap_metadata['users_boostrapped']),
+                }
             await audit(
                 conn,
                 tenant_id=None,
@@ -973,16 +1013,14 @@ async def update_tenant_module(
                 action=action,
                 entity_type='tenant_module',
                 entity_id=f'{tenant_id}:{module}',
-                metadata={
-                    'tenant_id': str(tenant_id),
-                    'module': module,
-                    'enabled': body.enabled,
-                    'plan': body.plan,
-                    'notes_provided': bool(body.notes),
-                },
+                metadata=audit_metadata,
             )
-            # Invalidate gate cache (mismo worker; otros workers vencen por TTL 5min).
-            _module_gate_cache_invalidate()
+            # Invalidate gate cache del módulo afectado (mismo worker; otros
+            # workers vencen por TTL del cache de cada módulo).
+            if module == _GD_MODULE_NAME:
+                _gd_module_gate_cache_invalidate()
+            else:
+                _module_gate_cache_invalidate()
 
     return TenantModuleRow(
         tenant_id=str(row['tenant_id']),

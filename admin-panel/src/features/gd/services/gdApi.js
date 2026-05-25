@@ -1,9 +1,18 @@
 /**
  * Cliente API del módulo Gestión Documental.
  *
- * Llama a `/api/v1/gd/*`, `/api/v1/core/*` y `/gd/verificar/*` del backend.
- * Reusa el mismo patrón de `coreApi.js` (session.api.baseUrl + JWT) pero la
- * URL base es distinta porque GD no vive bajo `/admin/api/core/v1`.
+ * Llama a los endpoints `/v1/gd/*` del backend FastAPI, pasando por el
+ * BFF del admin-panel server que reescribe `/admin/api/core/v1/*` a
+ * `/v1/*` en el backend. **Mismo prefijo que `coreApi.js`**.
+ *
+ * BUGFIX (2026-05-25): el `DEFAULT_BASE` original era `/api/v1`
+ * (asumía hit directo al backend FastAPI). Pero en deploy local +
+ * Docker el browser solo puede llegar al backend a través del BFF —
+ * `/api/v1/gd/me` pega al admin-panel server, que no conoce ese path,
+ * devuelve 404 silencioso, y la UI muestra "SIN ROL" aunque el user
+ * SÍ tenga perfil + roles en la DB. Misma URL base que coreApi
+ * (`/admin/api/core/v1`) resuelve el problema para TODOS los
+ * endpoints del módulo, no solo `/gd/me`.
  *
  * Convenciones:
  *  - Todos los fetch incluyen `X-Tenant-Id` (resuelto por `session.tenant`).
@@ -12,7 +21,9 @@
  *    para que la UI muestre "Solicite activación al administrador".
  */
 
-const DEFAULT_BASE = '/api/v1';
+import { adminPath } from '../../../services/adminSession.js';
+
+const DEFAULT_BASE = '/admin/api/core/v1';
 
 export class GdNoProfileError extends Error {
   constructor(message = 'gd_profile_missing_or_inactive') {
@@ -42,7 +53,10 @@ function authHeaders(session) {
 
 function gdPath(session, path) {
   const base = session?.api?.gdBaseUrl || DEFAULT_BASE;
-  return `${base}${path}`;
+  // adminPath() prepende `VITE_ADMIN_BACKEND_ORIGIN` cuando el SPA
+  // se sirve desde un origin distinto al admin-panel (dev con vite
+  // server proxy, etc). En el deploy normal devuelve el path tal cual.
+  return adminPath(`${base}${path}`);
 }
 
 async function gdFetch(session, path, { method = 'GET', body, params } = {}) {

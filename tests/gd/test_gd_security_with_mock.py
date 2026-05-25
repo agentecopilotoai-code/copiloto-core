@@ -72,7 +72,7 @@ class TestRequireGdPerfil:
         request = _make_request_state(user_id=None, tenant_id=None)
         conn = AsyncMock()
         with pytest.raises(HTTPException) as exc:
-            await require_gd_perfil(request, conn)
+            await require_gd_perfil(request, _auth=None, conn=conn)
         assert exc.value.status_code == 401
         assert exc.value.detail['error'] == 'unauthenticated'
 
@@ -82,7 +82,7 @@ class TestRequireGdPerfil:
         conn = AsyncMock()
         conn.fetchrow.return_value = None
         with pytest.raises(HTTPException) as exc:
-            await require_gd_perfil(request, conn)
+            await require_gd_perfil(request, _auth=None, conn=conn)
         assert exc.value.status_code == 403
         assert exc.value.detail['code'] == 'gd_profile_missing_or_inactive'
 
@@ -100,7 +100,7 @@ class TestRequireGdPerfil:
             'cargo_actual_id': None,
         }
         with pytest.raises(HTTPException) as exc:
-            await require_gd_perfil(request, conn)
+            await require_gd_perfil(request, _auth=None, conn=conn)
         assert exc.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -118,7 +118,7 @@ class TestRequireGdPerfil:
             'dependencia_actual_id': None,
             'cargo_actual_id': None,
         }
-        perfil = await require_gd_perfil(request, conn)
+        perfil = await require_gd_perfil(request, _auth=None, conn=conn)
         assert perfil.user_id == user_id
         assert perfil.estado_gd == 'activo'
         # Debe cachear en request.state para evitar relectura.

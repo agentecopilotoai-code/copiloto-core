@@ -28,8 +28,13 @@ from app.db.pool import get_db
 # el tenant no contrató/activó el módulo.
 MODULE_NAME: Final[str] = 'gestion_documental'
 
-# Cache TTL — 5 min (mismo que influencer). Activación/desactivación es
-# operación rara (manual del platform_owner) y staleness aceptable.
+# Cache TTL — 5min, mirror del patrón de influencer.
+# El flujo "activar módulo via PATCH → entrar al panel" se resuelve
+# inmediatamente en el worker que recibió el PATCH gracias al hook
+# `_cache_invalidate()` invocado desde `app/influencer/admin_routes.py`
+# (ver `update_tenant_module`). En multi-worker prod los demás workers
+# observan el cambio cuando vence el TTL — aceptable porque la
+# activación es un evento raro (operación de platform_owner).
 _CACHE_TTL_SECONDS: Final[float] = 300.0
 
 # Cache simple en memoria. Key = (tenant_id, module); value = (expires_at, enabled).

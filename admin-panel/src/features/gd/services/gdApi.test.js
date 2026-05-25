@@ -38,8 +38,11 @@ describe('gdApi', () => {
     expect(h['Content-Type']).toBe('application/json');
   });
 
-  it('gdPath usa /api/v1 por default', () => {
-    expect(_internal.gdPath({}, '/gd/me')).toBe('/api/v1/gd/me');
+  it('gdPath usa /admin/api/core/v1 por default (BFF path)', () => {
+    // BUGFIX 2026-05-25: el path va por el BFF del admin-panel, no
+    // directo al backend. Sin esto, `/api/v1/gd/me` pega al admin-panel
+    // server que no lo conoce → 404 → UI muestra "SIN ROL".
+    expect(_internal.gdPath({}, '/gd/me')).toBe('/admin/api/core/v1/gd/me');
   });
 
   it('getMyGdProfile hace GET /gd/me', async () => {
@@ -595,7 +598,7 @@ describe('gdApi — endpoints UI-3..UI-9 smoke', () => {
     await fn({ token: 't' }, ...args);
     expect(globalThis.fetch).toHaveBeenCalled();
     const url = globalThis.fetch.mock.calls[0][0];
-    // Toda llamada usa /api/v1/{gd|core}
-    expect(url).toMatch(/\/api\/v1\//);
+    // Toda llamada va por el BFF: /admin/api/core/v1/{gd|core}
+    expect(url).toMatch(/\/admin\/api\/core\/v1\//);
   });
 });

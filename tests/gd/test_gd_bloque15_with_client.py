@@ -85,14 +85,14 @@ class TestGets:
     def test_radicados_basico(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
-        r = client.get('/api/v1/gd/reportes/radicados')
+        r = client.get('/v1/gd/reportes/radicados')
         assert r.status_code == 200
 
     def test_radicados_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
         r = client.get(
-            '/api/v1/gd/reportes/radicados'
+            '/v1/gd/reportes/radicados'
             f'?desde=2026-01-01T00:00:00&hasta=2026-12-31T23:59:59'
             f'&canal_id={uuid4()}&dependencia_id={uuid4()}'
             '&tipo_radicado=entrada&estado=radicado',
@@ -105,7 +105,7 @@ class TestGets:
             'total_proximas_vencer': 0, 'total_cerradas': 2,
         }
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/reportes/pqrsd')
+        r = client.get('/v1/gd/reportes/pqrsd')
         assert r.status_code == 200
 
     def test_pqrsd_con_filtros(self, conn, client):
@@ -115,7 +115,7 @@ class TestGets:
         }
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/reportes/pqrsd?dependencia_id={uuid4()}'
+            f'/v1/gd/reportes/pqrsd?dependencia_id={uuid4()}'
             '&solo_vencidas=true&solo_proximas_vencer=true&estado=asignada',
         )
         assert r.status_code == 200
@@ -123,52 +123,52 @@ class TestGets:
     def test_correspondencia(self, conn, client):
         conn.fetchval.return_value = 0
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/reportes/correspondencia')
+        r = client.get('/v1/gd/reportes/correspondencia')
         assert r.status_code == 200
 
     def test_correspondencia_con_filtros(self, conn, client):
         conn.fetchval.return_value = 0
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/gd/reportes/correspondencia?tipo=interna'
+            '/v1/gd/reportes/correspondencia?tipo=interna'
             f'&dependencia_id={uuid4()}&estado=enviada',
         )
         assert r.status_code == 200
 
     def test_cargas(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/reportes/cargas')
+        r = client.get('/v1/gd/reportes/cargas')
         assert r.status_code == 200
 
     def test_cargas_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/reportes/cargas?dependencia_id={uuid4()}'
+            f'/v1/gd/reportes/cargas?dependencia_id={uuid4()}'
             f'&user_id={uuid4()}',
         )
         assert r.status_code == 200
 
     def test_uso_ia(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/reportes/uso-ia')
+        r = client.get('/v1/gd/reportes/uso-ia')
         assert r.status_code == 200
 
     def test_uso_ia_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/gd/reportes/uso-ia?tipo_asistencia=clasificacion',
+            '/v1/gd/reportes/uso-ia?tipo_asistencia=clasificacion',
         )
         assert r.status_code == 200
 
     def test_anulaciones(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/reportes/anulaciones')
+        r = client.get('/v1/gd/reportes/anulaciones')
         assert r.status_code == 200
 
     def test_anulaciones_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/gd/reportes/anulaciones'
+            '/v1/gd/reportes/anulaciones'
             '?tipo_entidad=radicado&decision=aprobada',
         )
         assert r.status_code == 200
@@ -176,14 +176,14 @@ class TestGets:
     def test_auditoria(self, conn, client):
         conn.fetchval.return_value = 0
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/reportes/auditoria')
+        r = client.get('/v1/gd/reportes/auditoria')
         assert r.status_code == 200
 
     def test_auditoria_con_filtros(self, conn, client):
         conn.fetchval.return_value = 0
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/reportes/auditoria?usuario_id={uuid4()}'
+            f'/v1/gd/reportes/auditoria?usuario_id={uuid4()}'
             '&entidad_tipo=documento',
         )
         assert r.status_code == 200
@@ -204,7 +204,7 @@ class TestExportar:
     def test_radicados(self, conn, client):
         self._setup_export_mocks(conn, 'radicados')
         r = client.post(
-            '/api/v1/gd/reportes/radicados/exportar',
+            '/v1/gd/reportes/radicados/exportar',
             json={'formato': 'csv', 'filtros': {}},
         )
         assert r.status_code == 201, r.text
@@ -212,14 +212,14 @@ class TestExportar:
     def test_radicados_pdf(self, conn, client):
         self._setup_export_mocks(conn, 'radicados')
         r = client.post(
-            '/api/v1/gd/reportes/radicados/exportar',
+            '/v1/gd/reportes/radicados/exportar',
             json={'formato': 'pdf', 'filtros': {}},
         )
         assert r.status_code == 201
 
     def test_radicados_formato_invalido(self, conn, client):
         r = client.post(
-            '/api/v1/gd/reportes/radicados/exportar',
+            '/v1/gd/reportes/radicados/exportar',
             json={'formato': 'xml', 'filtros': {}},
         )
         # Pydantic Literal rechaza 'xml' → 422
@@ -234,7 +234,7 @@ class TestExportar:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            '/api/v1/gd/reportes/pqrsd/exportar',
+            '/v1/gd/reportes/pqrsd/exportar',
             json={'formato': 'json', 'filtros': {}},
         )
         assert r.status_code == 201
@@ -242,7 +242,7 @@ class TestExportar:
     def test_correspondencia(self, conn, client):
         self._setup_export_mocks(conn, 'correspondencia')
         r = client.post(
-            '/api/v1/gd/reportes/correspondencia/exportar',
+            '/v1/gd/reportes/correspondencia/exportar',
             json={'formato': 'csv', 'filtros': {}},
         )
         assert r.status_code == 201
@@ -253,7 +253,7 @@ class TestExportar:
             tipo_reporte='cargas_trabajo',
         )
         r = client.post(
-            '/api/v1/gd/reportes/cargas/exportar',
+            '/v1/gd/reportes/cargas/exportar',
             json={'formato': 'csv', 'filtros': {}},
         )
         assert r.status_code == 201
@@ -262,7 +262,7 @@ class TestExportar:
         conn.fetch.return_value = []
         conn.fetchrow.return_value = _reporte_gen_dict(tipo_reporte='uso_ia')
         r = client.post(
-            '/api/v1/gd/reportes/uso-ia/exportar',
+            '/v1/gd/reportes/uso-ia/exportar',
             json={'formato': 'excel', 'filtros': {}},
         )
         assert r.status_code == 201
@@ -273,7 +273,7 @@ class TestExportar:
             tipo_reporte='anulaciones_reasignaciones',
         )
         r = client.post(
-            '/api/v1/gd/reportes/anulaciones/exportar',
+            '/v1/gd/reportes/anulaciones/exportar',
             json={'formato': 'csv', 'filtros': {}},
         )
         assert r.status_code == 201
@@ -286,7 +286,7 @@ class TestExportar:
             contiene_datos_sensibles=True,
         )
         r = client.post(
-            '/api/v1/gd/reportes/auditoria/exportar',
+            '/v1/gd/reportes/auditoria/exportar',
             json={'formato': 'csv', 'filtros': {}},
         )
         assert r.status_code == 201
@@ -299,23 +299,23 @@ class TestExportar:
 class TestLectura:
     def test_listar_generados(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/reportes/generados')
+        r = client.get('/v1/gd/reportes/generados')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/reportes/generados?tipo_reporte=radicados'
+            f'/v1/gd/reportes/generados?tipo_reporte=radicados'
             f'&generado_por_user_id={uuid4()}&limit=10',
         )
         assert r.status_code == 200
 
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _reporte_gen_dict()
-        r = client.get(f'/api/v1/gd/reportes/generados/{uuid4()}')
+        r = client.get(f'/v1/gd/reportes/generados/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/reportes/generados/{uuid4()}')
+        r = client.get(f'/v1/gd/reportes/generados/{uuid4()}')
         assert r.status_code == 404

@@ -89,13 +89,13 @@ def _evento_dict(**extra):
 class TestAuditoriaHandlers:
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/core/auditoria')
+        r = client.get('/v1/core/auditoria')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/core/auditoria?dominio=gd&tipo_evento=X'
+            '/v1/core/auditoria?dominio=gd&tipo_evento=X'
             f'&actor_id={uuid4()}&entidad_tipo=radicado'
             f'&entidad_id={uuid4()}&criticidad=alta&limit=20',
         )
@@ -103,29 +103,29 @@ class TestAuditoriaHandlers:
 
     def test_catalogo(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/core/auditoria/catalogo-eventos')
+        r = client.get('/v1/core/auditoria/catalogo-eventos')
         assert r.status_code == 200
 
     def test_catalogo_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/core/auditoria/catalogo-eventos?dominio=gd&activo=true',
+            '/v1/core/auditoria/catalogo-eventos?dominio=gd&activo=true',
         )
         assert r.status_code == 200
 
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _evento_dict()
-        r = client.get(f'/api/v1/core/auditoria/{uuid4()}')
+        r = client.get(f'/v1/core/auditoria/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_alta_emite_meta(self, conn, client):
         conn.fetchrow.return_value = _evento_dict(criticidad='alta')
-        r = client.get(f'/api/v1/core/auditoria/{uuid4()}')
+        r = client.get(f'/v1/core/auditoria/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/core/auditoria/{uuid4()}')
+        r = client.get(f'/v1/core/auditoria/{uuid4()}')
         assert r.status_code == 404
 
 
@@ -165,7 +165,7 @@ class TestConstanciaPublica:
             'exposicion_publica': True,
         }
         r = client.post(
-            f'/api/v1/gd/radicados/{uuid4()}/constancias',
+            f'/v1/gd/radicados/{uuid4()}/constancias',
         )
         assert r.status_code == 201
 
@@ -176,24 +176,24 @@ class TestConstanciaPublica:
 class TestTiposDocHandlers:
     def test_catalogo_sin_filtros(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/catalogos/tipos-documento')
+        r = client.get('/v1/gd/catalogos/tipos-documento')
         assert r.status_code == 200
 
     def test_catalogo_con_pais(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/catalogos/tipos-documento?pais_iso=co')
+        r = client.get('/v1/gd/catalogos/tipos-documento?pais_iso=co')
         assert r.status_code == 200
 
     def test_org_listar(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/organizacion/tipos-documento')
+        r = client.get('/v1/gd/organizacion/tipos-documento')
         assert r.status_code == 200
 
     def test_patch_ok(self, conn, client):
         conn.fetchval.return_value = 1
         conn.fetch.return_value = []
         r = client.patch(
-            '/api/v1/gd/organizacion/tipos-documento',
+            '/v1/gd/organizacion/tipos-documento',
             json={'codigos_activos': ['CC', 'CE'],
                   'codigo_default': 'CC'},
         )
@@ -201,7 +201,7 @@ class TestTiposDocHandlers:
 
     def test_patch_default_invalido(self, conn, client):
         r = client.patch(
-            '/api/v1/gd/organizacion/tipos-documento',
+            '/v1/gd/organizacion/tipos-documento',
             json={'codigos_activos': ['CC'], 'codigo_default': 'NIT'},
         )
         assert r.status_code == 409
@@ -209,7 +209,7 @@ class TestTiposDocHandlers:
     def test_patch_codigo_no_existe(self, conn, client):
         conn.fetchval.return_value = None
         r = client.patch(
-            '/api/v1/gd/organizacion/tipos-documento',
+            '/v1/gd/organizacion/tipos-documento',
             json={'codigos_activos': ['INEXISTENTE'],
                   'codigo_default': None},
         )
@@ -223,7 +223,7 @@ class TestCambiosDepHandlers:
     def test_historial(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/estructura/dependencias/{uuid4()}/historial',
+            f'/v1/gd/estructura/dependencias/{uuid4()}/historial',
         )
         assert r.status_code == 200
 
@@ -233,7 +233,7 @@ class TestCambiosDepHandlers:
             {'id': uuid4()}, {'id': uuid4()}, {'id': uuid4()},
         ]
         r = client.post(
-            '/api/v1/gd/estructura/fusionar',
+            '/v1/gd/estructura/fusionar',
             json={
                 'dependencias_origen': [str(uuid4()), str(uuid4())],
                 'dependencia_destino_id': str(uuid4()),
@@ -246,7 +246,7 @@ class TestCambiosDepHandlers:
     def test_fusionar_destino_no_existe(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            '/api/v1/gd/estructura/fusionar',
+            '/v1/gd/estructura/fusionar',
             json={
                 'dependencias_origen': [str(uuid4())],
                 'dependencia_destino_id': str(uuid4()),
@@ -271,7 +271,7 @@ class TestContingenciaHandler:
             'created_at': datetime.now(),
         }
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/contingencia',
+            '/v1/gd/ventanilla/radicados/contingencia',
             json={
                 'numero_radicado_manual': 'MANUAL-001',
                 'fecha_radicacion_real': '2026-05-23T10:00:00',
@@ -291,7 +291,7 @@ class TestContingenciaHandler:
 class TestHojaControlHandlers:
     def test_get_hoja_control(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get(f'/api/v1/gd/expedientes/{uuid4()}/hoja-control')
+        r = client.get(f'/v1/gd/expedientes/{uuid4()}/hoja-control')
         assert r.status_code == 200
 
     def test_generar_indice_ok(self, conn, client):
@@ -304,13 +304,13 @@ class TestHojaControlHandlers:
             'contenido_jsonb': {}, 'hash_sha256': 'abc',
         }
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/indice-electronico',
+            f'/v1/gd/expedientes/{uuid4()}/indice-electronico',
         )
         assert r.status_code == 201
 
     def test_generar_indice_expediente_no_existe(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/expedientes/{uuid4()}/indice-electronico',
+            f'/v1/gd/expedientes/{uuid4()}/indice-electronico',
         )
         assert r.status_code == 404

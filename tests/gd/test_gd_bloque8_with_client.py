@@ -118,7 +118,7 @@ class TestWorkflowHandlers:
             None,  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/enviar-a-revision',
+            f'/v1/gd/respuestas/{uuid4()}/enviar-a-revision',
             json={'observaciones': 'lista'},
         )
         assert r.status_code == 200, r.text
@@ -127,14 +127,14 @@ class TestWorkflowHandlers:
     def test_enviar_a_revision_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/enviar-a-revision', json={},
+            f'/v1/gd/respuestas/{uuid4()}/enviar-a-revision', json={},
         )
         assert r.status_code == 404
 
     def test_enviar_a_revision_409(self, conn, client):
         conn.fetchrow.return_value = _resp_row_dict('aprobada')
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/enviar-a-revision', json={},
+            f'/v1/gd/respuestas/{uuid4()}/enviar-a-revision', json={},
         )
         assert r.status_code == 409
 
@@ -146,7 +146,7 @@ class TestWorkflowHandlers:
             None,  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/revisar',
+            f'/v1/gd/respuestas/{uuid4()}/revisar',
             json={'resultado': 'ok'},
         )
         assert r.status_code == 200
@@ -161,7 +161,7 @@ class TestWorkflowHandlers:
             None,
         ]
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/revisar',
+            f'/v1/gd/respuestas/{uuid4()}/revisar',
             json={'resultado': 'devolver', 'observaciones': 'corrige'},
         )
         assert r.status_code == 200
@@ -173,7 +173,7 @@ class TestWorkflowHandlers:
             'en_revision', usuario_proyecta_id=ACTOR_USER_ID,
         )
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/revisar',
+            f'/v1/gd/respuestas/{uuid4()}/revisar',
             json={'resultado': 'ok'},
         )
         assert r.status_code == 403
@@ -182,7 +182,7 @@ class TestWorkflowHandlers:
     def test_revisar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/revisar',
+            f'/v1/gd/respuestas/{uuid4()}/revisar',
             json={'resultado': 'ok'},
         )
         assert r.status_code == 404
@@ -190,7 +190,7 @@ class TestWorkflowHandlers:
     def test_revisar_409(self, conn, client):
         conn.fetchrow.return_value = _resp_row_dict('borrador')
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/revisar',
+            f'/v1/gd/respuestas/{uuid4()}/revisar',
             json={'resultado': 'ok'},
         )
         assert r.status_code == 409
@@ -203,7 +203,7 @@ class TestWorkflowHandlers:
             None,
         ]
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/aprobar', json={},
+            f'/v1/gd/respuestas/{uuid4()}/aprobar', json={},
         )
         assert r.status_code == 200
 
@@ -211,17 +211,17 @@ class TestWorkflowHandlers:
         conn.fetchrow.return_value = _resp_row_dict(
             'aprobada', usuario_proyecta_id=ACTOR_USER_ID,
         )
-        r = client.post(f'/api/v1/gd/respuestas/{uuid4()}/aprobar', json={})
+        r = client.post(f'/v1/gd/respuestas/{uuid4()}/aprobar', json={})
         assert r.status_code == 403
 
     def test_aprobar_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.post(f'/api/v1/gd/respuestas/{uuid4()}/aprobar', json={})
+        r = client.post(f'/v1/gd/respuestas/{uuid4()}/aprobar', json={})
         assert r.status_code == 404
 
     def test_aprobar_409(self, conn, client):
         conn.fetchrow.return_value = _resp_row_dict('borrador')
-        r = client.post(f'/api/v1/gd/respuestas/{uuid4()}/aprobar', json={})
+        r = client.post(f'/v1/gd/respuestas/{uuid4()}/aprobar', json={})
         assert r.status_code == 409
 
     def test_firmar_ok(self, conn, client):
@@ -232,7 +232,7 @@ class TestWorkflowHandlers:
             None,
         ]
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/firmar',
+            f'/v1/gd/respuestas/{uuid4()}/firmar',
             json={'firma_id': str(uuid4())},
         )
         assert r.status_code == 200
@@ -241,17 +241,17 @@ class TestWorkflowHandlers:
         conn.fetchrow.return_value = _resp_row_dict(
             'aprobada', usuario_proyecta_id=ACTOR_USER_ID,
         )
-        r = client.post(f'/api/v1/gd/respuestas/{uuid4()}/firmar', json={})
+        r = client.post(f'/v1/gd/respuestas/{uuid4()}/firmar', json={})
         assert r.status_code == 403
 
     def test_firmar_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.post(f'/api/v1/gd/respuestas/{uuid4()}/firmar', json={})
+        r = client.post(f'/v1/gd/respuestas/{uuid4()}/firmar', json={})
         assert r.status_code == 404
 
     def test_firmar_409(self, conn, client):
         conn.fetchrow.return_value = _resp_row_dict('borrador')
-        r = client.post(f'/api/v1/gd/respuestas/{uuid4()}/firmar', json={})
+        r = client.post(f'/v1/gd/respuestas/{uuid4()}/firmar', json={})
         assert r.status_code == 409
 
     def test_radicar_salida_ok(self, conn, client, monkeypatch):
@@ -275,7 +275,7 @@ class TestWorkflowHandlers:
             None,
         ]
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/radicar-salida', json={},
+            f'/v1/gd/respuestas/{uuid4()}/radicar-salida', json={},
         )
         assert r.status_code == 200, r.text
         assert r.json()['estado'] == 'radicada'
@@ -283,14 +283,14 @@ class TestWorkflowHandlers:
     def test_radicar_salida_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/radicar-salida', json={},
+            f'/v1/gd/respuestas/{uuid4()}/radicar-salida', json={},
         )
         assert r.status_code == 404
 
     def test_radicar_salida_409(self, conn, client):
         conn.fetchrow.return_value = _resp_row_dict('borrador')
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/radicar-salida', json={},
+            f'/v1/gd/respuestas/{uuid4()}/radicar-salida', json={},
         )
         assert r.status_code == 409
 
@@ -302,7 +302,7 @@ class TestWorkflowHandlers:
             None,
         ]
         r = client.post(
-            f'/api/v1/gd/respuestas/{uuid4()}/enviar',
+            f'/v1/gd/respuestas/{uuid4()}/enviar',
             json={'canal_envio_id': str(uuid4()),
                   'constancia_envio_uri': 's3://x/y.pdf'},
         )
@@ -310,12 +310,12 @@ class TestWorkflowHandlers:
 
     def test_enviar_respuesta_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.post(f'/api/v1/gd/respuestas/{uuid4()}/enviar', json={})
+        r = client.post(f'/v1/gd/respuestas/{uuid4()}/enviar', json={})
         assert r.status_code == 404
 
     def test_enviar_respuesta_409(self, conn, client):
         conn.fetchrow.return_value = _resp_row_dict('borrador')
-        r = client.post(f'/api/v1/gd/respuestas/{uuid4()}/enviar', json={})
+        r = client.post(f'/v1/gd/respuestas/{uuid4()}/enviar', json={})
         assert r.status_code == 409
 
 
@@ -331,7 +331,7 @@ class TestCierreHandlers:
         ]
         conn.fetchval.return_value = 1
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/cerrar',
+            f'/v1/gd/pqrsd/{uuid4()}/cerrar',
             json={'motivo': 'Respondida y enviada'},
         )
         assert r.status_code == 200, r.text
@@ -339,7 +339,7 @@ class TestCierreHandlers:
     def test_cerrar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/cerrar',
+            f'/v1/gd/pqrsd/{uuid4()}/cerrar',
             json={'motivo': 'X' * 10},
         )
         assert r.status_code == 404
@@ -348,7 +348,7 @@ class TestCierreHandlers:
         conn.fetchrow.return_value = {'estado': 'asignada'}
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/cerrar',
+            f'/v1/gd/pqrsd/{uuid4()}/cerrar',
             json={'motivo': 'No quiero esperar'},
         )
         assert r.status_code == 409
@@ -359,7 +359,7 @@ class TestCierreHandlers:
             {'estado': 'asignada'}, _pqrsd_dict(estado='cerrada'), None,
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/cerrar',
+            f'/v1/gd/pqrsd/{uuid4()}/cerrar',
             json={'motivo': 'Retiro de solicitante',
                    'forzar_sin_respuesta': True},
         )
@@ -368,7 +368,7 @@ class TestCierreHandlers:
     def test_cerrar_ya_cerrada(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'cerrada'}
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/cerrar',
+            f'/v1/gd/pqrsd/{uuid4()}/cerrar',
             json={'motivo': 'X' * 10, 'forzar_sin_respuesta': True},
         )
         assert r.status_code == 409
@@ -380,7 +380,7 @@ class TestCierreHandlers:
             None,
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/reabrir',
+            f'/v1/gd/pqrsd/{uuid4()}/reabrir',
             json={'motivo': 'Solicitante apeló', 'dias_adicionales': 10},
         )
         assert r.status_code == 200
@@ -388,7 +388,7 @@ class TestCierreHandlers:
     def test_reabrir_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/reabrir',
+            f'/v1/gd/pqrsd/{uuid4()}/reabrir',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 404
@@ -396,7 +396,7 @@ class TestCierreHandlers:
     def test_reabrir_estado_invalido(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'asignada'}
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/reabrir',
+            f'/v1/gd/pqrsd/{uuid4()}/reabrir',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 409
@@ -413,7 +413,7 @@ class TestTrasladoHandler:
             None,  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/trasladar-competencia',
+            f'/v1/gd/pqrsd/{uuid4()}/trasladar-competencia',
             json={'entidad_competente_destino': 'Alcaldía Municipal',
                   'motivo': 'No es de nuestra competencia'},
         )
@@ -423,7 +423,7 @@ class TestTrasladoHandler:
     def test_trasladar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/trasladar-competencia',
+            f'/v1/gd/pqrsd/{uuid4()}/trasladar-competencia',
             json={'entidad_competente_destino': 'Otra Entidad',
                   'motivo': 'X' * 11},
         )
@@ -433,7 +433,7 @@ class TestTrasladoHandler:
         conn.fetchrow.return_value = {'estado': 'cerrada',
                                        'fecha_limite_respuesta': None}
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/trasladar-competencia',
+            f'/v1/gd/pqrsd/{uuid4()}/trasladar-competencia',
             json={'entidad_competente_destino': 'Otra Entidad',
                   'motivo': 'X' * 11},
         )
@@ -457,7 +457,7 @@ class TestSolicitarInfoHandler:
             None,  # audit
         ]
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/solicitar-info-adicional',
+            f'/v1/gd/pqrsd/{uuid4()}/solicitar-info-adicional',
             json={'motivo': 'Falta documentación',
                   'informacion_solicitada': 'Cédula completa',
                   'dias_estimados_suspension': 10},
@@ -467,7 +467,7 @@ class TestSolicitarInfoHandler:
     def test_solicitar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/solicitar-info-adicional',
+            f'/v1/gd/pqrsd/{uuid4()}/solicitar-info-adicional',
             json={'motivo': 'Falta info x', 'informacion_solicitada': 'Foto cédula',
                   'dias_estimados_suspension': 5},
         )
@@ -477,7 +477,7 @@ class TestSolicitarInfoHandler:
         conn.fetchrow.return_value = {'estado': 'cerrada',
                                        'fecha_limite_respuesta': None}
         r = client.post(
-            f'/api/v1/gd/pqrsd/{uuid4()}/solicitar-info-adicional',
+            f'/v1/gd/pqrsd/{uuid4()}/solicitar-info-adicional',
             json={'motivo': 'Falta info x', 'informacion_solicitada': 'Foto cédula',
                   'dias_estimados_suspension': 5},
         )
@@ -498,7 +498,7 @@ class TestDashboardHandler:
              'tipo_pqrsd_id': uuid4(), 'total': 3, 'vencidas': 1,
              'proximas_vencer': 0, 'dias_promedio_resolucion': 2.5},
         ]
-        r = client.get('/api/v1/gd/pqrsd/dashboard')
+        r = client.get('/v1/gd/pqrsd/dashboard')
         assert r.status_code == 200, r.text
         body = r.json()
         assert body['total_global'] == 10
@@ -511,7 +511,7 @@ class TestDashboardHandler:
         }
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/pqrsd/dashboard?dependencia_id={uuid4()}'
+            f'/v1/gd/pqrsd/dashboard?dependencia_id={uuid4()}'
             '&desde=2026-01-01T00:00:00&hasta=2026-05-23T00:00:00',
         )
         assert r.status_code == 200

@@ -53,8 +53,15 @@ from app.gd.handlers import (
 )
 
 
-# El router raíz del módulo. Se monta en main.py con prefix='/api/v1/gd'.
-router = APIRouter(prefix='/api/v1/gd', tags=['gd'])
+# El router raíz del módulo. Prefix `/v1/gd` (NO `/api/v1/gd`) para alinear
+# con el resto del backend (influencer, tenants, platform, contacts, etc.
+# todos viven bajo `/v1/*`). El BFF del admin-panel reescribe
+# `/admin/api/core/v1/*` → `/v1/*` upstream, por lo que necesita las
+# rutas montadas exactamente bajo `/v1/gd/*` para ser accesible desde el
+# browser. Antes estaba bajo `/api/v1/gd/*` y solo `_health` tenía un
+# alias separado — el resto del módulo (190+ endpoints) era inaccesible
+# vía BFF y devolvía 404 silencioso.
+router = APIRouter(prefix='/v1/gd', tags=['gd'])
 
 
 # ─── Health-check del módulo ───────────────────────────────────────────────
@@ -84,30 +91,11 @@ async def gd_module_health() -> dict[str, str]:
     return {'module': 'gestion_documental', 'status': 'active'}
 
 
-# Alias del health-check accesible via el BFF (`admin_core_api_proxy`). El
-# BFF strippea `/admin/api/core/` y forwardea a upstream — por eso necesita
-# el endpoint disponible en `/v1/gd/_health` (sin el prefijo `/api`). Sin
-# este alias, el frontend `isGdEnabled` (en `services/coreApi.js`) recibe
-# 404 incluso cuando el tenant SÍ tiene el módulo activo, y el item del
-# sidebar nunca aparece. Mismo patrón que `/v1/influencer/_health`.
-router_health_alias = APIRouter(prefix='/v1/gd', tags=['gd'])
-
-
-@router_health_alias.get(
-    '/_health',
-    summary='Internal: verifica que el módulo GD está activo para el tenant (BFF alias)',
-    dependencies=[
-        Depends(authenticate_request),
-        Depends(ensure_gd_module_enabled),
-    ],
-)
-async def gd_module_health_alias() -> dict[str, str]:
-    """Idéntico a `/api/v1/gd/_health` — alias para el BFF admin."""
-    return {'module': 'gestion_documental', 'status': 'active'}
-
-# Router transversal /api/v1/core/* — servicios compartidos con Knowledge.
+# Router transversal `/v1/core/*` — servicios compartidos con Knowledge.
 # Se monta en main.py separado de `router`. EP-018 archivos vive aquí.
-router_core = APIRouter(prefix='/api/v1/core', tags=['core'])
+# Mismo cambio de prefix que `router`: `/api/v1/core` → `/v1/core` para
+# que el BFF lo encuentre.
+router_core = APIRouter(prefix='/v1/core', tags=['core'])
 router_core.include_router(archivos_handlers.router)
 # GD-API-0119/0120: auditoría consulta + catálogo.
 router_core.include_router(utilidades_handlers.router_audit)

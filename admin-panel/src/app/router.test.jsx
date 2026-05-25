@@ -207,17 +207,25 @@ describe('router por rol', () => {
     expect(screen.queryByRole('link', { name: /Iniciar sesión con Auth0/i })).toBeNull();
   });
 
-  it('mfa_required bloquea cualquier ruta con el gate de MFA', async () => {
-    renderAt('/t/acme/services', {
-      session: { mfa_required: true, profile: { sub: 'u1', roles: ['owner'] } },
-      tenants: [ACME(['owner'])],
-    });
-    // UI-016.6: el heading pasó del literal "Verificación en dos pasos
-    // obligatoria" al copy del HTML T2 "Activa autenticación de dos factores".
-    expect(
-      await screen.findByRole('heading', { name: /Activa autenticación de dos factores/ }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText('SERVICES VIEW')).toBeNull();
+  it('mfa_required dispara auto-logout (POST /admin/logout) en lugar del blocker', async () => {
+    // Patch del submit del form: en jsdom, form.submit() no navega; con el
+    // spy verificamos que se hubiera disparado.
+    const submitSpy = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+    try {
+      renderAt('/t/acme/services', {
+        session: { mfa_required: true, profile: { sub: 'u1', roles: ['owner'] } },
+        tenants: [ACME(['owner'])],
+      });
+      // Tras el render, el useEffect del MfaAutoLogout crea un form y llama submit().
+      // El contenido del shell (SERVICES VIEW) no debe aparecer.
+      await waitFor(() => expect(submitSpy).toHaveBeenCalled());
+      expect(screen.queryByText('SERVICES VIEW')).toBeNull();
+      // Verifica que se montó un form apuntando a /admin/logout
+      const forms = document.querySelectorAll('form[action*="/admin/logout"]');
+      expect(forms.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      submitSpy.mockRestore();
+    }
   });
 
   it('UI-016.6 — una URL desconocida pinta la pantalla 404 (sin redirect silencioso)', async () => {

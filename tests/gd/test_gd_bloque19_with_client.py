@@ -95,7 +95,7 @@ class TestUpload:
     def test_subir_ok(self, conn, client):
         conn.fetchrow.return_value = _arch_dict()
         r = client.post(
-            '/api/v1/core/archivos',
+            '/v1/core/archivos',
             files={'archivo': ('test.pdf', BytesIO(b'pdf-data'),
                                 'application/pdf')},
             data={'proposito': 'gd.documento'},
@@ -109,7 +109,7 @@ class TestUpload:
             estado='bloqueado', av='infectado', ruta_almacenamiento=None,
         )
         r = client.post(
-            '/api/v1/core/archivos',
+            '/v1/core/archivos',
             files={'archivo': ('eicar.txt',
                                 BytesIO(EICAR_SIGNATURE.encode()),
                                 'text/plain')},
@@ -125,13 +125,13 @@ class TestUpload:
 class TestLectura:
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/core/archivos')
+        r = client.get('/v1/core/archivos')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/core/archivos?proposito=gd.documento'
+            '/v1/core/archivos?proposito=gd.documento'
             f'&estado=cargado&contexto_entidad_tipo=radicado'
             f'&contexto_entidad_id={uuid4()}&limit=10',
         )
@@ -139,29 +139,29 @@ class TestLectura:
 
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _arch_dict()
-        r = client.get(f'/api/v1/core/archivos/{uuid4()}')
+        r = client.get(f'/v1/core/archivos/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/core/archivos/{uuid4()}')
+        r = client.get(f'/v1/core/archivos/{uuid4()}')
         assert r.status_code == 404
 
     def test_duplicados_vacio(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get(f'/api/v1/core/archivos/duplicados?hash={"a"*64}')
+        r = client.get(f'/v1/core/archivos/duplicados?hash={"a"*64}')
         assert r.status_code == 200
         assert r.json()['total'] == 0
 
     def test_duplicados_con_coincidencias(self, conn, client):
         conn.fetch.return_value = [_arch_dict()]
-        r = client.get(f'/api/v1/core/archivos/duplicados?hash={"b"*64}')
+        r = client.get(f'/v1/core/archivos/duplicados?hash={"b"*64}')
         assert r.status_code == 200
         assert r.json()['total'] == 1
 
     def test_duplicados_hash_invalido(self, conn, client):
         # hash debe min_length=32
-        r = client.get('/api/v1/core/archivos/duplicados?hash=short')
+        r = client.get('/v1/core/archivos/duplicados?hash=short')
         assert r.status_code == 422
 
 
@@ -173,7 +173,7 @@ class TestAttach:
         conn.fetchval.return_value = 'cargado'
         conn.fetchrow.return_value = _arch_dict(proposito='gd.anexo')
         r = client.post(
-            f'/api/v1/core/archivos/{uuid4()}/attach-proposito',
+            f'/v1/core/archivos/{uuid4()}/attach-proposito',
             json={'proposito': 'gd.anexo',
                   'contexto_entidad_tipo': 'pqrsd',
                   'contexto_entidad_id': str(uuid4())},
@@ -183,7 +183,7 @@ class TestAttach:
     def test_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/core/archivos/{uuid4()}/attach-proposito',
+            f'/v1/core/archivos/{uuid4()}/attach-proposito',
             json={'proposito': 'general'},
         )
         assert r.status_code == 404
@@ -191,7 +191,7 @@ class TestAttach:
     def test_anulado_409(self, conn, client):
         conn.fetchval.return_value = 'anulado'
         r = client.post(
-            f'/api/v1/core/archivos/{uuid4()}/attach-proposito',
+            f'/v1/core/archivos/{uuid4()}/attach-proposito',
             json={'proposito': 'general'},
         )
         assert r.status_code == 409
@@ -206,23 +206,23 @@ class TestDescargarAnular:
             _arch_dict(),
             {'id': uuid4(), 'descargado_en': datetime.now()},
         ]
-        r = client.post(f'/api/v1/core/archivos/{uuid4()}/descargar')
+        r = client.post(f'/v1/core/archivos/{uuid4()}/descargar')
         assert r.status_code == 200, r.text
         assert 'download_url' in r.json()
 
     def test_descargar_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.post(f'/api/v1/core/archivos/{uuid4()}/descargar')
+        r = client.post(f'/v1/core/archivos/{uuid4()}/descargar')
         assert r.status_code == 404
 
     def test_descargar_anulado_409(self, conn, client):
         conn.fetchrow.return_value = _arch_dict(estado='anulado')
-        r = client.post(f'/api/v1/core/archivos/{uuid4()}/descargar')
+        r = client.post(f'/v1/core/archivos/{uuid4()}/descargar')
         assert r.status_code == 409
 
     def test_descargar_infectado_409(self, conn, client):
         conn.fetchrow.return_value = _arch_dict(av='infectado')
-        r = client.post(f'/api/v1/core/archivos/{uuid4()}/descargar')
+        r = client.post(f'/v1/core/archivos/{uuid4()}/descargar')
         assert r.status_code == 409
 
     def test_anular_ok(self, conn, client):
@@ -231,7 +231,7 @@ class TestDescargarAnular:
             _arch_dict(estado='anulado'),
         ]
         r = client.post(
-            f'/api/v1/core/archivos/{uuid4()}/anular',
+            f'/v1/core/archivos/{uuid4()}/anular',
             json={'motivo': 'subido por error sin permisos'},
         )
         assert r.status_code == 200
@@ -239,7 +239,7 @@ class TestDescargarAnular:
     def test_anular_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/core/archivos/{uuid4()}/anular',
+            f'/v1/core/archivos/{uuid4()}/anular',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 404
@@ -247,7 +247,7 @@ class TestDescargarAnular:
     def test_anular_ya_anulado(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'anulado'}
         r = client.post(
-            f'/api/v1/core/archivos/{uuid4()}/anular',
+            f'/v1/core/archivos/{uuid4()}/anular',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 409
@@ -267,18 +267,18 @@ class TestExtraccion:
             'motivo_truncado': None,
             'extraido_en': datetime.now(), 'duracion_ms': 5,
         }
-        r = client.get(f'/api/v1/core/archivos/{uuid4()}/extraccion')
+        r = client.get(f'/v1/core/archivos/{uuid4()}/extraccion')
         assert r.status_code == 200
 
     def test_consultar_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/core/archivos/{uuid4()}/extraccion')
+        r = client.get(f'/v1/core/archivos/{uuid4()}/extraccion')
         assert r.status_code == 404
 
     def test_reextraer_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/core/archivos/{uuid4()}/reextraer',
+            f'/v1/core/archivos/{uuid4()}/reextraer',
             json={'motor': 'auto'},
         )
         assert r.status_code == 404
@@ -291,7 +291,7 @@ class TestRetencion:
     def test_dry_run_sin_candidatos(self, conn, client):
         conn.fetch.return_value = []
         r = client.post(
-            '/api/v1/core/archivos/aplicar-retencion',
+            '/v1/core/archivos/aplicar-retencion',
             json={'dry_run': True, 'limit': 100},
         )
         assert r.status_code == 200
@@ -304,7 +304,7 @@ class TestRetencion:
              'nombre_original': 'a.pdf'},
         ]
         r = client.post(
-            '/api/v1/core/archivos/aplicar-retencion',
+            '/v1/core/archivos/aplicar-retencion',
             json={'dry_run': True, 'limit': 100},
         )
         assert r.status_code == 200

@@ -18,16 +18,24 @@ import styles from './SupportModeBanner.module.css';
  *     30s. Cuando `expiresAt` pasa, el banner igual queda visible pero el
  *     contador dice "Expira pronto"; el backend rechazará las próximas
  *     requests, dando feedback natural al user.
- *   - Botón "Salir de support mode" invoca `deactivateSupportMode` y
- *     limpia el state — el next render quita el banner.
+ *   - Botón "Salir de support mode" invoca `deactivateSupportMode`, opcio-
+ *     nalmente dispara `onExited` (para que el shell padre navegue al
+ *     platform home), y limpia el state — el next render quita el banner.
  *
  * El styling es deliberadamente prominente (color warning + posición
  * sticky al top del workspace) para que el operator NO olvide que está
  * con privilegios elevados en un tenant ajeno.
  *
- * @param {{ activeTenantId?: string }} props
+ * `onExited`: callback opcional que se ejecuta DESPUÉS de
+ * `deactivateSupportMode` exitoso. Útil en sub-shells (GdShell,
+ * InfluencerShell, TenantShell con platform_owner) para navegar fuera
+ * del tenant — sin el callback, el user queda "huérfano" en una página
+ * cuyas queries fallan porque ya no tiene cookie de support_mode ni es
+ * miembro real del tenant.
+ *
+ * @param {{ activeTenantId?: string, onExited?: () => void }} props
  */
-export function SupportModeBanner({ activeTenantId }) {
+export function SupportModeBanner({ activeTenantId, onExited }) {
   // Tolera ausencia de contexto — el shell puede renderizarse en tests
   // aislados sin provider. En ese caso, el banner no se monta.
   const ctx = useOptionalTenantContext();
@@ -60,6 +68,18 @@ export function SupportModeBanner({ activeTenantId }) {
     setBusy(true);
     try {
       await deactivateSupportMode(activeTenantId);
+      // Después del exit exitoso, dejá que el shell padre navegue. Sin
+      // esto, dentro de GdShell/InfluencerShell el user queda en una
+      // página que va a hacer 404 en el próximo fetch (perdió access).
+      if (typeof onExited === 'function') {
+        onExited();
+      }
+    } catch (err) {
+      // Swallow — el usuario verá que el banner sigue ahí (cookie no
+      // se removió server-side) y puede reintentar. Loguear para que
+      // quede en la consola del browser si algo se rompe sistemáticamente.
+      // eslint-disable-next-line no-console
+      console.error('SupportModeBanner: deactivateSupportMode falló', err);
     } finally {
       setBusy(false);
     }

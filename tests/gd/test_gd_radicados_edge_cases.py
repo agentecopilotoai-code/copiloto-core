@@ -108,7 +108,7 @@ class TestSnapshotFallback:
         ]
         conn.fetchval.return_value = None
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/entrada',
+            '/v1/gd/ventanilla/radicados/entrada',
             json={'canal_id': str(canal_id), 'asunto': 'Solicitud test'},
         )
         assert r.status_code == 201, r.text
@@ -160,7 +160,7 @@ class TestClasificacionInline:
         conn.fetchval.side_effect = [None, None]
 
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/entrada',
+            '/v1/gd/ventanilla/radicados/entrada',
             json={
                 'canal_id': str(canal_id),
                 'asunto': 'Solicitud con clasificación',
@@ -221,7 +221,7 @@ class TestSalidaConDestinatarioNuevo:
         ]
         conn.fetchval.return_value = None
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/salida',
+            '/v1/gd/ventanilla/radicados/salida',
             json={
                 'asunto': 'Respuesta a solicitud',
                 'dependencia_origen_id': str(dep_origen),
@@ -245,7 +245,7 @@ class TestSalidaConDestinatarioNuevo:
             asyncpg.UniqueViolationError,
         ]
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/salida',
+            '/v1/gd/ventanilla/radicados/salida',
             json={
                 'asunto': 'Respuesta',
                 'dependencia_origen_id': str(uuid4()),
@@ -268,7 +268,7 @@ class TestSalidaConDestinatarioNuevo:
             None,  # relacionado no existe
         ]
         r = client.post(
-            '/api/v1/gd/ventanilla/radicados/salida',
+            '/v1/gd/ventanilla/radicados/salida',
             json={
                 'asunto': 'Respuesta',
                 'dependencia_origen_id': str(uuid4()),

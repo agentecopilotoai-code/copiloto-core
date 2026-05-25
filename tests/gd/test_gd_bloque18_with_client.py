@@ -116,7 +116,7 @@ class TestIdentidadesHandlers:
     def test_crear_ok(self, conn, client):
         conn.fetchrow.return_value = _ident_dict()
         r = client.post(
-            '/api/v1/gd/identidades-tecnicas',
+            '/v1/gd/identidades-tecnicas',
             json={'codigo': 'BOT_X', 'nombre': 'Bot X',
                   'tipo': 'robot_rpa', 'scopes': ['*']},
         )
@@ -128,7 +128,7 @@ class TestIdentidadesHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/api/v1/gd/identidades-tecnicas',
+            '/v1/gd/identidades-tecnicas',
             json={'codigo': 'DUP', 'nombre': 'Dup',
                   'tipo': 'agente_ia'},
         )
@@ -136,7 +136,7 @@ class TestIdentidadesHandlers:
 
     def test_crear_codigo_invalido(self, conn, client):
         r = client.post(
-            '/api/v1/gd/identidades-tecnicas',
+            '/v1/gd/identidades-tecnicas',
             json={'codigo': 'minusculas',  # pattern ^[A-Z0-9_]+$
                   'nombre': 'X', 'tipo': 'agente_ia'},
         )
@@ -144,32 +144,32 @@ class TestIdentidadesHandlers:
 
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/identidades-tecnicas')
+        r = client.get('/v1/gd/identidades-tecnicas')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/gd/identidades-tecnicas?tipo=robot_rpa'
+            '/v1/gd/identidades-tecnicas?tipo=robot_rpa'
             '&estado=activa&limit=10',
         )
         assert r.status_code == 200
 
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _ident_dict()
-        r = client.get(f'/api/v1/gd/identidades-tecnicas/{uuid4()}')
+        r = client.get(f'/v1/gd/identidades-tecnicas/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/identidades-tecnicas/{uuid4()}')
+        r = client.get(f'/v1/gd/identidades-tecnicas/{uuid4()}')
         assert r.status_code == 404
 
     def test_revocar_ok(self, conn, client):
         conn.fetchval.return_value = 'activa'
         conn.fetchrow.return_value = _ident_dict(estado='revocada')
         r = client.post(
-            f'/api/v1/gd/identidades-tecnicas/{uuid4()}/revocar',
+            f'/v1/gd/identidades-tecnicas/{uuid4()}/revocar',
             json={'motivo': 'comprometida por filtración'},
         )
         assert r.status_code == 200
@@ -177,7 +177,7 @@ class TestIdentidadesHandlers:
     def test_revocar_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/identidades-tecnicas/{uuid4()}/revocar',
+            f'/v1/gd/identidades-tecnicas/{uuid4()}/revocar',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 404
@@ -185,7 +185,7 @@ class TestIdentidadesHandlers:
     def test_revocar_ya_revocada(self, conn, client):
         conn.fetchval.return_value = 'revocada'
         r = client.post(
-            f'/api/v1/gd/identidades-tecnicas/{uuid4()}/revocar',
+            f'/v1/gd/identidades-tecnicas/{uuid4()}/revocar',
             json={'motivo': 'X' * 11},
         )
         assert r.status_code == 409
@@ -194,7 +194,7 @@ class TestIdentidadesHandlers:
         conn.fetchval.return_value = 'activa'
         conn.fetchrow.return_value = _ident_dict()
         r = client.post(
-            f'/api/v1/gd/identidades-tecnicas/{uuid4()}/rotar-key',
+            f'/v1/gd/identidades-tecnicas/{uuid4()}/rotar-key',
             json={},
         )
         assert r.status_code == 200, r.text
@@ -203,7 +203,7 @@ class TestIdentidadesHandlers:
     def test_rotar_key_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/identidades-tecnicas/{uuid4()}/rotar-key',
+            f'/v1/gd/identidades-tecnicas/{uuid4()}/rotar-key',
             json={},
         )
         assert r.status_code == 404
@@ -211,7 +211,7 @@ class TestIdentidadesHandlers:
     def test_rotar_key_revocada(self, conn, client):
         conn.fetchval.return_value = 'revocada'
         r = client.post(
-            f'/api/v1/gd/identidades-tecnicas/{uuid4()}/rotar-key',
+            f'/v1/gd/identidades-tecnicas/{uuid4()}/rotar-key',
             json={},
         )
         assert r.status_code == 409
@@ -224,7 +224,7 @@ class TestTareasHandlers:
     def test_crear_tarea(self, conn, client):
         conn.fetchrow.return_value = _tarea_dict()
         r = client.post(
-            '/api/v1/gd/rpa/tareas',
+            '/v1/gd/rpa/tareas',
             json={'tipo': 'radicar_pdf', 'payload': {'k': 'v'},
                   'prioridad': 'alta'},
         )
@@ -232,13 +232,13 @@ class TestTareasHandlers:
 
     def test_pendientes(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/rpa/tareas-pendientes?tipo=radicar_pdf')
+        r = client.get('/v1/gd/rpa/tareas-pendientes?tipo=radicar_pdf')
         assert r.status_code == 200
 
     def test_reclamar_ok(self, conn, client):
         conn.fetchrow.return_value = _tarea_dict(estado='in_progress')
         r = client.post(
-            f'/api/v1/gd/rpa/tareas/reclamar?identidad_tecnica_id={uuid4()}',
+            f'/v1/gd/rpa/tareas/reclamar?identidad_tecnica_id={uuid4()}',
             json={'ttl_segundos': 300},
         )
         assert r.status_code == 200
@@ -246,7 +246,7 @@ class TestTareasHandlers:
     def test_reclamar_sin_tareas(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/rpa/tareas/reclamar?identidad_tecnica_id={uuid4()}',
+            f'/v1/gd/rpa/tareas/reclamar?identidad_tecnica_id={uuid4()}',
             json={'ttl_segundos': 60},
         )
         assert r.status_code == 404
@@ -260,7 +260,7 @@ class TestTareasHandlers:
             _tarea_dict(estado='done'),
         ]
         r = client.post(
-            f'/api/v1/gd/rpa/tareas/{uuid4()}/resultado',
+            f'/v1/gd/rpa/tareas/{uuid4()}/resultado',
             json={'claim_token': str(token), 'estado': 'done',
                   'resultado': {'ok': True}},
         )
@@ -269,7 +269,7 @@ class TestTareasHandlers:
     def test_reportar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/rpa/tareas/{uuid4()}/resultado',
+            f'/v1/gd/rpa/tareas/{uuid4()}/resultado',
             json={'claim_token': str(uuid4()), 'estado': 'done'},
         )
         assert r.status_code == 404
@@ -281,20 +281,20 @@ class TestTareasHandlers:
             'estado': 'in_progress',
         }
         r = client.post(
-            f'/api/v1/gd/rpa/tareas/{uuid4()}/resultado',
+            f'/v1/gd/rpa/tareas/{uuid4()}/resultado',
             json={'claim_token': str(uuid4()), 'estado': 'done'},
         )
         assert r.status_code == 409
 
     def test_listar_tareas(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/rpa/tareas')
+        r = client.get('/v1/gd/rpa/tareas')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/gd/rpa/tareas?estado=done&tipo=radicar_pdf'
+            '/v1/gd/rpa/tareas?estado=done&tipo=radicar_pdf'
             f'&identidad_tecnica_id={uuid4()}&limit=10',
         )
         assert r.status_code == 200
@@ -308,7 +308,7 @@ class TestWebhooksHandlers:
         conn.fetchval.return_value = 'activa'
         conn.fetchrow.return_value = _sub_dict()
         r = client.post(
-            '/api/v1/gd/webhooks/suscripciones',
+            '/v1/gd/webhooks/suscripciones',
             json={'identidad_tecnica_id': str(uuid4()),
                   'url': 'https://example.com/webhook',
                   'eventos_suscritos': ['PQRSDCreada']},
@@ -319,7 +319,7 @@ class TestWebhooksHandlers:
     def test_crear_sub_identidad_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            '/api/v1/gd/webhooks/suscripciones',
+            '/v1/gd/webhooks/suscripciones',
             json={'identidad_tecnica_id': str(uuid4()),
                   'url': 'https://x.com/hook',
                   'eventos_suscritos': ['*']},
@@ -329,7 +329,7 @@ class TestWebhooksHandlers:
     def test_crear_sub_identidad_revocada(self, conn, client):
         conn.fetchval.return_value = 'revocada'
         r = client.post(
-            '/api/v1/gd/webhooks/suscripciones',
+            '/v1/gd/webhooks/suscripciones',
             json={'identidad_tecnica_id': str(uuid4()),
                   'url': 'https://x.com/hook',
                   'eventos_suscritos': ['*']},
@@ -338,7 +338,7 @@ class TestWebhooksHandlers:
 
     def test_crear_sub_url_invalida(self, conn, client):
         r = client.post(
-            '/api/v1/gd/webhooks/suscripciones',
+            '/v1/gd/webhooks/suscripciones',
             json={'identidad_tecnica_id': str(uuid4()),
                   'url': 'ftp://invalido',
                   'eventos_suscritos': ['*']},
@@ -347,32 +347,32 @@ class TestWebhooksHandlers:
 
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/webhooks/suscripciones')
+        r = client.get('/v1/gd/webhooks/suscripciones')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/webhooks/suscripciones?identidad_tecnica_id={uuid4()}'
+            f'/v1/gd/webhooks/suscripciones?identidad_tecnica_id={uuid4()}'
             '&estado=activa&limit=10',
         )
         assert r.status_code == 200
 
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _sub_dict()
-        r = client.get(f'/api/v1/gd/webhooks/suscripciones/{uuid4()}')
+        r = client.get(f'/v1/gd/webhooks/suscripciones/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/webhooks/suscripciones/{uuid4()}')
+        r = client.get(f'/v1/gd/webhooks/suscripciones/{uuid4()}')
         assert r.status_code == 404
 
     def test_patch_ok(self, conn, client):
         conn.fetchval.return_value = 1
         conn.fetchrow.return_value = _sub_dict(estado='pausada')
         r = client.patch(
-            f'/api/v1/gd/webhooks/suscripciones/{uuid4()}',
+            f'/v1/gd/webhooks/suscripciones/{uuid4()}',
             json={'estado': 'pausada'},
         )
         assert r.status_code == 200
@@ -380,20 +380,20 @@ class TestWebhooksHandlers:
     def test_patch_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.patch(
-            f'/api/v1/gd/webhooks/suscripciones/{uuid4()}',
+            f'/v1/gd/webhooks/suscripciones/{uuid4()}',
             json={'estado': 'pausada'},
         )
         assert r.status_code == 404
 
     def test_listar_deliveries(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/webhooks/deliveries')
+        r = client.get('/v1/gd/webhooks/deliveries')
         assert r.status_code == 200
 
     def test_listar_deliveries_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/webhooks/deliveries?suscripcion_id={uuid4()}'
+            f'/v1/gd/webhooks/deliveries?suscripcion_id={uuid4()}'
             '&estado=failed&limit=10',
         )
         assert r.status_code == 200
@@ -409,7 +409,7 @@ class TestRateLimitHandlers:
             {'contador': 5},
         ]
         r = client.get(
-            f'/api/v1/gd/rate-limit/identidades-tecnicas/{uuid4()}/info',
+            f'/v1/gd/rate-limit/identidades-tecnicas/{uuid4()}/info',
         )
         assert r.status_code == 200
         body = r.json()
@@ -419,7 +419,7 @@ class TestRateLimitHandlers:
     def test_info_sin_limite(self, conn, client):
         conn.fetchrow.return_value = _ident_dict(rate_limit_rpm=None)
         r = client.get(
-            f'/api/v1/gd/rate-limit/identidades-tecnicas/{uuid4()}/info',
+            f'/v1/gd/rate-limit/identidades-tecnicas/{uuid4()}/info',
         )
         assert r.status_code == 200
         assert r.json()['permitido'] is True
@@ -427,6 +427,6 @@ class TestRateLimitHandlers:
     def test_info_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.get(
-            f'/api/v1/gd/rate-limit/identidades-tecnicas/{uuid4()}/info',
+            f'/v1/gd/rate-limit/identidades-tecnicas/{uuid4()}/info',
         )
         assert r.status_code == 404

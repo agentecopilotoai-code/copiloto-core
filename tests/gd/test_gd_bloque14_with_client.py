@@ -127,7 +127,7 @@ class TestEndpointsTipos:
     def test_clasificar(self, conn, client):
         _mocks_orquesta(conn, tipo='clasificacion')
         r = client.post(
-            '/api/v1/gd/ia/clasificar',
+            '/v1/gd/ia/clasificar',
             json={'entidad_origen_tipo': 'radicado',
                   'entidad_origen_id': str(uuid4())},
         )
@@ -137,7 +137,7 @@ class TestEndpointsTipos:
     def test_extraer(self, conn, client):
         _mocks_orquesta(conn, tipo='extraccion')
         r = client.post(
-            '/api/v1/gd/ia/extraer',
+            '/v1/gd/ia/extraer',
             json={'entidad_origen_tipo': 'pqrsd',
                   'entidad_origen_id': str(uuid4())},
         )
@@ -146,7 +146,7 @@ class TestEndpointsTipos:
     def test_resumir(self, conn, client):
         _mocks_orquesta(conn, tipo='resumen')
         r = client.post(
-            '/api/v1/gd/ia/resumir',
+            '/v1/gd/ia/resumir',
             json={'entidad_origen_tipo': 'pqrsd',
                   'entidad_origen_id': str(uuid4()),
                   'max_caracteres': 300},
@@ -156,7 +156,7 @@ class TestEndpointsTipos:
     def test_sugerir_dependencia(self, conn, client):
         _mocks_orquesta(conn, tipo='sugerencia_dependencia')
         r = client.post(
-            '/api/v1/gd/ia/sugerir-dependencia',
+            '/v1/gd/ia/sugerir-dependencia',
             json={'entidad_origen_tipo': 'radicado',
                   'entidad_origen_id': str(uuid4())},
         )
@@ -165,7 +165,7 @@ class TestEndpointsTipos:
     def test_detectar_duplicados(self, conn, client):
         _mocks_orquesta(conn, tipo='deteccion_duplicados')
         r = client.post(
-            '/api/v1/gd/ia/detectar-duplicados',
+            '/v1/gd/ia/detectar-duplicados',
             json={'entidad_origen_tipo': 'radicado',
                   'entidad_origen_id': str(uuid4()),
                   'top_k': 3},
@@ -175,7 +175,7 @@ class TestEndpointsTipos:
     def test_borrador_respuesta(self, conn, client):
         _mocks_orquesta(conn, tipo='borrador_respuesta')
         r = client.post(
-            '/api/v1/gd/ia/borrador-respuesta',
+            '/v1/gd/ia/borrador-respuesta',
             json={'entidad_origen_tipo': 'pqrsd',
                   'entidad_origen_id': str(uuid4()),
                   'plantilla_id': str(uuid4())},
@@ -185,7 +185,7 @@ class TestEndpointsTipos:
     def test_sugerir_termino(self, conn, client):
         _mocks_orquesta(conn, tipo='sugerencia_termino')
         r = client.post(
-            '/api/v1/gd/ia/sugerir-termino',
+            '/v1/gd/ia/sugerir-termino',
             json={'entidad_origen_tipo': 'pqrsd',
                   'entidad_origen_id': str(uuid4())},
         )
@@ -198,22 +198,22 @@ class TestEndpointsTipos:
 class TestLectura:
     def test_detalle_solicitud_ok(self, conn, client):
         conn.fetchrow.return_value = _sol_dict()
-        r = client.get(f'/api/v1/gd/ia/solicitudes/{uuid4()}')
+        r = client.get(f'/v1/gd/ia/solicitudes/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_solicitud_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/ia/solicitudes/{uuid4()}')
+        r = client.get(f'/v1/gd/ia/solicitudes/{uuid4()}')
         assert r.status_code == 404
 
     def test_detalle_resultado_ok(self, conn, client):
         conn.fetchrow.return_value = _res_dict()
-        r = client.get(f'/api/v1/gd/ia/resultados/{uuid4()}')
+        r = client.get(f'/v1/gd/ia/resultados/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_resultado_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/ia/resultados/{uuid4()}')
+        r = client.get(f'/v1/gd/ia/resultados/{uuid4()}')
         assert r.status_code == 404
 
 
@@ -225,7 +225,7 @@ class TestDecidir:
         conn.fetchval.return_value = 1
         conn.fetchrow.return_value = _decision_dict(decision='aceptar')
         r = client.post(
-            f'/api/v1/gd/ia/sugerencias/{uuid4()}/decidir',
+            f'/v1/gd/ia/sugerencias/{uuid4()}/decidir',
             json={'decision': 'aceptar'},
         )
         assert r.status_code == 201
@@ -236,7 +236,7 @@ class TestDecidir:
             decision='modificar', contenido_modificado={'x': 1},
         )
         r = client.post(
-            f'/api/v1/gd/ia/sugerencias/{uuid4()}/decidir',
+            f'/v1/gd/ia/sugerencias/{uuid4()}/decidir',
             json={'decision': 'modificar',
                   'contenido_modificado': {'x': 1},
                   'observaciones': 'cambié'},
@@ -247,7 +247,7 @@ class TestDecidir:
         conn.fetchval.return_value = 1
         conn.fetchrow.return_value = _decision_dict(decision='rechazar')
         r = client.post(
-            f'/api/v1/gd/ia/sugerencias/{uuid4()}/decidir',
+            f'/v1/gd/ia/sugerencias/{uuid4()}/decidir',
             json={'decision': 'rechazar', 'observaciones': 'no útil'},
         )
         assert r.status_code == 201
@@ -255,7 +255,7 @@ class TestDecidir:
     def test_resultado_no_existe(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/ia/sugerencias/{uuid4()}/decidir',
+            f'/v1/gd/ia/sugerencias/{uuid4()}/decidir',
             json={'decision': 'aceptar'},
         )
         assert r.status_code == 404
@@ -265,7 +265,7 @@ class TestDecidir:
         conn.fetchval.return_value = 1
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            f'/api/v1/gd/ia/sugerencias/{uuid4()}/decidir',
+            f'/v1/gd/ia/sugerencias/{uuid4()}/decidir',
             json={'decision': 'aceptar'},
         )
         assert r.status_code == 409
@@ -278,7 +278,7 @@ class TestTrazabilidad:
     def test_vacia(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/ia/trazabilidad?entidad_tipo=radicado'
+            f'/v1/gd/ia/trazabilidad?entidad_tipo=radicado'
             f'&entidad_id={uuid4()}',
         )
         assert r.status_code == 200
@@ -288,7 +288,7 @@ class TestTrazabilidad:
         conn.fetch.return_value = [_sol_dict()]
         conn.fetchrow.return_value = None
         r = client.get(
-            f'/api/v1/gd/ia/trazabilidad?entidad_tipo=pqrsd'
+            f'/v1/gd/ia/trazabilidad?entidad_tipo=pqrsd'
             f'&entidad_id={uuid4()}',
         )
         assert r.status_code == 200
@@ -298,7 +298,7 @@ class TestTrazabilidad:
         conn.fetch.return_value = [_sol_dict()]
         conn.fetchrow.side_effect = [_res_dict(), _decision_dict()]
         r = client.get(
-            f'/api/v1/gd/ia/trazabilidad?entidad_tipo=pqrsd'
+            f'/v1/gd/ia/trazabilidad?entidad_tipo=pqrsd'
             f'&entidad_id={uuid4()}',
         )
         assert r.status_code == 200
@@ -308,7 +308,7 @@ class TestTrazabilidad:
 
     def test_entidad_tipo_invalido(self, conn, client):
         r = client.get(
-            f'/api/v1/gd/ia/trazabilidad?entidad_tipo=invalido'
+            f'/v1/gd/ia/trazabilidad?entidad_tipo=invalido'
             f'&entidad_id={uuid4()}',
         )
         assert r.status_code == 422

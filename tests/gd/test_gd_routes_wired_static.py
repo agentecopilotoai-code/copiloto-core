@@ -1,6 +1,6 @@
 """Test estático: el router GD se monta correctamente en `app.main`.
 
-Verifica que /api/v1/gd/me aparezca en `app.routes` después del wiring.
+Verifica que /v1/gd/me aparezca en `app.routes` después del wiring.
 Sin este test, un import roto en el chain (app/gd/__init__ → routes → handlers)
 pasaría silencioso y los tests anteriores seguirían pasando porque importan
 directamente, no via app.main.
@@ -21,8 +21,8 @@ class TestGdRouterWired:
             for route in app_main.app.routes
             if isinstance(route, APIRoute)
         }
-        assert '/api/v1/gd/me' in paths, (
-            f'Esperaba /api/v1/gd/me en app.routes. '
+        assert '/v1/gd/me' in paths, (
+            f'Esperaba /v1/gd/me en app.routes. '
             f'Rutas GD encontradas: {sorted(p for p in paths if "/gd/" in p)}'
         )
 

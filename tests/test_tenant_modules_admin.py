@@ -371,6 +371,145 @@ def test_update_tenant_module_influencer_ok_when_providers_present():
         assert inv.called
 
 
+def test_update_tenant_module_gd_activation_triggers_bootstrap():
+    """Activar 'gestion_documental' (off→on) dispara bootstrap_gd_for_tenant
+    e invalida el cache GD (no el de influencer). Hook estructural — sin él,
+    los owners del tenant entrarían al módulo SIN ROL.
+    """
+    tenant_id = uuid4()
+    actor_id = uuid4()
+    tenant_row = {'id': tenant_id, 'slug': 'demo', 'display_name': 'Demo Org'}
+
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(side_effect=[
+        tenant_row,
+        None,  # no existía fila previa → activated_changed=True
+        {
+            'tenant_id': tenant_id,
+            'module': 'gestion_documental',
+            'enabled': True,
+            'plan': None,
+            'activated_at': datetime.now(timezone.utc),
+            'activated_by': actor_id,
+            'notes': None,
+        },
+    ])
+
+    bootstrap_metadata = {
+        'roles_seeded': 19,
+        'perfiles_creados': 1,
+        'asignaciones_creadas': 1,
+        'users_boostrapped': [str(uuid4())],
+    }
+    with patch(
+        'app.influencer.admin_routes.bootstrap_gd_for_tenant',
+        new=AsyncMock(return_value=bootstrap_metadata),
+    ) as boot, patch(
+        'app.influencer.admin_routes._gd_module_gate_cache_invalidate'
+    ) as gd_inv, patch(
+        'app.influencer.admin_routes._module_gate_cache_invalidate'
+    ) as influencer_inv:
+        result = asyncio.run(update_tenant_module(
+            tenant_id=str(tenant_id),
+            module='gestion_documental',
+            body=TenantModuleUpdate(enabled=True),
+            request=_request(user_id=actor_id),
+            conn=conn,
+        ))
+
+    assert result.enabled is True
+    assert result.module == 'gestion_documental'
+    boot.assert_awaited_once()
+    # El bootstrap recibe conn + tenant_id + actor.
+    boot_kwargs = boot.call_args.kwargs
+    assert boot_kwargs['tenant_id'] == str(tenant_id)
+    assert boot_kwargs['actor_user_id'] == str(actor_id)
+    # Solo se invalida el cache GD, no el de influencer.
+    assert gd_inv.called
+    assert not influencer_inv.called
+
+
+def test_update_tenant_module_gd_deactivation_does_not_bootstrap():
+    """Desactivar GD (on→off) NO debe invocar bootstrap (solo se hace al
+    activar). El cache GD sí se invalida.
+    """
+    tenant_id = uuid4()
+    tenant_row = {'id': tenant_id, 'slug': 'demo', 'display_name': 'Demo Org'}
+
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(side_effect=[
+        tenant_row,
+        {'enabled': True},  # estaba activo, vamos a apagar
+        {
+            'tenant_id': tenant_id,
+            'module': 'gestion_documental',
+            'enabled': False,
+            'plan': None,
+            'activated_at': datetime.now(timezone.utc),
+            'activated_by': uuid4(),
+            'notes': None,
+        },
+    ])
+
+    with patch(
+        'app.influencer.admin_routes.bootstrap_gd_for_tenant',
+        new=AsyncMock(),
+    ) as boot, patch(
+        'app.influencer.admin_routes._gd_module_gate_cache_invalidate'
+    ) as gd_inv:
+        result = asyncio.run(update_tenant_module(
+            tenant_id=str(tenant_id),
+            module='gestion_documental',
+            body=TenantModuleUpdate(enabled=False),
+            request=_request(),
+            conn=conn,
+        ))
+
+    assert result.enabled is False
+    boot.assert_not_awaited()
+    assert gd_inv.called  # se invalida el cache aunque sea desactivación
+
+
+def test_update_tenant_module_gd_metadata_only_no_bootstrap():
+    """Si GD ya estaba activo y solo se actualiza plan/notes (no toggle),
+    NO se invoca bootstrap ni se invalida cache (activated_changed=False).
+    """
+    tenant_id = uuid4()
+    tenant_row = {'id': tenant_id, 'slug': 'demo', 'display_name': 'Demo Org'}
+
+    conn = _async_conn()
+    conn.fetchrow = AsyncMock(side_effect=[
+        tenant_row,
+        {'enabled': True},  # ya estaba activo, mismo enabled
+        {
+            'tenant_id': tenant_id,
+            'module': 'gestion_documental',
+            'enabled': True,
+            'plan': 'pro',
+            'activated_at': datetime.now(timezone.utc),
+            'activated_by': uuid4(),
+            'notes': 'plan upgrade',
+        },
+    ])
+
+    with patch(
+        'app.influencer.admin_routes.bootstrap_gd_for_tenant',
+        new=AsyncMock(),
+    ) as boot, patch(
+        'app.influencer.admin_routes._gd_module_gate_cache_invalidate'
+    ) as gd_inv:
+        asyncio.run(update_tenant_module(
+            tenant_id=str(tenant_id),
+            module='gestion_documental',
+            body=TenantModuleUpdate(enabled=True, plan='pro', notes='plan upgrade'),
+            request=_request(),
+            conn=conn,
+        ))
+
+    boot.assert_not_awaited()
+    assert not gd_inv.called
+
+
 # ─── list_platform_ai_providers (TASK-INFLU-002) ─────────────────────────────
 
 

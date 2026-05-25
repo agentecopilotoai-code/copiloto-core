@@ -131,7 +131,7 @@ class TestPerfilUsuarioHandlers:
             {'id': uuid4()},
         ]
         r = client_all_perms.post(
-            '/api/v1/gd/perfil-usuario',
+            '/v1/gd/perfil-usuario',
             json={
                 'user_id': str(TARGET_USER_ID),
                 'tipo_vinculacion': 'planta',
@@ -144,7 +144,7 @@ class TestPerfilUsuarioHandlers:
     def test_post_user_inexistente_404(self, conn, client_all_perms):
         conn.fetchval.return_value = None
         r = client_all_perms.post(
-            '/api/v1/gd/perfil-usuario',
+            '/v1/gd/perfil-usuario',
             json={
                 'user_id': str(TARGET_USER_ID),
                 'tipo_vinculacion': 'planta',
@@ -158,7 +158,7 @@ class TestPerfilUsuarioHandlers:
     def test_post_ops_sin_fecha_fin_422(self, conn, client_all_perms):
         conn.fetchval.return_value = 1
         r = client_all_perms.post(
-            '/api/v1/gd/perfil-usuario',
+            '/v1/gd/perfil-usuario',
             json={
                 'user_id': str(TARGET_USER_ID),
                 'tipo_vinculacion': 'ops',
@@ -175,7 +175,7 @@ class TestPerfilUsuarioHandlers:
         # asyncpg excepciones se instancian sin args; el handler las pesca por tipo.
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client_all_perms.post(
-            '/api/v1/gd/perfil-usuario',
+            '/v1/gd/perfil-usuario',
             json={
                 'user_id': str(TARGET_USER_ID),
                 'tipo_vinculacion': 'planta',
@@ -201,7 +201,7 @@ class TestPerfilUsuarioHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client_all_perms.patch(
-            f'/api/v1/gd/perfil-usuario/{TARGET_USER_ID}',
+            f'/v1/gd/perfil-usuario/{TARGET_USER_ID}',
             json={'tipo_vinculacion': 'ops', 'fecha_fin_vinculacion': '2026-12-31'},
         )
         assert r.status_code == 200, r.text
@@ -210,7 +210,7 @@ class TestPerfilUsuarioHandlers:
     def test_patch_inexistente_404(self, conn, client_all_perms):
         conn.fetchrow.return_value = None
         r = client_all_perms.patch(
-            f'/api/v1/gd/perfil-usuario/{TARGET_USER_ID}',
+            f'/v1/gd/perfil-usuario/{TARGET_USER_ID}',
             json={'tipo_vinculacion': 'ops'},
         )
         assert r.status_code == 404
@@ -221,7 +221,7 @@ class TestPerfilUsuarioHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client_all_perms.post(
-            f'/api/v1/gd/perfil-usuario/{TARGET_USER_ID}/inactivar',
+            f'/v1/gd/perfil-usuario/{TARGET_USER_ID}/inactivar',
             json={'motivo': 'Cambio de proyecto reasignado'},
         )
         assert r.status_code == 200, r.text
@@ -235,7 +235,7 @@ class TestPerfilUsuarioHandlers:
             {'id': uuid4()},
         ]
         r = client_all_perms.post(
-            f'/api/v1/gd/perfil-usuario/{TARGET_USER_ID}/desbloquear',
+            f'/v1/gd/perfil-usuario/{TARGET_USER_ID}/desbloquear',
             json={'motivo': 'Usuario verificado por soporte'},
         )
         assert r.status_code == 200
@@ -243,7 +243,7 @@ class TestPerfilUsuarioHandlers:
     def test_post_accion_perfil_inexistente_404(self, conn, client_all_perms):
         conn.fetchrow.return_value = None
         r = client_all_perms.post(
-            f'/api/v1/gd/perfil-usuario/{TARGET_USER_ID}/inactivar',
+            f'/v1/gd/perfil-usuario/{TARGET_USER_ID}/inactivar',
             json={'motivo': 'Razón válida que tiene al menos 10 chars'},
         )
         assert r.status_code == 404
@@ -259,7 +259,7 @@ class TestPerfilUsuarioHandlers:
             }
         ]
         conn.fetchrow.return_value = {'c': 1}
-        r = client_all_perms.get('/api/v1/gd/perfil-usuario')
+        r = client_all_perms.get('/v1/gd/perfil-usuario')
         assert r.status_code == 200, r.text
         body = r.json()
         assert len(body['items']) == 1
@@ -269,7 +269,7 @@ class TestPerfilUsuarioHandlers:
         conn.fetch.return_value = []
         conn.fetchrow.return_value = {'c': 0}
         r = client_all_perms.get(
-            '/api/v1/gd/perfil-usuario'
+            '/v1/gd/perfil-usuario'
             '?dependencia_id=' + str(uuid4())
             + '&estado_gd=activo,suspendido'
             + '&tipo_vinculacion=planta,ops'
@@ -286,7 +286,7 @@ class TestPerfilUsuarioHandlers:
                 'motivo': None, 'fecha': datetime.now(),
             }
         ]
-        r = client_all_perms.get(f'/api/v1/gd/perfil-usuario/{TARGET_USER_ID}/historial')
+        r = client_all_perms.get(f'/v1/gd/perfil-usuario/{TARGET_USER_ID}/historial')
         assert r.status_code == 200
         assert len(r.json()['eventos']) == 1
 
@@ -300,13 +300,13 @@ class TestRolesHandlers:
             {'codigo': 'gd.profesional', 'nombre': 'Profesional', 'descripcion': None,
              'es_sistema': True, 'estado': 'activo', 'permisos_count': 23},
         ]
-        r = client_all_perms.get('/api/v1/gd/roles')
+        r = client_all_perms.get('/v1/gd/roles')
         assert r.status_code == 200
         assert len(r.json()['items']) == 1
 
     def test_get_roles_con_filtro(self, conn, client_all_perms):
         conn.fetch.return_value = []
-        r = client_all_perms.get('/api/v1/gd/roles?estado=activo')
+        r = client_all_perms.get('/v1/gd/roles?estado=activo')
         assert r.status_code == 200
 
     def test_post_rol_ok(self, conn, client_all_perms):
@@ -316,7 +316,7 @@ class TestRolesHandlers:
             {'id': uuid4()},
         ]
         r = client_all_perms.post(
-            '/api/v1/gd/roles',
+            '/v1/gd/roles',
             json={'codigo': 'gd.x', 'nombre': 'Custom'},
         )
         assert r.status_code == 201, r.text
@@ -324,7 +324,7 @@ class TestRolesHandlers:
     def test_post_rol_conflicto(self, conn, client_all_perms):
         conn.fetchrow.return_value = None  # ya existe
         r = client_all_perms.post(
-            '/api/v1/gd/roles',
+            '/v1/gd/roles',
             json={'codigo': 'gd.profesional', 'nombre': 'Profesional'},
         )
         assert r.status_code == 409
@@ -337,7 +337,7 @@ class TestRolesHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client_all_perms.patch(
-            '/api/v1/gd/roles/gd.x',
+            '/v1/gd/roles/gd.x',
             json={'nombre': 'X-nuevo'},
         )
         assert r.status_code == 200
@@ -345,7 +345,7 @@ class TestRolesHandlers:
     def test_patch_rol_404(self, conn, client_all_perms):
         conn.fetchrow.return_value = None
         r = client_all_perms.patch(
-            '/api/v1/gd/roles/gd.inexistente',
+            '/v1/gd/roles/gd.inexistente',
             json={'nombre': 'Nombre nuevo válido'},
         )
         assert r.status_code == 404
@@ -353,7 +353,7 @@ class TestRolesHandlers:
     def test_inactivar_rol_en_uso(self, conn, client_all_perms):
         conn.fetchrow.return_value = {'c': 5}  # asignaciones activas
         r = client_all_perms.post(
-            '/api/v1/gd/roles/gd.x/inactivar',
+            '/v1/gd/roles/gd.x/inactivar',
             json={'motivo': 'Razón válida suficientemente larga'},
         )
         assert r.status_code == 409
@@ -367,7 +367,7 @@ class TestRolesHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client_all_perms.post(
-            '/api/v1/gd/roles/gd.x/inactivar',
+            '/v1/gd/roles/gd.x/inactivar',
             json={'motivo': 'Reorganización institucional'},
         )
         assert r.status_code == 200
@@ -378,7 +378,7 @@ class TestRolesHandlers:
             None,  # inactivar_rol devuelve None
         ]
         r = client_all_perms.post(
-            '/api/v1/gd/roles/gd.x/inactivar',
+            '/v1/gd/roles/gd.x/inactivar',
             json={'motivo': 'Razón válida suficientemente larga'},
         )
         assert r.status_code == 404
@@ -390,7 +390,7 @@ class TestRolesHandlers:
             {'id': uuid4()},
         ]
         r = client_all_perms.post(
-            '/api/v1/gd/roles/gd.x/permisos',
+            '/v1/gd/roles/gd.x/permisos',
             json={'permiso_codigo': 'PERM-A', 'alcance_default': 'dependencia'},
         )
         assert r.status_code == 201
@@ -398,7 +398,7 @@ class TestRolesHandlers:
     def test_agregar_permiso_ya_existe(self, conn, client_all_perms):
         conn.fetchrow.return_value = None
         r = client_all_perms.post(
-            '/api/v1/gd/roles/gd.x/permisos',
+            '/v1/gd/roles/gd.x/permisos',
             json={'permiso_codigo': 'PERM-A', 'alcance_default': 'dependencia'},
         )
         assert r.status_code == 409
@@ -407,7 +407,7 @@ class TestRolesHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.ForeignKeyViolationError
         r = client_all_perms.post(
-            '/api/v1/gd/roles/gd.inexistente/permisos',
+            '/v1/gd/roles/gd.inexistente/permisos',
             json={'permiso_codigo': 'PERM-A', 'alcance_default': 'dependencia'},
         )
         assert r.status_code == 404
@@ -415,12 +415,12 @@ class TestRolesHandlers:
     def test_quitar_permiso_ok(self, conn, client_all_perms):
         conn.execute.return_value = 'DELETE 1'
         conn.fetchrow.return_value = {'id': uuid4()}  # audit
-        r = client_all_perms.delete('/api/v1/gd/roles/gd.x/permisos/PERM-A')
+        r = client_all_perms.delete('/v1/gd/roles/gd.x/permisos/PERM-A')
         assert r.status_code == 204
 
     def test_quitar_permiso_no_existe(self, conn, client_all_perms):
         conn.execute.return_value = 'DELETE 0'
-        r = client_all_perms.delete('/api/v1/gd/roles/gd.x/permisos/PERM-A')
+        r = client_all_perms.delete('/v1/gd/roles/gd.x/permisos/PERM-A')
         assert r.status_code == 404
 
     def test_get_permisos(self, conn, client_all_perms):
@@ -428,12 +428,12 @@ class TestRolesHandlers:
             {'codigo': 'PERM-A', 'nombre': 'A', 'modulo': 'pqrsd',
              'descripcion': None, 'es_critico': False, 'estado': 'activo'},
         ]
-        r = client_all_perms.get('/api/v1/gd/permisos')
+        r = client_all_perms.get('/v1/gd/permisos')
         assert r.status_code == 200
 
     def test_get_permisos_con_filtros(self, conn, client_all_perms):
         conn.fetch.return_value = []
-        r = client_all_perms.get('/api/v1/gd/permisos?modulo=pqrsd&estado=activo')
+        r = client_all_perms.get('/v1/gd/permisos?modulo=pqrsd&estado=activo')
         assert r.status_code == 200
 
 
@@ -454,7 +454,7 @@ class TestAsignacionesHandlers:
             {'id': uuid4()},
         ]
         r = client_all_perms.post(
-            f'/api/v1/gd/usuarios/{TARGET_USER_ID}/roles',
+            f'/v1/gd/usuarios/{TARGET_USER_ID}/roles',
             json={
                 'rol_codigo': 'gd.profesional',
                 'dependencia_id': str(uuid4()),
@@ -468,7 +468,7 @@ class TestAsignacionesHandlers:
     def test_post_destino_sin_perfil_404(self, conn, client_all_perms):
         conn.fetchval.return_value = None
         r = client_all_perms.post(
-            f'/api/v1/gd/usuarios/{TARGET_USER_ID}/roles',
+            f'/v1/gd/usuarios/{TARGET_USER_ID}/roles',
             json={
                 'rol_codigo': 'gd.profesional',
                 'alcance': 'institucional',
@@ -482,7 +482,7 @@ class TestAsignacionesHandlers:
     def test_post_destino_inactivo_409(self, conn, client_all_perms):
         conn.fetchval.return_value = 'inactivo'
         r = client_all_perms.post(
-            f'/api/v1/gd/usuarios/{TARGET_USER_ID}/roles',
+            f'/v1/gd/usuarios/{TARGET_USER_ID}/roles',
             json={
                 'rol_codigo': 'gd.profesional',
                 'alcance': 'institucional',
@@ -498,7 +498,7 @@ class TestAsignacionesHandlers:
         conn.fetchval.return_value = 'activo'
         conn.fetchrow.side_effect = asyncpg.ForeignKeyViolationError
         r = client_all_perms.post(
-            f'/api/v1/gd/usuarios/{TARGET_USER_ID}/roles',
+            f'/v1/gd/usuarios/{TARGET_USER_ID}/roles',
             json={
                 'rol_codigo': 'gd.inexistente',
                 'alcance': 'institucional',
@@ -515,7 +515,7 @@ class TestAsignacionesHandlers:
             {'id': uuid4()},
         ]
         r = client_all_perms.post(
-            f'/api/v1/gd/usuarios/{TARGET_USER_ID}/roles/{asign_id}/cerrar',
+            f'/v1/gd/usuarios/{TARGET_USER_ID}/roles/{asign_id}/cerrar',
             json={'motivo': 'Traslado a otra dependencia'},
         )
         assert r.status_code == 200
@@ -523,14 +523,14 @@ class TestAsignacionesHandlers:
     def test_cerrar_asignacion_no_existe(self, conn, client_all_perms):
         conn.fetchrow.return_value = None
         r = client_all_perms.post(
-            f'/api/v1/gd/usuarios/{TARGET_USER_ID}/roles/{uuid4()}/cerrar',
+            f'/v1/gd/usuarios/{TARGET_USER_ID}/roles/{uuid4()}/cerrar',
             json={'motivo': 'Razón válida suficientemente larga'},
         )
         assert r.status_code == 404
 
     def test_get_roles_propio_ok(self, conn, client_all_perms):
         conn.fetch.return_value = []
-        r = client_all_perms.get(f'/api/v1/gd/usuarios/{ACTOR_USER_ID}/roles')
+        r = client_all_perms.get(f'/v1/gd/usuarios/{ACTOR_USER_ID}/roles')
         assert r.status_code == 200
 
     def test_get_roles_otro_con_permiso_ok(self, conn, client_all_perms):
@@ -542,7 +542,7 @@ class TestAsignacionesHandlers:
         ]
         # nota: get_permisos_efectivos está overrideado a _fake_get_permisos_all
         # así que devuelve PERM-USR-010=global y pasa el check.
-        r = client_all_perms.get(f'/api/v1/gd/usuarios/{TARGET_USER_ID}/roles')
+        r = client_all_perms.get(f'/v1/gd/usuarios/{TARGET_USER_ID}/roles')
         assert r.status_code == 200
 
     def test_get_roles_otro_sin_permiso_403(self, conn, monkeypatch):
@@ -558,7 +558,7 @@ class TestAsignacionesHandlers:
         # local — el monkeypatch del módulo origen lo cubre.
         app = build_app_for(conn)
         client = TestClient(app)
-        r = client.get(f'/api/v1/gd/usuarios/{TARGET_USER_ID}/roles')
+        r = client.get(f'/v1/gd/usuarios/{TARGET_USER_ID}/roles')
         assert r.status_code == 403
 
 
@@ -573,7 +573,7 @@ class TestPoliticaHandlers:
             'intentos_fallidos_max': 3, 'cooldown_segundos': 60,
             'vigente_desde': datetime.now(), 'tenant_id': TENANT_ID,
         }
-        r = client_all_perms.get('/api/v1/gd/seguridad/politica')
+        r = client_all_perms.get('/v1/gd/seguridad/politica')
         assert r.status_code == 200
         assert r.json()['longitud_minima'] == 14
 
@@ -597,7 +597,7 @@ class TestPoliticaHandlers:
             {'id': uuid4()},
         ]
         r = client_all_perms.patch(
-            '/api/v1/gd/seguridad/politica',
+            '/v1/gd/seguridad/politica',
             json={'longitud_minima': 20},
         )
         assert r.status_code == 200
@@ -609,7 +609,7 @@ class TestPoliticaHandlers:
 # =============================================================================
 class TestTareasHandlers:
     def test_tareas_pendientes_stub_vacio(self, conn, client_all_perms):
-        r = client_all_perms.get(f'/api/v1/gd/perfil-usuario/{TARGET_USER_ID}/tareas-pendientes')
+        r = client_all_perms.get(f'/v1/gd/perfil-usuario/{TARGET_USER_ID}/tareas-pendientes')
         assert r.status_code == 200
         body = r.json()
         assert body['total_pendientes'] == 0
@@ -618,7 +618,7 @@ class TestTareasHandlers:
         conn.fetchval.return_value = 'activo'
         conn.fetchrow.return_value = {'id': uuid4()}
         r = client_all_perms.post(
-            f'/api/v1/gd/perfil-usuario/{TARGET_USER_ID}/tareas/reasignar',
+            f'/v1/gd/perfil-usuario/{TARGET_USER_ID}/tareas/reasignar',
             json={
                 'tareas': [str(uuid4()), str(uuid4())],
                 'user_destino_id': str(uuid4()),
@@ -632,7 +632,7 @@ class TestTareasHandlers:
     def test_reasignar_destino_inactivo_422(self, conn, client_all_perms):
         conn.fetchval.return_value = 'inactivo'
         r = client_all_perms.post(
-            f'/api/v1/gd/perfil-usuario/{TARGET_USER_ID}/tareas/reasignar',
+            f'/v1/gd/perfil-usuario/{TARGET_USER_ID}/tareas/reasignar',
             json={
                 'tareas': [str(uuid4())],
                 'user_destino_id': str(uuid4()),

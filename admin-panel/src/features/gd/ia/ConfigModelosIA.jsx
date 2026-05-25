@@ -64,7 +64,18 @@ export function ConfigModelosIA({ session, roles = [], ...shellProps }) {
   async function handle() {
     setInfo(null);
     try {
-      await editar.submit({ ...form, motivo });
+      // Mismo merge que el render: data como base, form sobre-escribe lo
+      // editado. Sin esto, si el user guardara antes de que el effect
+      // copiara data→form (raro pero posible), el payload sería {motivo}
+      // sin las claves de funcionalidades/guardrails/límite.
+      const payload = { motivo };
+      FUNCIONALIDADES.forEach(({ codigo }) => {
+        payload[codigo] = { ...(data[codigo] || {}), ...(form[codigo] || {}) };
+      });
+      payload.guardrails = { ...(data.guardrails || {}), ...(form.guardrails || {}) };
+      payload.limite_mensual_tokens =
+        form.limite_mensual_tokens ?? data.limite_mensual_tokens ?? null;
+      await editar.submit(payload);
       setInfo({ ok: true });
       refresh();
     } catch (err) {
@@ -105,6 +116,11 @@ export function ConfigModelosIA({ session, roles = [], ...shellProps }) {
 
       {puede && data && (
         <>
+          {/* Helpers de "merged view" — el form gana cuando el user editó,
+              data llena los huecos en el primer render (antes de que el
+              effect copie data→form). Evita race: la pestaña aparece con
+              datos correctos sin esperar al efecto. */}
+          {(() => null)()}
           <div className="card" style={{ padding: 'var(--s-5)', marginBottom: 'var(--s-4)' }} data-testid="ia-cfg-funcs">
             <h3 style={{ fontSize: 14, marginTop: 0 }}>Por funcionalidad</h3>
             <table className="data-table">
@@ -118,12 +134,19 @@ export function ConfigModelosIA({ session, roles = [], ...shellProps }) {
                 </tr>
               </thead>
               <tbody>
-                {FUNCIONALIDADES.map(({ codigo, label }) => (
+                {FUNCIONALIDADES.map(({ codigo, label }) => {
+                  const funcForm = form[codigo] || {};
+                  const funcData = data[codigo] || {};
+                  const modelo = funcForm.modelo ?? funcData.modelo ?? '';
+                  const temperatura = funcForm.temperatura ?? funcData.temperatura ?? 0.2;
+                  const maxTokens = funcForm.max_tokens ?? funcData.max_tokens ?? 2048;
+                  const habilitadoVal = funcForm.habilitado ?? funcData.habilitado;
+                  return (
                   <tr key={codigo} data-testid={`ia-cfg-func-${codigo}`}>
                     <td>{label}</td>
                     <td>
                       <input className="input" style={{ width: 160 }}
-                        value={form[codigo]?.modelo || ''}
+                        value={modelo}
                         onChange={(e) => updateFunc(codigo, 'modelo', e.target.value)}
                         placeholder="gpt-4o-mini"
                         data-testid={`ia-cfg-${codigo}-modelo`}
@@ -131,27 +154,28 @@ export function ConfigModelosIA({ session, roles = [], ...shellProps }) {
                     </td>
                     <td>
                       <input type="number" step={0.1} min={0} max={2} className="input" style={{ width: 80 }}
-                        value={form[codigo]?.temperatura ?? 0.2}
+                        value={temperatura}
                         onChange={(e) => updateFunc(codigo, 'temperatura', Number(e.target.value))}
                         data-testid={`ia-cfg-${codigo}-temp`}
                       />
                     </td>
                     <td>
                       <input type="number" className="input" style={{ width: 100 }}
-                        value={form[codigo]?.max_tokens ?? 2048}
+                        value={maxTokens}
                         onChange={(e) => updateFunc(codigo, 'max_tokens', Number(e.target.value))}
                         data-testid={`ia-cfg-${codigo}-max`}
                       />
                     </td>
                     <td>
                       <input type="checkbox"
-                        checked={form[codigo]?.habilitado !== false}
+                        checked={habilitadoVal !== false}
                         onChange={(e) => updateFunc(codigo, 'habilitado', e.target.checked)}
                         data-testid={`ia-cfg-${codigo}-hab`}
                       />
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -160,7 +184,7 @@ export function ConfigModelosIA({ session, roles = [], ...shellProps }) {
             <h3 style={{ fontSize: 14, marginTop: 0 }}>Guardrails de seguridad</h3>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
               <input type="checkbox"
-                checked={form.guardrails?.bloquear_pii_salida !== false}
+                checked={(form.guardrails?.bloquear_pii_salida ?? data.guardrails?.bloquear_pii_salida) !== false}
                 onChange={(e) => updateGuardrail('bloquear_pii_salida', e.target.checked)}
                 data-testid="ia-cfg-gr-pii"
               />
@@ -168,7 +192,7 @@ export function ConfigModelosIA({ session, roles = [], ...shellProps }) {
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 8 }}>
               <input type="checkbox"
-                checked={form.guardrails?.bloquear_lenguaje_ofensivo !== false}
+                checked={(form.guardrails?.bloquear_lenguaje_ofensivo ?? data.guardrails?.bloquear_lenguaje_ofensivo) !== false}
                 onChange={(e) => updateGuardrail('bloquear_lenguaje_ofensivo', e.target.checked)}
                 data-testid="ia-cfg-gr-ofensivo"
               />
@@ -176,7 +200,7 @@ export function ConfigModelosIA({ session, roles = [], ...shellProps }) {
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 8 }}>
               <input type="checkbox"
-                checked={form.guardrails?.registrar_prompts !== false}
+                checked={(form.guardrails?.registrar_prompts ?? data.guardrails?.registrar_prompts) !== false}
                 onChange={(e) => updateGuardrail('registrar_prompts', e.target.checked)}
                 data-testid="ia-cfg-gr-prompts"
               />
@@ -189,7 +213,7 @@ export function ConfigModelosIA({ session, roles = [], ...shellProps }) {
             <div className="field" style={{ maxWidth: 260 }}>
               <label>Límite mensual de tokens (entrada+salida)</label>
               <input type="number" className="input"
-                value={form.limite_mensual_tokens ?? ''}
+                value={form.limite_mensual_tokens ?? data.limite_mensual_tokens ?? ''}
                 onChange={(e) => setForm({ ...form, limite_mensual_tokens: Number(e.target.value) })}
                 data-testid="ia-cfg-limite-tokens"
               />

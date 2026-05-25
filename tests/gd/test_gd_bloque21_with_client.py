@@ -38,9 +38,9 @@ async def _noop_emit(*a, **k):
 
 def build_app(conn_mock):
     app = FastAPI()
-    # Prefijo /api/v1/gd similar al routes.py global.
+    # Prefijo /v1/gd similar al routes.py global.
     from fastapi import APIRouter
-    root = APIRouter(prefix='/api/v1/gd')
+    root = APIRouter(prefix='/v1/gd')
     root.include_router(router_puntos)
     root.include_router(router_perif)
     root.include_router(router_codigos)
@@ -154,14 +154,14 @@ def _codigo(**extra):
 class TestGateModulo:
     def test_modulo_inactivo_404(self, conn, client):
         conn.fetchrow.return_value = None  # módulo no activado
-        r = client.get('/api/v1/gd/puntos-atencion')
+        r = client.get('/v1/gd/puntos-atencion')
         assert r.status_code == 404
         body = r.json()
         assert body['detail']['code'] == 'modulo_perifericos_no_activo'
 
     def test_modulo_desactivado_404(self, conn, client):
         conn.fetchrow.return_value = {'activado': False}
-        r = client.get('/api/v1/gd/perifericos')
+        r = client.get('/v1/gd/perifericos')
         assert r.status_code == 404
 
 
@@ -174,7 +174,7 @@ class TestPuntos:
             {'activado': True}, _punto(),
         ]
         r = client.post(
-            '/api/v1/gd/puntos-atencion',
+            '/v1/gd/puntos-atencion',
             json={'nombre': 'Sede Centro', 'direccion': 'Cra 7'},
         )
         assert r.status_code == 201
@@ -182,24 +182,24 @@ class TestPuntos:
     def test_listar(self, conn, client):
         conn.fetchrow.return_value = {'activado': True}
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/puntos-atencion')
+        r = client.get('/v1/gd/puntos-atencion')
         assert r.status_code == 200
         assert r.json() == []
 
     def test_listar_con_estado(self, conn, client):
         conn.fetchrow.return_value = {'activado': True}
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/puntos-atencion?estado=activo')
+        r = client.get('/v1/gd/puntos-atencion?estado=activo')
         assert r.status_code == 200
 
     def test_obtener_ok(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, _punto()]
-        r = client.get(f'/api/v1/gd/puntos-atencion/{uuid4()}')
+        r = client.get(f'/v1/gd/puntos-atencion/{uuid4()}')
         assert r.status_code == 200
 
     def test_obtener_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
-        r = client.get(f'/api/v1/gd/puntos-atencion/{uuid4()}')
+        r = client.get(f'/v1/gd/puntos-atencion/{uuid4()}')
         assert r.status_code == 404
 
     def test_patch_ok(self, conn, client):
@@ -207,7 +207,7 @@ class TestPuntos:
             {'activado': True}, _punto(nombre='Nuevo'),
         ]
         r = client.patch(
-            f'/api/v1/gd/puntos-atencion/{uuid4()}',
+            f'/v1/gd/puntos-atencion/{uuid4()}',
             json={'nombre': 'Nuevo'},
         )
         assert r.status_code == 200
@@ -215,7 +215,7 @@ class TestPuntos:
     def test_patch_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.patch(
-            f'/api/v1/gd/puntos-atencion/{uuid4()}',
+            f'/v1/gd/puntos-atencion/{uuid4()}',
             json={'nombre': 'Nuevo'},
         )
         assert r.status_code == 404
@@ -226,7 +226,7 @@ class TestPuntos:
             _punto(estado='activo'),
         ]
         r = client.post(
-            f'/api/v1/gd/puntos-atencion/{uuid4()}/activar',
+            f'/v1/gd/puntos-atencion/{uuid4()}/activar',
             json={'motivo': 'reapertura programada'},
         )
         assert r.status_code == 200
@@ -237,7 +237,7 @@ class TestPuntos:
         ]
         conn.fetchval.return_value = 2
         r = client.post(
-            f'/api/v1/gd/puntos-atencion/{uuid4()}/inactivar',
+            f'/v1/gd/puntos-atencion/{uuid4()}/inactivar',
             json={'motivo': 'cierre temporal'},
         )
         assert r.status_code == 409
@@ -246,7 +246,7 @@ class TestPuntos:
     def test_cerrar_404_no_existe(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/puntos-atencion/{uuid4()}/cerrar',
+            f'/v1/gd/puntos-atencion/{uuid4()}/cerrar',
             json={'motivo': 'cierre definitivo'},
         )
         assert r.status_code == 404
@@ -255,7 +255,7 @@ class TestPuntos:
         conn.fetchrow.return_value = {'activado': True}
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/puntos-atencion/{uuid4()}/perifericos',
+            f'/v1/gd/puntos-atencion/{uuid4()}/perifericos',
         )
         assert r.status_code == 200
 
@@ -267,7 +267,7 @@ class TestPerifericosCRUD:
     def test_crear_ok(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, _perif()]
         r = client.post(
-            '/api/v1/gd/perifericos',
+            '/v1/gd/perifericos',
             json={
                 'tipo_periferico': 'impresora_etiquetas',
                 'nombre': 'Zebra GK420t',
@@ -284,7 +284,7 @@ class TestPerifericosCRUD:
             asyncpg.UniqueViolationError('dup'),
         ]
         r = client.post(
-            '/api/v1/gd/perifericos',
+            '/v1/gd/perifericos',
             json={
                 'tipo_periferico': 'impresora_etiquetas',
                 'nombre': 'Otra Zebra', 'serial': 'ZB-1',
@@ -295,7 +295,7 @@ class TestPerifericosCRUD:
     def test_listar(self, conn, client):
         conn.fetchrow.return_value = {'activado': True}
         conn.fetch.return_value = []
-        r = client.get('/api/v1/gd/perifericos')
+        r = client.get('/v1/gd/perifericos')
         assert r.status_code == 200
         assert r.json()['total'] == 0
 
@@ -303,7 +303,7 @@ class TestPerifericosCRUD:
         conn.fetchrow.return_value = {'activado': True}
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/gd/perifericos'
+            '/v1/gd/perifericos'
             f'?dependencia_id={uuid4()}&punto_atencion_id={uuid4()}'
             '&estado=activo&tipo_periferico=escaner_plano',
         )
@@ -312,12 +312,12 @@ class TestPerifericosCRUD:
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, _perif()]
         conn.fetch.side_effect = [[], []]
-        r = client.get(f'/api/v1/gd/perifericos/{uuid4()}')
+        r = client.get(f'/v1/gd/perifericos/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
-        r = client.get(f'/api/v1/gd/perifericos/{uuid4()}')
+        r = client.get(f'/v1/gd/perifericos/{uuid4()}')
         assert r.status_code == 404
 
     def test_patch_ok(self, conn, client):
@@ -325,7 +325,7 @@ class TestPerifericosCRUD:
             {'activado': True}, _perif(nombre='Nuevo'),
         ]
         r = client.patch(
-            f'/api/v1/gd/perifericos/{uuid4()}',
+            f'/v1/gd/perifericos/{uuid4()}',
             json={'nombre': 'Nuevo'},
         )
         assert r.status_code == 200
@@ -333,7 +333,7 @@ class TestPerifericosCRUD:
     def test_patch_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.patch(
-            f'/api/v1/gd/perifericos/{uuid4()}',
+            f'/v1/gd/perifericos/{uuid4()}',
             json={'nombre': 'Nuevo'},
         )
         assert r.status_code == 404
@@ -344,7 +344,7 @@ class TestPerifericosCRUD:
             _perif(estado='activo'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/activar',
+            f'/v1/gd/perifericos/{uuid4()}/activar',
             json={'motivo': 'vuelve a operación'},
         )
         assert r.status_code == 200
@@ -353,7 +353,7 @@ class TestPerifericosCRUD:
         conn.fetchrow.side_effect = [{'activado': True}, _perif()]
         conn.fetchval.return_value = 3
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/inactivar',
+            f'/v1/gd/perifericos/{uuid4()}/inactivar',
             json={'motivo': 'mantenimiento programado'},
         )
         assert r.status_code == 409
@@ -363,7 +363,7 @@ class TestPerifericosCRUD:
             {'activado': True}, _perif(), _perif(estado='inactivo'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/inactivar',
+            f'/v1/gd/perifericos/{uuid4()}/inactivar',
             json={'motivo': 'mantenimiento programado', 'forzar': True},
         )
         assert r.status_code == 200
@@ -374,7 +374,7 @@ class TestPerifericosCRUD:
         ]
         conn.fetchval.return_value = 0
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/poner-mantenimiento',
+            f'/v1/gd/perifericos/{uuid4()}/poner-mantenimiento',
             json={'motivo': 'calibración periódica'},
         )
         assert r.status_code == 200
@@ -385,7 +385,7 @@ class TestPerifericosCRUD:
         ]
         conn.fetchval.return_value = 0
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/retirar',
+            f'/v1/gd/perifericos/{uuid4()}/retirar',
             json={'motivo': 'equipo dado de baja'},
         )
         assert r.status_code == 200
@@ -393,7 +393,7 @@ class TestPerifericosCRUD:
     def test_estado_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/activar',
+            f'/v1/gd/perifericos/{uuid4()}/activar',
             json={'motivo': 'X' * 20},
         )
         assert r.status_code == 404
@@ -410,7 +410,7 @@ class TestCodigos:
             _codigo(),
         ]
         r = client.post(
-            f'/api/v1/gd/radicados/{uuid4()}/codigo-barras',
+            f'/v1/gd/radicados/{uuid4()}/codigo-barras',
             json={'tipo_codigo': 'qr'},
         )
         assert r.status_code == 201
@@ -418,19 +418,19 @@ class TestCodigos:
     def test_generar_radicado_no_existe_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/radicados/{uuid4()}/codigo-barras',
+            f'/v1/gd/radicados/{uuid4()}/codigo-barras',
             json={'tipo_codigo': 'qr'},
         )
         assert r.status_code == 404
 
     def test_obtener_vigente(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, _codigo()]
-        r = client.get(f'/api/v1/gd/radicados/{uuid4()}/codigo-barras')
+        r = client.get(f'/v1/gd/radicados/{uuid4()}/codigo-barras')
         assert r.status_code == 200
 
     def test_obtener_vigente_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
-        r = client.get(f'/api/v1/gd/radicados/{uuid4()}/codigo-barras')
+        r = client.get(f'/v1/gd/radicados/{uuid4()}/codigo-barras')
         assert r.status_code == 404
 
     def test_anular_sin_reemplazo(self, conn, client):
@@ -442,7 +442,7 @@ class TestCodigos:
                     motivo_anulacion='roto al pegar'),
         ]
         r = client.post(
-            f'/api/v1/gd/radicados/{uuid4()}'
+            f'/v1/gd/radicados/{uuid4()}'
             f'/codigo-barras/{cid}/anular',
             json={'motivo': 'roto al pegar'},
         )
@@ -461,7 +461,7 @@ class TestCodigos:
                     reemplazado_por_id=nuevo),
         ]
         r = client.post(
-            f'/api/v1/gd/radicados/{uuid4()}'
+            f'/v1/gd/radicados/{uuid4()}'
             f'/codigo-barras/{cid}/anular',
             json={
                 'motivo': 'cambio de formato',
@@ -475,7 +475,7 @@ class TestCodigos:
     def test_anular_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/radicados/{uuid4()}'
+            f'/v1/gd/radicados/{uuid4()}'
             f'/codigo-barras/{uuid4()}/anular',
             json={'motivo': 'X' * 20},
         )
@@ -487,7 +487,7 @@ class TestCodigos:
             {'id': uuid4(), 'estado': 'anulado'},
         ]
         r = client.post(
-            f'/api/v1/gd/radicados/{uuid4()}'
+            f'/v1/gd/radicados/{uuid4()}'
             f'/codigo-barras/{uuid4()}/anular',
             json={'motivo': 'X' * 20},
         )
@@ -505,7 +505,7 @@ class TestImpresion:
             _impr(),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/imprimir-etiqueta',
+            f'/v1/gd/perifericos/{uuid4()}/imprimir-etiqueta',
             json={'radicado_id': str(uuid4())},
         )
         assert r.status_code == 201
@@ -515,7 +515,7 @@ class TestImpresion:
             {'activado': True}, _perif(estado='inactivo'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/imprimir-etiqueta',
+            f'/v1/gd/perifericos/{uuid4()}/imprimir-etiqueta',
             json={'radicado_id': str(uuid4())},
         )
         assert r.status_code == 409
@@ -525,7 +525,7 @@ class TestImpresion:
             {'activado': True}, _perif(), None,
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/imprimir-etiqueta',
+            f'/v1/gd/perifericos/{uuid4()}/imprimir-etiqueta',
             json={'radicado_id': str(uuid4())},
         )
         assert r.status_code == 404
@@ -538,7 +538,7 @@ class TestImpresion:
         ]
         conn.fetchval.return_value = 0
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/reimprimir-etiqueta',
+            f'/v1/gd/perifericos/{uuid4()}/reimprimir-etiqueta',
             json={
                 'radicado_id': str(uuid4()),
                 'motivo': 'etiqueta original se dañó al pegarla',
@@ -549,7 +549,7 @@ class TestImpresion:
     def test_reimprimir_motivo_corto_422(self, conn, client):
         # motivo < 10 chars → schema 422 (no llega al gate).
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/reimprimir-etiqueta',
+            f'/v1/gd/perifericos/{uuid4()}/reimprimir-etiqueta',
             json={'radicado_id': str(uuid4()), 'motivo': 'corto'},
         )
         assert r.status_code == 422
@@ -561,7 +561,7 @@ class TestImpresion:
         ]
         conn.fetchval.return_value = 3
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/reimprimir-etiqueta',
+            f'/v1/gd/perifericos/{uuid4()}/reimprimir-etiqueta',
             json={
                 'radicado_id': str(uuid4()),
                 'motivo': 'cuarto intento por papel',
@@ -577,7 +577,7 @@ class TestImpresion:
             _impr(tipo_impresion='constancia_radicacion'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/imprimir-constancia',
+            f'/v1/gd/perifericos/{uuid4()}/imprimir-constancia',
             json={'radicado_id': str(uuid4())},
         )
         assert r.status_code == 201
@@ -585,7 +585,7 @@ class TestImpresion:
     def test_imprimir_constancia_perif_no_existe_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/imprimir-constancia',
+            f'/v1/gd/perifericos/{uuid4()}/imprimir-constancia',
             json={'radicado_id': str(uuid4())},
         )
         assert r.status_code == 404
@@ -598,7 +598,7 @@ class TestImpresion:
             _impr(id=iid, estado='generada', latencia_ms=850),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/impresiones/{iid}/resultado',
             json={'estado': 'generada', 'latencia_ms': 850},
         )
@@ -613,7 +613,7 @@ class TestImpresion:
                   mensaje_error='papel atascado'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/impresiones/{iid}/resultado',
             json={'estado': 'fallida',
                   'mensaje_error': 'papel atascado'},
@@ -623,7 +623,7 @@ class TestImpresion:
     def test_reportar_resultado_no_existe_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/impresiones/{uuid4()}/resultado',
             json={'estado': 'generada', 'latencia_ms': 100},
         )
@@ -635,7 +635,7 @@ class TestImpresion:
             {'id': uuid4(), 'estado': 'generada'},
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/impresiones/{uuid4()}/resultado',
             json={'estado': 'generada', 'latencia_ms': 100},
         )
@@ -653,7 +653,7 @@ class TestDigit:
             _digit(),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/digitalizar',
+            f'/v1/gd/perifericos/{uuid4()}/digitalizar',
             json={'radicado_id': str(uuid4())},
         )
         assert r.status_code == 201
@@ -663,7 +663,7 @@ class TestDigit:
             {'activado': True}, _perif(estado='retirado'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/digitalizar',
+            f'/v1/gd/perifericos/{uuid4()}/digitalizar',
             json={'radicado_id': str(uuid4())},
         )
         assert r.status_code == 409
@@ -673,7 +673,7 @@ class TestDigit:
             {'activado': True}, _perif(), None,
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/digitalizar',
+            f'/v1/gd/perifericos/{uuid4()}/digitalizar',
             json={'radicado_id': str(uuid4()),
                   'calidad_dpi': 300, 'observacion': 'oficio'},
         )
@@ -688,7 +688,7 @@ class TestDigit:
                    archivo_digital_id=uuid4()),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/digitalizaciones/{did}/resultado',
             json={'estado': 'correcta',
                   'archivo_digital_id': str(uuid4()),
@@ -704,7 +704,7 @@ class TestDigit:
             _digit(id=did, estado='fallida', mensaje_error='atasco'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/digitalizaciones/{did}/resultado',
             json={'estado': 'fallida', 'mensaje_error': 'atasco'},
         )
@@ -718,7 +718,7 @@ class TestDigit:
             _digit(id=did, estado='incompleta'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/digitalizaciones/{did}/resultado',
             json={'estado': 'incompleta', 'observacion': 'reintentar'},
         )
@@ -727,7 +727,7 @@ class TestDigit:
     def test_reportar_no_existe_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/digitalizaciones/{uuid4()}/resultado',
             json={'estado': 'correcta',
                   'archivo_digital_id': str(uuid4()),
@@ -741,7 +741,7 @@ class TestDigit:
             {'id': uuid4(), 'estado': 'correcta'},
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/digitalizaciones/{uuid4()}/resultado',
             json={'estado': 'correcta',
                   'archivo_digital_id': str(uuid4()),

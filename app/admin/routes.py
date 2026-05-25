@@ -199,6 +199,31 @@ def _core_api_url(path: str, query: str = '') -> str:
 _CORE_API_FORWARDED_COOKIES = ('copilotoia_support_mode',)
 
 
+def _tenant_id_from_support_cookie(request: Request) -> str | None:
+    """Lee el `tid` del cookie `copilotoia_support_mode` firmado.
+
+    El cookie es un payload firmado por `jwt_secret` (ver `app.core.signed_cookies`).
+    Devuelve el `tid` (UUID str) si el cookie está presente Y la firma es
+    válida; `None` en cualquier otro caso (sin cookie, firma inválida,
+    expirado). El backend `authenticate_request` re-valida sub+tid+exp,
+    así que este lookup es solo "best-effort" para popular el header.
+    """
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.core.security import SUPPORT_MODE_COOKIE_NAME  # noqa: PLC0415
+    from app.core.signed_cookies import unpack_signed_payload  # noqa: PLC0415
+
+    raw = request.cookies.get(SUPPORT_MODE_COOKIE_NAME)
+    if not raw:
+        return None
+    payload = unpack_signed_payload(get_settings().jwt_secret, raw)
+    if not payload:
+        return None
+    tid = payload.get('tid')
+    if isinstance(tid, str) and tid:
+        return tid
+    return None
+
+
 def _core_api_headers(
     request: Request, session: dict[str, Any], has_body: bool
 ) -> dict[str, str]:
@@ -212,8 +237,20 @@ def _core_api_headers(
     }
     if has_body and request.headers.get('content-type'):
         headers['content-type'] = request.headers['content-type']
+    # X-Tenant-Id: 1) si el browser lo manda explícito (caso POST/PATCH de
+    # endpoints tenant-scoped), respetarlo. 2) si NO lo manda pero hay un
+    # cookie de support_mode con `tid`, extraerlo del cookie. Sin (2),
+    # cualquier GET del SPA que no incluya el header (la mayoría — los
+    # fetches de coreApi.js no agregan X-Tenant-Id automáticamente) llega
+    # al backend sin tenant → `authenticate_request` no resuelve
+    # `tenant_id` → cualquier dep que lo requiera devuelve 401/404.
     if request.headers.get('x-tenant-id'):
         headers['x-tenant-id'] = request.headers['x-tenant-id']
+    else:
+        # Fallback: leer `tid` del cookie support_mode firmado.
+        cookie_tid = _tenant_id_from_support_cookie(request)
+        if cookie_tid:
+            headers['x-tenant-id'] = cookie_tid
     if request.headers.get('idempotency-key'):
         headers['idempotency-key'] = request.headers['idempotency-key']
     profile = session.get('profile') or {}

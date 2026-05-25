@@ -40,7 +40,7 @@ async def _noop_emit(*a, **k):
 def build_app(conn_mock):
     app = FastAPI()
     from fastapi import APIRouter
-    root = APIRouter(prefix='/api/v1/gd')
+    root = APIRouter(prefix='/v1/gd')
     # ORDEN crítico: literals primero (mismo patrón que routes.py global).
     root.include_router(router_perif_literals)
     root.include_router(router_perif_b)
@@ -113,7 +113,7 @@ class TestLote:
             _lote(),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/digitalizar-lote',
+            f'/v1/gd/perifericos/{uuid4()}/digitalizar-lote',
             json={'modo_separacion': 'por_pagina', 'calidad_dpi': 300},
         )
         assert r.status_code == 201
@@ -124,7 +124,7 @@ class TestLote:
             {'id': uuid4(), 'estado': 'inactivo'},
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/digitalizar-lote',
+            f'/v1/gd/perifericos/{uuid4()}/digitalizar-lote',
             json={'modo_separacion': 'por_pagina'},
         )
         assert r.status_code == 409
@@ -132,7 +132,7 @@ class TestLote:
     def test_iniciar_perif_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/digitalizar-lote',
+            f'/v1/gd/perifericos/{uuid4()}/digitalizar-lote',
             json={'modo_separacion': 'por_pagina'},
         )
         assert r.status_code == 404
@@ -140,12 +140,12 @@ class TestLote:
     def test_obtener_progreso_ok(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, _lote()]
         conn.fetch.return_value = []
-        r = client.get(f'/api/v1/gd/perifericos/lotes/{uuid4()}')
+        r = client.get(f'/v1/gd/perifericos/lotes/{uuid4()}')
         assert r.status_code == 200
 
     def test_obtener_progreso_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
-        r = client.get(f'/api/v1/gd/perifericos/lotes/{uuid4()}')
+        r = client.get(f'/v1/gd/perifericos/lotes/{uuid4()}')
         assert r.status_code == 404
 
     def test_finalizar_ok(self, conn, client):
@@ -154,7 +154,7 @@ class TestLote:
             _lote(estado='finalizado'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/lotes/{uuid4()}/finalizar',
+            f'/v1/gd/perifericos/lotes/{uuid4()}/finalizar',
             json={'observacion_final': 'completado'},
         )
         assert r.status_code == 200
@@ -162,7 +162,7 @@ class TestLote:
     def test_finalizar_lote_no_existe_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/perifericos/lotes/{uuid4()}/finalizar',
+            f'/v1/gd/perifericos/lotes/{uuid4()}/finalizar',
             json={},
         )
         assert r.status_code == 404
@@ -172,7 +172,7 @@ class TestLote:
             {'activado': True}, _lote(estado='finalizado'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/lotes/{uuid4()}/finalizar',
+            f'/v1/gd/perifericos/lotes/{uuid4()}/finalizar',
             json={},
         )
         assert r.status_code == 409
@@ -191,7 +191,7 @@ class TestContexto:
              'created_at': datetime.now()},
         ]
         r = client.post(
-            '/api/v1/gd/perifericos/contexto-activo',
+            '/v1/gd/perifericos/contexto-activo',
             json={'periferico_id': str(uuid4()),
                   'radicado_activo_id': str(uuid4())},
         )
@@ -201,7 +201,7 @@ class TestContexto:
         conn.fetchrow.return_value = {'activado': True}
         conn.execute.return_value = 'DELETE 1'
         r = client.delete(
-            '/api/v1/gd/perifericos/contexto-activo'
+            '/v1/gd/perifericos/contexto-activo'
             f'?periferico_id={uuid4()}',
         )
         assert r.status_code == 200
@@ -215,7 +215,7 @@ class TestEventos:
     def test_listar(self, conn, client):
         conn.fetchrow.return_value = {'activado': True}
         conn.fetch.return_value = []
-        r = client.get(f'/api/v1/gd/perifericos/{uuid4()}/eventos')
+        r = client.get(f'/v1/gd/perifericos/{uuid4()}/eventos')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
@@ -224,7 +224,7 @@ class TestEventos:
         desde = (datetime.now() - timedelta(days=1)).isoformat()
         hasta = datetime.now().isoformat()
         r = client.get(
-            f'/api/v1/gd/perifericos/{uuid4()}/eventos'
+            f'/v1/gd/perifericos/{uuid4()}/eventos'
             f'?desde={desde}&hasta={hasta}&resultado=fallo&limit=10',
         )
         assert r.status_code == 200
@@ -234,7 +234,7 @@ class TestEventos:
         conn.fetch.return_value = []
         desde = (datetime.now() - timedelta(hours=24)).isoformat()
         r = client.get(
-            f'/api/v1/gd/perifericos/eventos/fallos?desde={desde}',
+            f'/v1/gd/perifericos/eventos/fallos?desde={desde}',
         )
         assert r.status_code == 200
 
@@ -250,7 +250,7 @@ class TestMantenimiento:
             _mant(),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/mantenimiento',
+            f'/v1/gd/perifericos/{uuid4()}/mantenimiento',
             json={'tipo': 'preventivo',
                   'descripcion': 'Calibración mensual'},
         )
@@ -259,7 +259,7 @@ class TestMantenimiento:
     def test_iniciar_perif_no_existe_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/mantenimiento',
+            f'/v1/gd/perifericos/{uuid4()}/mantenimiento',
             json={'descripcion': 'Calibración'},
         )
         assert r.status_code == 404
@@ -271,7 +271,7 @@ class TestMantenimiento:
             _mant(estado='finalizado'),
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/mantenimiento/{uuid4()}/finalizar',
             json={'observacion_final': 'OK calibrado',
                   'costo': 50.0,
@@ -282,7 +282,7 @@ class TestMantenimiento:
     def test_finalizar_no_existe_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/mantenimiento/{uuid4()}/finalizar',
             json={'observacion_final': 'X' * 20},
         )
@@ -294,7 +294,7 @@ class TestMantenimiento:
             {'id': uuid4(), 'estado': 'finalizado'},
         ]
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}'
+            f'/v1/gd/perifericos/{uuid4()}'
             f'/mantenimiento/{uuid4()}/finalizar',
             json={'observacion_final': 'ya estaba'},
         )
@@ -321,7 +321,7 @@ class TestAgente:
         ]
         conn.fetchval.return_value = 1
         r = client.post(
-            '/api/v1/gd/agentes-locales/emparejar',
+            '/v1/gd/agentes-locales/emparejar',
             json={
                 'nombre_equipo': 'Counter-1',
                 'version_agente': '0.1.0',
@@ -339,7 +339,7 @@ class TestAgente:
         conn.fetchrow.return_value = {'activado': True}
         conn.fetchval.return_value = 0
         r = client.post(
-            '/api/v1/gd/agentes-locales/emparejar',
+            '/v1/gd/agentes-locales/emparejar',
             json={
                 'nombre_equipo': 'Counter-2',
                 'perifericos': [str(uuid4())],
@@ -353,7 +353,7 @@ class TestAgente:
         conn.fetchrow.return_value = {'activado': True}
         conn.fetchval.return_value = 1
         r = client.post(
-            '/api/v1/gd/agentes-locales/emparejar',
+            '/v1/gd/agentes-locales/emparejar',
             json={
                 'nombre_equipo': 'Counter-2',
                 'perifericos': [str(uuid4())],
@@ -375,7 +375,7 @@ class TestAgente:
              'fecha_registro': datetime.now()},
         ]
         r = client.post(
-            f'/api/v1/gd/agentes-locales/{aid}/revocar',
+            f'/v1/gd/agentes-locales/{aid}/revocar',
             json={'motivo': 'equipo comprometido'},
         )
         assert r.status_code == 200
@@ -383,7 +383,7 @@ class TestAgente:
     def test_revocar_no_existe_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/agentes-locales/{uuid4()}/revocar',
+            f'/v1/gd/agentes-locales/{uuid4()}/revocar',
             json={'motivo': 'X' * 20},
         )
         assert r.status_code == 404
@@ -394,7 +394,7 @@ class TestAgente:
             {'id': uuid4(), 'estado': 'revocado'},
         ]
         r = client.post(
-            f'/api/v1/gd/agentes-locales/{uuid4()}/revocar',
+            f'/v1/gd/agentes-locales/{uuid4()}/revocar',
             json={'motivo': 'X' * 20},
         )
         assert r.status_code == 409
@@ -407,14 +407,14 @@ class TestHistorial:
     def test_historial_perif(self, conn, client):
         conn.fetchrow.return_value = {'activado': True}
         conn.fetch.return_value = []
-        r = client.get(f'/api/v1/gd/perifericos/{uuid4()}/historial')
+        r = client.get(f'/v1/gd/perifericos/{uuid4()}/historial')
         assert r.status_code == 200
 
     def test_historial_perif_con_filtros(self, conn, client):
         conn.fetchrow.return_value = {'activado': True}
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/perifericos/{uuid4()}/historial'
+            f'/v1/gd/perifericos/{uuid4()}/historial'
             '?tipo_operacion=impresion&limit=50',
         )
         assert r.status_code == 200
@@ -423,7 +423,7 @@ class TestHistorial:
         conn.fetchrow.return_value = {'activado': True}
         conn.fetch.return_value = []
         r = client.get(
-            '/api/v1/gd/perifericos/historial-uso-global'
+            '/v1/gd/perifericos/historial-uso-global'
             f'?usuario_id={uuid4()}&periferico_id={uuid4()}',
         )
         assert r.status_code == 200
@@ -432,7 +432,7 @@ class TestHistorial:
         conn.fetchrow.return_value = {'activado': True}
         conn.fetchval.return_value = 100
         r = client.post(
-            '/api/v1/gd/perifericos/historial/exportar',
+            '/v1/gd/perifericos/historial/exportar',
             json={'formato': 'csv'},
         )
         assert r.status_code == 202
@@ -457,7 +457,7 @@ class TestReemplazo:
             {'id': nuevo, 'fecha_digitalizacion': datetime.now()},
         ]
         r = client.post(
-            f'/api/v1/gd/digitalizaciones/{did}/reemplazar',
+            f'/v1/gd/digitalizaciones/{did}/reemplazar',
             json={'motivo': 'Calidad baja: DPI insuficiente',
                   'archivo_digital_id_nuevo': str(uuid4())},
         )
@@ -466,7 +466,7 @@ class TestReemplazo:
     def test_no_existe_404(self, conn, client):
         conn.fetchrow.side_effect = [{'activado': True}, None]
         r = client.post(
-            f'/api/v1/gd/digitalizaciones/{uuid4()}/reemplazar',
+            f'/v1/gd/digitalizaciones/{uuid4()}/reemplazar',
             json={'motivo': 'X' * 20,
                   'archivo_digital_id_nuevo': str(uuid4())},
         )
@@ -481,7 +481,7 @@ class TestReemplazo:
              'calidad_dpi': 200, 'estado': 'reemplazada'},
         ]
         r = client.post(
-            f'/api/v1/gd/digitalizaciones/{uuid4()}/reemplazar',
+            f'/v1/gd/digitalizaciones/{uuid4()}/reemplazar',
             json={'motivo': 'X' * 20,
                   'archivo_digital_id_nuevo': str(uuid4())},
         )
@@ -489,7 +489,7 @@ class TestReemplazo:
 
     def test_motivo_corto_422(self, conn, client):
         r = client.post(
-            f'/api/v1/gd/digitalizaciones/{uuid4()}/reemplazar',
+            f'/v1/gd/digitalizaciones/{uuid4()}/reemplazar',
             json={'motivo': 'corto',
                   'archivo_digital_id_nuevo': str(uuid4())},
         )
@@ -503,7 +503,7 @@ class TestGate:
     def test_lote_modulo_inactivo_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/perifericos/{uuid4()}/digitalizar-lote',
+            f'/v1/gd/perifericos/{uuid4()}/digitalizar-lote',
             json={'modo_separacion': 'por_pagina'},
         )
         assert r.status_code == 404
@@ -511,7 +511,7 @@ class TestGate:
     def test_agente_modulo_inactivo_404(self, conn, client):
         conn.fetchrow.return_value = {'activado': False}
         r = client.post(
-            '/api/v1/gd/agentes-locales/emparejar',
+            '/v1/gd/agentes-locales/emparejar',
             json={'nombre_equipo': 'Counter-A',
                   'perifericos': [str(uuid4())],
                   'fingerprint_publico_b64':
@@ -522,7 +522,7 @@ class TestGate:
     def test_reemplazo_modulo_inactivo_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/digitalizaciones/{uuid4()}/reemplazar',
+            f'/v1/gd/digitalizaciones/{uuid4()}/reemplazar',
             json={'motivo': 'X' * 20,
                   'archivo_digital_id_nuevo': str(uuid4())},
         )

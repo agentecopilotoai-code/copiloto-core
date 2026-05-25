@@ -99,7 +99,7 @@ class TestCRUDHandlers:
     def test_crear_sin_version_ok(self, conn, client):
         conn.fetchrow.return_value = _pl_dict()
         r = client.post(
-            '/api/v1/gd/plantillas',
+            '/v1/gd/plantillas',
             json={'codigo': 'OFI', 'nombre': 'Oficio',
                   'tipo_plantilla': 'oficio_respuesta'},
         )
@@ -109,7 +109,7 @@ class TestCRUDHandlers:
         conn.fetchrow.side_effect = [_pl_dict(), _ver_dict()]
         conn.fetchval.return_value = 0
         r = client.post(
-            '/api/v1/gd/plantillas',
+            '/v1/gd/plantillas',
             json={'codigo': 'OFI', 'nombre': 'Oficio',
                   'tipo_plantilla': 'oficio_respuesta',
                   'contenido_template': 'X'},
@@ -120,7 +120,7 @@ class TestCRUDHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/api/v1/gd/plantillas',
+            '/v1/gd/plantillas',
             json={'codigo': 'DUP', 'nombre': 'Plantilla Duplicada',
                   'tipo_plantilla': 'otra'},
         )
@@ -130,7 +130,7 @@ class TestCRUDHandlers:
     def test_crear_codigo_invalido(self, conn, client):
         # Pattern ^[A-Z0-9_]+$
         r = client.post(
-            '/api/v1/gd/plantillas',
+            '/v1/gd/plantillas',
             json={'codigo': 'with-dash', 'nombre': 'X',
                   'tipo_plantilla': 'otra'},
         )
@@ -139,14 +139,14 @@ class TestCRUDHandlers:
     def test_listar(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
-        r = client.get('/api/v1/gd/plantillas')
+        r = client.get('/v1/gd/plantillas')
         assert r.status_code == 200
 
     def test_listar_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchval.return_value = 0
         r = client.get(
-            '/api/v1/gd/plantillas?estado=activa&tipo=respuesta_pqrsd'
+            '/v1/gd/plantillas?estado=activa&tipo=respuesta_pqrsd'
             f'&dependencia_id={uuid4()}&es_institucional=true&limit=10',
         )
         assert r.status_code == 200
@@ -154,12 +154,12 @@ class TestCRUDHandlers:
     def test_detalle_ok(self, conn, client):
         conn.fetchrow.return_value = _pl_dict()
         conn.fetch.return_value = []
-        r = client.get(f'/api/v1/gd/plantillas/{uuid4()}')
+        r = client.get(f'/v1/gd/plantillas/{uuid4()}')
         assert r.status_code == 200
 
     def test_detalle_404(self, conn, client):
         conn.fetchrow.return_value = None
-        r = client.get(f'/api/v1/gd/plantillas/{uuid4()}')
+        r = client.get(f'/v1/gd/plantillas/{uuid4()}')
         assert r.status_code == 404
 
     def test_patch_ok(self, conn, client):
@@ -167,7 +167,7 @@ class TestCRUDHandlers:
         conn.fetchrow.return_value = _pl_dict(nombre='Nuevo')
         conn.fetch.return_value = []
         r = client.patch(
-            f'/api/v1/gd/plantillas/{uuid4()}',
+            f'/v1/gd/plantillas/{uuid4()}',
             json={'nombre': 'Nuevo Nombre'},
         )
         assert r.status_code == 200
@@ -175,7 +175,7 @@ class TestCRUDHandlers:
     def test_patch_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.patch(
-            f'/api/v1/gd/plantillas/{uuid4()}', json={'nombre': 'Nuevo'},
+            f'/v1/gd/plantillas/{uuid4()}', json={'nombre': 'Nuevo'},
         )
         assert r.status_code == 404
 
@@ -191,7 +191,7 @@ class TestVersionesHandlers:
         conn.fetchval.side_effect = [1, 0]
         conn.fetchrow.return_value = _ver_dict(numero=1)
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/versiones',
+            f'/v1/gd/plantillas/{uuid4()}/versiones',
             json={'contenido_template': 'Nueva v {{x}}'},
         )
         assert r.status_code == 201
@@ -199,7 +199,7 @@ class TestVersionesHandlers:
     def test_nueva_version_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/versiones',
+            f'/v1/gd/plantillas/{uuid4()}/versiones',
             json={'contenido_template': 'X'},
         )
         assert r.status_code == 404
@@ -218,7 +218,7 @@ class TestActivarHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/activar',
+            f'/v1/gd/plantillas/{uuid4()}/activar',
             json={'version_id': str(ver_id)},
         )
         assert r.status_code == 200
@@ -229,7 +229,7 @@ class TestActivarHandlers:
             None,
         ]
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/activar', json={},
+            f'/v1/gd/plantillas/{uuid4()}/activar', json={},
         )
         assert r.status_code == 409
         assert r.json()['detail']['code'] == 'sin_version_borrador'
@@ -237,7 +237,7 @@ class TestActivarHandlers:
     def test_activar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/activar', json={},
+            f'/v1/gd/plantillas/{uuid4()}/activar', json={},
         )
         assert r.status_code == 404
 
@@ -248,21 +248,21 @@ class TestActivarHandlers:
         ]
         conn.fetch.return_value = []
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/inactivar',
+            f'/v1/gd/plantillas/{uuid4()}/inactivar',
         )
         assert r.status_code == 200
 
     def test_inactivar_409(self, conn, client):
         conn.fetchrow.return_value = {'estado': 'inactiva'}
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/inactivar',
+            f'/v1/gd/plantillas/{uuid4()}/inactivar',
         )
         assert r.status_code == 409
 
     def test_inactivar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/inactivar',
+            f'/v1/gd/plantillas/{uuid4()}/inactivar',
         )
         assert r.status_code == 404
 
@@ -288,7 +288,7 @@ class TestGenerarHandler:
             None,  # user
         ]
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/generar-documento',
+            f'/v1/gd/plantillas/{uuid4()}/generar-documento',
             json={'titulo': 'Documento generado',
                   'datos_adicionales': {'k': 'v'}},
         )
@@ -297,7 +297,7 @@ class TestGenerarHandler:
     def test_generar_404(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/generar-documento',
+            f'/v1/gd/plantillas/{uuid4()}/generar-documento',
             json={},
         )
         assert r.status_code == 404
@@ -308,7 +308,7 @@ class TestGenerarHandler:
             'estado': 'borrador', 'version_vigente_id': uuid4(),
         }
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/generar-documento',
+            f'/v1/gd/plantillas/{uuid4()}/generar-documento',
             json={},
         )
         assert r.status_code == 409
@@ -327,14 +327,14 @@ class TestAsociacionesHandlers:
             'creado_por_user_id': uuid4(), 'created_at': datetime.now(),
         }
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/asociar-dependencia/{uuid4()}',
+            f'/v1/gd/plantillas/{uuid4()}/asociar-dependencia/{uuid4()}',
         )
         assert r.status_code == 201
 
     def test_asociar_dep_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/asociar-dependencia/{uuid4()}',
+            f'/v1/gd/plantillas/{uuid4()}/asociar-dependencia/{uuid4()}',
         )
         assert r.status_code == 404
 
@@ -343,7 +343,7 @@ class TestAsociacionesHandlers:
         conn.fetchval.return_value = 1
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/asociar-dependencia/{uuid4()}',
+            f'/v1/gd/plantillas/{uuid4()}/asociar-dependencia/{uuid4()}',
         )
         assert r.status_code == 409
 
@@ -356,21 +356,21 @@ class TestAsociacionesHandlers:
             'creado_por_user_id': uuid4(), 'created_at': datetime.now(),
         }
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/asociar-tipo-tramite/PQRSD',
+            f'/v1/gd/plantillas/{uuid4()}/asociar-tipo-tramite/PQRSD',
         )
         assert r.status_code == 201
 
     def test_asociar_tt_404(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            f'/api/v1/gd/plantillas/{uuid4()}/asociar-tipo-tramite/PQRSD',
+            f'/v1/gd/plantillas/{uuid4()}/asociar-tipo-tramite/PQRSD',
         )
         assert r.status_code == 404
 
     def test_listar_asociaciones(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/api/v1/gd/plantillas/{uuid4()}/asociaciones',
+            f'/v1/gd/plantillas/{uuid4()}/asociaciones',
         )
         assert r.status_code == 200
 
@@ -387,7 +387,7 @@ class TestSeedHandler:
             rows.append(_ver_dict(numero=1))
         conn.fetchrow.side_effect = rows
         conn.fetchval.return_value = 0
-        r = client.post('/api/v1/gd/plantillas/_seed-institucionales')
+        r = client.post('/v1/gd/plantillas/_seed-institucionales')
         assert r.status_code == 200, r.text
         body = r.json()
         assert body['total'] == 7
@@ -397,7 +397,7 @@ class TestSeedHandler:
         import asyncpg
         rows: list = [asyncpg.UniqueViolationError for _ in range(7)]
         conn.fetchrow.side_effect = rows
-        r = client.post('/api/v1/gd/plantillas/_seed-institucionales')
+        r = client.post('/v1/gd/plantillas/_seed-institucionales')
         assert r.status_code == 200
         body = r.json()
         assert body['total'] == 0
