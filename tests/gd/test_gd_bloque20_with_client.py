@@ -223,7 +223,7 @@ class TestCambiosDepHandlers:
     def test_historial(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/v1/gd/estructura/dependencias/{uuid4()}/historial',
+            f'/v1/gd/admin/estructura/dependencias/{uuid4()}/historial',
         )
         assert r.status_code == 200
 
@@ -233,7 +233,7 @@ class TestCambiosDepHandlers:
             {'id': uuid4()}, {'id': uuid4()}, {'id': uuid4()},
         ]
         r = client.post(
-            '/v1/gd/estructura/fusionar',
+            '/v1/gd/admin/estructura/fusionar',
             json={
                 'dependencias_origen': [str(uuid4()), str(uuid4())],
                 'dependencia_destino_id': str(uuid4()),
@@ -246,7 +246,7 @@ class TestCambiosDepHandlers:
     def test_fusionar_destino_no_existe(self, conn, client):
         conn.fetchval.return_value = None
         r = client.post(
-            '/v1/gd/estructura/fusionar',
+            '/v1/gd/admin/estructura/fusionar',
             json={
                 'dependencias_origen': [str(uuid4())],
                 'dependencia_destino_id': str(uuid4()),

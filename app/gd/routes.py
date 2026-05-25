@@ -110,25 +110,18 @@ router.include_router(me_handlers.router)
 router.include_router(perfil_usuario_handlers.router)
 router.include_router(roles_handlers.router)
 router.include_router(asignaciones_handlers.router)
-router.include_router(politica_contrasena_handlers.router)
+# politica_contrasena (router prefix /seguridad/politica) ahora vive bajo
+# `/v1/gd/admin/seguridad/politica` — ver router_admin más abajo.
 # tareas_handlers comparte prefix /perfil-usuario con perfil_usuario_handlers;
 # las rutas son específicas (/{user_id}/tareas-pendientes y /{user_id}/tareas/reasignar)
 # y no chocan con las de perfil_usuario_handlers.
 router.include_router(tareas_handlers.router)
 # GD-API-0011: /api/v1/gd/organizacion + /api/v1/gd/organizacion/modulos
 router.include_router(organizacion_handlers.router)
-# GD-API-0012: /api/v1/gd/dependencias + /api/v1/gd/estructura/*
-router.include_router(dependencias_handlers.router_dependencias)
-router.include_router(dependencias_handlers.router_estructura)
-# GD-API-0013, 0014, 0016: catálogos institucionales
-router.include_router(catalogos_handlers.router_cargos)
-router.include_router(catalogos_handlers.router_canales)
-router.include_router(catalogos_handlers.router_calendarios)
-router.include_router(catalogos_handlers.router_tipos_pqrsd)
-router.include_router(catalogos_handlers.router_tipos_corresp)
-router.include_router(catalogos_handlers.router_reglas)
-# GD-API-0015: parámetros institucionales versionados
-router.include_router(parametros_handlers.router)
+# GD-API-0012, 0013, 0014, 0015, 0016: estructura orgánica + dependencias +
+# catálogos + parámetros institucionales se montan en `router_admin` al
+# final del archivo. Viven bajo `/v1/gd/admin/*` para que la UI los agrupe
+# como "Administración del módulo".
 # GD-API-0023: consecutivos transaccionales radicación
 router.include_router(consecutivos_handlers.router)
 # GD-API-0033: terceros (CRUD + búsqueda con detección duplicados)
@@ -190,7 +183,8 @@ router.include_router(rpa_handlers.router_rl)
 router.include_router(utilidades_handlers.router_constancia_priv)
 router.include_router(utilidades_handlers.router_tipos)
 router.include_router(utilidades_handlers.router_org_tipos)
-router.include_router(utilidades_handlers.router_estructura)
+# router_estructura (cambios históricos de dependencias) ahora vive bajo
+# /v1/gd/admin/estructura/* — ver router_admin.
 router.include_router(utilidades_handlers.router_contingencia)
 router.include_router(utilidades_handlers.router_hoja)
 # GD-API-0128..0135: EP-021 periféricos parte 1 (puntos atención, periféricos,
@@ -212,6 +206,52 @@ router.include_router(perifericos_handlers.router_codigos)
 router.include_router(perifericos2_handlers.router_perif_b)
 router.include_router(perifericos2_handlers.router_agentes)
 router.include_router(perifericos2_handlers.router_digit)
+
+
+# =============================================================================
+# Sub-router /v1/gd/admin/* — superficie unificada de "admin del módulo"
+# =============================================================================
+# Decisión arquitectónica (2026-05-25): la UI agrupa todo lo administrativo
+# del módulo bajo `/admin/*` en lugar de tener `/parametros`, `/seguridad/*`,
+# `/dependencias`, `/canales`, etc. dispersos al mismo nivel del módulo.
+# Es semánticamente más claro: el operador navega por "Administración" y
+# ahí encuentra TODOS los settings/configuraciones del módulo.
+#
+# Implementación: montamos los routers existentes (cuyos handlers están
+# testeados) bajo un nuevo prefix `/admin`. Los paths originales sin el
+# `/admin/` se eliminan (clean cut — sin alias legacy, como pidió el user).
+# =============================================================================
+router_admin = APIRouter(prefix='/admin', tags=['gd:admin'])
+
+# --- Estructura orgánica + dependencias ---
+router_admin.include_router(dependencias_handlers.router_dependencias)
+router_admin.include_router(dependencias_handlers.router_estructura)
+# Cambios históricos de dependencias (D77 utilidades).
+router_admin.include_router(utilidades_handlers.router_estructura)
+
+# --- Catálogos (cargos, canales, calendarios, tipos de PQRSD/correspondencia, reglas) ---
+router_admin.include_router(catalogos_handlers.router_cargos)
+router_admin.include_router(catalogos_handlers.router_canales)
+router_admin.include_router(catalogos_handlers.router_calendarios)
+router_admin.include_router(catalogos_handlers.router_tipos_pqrsd)
+router_admin.include_router(catalogos_handlers.router_tipos_corresp)
+router_admin.include_router(catalogos_handlers.router_reglas)
+
+# --- Parámetros institucionales ---
+router_admin.include_router(parametros_handlers.router)
+
+# --- Seguridad (política de contraseñas) ---
+router_admin.include_router(politica_contrasena_handlers.router)
+
+# El sub-router se incluye en el router raíz del módulo. Se monta DESPUÉS
+# de los routers planos para que la API queda como:
+#   /v1/gd/admin/dependencias        (nuevo, vía router_admin)
+#   /v1/gd/admin/estructura/vigente  (nuevo, vía router_admin)
+#   /v1/gd/admin/parametros          (nuevo, vía router_admin)
+#   /v1/gd/admin/seguridad/politica  (nuevo, vía router_admin)
+#   /v1/gd/admin/canales             (nuevo, vía router_admin)
+#   ... y así
+router.include_router(router_admin)
 
 
 __all__ = ['router', 'router_core', 'router_public']

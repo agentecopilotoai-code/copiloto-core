@@ -50,6 +50,15 @@ async def listar_eventos_auditoria(
         params.append(v)
         return f'${len(params)}'
 
+    # BUGFIX 2026-05-25: las queries usaban nombres de columnas que NO
+    # existen en `core.evento_auditoria`. Mapeo correcto (ver schema en
+    # `infra/postgres/modules/gd.sql` § 1.1):
+    #   actor_id      → usuario_id
+    #   entidad_tipo  → entidad_afectada_tipo
+    #   entidad_id    → entidad_afectada_id
+    #   created_at    → fecha_hora
+    #   actor_type    → NO EXISTE (solo `actor_snapshot` jsonb). Devolvemos
+    #                   NULL para mantener el shape del response API.
     if tenant_id is not None:
         where.append(f'tenant_id = {_p(tenant_id)}')
     if dominio is not None:
@@ -57,28 +66,33 @@ async def listar_eventos_auditoria(
     if tipo_evento is not None:
         where.append(f'tipo_evento = {_p(tipo_evento)}')
     if actor_id is not None:
-        where.append(f'actor_id = {_p(actor_id)}')
+        where.append(f'usuario_id = {_p(actor_id)}')
     if entidad_tipo is not None:
-        where.append(f'entidad_tipo = {_p(entidad_tipo)}')
+        where.append(f'entidad_afectada_tipo = {_p(entidad_tipo)}')
     if entidad_id is not None:
-        where.append(f'entidad_id = {_p(entidad_id)}')
+        where.append(f'entidad_afectada_id = {_p(entidad_id)}')
     if criticidad is not None:
         where.append(f'criticidad = {_p(criticidad)}')
     if desde is not None:
-        where.append(f'created_at >= {_p(desde)}')
+        where.append(f'fecha_hora >= {_p(desde)}')
     if hasta is not None:
-        where.append(f'created_at <= {_p(hasta)}')
+        where.append(f'fecha_hora <= {_p(hasta)}')
 
     where_sql = ' and '.join(where) if where else 'true'
     params.append(limit)
     rows = await conn.fetch(
         f"""
-        select id, tipo_evento, dominio, accion, actor_type, actor_id,
-               entidad_tipo, entidad_id, criticidad, request_id, ip,
-               valor_anterior, valor_nuevo, justificacion, detalles, created_at
+        select id, tipo_evento, dominio, accion,
+               null::text             as actor_type,
+               usuario_id             as actor_id,
+               entidad_afectada_tipo  as entidad_tipo,
+               entidad_afectada_id    as entidad_id,
+               criticidad, request_id, ip,
+               valor_anterior, valor_nuevo, justificacion, detalles,
+               fecha_hora             as created_at
         from core.evento_auditoria
         where {where_sql}
-        order by created_at desc
+        order by fecha_hora desc
         limit ${len(params)}
         """,
         *params,
@@ -98,9 +112,14 @@ async def obtener_evento_auditoria(
 ) -> dict[str, Any] | None:
     row = await conn.fetchrow(
         """
-        select id, tipo_evento, dominio, accion, actor_type, actor_id,
-               entidad_tipo, entidad_id, criticidad, request_id, ip,
-               valor_anterior, valor_nuevo, justificacion, detalles, created_at
+        select id, tipo_evento, dominio, accion,
+               null::text             as actor_type,
+               usuario_id             as actor_id,
+               entidad_afectada_tipo  as entidad_tipo,
+               entidad_afectada_id    as entidad_id,
+               criticidad, request_id, ip,
+               valor_anterior, valor_nuevo, justificacion, detalles,
+               fecha_hora             as created_at
         from core.evento_auditoria where id = $1
         """,
         evento_id,

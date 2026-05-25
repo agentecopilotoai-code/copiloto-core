@@ -74,7 +74,7 @@ class TestCargosHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            '/v1/gd/cargos',
+            '/v1/gd/admin/cargos',
             json={'nombre': 'Profesional Especializado'},
         )
         assert r.status_code == 201, r.text
@@ -83,20 +83,20 @@ class TestCargosHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.ForeignKeyViolationError
         r = client.post(
-            '/v1/gd/cargos',
+            '/v1/gd/admin/cargos',
             json={'nombre': 'Profesional Test', 'dependencia_id': str(uuid4())},
         )
         assert r.status_code == 404
 
     def test_get_cargos(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/v1/gd/cargos')
+        r = client.get('/v1/gd/admin/cargos')
         assert r.status_code == 200
 
     def test_get_cargos_con_filtros(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/v1/gd/cargos?dependencia_id={uuid4()}&estado=activo'
+            f'/v1/gd/admin/cargos?dependencia_id={uuid4()}&estado=activo'
         )
         assert r.status_code == 200
 
@@ -110,7 +110,7 @@ class TestCargosHandlers:
             {'id': uuid4()},
         ]
         r = client.patch(
-            f'/v1/gd/cargos/{uuid4()}',
+            f'/v1/gd/admin/cargos/{uuid4()}',
             json={'nombre': 'Nuevo nombre'},
         )
         assert r.status_code == 200
@@ -118,7 +118,7 @@ class TestCargosHandlers:
     def test_patch_cargo_no_existe(self, conn, client):
         conn.fetchrow.return_value = None
         r = client.patch(
-            f'/v1/gd/cargos/{uuid4()}',
+            f'/v1/gd/admin/cargos/{uuid4()}',
             json={'nombre': 'Nuevo nombre'},
         )
         assert r.status_code == 404
@@ -139,7 +139,7 @@ class TestCanalesHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            '/v1/gd/canales',
+            '/v1/gd/admin/canales',
             json={'codigo': 'pres', 'nombre': 'Presencial', 'requiere_punto_atencion': True},
         )
         assert r.status_code == 201, r.text
@@ -148,14 +148,14 @@ class TestCanalesHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/v1/gd/canales',
+            '/v1/gd/admin/canales',
             json={'codigo': 'pres', 'nombre': 'Presencial'},
         )
         assert r.status_code == 409
 
     def test_get_canales(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/v1/gd/canales')
+        r = client.get('/v1/gd/admin/canales')
         assert r.status_code == 200
 
 
@@ -173,7 +173,7 @@ class TestCalendariosHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            '/v1/gd/calendarios',
+            '/v1/gd/admin/calendarios',
             json={
                 'nombre': 'Hábil CO 2026',
                 'vigencia_anual': 2026,
@@ -187,7 +187,7 @@ class TestCalendariosHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/v1/gd/calendarios',
+            '/v1/gd/admin/calendarios',
             json={'nombre': 'Calendario 2026', 'vigencia_anual': 2026},
         )
         assert r.status_code == 409
@@ -195,14 +195,14 @@ class TestCalendariosHandlers:
     def test_get_calendarios(self, conn, client):
         conn.fetch.return_value = []
         conn.fetchrow.return_value = None  # sin default
-        r = client.get('/v1/gd/calendarios')
+        r = client.get('/v1/gd/admin/calendarios')
         assert r.status_code == 200
 
     def test_calcular_fecha_limite(self, conn, client):
         fecha_esperada = datetime(2026, 6, 15, 10, 0)
         conn.fetchrow.return_value = {'fecha_limite': fecha_esperada}
         r = client.post(
-            '/v1/gd/calendarios/calcular-fecha-limite',
+            '/v1/gd/admin/calendarios/calcular-fecha-limite',
             json={
                 'fecha_base': '2026-06-01T10:00:00',
                 'termino_dias': 10,
@@ -227,7 +227,7 @@ class TestTiposHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            '/v1/gd/tipos-pqrsd',
+            '/v1/gd/admin/tipos-pqrsd',
             json={
                 'codigo': 'pet', 'nombre': 'Petición',
                 'termino_dias': 15, 'tipo_dias': 'habiles',
@@ -239,7 +239,7 @@ class TestTiposHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/v1/gd/tipos-pqrsd',
+            '/v1/gd/admin/tipos-pqrsd',
             json={'codigo': 'pet', 'nombre': 'Petición',
                   'termino_dias': 15, 'tipo_dias': 'habiles'},
         )
@@ -247,7 +247,7 @@ class TestTiposHandlers:
 
     def test_get_tipos_pqrsd(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/v1/gd/tipos-pqrsd')
+        r = client.get('/v1/gd/admin/tipos-pqrsd')
         assert r.status_code == 200
 
     def test_post_tipo_correspondencia(self, conn, client):
@@ -260,7 +260,7 @@ class TestTiposHandlers:
             {'id': uuid4()},
         ]
         r = client.post(
-            '/v1/gd/tipos-correspondencia',
+            '/v1/gd/admin/tipos-correspondencia',
             json={'codigo': 'ofi', 'nombre': 'Oficio', 'ambito': 'externa_enviada'},
         )
         assert r.status_code == 201
@@ -269,14 +269,14 @@ class TestTiposHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/v1/gd/tipos-correspondencia',
+            '/v1/gd/admin/tipos-correspondencia',
             json={'codigo': 'ofi', 'nombre': 'Oficio', 'ambito': 'interna'},
         )
         assert r.status_code == 409
 
     def test_get_tipos_correspondencia(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/v1/gd/tipos-correspondencia?ambito=interna')
+        r = client.get('/v1/gd/admin/tipos-correspondencia?ambito=interna')
         assert r.status_code == 200
 
 
@@ -296,7 +296,7 @@ class TestReglasHandlers:
             {'id': uuid4()},  # audit
         ]
         r = client.post(
-            '/v1/gd/reglas/comunicacion',
+            '/v1/gd/admin/reglas/comunicacion',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'dependencia_destino_id': str(uuid4()),
@@ -308,7 +308,7 @@ class TestReglasHandlers:
     def test_post_regla_mismo_origen_destino(self, conn, client):
         dep = uuid4()
         r = client.post(
-            '/v1/gd/reglas/comunicacion',
+            '/v1/gd/admin/reglas/comunicacion',
             json={
                 'dependencia_origen_id': str(dep),
                 'dependencia_destino_id': str(dep),
@@ -320,7 +320,7 @@ class TestReglasHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.UniqueViolationError
         r = client.post(
-            '/v1/gd/reglas/comunicacion',
+            '/v1/gd/admin/reglas/comunicacion',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'dependencia_destino_id': str(uuid4()),
@@ -332,7 +332,7 @@ class TestReglasHandlers:
         import asyncpg
         conn.fetchrow.side_effect = asyncpg.ForeignKeyViolationError
         r = client.post(
-            '/v1/gd/reglas/comunicacion',
+            '/v1/gd/admin/reglas/comunicacion',
             json={
                 'dependencia_origen_id': str(uuid4()),
                 'dependencia_destino_id': str(uuid4()),
@@ -342,20 +342,20 @@ class TestReglasHandlers:
 
     def test_get_reglas(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/v1/gd/reglas/comunicacion')
+        r = client.get('/v1/gd/admin/reglas/comunicacion')
         assert r.status_code == 200
 
     def test_get_reglas_con_filtro(self, conn, client):
         conn.fetch.return_value = []
         r = client.get(
-            f'/v1/gd/reglas/comunicacion?dependencia_origen_id={uuid4()}'
+            f'/v1/gd/admin/reglas/comunicacion?dependencia_origen_id={uuid4()}'
         )
         assert r.status_code == 200
 
     def test_validar_comunicacion(self, conn, client):
         conn.fetchrow.return_value = None  # sin regla
         r = client.get(
-            f'/v1/gd/reglas/comunicacion/validar?origen={uuid4()}&destino={uuid4()}'
+            f'/v1/gd/admin/reglas/comunicacion/validar?origen={uuid4()}&destino={uuid4()}'
         )
         assert r.status_code == 200
         body = r.json()
@@ -368,7 +368,7 @@ class TestReglasHandlers:
 class TestParametrosHandlers:
     def test_get_listar(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/v1/gd/parametros')
+        r = client.get('/v1/gd/admin/parametros')
         assert r.status_code == 200
 
     def test_get_clave_existe(self, conn, client):
@@ -380,12 +380,12 @@ class TestParametrosHandlers:
                 'estado': 'activo',
             }
         ]
-        r = client.get('/v1/gd/parametros/gd.x')
+        r = client.get('/v1/gd/admin/parametros/gd.x')
         assert r.status_code == 200
 
     def test_get_clave_no_existe(self, conn, client):
         conn.fetch.return_value = []
-        r = client.get('/v1/gd/parametros/inexistente')
+        r = client.get('/v1/gd/admin/parametros/inexistente')
         assert r.status_code == 404
 
     def test_patch_parametros(self, conn, client):
@@ -403,7 +403,7 @@ class TestParametrosHandlers:
             {'id': uuid4()},
         ]
         r = client.patch(
-            '/v1/gd/parametros',
+            '/v1/gd/admin/parametros',
             json={
                 'parametros': [
                     {'clave': 'gd.x', 'valor': 'v1', 'tipo': 'string',

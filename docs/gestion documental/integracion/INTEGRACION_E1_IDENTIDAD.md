@@ -4,6 +4,29 @@
 >
 > Pre-lectura obligatoria: [`README.md`](README.md) de esta carpeta — define convenciones, errores comunes, headers, paginación, snapshots.
 
+## Convención de paths admin (2026-05-25)
+
+Todos los endpoints de **configuración/administración del módulo** viven bajo el prefix `/api/v1/gd/admin/*`:
+
+| Familia | Prefix admin |
+|---|---|
+| Estructura orgánica + dependencias | `/api/v1/gd/admin/dependencias`, `/api/v1/gd/admin/estructura/*` |
+| Catálogos institucionales | `/api/v1/gd/admin/cargos`, `/canales`, `/calendarios`, `/tipos-pqrsd`, `/tipos-correspondencia`, `/reglas/comunicacion` |
+| Parámetros institucionales | `/api/v1/gd/admin/parametros` |
+| Seguridad (política contraseñas) | `/api/v1/gd/admin/seguridad/politica` |
+
+**Endpoints de identidad/auth/perfil del usuario** (NO admin) siguen al nivel del módulo, sin el prefix `/admin/`:
+
+| Familia | Prefix |
+|---|---|
+| Usuario actual | `/api/v1/gd/me` |
+| Perfil de usuarios | `/api/v1/gd/perfil-usuario/*` |
+| Roles y permisos del catálogo | `/api/v1/gd/roles`, `/api/v1/gd/permisos` |
+| Asignación de roles | `/api/v1/gd/usuarios/{id}/roles` |
+| Perfil de organización | `/api/v1/gd/organizacion` |
+
+Esta separación facilita el filtrado por permisos en el sidebar de la UI y la navegación: el operador encuentra TODO lo configurable bajo "Administración".
+
 ## Índice
 
 - [1. Identidad del usuario actual](#1-identidad-del-usuario-actual)
@@ -487,7 +510,7 @@ Sin body.
 
 ## 5. Política de contraseñas
 
-### GET `/api/v1/gd/seguridad/politica`
+### GET `/api/v1/gd/admin/seguridad/politica`
 **Tarea backend:** GD-API-0007
 **Tarea(s) UI consumidoras:** GD-UI-0053 (config seguridad — pendiente)
 **Permiso requerido:** `PERM-USR-001`
@@ -507,7 +530,7 @@ Sin body.
 
 ---
 
-### PATCH `/api/v1/gd/seguridad/politica`
+### PATCH `/api/v1/gd/admin/seguridad/politica`
 **Tarea backend:** GD-API-0007
 **Permiso requerido:** `PERM-USR-001` (alcance: institucional)
 **Evento emitido:** `gd.politica_contrasena.modificada` (criticidad: alta)
@@ -684,7 +707,7 @@ Mismo shape que GET.
 
 ## 8. Estructura orgánica versionada
 
-### POST `/api/v1/gd/dependencias`
+### POST `/api/v1/gd/admin/dependencias`
 **Tarea backend:** GD-API-0012
 **Tarea(s) UI consumidoras:** GD-UI-0058 (admin dependencias — pendiente)
 **Permiso requerido:** `PERM-USR-001` (alcance: institucional)
@@ -718,7 +741,7 @@ Mismo shape que GET.
 
 ---
 
-### GET `/api/v1/gd/dependencias`
+### GET `/api/v1/gd/admin/dependencias`
 **Tarea backend:** GD-API-0012
 **Tarea(s) UI consumidoras:** GD-UI-0058, `<DependenciaPicker />` (GD-UI-0004), filtros en multiples vistas
 **Permiso requerido:** ninguno (catálogo público dentro del tenant)
@@ -765,7 +788,7 @@ Si `incluir_jerarquia=true`:
 
 ---
 
-### PATCH `/api/v1/gd/dependencias/{id}`
+### PATCH `/api/v1/gd/admin/dependencias/{id}`
 **Tarea backend:** GD-API-0012
 **Permiso requerido:** `PERM-USR-001`
 
@@ -780,7 +803,7 @@ Si `incluir_jerarquia=true`:
 
 ---
 
-### POST `/api/v1/gd/dependencias/{id}/cerrar-vigencia`
+### POST `/api/v1/gd/admin/dependencias/{id}/cerrar-vigencia`
 **Tarea backend:** GD-API-0012
 **Permiso requerido:** `PERM-USR-001`
 **Evento emitido:** `gd.dependencia.cerrada` (criticidad: alta)
@@ -796,7 +819,7 @@ Si `incluir_jerarquia=true`:
 
 ---
 
-### POST `/api/v1/gd/estructura/versiones`
+### POST `/api/v1/gd/admin/estructura/versiones`
 **Tarea backend:** GD-API-0012
 **Permiso requerido:** `PERM-USR-001`
 **Evento emitido:** `gd.estructura_organica.versionada` (criticidad: alta)
@@ -820,11 +843,11 @@ Si `incluir_jerarquia=true`:
   "dependencias_clonadas": 47
 }
 ```
-> La versión nueva entra como `borrador`. Activación requiere endpoint adicional `POST /api/v1/gd/estructura/versiones/{id}/activar` (no documentado aquí — flujo de revisión).
+> La versión nueva entra como `borrador`. Activación requiere endpoint adicional `POST /api/v1/gd/admin/estructura/versiones/{id}/activar` (no documentado aquí — flujo de revisión).
 
 ---
 
-### GET `/api/v1/gd/estructura/vigente`
+### GET `/api/v1/gd/admin/estructura/vigente`
 **Tarea backend:** GD-API-0012
 **Permiso requerido:** ninguno
 
@@ -840,7 +863,7 @@ Si `incluir_jerarquia=true`:
 
 ---
 
-### GET `/api/v1/gd/estructura/historica?fecha=YYYY-MM-DD`
+### GET `/api/v1/gd/admin/estructura/historica?fecha=YYYY-MM-DD`
 **Tarea backend:** GD-API-0012
 **Tarea(s) UI consumidoras:** GD-UI-0015 (timeline radicado), GD-UI-0058 (consulta histórica)
 **Permiso requerido:** ninguno
@@ -850,7 +873,7 @@ Mismo shape que `/vigente`, pero retorna la versión que estaba vigente en `fech
 
 ---
 
-### GET `/api/v1/gd/estructura/dependencias/{id}/historial`
+### GET `/api/v1/gd/admin/estructura/dependencias/{id}/historial`
 **Tarea backend:** GD-API-0124 (EP-020 — historial jerárquico)
 **Tarea(s) UI consumidoras:** GD-UI-0058
 **Permiso requerido:** `PERM-USR-010`
@@ -880,7 +903,7 @@ Mismo shape que `/vigente`, pero retorna la versión que estaba vigente en `fech
 
 ---
 
-### POST `/api/v1/gd/estructura/fusionar`
+### POST `/api/v1/gd/admin/estructura/fusionar`
 **Tarea backend:** GD-API-0124
 **Permiso requerido:** `PERM-USR-001`
 **Evento emitido:** `gd.dependencia.fusionada` (criticidad: crítica)
@@ -900,7 +923,7 @@ Mismo shape que `/vigente`, pero retorna la versión que estaba vigente en `fech
 
 ## 9. Cargos institucionales
 
-### POST/GET/PATCH `/api/v1/gd/cargos`
+### POST/GET/PATCH `/api/v1/gd/admin/cargos`
 **Tarea backend:** GD-API-0013
 **Tarea(s) UI consumidoras:** GD-UI-0059 (admin cargos — pendiente)
 **Permiso requerido:** `PERM-USR-001`
@@ -932,7 +955,7 @@ Mismo shape que `/vigente`, pero retorna la versión que estaba vigente en `fech
 
 ## 10. Canales, calendarios, parámetros
 
-### GET `/api/v1/gd/canales`
+### GET `/api/v1/gd/admin/canales`
 **Tarea backend:** GD-API-0014
 **Tarea(s) UI consumidoras:** GD-UI-0007 (selector canal en radicado), GD-UI-0060 (admin canales — pendiente)
 **Permiso requerido:** ninguno
@@ -962,7 +985,7 @@ Mismo shape que `/vigente`, pero retorna la versión que estaba vigente en `fech
 
 ---
 
-### GET `/api/v1/gd/calendarios`
+### GET `/api/v1/gd/admin/calendarios`
 **Tarea backend:** GD-API-0014
 **Permiso requerido:** ninguno
 
@@ -984,7 +1007,7 @@ Mismo shape que `/vigente`, pero retorna la versión que estaba vigente en `fech
 
 ---
 
-### GET/PATCH `/api/v1/gd/parametros`
+### GET/PATCH `/api/v1/gd/admin/parametros`
 **Tarea backend:** GD-API-0015
 **Tarea(s) UI consumidoras:** GD-UI-0061 (admin parámetros)
 **Permiso requerido:** `PERM-USR-001`
@@ -1016,7 +1039,7 @@ Mismo shape que `/vigente`, pero retorna la versión que estaba vigente en `fech
 
 ---
 
-### GET `/api/v1/gd/parametros/{clave}`
+### GET `/api/v1/gd/admin/parametros/{clave}`
 **Tarea backend:** GD-API-0015
 **Permiso requerido:** ninguno
 

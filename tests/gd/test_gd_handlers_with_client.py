@@ -573,7 +573,7 @@ class TestPoliticaHandlers:
             'intentos_fallidos_max': 3, 'cooldown_segundos': 60,
             'vigente_desde': datetime.now(), 'tenant_id': TENANT_ID,
         }
-        r = client_all_perms.get('/v1/gd/seguridad/politica')
+        r = client_all_perms.get('/v1/gd/admin/seguridad/politica')
         assert r.status_code == 200
         assert r.json()['longitud_minima'] == 14
 
@@ -597,7 +597,7 @@ class TestPoliticaHandlers:
             {'id': uuid4()},
         ]
         r = client_all_perms.patch(
-            '/v1/gd/seguridad/politica',
+            '/v1/gd/admin/seguridad/politica',
             json={'longitud_minima': 20},
         )
         assert r.status_code == 200
