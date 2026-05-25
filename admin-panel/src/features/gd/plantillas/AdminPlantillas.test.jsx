@@ -18,7 +18,7 @@ import { AdminPlantillas } from './AdminPlantillas.jsx';
 const ROLES = ['gd.admin_plantillas'];
 
 const P1 = {
-  id: 'p1', nombre: 'Oficio estándar', tipo: 'oficio',
+  id: 'p1', nombre: 'Oficio estándar', tipo: 'oficio_respuesta',
   version_actual: 2, activa: true, descripcion: 'd',
   cuerpo: 'Cuerpo {{nombre}}',
   variables: [{ nombre: 'nombre', tipo: 'texto', descripcion: 'Nombre destinatario' }],
@@ -71,7 +71,7 @@ describe('AdminPlantillas', () => {
     render(<AdminPlantillas session={{ token: 't' }} roles={ROLES} />);
     await user.click(screen.getByTestId('plt-new'));
     fireEvent.change(screen.getByTestId('plt-form-nombre'), { target: { value: 'Acta' } });
-    fireEvent.change(screen.getByTestId('plt-form-tipo'), { target: { value: 'acta' } });
+    fireEvent.change(screen.getByTestId('plt-form-tipo'), { target: { value: 'memorando_interno' } });
     fireEvent.change(screen.getByTestId('plt-form-cuerpo'), { target: { value: 'Cuerpo' } });
     await user.click(screen.getByTestId('plt-form-submit'));
     await waitFor(() => expect(api.crearPlantilla).toHaveBeenCalled());

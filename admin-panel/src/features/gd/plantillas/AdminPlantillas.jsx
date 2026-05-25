@@ -18,10 +18,45 @@ import {
 } from './useGdPlantillas.js';
 import { gdCanAny } from '../../../permissions/gd-matrix.js';
 
+// Valores del enum `TipoPlantilla` del backend (app/gd/schemas/plantillas.py:11).
+// Si agregás un nuevo tipo en el backend, agregalo acá también — el select
+// del form usa este array directo.
 const TIPOS_PLANTILLA = [
-  'oficio', 'memorando', 'constancia', 'certificado',
-  'resolucion', 'acta', 'circular', 'comunicado',
+  'oficio_respuesta',
+  'memorando_interno',
+  'constancia_radicacion',
+  'traslado_competencia',
+  'solicitud_info_adicional',
+  'respuesta_pqrsd',
+  'comunicacion_externa_salida',
+  'otra',
 ];
+
+// Label legible para cada tipo (el value sigue siendo el del backend).
+const TIPOS_PLANTILLA_LABEL = {
+  oficio_respuesta: 'Oficio de respuesta',
+  memorando_interno: 'Memorando interno',
+  constancia_radicacion: 'Constancia de radicación',
+  traslado_competencia: 'Traslado por competencia',
+  solicitud_info_adicional: 'Solicitud de información adicional',
+  respuesta_pqrsd: 'Respuesta PQRSD',
+  comunicacion_externa_salida: 'Comunicación externa de salida',
+  otra: 'Otra',
+};
+
+// Genera un código automático desde el nombre (slug uppercase + underscores).
+// El backend exige codigo con pattern ^[A-Z0-9_]+$ — autocompletamos para
+// que el user no tenga que tipearlo. Si quiere editarlo manualmente, también
+// puede.
+function autoCodigo(nombre) {
+  if (!nombre) return '';
+  return nombre
+    .toUpperCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')  // acentos
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
+}
 
 export function AdminPlantillas({ session, roles = [], onNavigate, ...shellProps }) {
   const [selectedId, setSelectedId] = useState(null);
@@ -217,20 +252,33 @@ function DetallePlantilla({ session, plantillaId, roles, onEdit, onNuevaVersion,
 function FormPlantilla({ session, plantillaId, onCancel, onSuccess }) {
   const isEdit = Boolean(plantillaId);
   const { data: existente } = usePlantilla(session, plantillaId, { enabled: isEdit });
+  // El form usa los MISMOS nombres de campo que el schema backend
+  // (`CrearPlantillaRequest` en app/gd/schemas/plantillas.py):
+  //   - codigo           ← user-editable, autogenerado del nombre
+  //   - nombre           ← display name
+  //   - tipo_plantilla   ← enum TipoPlantilla del backend
+  //   - descripcion      ← opcional
+  //   - contenido_template ← cuerpo de la plantilla (HTML/texto con {{vars}})
   const [form, setForm] = useState({
-    nombre: '', tipo: 'oficio', descripcion: '', cuerpo: '', variables: [],
+    codigo: '',
+    nombre: '',
+    tipo_plantilla: 'oficio_respuesta',
+    descripcion: '',
+    contenido_template: '',
   });
+  const [codigoTouched, setCodigoTouched] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
   React.useEffect(() => {
     if (existente && !initialized) {
       setForm({
+        codigo: existente.codigo || '',
         nombre: existente.nombre || '',
-        tipo: existente.tipo || 'oficio',
+        tipo_plantilla: existente.tipo_plantilla || 'oficio_respuesta',
         descripcion: existente.descripcion || '',
-        cuerpo: existente.cuerpo || '',
-        variables: existente.variables || [],
+        contenido_template: existente.contenido_template || '',
       });
+      setCodigoTouched(true);  // ya existe → no autogenerar
       setInitialized(true);
     }
   }, [existente, initialized]);
@@ -239,20 +287,50 @@ function FormPlantilla({ session, plantillaId, onCancel, onSuccess }) {
   const editar = useActualizarPlantilla(session);
   const hook = isEdit ? editar : crear;
 
-  function update(k, v) { setForm((p) => ({ ...p, [k]: v })); }
+  function update(k, v) {
+    setForm((p) => {
+      const next = { ...p, [k]: v };
+      // Si el user no tocó el codigo, autogeneralo del nombre.
+      if (k === 'nombre' && !codigoTouched && !isEdit) {
+        next.codigo = autoCodigo(v);
+      }
+      return next;
+    });
+  }
+  function updateCodigo(v) {
+    setCodigoTouched(true);
+    setForm((p) => ({ ...p, codigo: v.toUpperCase() }));
+  }
 
   async function handle() {
     try {
+      // Backend espera contenido_template, NO `cuerpo`. Y solo manda los
+      // campos del schema — descartamos cualquier extra del form local.
+      const payload = {
+        nombre: form.nombre.trim(),
+        descripcion: form.descripcion || null,
+      };
+      if (!isEdit) {
+        // tipo_plantilla y codigo son inmutables — solo en create.
+        payload.codigo = form.codigo.trim();
+        payload.tipo_plantilla = form.tipo_plantilla;
+      }
+      if (form.contenido_template) {
+        payload.contenido_template = form.contenido_template;
+      }
       if (isEdit) {
-        await editar.submit(plantillaId, form);
+        await editar.submit(plantillaId, payload);
       } else {
-        await crear.submit(form);
+        await crear.submit(payload);
       }
       onSuccess?.();
     } catch { /* hook */ }
   }
 
-  const isValid = form.nombre.trim().length >= 2 && form.tipo;
+  const isValid =
+    form.nombre.trim().length >= 2
+    && form.tipo_plantilla
+    && (isEdit || /^[A-Z0-9_]{2,80}$/.test(form.codigo));
 
   return (
     <div data-testid="plt-form">
@@ -269,17 +347,41 @@ function FormPlantilla({ session, plantillaId, onCancel, onSuccess }) {
         />
       </div>
       <div className="field" style={{ marginTop: 'var(--s-3)' }}>
-        <label>Tipo</label>
+        <label>
+          Código {!isEdit && <span className="req">*</span>}
+          {!isEdit && (
+            <small style={{ marginLeft: 8, color: 'var(--muted)' }}>
+              (mayúsculas, números y _; autogenerado del nombre — editable)
+            </small>
+          )}
+        </label>
+        <input
+          className="input"
+          value={form.codigo}
+          onChange={(e) => updateCodigo(e.target.value)}
+          disabled={isEdit}
+          pattern="[A-Z0-9_]+"
+          data-testid="plt-form-codigo"
+        />
+      </div>
+      <div className="field" style={{ marginTop: 'var(--s-3)' }}>
+        <label>Tipo de plantilla {!isEdit && <span className="req">*</span>}</label>
         <select
           className="select"
-          value={form.tipo}
-          onChange={(e) => update('tipo', e.target.value)}
+          value={form.tipo_plantilla}
+          onChange={(e) => update('tipo_plantilla', e.target.value)}
+          disabled={isEdit}
           data-testid="plt-form-tipo"
         >
           {TIPOS_PLANTILLA.map((t) => (
-            <option key={t} value={t}>{t}</option>
+            <option key={t} value={t}>{TIPOS_PLANTILLA_LABEL[t] || t}</option>
           ))}
         </select>
+        {isEdit && (
+          <small style={{ color: 'var(--muted)' }}>
+            El tipo no se puede cambiar; cambiarlo es destructivo.
+          </small>
+        )}
       </div>
       <div className="field" style={{ marginTop: 'var(--s-3)' }}>
         <label>Descripción</label>
@@ -292,14 +394,17 @@ function FormPlantilla({ session, plantillaId, onCancel, onSuccess }) {
         />
       </div>
       <div className="field" style={{ marginTop: 'var(--s-3)' }}>
-        <label>Cuerpo (HTML / texto con variables {`{{nombre}}`})</label>
+        <label>Cuerpo (HTML / texto con variables {`{{nombre}}`}) — opcional</label>
         <textarea
           className="textarea"
           rows={8}
-          value={form.cuerpo}
-          onChange={(e) => update('cuerpo', e.target.value)}
+          value={form.contenido_template}
+          onChange={(e) => update('contenido_template', e.target.value)}
           data-testid="plt-form-cuerpo"
         />
+        <small style={{ color: 'var(--muted)' }}>
+          Si se completa, se crea como primera versión en estado borrador.
+        </small>
       </div>
       {hook.error && (
         <div className="alert danger" role="alert" style={{ marginTop: 12 }}>

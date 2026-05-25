@@ -15,6 +15,9 @@ import { AdminEstructura } from './AdminEstructura.jsx';
 
 const ROLES = ['gd.admin_sistema'];
 const TREE = {
+  // version_id requerido por el form de Dependencia (campo
+  // `version_estructura_id` del schema CrearDependencia del backend).
+  version_id: 'ver-est-uuid-1',
   dependencias: [{
     id: 'd1', codigo: 'D01', nombre: 'Despacho', activa: true,
     jefe_nombre: 'Pedro X',

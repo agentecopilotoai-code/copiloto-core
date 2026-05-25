@@ -93,6 +93,11 @@ export function AdminEstructura({ session, roles = [], ...shellProps }) {
         <FormDepModal
           session={session}
           padreId={modal.padre_id}
+          // version_estructura_id requerido por el backend
+          // (DependenciaCreate). Lo leemos del response de
+          // /admin/estructura/vigente, que devuelve `version_id`
+          // (o `id`) según el shape del backend.
+          versionEstructuraId={data?.version_id || data?.id || null}
           onClose={() => setModal(null)}
           onSuccess={() => { setModal(null); refresh(); }}
         />
@@ -191,14 +196,31 @@ function DependenciaNodo({
   );
 }
 
-function FormDepModal({ session, dep, padreId, onClose, onSuccess }) {
+function FormDepModal({
+  session, dep, padreId,
+  versionEstructuraId,   // UUID de la versión vigente; required para crear
+  onClose, onSuccess,
+}) {
   const isEdit = Boolean(dep);
+  // Schema canónico backend: `DependenciaCreate`
+  // (app/gd/schemas/dependencias.py:61). Campos REQUERIDOS:
+  //   - codigo_organico       (1-40 chars, identificador en organigrama)
+  //   - nombre                (2-300 chars)
+  //   - fecha_inicio_vigencia (date — cuándo entra en vigencia esta unidad)
+  //   - version_estructura_id (UUID — debe existir una versión TRD activa
+  //                            del organigrama; pasada via prop o contexto)
+  // Opcional: dependencia_padre_id (UUID — null = raíz).
+  //
+  // IMPORTANTE: `version_estructura_id` lo pasa el componente padre
+  // (AdminEstructura) leyendo el `data?.version_id` que devuelve
+  // `getEstructuraOrganica` (= `/admin/estructura/vigente`). Si NO hay
+  // versión vigente, el botón "Nueva dependencia" debería estar deshabilitado.
+  const hoy = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({
-    codigo: dep?.codigo || '',
+    codigo_organico: dep?.codigo_organico || '',
     nombre: dep?.nombre || '',
-    descripcion: dep?.descripcion || '',
-    jefe_id: dep?.jefe_id || '',
-    padre_id: padreId ?? dep?.padre_id ?? '',
+    fecha_inicio_vigencia: dep?.fecha_inicio_vigencia || hoy,
+    dependencia_padre_id: padreId ?? dep?.dependencia_padre_id ?? '',
   });
   const crear = useCrearDependencia(session);
   const editar = useActualizarDependencia(session);
@@ -206,20 +228,53 @@ function FormDepModal({ session, dep, padreId, onClose, onSuccess }) {
 
   async function handle() {
     try {
-      if (isEdit) await editar.submit(dep.id, form);
-      else await crear.submit(form);
+      if (isEdit) {
+        // Backend PATCH solo acepta nombre + dependencia_padre_id.
+        await editar.submit(dep.id, {
+          nombre: form.nombre.trim(),
+          dependencia_padre_id: form.dependencia_padre_id || null,
+        });
+      } else {
+        if (!versionEstructuraId) {
+          // Defensa adicional: el padre debería haberlo prevenido.
+          throw new Error(
+            'No hay versión de estructura orgánica vigente. '
+            + 'Primero creá una versión desde "Estructura → Nueva versión".',
+          );
+        }
+        await crear.submit({
+          codigo_organico: form.codigo_organico.trim(),
+          nombre: form.nombre.trim(),
+          fecha_inicio_vigencia: form.fecha_inicio_vigencia,
+          version_estructura_id: versionEstructuraId,
+          dependencia_padre_id: form.dependencia_padre_id || null,
+        });
+      }
       onSuccess?.();
     } catch { /* hook */ }
   }
 
-  const valid = form.codigo.trim().length >= 1 && form.nombre.trim().length >= 2;
+  const valid =
+    form.codigo_organico.trim().length >= 1
+    && form.nombre.trim().length >= 2
+    && (isEdit || (form.fecha_inicio_vigencia && versionEstructuraId));
 
   return (
     <ModalShell title={isEdit ? 'Editar dependencia' : 'Nueva dependencia'} onClose={onClose} testid="est-form-modal">
+      {!isEdit && !versionEstructuraId && (
+        <div className="alert warning" role="alert" style={{ marginBottom: 12 }}>
+          <div className="body">
+            No hay versión de estructura orgánica vigente. Primero creá una
+            versión desde la pantalla "Estructura → Nueva versión" antes
+            de agregar dependencias.
+          </div>
+        </div>
+      )}
       <div className="field">
-        <label>Código <span className="req">*</span></label>
-        <input className="input" value={form.codigo}
-          onChange={(e) => setForm({ ...form, codigo: e.target.value })}
+        <label>Código orgánico <span className="req">*</span></label>
+        <input className="input" value={form.codigo_organico}
+          onChange={(e) => setForm({ ...form, codigo_organico: e.target.value })}
+          placeholder="Ej. 1000, 1200, 1210 (alineado al organigrama)"
           data-testid="est-form-codigo" />
       </div>
       <div className="field" style={{ marginTop: 'var(--s-3)' }}>
@@ -228,21 +283,19 @@ function FormDepModal({ session, dep, padreId, onClose, onSuccess }) {
           onChange={(e) => setForm({ ...form, nombre: e.target.value })}
           data-testid="est-form-nombre" />
       </div>
-      <div className="field" style={{ marginTop: 'var(--s-3)' }}>
-        <label>Descripción</label>
-        <textarea className="textarea" rows={2} value={form.descripcion}
-          onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
-          data-testid="est-form-desc" />
-      </div>
-      <div className="field" style={{ marginTop: 'var(--s-3)' }}>
-        <label>ID Jefe (usuario GD)</label>
-        <input className="input" value={form.jefe_id}
-          onChange={(e) => setForm({ ...form, jefe_id: e.target.value })}
-          data-testid="est-form-jefe" />
-      </div>
+      {!isEdit && (
+        <div className="field" style={{ marginTop: 'var(--s-3)' }}>
+          <label>Fecha de inicio de vigencia <span className="req">*</span></label>
+          <input className="input" type="date" value={form.fecha_inicio_vigencia}
+            onChange={(e) => setForm({ ...form, fecha_inicio_vigencia: e.target.value })}
+            data-testid="est-form-fecha" />
+        </div>
+      )}
       {hook.error && (
         <div className="alert danger" role="alert" style={{ marginTop: 12 }}>
-          <div className="body">{hook.error.message || 'Error.'}</div>
+          <div className="body" style={{ whiteSpace: 'pre-line' }}>
+            {hook.error.message || 'Error.'}
+          </div>
         </div>
       )}
       <ModalFoot onClose={onClose}>

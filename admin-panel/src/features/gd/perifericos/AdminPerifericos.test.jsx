@@ -15,7 +15,7 @@ import { AdminPerifericos } from './AdminPerifericos.jsx';
 
 const ROLES = ['gd.admin_sistema'];
 const P = {
-  id: 'p1', codigo: 'IMP-01', tipo: 'impresora', modelo: 'HP LaserJet',
+  id: 'p1', codigo: 'IMP-01', tipo_periferico: 'impresora_etiquetas', modelo: 'HP LaserJet',
   ubicacion: 'Ventanilla', activo: true, en_linea: true,
 };
 
@@ -55,7 +55,7 @@ describe('AdminPerifericos', () => {
   it('filtros refetch', async () => {
     render(<AdminPerifericos session={{ token: 't' }} roles={ROLES} />);
     await waitFor(() => expect(api.listPerifericos).toHaveBeenCalledTimes(1));
-    fireEvent.change(screen.getByTestId('per-filter-tipo'), { target: { value: 'escaner' } });
+    fireEvent.change(screen.getByTestId('per-filter-tipo'), { target: { value: 'escaner_plano' } });
     fireEvent.change(screen.getByTestId('per-filter-ubic'), { target: { value: 'X' } });
     await waitFor(() => expect(api.listPerifericos).toHaveBeenCalledTimes(3));
   });
@@ -65,7 +65,9 @@ describe('AdminPerifericos', () => {
     const user = userEvent.setup();
     render(<AdminPerifericos session={{ token: 't' }} roles={ROLES} />);
     await user.click(await screen.findByTestId('per-nuevo'));
-    fireEvent.change(screen.getByTestId('per-form-codigo'), { target: { value: 'IMP-02' } });
+    fireEvent.change(screen.getByTestId('per-form-nombre'), { target: { value: 'Impresora 2' } });
+    // serial es REQUERIDO en create (CrearPerifericoRequest backend).
+    fireEvent.change(screen.getByTestId('per-form-serial'), { target: { value: 'SN-IMP-02' } });
     fireEvent.change(screen.getByTestId('per-form-modelo'), { target: { value: 'Brother HL' } });
     fireEvent.change(screen.getByTestId('per-form-ubic'), { target: { value: 'Sec' } });
     await user.click(screen.getByTestId('per-form-submit'));
@@ -96,7 +98,8 @@ describe('AdminPerifericos', () => {
     const user = userEvent.setup();
     render(<AdminPerifericos session={{ token: 't' }} roles={ROLES} />);
     await user.click(await screen.findByTestId('per-nuevo'));
-    fireEvent.change(screen.getByTestId('per-form-codigo'), { target: { value: 'X' } });
+    fireEvent.change(screen.getByTestId('per-form-nombre'), { target: { value: 'Impresora X' } });
+    fireEvent.change(screen.getByTestId('per-form-serial'), { target: { value: 'SN-X' } });
     fireEvent.change(screen.getByTestId('per-form-modelo'), { target: { value: 'XX' } });
     await user.click(screen.getByTestId('per-form-submit'));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/boom/));

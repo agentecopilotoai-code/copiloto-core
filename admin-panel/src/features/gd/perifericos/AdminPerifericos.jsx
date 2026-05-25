@@ -15,7 +15,26 @@ import {
 } from './useGdPerifericos.js';
 import { gdCanAny } from '../../../permissions/gd-matrix.js';
 
-const TIPOS = ['impresora', 'escaner', 'lector_barras', 'otro'];
+// Valores del enum `TipoPeriferico` del backend
+// (app/gd/schemas/perifericos.py:22). Si agregás un tipo, sync acá.
+const TIPOS = [
+  'impresora_etiquetas',
+  'impresora_termica',
+  'impresora_convencional',
+  'escaner_plano',
+  'escaner_automatico',
+  'lector_codigo_barras',
+  'otro',
+];
+const TIPOS_LABEL = {
+  impresora_etiquetas: 'Impresora de etiquetas',
+  impresora_termica: 'Impresora térmica',
+  impresora_convencional: 'Impresora convencional',
+  escaner_plano: 'Escáner plano',
+  escaner_automatico: 'Escáner automático',
+  lector_codigo_barras: 'Lector de código de barras',
+  otro: 'Otro',
+};
 
 export function AdminPerifericos({ session, roles = [], ...shellProps }) {
   const [filtros, setFiltros] = useState({});
@@ -199,13 +218,22 @@ export function AdminPerifericos({ session, roles = [], ...shellProps }) {
 
 function FormPerifericoModal({ session, periferico, onClose, onSuccess }) {
   const isEdit = Boolean(periferico);
+  // Schema canónico backend: `CrearPerifericoRequest`
+  // (app/gd/schemas/perifericos.py). Campos REQUERIDOS:
+  //   - tipo_periferico (enum)
+  //   - nombre (2-200 chars)
+  //   - serial (1-200 chars)
+  // Opcionales: marca, modelo, dependencia_id, punto_atencion_id, configuracion.
+  // El UI agrega `ubicacion` + `direccion_red` como conveniencia — se guardan
+  // dentro de `configuracion` (jsonb libre del backend).
   const [form, setForm] = useState({
-    codigo: periferico?.codigo || '',
-    tipo: periferico?.tipo || 'impresora',
+    nombre: periferico?.nombre || '',
+    tipo_periferico: periferico?.tipo_periferico || 'impresora_etiquetas',
+    marca: periferico?.marca || '',
     modelo: periferico?.modelo || '',
-    ubicacion: periferico?.ubicacion || '',
-    descripcion: periferico?.descripcion || '',
-    direccion_red: periferico?.direccion_red || '',
+    serial: periferico?.serial || '',
+    ubicacion: periferico?.configuracion?.ubicacion || '',
+    direccion_red: periferico?.configuracion?.direccion_red || '',
   });
   const crear = useCrearPeriferico(session);
   const editar = useActualizarPeriferico(session);
@@ -213,36 +241,74 @@ function FormPerifericoModal({ session, periferico, onClose, onSuccess }) {
 
   async function handle() {
     try {
-      if (isEdit) await editar.submit(periferico.id, form);
-      else await crear.submit(form);
+      // Construye payload usando los nombres del schema backend.
+      // `ubicacion` y `direccion_red` van adentro de `configuracion` (jsonb).
+      const configuracion = {};
+      if (form.ubicacion) configuracion.ubicacion = form.ubicacion;
+      if (form.direccion_red) configuracion.direccion_red = form.direccion_red;
+
+      const payload = {
+        nombre: form.nombre.trim(),
+        marca: form.marca || null,
+        modelo: form.modelo || null,
+        configuracion,
+      };
+      if (!isEdit) {
+        // tipo_periferico y serial son inmutables (define identidad del device).
+        payload.tipo_periferico = form.tipo_periferico;
+        payload.serial = form.serial.trim();
+      }
+      if (isEdit) await editar.submit(periferico.id, payload);
+      else await crear.submit(payload);
       onSuccess?.();
     } catch { /* */ }
   }
-  const valid = form.codigo.trim().length >= 1 && form.modelo.trim().length >= 2;
+  const valid =
+    form.nombre.trim().length >= 2
+    && (isEdit || form.serial.trim().length >= 1);
 
   return (
     <ModalShell title={isEdit ? 'Editar periférico' : 'Registrar periférico'} onClose={onClose} testid="per-form-modal">
       <div className="field">
-        <label>Código <span className="req">*</span></label>
-        <input className="input" value={form.codigo}
-          disabled={isEdit}
-          onChange={(e) => setForm({ ...form, codigo: e.target.value })}
-          data-testid="per-form-codigo"
+        <label>Nombre <span className="req">*</span></label>
+        <input className="input" value={form.nombre}
+          onChange={(e) => setForm({ ...form, nombre: e.target.value })}
+          placeholder="Ej. Impresora Recepción 1"
+          data-testid="per-form-nombre"
         />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 'var(--s-3)' }}>
         <div className="field">
-          <label>Tipo</label>
+          <label>Tipo {!isEdit && <span className="req">*</span>}</label>
           <select className="select"
-            value={form.tipo}
-            onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+            value={form.tipo_periferico}
+            disabled={isEdit}
+            onChange={(e) => setForm({ ...form, tipo_periferico: e.target.value })}
             data-testid="per-form-tipo"
           >
-            {TIPOS.map((t) => <option key={t} value={t}>{t}</option>)}
+            {TIPOS.map((t) => <option key={t} value={t}>{TIPOS_LABEL[t] || t}</option>)}
           </select>
         </div>
         <div className="field">
-          <label>Modelo <span className="req">*</span></label>
+          <label>Serial {!isEdit && <span className="req">*</span>}</label>
+          <input className="input" value={form.serial}
+            disabled={isEdit}
+            onChange={(e) => setForm({ ...form, serial: e.target.value })}
+            placeholder="Serial físico del equipo"
+            data-testid="per-form-serial"
+          />
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 'var(--s-3)' }}>
+        <div className="field">
+          <label>Marca</label>
+          <input className="input" value={form.marca}
+            onChange={(e) => setForm({ ...form, marca: e.target.value })}
+            data-testid="per-form-marca"
+          />
+        </div>
+        <div className="field">
+          <label>Modelo</label>
           <input className="input" value={form.modelo}
             onChange={(e) => setForm({ ...form, modelo: e.target.value })}
             data-testid="per-form-modelo"
@@ -250,24 +316,17 @@ function FormPerifericoModal({ session, periferico, onClose, onSuccess }) {
         </div>
       </div>
       <div className="field" style={{ marginTop: 'var(--s-3)' }}>
-        <label>Ubicación</label>
+        <label>Ubicación (se guarda en configuración)</label>
         <input className="input" value={form.ubicacion}
           onChange={(e) => setForm({ ...form, ubicacion: e.target.value })}
           data-testid="per-form-ubic"
         />
       </div>
       <div className="field" style={{ marginTop: 'var(--s-3)' }}>
-        <label>Dirección de red / IP</label>
+        <label>Dirección de red / IP (se guarda en configuración)</label>
         <input className="input" value={form.direccion_red}
           onChange={(e) => setForm({ ...form, direccion_red: e.target.value })}
           data-testid="per-form-red"
-        />
-      </div>
-      <div className="field" style={{ marginTop: 'var(--s-3)' }}>
-        <label>Descripción</label>
-        <textarea className="textarea" rows={2} value={form.descripcion}
-          onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
-          data-testid="per-form-desc"
         />
       </div>
       {hook.error && (
