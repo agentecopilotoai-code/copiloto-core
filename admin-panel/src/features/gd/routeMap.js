@@ -1,28 +1,30 @@
 /**
  * Route map del módulo Gestión Documental.
  *
- * Mapea cada path lógico del módulo a un componente. Usado por
- * `GdShellRoute` (en `app/router.jsx`) para resolver tanto el sub-tree
- * de operación (`/gd/t/{slug}/*`) como el de admin del módulo
- * (`/gd/admin/t/{slug}/*`).
+ * Mapea cada path lógico del módulo (lo que `GdSidebar` emite por
+ * `onNavigate`) al componente que debe renderizarse. Usado por
+ * `GdShellRoute` (en `app/router.jsx`) para resolver el sub-tree
+ * `/t/{slug}/gd/*` montado dentro del shell tenant.
  *
- * Esquema D-ROUTES-01:
- *  - Operación → `OP_STATIC` + `OP_DYNAMIC`.
- *    Sub-paths: `/buzon`, `/pqrsd/mias`, `/documentos/:id`, ...
- *  - Admin del módulo → `ADMIN_STATIC` + `ADMIN_DYNAMIC`.
- *    Sub-paths: `/usuarios`, `/estructura`, `/parametros`, ...
- *    (NO incluyen `/admin/` prefix porque ya está en la URL del shell.)
+ * Convenciones:
+ *  - Las claves son rutas relativas al módulo (sin `/gd` prefijo, sin
+ *    el slug del tenant). Ej: `''` = landing, `'ventanilla'`,
+ *    `'pqrsd'`, `'documentos/:id'`, etc.
+ *  - Los componentes se importan desde `features/gd/placeholders` para
+ *    aprovechar el wiring rol-aware existente — cada placeholder es
+ *    en realidad la vista real (los placeholders se reemplazaron con
+ *    componentes 1:1 al cerrar UI-1..UI-15).
+ *  - Las rutas con parámetro (`:id`) extraen el último segmento del
+ *    path y lo pasan como prop `{nombre}Id` al componente.
  *
- * El resolvedor `resolveGdRoute({ mode, subPath })` devuelve:
+ * El resolvedor `resolveGdRoute(subPath)` devuelve:
  *  - `{ Component, extraProps }` cuando hay match
- *  - Fallback: `GdHome` para op, `GdAdminEstructura` para admin (entry
- *    razonable del flujo de configuración del módulo).
+ *  - `{ Component: GdHome, extraProps: {} }` como fallback (landing).
  */
 import * as G from './placeholders/index.jsx';
 
-// ─── OPERACIÓN ──────────────────────────────────────────────────────────────
-
-const OP_STATIC = Object.freeze({
+// Rutas estáticas: sin parámetros. El match es exacto contra `subPath`.
+const STATIC = Object.freeze({
   '': G.GdHome,
   '/': G.GdHome,
   '/ventanilla': G.GdVentanillaHome,
@@ -50,6 +52,19 @@ const OP_STATIC = Object.freeze({
   '/trd': G.GdTrdHome,
   '/tvd': G.GdTvdHome,
   '/expedientes': G.GdExpedientes,
+  '/admin/usuarios': G.GdAdminUsuarios,
+  '/admin/estructura': G.GdAdminEstructura,
+  '/admin/catalogos': G.GdAdminCatalogos,
+  '/admin/parametros': G.GdAdminParametros,
+  '/admin/calendario': G.GdCalendario,
+  '/admin/notificaciones': G.GdPlantillasNotif,
+  '/admin/logs': G.GdRetencionLogs,
+  '/admin/backup': G.GdBackup,
+  '/admin/integraciones': G.GdIntegraciones,
+  '/admin/salud': G.GdSaludSistema,
+  '/admin/perifericos': G.GdAdminPerifericos,
+  '/admin/impresion': G.GdImpresion,
+  '/admin/digitalizacion': G.GdDigitalizacion,
   '/seguridad': G.GdSeguridad,
   '/auditoria': G.GdAuditoria,
   '/auditoria/vista': G.GdVistaAuditor,
@@ -66,7 +81,9 @@ const OP_STATIC = Object.freeze({
   '/consulta': G.GdConsulta,
 });
 
-const OP_DYNAMIC = Object.freeze([
+// Rutas dinámicas: regex → { Component, propName }. El primer grupo de
+// captura se pasa al componente como prop con el nombre indicado.
+const DYNAMIC = Object.freeze([
   { re: /^\/documentos\/([^/]+)\/generar$/, Component: G.GdGenerarDocumento, prop: 'documentoId' },
   { re: /^\/documentos\/([^/]+)$/, Component: G.GdDocumentoFicha, prop: 'documentoId' },
   { re: /^\/plantillas\/([^/]+)\/generar$/, Component: G.GdGenerarDocumento, prop: 'plantillaId' },
@@ -80,50 +97,21 @@ const OP_DYNAMIC = Object.freeze([
   { re: /^\/trd\/clasificar$/, Component: G.GdClasificarConTRD, prop: null },
 ]);
 
-// ─── ADMIN DEL MÓDULO ───────────────────────────────────────────────────────
-
-const ADMIN_STATIC = Object.freeze({
-  // El landing de admin va a Estructura — paso obligatorio del flujo
-  // desde cero (sin versión vigente nada más funciona).
-  // Ver docs/gestion documental/FLUJO_DESDE_CERO.md.
-  '': G.GdAdminEstructura,
-  '/': G.GdAdminEstructura,
-  '/usuarios': G.GdAdminUsuarios,
-  '/estructura': G.GdAdminEstructura,
-  '/catalogos': G.GdAdminCatalogos,
-  '/parametros': G.GdAdminParametros,
-  '/calendario': G.GdCalendario,
-  '/notificaciones': G.GdPlantillasNotif,
-  '/logs': G.GdRetencionLogs,
-  '/backup': G.GdBackup,
-  '/integraciones': G.GdIntegraciones,
-  '/salud': G.GdSaludSistema,
-  '/perifericos': G.GdAdminPerifericos,
-  '/impresion': G.GdImpresion,
-  '/digitalizacion': G.GdDigitalizacion,
-});
-
-const ADMIN_DYNAMIC = Object.freeze([
-  // Slot reservado para detalles dinámicos (ej. ficha de usuario admin).
-]);
-
 /**
- * Resuelve un sub-path a `{ Component, extraProps }` según el modo
- * del shell (operación vs admin del módulo).
+ * Resuelve un sub-path del módulo GD a `{ Component, extraProps }`.
  *
- * @param {Object} opts
- * @param {'op'|'admin'} opts.mode - Determina cuál tabla de routes consultar.
- * @param {string} opts.subPath - Path relativo al shell (ej. `/buzon`,
- *   `/pqrsd/abc-123`, `/usuarios`).
+ * @param {string} subPath - Path relativo al módulo (ej. `'/pqrsd/abc-123'`).
+ *   Debe empezar con `/` (o ser cadena vacía para la landing).
  * @returns {{ Component: React.ComponentType, extraProps: object }}
  */
-export function resolveGdRoute({ mode, subPath }) {
-  const STATIC = mode === 'admin' ? ADMIN_STATIC : OP_STATIC;
-  const DYNAMIC = mode === 'admin' ? ADMIN_DYNAMIC : OP_DYNAMIC;
-  const FALLBACK = mode === 'admin' ? G.GdAdminEstructura : G.GdHome;
+export function resolveGdRoute(subPath) {
   const normalized = subPath || '';
+  // 1) match estático exacto
   const StaticCmp = STATIC[normalized];
-  if (StaticCmp) return { Component: StaticCmp, extraProps: {} };
+  if (StaticCmp) {
+    return { Component: StaticCmp, extraProps: {} };
+  }
+  // 2) match dinámico (regex)
   for (const entry of DYNAMIC) {
     const m = normalized.match(entry.re);
     if (m) {
@@ -131,7 +119,9 @@ export function resolveGdRoute({ mode, subPath }) {
       return { Component: entry.Component, extraProps };
     }
   }
-  return { Component: FALLBACK, extraProps: {} };
+  // 3) fallback → landing (GdHome). El usuario ve la home con el
+  //    sidebar para reorientarse.
+  return { Component: G.GdHome, extraProps: {} };
 }
 
-export const _internal = { OP_STATIC, OP_DYNAMIC, ADMIN_STATIC, ADMIN_DYNAMIC };
+export const _internal = { STATIC, DYNAMIC };

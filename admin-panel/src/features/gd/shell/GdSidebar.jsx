@@ -6,94 +6,74 @@
  *
  * Mapa derivado de UI_BACKLOG.md sección 3 (rol → landing + sidebar visible)
  * + MATRIZ_PERMISOS.md.
- *
- * URLs (esquema D-ROUTES-01):
- *   - Operación: `/gd/t/{slug}/{subPath}`
- *   - Admin del módulo: `/gd/admin/t/{slug}/{subPath}`
- * El sidebar declara `subPath` relativo al módulo (`/buzon`,
- * `/admin/usuarios`); `gdHome(slug, subPath)` construye la URL final
- * y auto-promueve `/admin/...` al sub-tree de admin.
  */
 import React from 'react';
 
 import { gdCanAny } from '../../../permissions/gd-matrix.js';
-import { gdHome } from '../../../app/urls.js';
 import { gdPrimaryRoleLabel } from './gdRoles.js';
 
 const NAV = Object.freeze([
   {
     label: 'OPERACIÓN',
     items: [
-      { id: 'ventanilla', label: 'Ventanilla Única', subPath: '/ventanilla', requires: ['VU-001', 'VU-002', 'VU-005'] },
-      { id: 'cola-vu', label: 'Cola Ventanilla', subPath: '/ventanilla/cola', requires: ['VU-005', 'VU-006'] },
-      { id: 'buzon', label: 'Mi buzón', subPath: '/buzon', requires: ['PQRSD-009', 'PQRSD-READ', 'DOC-002', 'CI-002'] },
-      { id: 'buzon-dep', label: 'Buzón de dependencia', subPath: '/buzon/dependencia', requires: ['PQRSD-008', 'USR-009'] },
-      { id: 'por-firmar', label: 'Por firmar', subPath: '/firmas/por-firmar', requires: ['FIR-001'] },
+      { id: 'ventanilla', label: 'Ventanilla Única', path: '/gd/ventanilla', requires: ['VU-001', 'VU-002', 'VU-005'] },
+      { id: 'cola-vu', label: 'Cola Ventanilla', path: '/gd/ventanilla/cola', requires: ['VU-005', 'VU-006'] },
+      { id: 'buzon', label: 'Mi buzón', path: '/gd/buzon', requires: ['PQRSD-009', 'PQRSD-READ', 'DOC-002', 'CI-002'] },
+      { id: 'buzon-dep', label: 'Buzón de dependencia', path: '/gd/buzon/dependencia', requires: ['PQRSD-008', 'USR-009'] },
+      { id: 'por-firmar', label: 'Por firmar', path: '/gd/firmas/por-firmar', requires: ['FIR-001'] },
     ],
   },
   {
     label: 'PQRSD',
     items: [
-      { id: 'pqrsd-panel', label: 'Panel PQRSD', subPath: '/pqrsd', requires: ['PQRSD-006', 'PQRSD-007'] },
-      { id: 'pqrsd-mias', label: 'Mis PQRSD', subPath: '/pqrsd/mias', requires: ['PQRSD-009'] },
-      { id: 'pqrsd-vencimientos', label: 'Vencimientos', subPath: '/pqrsd/vencimientos', requires: ['PQRSD-006', 'PQRSD-READ'] },
+      { id: 'pqrsd-panel', label: 'Panel PQRSD', path: '/gd/pqrsd', requires: ['PQRSD-006', 'PQRSD-007'] },
+      { id: 'pqrsd-mias', label: 'Mis PQRSD', path: '/gd/pqrsd/mias', requires: ['PQRSD-009'] },
+      { id: 'pqrsd-vencimientos', label: 'Vencimientos', path: '/gd/pqrsd/vencimientos', requires: ['PQRSD-006', 'PQRSD-READ'] },
     ],
   },
   {
     label: 'CORRESPONDENCIA',
     items: [
-      { id: 'corresp-interna', label: 'Interna', subPath: '/correspondencia/interna', requires: ['CI-001', 'CI-002'] },
-      { id: 'corresp-externa', label: 'Externa', subPath: '/correspondencia/externa', requires: ['CE-001', 'CE-005', 'CE-006'] },
+      { id: 'corresp-interna', label: 'Interna', path: '/gd/correspondencia/interna', requires: ['CI-001', 'CI-002'] },
+      { id: 'corresp-externa', label: 'Externa', path: '/gd/correspondencia/externa', requires: ['CE-001', 'CE-005', 'CE-006'] },
     ],
   },
   {
     label: 'DOCUMENTOS',
     items: [
-      { id: 'biblioteca', label: 'Biblioteca', subPath: '/documentos', requires: ['DOC-002'] },
-      { id: 'plantillas', label: 'Plantillas', subPath: '/plantillas', requires: ['PLA-001', 'PLA-USE'] },
+      { id: 'biblioteca', label: 'Biblioteca', path: '/gd/documentos', requires: ['DOC-002'] },
+      { id: 'plantillas', label: 'Plantillas', path: '/gd/plantillas', requires: ['PLA-001', 'PLA-USE'] },
     ],
   },
   {
     label: 'CLASIFICACIÓN',
     items: [
-      { id: 'trd', label: 'TRD / TVD', subPath: '/trd', requires: ['TRD-001', 'TRD-READ'] },
-      { id: 'expedientes', label: 'Expedientes', subPath: '/expedientes', requires: ['EXP-READ'] },
+      { id: 'trd', label: 'TRD / TVD', path: '/gd/trd', requires: ['TRD-001', 'TRD-READ'] },
+      { id: 'expedientes', label: 'Expedientes', path: '/gd/expedientes', requires: ['EXP-READ'] },
     ],
   },
   {
     label: 'AUDITORÍA',
     items: [
-      { id: 'auditoria', label: 'Eventos', subPath: '/auditoria', requires: ['AUD-001'] },
-      { id: 'reportes', label: 'Reportes', subPath: '/reportes', requires: ['REP-001'] },
+      { id: 'auditoria', label: 'Eventos', path: '/gd/auditoria', requires: ['AUD-001'] },
+      { id: 'reportes', label: 'Reportes', path: '/gd/reportes', requires: ['REP-001'] },
     ],
   },
   {
     label: 'ADMIN',
     items: [
-      // `/admin/...` se auto-promueve a `/gd/admin/t/{slug}/...` via gdHome.
-      { id: 'admin-usuarios', label: 'Usuarios', subPath: '/admin/usuarios', requires: ['USR-001', 'USR-010'] },
-      { id: 'admin-estructura', label: 'Estructura orgánica', subPath: '/admin/estructura', requires: ['USR-001'] },
-      { id: 'admin-catalogos', label: 'Catálogos', subPath: '/admin/catalogos', requires: ['USR-001'] },
-      { id: 'admin-parametros', label: 'Parámetros', subPath: '/admin/parametros', requires: ['USR-001'] },
-      { id: 'admin-perifericos', label: 'Periféricos', subPath: '/admin/perifericos', requires: ['PER-001'] },
-      { id: 'seguridad', label: 'Seguridad', subPath: '/seguridad', requires: ['SEG-PWD', 'SEG-SES'] },
+      { id: 'admin-usuarios', label: 'Usuarios', path: '/gd/admin/usuarios', requires: ['USR-001', 'USR-010'] },
+      { id: 'admin-estructura', label: 'Estructura orgánica', path: '/gd/admin/estructura', requires: ['USR-001'] },
+      { id: 'admin-catalogos', label: 'Catálogos', path: '/gd/admin/catalogos', requires: ['USR-001'] },
+      { id: 'admin-parametros', label: 'Parámetros', path: '/gd/admin/parametros', requires: ['USR-001'] },
+      { id: 'admin-perifericos', label: 'Periféricos', path: '/gd/admin/perifericos', requires: ['PER-001'] },
+      { id: 'seguridad', label: 'Seguridad', path: '/gd/seguridad', requires: ['SEG-PWD', 'SEG-SES'] },
     ],
   },
 ]);
 
-/**
- * Construye la URL final para un item del nav. Si no hay `tenantSlug`
- * (tests aislados) devuelve el subPath crudo — la navegación no funcionará
- * pero el render no rompe.
- */
-function itemHref(tenantSlug, subPath) {
-  if (!tenantSlug) return subPath;
-  return gdHome(tenantSlug, subPath);
-}
-
 export function GdSidebar({
   roles = [],
-  tenantSlug,
   currentPath = '',
   onNavigate,
   user,
@@ -138,18 +118,17 @@ export function GdSidebar({
           <div className="nav-group" key={group.label}>
             <div className="nav-group-label">{group.label}</div>
             {group.items.map((it) => {
-              const href = itemHref(tenantSlug, it.subPath);
-              const active = currentPath === href
-                || currentPath.startsWith(`${href}/`);
+              const active = currentPath === it.path
+                || currentPath.startsWith(`${it.path}/`);
               return (
                 <a
                   key={it.id}
-                  href={href}
+                  href={it.path}
                   className={`nav-link ${active ? 'active' : ''}`}
                   onClick={(e) => {
                     if (onNavigate) {
                       e.preventDefault();
-                      onNavigate(href, it.id);
+                      onNavigate(it.path, it.id);
                     }
                   }}
                   data-nav-id={it.id}

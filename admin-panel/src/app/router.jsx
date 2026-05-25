@@ -47,11 +47,6 @@ import { isInfluencerEnabled, isGdEnabled } from '../services/coreApi.js';
 import { resolveGdRoute } from '../features/gd/routeMap.js';
 import { getMyGdProfile } from '../features/gd/services/gdApi.js';
 import { GdProvider } from '../features/gd/shell/GdContext.jsx';
-import {
-  gdHome, gdAdmin,
-  influencerHome, chatbotHome,
-  legacyRedirectFor,
-} from './urls.js';
 import { PersonaWizardContainer } from '../features/influencer/wizard/PersonaWizardContainer.jsx';
 import { CreatePersonaAndRedirect } from '../features/influencer/wizard/CreatePersonaAndRedirect.jsx';
 import { PersonaStudioContainer } from '../features/influencer/studio/PersonaStudioContainer.jsx';
@@ -638,37 +633,14 @@ function InfluencerShellRoute() {
  * fusionarlos contaminaría ambos. El item `gd-entry` del sidebar
  * tenant simplemente redirige acá.
  */
-/**
- * GdShellRoute — shell del módulo GD montado en el ESQUEMA NUEVO
- * (D-ROUTES-01):
- *   mode='op'    → `/gd/t/{slug}/*`        (operación)
- *   mode='admin' → `/gd/admin/t/{slug}/*`  (admin del módulo)
- *
- * Antes vivía como hijo de `TenantScope` y recibía `activeTenant` por
- * outletContext. Ahora resolvemos el tenant directamente desde
- * `useParams().tenantSlug` para que la ruta pueda montar al top-level
- * del router sin depender de la jerarquía anterior.
- */
-function GdShellRoute({ mode = 'op' }) {
-  const { tenantSlug } = useParams();
-  const { tenantOptions, tenantsLoading, profile, session } = useTenantContext();
+function GdShellRoute() {
+  const { activeTenant } = useOutletContext();
+  const { profile, session } = useTenantContext();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const activeTenant = tenantOptions.find((t) => t.slug === tenantSlug) ?? null;
-
   // null = loading; true = activo; false = 404 del backend.
   const [moduleEnabled, setModuleEnabled] = useState(null);
-
-  // Persistimos el último tenant visitado — el redirect raíz lo usa para
-  // restaurar contexto. Antes lo hacía TenantScope; ahora cada module
-  // route lo hace por su cuenta porque no hay un wrapper compartido.
-  useEffect(() => {
-    if (!activeTenant) return;
-    try {
-      window.localStorage?.setItem(ACTIVE_TENANT_STORAGE_KEY, activeTenant.id);
-    } catch { /* ignore storage errors */ }
-  }, [activeTenant]);
 
   useEffect(() => {
     if (!session || !activeTenant?.id) return undefined;
@@ -680,24 +652,31 @@ function GdShellRoute({ mode = 'op' }) {
       .catch(() => {
         if (!cancelled) setModuleEnabled(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [session, activeTenant?.id]);
-
-  if (tenantsLoading) return <LoadingScreen />;
-  if (!activeTenant) return <Navigate to="/" replace />;
 
   if (moduleEnabled === null) return <LoadingScreen />;
 
   if (moduleEnabled === false) {
-    // Módulo no habilitado para este tenant — caemos al chatbot del
-    // tenant (home razonable; resolveSafeHomeModule corrige si tampoco
-    // tiene acceso ahí).
-    return <Navigate to={chatbotHome(activeTenant.slug)} replace />;
+    // Mismo patrón que `InfluencerShell`: mostramos un aviso dentro
+    // del shell del tenant. Aquí redirigimos al home del tenant para
+    // no dejar al usuario en una página vacía — el filtro de nav
+    // (más abajo) ya impide que el item aparezca, así que aterrizar
+    // acá significa deep-link manual o palanca apagada después de
+    // entrar. Redirigir + log mantiene la UX limpia.
+    return <Navigate to={`/t/${activeTenant.slug}`} replace />;
   }
 
+  // Roles GD del usuario — se obtienen de `/api/v1/gd/me` (que ya valida
+  // tenant + perfil activo + roles vigentes en gd.asignacion_alcance).
+  // La session del BFF NO incluye los roles GD (vive en una matriz aparte
+  // de los roles app: owner/admin/etc); por eso necesitamos el fetch.
+  // Componente <GdProfileLoader/> hace el fetch y pasa los roles al
+  // componente de la ruta resuelta.
   return (
     <GdProfileLoader
-      mode={mode}
       session={session}
       activeTenant={activeTenant}
       profile={profile}
@@ -714,7 +693,7 @@ function GdShellRoute({ mode = 'op' }) {
  * — el `GdShell` muestra el sidebar vacío y la landing dice "Sin permisos
  * activos. Solicite activación a su administrador."
  */
-function GdProfileLoader({ mode = 'op', session, activeTenant, profile, location, navigate }) {
+function GdProfileLoader({ session, activeTenant, profile, location, navigate }) {
   const [gdMe, setGdMe] = useState(undefined); // undefined=loading, null=sin perfil, {...}=ok
 
   useEffect(() => {
@@ -725,52 +704,64 @@ function GdProfileLoader({ mode = 'op', session, activeTenant, profile, location
         if (!cancelled) setGdMe(data || null);
       })
       .catch(() => {
+        // 403 con `code='gd_profile_missing_or_inactive'` o cualquier otro
+        // error → tratamos como "sin perfil GD activo". El GdShell mostrará
+        // el mensaje de "Sin permisos" usando el sistema de capabilities
+        // interno del módulo (GD-matrix con 17 roles, ortogonal a esto).
         if (!cancelled) setGdMe(null);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [session, activeTenant?.id]);
 
   if (gdMe === undefined) return <LoadingScreen />;
 
+  // Lista plana de códigos de rol vigentes (ej. ['gd.admin_sistema',
+  // 'gd.firmante']). El componente GdShell + GdSidebar usan este array
+  // contra la matriz `gd-matrix.js` (`gdCanAny(roles, 'VU-001', 'RW')`).
+  // El backend `/v1/gd/me` devuelve el campo como `roles_gd_vigentes`.
+  // Aceptamos también `roles_vigentes` como fallback por si algún
+  // entorno legacy responde con el nombre corto — defensa barata.
   const gdRoles = (gdMe?.roles_gd_vigentes || gdMe?.roles_vigentes || [])
     .map((r) => r.rol_codigo)
     .filter(Boolean);
 
-  // basePath del shell — depende del modo. Para mode='op' →
-  // `/gd/t/{slug}`; para mode='admin' → `/gd/admin/t/{slug}`. El
-  // subPath se calcula stripping ese prefijo del pathname actual.
-  const basePath = mode === 'admin' ? gdAdmin(activeTenant.slug) : gdHome(activeTenant.slug);
+  // Path relativo al módulo. Para `/t/{slug}/gd/pqrsd/mias` →
+  // `subPath = '/pqrsd/mias'`. Para `/t/{slug}/gd` o `/t/{slug}/gd/` →
+  // `subPath = ''` (landing).
+  const basePath = `/t/${activeTenant.slug}/gd`;
   let subPath = location.pathname.startsWith(basePath)
     ? location.pathname.slice(basePath.length)
     : '';
+  // Normaliza trailing slash (`'/'` → `''`).
   if (subPath === '/') subPath = '';
 
-  const { Component, extraProps } = resolveGdRoute({ mode, subPath });
+  const { Component, extraProps } = resolveGdRoute(subPath);
 
-  // `onNavigate` acepta TRES formas de path para back-compat con todas
-  // las páginas históricas:
-  //   1. URL absoluta nueva: `/gd/t/{slug}/buzon` → navigate directo.
-  //   2. Path legacy `/gd/...` o `/gd/admin/...` → re-componer con el
-  //      slug actual via gdHome/gdAdmin (auto-promote interno).
-  //   3. Path relativo `'buzon'` → anidar dentro del basePath actual.
-  // Sin esto, breadcrumbs hardcodeados como `{ path: '/gd' }` en 50+
-  // páginas mandan al usuario a `/gd` (sin slug, 404 garantizado).
+  // `onNavigate` recibe rutas del módulo (`/gd/...`) desde GdSidebar y
+  // los componentes hijos. Las traducimos a la ruta completa del
+  // tenant (`/t/{slug}/gd/...`) antes de hacer `navigate()`.
   const onNavigate = (path) => {
     if (!path) return;
-    if (path === '/gd' || path.startsWith('/gd/')) {
-      const subPath = path === '/gd' ? '' : path.slice(3);
-      // gdHome promueve `/admin/...` automáticamente a gdAdmin.
-      navigate(gdHome(activeTenant.slug, subPath));
-      return;
-    }
-    if (path.startsWith('/')) {
+    if (path.startsWith('/gd')) {
+      navigate(`/t/${activeTenant.slug}${path}`);
+    } else if (path.startsWith('/t/')) {
       navigate(path);
     } else {
-      navigate(`${basePath}/${path}`);
+      // Path relativo dentro del módulo (sin /gd prefix).
+      navigate(`${basePath}${path.startsWith('/') ? '' : '/'}${path}`);
     }
   };
 
   return (
+    // GdProvider envuelve TODO el módulo. Cualquier componente hijo
+    // (GdShell, GdSidebar, páginas) que necesite `roles`, `user`,
+    // `session`, `tenantSlug` o `activeTenantId` puede leerlos via
+    // `useGdContext()` sin que el componente intermedio tenga que
+    // pasarlos por prop. Esto elimina la clase de bug "el menú se
+    // borra al navegar a Eventos/Plantillas/Buzón" causado por
+    // componentes que olvidaban re-pasar `roles={roles}` a GdShell.
     <GdProvider
       user={profile}
       roles={gdRoles}
@@ -783,12 +774,16 @@ function GdProfileLoader({ mode = 'op', session, activeTenant, profile, location
         roles={gdRoles}
         user={profile}
         tenantSlug={activeTenant.slug}
-        // BUG-008 — `SupportModeBanner` necesita el UUID.
+        // BUG-008 — `SupportModeBanner` necesita el UUID para decidir si
+        // el override de support_mode aplica al tenant actual. Se forwarda
+        // a `GdShell` vía `{...shellProps}` desde cada vista del módulo.
         activeTenantId={activeTenant.id}
-        // Salir de support_mode: navegamos a la home del admin tenant
-        // del platform_owner. Antes era /platform; ahora /admin.
-        onExitSupportMode={() => navigate('/admin')}
-        currentPath={location.pathname}
+        // Cuando el user hace "Salir de support mode" desde el banner del
+        // GdShell, navegamos a /platform (home del platform_owner). Sin
+        // esto, queda dentro del módulo GD con la cookie ya removida →
+        // próximo fetch a /api/v1/gd/* da 404 y la página queda rota.
+        onExitSupportMode={() => navigate('/platform')}
+        currentPath={`/gd${subPath}`}
         onNavigate={onNavigate}
         {...extraProps}
       />
@@ -837,23 +832,6 @@ function ReadOnlyShellRoute() {
       <Outlet context={{ activeTenant }} />
     </ReadOnlyShell>
   );
-}
-
-/**
- * LegacyTenantRedirect — redirect transparente del esquema viejo
- * `/t/{slug}/{module}/...` al nuevo `/{module}/t/{slug}/...`
- * (D-ROUTES-01). Mantiene bookmarks funcionando durante la transición.
- *
- * Si la URL no es legacy migratable (ej. `/t/{slug}/read/*` que sigue
- * sin migrar) cae al NotFound estándar.
- */
-function LegacyTenantRedirect() {
-  const location = useLocation();
-  const newPath = legacyRedirectFor(location.pathname);
-  if (newPath) return <Navigate to={newPath + location.search} replace />;
-  // No migra (ej. /t/{slug}/read/...) — delegamos al render del shell
-  // original que ya está montado debajo en la misma route tree.
-  return <Outlet />;
 }
 
 /**
@@ -959,35 +937,6 @@ export const routes = [
           { index: true, element: <Navigate to={ROLE_HOME.platform_owner} replace /> },
           ...PLATFORM_MODULE_IDS.map(moduleRoute),
         ],
-      },
-      // ─── D-ROUTES-01: rutas top-level por módulo ─────────────────────────
-      //
-      // Esquema nuevo (canónico):
-      //   /gd/t/:slug/*           → operación GD
-      //   /gd/admin/t/:slug/*     → admin del módulo GD
-      //   /influencer/t/:slug/*   → operación Influencer  (TODO Phase 2)
-      //   /chatbot/t/:slug/*      → operación Chatbot     (TODO Phase 2)
-      //   /admin/*                → platform admin        (TODO Phase 2)
-      //
-      // Cada route resuelve `tenantSlug` por su cuenta (no más wrapper
-      // TenantScope compartido). La operación y el admin del mismo módulo
-      // comparten shell (`GdShellRoute`) parametrizado por `mode`.
-      //
-      // El orden importa: las rutas más específicas primero
-      // (`/gd/admin/t/...` antes de `/gd/t/...` antes de wildcards).
-      { path: 'gd/admin/t/:tenantSlug',   element: <GdShellRoute mode="admin" /> },
-      { path: 'gd/admin/t/:tenantSlug/*', element: <GdShellRoute mode="admin" /> },
-      { path: 'gd/t/:tenantSlug',         element: <GdShellRoute mode="op" /> },
-      { path: 'gd/t/:tenantSlug/*',       element: <GdShellRoute mode="op" /> },
-      // ─── Legacy redirect ────────────────────────────────────────────────
-      //
-      // Cualquier URL bajo `/t/:slug/*` que tenga equivalente en el esquema
-      // nuevo se redirige (helper `legacyRedirectFor`). Lo que NO migra
-      // (read shell, tenant home `/t/:slug` sin módulo) cae a la route
-      // original más abajo.
-      {
-        path: 't/:tenantSlug/*',
-        element: <LegacyTenantRedirect />,
       },
       {
         path: 't/:tenantSlug',
