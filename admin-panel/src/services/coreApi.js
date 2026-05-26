@@ -196,6 +196,18 @@ export function createTenant(session, payload) {
   return request('/tenant-signup', { method: 'POST', session, body: payload });
 }
 
+/**
+ * Platform-owner crea un tenant para un tercero desde Fleet.
+ *
+ * A diferencia de `createTenant` (self-service), este NO auto-asigna al
+ * caller como owner. El caller queda en Fleet (no entra al tenant nuevo).
+ * Para agregar miembros, usar `inviteTenantMember`/`addTenantMember`
+ * (ya existentes más abajo).
+ */
+export function createTenantAsPlatformOwner(session, payload) {
+  return request('/tenants', { method: 'POST', session, body: payload });
+}
+
 export function listFleetTenants(session, { status, country, vertical, search, limit, offset } = {}) {
   const params = new URLSearchParams();
   if (status) params.set('status', status);

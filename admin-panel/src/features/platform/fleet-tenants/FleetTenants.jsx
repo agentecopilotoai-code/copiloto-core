@@ -5,6 +5,7 @@ import { Card, PageHeader } from '../../../components/ui/index.js';
 import { RequirePermission } from '../../../permissions/index.js';
 import { usePermissions } from '../../../permissions/usePermissions.js';
 import { useTenantContext } from '../../../app/TenantProvider.jsx';
+import { CreateTenantModal } from './components/CreateTenantModal.jsx';
 import { FleetDrawer } from './components/FleetDrawer.jsx';
 import { FleetFilters } from './components/FleetFilters.jsx';
 import { FleetKpis } from './components/FleetKpis.jsx';
@@ -31,6 +32,7 @@ export function FleetTenants() {
   const [filters, setFilters] = useState({});
   const [selected, setSelected] = useState(null);
   const [supportError, setSupportError] = useState(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const { items, total, loading, error, refresh } = useFleetTenants({
     session,
@@ -80,9 +82,10 @@ export function FleetTenants() {
               <button
                 type="button"
                 className={styles.primaryButton}
-                onClick={() => navigate('/onboarding')}
+                onClick={() => setCreateOpen(true)}
+                data-testid="fleet-create-tenant-btn"
               >
-                Nuevo tenant
+                + Nuevo tenant
               </button>
             </RequirePermission>
           }
@@ -111,8 +114,20 @@ export function FleetTenants() {
 
         <FleetDrawer
           tenant={selected}
+          session={session}
           onClose={() => setSelected(null)}
           onSupportInto={handleSupportInto}
+        />
+
+        {/* Modal "Crear tenant nuevo". Tras crear, refresca la tabla y
+            DEJA AL USUARIO EN FLEET — no entra al tenant nuevo. Para
+            operar el tenant, el platform_owner debe usar "Ver como
+            tenant" (support_mode) desde el drawer. */}
+        <CreateTenantModal
+          session={session}
+          open={createOpen}
+          onClose={() => setCreateOpen(false)}
+          onCreated={() => { refresh(); }}
         />
       </section>
     </RequirePermission>

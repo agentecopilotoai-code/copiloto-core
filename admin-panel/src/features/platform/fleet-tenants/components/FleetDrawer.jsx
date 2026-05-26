@@ -1,5 +1,6 @@
 import { Modal, StatusBadge } from '../../../../components/ui/index.js';
 import { TenantModulesPanel } from './TenantModulesPanel.jsx';
+import { TenantMembersPanel } from './TenantMembersPanel.jsx';
 import styles from '../FleetTenants.module.css';
 
 const STATUS_TONE = {
@@ -37,7 +38,7 @@ function formatDateTime(value) {
  *   onSupportInto: (tenant: object) => void,
  * }} props
  */
-export function FleetDrawer({ tenant, onClose, onSupportInto }) {
+export function FleetDrawer({ tenant, onClose, onSupportInto, session }) {
   if (!tenant) return null;
 
   const rows = [
@@ -90,8 +91,15 @@ export function FleetDrawer({ tenant, onClose, onSupportInto }) {
         ))}
       </dl>
 
-      {/* PLATFORM-MODULES-EXPAND — Panel toggleable platform-owner only. */}
+      {/* Panel de activación de módulos opt-in (chatbot/gd/influencer/...). */}
       <TenantModulesPanel tenant={tenant} />
+
+      {/* Gestión de miembros: agregar usuarios al tenant, asignar roles,
+          revocar membresía. Toda la operación cross-tenant del platform_owner
+          vive acá; el platform_owner NUNCA queda como miembro del tenant. */}
+      {session ? (
+        <TenantMembersPanel session={session} tenant={tenant} />
+      ) : null}
     </Modal>
   );
 }

@@ -79,17 +79,13 @@ me_router = APIRouter(
 # `include_router` que copia las rutas al router raíz.
 
 from app.api.v1.handlers import public_handlers as _public_handlers  # noqa: F401, E402
+from app.api.v1.handlers import me_handlers as _me_handlers  # noqa: F401, E402
+from app.api.v1.handlers import tenant_user_handlers as _tenant_user_handlers  # noqa: F401, E402
+from app.api.v1.handlers import tenant_signup_handlers as _tenant_signup_handlers  # noqa: F401, E402
+from app.api.v1.handlers import platform_admin_handlers as _platform_admin_handlers  # noqa: F401, E402
 from app.api.v1.handlers import platform_roles_handlers as _platform_roles_handlers  # noqa: F401, E402
-# Branch `core`: handlers transversales con cross-imports al monolítico
-# routes.py viejo (platform_admin, me, tenant_signup, tenant_user, etc.)
-# fueron purgados acá. Se reagregan en commits siguientes con design
-# limpio (sin cross-imports). El platform admin de AI providers +
-# tenant_modules sigue funcionando via `app/platform_admin/admin_routes.py`.
-
-# Endpoints transversales adicionales del platform admin
-# (AI providers + tenant_modules CRUD).
+# Endpoints platform admin adicionales (AI providers + tenant_modules CRUD).
 from app.platform_admin import admin_routes as _platform_admin_routes  # noqa: F401, E402
-
 
 # ─── Composición final ─────────────────────────────────────────────────────
 
