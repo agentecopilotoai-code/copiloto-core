@@ -113,37 +113,16 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run full suite with coverage
-        # --cov-fail-under=93 hace exit 1 si la cobertura total cae bajo 93%.
-        # Excluimos tests con env / settings cache conflicts pre-existentes:
-        #   - test_auth0_admin_service_credentials.py
-        #   - test_auth0_invite.py
-        #   - test_mfa_enforcement.py
-        #   - test_security.py
-        # son los originales documentados.
-        #
-        # test_mfa_router_enforcement.py — detectado en el primer run real del
-        # coverage-gate:
-        # `test_require_mfa_for_privileged_403s_unverified_admin` falla con
-        # "DID NOT RAISE". El test setea env vars via monkeypatch +
-        # `get_settings.cache_clear()`, pero por algún side-effect de tests
-        # previos del mismo archivo, `require_mfa_for_privileged()` termina
-        # en uno de los `return` tempranos de `app/core/security.py:484-487`
-        # (mfa_enforcement_enabled o auth0_domain en falsy) en lugar del
-        # raise 403 esperado. La cobertura real de MFA está en los tests
-        # dedicados de `tests/test_mfa_enforcement.py` (que ya está
-        # excluido del coverage-gate por la misma clase de conflict)
-        # y en los integration tests vía `tests/test_mfa_enforcement_static.py`
-        # que NO requieren `get_settings()` y siguen corriendo en el gate.
-        # Excluido aquí hasta que se investigue el side-effect en una
-        # tarea aparte.
+        # --cov-fail-under=72 refleja el estado real post-purga del core.
+        # Los `--ignore` históricos (test_auth0_admin_service_credentials,
+        # test_auth0_invite, test_mfa_enforcement, test_mfa_router_enforcement,
+        # test_security) apuntaban a archivos QUE YA NO EXISTEN en el branch
+        # core (fueron borrados con la purga), así que se quitaron.
+        # Cuando lleguen los E2E tests (TASK-A13) la cobertura debería
+        # subir y este gate se elevará.
         run: |
           pytest --cov=app --cov-report=xml --cov-report=term \
-            --cov-fail-under=93 \
-            --ignore=tests/test_auth0_admin_service_credentials.py \
-            --ignore=tests/test_auth0_invite.py \
-            --ignore=tests/test_mfa_enforcement.py \
-            --ignore=tests/test_mfa_router_enforcement.py \
-            --ignore=tests/test_security.py \
+            --cov-fail-under=72 \
             -p no:warnings --tb=short
 
       - name: Upload coverage XML
@@ -153,67 +132,12 @@ jobs:
           name: backend-coverage
           path: coverage.xml
 
-  tests-e2e:
-    # TASK-0063: journey suite against an ephemeral PostgreSQL (with pgvector,
-    # btree_gist, citext). Runs the 5 patient/customer journey scenarios so
-    # contract regressions (renamed columns, dropped triggers, missing tables)
-    # are caught before merge. The suite is opted in via RUN_E2E=1 and the
-    # schema is re-applied once per job via E2E_APPLY_SCHEMA=1.
-    name: "API — journey E2E (Postgres ephemeral)"
-    # `needs: [api]` → fail-fast: si lint/compile/unit roto, este job no
-    # arranca y nos ahorramos ~10 min de Postgres + E2E suite.
-    needs: [api]
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: copilotoia_e2e
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      RUN_E2E: "1"
-      E2E_APPLY_SCHEMA: "1"
-      TEST_DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/copilotoia_e2e"
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-
-      - name: Journey E2E tests (service-layer scenarios)
-        run: |
-          pytest tests/test_journey_e2e.py tests/test_rls_multitenant_e2e.py \
-            -m e2e -v --tb=short \
-            --junitxml=pytest-e2e-report.xml
-
-      - name: HTTP-boundary E2E tests (FastAPI app + middleware + auth)
-        run: |
-          pytest tests/test_e2e_http_*.py -m e2e -v --tb=short \
-            --junitxml=pytest-e2e-http-report.xml
-
-      - name: Upload E2E reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pytest-e2e-report
-          path: |
-            pytest-e2e-report.xml
-            pytest-e2e-http-report.xml
+  # El job `tests-e2e` histórico se eliminó: apuntaba a
+  # `test_journey_e2e.py`, `test_rls_multitenant_e2e.py` y
+  # `test_e2e_http_*.py` — TODOS borrados durante la purga del branch
+  # core. `pytest` salía con exit code 5 ("no tests collected") y el
+  # job pasaba verde sin ejercitar nada. Cuando A13-A15 (E2E tests
+  # reales contra los handlers v1) aterricen, este job se reintroduce.
 
   admin-panel:
     name: "Admin Panel — install, lint & build"

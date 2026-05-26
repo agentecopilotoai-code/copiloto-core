@@ -40,15 +40,6 @@ load = ["locust>=2.31,<3"]
 line-length = 100
 target-version = "py312"
 
-[tool.ruff.lint.per-file-ignores]
-# pytest fixtures imported via `from tests.conftest_e2e_http import http_app, ...`
-# are intentionally re-shadowed across test files for fixture discovery —
-# F811 ("redefinition of unused name") is a false positive in this pattern.
-"tests/test_e2e_http_*.py" = ["F811"]
-"tests/test_unit_booking_flow_db.py" = ["F811"]
-"tests/test_unit_rag_orchestrator_db.py" = ["F811"]
-"tests/conftest_e2e_http.py" = ["F811"]
-
 [tool.setuptools.packages.find]
 include = ["app*"]
 
@@ -57,5 +48,4 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
   "requires_db: tests that need a live PostgreSQL connection (skipped in CI with -m 'not requires_db')",
-  "e2e: TASK-0063 journey suite — needs RUN_E2E=1 + TEST_DATABASE_URL (run in CI job 'tests-e2e')",
 ]
