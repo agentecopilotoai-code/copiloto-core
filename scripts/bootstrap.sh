@@ -112,7 +112,7 @@ MSG
   docker compose down -v --remove-orphans
 fi
 
-docker compose up -d --build postgres redis minio otel-collector api event-worker scheduler admin-panel
+docker compose up -d --build postgres redis minio otel-collector api admin-panel
 
 DATABASE_URL_VALUE="$(awk -F= '$1 == "DATABASE_URL" {print substr($0, index($0, "=") + 1)}' .env)"
 if [[ -z "$DATABASE_URL_VALUE" ]]; then
@@ -157,11 +157,13 @@ fi
 missing_tables="$(psql_app -Atc "
   with required(table_name) as (
     values
-      ('tenants'), ('tenant_settings'), ('tenant_channels'), ('users'), ('user_tenant_roles'),
-      ('contacts'), ('conversations'), ('messages'), ('message_status_events'), ('resources'),
-      ('service_requests'), ('quotes'), ('appointments'), ('reminder_jobs'), ('knowledge_documents'),
-      ('knowledge_chunks'), ('prompt_templates'), ('handoffs'), ('webhook_events_raw'),
-      ('domain_events'), ('audit_logs')
+      ('tenants'), ('users'), ('user_tenant_roles'), ('user_preferences'),
+      ('auth_sessions'), ('audit_logs'), ('operator_alerts'),
+      ('data_retention_policies'), ('backup_runs'),
+      ('tenant_legal_documents'), ('tenant_modules'),
+      ('platform_secrets'), ('platform_ai_providers'),
+      ('provider_dispatch'), ('feature_flags'),
+      ('role'), ('capability'), ('role_capability')
   )
   select string_agg(required.table_name, ', ' order by required.table_name)
   from required
@@ -221,37 +223,8 @@ if [[ ${#modules_to_load[@]} -gt 0 ]]; then
   echo "→ Módulos opt-in cargados: ${modules_to_load[*]}"
 fi
 
-# ── Check ANSWER_ENGINE is configured for bot responses ───────────────────────
-ANSWER_ENGINE_VALUE="$(awk -F= '$1 == "ANSWER_ENGINE" {print $2}' .env)"
-if [[ -z "$ANSWER_ENGINE_VALUE" ]]; then
-  echo ""
-  echo "⚠  ANSWER_ENGINE no está definido en .env."
-  echo "   El bot caerá siempre a handoff humano si no tiene motor configurado."
-  echo "   Agrega al .env:  ANSWER_ENGINE=cascade"
-  echo "   Y reinicia:      docker compose restart api"
-  echo ""
-fi
-
-# ── Check Ollama availability (non-blocking) ──────────────────────────────────
-LOCAL_LLM_BASE_URL_VALUE="$(awk -F= '$1 == "LOCAL_LLM_BASE_URL" {print $2}' .env)"
-LOCAL_LLM_BASE_URL_VALUE="${LOCAL_LLM_BASE_URL_VALUE:-http://host.docker.internal:11434}"
-# Strip host.docker.internal for host-side check
-OLLAMA_CHECK_URL="${LOCAL_LLM_BASE_URL_VALUE//host.docker.internal/localhost}"
-if curl -fsS --max-time 3 "${OLLAMA_CHECK_URL}/api/tags" >/dev/null 2>&1; then
-  echo "→ Ollama accesible en ${LOCAL_LLM_BASE_URL_VALUE} ✓"
-else
-  echo ""
-  echo "⚠  Ollama NO está corriendo en ${LOCAL_LLM_BASE_URL_VALUE}."
-  echo "   El bot en modo cascade/local_llm caerá a handoff sin él."
-  echo "   Para instalarlo:"
-  echo "     curl -fsSL https://ollama.com/install.sh | sh"
-  echo "     ollama pull llama3.2:3b"
-  echo "     ollama serve"
-  echo ""
-fi
-
 missing_extensions="$(psql_app -Atc "
-  with required(extname) as (values ('pgcrypto'), ('citext'), ('vector'), ('btree_gist'))
+  with required(extname) as (values ('pgcrypto'), ('citext'))
   select string_agg(required.extname, ', ' order by required.extname)
   from required
   left join pg_extension e on e.extname = required.extname
@@ -264,8 +237,8 @@ if [[ -n "$missing_extensions" ]]; then
 fi
 
 tenant_count="$(psql_app -Atc "select count(*) from app.tenants;")"
-if [[ "$tenant_count" -lt 3 ]]; then
-  echo "Error: se esperaban al menos 3 tenants demo, pero hay $tenant_count." >&2
+if [[ "$tenant_count" -lt 1 ]]; then
+  echo "Error: se esperaba al menos el tenant demo del seed, hay $tenant_count." >&2
   exit 1
 fi
 
