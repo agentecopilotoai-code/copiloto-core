@@ -60,6 +60,24 @@ _ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40}
 _BFF_DEBUG = os.environ.get('BFF_DEBUG', '0') == '1'
 
 
+# M52 — whitelist EXACTO de keys a redactar. Antes el matcher era
+# substring → `id_token_keys` o `redirect_to` se redactaban perdiendo
+# info diagnóstica. Ahora SOLO se trunca si la key matchea EXACTO uno
+# de estos identificadores. Si agregás un parámetro sensible al log,
+# tiene que llamarse igual que la entrada de la lista.
+_REDACT_EXACT_KEYS = frozenset({
+    'secret', 'client_secret', 'jwt_secret', 'auth0_admin_client_secret',
+    'token', 'access_token', 'id_token', 'refresh_token', 'id_token_hint',
+    'code', 'state', 'nonce',
+    'sid', 'session_id', 'cookie',
+})
+
+
+def _should_redact(key: str) -> bool:
+    """True si la key debe redactarse (match EXACTO contra whitelist)."""
+    return key.lower() in _REDACT_EXACT_KEYS
+
+
 def _debug(stage: str, **kwargs: Any) -> None:
     """Imprime una línea `[BFF-DEBUG] stage key=val key=val ...`.
 
@@ -67,10 +85,9 @@ def _debug(stage: str, **kwargs: Any) -> None:
     logs` sin tocar la config del logger. `flush=True` evita que uvicorn
     bufferee la línea hasta el siguiente flush — la ves al instante.
 
-    Cualquier valor que tenga `secret`, `token`, `code`, `state` en el
-    nombre se redacta a `<8 chars + ...>` para no dejar credenciales en
-    los logs (defensa frente a accidentes en producción si alguien
-    olvida apagar `BFF_DEBUG=1`).
+    Cualquier valor cuya key matchee EXACT-WORD una de
+    `_REDACT_EXACT_WORDS` se trunca a `<8 chars>…` para no dejar
+    credenciales en los logs. Ver `_should_redact` para el detalle.
     """
     if not _BFF_DEBUG:
         return
@@ -78,7 +95,7 @@ def _debug(stage: str, **kwargs: Any) -> None:
     for k, v in kwargs.items():
         if v is None:
             display = '∅'
-        elif any(s in k.lower() for s in ('secret', 'token', 'code', 'state', 'sid', 'cookie')):
+        elif _should_redact(k):
             s = str(v)
             display = (s[:8] + '…') if len(s) > 8 else s
         else:
@@ -637,6 +654,34 @@ async def admin_callback(
     if isinstance(amr, str):
         amr = [amr]
     mfa_verified = 'mfa' in amr
+
+    # M51 — DEBUG: imprimir todos los claims relacionados con autenticación
+    # para diagnosticar por qué Auth0 no marca MFA. Sin esto, el handler
+    # asume `amr=['mfa']` pero Auth0 puede:
+    #   - emitir un claim distinto (acr=urn:mace:incommon:iap:silver)
+    #   - poner amr=['mfa'] solo si el factor MFA está en el flow OAuth
+    #     (no en el "challenge after login" de Auth0 Actions)
+    #   - no incluir amr porque el cliente OAuth no lo pidió en `scope`
+    # Las claves listadas acá NO son secrets — son metadata del flow OAuth.
+    _AUTH_FLOW_CLAIMS = (
+        'amr', 'acr', 'auth_time', 'nonce', 'iss', 'aud', 'sub',
+        'iat', 'exp', 'azp', 'sid', 'at_hash',
+    )
+    id_token_flow_claims = {
+        k: id_token_claims.get(k) for k in _AUTH_FLOW_CLAIMS
+        if k in id_token_claims
+    }
+    userinfo_flow_claims = {
+        k: userinfo.get(k) for k in _AUTH_FLOW_CLAIMS
+        if k in userinfo
+    }
+    _debug(
+        'GET /callback', step='auth_flow_claims_inspection',
+        id_token_keys=sorted(id_token_claims.keys()),
+        id_token_flow_claims=id_token_flow_claims,
+        userinfo_flow_claims=userinfo_flow_claims,
+        amr_resolved=amr, mfa_verified=mfa_verified,
+    )
 
     session_id = secrets.token_urlsafe(32)
     profile_email = claims.get('email')

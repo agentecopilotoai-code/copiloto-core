@@ -531,3 +531,50 @@ def test_debug_helper_handles_none(monkeypatch, capsys):
     ar._debug('test', value=None)
     out = capsys.readouterr().out
     assert 'value=∅' in out
+
+
+# ─── M52 — _should_redact (exact-key matching) ────────────────────────────
+
+
+def test_should_redact_exact_keys():
+    """M52 — redacción solo por match EXACTO. Antes el matcher por
+    substring redactaba `id_token_keys` (que NO es un secret) porque
+    contenía la palabra 'token'."""
+    from app.admin.routes import _should_redact
+    # Keys sensibles → redact
+    assert _should_redact('secret') is True
+    assert _should_redact('access_token') is True
+    assert _should_redact('id_token') is True
+    assert _should_redact('refresh_token') is True
+    assert _should_redact('id_token_hint') is True
+    assert _should_redact('code') is True
+    assert _should_redact('state') is True
+    assert _should_redact('nonce') is True
+    assert _should_redact('sid') is True
+    assert _should_redact('cookie') is True
+    # Keys diagnósticas que CONTIENEN palabras sensibles pero NO son secrets
+    assert _should_redact('id_token_keys') is False
+    assert _should_redact('id_token_flow_claims') is False
+    assert _should_redact('state_validated') is False
+    assert _should_redact('state_cookie') is False  # compound — no exact match
+    assert _should_redact('with_id_token_hint') is False  # diagnostic flag
+    assert _should_redact('redirect_to') is False
+    assert _should_redact('foo_bar') is False
+
+
+def test_debug_helper_no_longer_redacts_diagnostic_keys(monkeypatch, capsys):
+    """Regresion test: `id_token_keys=['aud','sub',...]` debe imprimir
+    el array COMPLETO sin truncar a 8 chars."""
+    from app.admin import routes as ar
+    monkeypatch.setattr(ar, '_BFF_DEBUG', True)
+    ar._debug(
+        'inspect',
+        id_token_keys=['aud', 'sub', 'amr', 'acr', 'iat', 'exp'],
+        id_token_flow_claims={'aud': 'X', 'auth_time': 999, 'amr': []},
+    )
+    out = capsys.readouterr().out
+    assert "id_token_keys=['aud', 'sub', 'amr', 'acr', 'iat', 'exp']" in out
+    assert "auth_time" in out
+    assert "amr" in out
+    # NO debe haber truncamiento `…`
+    assert '…' not in out
