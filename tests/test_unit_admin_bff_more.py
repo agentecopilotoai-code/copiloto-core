@@ -250,39 +250,10 @@ def test_admin_session_200_when_active():
 # ─────────────────────── /admin/api/mfa-status ───────────────────────────
 
 
-def test_admin_mfa_status_401_without_session():
-    app = _build_app()
-    with _client(app) as c:
-        r = c.get('/admin/api/mfa-status')
-        assert r.status_code == 401
-
-
-def test_admin_mfa_status_returns_status():
-    from app.admin.routes import SESSION_COOKIE
-    sid, _ = _make_session(profile={'roles': ['admin', 'platform_owner'], 'mfa_verified': False})
-    app = _build_app()
-    with _client(app) as c:
-        c.cookies.set(SESSION_COOKIE, sid)
-        r = c.get('/admin/api/mfa-status')
-        assert r.status_code == 200
-        body = r.json()
-        assert body['is_privileged'] is True
-        assert body['mfa_verified'] is False
-        assert body['mfa_required'] is True
-        assert 'admin' in body['privileged_roles']
-
-
-def test_admin_mfa_status_not_privileged():
-    from app.admin.routes import SESSION_COOKIE
-    sid, _ = _make_session(profile={'roles': ['agent'], 'mfa_verified': True})
-    app = _build_app()
-    with _client(app) as c:
-        c.cookies.set(SESSION_COOKIE, sid)
-        r = c.get('/admin/api/mfa-status')
-        assert r.status_code == 200
-        body = r.json()
-        assert body['is_privileged'] is False
-        assert body['mfa_required'] is False
+# M42 — tests para `/admin/api/mfa-status` borrados: el endpoint se
+# eliminó del BFF cuando el único caller (`MfaRequiredBlocker.jsx`) fue
+# purgado durante la limpieza del branch core. Su 404 actual lo cubre el
+# behavior por defecto de FastAPI; no necesita test dedicado.
 
 
 # ─────────────────────── /admin/login ────────────────────────────────────

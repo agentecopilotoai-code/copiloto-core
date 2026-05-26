@@ -315,26 +315,12 @@ def _core_api_headers(
         headers['x-admin-user-email'] = profile['email']
     if profile.get('name'):
         headers['x-admin-user-name'] = profile['name']
-    # BUG-228 (codex P1 follow-up sobre BUG-195): el Core API necesita un
-    # email "confiable" para upsertear `app.users.email` (los access tokens
-    # Auth0 no traen claim `email` en esta config). El header
-    # `X-Admin-User-Email` solo es informativo — un caller con bearer token
-    # directo puede spoofearlo. Acá emitimos `X-Admin-Identity` con
-    # `pack_signed_payload(jwt_secret, {sub, email, exp})` que el Core
-    # valida para confirmar que (a) la firma matchea (caller tiene
-    # `jwt_secret` = solo el BFF), (b) `sub` matchea el JWT, (c) no expiró.
-    sub = profile.get('sub')
-    email = profile.get('email')
-    if sub and email:
-        from app.core.config import get_settings  # noqa: PLC0415
-        from app.core.signed_cookies import pack_signed_payload  # noqa: PLC0415
-
-        jwt_secret = get_settings().jwt_secret
-        # TTL corto (1h) — el header solo se usa en requests Core que el BFF
-        # acaba de proxiar, no se cachea client-side.
-        exp_ts = int(time.time()) + 3600
-        identity_payload = {'sub': sub, 'email': email, 'exp': exp_ts}
-        headers['x-admin-identity'] = pack_signed_payload(jwt_secret, identity_payload)
+    # M42 — `X-Admin-Identity` (HMAC-signed `{sub, email, exp}`) se emitía
+    # como defense-in-depth contra spoof del `X-Admin-User-Email`, pero NUNCA
+    # se montó un consumer en `app/core/security.py` ni en handler alguno.
+    # Mejor borrarlo que dejar dead code firmando con secretos en cada
+    # request. Si un módulo opt-in quiere re-introducirlo (e.g. para confiar
+    # ciegamente del email aguas abajo), debe agregar el verifier primero.
     # BUG-008 (codex P1 fix): el endpoint `/v1/me/support-mode/{tenant_id}`
     # emite una cookie `copilotoia_support_mode` que `authenticate_request`
     # lee en cada request al Core para bumpear `support_mode`. Sin forwarding,
@@ -616,26 +602,12 @@ async def admin_session(request: Request) -> Response:
     )
 
 
-@router.get('/admin/api/mfa-status')
-async def admin_mfa_status(request: Request) -> Response:
-    session = _active_session(request)
-    if not session:
-        return Response(status_code=401)
-    profile = session.get('profile') or {}
-    roles = set(profile.get('roles') or [])
-    is_privileged = bool(roles.intersection(_PRIVILEGED_ROLES))
-    mfa_verified = profile.get('mfa_verified', False)
-    return Response(
-        json.dumps(
-            {
-                'mfa_verified': mfa_verified,
-                'is_privileged': is_privileged,
-                'mfa_required': is_privileged and not mfa_verified,
-                'privileged_roles': sorted(roles.intersection(_PRIVILEGED_ROLES)),
-            }
-        ),
-        media_type='application/json',
-    )
+# M42 — `/admin/api/mfa-status` se borró en el audit pass. Su único caller
+# (`admin-panel/src/components/domain/MfaRequiredBlocker.jsx`) fue eliminado
+# durante la purga del branch core; el flujo MFA ahora vive en
+# `MfaAutoLogout` (cierre forzado de sesión por el BFF + redirect a login).
+# El endpoint dead exponía `is_privileged` + `privileged_roles` sin uso
+# real — superficie de info disclosure sin justificación.
 
 
 def _support_cookie_tid_from_ws(websocket: WebSocket) -> str | None:

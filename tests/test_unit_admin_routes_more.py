@@ -263,14 +263,8 @@ def test_core_api_url_with_query():
 # ─── _core_api_headers ──────────────────────────────────────────────────
 
 
-def test_core_api_headers_basic(monkeypatch):
+def test_core_api_headers_basic():
     from app.admin.routes import _core_api_headers
-    import app.core.config as _core_config
-    monkeypatch.setattr(
-        _core_config,
-        'get_settings',
-        lambda: SimpleNamespace(jwt_secret='secret-min-length-16-chars'),
-    )
     request = SimpleNamespace(
         headers={'accept': 'application/json', 'content-type': 'application/json',
                  'x-tenant-id': str(uuid4()), 'idempotency-key': 'idem-1'},
@@ -285,7 +279,9 @@ def test_core_api_headers_basic(monkeypatch):
     assert out['idempotency-key'] == 'idem-1'
     assert out['x-admin-user-email'] == 'x@y.com'
     assert out['x-admin-user-name'] == 'X'
-    assert 'x-admin-identity' in out
+    # M42 — `x-admin-identity` (HMAC signed) se removió: nunca tuvo verifier
+    # backend que lo consultara, era dead defense-in-depth.
+    assert 'x-admin-identity' not in out
 
 
 def test_core_api_headers_no_body_no_content_type():

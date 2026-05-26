@@ -11,7 +11,14 @@ Routers:
   - me_router          — `/v1/me/*` (perfil del usuario autenticado).
   - tenant_signup_router — `/v1/tenant-signup`.
   - tenant_user_router — `/v1/me/tenants` (listar tenants del usuario).
-  - platform_admin_router — `/v1/platform/*` (platform_owner + MFA).
+  - platform_admin_router — gated por platform_owner + MFA. Cubre DOS
+    "namespaces" de paths a propósito (sin prefix=`/platform`):
+      * `/v1/tenants/*` (fleet CRUD — un platform_owner administrando
+        tenants para terceros; el panel los llama "Fleet · Tenants").
+      * `/v1/platform/*` (observability + config global: runbooks,
+        feature flags, incidents, billing, etc.).
+    Si querés moverlo a un único prefix, hay que cambiar AMBOS lados
+    coordinadamente (handler decorators + admin-panel/.../coreApi.js).
 
 Branch `core`: solo routers transversales. Cuando se instala un módulo
 opt-in sobre el core, ese módulo agrega sus propios routers vía

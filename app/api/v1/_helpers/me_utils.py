@@ -19,11 +19,12 @@ Funciones:
 """
 from __future__ import annotations
 
-import hashlib
 from uuid import UUID
 
 import asyncpg
 from fastapi import HTTPException, Request
+
+from app.core.security import derive_session_id
 
 
 def _user_display_name_from_request(request: Request) -> str:
@@ -119,21 +120,16 @@ async def _load_user_preferences_row(
 
 
 def _session_id_from_request(request: Request) -> str | None:
-    """Deriva un session id estable desde el JWT.
+    """M43 — delega a `app.core.security.derive_session_id` (fuente única).
 
-    Prefiere `jti` (Auth0 lo emite por default). Fallback: hash determinístico
-    de `sub + iat` para que la misma sesión lógica matchee entre requests
-    hasta que el token expire.
+    Antes este helper duplicaba la lógica de derivación. Drift entre las
+    dos copias rompía BUG-199 (revoke check) silenciosamente.
     """
-    jti = getattr(request.state, 'session_jti', None)
-    if jti:
-        return str(jti)
-    actor_id = getattr(request.state, 'actor_id', None)
-    iat = getattr(request.state, 'token_iat', None)
-    if not actor_id or iat is None:
-        return None
-    digest = hashlib.sha256(f'{actor_id}|{iat}'.encode()).hexdigest()
-    return f'iat-{digest[:32]}'  # prefijo distingue fallback de jti real
+    return derive_session_id(
+        jti=getattr(request.state, 'session_jti', None),
+        sub=getattr(request.state, 'actor_id', None),
+        iat=getattr(request.state, 'token_iat', None),
+    )
 
 
 async def record_auth_session(

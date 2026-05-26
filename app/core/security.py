@@ -419,25 +419,39 @@ async def authenticate_request(
         await _enforce_session_not_revoked(session_id)
 
 
-def _derive_session_id(payload: dict) -> str | None:
-    """Match `_session_id_from_request` in routes.py.
+def derive_session_id(*, jti: str | None, sub: str | None, iat: int | None) -> str | None:
+    """M43 — fuente única de verdad para derivar un `session_id` estable.
 
-    Preferimos `jti` (siempre presente en JWTs Auth0); fallback a hash
-    determinista de `sub|iat` cuando jti no está. Sin esto, `authenticate_request`
-    y los handlers que upsertean `auth_sessions` divergirían y el revoke no
-    aplicaría.
+    Antes esto vivía duplicado en `_derive_session_id(payload)` (acá, leído
+    desde el JWT durante `authenticate_request`) y `_session_id_from_request
+    (request)` (en `_helpers/me_utils.py`, leído desde `request.state`).
+    Cualquier divergencia rompe BUG-199 (revoke check): el row insertado por
+    el handler nunca matchearía el row consultado por `authenticate_request`.
+
+    Contrato:
+    - Si `jti` está presente → usarlo (siempre lo emite Auth0).
+    - Si no, hash determinístico `sha256(sub|iat)[:32]` con prefijo
+      `iat-` para distinguir fallback de jti real.
+    - Si faltan `sub` o `iat` también → `None` (sin tracking de revoke).
     """
-    jti = payload.get('jti')
     if jti:
         return str(jti)
-    sub = payload.get('sub')
-    iat = payload.get('iat')
     if not sub or iat is None:
         return None
     import hashlib  # noqa: PLC0415
 
     digest = hashlib.sha256(f'{sub}|{iat}'.encode()).hexdigest()
     return f'iat-{digest[:32]}'
+
+
+def _derive_session_id(payload: dict) -> str | None:
+    """Compat wrapper sobre `derive_session_id` para call sites internos
+    que ya tenían el `payload` del JWT en mano."""
+    return derive_session_id(
+        jti=payload.get('jti'),
+        sub=payload.get('sub'),
+        iat=payload.get('iat'),
+    )
 
 
 async def _enforce_session_not_revoked(session_id: str) -> None:

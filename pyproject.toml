@@ -4,24 +4,23 @@ version = "0.1.0"
 description = "Core multitenant event-driven para Copiloto IA"
 requires-python = ">=3.12"
 dependencies = [
+  # M41 — dependencias purgadas en el audit pass (0 imports en app/ tras
+  # la limpieza del branch core): passlib, boto3, pypdf, python-docx,
+  # aiosmtplib, python-multipart, anthropic (SDK; usamos httpx directo),
+  # openai (SDK; idem), redis (solo aparece en comentario). Reducen
+  # imagen + superficie de ataque (CVEs). Cuando un módulo opt-in
+  # necesite alguna, la declara en su propio pyproject extras (ver
+  # docs/ARCHITECTURE.md § dependencias por módulo).
   "fastapi==0.115.6",
   "uvicorn[standard]==0.34.0",
   "asyncpg==0.30.0",
   "pydantic-settings==2.7.1",
   "python-jose[cryptography]==3.3.0",
-  "passlib[bcrypt]==1.7.4",
-  "redis==5.2.1",
   "httpx==0.28.1",
-  "boto3==1.35.90",
-  "python-multipart==0.0.20",
   "structlog==24.4.0",
-  "pypdf==4.3.1",
-  "python-docx==1.1.2",
-  "anthropic>=0.40.0",
-  "openai>=1.50.0",
-  "aiosmtplib==3.0.2",
   "prometheus-client==0.21.1",
   "phonenumbers==9.0.30",
+  "cryptography>=44.0.0",
 ]
 
 [project.optional-dependencies]
