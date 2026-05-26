@@ -193,6 +193,36 @@ def _active_session(request: Request) -> dict[str, Any] | None:
     return _active_session_id(request.cookies.get(SESSION_COOKIE))
 
 
+# M46 — `_sessions` vive en memoria del proceso uvicorn. Cualquier reinicio
+# del container (`docker compose restart admin-panel`) las pierde TODAS,
+# pero la cookie en el browser queda apuntando a una `sid` que ya no
+# existe — el endpoint devolvía 401 silencioso sin limpiar la cookie
+# zombie. El usuario se quedaba "atascado" hasta limpiar cookies manual.
+#
+# Fix: cuando recibimos cookie pero no encontramos sesión, devolvemos
+# body explicativo + `Set-Cookie` que elimina la cookie del browser. El
+# frontend puede leer `reason` para mostrar mensaje claro tipo "tu
+# sesión expiró, volvé a loguearte" en lugar del subtitle genérico.
+def _unauthorized_session_response(request: Request) -> Response:
+    """401 que indica claramente por qué (no_session vs session_expired)
+    y limpia cookie zombie si existe.
+
+    Reasons:
+      - 'no_session'      → el browser nunca tuvo cookie (user nuevo).
+      - 'session_expired' → cookie presente pero `_sessions` no la tiene
+                            (server reiniciado, TTL pasó, o sesión purgada).
+    """
+    had_cookie = request.cookies.get(SESSION_COOKIE) is not None
+    reason = 'session_expired' if had_cookie else 'no_session'
+    body = json.dumps({'authenticated': False, 'reason': reason})
+    response = Response(content=body, status_code=401, media_type='application/json')
+    if had_cookie:
+        # Borrar la cookie zombie — sin esto el browser sigue mandando
+        # `sid=abc123` en cada request aunque el server ya no la reconozca.
+        response.delete_cookie(SESSION_COOKIE, path='/', samesite='strict')
+    return response
+
+
 def _core_api_url(path: str, query: str = '') -> str:
     base_url = get_admin_settings().admin_core_api_base_url.rstrip('/')
     normalized_path = path.lstrip('/')
@@ -580,7 +610,10 @@ def _session_mfa_required(session: dict[str, Any]) -> bool:
 async def admin_session(request: Request) -> Response:
     session = _active_session(request)
     if not session:
-        return Response(status_code=401)
+        # M46: 401 explícito con reason + delete-cookie. Antes era un
+        # `Response(status_code=401)` plano y el frontend no podía
+        # distinguir "nunca tuvo sesión" de "sesión expiró por restart".
+        return _unauthorized_session_response(request)
     profile = session['profile']
     return Response(
         json.dumps(
@@ -717,7 +750,10 @@ def _csrf_origin_ok(request: Request) -> bool:
 async def admin_core_api_proxy(path: str, request: Request) -> Response:
     session = _active_session(request)
     if not session:
-        return Response(status_code=401)
+        # M46: mismo patrón que /admin/api/session — body explicativo
+        # con `reason` + delete-cookie zombie. El SPA puede leer el JSON
+        # para mostrar "tu sesión expiró" en lugar de un 401 mudo.
+        return _unauthorized_session_response(request)
 
     # CSRF gate: para mutaciones (POST/PUT/PATCH/DELETE) exigimos prueba de
     # same-origin. Defensa-en-profundidad sobre la cookie SameSite=strict.

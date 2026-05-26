@@ -2,7 +2,7 @@
  * Cover adminSession.js — currently 29.41%.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { adminPath, fetchAdminSession } from './adminSession.js';
+import { adminPath, fetchAdminSession, SESSION_UNAUTHORIZED } from './adminSession.js';
 
 
 describe('adminSession', () => {
@@ -19,10 +19,35 @@ describe('adminSession', () => {
     expect(out).toContain('/admin/login');
   });
 
-  it('fetchAdminSession returns null on 401', async () => {
-    fetch.mockResolvedValueOnce({ status: 401, ok: false });
+  // M46 — 401 ahora devuelve {unauthorized: SESSION_UNAUTHORIZED, reason: ...}
+  // en lugar de null. Esto permite distinguir "user nuevo" de "sesión zombie".
+  it('fetchAdminSession returns unauthorized+reason on 401 with reason in body', async () => {
+    fetch.mockResolvedValueOnce({
+      status: 401, ok: false,
+      json: () => Promise.resolve({ authenticated: false, reason: 'session_expired' }),
+    });
     const out = await fetchAdminSession();
-    expect(out).toBeNull();
+    expect(out).toEqual({ unauthorized: SESSION_UNAUTHORIZED, reason: 'session_expired' });
+  });
+
+  it('fetchAdminSession returns reason=no_session for plain 401', async () => {
+    fetch.mockResolvedValueOnce({
+      status: 401, ok: false,
+      json: () => Promise.resolve({ authenticated: false, reason: 'no_session' }),
+    });
+    const out = await fetchAdminSession();
+    expect(out.unauthorized).toBe(SESSION_UNAUTHORIZED);
+    expect(out.reason).toBe('no_session');
+  });
+
+  it('fetchAdminSession returns reason=unknown when 401 body is not JSON', async () => {
+    fetch.mockResolvedValueOnce({
+      status: 401, ok: false,
+      json: () => Promise.reject(new Error('not json')),
+    });
+    const out = await fetchAdminSession();
+    expect(out.unauthorized).toBe(SESSION_UNAUTHORIZED);
+    expect(out.reason).toBe('unknown');
   });
 
   it('fetchAdminSession returns parsed JSON on 200', async () => {
