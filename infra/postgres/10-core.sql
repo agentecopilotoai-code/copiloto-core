@@ -1833,3 +1833,153 @@ alter table app.contacts
     references app.contacts(tenant_id, id)
     on delete set null (referrer_contact_id);
 
+
+-- ============================================================================
+-- Fase 2 (core) — Roles & Capabilities dinámicos
+-- ============================================================================
+-- Antes de Fase 2 la matriz de roles vivía hardcodeada en el frontend
+-- (`admin-panel/src/permissions/matrix.js`). Para que el platform_owner
+-- pueda crear roles custom y reasignar capacidades desde la UI sin tocar
+-- código, materializamos el catálogo en estas tablas:
+--
+--   app.role          — catálogo de roles (sistema + custom).
+--   app.capability    — catálogo de capacidades (sistema + custom).
+--   app.role_capability — matriz role × capability con nivel de acceso.
+--
+-- Diseño:
+--   - `is_system=true` protege roles/capacidades que el módulo de producto
+--     o el core seedearon: no pueden borrarse desde la UI, solo
+--     desactivarse. Roles custom (creados por platform_owner) tienen
+--     `is_system=false` y se pueden borrar.
+--   - `access_level` codifica el nivel UI:
+--       'RW'         — read/write.
+--       'R'          — read-only.
+--       'partial'    — RW sobre subset (ej. "edit own contacts").
+--       'own_only'   — solo recursos propios.
+--   - `group_label` agrupa capabilities en secciones visuales de la
+--     matriz (igual que rolesAclData.js: "Operación diaria",
+--     "Análisis y crecimiento", etc.).
+--   - Las tablas son **platform-scope** (NO tienen tenant_id): el
+--     catálogo es uno solo para toda la plataforma. RLS deshabilitada;
+--     gating por `require_platform_owner` en los handlers.
+
+create table if not exists app.role (
+  code         text primary key,
+  name         text not null,
+  description  text null,
+  is_system    boolean not null default false,
+  is_active    boolean not null default true,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+create table if not exists app.capability (
+  code         text primary key,
+  name         text not null,
+  description  text null,
+  group_label  text null,
+  is_system    boolean not null default false,
+  is_active    boolean not null default true,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+create table if not exists app.role_capability (
+  role_code        text not null references app.role(code) on delete cascade,
+  capability_code  text not null references app.capability(code) on delete cascade,
+  access_level     text not null check (access_level in ('RW', 'R', 'partial', 'own_only')),
+  granted_at       timestamptz not null default now(),
+  granted_by       uuid null references app.users(id) on delete set null,
+  primary key (role_code, capability_code)
+);
+
+create index if not exists ix_role_capability_role on app.role_capability(role_code);
+create index if not exists ix_role_capability_cap on app.role_capability(capability_code);
+
+-- Seed de los 6 roles del sistema. Espejo de `permissions/matrix.js::ROLES`.
+insert into app.role (code, name, description, is_system) values
+  ('platform_owner', 'Platform Owner', 'Dueño de la plataforma. Cross-tenant + support_mode + MFA obligatorio.', true),
+  ('owner',          'Owner',          'Dueño del tenant. Acceso total al tenant.', true),
+  ('admin',          'Admin',          'Administrador del tenant. Configuración + operación.', true),
+  ('manager',        'Manager',        'Manager del tenant. Análisis + campañas + segmentos.', true),
+  ('agent',          'Agent',          'Agente del tenant. Operación diaria (handoffs, citas, contactos).', true),
+  ('viewer',         'Viewer',         'Lectura del tenant. Sin permisos de escritura.', true)
+on conflict (code) do nothing;
+
+-- Seed inicial de capabilities del CORE (las que no son de productos).
+-- Cuando un módulo se instala, agrega sus capabilities con su propio
+-- bootstrap (ej. el módulo GD agrega `gd.module.access`, `gd.documents.read`,
+-- ... vía su `bootstrap_gd_for_tenant` o un seed equivalente).
+insert into app.capability (code, name, description, group_label, is_system) values
+  -- Tenant transversales
+  ('tenant_setup.read',  'Leer configuración del tenant', null, 'Administración del tenant', true),
+  ('tenant_setup.write', 'Editar configuración del tenant', null, 'Administración del tenant', true),
+  ('team.read',          'Leer equipo', null, 'Administración del tenant', true),
+  ('team.write',         'Gestionar equipo', null, 'Administración del tenant', true),
+  ('legal.read',         'Leer documentos legales', null, 'Administración del tenant', true),
+  ('legal.write',        'Editar documentos legales', null, 'Administración del tenant', true),
+  ('audit.read',         'Consultar auditoría', null, 'Administración del tenant', true),
+  -- Platform admin (cross-tenant)
+  ('platform.tenants.read',         'Listar tenants',           null, 'Platform Owner', true),
+  ('platform.tenants.write',        'Gestionar tenants',        null, 'Platform Owner', true),
+  ('platform.system_health.read',   'Ver salud de la plataforma', null, 'Platform Owner', true),
+  ('platform.billing.read',         'Ver billing & MRR',        null, 'Platform Owner', true),
+  ('platform.incidents.read',       'Ver incidentes',           null, 'Platform Owner', true),
+  ('platform.incidents.write',      'Gestionar incidentes',     null, 'Platform Owner', true),
+  ('platform.outbound_dlq.read',    'Ver DLQ outbound',         null, 'Platform Owner', true),
+  ('platform.outbound_dlq.retry',   'Reintentar DLQ',           null, 'Platform Owner', true),
+  ('platform.runbooks.read',        'Leer runbooks',            null, 'Platform Owner', true),
+  ('platform.roles_acl.read',       'Ver roles & ACL',          null, 'Platform Owner', true),
+  ('platform.roles_acl.write',      'Editar roles & ACL',       null, 'Platform Owner', true),
+  ('platform.feature_flags.read',   'Ver feature flags',        null, 'Platform Owner', true),
+  ('platform.feature_flags.write',  'Editar feature flags',     null, 'Platform Owner', true),
+  ('platform.tenant_modules.read',  'Ver módulos por tenant',   null, 'Platform Owner', true),
+  ('platform.tenant_modules.write', 'Activar/desactivar módulos por tenant', null, 'Platform Owner', true),
+  ('platform.ai_providers.configure', 'Configurar proveedores IA', null, 'Platform Owner', true)
+on conflict (code) do nothing;
+
+-- Seed inicial de role_capability. Espejo de `permissions/matrix.js::PERMISSIONS`
+-- para los caps del CORE.
+insert into app.role_capability (role_code, capability_code, access_level) values
+  -- viewer (mínimo): solo lectura legal
+  ('viewer',  'legal.read',         'R'),
+  -- agent: legal read, audit ninguno
+  ('agent',   'legal.read',         'R'),
+  -- manager: tenant transversales read + team read
+  ('manager', 'legal.read',         'R'),
+  ('manager', 'team.read',          'R'),
+  -- admin: todo lo del tenant
+  ('admin',   'tenant_setup.read',  'R'),
+  ('admin',   'tenant_setup.write', 'RW'),
+  ('admin',   'team.read',          'R'),
+  ('admin',   'team.write',         'RW'),
+  ('admin',   'legal.read',         'R'),
+  ('admin',   'legal.write',        'RW'),
+  ('admin',   'audit.read',         'R'),
+  -- owner: todo lo de admin (alias funcional al owner del tenant)
+  ('owner',   'tenant_setup.read',  'R'),
+  ('owner',   'tenant_setup.write', 'RW'),
+  ('owner',   'team.read',          'R'),
+  ('owner',   'team.write',         'RW'),
+  ('owner',   'legal.read',         'R'),
+  ('owner',   'legal.write',        'RW'),
+  ('owner',   'audit.read',         'R'),
+  -- platform_owner: todas las caps platform
+  ('platform_owner', 'platform.tenants.read',           'R'),
+  ('platform_owner', 'platform.tenants.write',          'RW'),
+  ('platform_owner', 'platform.system_health.read',     'R'),
+  ('platform_owner', 'platform.billing.read',           'R'),
+  ('platform_owner', 'platform.incidents.read',         'R'),
+  ('platform_owner', 'platform.incidents.write',        'RW'),
+  ('platform_owner', 'platform.outbound_dlq.read',      'R'),
+  ('platform_owner', 'platform.outbound_dlq.retry',     'RW'),
+  ('platform_owner', 'platform.runbooks.read',          'R'),
+  ('platform_owner', 'platform.roles_acl.read',         'R'),
+  ('platform_owner', 'platform.roles_acl.write',        'RW'),
+  ('platform_owner', 'platform.feature_flags.read',     'R'),
+  ('platform_owner', 'platform.feature_flags.write',    'RW'),
+  ('platform_owner', 'platform.tenant_modules.read',    'R'),
+  ('platform_owner', 'platform.tenant_modules.write',   'RW'),
+  ('platform_owner', 'platform.ai_providers.configure', 'RW')
+on conflict (role_code, capability_code) do nothing;
+

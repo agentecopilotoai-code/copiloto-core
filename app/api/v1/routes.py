@@ -1706,6 +1706,11 @@ from app.api.v1.handlers.webhook_handlers import (  # noqa: F401, E402
 # `/platform/tenant-modules/*`). Antes vivían en `app.influencer.admin_routes`
 # por razón histórica; al separar el core se promueven al paquete neutral.
 from app.platform_admin import admin_routes as _platform_admin_routes  # noqa: F401, E402
+# Fase 2 — CRUD de roles/capabilities. Mismo patrón side-effect: el módulo
+# usa decoradores `@platform_admin_router.X` para registrar endpoints
+# `/platform/roles/*` y `/platform/capabilities/*`. Debe importarse ANTES
+# de `router.include_router(platform_admin_router)`.
+from app.api.v1.handlers import platform_roles_handlers as _platform_roles_handlers  # noqa: F401, E402
 
 router.include_router(public_router)
 router.include_router(web_router)
