@@ -51,9 +51,23 @@ services:
     # `.secrets`, así que cada `docker compose restart admin-panel`
     # seguía corriendo el código congelado en la image — confuso al
     # iterar (los `print()` nuevos no aparecían en logs).
+    #
+    # M48 — `./admin-panel/dist:/app/app/admin/static/dist:ro` resuelve
+    # la regresión que introdujo el bind anterior. En la image, Vite
+    # buildea el SPA en `/web/dist` y lo copia a
+    # `/app/app/admin/static/dist` (ver admin-panel/Dockerfile). Al
+    # mapear `./app` completo encima, ese dist desapareció y el endpoint
+    # `/admin/` devolvía 503 "React build is missing". El segundo mount
+    # lo restaura desde donde Vite lo genera en el host.
+    # Pre-requisito: correr `cd admin-panel && npm install && npm run build`
+    # al menos una vez (lo hace `bootstrap-admin-panel.sh`).
     command: python3 -m uvicorn app.admin.main:app --host 0.0.0.0 --port 3000 --reload
     volumes:
-      - ./app:/app/app:ro
+      # Sin `:ro` en el primer mount porque docker no puede crear un
+      # sub-mount (`/app/app/admin/static/dist`) dentro de un FS
+      # read-only. uvicorn no escribe en /app/app igualmente.
+      - ./app:/app/app
+      - ./admin-panel/dist:/app/app/admin/static/dist:ro
       - ./.secrets:/app/.secrets:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/admin/ >/dev/null || exit 1"]
