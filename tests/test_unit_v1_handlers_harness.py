@@ -162,13 +162,16 @@ def test_current_user_id_creates_lazy_when_missing():
 
 
 def test_current_user_id_creates_lazy_falls_to_default_email():
+    """Si JWT NO trae email y x-admin-user-email también vacío → fallback
+    `{actor_id}@auth.local`."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid = uuid4()
     req = _fake_request(email=None)
-    conn = FakeConn(fetchrow=[None, {'id': uid}])
+    # M57: 3 fetchrow ahora — auth_subject miss → pending miss → insert.
+    conn = FakeConn(fetchrow=[None, None, {'id': uid}])
     asyncio.run(current_user_id_from_request(req, conn))
-    # email argumento al insert es '{actor_id}@auth.local'
-    insert_call = conn.calls[1]
+    # Buscar el INSERT por SQL (no por índice) para no depender del orden.
+    insert_call = next(c for c in conn.calls if 'insert into app.users' in c[1])
     assert insert_call[2][1] == 'auth0|u1@auth.local'
 
 
@@ -1645,3 +1648,60 @@ def test_require_tenant_management_503_no_pool(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(require_tenant_management(tid, req))
     assert exc.value.status_code == 503
+
+
+# ─── M57 — reconciliación de invitación pending ───────────────────────────
+
+
+def test_current_user_id_reconciles_pending_invite():
+    """M57 — si el user no existe por auth_subject pero SÍ existe un
+    pending con su email, se UPDATEa el auth_subject del pending en
+    lugar de crear un user nuevo (que dejaba el pending huérfano)."""
+    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    uid_pending = uuid4()
+    req = _fake_request(actor_id='google-oauth2|123', email='nuevo@empresa.com')
+    conn = FakeConn(
+        fetchrow=[
+            None,                  # 1: lookup by auth_subject → miss
+            {'id': uid_pending},   # 2: lookup pending by email → hit
+        ],
+        execute=['OK'],            # update auth_subject del pending
+    )
+    result = asyncio.run(current_user_id_from_request(req, conn))
+    assert result == uid_pending
+    # El UPDATE debe ser el primer execute, con args (actor_id, display, id)
+    update_call = next(c for c in conn.calls if c[0] == 'execute')
+    assert 'update app.users' in update_call[1]
+    assert update_call[2][0] == 'google-oauth2|123'  # nuevo auth_subject
+    assert update_call[2][2] == uid_pending          # id del pending
+
+
+def test_current_user_id_creates_new_when_no_pending_match():
+    """Si no hay pending con ese email, crea user nuevo (comportamiento previo)."""
+    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    uid_new = uuid4()
+    req = _fake_request(actor_id='google-oauth2|456', email='nadie@empresa.com')
+    conn = FakeConn(
+        fetchrow=[
+            None,            # lookup by auth_subject → miss
+            None,            # lookup pending by email → miss
+            {'id': uid_new}, # insert returning id
+        ],
+    )
+    result = asyncio.run(current_user_id_from_request(req, conn))
+    assert result == uid_new
+
+
+def test_current_user_id_existing_user_skips_pending_lookup():
+    """Si el auth_subject ya está registrado, NO se hace lookup de pending
+    (path normal, sin overhead extra para usuarios ya logueados antes)."""
+    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    uid_existing = uuid4()
+    req = _fake_request(actor_id='google-oauth2|789')
+    conn = FakeConn(fetchrow=[{'id': uid_existing}])
+    result = asyncio.run(current_user_id_from_request(req, conn))
+    assert result == uid_existing
+    # Solo UNA query: el lookup por auth_subject. NO se hizo el pending lookup.
+    fetchrow_calls = [c for c in conn.calls if c[0] == 'fetchrow']
+    assert len(fetchrow_calls) == 1
+    assert 'auth_subject=$1' in fetchrow_calls[0][1]

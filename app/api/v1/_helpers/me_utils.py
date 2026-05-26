@@ -63,7 +63,7 @@ async def current_user_id_from_request(
     if not actor_id or actor_type != 'user':
         return None
 
-    # Lookup primero
+    # Lookup primero por auth_subject (path normal).
     row = await conn.fetchrow(
         'select id from app.users where auth_subject=$1', actor_id,
     )
@@ -71,9 +71,45 @@ async def current_user_id_from_request(
         request.state.user_id = row['id']
         return row['id']
 
-    # No existe → crear lazy desde claims del JWT
+    # M57 — reconciliación de invitación pendiente.
+    #
+    # `add_tenant_member` (cuando el invitado no existe en `app.users`)
+    # crea una fila placeholder con `auth_subject = 'pending|<sha256(email)>'`.
+    # Antes este lookup ignoraba ese placeholder y creaba un user NUEVO
+    # al primer login del invitado → quedaba un user huérfano (el pending)
+    # con la membresía, y un user real sin membresía con el mismo email.
+    #
+    # Fix: antes de insert, buscar un pending por email (case-insensitive
+    # — `app.users.email` es `citext`). Si existe, UPDATE su `auth_subject`
+    # al real → la membresía queda vinculada al user que se acaba de
+    # loguear con su identidad Auth0 real.
     email = getattr(request.state, 'email', None) or f'{actor_id}@auth.local'
     display = _user_display_name_from_request(request)
+    pending_row = await conn.fetchrow(
+        '''
+        select id from app.users
+        where email = $1 and auth_subject like 'pending|%'
+        limit 1
+        ''',
+        email,
+    )
+    if pending_row is not None:
+        # Reconcilia el pending → adopta el auth_subject real del JWT.
+        await conn.execute(
+            '''
+            update app.users
+               set auth_subject = $1,
+                   display_name = coalesce(nullif($2, ''), display_name),
+                   status = case when status = 'invited' then 'active' else status end,
+                   updated_at = now()
+             where id = $3
+            ''',
+            actor_id, display, pending_row['id'],
+        )
+        request.state.user_id = pending_row['id']
+        return pending_row['id']
+
+    # No existe ningún user con este email → crear lazy desde claims del JWT.
     row = await conn.fetchrow(
         '''
         insert into app.users (auth_subject, email, display_name)

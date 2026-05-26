@@ -384,8 +384,31 @@ async def authenticate_request(
     # acción ocurrió bajo opt-in temporal o bajo el modo legacy).
     request.state.support_mode_source = support_mode_source
     request.state.mfa_verified = _extract_mfa_verified(payload, namespace)
-    request.state.email = payload.get('email')
-    request.state.name = payload.get('name') or payload.get('nickname')
+    # M58 — Auth0 NO incluye `email`/`name` en el access_token por default
+    # (sólo en id_token + userinfo). El BFF guarda el email real en su
+    # sesión (post-callback) y lo inyecta como `x-admin-user-email` /
+    # `x-admin-user-name` al proxiar al core (ver `_core_api_headers`
+    # en app/admin/routes.py). Acá leemos esos headers como fallback
+    # cuando el JWT no los trae. SIN esto, `app.users.email` quedaba
+    # con `<auth_subject>@auth.local` y la reconciliación por email de
+    # `current_user_id_from_request` nunca matcheaba con los pendings
+    # creados por `add_tenant_member`.
+    #
+    # NOTA seg: el header `x-admin-user-email` es spoofable por un
+    # caller con access_token directo al core (no via BFF). Para hardening
+    # producción habría que HMAC-sign el header con jwt_secret (similar
+    # al ex-`x-admin-identity` que se purgó en M42). El JWT signature ya
+    # garantiza que el caller es legítimo; lo que falta es atar email al
+    # mismo sujeto firmado. Solución preferida: configurar un Auth0 Action
+    # que setee `api.accessToken.setCustomClaim('email', event.user.email)`
+    # → email viene en el JWT y desaparece la dependencia del header.
+    request.state.email = (
+        payload.get('email') or request.headers.get('x-admin-user-email')
+    )
+    request.state.name = (
+        payload.get('name') or payload.get('nickname')
+        or request.headers.get('x-admin-user-name')
+    )
     request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
     # UI-016.7-FU-SESSIONS: capturamos los claims que identifican esta sesión
     # del JWT. `jti` es el identificador canónico; `iat` se usa como fallback
