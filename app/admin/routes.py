@@ -536,6 +536,37 @@ async def admin_login(request: Request) -> RedirectResponse:
     return response
 
 
+def _callback_recover_redirect(reason: str) -> RedirectResponse:
+    """M56 — UX fix: en lugar de mostrar `{"detail":"Invalid or expired
+    OAuth state"}` como JSON crudo (que deja al user atascado), redirigir
+    a `/admin/` con `?login_error=<reason>` para que el SPA muestre un
+    banner explicativo + el botón "Iniciar sesión" para reintentar.
+
+    Causas comunes:
+      - state_missing:    user re-cargó el URL del callback (la cookie
+                          tiene Max-Age=600 y se setea solo durante
+                          /admin/login → si el user pega el URL a mano,
+                          no hay cookie).
+      - state_mismatch:   el user abrió varias pestañas y la cookie se
+                          sobreescribió.
+      - state_expired:    pasaron más de 10min entre /admin/login y el
+                          callback (típico cuando el flow se interrumpe
+                          y el user retoma horas después).
+      - auth0_error:      Auth0 devolvió un error en el query (e.g.
+                          access_denied porque el user canceló).
+      - missing_params:   redirect a /callback sin code o state.
+
+    El frontend lee `login_error` y muestra mensaje específico.
+    """
+    response = RedirectResponse(
+        f'/admin/?login_error={reason}',
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+    # Limpiar la state cookie zombie si existió → próximo login arranca limpio.
+    response.delete_cookie(STATE_COOKIE, path='/', samesite='lax')
+    return response
+
+
 @router.get('/callback', include_in_schema=False, name='admin_auth0_callback')
 @router.get('/admin/callback', include_in_schema=False)
 async def admin_callback(
@@ -552,31 +583,30 @@ async def admin_callback(
         error=error,
     )
     if error:
+        # M56 — Auth0 error (access_denied, consent_required, etc).
+        # Redirige al landing con el error para mostrar mensaje al user.
         _debug('GET /callback', step='auth0_error', error=error, description=error_description)
-        raise HTTPException(
-            status_code=400,
-            detail=f'{error}: {error_description or "Auth0 login failed"}',
-        )
+        return _callback_recover_redirect(f'auth0_{error}')
     if not code or not state:
         _debug('GET /callback', step='missing_params', has_code=bool(code), has_state=bool(state))
-        raise HTTPException(status_code=400, detail='Missing OAuth code or state')
+        return _callback_recover_redirect('missing_params')
 
     state_payload = _unpack_state(request.cookies.get(STATE_COOKIE, ''))
     if not state_payload:
         _debug('GET /callback', step='state_cookie_invalid', reason='cookie_missing_or_unsigned')
-        raise HTTPException(status_code=400, detail='Invalid or expired OAuth state')
+        return _callback_recover_redirect('state_missing')
     if state_payload.get('state') != state:
         _debug(
             'GET /callback', step='state_mismatch',
             cookie_state=state_payload.get('state'), url_state=state,
         )
-        raise HTTPException(status_code=400, detail='Invalid or expired OAuth state')
+        return _callback_recover_redirect('state_mismatch')
     if state_payload.get('created_at', 0) < time.time() - 600:
         _debug(
             'GET /callback', step='state_expired',
             age_seconds=int(time.time() - state_payload.get('created_at', 0)),
         )
-        raise HTTPException(status_code=400, detail='Invalid or expired OAuth state')
+        return _callback_recover_redirect('state_expired')
     _debug('GET /callback', step='state_validated')
 
     settings = get_admin_settings()

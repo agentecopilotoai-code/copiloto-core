@@ -352,25 +352,34 @@ def _stub_id_token_decode(monkeypatch):
 
 
 def test_admin_callback_with_error_param():
+    """M56 — los errores del callback ya NO devuelven 400 JSON. Redirigen
+    303 a `/admin/?login_error=<reason>` para que el SPA muestre un
+    banner explicativo + el botón "Iniciar sesión" para reintentar."""
     app = _build_app()
     with _client(app) as c:
-        r = c.get('/admin/callback?error=access_denied&error_description=user_cancel')
-        assert r.status_code == 400
+        r = c.get('/admin/callback?error=access_denied&error_description=user_cancel',
+                  follow_redirects=False)
+        assert r.status_code == 303
+        assert 'login_error=auth0_access_denied' in r.headers['location']
 
 
 def test_admin_callback_missing_code():
+    """M56 — sin code/state → redirect 303 con login_error=missing_params."""
     app = _build_app()
     with _client(app) as c:
-        r = c.get('/admin/callback?state=anything')
-        assert r.status_code == 400
+        r = c.get('/admin/callback?state=anything', follow_redirects=False)
+        assert r.status_code == 303
+        assert 'login_error=missing_params' in r.headers['location']
 
 
 def test_admin_callback_invalid_state():
+    """M56 — state cookie missing → redirect con login_error=state_missing."""
     app = _build_app()
     with _client(app) as c:
-        r = c.get('/admin/callback?code=ok&state=does_not_match')
-        # No state cookie → unpack returns None → 400
-        assert r.status_code == 400
+        r = c.get('/admin/callback?code=ok&state=does_not_match',
+                  follow_redirects=False)
+        assert r.status_code == 303
+        assert 'login_error=state_missing' in r.headers['location']
 
 
 def test_admin_callback_happy_path(monkeypatch):
@@ -509,7 +518,8 @@ def test_admin_callback_userinfo_fails(monkeypatch):
 
 
 def test_admin_callback_expired_state():
-    """state.created_at older than 600s → rejected."""
+    """M56 — state.created_at older than 600s → redirect 303 con
+    login_error=state_expired. Antes era 400 JSON crudo."""
     from app.admin import routes
     state = 'state-3'
     state_cookie = routes._pack_state({
@@ -518,8 +528,27 @@ def test_admin_callback_expired_state():
     app = _build_app()
     with _client(app) as c:
         c.cookies.set(routes.STATE_COOKIE, state_cookie)
-        r = c.get(f'/admin/callback?code=c&state={state}')
-        assert r.status_code == 400
+        r = c.get(f'/admin/callback?code=c&state={state}', follow_redirects=False)
+        assert r.status_code == 303
+        assert 'login_error=state_expired' in r.headers['location']
+
+
+def test_admin_callback_state_mismatch():
+    """M56 — cookie state≠URL state (user abrió varias pestañas) → 303
+    con login_error=state_mismatch."""
+    from app.admin import routes
+    cookie_state = 'state-from-tab-A'
+    state_cookie = routes._pack_state({
+        'state': cookie_state, 'nonce': 'n', 'created_at': int(time.time()),
+    })
+    app = _build_app()
+    with _client(app) as c:
+        c.cookies.set(routes.STATE_COOKIE, state_cookie)
+        # Llega state diferente (de otra pestaña).
+        r = c.get('/admin/callback?code=c&state=state-from-tab-B',
+                  follow_redirects=False)
+        assert r.status_code == 303
+        assert 'login_error=state_mismatch' in r.headers['location']
 
 
 def test_admin_callback_amr_as_string(monkeypatch):
