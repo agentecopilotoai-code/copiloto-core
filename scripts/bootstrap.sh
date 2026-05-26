@@ -154,16 +154,17 @@ MSG
   exit 1
 fi
 
+# M40-fix: el heredoc va con comillas dobles → bash interpreta backticks
+# como command substitution. Los comentarios SQL ahora usan comillas
+# simples para no romper el shell. Si un módulo opt-in re-introduce
+# tenant_legal_documents, extiende este listado en su propio bootstrap
+# (ver docs/runbooks/README.md para el patrón modular).
 missing_tables="$(psql_app -Atc "
   with required(table_name) as (
     values
       ('tenants'), ('users'), ('user_tenant_roles'), ('user_preferences'),
       ('auth_sessions'), ('audit_logs'), ('operator_alerts'),
       ('data_retention_policies'), ('backup_runs'),
-      -- M19/M40: `tenant_legal_documents` se eliminó del core en el
-      -- audit pass (sin call site real). Si un módulo opt-in la
-      -- re-introduce, debe extender este listado en su propio
-      -- bootstrap (ver `docs/ARCHITECTURE.md`).
       ('tenant_modules'),
       ('platform_secrets'), ('platform_ai_providers'),
       ('provider_dispatch'), ('feature_flags'),
@@ -213,7 +214,10 @@ else
   done < <(ls "${modules_dir}"/*.sql 2>/dev/null | sort)
 fi
 
-for m in "${modules_to_load[@]}"; do
+# M40-fix: con `set -u` un array vacío levanta "unbound variable" al
+# expandir ${arr[@]}. El patrón ${arr[@]+"${arr[@]}"} es safe-empty:
+# expande a nada si el array está vacío, o a los elementos quoted si no.
+for m in ${modules_to_load[@]+"${modules_to_load[@]}"}; do
   sql_path="${modules_dir}/${m}.sql"
   echo "→ Cargando módulo '${m}' desde ${sql_path}…"
   if ! psql_admin -q < "$sql_path"; then
@@ -223,8 +227,13 @@ for m in "${modules_to_load[@]}"; do
   echo "  ✓ módulo '${m}' cargado."
 done
 
+# Branch `core`: si no hay módulos opt-in instalados,
+# `infra/postgres/modules/*.sql` está vacío y `modules_to_load` queda
+# vacío — el script sigue normal con solo el core cargado.
 if [[ ${#modules_to_load[@]} -gt 0 ]]; then
   echo "→ Módulos opt-in cargados: ${modules_to_load[*]}"
+else
+  echo "→ Sin módulos opt-in (core puro). Para agregar uno, crea infra/postgres/modules/<name>.sql."
 fi
 
 missing_extensions="$(psql_app -Atc "
@@ -240,7 +249,13 @@ if [[ -n "$missing_extensions" ]]; then
   exit 1
 fi
 
-tenant_count="$(psql_app -Atc "select count(*) from app.tenants;")"
+# M40-fix: usar `psql_admin` (RLS bypass) en lugar de `psql_app`. La
+# policy `tenants_select` (introducida en C9) exige
+# `app.support_mode()=true OR app.current_tenant_id()=id`; sin ninguno,
+# el rol de aplicación ve 0 filas aunque el seed haya insertado el tenant
+# demo. El check es legítimo (validar que el seed corrió) y no necesita
+# pasar por RLS — el rol admin lo bypassea.
+tenant_count="$(psql_admin -Atc "select count(*) from app.tenants;")"
 if [[ "$tenant_count" -lt 1 ]]; then
   echo "Error: se esperaba al menos el tenant demo del seed, hay $tenant_count." >&2
   exit 1
