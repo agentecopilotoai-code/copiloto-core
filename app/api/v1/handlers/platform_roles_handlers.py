@@ -167,14 +167,17 @@ async def patch_role(
     sets = []
     params: list = []
     if body.name is not None:
-        params.append(body.name); sets.append(f'name = ${len(params)}')
+        params.append(body.name)
+        sets.append(f'name = ${len(params)}')
     if body.description is not None:
-        params.append(body.description); sets.append(f'description = ${len(params)}')
+        params.append(body.description)
+        sets.append(f'description = ${len(params)}')
     if body.is_active is not None:
-        params.append(body.is_active); sets.append(f'is_active = ${len(params)}')
+        params.append(body.is_active)
+        sets.append(f'is_active = ${len(params)}')
     if not sets:
         raise HTTPException(400, {'error': 'empty_patch'})
-    sets.append(f'updated_at = now()')
+    sets.append('updated_at = now()')
     params.append(role_code)
     sql = (
         f'update app.role set {", ".join(sets)} '

@@ -21,7 +21,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.v1._helpers.me_utils import (
     _load_user_preferences_row,
     _require_current_user,
-    _session_id_from_request,
     record_auth_session,
 )
 from app.api.v1._helpers.normalizers import _serialize_profile

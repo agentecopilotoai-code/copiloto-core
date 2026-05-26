@@ -85,11 +85,14 @@ async def list_all_tenants(
     where = ['t.deleted_at is null']
     params: list = []
     if status_filter:
-        params.append(status_filter); where.append(f't.status = ${len(params)}')
+        params.append(status_filter)
+        where.append(f't.status = ${len(params)}')
     if country_code:
-        params.append(country_code); where.append(f't.country_code = ${len(params)}')
+        params.append(country_code)
+        where.append(f't.country_code = ${len(params)}')
     if vertical_code:
-        params.append(vertical_code); where.append(f't.vertical_code = ${len(params)}')
+        params.append(vertical_code)
+        where.append(f't.vertical_code = ${len(params)}')
     if search:
         params.append(f'%{search.lower()}%')
         where.append(
@@ -492,7 +495,8 @@ async def list_platform_incidents(
     where = ['1=1']
     params: list = []
     if status_filter:
-        params.append(status_filter); where.append(f'oa.status = ${len(params)}')
+        params.append(status_filter)
+        where.append(f'oa.status = ${len(params)}')
     params.append(limit)
     rows = await conn.fetch(
         f'''

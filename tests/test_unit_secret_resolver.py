@@ -1,8 +1,6 @@
 """Cobertura completa de `app.services.secret_resolver`."""
 from __future__ import annotations
 
-import pytest
-
 from app.services.secret_resolver import (
     resolve_secret_ref,
     secret_ref_is_configured,
