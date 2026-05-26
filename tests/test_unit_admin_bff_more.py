@@ -776,6 +776,154 @@ def test_admin_core_api_proxy_upstream_error(monkeypatch):
         assert r.status_code == 502
 
 
+def test_admin_core_api_proxy_upstream_401_expired_purges_session(monkeypatch):
+    """B-002: si upstream devuelve 401 con detail típico de token expirado
+    (e.g. 'Expired token', 'Session has been revoked'), el proxy purga la
+    sesión local + delete-cookie + devuelve session_expired al SPA."""
+    from app.admin import routes
+    fake_settings = SimpleNamespace(
+        mfa_enforcement_enabled=False,
+        auth0_domain=None,
+        auth0_audience='aud',
+        auth0_claims_namespace='https://copilotoia.com/claims/',
+        admin_core_api_base_url='http://127.0.0.1:8000',
+        jwt_secret='secret-min-length-16-chars',
+        cookies_secure=False,
+    )
+    monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
+    import app.core.config as _core_config
+    monkeypatch.setattr(
+        _core_config, 'get_settings',
+        lambda: SimpleNamespace(jwt_secret='secret-min-length-16-chars'),
+    )
+    sid, _ = _make_session(profile={
+        'sub': 'u|1', 'email': 'u@x.com', 'roles': ['admin'],
+        'mfa_verified': True,
+    })
+    assert sid in routes._sessions
+
+    # Upstream Core responde 401 'Expired token' (lo que jose tira post-A-002).
+    _patch_httpx(monkeypatch, [
+        _FakeResp(
+            status_code=401,
+            json_payload={'detail': 'Expired token'},
+            content=b'{"detail":"Expired token"}',
+            headers={'content-type': 'application/json'},
+        ),
+    ])
+    app = _build_app()
+    with _client(app) as c:
+        c.cookies.set(routes.SESSION_COOKIE, sid)
+        r = c.get('/admin/api/core/v1/users')
+        assert r.status_code == 401
+        body = r.json()
+        # B-002: respuesta enriquecida — el SPA puede actuar específico.
+        assert body['reason'] == 'token_expired'
+        assert 'session_expired' in body['detail']
+    # La sesión fue purgada del dict in-memory.
+    assert sid not in routes._sessions
+
+
+def test_admin_core_api_proxy_upstream_401_other_preserved(monkeypatch):
+    """B-002: 401 con detail genérico (no expired/revoked) NO purga la
+    sesión — puede ser un permisos issue, no expiración. Pasamos el 401
+    al SPA tal cual."""
+    from app.admin import routes
+    fake_settings = SimpleNamespace(
+        mfa_enforcement_enabled=False,
+        auth0_domain=None,
+        auth0_audience='aud',
+        auth0_claims_namespace='https://copilotoia.com/claims/',
+        admin_core_api_base_url='http://127.0.0.1:8000',
+        jwt_secret='secret-min-length-16-chars',
+        cookies_secure=False,
+    )
+    monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
+    import app.core.config as _core_config
+    monkeypatch.setattr(
+        _core_config, 'get_settings',
+        lambda: SimpleNamespace(jwt_secret='secret-min-length-16-chars'),
+    )
+    sid, _ = _make_session(profile={
+        'sub': 'u|1', 'email': 'u@x.com', 'roles': ['admin'],
+        'mfa_verified': True,
+    })
+
+    _patch_httpx(monkeypatch, [
+        _FakeResp(
+            status_code=401,
+            json_payload={'detail': 'Authentication required'},
+            content=b'{"detail":"Authentication required"}',
+            headers={'content-type': 'application/json'},
+        ),
+    ])
+    app = _build_app()
+    with _client(app) as c:
+        c.cookies.set(routes.SESSION_COOKIE, sid)
+        r = c.get('/admin/api/core/v1/foo')
+        assert r.status_code == 401
+        # Detail tal cual del upstream — no marcado como expired.
+        assert r.json() == {'detail': 'Authentication required'}
+    # Sesión preservada.
+    assert sid in routes._sessions
+
+
+def test_admin_callback_uses_expires_in_from_token_response(monkeypatch):
+    """B-002: el TTL del cookie + session viene del access_token Auth0
+    (`expires_in`), no del hardcoded 8h previo."""
+    from app.admin import routes
+    fake_settings = SimpleNamespace(
+        mfa_enforcement_enabled=False,
+        auth0_domain='t.auth0.com',
+        auth0_admin_client_id='client-x',
+        auth0_admin_client_secret_file=None,
+        auth0_audience='aud',
+        auth0_issuer=None,
+        auth0_claims_namespace='https://copilotoia.com/claims/',
+        auth0_callback_urls='http://localhost:3000/callback,http://testserver/callback',
+        admin_core_api_base_url='http://127.0.0.1:8000',
+        jwt_secret='secret-min-length-16-chars',
+        state_secret='state-secret-min-16-chars',
+        cookies_secure=False,
+    )
+    monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
+    monkeypatch.setattr(routes, '_admin_client_secret', lambda: 'sec')
+    _stub_id_token_decode(monkeypatch)
+
+    import time as _t
+    state = 'state-' + 'x' * 20
+    state_cookie = routes._pack_state({
+        'state': state, 'nonce': 'n', 'created_at': int(_t.time()),
+    })
+    id_token = _make_id_token({'sub': 'auth0|x', 'email': 'x@y.co', 'nonce': 'n'})
+
+    _patch_httpx(monkeypatch, [
+        # /oauth/token — el response trae expires_in custom (e.g. 3600 = 1h).
+        _FakeResp(status_code=200, json_payload={
+            'access_token': 'at-x', 'id_token': id_token,
+            'refresh_token': 'rt-x', 'expires_in': 3600,
+        }, content=b'{}'),
+        # /userinfo
+        _FakeResp(status_code=200, json_payload={
+            'sub': 'auth0|x', 'email': 'x@y.co',
+        }, content=b'{}'),
+    ])
+    app = _build_app()
+    with _client(app) as c:
+        c.cookies.set(routes.STATE_COOKIE, state_cookie)
+        r = c.get(f'/callback?code=abc&state={state}', follow_redirects=False)
+    assert r.status_code in (302, 303, 307)
+    # La sesión nueva fue creada con expires_at ≈ now + 3600.
+    sids = [k for k, v in routes._sessions.items()
+            if v.get('profile', {}).get('sub') == 'auth0|x']
+    assert sids, 'sesión nueva no creada'
+    sess = routes._sessions[sids[-1]]
+    delta = sess['expires_at'] - _t.time()
+    assert 3500 < delta < 3700  # ~1h (con margen)
+    # refresh_token guardado.
+    assert sess['refresh_token'] == 'rt-x'
+
+
 def test_admin_core_api_proxy_post_with_body(monkeypatch):
     from app.admin import routes
     fake_settings = SimpleNamespace(

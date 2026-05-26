@@ -39,7 +39,16 @@ STATIC_DIR = Path(__file__).parent / 'static'
 DIST_DIR = STATIC_DIR / 'dist'
 SESSION_COOKIE = 'copilotoia_admin_session'
 STATE_COOKIE = 'copilotoia_admin_oauth_state'
-SESSION_TTL_SECONDS = 8 * 60 * 60
+# M60/B-002 — TTL del cookie + del session dict. Antes hardcoded 8h, pero
+# el `access_token` de Auth0 vive 2h por default (configure-auth0.sh
+# emite `lifetime_in_seconds=7200`). El desalineamiento causaba:
+# user con cookie válido pero token expirado → proxy upstream 401 → SPA
+# rota sin diagnóstico claro. Ahora capturamos `expires_in` del response
+# de /oauth/token y usamos ESO como TTL real. SESSION_TTL_SECONDS_DEFAULT
+# es el fallback si Auth0 no incluye el campo (no debería pasar).
+SESSION_TTL_SECONDS_DEFAULT = 2 * 60 * 60  # 2h matches Auth0 default
+# Backwards-compat alias for tests that imported el nombre histórico.
+SESSION_TTL_SECONDS = SESSION_TTL_SECONDS_DEFAULT
 
 router = APIRouter()
 _sessions: dict[str, dict[str, Any]] = {}
@@ -740,15 +749,31 @@ async def admin_callback(
     session_id = secrets.token_urlsafe(32)
     profile_email = claims.get('email')
     profile_roles = _namespaced_claim(claims, 'roles', [])
+    # B-002 — usar el `expires_in` REAL del token response (Auth0 default
+    # 7200s = 2h). Sin esto el cookie sobrevivía al access_token y la SPA
+    # se rompía silenciosa. Clamp [60, 24h] por seguridad.
+    raw_expires_in = tokens.get('expires_in')
+    try:
+        token_ttl = int(raw_expires_in) if raw_expires_in is not None else SESSION_TTL_SECONDS_DEFAULT
+    except (TypeError, ValueError):
+        token_ttl = SESSION_TTL_SECONDS_DEFAULT
+    session_ttl = max(60, min(token_ttl, 24 * 60 * 60))
     _debug(
         'GET /callback', step='creating_session',
         sid=session_id, email=profile_email, roles=profile_roles,
         mfa_verified=mfa_verified, store_size_before=len(_sessions),
+        session_ttl_seconds=session_ttl,
+        raw_expires_in=raw_expires_in,
     )
     _sessions[session_id] = {
-        'expires_at': time.time() + SESSION_TTL_SECONDS,
+        'expires_at': time.time() + session_ttl,
         'access_token': tokens['access_token'],
         'id_token': id_token,
+        # B-002 — guardar refresh_token para implementación futura del
+        # silent-refresh flow. Hoy NO se usa; el SPA re-loguea cuando el
+        # proxy detecta 401 upstream (ver `_purge_session_for_expired_
+        # token` abajo).
+        'refresh_token': tokens.get('refresh_token'),
         'profile': {
             'sub': claims.get('sub'),
             'name': claims.get('name') or claims.get('nickname') or claims.get('email'),
@@ -774,11 +799,11 @@ async def admin_callback(
         httponly=True,
         samesite='strict',
         secure=settings.cookies_secure,
-        max_age=SESSION_TTL_SECONDS,
+        max_age=session_ttl,
     )
     _debug(
         'GET /callback', step='session_cookie_set',
-        sid=session_id, ttl_seconds=SESSION_TTL_SECONDS,
+        sid=session_id, ttl_seconds=session_ttl,
         secure=settings.cookies_secure, samesite='strict',
         redirect='/admin/',
     )
@@ -1084,6 +1109,46 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
                 f'{get_admin_settings().admin_core_api_base_url}'
             ),
         ) from exc
+
+    # B-002 — si el Core responde 401 con detail típico de token expirado/
+    # revocado, purgamos la sesión local + delete-cookie ANTES de
+    # devolverle el 401 al SPA. Sin esto, el SPA quedaba con cookie
+    # válida pero todos los proxy requests fallando hasta que el user
+    # cerrara browser. Ahora el SPA recibe el body con
+    # `reason: 'token_expired'` y puede redirigir a /admin/login.
+    if upstream_response.status_code == 401:
+        try:
+            upstream_body = upstream_response.json() if upstream_response.content else {}
+            detail = (upstream_body.get('detail') or '').lower() if isinstance(upstream_body, dict) else ''
+        except (ValueError, TypeError):
+            detail = ''
+        token_expired_markers = (
+            'expired token', 'session has been revoked',
+            'invalid token', 'token missing required claim',
+            'id_token nonce mismatch',
+        )
+        if any(marker in detail for marker in token_expired_markers):
+            cookie_session_id = request.cookies.get(SESSION_COOKIE)
+            if cookie_session_id:
+                _sessions.pop(cookie_session_id, None)
+            _debug(
+                f'{request.method} /admin/api/core/{path}',
+                step='proxy_token_expired_purged',
+                upstream_detail=detail[:80],
+            )
+            cleared = Response(
+                content=json.dumps({
+                    'detail': 'session_expired',
+                    'reason': 'token_expired',
+                    'message': 'La sesión expiró — vuelve a iniciar sesión.',
+                }),
+                status_code=401,
+                media_type='application/json',
+            )
+            cleared.delete_cookie(
+                SESSION_COOKIE, path='/', samesite='strict',
+            )
+            return cleared
 
     response_headers = {}
     content_type = upstream_response.headers.get('content-type')
