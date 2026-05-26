@@ -1235,11 +1235,54 @@ def test_remove_tenant_member_404():
 # ─── observability ────────────────────────────────────────────────────────
 
 
-def test_get_platform_health():
+def test_get_platform_health_happy():
+    """M54 — shape DEBE matchear lo que `SystemHealth.jsx` consume:
+    generated_at, snapshot, alerts (array), services (array de
+    {key, label, status, detail}), note. El bug original era
+    `services` como dict → frontend `services.map()` rompía."""
     from app.api.v1.handlers.platform_admin_handlers import get_platform_health
-    result = asyncio.run(get_platform_health())
-    assert result['status'] == 'ok'
-    assert 'services' in result
+    conn = FakeConn(fetchval=[1])
+    result = asyncio.run(get_platform_health(conn))
+    assert 'generated_at' in result
+    assert 'snapshot' in result
+    assert isinstance(result['alerts'], list)
+    assert isinstance(result['services'], list)  # ← era dict antes
+    assert len(result['services']) == 2  # api + postgres
+    api_svc = next(s for s in result['services'] if s['key'] == 'api')
+    pg_svc = next(s for s in result['services'] if s['key'] == 'postgres')
+    assert api_svc['status'] == 'ok'
+    assert pg_svc['status'] == 'ok'
+    assert 'ms' in (pg_svc['detail'] or '')
+    assert isinstance(result['note'], str)
+
+
+def test_get_platform_health_db_down():
+    """Si el DB probe falla, postgres.status='down' + detail con el error."""
+    from app.api.v1.handlers.platform_admin_handlers import get_platform_health
+
+    class FailingConn(FakeConn):
+        async def fetchval(self, sql, *args):
+            raise RuntimeError('connection refused')
+
+    result = asyncio.run(get_platform_health(FailingConn()))
+    pg_svc = next(s for s in result['services'] if s['key'] == 'postgres')
+    assert pg_svc['status'] == 'down'
+    assert 'connection refused' in pg_svc['detail']
+
+
+def test_get_platform_health_db_timeout():
+    """Si el probe tarda más de 2s, status='down' con TimeoutError."""
+    import asyncio as _asyncio
+    from app.api.v1.handlers.platform_admin_handlers import get_platform_health
+
+    class SlowConn(FakeConn):
+        async def fetchval(self, sql, *args):
+            await _asyncio.sleep(5)  # más de 2s → timeout
+            return 1
+
+    result = asyncio.run(get_platform_health(SlowConn()))
+    pg_svc = next(s for s in result['services'] if s['key'] == 'postgres')
+    assert pg_svc['status'] == 'down'
 
 
 def test_get_billing_mrr():

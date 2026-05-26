@@ -32,7 +32,9 @@ handler.  Más limpio: usar el `platform_admin_router` directamente.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from typing import Literal
 from uuid import UUID
 
@@ -462,19 +464,68 @@ async def remove_tenant_member(
 
 
 @platform_admin_router.get('/platform/metrics/health')
-async def get_platform_health() -> dict:
-    """KPIs básicos del sistema — placeholder mínimo.
+async def get_platform_health(
+    conn: asyncpg.Connection = Depends(get_db),  # noqa: B008
+) -> dict:
+    """Snapshot live de System Health (UI-006.2).
 
-    Los módulos opt-in pueden enriquecer estos KPIs cuando se instalan.
+    M54 — el shape DEBE matchear lo que `admin-panel/.../SystemHealth.jsx`
+    consume:
+
+        {
+          'generated_at': ISO timestamp,
+          'snapshot': {...},            # KPIs (puede estar vacío en core)
+          'alerts': [...],              # array de alertas activas
+          'services': [...],            # array de {key, label, status, detail}
+          'note': str,
+        }
+
+    Antes el handler devolvía `services` como dict `{api: ..., db: ...}`
+    y rompía el frontend con `TypeError: t.map is not a function`.
+    El core branch no tiene workers/messages/circuit_breakers (todo eso
+    pertenece a módulos opt-in), pero SÍ podemos reportar el estado real
+    de los servicios que SÍ corren: API y Postgres (probe `select 1`).
     """
-    return {
-        'status': 'ok',
-        'services': {
-            'api': 'healthy',
-            'db': 'healthy',
-            'auth0': 'healthy',
+    from datetime import UTC, datetime  # noqa: PLC0415
+
+    # Probe live de la DB. Si responde, status=ok; si no, status=down
+    # con el error en `detail`. No bloqueamos más de 2s.
+    db_status = 'ok'
+    db_detail: str | None = None
+    db_started = time.monotonic()
+    try:
+        await asyncio.wait_for(conn.fetchval('select 1'), timeout=2.0)
+        elapsed_ms = (time.monotonic() - db_started) * 1000.0
+        db_detail = f'select 1 · {elapsed_ms:.1f}ms'
+    except (TimeoutError, Exception) as exc:  # noqa: BLE001
+        db_status = 'down'
+        db_detail = str(exc)[:120]
+
+    services = [
+        {
+            'key': 'api',
+            'label': 'API · FastAPI',
+            'status': 'ok',
+            'detail': 'Atendiendo requests',
         },
-        'note': 'Core base. Productos agregan métricas específicas.',
+        {
+            'key': 'postgres',
+            'label': 'Postgres · primary',
+            'status': db_status,
+            'detail': db_detail,
+        },
+    ]
+
+    return {
+        'generated_at': datetime.now(UTC).isoformat(),
+        # En el core no hay KPIs propios — los módulos opt-in agregan
+        # response_latency, llm_calls, circuit_breakers, workers, etc.
+        # Devolvemos {} para que `snapshot?.xxx` del frontend caiga al
+        # default sin romper.
+        'snapshot': {},
+        'alerts': [],
+        'services': services,
+        'note': 'Core base — sin métricas de producto. Cada módulo opt-in agrega sus KPIs (workers, breakers, mensajes, etc).',
     }
 
 
