@@ -928,3 +928,545 @@ def test_list_role_capabilities_happy():
     conn = FakeConn(fetch=[[]])
     result = asyncio.run(list_role_capabilities('admin', conn))
     assert result.items == []
+
+
+def test_patch_role_happy():
+    from app.api.v1.handlers.platform_roles_handlers import (
+        patch_role, RolePatchRequest,
+    )
+    conn = FakeConn(
+        fetchrow=[
+            {'code': 'analyst', 'name': 'Analyst X', 'description': 'updated',
+             'is_system': False, 'is_active': True},
+        ],
+        fetchval=[3],     # capability_count
+        execute=['OK'],   # audit
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = RolePatchRequest(name='Analyst X', description='updated', is_active=True)
+    result = asyncio.run(patch_role('analyst', body, req, conn))
+    assert result.capability_count == 3
+
+
+def test_patch_role_400_empty():
+    from app.api.v1.handlers.platform_roles_handlers import (
+        patch_role, RolePatchRequest,
+    )
+    from fastapi import HTTPException
+    conn = FakeConn()
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(patch_role('analyst', RolePatchRequest(), req, conn))
+    assert exc.value.status_code == 400
+
+
+def test_patch_role_404():
+    from app.api.v1.handlers.platform_roles_handlers import (
+        patch_role, RolePatchRequest,
+    )
+    from fastapi import HTTPException
+    conn = FakeConn(fetchrow=[None])
+    req = _fake_request(roles=['platform_owner'])
+    body = RolePatchRequest(name='New Name')
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(patch_role('missing', body, req, conn))
+    assert exc.value.status_code == 404
+
+
+def test_delete_role_happy():
+    from app.api.v1.handlers.platform_roles_handlers import delete_role
+    conn = FakeConn(
+        fetchrow=[{'code': 'analyst', 'is_system': False}],
+        execute=['DELETE 1', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    asyncio.run(delete_role('analyst', req, conn))
+
+
+def test_delete_role_404():
+    from app.api.v1.handlers.platform_roles_handlers import delete_role
+    from fastapi import HTTPException
+    conn = FakeConn(fetchrow=[None])
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(delete_role('missing', req, conn))
+    assert exc.value.status_code == 404
+
+
+def test_delete_role_409_system():
+    from app.api.v1.handlers.platform_roles_handlers import delete_role
+    from fastapi import HTTPException
+    conn = FakeConn(fetchrow=[{'code': 'owner', 'is_system': True}])
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(delete_role('owner', req, conn))
+    assert exc.value.status_code == 409
+
+
+def test_assign_capability_happy():
+    from app.api.v1.handlers.platform_roles_handlers import (
+        assign_capability_to_role, RoleCapabilityAssignRequest,
+    )
+    conn = FakeConn(
+        fetchval=[True, True],   # role exists, capability exists
+        execute=['OK', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = RoleCapabilityAssignRequest(access_level='RW')
+    result = asyncio.run(
+        assign_capability_to_role('admin', 'foo.bar', body, req, conn)
+    )
+    assert result.access_level == 'RW'
+
+
+def test_assign_capability_404_role_missing():
+    from app.api.v1.handlers.platform_roles_handlers import (
+        assign_capability_to_role, RoleCapabilityAssignRequest,
+    )
+    from fastapi import HTTPException
+    conn = FakeConn(fetchval=[False])  # role missing
+    req = _fake_request(roles=['platform_owner'])
+    body = RoleCapabilityAssignRequest(access_level='R')
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            assign_capability_to_role('missing', 'foo.bar', body, req, conn)
+        )
+    assert exc.value.status_code == 404
+
+
+def test_assign_capability_404_cap_missing():
+    from app.api.v1.handlers.platform_roles_handlers import (
+        assign_capability_to_role, RoleCapabilityAssignRequest,
+    )
+    from fastapi import HTTPException
+    conn = FakeConn(fetchval=[True, False])
+    req = _fake_request(roles=['platform_owner'])
+    body = RoleCapabilityAssignRequest(access_level='R')
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            assign_capability_to_role('admin', 'missing.cap', body, req, conn)
+        )
+    assert exc.value.status_code == 404
+
+
+def test_revoke_capability_happy():
+    from app.api.v1.handlers.platform_roles_handlers import revoke_capability_from_role
+    conn = FakeConn(execute=['DELETE 1', 'OK'])
+    req = _fake_request(roles=['platform_owner'])
+    asyncio.run(revoke_capability_from_role('admin', 'foo.bar', req, conn))
+
+
+def test_revoke_capability_404():
+    from app.api.v1.handlers.platform_roles_handlers import revoke_capability_from_role
+    from fastapi import HTTPException
+    conn = FakeConn(execute=['DELETE 0'])
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(revoke_capability_from_role('admin', 'foo.bar', req, conn))
+    assert exc.value.status_code == 404
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# platform_admin_handlers — members + observability + feature flags
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_patch_tenant_status_happy():
+    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_status, TenantStatusUpdate
+    tid = uuid4()
+    conn = FakeConn(
+        fetchrow=[{'id': tid, 'status': 'suspended'}],
+        execute=['OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantStatusUpdate(status='suspended')
+    result = asyncio.run(patch_tenant_status(tid, body, req, conn))
+    assert result['status'] == 'suspended'
+
+
+def test_patch_tenant_status_404():
+    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_status, TenantStatusUpdate
+    from fastapi import HTTPException
+    tid = uuid4()
+    conn = FakeConn(fetchrow=[None])
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantStatusUpdate(status='active')
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(patch_tenant_status(tid, body, req, conn))
+    assert exc.value.status_code == 404
+
+
+def test_list_tenant_members_happy():
+    from app.api.v1.handlers.platform_admin_handlers import list_tenant_members
+    from datetime import datetime, UTC
+    tid = uuid4()
+    uid = uuid4()
+    now = datetime.now(UTC)
+    rows = [{
+        'user_id': uid, 'email': 'u@x.co', 'display_name': 'U',
+        'user_status': 'active', 'mfa_enabled': True, 'last_login_at': now,
+        'roles': ['owner', 'admin'], 'is_default': True, 'joined_at': now,
+    }]
+    conn = FakeConn(fetch=[rows])
+    result = asyncio.run(list_tenant_members(tid, conn))
+    assert len(result['items']) == 1
+    assert result['items'][0]['roles'] == ['owner', 'admin']
+    assert result['tenant_id'] == str(tid)
+
+
+def test_add_tenant_member_existing_user():
+    from app.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
+    tid = uuid4()
+    uid = uuid4()
+    conn = FakeConn(
+        fetchval=[1],   # tenant exists
+        fetchrow=[{'id': uid, 'email': 'x@y.co'}],
+        execute=['OK', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberAdd(email='x@y.co', role='admin', is_default=False)
+    result = asyncio.run(add_tenant_member(tid, body, req, conn))
+    assert result['email'] == 'x@y.co'
+
+
+def test_add_tenant_member_pending_user():
+    """Si el email no existe, se crea pending."""
+    from app.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
+    tid = uuid4()
+    uid = uuid4()
+    conn = FakeConn(
+        fetchval=[1],
+        fetchrow=[None, {'id': uid, 'email': 'new@x.co'}],
+        execute=['OK', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberAdd(email='new@x.co', role='agent', is_default=False)
+    result = asyncio.run(add_tenant_member(tid, body, req, conn))
+    assert result['user_id'] == str(uid)
+
+
+def test_add_tenant_member_404_tenant_missing():
+    from app.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
+    from fastapi import HTTPException
+    tid = uuid4()
+    conn = FakeConn(fetchval=[None])
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberAdd(email='x@y.co', role='admin', is_default=False)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(add_tenant_member(tid, body, req, conn))
+    assert exc.value.status_code == 404
+
+
+def test_patch_tenant_member_change_role():
+    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
+    tid = uuid4()
+    uid = uuid4()
+    conn = FakeConn(
+        fetch=[[{'role': 'agent', 'is_default': True}]],
+        execute=['DELETE 1', 'INSERT 1', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberPatch(role='admin')
+    result = asyncio.run(patch_tenant_member(tid, uid, body, req, conn))
+    assert result['role'] == 'admin'
+
+
+def test_patch_tenant_member_change_is_default_only():
+    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
+    tid = uuid4()
+    uid = uuid4()
+    conn = FakeConn(
+        fetch=[[{'role': 'admin', 'is_default': False}]],
+        execute=['UPDATE 1', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberPatch(is_default=True)
+    result = asyncio.run(patch_tenant_member(tid, uid, body, req, conn))
+    assert result['is_default'] is True
+
+
+def test_patch_tenant_member_404_no_membership():
+    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
+    from fastapi import HTTPException
+    tid = uuid4()
+    uid = uuid4()
+    conn = FakeConn(fetch=[[]])
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberPatch(role='admin')
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(patch_tenant_member(tid, uid, body, req, conn))
+    assert exc.value.status_code == 404
+
+
+def test_patch_tenant_member_400_empty():
+    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
+    from fastapi import HTTPException
+    tid = uuid4()
+    uid = uuid4()
+    conn = FakeConn(fetch=[[{'role': 'admin', 'is_default': True}]])
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberPatch()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(patch_tenant_member(tid, uid, body, req, conn))
+    assert exc.value.status_code == 400
+
+
+def test_remove_tenant_member_happy():
+    from app.api.v1.handlers.platform_admin_handlers import remove_tenant_member
+    tid = uuid4()
+    uid = uuid4()
+    conn = FakeConn(execute=['DELETE 1', 'OK'])
+    req = _fake_request(roles=['platform_owner'])
+    asyncio.run(remove_tenant_member(tid, uid, req, conn))
+
+
+def test_remove_tenant_member_404():
+    from app.api.v1.handlers.platform_admin_handlers import remove_tenant_member
+    from fastapi import HTTPException
+    tid = uuid4()
+    uid = uuid4()
+    conn = FakeConn(execute=['DELETE 0'])
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(remove_tenant_member(tid, uid, req, conn))
+    assert exc.value.status_code == 404
+
+
+# ─── observability ────────────────────────────────────────────────────────
+
+
+def test_get_platform_health():
+    from app.api.v1.handlers.platform_admin_handlers import get_platform_health
+    result = asyncio.run(get_platform_health())
+    assert result['status'] == 'ok'
+    assert 'services' in result
+
+
+def test_get_billing_mrr():
+    from app.api.v1.handlers.platform_admin_handlers import get_billing_mrr
+    result = asyncio.run(get_billing_mrr())
+    assert result['mrr_total_usd'] == 0
+
+
+def test_list_platform_incidents_no_filter():
+    from app.api.v1.handlers.platform_admin_handlers import list_platform_incidents
+    conn = FakeConn(fetch=[[]])
+    result = asyncio.run(
+        list_platform_incidents(status_filter=None, limit=50, conn=conn)
+    )
+    assert result == {'items': []}
+
+
+def test_list_platform_incidents_with_filter():
+    from app.api.v1.handlers.platform_admin_handlers import list_platform_incidents
+    from datetime import datetime, UTC
+    now = datetime.now(UTC)
+    rows = [{
+        'id': uuid4(), 'tenant_id': uuid4(), 'tenant_slug': 'acme',
+        'tenant_name': 'ACME', 'kind': 'backup_failure', 'payload': '{}',
+        'status': 'open', 'attempts': 0, 'last_error': None,
+        'scheduled_for': now, 'created_at': now, 'sent_at': None,
+    }]
+    conn = FakeConn(fetch=[rows])
+    result = asyncio.run(
+        list_platform_incidents(status_filter='open', limit=10, conn=conn)
+    )
+    assert len(result['items']) == 1
+
+
+def test_list_outbound_dlq():
+    from app.api.v1.handlers.platform_admin_handlers import list_outbound_dlq
+    result = asyncio.run(list_outbound_dlq())
+    assert result['total'] == 0
+
+
+# ─── feature flags ────────────────────────────────────────────────────────
+
+
+def test_list_feature_flags():
+    from app.api.v1.handlers.platform_admin_handlers import list_feature_flags
+    from datetime import datetime, UTC
+    now = datetime.now(UTC)
+    rows = [{
+        'key': 'beta', 'description': None, 'enabled': True, 'rollout_pct': 50,
+        'metadata': '{}', 'created_at': now, 'updated_at': now,
+    }]
+    conn = FakeConn(fetch=[rows])
+    result = asyncio.run(list_feature_flags(conn))
+    assert result['items'][0]['key'] == 'beta'
+
+
+def test_create_feature_flag_happy():
+    from app.api.v1.handlers.platform_admin_handlers import create_feature_flag, FeatureFlagCreate
+    from datetime import datetime, UTC
+    now = datetime.now(UTC)
+    conn = FakeConn(
+        fetchrow=[{
+            'key': 'new', 'description': None, 'enabled': False,
+            'rollout_pct': 0, 'metadata': '{}',
+            'created_at': now, 'updated_at': now,
+        }],
+        execute=['OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = FeatureFlagCreate(key='new')
+    result = asyncio.run(create_feature_flag(body, req, conn))
+    assert result['key'] == 'new'
+
+
+def test_create_feature_flag_409():
+    import asyncpg
+    from app.api.v1.handlers.platform_admin_handlers import create_feature_flag, FeatureFlagCreate
+    from fastapi import HTTPException
+
+    class ConflictConn(FakeConn):
+        async def fetchrow(self, sql, *args):
+            raise asyncpg.UniqueViolationError('key taken')
+
+    conn = ConflictConn()
+    req = _fake_request(roles=['platform_owner'])
+    body = FeatureFlagCreate(key='taken')
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(create_feature_flag(body, req, conn))
+    assert exc.value.status_code == 409
+
+
+def test_patch_feature_flag_happy():
+    from app.api.v1.handlers.platform_admin_handlers import patch_feature_flag, FeatureFlagPatch
+    from datetime import datetime, UTC
+    now = datetime.now(UTC)
+    conn = FakeConn(
+        fetchrow=[{
+            'key': 'beta', 'description': 'updated', 'enabled': True,
+            'rollout_pct': 75, 'metadata': '{}',
+            'created_at': now, 'updated_at': now,
+        }],
+        execute=['OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = FeatureFlagPatch(enabled=True, rollout_pct=75, description='updated', metadata={'a': 1})
+    result = asyncio.run(patch_feature_flag('beta', body, req, conn))
+    assert result['enabled'] is True
+
+
+def test_patch_feature_flag_400_empty():
+    from app.api.v1.handlers.platform_admin_handlers import patch_feature_flag, FeatureFlagPatch
+    from fastapi import HTTPException
+    conn = FakeConn()
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(patch_feature_flag('beta', FeatureFlagPatch(), req, conn))
+    assert exc.value.status_code == 400
+
+
+def test_patch_feature_flag_404():
+    from app.api.v1.handlers.platform_admin_handlers import patch_feature_flag, FeatureFlagPatch
+    from fastapi import HTTPException
+    conn = FakeConn(fetchrow=[None])
+    req = _fake_request(roles=['platform_owner'])
+    body = FeatureFlagPatch(enabled=True)
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(patch_feature_flag('missing', body, req, conn))
+    assert exc.value.status_code == 404
+
+
+def test_delete_feature_flag_happy():
+    from app.api.v1.handlers.platform_admin_handlers import delete_feature_flag
+    conn = FakeConn(execute=['DELETE 1', 'OK'])
+    req = _fake_request(roles=['platform_owner'])
+    asyncio.run(delete_feature_flag('beta', req, conn))
+
+
+def test_delete_feature_flag_404():
+    from app.api.v1.handlers.platform_admin_handlers import delete_feature_flag
+    from fastapi import HTTPException
+    conn = FakeConn(execute=['DELETE 0'])
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(delete_feature_flag('missing', req, conn))
+    assert exc.value.status_code == 404
+
+
+# ─── health endpoint (public) ─────────────────────────────────────────────
+
+
+def test_public_health_calls_db():
+    from app.api.v1.handlers.public_handlers import health
+    conn = FakeConn(fetchval=[1])
+    result = asyncio.run(health(conn))
+    assert result == {'status': 'ok'}
+
+
+# ─── schemas — TENANT_SLUG_PATTERN + timezone validator ───────────────────
+
+
+def test_tenant_create_invalid_slug():
+    import pydantic
+    from app.api.v1.schemas import TenantCreate
+    with pytest.raises(pydantic.ValidationError):
+        TenantCreate(
+            slug='Bad Slug!', legal_name='X', display_name='X',
+            vertical_code='tech', country_code='CO',
+        )
+
+
+def test_tenant_create_invalid_timezone():
+    import pydantic
+    from app.api.v1.schemas import TenantCreate
+    with pytest.raises(pydantic.ValidationError):
+        TenantCreate(
+            slug='acme', legal_name='X', display_name='X',
+            vertical_code='tech', country_code='CO',
+            timezone='Not/A/Zone',
+        )
+
+
+def test_tenant_create_valid_timezone():
+    from app.api.v1.schemas import TenantCreate
+    t = TenantCreate(
+        slug='acme', legal_name='X', display_name='X',
+        vertical_code='tech', country_code='CO',
+        timezone='America/Mexico_City',
+    )
+    assert t.timezone == 'America/Mexico_City'
+
+
+def test_tenant_create_empty_timezone():
+    from app.api.v1.schemas import TenantCreate
+    t = TenantCreate(
+        slug='acme', legal_name='X', display_name='X',
+        vertical_code='tech', country_code='CO',
+        timezone=None,
+    )
+    assert t.timezone is None
+
+
+def test_tenant_create_extra_field_rejected():
+    import pydantic
+    from app.api.v1.schemas import TenantCreate
+    with pytest.raises(pydantic.ValidationError):
+        TenantCreate(
+            slug='acme', legal_name='X', display_name='X',
+            vertical_code='tech', country_code='CO',
+            unknown_field='foo',
+        )
+
+
+def test_tenant_update_accepts_partial():
+    from app.api.v1.schemas import TenantUpdate
+    t = TenantUpdate(display_name='New name')
+    assert t.display_name == 'New name'
+    assert t.slug is None
+
+
+def test_platform_tenant_update_status():
+    from app.api.v1.schemas import PlatformTenantUpdate
+    t = PlatformTenantUpdate(status='suspended')
+    assert t.status == 'suspended'
+
+
+def test_platform_tenant_update_invalid_status():
+    import pydantic
+    from app.api.v1.schemas import PlatformTenantUpdate
+    with pytest.raises(pydantic.ValidationError):
+        PlatformTenantUpdate(status='nuclear')
