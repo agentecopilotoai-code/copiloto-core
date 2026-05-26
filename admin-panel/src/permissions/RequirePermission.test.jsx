@@ -94,6 +94,20 @@ describe('<RequirePermission/>', () => {
     expect(screen.getByText('Lista de equipo')).toBeInTheDocument();
   });
 
+  it('capability=null pasa SIEMPRE (módulos sin capability declarada)', () => {
+    render(
+      <PermsHarness
+        profile={{}}
+        tenant={{ roles: ['viewer'] }}
+        capability={null}
+        mode="R"
+      >
+        <span>Sin capability — visible</span>
+      </PermsHarness>,
+    );
+    expect(screen.getByText('Sin capability — visible')).toBeInTheDocument();
+  });
+
   it('mode=RW bloquea acceso a manager (solo lectura)', () => {
     render(
       <PermsHarness
