@@ -149,7 +149,7 @@ export function TestProviderModal({ open, onClose, row, onTestProvider }) {
         <TestInputs modality={modality} form={form} setForm={setForm} onAudioFile={handleAudioFile} />
 
         {validationError ? (
-          <AlertBanner tone="warn">{validationError}</AlertBanner>
+          <AlertBanner tone="warning" title="Validación">{validationError}</AlertBanner>
         ) : null}
 
         {result ? <TestResult result={result} /> : null}
@@ -251,7 +251,7 @@ function TestInputs({ modality, form, setForm, onAudioFile }) {
             ))}
           </datalist>
         </FormField>
-        <AlertBanner tone="info">
+        <AlertBanner tone="info" title="Tiempo estimado">
           La generación de video toma 1–10 min según duración y resolución.
           La ventana puede quedar abierta hasta que termine.
         </AlertBanner>

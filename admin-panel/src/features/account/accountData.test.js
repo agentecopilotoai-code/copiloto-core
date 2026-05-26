@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_LOCALES,
   ACCOUNT_TIMEZONES,
-  DEFAULT_SESSIONS,
   NOTIFICATION_CHANNELS,
   NOTIFICATION_EVENTS,
   THEME_OPTIONS,
@@ -39,11 +38,6 @@ describe('accountData — catálogos estáticos', () => {
     expect(THEME_OPTIONS.map((o) => o.value)).toEqual(['auto', 'light', 'dark']);
   });
 
-  it('DEFAULT_SESSIONS marca exactamente una sesión como current', () => {
-    const current = DEFAULT_SESSIONS.filter((s) => s.current);
-    expect(current).toHaveLength(1);
-    expect(current[0].device).toMatch(/Chrome|macOS/);
-  });
 });
 
 describe('accountData — derivación de profile', () => {

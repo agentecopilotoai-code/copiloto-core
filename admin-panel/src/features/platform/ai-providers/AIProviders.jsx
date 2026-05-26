@@ -357,7 +357,7 @@ export function AIProviders({
               </FormField>
 
               {error ? (
-                <AlertBanner tone="warn">{error}</AlertBanner>
+                <AlertBanner tone="warning" title="Error">{error}</AlertBanner>
               ) : null}
             </form>
           );

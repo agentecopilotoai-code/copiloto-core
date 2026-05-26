@@ -154,22 +154,69 @@ function RootLayout() {
  * lo elimino para no romper tests; solo cambio el punto de uso.
  */
 function MfaAutoLogout() {
+  // A12: si el POST falla (BFF caído, network drop), el user quedaba en
+  // <LoadingScreen/> indefinido sin escape. Ahora tras 5s mostramos un
+  // fallback con CTA manual a `/admin/login` Y a una página externa
+  // hardcoded (`/admin/`) para que el user pueda escapar siempre.
+  const [stuck, setStuck] = useState(false);
+
   useEffect(() => {
     // Submit oculto del form POST a `/admin/logout`. El BFF invalida la
     // sesión y responde con redirect a la pantalla de login de Auth0
-    // (donde si configuran MFA, vuelven a entrar limpios).
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = adminPath('/admin/logout');
-    form.style.display = 'none';
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'mfa-auto-logout';
-    input.value = '1';
-    form.appendChild(input);
-    document.body.appendChild(form);
-    form.submit();
+    // (donde si configuran MFA, vuelven a entrar limpios). El CSRF gate
+    // requiere `X-Requested-With: fetch` — el form submit no setea esto,
+    // así que usamos `fetch` directo con credenciales incluidas.
+    let cancelled = false;
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        await fetch(adminPath('/admin/logout'), {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'x-requested-with': 'fetch' },
+          redirect: 'manual',
+          signal: ctrl.signal,
+        });
+        if (!cancelled) {
+          // El BFF responde 303 con Location a Auth0 logout — el browser
+          // ya no sigue redirects automáticos con `redirect: manual`, así
+          // que disparamos un reload de `/admin/` que el server reenvía
+          // a login.
+          window.location.assign(adminPath('/admin/'));
+        }
+      } catch {
+        // Network drop / abort. Caemos al fallback timeout.
+      }
+    })();
+    const timer = window.setTimeout(() => {
+      if (!cancelled) setStuck(true);
+    }, 5000);
+    return () => {
+      cancelled = true;
+      ctrl.abort();
+      window.clearTimeout(timer);
+    };
   }, []);
+
+  if (stuck) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <p className="eyebrow">CopilotoIA</p>
+          <h1>Necesitamos que vuelvas a iniciar sesión</h1>
+          <p className="hint">
+            Tu cuenta requiere completar 2FA. Hicimos un intento de logout
+            pero no respondió a tiempo.
+          </p>
+          <p>
+            <a href={adminPath('/admin/login')} className="auth-cta">
+              Iniciar sesión de nuevo
+            </a>
+          </p>
+        </section>
+      </main>
+    );
+  }
   return <LoadingScreen />;
 }
 
@@ -351,11 +398,17 @@ function TenantScope() {
  * ESTE tenant en particular (puede diferir del default tenant).
  */
 function TenantHomeRedirect() {
-  // Branch `core`: sin módulos de producto, el home del tenant es
-  // `tenant-setup` (configuración). Cuando se instala un módulo, su
-  // entry-point se vuelve el home según `resolveSafeHomeModule`.
+  // UI-018: usar `resolveSafeHomeModule` para elegir el primer módulo
+  // accesible al rol efectivo. Sin esto, hardcodear `tenant-setup`
+  // dejaba afuera roles que no lo tienen (agent/viewer) → quedaban en
+  // AccessDenied silent. Si NINGÚN módulo es accesible (rol vacío,
+  // tenant sin membresía), renderiza `NoModuleAccessScreen` con escape
+  // hatch (cerrar sesión).
   useOutletContext();
-  return <Navigate to="tenant-setup" replace />;
+  const permissions = usePermissions();
+  const safe = resolveSafeHomeModule(permissions);
+  if (!safe) return <NoModuleAccessScreen />;
+  return <Navigate to={safe} replace />;
 }
 
 /**

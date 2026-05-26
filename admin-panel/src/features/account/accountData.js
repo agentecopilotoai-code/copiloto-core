@@ -67,31 +67,10 @@ export const THEME_OPTIONS = [
   { value: 'dark', label: 'Oscuro', description: 'Ink + bone' },
 ];
 
-// Sesiones demo — usadas como fallback hasta que `/me/sessions` entregue
-// el listado real desde el backend.
-export const DEFAULT_SESSIONS = [
-  {
-    id: 'session-current',
-    device: 'Chrome 124 · macOS',
-    location: 'Bogotá, Colombia',
-    last_seen_label: 'ahora · sesión activa',
-    current: true,
-  },
-  {
-    id: 'session-mobile',
-    device: 'Safari · iPhone 15 · iOS 17',
-    location: 'Bogotá, Colombia',
-    last_seen_label: 'hace 2 días',
-    current: false,
-  },
-  {
-    id: 'session-old',
-    device: 'Firefox 125 · Ubuntu',
-    location: 'Medellín, Colombia',
-    last_seen_label: 'hace 11 días',
-    current: false,
-  },
-];
+// Las sesiones se sirven en vivo desde `/v1/me/sessions` (ver
+// `AccountSessions.jsx`). No hay fallback demo — exponer datos ficticios
+// en una pantalla de seguridad confundía a los usuarios pensando que su
+// cuenta estaba abierta en sitios que no usaron.
 
 /**
  * Shape inicial del form de perfil a partir del profile de Auth0.

@@ -2,7 +2,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-// UI-016.7-FU — mock auth/session source so the GET hydration effect runs.
 let mockSession;
 vi.mock('../../context/AuthContext.jsx', () => ({
   useAuth: () => ({ session: mockSession }),
@@ -37,36 +36,49 @@ import { AccountSessions } from './AccountSessions.jsx';
 
 const SESSION = { accessToken: 'tok', profile: { sub: 'u-1' } };
 
+const REAL_ITEMS = [
+  {
+    id: 'sess-current',
+    device: 'Chrome 124 · macOS',
+    location: 'Bogotá, Colombia',
+    last_seen_at: '2026-05-25T10:00:00Z',
+    current: true,
+  },
+  {
+    id: 'sess-old',
+    device: 'Firefox · Ubuntu',
+    location: 'Medellín',
+    last_seen_at: '2026-05-23T08:00:00Z',
+    current: false,
+  },
+];
+
 beforeEach(() => {
   mockSession = SESSION;
   toastSuccess.mockClear();
   toastError.mockClear();
   coreApi.listMySessions.mockReset();
   coreApi.revokeMySession.mockReset();
-  coreApi.listMySessions.mockResolvedValue({
-    user_id: 'u-1',
-    sessions: [{ id: 'current', current: true, last_seen_at: null }],
-    follow_up: 'UI-016.7-FU-SESSIONS',
-  });
+  coreApi.listMySessions.mockResolvedValue({ items: REAL_ITEMS });
   coreApi.revokeMySession.mockResolvedValue(null);
 });
 
 describe('<AccountSessions/>', () => {
-  it('pinta heading + listado de sesiones demo', () => {
+  it('pinta el heading + las sesiones reales devueltas por el backend', async () => {
     render(<AccountSessions />);
     expect(screen.getByRole('heading', { name: 'Sesiones activas' })).toBeInTheDocument();
-    expect(screen.getByText(/Chrome 124 · macOS/)).toBeInTheDocument();
-    expect(screen.getByText(/Safari · iPhone 15/)).toBeInTheDocument();
-    expect(screen.getByText(/Firefox 125 · Ubuntu/)).toBeInTheDocument();
+    expect(await screen.findByText('Chrome 124 · macOS')).toBeInTheDocument();
+    expect(screen.getByText('Firefox · Ubuntu')).toBeInTheDocument();
   });
 
-  it('marca la sesión actual con el chip "esta sesión"', () => {
+  it('marca la sesión actual con el chip "esta sesión"', async () => {
     render(<AccountSessions />);
-    expect(screen.getByText('esta sesión')).toBeInTheDocument();
+    expect(await screen.findByText('esta sesión')).toBeInTheDocument();
   });
 
-  it('botón "Revocar" de la sesión actual queda deshabilitado', () => {
+  it('botón "Revocar" de la sesión actual queda deshabilitado', async () => {
     render(<AccountSessions />);
+    await screen.findByText('Chrome 124 · macOS');
     const buttons = screen.getAllByRole('button', { name: /Revocar sesión/ });
     const currentBtn = buttons.find((btn) =>
       btn.getAttribute('aria-label')?.includes('Chrome 124'),
@@ -74,50 +86,49 @@ describe('<AccountSessions/>', () => {
     expect(currentBtn).toBeDisabled();
   });
 
-  it('al montar invoca listMySessions para refrescar el estado', async () => {
+  it('al montar invoca listMySessions', async () => {
     render(<AccountSessions />);
     await waitFor(() => {
       expect(coreApi.listMySessions).toHaveBeenCalledTimes(1);
     });
   });
 
-  it('revocar otra sesión muestra AlertBanner explicando workaround (BUG-233)', async () => {
+  it('revoke de otra sesión llama al backend + refresca', async () => {
     render(<AccountSessions />);
-    const otherSessionBtn = screen
+    await screen.findByText('Firefox · Ubuntu');
+    const buttons = screen.getAllByRole('button', { name: /Revocar sesión/ });
+    const otherBtn = buttons.find((btn) =>
+      btn.getAttribute('aria-label')?.includes('Firefox'),
+    );
+    await userEvent.click(otherBtn);
+    await waitFor(() => {
+      expect(coreApi.revokeMySession).toHaveBeenCalledWith(SESSION, 'sess-old');
+    });
+  });
+
+  it('revoke failure dispara toast error', async () => {
+    coreApi.revokeMySession.mockRejectedValue(new Error('nope'));
+    render(<AccountSessions />);
+    await screen.findByText('Firefox · Ubuntu');
+    const otherBtn = screen
       .getAllByRole('button', { name: /Revocar sesión/ })
-      .find((btn) => btn.getAttribute('aria-label')?.includes('Safari'));
-    await userEvent.click(otherSessionBtn);
-    // BUG-233 (codex P2 sobre PR #16): el copy original exponia el endpoint
-    // `DELETE /v1/me/sessions` y el codigo interno UI-016.7-FU-SESSIONS,
-    // jerga tecnica visible al usuario. Ahora el banner describe el
-    // workaround en lenguaje de negocio.
-    expect(
-      screen.getByText(/cambiá tu contraseña/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/cerrar la sesión actual desde acá/i),
-    ).toBeInTheDocument();
-    // No HTTP call para otras sesiones — el backend retorna 404 hasta que
-    // exista el session store.
-    expect(coreApi.revokeMySession).not.toHaveBeenCalled();
+      .find((btn) => btn.getAttribute('aria-label')?.includes('Firefox'));
+    await userEvent.click(otherBtn);
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledWith('nope');
+    });
   });
 
-  it('al cerrar todas las demás sesiones muestra AlertBanner UI-016.7-FU-SESSIONS', async () => {
+  it('empty state cuando el backend devuelve items vacíos', async () => {
+    coreApi.listMySessions.mockResolvedValue({ items: [] });
     render(<AccountSessions />);
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Cerrar todas las demás sesiones' }),
-    );
-    expect(screen.getByText(/Cerrar otras sesiones queda en standby/)).toBeInTheDocument();
+    expect(await screen.findByText(/Sin sesiones registradas/i)).toBeInTheDocument();
   });
 
-  it('botón "Entendido" cierra el alert banner', async () => {
+  it('error path muestra alert banner', async () => {
+    coreApi.listMySessions.mockRejectedValue(new Error('boom'));
     render(<AccountSessions />);
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Cerrar todas las demás sesiones' }),
-    );
-    expect(screen.getByRole('button', { name: 'Entendido' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Entendido' }));
-    expect(screen.queryByText(/Cerrar otras sesiones queda en standby/)).toBeNull();
+    expect(await screen.findByText(/No se pudieron cargar/i)).toBeInTheDocument();
   });
 
   it('no dispara listMySessions si no hay session', () => {

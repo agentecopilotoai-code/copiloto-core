@@ -190,19 +190,36 @@ describe('router por rol — branch core', () => {
     });
   });
 
-  it('mfa_required dispara auto-logout (POST /admin/logout)', async () => {
-    const submitSpy = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+  it('mfa_required dispara auto-logout (fetch POST /admin/logout)', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 303 });
+    const originalFetch = global.fetch;
+    global.fetch = fetchSpy;
+    const assignSpy = vi.fn();
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...originalLocation, assign: assignSpy },
+    });
     try {
       renderAt('/t/acme/tenant-setup', {
         session: { mfa_required: true, profile: { sub: 'u1', roles: ['owner'] } },
         tenants: [ACME(['owner'])],
       });
-      await waitFor(() => expect(submitSpy).toHaveBeenCalled());
+      await waitFor(() => {
+        expect(fetchSpy).toHaveBeenCalled();
+        const [url, init] = fetchSpy.mock.calls[0];
+        expect(String(url)).toMatch(/\/admin\/logout$/);
+        expect(init.method).toBe('POST');
+        expect(init.headers['x-requested-with']).toBe('fetch');
+        expect(init.credentials).toBe('include');
+      });
       expect(screen.queryByText('TENANT-SETUP VIEW')).toBeNull();
-      const forms = document.querySelectorAll('form[action*="/admin/logout"]');
-      expect(forms.length).toBeGreaterThanOrEqual(1);
     } finally {
-      submitSpy.mockRestore();
+      global.fetch = originalFetch;
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: originalLocation,
+      });
     }
   });
 });
