@@ -160,7 +160,11 @@ missing_tables="$(psql_app -Atc "
       ('tenants'), ('users'), ('user_tenant_roles'), ('user_preferences'),
       ('auth_sessions'), ('audit_logs'), ('operator_alerts'),
       ('data_retention_policies'), ('backup_runs'),
-      ('tenant_legal_documents'), ('tenant_modules'),
+      -- M19/M40: `tenant_legal_documents` se eliminó del core en el
+      -- audit pass (sin call site real). Si un módulo opt-in la
+      -- re-introduce, debe extender este listado en su propio
+      -- bootstrap (ver `docs/ARCHITECTURE.md`).
+      ('tenant_modules'),
       ('platform_secrets'), ('platform_ai_providers'),
       ('provider_dispatch'), ('feature_flags'),
       ('role'), ('capability'), ('role_capability')

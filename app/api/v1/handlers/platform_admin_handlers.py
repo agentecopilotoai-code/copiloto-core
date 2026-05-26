@@ -529,20 +529,57 @@ async def retry_outbound_dlq() -> dict:
     return {'queued': 0, 'note': 'Módulos opt-in agregan lógica.'}
 
 
+_RUNBOOK_CATALOG: list[dict] = [
+    {
+        'slug': 'auth0-mfa-error',
+        'title': 'Auth0 MFA error',
+        'category': 'auth',
+        'summary': 'Diagnóstico de errores MFA.',
+        # M40 — body placeholder; cuando se conecte la lectura real de
+        # `docs/runbooks/*.md` (TODO Fase 3) viene de ahí.
+        'body_md': (
+            '## Auth0 MFA error\n\n'
+            'Placeholder. El detalle real vive en `docs/runbooks/auth0-mfa-error.md`.'
+        ),
+    },
+    {
+        'slug': 'backup-signature-setup',
+        'title': 'Backup signature setup',
+        'category': 'backups',
+        'summary': 'Configurar firma GPG de backups.',
+        'body_md': (
+            '## Backup signature setup\n\n'
+            'Placeholder. El detalle real vive en '
+            '`docs/runbooks/backup-signature-setup.md`.'
+        ),
+    },
+]
+
+
 @platform_admin_router.get('/platform/runbooks')
 async def list_runbooks() -> dict:
     """Catálogo de runbooks. Por ahora estático.
 
     TODO Fase 3: leer desde `docs/runbooks/` o desde una tabla
-    `app.runbooks` (key + content_md + category)."""
+    `app.runbooks` (slug + content_md + category)."""
+    # Devolver el catálogo sin `body_md` (el listado no necesita el
+    # markdown completo — solo el detail endpoint lo expone).
     return {
         'items': [
-            {'key': 'auth0-mfa-error', 'title': 'Auth0 MFA error',
-             'category': 'auth', 'summary': 'Diagnóstico de errores MFA.'},
-            {'key': 'backup-signature-setup', 'title': 'Backup signature setup',
-             'category': 'backups', 'summary': 'Configurar firma GPG de backups.'},
+            {k: v for k, v in item.items() if k != 'body_md'}
+            for item in _RUNBOOK_CATALOG
         ],
     }
+
+
+@platform_admin_router.get('/platform/runbooks/{slug}')
+async def get_runbook(slug: str) -> dict:
+    """Detalle de un runbook (M40 — antes no existía y el click del
+    frontend explotaba con 404)."""
+    for item in _RUNBOOK_CATALOG:
+        if item['slug'] == slug:
+            return dict(item)
+    raise HTTPException(404, 'runbook_not_found')
 
 
 # ═══════════════════════════════════════════════════════════════════════════

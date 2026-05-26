@@ -487,6 +487,14 @@ async def require_platform_owner(request: Request) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail='platform_owner role is required'
         )
+    # M40 — gap detectado en el delta audit post-fix C9. Las policies de
+    # RLS sobre `app.tenants` (C9) exigen `app.support_mode()=true` o
+    # `app.current_tenant_id()=id`. El fleet (sin tenant scope) caía a
+    # las dos cero → SELECT vacío. Activar `support_mode` aquí garantiza
+    # que CUALQUIER handler protegido por `require_platform_owner`
+    # opera con la cookie virtual (audit logs registran el `actor_id`
+    # del platform_owner correctamente; no es escalación silenciosa).
+    request.state.support_mode = True
 
 
 async def require_service(request: Request) -> None:

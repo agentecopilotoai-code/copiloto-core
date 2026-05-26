@@ -42,7 +42,15 @@ export function useTeamData({ session, tenant }) {
     setNotice(null);
     try {
       const result = await listTenantMembers(session, tenantId);
-      setMembers(result?.members || []);
+      // M40 — el backend `GET /v1/tenants/{id}/members` devuelve
+      // `{items, tenant_id}` (ver `platform_admin_handlers.py`).
+      // El nombre `members` venía del shape histórico del módulo
+      // team pre-purga del branch `core`. Aceptamos ambos como fallback
+      // por si un módulo opt-in re-introduce el shape antiguo.
+      setMembers(result?.items || result?.members || []);
+      // `auth0_management_enabled` no lo expone el core (auth0_admin
+      // purgado). Si un módulo opt-in lo re-introduce con su propio
+      // handler, este flag vuelve a tener sentido.
       setAuth0Enabled(Boolean(result?.auth0_management_enabled));
     } catch (error) {
       setNotice({

@@ -279,8 +279,19 @@ export function revokeCapabilityFromRole(session, roleCode, capabilityCode) {
 
 // ─── Support mode (platform_owner opt-in temporal por tenant) ─────────────
 
-export function activateSupportMode(session, tenantId) {
-  return request(`/me/support-mode/${tenantId}`, { method: 'POST', session });
+/**
+ * Activa support_mode para un tenant. `body.justification` debe tener al menos
+ * 8 caracteres — el backend (`POST /v1/me/support-mode/{tenant_id}`) lo
+ * persiste en `audit_logs.metadata.justification` para la forensia del
+ * cruce cross-tenant (M40 — antes el wrapper ignoraba el body y el log
+ * quedaba con `justification_provided=false`).
+ */
+export function activateSupportMode(session, tenantId, body = {}) {
+  return request(`/me/support-mode/${tenantId}`, {
+    method: 'POST',
+    session,
+    body,
+  });
 }
 export function deactivateSupportMode(session, tenantId) {
   return request(`/me/support-mode/${tenantId}`, { method: 'DELETE', session });
