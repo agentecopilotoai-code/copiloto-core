@@ -140,6 +140,64 @@ def test_enforce_session_not_revoked_fail_open_on_exception():
         app.db.pool.db = original_db
 
 
+def test_enforce_session_not_revoked_fail_open_increments_counter():
+    """M-002: cada fail-open incrementa el counter expuesto en metrics."""
+    from app.core import security
+    security.reset_session_revoke_failopen_count()
+
+    class _BrokenConn:
+        async def fetchrow(self, sql, *args):
+            raise RuntimeError('db down')
+
+    class _FakePool:
+        def acquire(self):
+            return self
+        async def __aenter__(self):
+            return _BrokenConn()
+        async def __aexit__(self, *exc):
+            return None
+
+    class _FakeDb:
+        pool = _FakePool()
+
+    import app.db.pool
+    original_db = app.db.pool.db
+    app.db.pool.db = _FakeDb()
+    try:
+        async def _go():
+            await security._enforce_session_not_revoked('any-id')
+            await security._enforce_session_not_revoked('any-id-2')
+            await security._enforce_session_not_revoked('any-id-3')
+
+        asyncio.run(_go())
+        assert security.get_session_revoke_failopen_count() == 3
+    finally:
+        app.db.pool.db = original_db
+        security.reset_session_revoke_failopen_count()
+
+
+def test_enforce_session_not_revoked_no_pool_increments_counter():
+    """M-002: pool=None también cuenta como fail-open observable."""
+    from app.core import security
+    security.reset_session_revoke_failopen_count()
+
+    class _FakeDb:
+        pool = None
+
+    import app.db.pool
+    original_db = app.db.pool.db
+    app.db.pool.db = _FakeDb()
+    try:
+        async def _go():
+            await security._enforce_session_not_revoked('s1')
+
+        asyncio.run(_go())
+        assert security.get_session_revoke_failopen_count() == 1
+    finally:
+        app.db.pool.db = original_db
+        security.reset_session_revoke_failopen_count()
+
+
 def test_enforce_session_not_revoked_passes_when_active():
     """When the row exists with revoked_at=None, passes silently."""
     from app.core import security

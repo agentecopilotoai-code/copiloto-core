@@ -616,16 +616,48 @@ def _derive_session_id(payload: dict) -> str | None:
     )
 
 
+# M-002 — contador in-memory de fail-opens de revocation check.
+# Lo exponemos via `get_session_revoke_failopen_count()` para que
+# `/v1/platform/metrics/health` lo surface y se pueda alertar
+# (e.g. >5/min sugiere outage de DB que está rompiendo el enforce
+# de revocaciones — un user revoked podría seguir activo).
+_session_revoke_failopen_count: dict[str, int] = {'total': 0}
+
+
+def get_session_revoke_failopen_count() -> int:
+    """Devuelve el contador acumulado de fail-opens. Useful para
+    `/platform/metrics/health` y alertas observability."""
+    return _session_revoke_failopen_count['total']
+
+
+def reset_session_revoke_failopen_count() -> None:
+    """Test-only — limpia el contador."""
+    _session_revoke_failopen_count['total'] = 0
+
+
 async def _enforce_session_not_revoked(session_id: str) -> None:
     """BUG-199: 401 si `auth_sessions.revoked_at IS NOT NULL` para este sid.
 
     Import lazy de `app.db.pool` para evitar ciclo (la pool importa security
     indirectamente vía sus consumidores).
+
+    M-002 — el fail-open de availability ahora INCREMENTA un contador
+    + emite structlog.warning. Sin esto, una pool down silente
+    rompía revocaciones sin que el operator se enterara: un user que
+    pidió revoke desde la UI seguía teniendo acceso hasta exp natural
+    del JWT.
     """
     try:
         from app.db.pool import db  # noqa: PLC0415
 
         if not db.pool:
+            _session_revoke_failopen_count['total'] += 1
+            _security_log.warning(
+                'auth.session_revoke_check.fail_open',
+                reason='db_pool_not_initialized',
+                session_id=session_id,
+                cumulative_failopens=_session_revoke_failopen_count['total'],
+            )
             return
         async with db.pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -634,7 +666,15 @@ async def _enforce_session_not_revoked(session_id: str) -> None:
             )
     except HTTPException:
         raise
-    except Exception:  # noqa: BLE001 — fail-open por availability
+    except Exception as exc:  # noqa: BLE001 — fail-open por availability
+        _session_revoke_failopen_count['total'] += 1
+        _security_log.warning(
+            'auth.session_revoke_check.fail_open',
+            reason='db_exception',
+            error_type=type(exc).__name__,
+            session_id=session_id,
+            cumulative_failopens=_session_revoke_failopen_count['total'],
+        )
         return
     if row and row['revoked_at'] is not None:
         raise HTTPException(

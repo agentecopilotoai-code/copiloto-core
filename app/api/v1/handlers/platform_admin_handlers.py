@@ -585,14 +585,34 @@ async def get_platform_health(
         },
     ]
 
+    # M-002 — surface contador de fail-opens del revoke check. Si >0,
+    # sesiones revocadas pueden estar siendo aceptadas silentemente
+    # por outages transient de DB. Alerta operator-visible.
+    from app.core.security import get_session_revoke_failopen_count  # noqa: PLC0415
+    failopens = get_session_revoke_failopen_count()
+    alerts: list[dict] = []
+    if failopens > 0:
+        alerts.append({
+            'severity': 'warning',
+            'code': 'auth_session_revoke_failopens',
+            'message': (
+                f'{failopens} revoke-check fail-opens desde el último restart. '
+                'Sesiones marcadas como revocadas pueden seguir aceptándose. '
+                'Inspeccionar logs `auth.session_revoke_check.fail_open`.'
+            ),
+            'count': failopens,
+        })
+
     return {
         'generated_at': datetime.now(UTC).isoformat(),
         # En el core no hay KPIs propios — los módulos opt-in agregan
         # response_latency, llm_calls, circuit_breakers, workers, etc.
         # Devolvemos {} para que `snapshot?.xxx` del frontend caiga al
         # default sin romper.
-        'snapshot': {},
-        'alerts': [],
+        'snapshot': {
+            'auth_session_revoke_failopens': failopens,
+        },
+        'alerts': alerts,
         'services': services,
         'note': 'Core base — sin métricas de producto. Cada módulo opt-in agrega sus KPIs (workers, breakers, mensajes, etc).',
     }
