@@ -480,11 +480,22 @@ async def admin_login(request: Request) -> RedirectResponse:
     nonce = secrets.token_urlsafe(32)
     callback_url = _callback_url(request)
     state_cookie = _pack_state({'state': state, 'nonce': nonce, 'created_at': int(time.time())})
+    # M50 — `prompt=login` fuerza a Auth0 a re-autenticar SIEMPRE,
+    # ignorando la cookie SSO. Sin esto, Auth0 te re-loguea silenciosamente
+    # si tenés sesión activa en `auth0.com` (típico cuando hiciste logout
+    # del BFF pero la cookie SSO de Auth0 sigue viva). Con `prompt=login`
+    # SIEMPRE pide email/contraseña al user — comportamiento esperado de
+    # "iniciar sesión".
+    # Spec OIDC: https://openid.net/specs/openid-connect-core-1_0.html#AuthRequest
+    # Opcional override: `?force=0` en la URL omite el prompt (útil para
+    # casos donde sí queremos SSO silencioso — no usado hoy).
+    force_relogin = request.query_params.get('force', '1') != '0'
     _debug(
         'GET /admin/login', step='redirect_to_auth0',
         callback_url=callback_url, state=state, auth0=settings.auth0_domain,
+        prompt_login=force_relogin,
     )
-    authorization_params = {
+    authorization_params: dict[str, str] = {
         'response_type': 'code',
         'client_id': settings.auth0_admin_client_id,
         'redirect_uri': callback_url,
@@ -493,6 +504,8 @@ async def admin_login(request: Request) -> RedirectResponse:
         'state': state,
         'nonce': nonce,
     }
+    if force_relogin:
+        authorization_params['prompt'] = 'login'
     authorization_url = f'{_auth0_base_url()}/authorize?{urlencode(authorization_params)}'
     response = RedirectResponse(authorization_url)
     response.set_cookie(
