@@ -966,6 +966,12 @@ def test_ws_stream_happy_path_sends_connected_then_heartbeat(monkeypatch):
 
     fanout = _Fanout()
     monkeypatch.setattr(routes, 'ws_fanout', fanout)
+    # A2: el shortcut support_mode ahora exige cookie tid matching. Bypass
+    # con un stub que devuelve True para este test (cubrimos el flow del
+    # handler, no la lógica de auth — eso vive en test_unit_admin_routes_more).
+    async def _gate_ok(*args, **kwargs):
+        return True
+    monkeypatch.setattr(routes, '_session_can_stream_tenant', _gate_ok)
     # Patch wait_for in the routes module's asyncio attribute via monkeypatch on
     # asyncio module itself works since the code references asyncio.wait_for.
     monkeypatch.setattr(asyncio, 'wait_for', _fast_wait_for)

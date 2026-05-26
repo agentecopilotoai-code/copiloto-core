@@ -133,32 +133,38 @@ def _session_claim_matches_tenant(session: dict[str, Any], tenant_id: UUID) -> b
         return False
 
 
-async def _session_can_stream_tenant(session: dict[str, Any], tenant_id: UUID) -> bool:
+async def _session_can_stream_tenant(
+    session: dict[str, Any],
+    tenant_id: UUID,
+    *,
+    support_cookie_tid: str | None = None,
+) -> bool:
     """Authorize a WS stream subscription with a tenant DB-check.
 
-    BUG-196 (codex HIGH) — históricamente esta función aceptaba el WS stream
-    cuando la sesión cacheada del BFF tenía un claim ``tenant_id`` matching
-    el tenant solicitado (shortcut 2). Problema: cuando un admin revocaba al
-    user via ``revoke_tenant_roles``, el claim ``tenant_id`` del JWT viejo
-    seguía vivo (Auth0 PostLogin Action no se re-ejecuta hasta el próximo
-    login), y la sesión BFF cacheada seguía aceptando WS streams del tenant
-    revocado hasta que la sesión expirara.
+    A2 fix sobre BUG-196: el shortcut histórico aceptaba el WS cuando la
+    sesión cacheada tenía `profile.support_mode=true` Y rol admin. Pero el
+    claim `support_mode` viene del JWT y NO se invalida si Auth0 RBAC
+    revoca al user — la sesión cacheada lo seguía permitiendo hasta el
+    próximo login. Ahora el shortcut SOLO aplica si:
+      1. Hay una cookie firmada `copilotoia_support_mode` activa Y
+      2. Su `tid` matchea el `tenant_id` del WS Y
+      3. El cache de sesión tiene rol admin (defense-in-depth).
+    Sin la cookie firmada, caemos al DB-check de membresía
+    (`app.user_tenant_roles`) que es source-of-truth para tenant access.
 
-    Fix: para acceso por tenant role, **siempre** consultamos
-    ``app.user_tenant_roles`` para confirmar que el ``auth_subject`` del JWT
-    tiene rol ``>= agent`` en el ``tenant_id`` solicitado AHORA. Los claims
-    del JWT y el cache del BFF pueden estar stale; la DB es la única fuente
-    de verdad de membresía por tenant.
-
-    El shortcut de ``support_mode`` SE PRESERVA porque ``platform_owner`` es
-    un rol global de Auth0 (RBAC) — revocarlo requiere un flow distinto
-    (remover de Auth0 RBAC) que también invalida el claim ``support_mode``
-    de la sesión. Si en el futuro agregamos un table ``user_global_roles``
-    para DB-check de platform_owner, este shortcut debería migrar a esa
-    consulta.
+    Para revocar acceso WS cross-tenant: el platform_owner debe
+    DELETE /v1/me/support-mode/{tid} (limpia cookie) O ser removido de
+    Auth0 RBAC (próximo refresh del JWT invalida claim).
     """
     profile = session.get('profile') or {}
-    if profile.get('support_mode') and _has_admin_role(session, 'agent'):
+    # Shortcut endurecido: cookie firmada activa para ESTE tenant + rol admin
+    # cacheado. Sin la cookie no aplica — la prueba está en `pack_signed_payload`
+    # firmado con jwt_secret, no en el claim del JWT cacheado.
+    if (
+        support_cookie_tid is not None
+        and support_cookie_tid == str(tenant_id)
+        and _has_admin_role(session, 'agent')
+    ):
         return True
     sub = profile.get('sub')
     if not db.pool or not sub:
@@ -626,6 +632,22 @@ async def admin_mfa_status(request: Request) -> Response:
     )
 
 
+def _support_cookie_tid_from_ws(websocket: WebSocket) -> str | None:
+    """A2: lee el `tid` del cookie firmado de support_mode desde un WebSocket."""
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.core.security import SUPPORT_MODE_COOKIE_NAME  # noqa: PLC0415
+    from app.core.signed_cookies import unpack_signed_payload  # noqa: PLC0415
+
+    raw = websocket.cookies.get(SUPPORT_MODE_COOKIE_NAME)
+    if not raw:
+        return None
+    payload = unpack_signed_payload(get_settings().jwt_secret, raw)
+    if not payload:
+        return None
+    tid = payload.get('tid')
+    return tid if isinstance(tid, str) and tid else None
+
+
 @router.websocket('/admin/api/core/v1/conversations/stream')
 async def admin_conversations_stream(websocket: WebSocket) -> None:
     session = _active_session_id(websocket.cookies.get(SESSION_COOKIE))
@@ -641,7 +663,10 @@ async def admin_conversations_stream(websocket: WebSocket) -> None:
     if not db.pool:
         await websocket.close(code=1011, reason='database_pool_unavailable')
         return
-    if not await _session_can_stream_tenant(session, tenant_id):
+    support_cookie_tid = _support_cookie_tid_from_ws(websocket)
+    if not await _session_can_stream_tenant(
+        session, tenant_id, support_cookie_tid=support_cookie_tid,
+    ):
         await websocket.close(code=1008, reason='tenant_agent_role_required')
         return
 

@@ -130,7 +130,7 @@ async def create_role(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),  # noqa: B008
 ) -> RoleRow:
-    actor_id = getattr(request.state, 'user_id', None)
+    actor_id = getattr(request.state, 'actor_id', None)
     try:
         row = await conn.fetchrow(
             '''
@@ -160,7 +160,7 @@ async def patch_role(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),  # noqa: B008
 ) -> RoleRow:
-    actor_id = getattr(request.state, 'user_id', None)
+    actor_id = getattr(request.state, 'actor_id', None)
     sets = []
     params: list = []
     if body.name is not None:
@@ -206,7 +206,7 @@ async def delete_role(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),  # noqa: B008
 ) -> None:
-    actor_id = getattr(request.state, 'user_id', None)
+    actor_id = getattr(request.state, 'actor_id', None)
     row = await conn.fetchrow(
         'select is_system from app.role where code = $1', role_code,
     )
@@ -254,7 +254,7 @@ async def create_capability(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),  # noqa: B008
 ) -> CapabilityRow:
-    actor_id = getattr(request.state, 'user_id', None)
+    actor_id = getattr(request.state, 'actor_id', None)
     try:
         row = await conn.fetchrow(
             '''
@@ -314,7 +314,7 @@ async def assign_capability_to_role(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),  # noqa: B008
 ) -> RoleCapabilityRow:
-    actor_id = getattr(request.state, 'user_id', None)
+    actor_id = getattr(request.state, 'actor_id', None)
     # Verifica que ambos existan (FK lo haría también, pero damos mejor error).
     role_exists = await conn.fetchval('select 1 from app.role where code = $1', role_code)
     if not role_exists:
@@ -359,7 +359,7 @@ async def revoke_capability_from_role(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),  # noqa: B008
 ) -> None:
-    actor_id = getattr(request.state, 'user_id', None)
+    actor_id = getattr(request.state, 'actor_id', None)
     result = await conn.execute(
         'delete from app.role_capability where role_code = $1 and capability_code = $2',
         role_code, capability_code,

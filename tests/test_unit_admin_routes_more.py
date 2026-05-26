@@ -126,10 +126,41 @@ def test_session_claim_matches_tenant_none_claim():
 
 
 def test_session_can_stream_support_mode_with_agent_role():
+    """A2: el support_mode shortcut SOLO aplica si la cookie firmada
+    matchea el tenant_id. El claim cacheado solo NO basta."""
     from app.admin.routes import _session_can_stream_tenant
     session = {'profile': {'support_mode': True, 'roles': ['agent']}}
-    out = _run(_session_can_stream_tenant(session, uuid4()))
-    assert out is True
+    tenant_id = uuid4()
+    # Sin cookie tid → cae al DB-check.
+    from app.db.pool import db
+    original_pool = db.pool
+    db.pool = None
+    try:
+        out = _run(_session_can_stream_tenant(session, tenant_id))
+        assert out is False, 'sin cookie matching debe ir al DB-check'
+        # Con cookie matching → shortcut aplica.
+        out = _run(_session_can_stream_tenant(
+            session, tenant_id, support_cookie_tid=str(tenant_id),
+        ))
+        assert out is True
+    finally:
+        db.pool = original_pool
+
+
+def test_session_can_stream_support_cookie_different_tenant():
+    """Cookie matching tenant A NO autoriza WS para tenant B."""
+    from app.admin.routes import _session_can_stream_tenant
+    session = {'profile': {'support_mode': True, 'roles': ['agent']}}
+    from app.db.pool import db
+    original_pool = db.pool
+    db.pool = None
+    try:
+        out = _run(_session_can_stream_tenant(
+            session, uuid4(), support_cookie_tid=str(uuid4()),
+        ))
+        assert out is False
+    finally:
+        db.pool = original_pool
 
 
 def test_session_can_stream_support_mode_without_role():

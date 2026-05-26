@@ -885,7 +885,7 @@ async def update_tenant_module(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ) -> TenantModuleRow:
-    actor_id = getattr(request.state, 'user_id', None)
+    actor_id = getattr(request.state, 'actor_id', None)
 
     # Toda la operación en una transacción única: `set_config('app.support_mode',
     # 'true', true)` es transaction-local; sin este `BEGIN` explícito, el setting
