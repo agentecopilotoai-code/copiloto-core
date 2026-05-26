@@ -1834,8 +1834,31 @@ def test_add_tenant_member_auth0_error_falls_back_to_local(monkeypatch):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+# M60/M-004 — helper payloads para los tests post-hardening.
+def _auth0_action_payload(justification='Motivo legítimo de operación.'):
+    from app.api.v1.handlers.platform_admin_handlers import (
+        Auth0AdminActionPayload,
+    )
+    return Auth0AdminActionPayload(justification=justification)
+
+
+def _auth0_delete_payload(confirm=True, justification='GDPR request del titular.'):
+    from app.api.v1.handlers.platform_admin_handlers import (
+        Auth0AdminDeletePayload,
+    )
+    return Auth0AdminDeletePayload(confirm=confirm, justification=justification)
+
+
+def _reset_auth0_rate_limit():
+    from app.api.v1.handlers.platform_admin_handlers import (
+        _auth0_rl_reset_all,
+    )
+    _auth0_rl_reset_all()
+
+
 def test_auth0_admin_404_when_user_not_found(monkeypatch):
     """Si no existe el `app.users.id`, todos los endpoints devuelven 404."""
+    _reset_auth0_rate_limit()
     from app.api.v1.handlers.platform_admin_handlers import (
         block_user_in_auth0,
     )
@@ -1846,13 +1869,16 @@ def test_auth0_admin_404_when_user_not_found(monkeypatch):
     conn = FakeConn(fetchrow=[None])
     req = _fake_request(roles=['platform_owner'])
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(block_user_in_auth0(uuid4(), req, conn=conn))
+        asyncio.run(block_user_in_auth0(
+            uuid4(), _auth0_action_payload(), req, conn=conn,
+        ))
     assert exc.value.status_code == 404
     assert 'user_not_found' in exc.value.detail
 
 
 def test_auth0_admin_409_when_user_pending(monkeypatch):
     """Si `auth_subject = 'pending|...'` (invitee sin login real), 409."""
+    _reset_auth0_rate_limit()
     from app.api.v1.handlers.platform_admin_handlers import (
         reset_mfa_in_auth0,
     )
@@ -1863,13 +1889,16 @@ def test_auth0_admin_409_when_user_pending(monkeypatch):
     ])
     req = _fake_request(roles=['platform_owner'])
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(reset_mfa_in_auth0(uuid4(), req, conn=conn))
+        asyncio.run(reset_mfa_in_auth0(
+            uuid4(), _auth0_action_payload(), req, conn=conn,
+        ))
     assert exc.value.status_code == 409
     assert 'pending' in exc.value.detail.lower()
 
 
 def test_auth0_admin_501_when_not_configured(monkeypatch):
     """Si Auth0 Management API no está configurado → 501."""
+    _reset_auth0_rate_limit()
     from app.api.v1.handlers.platform_admin_handlers import (
         unblock_user_in_auth0,
     )
@@ -1878,13 +1907,16 @@ def test_auth0_admin_501_when_not_configured(monkeypatch):
     conn = FakeConn()
     req = _fake_request(roles=['platform_owner'])
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(unblock_user_in_auth0(uuid4(), req, conn=conn))
+        asyncio.run(unblock_user_in_auth0(
+            uuid4(), _auth0_action_payload(), req, conn=conn,
+        ))
     assert exc.value.status_code == 501
     assert 'auth0_management_not_configured' in exc.value.detail
 
 
 def test_auth0_admin_block_ok(monkeypatch):
     """Happy path: block resuelve auth_subject + llama auth0_admin.block_user + audita."""
+    _reset_auth0_rate_limit()
     from app.api.v1.handlers.platform_admin_handlers import (
         block_user_in_auth0,
     )
@@ -1902,14 +1934,22 @@ def test_auth0_admin_block_ok(monkeypatch):
         execute=['OK'],  # audit insert
     )
     req = _fake_request(roles=['platform_owner'])
-    asyncio.run(block_user_in_auth0(uid, req, conn=conn))
+    asyncio.run(block_user_in_auth0(
+        uid, _auth0_action_payload('Investigación de incidente #123.'),
+        req, conn=conn,
+    ))
     assert called == {'user_id': 'auth0|abc'}
-    # El audit insert debe haber ocurrido.
-    assert any('insert into app.audit' in c[1].lower()
-               or 'audit' in c[1].lower() for c in conn.calls)
+    # El audit insert debe haber ocurrido y traer la justificación.
+    audit_call = next((c for c in conn.calls if 'audit' in c[1].lower()), None)
+    assert audit_call is not None
+    # last arg de audit() es metadata as JSON (stringified) — buscamos
+    # la palabra clave del justificativo.
+    args_repr = repr(audit_call[2])
+    assert 'incidente' in args_repr or 'justification' in args_repr
 
 
 def test_auth0_admin_unblock_ok(monkeypatch):
+    _reset_auth0_rate_limit()
     from app.api.v1.handlers.platform_admin_handlers import (
         unblock_user_in_auth0,
     )
@@ -1926,11 +1966,14 @@ def test_auth0_admin_unblock_ok(monkeypatch):
         execute=['OK'],
     )
     req = _fake_request(roles=['platform_owner'])
-    asyncio.run(unblock_user_in_auth0(uuid4(), req, conn=conn))
+    asyncio.run(unblock_user_in_auth0(
+        uuid4(), _auth0_action_payload(), req, conn=conn,
+    ))
     assert called == {'user_id': 'auth0|xyz'}
 
 
 def test_auth0_admin_reset_mfa_ok(monkeypatch):
+    _reset_auth0_rate_limit()
     from app.api.v1.handlers.platform_admin_handlers import (
         reset_mfa_in_auth0,
     )
@@ -1947,12 +1990,16 @@ def test_auth0_admin_reset_mfa_ok(monkeypatch):
         execute=['OK'],
     )
     req = _fake_request(roles=['platform_owner'])
-    asyncio.run(reset_mfa_in_auth0(uuid4(), req, conn=conn))
+    asyncio.run(reset_mfa_in_auth0(
+        uuid4(), _auth0_action_payload('User perdió su teléfono.'),
+        req, conn=conn,
+    ))
     assert called == {'user_id': 'auth0|mfa-user'}
 
 
 def test_auth0_admin_delete_ok_marks_user_pending(monkeypatch):
     """DELETE en Auth0 + marca local user como pending|<hex> + audita."""
+    _reset_auth0_rate_limit()
     from app.api.v1.handlers.platform_admin_handlers import (
         delete_user_in_auth0,
     )
@@ -1969,7 +2016,9 @@ def test_auth0_admin_delete_ok_marks_user_pending(monkeypatch):
         execute=['OK', 'OK'],  # update pending + audit
     )
     req = _fake_request(roles=['platform_owner'])
-    asyncio.run(delete_user_in_auth0(uid, req, conn=conn))
+    asyncio.run(delete_user_in_auth0(
+        uid, _auth0_delete_payload(), req, conn=conn,
+    ))
     update_call = next(c for c in conn.calls
                        if 'update app.users' in c[1] and 'auth_subject' in c[1])
     # Primer arg del UPDATE debe ser `pending|<uid.hex>`.
@@ -1978,6 +2027,7 @@ def test_auth0_admin_delete_ok_marks_user_pending(monkeypatch):
 
 def test_auth0_admin_block_502_on_auth0_error(monkeypatch):
     """Si auth0_admin levanta Auth0ApiError → 502."""
+    _reset_auth0_rate_limit()
     from app.api.v1.handlers.platform_admin_handlers import (
         block_user_in_auth0,
     )
@@ -1993,12 +2043,15 @@ def test_auth0_admin_block_502_on_auth0_error(monkeypatch):
     )
     req = _fake_request(roles=['platform_owner'])
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(block_user_in_auth0(uuid4(), req, conn=conn))
+        asyncio.run(block_user_in_auth0(
+            uuid4(), _auth0_action_payload(), req, conn=conn,
+        ))
     assert exc.value.status_code == 502
     assert 'auth0_block_failed' in exc.value.detail
 
 
 def test_auth0_admin_delete_502_on_auth0_error(monkeypatch):
+    _reset_auth0_rate_limit()
     from app.api.v1.handlers.platform_admin_handlers import (
         delete_user_in_auth0,
     )
@@ -2014,6 +2067,154 @@ def test_auth0_admin_delete_502_on_auth0_error(monkeypatch):
     )
     req = _fake_request(roles=['platform_owner'])
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(delete_user_in_auth0(uuid4(), req, conn=conn))
+        asyncio.run(delete_user_in_auth0(
+            uuid4(), _auth0_delete_payload(), req, conn=conn,
+        ))
     assert exc.value.status_code == 502
     assert 'auth0_delete_failed' in exc.value.detail
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M60/M-004 — payload validation + rate-limit per actor + confirmation
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_auth0_admin_payload_justification_too_short_rejected():
+    """M-004: justification < 10 chars → pydantic ValidationError."""
+    import pydantic  # noqa: PLC0415
+    from app.api.v1.handlers.platform_admin_handlers import (
+        Auth0AdminActionPayload,
+    )
+    with pytest.raises(pydantic.ValidationError):
+        Auth0AdminActionPayload(justification='short')
+
+
+def test_auth0_admin_delete_requires_confirm_true(monkeypatch):
+    """M-004: DELETE con confirm=False explícito → 400."""
+    _reset_auth0_rate_limit()
+    from app.api.v1.handlers.platform_admin_handlers import (
+        delete_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+    monkeypatch.setattr(auth0_admin, 'delete_user',
+                        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError('should not call')))
+
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|x', 'email': 'x@y.co'}],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(delete_user_in_auth0(
+            uuid4(), _auth0_delete_payload(confirm=False), req, conn=conn,
+        ))
+    assert exc.value.status_code == 400
+    assert 'confirm' in exc.value.detail.lower()
+
+
+def test_auth0_admin_mutate_rate_limit_enforced(monkeypatch):
+    """M-004: 11º block del MISMO actor en <5min → 429."""
+    _reset_auth0_rate_limit()
+    from app.api.v1.handlers.platform_admin_handlers import (
+        block_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    async def fake_block(user_id): pass
+    monkeypatch.setattr(auth0_admin, 'block_user', fake_block)
+
+    req = _fake_request(
+        roles=['platform_owner'], actor_id='auth0|attacker',
+    )
+    # 10 calls OK, 11º levanta 429.
+    for i in range(10):
+        conn = FakeConn(
+            fetchrow=[{'auth_subject': f'auth0|t{i}', 'email': f't{i}@x.co'}],
+            execute=['OK'],
+        )
+        asyncio.run(block_user_in_auth0(
+            uuid4(), _auth0_action_payload(), req, conn=conn,
+        ))
+    # 11º
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|tx', 'email': 'tx@x.co'}],
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(block_user_in_auth0(
+            uuid4(), _auth0_action_payload(), req, conn=conn,
+        ))
+    assert exc.value.status_code == 429
+    assert 'rate_limit' in exc.value.detail
+    _reset_auth0_rate_limit()
+
+
+def test_auth0_admin_destroy_rate_limit_stricter(monkeypatch):
+    """M-004: delete tiene rate-limit propio más estricto: max 3/30min."""
+    _reset_auth0_rate_limit()
+    from app.api.v1.handlers.platform_admin_handlers import (
+        delete_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    async def fake_delete(user_id): pass
+    monkeypatch.setattr(auth0_admin, 'delete_user', fake_delete)
+
+    req = _fake_request(
+        roles=['platform_owner'], actor_id='auth0|admin1',
+    )
+    # 3 deletes OK.
+    for i in range(3):
+        conn = FakeConn(
+            fetchrow=[{'auth_subject': f'auth0|d{i}', 'email': f'd{i}@x.co'}],
+            execute=['OK', 'OK'],
+        )
+        asyncio.run(delete_user_in_auth0(
+            uuid4(), _auth0_delete_payload(), req, conn=conn,
+        ))
+    # 4º levanta.
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|d4', 'email': 'd4@x.co'}],
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(delete_user_in_auth0(
+            uuid4(), _auth0_delete_payload(), req, conn=conn,
+        ))
+    assert exc.value.status_code == 429
+    _reset_auth0_rate_limit()
+
+
+def test_auth0_admin_rate_limit_per_actor_isolated(monkeypatch):
+    """M-004: el bucket es POR ACTOR — un actor saturado no afecta a otro."""
+    _reset_auth0_rate_limit()
+    from app.api.v1.handlers.platform_admin_handlers import (
+        block_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    async def fake_block(_uid): pass
+    monkeypatch.setattr(auth0_admin, 'block_user', fake_block)
+
+    # actor A satura su bucket (10/10).
+    req_a = _fake_request(roles=['platform_owner'], actor_id='auth0|a')
+    for _ in range(10):
+        conn = FakeConn(
+            fetchrow=[{'auth_subject': 'auth0|t', 'email': 't@x.co'}],
+            execute=['OK'],
+        )
+        asyncio.run(block_user_in_auth0(
+            uuid4(), _auth0_action_payload(), req_a, conn=conn,
+        ))
+    # actor B aún puede operar sin restricción.
+    req_b = _fake_request(roles=['platform_owner'], actor_id='auth0|b')
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|t', 'email': 't@x.co'}],
+        execute=['OK'],
+    )
+    # Si esto no levanta, isolation funciona.
+    asyncio.run(block_user_in_auth0(
+        uuid4(), _auth0_action_payload(), req_b, conn=conn,
+    ))
+    _reset_auth0_rate_limit()

@@ -858,10 +858,84 @@ async def delete_feature_flag(
 #   POST   /v1/platform/users/{user_id}/auth0/reset-mfa  — limpia MFA enrollments
 #   DELETE /v1/platform/users/{user_id}/auth0            — borra de Auth0 (GDPR)
 #
+# M60/M-004 — los 4 endpoints exigen JUSTIFICATION en body (audit
+# trail forense + bloquea cliquear-por-error). El DELETE además
+# exige `confirm=True` explícito (irreversible — GDPR). El rate-limit
+# per-actor + per-operation evita bulk-actions accidentales.
+#
 # `user_id` es el UUID local de `app.users`. El handler lookups
 # `auth_subject` y delega a `app.services.auth0_admin`. Si el user
 # es `pending|xxx` (invitado, nunca loggeado) o si Auth0 no está
 # configurado, devuelve 409 explicando el estado.
+
+
+# ─── Payload schemas (M-004) ─────────────────────────────────────────────
+
+
+class Auth0AdminActionPayload(BaseModel):
+    """Body para block / unblock / reset-mfa. La justificación queda
+    en el audit log — al investigador forense le sirve más que el
+    timestamp solo."""
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    justification: str = Field(
+        min_length=10, max_length=500,
+        description='Por qué se ejecuta la acción. Queda en audit forever.',
+    )
+
+
+class Auth0AdminDeletePayload(Auth0AdminActionPayload):
+    """DELETE es irreversible: además de justificación, `confirm=true`."""
+    confirm: bool = Field(
+        description='Debe ser true. Borra al user de Auth0 (GDPR-style).',
+    )
+
+
+# ─── Rate-limit per actor + per operation (M-004) ────────────────────────
+#
+# Bucket in-memory por (actor_id, operation_class). Operaciones que sólo
+# afectan capacidad de login se limitan más laxo; delete (irreversible)
+# es muy restrictivo. Reset = restart limpia counters → aceptable: el
+# enforcement crítico vive en audit + alertas.
+
+_AUTH0_RL_BUCKETS: dict[tuple[str, str], list[float]] = {}
+
+
+def _auth0_rl_check(
+    actor_id: str | None, op_class: str, *,
+    max_calls: int, window_seconds: float,
+) -> None:
+    """Token bucket sliding-window. Levanta 429 si excede.
+
+    `op_class`:
+      - 'mutate'  → block / unblock / reset-mfa.  max=10/5min.
+      - 'destroy' → delete.                        max=3/30min.
+    """
+    if not actor_id:
+        # Service tokens NO llegan acá (router exige platform_owner),
+        # pero defensive: si por algun bug actor_id es None, dejar pasar
+        # sin rate-limit (las otras gates ya rechazaron).
+        return
+    key = (actor_id, op_class)
+    now = time.monotonic()
+    bucket = _AUTH0_RL_BUCKETS.setdefault(key, [])
+    # Drop calls fuera del window.
+    cutoff = now - window_seconds
+    bucket[:] = [t for t in bucket if t > cutoff]
+    if len(bucket) >= max_calls:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f'auth0_admin_rate_limit: max {max_calls} {op_class} '
+                f'operations / {int(window_seconds / 60)}min per actor. '
+                f'Esperar antes de reintentar.'
+            ),
+        )
+    bucket.append(now)
+
+
+def _auth0_rl_reset_all() -> None:
+    """Test-only — limpia todos los buckets."""
+    _AUTH0_RL_BUCKETS.clear()
 
 
 async def _resolve_auth0_subject(
@@ -904,6 +978,7 @@ def _require_auth0_configured() -> None:
 )
 async def block_user_in_auth0(
     user_id: UUID,
+    payload: Auth0AdminActionPayload,
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ) -> None:
@@ -912,8 +987,12 @@ async def block_user_in_auth0(
     Las sesiones ACTIVAS no se invalidan (JWT siguen valid hasta exp);
     para revocar también las sesiones en flight, usar endpoint separado
     (TODO `POST /v1/platform/users/{uid}/sessions/revoke-all`).
+
+    M-004: `justification` requerida + rate-limit 10/5min por actor.
     """
     from app.services import auth0_admin  # noqa: PLC0415
+    actor_id = getattr(request.state, 'actor_id', None)
+    _auth0_rl_check(actor_id, 'mutate', max_calls=10, window_seconds=300)
     _require_auth0_configured()
     auth_subject = await _resolve_auth0_subject(conn, user_id)
     try:
@@ -922,10 +1001,13 @@ async def block_user_in_auth0(
         raise HTTPException(502, f'auth0_block_failed: {exc!s}'[:300]) from exc
     await audit(
         conn, tenant_id=None, actor_type='user',
-        actor_id=getattr(request.state, 'actor_id', None),
+        actor_id=actor_id,
         action='platform.auth0.user_blocked',
         entity_type='user', entity_id=str(user_id),
-        metadata={'auth_subject': auth_subject},
+        metadata={
+            'auth_subject': auth_subject,
+            'justification': payload.justification,
+        },
     )
 
 
@@ -936,11 +1018,17 @@ async def block_user_in_auth0(
 )
 async def unblock_user_in_auth0(
     user_id: UUID,
+    payload: Auth0AdminActionPayload,
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ) -> None:
-    """Desbloquea login en Auth0 (revierte `blocked=true`)."""
+    """Desbloquea login en Auth0 (revierte `blocked=true`).
+
+    M-004: `justification` requerida + rate-limit 10/5min por actor.
+    """
     from app.services import auth0_admin  # noqa: PLC0415
+    actor_id = getattr(request.state, 'actor_id', None)
+    _auth0_rl_check(actor_id, 'mutate', max_calls=10, window_seconds=300)
     _require_auth0_configured()
     auth_subject = await _resolve_auth0_subject(conn, user_id)
     try:
@@ -949,10 +1037,13 @@ async def unblock_user_in_auth0(
         raise HTTPException(502, f'auth0_unblock_failed: {exc!s}'[:300]) from exc
     await audit(
         conn, tenant_id=None, actor_type='user',
-        actor_id=getattr(request.state, 'actor_id', None),
+        actor_id=actor_id,
         action='platform.auth0.user_unblocked',
         entity_type='user', entity_id=str(user_id),
-        metadata={'auth_subject': auth_subject},
+        metadata={
+            'auth_subject': auth_subject,
+            'justification': payload.justification,
+        },
     )
 
 
@@ -963,6 +1054,7 @@ async def unblock_user_in_auth0(
 )
 async def reset_mfa_in_auth0(
     user_id: UUID,
+    payload: Auth0AdminActionPayload,
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ) -> None:
@@ -971,8 +1063,12 @@ async def reset_mfa_in_auth0(
     Si `MFA_ENFORCEMENT_ENABLED=true` (default), el user vuelve a
     enrolar MFA en su próximo login. Usar cuando el user perdió su
     factor (extravió el teléfono, etc).
+
+    M-004: `justification` requerida + rate-limit 10/5min por actor.
     """
     from app.services import auth0_admin  # noqa: PLC0415
+    actor_id = getattr(request.state, 'actor_id', None)
+    _auth0_rl_check(actor_id, 'mutate', max_calls=10, window_seconds=300)
     _require_auth0_configured()
     auth_subject = await _resolve_auth0_subject(conn, user_id)
     try:
@@ -981,10 +1077,13 @@ async def reset_mfa_in_auth0(
         raise HTTPException(502, f'auth0_reset_mfa_failed: {exc!s}'[:300]) from exc
     await audit(
         conn, tenant_id=None, actor_type='user',
-        actor_id=getattr(request.state, 'actor_id', None),
+        actor_id=actor_id,
         action='platform.auth0.user_mfa_reset',
         entity_type='user', entity_id=str(user_id),
-        metadata={'auth_subject': auth_subject},
+        metadata={
+            'auth_subject': auth_subject,
+            'justification': payload.justification,
+        },
     )
 
 
@@ -995,6 +1094,7 @@ async def reset_mfa_in_auth0(
 )
 async def delete_user_in_auth0(
     user_id: UUID,
+    payload: Auth0AdminDeletePayload,
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ) -> None:
@@ -1007,8 +1107,18 @@ async def delete_user_in_auth0(
     Side-effect: el user ya NO puede loguearse. Tampoco aparece más
     en Auth0 logs históricos. Si re-aparece luego (mismo email →
     nuevo signup), Auth0 le asigna un `user_id` distinto.
+
+    M-004: requiere `{justification: str, confirm: true}` en body.
+    Rate-limit dedicado: 3 deletes / 30min por actor.
     """
     from app.services import auth0_admin  # noqa: PLC0415
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='delete_requires_confirmation — set "confirm": true en body',
+        )
+    actor_id = getattr(request.state, 'actor_id', None)
+    _auth0_rl_check(actor_id, 'destroy', max_calls=3, window_seconds=1800)
     _require_auth0_configured()
     auth_subject = await _resolve_auth0_subject(conn, user_id)
     try:
@@ -1026,8 +1136,12 @@ async def delete_user_in_auth0(
     )
     await audit(
         conn, tenant_id=None, actor_type='user',
-        actor_id=getattr(request.state, 'actor_id', None),
+        actor_id=actor_id,
         action='platform.auth0.user_deleted',
         entity_type='user', entity_id=str(user_id),
-        metadata={'auth_subject': auth_subject},
+        metadata={
+            'auth_subject': auth_subject,
+            'justification': payload.justification,
+            'confirmed': True,
+        },
     )
