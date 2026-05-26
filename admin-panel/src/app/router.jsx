@@ -22,7 +22,6 @@ import {
   AccountSessions,
   AccountShell,
 } from '../features/account/index.js';
-import { ContactProfile } from '../features/agente/contact-profile/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 import { Landing } from '../features/public/landing/index.js';
 import { PublicLandingShell } from '../features/public/ravit-landing/PublicLandingShell.jsx';
@@ -40,17 +39,9 @@ import { MODULE_REGISTRY } from './moduleRegistry.js';
 import { NoModuleAccessScreen } from './NoModuleAccessScreen.jsx';
 import { resolveSafeHomeModule } from './resolveSafeHomeModule.js';
 import { PlatformOwnerShell } from './shells/PlatformOwnerShell.jsx';
-import { ReadOnlyShell } from './shells/ReadOnlyShell.jsx';
 import { TenantShell } from './shells/TenantShell.jsx';
-import { InfluencerShell } from './shells/InfluencerShell.jsx';
-import { isInfluencerEnabled, isGdEnabled } from '../services/coreApi.js';
-import { resolveGdRoute } from '../features/gd/routeMap.js';
-import { getMyGdProfile } from '../features/gd/services/gdApi.js';
-import { GdProvider } from '../features/gd/shell/GdContext.jsx';
-import { PersonaWizardContainer } from '../features/influencer/wizard/PersonaWizardContainer.jsx';
-import { CreatePersonaAndRedirect } from '../features/influencer/wizard/CreatePersonaAndRedirect.jsx';
-import { PersonaStudioContainer } from '../features/influencer/studio/PersonaStudioContainer.jsx';
-import { GenerateContainer } from '../features/influencer/generate/GenerateContainer.jsx';
+// Branch `core`: ReadOnlyShell + InfluencerShell removidos. Los módulos
+// opt-in (GD/influencer/chatbot) traen su propio shell cuando se instalan.
 import {
   ACTIVE_TENANT_STORAGE_KEY,
   pickDefaultTenant,
@@ -58,27 +49,16 @@ import {
   useTenantContext,
 } from './TenantProvider.jsx';
 
+// Branch `core`: en el sistema operativo base solo hay módulos PLATFORM
+// (cross-tenant) y TENANT transversales (config). Los módulos de
+// producto (gd/influencer/chatbot) registran sus IDs cuando se instalan
+// sobre el core.
 const PLATFORM_MODULE_IDS = adminModules
   .filter((module) => module.id.startsWith('platform-'))
   .map((module) => module.id);
 
-// UI-INFLU-002: los módulos `influencer-*` viven bajo un shell distinto
-// (`InfluencerShell` con su propio `INFLUENCER_NAV`), por eso los excluimos
-// de `TENANT_MODULE_IDS` para que `TenantShellRoute` no intente renderizarlos.
-// EXCEPCIÓN: `influencer-entry` SÍ vive en el shell del tenant — es solo un
-// item de nav que redirige al InfluencerShell. Necesita una route para que
-// el deep-link directo `/t/{slug}/influencer-entry` resuelva al component
-// `InfluencerEntryRedirect` (que hace `<Navigate to=".../influencer"/>`).
-const INFLUENCER_MODULE_IDS = adminModules
-  .filter((module) => module.id.startsWith('influencer-') && module.id !== 'influencer-entry')
-  .map((module) => module.id);
-
 const TENANT_MODULE_IDS = adminModules
-  .filter(
-    (module) =>
-      !module.id.startsWith('platform-') &&
-      (!module.id.startsWith('influencer-') || module.id === 'influencer-entry'),
-  )
+  .filter((module) => !module.id.startsWith('platform-'))
   .map((module) => module.id);
 
 /**
@@ -243,20 +223,12 @@ function IndexRedirect({ publicTab = 'ravit' }) {
   }
   if (!defaultTenant) return <Navigate to="/no-tenant" replace />;
 
-  const base = `/t/${defaultTenant.slug}`;
-  const safeHome = resolveSafeHomeModule(tenantPermissions);
-
-  if (!safeHome) {
-    // UI-018 — rol efectivo sin acceso a NINGÚN módulo en el tenant activo.
-    // En vez de redirigir a una vista que va a fallar el guard, mostramos un
-    // estado claro con CTA para cerrar sesión y reintentar con otra cuenta.
-    return <NoModuleAccessScreen />;
-  }
-
-  if (tenantPermissions.role === 'viewer') {
-    return <Navigate to={`${base}/read/${safeHome}`} replace />;
-  }
-  return <Navigate to={`${base}/${safeHome}`} replace />;
+  // Branch `core`: sin módulos de producto instalados, post-login el
+  // usuario aterriza en `tenant-setup` (configuración del tenant). Cuando
+  // un módulo se instala, redefine `IndexRedirect` o agrega su entrada
+  // a `TENANT_NAV` y `resolveSafeHomeModule` la prioriza.
+  void tenantPermissions; // reservado para módulos que filtren por rol
+  return <Navigate to={`/t/${defaultTenant.slug}/tenant-setup`} replace />;
 }
 
 /** `/no-tenant`: tarjeta de bienvenida para usuarios sin tenant. */
@@ -383,143 +355,50 @@ function TenantScope() {
  * ESTE tenant en particular (puede diferir del default tenant).
  */
 function TenantHomeRedirect() {
-  // `usePermissions()` auto-resuelve profile (del TenantContext) y tenant
-  // (del slug del URL). El outlet context se conserva por si algún hijo
-  // del Route lo necesita downstream.
+  // Branch `core`: sin módulos de producto, el home del tenant es
+  // `tenant-setup` (configuración). Cuando se instala un módulo, su
+  // entry-point se vuelve el home según `resolveSafeHomeModule`.
   useOutletContext();
-  const permissions = usePermissions();
-  const safeHome = resolveSafeHomeModule(permissions);
-  if (!safeHome) return <NoModuleAccessScreen />;
-  if (permissions.role === 'viewer') return <Navigate to={`read/${safeHome}`} replace />;
-  return <Navigate to={safeHome} replace />;
+  return <Navigate to="tenant-setup" replace />;
 }
 
 /**
- * BUG-186 (codex P2 sobre BUG-084): index del subárbol `/t/:slug/read/`
- * para viewers. Antes era un `<Navigate to={ROLE_HOME.viewer}>` estático,
- * que redirigía a `viewer-summary` aunque el rol efectivo no tuviera
- * `analytics.tenant.read` (caso edge: viewer con caps customizadas).
+ * BUG-186 — preservado por compatibilidad con tests que importan
+ * `resolveSafeHomeModule`. En el core no hay sub-tree read-only montado.
  * Resultado: aterrizaban en una vista inaccesible → AccessDenied.
  * Ahora delegamos en `resolveSafeHomeModule(permissions)` que itera el
  * `VIEWER_NAV` y devuelve el primer módulo cuya capability el viewer SÍ
  * tiene; si ninguno es accesible, renderea `NoModuleAccessScreen` igual
  * que `TenantHomeRedirect`.
  */
-function ReadHomeRedirect() {
-  useOutletContext();
-  const permissions = usePermissions();
-  const safeHome = resolveSafeHomeModule(permissions);
-  if (!safeHome) return <NoModuleAccessScreen />;
-  return <Navigate to={safeHome} replace />;
-}
-
-/** Layout tenant-scoped (Owner / Admin / Manager / Agent). */
+/** Layout tenant-scoped (Owner / Admin / Manager / Agent).
+ *
+ * Branch `core`: sin módulos opt-in (gd/influencer/chatbot) instalados, el
+ * sidebar del tenant solo expone la sección "Configuración" (tenant-setup,
+ * team, legal, audit). Los módulos de producto se registran al
+ * instalarse y se filtran por `tenant_modules` activo.
+ */
 function TenantShellRoute() {
   const { activeTenant } = useOutletContext();
-  // BUG-191: extraer `session` del contexto para threadearlo al shell →
-  // ShellTopbar → TenantBrandLogo (fetch del logo proxy con Bearer auth).
   const { profile, tenantOptions, session } = useTenantContext();
   const permissions = usePermissions();
   const navigate = useNavigate();
   const location = useLocation();
 
   const segments = location.pathname.split('/').filter(Boolean); // ['t', slug, moduleId]
-  const activeModuleId = segments[2] || permissions.home;
-
-  // UI-INFLU-MENU — `influencer-entry` aparece en `TENANT_NAV` SOLO si el
-  // tenant tiene el módulo influencer habilitado en `app.tenant_modules`.
-  // Consultamos `isInfluencerEnabled` al montar (mismo patrón que
-  // `InfluencerShellRoute`) y filtramos `adminModules` antes de pasarlos al
-  // shell — `resolveNav` excluye los items cuyo `id` no esté en `modules`,
-  // así el item desaparece del sidebar sin tocar `resolveNav` ni el shell.
-  //
-  // `null` = loading (asumimos NO habilitado para no flickear el item);
-  // `true` = mostrar; `false` = ocultar.
-  const [influencerEnabled, setInfluencerEnabled] = useState(null);
-  useEffect(() => {
-    if (!session || !activeTenant?.id) return undefined;
-    let cancelled = false;
-    isInfluencerEnabled(session, activeTenant.id)
-      .then((enabled) => {
-        if (!cancelled) setInfluencerEnabled(enabled);
-      })
-      .catch(() => {
-        if (!cancelled) setInfluencerEnabled(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [session, activeTenant?.id]);
-
-  // GD-MENU — mismo patrón que influencer: el item `gd-entry` aparece
-  // en `TENANT_NAV` SOLO si el tenant tiene Gestión Documental
-  // habilitada en `app.tenant_modules.gestion_documental`. Sin esto,
-  // el sidebar mostraría una opción que choca con un 404 al entrar.
-  const [gdEnabled, setGdEnabled] = useState(null);
-  useEffect(() => {
-    if (!session || !activeTenant?.id) return undefined;
-    let cancelled = false;
-    isGdEnabled(session, activeTenant.id)
-      .then((enabled) => {
-        if (!cancelled) setGdEnabled(enabled);
-      })
-      .catch(() => {
-        if (!cancelled) setGdEnabled(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [session, activeTenant?.id]);
-
-  // Un viewer nunca entra al shell con CTAs de escritura: aunque el módulo
-  // permita lectura (ej. analytics, contacts), se redirige al subárbol
-  // read-only que aplica el chrome de solo lectura y oculta las acciones.
-  if (permissions.role === 'viewer') {
-    return <Navigate to={`/t/${activeTenant.slug}/read/${activeModuleId}`} replace />;
-  }
+  const activeModuleId = segments[2] || 'tenant-setup';
 
   const activeModule =
     adminModules.find((item) => item.id === activeModuleId) ?? adminModules[0];
-
-  // Si los módulos opt-in NO están habilitados (o aún cargando),
-  // filtramos sus entries de la lista que recibe el shell — así el
-  // nav no los renderiza. Las capabilities (`influencer.module.access`,
-  // `gd.module.access`) ya definidas siguen aplicándose por `resolveNav`
-  // para roles sin acceso.
-  let modulesForShell = adminModules;
-  if (!influencerEnabled) {
-    modulesForShell = modulesForShell.filter((m) => m.id !== 'influencer-entry');
-  }
-  if (!gdEnabled) {
-    modulesForShell = modulesForShell.filter((m) => m.id !== 'gd-entry');
-  }
 
   return (
     <TenantShell
       profile={profile}
       permissions={permissions}
-      modules={modulesForShell}
+      modules={adminModules}
       activeModule={activeModule}
       activeModuleId={activeModuleId}
-      onModuleSelect={(id) => {
-        // `influencer-entry` no es un módulo del shell del tenant — es un
-        // entry-point al `InfluencerShell`. Navegamos al sub-tree del shell
-        // del influencer en lugar de a `/t/{slug}/influencer-entry`. El
-        // path `influencer-entry` SÍ tiene route registrada (`TENANT_MODULE_IDS`
-        // lo incluye) que monta `InfluencerEntryRedirect` para deep-links
-        // directos; este shortcut evita el redirect intermedio.
-        if (id === 'influencer-entry') {
-          navigate(`/t/${activeTenant.slug}/influencer`);
-          return;
-        }
-        // `gd-entry`: mismo shortcut que influencer — el sub-shell
-        // del módulo GD vive en `/t/{slug}/gd`, no en `/t/{slug}/gd-entry`.
-        if (id === 'gd-entry') {
-          navigate(`/t/${activeTenant.slug}/gd`);
-          return;
-        }
-        navigate(`/t/${activeTenant.slug}/${id}`);
-      }}
+      onModuleSelect={(id) => navigate(`/t/${activeTenant.slug}/${id}`)}
       tenantOptions={tenantOptions}
       activeTenantId={activeTenant.id}
       onTenantChange={(id) => {
@@ -534,305 +413,6 @@ function TenantShellRoute() {
   );
 }
 
-/**
- * UI-INFLU-002 — Layout del módulo Influencer / Ravit Studio.
- *
- * Igual que `TenantShellRoute` (extrae tenant del slug + permisos + navega),
- * pero usa `InfluencerShell` con `INFLUENCER_NAV`. Adicionalmente:
- *   - Consulta `isInfluencerEnabled(session, tenantId)` al montar y guarda
- *     el resultado en estado. Si el backend responde 404 (módulo no activo
- *     para el tenant), el shell muestra un `<AlertBanner>` "Módulo no
- *     habilitado" en lugar del módulo real (decisión D2 — frontend traduce
- *     el 404 a UX amistosa sin filtrar la existencia del feature).
- *   - El estado inicial `null` significa "cargando"; mostramos `<LoadingScreen>`.
- *   - El gate primario sigue siendo el backend; el frontend solo respeta
- *     su veredicto. Si en una venta futura el tenant pierde el módulo, el
- *     primer 404 del próximo request lo refleja.
- */
-function InfluencerShellRoute() {
-  const { activeTenant } = useOutletContext();
-  const { profile, tenantOptions, session } = useTenantContext();
-  const permissions = usePermissions();
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  // null = loading; true = activo; false = 404 del backend.
-  const [moduleEnabled, setModuleEnabled] = useState(null);
-
-  useEffect(() => {
-    if (!session || !activeTenant?.id) return undefined;
-    let cancelled = false;
-    isInfluencerEnabled(session, activeTenant.id)
-      .then((enabled) => {
-        if (!cancelled) setModuleEnabled(enabled);
-      })
-      .catch(() => {
-        // Cualquier error que NO sea 404 → tratamos como "no activo" para
-        // no bloquear la UI. El ErrorBoundary atrapa los crashes reales.
-        if (!cancelled) setModuleEnabled(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [session, activeTenant?.id]);
-
-  // Mientras se resuelve la activación, mostramos loading screen sin shell —
-  // evita el flash de "Módulo no habilitado" en el primer render.
-  if (moduleEnabled === null) return <LoadingScreen />;
-
-  const segments = location.pathname.split('/').filter(Boolean); // ['t', slug, 'influencer', moduleId]
-  const activeModuleId = segments[3] || 'influencer-casting';
-  const activeModule =
-    adminModules.find((item) => item.id === activeModuleId) ??
-    adminModules.find((item) => item.id === 'influencer-casting') ??
-    null;
-
-  return (
-    <InfluencerShell
-      profile={profile}
-      permissions={permissions}
-      modules={adminModules}
-      activeModule={activeModule}
-      activeModuleId={activeModuleId}
-      onModuleSelect={(id) => navigate(`/t/${activeTenant.slug}/influencer/${id}`)}
-      tenantOptions={tenantOptions}
-      activeTenantId={activeTenant.id}
-      onTenantChange={(id) => {
-        const next = tenantOptions.find((tenant) => tenant.id === id);
-        if (next) navigate(`/t/${next.slug}/influencer`);
-      }}
-      canSwitchTenants={tenantOptions.length > 1 || permissions.isSystemOwner}
-      session={session}
-      moduleEnabled={moduleEnabled}
-    >
-      <Outlet context={{ activeTenant }} />
-    </InfluencerShell>
-  );
-}
-
-/**
- * Layout del módulo Gestión Documental (GD).
- *
- * Vive PARALELO a `TenantShellRoute` (no anidado dentro) porque el
- * módulo es autocontenido: usa su propio `GdShell` con `GdSidebar`
- * y `GdTopBar` rol-aware. La activación se chequea con
- * `isGdEnabled(session, tenantId)` (mismo patrón que Influencer).
- *
- * Resolución del sub-tree `/t/{slug}/gd/...`:
- *  - El path interno (todo lo que sigue a `/t/{slug}/gd`) se mapea a
- *    un componente con `resolveGdRoute()` (ver `features/gd/routeMap.js`).
- *  - El gate primario es el backend (404 → módulo no activo). El
- *    frontend traduce 404 a UX amistosa sin filtrar la existencia.
- *  - `null` inicial = loading; mostramos `<LoadingScreen />` para
- *    evitar el flash de "no habilitado" en el primer render.
- *
- * Decisión D-WIRE-01: `GdShellRoute` usa el sub-shell completo del
- * módulo (con su sidebar) en lugar de embedar las vistas dentro de
- * `TenantShell`. Razón: el módulo GD tiene 94 vistas y un sidebar
- * rol-aware muy distinto al del producto principal (CopilotoIA);
- * fusionarlos contaminaría ambos. El item `gd-entry` del sidebar
- * tenant simplemente redirige acá.
- */
-function GdShellRoute() {
-  const { activeTenant } = useOutletContext();
-  const { profile, session } = useTenantContext();
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  // null = loading; true = activo; false = 404 del backend.
-  const [moduleEnabled, setModuleEnabled] = useState(null);
-
-  useEffect(() => {
-    if (!session || !activeTenant?.id) return undefined;
-    let cancelled = false;
-    isGdEnabled(session, activeTenant.id)
-      .then((enabled) => {
-        if (!cancelled) setModuleEnabled(enabled);
-      })
-      .catch(() => {
-        if (!cancelled) setModuleEnabled(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [session, activeTenant?.id]);
-
-  if (moduleEnabled === null) return <LoadingScreen />;
-
-  if (moduleEnabled === false) {
-    // Mismo patrón que `InfluencerShell`: mostramos un aviso dentro
-    // del shell del tenant. Aquí redirigimos al home del tenant para
-    // no dejar al usuario en una página vacía — el filtro de nav
-    // (más abajo) ya impide que el item aparezca, así que aterrizar
-    // acá significa deep-link manual o palanca apagada después de
-    // entrar. Redirigir + log mantiene la UX limpia.
-    return <Navigate to={`/t/${activeTenant.slug}`} replace />;
-  }
-
-  // Roles GD del usuario — se obtienen de `/api/v1/gd/me` (que ya valida
-  // tenant + perfil activo + roles vigentes en gd.asignacion_alcance).
-  // La session del BFF NO incluye los roles GD (vive en una matriz aparte
-  // de los roles app: owner/admin/etc); por eso necesitamos el fetch.
-  // Componente <GdProfileLoader/> hace el fetch y pasa los roles al
-  // componente de la ruta resuelta.
-  return (
-    <GdProfileLoader
-      session={session}
-      activeTenant={activeTenant}
-      profile={profile}
-      location={location}
-      navigate={navigate}
-    />
-  );
-}
-
-/**
- * Loader que resuelve los roles GD del usuario actual antes de renderizar
- * el componente de la ruta. Mientras carga muestra `<LoadingScreen />`.
- * Si el usuario NO tiene perfil GD activo en el tenant, pasa `roles=[]`
- * — el `GdShell` muestra el sidebar vacío y la landing dice "Sin permisos
- * activos. Solicite activación a su administrador."
- */
-function GdProfileLoader({ session, activeTenant, profile, location, navigate }) {
-  const [gdMe, setGdMe] = useState(undefined); // undefined=loading, null=sin perfil, {...}=ok
-
-  useEffect(() => {
-    if (!session || !activeTenant?.id) return undefined;
-    let cancelled = false;
-    getMyGdProfile(session)
-      .then((data) => {
-        if (!cancelled) setGdMe(data || null);
-      })
-      .catch(() => {
-        // 403 con `code='gd_profile_missing_or_inactive'` o cualquier otro
-        // error → tratamos como "sin perfil GD activo". El GdShell mostrará
-        // el mensaje de "Sin permisos" usando el sistema de capabilities
-        // interno del módulo (GD-matrix con 17 roles, ortogonal a esto).
-        if (!cancelled) setGdMe(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [session, activeTenant?.id]);
-
-  if (gdMe === undefined) return <LoadingScreen />;
-
-  // Lista plana de códigos de rol vigentes (ej. ['gd.admin_sistema',
-  // 'gd.firmante']). El componente GdShell + GdSidebar usan este array
-  // contra la matriz `gd-matrix.js` (`gdCanAny(roles, 'VU-001', 'RW')`).
-  // El backend `/v1/gd/me` devuelve el campo como `roles_gd_vigentes`.
-  // Aceptamos también `roles_vigentes` como fallback por si algún
-  // entorno legacy responde con el nombre corto — defensa barata.
-  const gdRoles = (gdMe?.roles_gd_vigentes || gdMe?.roles_vigentes || [])
-    .map((r) => r.rol_codigo)
-    .filter(Boolean);
-
-  // Path relativo al módulo. Para `/t/{slug}/gd/pqrsd/mias` →
-  // `subPath = '/pqrsd/mias'`. Para `/t/{slug}/gd` o `/t/{slug}/gd/` →
-  // `subPath = ''` (landing).
-  const basePath = `/t/${activeTenant.slug}/gd`;
-  let subPath = location.pathname.startsWith(basePath)
-    ? location.pathname.slice(basePath.length)
-    : '';
-  // Normaliza trailing slash (`'/'` → `''`).
-  if (subPath === '/') subPath = '';
-
-  const { Component, extraProps } = resolveGdRoute(subPath);
-
-  // `onNavigate` recibe rutas del módulo (`/gd/...`) desde GdSidebar y
-  // los componentes hijos. Las traducimos a la ruta completa del
-  // tenant (`/t/{slug}/gd/...`) antes de hacer `navigate()`.
-  const onNavigate = (path) => {
-    if (!path) return;
-    if (path.startsWith('/gd')) {
-      navigate(`/t/${activeTenant.slug}${path}`);
-    } else if (path.startsWith('/t/')) {
-      navigate(path);
-    } else {
-      // Path relativo dentro del módulo (sin /gd prefix).
-      navigate(`${basePath}${path.startsWith('/') ? '' : '/'}${path}`);
-    }
-  };
-
-  return (
-    // GdProvider envuelve TODO el módulo. Cualquier componente hijo
-    // (GdShell, GdSidebar, páginas) que necesite `roles`, `user`,
-    // `session`, `tenantSlug` o `activeTenantId` puede leerlos via
-    // `useGdContext()` sin que el componente intermedio tenga que
-    // pasarlos por prop. Esto elimina la clase de bug "el menú se
-    // borra al navegar a Eventos/Plantillas/Buzón" causado por
-    // componentes que olvidaban re-pasar `roles={roles}` a GdShell.
-    <GdProvider
-      user={profile}
-      roles={gdRoles}
-      session={session}
-      tenantSlug={activeTenant.slug}
-      activeTenantId={activeTenant.id}
-    >
-      <Component
-        session={session}
-        roles={gdRoles}
-        user={profile}
-        tenantSlug={activeTenant.slug}
-        // BUG-008 — `SupportModeBanner` necesita el UUID para decidir si
-        // el override de support_mode aplica al tenant actual. Se forwarda
-        // a `GdShell` vía `{...shellProps}` desde cada vista del módulo.
-        activeTenantId={activeTenant.id}
-        // Cuando el user hace "Salir de support mode" desde el banner del
-        // GdShell, navegamos a /platform (home del platform_owner). Sin
-        // esto, queda dentro del módulo GD con la cookie ya removida →
-        // próximo fetch a /api/v1/gd/* da 404 y la página queda rota.
-        onExitSupportMode={() => navigate('/platform')}
-        currentPath={`/gd${subPath}`}
-        onNavigate={onNavigate}
-        {...extraProps}
-      />
-    </GdProvider>
-  );
-}
-
-/** Layout de solo lectura (Viewer). */
-function ReadOnlyShellRoute() {
-  const { activeTenant } = useOutletContext();
-  // BUG-191: thread `session` para que `TenantBrandLogo` pueda fetchear el
-  // logo proxy con auth headers (Bearer + X-Tenant-Id).
-  const { profile, tenantOptions, session } = useTenantContext();
-  const permissions = usePermissions();
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const segments = location.pathname.split('/').filter(Boolean); // ['t', slug, 'read', moduleId]
-  // BUG-084: usar `resolveSafeHomeModule(permissions)` cuando no hay segment
-  // explícito, igual que IndexRedirect. Antes `ROLE_HOME.viewer` apuntaba a
-  // un módulo cuya capability el viewer podía no tener en este tenant
-  // (TASK-0077 desincronía de roles globales vs tenant.roles) → pantalla en
-  // blanco o AccessDenied bajo el ReadOnlyShell.
-  const safeHome = resolveSafeHomeModule(permissions);
-  const activeModuleId = segments[3] || safeHome || ROLE_HOME.viewer;
-  const activeModule =
-    adminModules.find((item) => item.id === activeModuleId) ?? adminModules[0];
-
-  return (
-    <ReadOnlyShell
-      profile={profile}
-      permissions={permissions}
-      modules={adminModules}
-      activeModule={activeModule}
-      activeModuleId={activeModuleId}
-      onModuleSelect={(id) => navigate(`/t/${activeTenant.slug}/read/${id}`)}
-      tenantOptions={tenantOptions}
-      activeTenantId={activeTenant.id}
-      onTenantChange={(id) => {
-        const next = tenantOptions.find((tenant) => tenant.id === id);
-        if (next) navigate(`/t/${next.slug}/read`);
-      }}
-      canSwitchTenants={tenantOptions.length > 1 || permissions.isSystemOwner}
-      session={session}
-    >
-      <Outlet context={{ activeTenant }} />
-    </ReadOnlyShell>
-  );
-}
 
 /**
  * UI-016.6 — pantalla 404 para el catch-all `path: '*'`. Reemplaza el
@@ -939,106 +519,18 @@ export const routes = [
         ],
       },
       {
+        // Branch `core`: tenant routes minimalistas. Solo TenantShell con
+        // los transversales (tenant-setup, team, legal, audit). Los
+        // módulos opt-in (gd/influencer/chatbot) agregan sub-trees acá
+        // cuando se instalan sobre el core (TODO Fase 2 — module discovery).
         path: 't/:tenantSlug',
         element: <TenantScope />,
         children: [
           { index: true, element: <TenantHomeRedirect /> },
           {
-            path: 'read',
-            element: <ReadOnlyShellRoute />,
-            children: [
-              // BUG-186: usar `ReadHomeRedirect` (calcula `safeHome` con
-              // `resolveSafeHomeModule`) en lugar de un `<Navigate>` estático
-              // a `ROLE_HOME.viewer`. Sin esto, viewers con caps customizadas
-              // que no incluyen `analytics.tenant.read` aterrizaban en
-              // `viewer-summary` y veían AccessDenied.
-              { index: true, element: <ReadHomeRedirect /> },
-              ...TENANT_MODULE_IDS.map(moduleRoute),
-            ],
-          },
-          {
-            // UI-INFLU-002 — sub-tree del módulo Influencer / Ravit Studio.
-            // Vive PARALELO a TenantShellRoute (no anidado dentro) porque
-            // tiene su propio shell con sub-nav distinta (INFLUENCER_NAV).
-            // El gate de activación del módulo (404 del backend) se chequea
-            // dentro de `InfluencerShellRoute` con `isInfluencerEnabled`.
-            path: 'influencer',
-            element: <InfluencerShellRoute />,
-            children: [
-              {
-                index: true,
-                element: <Navigate to="influencer-casting" replace />,
-              },
-              ...INFLUENCER_MODULE_IDS.map(moduleRoute),
-              // UI-INFLU-008..012 wiring — wizard de creación de personaje.
-              // UI-INFLU-014.11: cada personaje tiene su propio URL con
-              // `personaId`. Esto permite que el usuario tenga N drafts
-              // en paralelo, cada uno con su propia "página".
-              //
-              //   `personas/new` → CastingNewPersona (crea draft + redirige).
-              //   `personas/:personaId/wizard/:stepSlug` → wizard del draft.
-              //
-              // Ruta legacy `personas/new/:stepSlug` se mantiene por
-              // compat de bookmarks; redirige al casting si no hay un
-              // personaId activo en sessionStorage.
-              {
-                path: 'personas/new',
-                element: <CreatePersonaAndRedirect />,
-              },
-              {
-                path: 'personas/new/:stepSlug',
-                element: <PersonaWizardContainer />,
-              },
-              {
-                path: 'personas/:personaId/wizard',
-                element: <Navigate to="step-1" replace />,
-              },
-              {
-                path: 'personas/:personaId/wizard/:stepSlug',
-                element: <PersonaWizardContainer />,
-              },
-              // UI-INFLU-005 wiring — vista de detalle del personaje.
-              // El componente `PersonaStudio` recibe el bundle del
-              // endpoint `GET /personas/{id}/studio` resuelto por
-              // `PersonaStudioContainer`.
-              {
-                path: 'personas/:personaId/studio',
-                element: <PersonaStudioContainer />,
-              },
-              // UI-INFLU-013 wiring — composer "Generar contenido".
-              {
-                path: 'personas/:personaId/generate',
-                element: <GenerateContainer />,
-              },
-            ],
-          },
-          {
-            // Sub-tree del módulo Gestión Documental — PARALELO al
-            // tenant shell. Resolución del path interno se hace en
-            // `GdShellRoute` mediante `resolveGdRoute(subPath)`. El
-            // catch-all `gd/*` cubre todas las vistas (94 vistas + N
-            // rutas con UUID), así no tenemos que enumerar cada una
-            // acá. El gate por tenant (`isGdEnabled`) y el filtro de
-            // permisos por rol se aplican dentro de la route + el
-            // sidebar del módulo.
-            path: 'gd',
-            element: <GdShellRoute />,
-          },
-          {
-            path: 'gd/*',
-            element: <GdShellRoute />,
-          },
-          {
             element: <TenantShellRoute />,
             children: [
               ...TENANT_MODULE_IDS.map(moduleRoute),
-              // UI-009.3 — deep-link a la ficha enfocada de un contacto. No es
-              // un módulo (no aparece en la nav); `contacts/:contactId` es una
-              // ruta más profunda que el módulo `contacts` exacto, así que no
-              // colisiona. `ContactProfile` aplica su propio `<RequirePermission
-              // capability="contacts.view">`, por eso no se envuelve en
-              // `<ModuleScreen>`.
-              { path: 'contacts/:contactId', element: <ContactProfile /> },
             ],
           },
         ],

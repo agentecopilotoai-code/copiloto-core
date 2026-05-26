@@ -1,3 +1,26 @@
+/**
+ * Registro de módulos del panel — branch `core`.
+ *
+ * Solo contiene los módulos TRANSVERSALES del sistema operativo:
+ *   - **Platform admin** (cross-tenant, solo platform_owner): fleet,
+ *     system-health, billing, incidents, fleet-dlq, runbooks, roles-acl,
+ *     feature-flags, ai-providers.
+ *   - **Tenant transversales** (cualquier owner/admin del tenant):
+ *     tenant-setup, team, legal, audit.
+ *
+ * Los módulos de producto (GD, influencer, chatbot) se "instalan" sobre
+ * el core agregando sus propias entradas a este registry vía un hook de
+ * carga dinámica (TODO Fase 2 — module discovery). El core NO conoce
+ * estos módulos por nombre.
+ *
+ * El router (`router.jsx`) renderiza cada entrada vía `<ModuleScreen/>`,
+ * que envuelve el componente en `<RequirePermission capability mode>`
+ * cuando `capability` no es `null`.
+ *
+ * @type {Record<string, { Component: Function, capability: string|null, mode?: 'R'|'RW' }>}
+ */
+
+// ─── Platform admin (cross-tenant) ──────────────────────────────────────────
 import { BillingMrr } from '../features/platform/billing-mrr/index.js';
 import { FeatureFlags } from '../features/platform/feature-flags/index.js';
 import { FleetDlq } from '../features/platform/fleet-dlq/index.js';
@@ -7,64 +30,13 @@ import { RolesAcl } from '../features/platform/roles-acl/index.js';
 import { Runbooks } from '../features/platform/runbooks/index.js';
 import { SystemHealth } from '../features/platform/system-health/index.js';
 import { AIProvidersContainer } from '../features/platform/ai-providers/AIProvidersContainer.jsx';
-import { Dashboard } from '../features/owner-admin/dashboard/index.js';
-import { Onboarding } from '../features/owner-admin/onboarding/index.js';
-import { ConversationsContacts } from '../features/owner-admin/conversations-contacts/index.js';
-import { Services } from '../features/owner-admin/services/index.js';
-import { Packages } from '../features/owner-admin/packages/index.js';
-import { Subscriptions } from '../features/owner-admin/subscriptions/index.js';
-import { Branches } from '../features/owner-admin/branches/index.js';
-import { WhatsAppOnboarding } from '../features/owner-admin/whatsapp/index.js';
-import { AnalyticsPanel } from '../features/owner-admin/analytics/index.js';
-import { ManagerAnalytics } from '../features/manager/analytics/index.js';
+
+// ─── Tenant transversales ───────────────────────────────────────────────────
 import { AuditPanel } from '../features/owner-admin/audit/index.js';
-import { CampaignsModule } from '../features/manager/campaigns/index.js';
-import { DigestReports } from '../features/manager/digest-reports/index.js';
-import { KnowledgeStorageSettings } from '../features/owner-admin/knowledge-studio/components/KnowledgeStorageSettings.jsx';
-import { KnowledgeStudio } from '../features/owner-admin/knowledge-studio/index.js';
 import { LegalModule } from '../features/owner-admin/legal/index.js';
-import { MediaLibraryModule } from '../features/owner-admin/media-library/index.js';
-import { MyHandoffs } from '../features/agente/my-handoffs/index.js';
-import { OperationsDesk } from '../features/agente/inbox/index.js';
-import { OutboundDLQ } from '../features/agente/outbound-dlq/index.js';
-import { TodayAppointments } from '../features/agente/today-appointments/index.js';
-import { GoLiveReadiness } from '../features/owner-admin/readiness/index.js';
-import { SegmentsModule } from '../features/manager/segments/index.js';
-import { SocialChannelsModule } from '../features/owner-admin/social-channels/index.js';
 import { TeamModule } from '../features/owner-admin/team/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
-import { ViewerAnalytics } from '../features/viewer/analytics/index.js';
-import { ViewerAppointments } from '../features/viewer/appointments/index.js';
-import { ViewerConversations } from '../features/viewer/conversations/index.js';
-import { ViewerSummary } from '../features/viewer/summary/index.js';
-import {
-  InfluencerCasting,
-  InfluencerLibrary,
-} from '../features/influencer/placeholders.jsx';
-// UI-INFLU-014 wiring — Calendar real (no más placeholder).
-import { CalendarContainer as InfluencerCalendar } from '../features/influencer/calendar/CalendarContainer.jsx';
-// UI-INFLU-016 wiring — Credits real (balance + history + topup).
-import { CreditsModule as InfluencerCredits } from '../features/influencer/credits/CreditsModule.jsx';
-// `InfluencerEntryRedirect` vive en su propio `.jsx` (no inline aquí) porque
-// `moduleRegistry.js` es `.js` y `@vitejs/plugin-react` no procesa JSX en
-// archivos `.js` — un JSX inline rompería el build con "Expression expected".
-import { InfluencerEntryRedirect } from '../features/influencer/InfluencerEntryRedirect.jsx';
-// Módulo Gestión Documental (UI-1 foundation + placeholders por bloque).
-import { GdHome } from '../features/gd/placeholders/index.jsx';
 
-/**
- * Registro `module id → { Component, capability, mode }`.
- *
- * Reemplaza al `switch` que vivía en `ModuleContent.jsx`. El router
- * (`router.jsx`) renderiza cada entrada vía `<ModuleScreen/>`, que envuelve el
- * componente en `<RequirePermission capability mode>` cuando `capability` no es
- * `null`. Las capabilities espejan exactamente las del antiguo `ModuleContent`.
- *
- * Los ids que NO están aquí (p. ej. `platform-*`) se renderizan como
- * `<ModulePlaceholder/>`: las vistas reales llegan en UI-006..UI-010.
- *
- * @type {Record<string, { Component: Function, capability: string|null, mode?: 'R'|'RW' }>}
- */
 export const MODULE_REGISTRY = Object.freeze({
   'platform-fleet': { Component: FleetTenants, capability: 'platform.tenants.read' },
   'platform-system-health': {
@@ -80,79 +52,17 @@ export const MODULE_REGISTRY = Object.freeze({
     Component: FeatureFlags,
     capability: 'platform.feature_flags.read',
   },
-  // Refactor — Proveedores IA transversales (Influencer, Gestión Documental,
-  // futuros). Capability `platform.ai_providers.configure` — solo platform_owner.
+  // Proveedores IA — config transversal cross-modalidad (LLM/image/etc).
+  // Alimenta cualquier módulo de producto que requiera IA.
   'platform-ai-providers': {
     Component: AIProvidersContainer,
     capability: 'platform.ai_providers.configure',
     mode: 'RW',
   },
-  // BUG-188 (codex P2 sobre BUG-117): `modules.js` ya cambió la capability
-  // a `dashboard.read` (Owner/Admin only), pero `moduleRegistry` seguía
-  // gating con `analytics.tenant.read` (viewer/agent/manager también).
-  // El nav HIDE el item pero un deep link directo a `/t/<slug>/dashboard`
-  // todavía renderizaba el Dashboard Owner para roles inferiores. Alineamos.
-  dashboard: { Component: Dashboard, capability: 'dashboard.read' },
+
+  // Tenant transversales (administración del tenant en sí, no de un producto).
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
-  'onboarding-wizard': { Component: Onboarding, capability: 'onboarding.run', mode: 'RW' },
-  services: { Component: Services, capability: 'services.read' },
-  branches: { Component: Branches, capability: 'branches.write', mode: 'RW' },
-  packages: { Component: Packages, capability: 'packages.write', mode: 'RW' },
-  subscriptions: { Component: Subscriptions, capability: 'subscriptions.write', mode: 'RW' },
-  whatsapp: { Component: WhatsAppOnboarding, capability: 'whatsapp.read' },
-  'social-channels': {
-    Component: SocialChannelsModule,
-    capability: 'social_channels.write',
-    mode: 'RW',
-  },
-  'knowledge-storage': {
-    Component: KnowledgeStorageSettings,
-    capability: 'knowledge_storage.write',
-    mode: 'RW',
-  },
-  'knowledge-studio': { Component: KnowledgeStudio, capability: 'knowledge.read' },
-  'media-library': { Component: MediaLibraryModule, capability: 'media.write', mode: 'RW' },
-  contacts: { Component: ConversationsContacts, capability: 'contacts.view' },
-  segments: { Component: SegmentsModule, capability: 'segments.write', mode: 'RW' },
-  campaigns: { Component: CampaignsModule, capability: 'campaigns.write', mode: 'RW' },
-  'operations-desk': { Component: OperationsDesk, capability: 'conversations.view' },
-  'my-handoffs': { Component: MyHandoffs, capability: 'conversations.view' },
-  'outbound-dlq': { Component: OutboundDLQ, capability: 'outbound_dlq.retry', mode: 'RW' },
-  appointments: { Component: TodayAppointments, capability: 'appointments.view' },
-  'go-live-readiness': { Component: GoLiveReadiness, capability: 'go_live_readiness.read' },
-  analytics: { Component: AnalyticsPanel, capability: 'analytics.tenant.read' },
-  'manager-analytics': {
-    Component: ManagerAnalytics,
-    capability: 'analytics.tenant.read',
-  },
-  'digest-reports': { Component: DigestReports, capability: 'digest.write', mode: 'RW' },
-  audit: { Component: AuditPanel, capability: 'audit.read' },
   team: { Component: TeamModule, capability: 'team.write', mode: 'RW' },
   legal: { Component: LegalModule, capability: 'legal.write', mode: 'RW' },
-  'viewer-summary': { Component: ViewerSummary, capability: 'analytics.tenant.read' },
-  'viewer-analytics': { Component: ViewerAnalytics, capability: 'analytics.tenant.read' },
-  'viewer-appointments': { Component: ViewerAppointments, capability: 'appointments.view' },
-  'viewer-conversations': { Component: ViewerConversations, capability: 'conversations.view' },
-  // ─── Módulo Influencer / Ravit Studio (UI-INFLU-002) ───────────────────
-  // Placeholders mientras se materializan las vistas reales en UI-INFLU-003+.
-  // El gate de módulo (tenant_modules.influencer.enabled=true) lo hace el
-  // shell vía 404 del backend (TASK-INFLU-001) — el capability adicional
-  // protege contra rol que no debe ver el módulo aún teniendo el tenant
-  // activado.
-  // Entry-point del módulo en `TENANT_NAV`. Si el user clickea desde el menú
-  // del tenant, `TenantShellRoute.onModuleSelect` redirige antes de montar
-  // este componente. Este componente solo se ejecuta en deep-links directos
-  // a `/t/{slug}/influencer-entry` — redirige al shell real para consistencia.
-  'influencer-entry': { Component: InfluencerEntryRedirect, capability: 'influencer.module.access' },
-  'influencer-casting': { Component: InfluencerCasting, capability: 'influencer.module.access' },
-  'influencer-calendar': { Component: InfluencerCalendar, capability: 'influencer.posts.schedule', mode: 'RW' },
-  'influencer-library': { Component: InfluencerLibrary, capability: 'influencer.module.access' },
-  'influencer-credits': { Component: InfluencerCredits, capability: 'influencer.credits.read' },
-
-  // ─── Módulo Gestión Documental ─────────────────────────────────────────
-  // Punto de entrada al GdShell. El doble gate (tenant_modules.
-  // gestion_documental.enabled + perfil GD activo) lo verifica el shell.
-  // Este registro garantiza que el item de nav del producto principal
-  // funcione y monte el GdHome (landing rol-aware).
-  'gd-entry': { Component: GdHome, capability: 'gd.module.access' },
+  audit: { Component: AuditPanel, capability: 'audit.read' },
 });

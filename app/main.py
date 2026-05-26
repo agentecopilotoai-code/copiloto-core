@@ -5,43 +5,13 @@ from fastapi import FastAPI, Request, Response
 from app.api.v1.routes import router as v1_router
 from app.admin.routes import router as admin_router
 from app.core.config import get_settings
-from app.influencer.router import influencer_router
-from app.influencer.personas_router import personas_router as influencer_personas_router
-from app.influencer.wizard_router import wizard_router as influencer_wizard_router
-from app.influencer.face_variations_router import (
-    face_variations_router as influencer_face_variations_router,
-    storage_router as influencer_storage_router,
-)
-from app.influencer.generations_router import (
-    generate_router as influencer_generate_router,
-    generations_router as influencer_generations_router,
-)
-from app.influencer.voice_router import voice_router as influencer_voice_router
-from app.influencer.instagram_router import instagram_router as influencer_instagram_router
-from app.influencer.posts_router import posts_router as influencer_posts_router
-from app.influencer.credits_router import (
-    credits_router as influencer_credits_router,
-    pricing_router as influencer_pricing_router,
-)
-from app.influencer.casting_router import casting_router as influencer_casting_router
-# GD-API-0002 — Módulo Gestión Documental. Router raíz que monta sub-routers
-# por épica (identidad, ventanilla, pqrsd, etc.). El gate de visibilidad de
-# rutas se hace dentro de cada handler vía `require_gd_perfil` (devuelve 403
-# con code='gd_profile_missing_or_inactive' para usuarios sin perfil GD activo
-# en el tenant). El router siempre se monta; tenants sin GD simplemente
-# reciben 403 — análogo al patrón del módulo influencer.
-from app.gd.routes import (
-    router as gd_router,
-    router_core as gd_router_core,
-    router_public as gd_router_public,
-)
-# NOTA — el import side-effect que registra los endpoints
-# `/v1/platform/ai-providers*` y `/v1/platform/tenant-modules*` sobre
-# `platform_admin_router` (TASK-INFLU-002 + TASK-INFLU-019) ya se ejecuta
-# desde dentro de `app/api/v1/routes.py` antes del `router.include_router(
-# platform_admin_router)` final. Importarlo aquí ahora es redundante y
-# además es tardío (FastAPI ya copió las rutas en el include_router).
-# Ver el comentario en `app/api/v1/routes.py:1695` para el detalle.
+# Branch `core`: módulos de producto (gd/influencer/chatbot) NO se importan.
+# Cada uno se monta como add-on por separado al instalarse sobre el core
+# (ver `docs/ARCHITECTURE.md` § "Cómo agregar un módulo nuevo").
+#
+# Endpoints platform admin transversales (`/v1/platform/ai-providers/*`,
+# `/v1/platform/tenant-modules/*`) viven en `app/platform_admin/admin_routes.py`
+# y se cargan por side-effect desde `app/api/v1/routes.py`.
 from app.core.logging import configure_logging
 from app.db.pool import db
 from app.services.metrics import (
@@ -147,54 +117,10 @@ def create_app() -> FastAPI:
 
     api.include_router(admin_router)
     api.include_router(v1_router)
-    # TASK-INFLU-001 — módulo opcional Ravit Studio. El router siempre se
-    # monta; el gate `ensure_module_enabled` en cada endpoint responde 404
-    # cuando el tenant no tiene la fila `app.tenant_modules.influencer
-    # enabled=true`. No filtramos la existencia del módulo a tenants sin
-    # acceso (decisión D2 del backlog).
-    api.include_router(influencer_router)
-    # TASK-INFLU-008 — CRUD de personajes. Sub-router montado al lado del
-    # router principal (`/v1/influencer/_health` vs
-    # `/v1/influencer/personas/*`) para mantener flat el árbol de rutas
-    # del módulo. Comparte las dependencies `authenticate_request` +
-    # `ensure_module_enabled` configuradas en cada sub-router.
-    api.include_router(influencer_personas_router)
-    # TASK-INFLU-009 — wizard endpoints (PUT /face /body /identity /voice
-    # /platforms + POST /activate) bajo el mismo prefix de personas.
-    api.include_router(influencer_wizard_router)
-    # TASK-INFLU-010 — face variations async (POST encola, GET status).
-    api.include_router(influencer_face_variations_router)
-    # UI-INFLU-014.7 — GET /v1/influencer/storage/{key:path} sirve los
-    # archivos del storage del tenant (local Docker volume o S3) con
-    # auth + tenant_scope.
-    api.include_router(influencer_storage_router)
-    # TASK-INFLU-011 — generaciones genéricas + lookup de assets.
-    api.include_router(influencer_generate_router)
-    api.include_router(influencer_generations_router)
-    # TASK-INFLU-013 — voice sample + captions preview.
-    api.include_router(influencer_voice_router)
-    # TASK-INFLU-014 — Instagram OAuth (primer plataforma).
-    api.include_router(influencer_instagram_router)
-    # TASK-INFLU-015 — posts + calendar + publish queue.
-    api.include_router(influencer_posts_router)
-    # TASK-INFLU-016 — credit ledger + pricing.
-    api.include_router(influencer_credits_router)
-    api.include_router(influencer_pricing_router)
-    # TASK-INFLU-017 — casting home + studio detail.
-    api.include_router(influencer_casting_router)
-    # GD-API-0002 — Módulo Gestión Documental. Monta /v1/gd/* con sus
-    # sub-routers por épica. Los handlers usan require_gd_perfil para gating;
-    # tenants sin perfil GD activo reciben 403 con code claro.
-    # FIX 2026-05-25: prefix `/v1/gd` (antes `/api/v1/gd`) para que el BFF
-    # admin (que reescribe `/admin/api/core/v1/*` → `/v1/*`) encuentre TODOS
-    # los endpoints del módulo, no solo `_health`. Alineado con el resto del
-    # backend (influencer, tenants, platform, contacts también usan `/v1/*`).
-    api.include_router(gd_router)
-    # EP-018 — servicio transversal /v1/core/* (archivos compartido).
-    api.include_router(gd_router_core)
-    # GD-API-0122 — endpoint público SIN auth para verificación QR
-    # constancia. Vive en /gd/verificar/{codigo}, NO bajo /api/v1.
-    api.include_router(gd_router_public)
+    # Branch `core`: ningún router de producto se monta. Los módulos opt-in
+    # (gd/influencer/chatbot) registran sus routers cuando se instalan
+    # sobre el core, agregando sus propios `api.include_router(...)` acá
+    # o vía un hook de carga dinámica (TODO Fase 2 — module discovery).
     return api
 
 

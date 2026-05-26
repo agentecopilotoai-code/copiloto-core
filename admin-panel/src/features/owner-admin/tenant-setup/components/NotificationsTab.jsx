@@ -1,6 +1,6 @@
 import { Button, Card, FormField } from '../../../../components/ui/index.js';
 import { ComplaintAlertChannelsFieldset } from './ComplaintAlertChannelsFieldset.jsx';
-import DigestSubscriptionsPanel from '../../../manager/digest-reports/components/DigestSubscriptionsPanel.jsx';
+// Branch `core`: DigestSubscriptionsPanel removido (módulo manager chatbot).
 import styles from '../TenantSetupWizard.module.css';
 
 export function NotificationsTab({ state, actions, session }) {
@@ -156,13 +156,7 @@ export function NotificationsTab({ state, actions, session }) {
           setNotificationSettings={setNotificationSettings}
         />
 
-        {currentTenantId ? (
-          <DigestSubscriptionsPanel session={session} tenantId={currentTenantId} />
-        ) : (
-          <p className={`${styles.hint} ${styles.wide}`}>
-            Creá el negocio antes de configurar suscripciones al resumen periódico.
-          </p>
-        )}
+        {/* Branch `core`: panel de suscripciones a digest removido (módulo chatbot). */}
 
         <fieldset className={`${styles.fieldset} ${styles.wide}`}>
           <legend>Flujo post-cita</legend>

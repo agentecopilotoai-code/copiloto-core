@@ -11,7 +11,7 @@ import { GeneralTab } from './components/GeneralTab.jsx';
 import { QualificationTab } from './components/QualificationTab.jsx';
 import { SettingsTab } from './components/SettingsTab.jsx';
 import { ScheduleTab } from './components/ScheduleTab.jsx';
-import { BranchesTab } from './components/BranchesTab.jsx';
+// Branch `core`: BranchesTab removida (era del módulo chatbot).
 import { EscalationTab } from './components/EscalationTab.jsx';
 import { IntentsTab } from './components/IntentsTab.jsx';
 import { NotificationsTab } from './components/NotificationsTab.jsx';
@@ -133,7 +133,7 @@ function renderPanel({ activeTab, state, actions, session }) {
     case 'hours':
       return <ScheduleTab state={state} actions={actions} />;
     case 'branches':
-      return <BranchesTab state={state} session={session} />;
+      return null; // Branch `core`: branches tab removida.
     case 'escalation':
       return <EscalationTab state={state} actions={actions} />;
     case 'intenciones':

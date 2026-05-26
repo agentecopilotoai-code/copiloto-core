@@ -1,348 +1,107 @@
+/**
+ * Branch `core` — adminModules del sistema operativo.
+ *
+ * Solo platform admin (cross-tenant) + transversales del tenant. NINGÚN
+ * módulo de producto (GD/influencer/chatbot) está hardcodeado acá.
+ *
+ * Cuando se "instala" un módulo sobre el core, ese módulo agrega su
+ * propia entrada a esta lista (vía un hook de carga dinámica, TODO Fase 2).
+ */
 export const adminModules = [
+  // ─── Platform admin (cross-tenant) ────────────────────────────────────────
   {
     id: 'platform-fleet',
     label: 'Fleet · Tenants',
-    summary: 'Vista de todos los negocios de la plataforma: listado, filtros y detalle.',
-    scope: ['Listado de tenants', 'Filtros por status/país/vertical/búsqueda', 'KPIs agregados', 'Drawer de detalle y "Ver como tenant"'],
+    summary: 'Vista cross-tenant: listado, filtros, detalle y "Operar como tenant" (support_mode).',
+    scope: ['Listado de tenants', 'Filtros por status/país/vertical', 'KPIs agregados', 'Drawer de detalle', 'Entrada a support_mode auditado'],
     capability: 'platform.tenants.read',
   },
   {
     id: 'platform-system-health',
     label: 'System Health',
-    summary: 'Estado en vivo de la plataforma: latencia del bot, mensajes, procesos de fondo, estado de proveedores y alertas activas.',
-    scope: ['KPIs de salud', 'Latencia p50/p95/p99', 'Estado por servicio', 'Circuit breakers', 'Alertas derivadas'],
+    summary: 'Estado en vivo de la plataforma: latencia, procesos de fondo, proveedores y alertas activas.',
+    scope: ['KPIs de salud', 'Latencia p50/p95/p99', 'Estado por servicio', 'Circuit breakers'],
     capability: 'platform.system_health.read',
   },
   {
     id: 'platform-billing',
     label: 'Billing & MRR',
-    summary: 'Ingreso recurrente mensual agregado de todos los negocios: MRR por moneda, plan, negocio y país. Churn 30d y cobros fallidos.',
-    scope: ['MRR consolidado por moneda', 'Composición del MRR por plan', 'Tenants por plan', 'Churn 30d', 'Cobros fallidos por tenant'],
+    summary: 'Ingreso recurrente mensual agregado por moneda, plan, negocio y país.',
+    scope: ['MRR consolidado por moneda', 'Composición del MRR por plan', 'Tenants por plan', 'Churn 30d'],
     capability: 'platform.billing.read',
   },
   {
     id: 'platform-incidents',
     label: 'Incidentes',
-    summary: 'Alertas operativas de toda la plataforma con severidad y guía de resolución derivadas por tipo.',
-    scope: ['Lista de incidentes con severidad y tenant', 'Filtros por estado y tipo', 'KPIs de incidentes abiertos', 'Drawer con payload y timeline de entrega'],
+    summary: 'Alertas operativas de toda la plataforma con severidad y guía de resolución.',
+    scope: ['Lista de incidentes con severidad', 'Filtros por estado y tipo', 'Drawer con payload y timeline'],
     capability: 'platform.incidents.read',
   },
   {
     id: 'platform-fleet-dlq',
     label: 'Outbound DLQ',
-    summary: 'Mensajes salientes no entregados, agregados por negocio y motivo del error, con reintento masivo.',
-    scope: ['Fallos agregados por tenant', 'Distribución por error code', 'Filtros por ventana y error code', 'Reintento masivo por tenant con confirmación'],
+    summary: 'Mensajes salientes no entregados, agregados por negocio y motivo del error.',
+    scope: ['Fallos agregados por tenant', 'Distribución por error code', 'Reintento masivo con confirmación'],
     capability: 'platform.outbound_dlq.read',
   },
   {
     id: 'platform-runbooks',
     label: 'Runbooks',
     summary: 'Catálogo de guías operacionales con búsqueda, filtro por categoría y visor seguro.',
-    scope: ['Catálogo de guías', 'Búsqueda por título', 'Filtro por categoría', 'Visor con render seguro'],
+    scope: ['Catálogo de guías', 'Búsqueda', 'Filtro por categoría', 'Visor seguro'],
     capability: 'platform.runbooks.read',
   },
   {
     id: 'platform-roles-acl',
     label: 'Roles & ACL',
-    summary: 'Vista informativa de la matriz de permisos por capacidad × rol, agrupada por dominio, con búsqueda y panel de política de acceso.',
-    scope: ['Matriz capacidad × rol', 'Agrupación por dominio', 'Búsqueda de capacidades', 'Panel de política de roles'],
+    summary: 'Matriz de permisos del sistema operativo: capacidades del chrome del panel × rol. CRUD pendiente Fase 2.',
+    scope: ['Matriz capacidad × rol', 'Política de roles'],
     capability: 'platform.roles_acl.read',
   },
   {
     id: 'platform-feature-flags',
     label: 'Feature flags',
-    summary: 'Catálogo informativo de los feature flags del producto con búsqueda y filtro por tipo.',
-    scope: ['Catálogo de feature flags', 'Búsqueda por key/descripción', 'Filtro por tipo de flag', 'Estado default y rollout % informativo'],
+    summary: 'Catálogo de feature flags del sistema. CRUD pendiente Fase 2.',
+    scope: ['Catálogo de feature flags', 'Búsqueda', 'Estado default y rollout %'],
     capability: 'platform.feature_flags.read',
   },
   {
-    // Proveedores IA transversales — alimentan Influencer, Gestión
-    // Documental y futuros módulos que requieran LLM/Image/Video/TTS/STT.
-    // platform_owner only. El operador configura provider + modelo + rota
-    // la key por modalidad desde un único panel central.
+    // Proveedores IA transversales — alimentan cualquier módulo que se
+    // instale sobre el core (GD/influencer/chatbot/futuros).
     id: 'platform-ai-providers',
     label: 'Proveedores IA',
-    summary: 'Configuración cross-modalidad (llm/image/video/tts/stt) de los proveedores IA. Recurso transversal usado por Influencer, Gestión Documental y otros módulos. Solo platform_owner.',
+    summary: 'Configuración cross-modalidad (llm/image/video/tts/stt) de los proveedores IA. Recurso transversal — cualquier módulo del producto lo consume.',
     scope: ['Catálogo de modalidades', 'Provider + modelo por modalidad', 'Rotación de secret (write-only)', 'Hint público (últimos 4 chars)'],
     capability: 'platform.ai_providers.configure',
   },
-  {
-    id: 'dashboard',
-    label: 'Dashboard',
-    summary: 'Página de entrada para Owner / Admin: KPIs con variación semanal, alertas operativas y accesos rápidos.',
-    scope: ['KPIs con delta semanal', 'Alertas (handoffs, feedback, no-show)', 'Accesos rápidos a módulos'],
-    // BUG-117: el dashboard es Owner/Admin-only — `dashboard.read` (matrix.js)
-    // restringe a admin/owner. Antes usaba `analytics.tenant.read` (R para
-    // viewer/agent/manager también) y el item aparecía en la sidebar de roles
-    // que no deberían verlo. Los managers usan `manager-analytics`; los
-    // viewers usan `viewer-summary`.
-    capability: 'dashboard.read',
-  },
+
+  // ─── Tenant transversales ────────────────────────────────────────────────
   {
     id: 'tenant-setup',
-    label: 'Tenant Setup',
-    summary: 'Configuración general del tenant: negocio, horarios, escalamiento, voz del bot y privacidad.',
-    scope: ['Crear tenant', 'Editar settings', 'Horarios y escalamiento', 'PII policy y no_train'],
-  },
-  {
-    id: 'onboarding-wizard',
-    label: 'Onboarding self-service',
-    summary: 'Asistente guiado de 7 pasos para que un cliente nuevo configure su negocio solo, con verificación paso a paso.',
-    scope: ['Datos del negocio', 'Zona horaria, idioma y moneda', 'Canal WhatsApp con firma verificada', 'Plantilla de consentimiento', 'Catálogo mínimo de servicios', 'Horarios de atención', 'Prueba end-to-end del bot'],
-    capability: 'onboarding.run',
-  },
-  {
-    id: 'services',
-    label: 'Servicios',
-    summary: 'Catálogo de servicios del negocio con precio, duración e instrucciones.',
-    scope: ['Crear/editar servicios', 'Reordenar', 'Activar/desactivar', 'Instrucciones pre y post servicio'],
-    capability: 'services.read',
-  },
-  {
-    id: 'branches',
-    label: 'Sedes',
-    summary: 'Sedes con dirección, contacto y horario propios.',
-    scope: ['Crear y editar sedes', 'Selección de sede en booking', 'Recordatorios con dirección por sede', 'Filtrar analytics por sede'],
-    capability: 'branches.write',
-  },
-  {
-    id: 'packages',
-    label: 'Paquetes',
-    summary: 'Paquetes y planes de tratamiento multi-cita con saldo de sesiones.',
-    scope: ['Crear y editar paquetes', 'Sesiones, precio y vencimiento', 'Asignar paquetes al contacto', 'Consumo automático al completar cita'],
-    capability: 'packages.write',
-  },
-  {
-    id: 'subscriptions',
-    label: 'Suscripciones',
-    summary: 'Membresías con cobro recurrente vía Stripe o MercadoPago.',
-    scope: ['Crear planes mensuales/trimestrales/anuales', 'Listar suscriptores activos', 'Reintento automático en cobro fallido', 'Cancelación auditada'],
-    capability: 'subscriptions.write',
-  },
-  {
-    id: 'whatsapp',
-    label: 'WhatsApp',
-    summary: 'Onboarding y salud del canal WhatsApp/WABA.',
-    scope: ['Business ID', 'WABA ID', 'Phone Number ID', 'Referencias de token y app secret'],
-    capability: 'whatsapp.read',
-  },
-  {
-    id: 'social-channels',
-    label: 'Redes sociales',
-    summary: 'Canales Instagram DM y Facebook Messenger con la misma orquestación que WhatsApp.',
-    scope: ['Page ID / Instagram Account ID', 'Page access token', 'App secret y verify token', 'Ventana de servicio 24h por canal'],
-    capability: 'social_channels.write',
-  },
-  {
-    id: 'knowledge-storage',
-    label: 'Storage del Knowledge',
-    summary: 'Configura dónde se almacenan los documentos del bot. Compatible con S3 dedicado por tenant o storage local del entorno.',
-    scope: ['Backend local o S3', 'Bucket único por tenant', 'Credenciales fuera de DB', 'Prefix de documentos'],
-    capability: 'knowledge_storage.write',
-  },
-  {
-    id: 'knowledge-studio',
-    label: 'Knowledge Studio',
-    summary: 'Gestión de documentos, FAQ y políticas por tenant.',
-    scope: ['Estados draft/indexing/active/failed', 'Visibilidad por documento', 'Fuentes y archivos'],
-    capability: 'knowledge.read',
-  },
-  {
-    id: 'media-library',
-    label: 'Medios y promociones',
-    summary: 'Imágenes, videos y promociones que el bot puede enviar durante el booking.',
-    scope: ['Subir fotos, videos y PDFs', 'Etiquetar y buscar', 'Crear promociones', 'Vincular promoción → servicio'],
-    capability: 'media.write',
-  },
-  {
-    id: 'contacts',
-    label: 'Contactos',
-    summary: 'CRM básico: perfil de contacto con historial, etiquetas y notas internas.',
-    scope: ['Búsqueda y filtros', 'Perfil con historial', 'Etiquetas asignables', 'Notas internas'],
-    capability: 'contacts.view',
-  },
-  {
-    id: 'segments',
-    label: 'Segmentos',
-    summary: 'Segmentos automáticos para retención y reactivación de clientes.',
-    scope: ['Reglas dinámicas reutilizables', 'Segmentos preconfigurados', 'Previsualización en vivo', 'Snapshots manuales'],
-    capability: 'segments.write',
-  },
-  {
-    id: 'campaigns',
-    label: 'Campañas',
-    summary: 'Mensajes masivos a segmentos de contactos vía templates aprobados.',
-    scope: ['Partir de un segmento', 'Previsualizar destinatarios', 'Programar envío', 'Métricas de entrega'],
-    capability: 'campaigns.write',
-  },
-  {
-    id: 'operations-desk',
-    label: 'Operations Desk',
-    summary: 'Inbox operativo para conversaciones y handoff humano.',
-    scope: ['Conversaciones', 'Mensajes', 'Tomar/liberar handoff', 'Auditoría operacional'],
-    capability: 'conversations.view',
-  },
-  {
-    id: 'my-handoffs',
-    label: 'Mis handoffs',
-    summary: 'Cola de conversaciones escaladas a humano con filtro pre-aplicado al agente actual.',
-    scope: ['Cola de handoffs', 'Filtros Sin asignar / Mías', 'Tomar handoff', 'Liberar al bot'],
-    capability: 'conversations.view',
-  },
-  {
-    id: 'outbound-dlq',
-    label: 'Outbound DLQ',
-    summary: 'Mensajes salientes que no se pudieron entregar a WhatsApp.',
-    scope: ['Listar fallos por error_code', 'Ver payload y error de Meta', 'Reintentar envío manual', 'Alertas cuando supera umbral'],
-    capability: 'outbound_dlq.retry',
-  },
-  {
-    id: 'appointments',
-    label: 'Citas del día',
-    summary: 'Agenda del día para el agente: lista de citas con estado en vivo (confirmada, sin confirmar, atendida, no-show) y navegación entre días.',
-    scope: ['Lista de citas del día', 'Estados en vivo', 'Navegación Día anterior / Hoy / Mañana', 'Conteos del día (total, sin confirmar, atendidas, próxima)'],
-    capability: 'appointments.view',
-  },
-  {
-    id: 'go-live-readiness',
-    label: 'Go-live Readiness',
-    summary: 'Checklist automatizado para validar si un tenant puede entrar a producción controlada.',
-    scope: ['Tenant activo', 'Settings y WhatsApp', 'Retrieval smoke test', 'Handoff y auditoría'],
-    capability: 'go_live_readiness.read',
-  },
-  {
-    id: 'analytics',
-    label: 'Analítica',
-    summary: 'KPIs de conversaciones, citas, ingresos, retención y no-show del negocio.',
-    scope: ['Rangos 7d/30d/90d', 'Top intenciones y servicios', 'Evolución diaria', 'Distribución por estado'],
-    capability: 'analytics.tenant.read',
-  },
-  {
-    id: 'manager-analytics',
-    label: 'Analítica',
-    summary: 'Home del Manager: cómo va el negocio — KPIs, embudo de conversión por canal, rendimiento por agente y campañas recientes.',
-    scope: ['KPIs con variación de período', 'Embudo de conversión por canal', 'Rendimiento por agente', 'Resumen de campañas'],
-    capability: 'analytics.tenant.read',
-  },
-  {
-    id: 'digest-reports',
-    label: 'Reportes · Digest',
-    summary: 'Vista del manager para los resúmenes programados (diario / semanal): suscriptores por persona, cadencia y canal.',
-    scope: ['Suscriptores del digest', 'Cadencia diaria / semanal', 'Suscribir destinatario por email o WhatsApp', 'Activar / pausar suscripción'],
-    capability: 'digest.write',
-  },
-  {
-    id: 'audit',
-    label: 'Audit',
-    summary: 'Trazabilidad de cambios y acciones administrativas.',
-    scope: ['Logs de auditoría', 'Actor y entidad', 'Filtros por tenant', 'Evidencia para cumplimiento'],
-    capability: 'audit.read',
-  },
-  {
-    id: 'legal',
-    label: 'Legal',
-    summary: 'Páginas legales por negocio: Términos, Privacidad y Aviso de Consentimiento, con control de versión auditado.',
-    scope: ['Editor Markdown con preview', 'Publicación versionada (append-only)', 'Auditoría de publicaciones', 'Link público referenciado por el bot'],
-    capability: 'legal.write',
+    label: 'Configuración del tenant',
+    summary: 'Wizard de configuración base del tenant (datos institucionales, módulos activos, branding).',
+    scope: ['Datos institucionales', 'Activación de módulos', 'Branding/logo'],
+    capability: null,
   },
   {
     id: 'team',
     label: 'Equipo',
-    summary: 'Miembros, roles e invitaciones del negocio.',
-    scope: ['Invitar usuarios', 'Cambiar rol', 'Revocar acceso', 'Sincronización automática de permisos'],
+    summary: 'Gestión de usuarios del tenant y sus roles del chrome (owner/admin/manager/agent/viewer).',
+    scope: ['Listado de miembros', 'Invitar usuarios', 'Asignar/revocar roles'],
     capability: 'team.write',
   },
   {
-    id: 'viewer-summary',
-    label: 'Resumen',
-    summary: 'Vista del rol Viewer: resumen del negocio en modo solo lectura con KPIs y variación semanal.',
-    scope: ['KPIs con delta semanal (read-only)', 'Chip de período (Últimos 7 días)', 'Sin acciones de edición', 'Banner permanente "Modo solo lectura"'],
-    capability: 'analytics.tenant.read',
+    id: 'legal',
+    label: 'Legal',
+    summary: 'Aceptación de términos y configuración de políticas del tenant.',
+    scope: ['Aceptación de términos', 'Políticas de privacidad', 'Compliance'],
+    capability: 'legal.write',
   },
   {
-    id: 'viewer-analytics',
-    label: 'Analítica',
-    summary: 'Vista del rol Viewer: analítica del negocio en modo solo lectura, sin acciones de exportar ni editar.',
-    scope: ['KPIs por rango (7d/30d/90d/custom)', 'Tabs Resumen / Funnel / Campañas / Agentes', 'Sin acciones de escritura', 'Banner permanente "Modo solo lectura"'],
-    capability: 'analytics.tenant.read',
-  },
-  {
-    id: 'viewer-appointments',
-    label: 'Citas',
-    summary: 'Vista del rol Viewer: listado paginado de citas en solo lectura, con filtros por estado, rango de fechas y cliente, y exportación CSV.',
-    scope: ['Listado paginado de citas', 'Filtros por estado, rango de fechas y cliente', 'Exportar selección a CSV', 'Sin acciones de fila ni edición', 'Banner permanente "Modo solo lectura"'],
-    capability: 'appointments.view',
-  },
-  {
-    id: 'viewer-conversations',
-    label: 'Conversaciones',
-    summary: 'Vista del rol Viewer: lista de conversaciones del negocio en solo lectura. Sin envío de mensajes, sin handoff, sin iniciar nuevas conversaciones.',
-    scope: ['Lista de conversaciones', 'Tabs «Todas» / «Quejas» (read-only)', 'Sin composer ni acciones de handoff', 'Sin formulario «Iniciar conversación»', 'Banner permanente "Modo solo lectura"'],
-    capability: 'conversations.view',
-  },
-  // ─────────────────────────────────── MÓDULO INFLUENCER / Ravit Studio ────────────────────
-  // UI-INFLU-002. Las 6 vistas materializadas viven en `src/features/influencer/` y
-  // se implementan en UI-INFLU-003+. Aquí solo declaramos el catálogo + capability;
-  // el `moduleRegistry` apunta a placeholders mientras se construye cada vista.
-  //
-  // `influencer-entry` es un ITEM DE NAV en `TENANT_NAV` que sirve como
-  // entry-point al sub-tree `/t/{slug}/influencer/*` (que vive en su propio
-  // shell `InfluencerShell` con sub-nav distinta). NO renderiza un módulo:
-  // cuando el shell del tenant detecta este id en `onModuleSelect`, navega
-  // a la URL del influencer shell. Si alguien aterriza directo en
-  // `/t/{slug}/influencer-entry`, el componente registrado en
-  // `moduleRegistry` redirige al InfluencerShell con `<Navigate replace/>`.
-  // La visibilidad de este item en el menú depende de DOS gates:
-  //   1. capability `influencer.module.access` (matriz de permisos).
-  //   2. `tenant_modules.influencer.enabled=true` (consultado por el
-  //      `TenantShellRoute` vía `isInfluencerEnabled` y materializado
-  //      filtrando este id de `adminModules` cuando NO está activo).
-  {
-    id: 'influencer-entry',
-    label: 'Ravit Studio',
-    summary: 'Ravit Studio · entry-point al módulo de influencers de IA (personajes, contenido, calendario, créditos). Abre el sub-shell con su propia sub-nav.',
-    scope: ['Acceso al InfluencerShell', 'Sub-nav: Casting / Calendario / Biblioteca / Créditos', 'Visibilidad gated por `tenant_modules.influencer.enabled=true`'],
-    capability: 'influencer.module.access',
-  },
-  {
-    id: 'influencer-casting',
-    label: 'Casting',
-    summary: 'Ravit Studio · home del rol que ve los personajes IA del tenant con KPIs (posts, alcance, engagement).',
-    scope: ['Grid de personajes activos', 'KPIs cross-personajes', 'Filtros por categoría', 'CTA "Crear personaje" (gate por write)'],
-    capability: 'influencer.module.access',
-  },
-  {
-    id: 'influencer-calendar',
-    label: 'Calendario',
-    summary: 'Ravit Studio · calendario semanal/mensual cross-personajes con scheduling y aprobación de posts.',
-    scope: ['Vista Día/Semana/Mes', 'Filtro multi-personaje', 'Aprobar y publicar', 'Reprogramar/cancelar'],
-    capability: 'influencer.posts.schedule',
-  },
-  {
-    id: 'influencer-library',
-    label: 'Biblioteca',
-    summary: 'Ravit Studio · acceso al banco de medios reusando el módulo `media-library` existente.',
-    scope: ['Reuso de media-library para assets generados', 'Filtros por personaje y tipo'],
-    capability: 'influencer.module.access',
-  },
-  {
-    id: 'influencer-credits',
-    label: 'Créditos',
-    summary: 'Ravit Studio · balance del tenant + historial de movimientos + (admin/owner) top-up.',
-    scope: ['Balance actual + últimas 50 transacciones', 'Histórico de generaciones × créditos', 'CTA "Comprar créditos" (gate por topup)'],
-    capability: 'influencer.credits.read',
-  },
-  // ─── Módulo Gestión Documental (GD-UI EP-001..EP-013) ──────────────────
-  // Entry-point en la sidebar del producto principal. Visible solo si el
-  // tenant tiene `tenant_modules.gestion_documental.enabled=true` Y el
-  // usuario tiene al menos un rol GD (verificado por `hasAnyGdAccess`
-  // contra `gd-matrix.js`). Aparece como item top-level con su propio
-  // sub-shell `<GdShell />` y sub-navegación contextual al rol.
-  {
-    id: 'gd-entry',
-    label: 'Gestión Documental',
-    summary: 'Módulo de gestión documental institucional con IA asistida (radicación, PQRSD, correspondencia, firmas, TRD, expedientes, auditoría). Cumple Decreto 1166/2016 y Ley 1581/2012.',
-    scope: ['Acceso al GdShell', 'Sidebar rol-aware', 'Sub-routing /gd/*', 'Gate por tenant_modules.gestion_documental + rol GD'],
-    capability: 'gd.module.access',
+    id: 'audit',
+    label: 'Auditoría',
+    summary: 'Bitácora cross-módulo de eventos del tenant (auth, configuración, módulos).',
+    scope: ['Lista de eventos', 'Filtros por tipo/actor/fecha', 'Detalle del evento'],
+    capability: 'audit.read',
   },
 ];

@@ -6,12 +6,15 @@ import { MemoryRouter } from 'react-router-dom';
 import { adminModules } from '../modules.js';
 import { TenantShell } from './TenantShell.jsx';
 
+// Branch `core`: sin módulos de producto, el sidebar tenant solo expone
+// la sección "Configuración" (tenant-setup, team, legal, audit). El
+// módulo por default acá es tenant-setup.
 const baseProps = {
   profile: { name: 'Camila Rojas', roles: ['owner'] },
   permissions: { role: 'owner', can: () => true },
   modules: adminModules,
-  activeModule: { id: 'services', label: 'Servicios' },
-  activeModuleId: 'services',
+  activeModule: { id: 'tenant-setup', label: 'Configuración del tenant' },
+  activeModuleId: 'tenant-setup',
   onModuleSelect: () => {},
   tenantOptions: [{ id: 't1', slug: 'acme', display_name: 'Acme', role: 'owner' }],
   activeTenantId: 't1',
@@ -30,30 +33,28 @@ function renderShell(children, props = {}) {
 }
 
 describe('<TenantShell/>', () => {
-  it('pinta sidebar agrupada, topbar y children', () => {
+  it('pinta sidebar con sección "Configuración", topbar y children', () => {
     renderShell(<p>contenido del módulo</p>);
-    expect(screen.getByRole('heading', { name: 'Servicios' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Configuración del tenant' })).toBeInTheDocument();
     expect(screen.getByText('contenido del módulo')).toBeInTheDocument();
-    expect(screen.getByText('Negocio')).toBeInTheDocument();
+    expect(screen.getByText('Configuración')).toBeInTheDocument();
     expect(screen.getByText('Camila Rojas')).toBeInTheDocument();
   });
 
   it('marca el módulo activo con aria-current', () => {
     renderShell(<p>x</p>);
-    expect(screen.getByRole('button', { name: 'Servicios' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'Configuración del tenant' })).toHaveAttribute(
       'aria-current',
       'page',
     );
   });
 
-  it('dispara onModuleSelect al click en un item de navegación', async () => {
+  it('dispara onModuleSelect al click en "Equipo" del sidebar', async () => {
     const onModuleSelect = vi.fn();
     renderShell(<p>x</p>, { onModuleSelect });
-    // BUG-087: el botón "Contactos" se renderea tanto en sidebar como en
-    // ShellBottomNav (priority mobile rail). Tomamos el primero (sidebar).
-    const buttons = screen.getAllByRole('button', { name: 'Contactos' });
+    const buttons = screen.getAllByRole('button', { name: 'Equipo' });
     await userEvent.click(buttons[0]);
-    expect(onModuleSelect).toHaveBeenCalledWith('contacts');
+    expect(onModuleSelect).toHaveBeenCalledWith('team');
   });
 
   it('el tenant switcher queda deshabilitado con un solo tenant', () => {

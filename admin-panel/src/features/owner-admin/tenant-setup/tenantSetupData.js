@@ -26,7 +26,7 @@ export const wizardTabs = [
   { id: 'calificacion', label: 'Calificación' },
   { id: 'settings', label: 'Settings' },
   { id: 'hours', label: 'Horarios' },
-  { id: 'branches', label: 'Sedes' },
+  // Branch `core`: tab "Sedes" removida (módulo chatbot).
   { id: 'escalation', label: 'Escalamiento' },
   { id: 'intenciones', label: 'Intenciones' },
   { id: 'notificaciones', label: 'Notificaciones' },

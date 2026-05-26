@@ -246,3 +246,77 @@ no necesitan el prefix `/api`.
 | Core (chatbot base)  | `10-core.sql` (schema `app.*`)     | `app/api/v1/`    | ✅ stable  |
 | Influencer / Ravit   | `modules/influencer.sql`           | `app/influencer/`| ✅ stable  |
 | Gestión Documental   | `modules/gd.sql`                   | `app/gd/`        | ✅ stable  |
+
+## Branches del repositorio (modelo de deployment)
+
+El proyecto soporta **deployments parciales** vía branches dedicados que
+"montan" un subset de módulos sobre el core. La idea: el `core` es el
+**sistema operativo** sobre el cual cualquier producto se construye,
+sin que ningún producto modifique al core.
+
+| Branch              | Contiene                                                                 | Use case                                |
+| ------------------- | ------------------------------------------------------------------------ | --------------------------------------- |
+| `develop`           | Core + Chatbot + Influencer + GD (todos los módulos activos)             | Desarrollo full-stack                   |
+| `core`              | **Solo core** (auth, tenants, platform admin, AI providers, runbooks…)   | Baseline para futuros productos         |
+| `gestion-documental`| Core + GD (Chatbot/Influencer removidos)                                 | Deployment GD-only para gobierno        |
+| `chatbot-only`      | (futuro) Core + Chatbot                                                  | Deployment chatbot legacy               |
+| `influencer-only`   | (futuro) Core + Influencer (Ravit Studio)                                | Deployment Ravit Studio standalone      |
+
+### Branch `core` — qué contiene
+
+**Conserva** (sistema operativo):
+- `app/core/`, `app/db/`, `app/ai/`, `app/admin/`, `app/i18n/` — transversales.
+- `app/api/v1/handlers/{public, system, me, tenant_signup, tenant_user,
+   tenant_catalog, tenant_ops, tenant_manager, tenant_analytics,
+   platform_admin, public}_handlers.py` — endpoints transversales del core.
+- `app/platform_admin/admin_routes.py` — endpoints platform_owner para
+   AI providers y tenant_modules.
+- `admin-panel/src/features/platform/*` — TODO el panel del platform_owner.
+- `admin-panel/src/features/owner-admin/{tenant-setup, team, legal, audit}`
+   — transversales del tenant.
+- `admin-panel/src/features/account/` — "Mi cuenta".
+
+**Elimina** (productos):
+- `app/gd/`, `app/influencer/router*.py`, `app/chatbot/*.py` (excepto
+   utils LLM).
+- `admin-panel/src/features/{gd, influencer, agente, manager, viewer,
+   owner-admin/{services, contacts, …}}/` — todo lo de productos.
+
+### Cómo agregar un módulo sobre el core (Fase 2 — module discovery)
+
+Mientras la **carga dinámica de módulos** (TODO) no esté lista, agregar
+un módulo se hace así:
+
+1. **Backend**:
+   - Crear `app/<module>/` con `__init__.py` (con `MODULE_NAME`,
+     `ensure_module_enabled`), `router.py` (APIRouter con prefix
+     `/v1/<module>`), schemas, services, bootstrap.
+   - Agregar `<module>` al CHECK constraint de `app.tenant_modules.module`
+     en `infra/postgres/10-core.sql`.
+   - Crear `infra/postgres/modules/<module>.sql` con schema + RLS.
+   - En `app/main.py` agregar `from app.<module>.router import router as
+     <module>_router; api.include_router(<module>_router)`.
+
+2. **Frontend**:
+   - Crear `admin-panel/src/features/<module>/` con shells, pages,
+     services, hooks.
+   - Agregar entries a `admin-panel/src/app/modules.js` y
+     `admin-panel/src/app/moduleRegistry.js`.
+   - Agregar la sección al `TENANT_NAV` en `admin-panel/src/app/nav.js`.
+   - Si el módulo tiene su propio shell, agregar route en
+     `admin-panel/src/app/router.jsx` (mismo patrón que `GdShellRoute`).
+
+3. **Tests**: pytest backend + vitest frontend. Mínimo `_health`
+   endpoint debe responder 200 cuando activo, 404 cuando no.
+
+4. **Bootstrap**: `./scripts/bootstrap.sh --reset --yes --module=<module>`
+   debe levantar todo desde cero.
+
+### Fase 2 (futuro) — module discovery automático
+
+El objetivo es que agregar un módulo NO requiera tocar `main.py`,
+`modules.js`, `moduleRegistry.js` ni `nav.js`. Cada módulo declara su
+manifesto en `app/<module>/manifest.json` y un hook al arranque escanea
+`app/*/manifest.json` para auto-registrar routers + sidebar items.
+
+Pendiente de diseñar.
