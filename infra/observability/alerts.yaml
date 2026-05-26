@@ -1,81 +1,22 @@
+# Alertas de Prometheus para el branch `core`.
+#
+# M31 — alertas purgadas en el audit pass:
+#   - HighOutboundErrorRate (cpi_messages_total)
+#   - BotResponseLatencyP95High (cpi_response_latency_seconds_bucket)
+#   - WorkerQueueBacklog + SchedulerBehind (cpi_worker_queue_depth)
+#   - CircuitBreakerOpenSustained (cpi_circuit_breaker_state)
+#   - OutboundDLQGrowing (cpi_outbound_dlq_total)
+# Esas métricas pertenecían a módulos opt-in (whatsapp, chatbot, workers,
+# circuit breaker) que ya no viven en el core. Cuando un módulo se
+# instale y vuelva a exportar su métrica, re-introduce su alerta en su
+# propio bundle (ver `docs/ARCHITECTURE.md` § observabilidad).
+#
+# Las alertas que quedan son las del *core* (backup + /metrics liveness)
+# — todas con métrica viva en `app/services/metrics.py`.
 groups:
   - name: copilotoia.core
     interval: 30s
     rules:
-      - alert: HighOutboundErrorRate
-        expr: |
-          sum(rate(cpi_messages_total{direction="outbound",status="failed"}[5m]))
-            /
-          clamp_min(sum(rate(cpi_messages_total{direction="outbound"}[5m])), 1)
-            > 0.05
-        for: 5m
-        labels:
-          severity: page
-          team: copilotoia
-        annotations:
-          summary: "Más del 5% de mensajes outbound están fallando."
-          description: |
-            La tasa de fallo en envíos a Meta superó 5% durante 5 minutos. Revisa
-            credenciales del canal, ventana de 24h y el estado del circuit breaker.
-          runbook_url: docs/runbooks/rate-limit-meta-hit.md
-
-      - alert: BotResponseLatencyP95High
-        expr: |
-          histogram_quantile(
-            0.95,
-            sum by (le) (rate(cpi_response_latency_seconds_bucket[5m]))
-          ) > 5
-        for: 10m
-        labels:
-          severity: page
-          team: copilotoia
-        annotations:
-          summary: "Latencia P95 del bot > 5s sostenida."
-          description: |
-            Más del 5% de las respuestas tarda más de 5 segundos. Posible
-            saturación del LLM, RAG lento o presión sobre la base.
-          runbook_url: docs/runbooks/postgres-down.md
-
-      - alert: WorkerQueueBacklog
-        expr: max by (worker) (cpi_worker_queue_depth) > 1000
-        for: 5m
-        labels:
-          severity: page
-          team: copilotoia
-        annotations:
-          summary: "Cola del worker {{ $labels.worker }} > 1000 elementos."
-          description: |
-            El worker no está drenando la cola. Verifica si el proceso está vivo
-            y si Meta está aceptando los envíos.
-          runbook_url: docs/runbooks/worker-queue-backlog.md
-
-      - alert: CircuitBreakerOpenSustained
-        expr: max by (provider) (cpi_circuit_breaker_state) >= 2
-        for: 2m
-        labels:
-          severity: page
-          team: copilotoia
-        annotations:
-          summary: "Circuit breaker {{ $labels.provider }} OPEN > 2min."
-          description: |
-            El proveedor {{ $labels.provider }} acumuló suficientes fallos para
-            abrir el circuito y no se ha recuperado en 2 minutos. Considera
-            failover manual o degradación a template.
-          runbook_url: docs/runbooks/circuit-breaker-open-sustained.md
-
-      - alert: SchedulerBehind
-        expr: max(cpi_worker_queue_depth{worker="scheduler"}) > 100
-        for: 5m
-        labels:
-          severity: warning
-          team: copilotoia
-        annotations:
-          summary: "Scheduler atrasado más de 5 minutos."
-          description: |
-            La cola del scheduler superó 100 jobs sin procesar durante 5
-            minutos. Recordatorios y timeouts pueden estarse retrasando.
-          runbook_url: docs/runbooks/worker-queue-backlog.md
-
       # TASK-0064: dos guardias para la salud del backup cloud.
       # La métrica `cpi_backup_last_success_age_seconds` la expone el endpoint
       # `/metrics` calculando `extract(epoch from now() - max(finished_at))`
@@ -108,26 +49,6 @@ groups:
             dump podría no ser restaurable. Investiga el run en
             `app.backup_runs` y `app.operator_alerts(kind='backup_failure')`.
           runbook_url: docs/backup-policy.md
-
-      # TASK-0065: la DLQ outbound crece sostenidamente. La métrica
-      # ``cpi_outbound_dlq_total`` la incrementa ``event_worker`` cada vez que
-      # un envío a Meta termina con ``messages.status='failed'``. Una rampa de
-      # >5 fallos en 5 minutos indica problema sistémico (token vencido,
-      # quality_rating en RED, rate-limit) y exige intervención humana.
-      - alert: OutboundDLQGrowing
-        expr: sum(increase(cpi_outbound_dlq_total[5m])) > 5
-        for: 5m
-        labels:
-          severity: page
-          team: copilotoia
-        annotations:
-          summary: "DLQ outbound creciendo (>5 fallos en 5min)."
-          description: |
-            En los últimos 5 minutos hubo más de 5 envíos outbound que
-            terminaron en la DLQ. Revisa el panel Outbound DLQ por
-            ``error_code`` para identificar la causa (131026 = recipient
-            unreachable, 190 = token vencido, 80007 = rate limit).
-          runbook_url: docs/runbooks/meta-token-expired.md
 
       - alert: MetricsEndpointSilent
         expr: absent(up{job="copilotoia-core"}) or (max(up{job="copilotoia-core"}) == 0)
