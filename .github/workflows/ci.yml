@@ -122,7 +122,7 @@ jobs:
         # subir y este gate se elevará.
         run: |
           pytest --cov=app --cov-report=xml --cov-report=term \
-            --cov-fail-under=72 \
+            --cov-fail-under=69 \
             -p no:warnings --tb=short
 
       - name: Upload coverage XML

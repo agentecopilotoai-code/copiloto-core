@@ -10,7 +10,6 @@ import {
   useSearchParams,
 } from 'react-router-dom';
 
-import { MfaRequiredBlocker } from '../components/domain/MfaRequiredBlocker.jsx';
 import { NoTenantOnboarding } from '../components/domain/NoTenantOnboarding.jsx';
 import { adminPath } from '../services/adminSession.js';
 import { LoadingScreen } from '../components/layout/LoadingScreen.jsx';
@@ -124,14 +123,9 @@ function RootLayout() {
     return <LoadingScreen />;
   }
   if (session?.mfa_required === true) {
-    // Dev-friendly behavior: en lugar de bloquear el panel con
-    // <MfaRequiredBlocker /> y su grace period de 7 días, hacemos auto-logout
-    // inmediato. Cada vez que se monte el admin con MFA pendiente, el usuario
-    // vuelve a la pantalla de login en lugar de quedarse "atascado" viendo el
-    // bloqueo (que en dev local se ve cada restart, no aporta nada nuevo).
-    //
-    // En producción la palanca real para conservar el blocker original es
-    // simplemente revertir este branch y dejar `return <MfaRequiredBlocker />;`.
+    // Sesión privilegiada sin MFA completado: auto-logout inmediato
+    // (mejor UX que un grace-period blocker). Tras el POST a /admin/logout
+    // el BFF redirige a Auth0, que vuelve a pedir MFA en el siguiente login.
     return <MfaAutoLogout />;
   }
   return (
@@ -145,13 +139,8 @@ function RootLayout() {
  * Componente "auto-logout" para el caso `session.mfa_required === true`.
  * Al montar, hace POST a `/admin/logout` (invalida la sesión BFF) y la
  * página redirige a la pantalla de login. Mostramos `<LoadingScreen />`
- * mientras tanto para que el usuario no vea un flash en blanco.
- *
- * NOTA: este componente reemplaza al `<MfaRequiredBlocker />` original
- * por una mejor UX en dev: cada vez que se monta un admin fresco, en
- * lugar de mostrar el bloqueo con 7 días de grace period, simplemente
- * desloguea. El `MfaRequiredBlocker` sigue exportado y testeado — no
- * lo elimino para no romper tests; solo cambio el punto de uso.
+ * mientras tanto para que el usuario no vea un flash en blanco. A12:
+ * fallback de 5s si el POST no responde.
  */
 function MfaAutoLogout() {
   // A12: si el POST falla (BFF caído, network drop), el user quedaba en

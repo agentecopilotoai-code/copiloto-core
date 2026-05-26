@@ -214,33 +214,26 @@ export function ShellSidebar({
  * Si una sección no tiene icono propio, cae al fallback genérico (`svgDots`).
  */
 function iconForSection(section) {
+  // Solo las secciones del core (`app/nav.js`). Las labels históricas
+  // (`Inicio`, `Conversaciones`, `Hoy`, `Negocio`, `IA & Canales`,
+  // `Lectura`, `Audit global`) pertenecían a módulos opt-in purgados.
+  // Cuando un módulo opt-in se instale, agrega su switch case extendiendo
+  // este map (o lo movemos a un registry indexado por nombre).
   switch (section) {
-    case 'Inicio':
-      return svgHome();
-    case 'Conversaciones':
-      return svgChat();
-    case 'Hoy':
-      return svgCalendar();
-    case 'Negocio':
-      return svgBriefcase();
-    case 'IA & Canales':
-      return svgSparkles();
-    case 'Operación':
-      return svgListCheck();
-    case 'Configuración':
-      return svgCog();
-    case 'Lectura':
-      return svgEye();
     case 'Plataforma':
       return svgLayers();
     case 'Observability':
       return svgChart();
     case 'Operaciones':
       return svgListCheck();
-    case 'Audit global':
-      return svgShield();
+    case 'Runbooks':
+      return svgListCheck();
     case 'Acceso':
       return svgKey();
+    case 'Proveedores IA':
+      return svgSparkles();
+    case 'Configuración':
+      return svgCog();
     default:
       return svgDots();
   }
@@ -256,40 +249,6 @@ const SVG_PROPS = {
   strokeLinecap: 'round',
   strokeLinejoin: 'round',
 };
-
-function svgHome() {
-  return (
-    <svg {...SVG_PROPS} data-icon="home">
-      <path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z" />
-    </svg>
-  );
-}
-
-function svgChat() {
-  return (
-    <svg {...SVG_PROPS} data-icon="chat">
-      <path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-5.5A8 8 0 1 1 21 12z" />
-    </svg>
-  );
-}
-
-function svgCalendar() {
-  return (
-    <svg {...SVG_PROPS} data-icon="calendar">
-      <rect x="3" y="5" width="18" height="16" rx="2" />
-      <path d="M8 3v4M16 3v4M3 11h18" />
-    </svg>
-  );
-}
-
-function svgBriefcase() {
-  return (
-    <svg {...SVG_PROPS} data-icon="briefcase">
-      <rect x="3" y="7" width="18" height="13" rx="2" />
-      <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18" />
-    </svg>
-  );
-}
 
 function svgSparkles() {
   return (
@@ -317,15 +276,6 @@ function svgCog() {
   );
 }
 
-function svgEye() {
-  return (
-    <svg {...SVG_PROPS} data-icon="eye">
-      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
 function svgLayers() {
   return (
     <svg {...SVG_PROPS} data-icon="layers">
@@ -338,14 +288,6 @@ function svgChart() {
   return (
     <svg {...SVG_PROPS} data-icon="chart">
       <path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-7" />
-    </svg>
-  );
-}
-
-function svgShield() {
-  return (
-    <svg {...SVG_PROPS} data-icon="shield">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     </svg>
   );
 }

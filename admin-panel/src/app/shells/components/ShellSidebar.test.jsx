@@ -204,10 +204,11 @@ describe('<ShellSidebar/> — UI-019', () => {
   });
 
   it('pinta cada SVG section icon canónico + fallback dots para secciones desconocidas', () => {
+    // Solo las secciones del core branch (`app/nav.js`). Cuando un módulo
+    // opt-in se instale, agrega su section name + icono esperado aquí.
     const allSectionsNav = [
-      'Inicio', 'Conversaciones', 'Hoy', 'Negocio', 'IA & Canales',
-      'Operación', 'Configuración', 'Lectura', 'Plataforma',
-      'Observability', 'Operaciones', 'Audit global', 'Acceso',
+      'Plataforma', 'Observability', 'Operaciones', 'Runbooks',
+      'Acceso', 'Proveedores IA', 'Configuración',
       'Sección Desconocida',
     ].map((s, i) => ({
       section: s,
@@ -218,19 +219,13 @@ describe('<ShellSidebar/> — UI-019', () => {
     const icons = Array.from(document.querySelectorAll('[data-icon]')).map(
       (el) => el.getAttribute('data-icon'),
     );
-    expect(icons).toContain('home');
-    expect(icons).toContain('chat');
-    expect(icons).toContain('calendar');
-    expect(icons).toContain('briefcase');
-    expect(icons).toContain('sparkles');
-    expect(icons).toContain('list-check');
-    expect(icons).toContain('cog');
-    expect(icons).toContain('eye');
-    expect(icons).toContain('layers');
-    expect(icons).toContain('chart');
-    expect(icons).toContain('shield');
-    expect(icons).toContain('key');
-    expect(icons).toContain('dots'); // fallback
+    expect(icons).toContain('layers'); // Plataforma
+    expect(icons).toContain('chart'); // Observability
+    expect(icons).toContain('list-check'); // Operaciones + Runbooks
+    expect(icons).toContain('key'); // Acceso
+    expect(icons).toContain('sparkles'); // Proveedores IA
+    expect(icons).toContain('cog'); // Configuración
+    expect(icons).toContain('dots'); // fallback Sección Desconocida
   });
 
   it('userInitials: profile.name multi-palabra → primeras letras', () => {
