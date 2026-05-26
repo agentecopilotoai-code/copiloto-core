@@ -92,7 +92,11 @@ create table app.user_tenant_roles (
   tenant_id uuid not null references app.tenants(id) on delete cascade,
   -- Roles del CHROME del panel. Cada módulo opt-in declara sus propios
   -- roles específicos en sus propias tablas.
-  role text not null check (role in ('owner','admin','manager','agent','viewer','support')),
+  -- M20: alineado con `app.role` (seed más abajo). El rol 'support' del
+  -- check original no tenía seed ni call sites (la suplantación cross-tenant
+  -- se modela vía cookie `support_mode` + claim JWT, no como rol per-tenant).
+  -- `platform_owner` es global (profile) y no se asigna per-tenant.
+  role text not null check (role in ('owner','admin','manager','agent','viewer')),
   scopes text[] not null default '{}',
   is_default boolean not null default false,
   created_at timestamptz not null default now(),
@@ -267,52 +271,12 @@ create index ix_backup_runs_kind_status_finished
   on app.backup_runs(kind, status, finished_at desc)
   where finished_at is not null;
 
--- ─── Documentos legales del tenant ──────────────────────────────────────────
--- Términos y condiciones, política de privacidad, etc. Versionados: cada
--- update archiva la versión anterior automáticamente.
-
-create table app.tenant_legal_documents (
-  id uuid primary key default gen_random_uuid(),
-  tenant_id uuid not null references app.tenants(id) on delete cascade,
-  document_type text not null check (document_type in ('terms','privacy','dpa','custom')),
-  version integer not null default 1 check (version > 0),
-  title text not null,
-  content text not null,
-  status text not null default 'draft' check (status in ('draft','active','archived')),
-  effective_from timestamptz,
-  effective_until timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (tenant_id, document_type, version)
-);
-create index ix_tenant_legal_documents_active
-  on app.tenant_legal_documents(tenant_id, document_type)
-  where status = 'active';
-
-create or replace function app.tenant_legal_documents_archive_previous() returns trigger
-language plpgsql as $$
-begin
-  if NEW.status = 'active' then
-    update app.tenant_legal_documents
-       set status = 'archived', updated_at = now()
-     where tenant_id = NEW.tenant_id
-       and document_type = NEW.document_type
-       and id <> NEW.id
-       and status = 'active';
-  end if;
-  NEW.updated_at = now();
-  return NEW;
-end;
-$$;
-create trigger trg_tenant_legal_documents_archive
-  before insert or update on app.tenant_legal_documents
-  for each row execute function app.tenant_legal_documents_archive_previous();
-
-alter table app.tenant_legal_documents enable row level security;
-create policy tenant_legal_documents_tenant_scope on app.tenant_legal_documents
-  for all
-  using (tenant_id = app.current_tenant_id() or app.support_mode())
-  with check (tenant_id = app.current_tenant_id() or app.support_mode());
+-- M18/M19: la tabla `tenant_legal_documents` (con su trigger de archivado
+-- y políticas RLS) se removió durante el audit pass: no había `app/services/
+-- legal.py` (purgado en la limpieza del branch core) ni handler v1 que la
+-- consumiera, ni capabilities `legal.read/write` en `admin-panel/.../matrix.js`.
+-- Cuando un módulo opt-in "legal-pack" se instale, traerá su propio schema
+-- en `infra/postgres/modules/legal.sql` (ver docs/ARCHITECTURE.md).
 
 -- ─── Activación de módulos opt-in por tenant ───────────────────────────────
 -- El core NO conoce módulos específicos. El CHECK permite cualquier string
@@ -509,9 +473,10 @@ insert into app.capability (code, name, description, group_label, is_system) val
   ('tenant_setup.write', 'Editar configuración del tenant', null, 'Administración del tenant', true),
   ('team.read',          'Leer equipo', null, 'Administración del tenant', true),
   ('team.write',         'Gestionar equipo', null, 'Administración del tenant', true),
-  ('legal.read',         'Leer documentos legales', null, 'Administración del tenant', true),
-  ('legal.write',        'Editar documentos legales', null, 'Administración del tenant', true),
-  ('audit.read',         'Consultar auditoría', null, 'Administración del tenant', true),
+  -- M18: capabilities `legal.read/write` y `audit.read` removidas en el
+  -- audit pass: sin call sites en el core (ni en `admin-panel/.../matrix.js`
+  -- ni en handlers v1). Cuando un módulo opt-in agregue UI de docs legales
+  -- o lectura de audit logs, las re-introduce en su propio seed.
   ('platform.tenants.read',           'Listar tenants',                          null, 'Platform Owner', true),
   ('platform.tenants.write',          'Gestionar tenants',                       null, 'Platform Owner', true),
   ('platform.system_health.read',     'Ver salud de la plataforma',              null, 'Platform Owner', true),
@@ -531,24 +496,15 @@ insert into app.capability (code, name, description, group_label, is_system) val
 on conflict (code) do nothing;
 
 insert into app.role_capability (role_code, capability_code, access_level) values
-  ('viewer',  'legal.read',         'R'),
-  ('agent',   'legal.read',         'R'),
-  ('manager', 'legal.read',         'R'),
   ('manager', 'team.read',          'R'),
   ('admin',   'tenant_setup.read',  'R'),
   ('admin',   'tenant_setup.write', 'RW'),
   ('admin',   'team.read',          'R'),
   ('admin',   'team.write',         'RW'),
-  ('admin',   'legal.read',         'R'),
-  ('admin',   'legal.write',        'RW'),
-  ('admin',   'audit.read',         'R'),
   ('owner',   'tenant_setup.read',  'R'),
   ('owner',   'tenant_setup.write', 'RW'),
   ('owner',   'team.read',          'R'),
   ('owner',   'team.write',         'RW'),
-  ('owner',   'legal.read',         'R'),
-  ('owner',   'legal.write',        'RW'),
-  ('owner',   'audit.read',         'R'),
   ('platform_owner', 'platform.tenants.read',           'R'),
   ('platform_owner', 'platform.tenants.write',          'RW'),
   ('platform_owner', 'platform.system_health.read',     'R'),
