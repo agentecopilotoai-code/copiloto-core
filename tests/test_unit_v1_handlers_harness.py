@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 
 # ─── FakeConn — asyncpg.Connection mock con queries grabadas ──────────────
@@ -1705,3 +1706,314 @@ def test_current_user_id_existing_user_skips_pending_lookup():
     fetchrow_calls = [c for c in conn.calls if c[0] == 'fetchrow']
     assert len(fetchrow_calls) == 1
     assert 'auth_subject=$1' in fetchrow_calls[0][1]
+
+
+# ─── M59 — add_tenant_member con Auth0 wired ─────────────────────────────
+
+
+def test_add_tenant_member_auth0_invited(monkeypatch):
+    """Auth0 configured + user nuevo → invita + crea user con auth_subject real."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        add_tenant_member, TenantMemberAdd,
+    )
+    from app.services import auth0_admin
+    tid = uuid4()
+    uid = uuid4()
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    async def fake_invite(**kw):
+        return {
+            'user': {'user_id': 'auth0|new-real-id', 'email': kw['email']},
+            'reused_existing': False,
+            'invitation_ticket_url': 'https://test.auth0.com/u/reset?abc',
+        }
+    monkeypatch.setattr(auth0_admin, 'invite_user', fake_invite)
+
+    conn = FakeConn(
+        fetchval=[1],
+        fetchrow=[None, {'id': uid, 'email': 'new@x.co'}],
+        execute=['OK', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberAdd(email='new@x.co', role='admin', is_default=False)
+    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    assert result['auth0']['status'] == 'invited'
+    assert result['auth0']['user_id'] == 'auth0|new-real-id'
+    assert result['auth0']['invitation_ticket_url'].startswith('https://')
+    # El INSERT en app.users debe usar el auth_subject REAL (no pending|).
+    insert_call = next(c for c in conn.calls if 'insert into app.users' in c[1])
+    assert insert_call[2][0] == 'auth0|new-real-id'
+    # status='active' porque ya está en Auth0 (no 'invited' que es para pending).
+    assert insert_call[2][3] == 'active'
+
+
+def test_add_tenant_member_auth0_reused_existing(monkeypatch):
+    """Email ya estaba en Auth0 → reusa el user. status='reused_existing'."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        add_tenant_member, TenantMemberAdd,
+    )
+    from app.services import auth0_admin
+    tid = uuid4()
+    uid = uuid4()
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    async def fake_invite(**kw):
+        return {
+            'user': {'user_id': 'auth0|existing-id', 'email': kw['email']},
+            'reused_existing': True,
+            'invitation_ticket_url': None,
+        }
+    monkeypatch.setattr(auth0_admin, 'invite_user', fake_invite)
+
+    conn = FakeConn(
+        fetchval=[1],
+        fetchrow=[None, {'id': uid, 'email': 'existing@x.co'}],
+        execute=['OK', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberAdd(email='existing@x.co', role='admin', is_default=False)
+    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    assert result['auth0']['status'] == 'reused_existing'
+
+
+def test_add_tenant_member_auth0_skipped_when_not_configured(monkeypatch):
+    """Sin Auth0 configurado → modo LOCAL ONLY, status='skipped', pending|hash."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        add_tenant_member, TenantMemberAdd,
+    )
+    from app.services import auth0_admin
+    tid = uuid4()
+    uid = uuid4()
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: False)
+
+    conn = FakeConn(
+        fetchval=[1],
+        fetchrow=[None, {'id': uid, 'email': 'local@x.co'}],
+        execute=['OK', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberAdd(email='local@x.co', role='admin', is_default=False)
+    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    assert result['auth0']['status'] == 'skipped'
+    assert result['auth0']['user_id'] is None
+    # auth_subject = pending|hash → M57 lo reconcilia después.
+    insert_call = next(c for c in conn.calls if 'insert into app.users' in c[1])
+    assert insert_call[2][0].startswith('pending|')
+
+
+def test_add_tenant_member_auth0_error_falls_back_to_local(monkeypatch):
+    """Auth0 API error → flow sigue en modo LOCAL (no aborta), status='error'."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        add_tenant_member, TenantMemberAdd,
+    )
+    from app.services import auth0_admin
+    tid = uuid4()
+    uid = uuid4()
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    async def boom(**kw):
+        raise auth0_admin.Auth0ApiError(500, '{"error":"oops"}')
+    monkeypatch.setattr(auth0_admin, 'invite_user', boom)
+
+    conn = FakeConn(
+        fetchval=[1],
+        fetchrow=[None, {'id': uid, 'email': 'down@x.co'}],
+        execute=['OK', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberAdd(email='down@x.co', role='admin', is_default=False)
+    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    assert result['auth0']['status'] == 'error'
+    assert 'oops' in result['auth0']['error']
+    # Pero la membresía local SÍ se creó (no aborta).
+    assert result['user_id'] == str(uid)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M59 — Auth0 admin HTTP endpoints (block / unblock / reset_mfa / delete)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_auth0_admin_404_when_user_not_found(monkeypatch):
+    """Si no existe el `app.users.id`, todos los endpoints devuelven 404."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        block_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+    monkeypatch.setattr(auth0_admin, 'block_user',
+                        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError('should not call')))
+    conn = FakeConn(fetchrow=[None])
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(block_user_in_auth0(uuid4(), req, conn=conn))
+    assert exc.value.status_code == 404
+    assert 'user_not_found' in exc.value.detail
+
+
+def test_auth0_admin_409_when_user_pending(monkeypatch):
+    """Si `auth_subject = 'pending|...'` (invitee sin login real), 409."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        reset_mfa_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+    conn = FakeConn(fetchrow=[
+        {'auth_subject': 'pending|abc123', 'email': 'pend@x.co'},
+    ])
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(reset_mfa_in_auth0(uuid4(), req, conn=conn))
+    assert exc.value.status_code == 409
+    assert 'pending' in exc.value.detail.lower()
+
+
+def test_auth0_admin_501_when_not_configured(monkeypatch):
+    """Si Auth0 Management API no está configurado → 501."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        unblock_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: False)
+    conn = FakeConn()
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(unblock_user_in_auth0(uuid4(), req, conn=conn))
+    assert exc.value.status_code == 501
+    assert 'auth0_management_not_configured' in exc.value.detail
+
+
+def test_auth0_admin_block_ok(monkeypatch):
+    """Happy path: block resuelve auth_subject + llama auth0_admin.block_user + audita."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        block_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+    called = {}
+
+    async def fake_block(user_id):
+        called['user_id'] = user_id
+    monkeypatch.setattr(auth0_admin, 'block_user', fake_block)
+
+    uid = uuid4()
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|abc', 'email': 'u@x.co'}],
+        execute=['OK'],  # audit insert
+    )
+    req = _fake_request(roles=['platform_owner'])
+    asyncio.run(block_user_in_auth0(uid, req, conn=conn))
+    assert called == {'user_id': 'auth0|abc'}
+    # El audit insert debe haber ocurrido.
+    assert any('insert into app.audit' in c[1].lower()
+               or 'audit' in c[1].lower() for c in conn.calls)
+
+
+def test_auth0_admin_unblock_ok(monkeypatch):
+    from app.api.v1.handlers.platform_admin_handlers import (
+        unblock_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+    called = {}
+
+    async def fake_unblock(user_id):
+        called['user_id'] = user_id
+    monkeypatch.setattr(auth0_admin, 'unblock_user', fake_unblock)
+
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|xyz', 'email': 'u@x.co'}],
+        execute=['OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    asyncio.run(unblock_user_in_auth0(uuid4(), req, conn=conn))
+    assert called == {'user_id': 'auth0|xyz'}
+
+
+def test_auth0_admin_reset_mfa_ok(monkeypatch):
+    from app.api.v1.handlers.platform_admin_handlers import (
+        reset_mfa_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+    called = {}
+
+    async def fake_reset(user_id):
+        called['user_id'] = user_id
+    monkeypatch.setattr(auth0_admin, 'reset_mfa', fake_reset)
+
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|mfa-user', 'email': 'm@x.co'}],
+        execute=['OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    asyncio.run(reset_mfa_in_auth0(uuid4(), req, conn=conn))
+    assert called == {'user_id': 'auth0|mfa-user'}
+
+
+def test_auth0_admin_delete_ok_marks_user_pending(monkeypatch):
+    """DELETE en Auth0 + marca local user como pending|<hex> + audita."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        delete_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    async def fake_delete(user_id):
+        return None
+    monkeypatch.setattr(auth0_admin, 'delete_user', fake_delete)
+
+    uid = uuid4()
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|del-me', 'email': 'd@x.co'}],
+        execute=['OK', 'OK'],  # update pending + audit
+    )
+    req = _fake_request(roles=['platform_owner'])
+    asyncio.run(delete_user_in_auth0(uid, req, conn=conn))
+    update_call = next(c for c in conn.calls
+                       if 'update app.users' in c[1] and 'auth_subject' in c[1])
+    # Primer arg del UPDATE debe ser `pending|<uid.hex>`.
+    assert update_call[2][0] == f'pending|{uid.hex}'
+
+
+def test_auth0_admin_block_502_on_auth0_error(monkeypatch):
+    """Si auth0_admin levanta Auth0ApiError → 502."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        block_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    async def boom(_user_id):
+        raise auth0_admin.Auth0ApiError(500, '{"error":"upstream"}')
+    monkeypatch.setattr(auth0_admin, 'block_user', boom)
+
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|err', 'email': 'e@x.co'}],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(block_user_in_auth0(uuid4(), req, conn=conn))
+    assert exc.value.status_code == 502
+    assert 'auth0_block_failed' in exc.value.detail
+
+
+def test_auth0_admin_delete_502_on_auth0_error(monkeypatch):
+    from app.api.v1.handlers.platform_admin_handlers import (
+        delete_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    async def boom(_user_id):
+        raise auth0_admin.Auth0ApiError(404, '{"error":"not found"}')
+    monkeypatch.setattr(auth0_admin, 'delete_user', boom)
+
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|gone', 'email': 'g@x.co'}],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(delete_user_in_auth0(uuid4(), req, conn=conn))
+    assert exc.value.status_code == 502
+    assert 'auth0_delete_failed' in exc.value.detail

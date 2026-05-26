@@ -315,14 +315,29 @@ async def add_tenant_member(
     _acl: None = Depends(require_tenant_management),  # M55
     conn: asyncpg.Connection = Depends(get_db),
 ) -> dict:
-    """Agregar miembro al tenant. Si el email no existe en `app.users` se
-    crea una fila pending (auth_subject = `pending|<hash>`); cuando ese
-    user loguea por primera vez, `current_user_id_from_request` lo
-    reconcilia automáticamente.
+    """Agregar miembro al tenant.
 
-    BRANCH `core`: el reclamo pending se hace al primer login del invitado
-    (ver `app.api.v1._helpers.me_utils.current_user_id_from_request`).
+    M59 — orquesta dos sistemas:
+
+    (1) Auth0 (si está configurado vía `auth0_service_client_id` +
+        `auth0_service_client_secret_file`): crea el user en Auth0
+        + emite ticket de password-change (Auth0 manda email con
+        magic link de welcome al invitado). Idempotente: si el
+        email ya existe en Auth0, reusa esa cuenta.
+
+    (2) DB local (`app.users` + `app.user_tenant_roles`): registra
+        la membresía. Si Auth0 estaba configurado, usa el
+        `user_id` real (`auth0|...`) como `auth_subject`. Si NO,
+        cae al placeholder `pending|<hash>` y M57 reconcilia al
+        primer login del invitado.
+
+    Response incluye `auth0` con el resultado (`invited` /
+    `reused_existing` / `skipped`) + opcional `invitation_ticket_url`
+    para que la UI pueda mostrarlo si Auth0 no manda el email
+    automático (tiers gratuitos sin SMTP custom).
     """
+    from app.services import auth0_admin  # noqa: PLC0415
+
     # ¿Existe el tenant?
     tenant_exists = await conn.fetchval(
         'select 1 from app.tenants where id = $1 and deleted_at is null',
@@ -331,23 +346,50 @@ async def add_tenant_member(
     if not tenant_exists:
         raise HTTPException(404, 'tenant_not_found')
 
+    # ─── (1) Auth0 ────────────────────────────────────────────────────
+    auth0_user_id: str | None = None
+    auth0_status = 'skipped'  # 'invited' | 'reused_existing' | 'skipped' | 'error'
+    auth0_error: str | None = None
+    invitation_ticket_url: str | None = None
+    if auth0_admin.is_configured():
+        try:
+            display_name = payload.display_name or payload.email.split('@', 1)[0]
+            result = await auth0_admin.invite_user(
+                email=payload.email, name=display_name,
+            )
+            auth0_user_id = result['user']['user_id']
+            auth0_status = 'reused_existing' if result['reused_existing'] else 'invited'
+            invitation_ticket_url = result.get('invitation_ticket_url')
+        except auth0_admin.Auth0NotConfiguredError:
+            # Race: settings cambiaron entre is_configured() y el call.
+            auth0_status = 'skipped'
+        except auth0_admin.Auth0ApiError as exc:
+            # No abortar el flow — el user todavía puede signuparse a mano.
+            # Audit-loggeamos el error para diagnóstico.
+            auth0_status = 'error'
+            auth0_error = str(exc)[:200]
+
+    # ─── (2) DB local ─────────────────────────────────────────────────
     # Lookup user por email (case-insensitive — `app.users.email` es citext).
     user_row = await conn.fetchrow(
         'select id, email from app.users where email = $1', payload.email,
     )
     if user_row is None:
-        # Pending: creamos una fila placeholder. El sub real se llena al
-        # primer login Auth0 del invitado.
-        import hashlib
-        pending_sub = f'pending|{hashlib.sha256(payload.email.encode()).hexdigest()[:32]}'
+        # auth_subject = real de Auth0 (si lo tenemos) o pending|hash.
+        # `make_pending_auth_subject` es determinístico → M57 matchea
+        # cuando el user se loguea real.
+        auth_subject = auth0_user_id or auth0_admin.make_pending_auth_subject(
+            payload.email,
+        )
         user_row = await conn.fetchrow(
             '''
             insert into app.users (auth_subject, email, display_name, status)
-            values ($1, $2, $3, 'invited')
+            values ($1, $2, $3, $4)
             returning id, email
             ''',
-            pending_sub, payload.email,
+            auth_subject, payload.email,
             payload.display_name or payload.email.split('@', 1)[0],
+            'invited' if not auth0_user_id else 'active',
         )
 
     await conn.execute(
@@ -365,7 +407,12 @@ async def add_tenant_member(
         action='tenant.member_added',
         entity_type='user_tenant_role',
         entity_id=f'{user_row["id"]}:{tenant_id}:{payload.role}',
-        metadata={'email': payload.email, 'role': payload.role},
+        metadata={
+            'email': payload.email, 'role': payload.role,
+            'auth0_status': auth0_status,
+            'auth0_user_id': auth0_user_id,
+            'auth0_error': auth0_error,
+        },
     )
     return {
         'user_id': str(user_row['id']),
@@ -373,6 +420,15 @@ async def add_tenant_member(
         'email': str(user_row['email']),
         'role': payload.role,
         'is_default': payload.is_default,
+        # M59 — info del invite Auth0 para que la UI pueda mostrar
+        # mensaje específico ("se mandó email", "ya existía y se
+        # vinculó", "Auth0 no está configurado", etc).
+        'auth0': {
+            'status': auth0_status,           # invited|reused_existing|skipped|error
+            'user_id': auth0_user_id,
+            'invitation_ticket_url': invitation_ticket_url,  # URL para forward manual
+            'error': auth0_error,
+        },
     }
 
 
@@ -448,6 +504,14 @@ async def remove_tenant_member(
     _acl: None = Depends(require_tenant_management),  # M55
     conn: asyncpg.Connection = Depends(get_db),
 ) -> None:
+    """Revoca membresía del user en este tenant.
+
+    M59 — solo borra `user_tenant_roles` (membresía LOCAL). NO bloquea
+    al user en Auth0 — sigue pudiendo loguearse a sus OTROS tenants
+    donde aún tiene membresía. Si el caller necesita ban total, usar
+    los endpoints separados de Auth0 admin (TODO: `POST
+    /v1/platform/users/{user_id}/block` — fuera del scope de M59).
+    """
     result = await conn.execute(
         'delete from app.user_tenant_roles where user_id = $1 and tenant_id = $2',
         user_id, tenant_id,
@@ -758,4 +822,192 @@ async def delete_feature_flag(
         actor_id=getattr(request.state, 'actor_id', None),
         action='platform.feature_flag.deleted',
         entity_type='feature_flag', entity_id=key,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Auth0 admin per-user (M59 — exposición HTTP de auth0_admin)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Cross-tenant: solo platform_owner. Operaciones destructivas sobre la
+# identidad del user en Auth0 (no su membresía local — para eso usar
+# DELETE /v1/tenants/{tid}/members/{uid}).
+#
+#   POST   /v1/platform/users/{user_id}/auth0/block      — block login
+#   POST   /v1/platform/users/{user_id}/auth0/unblock    — unblock
+#   POST   /v1/platform/users/{user_id}/auth0/reset-mfa  — limpia MFA enrollments
+#   DELETE /v1/platform/users/{user_id}/auth0            — borra de Auth0 (GDPR)
+#
+# `user_id` es el UUID local de `app.users`. El handler lookups
+# `auth_subject` y delega a `app.services.auth0_admin`. Si el user
+# es `pending|xxx` (invitado, nunca loggeado) o si Auth0 no está
+# configurado, devuelve 409 explicando el estado.
+
+
+async def _resolve_auth0_subject(
+    conn: asyncpg.Connection, user_id: UUID,
+) -> str:
+    """Lookup `auth_subject` del local user_id. Levanta:
+    - 404 si no existe.
+    - 409 si es `pending|xxx` (no ha hecho login real todavía).
+    """
+    row = await conn.fetchrow(
+        'select auth_subject, email from app.users where id = $1',
+        user_id,
+    )
+    if row is None:
+        raise HTTPException(404, 'user_not_found')
+    auth_subject = row['auth_subject']
+    if not auth_subject or auth_subject.startswith('pending|'):
+        raise HTTPException(
+            409, 'user_not_in_auth0_yet — pending invitation; '
+            'no Auth0 identity to mutate.',
+        )
+    return auth_subject
+
+
+def _require_auth0_configured() -> None:
+    """Levanta 501 si Auth0 Management API no está wired (settings missing)."""
+    from app.services import auth0_admin  # noqa: PLC0415
+    if not auth0_admin.is_configured():
+        raise HTTPException(
+            501,
+            'auth0_management_not_configured — set '
+            'AUTH0_SERVICE_CLIENT_ID + AUTH0_SERVICE_CLIENT_SECRET[_FILE]',
+        )
+
+
+@platform_admin_router.post(
+    '/platform/users/{user_id}/auth0/block',
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def block_user_in_auth0(
+    user_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> None:
+    """Bloquea login del user en Auth0. Idempotente.
+
+    Las sesiones ACTIVAS no se invalidan (JWT siguen valid hasta exp);
+    para revocar también las sesiones en flight, usar endpoint separado
+    (TODO `POST /v1/platform/users/{uid}/sessions/revoke-all`).
+    """
+    from app.services import auth0_admin  # noqa: PLC0415
+    _require_auth0_configured()
+    auth_subject = await _resolve_auth0_subject(conn, user_id)
+    try:
+        await auth0_admin.block_user(auth_subject)
+    except auth0_admin.Auth0ApiError as exc:
+        raise HTTPException(502, f'auth0_block_failed: {exc!s}'[:300]) from exc
+    await audit(
+        conn, tenant_id=None, actor_type='user',
+        actor_id=getattr(request.state, 'actor_id', None),
+        action='platform.auth0.user_blocked',
+        entity_type='user', entity_id=str(user_id),
+        metadata={'auth_subject': auth_subject},
+    )
+
+
+@platform_admin_router.post(
+    '/platform/users/{user_id}/auth0/unblock',
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def unblock_user_in_auth0(
+    user_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> None:
+    """Desbloquea login en Auth0 (revierte `blocked=true`)."""
+    from app.services import auth0_admin  # noqa: PLC0415
+    _require_auth0_configured()
+    auth_subject = await _resolve_auth0_subject(conn, user_id)
+    try:
+        await auth0_admin.unblock_user(auth_subject)
+    except auth0_admin.Auth0ApiError as exc:
+        raise HTTPException(502, f'auth0_unblock_failed: {exc!s}'[:300]) from exc
+    await audit(
+        conn, tenant_id=None, actor_type='user',
+        actor_id=getattr(request.state, 'actor_id', None),
+        action='platform.auth0.user_unblocked',
+        entity_type='user', entity_id=str(user_id),
+        metadata={'auth_subject': auth_subject},
+    )
+
+
+@platform_admin_router.post(
+    '/platform/users/{user_id}/auth0/reset-mfa',
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def reset_mfa_in_auth0(
+    user_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> None:
+    """Limpia TODOS los MFA enrollments del user en Auth0.
+
+    Si `MFA_ENFORCEMENT_ENABLED=true` (default), el user vuelve a
+    enrolar MFA en su próximo login. Usar cuando el user perdió su
+    factor (extravió el teléfono, etc).
+    """
+    from app.services import auth0_admin  # noqa: PLC0415
+    _require_auth0_configured()
+    auth_subject = await _resolve_auth0_subject(conn, user_id)
+    try:
+        await auth0_admin.reset_mfa(auth_subject)
+    except auth0_admin.Auth0ApiError as exc:
+        raise HTTPException(502, f'auth0_reset_mfa_failed: {exc!s}'[:300]) from exc
+    await audit(
+        conn, tenant_id=None, actor_type='user',
+        actor_id=getattr(request.state, 'actor_id', None),
+        action='platform.auth0.user_mfa_reset',
+        entity_type='user', entity_id=str(user_id),
+        metadata={'auth_subject': auth_subject},
+    )
+
+
+@platform_admin_router.delete(
+    '/platform/users/{user_id}/auth0',
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def delete_user_in_auth0(
+    user_id: UUID,
+    request: Request,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> None:
+    """Borra el user de Auth0 (irreversible — GDPR-style).
+
+    Preferir `block` salvo que el user solicite explícitamente
+    deletion. NO toca `app.users` local; ese borrado va por
+    pipeline de retention separado.
+
+    Side-effect: el user ya NO puede loguearse. Tampoco aparece más
+    en Auth0 logs históricos. Si re-aparece luego (mismo email →
+    nuevo signup), Auth0 le asigna un `user_id` distinto.
+    """
+    from app.services import auth0_admin  # noqa: PLC0415
+    _require_auth0_configured()
+    auth_subject = await _resolve_auth0_subject(conn, user_id)
+    try:
+        await auth0_admin.delete_user(auth_subject)
+    except auth0_admin.Auth0ApiError as exc:
+        raise HTTPException(502, f'auth0_delete_failed: {exc!s}'[:300]) from exc
+    # Marcamos `auth_subject` como pending para que la fila local
+    # no quede colgada apuntando a un Auth0 ID inexistente. M57
+    # reconciliará si el user re-signa-up con el mismo email.
+    await conn.execute(
+        '''update app.users
+              set auth_subject = $1, status = 'invited', updated_at = now()
+            where id = $2''',
+        f'pending|{user_id.hex}', user_id,
+    )
+    await audit(
+        conn, tenant_id=None, actor_type='user',
+        actor_id=getattr(request.state, 'actor_id', None),
+        action='platform.auth0.user_deleted',
+        entity_type='user', entity_id=str(user_id),
+        metadata={'auth_subject': auth_subject},
     )

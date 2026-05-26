@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
     auth0_jwks_cache_ttl_seconds: int = 300
 
+    # M59 — Auth0 Management API (M2M app `copilotoia-service-m2m`).
+    # Cuando estos están seteados, `app.services.auth0_admin` puede
+    # invitar usuarios reales (email + password reset link), bloquear
+    # logins, resetear MFA, borrar users de Auth0. Sin esto, los
+    # handlers de members funcionan en modo LOCAL ONLY (sólo
+    # `app.user_tenant_roles`, sin propagar a Auth0).
+    auth0_service_client_id: str | None = None
+    auth0_service_client_secret: str | None = None
+    auth0_service_client_secret_file: str | None = None
+    # Cache TTL del Management API token (Auth0 los emite con 24h
+    # por default, pero refrescamos un poco antes por safety).
+    auth0_mgmt_token_cache_ttl_seconds: int = 60 * 60 * 20  # 20h
+
     # MFA enforcement para roles privilegiados (admin/owner/platform_owner).
     # Setear False solo en envs cuya tier Auth0 no incluye MFA add-on.
     mfa_enforcement_enabled: bool = True
