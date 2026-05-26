@@ -1,6 +1,0 @@
-categoria,procedimiento,descripcion,precio_cop,duracion_minutos,requiere_diagnostico,notas
-Paquetes,Combo manicure + pedicure tradicional,"Manicure y pedicure tradicional en una sola cita",62000,85,no,"Ahorra $4.000 frente a servicios por separado; sujeto a disponibilidad de agenda"
-Paquetes,Combo manicure + pedicure semipermanente,"Manicure y pedicure con esmaltado semipermanente",88000,110,no,"Ahorro de $18.000 frente a servicios por separado"
-Paquetes,Paquete belleza express,"Cepillado, manicure tradicional y pedicure tradicional",95000,120,no,"Ideal para eventos; precio especial por combo; reservar con anticipación"
-Paquetes,Paquete novia o quinceañera,"Cepillado o recogido, manicure semipermanente y pedicure semipermanente",190000,180,sí,"Requiere reserva anticipada mínimo 1 semana; incluye prueba de peinado"
-Paquetes,Día de spa cabello y manos,"Hidratación capilar + manicure spa",100000,90,no,"Experiencia de relajación completa; cupos limitados por día"
