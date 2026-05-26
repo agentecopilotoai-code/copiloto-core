@@ -42,8 +42,9 @@ import asyncpg
 from fastapi import Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.v1.routes import platform_admin_router
+from app.api.v1.routes import platform_admin_router, tenant_management_router
 from app.api.v1.schemas import TenantCreate, TenantUpdate
+from app.core.security import require_tenant_management
 from app.db.pool import get_db, record_to_dict
 from app.services import locale as locale_service
 from app.services.audit import audit
@@ -267,9 +268,10 @@ async def patch_tenant_status(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@platform_admin_router.get('/tenants/{tenant_id}/members')
+@tenant_management_router.get('/tenants/{tenant_id}/members')
 async def list_tenant_members(
     tenant_id: UUID,
+    _acl: None = Depends(require_tenant_management),  # M55 ACL: platform_owner OR owner/admin
     conn: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Listar miembros del tenant + sus roles."""
@@ -302,7 +304,7 @@ async def list_tenant_members(
     return {'items': items, 'tenant_id': str(tenant_id)}
 
 
-@platform_admin_router.post(
+@tenant_management_router.post(
     '/tenants/{tenant_id}/members',
     status_code=status.HTTP_201_CREATED,
 )
@@ -310,6 +312,7 @@ async def add_tenant_member(
     tenant_id: UUID,
     payload: TenantMemberAdd,
     request: Request,
+    _acl: None = Depends(require_tenant_management),  # M55
     conn: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Agregar miembro al tenant. Si el email no existe en `app.users` se
@@ -373,12 +376,13 @@ async def add_tenant_member(
     }
 
 
-@platform_admin_router.patch('/tenants/{tenant_id}/members/{user_id}')
+@tenant_management_router.patch('/tenants/{tenant_id}/members/{user_id}')
 async def patch_tenant_member(
     tenant_id: UUID,
     user_id: UUID,
     payload: TenantMemberPatch,
     request: Request,
+    _acl: None = Depends(require_tenant_management),  # M55
     conn: asyncpg.Connection = Depends(get_db),
 ) -> dict:
     """Cambiar rol o is_default. Cambio de rol = DELETE viejo + INSERT nuevo
@@ -432,7 +436,7 @@ async def patch_tenant_member(
     }
 
 
-@platform_admin_router.delete(
+@tenant_management_router.delete(
     '/tenants/{tenant_id}/members/{user_id}',
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
@@ -441,6 +445,7 @@ async def remove_tenant_member(
     tenant_id: UUID,
     user_id: UUID,
     request: Request,
+    _acl: None = Depends(require_tenant_management),  # M55
     conn: asyncpg.Connection = Depends(get_db),
 ) -> None:
     result = await conn.execute(

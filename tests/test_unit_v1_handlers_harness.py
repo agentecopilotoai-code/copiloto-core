@@ -1108,7 +1108,7 @@ def test_list_tenant_members_happy():
         'roles': ['owner', 'admin'], 'is_default': True, 'joined_at': now,
     }]
     conn = FakeConn(fetch=[rows])
-    result = asyncio.run(list_tenant_members(tid, conn))
+    result = asyncio.run(list_tenant_members(tid, _acl=None, conn=conn))
     assert len(result['items']) == 1
     assert result['items'][0]['roles'] == ['owner', 'admin']
     assert result['tenant_id'] == str(tid)
@@ -1125,7 +1125,7 @@ def test_add_tenant_member_existing_user():
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='x@y.co', role='admin', is_default=False)
-    result = asyncio.run(add_tenant_member(tid, body, req, conn))
+    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
     assert result['email'] == 'x@y.co'
 
 
@@ -1141,7 +1141,7 @@ def test_add_tenant_member_pending_user():
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='new@x.co', role='agent', is_default=False)
-    result = asyncio.run(add_tenant_member(tid, body, req, conn))
+    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
     assert result['user_id'] == str(uid)
 
 
@@ -1153,7 +1153,7 @@ def test_add_tenant_member_404_tenant_missing():
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='x@y.co', role='admin', is_default=False)
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(add_tenant_member(tid, body, req, conn))
+        asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
     assert exc.value.status_code == 404
 
 
@@ -1167,7 +1167,7 @@ def test_patch_tenant_member_change_role():
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberPatch(role='admin')
-    result = asyncio.run(patch_tenant_member(tid, uid, body, req, conn))
+    result = asyncio.run(patch_tenant_member(tid, uid, body, req, _acl=None, conn=conn))
     assert result['role'] == 'admin'
 
 
@@ -1181,7 +1181,7 @@ def test_patch_tenant_member_change_is_default_only():
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberPatch(is_default=True)
-    result = asyncio.run(patch_tenant_member(tid, uid, body, req, conn))
+    result = asyncio.run(patch_tenant_member(tid, uid, body, req, _acl=None, conn=conn))
     assert result['is_default'] is True
 
 
@@ -1194,7 +1194,7 @@ def test_patch_tenant_member_404_no_membership():
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberPatch(role='admin')
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(patch_tenant_member(tid, uid, body, req, conn))
+        asyncio.run(patch_tenant_member(tid, uid, body, req, _acl=None, conn=conn))
     assert exc.value.status_code == 404
 
 
@@ -1207,7 +1207,7 @@ def test_patch_tenant_member_400_empty():
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberPatch()
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(patch_tenant_member(tid, uid, body, req, conn))
+        asyncio.run(patch_tenant_member(tid, uid, body, req, _acl=None, conn=conn))
     assert exc.value.status_code == 400
 
 
@@ -1217,7 +1217,7 @@ def test_remove_tenant_member_happy():
     uid = uuid4()
     conn = FakeConn(execute=['DELETE 1', 'OK'])
     req = _fake_request(roles=['platform_owner'])
-    asyncio.run(remove_tenant_member(tid, uid, req, conn))
+    asyncio.run(remove_tenant_member(tid, uid, req, _acl=None, conn=conn))
 
 
 def test_remove_tenant_member_404():
@@ -1228,7 +1228,7 @@ def test_remove_tenant_member_404():
     conn = FakeConn(execute=['DELETE 0'])
     req = _fake_request(roles=['platform_owner'])
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(remove_tenant_member(tid, uid, req, conn))
+        asyncio.run(remove_tenant_member(tid, uid, req, _acl=None, conn=conn))
     assert exc.value.status_code == 404
 
 
@@ -1513,3 +1513,135 @@ def test_platform_tenant_update_invalid_status():
     from app.api.v1.schemas import PlatformTenantUpdate
     with pytest.raises(pydantic.ValidationError):
         PlatformTenantUpdate(status='nuclear')
+
+
+# ─── M55 — require_tenant_management ACL helper ────────────────────────────
+
+
+def test_require_tenant_management_platform_owner_bypasses():
+    """platform_owner pasa sin lookup en DB y setea support_mode=True."""
+    from app.core.security import require_tenant_management
+    tid = uuid4()
+    req = _fake_request(roles=['platform_owner'])
+    # No need to mock db.pool — platform_owner short-circuits before lookup
+    asyncio.run(require_tenant_management(tid, req))
+    assert req.state.support_mode is True
+
+
+def test_require_tenant_management_401_no_actor():
+    from app.core.security import require_tenant_management
+    from fastapi import HTTPException
+    tid = uuid4()
+    req = _fake_request(actor_id=None, roles=[])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(require_tenant_management(tid, req))
+    assert exc.value.status_code == 401
+
+
+def test_require_tenant_management_owner_of_this_tenant(monkeypatch):
+    """Owner del tenant del path → pasa + setea state.tenant_id."""
+    from app.core.security import require_tenant_management
+    from app.db import pool as pool_mod
+    tid = uuid4()
+
+    # Mock db.pool.acquire context manager
+    class FakeConnLookup:
+        async def fetchrow(self, sql, *args):
+            return {'role': 'owner'}
+
+    class FakeAcquireCtx:
+        async def __aenter__(self_inner): return FakeConnLookup()
+        async def __aexit__(self_inner, *e): return False
+
+    class FakePool:
+        def acquire(self_inner): return FakeAcquireCtx()
+
+    monkeypatch.setattr(pool_mod.db, 'pool', FakePool())
+    req = _fake_request(actor_id='auth0|u1', roles=[])
+    asyncio.run(require_tenant_management(tid, req))
+    assert req.state.tenant_id == tid
+
+
+def test_require_tenant_management_admin_of_this_tenant(monkeypatch):
+    """Admin del tenant del path también pasa."""
+    from app.core.security import require_tenant_management
+    from app.db import pool as pool_mod
+    tid = uuid4()
+
+    class FakeConnLookup:
+        async def fetchrow(self, sql, *args):
+            return {'role': 'admin'}
+
+    class FakeAcquireCtx:
+        async def __aenter__(self_inner): return FakeConnLookup()
+        async def __aexit__(self_inner, *e): return False
+
+    class FakePool:
+        def acquire(self_inner): return FakeAcquireCtx()
+
+    monkeypatch.setattr(pool_mod.db, 'pool', FakePool())
+    req = _fake_request(actor_id='auth0|u1', roles=[])
+    asyncio.run(require_tenant_management(tid, req))
+
+
+def test_require_tenant_management_403_wrong_role(monkeypatch):
+    """Viewer/agent/manager del tenant → 403 (solo owner/admin)."""
+    from app.core.security import require_tenant_management
+    from app.db import pool as pool_mod
+    from fastapi import HTTPException
+    tid = uuid4()
+
+    class FakeConnLookup:
+        async def fetchrow(self, sql, *args):
+            return {'role': 'viewer'}
+
+    class FakeAcquireCtx:
+        async def __aenter__(self_inner): return FakeConnLookup()
+        async def __aexit__(self_inner, *e): return False
+
+    class FakePool:
+        def acquire(self_inner): return FakeAcquireCtx()
+
+    monkeypatch.setattr(pool_mod.db, 'pool', FakePool())
+    req = _fake_request(actor_id='auth0|u1', roles=[])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(require_tenant_management(tid, req))
+    assert exc.value.status_code == 403
+
+
+def test_require_tenant_management_403_not_member(monkeypatch):
+    """User no es miembro del tenant → 403."""
+    from app.core.security import require_tenant_management
+    from app.db import pool as pool_mod
+    from fastapi import HTTPException
+    tid = uuid4()
+
+    class FakeConnLookup:
+        async def fetchrow(self, sql, *args):
+            return None  # no membership
+
+    class FakeAcquireCtx:
+        async def __aenter__(self_inner): return FakeConnLookup()
+        async def __aexit__(self_inner, *e): return False
+
+    class FakePool:
+        def acquire(self_inner): return FakeAcquireCtx()
+
+    monkeypatch.setattr(pool_mod.db, 'pool', FakePool())
+    req = _fake_request(actor_id='auth0|u1', roles=[])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(require_tenant_management(tid, req))
+    assert exc.value.status_code == 403
+
+
+def test_require_tenant_management_503_no_pool(monkeypatch):
+    """Si db.pool no está inicializada (boot race) → 503."""
+    from app.core.security import require_tenant_management
+    from app.db import pool as pool_mod
+    from fastapi import HTTPException
+    tid = uuid4()
+    monkeypatch.setattr(pool_mod.db, 'pool', None)
+    req = _fake_request(actor_id='auth0|u1', roles=[])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(require_tenant_management(tid, req))
+    assert exc.value.status_code == 503

@@ -516,6 +516,74 @@ async def require_service(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Service token required')
 
 
+# M55 — ACL flexible para endpoints "de gestión per-tenant" (members,
+# settings, etc) que deben ser accesibles tanto por:
+#   - platform_owner (cualquier tenant)
+#   - owner/admin del tenant del path (solo su propio tenant)
+#
+# Necesario porque el reporte del user mostró: el flow `Iniciar sesión
+# como otro usuario que es owner de SU tenant` → el SPA intentaba
+# `GET /v1/tenants/{tid}/members` → 403 porque ese endpoint estaba
+# en platform_admin_router con require_platform_owner hardcoded. Un
+# owner regular NO podía gestionar SU PROPIO equipo.
+#
+# Uso:
+#   @tenant_management_router.get('/tenants/{tenant_id}/members')
+#   async def list_members(
+#       tenant_id: UUID,
+#       _acl: None = Depends(require_tenant_management),
+#       conn: asyncpg.Connection = Depends(get_db),
+#   ): ...
+async def require_tenant_management(
+    tenant_id: UUID, request: Request,
+) -> None:
+    """ACL: platform_owner OR owner/admin del tenant_id del path.
+
+    Side-effect: setea `request.state.support_mode=True` (platform_owner)
+    O `request.state.tenant_id=<tid>` (owner/admin) para que `get_db`
+    abra la conn con las flags RLS correctas. SIN esto, las queries
+    contra `app.tenants` (RLS-protected) devolverían vacío.
+
+    `tenant_id` se inyecta automáticamente desde el path param que el
+    handler declara (FastAPI matchea por nombre).
+    """
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required',
+        )
+    roles = list(getattr(request.state, 'roles', None) or [])
+    if 'platform_owner' in roles:
+        # Cross-tenant: support_mode bypassa RLS de app.tenants.
+        request.state.support_mode = True
+        return
+    # Owner/admin de ESTE tenant. Abrir conn temporal (no la del get_db
+    # que aún no corrió) para chequear membresía.
+    from app.db.pool import db  # noqa: PLC0415
+    if not db.pool:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Database pool not initialized',
+        )
+    async with db.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            '''
+            select utr.role from app.user_tenant_roles utr
+            join app.users u on u.id = utr.user_id
+            where u.auth_subject = $1 and utr.tenant_id = $2
+            ''',
+            actor_id, tenant_id,
+        )
+    if not row or row['role'] not in ('owner', 'admin'):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='must_be_platform_owner_or_tenant_owner_admin',
+        )
+    # Scope la próxima conn al tenant_id del path → RLS-safe + sin
+    # darle privilegios cross-tenant.
+    request.state.tenant_id = tenant_id
+
+
 def require_min_role(minimum_role: str, *, allow_service: bool = False):
     async def dependency(request: Request) -> None:
         actor_type = getattr(request.state, 'actor_type', 'anonymous')

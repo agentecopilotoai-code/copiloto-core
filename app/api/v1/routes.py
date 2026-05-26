@@ -66,6 +66,17 @@ tenant_user_router = APIRouter(
     dependencies=[Depends(authenticate_request)],
 )
 
+# M55 — endpoints de gestión per-tenant (members, settings, etc) que
+# pueden ser ejecutados POR:
+#   - platform_owner (cualquier tenant)
+#   - owner/admin del tenant del path (solo su propio tenant)
+# La ACL específica vive en `require_tenant_management` que cada
+# handler invoca como Depends, leyendo el `tenant_id` del path.
+tenant_management_router = APIRouter(
+    tags=['tenant-management'],
+    dependencies=[Depends(authenticate_request)],
+)
+
 system_router = APIRouter(
     tags=['system'],
     dependencies=[Depends(authenticate_request), Depends(require_service)],
@@ -96,6 +107,7 @@ from app.platform_admin import admin_routes as _platform_admin_routes  # noqa: F
 
 router.include_router(public_router)
 router.include_router(platform_admin_router)
+router.include_router(tenant_management_router)
 router.include_router(tenant_signup_router)
 router.include_router(tenant_user_router)
 # system_router declarado pero sin handlers en el core. Lo dejamos
