@@ -58,6 +58,18 @@ create trigger trg_tenants_touch
   before update on app.tenants
   for each row execute function app.touch_updated_at();
 
+-- C9: RLS defense-in-depth para app.tenants. Antes, cualquier handler que
+-- olvidara filtrar `where tenant_id=X` (o un bug en query builder) leakeaba
+-- la fleet entera cross-tenant. El gating real de fleet es
+-- `require_platform_owner` del router, pero RLS evita que un handler
+-- accidental (o futuro módulo opt-in mal hecho) tenga acceso silent.
+-- support_mode bypasea — la fleet view del platform_owner depende de eso.
+alter table app.tenants enable row level security;
+create policy tenants_select on app.tenants
+  for select using (id = app.current_tenant_id() or app.support_mode());
+create policy tenants_modify on app.tenants
+  for all using (app.support_mode()) with check (app.support_mode());
+
 -- ─── Usuarios y membresía ──────────────────────────────────────────────────
 
 create table app.users (
@@ -87,6 +99,9 @@ create table app.user_tenant_roles (
   primary key (user_id, tenant_id, role)
 );
 create index ix_user_tenant_roles_tenant on app.user_tenant_roles(tenant_id, role);
+-- A8: FK `user_id` sin índice → queries `where user_id=$1` (5+ callers
+-- en handlers + helpers) hacían seq-scan. Postgres NO indexa FKs auto.
+create index ix_user_tenant_roles_user on app.user_tenant_roles(user_id);
 
 create table app.user_preferences (
   user_id uuid primary key references app.users(id) on delete cascade,
@@ -157,9 +172,19 @@ create policy audit_logs_tenant_select on app.audit_logs
     or (tenant_id is null and app.support_mode())
     or app.support_mode()
   );
+-- A7: INSERT con tenant_id=NULL solo permitido bajo support_mode. Antes
+-- cualquier conexión podía escribir audit cross-tenant accidentalmente
+-- (un módulo opt-in mal codeado contaminaba logs de plataforma).
 create policy audit_logs_insert on app.audit_logs for insert with check (
-  tenant_id = app.current_tenant_id() or tenant_id is null or app.support_mode()
+  tenant_id = app.current_tenant_id()
+  or (tenant_id is null and app.support_mode())
+  or app.support_mode()
 );
+-- A6: audit log es append-only por contrato (forensia). Bloqueamos UPDATE
+-- y DELETE explícitamente; Postgres default deniega pero declarar
+-- explícito hace el contrato auditable desde el schema.
+create policy audit_logs_no_update on app.audit_logs for update using (false);
+create policy audit_logs_no_delete on app.audit_logs for delete using (false);
 
 -- ─── Operator alerts (incidentes cross-tenant) ────────────────────────────
 -- Outbound dispatch (email/webhook) lo agrega cada módulo opt-in cuando
@@ -220,15 +245,27 @@ create trigger trg_data_retention_policies_touch
 
 create table app.backup_runs (
   id uuid primary key default gen_random_uuid(),
+  -- C10: `kind` separa los flavors del pipeline (cloud_dump = backup
+  -- nightly, cloud_verify = restore-and-verify periódico). El scrape de
+  -- /metrics filtra por kind para no mezclar "edad del último dump OK"
+  -- con "edad del último verify OK".
+  kind text not null check (kind in ('cloud_dump','cloud_verify','local_dump')),
   started_at timestamptz not null default now(),
   finished_at timestamptz,
-  status text not null default 'running' check (status in ('running','success','failed')),
-  artifact_path text,
+  -- 'ok' matchea el set producido por scripts/backup-to-cloud.sh y
+  -- verify-backup.sh (NO 'success' — drift histórico ya consolidado).
+  status text not null default 'running' check (status in ('running','ok','failed')),
+  -- evidence_path: ruta s3:// del artefacto cifrado + firma.
+  evidence_path text,
   size_bytes bigint,
-  error_message text,
+  -- error: mensaje cortado a 8KB para no inflar la row con tracebacks.
+  error text,
   metadata jsonb not null default '{}'::jsonb
 );
 create index ix_backup_runs_started on app.backup_runs(started_at desc);
+create index ix_backup_runs_kind_status_finished
+  on app.backup_runs(kind, status, finished_at desc)
+  where finished_at is not null;
 
 -- ─── Documentos legales del tenant ──────────────────────────────────────────
 -- Términos y condiciones, política de privacidad, etc. Versionados: cada
@@ -296,6 +333,10 @@ create table app.tenant_modules (
 create index ix_tenant_modules_enabled
   on app.tenant_modules (tenant_id, module)
   where enabled = true;
+-- A8: FK `activated_by` sin índice → DELETE de app.users hace seq-scan.
+create index ix_tenant_modules_activated_by
+  on app.tenant_modules (activated_by)
+  where activated_by is not null;
 
 alter table app.tenant_modules enable row level security;
 create policy tenant_modules_tenant_select on app.tenant_modules
@@ -329,6 +370,10 @@ create policy platform_secrets_support_update on app.platform_secrets
   for update using (app.support_mode()) with check (app.support_mode());
 create policy platform_secrets_support_delete on app.platform_secrets
   for delete using (app.support_mode());
+-- A8: FK created_by sin índice.
+create index ix_platform_secrets_created_by
+  on app.platform_secrets (created_by)
+  where created_by is not null;
 
 create table app.platform_ai_providers (
   modality      text primary key check (modality in ('llm', 'image', 'video', 'tts', 'stt')),
@@ -348,6 +393,10 @@ create policy platform_ai_providers_support_update on app.platform_ai_providers
   for update using (app.support_mode()) with check (app.support_mode());
 create policy platform_ai_providers_support_delete on app.platform_ai_providers
   for delete using (app.support_mode());
+-- A8: FK updated_by sin índice.
+create index ix_platform_ai_providers_updated_by
+  on app.platform_ai_providers (updated_by)
+  where updated_by is not null;
 
 insert into app.platform_ai_providers (modality, provider, model) values
   ('llm',   'unset', null),
@@ -439,6 +488,10 @@ create table app.role_capability (
 );
 create index ix_role_capability_role on app.role_capability(role_code);
 create index ix_role_capability_cap on app.role_capability(capability_code);
+-- A8: FK granted_by sin índice.
+create index ix_role_capability_granted_by
+  on app.role_capability (granted_by)
+  where granted_by is not null;
 
 -- Seed de los 6 roles del sistema (chrome del panel).
 insert into app.role (code, name, description, is_system) values
