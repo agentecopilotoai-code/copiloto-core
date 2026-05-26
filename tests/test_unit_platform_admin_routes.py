@@ -8,9 +8,7 @@ exponer un `transaction()` que devuelva un async context manager no-op.
 from __future__ import annotations
 
 import asyncio
-import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest

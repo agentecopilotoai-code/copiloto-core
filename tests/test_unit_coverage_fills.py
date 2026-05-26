@@ -13,7 +13,7 @@ import asyncio
 import base64
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -48,7 +48,7 @@ def test_unpack_signed_payload_malformed_json_after_valid_signature():
 
 
 def test_unpack_signed_payload_happy():
-    from app.core.signed_cookies import _sign, pack_signed_payload, unpack_signed_payload
+    from app.core.signed_cookies import pack_signed_payload, unpack_signed_payload
     packed = pack_signed_payload('secret', {'k': 'v', 'n': 42})
     out = unpack_signed_payload('secret', packed)
     assert out == {'k': 'v', 'n': 42}

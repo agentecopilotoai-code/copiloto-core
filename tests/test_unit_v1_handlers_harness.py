@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
