@@ -158,6 +158,7 @@ def test_session_mfa_required_disabled_when_mfa_off(monkeypatch):
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=False,
         auth0_domain='example.auth0.com',
+        auth0_issuer=None,
         auth0_audience='aud',
         auth0_claims_namespace='https://copilotoia.com/claims/',
     )
@@ -184,6 +185,7 @@ def test_session_mfa_required_disabled_when_not_privileged(monkeypatch):
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=True,
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_audience='aud',
         auth0_claims_namespace='https://copilotoia.com/claims/',
     )
@@ -197,6 +199,7 @@ def test_session_mfa_required_true_when_privileged_no_mfa(monkeypatch):
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=True,
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_audience='aud',
         auth0_claims_namespace='https://copilotoia.com/claims/',
     )
@@ -210,6 +213,7 @@ def test_session_mfa_required_false_when_privileged_with_mfa(monkeypatch):
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=True,
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_audience='aud',
         auth0_claims_namespace='https://copilotoia.com/claims/',
     )
@@ -299,6 +303,7 @@ def test_admin_login_503_when_unconfigured(monkeypatch):
     from app.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_admin_client_id=None,
         auth0_audience=None,
         auth0_callback_urls='http://localhost:3000/callback',
@@ -310,6 +315,8 @@ def test_admin_login_503_when_unconfigured(monkeypatch):
         admin_core_api_base_url='http://127.0.0.1:8000',
         mfa_enforcement_enabled=False,
         state_secret='secret-min-length-16-chars',
+        cookies_secure=False,
+        app_env='local',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     app = _build_app()
@@ -323,6 +330,7 @@ def test_admin_login_redirects_to_auth0(monkeypatch):
     from app.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_admin_client_id='client-id-min-length-16',
         auth0_audience='aud',
         auth0_callback_urls='http://localhost:3000/callback',
@@ -334,6 +342,8 @@ def test_admin_login_redirects_to_auth0(monkeypatch):
         admin_core_api_base_url='http://127.0.0.1:8000',
         mfa_enforcement_enabled=False,
         state_secret='secret-min-length-32-chars-long-enough',
+        cookies_secure=False,
+        app_env='local',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     app = _build_app()
@@ -347,10 +357,27 @@ def test_admin_login_redirects_to_auth0(monkeypatch):
 
 
 def _make_id_token(claims):
-    """Build a fake JWT with the claims payload (header+payload+sig, no real sig)."""
+    """Build a fake JWT with the claims payload (header+payload+sig, no real sig).
+
+    Pairs with `_stub_id_token_decode` which makes the BFF accept it by
+    bypassing JWT signature verification.
+    """
     header = base64.urlsafe_b64encode(b'{"alg":"HS256","typ":"JWT"}').rstrip(b'=').decode()
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b'=').decode()
     return f'{header}.{payload}.sig'
+
+
+def _stub_id_token_decode(monkeypatch):
+    """Bypass `decode_auth0_id_token` in the BFF so `_make_id_token` works."""
+    from app.admin import routes as admin_routes  # noqa: PLC0415
+    async def fake_decode(token, **kwargs):
+        # `_make_id_token` builds `header.payload.sig`; extract payload b64.
+        import base64 as b64  # noqa: PLC0415
+        import json as j  # noqa: PLC0415
+        payload = token.split('.')[1]
+        padding = '=' * (-len(payload) % 4)
+        return j.loads(b64.urlsafe_b64decode(payload + padding))
+    monkeypatch.setattr(admin_routes, 'decode_auth0_id_token', fake_decode)
 
 
 def test_admin_callback_with_error_param():
@@ -380,6 +407,7 @@ def test_admin_callback_happy_path(monkeypatch):
     from app.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_admin_client_id='client-id-min-length-16',
         auth0_admin_client_secret='client-secret-min-length-16',
         auth0_admin_client_secret_file=None,
@@ -393,6 +421,8 @@ def test_admin_callback_happy_path(monkeypatch):
         admin_core_api_base_url='http://127.0.0.1:8000',
         mfa_enforcement_enabled=False,
         state_secret='secret-min-length-32-chars-long-enough',
+        cookies_secure=False,
+        app_env='local',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
 
@@ -403,6 +433,7 @@ def test_admin_callback_happy_path(monkeypatch):
     })
 
     # Mock httpx responses: token exchange + userinfo
+    _stub_id_token_decode(monkeypatch)
     id_token = _make_id_token({
         'sub': 'auth0|abc',
         'amr': ['mfa'],
@@ -436,6 +467,7 @@ def test_admin_callback_token_exchange_fails(monkeypatch):
     from app.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_admin_client_id='client-id-min-length-16',
         auth0_admin_client_secret='client-secret-min-length-16',
         auth0_admin_client_secret_file=None,
@@ -449,6 +481,8 @@ def test_admin_callback_token_exchange_fails(monkeypatch):
         admin_core_api_base_url='http://127.0.0.1:8000',
         mfa_enforcement_enabled=False,
         state_secret='secret-min-length-32-chars-long-enough',
+        cookies_secure=False,
+        app_env='local',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     state = 'state-1'
@@ -468,6 +502,7 @@ def test_admin_callback_userinfo_fails(monkeypatch):
     from app.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_admin_client_id='client-id-min-length-16',
         auth0_admin_client_secret='client-secret-min-length-16',
         auth0_admin_client_secret_file=None,
@@ -481,6 +516,8 @@ def test_admin_callback_userinfo_fails(monkeypatch):
         admin_core_api_base_url='http://127.0.0.1:8000',
         mfa_enforcement_enabled=False,
         state_secret='secret-min-length-32-chars-long-enough',
+        cookies_secure=False,
+        app_env='local',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     state = 'state-2'
@@ -519,6 +556,7 @@ def test_admin_callback_amr_as_string(monkeypatch):
     from app.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_admin_client_id='client-id-min-length-16',
         auth0_admin_client_secret='client-secret-min-length-16',
         auth0_admin_client_secret_file=None,
@@ -532,11 +570,14 @@ def test_admin_callback_amr_as_string(monkeypatch):
         admin_core_api_base_url='http://127.0.0.1:8000',
         mfa_enforcement_enabled=False,
         state_secret='secret-min-length-32-chars-long-enough',
+        cookies_secure=False,
+        app_env='local',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     state = 'state-amr'
     state_cookie = routes._pack_state({'state': state, 'nonce': 'n', 'created_at': int(time.time())})
 
+    _stub_id_token_decode(monkeypatch)
     id_token = _make_id_token({
         'sub': 'auth0|y',
         'amr': 'mfa',  # string form
@@ -559,6 +600,7 @@ def test_admin_logout_clears_cookie_and_redirects(monkeypatch):
     from app.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_admin_client_id='client-id-min-length-16',
         auth0_admin_client_secret='client-secret-min-length-16',
         auth0_admin_client_secret_file=None,
@@ -572,6 +614,8 @@ def test_admin_logout_clears_cookie_and_redirects(monkeypatch):
         admin_core_api_base_url='http://127.0.0.1:8000',
         mfa_enforcement_enabled=False,
         state_secret='secret-min-length-32-chars-long-enough',
+        cookies_secure=False,
+        app_env='local',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
 
@@ -579,7 +623,7 @@ def test_admin_logout_clears_cookie_and_redirects(monkeypatch):
     app = _build_app()
     with _client(app) as c:
         c.cookies.set(routes.SESSION_COOKIE, sid)
-        r = c.post('/admin/logout', follow_redirects=False)
+        r = c.post('/admin/logout', headers={'x-requested-with': 'fetch'}, follow_redirects=False)
         assert r.status_code == 303
         # Session should be removed
         assert sid not in routes._sessions
@@ -603,11 +647,13 @@ def test_admin_logout_no_session_still_works(monkeypatch):
         admin_core_api_base_url='http://127.0.0.1:8000',
         mfa_enforcement_enabled=False,
         state_secret='secret-min-length-32-chars-long-enough',
+        cookies_secure=False,
+        app_env='local',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     app = _build_app()
     with _client(app) as c:
-        r = c.post('/admin/logout', follow_redirects=False)
+        r = c.post('/admin/logout', headers={'x-requested-with': 'fetch'}, follow_redirects=False)
         assert r.status_code == 303
 
 
@@ -626,6 +672,7 @@ def test_admin_core_api_proxy_mfa_required(monkeypatch):
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=True,
         auth0_domain='x.auth0.com',
+        auth0_issuer=None,
         auth0_audience='aud',
         auth0_claims_namespace='https://copilotoia.com/claims/',
         admin_core_api_base_url='http://127.0.0.1:8000',
@@ -758,7 +805,7 @@ def test_admin_core_api_proxy_post_with_body(monkeypatch):
     app = _build_app()
     with _client(app) as c:
         c.cookies.set(routes.SESSION_COOKIE, sid)
-        r = c.post('/admin/api/core/v1/items', json={'name': 'x'})
+        r = c.post('/admin/api/core/v1/items', json={'name': 'x'}, headers={'x-requested-with': 'fetch'})
         assert r.status_code == 201
 
 

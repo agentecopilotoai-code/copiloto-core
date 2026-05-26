@@ -45,6 +45,47 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host
 
 
+_SECURITY_HEADERS = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Permissions-Policy': 'interest-cohort=(), browsing-topics=()',
+    # HSTS solo aplica detrás de HTTPS — al levantar local en http es benigno
+    # (el browser lo ignora). En prod detrás de TLS, fuerza HTTPS-only por 1 año.
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+    # CSP defensiva: solo cargamos assets locales, no inline scripts (Vite
+    # genera bundles externos). Si un módulo opt-in requiere CDN específico,
+    # lo extiende vía middleware adicional.
+    'Content-Security-Policy': (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob: https:; "
+        "font-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self' https://*.auth0.com"
+    ),
+}
+
+
+async def _security_headers_middleware(request: Request, call_next):
+    """Adjunta security headers a CADA response.
+
+    `Content-Security-Policy`, `X-Frame-Options`, etc. defienden contra:
+      - clickjacking (X-Frame-Options DENY)
+      - MIME sniffing (X-Content-Type-Options nosniff)
+      - referrer leak (Referrer-Policy no-referrer)
+      - downgrade HTTP (HSTS)
+      - cross-site script/asset injection (CSP)
+    """
+    response = await call_next(request)
+    for header, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    return response
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     api = FastAPI(title=settings.app_name, version='0.1.0', lifespan=lifespan)
@@ -62,6 +103,10 @@ def create_app() -> FastAPI:
         refresh_runtime_metrics()
         payload, content_type = render_latest()
         return Response(content=payload, media_type=content_type)
+
+    # Security headers — registrar antes que el rate limiter para que TODAS
+    # las responses (incluso 429) los lleven.
+    api.middleware('http')(_security_headers_middleware)
 
     # Rate limiting runs first (outermost). Starlette wraps middlewares in
     # reverse order of registration, so this must be added last.

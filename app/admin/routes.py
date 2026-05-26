@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import secrets
 import time
@@ -24,6 +23,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 from app.admin.config import get_admin_settings
 from app.admin.ws_fanout import fanout as ws_fanout
+from app.core.security import decode_auth0_id_token
 from app.core.signed_cookies import (
     _sign as _signed_cookies_sign,
     pack_signed_payload,
@@ -405,7 +405,14 @@ async def admin_login(request: Request) -> RedirectResponse:
     }
     authorization_url = f'{_auth0_base_url()}/authorize?{urlencode(authorization_params)}'
     response = RedirectResponse(authorization_url)
-    response.set_cookie(STATE_COOKIE, state_cookie, httponly=True, samesite='lax', max_age=600)
+    response.set_cookie(
+        STATE_COOKIE,
+        state_cookie,
+        httponly=True,
+        samesite='lax',
+        secure=settings.cookies_secure,
+        max_age=600,
+    )
     return response
 
 
@@ -463,16 +470,30 @@ async def admin_callback(
             raise HTTPException(status_code=401, detail='Could not fetch Auth0 user profile')
         userinfo = userinfo_response.json()
 
+    # SEC: validamos la firma del id_token contra el JWKS de Auth0. ANTES
+    # decodificábamos con base64 raw (sin firma) → un atacante con un
+    # access_token válido podía forjar un id_token con `amr=['mfa']` y
+    # bypassear el MFA enforcement del BFF. Ahora exigimos firma RS256
+    # válida + audience = admin client_id + issuer = nuestro tenant Auth0.
     id_token_claims: dict[str, Any] = {}
     id_token = tokens.get('id_token')
     if id_token:
-        payload_segment = id_token.split('.')[1]
-        padding = '=' * (-len(payload_segment) % 4)
-        id_token_claims = json.loads(base64.urlsafe_b64decode(payload_segment + padding))
+        if not settings.auth0_domain or not settings.auth0_admin_client_id:
+            raise HTTPException(
+                status_code=500,
+                detail='Auth0 admin client_id no configurado; no se puede validar id_token',
+            )
+        id_token_claims = await decode_auth0_id_token(
+            id_token,
+            audience=settings.auth0_admin_client_id,
+            auth0_domain=settings.auth0_domain,
+            auth0_issuer=settings.auth0_issuer,
+        )
 
     claims = {**id_token_claims, **userinfo}
 
     # Auth0 sets amr=['mfa'] in the id_token when a second factor was used.
+    # El claim AHORA viene del id_token con firma verificada — no es forgeable.
     amr = id_token_claims.get('amr') or claims.get('amr') or []
     if isinstance(amr, str):
         amr = [amr]
@@ -498,11 +519,16 @@ async def admin_callback(
     }
     response = RedirectResponse('/admin/')
     response.delete_cookie(STATE_COOKIE)
+    # `samesite='strict'` para la session cookie es defensa contra CSRF
+    # cross-origin (el browser NO la adjunta en navegación cross-site, ni
+    # siquiera en top-level POSTs). `secure=True` cuando no estamos en
+    # `local` para forzar HTTPS-only.
     response.set_cookie(
         SESSION_COOKIE,
         session_id,
         httponly=True,
-        samesite='lax',
+        samesite='strict',
+        secure=settings.cookies_secure,
         max_age=SESSION_TTL_SECONDS,
     )
     return response
@@ -510,6 +536,13 @@ async def admin_callback(
 
 @router.post('/admin/logout', include_in_schema=False)
 async def admin_logout(request: Request) -> RedirectResponse:
+    # CSRF gate: el form POST debe venir del mismo origin. Sin esto, un
+    # sitio externo podría disparar el logout del usuario con un form
+    # cross-origin (aunque la cookie SameSite=strict ya lo previene, esto
+    # es defensa-en-profundidad y evita falsos positivos por cookies de
+    # navegadores viejos).
+    if not _csrf_origin_ok(request):
+        raise HTTPException(status_code=403, detail='csrf_check_failed')
     settings = get_admin_settings()
     session_id = request.cookies.get(SESSION_COOKIE)
     if session_id:
@@ -642,6 +675,39 @@ async def admin_conversations_stream(websocket: WebSocket) -> None:
         await ws_fanout.unsubscribe(tenant_id, queue)
 
 
+_SAFE_METHODS = frozenset({'GET', 'HEAD', 'OPTIONS'})
+
+
+def _csrf_origin_ok(request: Request) -> bool:
+    """CSRF defense: para mutaciones exigimos prueba de same-origin.
+
+    Aceptamos cualquiera de:
+      - `Sec-Fetch-Site: same-origin` (browsers modernos lo setean automáticamente
+        cuando el fetch sale del mismo origin; no se puede falsificar cross-site).
+      - `X-Requested-With: XMLHttpRequest` o `fetch` (no es un header simple por
+        CORS, browsers solo lo permiten en same-origin sin preflight).
+      - `Origin` matching el host del request.
+
+    Esto bloquea el escenario "form HTML cross-origin envía POST a /admin/api/*
+    aprovechando el cookie SameSite=lax". La cookie de sesión es ahora
+    SameSite=strict (otro fix), pero defensa-en-profundidad.
+    """
+    sec_fetch_site = request.headers.get('sec-fetch-site', '')
+    if sec_fetch_site == 'same-origin' or sec_fetch_site == 'none':
+        return True
+    requested_with = request.headers.get('x-requested-with', '').lower()
+    if requested_with in {'xmlhttprequest', 'fetch'}:
+        return True
+    origin = request.headers.get('origin', '')
+    host = request.headers.get('host', '')
+    if origin and host:
+        # http://host or https://host
+        origin_host = origin.split('://', 1)[-1]
+        if origin_host == host:
+            return True
+    return False
+
+
 @router.api_route(
     '/admin/api/core/{path:path}', methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 )
@@ -649,6 +715,15 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
     session = _active_session(request)
     if not session:
         return Response(status_code=401)
+
+    # CSRF gate: para mutaciones (POST/PUT/PATCH/DELETE) exigimos prueba de
+    # same-origin. Defensa-en-profundidad sobre la cookie SameSite=strict.
+    if request.method not in _SAFE_METHODS and not _csrf_origin_ok(request):
+        return Response(
+            content=json.dumps({'detail': 'csrf_check_failed'}),
+            status_code=403,
+            media_type='application/json',
+        )
 
     # TASK-0080 / BUG14: the BFF must refuse to relay any request when the
     # session is privileged but MFA was not completed. Without this gate, the

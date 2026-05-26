@@ -146,6 +146,61 @@ def _select_jwk(jwks: dict, kid: str | None) -> dict:
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Unknown token key id')
 
 
+async def decode_auth0_id_token(
+    token: str,
+    *,
+    audience: str,
+    auth0_domain: str,
+    auth0_issuer: str | None = None,
+    jwks_cache_ttl_seconds: int = 300,
+) -> dict:
+    """Valida un Auth0 id_token con su firma (RS256 + JWKS).
+
+    Usado por el BFF admin (`app.admin.routes`) para extraer claims del
+    id_token tras el OAuth callback. SIN esto, decodear el id_token con
+    base64 raw permite que un atacante con un access_token válido forje un
+    id_token con `amr=['mfa']` y bypassee el MFA enforcement del BFF.
+
+    Args:
+        token: JWT id_token recibido del `/oauth/token` endpoint.
+        audience: el client_id del admin app (ese es el aud del id_token).
+        auth0_domain: dominio Auth0 sin scheme.
+        auth0_issuer: override opcional del issuer.
+        jwks_cache_ttl_seconds: TTL del cache JWKS.
+
+    Returns:
+        Dict con los claims del id_token validado.
+
+    Raises:
+        HTTPException 401 si el token es inválido / firma rota / aud mismatch.
+    """
+    try:
+        header = jwt.get_unverified_header(token)
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid id_token'
+        ) from exc
+    if header.get('alg') != 'RS256':
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid id_token algorithm'
+        )
+
+    jwks = await _fetch_auth0_jwks(auth0_domain, jwks_cache_ttl_seconds)
+    key = _select_jwk(jwks, header.get('kid'))
+    try:
+        return jwt.decode(
+            token,
+            key,
+            algorithms=['RS256'],
+            audience=audience,
+            issuer=_auth0_issuer(auth0_domain, auth0_issuer),
+        )
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid id_token'
+        ) from exc
+
+
 async def _decode_auth0_token(token: str, settings) -> dict:
     if not settings.auth0_domain or not settings.auth0_audience:
         raise HTTPException(
@@ -301,6 +356,16 @@ async def authenticate_request(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail='X-Tenant-Id does not match token tenant_id',
+        )
+    # A5 hardening: caller SIN token_tenant_id (típicamente platform_owner)
+    # NO puede acceder a endpoints tenant-scoped vía X-Tenant-Id sin haber
+    # activado support_mode. Sin esto, un platform_owner con MFA verified
+    # pero sin support_mode podía mandar X-Tenant-Id=acme y obtener acceso
+    # silencioso al tenant, saltándose el audit que support_mode genera.
+    if x_tenant_id and not token_tenant_id and not support_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Cross-tenant access requires support_mode',
         )
     request.state.actor_type = 'user'
     request.state.actor_id = payload.get('sub')
