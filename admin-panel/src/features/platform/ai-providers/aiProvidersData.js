@@ -2,7 +2,7 @@
  * Helpers puros para la config de proveedores IA transversales.
  *
  * Los providers IA (LLM/Image/Video/TTS/STT) son un recurso de plataforma
- * usado por múltiples módulos (Influencer, Gestión Documental, futuros).
+ * usado por cualquier módulo opt-in que se instale sobre el core.
  * Este archivo NO depende de ningún módulo en particular.
  */
 

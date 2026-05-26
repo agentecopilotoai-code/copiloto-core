@@ -16,7 +16,7 @@ import {
 } from './accountData.js';
 
 describe('accountData — catálogos estáticos', () => {
-  it('expone ≥ 1 locale y zona horaria con shape { value, label }', () => {
+  it('expone locales y zonas horarias con shape { value, label }', () => {
     expect(ACCOUNT_LOCALES.length).toBeGreaterThan(0);
     for (const option of ACCOUNT_LOCALES) {
       expect(option).toMatchObject({ value: expect.any(String), label: expect.any(String) });
@@ -25,12 +25,14 @@ describe('accountData — catálogos estáticos', () => {
     expect(ACCOUNT_TIMEZONES[0]).toMatchObject({ value: 'America/Bogota' });
   });
 
-  it('expone los 3 canales y los 6 eventos del HTML T3', () => {
-    expect(NOTIFICATION_CHANNELS.map((c) => c.id)).toEqual(['email', 'wa', 'inapp']);
-    expect(NOTIFICATION_EVENTS.length).toBe(6);
-    expect(NOTIFICATION_EVENTS.map((e) => e.id)).toContain('daily_digest');
-    expect(NOTIFICATION_EVENTS.map((e) => e.id)).toContain('quality_rating_low');
-    expect(NOTIFICATION_EVENTS.map((e) => e.id)).toContain('weekly_campaigns_summary');
+  it('expone los canales del core (email + inapp) y eventos transversales', () => {
+    expect(NOTIFICATION_CHANNELS.map((c) => c.id)).toEqual(['email', 'inapp']);
+    expect(NOTIFICATION_EVENTS.length).toBeGreaterThan(0);
+    const ids = NOTIFICATION_EVENTS.map((e) => e.id);
+    expect(ids).toContain('security_alert');
+    expect(ids).toContain('tenant_invite');
+    expect(ids).toContain('role_changed');
+    expect(ids).toContain('support_mode_used');
   });
 
   it('THEME_OPTIONS lista auto / light / dark en ese orden', () => {
@@ -81,23 +83,22 @@ describe('accountData — derivación de profile', () => {
 describe('accountData — matriz de notificaciones', () => {
   it('initialNotificationMatrix pinta los defaults del catálogo', () => {
     const matrix = initialNotificationMatrix();
-    expect(matrix.daily_digest).toMatchObject({ email: true, wa: true, inapp: false });
-    expect(matrix.payment_failed).toMatchObject({ email: true, inapp: false });
+    expect(matrix.security_alert).toMatchObject({ email: true, inapp: true });
+    expect(matrix.support_mode_used).toMatchObject({ email: true, inapp: false });
     expect(Object.keys(matrix)).toHaveLength(NOTIFICATION_EVENTS.length);
   });
 
   it('toggleNotificationChannel produce una copia inmutable e invierte el flag', () => {
     const before = initialNotificationMatrix();
-    const after = toggleNotificationChannel(before, 'daily_digest', 'email');
+    const after = toggleNotificationChannel(before, 'security_alert', 'email');
     expect(after).not.toBe(before);
-    expect(after.daily_digest.email).toBe(false);
-    // Otras filas intactas.
-    expect(after.payment_failed).toEqual(before.payment_failed);
+    expect(after.security_alert.email).toBe(false);
+    expect(after.tenant_invite).toEqual(before.tenant_invite);
   });
 
   it('toggleNotificationChannel maneja eventos sin entry previa', () => {
     const empty = {};
-    const next = toggleNotificationChannel(empty, 'daily_digest', 'inapp');
-    expect(next.daily_digest.inapp).toBe(true);
+    const next = toggleNotificationChannel(empty, 'security_alert', 'inapp');
+    expect(next.security_alert.inapp).toBe(true);
   });
 });

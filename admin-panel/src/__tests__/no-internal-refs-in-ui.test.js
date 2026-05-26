@@ -5,15 +5,15 @@ import { cwd } from 'node:process';
 
 /**
  * Anti-regresión — strings visibles en la UI no deben contener referencias
- * internas de desarrollo. Antes este panel mostraba copy del tipo
+ * internas de desarrollo. Antes el panel mostraba copy del tipo
  * "Suscripciones a resúmenes (TASK-0067)" o nombres internos de plantillas
- * de WhatsApp (digest_daily_v1), que sólo tienen sentido para el equipo
- * técnico y rompen la experiencia para el cliente final.
+ * con sufijo `_vN`, que sólo tienen sentido para el equipo técnico y rompen
+ * la experiencia para el cliente final.
  *
  * Este test escanea todos los .js / .jsx de admin-panel/src/ (excluyendo
  * tests y fixtures), elimina los comentarios y verifica que no queden
- * literales de string con códigos internos de tarea / bug, nombres de
- * plantilla con sufijo _vN, ni jerga puramente técnica.
+ * literales de string con códigos internos de tarea / bug, nombres con
+ * sufijo _vN, ni jerga puramente técnica.
  */
 
 // El test corre desde admin-panel/ vía vitest, por eso resolvemos absoluto.
@@ -39,22 +39,17 @@ const EXCLUDED_FILE_PATTERNS = [
 // identificadores como `xtask_001` o `mybug-12-tracker.txt`.
 const TASK_CODE_RE = /\b(?:TASK|BUG|SEC|UI)-\d+/i;
 
-// Nombres internos de plantillas WhatsApp con sufijo _vN — ej.
-// "digest_daily_v1", "subscription_payment_failed_v1".
+// Nombres internos con sufijo _vN — ej. plantillas/templates de mensajería.
 const TEMPLATE_NAME_RE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+_v\d+\b/;
 
 // Allowlist de IDs de modelos de proveedores IA (third-party) que matchean
 // el patrón anterior pero son legítimos — son las strings canónicas que
-// el operador platform_owner debe usar exactas al configurar el provider
-// (ver UI-INFLU-015). No son nombres internos de templates; son IDs
-// públicos del vendor.
+// el operador platform_owner debe usar exactas al configurar el provider.
 const VENDOR_MODEL_ALLOWLIST = [
-  /\beleven_[a-z0-9_]+\b/,  // ElevenLabs: eleven_multilingual_v2, eleven_turbo_v2_5
+  /\beleven_[a-z0-9_]+\b/,
 ];
 
-// Jerga puramente técnica que no debe aparecer en la UI. Lista corta y
-// conservadora — no bloquea palabras que sí pueden aparecer en contextos
-// legítimos para el usuario (ej. "email", "WhatsApp", "API").
+// Jerga puramente técnica que no debe aparecer en la UI.
 const FORBIDDEN_JARGON = [
   /\bJWT\b/,
   /\bRLS\b/,
@@ -126,7 +121,7 @@ describe('UI copy — referencias internas prohibidas', () => {
     ).toEqual([]);
   });
 
-  it('ningún .js/.jsx expone nombres internos de plantillas WhatsApp (`_vN`)', () => {
+  it('ningún .js/.jsx expone nombres internos con sufijo `_vN`', () => {
     const violations = [];
     for (const file of files) {
       const source = readFileSync(file, 'utf8');

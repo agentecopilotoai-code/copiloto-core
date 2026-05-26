@@ -16,10 +16,10 @@
 // Owner / Admin / Manager / Agent — shell tenant-scoped.
 //
 // Sin módulos de producto instalados, el sidebar tenant solo expone
-// la sección "Configuración" (tenant-setup, team, legal, audit). Un
-// tenant fresco sin módulos es un tenant útil solo para configurarse.
+// la sección "Configuración" (tenant-setup, team). Un tenant fresco
+// sin módulos es un tenant útil solo para configurarse.
 export const TENANT_NAV = Object.freeze([
-  { section: 'Configuración', items: ['tenant-setup', 'team', 'legal', 'audit'] },
+  { section: 'Configuración', items: ['tenant-setup', 'team'] },
 ]);
 
 // Platform Owner — shell de flota, sin selector de tenant. Sistema operativo

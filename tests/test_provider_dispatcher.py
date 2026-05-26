@@ -148,7 +148,7 @@ def test_audit_row_inserted_on_success():
     # Verificar que el INSERT al audit table se llamó.
     assert conn.execute.called
     sql = conn.execute.call_args[0][0]
-    assert 'influencer.provider_dispatch' in sql
+    assert 'app.provider_dispatch' in sql
 
 
 def test_audit_records_failure_when_all_fail():

@@ -54,18 +54,18 @@ def test_safe_tenant_uuid():
 def test_record_message_invalid_direction_returns_silently():
     from app.services.metrics import record_message
     # No raise; metric is just skipped
-    record_message(tenant_id=None, direction='sideways', channel='whatsapp', status='sent')
+    record_message(tenant_id=None, direction='sideways', channel='inapp', status='sent')
 
 
 def test_record_message_invalid_status_returns_silently():
     from app.services.metrics import record_message
-    record_message(tenant_id=None, direction='inbound', channel='whatsapp', status='maybe')
+    record_message(tenant_id=None, direction='inbound', channel='inapp', status='maybe')
 
 
 def test_record_message_valid_increments():
     from app.services.metrics import record_message
     # Just ensure no raise
-    record_message(tenant_id='t1', direction='inbound', channel='whatsapp', status='delivered')
+    record_message(tenant_id='t1', direction='inbound', channel='inapp', status='delivered')
 
 
 def test_observe_response_latency_negative_skipped():

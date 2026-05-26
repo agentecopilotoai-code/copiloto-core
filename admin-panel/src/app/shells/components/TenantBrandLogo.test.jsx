@@ -4,23 +4,7 @@ import { render, screen } from '@testing-library/react';
 import { TenantBrandLogo } from './TenantBrandLogo.jsx';
 
 describe('<TenantBrandLogo/>', () => {
-  it('renderiza <img> con src y alt cuando tenant.brand_logo_url está definido', async () => {
-    render(
-      <TenantBrandLogo
-        tenant={{
-          brand_logo_url: 'https://cdn.example.com/acme-logo.png',
-          display_name: 'Acme S.A.',
-          slug: 'acme',
-        }}
-      />,
-    );
-    const img = await screen.findByRole('img', { name: /Acme S\.A\./ });
-    expect(img.tagName).toBe('IMG');
-    expect(img).toHaveAttribute('src', 'https://cdn.example.com/acme-logo.png');
-    expect(img).toHaveAttribute('alt', 'Logo de Acme S.A.');
-  });
-
-  it('cae al fallback de iniciales cuando brand_logo_url está ausente', async () => {
+  it('pinta iniciales del display_name', async () => {
     render(<TenantBrandLogo tenant={{ display_name: 'Burrito Bros', slug: 'burrito' }} />);
     const fallback = await screen.findByRole('img', { name: /Burrito Bros/ });
     expect(fallback.tagName).toBe('SPAN');
@@ -33,9 +17,9 @@ describe('<TenantBrandLogo/>', () => {
     expect(fallback.textContent).toBe('TA');
   });
 
-  it('genérico CO cuando tenant es null/undefined', async () => {
+  it('fallback genérico CO cuando tenant es null/undefined', async () => {
     render(<TenantBrandLogo tenant={null} />);
-    const fallback = await screen.findByRole('img', { name: /CopilotoIA/ });
+    const fallback = await screen.findByRole('img', { name: /Copiloto/ });
     expect(fallback.tagName).toBe('SPAN');
     expect(fallback.textContent).toBe('CO');
   });

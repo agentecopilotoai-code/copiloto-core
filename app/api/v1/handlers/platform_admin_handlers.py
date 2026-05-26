@@ -462,8 +462,7 @@ async def remove_tenant_member(
 async def get_platform_health() -> dict:
     """KPIs básicos del sistema — placeholder mínimo.
 
-    Los productos pueden enriquecer estos KPIs cuando se instalan
-    (latency_p95 chatbot, generations per minute influencer, etc.).
+    Los módulos opt-in pueden enriquecer estos KPIs cuando se instalan.
     """
     return {
         'status': 'ok',
@@ -513,16 +512,17 @@ async def list_platform_incidents(
 
 @platform_admin_router.get('/platform/outbound-dlq')
 async def list_outbound_dlq() -> dict:
-    """DLQ outbound — placeholder. El módulo chatbot agrega la lógica real
-    (lookup en app.messages con status='failed'), agrupada por tenant."""
-    return {'items': [], 'total': 0, 'note': 'Productos chatbot agregan lógica.'}
+    """DLQ outbound — placeholder. Los módulos opt-in que emiten mensajes
+    salientes agregan la lógica real (lookup en su tabla de mensajes con
+    status='failed'), agrupada por tenant."""
+    return {'items': [], 'total': 0, 'note': 'Módulos opt-in agregan lógica.'}
 
 
 @platform_admin_router.post('/platform/outbound-dlq/retry')
 async def retry_outbound_dlq() -> dict:
-    """Trigger de reintento masivo. Placeholder — el módulo chatbot lo
-    implementa."""
-    return {'queued': 0, 'note': 'Productos chatbot agregan lógica.'}
+    """Trigger de reintento masivo. Placeholder — los módulos opt-in lo
+    implementan."""
+    return {'queued': 0, 'note': 'Módulos opt-in agregan lógica.'}
 
 
 @platform_admin_router.get('/platform/runbooks')

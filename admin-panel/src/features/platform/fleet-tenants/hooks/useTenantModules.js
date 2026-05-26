@@ -2,51 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { listTenantModules, updateTenantModule } from '../../../../services/coreApi.js';
 
-// PLATFORM-MODULES-EXPAND
-// Catálogo del frontend — debe seguir el orden visual deseado en el drawer.
-// Cualquier módulo aquí debe estar en el CHECK constraint de
-// `app.tenant_modules.module` (ver `infra/postgres/01-schema.sql` y
-// `infra/postgres/03-migrations.sql`, sección PLATFORM-MODULES-EXPAND).
+// Catálogo del frontend — vacío en el core puro. Cuando se instala un módulo
+// opt-in sobre el core, ese módulo registra su entrada acá vía un mecanismo
+// de extensión (TODO Fase 3 — module discovery con manifest.json).
 //
-// El catálogo se exporta para que el test del panel pueda iterar sin
-// hard-codear strings.
-export const TENANT_MODULES_CATALOG = [
-  {
-    code: 'influencer',
-    label: 'Influencer Studio',
-    description: 'Personas virtuales, casting, generación de contenido, publicación programada.',
-  },
-  {
-    code: 'chatbot',
-    label: 'Chatbot conversacional',
-    description: 'Núcleo de CopilotoIA — RAG, intent classifier, handoff, recordatorios.',
-  },
-  {
-    code: 'widget_web',
-    label: 'Widget web',
-    description: 'Captura de leads desde el sitio del tenant + formulario embebido.',
-  },
-  {
-    code: 'campaigns',
-    label: 'Campañas y mensajes masivos',
-    description: 'Segmentos, envíos por WhatsApp, attribution, funnel.',
-  },
-  {
-    code: 'analytics',
-    label: 'Analítica de negocio',
-    description: 'Dashboards de KPIs, no-show, ingreso, retención, funnel de conversión.',
-  },
-  {
-    code: 'payments',
-    label: 'Pagos (Stripe / MercadoPago)',
-    description: 'Links de pago, registro de cobros, webhooks fail-closed.',
-  },
-  {
-    code: 'gestion_documental',
-    label: 'Gestión Documental',
-    description: 'Módulo externo — Ventanilla Única, PQRSD, correspondencia, TRD/TVD, expedientes, firmas, IA asistida.',
-  },
-];
+// Cualquier código nuevo aquí debe estar también en el CHECK constraint de
+// `app.tenant_modules.module` del schema del módulo correspondiente.
+export const TENANT_MODULES_CATALOG = [];
 
 /**
  * Hook que combina dos endpoints del backend platform-owner:

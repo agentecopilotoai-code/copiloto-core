@@ -1,18 +1,17 @@
 """Helpers transversales de identidad — mapeo Auth0 `sub` ↔ `app.users.id`.
 
-Vive en `app.core` porque es **compartido por TODOS los módulos** (chatbot,
-influencer, gd, knowledge, etc.). Cualquier módulo que necesite el UUID
-interno del usuario (`app.users.id`) en lugar del `sub` del JWT lo
-resuelve acá. No duplicar la query en cada módulo.
+Vive en `app.core` porque es compartido por TODOS los módulos opt-in
+instalados sobre el core. Cualquier módulo que necesite el UUID interno
+del usuario (`app.users.id`) en lugar del `sub` del JWT lo resuelve acá.
+No duplicar la query en cada módulo.
 
 Diseño:
     `authenticate_request` (en `app.core.security`) setea
     `request.state.actor_id` con el `sub` del JWT Auth0 (string como
     `'google-oauth2|103442...'`). Para hacer JOINs contra tablas que
     referencian `app.users.id` (UUID), hay que resolver el `sub` al UUID
-    interno. La query es simple — pero ANTES de este helper estaba
-    duplicada en `app/influencer/admin_routes.py:227` y `app/gd/security.py`,
-    y los módulos nuevos solían olvidarla → 401 espurios.
+    interno. La query es simple, centralizada acá para evitar duplicación
+    en cada módulo opt-in (causa típica de 401 espurios).
 
 Cache: NO cacheamos en memoria. El lookup es O(1) sobre el índice único de
     `app.users.auth_subject` (~1ms). Cachear sería prematura optimización

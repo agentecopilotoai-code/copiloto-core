@@ -29,10 +29,10 @@ const PLATFORM_OWNER_PROFILE = {
 const CATALOGUE = {
   runbooks: [
     {
-      slug: 'meta-token-expired',
-      filename: 'meta-token-expired.md',
-      title: 'Runbook — Token de Meta vencido',
-      category: 'Meta · WhatsApp',
+      slug: 'auth-token-expired',
+      filename: 'auth-token-expired.md',
+      title: 'Runbook — Token de auth vencido',
+      category: 'Operaciones',
       size_bytes: 2942,
     },
     {
@@ -43,15 +43,15 @@ const CATALOGUE = {
       size_bytes: 3035,
     },
   ],
-  categories: ['Infraestructura', 'Meta · WhatsApp'],
+  categories: ['Infraestructura', 'Operaciones'],
 };
 
 const DETAIL = {
-  slug: 'meta-token-expired',
-  filename: 'meta-token-expired.md',
-  title: 'Runbook — Token de Meta vencido',
-  category: 'Meta · WhatsApp',
-  html: '<article class="legal-document"><h1>Runbook — Token de Meta vencido</h1><p>Sintoma del token.</p></article>',
+  slug: 'auth-token-expired',
+  filename: 'auth-token-expired.md',
+  title: 'Runbook — Token de auth vencido',
+  category: 'Operaciones',
+  html: '<article class="legal-document"><h1>Runbook — Token de auth vencido</h1><p>Sintoma del token.</p></article>',
 };
 
 function setup() {
@@ -79,38 +79,38 @@ describe('Runbooks', () => {
     expect(
       await screen.findByRole('heading', { name: 'Runbooks' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Runbook — Token de Meta vencido')).toBeInTheDocument();
+    expect(screen.getByText('Runbook — Token de auth vencido')).toBeInTheDocument();
     expect(screen.getByText('Runbook — Postgres caído')).toBeInTheDocument();
   });
 
   it('filters the catalogue by category client-side', async () => {
     setup();
-    await screen.findByText('Runbook — Token de Meta vencido');
+    await screen.findByText('Runbook — Token de auth vencido');
 
     await userEvent.selectOptions(screen.getByLabelText('Categoría'), 'Infraestructura');
 
-    expect(screen.queryByText('Runbook — Token de Meta vencido')).toBeNull();
+    expect(screen.queryByText('Runbook — Token de auth vencido')).toBeNull();
     expect(screen.getByText('Runbook — Postgres caído')).toBeInTheDocument();
   });
 
   it('filters the catalogue by search text client-side', async () => {
     setup();
-    await screen.findByText('Runbook — Token de Meta vencido');
+    await screen.findByText('Runbook — Token de auth vencido');
 
     await userEvent.type(screen.getByLabelText('Buscar'), 'postgres');
 
-    expect(screen.queryByText('Runbook — Token de Meta vencido')).toBeNull();
+    expect(screen.queryByText('Runbook — Token de auth vencido')).toBeNull();
     expect(screen.getByText('Runbook — Postgres caído')).toBeInTheDocument();
   });
 
   it('opens the viewer with the server-rendered HTML on card click', async () => {
     setup();
-    await screen.findByText('Runbook — Token de Meta vencido');
+    await screen.findByText('Runbook — Token de auth vencido');
 
-    await userEvent.click(screen.getByText('Runbook — Token de Meta vencido'));
+    await userEvent.click(screen.getByText('Runbook — Token de auth vencido'));
 
     const dialog = await screen.findByRole('dialog');
-    expect(getPlatformRunbook).toHaveBeenCalledWith(expect.anything(), 'meta-token-expired');
+    expect(getPlatformRunbook).toHaveBeenCalledWith(expect.anything(), 'auth-token-expired');
     expect(dialog.textContent).toContain('Sintoma del token.');
   });
 

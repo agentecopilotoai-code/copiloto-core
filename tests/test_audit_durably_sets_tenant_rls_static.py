@@ -205,7 +205,7 @@ def test_audit_durably_with_null_tenant_passes_empty_string_to_set_config():
                 tenant_id=None,
                 actor_type='public',
                 actor_id=None,
-                action='webhook.whatsapp_rejected',
+                action='webhook.inbound_rejected',
                 entity_type='webhook',
                 entity_id=None,
                 metadata={'reason': 'invalid_signature'},

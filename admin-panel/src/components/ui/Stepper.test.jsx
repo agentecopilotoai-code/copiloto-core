@@ -5,7 +5,7 @@ import { Stepper } from './Stepper.jsx';
 
 const STEPS = [
   { key: 'a', label: 'Datos del negocio', status: 'done', description: 'Slug y razón social' },
-  { key: 'b', label: 'Canal WhatsApp', status: 'current', description: 'Firma verificada' },
+  { key: 'b', label: 'Configurar dominio', status: 'current', description: 'Firma verificada' },
   { key: 'c', label: 'Test E2E', status: 'blocked' },
 ];
 
@@ -13,7 +13,7 @@ describe('Stepper', () => {
   it('renders every step label and description', () => {
     render(<Stepper steps={STEPS} />);
     expect(screen.getByText('Datos del negocio')).toBeInTheDocument();
-    expect(screen.getByText('Canal WhatsApp')).toBeInTheDocument();
+    expect(screen.getByText('Configurar dominio')).toBeInTheDocument();
     expect(screen.getByText('Test E2E')).toBeInTheDocument();
     expect(screen.getByText('Slug y razón social')).toBeInTheDocument();
   });

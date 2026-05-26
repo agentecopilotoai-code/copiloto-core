@@ -1,9 +1,8 @@
 """Handlers públicos del core.
 
 Endpoints sin auth, transversales (no específicos de ningún producto).
-Branch `core`: reducido a `/v1/health`. Los endpoints chatbot
-(public resources, web widget public profile, public knowledge docs)
-viven en el módulo chatbot cuando se instala sobre el core.
+Branch `core`: reducido a `/v1/health`. Los módulos opt-in declaran sus
+propios endpoints públicos cuando se instalan sobre el core.
 """
 from __future__ import annotations
 

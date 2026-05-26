@@ -5,13 +5,9 @@
 -- identidad, tenants, sesiones, auditoría, retención, módulos opt-in,
 -- proveedores IA transversales, roles & capabilities dinámicos.
 --
--- NO contiene tablas de chatbot (contacts, conversations, messages,
--- services, appointments, campaigns, knowledge_*, etc.), influencer
--- (personas, generations, posts), ni gestión documental (radicados,
--- expedientes, firmas, perifericos).
---
--- Cada módulo de producto vive en `infra/postgres/modules/<nombre>.sql`
--- y se carga por separado vía `bootstrap.sh --module=<nombre>`.
+-- NO contiene tablas de ningún módulo opt-in. Cada módulo trae su propio
+-- schema cuando se "instala" sobre el core (vía un archivo SQL adicional
+-- en `infra/postgres/modules/<nombre>.sql` cargado por bootstrap).
 -- ============================================================================
 
 create extension if not exists pgcrypto;
@@ -82,8 +78,8 @@ create trigger trg_users_touch
 create table app.user_tenant_roles (
   user_id uuid not null references app.users(id) on delete cascade,
   tenant_id uuid not null references app.tenants(id) on delete cascade,
-  -- Roles del CHROME del panel. Para roles específicos de un producto
-  -- (ej. gd.profesional, influencer.publisher) usar las tablas del módulo.
+  -- Roles del CHROME del panel. Cada módulo opt-in declara sus propios
+  -- roles específicos en sus propias tablas.
   role text not null check (role in ('owner','admin','manager','agent','viewer','support')),
   scopes text[] not null default '{}',
   is_default boolean not null default false,
@@ -166,7 +162,7 @@ create policy audit_logs_insert on app.audit_logs for insert with check (
 );
 
 -- ─── Operator alerts (incidentes cross-tenant) ────────────────────────────
--- Outbound dispatch (email/whatsapp/webhook) lo agrega cada producto cuando
+-- Outbound dispatch (email/webhook) lo agrega cada módulo opt-in cuando
 -- se instala. El core solo persiste la fila + sirve el listado via
 -- /v1/platform/incidents.
 
@@ -361,7 +357,28 @@ insert into app.platform_ai_providers (modality, provider, model) values
   ('stt',   'unset', null)
 on conflict (modality) do nothing;
 
--- ─── Feature flags (catálogo del producto) ─────────────────────────────────
+-- ─── Audit trail de los dispatches del proveedor IA ────────────────────────
+-- Cada dispatch (texto/imagen/video/etc.) emite una fila acá para que el
+-- platform_owner pueda investigar fallos de provider, fallback chain, etc.
+-- La inserción es best-effort: si la tabla no existe el dispatcher loguea
+-- y sigue (ver `_record_audit` en `app/ai/dispatcher.py`).
+
+create table app.provider_dispatch (
+  id               bigserial primary key,
+  created_at       timestamptz not null default now(),
+  modality         text not null,
+  provider_primary text not null,
+  provider_used    text,
+  fallback_depth   integer not null default 0,
+  elapsed_ms       double precision not null default 0,
+  success          boolean not null,
+  error_class      text
+);
+create index ix_provider_dispatch_created on app.provider_dispatch(created_at desc);
+create index ix_provider_dispatch_modality_success
+  on app.provider_dispatch(modality, success, created_at desc);
+
+-- ─── Feature flags (catálogo del core) ─────────────────────────────────────
 
 create table app.feature_flags (
   key         text primary key,
@@ -433,7 +450,7 @@ insert into app.role (code, name, description, is_system) values
   ('viewer',         'Viewer',         'Lectura del tenant. Sin permisos de escritura.', true)
 on conflict (code) do nothing;
 
--- Seed inicial de capabilities del CORE (sin chatbot/influencer/gd).
+-- Seed inicial de capabilities del CORE (transversales del sistema).
 insert into app.capability (code, name, description, group_label, is_system) values
   ('tenant_setup.read',  'Leer configuración del tenant', null, 'Administración del tenant', true),
   ('tenant_setup.write', 'Editar configuración del tenant', null, 'Administración del tenant', true),

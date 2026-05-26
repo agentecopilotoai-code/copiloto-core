@@ -1,0 +1,38 @@
+.page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--surface, #fff);
+  padding: var(--space-5, 2rem);
+}
+
+.hero {
+  max-width: 480px;
+  text-align: center;
+}
+
+.title {
+  font-size: var(--fs-h1, 2.5rem);
+  margin: 0 0 var(--space-3, 1rem);
+}
+
+.subtitle {
+  font-size: var(--fs-body, 1rem);
+  color: var(--ink-2, #555);
+  margin: 0 0 var(--space-5, 2rem);
+  line-height: 1.6;
+}
+
+.cta {
+  display: inline-block;
+  background: var(--accent, #1a73e8);
+  color: white;
+  padding: var(--space-3, 1rem) var(--space-5, 2rem);
+  border-radius: var(--radius-md, 8px);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.cta:hover {
+  opacity: 0.9;
+}

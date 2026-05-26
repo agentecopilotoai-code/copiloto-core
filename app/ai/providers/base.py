@@ -1,12 +1,10 @@
-"""Interfaces abstractas + dataclasses para los proveedores IA del módulo
-Influencer — TASK-INFLU-003.
+"""Interfaces abstractas + dataclasses para los proveedores IA del core.
 
 Cada adapter concreto (Grok, Anthropic, OpenAI, ElevenLabs, Ollama, SDXL,
-Whisper) implementa una o más de estas interfaces. El dispatcher de
-TASK-INFLU-007 selecciona el adapter activo via
-``app.ai.registry.resolve_provider`` y delega
-la llamada sin conocer el SDK específico — eso permite cambiar de Grok a
-OpenAI a nivel platform sin tocar el código de los workers de generación.
+Whisper) implementa una o más de estas interfaces. El dispatcher selecciona
+el adapter activo via ``app.ai.registry.resolve_provider`` y delega la
+llamada sin conocer el SDK específico — eso permite cambiar provider a
+nivel platform sin tocar el código de los módulos opt-in.
 
 Diseño:
 
@@ -15,8 +13,8 @@ Diseño:
   (Ollama/SDXL/Whisper) usan ``httpx`` async contra el endpoint local. El
   hot path (worker de generación) NO bloquea el event loop nunca.
 - **Result dataclasses frozen**: cada operación devuelve un objeto inmutable
-  con bytes + meta + cost — el worker persiste eso tal cual en S3 +
-  ``influencer.assets`` + ``influencer.credit_ledger``.
+  con bytes + meta + cost — el worker del módulo opt-in persiste eso tal
+  cual en sus propias tablas (e.g. assets + credit_ledger).
 - **PersonaAnchor**: encapsula los rasgos visuales/voz del personaje
   (face_embedding, body_traits, reference URLs) para que los adapters
   de imagen/video mantengan consistencia entre generaciones del mismo
@@ -187,7 +185,7 @@ class IAProvider(ABC):
 
     Concrete adapters override ``provider_name`` con su identificador (e.g.
     'grok', 'anthropic'). El ``health_check`` es invocado por el dispatcher
-    + la métrica Prometheus ``influencer_provider_health{provider, modality}``
+    + la métrica Prometheus ``ai_provider_health{provider, modality}``
     para detectar caídas.
     """
 
@@ -312,8 +310,7 @@ class STTProvider(IAProvider):
         """Transcribe ``audio_bytes`` a texto.
 
         ``language`` opcionalmente fuerza el idioma (e.g. 'es'); si es
-        None, el provider auto-detecta. Útil para procesar mensajes de
-        voz que un cliente envía via WhatsApp.
+        None, el provider auto-detecta.
         """
 
 

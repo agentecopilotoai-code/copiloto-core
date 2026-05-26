@@ -24,10 +24,10 @@ from app.core.config import get_settings
 
 log = structlog.get_logger()
 
-WEBHOOK_META_PREFIX = '/webhooks/whatsapp'
-# Extrae tenant_id del path del webhook si viene presente.
+WEBHOOK_PREFIX = '/webhooks/'
+# Extrae tenant_id del path si viene presente.
 _TENANT_PATH_RE = re.compile(
-    r'/(?:v1|webhooks/whatsapp)/(?:tenants/)?'
+    r'/(?:v1|webhooks)/(?:tenants/)?'
     r'(?P<tenant>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})'
 )
 
@@ -149,7 +149,7 @@ class RateLimiter:
 
 
 def classify_scope(path: str) -> str:
-    if path.startswith(WEBHOOK_META_PREFIX):
+    if path.startswith(WEBHOOK_PREFIX):
         return 'webhook'
     return 'default'
 
@@ -170,7 +170,7 @@ def extract_client_ip(request) -> str:
     podía rotar el header en cada request (`X-Forwarded-For: 1.2.3.4` →
     `1.2.3.5` → ...) y cada valor forjado producía una key distinta —
     cada request abría un nuevo bucket con burst limit full. Bypass total
-    del rate limiter contra endpoints públicos (webhooks, widget).
+    del rate limiter contra endpoints públicos (webhooks, etc.).
 
     Además: el `_buckets` dict no tenía eviction; el atacante podía
     saturar memoria del worker con millones de fake-IP buckets.

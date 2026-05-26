@@ -28,10 +28,7 @@ admin_password="$(random_token 32)"
 app_password="$(random_token 32)"
 jwt_secret="$(random_token 64)"
 service_token="$(random_token 48)"
-whatsapp_verify_token="$(random_token 32)"
-whatsapp_app_secret="$(random_token 48)"
 minio_password="$(random_token 32)"
-meta_access_token="local-mock-token-replace-in-production"
 
 # Master key (Fernet) para cifrar API keys de proveedores IA en
 # `app.platform_secrets.ciphertext`. Fernet requiere 32 bytes random
@@ -74,16 +71,6 @@ for key in jwt_secret service_token s3_secret_access_key; do
   chmod 600 ".secrets/${key}"
 done
 
-for tenant_id in \
-  11111111-1111-1111-1111-111111111111 \
-  22222222-2222-2222-2222-222222222222 \
-  33333333-3333-3333-3333-333333333333; do
-  tenant_secret_dir=".secrets/tenants/${tenant_id}"
-  mkdir -p "${tenant_secret_dir}"
-  printf '%s' "${meta_access_token}" > "${tenant_secret_dir}/meta_access_token"
-  printf '%s' "${whatsapp_app_secret}" > "${tenant_secret_dir}/whatsapp_app_secret"
-  printf '%s' "${whatsapp_verify_token}" > "${tenant_secret_dir}/whatsapp_verify_token"
-  chmod 600 "${tenant_secret_dir}/meta_access_token" "${tenant_secret_dir}/whatsapp_app_secret" "${tenant_secret_dir}/whatsapp_verify_token"
-done
-
-echo "Secretos locales generados en .env y .secrets/tenants/<tenant_id>/ (ignorados por git)."
+echo "Secretos locales generados en .env y .secrets/ (ignorados por git)."
+echo "Los módulos opt-in que requieran secrets por tenant los gestionan en su"
+echo "propia carpeta bajo .secrets/tenants/<tenant_id>/."

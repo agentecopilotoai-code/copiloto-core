@@ -1,15 +1,11 @@
 """Factory: ``ResolvedProvider`` → instancia concreta de ``IAProvider``.
 
-Este módulo es el "último paso" del wire-up: el worker
-(``app/workers/influencer_generation_worker.py``) llama a ``dispatch()``
-que resuelve el provider configurado por el platform_owner, y para cada
-intento llama a un ``call_fn(resolved)``. Ese ``call_fn`` necesita una
-forma uniforme de mapear el nombre del provider a una clase de adapter +
-resolver el ``secret_ref`` opaco a la API key real.
-
-Antes de este módulo, el ``call_fn`` levantaba ``NotImplementedError`` —
-la config de ``platform_ai_providers`` quedaba cableada en backend pero
-las llamadas reales al SDK nunca ocurrían. Esto desbloquea producción.
+Este módulo es el "último paso" del wire-up: cualquier consumer de IA
+llama a ``dispatch()`` que resuelve el provider configurado por el
+platform_owner, y para cada intento llama a un ``call_fn(resolved)``.
+Ese ``call_fn`` necesita una forma uniforme de mapear el nombre del
+provider a una clase de adapter + resolver el ``secret_ref`` opaco a la
+API key real.
 
 Patrón:
 
@@ -27,11 +23,10 @@ Providers soportados (matchean ``platform_ai_providers.provider``):
     'local_sdxl'     → LocalSDXLProvider (image local)
     'local_whisper'  → LocalWhisperProvider (stt local)
 
-Resolución de secrets: para providers de cloud, lee del filesystem via
-``resolve_secret_ref(secret_ref)`` (mismo patrón usado por WhatsApp y
-Meta APIs). Si el secret es requerido pero no se puede resolver,
-levanta ``ProviderUnavailable`` — el dispatcher lo trata como retryable
-(útil cuando la clave aún no está montada en el pod).
+Resolución de secrets: para providers de cloud, lee del entorno via
+``resolve_secret_ref(secret_ref)``. Si el secret es requerido pero no se
+puede resolver, levanta ``ProviderUnavailable`` — el dispatcher lo trata
+como retryable (útil cuando la clave aún no está montada en el pod).
 """
 from __future__ import annotations
 
@@ -46,7 +41,7 @@ from app.ai.providers.local_whisper import LocalWhisperProvider
 from app.ai.providers.ollama import OllamaProvider
 from app.ai.providers.openai import OpenAIProvider
 from app.ai.registry import ResolvedProvider
-from app.services.whatsapp import resolve_secret_ref
+from app.services.secret_resolver import resolve_secret_ref
 
 # Providers de cloud que requieren API key (lectura desde secret_ref).
 _CLOUD_PROVIDERS: frozenset[str] = frozenset({'grok', 'openai', 'anthropic', 'elevenlabs'})

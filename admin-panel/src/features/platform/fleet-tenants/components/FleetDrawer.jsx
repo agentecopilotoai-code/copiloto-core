@@ -91,7 +91,7 @@ export function FleetDrawer({ tenant, onClose, onSupportInto, session }) {
         ))}
       </dl>
 
-      {/* Panel de activación de módulos opt-in (chatbot/gd/influencer/...). */}
+      {/* Panel de activación de módulos opt-in registrados en TENANT_MODULES_CATALOG. */}
       <TenantModulesPanel tenant={tenant} />
 
       {/* Gestión de miembros: agregar usuarios al tenant, asignar roles,

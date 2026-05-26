@@ -64,24 +64,16 @@ class TestIsPlatformScopedPath:
     @pytest.mark.parametrize(
         'path',
         [
-            'v1/gd/me',
-            'v1/gd/_health',
-            'v1/gd/ventanilla/radicados',
-            'v1/influencer/_health',
-            'v1/influencer/personas',
-            'v1/contacts',
-            'v1/messages',
-            'v1/appointments',
-            'v1/knowledge/documents',
-            'v1/analytics/overview',
-            'v1/conversations/stream',
-            'v1/core/auditoria',  # core API transversal — sí necesita tenant
+            'v1/core/auditoria',
+            'v1/health',
+            'v1/anything-not-platform',
         ],
     )
     def test_module_paths_son_tenant_scoped(self, path: str) -> None:
-        # Estos son endpoints de módulos opt-in o data del tenant — necesitan
-        # X-Tenant-Id. El BFF SÍ debe inyectarlo desde la cookie cuando el
-        # browser no lo manda explícito.
+        # Endpoints scoped al tenant — necesitan X-Tenant-Id. El BFF SÍ
+        # debe inyectarlo desde la cookie cuando el browser no lo manda
+        # explícito. (En el core puro no hay paths así; cada módulo opt-in
+        # registra sus propios paths bajo su prefix.)
         assert _is_platform_scoped_path(path) is False
 
     def test_path_vacio_no_es_platform_scoped(self) -> None:

@@ -1,18 +1,11 @@
 /**
- * UI-016.7 — datos y catálogos estáticos para Cuenta del usuario.
+ * Datos y catálogos estáticos para Cuenta del usuario.
  *
- * Toda la pantalla `T3 _ Cuenta del usuario.html` es transversal y previa al
- * backend (`UI-016.7-FU` lo declara). Mientras los endpoints `/me/profile`,
- * `/me/preferences`, `/me/notifications` y `/me/sessions` no existen, estos
- * helpers proveen:
- *   - el catálogo de idiomas y zonas horarias del select,
- *   - la matriz canónica de eventos × canales (estado inicial: el del HTML),
- *   - la lista demo de sesiones activas (read-only mientras no haya backend),
- *   - utilidades para derivar nombre / iniciales del `profile` de Auth0
- *     (`useAuth().session.profile`).
+ * Solo lo transversal del core: idiomas, zonas horarias, canales de
+ * notificación, eventos de notificación core y sesiones activas demo.
+ * Los módulos opt-in extienden estos catálogos con sus propios eventos.
  *
- * Mantener este módulo libre de React: solo datos y funciones puras, así los
- * tests cubren la lógica con `vitest` sin renderizar nada.
+ * Mantener libre de React: solo datos y funciones puras.
  */
 
 export const ACCOUNT_LOCALES = [
@@ -33,52 +26,38 @@ export const ACCOUNT_TIMEZONES = [
   { value: 'Europe/Madrid', label: 'Europe/Madrid (UTC+1)' },
 ];
 
+// Canales de notificación core: solo email + in-app. Los módulos opt-in
+// agregan sus propios canales (ej. un módulo de mensajería agrega su canal).
 export const NOTIFICATION_CHANNELS = [
   { id: 'email', label: 'Email' },
-  { id: 'wa', label: 'WhatsApp' },
   { id: 'inapp', label: 'En la app' },
 ];
 
-/**
- * Catálogo canónico de eventos × canales. El `default` es el estado preseleccionado
- * que pintan los checkboxes del HTML (`true` = canal activo para ese evento).
- */
+// Catálogo de eventos del core. Cada módulo opt-in suma sus propios eventos.
 export const NOTIFICATION_EVENTS = [
   {
-    id: 'daily_digest',
-    title: 'Digest diario',
-    description: '08:00 hora local · resumen del negocio',
-    defaults: { email: true, wa: true, inapp: false },
+    id: 'security_alert',
+    title: 'Alerta de seguridad',
+    description: 'login sospechoso, cambio de password, nueva sesión',
+    defaults: { email: true, inapp: true },
   },
   {
-    id: 'handoff_sla',
-    title: 'Handoff con SLA cercano',
-    description: 'cuando una conversación tuya queda < 10 min de SLA',
-    defaults: { email: true, wa: false, inapp: true },
+    id: 'tenant_invite',
+    title: 'Invitación a un negocio',
+    description: 'cuando te invitan como miembro de un tenant',
+    defaults: { email: true, inapp: true },
   },
   {
-    id: 'payment_failed',
-    title: 'Cobro fallido',
-    description: 'cualquier suscripción del tenant',
-    defaults: { email: true, wa: false, inapp: false },
+    id: 'role_changed',
+    title: 'Cambio de rol',
+    description: 'cuando tu rol en un negocio cambia',
+    defaults: { email: true, inapp: true },
   },
   {
-    id: 'appointment_confirmed',
-    title: 'Cita confirmada',
-    description: 'cliente confirma su cita por bot',
-    defaults: { email: false, wa: false, inapp: true },
-  },
-  {
-    id: 'quality_rating_low',
-    title: 'Quality rating de WhatsApp baja',
-    description: 'cuando Meta reduce el rating del canal',
-    defaults: { email: true, wa: false, inapp: true },
-  },
-  {
-    id: 'weekly_campaigns_summary',
-    title: 'Resumen semanal de campañas',
-    description: 'lunes 09:00',
-    defaults: { email: true, wa: false, inapp: false },
+    id: 'support_mode_used',
+    title: 'Soporte ingresó a tu negocio',
+    description: 'platform owner activó support_mode en tu tenant',
+    defaults: { email: true, inapp: false },
   },
 ];
 
@@ -88,11 +67,8 @@ export const THEME_OPTIONS = [
   { value: 'dark', label: 'Oscuro', description: 'Ink + bone' },
 ];
 
-/**
- * Estado demo de "sesiones activas" — read-only hasta que exista `/me/sessions`.
- * El HTML T3 menciona "Última sesión: 14 may · 09:42 · Bogotá · Chrome 124 / macOS".
- * Marcamos `current: true` en la fila actual y dejamos otra como ejemplo.
- */
+// Sesiones demo — usadas como fallback hasta que `/me/sessions` entregue
+// el listado real desde el backend.
 export const DEFAULT_SESSIONS = [
   {
     id: 'session-current',
@@ -103,7 +79,7 @@ export const DEFAULT_SESSIONS = [
   },
   {
     id: 'session-mobile',
-    device: 'WhatsApp Web · iPhone 15 · iOS 17',
+    device: 'Safari · iPhone 15 · iOS 17',
     location: 'Bogotá, Colombia',
     last_seen_label: 'hace 2 días',
     current: false,
@@ -118,9 +94,7 @@ export const DEFAULT_SESSIONS = [
 ];
 
 /**
- * Genera el shape inicial del formulario de Perfil a partir del profile del
- * session de Auth0. El email es siempre read-only (lo controla Auth0). Si
- * `profile?.name` no viene, intentamos un fallback razonable.
+ * Shape inicial del form de perfil a partir del profile de Auth0.
  */
 export function deriveProfileForm(profile) {
   const name = profile?.name || profile?.email?.split('@')[0] || '';
@@ -136,9 +110,7 @@ export function deriveProfileForm(profile) {
 }
 
 /**
- * Inicializa la matriz de notificaciones (event_id → { email, wa, inapp }) con
- * los defaults del catálogo. Esta función no toca localStorage: las
- * preferencias persistirán cuando UI-016.7-FU entregue `/me/notifications`.
+ * Matriz inicial de notificaciones (event_id → { email, inapp }) con defaults.
  */
 export function initialNotificationMatrix() {
   return NOTIFICATION_EVENTS.reduce((acc, event) => {
@@ -148,8 +120,7 @@ export function initialNotificationMatrix() {
 }
 
 /**
- * Toggle de un canal en la matriz de notificaciones; devuelve una matriz nueva
- * (inmutable) para que React detecte el cambio.
+ * Toggle inmutable de un canal de notificación.
  */
 export function toggleNotificationChannel(matrix, eventId, channelId) {
   const current = matrix[eventId] || {};
@@ -159,10 +130,6 @@ export function toggleNotificationChannel(matrix, eventId, channelId) {
   };
 }
 
-/**
- * Iniciales para el avatar a partir del profile. Mismo algoritmo que
- * `ShellSidebar.userInitials` pero exportado para reuso en el AccountShell.
- */
 export function profileInitials(profile) {
   const source = profile?.name || profile?.email || profile?.sub || 'U';
   const parts = source.trim().split(/\s+/);
@@ -176,7 +143,5 @@ export function profileDisplayName(profile) {
 
 export function profileRoleLabel(profile) {
   if (!profile?.roles?.length) return 'sin rol';
-  // Si el usuario tiene varios roles, el sidebar muestra el primero — el panel
-  // de cuenta usa la misma convención para no contradecirlo.
   return profile.roles[0];
 }

@@ -106,9 +106,8 @@ export function ToastProvider({ children }) {
         title: toast?.title || '',
         message: toast?.message || '',
         action: toast?.action || null,
-        // UI-INFLU-007 — variantes del módulo Influencer: thumbnail
-        // permite renderizar un preview (URL o React node) en el
-        // success de "Generación completada · N imágenes listas".
+        // `thumbnail` permite renderizar un preview opcional (URL o React
+        // node) junto al toast — usado por módulos opt-in que generan media.
         thumbnail: toast?.thumbnail || null,
         timeout: timeoutFor(tone, toast?.timeout),
       };

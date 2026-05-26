@@ -13,11 +13,9 @@ Routers:
   - tenant_user_router — `/v1/me/tenants` (listar tenants del usuario).
   - platform_admin_router — `/v1/platform/*` (platform_owner + MFA).
 
-Branch `core`: removidos `webhook_router`, `web_router`,
-`tenant_admin_router`, `tenant_catalog_router`, `tenant_ops_router`,
-`tenant_analytics_router`, `tenant_manager_router` — eran del chatbot.
-Cuando se instala un módulo de producto sobre el core, ese módulo
-agrega sus propios routers acá vía `include_router` desde `app/main.py`.
+Branch `core`: solo routers transversales. Cuando se instala un módulo
+opt-in sobre el core, ese módulo agrega sus propios routers vía
+`include_router` desde `app/main.py`.
 """
 from __future__ import annotations
 

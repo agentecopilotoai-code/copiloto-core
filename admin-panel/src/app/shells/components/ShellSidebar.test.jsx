@@ -25,40 +25,31 @@ import { ShellSidebar } from './ShellSidebar.jsx';
 
 const SAMPLE_NAV = [
   {
-    section: 'Inicio',
-    items: [{ id: 'dashboard', label: 'Dashboard', disabled: false }],
-  },
-  {
-    section: 'Conversaciones',
-    items: [
-      { id: 'operations-desk', label: 'Inbox operativo', disabled: false },
-      { id: 'contacts', label: 'Contactos', disabled: false },
-    ],
-  },
-  {
-    section: 'Negocio',
-    items: [
-      { id: 'services', label: 'Servicios', disabled: false },
-      { id: 'branches', label: 'Sedes', disabled: true },
-    ],
-  },
-  {
-    section: 'IA & Canales',
-    items: [{ id: 'whatsapp', label: 'WhatsApp', disabled: false }],
-  },
-  {
-    section: 'Operación',
-    items: [{ id: 'outbound-dlq', label: 'Cola saliente', disabled: false }],
-  },
-  {
     section: 'Configuración',
-    items: [{ id: 'tenant-setup', label: 'Tenant setup', disabled: false }],
+    items: [
+      { id: 'tenant-setup', label: 'Tenant setup', disabled: false },
+      { id: 'team', label: 'Equipo', disabled: false },
+    ],
+  },
+  {
+    section: 'Plataforma',
+    items: [
+      { id: 'platform-fleet', label: 'Flota', disabled: false },
+      { id: 'platform-system-health', label: 'Salud del sistema', disabled: false },
+    ],
+  },
+  {
+    section: 'Operaciones',
+    items: [
+      { id: 'platform-incidents', label: 'Incidentes', disabled: false },
+      { id: 'platform-fleet-dlq', label: 'Cola saliente', disabled: true },
+    ],
   },
 ];
 
 const baseProps = {
   navGroups: SAMPLE_NAV,
-  activeModuleId: 'dashboard',
+  activeModuleId: 'tenant-setup',
   onModuleSelect: () => {},
   profile: { name: 'Camila Rojas', roles: ['owner'] },
 };
@@ -84,32 +75,26 @@ afterEach(() => {
 describe('<ShellSidebar/> — UI-019', () => {
   it('renderiza todas las secciones del nav input', () => {
     renderSidebar();
-    expect(screen.getByText('Inicio')).toBeInTheDocument();
-    expect(screen.getByText('Conversaciones')).toBeInTheDocument();
-    expect(screen.getByText('Negocio')).toBeInTheDocument();
-    expect(screen.getByText('IA & Canales')).toBeInTheDocument();
-    expect(screen.getByText('Operación')).toBeInTheDocument();
     expect(screen.getByText('Configuración')).toBeInTheDocument();
+    expect(screen.getByText('Plataforma')).toBeInTheDocument();
+    expect(screen.getByText('Operaciones')).toBeInTheDocument();
   });
 
   it('renderiza los items navegables como buttons', () => {
     renderSidebar();
-    expect(screen.getByRole('button', { name: 'Dashboard' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Inbox operativo' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'WhatsApp' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Tenant setup' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Equipo' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Flota' })).toBeInTheDocument();
   });
 
   it('cada sección lleva un icono SVG envuelto en un span aria-hidden', () => {
     renderSidebar();
     const nav = screen.getByRole('navigation', { name: 'Módulos de administración' });
-    const sectionTitles = ['Inicio', 'Conversaciones', 'Negocio', 'IA & Canales', 'Operación', 'Configuración'];
+    const sectionTitles = ['Configuración', 'Plataforma', 'Operaciones'];
     for (const title of sectionTitles) {
       const label = within(nav).getByText(title);
       const header = label.closest('p');
       expect(header).not.toBeNull();
-      // El header tiene un <svg> renderizado por iconForSection envuelto en
-      // un span con aria-hidden="true" para que solo el label sea leído por
-      // screen readers (mismo patrón que ShellBottomNav).
       const svg = header.querySelector('svg');
       expect(svg).not.toBeNull();
       const iconWrapper = svg.parentElement;
@@ -118,8 +103,8 @@ describe('<ShellSidebar/> — UI-019', () => {
   });
 
   it('marca el módulo activo con aria-current="page"', () => {
-    renderSidebar({ activeModuleId: 'contacts' });
-    expect(screen.getByRole('button', { name: 'Contactos' })).toHaveAttribute(
+    renderSidebar({ activeModuleId: 'team' });
+    expect(screen.getByRole('button', { name: 'Equipo' })).toHaveAttribute(
       'aria-current',
       'page',
     );
@@ -128,14 +113,14 @@ describe('<ShellSidebar/> — UI-019', () => {
   it('dispara onModuleSelect al click en un item', async () => {
     const onModuleSelect = vi.fn();
     renderSidebar({ onModuleSelect });
-    await userEvent.click(screen.getByRole('button', { name: 'Servicios' }));
-    expect(onModuleSelect).toHaveBeenCalledWith('services');
+    await userEvent.click(screen.getByRole('button', { name: 'Equipo' }));
+    expect(onModuleSelect).toHaveBeenCalledWith('team');
   });
 
   it('renderiza items deshabilitados como span con aria-disabled', () => {
     renderSidebar();
-    const branches = screen.getByText('Sedes').closest('span[aria-disabled="true"]');
-    expect(branches).not.toBeNull();
+    const dlq = screen.getByText('Cola saliente').closest('span[aria-disabled="true"]');
+    expect(dlq).not.toBeNull();
   });
 
   it('arranca expandido por defecto (sin localStorage)', () => {
@@ -187,9 +172,9 @@ describe('<ShellSidebar/> — UI-019', () => {
 
     // Colapsado → el botón se identifica por aria-label en lugar del texto
     // visible (el span del label tiene `display: none` vía CSS).
-    const services = screen.getByRole('button', { name: 'Servicios' });
-    await userEvent.click(services);
-    expect(onModuleSelect).toHaveBeenCalledWith('services');
+    const team = screen.getByRole('button', { name: 'Equipo' });
+    await userEvent.click(team);
+    expect(onModuleSelect).toHaveBeenCalledWith('team');
   });
 
   it('el toggle expone aria-pressed sincronizado con el estado', async () => {

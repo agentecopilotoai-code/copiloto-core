@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 
 // Branch `core`: sin módulos de producto, el MODULE_REGISTRY real solo
-// tiene platform-* + transversales (tenant-setup, team, legal, audit).
+// tiene platform-* + transversales (tenant-setup, team).
 // Los tests mockean con componentes triviales para aislar el ruteo.
 vi.mock('./moduleRegistry.js', () => ({
   MODULE_REGISTRY: {
@@ -12,8 +12,6 @@ vi.mock('./moduleRegistry.js', () => ({
       capability: null,
     },
     team: { Component: () => <div>TEAM VIEW</div>, capability: 'team.write', mode: 'RW' },
-    audit: { Component: () => <div>AUDIT VIEW</div>, capability: 'audit.read' },
-    legal: { Component: () => <div>LEGAL VIEW</div>, capability: 'legal.write', mode: 'RW' },
     'platform-fleet': {
       Component: () => <div>FLEET VIEW</div>,
       capability: 'platform.tenants.read',
@@ -71,13 +69,13 @@ describe('router por rol — branch core', () => {
     });
   });
 
-  it('deep-link a un módulo transversal del tenant (audit) responde', async () => {
-    const router = renderAt('/t/acme/audit', { tenants: [ACME(['owner'])] });
-    await screen.findByText('AUDIT VIEW');
-    expect(router.state.location.pathname).toBe('/t/acme/audit');
+  it('deep-link a un módulo transversal del tenant (team) responde', async () => {
+    const router = renderAt('/t/acme/team', { tenants: [ACME(['owner'])] });
+    await screen.findByText('TEAM VIEW');
+    expect(router.state.location.pathname).toBe('/t/acme/team');
   });
 
-  it('un módulo chatbot legacy (services) NO está registrado → 404', async () => {
+  it('un módulo legacy no registrado → 404', async () => {
     const router = renderAt('/t/acme/services', { tenants: [ACME(['owner'])] });
     expect(
       await screen.findByRole('heading', { name: 'Esta página no existe (o se mudó)' }),

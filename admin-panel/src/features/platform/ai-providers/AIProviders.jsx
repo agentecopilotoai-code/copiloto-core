@@ -1,9 +1,9 @@
 /**
  * Config de proveedores IA — recurso transversal (platform_owner only).
  *
- * Alimenta múltiples módulos verticales (Influencer, Gestión Documental,
- * futuros) desde un único panel central. El operador rota keys, elige
- * provider+modelo y prueba la config sin entrar a cada módulo.
+ * Alimenta cualquier módulo opt-in que requiera IA desde un único panel
+ * central. El operador rota keys, elige provider+modelo y prueba la config
+ * sin entrar a cada módulo.
  *
  * Modal de edición (no side-panel). El form usa nombres de campos opacos +
  * `autoComplete="off"` + `data-1p-ignore`/`data-lpignore` para evitar que
@@ -101,7 +101,7 @@ export function AIProviders({
       <PageHeader
         eyebrow="Platform Owner"
         title="Proveedores IA"
-        description="Configuración transversal usada por Influencer, Gestión Documental y demás módulos. Los tenants nunca ven estos modelos."
+        description="Configuración transversal consumida por cualquier módulo opt-in instalado sobre el core. Los tenants nunca ven estos modelos."
       />
 
       <Card padding="md">

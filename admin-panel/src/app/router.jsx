@@ -23,8 +23,7 @@ import {
   AccountShell,
 } from '../features/account/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
-import { Landing } from '../features/public/landing/index.js';
-import { PublicLandingShell } from '../features/public/ravit-landing/PublicLandingShell.jsx';
+import { PublicLanding } from '../features/public/PublicLanding.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { adminModules } from './modules.js';
 import { ModulePlaceholder } from './ModulePlaceholder.jsx';
@@ -40,8 +39,8 @@ import { NoModuleAccessScreen } from './NoModuleAccessScreen.jsx';
 import { resolveSafeHomeModule } from './resolveSafeHomeModule.js';
 import { PlatformOwnerShell } from './shells/PlatformOwnerShell.jsx';
 import { TenantShell } from './shells/TenantShell.jsx';
-// Branch `core`: ReadOnlyShell + InfluencerShell removidos. Los módulos
-// opt-in (GD/influencer/chatbot) traen su propio shell cuando se instalan.
+// Branch `core`: solo PlatformOwnerShell + TenantShell. Los módulos opt-in
+// traen su propio shell cuando se instalan sobre el core.
 import {
   ACTIVE_TENANT_STORAGE_KEY,
   pickDefaultTenant,
@@ -50,9 +49,8 @@ import {
 } from './TenantProvider.jsx';
 
 // Branch `core`: en el sistema operativo base solo hay módulos PLATFORM
-// (cross-tenant) y TENANT transversales (config). Los módulos de
-// producto (gd/influencer/chatbot) registran sus IDs cuando se instalan
-// sobre el core.
+// (cross-tenant) y TENANT transversales (config). Los módulos de producto
+// opt-in registran sus IDs cuando se instalan sobre el core.
 const PLATFORM_MODULE_IDS = adminModules
   .filter((module) => module.id.startsWith('platform-'))
   .map((module) => module.id);
@@ -200,22 +198,20 @@ function MfaAutoLogout() {
  * pintamos un `StateScreen` "Sin acceso a ningún módulo" con CTA de logout
  * en lugar de hacer redirect a un módulo roto.
  */
-function IndexRedirect({ publicTab = 'ravit' }) {
+function IndexRedirect() {
   const { session, profile, tenantOptions, tenantsLoading } = useTenantContext();
-  // Caso especial: evaluamos permisos en DOS contextos:
+  // Permisos calculados en dos contextos:
   //   (a) sin tenant — para decidir si es platform_owner y va a `/platform`.
-  //   (b) en el `defaultTenant` — para resolver el safe-home tenant-scoped.
-  // El hook `usePermissions()` está atado al tenant del URL (vía
-  // `useActiveTenant()`), pero acá el URL es `/` (sin slug). Por eso usamos
-  // `computePermissions` (función pura, no-hook) con args explícitos.
+  //   (b) en el `defaultTenant` — para el safe-home tenant-scoped.
+  // `usePermissions()` está atado al tenant del URL (vía `useActiveTenant()`),
+  // pero acá el URL es `/` (sin slug). Por eso usamos `computePermissions`
+  // (función pura, no-hook) con args explícitos.
   const platformPermissions = computePermissions({ profile, tenant: null });
   const defaultTenant = pickDefaultTenant(tenantOptions);
   const tenantPermissions = computePermissions({ profile, tenant: defaultTenant });
 
-  // Usuario anónimo → landing pública con shell de tabs.
-  // `/` = Personajes AI · `/copiloto` = Chatbot AI · `/documentos` =
-  // Gestión Documental AI. Sin RequirePermission (es público).
-  if (!session) return <PublicLandingShell activeTab={publicTab} />;
+  // Usuario anónimo → landing pública mínima del core (CTA de login).
+  if (!session) return <PublicLanding />;
 
   if (tenantsLoading) return <LoadingScreen />;
   if (platformPermissions.role === 'platform_owner') {
@@ -373,10 +369,10 @@ function TenantHomeRedirect() {
  */
 /** Layout tenant-scoped (Owner / Admin / Manager / Agent).
  *
- * Branch `core`: sin módulos opt-in (gd/influencer/chatbot) instalados, el
- * sidebar del tenant solo expone la sección "Configuración" (tenant-setup,
- * team, legal, audit). Los módulos de producto se registran al
- * instalarse y se filtran por `tenant_modules` activo.
+ * Branch `core`: sin módulos opt-in instalados, el sidebar del tenant solo
+ * expone la sección "Configuración" (tenant-setup, team). Los módulos de
+ * producto se registran al instalarse y se filtran por `tenant_modules`
+ * activo.
  */
 function TenantShellRoute() {
   const { activeTenant } = useOutletContext();
@@ -488,14 +484,7 @@ export const routes = [
   {
     element: <RootLayout />,
     children: [
-      { index: true, element: <IndexRedirect publicTab="ravit" /> },
-      // Tabs públicas: cada ruta reusa el mismo IndexRedirect pero
-      // activando el tab correspondiente. Si hay sesión, delegan al
-      // mismo flujo de home redirect (igual que `/no-tenant`).
-      { path: 'copiloto',   element: <IndexRedirect publicTab="copiloto" /> },
-      { path: 'documentos', element: <IndexRedirect publicTab="documentos" /> },
-      // Back-compat de la spec previa de UI-INFLU-016 que mencionaba /ravit.
-      { path: 'ravit', element: <Navigate to="/" replace /> },
+      { index: true, element: <IndexRedirect /> },
       { path: 'login', element: <Navigate to="/" replace /> },
       { path: 'no-tenant', element: <NoTenantRoute /> },
       { path: 'onboarding', element: <OnboardingRoute /> },
@@ -520,9 +509,9 @@ export const routes = [
       },
       {
         // Branch `core`: tenant routes minimalistas. Solo TenantShell con
-        // los transversales (tenant-setup, team, legal, audit). Los
-        // módulos opt-in (gd/influencer/chatbot) agregan sub-trees acá
-        // cuando se instalan sobre el core (TODO Fase 2 — module discovery).
+        // los transversales (tenant-setup, team). Los módulos opt-in agregan
+        // sub-trees acá cuando se instalan sobre el core (TODO Fase 3 —
+        // module discovery).
         path: 't/:tenantSlug',
         element: <TenantScope />,
         children: [

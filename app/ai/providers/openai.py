@@ -311,7 +311,7 @@ def _check_status(resp: httpx.Response, path: str) -> None:
 
 
 def _format_to_dalle_size(fmt: str) -> str:
-    # Mapping the influencer format spec to DALL-E 3 supported sizes.
+    # Mapping the requested format spec to DALL-E 3 supported sizes.
     return {
         '1:1': '1024x1024',
         '9:16': '1024x1792',

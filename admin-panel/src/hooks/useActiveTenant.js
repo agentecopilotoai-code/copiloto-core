@@ -20,12 +20,10 @@ import { useOptionalTenantContext } from '../app/TenantProvider.jsx';
  * (típicamente `useOutletContext().activeTenant`). Eso obligaba a cada
  * callsite a "saber" la cadena de outlet contexts — frágil y olvidable.
  *
- * BUG-220: hasta hoy, 8 componentes del módulo influencer (Casting,
- * Studio, Generate, Calendar, EmptyStates + 3 wizard steps) llamaban
- * `usePermissions()` sin args. Sin profile + tenant resueltos, los roles
- * efectivos eran `[]` y TODAS las CTAs de escritura quedaban deshabilitadas
- * aunque el user tuviera rol `owner` del tenant. Este hook + el fallback
- * en `usePermissions` cierran ese gap sin necesitar tocar cada callsite.
+ * Antes los callsites tenían que pasar `usePermissions({ profile, tenant })`
+ * explícito; sin esos args los roles efectivos eran `[]` y todas las CTAs
+ * quedaban deshabilitadas. Este hook + el fallback en `usePermissions`
+ * cierran ese gap sin tocar cada callsite.
  *
  * @returns {object|null} El tenant activo con sus roles, o `null`.
  */

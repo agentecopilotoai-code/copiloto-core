@@ -6,12 +6,12 @@
  *     system-health, billing, incidents, fleet-dlq, runbooks, roles-acl,
  *     feature-flags, ai-providers.
  *   - **Tenant transversales** (cualquier owner/admin del tenant):
- *     tenant-setup, team, legal, audit.
+ *     tenant-setup, team.
  *
- * Los módulos de producto (GD, influencer, chatbot) se "instalan" sobre
- * el core agregando sus propias entradas a este registry vía un hook de
- * carga dinámica (TODO Fase 2 — module discovery). El core NO conoce
- * estos módulos por nombre.
+ * Los módulos de producto se "instalan" sobre el core agregando sus propias
+ * entradas a este registry vía un hook de carga dinámica (TODO Fase 3 —
+ * module discovery con manifest.json). El core NO conoce esos módulos por
+ * nombre.
  *
  * El router (`router.jsx`) renderiza cada entrada vía `<ModuleScreen/>`,
  * que envuelve el componente en `<RequirePermission capability mode>`
@@ -32,8 +32,6 @@ import { SystemHealth } from '../features/platform/system-health/index.js';
 import { AIProvidersContainer } from '../features/platform/ai-providers/AIProvidersContainer.jsx';
 
 // ─── Tenant transversales ───────────────────────────────────────────────────
-import { AuditPanel } from '../features/owner-admin/audit/index.js';
-import { LegalModule } from '../features/owner-admin/legal/index.js';
 import { TeamModule } from '../features/owner-admin/team/index.js';
 import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
 
@@ -63,6 +61,4 @@ export const MODULE_REGISTRY = Object.freeze({
   // Tenant transversales (administración del tenant en sí, no de un producto).
   'tenant-setup': { Component: TenantSetupWizard, capability: null },
   team: { Component: TeamModule, capability: 'team.write', mode: 'RW' },
-  legal: { Component: LegalModule, capability: 'legal.write', mode: 'RW' },
-  audit: { Component: AuditPanel, capability: 'audit.read' },
 });

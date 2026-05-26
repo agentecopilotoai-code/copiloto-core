@@ -21,9 +21,9 @@ function formatDateTime(value) {
 }
 
 /**
- * PLATFORM-MODULES-EXPAND — Panel "Módulos" del FleetDrawer.
+ * Panel "Módulos" del FleetDrawer.
  *
- * Renderiza el catálogo de módulos toggleables (`TENANT_MODULES_CATALOG`)
+ * Renderiza el catálogo de módulos opt-in (`TENANT_MODULES_CATALOG`)
  * con un switch por cada uno. Solo platform_owner ve y opera este panel
  * (gate `RequirePermission capability='platform.tenant_modules.write'`).
  *

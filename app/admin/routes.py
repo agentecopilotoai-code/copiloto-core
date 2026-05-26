@@ -563,11 +563,7 @@ async def admin_session(request: Request) -> Response:
                 },
                 'modules': [
                     {'id': 'tenant-setup', 'label': 'Tenant Setup'},
-                    {'id': 'whatsapp', 'label': 'WhatsApp'},
-                    {'id': 'knowledge-storage', 'label': 'Storage S3'},
-                    {'id': 'knowledge-studio', 'label': 'Knowledge Studio'},
-                    {'id': 'operations-desk', 'label': 'Operations Desk'},
-                    {'id': 'audit', 'label': 'Audit'},
+                    {'id': 'team', 'label': 'Equipo'},
                 ],
             }
         ),

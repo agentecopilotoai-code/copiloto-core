@@ -5,9 +5,6 @@ import { RequirePermission } from './RequirePermission.jsx';
 import { computePermissions } from './usePermissions.js';
 
 describe('<RequirePermission/>', () => {
-  // `RequirePermission` recibe `permissions` como prop (no usa el hook).
-  // Resolvemos con `computePermissions` (función pura) para evitar tener
-  // que envolver con providers en cada test.
   function PermsHarness({ profile, tenant, capability, mode, hidden, fallback, children }) {
     const permissions = computePermissions({ profile, tenant });
     return (
@@ -28,13 +25,13 @@ describe('<RequirePermission/>', () => {
       <PermsHarness
         profile={{}}
         tenant={{ roles: ['admin'] }}
-        capability="services.write"
+        capability="team.write"
         mode="RW"
       >
-        <span>Editor de servicios</span>
+        <span>Editor de equipo</span>
       </PermsHarness>,
     );
-    expect(screen.getByText('Editor de servicios')).toBeInTheDocument();
+    expect(screen.getByText('Editor de equipo')).toBeInTheDocument();
   });
 
   it('pinta AccessDenied por defecto cuando no hay permiso', () => {
@@ -42,15 +39,15 @@ describe('<RequirePermission/>', () => {
       <PermsHarness
         profile={{}}
         tenant={{ roles: ['viewer'] }}
-        capability="services.write"
+        capability="team.write"
         mode="RW"
       >
-        <span>Editor de servicios</span>
+        <span>Editor de equipo</span>
       </PermsHarness>,
     );
-    expect(screen.queryByText('Editor de servicios')).not.toBeInTheDocument();
+    expect(screen.queryByText('Editor de equipo')).not.toBeInTheDocument();
     expect(screen.getByText(/Acceso restringido/i)).toBeInTheDocument();
-    expect(screen.getByText(/services\.write/)).toBeInTheDocument();
+    expect(screen.getByText(/team\.write/)).toBeInTheDocument();
   });
 
   it('hidden=true devuelve null sin fallback', () => {
@@ -58,7 +55,7 @@ describe('<RequirePermission/>', () => {
       <PermsHarness
         profile={{}}
         tenant={{ roles: ['viewer'] }}
-        capability="services.write"
+        capability="team.write"
         mode="RW"
         hidden
       >
@@ -73,7 +70,7 @@ describe('<RequirePermission/>', () => {
       <PermsHarness
         profile={{}}
         tenant={{ roles: ['viewer'] }}
-        capability="services.write"
+        capability="team.write"
         mode="RW"
         fallback={<span>Pide permiso a tu admin</span>}
       >
@@ -83,33 +80,32 @@ describe('<RequirePermission/>', () => {
     expect(screen.getByText('Pide permiso a tu admin')).toBeInTheDocument();
   });
 
-  it('mode=R permite acceso parcial (contacts.write para agent)', () => {
+  it('mode=R permite lectura de team a manager', () => {
     render(
       <PermsHarness
         profile={{}}
-        tenant={{ roles: ['agent'] }}
-        capability="contacts.write"
+        tenant={{ roles: ['manager'] }}
+        capability="team.read"
         mode="R"
       >
-        <span>Edit contact (parcial)</span>
+        <span>Lista de equipo</span>
       </PermsHarness>,
     );
-    expect(screen.getByText('Edit contact (parcial)')).toBeInTheDocument();
+    expect(screen.getByText('Lista de equipo')).toBeInTheDocument();
   });
 
-  it('mode=RW bloquea acceso parcial', () => {
+  it('mode=RW bloquea acceso a manager (solo lectura)', () => {
     render(
       <PermsHarness
         profile={{}}
-        tenant={{ roles: ['agent'] }}
-        capability="contacts.write"
+        tenant={{ roles: ['manager'] }}
+        capability="team.write"
         mode="RW"
         hidden
       >
-        <span>Edit contact full</span>
+        <span>Editar equipo</span>
       </PermsHarness>,
     );
-    expect(screen.queryByText('Edit contact full')).not.toBeInTheDocument();
+    expect(screen.queryByText('Editar equipo')).not.toBeInTheDocument();
   });
-
 });

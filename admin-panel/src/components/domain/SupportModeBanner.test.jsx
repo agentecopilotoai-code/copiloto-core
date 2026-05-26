@@ -64,8 +64,8 @@ describe('SupportModeBanner (BUG-008)', () => {
   });
 
   it('invoca onExited después de deactivateSupportMode exitoso', async () => {
-    // Sin esto, el platform_owner dentro de GdShell/InfluencerShell queda
-    // en una página rota porque la cookie ya no existe y las queries 404.
+    // Sin esto, el platform_owner dentro de un sub-shell queda en una
+    // página rota porque la cookie ya no existe y las queries 404.
     const deactivate = vi.fn().mockResolvedValue(undefined);
     const onExited = vi.fn();
     mockTenantContext = {

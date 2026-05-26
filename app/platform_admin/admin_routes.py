@@ -1,14 +1,14 @@
-"""Platform admin endpoints del módulo Influencer — TASK-INFLU-002.
+"""Platform admin endpoints del core — AI providers + tenant modules.
 
-Endpoints SOLO para ``platform_owner`` con MFA. Decisión D3 del backlog:
-la configuración de proveedores IA del módulo es exclusiva del dueño de
-la plataforma — los tenants nunca ven ni configuran estos modelos.
+Endpoints SOLO para ``platform_owner`` con MFA. La configuración de
+proveedores IA es exclusiva del dueño de la plataforma — los tenants
+nunca ven ni configuran estos modelos.
 
 Se montan sobre ``platform_admin_router`` (definido en ``app/api/v1/routes.py``)
 que ya aplica las dependencies ``authenticate_request`` +
 ``require_platform_owner`` + ``require_mfa_for_privileged``. Importar este
-módulo es lo único que necesita ``app/main.py`` para que las rutas queden
-registradas — el decorator ``@platform_admin_router.X(...)`` corre al import.
+módulo es lo único que necesita ``app/api/v1/routes.py`` para registrar
+las rutas — el decorator ``@platform_admin_router.X(...)`` corre al import.
 """
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ def _generate_secret_ref(modality: str, backend: str) -> str:
 @platform_admin_router.get(
     '/platform/ai-providers',
     response_model=PlatformAIProviderListResponse,
-    summary='Lista la configuración de proveedores IA del módulo Influencer',
+    summary='Lista la configuración cross-modalidad de proveedores IA',
 )
 async def list_platform_ai_providers(
     conn: asyncpg.Connection = Depends(get_db),
@@ -743,32 +743,25 @@ async def _run_smoke_call(provider, modality: str, body: TestProviderRequest) ->
     raise ValueError(f'unsupported modality {modality!r}')
 
 
-# ─── TASK-INFLU-019 — tenant_modules platform_admin endpoints ──────────────
+# ─── tenant_modules platform_admin endpoints ───────────────────────────────
 
 
 # Branch `core`: cache de gates de módulos y bootstrap por módulo viven
-# en cada módulo cuando se "instala" sobre el core. Acá NO conocemos
-# módulos específicos (GD/influencer/chatbot). El cache de gates se
-# invalida por TTL natural (5 min en cada módulo). Si un módulo quiere
-# invalidación inmediata, puede subscribirse al evento "tenant_modules
-# changed" (TODO: agregar pub/sub interno).
+# en cada módulo opt-in cuando se "instala" sobre el core. Acá NO
+# conocemos módulos específicos. El cache de gates se invalida por TTL
+# natural (5 min en cada módulo). Si un módulo quiere invalidación
+# inmediata, puede subscribirse al evento "tenant_modules changed"
+# (TODO: agregar pub/sub interno).
 def _module_gate_cache_invalidate() -> None:
     """No-op en el core. Cada módulo redefine este helper si lo necesita."""
     return None
 
 
-_GD_MODULE_NAME = 'gestion_documental'  # constante para evitar import del módulo
-_gd_module_gate_cache_invalidate = _module_gate_cache_invalidate
-
-# Bootstrap de tenant cuando se activa un módulo: cada módulo trae su
-# propio bootstrap (seed de catálogos, roles, etc.) y lo registra al
-# instalarse sobre el core. Por ahora, sin bootstrap específico.
-async def bootstrap_gd_for_tenant(*args, **kwargs):  # noqa: D401
-    """Stub no-op. El módulo GD redefine esto cuando se instala."""
-    return None
-
-
-_REQUIRED_MODALITIES_FOR_INFLUENCER = ('llm', 'image')
+# Pre-flight de pre-requisitos por módulo. Cada módulo opt-in puede
+# registrar sus modalidades IA requeridas acá (o vía el endpoint
+# /platform/tenant-modules) cuando se instala sobre el core. Por ahora
+# vacío — el core no asume ningún módulo.
+_REQUIRED_MODALITIES_BY_MODULE: dict[str, tuple[str, ...]] = {}
 
 
 class TenantModuleRow(BaseModel):
@@ -911,17 +904,19 @@ async def update_tenant_module(
         if tenant is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, 'tenant not found')
 
-        # Pre-flight check para el módulo influencer: providers configurados.
-        if module == 'influencer' and body.enabled is True:
+        # Pre-flight: si el módulo opt-in declaró modalidades IA requeridas
+        # via `_REQUIRED_MODALITIES_BY_MODULE`, validamos que estén configuradas.
+        required_modalities = _REQUIRED_MODALITIES_BY_MODULE.get(module)
+        if required_modalities and body.enabled is True:
             configured = await conn.fetch(
                 '''
                 select modality from app.platform_ai_providers
                 where modality = any($1) and secret_ref is not null
                 ''',
-                list(_REQUIRED_MODALITIES_FOR_INFLUENCER),
+                list(required_modalities),
             )
             configured_modalities = {r['modality'] for r in configured}
-            missing = set(_REQUIRED_MODALITIES_FOR_INFLUENCER) - configured_modalities
+            missing = set(required_modalities) - configured_modalities
             if missing:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
@@ -972,24 +967,11 @@ async def update_tenant_module(
             ) from exc
 
         # Bootstrap automático del módulo Gestión Documental al activarlo.
-        # Diseño: el platform_owner puede activar GD para cualquier tenant.
-        # Sin este hook, los owners del tenant entrarían al módulo "SIN ROL"
-        # porque gd.perfil_usuario y gd.asignacion_alcance estarían vacíos.
-        # Se ejecuta solo en la transición off→on (activated_changed + enabled).
-        # Idempotente — si el tenant se desactiva y reactiva, no duplica filas.
-        # Corre DENTRO de la misma transacción → si falla el bootstrap, el
-        # PATCH entero rollbackea (no quedan modules.enabled=true sin perfiles).
-        gd_bootstrap_metadata: dict | None = None
-        if (
-            activated_changed
-            and body.enabled is True
-            and module == _GD_MODULE_NAME
-        ):
-            gd_bootstrap_metadata = await bootstrap_gd_for_tenant(
-                conn,
-                tenant_id=str(tenant_id),
-                actor_user_id=str(actor_id) if actor_id else None,
-            )
+        # Branch `core`: no hay bootstrap específico por módulo. Cada módulo
+        # opt-in registra su propio bootstrap cuando se instala sobre el core
+        # (typical: seed de catálogos, roles del módulo, asignaciones).
+        # Idempotente — si el tenant se desactiva y reactiva, el módulo se
+        # encarga de no duplicar filas.
 
         if activated_changed:
             # Audit (sin `notes` — puede contener PII).
@@ -1004,24 +986,13 @@ async def update_tenant_module(
                 'plan': body.plan,
                 'notes_provided': bool(body.notes),
             }
-            if gd_bootstrap_metadata is not None:
-                # Solo counters — la lista users_boostrapped puede ser larga.
-                audit_metadata['gd_bootstrap'] = {
-                    'roles_seeded': gd_bootstrap_metadata['roles_seeded'],
-                    'perfiles_creados': gd_bootstrap_metadata['perfiles_creados'],
-                    'asignaciones_creadas': gd_bootstrap_metadata['asignaciones_creadas'],
-                    'users_count': len(gd_bootstrap_metadata['users_boostrapped']),
-                }
             await audit(
                 conn,
                 tenant_id=None,
                 # `platform_owner` es un ROL (verificado en require_platform_owner
                 # del router), no un actor_type. El CHECK constraint de
                 # `audit_logs.actor_type` solo acepta {anonymous, contact, bot,
-                # agent, user, service, system, support}. Mantenemos `'user'`
-                # consistente con la otra llamada audit() de este mismo archivo
-                # (línea 351, TASK-INFLU-002). El rol queda capturado en el JWT
-                # y en `actor_id` para la traza.
+                # agent, user, service, system, support}.
                 actor_type='user',
                 actor_id=str(actor_id) if actor_id else None,
                 action=action,
@@ -1031,10 +1002,7 @@ async def update_tenant_module(
             )
             # Invalidate gate cache del módulo afectado (mismo worker; otros
             # workers vencen por TTL del cache de cada módulo).
-            if module == _GD_MODULE_NAME:
-                _gd_module_gate_cache_invalidate()
-            else:
-                _module_gate_cache_invalidate()
+            _module_gate_cache_invalidate()
 
     return TenantModuleRow(
         tenant_id=str(row['tenant_id']),

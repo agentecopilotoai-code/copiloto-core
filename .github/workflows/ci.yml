@@ -122,7 +122,7 @@ jobs:
         # son los originales documentados.
         #
         # test_mfa_router_enforcement.py — detectado en el primer run real del
-        # coverage-gate (PR #1 del módulo Influencer):
+        # coverage-gate:
         # `test_require_mfa_for_privileged_403s_unverified_admin` falla con
         # "DID NOT RAISE". El test setea env vars via monkeypatch +
         # `get_settings.cache_clear()`, pero por algún side-effect de tests

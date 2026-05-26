@@ -651,40 +651,11 @@ def ip_allowed(client_ip: str | None, allowlist: Iterable[str]) -> bool:
     return client_ip in allowset
 
 
-# ─── Influencer module metrics — TASK-INFLU-018 ────────────────────────────
+# ─── AI provider health metric (transversal del core) ─────────────────────
 
 
-influencer_generations_total = Counter(
-    'influencer_generations_total',
-    'Total de generaciones encoladas/completadas en el módulo Ravit Studio.',
-    ['kind', 'status', 'provider'],
-)
-
-
-influencer_generation_duration_seconds = Histogram(
-    'influencer_generation_duration_seconds',
-    'Latencia end-to-end de una generación (encolar → succeeded/failed).',
-    ['kind', 'provider'],
-    buckets=(0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600),
-)
-
-
-influencer_credits_balance = Gauge(
-    'influencer_credits_balance',
-    'Balance de créditos del tenant (actualizado en cada debit/credit).',
-    ['tenant_id'],
-)
-
-
-influencer_posts_published_total = Counter(
-    'influencer_posts_published_total',
-    'Posts intentados/publicados en cada platform.',
-    ['platform', 'status'],
-)
-
-
-influencer_provider_health = Gauge(
-    'influencer_provider_health',
-    'Salud del provider (1 = healthy, 0 = degraded/circuit-open).',
+ai_provider_health = Gauge(
+    'ai_provider_health',
+    'Salud del provider IA (1 = healthy, 0 = degraded/circuit-open).',
     ['provider', 'modality'],
 )

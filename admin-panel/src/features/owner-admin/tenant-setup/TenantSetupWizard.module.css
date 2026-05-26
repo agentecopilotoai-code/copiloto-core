@@ -1,315 +1,98 @@
-/**
- * UI-021 — Tenant Setup Wizard layout. All tokens via var(--...) per the
- * design system. The page mirrors `docs/HTML DESIGN/OWNER : Admin/20 _ Config
- * _ Tenant Setup _ Voz del bot.html`: PageHeader on top, tabbed sections, then
- * the active panel rendered inside a `<Card>`.
- */
-
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 
-.notice {
-  border-radius: var(--r-sm);
-  border: 1px solid var(--line);
-  padding: var(--space-3);
-  font-size: var(--fs-small);
-  color: var(--ink-2);
-  background: var(--panel-alt);
-}
-
-.notice--info {
-  border-color: var(--accent);
-  background: var(--panel);
-  color: var(--accent-ink);
-}
-
-.notice--success {
-  border-color: var(--accent);
-  color: var(--accent-ink);
-}
-
-.notice--error {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-.tenantMeta {
+.tabBar {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  font-size: var(--fs-small);
-  color: var(--muted);
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: var(--space-1);
 }
 
-.tenantMeta strong {
-  font-weight: var(--fw-semibold);
-  color: var(--ink);
-}
-
-/* ── shared subcomponent helpers ─────────────────────────────────────────── */
-
-.formGrid {
-  display: grid;
-  gap: var(--space-3);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.formGrid > .wide,
-.formGrid > .actions {
-  grid-column: 1 / -1;
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-.hint {
-  margin: 0;
-  font-size: var(--fs-small);
-  color: var(--muted);
-}
-
-.sectionTitle {
-  margin: 0;
-  font-size: var(--fs-h3);
-  font-weight: var(--fw-semibold);
-  color: var(--ink);
-}
-
-.sectionSubtitle {
-  margin: 0;
-  font-size: var(--fs-small);
-  color: var(--muted);
-}
-
-.fieldset {
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: var(--space-3) var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.fieldset legend {
-  font-weight: var(--fw-semibold);
-  color: var(--ink-2);
-  font-size: var(--fs-small);
-}
-
-.inlineCheck {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--fs-small);
-  color: var(--ink-2);
-  font-weight: normal;
-  text-transform: none;
-}
-
-.builderPreview {
-  background: var(--panel-alt);
-  border: 1px dashed var(--line);
-  border-radius: var(--r-sm);
-  padding: var(--space-3);
-  font-size: var(--fs-small);
-  color: var(--ink-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.builderPreview pre {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.tagList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.tagRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.tagPill {
-  padding: 2px var(--space-2);
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--panel);
-  font-size: var(--fs-small);
-  font-weight: var(--fw-semibold);
-  white-space: nowrap;
-}
-
-.tagDesc {
-  flex: 1;
-  font-size: var(--fs-small);
-  color: var(--muted);
-}
-
-.intentList {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.optionGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: var(--space-2);
-}
-
-.providerCard {
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: var(--space-3);
-  background: var(--panel);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.tabButton {
+  background: transparent;
+  border: none;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+  font-size: var(--fs-body);
+  color: var(--ink-2);
 }
 
-.providerCard:hover,
-.providerCard:focus-visible {
-  border-color: var(--accent);
-  outline: none;
+.tabButton:hover {
+  background: var(--surface-2);
 }
 
-.providerCard.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent) inset;
+.tabButtonActive {
+  color: var(--accent);
+  background: var(--accent-soft, rgba(0, 100, 200, 0.08));
+  font-weight: 600;
 }
 
-.providerCardTitle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.previewList {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 
-.previewItem {
+.formHeading {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-h3);
+}
+
+.helpText {
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+
+.formField {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  font-size: var(--fs-body);
 }
 
-.previewBubble {
-  background: var(--panel-alt);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+.formField span {
+  font-weight: 500;
+}
+
+.formField input,
+.formField select {
   padding: var(--space-2) var(--space-3);
-  font-size: var(--fs-small);
-  color: var(--ink-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: var(--fs-body);
 }
 
-.brandLogoPreview {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  background: var(--panel-alt);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-}
-
-.brandLogoImg {
-  max-width: 120px;
-  max-height: 120px;
-  border-radius: var(--r-sm);
-}
-
-.retentionTable {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-small);
-  color: var(--ink-2);
-}
-
-.retentionTable th,
-.retentionTable td {
-  text-align: left;
-  padding: var(--space-2);
-  border-bottom: 1px solid var(--line);
-}
-
-.retentionTable th {
-  font-weight: var(--fw-semibold);
+.formField small {
   color: var(--muted);
-  background: var(--panel-alt);
+  font-size: var(--fs-micro);
 }
 
-.daysGrid {
+.formRow {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
 }
 
-.dayCard {
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: var(--space-3);
-  background: var(--panel);
+.formActions {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  justify-content: flex-end;
+  margin-top: var(--space-3);
 }
 
-.dayCard legend {
-  font-weight: var(--fw-semibold);
-  font-size: var(--fs-small);
-  color: var(--ink-2);
+.formError {
+  color: var(--danger);
+  background: var(--danger-soft, rgba(220, 53, 69, 0.08));
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-caption);
 }
 
-.auditList {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.auditItem {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--panel-alt);
-  font-size: var(--fs-small);
-}
-
-.auditItem strong {
-  color: var(--ink);
-}
-
-.auditItem small {
-  color: var(--muted);
+.formSuccess {
+  color: var(--success);
+  font-size: var(--fs-caption);
 }

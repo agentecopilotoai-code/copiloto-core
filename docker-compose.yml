@@ -22,7 +22,6 @@ services:
     volumes:
       - ./app:/app/app:ro
       - ./.secrets:/app/.secrets
-      - knowledge-files:/app/data/knowledge
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/v1/health >/dev/null || exit 1"]
       interval: 10s
@@ -57,48 +56,7 @@ services:
       retries: 12
       start_period: 10s
 
-  event-worker:
-    build: .
-    env_file: *app-env-files
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: python3 -m app.workers.event_worker
-    # /metrics expuesto en :9100 dentro de la red docker; Prometheus lo
-    # raspa con target event-worker:9100. No publicamos al host porque solo
-    # interesa el scrape interno.
-    expose:
-      - "9100"
-    volumes:
-      - ./.secrets:/app/.secrets:ro
-
-  scheduler:
-    build: .
-    env_file: *app-env-files
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: python3 -m app.workers.scheduler
-    expose:
-      - "9100"
-
-  # TASK-0067: digest worker (resumen diario/semanal por email + WhatsApp).
-  # Tick cada 10 min; despacha 08:00 hora local del tenant. La idempotencia
-  # vive en `digest_subscriptions.last_sent_at`.
-  digest-worker:
-    build: .
-    env_file: *app-env-files
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: python3 -m app.workers.digest_worker
-    volumes:
-      - ./.secrets:/app/.secrets:ro
-
-  # TASK-0064: backup automatizado a cloud (perfil opt-in `backups`).
+  # Backup automatizado a cloud (perfil opt-in `backups`).
   # Arranca con:
   #   docker compose --profile backups up -d backup-worker
   # Variables requeridas en .env: BACKUP_S3_BUCKET, BACKUP_ENV,
@@ -116,26 +74,12 @@ services:
       POSTGRES_HOST: postgres
       BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
       BACKUP_ENV: ${BACKUP_ENV:-local}
-      # BUG-151: el default `http://minio:9000` rutaba backups de prod al
-      # MinIO local cuando se olvidaba setear `BACKUP_S3_ENDPOINT` — silently
-      # corrompía la pipeline de prod. Ahora el default es empty: si la var
-      # no está seteada, el aws-cli usa el endpoint AWS real. Para correr
-      # con MinIO local, setear explícitamente:
-      #   BACKUP_S3_ENDPOINT=http://minio:9000 docker compose up backup-worker
       BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
       BACKUP_GPG_RECIPIENT: ${BACKUP_GPG_RECIPIENT:-}
       BACKUP_GPG_PUBKEY_PATH: ${BACKUP_GPG_PUBKEY_PATH:-/app/.secrets/backup_gpg_pubkey.asc}
-      # SEC-009 — firma detached del producer.
       BACKUP_SIGNER_FPR: ${BACKUP_SIGNER_FPR:-}
       BACKUP_SIGNER_PRIVKEY_PATH: ${BACKUP_SIGNER_PRIVKEY_PATH:-/app/.secrets/backup_signer_privkey.asc}
       BACKUP_SIGNER_PUBKEY_PATH: ${BACKUP_SIGNER_PUBKEY_PATH:-/app/.secrets/backup_signer_pubkey.asc}
-      # SEC-009 — verifier corre el restore en un Postgres efímero en
-      # `backup-verify-net` (red bridge --internal). Si docker socket no está
-      # disponible, fallback degraded a `pg_restore --list` (ver SEC-009.1-FU).
-      # codex P1 fix: default `pgvector/pgvector:pg16` para que el restore
-      # pueda procesar la extensión `vector` que vive en el schema productivo
-      # (`app.knowledge_chunks.embedding vector(1536)`). La imagen plain
-      # `postgres:16-alpine` fallaba al toparse con esos objects.
       BACKUP_VERIFY_PG_IMAGE: ${BACKUP_VERIFY_PG_IMAGE:-pgvector/pgvector:pg16}
       BACKUP_VERIFY_PG_PORT: ${BACKUP_VERIFY_PG_PORT:-55432}
       BACKUP_VERIFY_NETWORK: ${BACKUP_VERIFY_NETWORK:-backup-verify-net}
@@ -148,12 +92,6 @@ services:
       - ./.secrets:/app/.secrets:ro
       - ./scripts:/app/scripts:ro
       - backup-logs:/var/log
-      # SEC-009 — el verifier necesita el docker socket SOLO para spin-up del
-      # Postgres efímero isolated. El container desechable corre en una red
-      # bridge `--internal`, así que no puede salir al exterior. Operadores
-      # paranoicos pueden setear `BACKUP_VERIFY_SKIP_EPHEMERAL=1` para usar el
-      # fallback `pg_restore --list` y omitir el socket — pierde Layer 2 a
-      # cambio de no exponer el daemon. Ver docs/runbooks/backup-signature-setup.md.
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
@@ -210,7 +148,7 @@ services:
       - "4318:4318"
       - "8889:8889"
 
-  # TASK-0060: stack de observabilidad opt-in. Arranca con
+  # Stack de observabilidad opt-in. Arranca con
   #   docker compose --profile observability up
   # OBSERVABILITY_ALLOWED_IPS debe incluir la IP del contenedor de Prometheus
   # (típicamente la subred docker, p.ej. 172.18.0.0/16) o la del host.
@@ -246,31 +184,10 @@ services:
       prometheus:
         condition: service_started
 
-  # ── LLM local (Ollama) ────────────────────────────────────────────────────
-  # Ollama corre FUERA de este compose, en la máquina host o servidor con GPU.
-  # El compose le envía requests via LOCAL_LLM_BASE_URL en .env.
-  #
-  # Instalar Ollama en el host:   https://ollama.com/download
-  # Descargar modelo:             ollama pull llama3.2:3b
-  # Iniciar el servidor:          ollama serve          (queda en :11434)
-  #
-  # Para exponer Ollama al compose en Linux/Mac:
-  #   LOCAL_LLM_BASE_URL=http://host.docker.internal:11434
-  # Para Linux sin host.docker.internal:
-  #   LOCAL_LLM_BASE_URL=http://172.17.0.1:11434   (IP del gateway docker0)
-  #
-  # Requisitos mínimos por modelo:
-  #   llama3.2:3b  →  4 GB RAM (CPU) / 4 GB VRAM (GPU)  ~1-5s por respuesta
-  #   mistral:7b   →  8 GB RAM (CPU) / 6 GB VRAM (GPU)  ~2-8s por respuesta
-  #   phi3:mini    →  3 GB RAM (CPU)                     buena opción CPU-only
-  #
-  # Para producción con alto volumen: usar ANSWER_ENGINE=cascade + cloud LLM (TASK-0024)
-
 volumes:
   postgres-data:
   redis-data:
   minio-data:
-  knowledge-files:
   prometheus-data:
   grafana-data:
   backup-logs:

@@ -131,12 +131,9 @@ def render_markdown_to_safe_html(content_md: str) -> str:
 
 
 def legal_public_url(base_url: str, tenant_id: UUID | str, kind: str) -> str:
-    """Build the public URL the bot references in the consent template footer.
+    """Build the public URL para un documento legal del tenant.
 
-    Falls back to the bare path when ``base_url`` is empty so the link is
-    still parseable in plain-text rendering (the WhatsApp client linkifies
-    relative paths preceded by https only — that case is the operator's
-    responsibility to configure).
+    Falls back to the bare path when ``base_url`` is empty.
     """
     if kind not in LEGAL_KINDS:
         raise ValueError(f'Unknown legal kind: {kind}')

@@ -1,22 +1,21 @@
-"""Registry de proveedores IA del módulo Influencer — TASK-INFLU-002.
+"""Registry transversal de proveedores IA del core.
 
 Resuelve qué proveedor + modelo está activo para cada modalidad
 (``llm``/``image``/``video``/``tts``/``stt``). La fuente de verdad es la
 tabla ``app.platform_ai_providers``; este módulo:
 
 1. Cachea las 5 filas en memoria con TTL 5 min por worker (PROVIDER_CACHE_TTL_SECONDS)
-   para que la resolución sea O(1) en el hot path de generación.
+   para que la resolución sea O(1) en el hot path.
 2. Si la fila tiene ``provider='unset'`` o no existe, cae a la env var
-   ``INFLUENCER_DEFAULT_{MODALITY}_PROVIDER`` — útil para dev local sin
-   tener que poblar la tabla.
+   ``AI_DEFAULT_{MODALITY}_PROVIDER`` — útil para dev local sin tener que
+   poblar la tabla.
 3. NO devuelve el valor en claro del secret: solo el ``secret_ref`` opaco
-   y el ``hint`` (últimos 4 chars). El código del proveedor adapter es
-   responsable de resolver el ``secret_ref`` contra el backend correcto
-   (env / AWS Secrets Manager / Vault) cuando va a hacer la llamada real.
+   y el ``hint`` (últimos 4 chars). El adapter es responsable de resolver
+   el ``secret_ref`` contra el backend correcto (env / AWS Secrets
+   Manager / Vault) cuando hace la llamada real.
 
-Política D3 del backlog: este módulo NO acepta parámetro ``tenant_id``.
-La config es global a la plataforma; el tenant nunca decide qué proveedor
-usa el módulo influencer.
+Política: este módulo NO acepta parámetro ``tenant_id``. La config IA
+es global a la plataforma; el tenant nunca decide qué proveedor se usa.
 """
 from __future__ import annotations
 
@@ -69,13 +68,13 @@ def _cache_invalidate() -> None:
 
 
 def _env_fallback(modality: str) -> ResolvedProvider:
-    """Resuelve la modalidad contra ``INFLUENCER_DEFAULT_{MODALITY}_PROVIDER``.
+    """Resuelve la modalidad contra ``AI_DEFAULT_{MODALITY}_PROVIDER``.
 
     Si la env var no está seteada, devuelve un ``ResolvedProvider`` con
     ``provider='unset'`` y ``source='unset'`` — el caller debe decidir
     si lanza un error o cae a un mock (e.g. en tests).
     """
-    env_key = f'INFLUENCER_DEFAULT_{modality.upper()}_PROVIDER'
+    env_key = f'AI_DEFAULT_{modality.upper()}_PROVIDER'
     provider = os.environ.get(env_key, '').strip()
     if not provider:
         return ResolvedProvider(
@@ -90,7 +89,7 @@ def _env_fallback(modality: str) -> ResolvedProvider:
         modality=modality,
         provider=provider,
         secret_ref=None,
-        model=os.environ.get(f'INFLUENCER_DEFAULT_{modality.upper()}_MODEL') or None,
+        model=os.environ.get(f'AI_DEFAULT_{modality.upper()}_MODEL') or None,
         params={},
         source='env',
     )
@@ -106,7 +105,7 @@ async def resolve_provider(
         1. Cache in-memory (TTL 5 min).
         2. SELECT en ``app.platform_ai_providers`` por ``modality``.
         3. Si la fila no existe o tiene ``provider='unset'``, fallback a
-           env var ``INFLUENCER_DEFAULT_{MODALITY}_PROVIDER``.
+           env var ``AI_DEFAULT_{MODALITY}_PROVIDER``.
         4. Si la env var tampoco está seteada, devuelve ``provider='unset'``
            — el caller decide si lanza error.
 

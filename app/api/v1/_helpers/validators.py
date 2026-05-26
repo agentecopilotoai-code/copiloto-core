@@ -6,15 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 
-NOTIFICATION_CHANNEL_IDS = ('email', 'wa', 'inapp')
-
-
-def _validate_digest_recipients(email: str | None, whatsapp: str | None) -> None:
-    if not (email or '').strip() and not (whatsapp or '').strip():
-        raise HTTPException(
-            status_code=400,
-            detail='recipient_email or recipient_whatsapp is required',
-        )
+NOTIFICATION_CHANNEL_IDS = ('email', 'inapp')
 
 
 def _validate_timezone(tz: Any) -> None:
@@ -42,7 +34,7 @@ def _validate_timezone(tz: Any) -> None:
 def _validate_notification_matrix(matrix: Any) -> dict:
     """Validate the `notification_matrix` payload.
 
-    Shape: `{event_id (str): {channel_id (str in {email,wa,inapp}): bool}}`.
+    Shape: `{event_id (str): {channel_id (str in {email,inapp}): bool}}`.
     Unknown channel ids are rejected; unknown event ids are allowed (the
     catalog of events is frontend-driven and may grow without a backend
     migration).

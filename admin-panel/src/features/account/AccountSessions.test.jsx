@@ -56,7 +56,7 @@ describe('<AccountSessions/>', () => {
     render(<AccountSessions />);
     expect(screen.getByRole('heading', { name: 'Sesiones activas' })).toBeInTheDocument();
     expect(screen.getByText(/Chrome 124 · macOS/)).toBeInTheDocument();
-    expect(screen.getByText(/WhatsApp Web · iPhone 15/)).toBeInTheDocument();
+    expect(screen.getByText(/Safari · iPhone 15/)).toBeInTheDocument();
     expect(screen.getByText(/Firefox 125 · Ubuntu/)).toBeInTheDocument();
   });
 
@@ -85,7 +85,7 @@ describe('<AccountSessions/>', () => {
     render(<AccountSessions />);
     const otherSessionBtn = screen
       .getAllByRole('button', { name: /Revocar sesión/ })
-      .find((btn) => btn.getAttribute('aria-label')?.includes('WhatsApp Web'));
+      .find((btn) => btn.getAttribute('aria-label')?.includes('Safari'));
     await userEvent.click(otherSessionBtn);
     // BUG-233 (codex P2 sobre PR #16): el copy original exponia el endpoint
     // `DELETE /v1/me/sessions` y el codigo interno UI-016.7-FU-SESSIONS,

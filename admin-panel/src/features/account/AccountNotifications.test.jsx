@@ -2,7 +2,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-// UI-016.7-FU — mock the auth/session source so the hydration effect can run.
 let mockSession;
 vi.mock('../../context/AuthContext.jsx', () => ({
   useAuth: () => ({ session: mockSession }),
@@ -51,28 +50,26 @@ beforeEach(() => {
 });
 
 describe('<AccountNotifications/>', () => {
-  it('pinta las 6 filas de eventos del HTML T3', () => {
+  it('pinta las filas de eventos transversales del core', () => {
     render(<AccountNotifications />);
-    expect(screen.getByText('Digest diario')).toBeInTheDocument();
-    expect(screen.getByText('Handoff con SLA cercano')).toBeInTheDocument();
-    expect(screen.getByText('Cobro fallido')).toBeInTheDocument();
-    expect(screen.getByText('Cita confirmada')).toBeInTheDocument();
-    expect(screen.getByText('Quality rating de WhatsApp baja')).toBeInTheDocument();
-    expect(screen.getByText('Resumen semanal de campañas')).toBeInTheDocument();
+    expect(screen.getByText('Alerta de seguridad')).toBeInTheDocument();
+    expect(screen.getByText('Invitación a un negocio')).toBeInTheDocument();
+    expect(screen.getByText('Cambio de rol')).toBeInTheDocument();
+    expect(screen.getByText('Soporte ingresó a tu negocio')).toBeInTheDocument();
   });
 
-  it('cada fila ofrece checkboxes para email/wa/inapp', () => {
+  it('cada fila ofrece checkboxes para email/inapp', () => {
     render(<AccountNotifications />);
-    const dailyDigestRow = screen.getByText('Digest diario').closest('[role="row"]');
-    expect(dailyDigestRow).not.toBeNull();
-    const checkboxes = within(dailyDigestRow).getAllByRole('checkbox');
-    expect(checkboxes).toHaveLength(3);
+    const row = screen.getByText('Alerta de seguridad').closest('[role="row"]');
+    expect(row).not.toBeNull();
+    const checkboxes = within(row).getAllByRole('checkbox');
+    expect(checkboxes).toHaveLength(2);
   });
 
   it('toggle de checkbox actualiza su estado checked', async () => {
     render(<AccountNotifications />);
     const checkbox = document.querySelector(
-      'input[data-event="daily_digest"][data-channel="email"]',
+      'input[data-event="security_alert"][data-channel="email"]',
     );
     expect(checkbox).toBeChecked();
     await userEvent.click(checkbox);
@@ -86,15 +83,12 @@ describe('<AccountNotifications/>', () => {
       expect(coreApi.patchMyNotifications).toHaveBeenCalledTimes(1);
     });
     const [, matrix] = coreApi.patchMyNotifications.mock.calls[0];
-    // The 6 canonical event ids must appear in the payload.
     expect(matrix).toEqual(
       expect.objectContaining({
-        daily_digest: expect.any(Object),
-        handoff_sla: expect.any(Object),
-        payment_failed: expect.any(Object),
-        appointment_confirmed: expect.any(Object),
-        quality_rating_low: expect.any(Object),
-        weekly_campaigns_summary: expect.any(Object),
+        security_alert: expect.any(Object),
+        tenant_invite: expect.any(Object),
+        role_changed: expect.any(Object),
+        support_mode_used: expect.any(Object),
       }),
     );
     await waitFor(() => {
@@ -103,15 +97,13 @@ describe('<AccountNotifications/>', () => {
   });
 
   it('si el backend devuelve 422 muestra AlertBanner danger', async () => {
-    const err = new Error('notification_matrix[bad][unknown]: channel must be one of email, wa, inapp');
+    const err = new Error('notification_matrix[bad][unknown]: channel must be one of email, inapp');
     err.status = 422;
     coreApi.patchMyNotifications.mockRejectedValueOnce(err);
 
     render(<AccountNotifications />);
     await userEvent.click(screen.getByRole('button', { name: /Guardar preferencias/ }));
 
-    expect(
-      await screen.findByText(/channel must be one of/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/channel must be one of/)).toBeInTheDocument();
   });
 });

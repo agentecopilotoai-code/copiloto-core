@@ -2,7 +2,7 @@
  * Branch `core` — adminModules del sistema operativo.
  *
  * Solo platform admin (cross-tenant) + transversales del tenant. NINGÚN
- * módulo de producto (GD/influencer/chatbot) está hardcodeado acá.
+ * módulo de producto opt-in está hardcodeado acá.
  *
  * Cuando se "instala" un módulo sobre el core, ese módulo agrega su
  * propia entrada a esta lista (vía un hook de carga dinámica, TODO Fase 2).
@@ -66,8 +66,8 @@ export const adminModules = [
     capability: 'platform.feature_flags.read',
   },
   {
-    // Proveedores IA transversales — alimentan cualquier módulo que se
-    // instale sobre el core (GD/influencer/chatbot/futuros).
+    // Proveedores IA transversales — alimentan cualquier módulo de producto
+    // opt-in que se instale sobre el core.
     id: 'platform-ai-providers',
     label: 'Proveedores IA',
     summary: 'Configuración cross-modalidad (llm/image/video/tts/stt) de los proveedores IA. Recurso transversal — cualquier módulo del producto lo consume.',
@@ -89,19 +89,5 @@ export const adminModules = [
     summary: 'Gestión de usuarios del tenant y sus roles del chrome (owner/admin/manager/agent/viewer).',
     scope: ['Listado de miembros', 'Invitar usuarios', 'Asignar/revocar roles'],
     capability: 'team.write',
-  },
-  {
-    id: 'legal',
-    label: 'Legal',
-    summary: 'Aceptación de términos y configuración de políticas del tenant.',
-    scope: ['Aceptación de términos', 'Políticas de privacidad', 'Compliance'],
-    capability: 'legal.write',
-  },
-  {
-    id: 'audit',
-    label: 'Auditoría',
-    summary: 'Bitácora cross-módulo de eventos del tenant (auth, configuración, módulos).',
-    scope: ['Lista de eventos', 'Filtros por tipo/actor/fecha', 'Detalle del evento'],
-    capability: 'audit.read',
   },
 ];

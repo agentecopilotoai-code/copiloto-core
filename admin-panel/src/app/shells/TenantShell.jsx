@@ -18,11 +18,6 @@ import styles from './shell.module.css';
  * El contenido del módulo activo llega por `children` (UI-003 lo reemplazará
  * por `<Outlet/>` del router).
  *
- * BUG-191 (codex P1 sobre BUG-177): `session` se forwardea a `ShellTopbar` →
- * `TenantBrandLogo` para que pueda hacer `fetchTenantMediaBlobUrl` con
- * Bearer auth. Sin esta prop, el componente cae a iniciales aunque el
- * tenant tenga `brand_logo_url` apuntando al proxy interno.
- *
  * @param {{
  *   profile?: object,
  *   permissions: object,

@@ -13,7 +13,9 @@ Diferencia con `POST /v1/tenants` (platform_admin_handlers): este
 endpoint es para AUTO-CREAR el propio tenant; el otro es para que el
 platform_owner cree tenants para terceros desde Fleet.
 
-Branch `core`: limpio, sin seed de segments/retention chatbot.
+Branch `core`: solo crea la fila en `app.tenants` + asigna `owner` al
+caller. Los módulos opt-in agregan sus propios seeds cuando se activan
+en el tenant.
 """
 from __future__ import annotations
 

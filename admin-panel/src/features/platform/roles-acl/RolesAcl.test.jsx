@@ -39,28 +39,25 @@ describe('RolesAcl', () => {
     setup();
 
     expect(screen.getByRole('heading', { name: 'Roles & ACL' })).toBeInTheDocument();
-    // A capability group + a known capability key from PERMISSIONS.
-    expect(screen.getByText('Operación diaria')).toBeInTheDocument();
-    expect(screen.getByText('conversations.view')).toBeInTheDocument();
+    expect(screen.getByText('Administración del tenant')).toBeInTheDocument();
+    expect(screen.getByText('tenant_setup.write')).toBeInTheDocument();
     expect(screen.getByText('platform.tenants.read')).toBeInTheDocument();
-    // Static policy panel.
     expect(screen.getByText('Política de roles')).toBeInTheDocument();
   });
 
   it('filters the matrix by capability search', async () => {
     setup();
-    expect(screen.getByText('conversations.view')).toBeInTheDocument();
+    expect(screen.getByText('tenant_setup.write')).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText('Buscar capacidad'), 'platform');
 
-    expect(screen.queryByText('conversations.view')).toBeNull();
+    expect(screen.queryByText('tenant_setup.write')).toBeNull();
     expect(screen.getByText('platform.tenants.read')).toBeInTheDocument();
     expect(screen.getByText('Platform Owner · fleet')).toBeInTheDocument();
   });
 
   it('renders capability-count tiles per role', () => {
     setup();
-    // One KPI tile per role — the platform_owner tile exists with a count.
     const tile = screen
       .getByText('Platform Owner', { selector: '.label' })
       .closest('article');

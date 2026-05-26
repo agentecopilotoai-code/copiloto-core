@@ -188,14 +188,6 @@ class Settings(BaseSettings):
     # 'outbound_dlq_threshold')`` con el preview de los últimos 5 errores.
     dlq_alert_threshold: int = Field(default=10, ge=1)
     dlq_alert_window_minutes: int = Field(default=60, ge=1, le=1440)
-    # TASK-0070: CDN-distributed embeddable web widget. ``web_widget_api_base``
-    # is the origin the widget hits for /v1/web/chat/*; it MUST be set to the
-    # public API origin in production because the CDN host that serves
-    # widget.js (e.g. cdn.copilotoia.com) doesn't proxy the API. The widget
-    # reads it from ``data-api-base`` on the snippet.
-    web_widget_api_base: str = 'http://localhost:8000'
-    web_widget_cdn_url: str = 'https://cdn.copilotoia.com/widget/v1/widget.js'
-
     # AUDIT-49 / re-audit §1.9 (2026-05-18): coerce empty string → None para
     # `service_token_next`. El default operacional de rotación es: setear
     # `SERVICE_TOKEN_NEXT=<nuevo>` en `.env`, rotar clientes M2M, promover

@@ -5,9 +5,9 @@ from fastapi import FastAPI, Request, Response
 from app.api.v1.routes import router as v1_router
 from app.admin.routes import router as admin_router
 from app.core.config import get_settings
-# Branch `core`: módulos de producto (gd/influencer/chatbot) NO se importan.
-# Cada uno se monta como add-on por separado al instalarse sobre el core
-# (ver `docs/ARCHITECTURE.md` § "Cómo agregar un módulo nuevo").
+# Branch `core`: el core NO incluye módulos opt-in. Cada módulo se monta
+# como add-on por separado al instalarse sobre el core (ver
+# `docs/ARCHITECTURE.md` § "Cómo agregar un módulo nuevo").
 #
 # Endpoints platform admin transversales (`/v1/platform/ai-providers/*`,
 # `/v1/platform/tenant-modules/*`) viven en `app/platform_admin/admin_routes.py`
@@ -37,10 +37,6 @@ async def lifespan(app: FastAPI):
     await db.close()
 
 
-def _is_web_widget_path(path: str) -> bool:
-    return path.startswith('/v1/web/')
-
-
 def _client_ip(request: Request) -> str | None:
     """IP del cliente. Ignora X-Forwarded-For: el endpoint se restringe por red
     privada y un proxy mal configurado no debe degradar la allowlist."""
@@ -58,49 +54,14 @@ def create_app() -> FastAPI:
     async def metrics(request: Request) -> Response:
         if not ip_allowed(_client_ip(request), allowlist):
             return Response(status_code=403)
-        # BUG-047: refrescar gauges de backup desde `app.backup_runs` ANTES
-        # de serializar. Sin esto, los gauges quedaban vacíos y las reglas
-        # `BackupCloudStale` / `BackupVerifyFailed` (alerts.yaml) nunca
-        # paginaban — backups stale silentes. `app.backup_runs` es platform-
-        # scoped (sin RLS), así que `db.connection()` sin tenant alcanza.
-        # Best-effort: si la pool no está lista o la DB cae, el helper
-        # loguea y el endpoint sirve los valores en memoria (sin crashear).
         try:
             async with db.connection() as conn:
                 await refresh_backup_age_metrics(conn)
         except Exception:  # noqa: BLE001
-            # No bloquear /metrics si la DB se cae — scrape sigue sirviendo
-            # el resto de las métricas. La alerta `PostgresUnavailable` (si
-            # se llega a configurar) cubrirá la caída de DB independientemente.
             pass
-        # AUDIT-51: refrescar gauges runtime (fanout + rate-limit) sin tocar DB.
         refresh_runtime_metrics()
         payload, content_type = render_latest()
         return Response(content=payload, media_type=content_type)
-
-
-    @api.middleware('http')
-    async def web_widget_cors(request: Request, call_next):
-        """Add permissive CORS headers for the public web-widget endpoints.
-
-        The widget is embedded on third-party sites; per-tenant origin
-        validation happens inside the endpoint using ``allowed_origins``.
-        Here we only need to satisfy the browser preflight so the request
-        reaches FastAPI.
-        """
-        if not _is_web_widget_path(request.url.path):
-            return await call_next(request)
-        origin = request.headers.get('origin', '*')
-        if request.method == 'OPTIONS':
-            response = Response(status_code=204)
-        else:
-            response = await call_next(request)
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Vary'] = 'Origin'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type'
-        response.headers['Access-Control-Max-Age'] = '600'
-        return response
 
     # Rate limiting runs first (outermost). Starlette wraps middlewares in
     # reverse order of registration, so this must be added last.
@@ -110,7 +71,7 @@ def create_app() -> FastAPI:
         max_entries=settings.rate_limit_bucket_max_entries,
         ttl_seconds=settings.rate_limit_bucket_ttl_seconds,
     )
-    # AUDIT-51: registrar el limiter para que `refresh_runtime_metrics`
+    # Registrar el limiter para que `refresh_runtime_metrics`
     # pueda leer `.size` sin import circular.
     _set_active_rate_limiter(limiter)
     api.middleware('http')(build_rate_limit_middleware(limiter))
@@ -118,9 +79,9 @@ def create_app() -> FastAPI:
     api.include_router(admin_router)
     api.include_router(v1_router)
     # Branch `core`: ningún router de producto se monta. Los módulos opt-in
-    # (gd/influencer/chatbot) registran sus routers cuando se instalan
-    # sobre el core, agregando sus propios `api.include_router(...)` acá
-    # o vía un hook de carga dinámica (TODO Fase 2 — module discovery).
+    # registran sus routers cuando se instalan sobre el core, agregando sus
+    # propios `api.include_router(...)` acá o vía un hook de carga dinámica
+    # (TODO Fase 3 — module discovery con manifest.json).
     return api
 
 

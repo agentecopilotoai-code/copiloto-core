@@ -28,16 +28,13 @@ Opciones:
   --yes             Confirma --reset.
   --skip-smoke      Levanta y valida DB/API, pero no ejecuta smoke-test.sh.
   --module=<name>   Carga el módulo opt-in <name> (de infra/postgres/modules/<name>.sql).
-                    Repetible: --module=chatbot --module=influencer --module=gd.
-                    Sin esta flag (y sin --no-modules) carga TODOS.
+                    Repetible. Sin esta flag (y sin --no-modules) carga TODOS
+                    los módulos en infra/postgres/modules/*.sql.
   --no-modules      NO carga ningún módulo opt-in. Solo core (10-core + 20-seed).
 
 Ejemplos:
-  # Reset full con todos los módulos (uso típico dev):
+  # Reset full con todos los módulos opt-in disponibles:
   ./scripts/bootstrap.sh --reset --yes
-
-  # Reset solo con GD (sin influencer):
-  ./scripts/bootstrap.sh --reset --yes --module=gd
 
   # Reset minimal — solo core, sin módulos opt-in:
   ./scripts/bootstrap.sh --reset --yes --no-modules
@@ -304,21 +301,8 @@ echo "Health:         http://localhost:8000/v1/health"
 echo "MinIO console:  http://localhost:9001"
 echo "OTel metrics:   http://localhost:8889/metrics"
 echo ""
-echo "── Pasos siguientes para habilitar el bot WhatsApp ─────────────────────"
-echo " 1. Sube el CSV de servicios:"
-echo "    curl -X POST http://localhost:8000/v1/knowledge/documents \\"
-echo "         -H 'X-Tenant-Id: 22222222-2222-2222-2222-222222222222' \\"
-echo "         -H 'X-Service-Token: \$SERVICE_TOKEN' \\"
-echo "         -F 'file=@servicios.csv' -F 'title=Servicios' -F 'document_type=reference'"
-echo ""
-echo " 2. Verifica que Ollama corre en el host: ollama serve"
-echo "    Descarga el modelo: ollama pull llama3.2:3b"
-echo ""
-echo " 3. En .env asegúrate de tener:"
-echo "    ANSWER_ENGINE=cascade"
-echo "    LOCAL_LLM_BASE_URL=http://host.docker.internal:11434  # Linux Docker Desktop"
-echo "    # ó  http://172.17.0.1:11434                          # Linux nativo"
-echo ""
-echo " 4. Si cambiaste .env: docker compose restart api"
 echo "────────────────────────────────────────────────────────────────────────"
-echo "Bootstrap completo: DB, tablas, extensiones, tenants demo, API y métricas OK."
+echo "Bootstrap completo: DB, tablas, extensiones, tenant demo, API y métricas OK."
+echo ""
+echo "Los módulos opt-in (si existen en infra/postgres/modules/) ya quedaron"
+echo "instalados. Cada módulo trae su propia documentación de configuración."

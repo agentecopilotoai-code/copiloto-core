@@ -1,21 +1,20 @@
-"""Provider adapters del módulo Influencer / Ravit Studio.
+"""Provider adapters de IA del core.
 
 Cada proveedor (Grok, Anthropic, OpenAI, ElevenLabs, Ollama, SDXL local,
 Whisper local) implementa una o más de las 5 interfaces abstractas
 declaradas en ``base``:
 
-    - LLMProvider   → generación de texto (captions, descripciones, decisiones)
-    - ImageProvider → generación de imágenes (fotos, escenas, anuncios visuales)
-    - VideoProvider → generación de video (reels, historias, anuncios)
-    - TTSProvider   → text-to-speech (voz del personaje)
-    - STTProvider   → speech-to-text (transcripción de audio inputs)
+    - LLMProvider   → generación de texto
+    - ImageProvider → generación de imágenes
+    - VideoProvider → generación de video
+    - TTSProvider   → text-to-speech
+    - STTProvider   → speech-to-text
 
-La interfaz es la fuente de verdad — los adapters concretos (TASK-INFLU-004+)
-implementan estos métodos. El dispatcher de TASK-INFLU-007 resuelve el
-provider activo via ``app.ai.registry`` y lo invoca
-sin conocer detalles del SDK específico.
+Cualquier módulo opt-in que necesite IA consume estos adapters vía
+``app.ai.dispatcher.dispatch()`` — el dispatcher resuelve el provider
+activo via ``app.ai.registry`` y lo invoca sin conocer detalles del SDK.
 
-Política D3: ningún adapter recibe ``tenant_id`` como parámetro. La config
+Política: ningún adapter recibe ``tenant_id`` como parámetro. La config
 del proveedor es global a la plataforma; el tenant nunca decide modelos.
 """
 from app.ai.providers.base import (

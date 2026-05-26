@@ -4,8 +4,8 @@
 -- Solo inserta el dataset MÍNIMO que el core necesita para funcionar:
 -- un tenant demo + activación de módulos opt-in vacía.
 --
--- Productos (chatbot/influencer/gd) seedean su propio dataset en
--- `infra/postgres/modules/<modulo>.sql` cuando se instalan sobre el core.
+-- Cada módulo opt-in seedea su propio dataset cuando se instala sobre el
+-- core (típicamente en `infra/postgres/modules/<modulo>.sql`).
 -- ============================================================================
 
 -- Tenant demo para development local. En producción este insert NO se

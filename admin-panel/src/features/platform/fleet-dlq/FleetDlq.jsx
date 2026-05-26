@@ -97,7 +97,7 @@ export function FleetDlq() {
         <PageHeader
           eyebrow="Plataforma · Operaciones"
           title="Outbound DLQ · fleet"
-          description="Mensajes salientes que no pudieron entregarse a WhatsApp, agrupados por negocio y motivo del error. Cada negocio ve el detalle de sus propios mensajes en su panel."
+          description="Mensajes salientes que no pudieron entregarse (DLQ), agrupados por negocio y motivo del error. Cada negocio ve el detalle de sus propios mensajes en su panel."
           actions={
             <button type="button" className={styles.refreshButton} onClick={refresh}>
               Actualizar

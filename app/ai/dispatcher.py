@@ -16,7 +16,7 @@ Política:
 4. Circuit breaker por provider: 5 fallos consecutivos en una ventana
    de 60s → provider marcado ``degraded`` por 5 min y saltado en próximos
    ``dispatch`` calls hasta que el cooldown expire.
-5. Audit: cada dispatch emite una fila en ``influencer.provider_dispatch``
+5. Audit: cada dispatch emite una fila en ``app.provider_dispatch``
    con ``{modality, provider_primary, provider_used, fallback_depth,
    elapsed_ms, success, error_class}``.
 
@@ -130,11 +130,10 @@ class DispatchAudit:
 
 
 async def _record_audit(conn: asyncpg.Connection | None, audit: DispatchAudit) -> None:
-    """Inserta en ``influencer.provider_dispatch`` si la tabla existe.
+    """Inserta en ``app.provider_dispatch`` si la tabla existe.
 
-    Si ``conn`` es ``None`` o la tabla no está creada todavía (caller
-    pre-TASK-INFLU-007 schema migration), se loguea y se descarta — el
-    dispatch no falla por la auditoría.
+    Si ``conn`` es ``None`` o la tabla no está creada todavía, se loguea
+    y se descarta — el dispatch no falla por la auditoría.
     """
     if conn is None:
         logger.info(
@@ -147,7 +146,7 @@ async def _record_audit(conn: asyncpg.Connection | None, audit: DispatchAudit) -
     try:
         await conn.execute(
             '''
-            insert into influencer.provider_dispatch
+            insert into app.provider_dispatch
               (modality, provider_primary, provider_used, fallback_depth,
                elapsed_ms, success, error_class)
             values ($1, $2, $3, $4, $5, $6, $7)
@@ -201,7 +200,7 @@ async def dispatch(
             result. La implementación es responsable de instanciar el
             adapter correcto y resolver el ``secret_ref``.
         audit_conn: si se provee, se inserta una fila en
-            ``influencer.provider_dispatch``. Puede ser la misma `conn`.
+            ``app.provider_dispatch``. Puede ser la misma `conn`.
 
     Raises:
         ProviderContentRejected: si el primer provider rechaza por

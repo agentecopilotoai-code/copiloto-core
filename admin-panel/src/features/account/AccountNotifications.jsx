@@ -15,19 +15,17 @@ import {
 } from './accountData.js';
 
 /**
- * UI-016.7 — `/account/notifications`.
+ * `/account/notifications`.
  *
- * Matriz de notificaciones (eventos × canales). El HTML T3 muestra 6 eventos:
- * Digest diario, Handoff con SLA cercano, Cobro fallido, Cita confirmada,
- * Quality rating de WhatsApp baja, Resumen semanal de campañas. Cada uno se
- * puede toggear por email / WhatsApp / en-la-app.
+ * Matriz de notificaciones (eventos × canales). El core entrega eventos
+ * transversales (seguridad, invitación a tenant, cambio de rol, support
+ * mode). Cada canal del usuario (email / in-app) se puede toggear por
+ * evento. Los módulos opt-in suman sus propios eventos al catálogo.
  *
- * UI-016.7-FU cableó GET/PATCH `/v1/me/notifications`. El form arranca con
- * los defaults canónicos (`initialNotificationMatrix`) y, si el backend tiene
- * una matriz guardada, la merge encima — así un evento nuevo del catálogo
- * mantiene su default mientras los preexistentes preservan la elección del
- * usuario. PATCH manda la matriz completa (no diff). Éxito → toast `success`;
- * 4xx → AlertBanner; 5xx → toast `error`.
+ * El form arranca con los defaults canónicos (`initialNotificationMatrix`)
+ * y, si el backend tiene una matriz guardada, la merge encima. PATCH manda
+ * la matriz completa (no diff). Éxito → toast `success`; 4xx → AlertBanner;
+ * 5xx → toast `error`.
  */
 export function AccountNotifications() {
   const { session } = useAuth();
@@ -94,7 +92,7 @@ export function AccountNotifications() {
       <PageHeader
         eyebrow="Cuenta · notificaciones"
         title="Notificaciones"
-        description="Elige qué eventos te llegan y por dónde. Las notificaciones in-app se ven en el header del panel; email y WhatsApp respetan el contacto configurado en tu perfil."
+        description="Elige qué eventos te llegan y por dónde. Las notificaciones in-app se ven en el header del panel; las de email se mandan al correo de tu perfil."
       />
 
       {error ? (

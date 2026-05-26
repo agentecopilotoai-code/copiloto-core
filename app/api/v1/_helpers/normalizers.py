@@ -1,8 +1,8 @@
 """Normalizers transversales del core.
 
-Solo contiene helpers que usan los handlers del core. Los normalizers
-chatbot (messenger_channel, web_channel, campaigns, segments,
-qualifications, media_assets, etc.) viven en el módulo chatbot.
+Solo contiene helpers que usan los handlers del core. Los módulos opt-in
+que se instalen sobre el core declaran sus propios normalizers en su
+feature folder.
 """
 from __future__ import annotations
 

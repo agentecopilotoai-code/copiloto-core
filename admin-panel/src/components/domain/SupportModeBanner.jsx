@@ -27,11 +27,10 @@ import styles from './SupportModeBanner.module.css';
  * con privilegios elevados en un tenant ajeno.
  *
  * `onExited`: callback opcional que se ejecuta DESPUÉS de
- * `deactivateSupportMode` exitoso. Útil en sub-shells (GdShell,
- * InfluencerShell, TenantShell con platform_owner) para navegar fuera
- * del tenant — sin el callback, el user queda "huérfano" en una página
- * cuyas queries fallan porque ya no tiene cookie de support_mode ni es
- * miembro real del tenant.
+ * `deactivateSupportMode` exitoso. Útil en sub-shells de módulos opt-in
+ * para navegar fuera del tenant — sin el callback, el user queda
+ * "huérfano" en una página cuyas queries fallan porque ya no tiene cookie
+ * de support_mode ni es miembro real del tenant.
  *
  * @param {{ activeTenantId?: string, onExited?: () => void }} props
  */
@@ -69,8 +68,8 @@ export function SupportModeBanner({ activeTenantId, onExited }) {
     try {
       await deactivateSupportMode(activeTenantId);
       // Después del exit exitoso, dejá que el shell padre navegue. Sin
-      // esto, dentro de GdShell/InfluencerShell el user queda en una
-      // página que va a hacer 404 en el próximo fetch (perdió access).
+      // esto, dentro de un sub-shell el user queda en una página que va
+      // a hacer 404 en el próximo fetch (perdió access).
       if (typeof onExited === 'function') {
         onExited();
       }

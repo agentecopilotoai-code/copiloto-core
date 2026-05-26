@@ -1,13 +1,10 @@
-"""``app.ai`` — Módulo AI transversal de CopilotoIA (TASK-0087).
+"""``app.ai`` — Capa transversal de proveedores de IA del core.
 
-Capa de proveedores de IA usada por:
-  * **Influencer** (`app.influencer.*`) — generación de contenido (fotos,
-    reels, voz, transcripción) vía workers async.
-  * **Chatbot** (`app.chatbot.*`) — answer-engine que invoca LLMs para
-    generar respuestas conversacionales y clasificar intents.
-    (TASK-0088 follow-up: hoy el chatbot usa ``httpx`` directo; ese
-    rewire para que pase por ``dispatch()`` es opt-in y queda como tarea
-    aparte.)
+Cualquier módulo opt-in instalado sobre el core que necesite IA
+(generación de texto, imagen, video, voz, transcripción) consume estos
+adapters vía ``dispatch()``. Los módulos no instancian providers
+directamente — el dispatcher resuelve provider activo + circuit breaker
++ audit por cada call.
 
 Contrato público (estable; documentado en `ARCHITECTURE.md` §6):
 
@@ -20,10 +17,6 @@ Contrato público (estable; documentado en `ARCHITECTURE.md` §6):
     (Grok, Anthropic, OpenAI, ElevenLabs, Ollama, LocalSDXL, LocalWhisper).
   - **Results & Anchor**: 5 dataclasses ``*Result`` + ``PersonaAnchor``.
   - **Exceptions**: ``ProviderError`` + 4 subclases tipadas.
-
-El acoplamiento histórico bajo el namespace influencer-services se eliminó
-en TASK-0087; importar desde la ruta vieja falla con ``ModuleNotFoundError``
-(no hay shim de compat).
 """
 from __future__ import annotations
 

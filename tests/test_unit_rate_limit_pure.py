@@ -187,7 +187,7 @@ def test_rate_limiter_ttl_expires_on_same_key():
 
 def test_classify_scope_webhook_prefix():
     from app.services.rate_limit import classify_scope
-    assert classify_scope('/webhooks/whatsapp/123') == 'webhook'
+    assert classify_scope('/webhooks/inbound/123') == 'webhook'
     assert classify_scope('/v1/tenants') == 'default'
 
 

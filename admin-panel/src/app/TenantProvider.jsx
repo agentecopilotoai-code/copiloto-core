@@ -3,8 +3,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useTenantOptions } from '../hooks/useTenantOptions.js';
 import { highestRole } from '../permissions/index.js';
 import {
-  activateSupportModeForTenant,
-  deactivateSupportModeForTenant,
+  activateSupportMode as activateSupportModeForTenant,
+  deactivateSupportMode as deactivateSupportModeForTenant,
   listMyTenants,
 } from '../services/coreApi.js';
 

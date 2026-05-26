@@ -1,8 +1,7 @@
-"""``GrokProvider`` — adapter xAI Grok para el módulo Influencer.
+"""``GrokProvider`` — adapter xAI Grok del core.
 
-Implementa las 5 interfaces de TASK-INFLU-003 (LLM/Image/Video/TTS/STT)
-contra la API REST de xAI. Modelos cableados según el pricing compartido
-por el usuario (TASK-INFLU-004):
+Implementa las 5 interfaces de IA del core (LLM/Image/Video/TTS/STT)
+contra la API REST de xAI. Modelos cableados según el pricing público:
 
 - LLM: ``grok-4.3`` (1M ctx).
 - Image quality: ``grok-imagine-image-quality``.
@@ -12,15 +11,13 @@ por el usuario (TASK-INFLU-004):
 
 Diseño:
 
-- ``httpx.AsyncClient`` (no SDK oficial — el SDK xAI no es estable a
-  fecha de TASK-INFLU-004 y este adapter usa la API REST documentada).
-- ``asyncio.wait_for`` con ``hard_deadline = timeout + 2s`` (mismo
-  patrón de ``app/chatbot/intent_classifier.py``) — defensa contra
-  SDKs que ignoran el timeout nativo.
-- ``transport`` inyectable para tests (``httpx.MockTransport``); mismo
-  patrón que ``tests/test_payment_provider_static.py``.
-- API key resuelta via ``app.services.whatsapp.resolve_secret_ref`` (o
-  inyectada en el constructor para tests). Nunca se loguea en claro.
+- ``httpx.AsyncClient`` (no SDK oficial — el SDK xAI no es estable y este
+  adapter usa la API REST documentada).
+- ``asyncio.wait_for`` con ``hard_deadline = timeout + 2s`` como defensa
+  contra SDKs que ignoran el timeout nativo.
+- ``transport`` inyectable para tests (``httpx.MockTransport``).
+- API key resuelta via ``app.services.secret_resolver.resolve_secret_ref``
+  (o inyectada en el constructor para tests). Nunca se loguea en claro.
 
 Seguridad:
 
@@ -124,7 +121,7 @@ class GrokProvider(LLMProvider, ImageProvider, VideoProvider, TTSProvider, STTPr
             transport=self._transport,
             headers={
                 'Authorization': f'Bearer {self._api_key}',
-                'User-Agent': 'copilotoia-influencer/1.0',
+                'User-Agent': 'copiloto-core/1.0',
             },
         )
 
