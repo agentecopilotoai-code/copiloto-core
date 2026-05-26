@@ -478,3 +478,56 @@ def test_dist_file_nonexistent_raises():
     from app.admin.routes import _dist_file
     with pytest.raises(HTTPException):
         _dist_file('definitely-does-not-exist-asdf.html')
+
+
+# ─── M47 — _debug helper ───────────────────────────────────────────────────
+
+
+def test_debug_helper_noop_when_disabled(monkeypatch, capsys):
+    """Cuando BFF_DEBUG=0 (default), `_debug()` no imprime nada."""
+    from app.admin import routes as ar
+    monkeypatch.setattr(ar, '_BFF_DEBUG', False)
+    ar._debug('test_stage', foo='bar')
+    out = capsys.readouterr().out
+    assert out == ''
+
+
+def test_debug_helper_prints_when_enabled(monkeypatch, capsys):
+    """Cuando BFF_DEBUG=1, imprime una línea con stage + key=val."""
+    from app.admin import routes as ar
+    monkeypatch.setattr(ar, '_BFF_DEBUG', True)
+    ar._debug('test_stage', foo='bar', count=42)
+    out = capsys.readouterr().out
+    assert '[BFF-DEBUG]' in out
+    assert 'test_stage' in out
+    assert 'foo=bar' in out
+    assert 'count=42' in out
+
+
+def test_debug_helper_redacts_sensitive_keys(monkeypatch, capsys):
+    """Cualquier key con 'secret', 'token', 'code', 'state', 'sid', 'cookie'
+    en el nombre se trunca a 8 chars para no leakear credenciales."""
+    from app.admin import routes as ar
+    monkeypatch.setattr(ar, '_BFF_DEBUG', True)
+    ar._debug(
+        'test',
+        sid='abcdefghijklmnop123456',
+        secret='super-secret-value-xyz',
+        access_token='very-long-token-string',
+        ok_field='public-value-not-redacted',
+    )
+    out = capsys.readouterr().out
+    assert 'sid=abcdefgh…' in out
+    assert 'secret=super-se…' in out
+    assert 'access_token=very-lon…' in out
+    # Non-sensitive passthrough
+    assert 'ok_field=public-value-not-redacted' in out
+
+
+def test_debug_helper_handles_none(monkeypatch, capsys):
+    """None se muestra como ∅ para distinguir de string vacío."""
+    from app.admin import routes as ar
+    monkeypatch.setattr(ar, '_BFF_DEBUG', True)
+    ar._debug('test', value=None)
+    out = capsys.readouterr().out
+    assert 'value=∅' in out

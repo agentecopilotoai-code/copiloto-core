@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 import time
 from pathlib import Path
@@ -49,6 +50,41 @@ _sessions: dict[str, dict[str, Any]] = {}
 # no escalando rol. Ver `_session_can_stream_tenant` para el contrato.
 # BUG-133: `support` no es un rol — es un modo. No se incluye en el ladder.
 _ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40}
+
+
+# ─── M47 — DEBUG instrumentation ──────────────────────────────────────────
+# `print(..., flush=True)` aparece inmediato en `docker compose logs
+# admin-panel`. Lo activamos sólo cuando `BFF_DEBUG=1` para no ensuciar
+# producción. En dev local (.env arranca con BFF_DEBUG=1) cada paso del
+# OAuth/session flow imprime una línea legible prefijada `[BFF-DEBUG]`.
+_BFF_DEBUG = os.environ.get('BFF_DEBUG', '0') == '1'
+
+
+def _debug(stage: str, **kwargs: Any) -> None:
+    """Imprime una línea `[BFF-DEBUG] stage key=val key=val ...`.
+
+    No usa logging porque queremos algo super visible en `docker compose
+    logs` sin tocar la config del logger. `flush=True` evita que uvicorn
+    bufferee la línea hasta el siguiente flush — la ves al instante.
+
+    Cualquier valor que tenga `secret`, `token`, `code`, `state` en el
+    nombre se redacta a `<8 chars + ...>` para no dejar credenciales en
+    los logs (defensa frente a accidentes en producción si alguien
+    olvida apagar `BFF_DEBUG=1`).
+    """
+    if not _BFF_DEBUG:
+        return
+    parts: list[str] = []
+    for k, v in kwargs.items():
+        if v is None:
+            display = '∅'
+        elif any(s in k.lower() for s in ('secret', 'token', 'code', 'state', 'sid', 'cookie')):
+            s = str(v)
+            display = (s[:8] + '…') if len(s) > 8 else s
+        else:
+            display = str(v)
+        parts.append(f'{k}={display}')
+    print(f'[BFF-DEBUG] {stage:<28} ' + ' '.join(parts), flush=True)
 
 
 # BUG-008: el wire format del cookie (HMAC-SHA256 + base64url) se extrajo a
@@ -113,12 +149,27 @@ def _logout_return_to(request: Request) -> str:
 
 def _active_session_id(session_id: str | None) -> dict[str, Any] | None:
     if not session_id:
+        _debug('_active_session_id', result='miss', reason='no_cookie')
         return None
     session = _sessions.get(session_id)
-    if not session or session['expires_at'] < time.time():
-        if session_id:
-            _sessions.pop(session_id, None)
+    if not session:
+        _debug(
+            '_active_session_id', result='miss', reason='zombie',
+            sid=session_id, store_size=len(_sessions),
+        )
         return None
+    if session['expires_at'] < time.time():
+        _debug(
+            '_active_session_id', result='miss', reason='ttl_expired',
+            sid=session_id, expired_seconds_ago=int(time.time() - session['expires_at']),
+        )
+        _sessions.pop(session_id, None)
+        return None
+    _debug(
+        '_active_session_id', result='hit',
+        sid=session_id, email=session.get('profile', {}).get('email'),
+        store_size=len(_sessions),
+    )
     return session
 
 
@@ -408,11 +459,18 @@ async def admin_favicon() -> Response:
 
 @router.get('/admin/login', include_in_schema=False)
 async def admin_login(request: Request) -> RedirectResponse:
+    _debug('GET /admin/login', has_cookie=request.cookies.get(SESSION_COOKIE) is not None)
     if _active_session(request):
+        _debug('GET /admin/login', skip='already_authenticated', redirect='/admin/')
         return RedirectResponse('/admin/', status_code=status.HTTP_303_SEE_OTHER)
 
     settings = get_admin_settings()
     if not settings.auth0_admin_client_id or not settings.auth0_audience:
+        _debug(
+            'GET /admin/login', error='auth0_not_configured',
+            client_id_set=bool(settings.auth0_admin_client_id),
+            audience_set=bool(settings.auth0_audience),
+        )
         raise HTTPException(
             status_code=503,
             detail='Auth0 admin client ID or audience is not configured',
@@ -422,6 +480,10 @@ async def admin_login(request: Request) -> RedirectResponse:
     nonce = secrets.token_urlsafe(32)
     callback_url = _callback_url(request)
     state_cookie = _pack_state({'state': state, 'nonce': nonce, 'created_at': int(time.time())})
+    _debug(
+        'GET /admin/login', step='redirect_to_auth0',
+        callback_url=callback_url, state=state, auth0=settings.auth0_domain,
+    )
     authorization_params = {
         'response_type': 'code',
         'client_id': settings.auth0_admin_client_id,
@@ -453,25 +515,44 @@ async def admin_callback(
     error: str | None = None,
     error_description: str | None = None,
 ) -> RedirectResponse:
+    _debug(
+        'GET /callback', step='received',
+        has_code=bool(code), has_state=bool(state),
+        has_state_cookie=request.cookies.get(STATE_COOKIE) is not None,
+        error=error,
+    )
     if error:
+        _debug('GET /callback', step='auth0_error', error=error, description=error_description)
         raise HTTPException(
             status_code=400,
             detail=f'{error}: {error_description or "Auth0 login failed"}',
         )
     if not code or not state:
+        _debug('GET /callback', step='missing_params', has_code=bool(code), has_state=bool(state))
         raise HTTPException(status_code=400, detail='Missing OAuth code or state')
 
     state_payload = _unpack_state(request.cookies.get(STATE_COOKIE, ''))
-    if (
-        not state_payload
-        or state_payload.get('state') != state
-        or state_payload.get('created_at', 0) < time.time() - 600
-    ):
+    if not state_payload:
+        _debug('GET /callback', step='state_cookie_invalid', reason='cookie_missing_or_unsigned')
         raise HTTPException(status_code=400, detail='Invalid or expired OAuth state')
+    if state_payload.get('state') != state:
+        _debug(
+            'GET /callback', step='state_mismatch',
+            cookie_state=state_payload.get('state'), url_state=state,
+        )
+        raise HTTPException(status_code=400, detail='Invalid or expired OAuth state')
+    if state_payload.get('created_at', 0) < time.time() - 600:
+        _debug(
+            'GET /callback', step='state_expired',
+            age_seconds=int(time.time() - state_payload.get('created_at', 0)),
+        )
+        raise HTTPException(status_code=400, detail='Invalid or expired OAuth state')
+    _debug('GET /callback', step='state_validated')
 
     settings = get_admin_settings()
     callback_url = _callback_url(request)
     async with httpx.AsyncClient(timeout=10) as client:
+        _debug('GET /callback', step='exchanging_code_for_token', auth0=settings.auth0_domain)
         token_response = await client.post(
             f'{_auth0_base_url()}/oauth/token',
             headers={'content-type': 'application/json'},
@@ -484,19 +565,36 @@ async def admin_callback(
             },
         )
         if token_response.status_code >= 400:
+            _debug(
+                'GET /callback', step='token_exchange_failed',
+                status=token_response.status_code, body=token_response.text[:200],
+            )
             raise HTTPException(
                 status_code=401,
                 detail='Could not exchange Auth0 authorization code',
             )
         tokens = token_response.json()
+        _debug(
+            'GET /callback', step='tokens_received',
+            has_id_token=bool(tokens.get('id_token')),
+            has_refresh=bool(tokens.get('refresh_token')),
+        )
 
         userinfo_response = await client.get(
             f'{_auth0_base_url()}/userinfo',
             headers={'authorization': f"Bearer {tokens['access_token']}"},
         )
         if userinfo_response.status_code >= 400:
+            _debug(
+                'GET /callback', step='userinfo_failed',
+                status=userinfo_response.status_code, body=userinfo_response.text[:200],
+            )
             raise HTTPException(status_code=401, detail='Could not fetch Auth0 user profile')
         userinfo = userinfo_response.json()
+        _debug(
+            'GET /callback', step='userinfo_received',
+            sub=userinfo.get('sub'), email=userinfo.get('email'),
+        )
 
     # SEC: validamos la firma del id_token contra el JWKS de Auth0. ANTES
     # decodificábamos con base64 raw (sin firma) → un atacante con un
@@ -528,6 +626,13 @@ async def admin_callback(
     mfa_verified = 'mfa' in amr
 
     session_id = secrets.token_urlsafe(32)
+    profile_email = claims.get('email')
+    profile_roles = _namespaced_claim(claims, 'roles', [])
+    _debug(
+        'GET /callback', step='creating_session',
+        sid=session_id, email=profile_email, roles=profile_roles,
+        mfa_verified=mfa_verified, store_size_before=len(_sessions),
+    )
     _sessions[session_id] = {
         'expires_at': time.time() + SESSION_TTL_SECONDS,
         'access_token': tokens['access_token'],
@@ -559,22 +664,41 @@ async def admin_callback(
         secure=settings.cookies_secure,
         max_age=SESSION_TTL_SECONDS,
     )
+    _debug(
+        'GET /callback', step='session_cookie_set',
+        sid=session_id, ttl_seconds=SESSION_TTL_SECONDS,
+        secure=settings.cookies_secure, samesite='strict',
+        redirect='/admin/',
+    )
     return response
 
 
 @router.post('/admin/logout', include_in_schema=False)
 async def admin_logout(request: Request) -> RedirectResponse:
+    _debug(
+        'POST /admin/logout', step='received',
+        has_cookie=request.cookies.get(SESSION_COOKIE) is not None,
+    )
     # CSRF gate: el form POST debe venir del mismo origin. Sin esto, un
     # sitio externo podría disparar el logout del usuario con un form
     # cross-origin (aunque la cookie SameSite=strict ya lo previene, esto
     # es defensa-en-profundidad y evita falsos positivos por cookies de
     # navegadores viejos).
     if not _csrf_origin_ok(request):
+        _debug(
+            'POST /admin/logout', step='csrf_rejected',
+            origin=request.headers.get('origin'),
+            sec_fetch_site=request.headers.get('sec-fetch-site'),
+        )
         raise HTTPException(status_code=403, detail='csrf_check_failed')
     settings = get_admin_settings()
     session_id = request.cookies.get(SESSION_COOKIE)
     if session_id:
-        _sessions.pop(session_id, None)
+        existed = _sessions.pop(session_id, None) is not None
+        _debug(
+            'POST /admin/logout', step='session_purged',
+            sid=session_id, found_in_store=existed, store_size_after=len(_sessions),
+        )
     return_to = _logout_return_to(request)
     logout_params = {'client_id': settings.auth0_admin_client_id or '', 'returnTo': return_to}
     logout_url = (
@@ -608,12 +732,23 @@ def _session_mfa_required(session: dict[str, Any]) -> bool:
 
 @router.get('/admin/api/session')
 async def admin_session(request: Request) -> Response:
+    _debug(
+        'GET /admin/api/session', step='received',
+        has_cookie=request.cookies.get(SESSION_COOKIE) is not None,
+        store_size=len(_sessions),
+    )
     session = _active_session(request)
     if not session:
         # M46: 401 explícito con reason + delete-cookie. Antes era un
         # `Response(status_code=401)` plano y el frontend no podía
         # distinguir "nunca tuvo sesión" de "sesión expiró por restart".
+        _debug('GET /admin/api/session', step='returning_401', store_size=len(_sessions))
         return _unauthorized_session_response(request)
+    _debug(
+        'GET /admin/api/session', step='returning_200',
+        email=session['profile'].get('email'),
+        roles=session['profile'].get('roles'),
+    )
     profile = session['profile']
     return Response(
         json.dumps(
@@ -748,12 +883,22 @@ def _csrf_origin_ok(request: Request) -> bool:
     '/admin/api/core/{path:path}', methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 )
 async def admin_core_api_proxy(path: str, request: Request) -> Response:
+    _debug(
+        f'{request.method} /admin/api/core/{path}', step='proxy_received',
+        has_cookie=request.cookies.get(SESSION_COOKIE) is not None,
+        store_size=len(_sessions),
+    )
     session = _active_session(request)
     if not session:
         # M46: mismo patrón que /admin/api/session — body explicativo
         # con `reason` + delete-cookie zombie. El SPA puede leer el JSON
         # para mostrar "tu sesión expiró" en lugar de un 401 mudo.
+        _debug(f'{request.method} /admin/api/core/{path}', step='proxy_401_no_session')
         return _unauthorized_session_response(request)
+    _debug(
+        f'{request.method} /admin/api/core/{path}', step='proxy_authorized',
+        email=session['profile'].get('email'),
+    )
 
     # CSRF gate: para mutaciones (POST/PUT/PATCH/DELETE) exigimos prueba de
     # same-origin. Defensa-en-profundidad sobre la cookie SameSite=strict.

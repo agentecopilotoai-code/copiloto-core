@@ -46,8 +46,14 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    command: python3 -m uvicorn app.admin.main:app --host 0.0.0.0 --port 3000
+    # M47 — `--reload` + bind mount de `./app` para que cambios en el BFF
+    # (app/admin/*) se reflejen sin rebuild. Antes solo había bind de
+    # `.secrets`, así que cada `docker compose restart admin-panel`
+    # seguía corriendo el código congelado en la image — confuso al
+    # iterar (los `print()` nuevos no aparecían en logs).
+    command: python3 -m uvicorn app.admin.main:app --host 0.0.0.0 --port 3000 --reload
     volumes:
+      - ./app:/app/app:ro
       - ./.secrets:/app/.secrets:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:3000/admin/ >/dev/null || exit 1"]
