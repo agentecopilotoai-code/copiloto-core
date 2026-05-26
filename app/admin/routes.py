@@ -648,12 +648,27 @@ async def admin_callback(
 
     claims = {**id_token_claims, **userinfo}
 
-    # Auth0 sets amr=['mfa'] in the id_token when a second factor was used.
-    # El claim AHORA viene del id_token con firma verificada — no es forgeable.
+    # M53 — detectar MFA por DOS vías (en orden de preferencia):
+    #
+    # (1) Custom claim namespaced del Auth0 Action:
+    #       `https://copilotoia.local/claims/mfa_verified`  (boolean)
+    #     Esto es lo que el Action de Auth0 de este tenant ya emite (vimos
+    #     la key en el `auth_flow_claims_inspection` log: M51/M52). Es
+    #     más robusto que `amr` porque el Action puede setearlo desde
+    #     `event.authentication.methods` con cualquier semantic custom
+    #     (factor adaptive, risk-based, etc).
+    #
+    # (2) Standard OIDC `amr=['mfa']` claim:
+    #     Fallback estándar. Auth0 lo emite SOLO si el cliente OAuth pide
+    #     `acr_values=mfa` o el Action lo setea explícito.
+    #
+    # Cualquiera de los dos cuenta como MFA verificado.
     amr = id_token_claims.get('amr') or claims.get('amr') or []
     if isinstance(amr, str):
         amr = [amr]
-    mfa_verified = 'mfa' in amr
+    mfa_via_amr = 'mfa' in amr
+    mfa_via_custom_claim = bool(_namespaced_claim(claims, 'mfa_verified', False))
+    mfa_verified = mfa_via_amr or mfa_via_custom_claim
 
     # M51 — DEBUG: imprimir todos los claims relacionados con autenticación
     # para diagnosticar por qué Auth0 no marca MFA. Sin esto, el handler
@@ -680,7 +695,10 @@ async def admin_callback(
         id_token_keys=sorted(id_token_claims.keys()),
         id_token_flow_claims=id_token_flow_claims,
         userinfo_flow_claims=userinfo_flow_claims,
-        amr_resolved=amr, mfa_verified=mfa_verified,
+        amr_resolved=amr,
+        mfa_via_amr=mfa_via_amr,
+        mfa_via_custom_claim=mfa_via_custom_claim,
+        mfa_verified=mfa_verified,
     )
 
     session_id = secrets.token_urlsafe(32)
