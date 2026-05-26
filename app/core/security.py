@@ -60,7 +60,12 @@ _jwks_cache: dict[str, tuple[float, dict]] = {}
 # de support_mode es por endpoint dedicado (cookie firmada + audit), no por
 # rol. Removemos `support` del ladder; cualquier elevación cross-tenant pasa
 # por `support_mode` (verificado en `authenticate_request`).
-_ROLE_LEVELS = {
+# M13 — fuente única de verdad del ladder de roles. Antes vivía duplicada
+# en `app/admin/routes.py` con la misma rationale; ahora el BFF re-importa
+# desde aquí (`from app.core.security import ROLE_LEVELS, PRIVILEGED_ROLES`).
+# Mantener `_ROLE_LEVELS` / `_PRIVILEGED_ROLES` como aliases internos para
+# no romper call sites históricos dentro de este módulo.
+ROLE_LEVELS = {
     'viewer': 5,
     'agent': 10,
     'manager': 20,
@@ -68,7 +73,9 @@ _ROLE_LEVELS = {
     'owner': 40,
     'platform_owner': 60,
 }
-_PRIVILEGED_ROLES = {'admin', 'owner', 'platform_owner'}
+PRIVILEGED_ROLES = frozenset({'admin', 'owner', 'platform_owner'})
+_ROLE_LEVELS = ROLE_LEVELS  # backwards compat dentro del módulo
+_PRIVILEGED_ROLES = PRIVILEGED_ROLES
 
 
 def clear_jwks_cache() -> None:

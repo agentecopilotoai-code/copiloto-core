@@ -23,7 +23,10 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 from app.admin.config import get_admin_settings
 from app.admin.ws_fanout import fanout as ws_fanout
-from app.core.security import decode_auth0_id_token
+from app.core.security import (
+    PRIVILEGED_ROLES as _PRIVILEGED_ROLES,
+    decode_auth0_id_token,
+)
 from app.core.signed_cookies import (
     _sign as _signed_cookies_sign,
     pack_signed_payload,
@@ -39,10 +42,13 @@ SESSION_TTL_SECONDS = 8 * 60 * 60
 
 router = APIRouter()
 _sessions: dict[str, dict[str, Any]] = {}
-# BUG-133: `support` no es un rol — es un modo (`support_mode` flag/cookie).
-# Ver `app/core/security.py::_ROLE_LEVELS` para la racional completa.
+# M13 — `_PRIVILEGED_ROLES` se importa desde `app/core/security.py`
+# (fuente única de verdad). `_ROLE_LEVELS` queda LOCAL al BFF a propósito:
+# excluye `platform_owner` porque el BFF nunca debe tratarlo como un rol
+# tenant-scoped — el platform_owner cruza tenants vía cookie `support_mode`,
+# no escalando rol. Ver `_session_can_stream_tenant` para el contrato.
+# BUG-133: `support` no es un rol — es un modo. No se incluye en el ladder.
 _ROLE_LEVELS = {'agent': 10, 'manager': 20, 'admin': 30, 'owner': 40}
-_PRIVILEGED_ROLES = {'admin', 'owner', 'platform_owner'}
 
 
 # BUG-008: el wire format del cookie (HMAC-SHA256 + base64url) se extrajo a
