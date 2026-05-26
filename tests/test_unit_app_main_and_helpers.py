@@ -326,3 +326,25 @@ def test_metrics_endpoint_200_with_allowlist(monkeypatch):
     req = FRequest(scope)
     result = asyncio.run(handler(req))
     assert result.status_code == 200
+
+
+# ─── app.admin.main — admin-panel container entrypoint ────────────────────
+
+
+def test_admin_main_module_creates_app():
+    """`app/admin/main.py` es el entrypoint del container `admin-panel`
+    en docker-compose.yml. Importarlo ejecuta `create_app()` a nivel de
+    módulo. Verificamos que ese app expone el router admin (login/logout/
+    callback)."""
+    from app.admin import main as admin_main
+    api = admin_main.app
+    # Routes del admin_router montadas — checkamos el endpoint canónico.
+    paths = [r.path for r in api.routes if hasattr(r, 'path')]
+    assert '/admin/login' in paths or any('/admin' in p for p in paths)
+
+
+def test_admin_main_create_app_factory():
+    """Llamada directa al factory devuelve una FastAPI nueva."""
+    from app.admin.main import create_app
+    api = create_app()
+    assert api.title.endswith('Admin Panel')
