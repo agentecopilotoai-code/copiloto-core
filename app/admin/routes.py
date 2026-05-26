@@ -693,18 +693,50 @@ async def admin_logout(request: Request) -> RedirectResponse:
         raise HTTPException(status_code=403, detail='csrf_check_failed')
     settings = get_admin_settings()
     session_id = request.cookies.get(SESSION_COOKIE)
+    # M49 — leer id_token ANTES de purgar la sesión para pasarlo como
+    # `id_token_hint` a Auth0 OIDC logout. Sin hint, Auth0 puede
+    # mostrar una pantalla de confirmación al user ("¿salir?") en lugar
+    # de terminar la sesión silenciosa.
+    id_token_hint: str | None = None
     if session_id:
+        cached_session = _sessions.get(session_id)
+        if cached_session:
+            id_token_hint = cached_session.get('id_token')
         existed = _sessions.pop(session_id, None) is not None
         _debug(
             'POST /admin/logout', step='session_purged',
-            sid=session_id, found_in_store=existed, store_size_after=len(_sessions),
+            sid=session_id, found_in_store=existed,
+            had_id_token=id_token_hint is not None,
+            store_size_after=len(_sessions),
         )
     return_to = _logout_return_to(request)
-    logout_params = {'client_id': settings.auth0_admin_client_id or '', 'returnTo': return_to}
-    logout_url = (
-        f'{_auth0_base_url()}/v2/logout?{urlencode(logout_params)}'
-        if settings.auth0_domain and settings.auth0_admin_client_id
-        else '/admin/'
+    # M49 — Auth0 deprecó `/v2/logout` (devuelve 404 desde 2024). El
+    # endpoint OIDC estándar es `/oidc/logout` con parámetros distintos:
+    #   - `client_id`               (igual que antes)
+    #   - `post_logout_redirect_uri` (en lugar de `returnTo`)
+    #   - `id_token_hint`           (opcional pero evita pantalla de
+    #                                confirmación + termina SSO silencioso)
+    # `post_logout_redirect_uri` debe estar registrado en
+    # Application Settings → "Allowed Logout URLs" del dashboard Auth0.
+    if settings.auth0_domain and settings.auth0_admin_client_id:
+        oidc_params: dict[str, str] = {
+            'client_id': settings.auth0_admin_client_id,
+            'post_logout_redirect_uri': return_to,
+        }
+        if id_token_hint:
+            oidc_params['id_token_hint'] = id_token_hint
+        logout_url = f'{_auth0_base_url()}/oidc/logout?{urlencode(oidc_params)}'
+    else:
+        logout_url = '/admin/'
+    _debug(
+        'POST /admin/logout', step='redirect_decided',
+        redirect_to=logout_url[:100] + ('…' if len(logout_url) > 100 else ''),
+        post_logout_redirect_uri=return_to,
+        with_id_token_hint=bool(id_token_hint),
+        auth0_oidc_logout=settings.auth0_domain is not None,
+        client_header_sec_fetch=request.headers.get('sec-fetch-mode'),
+        client_header_x_req=request.headers.get('x-requested-with'),
+        client_header_origin=request.headers.get('origin'),
     )
     response = RedirectResponse(logout_url, status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(SESSION_COOKIE)
