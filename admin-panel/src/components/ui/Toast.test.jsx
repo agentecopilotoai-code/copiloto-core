@@ -170,6 +170,96 @@ describe('Toast', () => {
     }
   });
 
+  it('renders thumbnail as string URL', async () => {
+    function ThumbTrigger() {
+      const toast = useToast();
+      return (
+        <button
+          type="button"
+          onClick={() => toast.push({
+            tone: 'success', title: 'Img', thumbnail: 'https://cdn/x.png',
+          })}
+        >
+          T
+        </button>
+      );
+    }
+    render(<ToastProvider><ThumbTrigger /></ToastProvider>);
+    await userEvent.click(screen.getByRole('button', { name: 'T' }));
+    expect(document.querySelector('img[src="https://cdn/x.png"]')).not.toBeNull();
+  });
+
+  it('renders thumbnail as React node', async () => {
+    function ThumbTrigger() {
+      const toast = useToast();
+      return (
+        <button
+          type="button"
+          onClick={() => toast.push({
+            tone: 'success',
+            title: 'Node',
+            thumbnail: <span data-testid="node-thumb">✓</span>,
+          })}
+        >
+          T
+        </button>
+      );
+    }
+    render(<ToastProvider><ThumbTrigger /></ToastProvider>);
+    await userEvent.click(screen.getByRole('button', { name: 'T' }));
+    expect(screen.getByTestId('node-thumb')).toBeInTheDocument();
+  });
+
+  it('renders custom action button con onClick + dismiss default', async () => {
+    const onAction = vi.fn();
+    function ActTrigger() {
+      const toast = useToast();
+      return (
+        <button
+          type="button"
+          onClick={() => toast.push({
+            tone: 'info',
+            title: 'A',
+            action: { label: 'OK', onClick: onAction },
+          })}
+        >
+          T
+        </button>
+      );
+    }
+    render(<ToastProvider><ActTrigger /></ToastProvider>);
+    await userEvent.click(screen.getByRole('button', { name: 'T' }));
+    const actionBtn = screen.getByRole('button', { name: 'OK' });
+    await act(async () => { await userEvent.click(actionBtn); });
+    expect(onAction).toHaveBeenCalled();
+    // Por default dismiss-on-click, así que el toast desaparece.
+    expect(screen.queryByText('A')).toBeNull();
+  });
+
+  it('action.dismissOnClick=false NO cierra el toast', async () => {
+    function ActTrigger() {
+      const toast = useToast();
+      return (
+        <button
+          type="button"
+          onClick={() => toast.push({
+            tone: 'info',
+            title: 'Sticky',
+            action: { label: 'Action', onClick: () => {}, dismissOnClick: false },
+          })}
+        >
+          T
+        </button>
+      );
+    }
+    render(<ToastProvider><ActTrigger /></ToastProvider>);
+    await userEvent.click(screen.getByRole('button', { name: 'T' }));
+    await act(async () => {
+      await userEvent.click(screen.getByRole('button', { name: 'Action' }));
+    });
+    expect(screen.getByText('Sticky')).toBeInTheDocument();
+  });
+
   it('explicit timeout overrides the per-tone default', async () => {
     vi.useFakeTimers();
     try {

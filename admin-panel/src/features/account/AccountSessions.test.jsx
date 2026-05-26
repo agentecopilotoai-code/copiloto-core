@@ -109,4 +109,20 @@ describe('<AccountSessions/>', () => {
     );
     expect(screen.getByText(/Cerrar otras sesiones queda en standby/)).toBeInTheDocument();
   });
+
+  it('botón "Entendido" cierra el alert banner', async () => {
+    render(<AccountSessions />);
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Cerrar todas las demás sesiones' }),
+    );
+    expect(screen.getByRole('button', { name: 'Entendido' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Entendido' }));
+    expect(screen.queryByText(/Cerrar otras sesiones queda en standby/)).toBeNull();
+  });
+
+  it('no dispara listMySessions si no hay session', () => {
+    mockSession = null;
+    render(<AccountSessions />);
+    expect(coreApi.listMySessions).not.toHaveBeenCalled();
+  });
 });

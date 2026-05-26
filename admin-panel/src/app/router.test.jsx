@@ -120,6 +120,76 @@ describe('router por rol — branch core', () => {
     expect(router.state.location.pathname).toBe('/some/unknown/path');
   });
 
+  it('NotFoundRoute: botón "Reportar enlace roto" navega al mailto', async () => {
+    renderAt('/some/unknown/path', { tenants: [ACME(['owner'])] });
+    await screen.findByRole('heading', { name: 'Esta página no existe (o se mudó)' });
+    const original = window.location;
+    // jsdom no permite mutar location.href directamente — usamos Proxy.
+    let assignedHref = '';
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: {
+        ...original,
+        get href() { return original.href; },
+        set href(val) { assignedHref = val; },
+      },
+    });
+    try {
+      await screen.findByRole('button', { name: 'Reportar enlace roto' });
+      const userEvent = (await import('@testing-library/user-event')).default;
+      await userEvent.click(screen.getByRole('button', { name: 'Reportar enlace roto' }));
+      expect(assignedHref).toMatch(/^mailto:soporte@copilotoia\.co\?subject=/);
+    } finally {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
+
+  it('OnboardingRoute: anónimo redirige a "/"', async () => {
+    const router = renderAt('/onboarding', { session: null });
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/');
+    });
+  });
+
+  it('NoTenantRoute: anónimo redirige a "/"', async () => {
+    const router = renderAt('/no-tenant', { session: null });
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/');
+    });
+  });
+
+  it('NoTenantRoute: usuario con tenants ya activos redirige a "/"', async () => {
+    const router = renderAt('/no-tenant', { tenants: [ACME(['owner'])] });
+    await waitFor(() => {
+      expect(router.state.location.pathname).not.toBe('/no-tenant');
+    });
+  });
+
+  it('PlatformRoute: anónimo redirige a "/"', async () => {
+    const router = renderAt('/platform', { session: null });
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/');
+    });
+  });
+
+  it('AccountRoute: anónimo redirige a "/"', async () => {
+    const router = renderAt('/account/profile', { session: null });
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/');
+    });
+  });
+
+  it('TenantScope: slug que no matchea ningún tenant redirige a "/"', async () => {
+    const router = renderAt('/t/desconocido/team', { tenants: [ACME(['owner'])] });
+    await waitFor(() => {
+      // El slug no matchea, TenantScope redirige a /
+      expect(router.state.location.pathname).not.toBe('/t/desconocido/team');
+    });
+  });
+
   it('mfa_required dispara auto-logout (POST /admin/logout)', async () => {
     const submitSpy = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
     try {

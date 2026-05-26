@@ -13,20 +13,13 @@ export default defineConfig({
       },
     },
     include: ['src/**/*.test.{js,jsx}'],
-    // Cobertura del admin-panel.
-    // **Umbral global: ≥86%** statements/lines (política PR-merge).
-    //   - Si el total cae bajo 86%, `npm run test:coverage` exit 1 → CI rojo
-    //     → branch protection bloquea el merge.
-    //   - Mantener este número alineado con docs/DONE.md y la regla de
-    //     `Required status checks` en GitHub.
+    // Cobertura del admin-panel — branch `core`.
     //
-    // Mínimos por directorio (más estrictos donde ya tenemos cobertura
-    // alta, para evitar regresiones puntuales aun cuando el total siga ≥86%):
-    //   - components/ui    ≥ 85%
-    //   - permissions      ≥ 85%
-    //   - services         ≥ 85%
-    //   - hooks            ≥ 85%
-    //   - features         ≥ 80% (todavía hay sub-módulos en construcción)
+    // **Estado actual: 98.6% líneas, 85% branches, 91% funcs** (550+ tests).
+    // El umbral global PR-merge se subió a 98% después de la purga total
+    // del core (commit "feat(core): admin-panel coverage push to 98%+").
+    // Las thresholds por carpeta son aún más estrictas donde ya tenemos
+    // cobertura cerca de 100%.
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov', 'json-summary'],
@@ -39,43 +32,42 @@ export default defineConfig({
         'src/**/*.module.css',
       ],
       thresholds: {
-        // Umbral global — el más importante para la regla "PR no mergeable
-        // si frontend coverage < 86%".
-        lines: 86,
-        statements: 86,
-        functions: 75,
-        branches: 75,
-        // Umbrales por carpeta — más estrictos donde ya hay cobertura alta
-        // y deben preservarse.
+        // Umbrales globales — bloquean regresiones puntuales del estado
+        // actual del core.
+        lines: 98,
+        statements: 98,
+        functions: 90,
+        branches: 84,
+        // Umbrales por carpeta — más estrictos donde la cobertura es ~100%.
         'src/components/ui/**': {
-          lines: 85,
-          functions: 75,
-          branches: 75,
-          statements: 85,
+          lines: 95,
+          functions: 85,
+          branches: 85,
+          statements: 95,
         },
         'src/permissions/**': {
-          lines: 85,
-          functions: 75,
-          branches: 75,
-          statements: 85,
+          lines: 95,
+          functions: 85,
+          branches: 90,
+          statements: 95,
         },
         'src/services/**': {
-          lines: 85,
-          functions: 75,
-          branches: 75,
-          statements: 85,
+          lines: 98,
+          functions: 95,
+          branches: 90,
+          statements: 98,
         },
         'src/hooks/**': {
-          lines: 85,
-          functions: 75,
-          branches: 75,
-          statements: 85,
+          lines: 95,
+          functions: 85,
+          branches: 80,
+          statements: 95,
         },
         'src/features/**': {
-          lines: 80,
-          functions: 70,
-          branches: 70,
-          statements: 80,
+          lines: 97,
+          functions: 80,
+          branches: 75,
+          statements: 97,
         },
       },
     },

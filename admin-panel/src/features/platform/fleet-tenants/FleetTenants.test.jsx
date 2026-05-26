@@ -174,6 +174,28 @@ describe('FleetTenants', () => {
     await screen.findByText('Clínica Estética Norte');
   });
 
+  it('handleSupportInto: si activateSupportMode falla, muestra error y no navega', async () => {
+    mockTenantContext.activateSupportMode = vi.fn().mockRejectedValue(new Error('mfa expired'));
+    setup();
+    await screen.findByText('Clínica Estética Norte');
+    await userEvent.click(screen.getByText('Clínica Estética Norte'));
+    await screen.findByRole('dialog');
+    await userEvent.click(screen.getByRole('button', { name: 'Ver como tenant' }));
+    expect(await screen.findByText('mfa expired')).toBeInTheDocument();
+    expect(mockNavigate).not.toHaveBeenCalledWith('/t/clinica-norte');
+  });
+
+  it('+ Nuevo tenant abre el modal, crear cierra y refresca', async () => {
+    setup();
+    await screen.findByText('Clínica Estética Norte');
+    await userEvent.click(screen.getByTestId('fleet-create-tenant-btn'));
+    expect(await screen.findByText('Crear tenant nuevo')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+    await waitFor(() => {
+      expect(screen.queryByText('Crear tenant nuevo')).toBeNull();
+    });
+  });
+
   it('hides AccessDenied for a non platform_owner caller', () => {
     mockTenantContext = {
       session: { profile: { sub: 'u-admin', roles: ['admin'] } },

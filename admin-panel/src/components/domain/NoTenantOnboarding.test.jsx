@@ -37,6 +37,22 @@ describe('<NoTenantOnboarding/> (UI-016.6 refactor)', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 
+  it('sin onRefresh usa window.location.reload', async () => {
+    const reload = vi.fn();
+    const original = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...original, reload },
+    });
+    try {
+      render(<NoTenantOnboarding onCreateTenant={() => {}} />);
+      await userEvent.click(screen.getByRole('button', { name: 'Refrescar' }));
+      expect(reload).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: original });
+    }
+  });
+
   // BUG-002: escape hatch garantizado para usuarios sin acceso a ningún tenant.
   it('incluye un form de logout en el secondary slot', () => {
     const { container } = render(<NoTenantOnboarding onCreateTenant={() => {}} />);

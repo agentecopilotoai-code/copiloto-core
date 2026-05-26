@@ -77,7 +77,9 @@ export function AIProvidersContainer() {
   return (
     <>
       {error ? (
-        <AlertBanner tone="danger" title="Error" body={error} />
+        <AlertBanner tone="danger" title="Error">
+          {error}
+        </AlertBanner>
       ) : null}
       <AIProviders rows={rows} onSave={handleSave} onTestProvider={handleTest} />
     </>

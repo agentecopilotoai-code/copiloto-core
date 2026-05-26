@@ -141,6 +141,31 @@ describe('FleetDlq', () => {
     expect(await screen.findByText('dlq endpoint down')).toBeInTheDocument();
   });
 
+  it('Entrar como tenant: pushea tenant via handleTenantCreated y navega', async () => {
+    setup();
+    await screen.findByText('Taller Motos BA');
+    const enterButtons = screen.getAllByRole('button', { name: /Entrar/ });
+    await userEvent.click(enterButtons[0]);
+    expect(mockHandleTenantCreated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 't1',
+        slug: 'taller-motos-ba',
+        label: expect.stringContaining('taller-motos-ba'),
+      }),
+    );
+    expect(mockNavigate).toHaveBeenCalledWith('/t/taller-motos-ba');
+  });
+
+  it('retry falla → muestra error sin cerrar el modal', async () => {
+    retryPlatformOutboundDlq.mockRejectedValue(new Error('rls denied'));
+    setup();
+    await screen.findByText('Taller Motos BA');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Reintentar' })[0]);
+    await screen.findByRole('dialog');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirmar reintento' }));
+    expect(await screen.findByText('rls denied')).toBeInTheDocument();
+  });
+
   it('renders AccessDenied for a non platform_owner caller', () => {
     mockTenantContext = {
       session: { profile: { sub: 'u-admin', roles: ['admin'] } },

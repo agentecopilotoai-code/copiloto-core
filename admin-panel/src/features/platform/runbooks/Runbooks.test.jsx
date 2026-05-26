@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -112,6 +112,24 @@ describe('Runbooks', () => {
     const dialog = await screen.findByRole('dialog');
     expect(getPlatformRunbook).toHaveBeenCalledWith(expect.anything(), 'auth-token-expired');
     expect(dialog.textContent).toContain('Sintoma del token.');
+  });
+
+  it('error path: pinta EmptyState con Reintentar y dispara refresh', async () => {
+    getPlatformRunbooks.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(CATALOGUE);
+    setup();
+    expect(await screen.findByText(/No se pudo cargar/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+    await screen.findByText('Runbook — Postgres caído');
+  });
+
+  it('Actualizar dispara refresh', async () => {
+    setup();
+    await screen.findByText('Runbook — Postgres caído');
+    getPlatformRunbooks.mockClear();
+    await userEvent.click(screen.getByRole('button', { name: 'Actualizar' }));
+    await waitFor(() => {
+      expect(getPlatformRunbooks).toHaveBeenCalled();
+    });
   });
 
   it('renders AccessDenied for a non platform_owner caller', () => {

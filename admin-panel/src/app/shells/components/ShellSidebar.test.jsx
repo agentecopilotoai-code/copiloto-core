@@ -202,4 +202,79 @@ describe('<ShellSidebar/> — UI-019', () => {
     expect(screen.getByTestId('tenant-switcher-stub')).toBeInTheDocument();
     expect(screen.getByTestId('badge-stub')).toBeInTheDocument();
   });
+
+  it('pinta cada SVG section icon canónico + fallback dots para secciones desconocidas', () => {
+    const allSectionsNav = [
+      'Inicio', 'Conversaciones', 'Hoy', 'Negocio', 'IA & Canales',
+      'Operación', 'Configuración', 'Lectura', 'Plataforma',
+      'Observability', 'Operaciones', 'Audit global', 'Acceso',
+      'Sección Desconocida',
+    ].map((s, i) => ({
+      section: s,
+      items: [{ id: `i${i}`, label: s, disabled: false }],
+    }));
+    renderSidebar({ navGroups: allSectionsNav });
+    // Cada section debe tener un SVG con data-icon.
+    const icons = Array.from(document.querySelectorAll('[data-icon]')).map(
+      (el) => el.getAttribute('data-icon'),
+    );
+    expect(icons).toContain('home');
+    expect(icons).toContain('chat');
+    expect(icons).toContain('calendar');
+    expect(icons).toContain('briefcase');
+    expect(icons).toContain('sparkles');
+    expect(icons).toContain('list-check');
+    expect(icons).toContain('cog');
+    expect(icons).toContain('eye');
+    expect(icons).toContain('layers');
+    expect(icons).toContain('chart');
+    expect(icons).toContain('shield');
+    expect(icons).toContain('key');
+    expect(icons).toContain('dots'); // fallback
+  });
+
+  it('userInitials: profile.name multi-palabra → primeras letras', () => {
+    renderSidebar({ profile: { name: 'María José Pérez', roles: ['admin'] } });
+    expect(screen.getByText('MJ')).toBeInTheDocument();
+  });
+
+  it('userInitials: profile sin name usa email', () => {
+    renderSidebar({ profile: { email: 'lucas@x.co' } });
+    expect(screen.getByText('LU')).toBeInTheDocument();
+  });
+
+  it('userInitials: profile vacío cae a "U"', () => {
+    renderSidebar({ profile: null });
+    expect(screen.getByText('U')).toBeInTheDocument();
+  });
+
+  it('UserCard pinta picture en lugar de iniciales cuando viene', () => {
+    renderSidebar({
+      profile: { name: 'X', email: 'x@y.co', picture: 'https://cdn/x.png' },
+    });
+    expect(document.querySelector('img[src="https://cdn/x.png"]')).not.toBeNull();
+  });
+
+  it('UserCard cae a "sin rol" si profile no tiene roles', () => {
+    renderSidebar({ profile: { name: 'X' } });
+    expect(screen.getByText('sin rol')).toBeInTheDocument();
+  });
+
+  it('tolera localStorage no disponible (private mode)', () => {
+    const original = window.localStorage;
+    Object.defineProperty(window, 'localStorage', {
+      get: () => { throw new Error('blocked'); },
+      configurable: true,
+    });
+    try {
+      renderSidebar();
+      const sidebar = screen.getByTestId('shell-sidebar');
+      expect(sidebar).toHaveAttribute('data-collapsed', 'false');
+    } finally {
+      Object.defineProperty(window, 'localStorage', {
+        value: original,
+        configurable: true,
+      });
+    }
+  });
 });

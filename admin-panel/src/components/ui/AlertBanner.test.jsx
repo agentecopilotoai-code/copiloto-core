@@ -25,4 +25,14 @@ describe('AlertBanner', () => {
     const { container } = render(<AlertBanner tone="danger" title="x" />);
     expect(container.firstChild.className).toMatch(/banner--danger/);
   });
+
+  it('renderiza icon slot cuando se pasa', () => {
+    render(<AlertBanner tone="info" title="x" icon={<span data-testid="icon">!</span>} />);
+    expect(screen.getByTestId('icon')).toBeInTheDocument();
+  });
+
+  it('respeta className extra', () => {
+    const { container } = render(<AlertBanner tone="info" title="x" className="custom-x" />);
+    expect(container.firstChild.className).toMatch(/custom-x/);
+  });
 });

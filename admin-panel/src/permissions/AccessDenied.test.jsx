@@ -52,4 +52,23 @@ describe('<AccessDenied/> (UI-016.6 refactor)', () => {
     expect(form).not.toBeNull();
     expect(form.getAttribute('action')).toMatch(/\/admin\/logout$/);
   });
+
+  it('sin onGoHome usa window.location.assign("/admin/")', async () => {
+    const original = window.location;
+    let assigned = null;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { assign: (url) => { assigned = url; } },
+    });
+    try {
+      render(<AccessDenied capability="x.read" mode="R" />);
+      await userEvent.click(screen.getByRole('button', { name: 'Volver al inicio' }));
+      expect(assigned).toBe('/admin/');
+    } finally {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: original,
+      });
+    }
+  });
 });
