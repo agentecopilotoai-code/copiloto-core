@@ -165,6 +165,45 @@ create policy audit_logs_insert on app.audit_logs for insert with check (
   tenant_id = app.current_tenant_id() or tenant_id is null or app.support_mode()
 );
 
+-- ─── Operator alerts (incidentes cross-tenant) ────────────────────────────
+-- Outbound dispatch (email/whatsapp/webhook) lo agrega cada producto cuando
+-- se instala. El core solo persiste la fila + sirve el listado via
+-- /v1/platform/incidents.
+
+create table app.operator_alerts (
+  id uuid primary key default gen_random_uuid(),
+  -- nullable para system-level alerts (e.g. backup_failure no pertenece a
+  -- ningún tenant). El listado bajo support_mode ve todos los rows.
+  tenant_id uuid references app.tenants(id) on delete cascade,
+  kind text not null,
+  payload jsonb not null default '{}'::jsonb,
+  status text not null default 'pending' check (status in ('pending','sent','failed')),
+  attempts integer not null default 0,
+  last_error text,
+  delivered_channels text[] not null default '{}',
+  scheduled_for timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  sent_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+create index ix_operator_alerts_status on app.operator_alerts(status, scheduled_for);
+create index ix_operator_alerts_tenant on app.operator_alerts(tenant_id, created_at desc);
+create trigger trg_operator_alerts_touch
+  before update on app.operator_alerts
+  for each row execute function app.touch_updated_at();
+
+alter table app.operator_alerts enable row level security;
+create policy operator_alerts_support_select on app.operator_alerts
+  for select using (
+    tenant_id = app.current_tenant_id()
+    or (tenant_id is null and app.support_mode())
+    or app.support_mode()
+  );
+create policy operator_alerts_insert on app.operator_alerts for insert with check (
+  tenant_id = app.current_tenant_id() or tenant_id is null or app.support_mode()
+);
+
+
 -- ─── Política de retención de logs ──────────────────────────────────────────
 
 create table app.data_retention_policies (
