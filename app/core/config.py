@@ -75,6 +75,23 @@ class Settings(BaseSettings):
     # Setear False solo en envs cuya tier Auth0 no incluye MFA add-on.
     mfa_enforcement_enabled: bool = True
 
+    # M60/A-003 — toggle de compat para el header `x-admin-user-email`.
+    #
+    # ANTES (M58): el BFF inyectaba este header al proxyar al Core porque
+    # Auth0 no incluía `email` en el access_token. El Core leía ese header
+    # como fallback cuando el JWT no tenía email. SPOOFABLE por cualquier
+    # caller con un access_token Auth0 que pegue directo al Core.
+    #
+    # AHORA: el Auth0 Action emite el claim `email` namespaced en el
+    # access_token (ver scripts/configure-auth0.sh post-M60). El Core lee
+    # el email del JWT firmado y NO necesita el header.
+    #
+    # Default True por COMPAT con instalaciones existentes que aún no
+    # re-deployaron el Action. Pasar a False una vez verificado que el
+    # access_token trae el claim (chequeable en `/admin/api/diagnostics`
+    # o leyendo cualquier audit log con `actor_email` populated).
+    auth0_trust_admin_email_header: bool = True
+
     # ─── Service token (M2M) ──────────────────────────────────────────────
     service_token: str = Field(min_length=16)
     # AUDIT-48: rotación dual del service_token. El callsite acepta

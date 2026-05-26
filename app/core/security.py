@@ -502,31 +502,52 @@ async def authenticate_request(
     # acción ocurrió bajo opt-in temporal o bajo el modo legacy).
     request.state.support_mode_source = support_mode_source
     request.state.mfa_verified = _extract_mfa_verified(payload, namespace)
-    # M58 — Auth0 NO incluye `email`/`name` en el access_token por default
-    # (sólo en id_token + userinfo). El BFF guarda el email real en su
-    # sesión (post-callback) y lo inyecta como `x-admin-user-email` /
-    # `x-admin-user-name` al proxiar al core (ver `_core_api_headers`
-    # en app/admin/routes.py). Acá leemos esos headers como fallback
-    # cuando el JWT no los trae. SIN esto, `app.users.email` quedaba
-    # con `<auth_subject>@auth.local` y la reconciliación por email de
-    # `current_user_id_from_request` nunca matcheaba con los pendings
-    # creados por `add_tenant_member`.
+    # M60/A-003 — orden de preferencia para `email` / `name`:
+    #   1. Claim namespaced del access_token (emitido por el Auth0
+    #      Action post-M60). Esta es la fuente de verdad — firmada por
+    #      Auth0, no spoofable.
+    #   2. Claim plano (`email`, `name`, `nickname`) — algunos tenants
+    #      Auth0 los exponen sin namespace.
+    #   3. (DEPRECATED, M58) Header `x-admin-user-email` /
+    #      `x-admin-user-name` inyectado por el BFF post-callback.
+    #      SPOOFABLE por callers que pegan directo al Core. SOLO se
+    #      usa si `auth0_trust_admin_email_header=True` (default True
+    #      por compat con instalaciones que aún no re-deployaron el
+    #      Action; setear a False una vez verificado que el claim
+    #      llega populated).
     #
-    # NOTA seg: el header `x-admin-user-email` es spoofable por un
-    # caller con access_token directo al core (no via BFF). Para hardening
-    # producción habría que HMAC-sign el header con jwt_secret (similar
-    # al ex-`x-admin-identity` que se purgó en M42). El JWT signature ya
-    # garantiza que el caller es legítimo; lo que falta es atar email al
-    # mismo sujeto firmado. Solución preferida: configurar un Auth0 Action
-    # que setee `api.accessToken.setCustomClaim('email', event.user.email)`
-    # → email viene en el JWT y desaparece la dependencia del header.
-    request.state.email = (
-        payload.get('email') or request.headers.get('x-admin-user-email')
+    # SIN un email confiable, `app.users.email` queda con
+    # `<auth_subject>@auth.local` y la reconciliación por email de
+    # `current_user_id_from_request` (M57) nunca matchea con los
+    # pendings creados por `add_tenant_member` (M59). Por eso el
+    # fallback no se elimina automáticamente — un operator que aún
+    # no migrar el Action vería invitaciones rotas.
+    email = (
+        _claim(payload, namespace, 'email')
+        or payload.get('email')
     )
-    request.state.name = (
-        payload.get('name') or payload.get('nickname')
-        or request.headers.get('x-admin-user-name')
+    name = (
+        _claim(payload, namespace, 'name')
+        or payload.get('name')
+        or payload.get('nickname')
     )
+    if email is None and settings.auth0_trust_admin_email_header:
+        header_email = request.headers.get('x-admin-user-email')
+        if header_email:
+            _security_log.warning(
+                'auth.email_from_header_fallback',
+                hint=(
+                    'access_token no incluye claim email — usando header '
+                    'spoofable. Re-deployar Auth0 Action (configure-auth0.sh) '
+                    'y luego setear AUTH0_TRUST_ADMIN_EMAIL_HEADER=false.'
+                ),
+                actor_id=payload.get('sub'),
+            )
+            email = header_email
+    if name is None and settings.auth0_trust_admin_email_header:
+        name = request.headers.get('x-admin-user-name')
+    request.state.email = email
+    request.state.name = name
     request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
     # UI-016.7-FU-SESSIONS: capturamos los claims que identifican esta sesión
     # del JWT. `jti` es el identificador canónico; `iat` se usa como fallback

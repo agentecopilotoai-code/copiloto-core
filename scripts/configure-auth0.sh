@@ -379,6 +379,21 @@ exports.onExecutePostLogin = async (event, api) => {
   api.accessToken.setCustomClaim(\`\${namespace}/roles\`, roles);
   api.accessToken.setCustomClaim(\`\${namespace}/permissions\`, permissions);
 
+  // M60/A-003 — emitir email + email_verified en el ACCESS_TOKEN como
+  // claim namespaced. Auth0 los pone en el id_token + userinfo por
+  // default, pero NO en el access_token, así que el Core los recibe
+  // como null. Eso forzó (en M58) un fallback al header
+  // \`x-admin-user-email\` inyectado por el BFF — header SPOOFABLE para
+  // un caller que pegue directo al Core. Con este claim el Core lee
+  // el email directo del JWT firmado por Auth0 y no necesita el header.
+  if (event.user && event.user.email) {
+    api.accessToken.setCustomClaim(\`\${namespace}/email\`, event.user.email);
+    api.accessToken.setCustomClaim(
+      \`\${namespace}/email_verified\`,
+      event.user.email_verified === true,
+    );
+  }
+
   if (tenantId) {
     api.idToken.setCustomClaim(\`\${namespace}/tenant_id\`, tenantId);
     api.accessToken.setCustomClaim(\`\${namespace}/tenant_id\`, tenantId);

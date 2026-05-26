@@ -29,6 +29,7 @@ def _stub_settings(monkeypatch, **overrides):
         'mfa_enforcement_enabled': True,
         'service_token': 'test-service-token-min-length-16',
         'service_token_next': None,
+        'auth0_trust_admin_email_header': True,
     }
     defaults.update(overrides)
     stub = SimpleNamespace(**defaults)
@@ -250,3 +251,85 @@ def test_authenticate_request_with_cookie_support_mode(monkeypatch):
     asyncio.run(_go())
     assert request.state.support_mode is True
     assert request.state.support_mode_source == 'cookie'
+
+
+# ═══ A-003 — email source priority + header fallback toggle ═══════════════
+
+
+def test_authenticate_request_email_from_namespaced_claim(monkeypatch):
+    """A-003: namespaced claim `email` (emitido por Auth0 Action) gana
+    sobre el header `x-admin-user-email`."""
+    from app.core.security import authenticate_request
+    _stub_settings(monkeypatch, auth0_trust_admin_email_header=True)
+    ns = 'https://copilotoia.com/claims'
+    token = _signed_token({
+        'sub': 'auth0|u1',
+        f'{ns}/email': 'real@auth0.tld',
+    })
+    request = _req()
+    request.headers = {'x-admin-user-email': 'spoofed@attacker.tld'}
+
+    async def _go():
+        await authenticate_request(
+            request, authorization=f'Bearer {token}', x_tenant_id=None,
+        )
+
+    asyncio.run(_go())
+    # El claim NAMESPACED gana; el header se ignora completamente.
+    assert request.state.email == 'real@auth0.tld'
+
+
+def test_authenticate_request_email_header_blocked_when_setting_false(monkeypatch):
+    """A-003: con `auth0_trust_admin_email_header=False` el header NO se usa
+    aunque el JWT no traiga email — cierra el vector de hijack."""
+    from app.core.security import authenticate_request
+    _stub_settings(monkeypatch, auth0_trust_admin_email_header=False)
+    token = _signed_token({'sub': 'auth0|u1'})  # sin email
+    request = _req()
+    request.headers = {'x-admin-user-email': 'victim@invited.tld'}
+
+    async def _go():
+        await authenticate_request(
+            request, authorization=f'Bearer {token}', x_tenant_id=None,
+        )
+
+    asyncio.run(_go())
+    # email queda None — el handler downstream tiene que decidir qué hacer.
+    # La invitación NO puede ser hijackeada vía header spoof.
+    assert request.state.email is None
+
+
+def test_authenticate_request_email_header_fallback_when_setting_true(monkeypatch):
+    """A-003: con setting=True (compat default) Y access_token sin email,
+    el header se usa pero queda LOGGED como warning."""
+    from app.core.security import authenticate_request
+    _stub_settings(monkeypatch, auth0_trust_admin_email_header=True)
+    token = _signed_token({'sub': 'auth0|u1'})  # sin email
+    request = _req()
+    request.headers = {'x-admin-user-email': 'legacy@x.co'}
+
+    async def _go():
+        await authenticate_request(
+            request, authorization=f'Bearer {token}', x_tenant_id=None,
+        )
+
+    asyncio.run(_go())
+    # Fallback al header (modo legacy / migration period).
+    assert request.state.email == 'legacy@x.co'
+
+
+def test_authenticate_request_email_plain_claim_still_works(monkeypatch):
+    """A-003: tokens con claim `email` plano (no namespaced) siguen
+    funcionando — algunos tenants Auth0 lo emiten así."""
+    from app.core.security import authenticate_request
+    _stub_settings(monkeypatch, auth0_trust_admin_email_header=False)
+    token = _signed_token({'sub': 'auth0|u1', 'email': 'plain@x.co'})
+    request = _req()
+
+    async def _go():
+        await authenticate_request(
+            request, authorization=f'Bearer {token}', x_tenant_id=None,
+        )
+
+    asyncio.run(_go())
+    assert request.state.email == 'plain@x.co'
