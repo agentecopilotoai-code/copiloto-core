@@ -10,10 +10,12 @@ Los helpers compartidos viven en `app.api.v1._helpers.me_utils`.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 import asyncpg
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.v1._helpers.me_utils import (
@@ -24,6 +26,9 @@ from app.api.v1._helpers.me_utils import (
 )
 from app.api.v1._helpers.normalizers import _serialize_profile
 from app.api.v1.routes import me_router
+from app.core.config import get_settings
+from app.core.security import SUPPORT_MODE_COOKIE_NAME
+from app.core.signed_cookies import pack_signed_payload
 from app.db.pool import get_db
 from app.services.audit import audit
 
@@ -275,6 +280,155 @@ async def revoke_my_session(
     )
 
 
-# ─── Hook que registra la sesión actual en cada GET /me/profile ────────────
-# Side-effect: el primer GET de cualquier `/v1/me/*` upsertea la sesión del
-# JWT. No es necesario llamarlo manual desde otros lados.
+# ─── /me/support-mode/{tenant_id} ──────────────────────────────────────────
+# BUG-008 — opt-in temporal de support_mode por tenant.
+#
+# El platform_owner (o `owner` global con su `app_metadata.support_mode=true`)
+# puede activar support_mode UN tenant ajeno a la vez. Sin esto, la única
+# alternativa histórica era marcar `support_mode=true` permanente en Auth0,
+# lo cual amplía el blast-radius más allá del problema concreto.
+#
+# Diseño:
+#   - POST emite una cookie `copilotoia_support_mode` firmada HMAC
+#     (jwt_secret) con `{tid, sub, exp}`. TTL: 1h por default.
+#   - DELETE limpia la cookie (mismo nombre, max_age=0).
+#   - `authenticate_request` lee la cookie en cada request que envíe
+#     `X-Tenant-Id` matcheando `tid`; si todo coincide y el `sub` matchea
+#     el del JWT, bumpea `support_mode=True` para esa request.
+#   - Sin `X-Tenant-Id`, la cookie se ignora (el opt-in es per-tenant).
+
+SUPPORT_MODE_TTL_SECONDS = 3600
+SUPPORT_MODE_MIN_JUSTIFICATION_LEN = 8
+
+_SUPPORT_MODE_ROLES = {'platform_owner', 'owner'}
+
+
+class SupportModeActivateRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    justification: str | None = Field(
+        default=None,
+        min_length=SUPPORT_MODE_MIN_JUSTIFICATION_LEN,
+        max_length=500,
+    )
+
+
+class SupportModeActivateResponse(BaseModel):
+    tenant_id: str
+    expires_at: str
+    ttl_seconds: int
+
+
+def _caller_can_use_support_mode(roles: list[str]) -> bool:
+    """Solo roles globales (platform_owner / owner) pueden activar support_mode."""
+    return any(r in _SUPPORT_MODE_ROLES for r in roles or [])
+
+
+@me_router.post(
+    '/me/support-mode/{tenant_id}',
+    response_model=SupportModeActivateResponse,
+)
+async def activate_support_mode(
+    tenant_id: UUID,
+    request: Request,
+    response: Response,
+    body: SupportModeActivateRequest | None = None,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> SupportModeActivateResponse:
+    """Activa support_mode opt-in para `tenant_id` durante TTL segundos.
+
+    Defensas:
+      - Caller debe estar autenticado (`authenticate_request` ya corrió).
+      - Caller debe tener rol global elevable (platform_owner / owner).
+      - Tenant target debe existir.
+      - Cookie firmada con jwt_secret + sub + exp; sin esos campos
+        matcheando el JWT, `authenticate_request` la ignora.
+      - Audit log con `metadata.justification` para forensia.
+    """
+    actor_id = getattr(request.state, 'actor_id', None)
+    roles = list(getattr(request.state, 'roles', None) or [])
+    if not actor_id:
+        raise HTTPException(401, 'authentication_required')
+    if not _caller_can_use_support_mode(roles):
+        raise HTTPException(403, 'support_mode_requires_global_role')
+
+    # Verificar que el tenant existe (sin RLS — tabla platform-scoped).
+    exists = await conn.fetchval(
+        'select 1 from app.tenants where id = $1 and deleted_at is null',
+        tenant_id,
+    )
+    if not exists:
+        raise HTTPException(404, 'tenant_not_found')
+
+    settings = get_settings()
+    if not settings.jwt_secret:
+        raise HTTPException(500, 'jwt_secret_not_configured')
+
+    expires_at = datetime.now(UTC) + timedelta(seconds=SUPPORT_MODE_TTL_SECONDS)
+    payload = {
+        'tid': str(tenant_id),
+        'sub': actor_id,
+        'exp': int(expires_at.timestamp()),
+    }
+    cookie_value = pack_signed_payload(settings.jwt_secret, payload)
+    response.set_cookie(
+        SUPPORT_MODE_COOKIE_NAME,
+        cookie_value,
+        httponly=True,
+        samesite='strict',
+        secure=settings.app_env != 'local',
+        max_age=SUPPORT_MODE_TTL_SECONDS,
+        path='/',
+    )
+
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type='user',
+        actor_id=actor_id,
+        action='platform.support_mode.activated',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+        metadata={
+            'roles': roles,
+            'justification_provided': bool(body and body.justification),
+            'ttl_seconds': SUPPORT_MODE_TTL_SECONDS,
+        },
+    )
+    return SupportModeActivateResponse(
+        tenant_id=str(tenant_id),
+        expires_at=expires_at.isoformat(),
+        ttl_seconds=SUPPORT_MODE_TTL_SECONDS,
+    )
+
+
+@me_router.delete(
+    '/me/support-mode/{tenant_id}',
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def deactivate_support_mode(
+    tenant_id: UUID,
+    request: Request,
+    response: Response,
+    conn: asyncpg.Connection = Depends(get_db),
+) -> None:
+    """Limpia la cookie de support_mode.
+
+    Idempotente: 204 incluso si la cookie no estaba activa. Audit log
+    siempre se emite (para que el ciclo activate→deactivate quede en
+    forensia).
+    """
+    actor_id = getattr(request.state, 'actor_id', None)
+    if not actor_id:
+        raise HTTPException(401, 'authentication_required')
+
+    response.delete_cookie(SUPPORT_MODE_COOKIE_NAME, path='/')
+    await audit(
+        conn,
+        tenant_id=tenant_id,
+        actor_type='user',
+        actor_id=actor_id,
+        action='platform.support_mode.deactivated',
+        entity_type='tenant',
+        entity_id=str(tenant_id),
+    )
