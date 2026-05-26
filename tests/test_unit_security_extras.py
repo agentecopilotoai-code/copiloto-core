@@ -176,18 +176,17 @@ def test_select_jwk_finds_by_kid():
     assert _select_jwk(jwks, 'k2') == {'kty': 'RSA', 'kid': 'k2'}
 
 
-def test_select_jwk_unknown_kid_raises():
+def test_select_jwk_unknown_kid_returns_none():
+    """M-001: ahora devuelve None — el resolver caller decide si refrescar
+    el JWKS (rotation handling) antes de levantar 401."""
     from app.core.security import _select_jwk
     jwks = {'keys': [{'kty': 'RSA', 'kid': 'k1'}]}
-    with pytest.raises(HTTPException) as exc_info:
-        _select_jwk(jwks, 'unknown')
-    assert exc_info.value.status_code == 401
+    assert _select_jwk(jwks, 'unknown') is None
 
 
-def test_select_jwk_missing_keys_raises():
+def test_select_jwk_missing_keys_returns_none():
     from app.core.security import _select_jwk
-    with pytest.raises(HTTPException):
-        _select_jwk({}, 'k1')
+    assert _select_jwk({}, 'k1') is None
 
 
 # ───────── _has_role / has_jwt_role ─────────────────────────────────────
@@ -287,6 +286,7 @@ def test_decode_local_token_invalid_raises():
 
 
 def test_decode_local_token_valid_returns_payload():
+    from time import time
     from jose import jwt
     from app.core.security import _decode_local_token
     settings = SimpleNamespace(
@@ -294,8 +294,10 @@ def test_decode_local_token_valid_returns_payload():
         jwt_audience='api',
         jwt_issuer='copilotoia',
     )
+    now = int(time())
     token = jwt.encode(
-        {'sub': 'user1', 'aud': 'api', 'iss': 'copilotoia'},
+        {'sub': 'user1', 'aud': 'api', 'iss': 'copilotoia',
+         'iat': now, 'exp': now + 3600},
         settings.jwt_secret, algorithm='HS256',
     )
     payload = _decode_local_token(token, settings)

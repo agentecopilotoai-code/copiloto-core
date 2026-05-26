@@ -65,18 +65,67 @@ def test_select_jwk_matches_kid():
     assert out['kid'] == 'k2'
 
 
-def test_select_jwk_unknown_kid_raises():
+def test_select_jwk_unknown_kid_returns_none():
+    """M-001: ahora devuelve None — el resolver caller decide si refrescar."""
     from app.core.security import _select_jwk
     jwks = {'keys': [{'kid': 'k1'}, {'kid': 'k2'}]}
-    with pytest.raises(HTTPException) as exc:
-        _select_jwk(jwks, 'unknown')
-    assert exc.value.status_code == 401
+    assert _select_jwk(jwks, 'unknown') is None
 
 
-def test_select_jwk_no_keys_raises():
+def test_select_jwk_no_keys_returns_none():
     from app.core.security import _select_jwk
-    with pytest.raises(HTTPException):
-        _select_jwk({'keys': []}, None)
+    assert _select_jwk({'keys': []}, None) is None
+
+
+def test_resolve_jwk_unknown_kid_after_refresh_raises():
+    """M-001: si después de force_refresh el kid sigue sin existir → 401."""
+    import asyncio  # noqa: PLC0415
+    from app.core import security  # noqa: PLC0415
+    security.clear_jwks_cache()
+
+    call_count = {'n': 0}
+
+    async def fake_fetch(domain, ttl, *, force_refresh=False):
+        call_count['n'] += 1
+        return {'keys': [{'kid': 'k-stale', 'kty': 'RSA'}]}
+
+    # Monkeypatch _fetch_auth0_jwks to always return the same stale JWKS.
+    orig = security._fetch_auth0_jwks
+    security._fetch_auth0_jwks = fake_fetch
+    try:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(security._resolve_jwk('tenant.auth0.com', 300, 'k-rotated'))
+        assert exc.value.status_code == 401
+        # Debe haber intentado UNA vez con cache + UNA con force_refresh.
+        assert call_count['n'] == 2
+    finally:
+        security._fetch_auth0_jwks = orig
+        security.clear_jwks_cache()
+
+
+def test_resolve_jwk_recovers_after_rotation():
+    """M-001: kid rotado → force_refresh devuelve nuevas keys → encontrado."""
+    import asyncio  # noqa: PLC0415
+    from app.core import security  # noqa: PLC0415
+    security.clear_jwks_cache()
+
+    call_count = {'n': 0}
+
+    async def fake_fetch(domain, ttl, *, force_refresh=False):
+        call_count['n'] += 1
+        if force_refresh:
+            return {'keys': [{'kid': 'k-new', 'kty': 'RSA'}]}
+        return {'keys': [{'kid': 'k-old', 'kty': 'RSA'}]}
+
+    orig = security._fetch_auth0_jwks
+    security._fetch_auth0_jwks = fake_fetch
+    try:
+        out = asyncio.run(security._resolve_jwk('tenant.auth0.com', 300, 'k-new'))
+        assert out == {'kid': 'k-new', 'kty': 'RSA'}
+        assert call_count['n'] == 2  # cached miss + force_refresh
+    finally:
+        security._fetch_auth0_jwks = orig
+        security.clear_jwks_cache()
 
 
 # ─── _decode_auth0_token error paths ─────────────────────────────────────
@@ -495,3 +544,180 @@ def test_enforce_session_not_revoked_db_error_fail_open(monkeypatch):
         _run(_enforce_session_not_revoked('any-sid'))
     except Exception:
         pytest.fail('should fail open')
+
+
+# ═══ A-001 — OIDC nonce validation =====================================
+
+
+def _build_rs256_test_kit(*, claims_extra=None):
+    """Genera (private_pem, public_jwk, signed_token) para tests RS256 inline."""
+    from time import time as _now  # noqa: PLC0415
+
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+    from jose import jwk, jwt as jose_jwt  # noqa: PLC0415
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    public_pem = key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    # jose.jwk.RSAKey + .to_dict() devuelve el dict JWK público listo.
+    pub = jwk.RSAKey(key=public_pem, algorithm='RS256')
+    pub_dict = pub.to_dict()
+    pub_dict['kid'] = 'test-kid'
+
+    now = int(_now())
+    claims = {'sub': 'auth0|x', 'aud': 'aud-test', 'iss': 'https://t.auth0.com/',
+              'iat': now, 'exp': now + 3600}
+    if claims_extra:
+        claims.update(claims_extra)
+    token = jose_jwt.encode(
+        claims, private_pem, algorithm='RS256', headers={'kid': 'test-kid'},
+    )
+    return private_pem, pub_dict, token
+
+
+def test_decode_auth0_id_token_nonce_match():
+    """A-001: nonce matching → token aceptado."""
+    import asyncio  # noqa: PLC0415
+    from app.core import security  # noqa: PLC0415
+    security.clear_jwks_cache()
+    _priv, pub_jwk, token = _build_rs256_test_kit(
+        claims_extra={'nonce': 'abc-123'},
+    )
+
+    async def fake_fetch(domain, ttl, *, force_refresh=False):
+        return {'keys': [pub_jwk]}
+
+    orig = security._fetch_auth0_jwks
+    security._fetch_auth0_jwks = fake_fetch
+    try:
+        out = asyncio.run(security.decode_auth0_id_token(
+            token, audience='aud-test', auth0_domain='t.auth0.com',
+            expected_nonce='abc-123',
+        ))
+        assert out['nonce'] == 'abc-123'
+    finally:
+        security._fetch_auth0_jwks = orig
+        security.clear_jwks_cache()
+
+
+def test_decode_auth0_id_token_nonce_mismatch_raises():
+    """A-001: nonce esperado != id_token.nonce → 401."""
+    import asyncio  # noqa: PLC0415
+    from app.core import security  # noqa: PLC0415
+    security.clear_jwks_cache()
+    _priv, pub_jwk, token = _build_rs256_test_kit(
+        claims_extra={'nonce': 'received'},
+    )
+
+    async def fake_fetch(domain, ttl, *, force_refresh=False):
+        return {'keys': [pub_jwk]}
+
+    orig = security._fetch_auth0_jwks
+    security._fetch_auth0_jwks = fake_fetch
+    try:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(security.decode_auth0_id_token(
+                token, audience='aud-test', auth0_domain='t.auth0.com',
+                expected_nonce='expected-other',
+            ))
+        assert exc.value.status_code == 401
+        assert 'nonce' in exc.value.detail.lower()
+    finally:
+        security._fetch_auth0_jwks = orig
+        security.clear_jwks_cache()
+
+
+def test_decode_auth0_id_token_nonce_missing_in_token_raises():
+    """A-001: si esperamos nonce y el id_token no trae claim → 401."""
+    import asyncio  # noqa: PLC0415
+    from app.core import security  # noqa: PLC0415
+    security.clear_jwks_cache()
+    _priv, pub_jwk, token = _build_rs256_test_kit(claims_extra=None)  # sin nonce
+
+    async def fake_fetch(domain, ttl, *, force_refresh=False):
+        return {'keys': [pub_jwk]}
+
+    orig = security._fetch_auth0_jwks
+    security._fetch_auth0_jwks = fake_fetch
+    try:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(security.decode_auth0_id_token(
+                token, audience='aud-test', auth0_domain='t.auth0.com',
+                expected_nonce='abc',
+            ))
+        assert exc.value.status_code == 401
+    finally:
+        security._fetch_auth0_jwks = orig
+        security.clear_jwks_cache()
+
+
+def test_decode_auth0_id_token_no_nonce_check_skipped():
+    """A-001: si expected_nonce=None (default), no se valida — backwards compat."""
+    import asyncio  # noqa: PLC0415
+    from app.core import security  # noqa: PLC0415
+    security.clear_jwks_cache()
+    _priv, pub_jwk, token = _build_rs256_test_kit()
+
+    async def fake_fetch(domain, ttl, *, force_refresh=False):
+        return {'keys': [pub_jwk]}
+
+    orig = security._fetch_auth0_jwks
+    security._fetch_auth0_jwks = fake_fetch
+    try:
+        out = asyncio.run(security.decode_auth0_id_token(
+            token, audience='aud-test', auth0_domain='t.auth0.com',
+            # sin expected_nonce
+        ))
+        assert out['sub'] == 'auth0|x'
+    finally:
+        security._fetch_auth0_jwks = orig
+        security.clear_jwks_cache()
+
+
+# ═══ A-002 — strict exp/iat requirement =================================
+
+
+def test_decode_local_token_missing_exp_raises():
+    """A-002: jose con `require=['exp','iat']` rechaza JWT sin exp."""
+    from jose import jwt as jose_jwt  # noqa: PLC0415
+
+    from app.core.security import _decode_local_token  # noqa: PLC0415
+
+    # Token sin exp (omitido a propósito).
+    settings = SimpleNamespace(
+        jwt_secret='x' * 32, jwt_audience='aud', jwt_issuer='iss',
+    )
+    token = jose_jwt.encode(
+        {'sub': 'u', 'aud': 'aud', 'iss': 'iss', 'iat': 1700000000},
+        settings.jwt_secret, algorithm='HS256',
+    )  # no exp
+    with pytest.raises(HTTPException) as exc:
+        _decode_local_token(token, settings)
+    assert exc.value.status_code == 401
+
+
+def test_decode_local_token_missing_iat_raises():
+    """A-002: require iat también."""
+    from jose import jwt as jose_jwt  # noqa: PLC0415
+
+    from app.core.security import _decode_local_token  # noqa: PLC0415
+    from time import time as _now  # noqa: PLC0415
+
+    settings = SimpleNamespace(
+        jwt_secret='x' * 32, jwt_audience='aud', jwt_issuer='iss',
+    )
+    token = jose_jwt.encode(
+        {'sub': 'u', 'aud': 'aud', 'iss': 'iss', 'exp': int(_now()) + 3600},
+        settings.jwt_secret, algorithm='HS256',
+    )  # no iat
+    with pytest.raises(HTTPException) as exc:
+        _decode_local_token(token, settings)
+    assert exc.value.status_code == 401

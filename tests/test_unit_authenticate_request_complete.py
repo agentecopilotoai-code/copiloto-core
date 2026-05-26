@@ -37,7 +37,16 @@ def _stub_settings(monkeypatch, **overrides):
 
 
 def _signed_token(claims: dict, secret: str = _SECRET, audience='api', issuer='copilotoia'):
-    base = {'aud': audience, 'iss': issuer, **claims}
+    # A-002 — `app.core.security._require_strict_claims` ahora exige
+    # `iat` y `exp` siempre. Setear defaults si el caller no los
+    # provee, para no tener que actualizar todos los tests legados.
+    from time import time as _now  # noqa: PLC0415
+    now = int(_now())
+    base = {
+        'aud': audience, 'iss': issuer,
+        'iat': now, 'exp': now + 3600,
+        **claims,
+    }
     return jwt.encode(base, secret, algorithm='HS256')
 
 

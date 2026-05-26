@@ -669,11 +669,17 @@ async def admin_callback(
                 status_code=500,
                 detail='Auth0 admin client_id no configurado; no se puede validar id_token',
             )
+        # A-001 — validamos que el `nonce` del id_token matchee el que
+        # mandamos a /authorize (cookie firmada). Sin esto un id_token
+        # capturado puede ser inyectado en otro flow del mismo cliente
+        # (OIDC §3.1.3.7 step 11: "The Client SHOULD check the nonce
+        # value for replay attacks").
         id_token_claims = await decode_auth0_id_token(
             id_token,
             audience=settings.auth0_admin_client_id,
             auth0_domain=settings.auth0_domain,
             auth0_issuer=settings.auth0_issuer,
+            expected_nonce=state_payload.get('nonce'),
         )
 
     claims = {**id_token_claims, **userinfo}

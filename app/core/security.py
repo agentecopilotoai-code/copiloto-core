@@ -1,6 +1,7 @@
 import hmac
 from datetime import UTC, datetime
 from time import monotonic
+from typing import Any
 from uuid import UUID
 
 import httpx
@@ -127,11 +128,19 @@ def _auth0_issuer(domain: str, configured_issuer: str | None = None) -> str:
     return f'https://{_normalize_auth0_domain(domain)}/'
 
 
-async def _fetch_auth0_jwks(domain: str, ttl_seconds: int) -> dict:
+async def _fetch_auth0_jwks(
+    domain: str, ttl_seconds: int, *, force_refresh: bool = False,
+) -> dict:
+    """M-001 — agrega `force_refresh` para invalidar cache cuando un
+    `kid` desconocido sugiere que Auth0 rotó keys durante el TTL.
+
+    Sin esto, una rotación de keys mid-TTL rechazaba TODOS los tokens
+    firmados con la nueva key por hasta 5 minutos.
+    """
     issuer = _auth0_issuer(domain)
     cached = _jwks_cache.get(issuer)
     now = monotonic()
-    if cached and cached[0] > now:
+    if cached and cached[0] > now and not force_refresh:
         return cached[1]
 
     url = f'{issuer}.well-known/jwks.json'
@@ -140,17 +149,89 @@ async def _fetch_auth0_jwks(domain: str, ttl_seconds: int) -> dict:
         response.raise_for_status()
     jwks = response.json()
     _jwks_cache[issuer] = (now + ttl_seconds, jwks)
+    if force_refresh:
+        _security_log.info(
+            'auth0.jwks.force_refreshed',
+            hint='kid desconocido en cached JWKS; re-fetched (rotation handling)',
+            issuer=issuer,
+            new_kids=[k.get('kid') for k in jwks.get('keys', [])],
+        )
     return jwks
 
 
-def _select_jwk(jwks: dict, kid: str | None) -> dict:
+def _select_jwk(jwks: dict, kid: str | None) -> dict | None:
+    """Devuelve el JWK que matchea `kid`, o `None` si no existe.
+
+    M-001 — antes levantaba 401 directo; ahora retorna None para que el
+    caller pueda intentar un re-fetch del JWKS antes de fallar (handling
+    de rotación de keys de Auth0 mid-TTL).
+    """
     keys = jwks.get('keys', [])
     if not kid and len(keys) == 1:
         return keys[0]
     for key in keys:
         if key.get('kid') == kid:
             return key
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Unknown token key id')
+    return None
+
+
+async def _resolve_jwk(
+    domain: str, ttl_seconds: int, kid: str | None,
+) -> dict:
+    """M-001 — busca el JWK por `kid` con auto-refresh-once on miss.
+
+    Flow:
+      1. fetch JWKS (puede venir del cache).
+      2. _select_jwk(jwks, kid) → si encontró, return.
+      3. Si NO encontró Y la respuesta vino del cache, force_refresh
+         (Auth0 pudo haber rotado keys mid-TTL) y reintentar.
+      4. Si tampoco está después del refresh → 401 'Unknown token key id'.
+    """
+    jwks = await _fetch_auth0_jwks(domain, ttl_seconds)
+    jwk = _select_jwk(jwks, kid)
+    if jwk is not None:
+        return jwk
+    # Posible rotation mid-TTL — re-fetch UNA vez.
+    jwks = await _fetch_auth0_jwks(domain, ttl_seconds, force_refresh=True)
+    jwk = _select_jwk(jwks, kid)
+    if jwk is not None:
+        return jwk
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail='Unknown token key id',
+    )
+
+
+# A-002 — opciones strict pasadas a `jwt.decode`. Notar: `python-jose`
+# IGNORA la opción `require` (verificado experimentalmente, jose
+# 3.3.0). Por eso enforce-amos `exp` e `iat` manualmente con
+# `_require_strict_claims` después del decode.
+_JWT_DECODE_OPTIONS_STRICT: dict[str, Any] = {
+    'verify_exp': True,
+    'verify_nbf': True,
+    'verify_iat': True,
+    'verify_aud': True,
+    'verify_iss': True,
+}
+
+# Claims que TODO JWT firmado por nuestro IdP (Auth0 o local HS256)
+# debe traer. Sin exp → token sin caducidad efectiva. Sin iat → no
+# podemos derivar session_id fallback ni atar el token a un origen
+# temporal.
+_REQUIRED_JWT_CLAIMS: tuple[str, ...] = ('exp', 'iat')
+
+
+def _require_strict_claims(claims: dict, *, kind: str = 'token') -> None:
+    """A-002 — enforce explícito de claims obligatorios.
+
+    Levanta 401 si falta alguno. `kind` se usa en el detail para
+    distinguir 'token' (access_token) de 'id_token'.
+    """
+    for required in _REQUIRED_JWT_CLAIMS:
+        if claims.get(required) is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f'{kind} missing required claim: {required}',
+            )
 
 
 async def decode_auth0_id_token(
@@ -160,6 +241,7 @@ async def decode_auth0_id_token(
     auth0_domain: str,
     auth0_issuer: str | None = None,
     jwks_cache_ttl_seconds: int = 300,
+    expected_nonce: str | None = None,
 ) -> dict:
     """Valida un Auth0 id_token con su firma (RS256 + JWKS).
 
@@ -168,18 +250,28 @@ async def decode_auth0_id_token(
     base64 raw permite que un atacante con un access_token válido forje un
     id_token con `amr=['mfa']` y bypassee el MFA enforcement del BFF.
 
+    A-001 (audit M59+1): si `expected_nonce` es non-None, exige que el
+    claim `nonce` del id_token matchee EXACTO. Sin esta verificación un
+    id_token capturado en un flow puede ser inyectado en otro flow del
+    mismo cliente (OIDC §3.1.3.7 step 11).
+
+    A-002: `require=['exp','iat']` rechaza JWTs sin caducidad o sin iat.
+
     Args:
         token: JWT id_token recibido del `/oauth/token` endpoint.
         audience: el client_id del admin app (ese es el aud del id_token).
         auth0_domain: dominio Auth0 sin scheme.
         auth0_issuer: override opcional del issuer.
         jwks_cache_ttl_seconds: TTL del cache JWKS.
+        expected_nonce: nonce esperado (el que enviamos en /authorize).
+            Si se omite, NO se valida (modo backwards-compat).
 
     Returns:
         Dict con los claims del id_token validado.
 
     Raises:
-        HTTPException 401 si el token es inválido / firma rota / aud mismatch.
+        HTTPException 401 si el token es inválido / firma rota / aud
+        mismatch / exp o iat faltantes / nonce mismatch.
     """
     try:
         header = jwt.get_unverified_header(token)
@@ -192,20 +284,38 @@ async def decode_auth0_id_token(
             status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid id_token algorithm'
         )
 
-    jwks = await _fetch_auth0_jwks(auth0_domain, jwks_cache_ttl_seconds)
-    key = _select_jwk(jwks, header.get('kid'))
+    key = await _resolve_jwk(auth0_domain, jwks_cache_ttl_seconds, header.get('kid'))
     try:
-        return jwt.decode(
+        claims = jwt.decode(
             token,
             key,
             algorithms=['RS256'],
             audience=audience,
             issuer=_auth0_issuer(auth0_domain, auth0_issuer),
+            options=_JWT_DECODE_OPTIONS_STRICT,
         )
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid id_token'
         ) from exc
+
+    _require_strict_claims(claims, kind='id_token')
+
+    if expected_nonce is not None:
+        token_nonce = claims.get('nonce')
+        # constant-time compare → no leakea longitud del nonce esperado.
+        if not isinstance(token_nonce, str) or not hmac.compare_digest(
+            token_nonce, expected_nonce,
+        ):
+            _security_log.warning(
+                'auth0.id_token.nonce_mismatch',
+                hint='posible token-replay o id_token-injection',
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='id_token nonce mismatch',
+            )
+    return claims
 
 
 async def _decode_auth0_token(token: str, settings) -> dict:
@@ -224,35 +334,42 @@ async def _decode_auth0_token(token: str, settings) -> dict:
             status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid token algorithm'
         )
 
-    jwks = await _fetch_auth0_jwks(settings.auth0_domain, settings.auth0_jwks_cache_ttl_seconds)
-    key = _select_jwk(jwks, header.get('kid'))
+    key = await _resolve_jwk(
+        settings.auth0_domain, settings.auth0_jwks_cache_ttl_seconds, header.get('kid'),
+    )
     try:
-        return jwt.decode(
+        claims = jwt.decode(
             token,
             key,
             algorithms=['RS256'],
             audience=settings.auth0_audience,
             issuer=_auth0_issuer(settings.auth0_domain, settings.auth0_issuer),
+            options=_JWT_DECODE_OPTIONS_STRICT,
         )
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid token'
         ) from exc
+    _require_strict_claims(claims, kind='token')
+    return claims
 
 
 def _decode_local_token(token: str, settings) -> dict:
     try:
-        return jwt.decode(
+        claims = jwt.decode(
             token,
             settings.jwt_secret,
             algorithms=['HS256'],
             audience=settings.jwt_audience,
             issuer=settings.jwt_issuer,
+            options=_JWT_DECODE_OPTIONS_STRICT,
         )
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid token'
         ) from exc
+    _require_strict_claims(claims, kind='token')
+    return claims
 
 
 async def _decode_user_token(token: str, settings) -> dict:
@@ -315,9 +432,10 @@ async def authenticate_request(
 
     payload = await _decode_user_token(token, settings)
 
-    exp = payload.get('exp')
-    if exp and datetime.fromtimestamp(exp, UTC) < datetime.now(UTC):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Expired token')
+    # A-002: la validación de `exp` ahora vive en `_JWT_DECODE_OPTIONS_STRICT`
+    # (require=['exp','iat'] + verify_exp=True). jose levanta `JWTError`
+    # antes de llegar acá si exp falta o ya pasó → no necesitamos chequeo
+    # manual.
 
     namespace = settings.auth0_claims_namespace
     token_tenant_claim = _claim(payload, namespace, 'tenant_id')
