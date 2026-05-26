@@ -17,7 +17,7 @@ from typing import Literal
 
 import asyncpg
 from fastapi import Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.v1.routes import platform_admin_router
 from app.db.pool import get_db
@@ -64,6 +64,9 @@ class PlatformAIProviderUpdate(BaseModel):
     (PATCH para guardar, POST /test para probar). Sin la master key
     configurada los endpoints fallan con un mensaje claro.
 
+    M21 — extra=forbid: el contrato es explícito y los campos
+    desconocidos (typo, drift de versión) deben rechazarse con 422.
+
     Como alternativa a ``secret_value``, ``reuse_from_modality`` permite
     apuntar el ``secret_ref`` actual al ``secret_ref`` de OTRA modalidad
     que ya tenga una key configurada. Útil cuando varias modalidades
@@ -71,6 +74,8 @@ class PlatformAIProviderUpdate(BaseModel):
     image, video, tts, stt). El ``secret_ref`` es opaco — el frontend NUNCA
     lo ve; solo elige la modalidad fuente y el backend resuelve el join.
     """
+    model_config = ConfigDict(extra='forbid')
+
     provider: str | None = Field(default=None, min_length=1, max_length=64)
     model: str | None = Field(default=None, max_length=128)
     params: dict | None = None
@@ -416,7 +421,12 @@ class TestProviderRequest(BaseModel):
     """Body polimórfico para el smoke test. Cada modalidad usa el subset de
     campos relevante; los demás se ignoran. El handler valida que los campos
     requeridos por la modalidad estén presentes y rechaza con 400 si no.
+
+    M21 — extra=forbid: el body es polimórfico pero cerrado; campos fuera
+    de la lista whitelisteada (typo o drift) → 422.
     """
+    model_config = ConfigDict(extra='forbid')
+
     # LLM
     prompt: str | None = Field(default=None, max_length=2000)
     system: str | None = Field(default=None, max_length=2000)
@@ -781,6 +791,9 @@ class TenantModuleListResponse(BaseModel):
 
 
 class TenantModuleUpdate(BaseModel):
+    # M21 — extra=forbid: campos del PATCH son explícitos.
+    model_config = ConfigDict(extra='forbid')
+
     enabled: bool
     plan: str | None = Field(default=None, max_length=64)
     notes: str | None = Field(default=None, max_length=500)

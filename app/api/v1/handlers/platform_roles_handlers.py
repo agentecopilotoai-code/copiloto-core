@@ -48,7 +48,8 @@ class RoleListResponse(BaseModel):
 
 
 class RoleCreateRequest(BaseModel):
-    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+    # M21 — extra=forbid: rechazar campos desconocidos en lugar de silenciarlos.
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra='forbid')
 
     code: str = Field(min_length=1, max_length=80, pattern=r'^[a-z][a-z0-9_]*$')
     name: str = Field(min_length=1, max_length=200)
@@ -77,7 +78,8 @@ class CapabilityListResponse(BaseModel):
 
 
 class CapabilityCreateRequest(BaseModel):
-    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+    # M21 — extra=forbid: rechazar campos desconocidos en lugar de silenciarlos.
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True, extra='forbid')
 
     code: str = Field(min_length=1, max_length=200, pattern=r'^[a-z][a-z0-9_\.]*$')
     name: str = Field(min_length=1, max_length=200)
@@ -86,7 +88,8 @@ class CapabilityCreateRequest(BaseModel):
 
 
 class RoleCapabilityAssignRequest(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    # M21 — extra=forbid: el contrato es solo `access_level`.
+    model_config = ConfigDict(frozen=True, extra='forbid')
 
     access_level: Literal['RW', 'R', 'partial', 'own_only']
 

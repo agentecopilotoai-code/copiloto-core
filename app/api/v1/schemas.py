@@ -4,13 +4,20 @@ Solo contiene los schemas usados por los handlers del core (TenantCreate,
 TenantUpdate, PlatformTenantUpdate). Los módulos opt-in declaran sus
 propios schemas en su feature folder.
 """
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.locale import SUPPORTED_COUNTRIES
 
 # Solo vendemos a 7 países LatAm. Patrón viene del catálogo autoritativo
 # de `app.services.locale` para evitar drift.
 SUPPORTED_COUNTRY_PATTERN = '^(' + '|'.join(SUPPORTED_COUNTRIES) + ')$'
+
+# M23 — slug acotado a `[a-z0-9-]`, no empieza ni termina en `-`, longitud
+# 2..63 (encaja en hostname segment / path segment URL-safe sin necesidad
+# de encoding). Bloquea inyección de path traversal en URLs públicas como
+# `/admin/tenant/{slug}/...` y evita drift con el constraint del frontend
+# (`admin-panel/.../resolveSafeHomeModule.js`).
+TENANT_SLUG_PATTERN = r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$'
 
 
 def _validate_iana_timezone(value: str | None) -> str | None:
@@ -39,9 +46,14 @@ def _validate_iana_timezone(value: str | None) -> str | None:
 
 
 class TenantCreate(BaseModel):
-    slug: str
-    legal_name: str
-    display_name: str
+    # M21 — `extra='forbid'` cierra el contrato: si el frontend manda un
+    # campo desconocido (typo, drift), Pydantic devuelve 422 en lugar de
+    # silenciarlo (que oculta bugs aguas arriba).
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+
+    slug: str = Field(min_length=2, max_length=63, pattern=TENANT_SLUG_PATTERN)
+    legal_name: str = Field(min_length=1, max_length=200)
+    display_name: str = Field(min_length=1, max_length=200)
     vertical_code: str = Field(min_length=1, max_length=64)
     business_type_label: str | None = Field(default=None, min_length=1, max_length=160)
     country_code: str = Field(default='CO', pattern=SUPPORTED_COUNTRY_PATTERN)
@@ -63,13 +75,17 @@ class TenantUpdate(BaseModel):
     en :class:`PlatformTenantUpdate`.
     """
 
-    slug: str | None = None
-    legal_name: str | None = None
-    display_name: str | None = None
+    # M21 — extra=forbid: el PATCH explícitamente lista los campos
+    # mutables; cualquier otro es rechazado con 422.
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+
+    slug: str | None = Field(default=None, min_length=2, max_length=63, pattern=TENANT_SLUG_PATTERN)
+    legal_name: str | None = Field(default=None, min_length=1, max_length=200)
+    display_name: str | None = Field(default=None, min_length=1, max_length=200)
     vertical_code: str | None = Field(default=None, min_length=1, max_length=64)
     business_type_label: str | None = Field(default=None, min_length=1, max_length=160)
     country_code: str | None = Field(default=None, pattern=SUPPORTED_COUNTRY_PATTERN)
-    timezone: str | None = None
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
 
     @field_validator('timezone')
     @classmethod
@@ -89,6 +105,7 @@ class PlatformTenantUpdate(TenantUpdate):
 __all__ = [
     'PlatformTenantUpdate',
     'SUPPORTED_COUNTRY_PATTERN',
+    'TENANT_SLUG_PATTERN',
     'TenantCreate',
     'TenantUpdate',
 ]
