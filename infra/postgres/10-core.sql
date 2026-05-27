@@ -30,6 +30,17 @@ returns boolean language sql stable as $$
   select coalesce(current_setting('app.support_mode', true), 'false') = 'true'
 $$;
 
+-- P1-1 (audit 2026-05-27) — current_user_id es el UUID de `app.users.id`
+-- del actor de la request. Lo setea `Database.connection()` cuando el
+-- helper `current_user_id_from_request` lo resolvió. Si NO está seteado
+-- (request anónima o handler que no llamó al helper), retorna NULL —
+-- las policies abajo aceptan eso como "modo permissive" para no romper
+-- queries legacy. Cuando se setea, RLS activa enforcement.
+create or replace function app.current_user_id()
+returns uuid language sql stable as $$
+  select nullif(current_setting('app.user_id', true), '')::uuid
+$$;
+
 create or replace function app.touch_updated_at()
 returns trigger language plpgsql as $$
 begin
@@ -123,6 +134,29 @@ create trigger trg_user_preferences_touch
   before update on app.user_preferences
   for each row execute function app.touch_updated_at();
 
+-- P1-1 (audit 2026-05-27) — RLS defense-in-depth para user_preferences.
+-- Antes era una tabla "abierta" — cualquier handler con bug podía leer
+-- preferencias de OTROS users (caso raro, los handlers actuales filtran
+-- por user_id, pero queremos backstop).
+--
+-- Policy permissive: si `app.current_user_id()` está NULL (request
+-- anónima, o handler que aún no llamó `current_user_id_from_request`),
+-- pasa todo — mantiene compat con queries legacy. Cuando el contexto SE
+-- setea, RLS enforcea que solo se ven/mutan rows del user activo.
+-- `support_mode` (platform_owner) bypassa para soporte cross-user.
+alter table app.user_preferences enable row level security;
+create policy user_preferences_access on app.user_preferences
+  for all using (
+    app.support_mode()
+    or app.current_user_id() is null
+    or user_id = app.current_user_id()
+  )
+  with check (
+    app.support_mode()
+    or app.current_user_id() is null
+    or user_id = app.current_user_id()
+  );
+
 -- ─── Sesiones server-side ──────────────────────────────────────────────────
 -- Cada request autenticada upsertea su sesión por `id` (jti del JWT cuando
 -- Auth0 lo emite; fallback hash estable basado en `sub + iat` cuando no),
@@ -147,6 +181,22 @@ create index ix_auth_sessions_user_active
 create trigger trg_auth_sessions_touch
   before update on app.auth_sessions
   for each row execute function app.touch_updated_at();
+
+-- P1-1 (audit 2026-05-27) — RLS defense-in-depth (idem user_preferences).
+-- Las queries actuales (`me_handlers.list_my_sessions` etc) ya filtran
+-- por user_id propio; RLS es backstop para evitar leak por bug futuro.
+alter table app.auth_sessions enable row level security;
+create policy auth_sessions_access on app.auth_sessions
+  for all using (
+    app.support_mode()
+    or app.current_user_id() is null
+    or user_id = app.current_user_id()
+  )
+  with check (
+    app.support_mode()
+    or app.current_user_id() is null
+    or user_id = app.current_user_id()
+  );
 
 -- ─── Auditoría ──────────────────────────────────────────────────────────────
 

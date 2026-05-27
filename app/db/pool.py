@@ -40,7 +40,8 @@ class Database:
 
     @asynccontextmanager
     async def connection(
-        self, tenant_id: UUID | None = None, support_mode: bool = False
+        self, tenant_id: UUID | None = None, support_mode: bool = False,
+        user_id: UUID | None = None,
     ) -> AsyncIterator[asyncpg.Connection]:
         if not self.pool:
             raise RuntimeError('Database pool is not initialized')
@@ -52,6 +53,14 @@ class Database:
                     "select set_config('app.support_mode', $1, true)",
                     'true' if support_mode else 'false',
                 )
+                # P1-1 (audit 2026-05-27) — `app.user_id` lo lee
+                # `app.current_user_id()` desde las RLS policies de
+                # user_preferences/auth_sessions. Si no se setea, queda
+                # vacío → policy permissive (compat con queries legacy).
+                if user_id:
+                    await conn.execute(
+                        "select set_config('app.user_id', $1, true)", str(user_id),
+                    )
                 yield conn
 
 
@@ -61,7 +70,16 @@ db = Database()
 async def get_db(request: Request) -> AsyncIterator[asyncpg.Connection]:
     tenant_id = getattr(request.state, 'tenant_id', None)
     support_mode = getattr(request.state, 'support_mode', False)
-    async with db.connection(tenant_id=tenant_id, support_mode=support_mode) as conn:
+    # P1-1 — `user_id` se cache en request.state DESPUÉS de la primera
+    # llamada a `current_user_id_from_request`. Acá leemos lo que esté
+    # disponible (probablemente None en la primera query, no None en
+    # subsiguientes si el handler ya lo resolvió en la misma request).
+    # Para RLS enforcement REAL, el handler debe llamar el helper ANTES
+    # de las queries protegidas.
+    user_id = getattr(request.state, 'user_id', None)
+    async with db.connection(
+        tenant_id=tenant_id, support_mode=support_mode, user_id=user_id,
+    ) as conn:
         yield conn
 
 
