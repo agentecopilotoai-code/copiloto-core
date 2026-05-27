@@ -17,7 +17,7 @@ from typing import Literal
 
 import asyncpg
 from fastapi import Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.api.v1.routes import platform_admin_router
 from app.db.pool import get_db
@@ -83,8 +83,87 @@ class PlatformAIProviderUpdate(BaseModel):
     secret_backend: Literal['env', 'aws_sm', 'vault', 'file'] | None = None
     reuse_from_modality: Literal['llm', 'image', 'video', 'tts', 'stt'] | None = None
 
+    @field_validator('params')
+    @classmethod
+    def _validate_params_anti_ssrf(cls, v: dict | None) -> dict | None:
+        """SEC-019 (audit #2, 2026-05-27) — anti-SSRF en `params.base_url`.
+
+        Hoy ningún provider del registry consume `params.base_url`, pero
+        cuando esto cambie (custom endpoints para self-hosted o
+        replicaciones), un platform_owner comprometido podría apuntar el
+        provider a:
+          - http://169.254.169.254/... (AWS metadata service)
+          - http://10.x.x.x:port (IPs internas)
+          - http://localhost:port (otros servicios del mismo host)
+        Con la API key del provider real adjuntada en el header
+        Authorization → leak masivo.
+
+        Rechazamos al persist (PATCH) — el smoke test ni siquiera llega
+        a leerlo. Defensa pre-emptive del data store.
+        """
+        if v is None:
+            return v
+        url_keys = ('base_url', 'endpoint', 'api_url', 'host')
+        for key in url_keys:
+            candidate = v.get(key)
+            if not candidate or not isinstance(candidate, str):
+                continue
+            _reject_unsafe_provider_url(candidate, field=f'params.{key}')
+        return v
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────
+
+
+def _reject_unsafe_provider_url(url: str, *, field: str) -> None:
+    """SEC-019 (audit #2) — rechaza URLs SSRF-able para provider params.
+
+    Rechaza:
+      - Schema no-https (http/ftp/file/gopher/etc).
+      - IP literals: RFC1918 (10/8, 172.16/12, 192.168/16), loopback
+        (127/8, ::1), link-local (169.254/16 incluye AWS metadata),
+        multicast, unspecified.
+      - Hostnames: `localhost`, `*.local`, `*.internal`.
+
+    El platform_owner debería apuntar a la API pública del provider
+    (api.x.ai, api.openai.com, etc.) sobre HTTPS.
+    """
+    import ipaddress  # noqa: PLC0415
+    from urllib.parse import urlparse  # noqa: PLC0415
+    from fastapi import HTTPException, status  # noqa: PLC0415
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ('https',):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'{field}: scheme must be https (got {parsed.scheme!r})',
+        )
+    host = (parsed.hostname or '').lower()
+    if not host:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'{field}: hostname missing',
+        )
+    if host in ('localhost',) or host.endswith(('.local', '.internal')):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f'{field}: hostname {host!r} not allowed',
+        )
+    # Si es IP literal, validar el rango.
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return  # hostname normal — DNS lookup vendrá después; la API
+                # pública del provider va a resolver a una IP pública.
+    if (ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_multicast or ip.is_unspecified or ip.is_reserved):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f'{field}: IP {host!r} not allowed (private/loopback/'
+                f'link-local/multicast/reserved)'
+            ),
+        )
 
 
 def _hint_of(secret_value: str) -> str:

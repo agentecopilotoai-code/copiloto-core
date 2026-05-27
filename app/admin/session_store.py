@@ -137,7 +137,18 @@ class RedisSessionStore:
         return f'{self._prefix}{sid}'
 
     async def get(self, sid: str) -> dict[str, Any] | None:
-        raw = await self._client.get(self._key(sid))
+        try:
+            raw = await self._client.get(self._key(sid))
+        except Exception as exc:  # noqa: BLE001
+            # INT-NEW-2 (audit #2) — Redis down: fail-soft (None = miss).
+            # El BFF responde 401 "session_expired" en lugar de 500. El
+            # user re-loguea — UX degradada pero recuperable.
+            import structlog  # noqa: PLC0415
+            structlog.get_logger().error(
+                'session_store.redis_get_failed',
+                error=type(exc).__name__, hint='Redis unavailable; treating as miss',
+            )
+            return None
         if raw is None:
             return None
         try:
@@ -145,7 +156,10 @@ class RedisSessionStore:
         except (json.JSONDecodeError, TypeError):
             # Sesión corrupta (probable: bug viejo escribió pickle/binary
             # con otro prefijo). Borrar para que el user re-loguee.
-            await self._client.delete(self._key(sid))
+            try:
+                await self._client.delete(self._key(sid))
+            except Exception:  # noqa: BLE001
+                pass
             return None
 
     async def set(
@@ -156,18 +170,46 @@ class RedisSessionStore:
         # InMemory store (algunos call sites legacy lo leen). El TTL
         # real en Redis lo enforcea el server.
         payload_with_exp['expires_at'] = time.time() + ttl_seconds
-        await self._client.set(
-            self._key(sid),
-            json.dumps(payload_with_exp),
-            ex=ttl_seconds,
-        )
+        try:
+            await self._client.set(
+                self._key(sid),
+                json.dumps(payload_with_exp),
+                ex=ttl_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # INT-NEW-2 — set falla → propagar como RuntimeError para que
+            # el handler responda 503 (no podemos crear sesión sin store).
+            # El callback OAuth redirige a recovery — el user reintenta.
+            import structlog  # noqa: PLC0415
+            structlog.get_logger().error(
+                'session_store.redis_set_failed',
+                error=type(exc).__name__,
+            )
+            raise RuntimeError(
+                'session_store_unavailable — Redis no responde'
+            ) from exc
 
     async def delete(self, sid: str) -> bool:
-        deleted = await self._client.delete(self._key(sid))
-        return bool(deleted)
+        try:
+            deleted = await self._client.delete(self._key(sid))
+            return bool(deleted)
+        except Exception as exc:  # noqa: BLE001
+            # Delete falla → no podemos confirmar pero no bloqueamos
+            # el logout response.
+            import structlog  # noqa: PLC0415
+            structlog.get_logger().warning(
+                'session_store.redis_delete_failed',
+                error=type(exc).__name__,
+            )
+            return False
 
     async def close(self) -> None:
-        await self._client.aclose()
+        import asyncio  # noqa: PLC0415
+        try:
+            await asyncio.wait_for(self._client.aclose(), timeout=2.0)
+        except (Exception, asyncio.TimeoutError):  # noqa: BLE001
+            # No bloquear shutdown si Redis muerto.
+            pass
 
 
 # ─── Factory ────────────────────────────────────────────────────────────
@@ -181,7 +223,14 @@ def get_session_store() -> SessionStore:
 
     Decisión:
       - Si `redis_url` está seteado → `RedisSessionStore`.
-      - Si no → `InMemorySessionStore`.
+      - Si no, en `app_env='local'` → `InMemorySessionStore`.
+      - Si no, en cualquier otro env (production/staging) → RuntimeError.
+
+    INT-NEW-1 (audit #2, 2026-05-27) — fail-fast: el bug original M70
+    fue que multi-worker con `_sessions = {}` no compartía estado.
+    Ahora con InMemoryStore por default, podemos caer al mismo bug
+    silenciosamente. Producción DEBE setear REDIS_URL — sin él, levantamos
+    al primer hit, no en silencio.
 
     Para tests / scripts standalone, usar `set_session_store_for_tests()`
     para inyectar una implementación específica."""
@@ -191,13 +240,24 @@ def get_session_store() -> SessionStore:
     from app.admin.config import get_admin_settings  # noqa: PLC0415
     settings = get_admin_settings()
     redis_url = getattr(settings, 'redis_url', None)
+    app_env = getattr(settings, 'app_env', 'local')
     if redis_url:
         prefix = getattr(
             settings, 'bff_session_redis_prefix', 'copilotoia:admin:session:',
         )
         _store = RedisSessionStore(redis_url, prefix)
-    else:
+    elif app_env == 'local':
         _store = InMemorySessionStore()
+    else:
+        raise RuntimeError(
+            'INT-NEW-1: app_env={app_env!r} requiere REDIS_URL configurado. '
+            'El InMemorySessionStore no es multi-worker safe — un user '
+            'logueado en worker N tendría 401 "session_expired" cuando su '
+            'request siguiente aterriza en worker M. Setear REDIS_URL en '
+            '.env del orquestador (docker-compose ya lo provee).'.format(
+                app_env=app_env,
+            ),
+        )
     return _store
 
 

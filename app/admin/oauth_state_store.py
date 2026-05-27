@@ -96,13 +96,28 @@ class RedisOAuthStateStore:
 
     async def mark_consumed(self, state: str, ttl_seconds: int) -> bool:
         # SET con NX (only-if-not-exists) + EX (TTL). Retorna 'OK' o None.
-        result = await self._client.set(
-            self._key(state), '1', nx=True, ex=ttl_seconds,
-        )
+        try:
+            result = await self._client.set(
+                self._key(state), '1', nx=True, ex=ttl_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # INT-NEW-2: fail-CLOSED — si Redis cae, rechazar el state.
+            # Mejor que el user re-loguee a permitir un replay potencial.
+            import structlog  # noqa: PLC0415
+            structlog.get_logger().error(
+                'oauth_state_store.redis_failed',
+                error=type(exc).__name__,
+                hint='fail-closed: rejecting state to prevent replay',
+            )
+            return False
         return result is not None  # None = key already existed → replay
 
     async def close(self) -> None:
-        await self._client.aclose()
+        import asyncio  # noqa: PLC0415
+        try:
+            await asyncio.wait_for(self._client.aclose(), timeout=2.0)
+        except (Exception, asyncio.TimeoutError):  # noqa: BLE001
+            pass
 
 
 # ─── Factory ────────────────────────────────────────────────────────────
@@ -112,18 +127,28 @@ _store: OAuthStateStore | None = None
 
 
 def get_oauth_state_store() -> OAuthStateStore:
+    """Factory con fail-fast en non-local sin REDIS_URL (INT-NEW-1
+    audit #2). InMemory permite replay attacks cross-worker — un OAuth
+    callback consumido en worker A NO se marca en worker B y queda
+    abierto a re-uso."""
     global _store
     if _store is not None:
         return _store
     from app.admin.config import get_admin_settings  # noqa: PLC0415
     settings = get_admin_settings()
     redis_url = getattr(settings, 'redis_url', None)
+    app_env = getattr(settings, 'app_env', 'local')
     if redis_url:
-        # Mismo Redis del session_store, prefix distinto.
         prefix = 'copilotoia:admin:oauth_state:'
         _store = RedisOAuthStateStore(redis_url, prefix)
-    else:
+    elif app_env == 'local':
         _store = InMemoryOAuthStateStore()
+    else:
+        raise RuntimeError(
+            f'INT-NEW-1: app_env={app_env!r} requiere REDIS_URL para el '
+            'OAuth state store. InMemory permite replay cross-worker — '
+            'un state consumido en worker A no se marca en worker B.'
+        )
     return _store
 
 
