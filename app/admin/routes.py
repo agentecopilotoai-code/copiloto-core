@@ -649,21 +649,46 @@ async def admin_callback(
             has_refresh=bool(tokens.get('refresh_token')),
         )
 
-        userinfo_response = await client.get(
-            f'{_auth0_base_url()}/userinfo',
-            headers={'authorization': f"Bearer {tokens['access_token']}"},
-        )
-        if userinfo_response.status_code >= 400:
-            _debug(
-                'GET /callback', step='userinfo_failed',
-                status=userinfo_response.status_code, body=userinfo_response.text[:200],
+        # M63 — `/userinfo` es OPCIONAL. Auth0 lo rechaza con 401/403
+        # cuando el access_token tiene `audience=<custom API>` (la nuestra),
+        # porque /userinfo requiere un token con audience del propio Auth0
+        # (`https://<tenant>.auth0.com/userinfo`). Como nuestro app pide
+        # `audience=<copilotoia-core-api>` para llamar nuestro backend,
+        # ese token NO sirve para /userinfo.
+        #
+        # El id_token validado (firma RS256 + JWKS + nonce A-001) YA
+        # contiene sub, email, name, picture — todo lo que /userinfo
+        # daría. /userinfo es legacy de OAuth 1.0; con OIDC moderno el
+        # id_token es la fuente de truth. Hacemos best-effort: si
+        # /userinfo responde 2xx, mergeamos sus claims (override id_token);
+        # si falla, seguimos con id_token_claims solo.
+        userinfo: dict[str, Any] = {}
+        try:
+            userinfo_response = await client.get(
+                f'{_auth0_base_url()}/userinfo',
+                headers={'authorization': f"Bearer {tokens['access_token']}"},
             )
-            raise HTTPException(status_code=401, detail='Could not fetch Auth0 user profile')
-        userinfo = userinfo_response.json()
-        _debug(
-            'GET /callback', step='userinfo_received',
-            sub=userinfo.get('sub'), email=userinfo.get('email'),
-        )
+            if userinfo_response.status_code < 400:
+                userinfo = userinfo_response.json()
+                _debug(
+                    'GET /callback', step='userinfo_received',
+                    sub=userinfo.get('sub'), email=userinfo.get('email'),
+                )
+            else:
+                _debug(
+                    'GET /callback', step='userinfo_skipped_non_2xx',
+                    status=userinfo_response.status_code,
+                    body=userinfo_response.text[:200],
+                    hint=(
+                        'access_token con audience custom no aplica para /userinfo. '
+                        'Usaremos solo id_token_claims (que ya tiene sub/email/name).'
+                    ),
+                )
+        except httpx.HTTPError as exc:
+            _debug(
+                'GET /callback', step='userinfo_skipped_network_error',
+                error=str(exc)[:200],
+            )
 
     # SEC: validamos la firma del id_token contra el JWKS de Auth0. ANTES
     # decodificábamos con base64 raw (sin firma) → un atacante con un
