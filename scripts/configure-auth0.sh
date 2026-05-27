@@ -294,6 +294,43 @@ api_patch_soft() { api_request_soft PATCH "$1" "$2" "${3:-PATCH $1}"; }
 api_put_soft() { api_request_soft PUT "$1" "$2" "${3:-PUT $1}"; }
 api_delete_soft() { api_request_soft DELETE "$1" "" "${2:-DELETE $1}"; }
 
+# M62 hotfix #3 — espera que un Action de Auth0 termine su BUILD async
+# antes de bindarlo. Necesario para Actions con `dependencies` (npm
+# packages como `auth0`) — Auth0 hace `npm install` server-side antes
+# de marcar la action como `built`. Si bindas antes, devuelve:
+#   "Trying to create a binding for an action that has not been deployed yet"
+#
+# Args: action_id. Polls cada 2s hasta status=built o timeout 60s.
+# Soft-fail: si timeout, loguea y devuelve 1 (el caller decide).
+wait_action_built() {
+  local action_id="$1"
+  local label="${2:-action $action_id}"
+  local max_wait=60
+  local elapsed=0
+  local status
+  while [ "$elapsed" -lt "$max_wait" ]; do
+    status="$(api_get_soft "/actions/actions/$action_id" "poll status $label" 2>/dev/null \
+              | jq -r '.status // "?"')"
+    case "$status" in
+      built)
+        return 0 ;;
+      failed)
+        echo "  ⚠ $label → build failed (revisar code/deps en dashboard)" >&2
+        return 1 ;;
+      pending|building|""|"?")
+        sleep 2
+        elapsed=$((elapsed + 2))
+        ;;
+      *)
+        sleep 2
+        elapsed=$((elapsed + 2))
+        ;;
+    esac
+  done
+  echo "  ⚠ $label → timeout ${max_wait}s esperando status=built (status actual: $status)" >&2
+  return 1
+}
+
 write_secret_file() {
   local path="$1"
   local value="$2"
@@ -1177,32 +1214,48 @@ if [ "$CONFIGURE_EMAIL_TEMPLATES" = "true" ]; then
 
   template_names=(verify_email reset_email welcome_email blocked_account stolen_credentials enrollment_email mfa_oob_code)
 
+  # Body Liquid default sutil — Auth0 requiere body non-empty al CREAR
+  # templates (no acepta `""`). Usamos {{ message.text }} estándar que
+  # le dice "renderizá el cuerpo default de este tipo de template".
+  # El operator puede customizarlo después en el dashboard sin perder
+  # el subject + from que seteamos.
+  default_body_liquid='<p>{{ message.text }}</p>'
+
   for template_name in "${template_names[@]}"; do
     template_subject="$(template_subject_for "$template_name")"
-    template_payload="$(jq -n \
+    # POST body: template name VA EN EL PAYLOAD, no en el path.
+    create_payload="$(jq -n \
       --arg name "$template_name" \
       --arg subject "$template_subject" \
       --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
+      --arg body "$default_body_liquid" \
       '{
         template: $name,
         subject: $subject,
         from: $from,
         resultUrl: "",
         syntax: "liquid",
-        body: "",
+        body: $body,
         enabled: true
       }')"
-    # GET para chequear si existe; PATCH si sí, PUT si no.
-    template_exists="$(api_get_soft "/email-templates/$template_name" "GET /email-templates/$template_name" || true)"
+    # PATCH body: solo lo que queremos actualizar (sin tocar el body
+    # custom que el operator pudo haber editado en dashboard).
+    update_payload="$(jq -n \
+      --arg subject "$template_subject" \
+      --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
+      '{subject:$subject, from:$from, enabled:true}')"
+
+    # API contract Auth0:
+    #   GET /email-templates/{name} → 200 si existe, 404 si no.
+    #   POST /email-templates (body trae template name) → crea.
+    #   PATCH /email-templates/{name} → actualiza existing.
+    template_exists="$(api_get_soft "/email-templates/$template_name" "GET /email-templates/$template_name" 2>/dev/null || true)"
     if [ -n "$template_exists" ] && [ "$(jq -r '.template // ""' <<<"$template_exists")" = "$template_name" ]; then
-      # Patch keep existing body (no override del HTML custom).
-      patch_payload="$(jq -n --arg subject "$template_subject" --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
-        '{subject:$subject, from:$from, enabled:true}')"
-      api_patch_soft "/email-templates/$template_name" "$patch_payload" "PATCH template/$template_name" >/dev/null \
+      api_patch_soft "/email-templates/$template_name" "$update_payload" "PATCH template/$template_name" >/dev/null \
         && echo "  ✓ Template '$template_name' actualizado (subject ES)"
     else
-      api_put_soft "/email-templates/$template_name" "$template_payload" "PUT template/$template_name" >/dev/null \
-        && echo "  ✓ Template '$template_name' creado"
+      api_post_soft '/email-templates' "$create_payload" "POST template (create $template_name)" >/dev/null \
+        && echo "  ✓ Template '$template_name' creado (subject ES)"
     fi
   done
 fi
@@ -1313,20 +1366,37 @@ LINKING_ACTION
         ]
       }')"
 
+    linking_action_action_taken=""
     if [ -z "$linking_action_id" ]; then
       result="$(api_post_soft '/actions/actions' "$linking_action_payload" 'POST actions (linking)')"
       if [ -n "$result" ]; then
         linking_action_id="$(jq -r .id <<<"$result")"
         echo "  ✓ Action account-linking creado: $linking_action_id"
+        linking_action_action_taken="created"
       fi
     else
       update_linking="$(jq -n --arg code "$linking_action_code" --arg domain "$AUTH0_DOMAIN" --arg cid "$service_client_id" --arg secret "$service_client_secret" \
         '{code:$code, runtime:"node18", supported_triggers:[{id:"post-login",version:"v3"}],
           dependencies:[{name:"auth0",version:"4.0.0"}],
           secrets:[{name:"AUTH0_DOMAIN",value:$domain},{name:"AUTH0_M2M_CLIENT_ID",value:$cid},{name:"AUTH0_M2M_CLIENT_SECRET",value:$secret}]}')"
-      api_patch_soft "/actions/actions/$linking_action_id" "$update_linking" 'PATCH actions (linking)' >/dev/null \
-        && api_post_soft "/actions/actions/$linking_action_id/deploy" '{}' 'deploy linking' >/dev/null \
-        && echo "  ✓ Action account-linking actualizado"
+      if api_patch_soft "/actions/actions/$linking_action_id" "$update_linking" 'PATCH actions (linking)' >/dev/null; then
+        echo "  ✓ Action account-linking actualizado"
+        linking_action_action_taken="updated"
+      fi
+    fi
+
+    # M62 hotfix #3 — Action con `dependencies:['auth0']` requiere build
+    # async server-side. Si bindamos antes de que termine, Auth0 rechaza
+    # con "binding for an action that has not been deployed yet".
+    # Llamamos explicit /deploy + polleamos hasta status=built.
+    if [ -n "$linking_action_id" ] && [ -n "$linking_action_action_taken" ]; then
+      api_post_soft "/actions/actions/$linking_action_id/deploy" '{}' "deploy account-linking" >/dev/null || true
+      echo "  ⏳ Esperando build del Action (deps npm: auth0)..."
+      if wait_action_built "$linking_action_id" "account-linking"; then
+        echo "  ✓ Action account-linking built"
+      else
+        echo "  ⚠ Bind se intentará igual pero puede fallar — re-correr el script en 1min si esto pasa." >&2
+      fi
     fi
 
     # Bindear al inicio del flow post-login (ANTES de claims + MFA challenge).
