@@ -21,8 +21,9 @@ Diseño:
     pero queremos evitar race en multi-task).
 
 NO usa Redis por ahora — los counters son per-worker. Para producción
-multi-worker estricta, sustituir por Redis INCR con TTL (TODO iteración
-futura). El enforcement crítico vive en audit logs + alertas.
+multi-worker estricta, sustituir por Redis `INCR` con TTL (work item
+en BACKLOG.md). El enforcement crítico vive en audit logs + alertas
+del lado server, los counters son anti-abuse soft.
 """
 from __future__ import annotations
 

@@ -21,15 +21,16 @@ Flow:
 Casos cubiertos:
 
   - User nuevo en Auth0: invitación crea token → email con link → user
-    click → completa signup Auth0 → M57 reconcilia + (iteración 2) redime
-    la invitación.
+    click → completa signup Auth0 → M57 reconcilia → `/i/<token>` redime
+    via `redeem_invitation` (M65).
   - User existente en Auth0 (`reused_existing`): TAMBIÉN se crea
     invitación + se manda email — porque aunque puedan loguearse, sigue
-    siendo cortés avisarles "te agregaron a TenantX". Antes esto era
-    silencioso.
+    siendo cortés avisarles "te agregaron a TenantX".
   - Re-invitar (mismo email, mismo tenant, invitación previa no
-    redimida): el caller (iteración 2 via /invitations/{id}/resend)
-    actualizará la row existente — acá generamos NUEVA siempre.
+    redimida): `create_invitation_record` hace UPDATE-supersede del row
+    previo + INSERT nuevo (UNIQUE partial index `tenant_email_open`
+    + advisory lock I-2 previenen race). Endpoint `/resend` futuro
+    podría reutilizar el row existente, hoy generamos NUEVO siempre.
 
 Rate-limit anti-bulk:
 
@@ -413,7 +414,7 @@ async def create_and_send_invitation(
     return await send_invitation_email_for_draft(draft, conn=conn)
 
 
-# ─── Preview + Redeem (iteración 2 — endpoint /i/<token>) ──────────────
+# ─── Preview + Redeem (M65 — endpoint /i/<token>) ──────────────────────
 
 
 @dataclass(frozen=True)
