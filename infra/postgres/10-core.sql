@@ -574,9 +574,17 @@ create index ix_tenant_invitations_tenant_email_open
 
 -- Lookup por email global — M57 reconciliation chequea si el primer login
 -- de un user matchea alguna invitación pending para auto-redeem.
+--
+-- IMMUTABLE constraint: Postgres exige que las funciones en el predicate
+-- de un índice parcial sean IMMUTABLE (siempre devuelven mismo valor para
+-- mismos args). `now()` no califica (cambia con el tiempo) — usar acá
+-- daría `functions in index predicate must be marked IMMUTABLE`. Solución:
+-- el predicate solo filtra por `redeemed_at is null` (siempre IMMUTABLE).
+-- La condición `expires_at > now()` la pone el query del caller — Postgres
+-- igual usa el índice + filtra por expires_at en el plan resultante.
 create index ix_tenant_invitations_email_open
   on app.tenant_invitations(email)
-  where redeemed_at is null and expires_at > now();
+  where redeemed_at is null;
 
 create trigger trg_tenant_invitations_touch
   before update on app.tenant_invitations
