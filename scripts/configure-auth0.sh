@@ -69,10 +69,19 @@ set -euo pipefail
 #                               factores OTP + WebAuthn (platform/roaming) en
 #                               el tenant. Sin esto, la Action MFA-challenge
 #                               de ENFORCE_MFA_ACTION puede fallar.
-#   MFA_POLICY                  all-applications / never. Default: "" (no
-#                               toca la policy — la maneja la Action).
-#                               Setearlo a "all-applications" obliga MFA a
-#                               TODOS los users del tenant.
+#   MFA_POLICY                  all-applications | confidence-score | none.
+#                               Default: "" → auto-seteado a "all-applications"
+#                               cuando ENFORCE_MFA_ACTION=true (la Action de
+#                               MFA-challenge no funciona sin policy non-empty).
+#                               - all-applications: MFA requerido para TODOS
+#                                 los users en TODAS las apps. La Action
+#                                 después puede customizar (e.g. solo
+#                                 enrollWith para platform_owner).
+#                               - confidence-score: solo MFA cuando Auth0
+#                                 detecta riesgo (IP nueva, device nuevo, etc).
+#                               - none: desactiva MFA enforcement completo.
+#                                 La Action queda inutilizable (Auth0 rechaza
+#                                 con "feature is not enabled").
 #
 #   CONFIGURE_ATTACK_PROTECTION true/false. Default: true. Habilita brute
 #                               force + breached password detection + IP
@@ -962,14 +971,35 @@ if [ "$CONFIGURE_MFA_FACTORS" = "true" ]; then
   # adicional con APNs/FCM credentials. Habilitar manualmente si querés
   # ofrecer la Auth0 Guardian app como factor.
 
-  if [ -n "$MFA_POLICY" ]; then
-    echo "▶ MFA policy = $MFA_POLICY"
-    policy_payload="[\"$MFA_POLICY\"]"
-    if api_put_soft '/guardian/policies' "$policy_payload" 'PUT /guardian/policies' >/dev/null; then
-      echo "  ✓ MFA enforced via tenant policy ($MFA_POLICY)"
+  # M62 hotfix #10 — la MFA Action (`enrollWith`/`challengeWith`) NO
+  # funciona si la MFA Policy del tenant está vacía. Auth0 rechaza con:
+  #   "MFA customized via PostLogin action but feature is not enabled"
+  #
+  # Hay 2 niveles separados:
+  #   - Factores (/guardian/factors/*): OTP, WebAuthn, etc. → QUÉ podés usar
+  #   - Policy (/guardian/policies): all-applications, confidence-score, [] → SI MFA aplica
+  #
+  # Para que las Actions puedan custom-trigger MFA, la policy NO puede
+  # estar vacía. Default `all-applications` si ENFORCE_MFA_ACTION=true
+  # y el operator no overrideó MFA_POLICY explícito.
+  effective_mfa_policy="$MFA_POLICY"
+  if [ -z "$effective_mfa_policy" ] && [ "$ENFORCE_MFA_ACTION" = "true" ]; then
+    effective_mfa_policy="all-applications"
+    echo "  ⓘ MFA_POLICY auto-seteado a 'all-applications' (requerido por Action MFA-challenge)"
+    echo "    Para desactivar globalmente, pasá MFA_POLICY='none' explícito (la Action queda inutilizable)."
+  fi
+
+  if [ "$effective_mfa_policy" = "none" ] || [ -z "$effective_mfa_policy" ]; then
+    # Operator pidió explícitamente "ninguna policy" — vaciar.
+    if api_put_soft '/guardian/policies' '[]' 'PUT /guardian/policies (empty)' >/dev/null; then
+      echo "  ⓘ MFA Policy desactivada (Action MFA-challenge NO funcionará)"
     fi
   else
-    echo "  ⓘ MFA_POLICY vacío — usando Action MFA-challenge (ENFORCE_MFA_ACTION=$ENFORCE_MFA_ACTION) para enforcement granular por rol"
+    echo "▶ MFA policy = $effective_mfa_policy"
+    policy_payload="[\"$effective_mfa_policy\"]"
+    if api_put_soft '/guardian/policies' "$policy_payload" 'PUT /guardian/policies' >/dev/null; then
+      echo "  ✓ MFA enforced via tenant policy ($effective_mfa_policy)"
+    fi
   fi
 fi
 
