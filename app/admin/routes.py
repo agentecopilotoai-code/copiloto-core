@@ -20,7 +20,7 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from app.admin.config import get_admin_settings
 from app.admin.ws_fanout import fanout as ws_fanout
@@ -39,6 +39,13 @@ STATIC_DIR = Path(__file__).parent / 'static'
 DIST_DIR = STATIC_DIR / 'dist'
 SESSION_COOKIE = 'copilotoia_admin_session'
 STATE_COOKIE = 'copilotoia_admin_oauth_state'
+# M65 — cookie efímero seteado por `GET /i/<token>` cuando el invitado
+# clickea el link del email. Sobrevive el OAuth redirect (samesite=lax)
+# para que el `/admin/callback` lo lea y dispare el `POST /v1/invitations/
+# {token}/redeem` automáticamente, sin pasarle el token al SPA. TTL corto
+# (10 min) — el invitado tiene que loguearse rápido o repetir el link.
+PENDING_INVITATION_COOKIE = 'copilotoia_pending_invitation'
+PENDING_INVITATION_TTL_SECONDS = 10 * 60
 # M60/B-002 — TTL del cookie + del session dict. Antes hardcoded 8h, pero
 # el `access_token` de Auth0 vive 2h por default (configure-auth0.sh
 # emite `lifetime_in_seconds=7200`). El desalineamiento causaba:
@@ -550,6 +557,194 @@ async def admin_favicon() -> Response:
     return Response(status_code=204)
 
 
+# ─── M65 — Invitation landing page ───────────────────────────────────────
+#
+# `GET /i/<token>` es el link que llega en el email de invitación de Resend.
+# El flow del invitado:
+#
+#   1. Click email → GET /i/<token>
+#   2. BFF hace GET al Core /v1/invitations/<token> (público).
+#      - Si 404 → muestra HTML "Invitación inválida o expirada".
+#      - Si OK → setea cookie `pending_invitation` con SameSite=Lax (que
+#        SOBREVIVE el redirect cross-site del OAuth flow — `strict` no)
+#        y redirige a /admin/login.
+#   3. Auth0 login (signup si el user es nuevo).
+#   4. Auth0 callback → BFF crea session → detecta cookie pending →
+#      POST /v1/invitations/<token>/redeem al Core con el access_token.
+#   5. Borra el cookie, redirige a /admin/.
+#
+# El token nunca pasa al SPA (queda HttpOnly entre el browser del invitado
+# y el BFF). El SPA solo ve un user logueado normal con su membership
+# (que ya fue creada por `add_tenant_member` al mandar la invitación).
+
+
+def _invitation_landing_html(
+    *, ok: bool, title: str, message: str, cta_label: str | None,
+    cta_url: str | None,
+) -> str:
+    """HTML mínimo, inline, sin assets externos. Match visual del admin
+    panel no necesario (esta página la ve el invitado UNA vez antes del
+    primer login).
+
+    CONTRATO XSS: `title` y `message` se asumen HTML-safe (el caller debe
+    pasar `_html.escape(...)` sobre cualquier dato no-controlado).
+    `cta_label` y `cta_url` SÍ los escapamos acá porque son plain strings
+    fijos del código (no del user input). Para `<title>` además
+    re-escapamos por defensa-en-profundidad (consume el `<` del payload
+    sin riesgo de doble-escape porque viene ya neutralizado).
+    """
+    import html as _html  # noqa: PLC0415
+
+    cta_block = ''
+    if cta_label and cta_url:
+        cta_block = (
+            f'<a href="{_html.escape(cta_url, quote=True)}" '
+            'style="display:inline-block;margin-top:24px;padding:12px 24px;'
+            'background:#2563eb;color:#fff;text-decoration:none;'
+            'border-radius:8px;font-weight:600">'
+            f'{_html.escape(cta_label)}</a>'
+        )
+    color = '#0f172a' if ok else '#dc2626'
+    # `title` puede llevar HTML inline (ej. `<strong>X</strong>`) o texto
+    # pre-escapado. NO doble-escapamos. Para el `<title>` del head sí
+    # corremos un `strip_tags` cheap (split por `<`) para no romper
+    # parseo del header en el browser.
+    title_for_head = title.split('<')[0].split('&lt;')[0]
+    return (
+        '<!doctype html><html lang="es"><head>'
+        '<meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f'<title>{_html.escape(title_for_head).strip() or "CopilotoIA"} · CopilotoIA</title>'
+        '</head><body style="margin:0;font-family:-apple-system,'
+        'BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:#f8fafc;'
+        'color:#0f172a">'
+        '<div style="max-width:480px;margin:80px auto;padding:32px;'
+        'background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.1);'
+        'text-align:center">'
+        f'<h1 style="margin:0 0 16px;color:{color};font-size:24px">'
+        f'{title}</h1>'
+        f'<p style="margin:0;color:#475569;font-size:16px;line-height:1.5">'
+        f'{message}</p>'
+        f'{cta_block}'
+        '</div></body></html>'
+    )
+
+
+@router.get('/i/{token}', include_in_schema=False)
+async def invitation_landing(token: str, request: Request) -> Response:
+    """Landing del link de invitación que llega al inbox del invitado."""
+    import html as _html  # noqa: PLC0415
+
+    _debug('GET /i/<token>', token_prefix=token[:8] + '…' if token else 'empty')
+
+    # Defensa cheap: el token es 64 hex chars. Cualquier otra forma
+    # probablemente es scraping / vuln scanner — devolvemos 404 sin
+    # pegarle al Core.
+    if not token or len(token) != 64 or not all(c in '0123456789abcdef' for c in token.lower()):
+        return HTMLResponse(
+            _invitation_landing_html(
+                ok=False,
+                title='Enlace inválido',
+                message='El link no tiene el formato esperado.',
+                cta_label=None, cta_url=None,
+            ),
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Preview público del Core — sin auth.
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(_core_api_url(f'v1/invitations/{token}'))
+    except httpx.RequestError as exc:
+        _debug('GET /i/<token>', error='core_unreachable', detail=str(exc))
+        return HTMLResponse(
+            _invitation_landing_html(
+                ok=False,
+                title='Error temporal',
+                message='No pudimos validar tu invitación. Probá de nuevo en un minuto.',
+                cta_label=None, cta_url=None,
+            ),
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    if r.status_code == 404:
+        return HTMLResponse(
+            _invitation_landing_html(
+                ok=False,
+                title='Invitación no encontrada',
+                message=(
+                    'El link es inválido o ya fue procesado. '
+                    'Si esperabas una invitación, pedile al admin del tenant '
+                    'que te re-envíe el email.'
+                ),
+                cta_label=None, cta_url=None,
+            ),
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    if r.status_code != 200:
+        _debug('GET /i/<token>', error='core_unexpected_status',
+               status=r.status_code)
+        return HTMLResponse(
+            _invitation_landing_html(
+                ok=False,
+                title='Error temporal',
+                message='No pudimos validar tu invitación. Probá de nuevo en un minuto.',
+                cta_label=None, cta_url=None,
+            ),
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    preview = r.json()
+    tenant_name = _html.escape(str(preview.get('tenant_name', 'CopilotoIA')))
+    role = _html.escape(str(preview.get('role', 'miembro')))
+    invitee_email = _html.escape(str(preview.get('email', '')))
+
+    if preview.get('redeemed'):
+        # Ya redeemed: no setear cookie, solo dejar entrar al admin panel
+        # si tiene sesión, o login si no.
+        return HTMLResponse(
+            _invitation_landing_html(
+                ok=True,
+                title='Ya aceptaste esta invitación',
+                message=(
+                    f'Ya estás como miembro de <strong>{tenant_name}</strong>. '
+                    f'Iniciá sesión con <strong>{invitee_email}</strong> para entrar.'
+                ),
+                cta_label='Iniciar sesión',
+                cta_url='/admin/login',
+            ),
+        )
+
+    # Válida y pending — setear cookie + redirigir al login.
+    settings = get_admin_settings()
+    response = HTMLResponse(
+        _invitation_landing_html(
+            ok=True,
+            title=f'Te invitaron a {tenant_name}',
+            message=(
+                f'Vas a entrar como <strong>{role}</strong> con la cuenta '
+                f'<strong>{invitee_email}</strong>. '
+                'Hacé click en "Continuar" para iniciar sesión.'
+            ),
+            cta_label='Continuar',
+            cta_url='/admin/login',
+        ),
+    )
+    response.set_cookie(
+        PENDING_INVITATION_COOKIE,
+        token,
+        httponly=True,
+        # `lax` (no `strict`) para que el cookie se mande en el redirect
+        # cross-site del OAuth callback. Sin esto, el callback no lo ve
+        # y el redeem nunca se dispara.
+        samesite='lax',
+        secure=settings.cookies_secure,
+        max_age=PENDING_INVITATION_TTL_SECONDS,
+        path='/',
+    )
+    return response
+
+
 @router.get('/admin/login', include_in_schema=False)
 async def admin_login(request: Request) -> RedirectResponse:
     _debug('GET /admin/login', has_cookie=request.cookies.get(SESSION_COOKIE) is not None)
@@ -879,8 +1074,41 @@ async def admin_callback(
             'mfa_verified': mfa_verified,
         },
     }
+    # M65 — antes de armar el response, chequeamos si hay cookie
+    # `pending_invitation` (el invitado vino de `/i/<token>`). Si está,
+    # disparamos el redeem AHORA — el access_token recién emitido tiene
+    # el email del invitado en el claim namespaced, así que el Core
+    # puede validar email-match.
+    pending_token = request.cookies.get(PENDING_INVITATION_COOKIE)
+    redeem_status: str | None = None
+    if pending_token:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                rr = await client.post(
+                    _core_api_url(f'v1/invitations/{pending_token}/redeem'),
+                    headers={'Authorization': f'Bearer {tokens["access_token"]}'},
+                )
+            redeem_status = f'core_status_{rr.status_code}'
+            _debug(
+                'GET /callback', step='invitation_redeem',
+                status=rr.status_code,
+                # Body puede contener tenant_name pero no es secret.
+                body_preview=rr.text[:200] if rr.text else None,
+            )
+        except httpx.RequestError as exc:
+            redeem_status = 'request_error'
+            _debug(
+                'GET /callback', step='invitation_redeem_error',
+                error=str(exc),
+            )
+        # Cualquier fallo del redeem NO debe tumbar el login. El user
+        # entra al panel igual (ya tiene membership desde
+        # `add_tenant_member`); el redeem es solo audit + UX.
+
     response = RedirectResponse('/admin/')
     response.delete_cookie(STATE_COOKIE)
+    if pending_token:
+        response.delete_cookie(PENDING_INVITATION_COOKIE, path='/')
     # `samesite='strict'` para la session cookie es defensa contra CSRF
     # cross-origin (el browser NO la adjunta en navegación cross-site, ni
     # siquiera en top-level POSTs). `secure=True` cuando no estamos en
@@ -898,6 +1126,7 @@ async def admin_callback(
         sid=session_id, ttl_seconds=session_ttl,
         secure=settings.cookies_secure, samesite='strict',
         redirect='/admin/',
+        pending_invitation_redeem=redeem_status,
     )
     return response
 

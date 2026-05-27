@@ -10,9 +10,11 @@ from uuid import uuid4
 import pytest
 
 from app.services.invitations import (
-    InvitationRateLimitError, _reset_invitation_rate_buckets,
-    create_and_send_invitation, generate_invitation_token,
-    hash_invitation_token,
+    InvitationEmailMismatchError, InvitationExpiredError,
+    InvitationNotFoundError, InvitationRateLimitError,
+    _reset_invitation_rate_buckets, create_and_send_invitation,
+    generate_invitation_token, get_invitation_preview, hash_invitation_token,
+    redeem_invitation,
 )
 
 
@@ -374,3 +376,175 @@ def test_create_and_send_invitation_renders_template_with_tenant_name(monkeypatc
     assert captured['tags']['type'] == 'invitation'
     assert captured['tags']['tenant_id'] == str(tid)
     assert captured['tags']['invitation_id'] == str(inv_id)
+
+
+# ─── get_invitation_preview (M65 iteración 2) ────────────────────────────
+
+
+def _preview_row(*, redeemed=False, expires_at=None, tenant_name='Demo Tenant',
+                 email='invitee@example.com', role='admin'):
+    """Construye una row tal como la devolvería el JOIN del query."""
+    from datetime import timedelta
+    return {
+        'id': uuid4(),
+        'tenant_id': uuid4(),
+        'email': email,
+        'role': role,
+        'expires_at': expires_at or (datetime.now(UTC) + timedelta(days=7)),
+        'redeemed_at': datetime.now(UTC) if redeemed else None,
+        'redeemed_by_user_id': uuid4() if redeemed else None,
+        'tenant_name': tenant_name,
+    }
+
+
+def test_get_invitation_preview_returns_none_when_token_unknown():
+    conn = FakeConn(fetchrow_returns=[None])
+    out = asyncio.run(get_invitation_preview(conn, 'a' * 64))
+    assert out is None
+
+
+def test_get_invitation_preview_returns_dto_when_exists():
+    row = _preview_row()
+    conn = FakeConn(fetchrow_returns=[row])
+    out = asyncio.run(get_invitation_preview(conn, 'a' * 64))
+    assert out is not None
+    assert out.tenant_name == 'Demo Tenant'
+    assert out.role == 'admin'
+    assert out.email == 'invitee@example.com'
+    assert out.redeemed is False
+
+
+def test_get_invitation_preview_marks_redeemed_flag():
+    row = _preview_row(redeemed=True)
+    conn = FakeConn(fetchrow_returns=[row])
+    out = asyncio.run(get_invitation_preview(conn, 'a' * 64))
+    assert out is not None
+    assert out.redeemed is True
+
+
+def test_get_invitation_preview_hashes_token_for_lookup():
+    """Confirma que el SELECT usa `hash_invitation_token(clear_token)` —
+    si el lookup usara el clear, la DB nunca matcharía (storeamos hash)."""
+    conn = FakeConn(fetchrow_returns=[None])
+    clear = 'b' * 64
+    asyncio.run(get_invitation_preview(conn, clear))
+    # Última call fue fetchrow. El último arg es el bound param $1 = hash.
+    _, _, args = conn.calls[-1]
+    assert args[0] == hash_invitation_token(clear)
+
+
+# ─── redeem_invitation (M65 iteración 2) ─────────────────────────────────
+
+
+def test_redeem_invitation_raises_not_found_when_token_unknown():
+    conn = FakeConn(fetchrow_returns=[None])
+    with pytest.raises(InvitationNotFoundError):
+        asyncio.run(redeem_invitation(
+            conn=conn, clear_token='a' * 64,
+            redeemer_user_id=uuid4(), redeemer_email='x@y.co',
+        ))
+
+
+def test_redeem_invitation_raises_email_mismatch():
+    """Defense anti-hijack: invitación para `invitee@x.co` pero el user
+    autenticado tiene email `attacker@evil.co` → 403."""
+    row = _preview_row(email='invitee@example.com')
+    conn = FakeConn(fetchrow_returns=[row])
+    with pytest.raises(InvitationEmailMismatchError):
+        asyncio.run(redeem_invitation(
+            conn=conn, clear_token='a' * 64,
+            redeemer_user_id=uuid4(),
+            redeemer_email='attacker@evil.co',
+        ))
+    # NO debe haber UPDATE — el row queda intacto.
+    assert not any(c[0] == 'execute' for c in conn.calls)
+
+
+def test_redeem_invitation_email_match_is_case_insensitive():
+    """`citext` en DB pero igual normalizamos en Python como defensa."""
+    row = _preview_row(email='Invitee@Example.com')
+    conn = FakeConn(fetchrow_returns=[row], execute_returns=['UPDATE'])
+    out = asyncio.run(redeem_invitation(
+        conn=conn, clear_token='a' * 64,
+        redeemer_user_id=uuid4(),
+        redeemer_email='invitee@example.COM',
+    ))
+    assert out.redeemed is True
+
+
+def test_redeem_invitation_raises_expired_when_past_expires_at():
+    from datetime import timedelta
+    row = _preview_row(
+        expires_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    conn = FakeConn(fetchrow_returns=[row])
+    with pytest.raises(InvitationExpiredError):
+        asyncio.run(redeem_invitation(
+            conn=conn, clear_token='a' * 64,
+            redeemer_user_id=uuid4(),
+            redeemer_email='invitee@example.com',
+        ))
+
+
+def test_redeem_invitation_idempotent_when_already_redeemed():
+    """Si el user clickea el link 2 veces, el segundo retorna OK sin update."""
+    row = _preview_row(redeemed=True)
+    conn = FakeConn(fetchrow_returns=[row])
+    out = asyncio.run(redeem_invitation(
+        conn=conn, clear_token='a' * 64,
+        redeemer_user_id=uuid4(),
+        redeemer_email='invitee@example.com',
+    ))
+    assert out.redeemed is True
+    # Sin UPDATE — solo SELECT.
+    assert not any(c[0] == 'execute' for c in conn.calls)
+
+
+def test_redeem_invitation_already_redeemed_after_expiry_still_ok():
+    """Edge case: una invitación que fue redimida ANTES de expirar, y ahora
+    está expirada — sigue siendo válida para retornar (audit-only)."""
+    from datetime import timedelta
+    row = _preview_row(
+        redeemed=True,
+        expires_at=datetime.now(UTC) - timedelta(days=30),
+    )
+    conn = FakeConn(fetchrow_returns=[row])
+    out = asyncio.run(redeem_invitation(
+        conn=conn, clear_token='a' * 64,
+        redeemer_user_id=uuid4(),
+        redeemer_email='invitee@example.com',
+    ))
+    assert out.redeemed is True
+
+
+def test_redeem_invitation_happy_path_marks_redeemed():
+    row = _preview_row()
+    user_id = uuid4()
+    conn = FakeConn(fetchrow_returns=[row], execute_returns=['UPDATE'])
+    out = asyncio.run(redeem_invitation(
+        conn=conn, clear_token='a' * 64,
+        redeemer_user_id=user_id,
+        redeemer_email='invitee@example.com',
+    ))
+    assert out.redeemed is True
+    assert out.tenant_name == 'Demo Tenant'
+    # Tiene que haber emitido el UPDATE.
+    update_calls = [c for c in conn.calls if c[0] == 'execute']
+    assert len(update_calls) == 1
+    # Args: ($1=id, $2=user_id)
+    assert update_calls[0][2][1] == user_id
+
+
+def test_redeem_invitation_uses_for_update_lock():
+    """Race-condition safety: query debe usar FOR UPDATE para serializar
+    redeems concurrentes con el mismo token."""
+    row = _preview_row()
+    conn = FakeConn(fetchrow_returns=[row], execute_returns=['UPDATE'])
+    asyncio.run(redeem_invitation(
+        conn=conn, clear_token='a' * 64,
+        redeemer_user_id=uuid4(),
+        redeemer_email='invitee@example.com',
+    ))
+    # La query del fetchrow inicial debe contener FOR UPDATE.
+    select_call = next(c for c in conn.calls if c[0] == 'fetchrow')
+    assert 'for update' in select_call[1].lower()

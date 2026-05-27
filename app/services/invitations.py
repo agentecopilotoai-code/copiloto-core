@@ -67,6 +67,22 @@ class InvitationRateLimitError(RuntimeError):
     """El actor excedió el límite de invitaciones por hora."""
 
 
+class InvitationNotFoundError(LookupError):
+    """No existe invitación con ese token (token inválido o falsificado)."""
+
+
+class InvitationExpiredError(RuntimeError):
+    """La invitación expiró (pasó `expires_at`)."""
+
+
+class InvitationEmailMismatchError(RuntimeError):
+    """El email del redimidor no coincide con el email de la invitación.
+
+    Previene hijack: si alguien intercepta el link `/i/<token>`, no puede
+    usarlo con SU propia cuenta de Auth0 para entrar al tenant del invitado
+    original. El check es case-insensitive (DB usa `citext`)."""
+
+
 # ─── Token generation ────────────────────────────────────────────────────
 
 
@@ -285,6 +301,171 @@ async def create_and_send_invitation(
         email_message_id=email_message_id,
         email_provider=email_provider_name,
         email_status=email_status,
+    )
+
+
+# ─── Preview + Redeem (iteración 2 — endpoint /i/<token>) ──────────────
+
+
+@dataclass(frozen=True)
+class InvitationPreview:
+    """Información pública (no-secret) de una invitación, suficiente para
+    armar la landing page `/i/<token>` antes de que el invitado se logue.
+
+    NO incluye el token, ni el hash, ni el inviter_user_id, ni metadata —
+    solo lo que muestra la UI ("Te invitaron a TenantX como Y, link
+    vigente hasta Z").
+    """
+    invitation_id: UUID
+    tenant_id: UUID
+    tenant_name: str
+    role: str
+    email: str  # del invitado (case-preserved como vino)
+    expires_at: datetime
+    redeemed: bool
+
+
+def _row_to_preview(row: asyncpg.Record) -> InvitationPreview:
+    return InvitationPreview(
+        invitation_id=row['id'],
+        tenant_id=row['tenant_id'],
+        tenant_name=row['tenant_name'] or 'CopilotoIA',
+        role=row['role'],
+        email=row['email'],
+        expires_at=row['expires_at'],
+        redeemed=row['redeemed_at'] is not None,
+    )
+
+
+async def get_invitation_preview(
+    conn: asyncpg.Connection, clear_token: str,
+) -> InvitationPreview | None:
+    """Lookup público para la landing page. Retorna `None` si no existe
+    invitación con ese token (token falsificado o ya purgado).
+
+    NO valida expiry — el caller decide qué mostrar al user (el handler
+    público las muestra todas, marcando si están expiradas/redeemed). Sí
+    consulta el flag `redeemed`."""
+    token_hash = hash_invitation_token(clear_token)
+    row = await conn.fetchrow(
+        '''
+        select i.id, i.tenant_id, i.email, i.role, i.expires_at,
+               i.redeemed_at,
+               coalesce(t.display_name, t.legal_name) as tenant_name
+          from app.tenant_invitations i
+          join app.tenants t on t.id = i.tenant_id
+         where i.token_hash = $1
+        ''',
+        token_hash,
+    )
+    if not row:
+        return None
+    return _row_to_preview(row)
+
+
+async def redeem_invitation(
+    *,
+    conn: asyncpg.Connection,
+    clear_token: str,
+    redeemer_user_id: UUID,
+    redeemer_email: str,
+) -> InvitationPreview:
+    """Marca la invitación como `redeemed_at = now()` y persiste el
+    `redeemed_by_user_id`. Idempotente: si ya fue redimida por el mismo
+    email, devuelve la preview sin error ni efecto secundario.
+
+    Defensa anti-hijack:
+      - Email mismatch → `InvitationEmailMismatchError`. Previene que un
+        atacante que intercepta el link `/i/<token>` lo use con SU cuenta
+        para entrar al tenant del invitado original.
+
+    Validaciones:
+      - Token existe → si no, `InvitationNotFoundError`.
+      - Email matchea (case-insensitive) → si no, `InvitationEmailMismatchError`.
+      - Si ya fue redeemed → idempotent (return).
+      - Expiry chequeada solo en PRIMER redeem (already-redeemed son
+        válidas aunque pasó `expires_at` — eso es un audit-log, no un gate).
+
+    `SELECT ... FOR UPDATE` previene race conditions si llegan 2 requests
+    concurrentes con el mismo token (locked hasta commit/rollback)."""
+    token_hash = hash_invitation_token(clear_token)
+    row = await conn.fetchrow(
+        '''
+        select i.id, i.tenant_id, i.email, i.role, i.expires_at,
+               i.redeemed_at, i.redeemed_by_user_id,
+               coalesce(t.display_name, t.legal_name) as tenant_name
+          from app.tenant_invitations i
+          join app.tenants t on t.id = i.tenant_id
+         where i.token_hash = $1
+         for update
+        ''',
+        token_hash,
+    )
+    if not row:
+        raise InvitationNotFoundError('invitation not found')
+
+    # Email match (case-insensitive — DB col es `citext` pero igual
+    # normalizamos en Python por defensa-en-profundidad).
+    if row['email'].lower() != redeemer_email.lower():
+        log.warning(
+            'invitation.redeem.email_mismatch',
+            invitation_id=str(row['id']),
+            tenant_id=str(row['tenant_id']),
+            invitation_email_masked=row['email'][:2] + '***',
+            redeemer_email_masked=redeemer_email[:2] + '***',
+        )
+        raise InvitationEmailMismatchError(
+            'El email autenticado no coincide con el de la invitación.',
+        )
+
+    # Idempotent: ya redeemed por este mismo email → return preview.
+    if row['redeemed_at'] is not None:
+        log.info(
+            'invitation.redeem.idempotent',
+            invitation_id=str(row['id']),
+            tenant_id=str(row['tenant_id']),
+        )
+        return _row_to_preview(row)
+
+    # Expiry — solo en primer redeem.
+    now = datetime.now(UTC)
+    if row['expires_at'] < now:
+        log.info(
+            'invitation.redeem.expired',
+            invitation_id=str(row['id']),
+            tenant_id=str(row['tenant_id']),
+            expired_at=row['expires_at'].isoformat(),
+        )
+        raise InvitationExpiredError(
+            f'La invitación expiró el {row["expires_at"].isoformat()}.',
+        )
+
+    await conn.execute(
+        '''
+        update app.tenant_invitations
+           set redeemed_at = now(),
+               redeemed_by_user_id = $2
+         where id = $1
+        ''',
+        row['id'], redeemer_user_id,
+    )
+
+    log.info(
+        'invitation.redeemed',
+        invitation_id=str(row['id']),
+        tenant_id=str(row['tenant_id']),
+        redeemer_user_id=str(redeemer_user_id),
+    )
+
+    # Construir preview con flag redeemed=True (sin segundo SELECT).
+    return InvitationPreview(
+        invitation_id=row['id'],
+        tenant_id=row['tenant_id'],
+        tenant_name=row['tenant_name'] or 'CopilotoIA',
+        role=row['role'],
+        email=row['email'],
+        expires_at=row['expires_at'],
+        redeemed=True,
     )
 
 

@@ -100,6 +100,7 @@ from app.api.v1.handlers import tenant_user_handlers as _tenant_user_handlers  #
 from app.api.v1.handlers import tenant_signup_handlers as _tenant_signup_handlers  # noqa: F401, E402
 from app.api.v1.handlers import platform_admin_handlers as _platform_admin_handlers  # noqa: F401, E402
 from app.api.v1.handlers import platform_roles_handlers as _platform_roles_handlers  # noqa: F401, E402
+from app.api.v1.handlers import invitation_handlers as _invitation_handlers  # noqa: F401, E402
 # Endpoints platform admin adicionales (AI providers + tenant_modules CRUD).
 from app.platform_admin import admin_routes as _platform_admin_routes  # noqa: F401, E402
 
