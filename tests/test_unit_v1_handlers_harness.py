@@ -605,6 +605,33 @@ def test_list_my_tenants_401_anonymous():
     assert exc.value.status_code == 401
 
 
+def test_list_my_tenants_M68_uses_security_definer_function():
+    """M68 — el listado debe invocar `app.list_user_tenants(...)` (SECURITY
+    DEFINER) en vez del SELECT directo. Sin esto, la RLS de `app.tenants`
+    bloqueaba el JOIN para users invitados sin `tenant_id` claim en JWT
+    → `/me/tenants` retornaba [] aunque la membresía existía."""
+    from app.api.v1.handlers.tenant_user_handlers import list_my_tenants
+    uid = uuid4()
+    tid = uuid4()
+    rows = [{
+        'id': tid, 'slug': 'acme', 'legal_name': 'ACME Corp',
+        'display_name': 'ACME', 'vertical_code': 'tech',
+        'business_type_label': None, 'country_code': 'CO',
+        'timezone': 'America/Bogota', 'status': 'active',
+        'roles': ['admin'], 'is_default': True,
+        'joined_at': None,
+    }]
+    conn = FakeConn(fetchrow=[{'id': uid}], fetch=[rows])
+    req = _fake_request()
+    asyncio.run(list_my_tenants(req, conn))
+    fetch_calls = [c for c in conn.calls if c[0] == 'fetch']
+    assert len(fetch_calls) == 1
+    assert 'list_user_tenants' in fetch_calls[0][1]
+    # NO debe haber un SELECT directo a `app.tenants` (la function
+    # encapsula el JOIN).
+    assert 'from app.users u' not in fetch_calls[0][1].lower()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # tenant_signup_handlers
 # ═══════════════════════════════════════════════════════════════════════════

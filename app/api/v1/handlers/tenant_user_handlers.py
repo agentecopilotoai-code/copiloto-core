@@ -31,29 +31,16 @@ async def list_my_tenants(
     # user aterriza erróneamente en /no-tenant.
     await current_user_id_from_request(request, conn)
 
+    # M68 — usar SECURITY DEFINER function para bypass RLS. La policy
+    # `tenants_select` exige `tenant_id = current_tenant_id() OR support_mode`.
+    # Un user invitado por primera vez NO tiene `tenant_id` en su JWT
+    # (Auth0 lo deriva de app_metadata, vacío hasta que algún proceso
+    # lo setee), entonces el JOIN con `app.tenants` filtra TODO →
+    # `/me/tenants` retornaba [] aunque la membresía existía en DB.
+    # La function `app.list_user_tenants` filtra por `auth_subject` —
+    # safe porque el caller (este handler) ya validó el JWT.
     rows = await conn.fetch(
-        '''
-        select t.id, t.slug, t.legal_name, t.display_name, t.vertical_code,
-               t.business_type_label, t.country_code, t.timezone, t.status,
-               array_agg(utr.role order by
-                   case utr.role
-                       when 'owner' then 1
-                       when 'admin' then 2
-                       when 'manager' then 3
-                       when 'agent' then 4
-                       when 'viewer' then 5
-                       else 6
-                   end
-               ) as roles,
-               bool_or(utr.is_default) as is_default,
-               min(utr.created_at) as joined_at
-        from app.users u
-        join app.user_tenant_roles utr on utr.user_id = u.id
-        join app.tenants t on t.id = utr.tenant_id
-        where u.auth_subject = $1 and t.deleted_at is null
-        group by t.id
-        order by bool_or(utr.is_default) desc, min(utr.created_at) asc
-        ''',
+        'select * from app.list_user_tenants($1)',
         actor_id,
     )
     tenants = []

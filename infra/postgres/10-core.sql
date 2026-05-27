@@ -671,6 +671,67 @@ revoke all on function app.mark_invitation_redeemed(uuid, uuid) from public;
 grant execute on function app.lookup_invitation_by_token_hash(text) to copiloto_app;
 grant execute on function app.mark_invitation_redeemed(uuid, uuid) to copiloto_app;
 
+-- M68 — SECURITY DEFINER para el listado de tenants del usuario.
+--
+-- Bug observado: un invitado RECIÉN logueado por primera vez ve
+-- "Aún no estás asignada a un negocio" aunque tiene una row en
+-- `user_tenant_roles`. Causa: la RLS de `app.tenants` exige
+-- `id = current_tenant_id()` o `support_mode`. El JWT del invitado
+-- nuevo NO trae `tenant_id` (app_metadata.tenant_id vacío hasta que
+-- alguien lo setee en Auth0), entonces el JOIN con `app.tenants`
+-- devuelve 0 rows → /v1/me/tenants → []. Bug pre-M65.
+--
+-- Fix: SECURITY DEFINER function que bypassa RLS para el listado.
+-- Safe porque filtra por `auth_subject` del JWT — un user solo puede
+-- listar SUS tenants (no spoofeable: el auth_subject lo provee el
+-- caller que ya validó el JWT en `authenticate_request`).
+
+create or replace function app.list_user_tenants(p_auth_subject text)
+returns table (
+  id uuid,
+  slug text,
+  legal_name text,
+  display_name text,
+  vertical_code text,
+  business_type_label text,
+  country_code text,
+  timezone text,
+  status text,
+  roles text[],
+  is_default boolean,
+  joined_at timestamptz
+)
+security definer
+set search_path = app, pg_temp
+language sql stable as $$
+  select t.id, t.slug::text, t.legal_name, t.display_name,
+         t.vertical_code, t.business_type_label, t.country_code::text,
+         t.timezone, t.status,
+         array_agg(utr.role order by
+             case utr.role
+                 when 'owner' then 1
+                 when 'admin' then 2
+                 when 'manager' then 3
+                 when 'agent' then 4
+                 when 'viewer' then 5
+                 else 6
+             end
+         ) as roles,
+         bool_or(utr.is_default) as is_default,
+         min(utr.created_at) as joined_at
+    from app.users u
+    join app.user_tenant_roles utr on utr.user_id = u.id
+    join app.tenants t on t.id = utr.tenant_id
+   where u.auth_subject = p_auth_subject
+     and t.deleted_at is null
+   group by t.id, t.slug, t.legal_name, t.display_name, t.vertical_code,
+            t.business_type_label, t.country_code, t.timezone, t.status
+   order by bool_or(utr.is_default) desc, min(utr.created_at) asc
+$$;
+
+revoke all on function app.list_user_tenants(text) from public;
+grant execute on function app.list_user_tenants(text) to copiloto_app;
+
 -- ─── Grants al rol de aplicación ───────────────────────────────────────────
 
 grant usage on schema app to copiloto_app;
