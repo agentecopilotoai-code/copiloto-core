@@ -297,15 +297,49 @@ async def revoke_my_session(
 #   - Sin `X-Tenant-Id`, la cookie se ignora (el opt-in es per-tenant).
 
 SUPPORT_MODE_TTL_SECONDS = 3600
-SUPPORT_MODE_MIN_JUSTIFICATION_LEN = 8
+SUPPORT_MODE_MIN_JUSTIFICATION_LEN = 10
 
 _SUPPORT_MODE_ROLES = {'platform_owner', 'owner'}
+
+# SEC-002 (audit 2026-05-27) — rate-limit anti-bombing del support-mode.
+# In-memory sliding window por actor (alineado al patrón de
+# `_AUTH0_RL_BUCKETS` y `_INVITATION_RATE_BUCKETS`). 5 activaciones por
+# 5min — cubre uso humano normal (cambio de tenant en troubleshooting)
+# y bloquea un script atacante.
+_SUPPORT_MODE_RATE_BUCKETS: dict[str, list[float]] = {}
+_SUPPORT_MODE_RL_MAX = 5
+_SUPPORT_MODE_RL_WINDOW_SECONDS = 300
+
+
+def _support_mode_rl_check(actor_id: str) -> None:
+    import time as _time  # noqa: PLC0415
+    now = _time.monotonic()
+    bucket = _SUPPORT_MODE_RATE_BUCKETS.setdefault(actor_id, [])
+    cutoff = now - _SUPPORT_MODE_RL_WINDOW_SECONDS
+    bucket[:] = [t for t in bucket if t > cutoff]
+    if len(bucket) >= _SUPPORT_MODE_RL_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f'rate_limit_exceeded — máx {_SUPPORT_MODE_RL_MAX} '
+                f'activaciones de support_mode por '
+                f'{_SUPPORT_MODE_RL_WINDOW_SECONDS // 60}min por actor.'
+            ),
+        )
+    bucket.append(now)
+
+
+def _reset_support_mode_rate_limit() -> None:
+    """Test-only — limpia los buckets entre tests."""
+    _SUPPORT_MODE_RATE_BUCKETS.clear()
 
 
 class SupportModeActivateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
-    justification: str | None = Field(
-        default=None,
+    # SEC-003 (audit 2026-05-27) — justification ahora REQUERIDA. Alinea
+    # con `Auth0AdminActionPayload` (M-004) que ya lo exigía para
+    # block/unblock/reset-mfa/delete.
+    justification: str = Field(
         min_length=SUPPORT_MODE_MIN_JUSTIFICATION_LEN,
         max_length=500,
     )
@@ -330,7 +364,7 @@ async def activate_support_mode(
     tenant_id: UUID,
     request: Request,
     response: Response,
-    body: SupportModeActivateRequest | None = None,
+    body: SupportModeActivateRequest,
     conn: asyncpg.Connection = Depends(get_db),
 ) -> SupportModeActivateResponse:
     """Activa support_mode opt-in para `tenant_id` durante TTL segundos.
@@ -338,17 +372,28 @@ async def activate_support_mode(
     Defensas:
       - Caller debe estar autenticado (`authenticate_request` ya corrió).
       - Caller debe tener rol global elevable (platform_owner / owner).
+      - SEC-002: MFA obligatorio (mismo gate que platform_admin endpoints).
+      - SEC-002: rate-limit 5/5min por actor (anti-bombing).
+      - SEC-003: `justification` ahora REQUERIDA (Pydantic 422 si falta).
       - Tenant target debe existir.
       - Cookie firmada con jwt_secret + sub + exp; sin esos campos
         matcheando el JWT, `authenticate_request` la ignora.
       - Audit log con `metadata.justification` para forensia.
     """
+    from app.core.security import require_mfa_for_privileged  # noqa: PLC0415
+
     actor_id = getattr(request.state, 'actor_id', None)
     roles = list(getattr(request.state, 'roles', None) or [])
     if not actor_id:
         raise HTTPException(401, 'authentication_required')
     if not _caller_can_use_support_mode(roles):
         raise HTTPException(403, 'support_mode_requires_global_role')
+    # SEC-002 — MFA gate. Reusamos el helper canónico para evitar drift
+    # con el resto de endpoints privilegiados.
+    await require_mfa_for_privileged(request)
+    # SEC-002 — rate-limit (después de auth/roles para no consumir buckets
+    # por requests legítimamente rechazadas).
+    _support_mode_rl_check(actor_id)
 
     # Verificar que el tenant existe (sin RLS — tabla platform-scoped).
     exists = await conn.fetchval(
@@ -389,7 +434,7 @@ async def activate_support_mode(
         entity_id=str(tenant_id),
         metadata={
             'roles': roles,
-            'justification_provided': bool(body and body.justification),
+            'justification': body.justification,
             'ttl_seconds': SUPPORT_MODE_TTL_SECONDS,
         },
     )

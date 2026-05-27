@@ -73,6 +73,10 @@ def _fake_request(**state) -> SimpleNamespace:
         # de M67 lo overridean explícito a False cuando quieren probar
         # el fail-closed path.
         'email_verified': True,
+        # SEC-002 (audit 2026-05-27) — default True por mismo motivo
+        # que email_verified. Tests específicos de MFA gate overridean
+        # a False explícitamente para probar el reject path.
+        'mfa_verified': True,
         'name': 'U',
         'session_jti': 'jti-abc',
         'token_iat': 1700000000,
@@ -563,6 +567,49 @@ def test_activate_support_mode_401_no_actor():
             activate_support_mode(tid, req, resp, body, conn)
         )
     assert exc.value.status_code == 401
+
+
+def test_activate_support_mode_SEC002_rejects_unverified_mfa():
+    """SEC-002 — un platform_owner con `mfa_verified=False` no debe poder
+    activar support_mode (mismo gate que platform_admin endpoints)."""
+    from app.api.v1.handlers.me_handlers import (
+        SupportModeActivateRequest, _reset_support_mode_rate_limit,
+        activate_support_mode,
+    )
+    from fastapi import HTTPException, Response
+    _reset_support_mode_rate_limit()
+    tid = uuid4()
+    conn = FakeConn()
+    req = _fake_request(roles=['platform_owner'], mfa_verified=False)
+    resp = Response()
+    body = SupportModeActivateRequest(justification='troubleshooting #123')
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(activate_support_mode(tid, req, resp, body, conn))
+    assert exc.value.status_code == 403
+
+
+def test_activate_support_mode_SEC002_rate_limit_enforced():
+    """SEC-002 — más de 5 activaciones en 5min por mismo actor → 429."""
+    from app.api.v1.handlers.me_handlers import (
+        SupportModeActivateRequest, _reset_support_mode_rate_limit,
+        activate_support_mode,
+    )
+    from fastapi import HTTPException, Response
+    _reset_support_mode_rate_limit()
+    tid = uuid4()
+    body = SupportModeActivateRequest(justification='troubleshooting #123')
+    req = _fake_request(roles=['platform_owner'])
+    # Las primeras 5 deben pasar (cada una con tenant exists + audit).
+    for _ in range(5):
+        conn = FakeConn(fetchval=[1], execute=['OK'])
+        resp = Response()
+        asyncio.run(activate_support_mode(tid, req, resp, body, conn))
+    # La 6ta debe levantar 429 ANTES de tocar DB.
+    conn = FakeConn()
+    resp = Response()
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(activate_support_mode(tid, req, resp, body, conn))
+    assert exc.value.status_code == 429
 
 
 def test_deactivate_support_mode_idempotent():
