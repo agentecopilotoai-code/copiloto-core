@@ -808,149 +808,6 @@ MFA_ACTION
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
-# Bootstrap del platform_owner inicial (opt-in via BOOTSTRAP_PLATFORM_OWNER_EMAIL)
-# ════════════════════════════════════════════════════════════════════════════
-#
-# Si BOOTSTRAP_PLATFORM_OWNER_EMAIL está definido, el script:
-#   1. Busca el user por email vía Management API.
-#   2. Le asigna el rol `platform_owner` (idempotente — no duplica si ya está).
-#   3. Setea `app_metadata.support_mode=true` (default; gated por
-#      BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE para opt-out).
-#
-# Sin esto, el operador tenía que:
-#   - Crear el user en Auth0 (lo sigue haciendo a mano — el script no crea
-#     users porque eso requiere consent del owner del email).
-#   - Asignar rol `platform_owner` desde el dashboard (Pestaña Roles → Assign).
-#   - Editar `app_metadata` para agregar `{"support_mode": true}` (sin esto
-#     el botón "Ver como tenant" en /platform/tenants no funciona — el
-#     resolveActiveRoles del frontend requiere support_mode para que el rol
-#     global aplique cuando hay tenant activo, ver TASK-0077).
-#
-# Variables opcionales:
-#   BOOTSTRAP_PLATFORM_OWNER_EMAIL          email del user a bootstrappear
-#                                           (debe existir previamente en Auth0).
-#   BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE   true/false. Default true. Si false,
-#                                           solo asigna el rol sin tocar
-#                                           app_metadata.support_mode.
-#
-# **Trade-off de seguridad**: support_mode=true permanente significa que el
-# platform_owner SIEMPRE puede operar en cualquier tenant (sin opt-in
-# temporal). Para producción endurecida, dejarlo en false y manejar el
-# toggle via un endpoint dedicado (ver `BUG-008` en docs/UI_BACKLOG.md).
-BOOTSTRAP_PLATFORM_OWNER_EMAIL="${BOOTSTRAP_PLATFORM_OWNER_EMAIL:-}"
-BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE="${BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE:-true}"
-
-if [ -n "$BOOTSTRAP_PLATFORM_OWNER_EMAIL" ]; then
-  echo "▶ Bootstrap platform_owner: $BOOTSTRAP_PLATFORM_OWNER_EMAIL"
-
-  # 1. Localizar el user por email. La API espera el email URL-encoded.
-  bootstrap_email_encoded="$(jq -rn --arg e "$BOOTSTRAP_PLATFORM_OWNER_EMAIL" '$e | @uri')"
-  bootstrap_users_response="$(api_get "/users-by-email?email=$bootstrap_email_encoded")"
-  # codex P1 fix: Auth0 permite el mismo email en múltiples connections
-  # (database + Google OAuth + Microsoft, etc.). `/users-by-email` puede
-  # devolver MÁS DE UN user. Si silenciosamente tomamos `.[0]`, podríamos
-  # asignar `platform_owner` + `support_mode` a la identidad equivocada y
-  # dejar al operador previsto sin acceso. Fail-closed si hay 0 o >1; el
-  # operador desambigua manualmente borrando duplicates o asignando vía
-  # dashboard al user_id correcto.
-  bootstrap_user_count="$(jq 'length' <<<"$bootstrap_users_response")"
-
-  if [ "$bootstrap_user_count" -eq 0 ]; then
-    echo "  ⚠ User '$BOOTSTRAP_PLATFORM_OWNER_EMAIL' NO existe en Auth0." >&2
-    echo "    Crealo primero en Auth0 Dashboard → Users → Create User," >&2
-    echo "    luego re-corré este script con la misma variable." >&2
-    echo "    (El script no crea users automáticamente porque requiere consent" >&2
-    echo "    del dueño del email — Auth0 le manda email de invitación.)" >&2
-    exit 2
-  fi
-
-  if [ "$bootstrap_user_count" -gt 1 ]; then
-    echo "  ⚠ Email '$BOOTSTRAP_PLATFORM_OWNER_EMAIL' tiene MÁS DE UN user en Auth0." >&2
-    echo "    Auth0 permite el mismo email en múltiples connections (database +" >&2
-    echo "    Google OAuth + Microsoft, etc.). Para evitar asignar privilegios a" >&2
-    echo "    la identidad equivocada, el script aborta — desambiguá manualmente." >&2
-    echo "" >&2
-    echo "    User IDs encontrados:" >&2
-    jq -r '.[] | "      - \(.user_id) (connection=\(.identities[0].connection // "?"))"' <<<"$bootstrap_users_response" >&2
-    echo "" >&2
-    echo "    Acciones posibles:" >&2
-    echo "      1. Borrá las identidades duplicadas que no querés en Auth0 Dashboard." >&2
-    echo "      2. O asigná rol + app_metadata MANUALMENTE desde el dashboard al" >&2
-    echo "         user_id correcto, y re-corré este script con BOOTSTRAP_PLATFORM_OWNER_EMAIL" >&2
-    echo "         vacío para que skipee el bloque de bootstrap." >&2
-    exit 2
-  fi
-
-  bootstrap_user_id="$(jq -r '.[0].user_id' <<<"$bootstrap_users_response")"
-
-  # BUG-194 (codex HIGH): la cuenta Auth0 debe estar `email_verified=true`
-  # antes de asignarle `platform_owner` + `support_mode`. Un atacante puede
-  # crear una cuenta sin verificar con el email del platform owner antes que
-  # la víctima active su propia cuenta — si el bootstrap silenciosamente
-  # promueve la cuenta no verificada, el atacante recibe el rol más alto del
-  # sistema y `support_mode` (cross-tenant). Fail-closed: el operador debe
-  # disparar `verify email` desde el Auth0 dashboard antes de re-correr.
-  bootstrap_user_verified="$(jq -r '.[0].email_verified // false' <<<"$bootstrap_users_response")"
-  if [ "$bootstrap_user_verified" != "true" ]; then
-    echo "  ⚠ User '$BOOTSTRAP_PLATFORM_OWNER_EMAIL' (user_id=$bootstrap_user_id)" >&2
-    echo "    tiene email_verified=false en Auth0. Por seguridad, no se asigna" >&2
-    echo "    'platform_owner' + 'support_mode' a una cuenta sin verificar — un" >&2
-    echo "    atacante puede haber registrado el email antes que el dueño legítimo." >&2
-    echo "" >&2
-    echo "    Acción requerida:" >&2
-    echo "      1. Auth0 Dashboard → Users → '$BOOTSTRAP_PLATFORM_OWNER_EMAIL'" >&2
-    echo "      2. Verificá manualmente que la identidad corresponde al owner" >&2
-    echo "         (chequeá el campo 'identities[0].connection' y los logs de" >&2
-    echo "         creación)." >&2
-    echo "      3. Disparar 'Send Verification Email' o setear email_verified=true" >&2
-    echo "         manualmente si confiás en la identidad." >&2
-    echo "      4. Re-correr este script." >&2
-    exit 2
-  fi
-
-  # codex P1 fix: Auth0 user_ids tienen prefijo de connection con un pipe
-  # (auth0|abc123, google-oauth2|123456, etc.). El pipe `|` no es URL-safe
-  # y debe encodearse a `%7C` cuando va como path segment. Sin esto, los
-  # endpoints `/users/{id}/roles` y `/users/{id}` pueden fallar con 404 o
-  # 400 en algunos backends de proxy.
-  bootstrap_user_id_encoded="$(jq -rn --arg id "$bootstrap_user_id" '$id | @uri')"
-
-  # 2. Asignar rol platform_owner (idempotente).
-  bootstrap_platform_role_id="$(jq -r '.[] | select(.name == "platform_owner") | .id' <<<"$roles_json" | head -n1)"
-  if [ -z "$bootstrap_platform_role_id" ]; then
-    echo "  ⚠ Rol 'platform_owner' no encontrado (¿se borró del bloque de roles?)" >&2
-    exit 2
-  fi
-
-  bootstrap_existing_roles="$(api_get "/users/$bootstrap_user_id_encoded/roles?per_page=100")"
-  bootstrap_already_assigned="$(jq -r --arg rid "$bootstrap_platform_role_id" '.[] | select(.id == $rid) | .id' <<<"$bootstrap_existing_roles" | head -n1)"
-
-  if [ -z "$bootstrap_already_assigned" ]; then
-    bootstrap_role_payload="$(jq -n --arg rid "$bootstrap_platform_role_id" '{roles:[$rid]}')"
-    api_post "/users/$bootstrap_user_id_encoded/roles" "$bootstrap_role_payload" >/dev/null
-    echo "  Rol 'platform_owner' asignado a $BOOTSTRAP_PLATFORM_OWNER_EMAIL"
-  else
-    echo "  Rol 'platform_owner' ya estaba asignado (idempotente)"
-  fi
-
-  # 3. (Opcional) setear app_metadata.support_mode=true. El user debe
-  # logout+login después para que la PostLogin Action de claims lo propague
-  # al JWT — los JWT existentes siguen con el valor viejo hasta expiración.
-  if [ "$BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE" = "true" ]; then
-    bootstrap_user_payload="$(jq -n '{app_metadata:{support_mode:true}}')"
-    api_patch "/users/$bootstrap_user_id_encoded" "$bootstrap_user_payload" >/dev/null
-    echo "  app_metadata.support_mode=true seteado (logout+login para que el JWT lo refleje)"
-    echo "  ⚠ Trade-off: support_mode permanente — el platform_owner puede operar"
-    echo "    en cualquier tenant sin opt-in temporal. Ver BUG-008 para el toggle."
-  else
-    echo "  app_metadata.support_mode NO modificado (BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=false)"
-    echo "  ⚠ Sin support_mode, el botón 'Ver como tenant' del Platform Owner"
-    echo "    rechazará acceso a tenants ajenos. Setealo a true para destrabar"
-    echo "    o setealo manualmente vía Auth0 Dashboard → Users → app_metadata."
-  fi
-fi
-
-# ════════════════════════════════════════════════════════════════════════════
 # M62 — Automation completa del tenant (TIER 1 + TIER 2)
 # Todas las secciones son idempotentes + fail-soft. Si el M2M no tiene el
 # scope necesario, loguea warning y skipea (no aborta).
@@ -1568,6 +1425,149 @@ fi
 # ════════════════════════════════════════════════════════════════════════════
 # FIN M62 secciones avanzadas
 # ════════════════════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════════════════════
+# Bootstrap del platform_owner inicial (opt-in via BOOTSTRAP_PLATFORM_OWNER_EMAIL)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Si BOOTSTRAP_PLATFORM_OWNER_EMAIL está definido, el script:
+#   1. Busca el user por email vía Management API.
+#   2. Le asigna el rol `platform_owner` (idempotente — no duplica si ya está).
+#   3. Setea `app_metadata.support_mode=true` (default; gated por
+#      BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE para opt-out).
+#
+# Sin esto, el operador tenía que:
+#   - Crear el user en Auth0 (lo sigue haciendo a mano — el script no crea
+#     users porque eso requiere consent del owner del email).
+#   - Asignar rol `platform_owner` desde el dashboard (Pestaña Roles → Assign).
+#   - Editar `app_metadata` para agregar `{"support_mode": true}` (sin esto
+#     el botón "Ver como tenant" en /platform/tenants no funciona — el
+#     resolveActiveRoles del frontend requiere support_mode para que el rol
+#     global aplique cuando hay tenant activo, ver TASK-0077).
+#
+# Variables opcionales:
+#   BOOTSTRAP_PLATFORM_OWNER_EMAIL          email del user a bootstrappear
+#                                           (debe existir previamente en Auth0).
+#   BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE   true/false. Default true. Si false,
+#                                           solo asigna el rol sin tocar
+#                                           app_metadata.support_mode.
+#
+# **Trade-off de seguridad**: support_mode=true permanente significa que el
+# platform_owner SIEMPRE puede operar en cualquier tenant (sin opt-in
+# temporal). Para producción endurecida, dejarlo en false y manejar el
+# toggle via un endpoint dedicado (ver `BUG-008` en docs/UI_BACKLOG.md).
+BOOTSTRAP_PLATFORM_OWNER_EMAIL="${BOOTSTRAP_PLATFORM_OWNER_EMAIL:-}"
+BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE="${BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE:-true}"
+
+if [ -n "$BOOTSTRAP_PLATFORM_OWNER_EMAIL" ]; then
+  echo "▶ Bootstrap platform_owner: $BOOTSTRAP_PLATFORM_OWNER_EMAIL"
+
+  # 1. Localizar el user por email. La API espera el email URL-encoded.
+  bootstrap_email_encoded="$(jq -rn --arg e "$BOOTSTRAP_PLATFORM_OWNER_EMAIL" '$e | @uri')"
+  bootstrap_users_response="$(api_get "/users-by-email?email=$bootstrap_email_encoded")"
+  # codex P1 fix: Auth0 permite el mismo email en múltiples connections
+  # (database + Google OAuth + Microsoft, etc.). `/users-by-email` puede
+  # devolver MÁS DE UN user. Si silenciosamente tomamos `.[0]`, podríamos
+  # asignar `platform_owner` + `support_mode` a la identidad equivocada y
+  # dejar al operador previsto sin acceso. Fail-closed si hay 0 o >1; el
+  # operador desambigua manualmente borrando duplicates o asignando vía
+  # dashboard al user_id correcto.
+  bootstrap_user_count="$(jq 'length' <<<"$bootstrap_users_response")"
+
+  if [ "$bootstrap_user_count" -eq 0 ]; then
+    echo "  ⚠ User '$BOOTSTRAP_PLATFORM_OWNER_EMAIL' NO existe en Auth0." >&2
+    echo "    Crealo primero en Auth0 Dashboard → Users → Create User," >&2
+    echo "    luego re-corré este script con la misma variable." >&2
+    echo "    (El script no crea users automáticamente porque requiere consent" >&2
+    echo "    del dueño del email — Auth0 le manda email de invitación.)" >&2
+    exit 2
+  fi
+
+  if [ "$bootstrap_user_count" -gt 1 ]; then
+    echo "  ⚠ Email '$BOOTSTRAP_PLATFORM_OWNER_EMAIL' tiene MÁS DE UN user en Auth0." >&2
+    echo "    Auth0 permite el mismo email en múltiples connections (database +" >&2
+    echo "    Google OAuth + Microsoft, etc.). Para evitar asignar privilegios a" >&2
+    echo "    la identidad equivocada, el script aborta — desambiguá manualmente." >&2
+    echo "" >&2
+    echo "    User IDs encontrados:" >&2
+    jq -r '.[] | "      - \(.user_id) (connection=\(.identities[0].connection // "?"))"' <<<"$bootstrap_users_response" >&2
+    echo "" >&2
+    echo "    Acciones posibles:" >&2
+    echo "      1. Borrá las identidades duplicadas que no querés en Auth0 Dashboard." >&2
+    echo "      2. O asigná rol + app_metadata MANUALMENTE desde el dashboard al" >&2
+    echo "         user_id correcto, y re-corré este script con BOOTSTRAP_PLATFORM_OWNER_EMAIL" >&2
+    echo "         vacío para que skipee el bloque de bootstrap." >&2
+    exit 2
+  fi
+
+  bootstrap_user_id="$(jq -r '.[0].user_id' <<<"$bootstrap_users_response")"
+
+  # BUG-194 (codex HIGH): la cuenta Auth0 debe estar `email_verified=true`
+  # antes de asignarle `platform_owner` + `support_mode`. Un atacante puede
+  # crear una cuenta sin verificar con el email del platform owner antes que
+  # la víctima active su propia cuenta — si el bootstrap silenciosamente
+  # promueve la cuenta no verificada, el atacante recibe el rol más alto del
+  # sistema y `support_mode` (cross-tenant). Fail-closed: el operador debe
+  # disparar `verify email` desde el Auth0 dashboard antes de re-correr.
+  bootstrap_user_verified="$(jq -r '.[0].email_verified // false' <<<"$bootstrap_users_response")"
+  if [ "$bootstrap_user_verified" != "true" ]; then
+    echo "  ⚠ User '$BOOTSTRAP_PLATFORM_OWNER_EMAIL' (user_id=$bootstrap_user_id)" >&2
+    echo "    tiene email_verified=false en Auth0. Por seguridad, no se asigna" >&2
+    echo "    'platform_owner' + 'support_mode' a una cuenta sin verificar — un" >&2
+    echo "    atacante puede haber registrado el email antes que el dueño legítimo." >&2
+    echo "" >&2
+    echo "    Acción requerida:" >&2
+    echo "      1. Auth0 Dashboard → Users → '$BOOTSTRAP_PLATFORM_OWNER_EMAIL'" >&2
+    echo "      2. Verificá manualmente que la identidad corresponde al owner" >&2
+    echo "         (chequeá el campo 'identities[0].connection' y los logs de" >&2
+    echo "         creación)." >&2
+    echo "      3. Disparar 'Send Verification Email' o setear email_verified=true" >&2
+    echo "         manualmente si confiás en la identidad." >&2
+    echo "      4. Re-correr este script." >&2
+    exit 2
+  fi
+
+  # codex P1 fix: Auth0 user_ids tienen prefijo de connection con un pipe
+  # (auth0|abc123, google-oauth2|123456, etc.). El pipe `|` no es URL-safe
+  # y debe encodearse a `%7C` cuando va como path segment. Sin esto, los
+  # endpoints `/users/{id}/roles` y `/users/{id}` pueden fallar con 404 o
+  # 400 en algunos backends de proxy.
+  bootstrap_user_id_encoded="$(jq -rn --arg id "$bootstrap_user_id" '$id | @uri')"
+
+  # 2. Asignar rol platform_owner (idempotente).
+  bootstrap_platform_role_id="$(jq -r '.[] | select(.name == "platform_owner") | .id' <<<"$roles_json" | head -n1)"
+  if [ -z "$bootstrap_platform_role_id" ]; then
+    echo "  ⚠ Rol 'platform_owner' no encontrado (¿se borró del bloque de roles?)" >&2
+    exit 2
+  fi
+
+  bootstrap_existing_roles="$(api_get "/users/$bootstrap_user_id_encoded/roles?per_page=100")"
+  bootstrap_already_assigned="$(jq -r --arg rid "$bootstrap_platform_role_id" '.[] | select(.id == $rid) | .id' <<<"$bootstrap_existing_roles" | head -n1)"
+
+  if [ -z "$bootstrap_already_assigned" ]; then
+    bootstrap_role_payload="$(jq -n --arg rid "$bootstrap_platform_role_id" '{roles:[$rid]}')"
+    api_post "/users/$bootstrap_user_id_encoded/roles" "$bootstrap_role_payload" >/dev/null
+    echo "  Rol 'platform_owner' asignado a $BOOTSTRAP_PLATFORM_OWNER_EMAIL"
+  else
+    echo "  Rol 'platform_owner' ya estaba asignado (idempotente)"
+  fi
+
+  # 3. (Opcional) setear app_metadata.support_mode=true. El user debe
+  # logout+login después para que la PostLogin Action de claims lo propague
+  # al JWT — los JWT existentes siguen con el valor viejo hasta expiración.
+  if [ "$BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE" = "true" ]; then
+    bootstrap_user_payload="$(jq -n '{app_metadata:{support_mode:true}}')"
+    api_patch "/users/$bootstrap_user_id_encoded" "$bootstrap_user_payload" >/dev/null
+    echo "  app_metadata.support_mode=true seteado (logout+login para que el JWT lo refleje)"
+    echo "  ⚠ Trade-off: support_mode permanente — el platform_owner puede operar"
+    echo "    en cualquier tenant sin opt-in temporal. Ver BUG-008 para el toggle."
+  else
+    echo "  app_metadata.support_mode NO modificado (BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE=false)"
+    echo "  ⚠ Sin support_mode, el botón 'Ver como tenant' del Platform Owner"
+    echo "    rechazará acceso a tenants ajenos. Setealo a true para destrabar"
+    echo "    o setealo manualmente vía Auth0 Dashboard → Users → app_metadata."
+  fi
+fi
 
 if [ "$SAVE_AUTH0_CONFIG" = "true" ]; then
   echo "▶ Guardar configuración Auth0 local"
