@@ -208,26 +208,49 @@ api_request() {
   local method="$1"
   local path="$2"
   local data="${3:-}"
-  local response_with_code http_code response
+  local response_with_code http_code response attempt wait_s
 
-  if [ -n "$data" ]; then
-    response_with_code="$(printf '%s' "$data" | curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}" --data @-)"
-  else
-    response_with_code="$(curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}")"
-  fi
+  # M62 hotfix #5 — retry on 429 también en el wrapper original (no solo
+  # en api_request_soft). Auth0 tira "Global limit has been reached" en
+  # cualquier endpoint si hacés muchas calls seguidas (e.g. el loop de
+  # roles hace 14 calls a /roles/* en pocos segundos → 429). Sin retry,
+  # el script aborta con `exit 1` por el `set -e` global.
+  #
+  # Hasta 3 attempts: 15s + 30s backoff = 45s wait max. Si los 3
+  # fallan, aborta (mantiene el contrato hard-fail del wrapper original).
+  for attempt in 1 2 3; do
+    if [ -n "$data" ]; then
+      response_with_code="$(printf '%s' "$data" | curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}" --data @-)"
+    else
+      response_with_code="$(curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}")"
+    fi
 
-  http_code="$(tail -n1 <<<"$response_with_code")"
-  response="$(sed '$d' <<<"$response_with_code")"
+    http_code="$(tail -n1 <<<"$response_with_code")"
+    response="$(sed '$d' <<<"$response_with_code")"
 
-  if [[ ! "$http_code" =~ ^2 ]]; then
+    if [[ "$http_code" =~ ^2 ]]; then
+      printf '%s' "$response"
+      return 0
+    fi
+
+    # 429 → retry con backoff.
+    if [ "$http_code" = "429" ] && [ "$attempt" -lt 3 ]; then
+      wait_s=$((attempt * 15))
+      echo "  ⏳ $method $path → HTTP 429 — esperando ${wait_s}s (attempt $attempt/3)" >&2
+      sleep "$wait_s"
+      continue
+    fi
+
+    # No es 2xx ni retryable 429 → hard fail (mantiene contrato original).
     echo "Error Auth0 Management API: $method $path" >&2
     echo "HTTP status: $http_code" >&2
     echo "Respuesta:" >&2
     jq . <<<"$response" >&2 2>/dev/null || echo "$response" >&2
+    if [ "$http_code" = "429" ]; then
+      echo "Sugerencia: Auth0 sigue rate-limitando tras 3 intentos. Esperá 1-2 minutos y re-corré el script (es idempotente)." >&2
+    fi
     exit 1
-  fi
-
-  printf '%s' "$response"
+  done
 }
 
 api_get() { api_request GET "$1"; }
