@@ -104,12 +104,30 @@ async def current_user_id_from_request(
 
     # Tolerar shape `{'id': uid}` (tests legacy stubbed). En prod la
     # function devuelve `(user_id, branch)`.
+    # SEC-017 (audit #2) — log warning si caemos al shape legacy en prod.
+    # Si la SQL function alguna vez retorna columnas renombradas
+    # (refactor), antes íbamos silenciosamente al return None. Ahora
+    # loggeamos para que el operator vea el drift.
     try:
         user_id = row['user_id']
     except (KeyError, TypeError):
         try:
             user_id = row['id']
+            import structlog  # noqa: PLC0415
+            structlog.get_logger().warning(
+                'me_utils.legacy_row_shape',
+                hint=(
+                    'Fallback al shape pre-P1-9 (`id` en vez de `user_id`). '
+                    'Probable test stub o SQL function out-of-sync. '
+                    'Verificar `app.resolve_or_create_user`.'
+                ),
+            )
         except (KeyError, TypeError):
+            import structlog  # noqa: PLC0415
+            structlog.get_logger().error(
+                'me_utils.row_missing_user_id',
+                row_keys=list(row.keys()) if hasattr(row, 'keys') else None,
+            )
             return None
     if user_id is None:
         return None

@@ -81,14 +81,10 @@ class RedisOAuthStateStore:
     """Backed por Redis con `SET NX EX`. Atomic, multi-worker safe."""
 
     def __init__(self, url: str, prefix: str) -> None:
-        try:
-            from redis.asyncio import Redis  # noqa: PLC0415
-        except ImportError as exc:
-            raise RuntimeError(
-                'P1-10 — redis-py no instalado. Agregar `redis>=5.0` o '
-                'desactivar REDIS_URL para usar InMemory.'
-            ) from exc
-        self._client = Redis.from_url(url, decode_responses=True)
+        # QUAL audit#2 — lazy import compartido en `_redis_store_base`.
+        from app.admin._redis_store_base import lazy_redis_import  # noqa: PLC0415
+        redis_cls = lazy_redis_import()
+        self._client = redis_cls.from_url(url, decode_responses=True)
         self._prefix = prefix
 
     def _key(self, state: str) -> str:
@@ -113,11 +109,8 @@ class RedisOAuthStateStore:
         return result is not None  # None = key already existed → replay
 
     async def close(self) -> None:
-        import asyncio  # noqa: PLC0415
-        try:
-            await asyncio.wait_for(self._client.aclose(), timeout=2.0)
-        except (Exception, asyncio.TimeoutError):  # noqa: BLE001
-            pass
+        from app.admin._redis_store_base import close_redis_client_with_timeout  # noqa: PLC0415
+        await close_redis_client_with_timeout(self._client)
 
 
 # ─── Factory ────────────────────────────────────────────────────────────

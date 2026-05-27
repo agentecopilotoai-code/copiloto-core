@@ -122,15 +122,10 @@ class RedisSessionStore:
     """
 
     def __init__(self, url: str, prefix: str, *, local_cache_ttl: float = 5.0) -> None:
-        # Lazy import para no romper instalaciones sin redis dep.
-        try:
-            from redis.asyncio import Redis  # noqa: PLC0415
-        except ImportError as exc:
-            raise RuntimeError(
-                'P0-3 — redis-py no instalado. Agregar `redis>=5.0` a '
-                'dependencies o desactivar REDIS_URL para usar InMemory.'
-            ) from exc
-        self._client = Redis.from_url(url, decode_responses=True)
+        # QUAL audit#2 — lazy import compartido en `_redis_store_base`.
+        from app.admin._redis_store_base import lazy_redis_import  # noqa: PLC0415
+        redis_cls = lazy_redis_import()
+        self._client = redis_cls.from_url(url, decode_responses=True)
         self._prefix = prefix
         # PERF-019 (audit #2) — cache local TTL corto en el process del
         # BFF. Cada request del SPA invoca `get_session_store().get(sid)`;
@@ -238,12 +233,8 @@ class RedisSessionStore:
             return False
 
     async def close(self) -> None:
-        import asyncio  # noqa: PLC0415
-        try:
-            await asyncio.wait_for(self._client.aclose(), timeout=2.0)
-        except (Exception, asyncio.TimeoutError):  # noqa: BLE001
-            # No bloquear shutdown si Redis muerto.
-            pass
+        from app.admin._redis_store_base import close_redis_client_with_timeout  # noqa: PLC0415
+        await close_redis_client_with_timeout(self._client)
 
 
 # ─── Factory ────────────────────────────────────────────────────────────
