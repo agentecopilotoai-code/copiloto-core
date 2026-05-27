@@ -1068,5 +1068,131 @@ export function verificarHashRegistro(session, entidadTipo, entidadId) {
   return gdFetch(session, `/gd/auditor/integridad/${entidadTipo}/${entidadId}`);
 }
 
+// ─── UI-12: IA embebida (EP-010) — GD-API-0126..0140 ───────────────────
+//
+// Endpoints rol-aware (el backend filtra por permisos IA-*); todas las
+// llamadas IA pasan por audit trail con `solicitante`, `tokens_in`,
+// `tokens_out`, `coste_usd_estimado`.
+//
+// Convención: si el backend rechaza por presupuesto excedido devuelve
+// 429 `code='ia_budget_exceeded'`; la UI lo muestra inline con CTA
+// "Solicitar ampliación".
+
+// --- Sugerencia de clasificación (TRD + tipo doc + dependencia) ---
+export function sugerirClasificacionIa(session, payload) {
+  // POST GD-API-0126.
+  // payload: { contenido?, adjunto_id?, asunto?, anexos?: [] }.
+  // resp: { trd_sugerida: {serie, subserie, retencion}, tipo_documental,
+  //         dependencia: {id, nombre}, confianza: 0..1, justificacion }.
+  return gdFetch(session, '/gd/ia/clasificar', {
+    method: 'POST', body: payload,
+  });
+}
+export function aplicarSugerenciaClasificacion(session, payload) {
+  // POST GD-API-0127. payload: { entidad, entidad_id, decision: 'aceptar'|'rechazar',
+  // ajustes? }. resp: { aplicado: true, audit_id }.
+  return gdFetch(session, '/gd/ia/clasificar/aplicar', {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Resumen automático IA ---
+export function resumirDocumentoIa(session, payload) {
+  // POST GD-API-0128. payload: { entidad: 'documento'|'expediente',
+  // entidad_id, max_tokens?, idioma? }. resp: { resumen, puntos_clave: [],
+  // entidades_extraidas: [], modelo, tokens, coste_usd }.
+  return gdFetch(session, '/gd/ia/resumir', {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Búsqueda semántica ---
+export function buscarSemanticoIa(session, payload) {
+  // POST GD-API-0129. payload: { query, top_k?, filtros?, scope? }.
+  // resp: { resultados: [{ documento_id, titulo, fragmento, score,
+  // entidad, contexto }], modelo_embeddings, tokens }.
+  return gdFetch(session, '/gd/ia/buscar', {
+    method: 'POST', body: payload,
+  });
+}
+export function registrarFeedbackBusquedaIa(session, payload) {
+  // POST GD-API-0130. payload: { query, documento_id, util: bool, comentario? }.
+  return gdFetch(session, '/gd/ia/buscar/feedback', {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Asistente conversacional ---
+export function preguntarAsistenteIa(session, payload) {
+  // POST GD-API-0131. payload: { conversacion_id?, mensaje, scope?,
+  //   incluir_citas?: bool }. resp: { conversacion_id, respuesta,
+  //   citas: [{ documento_id, titulo, fragmento, score }],
+  //   permisos_aplicados: [] (códigos), tokens, coste_usd }.
+  return gdFetch(session, '/gd/ia/asistente/preguntar', {
+    method: 'POST', body: payload,
+  });
+}
+export function listConversacionesIa(session, filtros = {}) {
+  // GET GD-API-0132. resp: { items: [{ id, titulo, mensajes_count,
+  //   tokens_total, ultimo: 'iso', estado }], total }.
+  return gdFetch(session, '/gd/ia/asistente/conversaciones', { params: filtros });
+}
+export function getConversacionIa(session, conversacionId) {
+  // GET GD-API-0133. resp: { id, titulo, mensajes: [...] }.
+  return gdFetch(session, `/gd/ia/asistente/conversaciones/${conversacionId}`);
+}
+
+// --- Detección de PII (Ley 1581/2012) ---
+export function detectarPiiIa(session, payload) {
+  // POST GD-API-0134. payload: { contenido?, adjunto_id?, sensible?: bool }.
+  // resp: { detectado: bool, hallazgos: [{ tipo, valor_redactado, span,
+  //   severidad: 'baja'|'media'|'alta', categoria_ley1581 }], modelo,
+  //   tokens }.
+  return gdFetch(session, '/gd/ia/pii/detectar', {
+    method: 'POST', body: payload,
+  });
+}
+export function reportarFalsoPositivoPii(session, payload) {
+  // POST GD-API-0135. payload: { hallazgo_id, motivo, contexto? }.
+  return gdFetch(session, '/gd/ia/pii/falso-positivo', {
+    method: 'POST', body: payload,
+  });
+}
+
+// --- Panel uso IA + costos ---
+export function getUsoIa(session, filtros = {}) {
+  // GET GD-API-0136. params: { from?, to?, usuario_id?, modelo?, scope? }.
+  // resp: { total_tokens, total_coste_usd, por_modelo: [], por_usuario: [],
+  //   por_funcionalidad: [], limite_actual_usd, limite_consumido_usd }.
+  return gdFetch(session, '/gd/ia/uso', { params: filtros });
+}
+export function getLimitesIa(session) {
+  // GET GD-API-0137. resp: { usuario_id?, limite_diario_usd,
+  //   limite_mensual_usd, consumido_dia, consumido_mes, restante }.
+  return gdFetch(session, '/gd/ia/limites');
+}
+export function actualizarLimitesIa(session, payload) {
+  // PUT GD-API-0138. payload: { usuario_id?, limite_diario_usd?,
+  //   limite_mensual_usd?, motivo }.
+  return gdFetch(session, '/gd/ia/limites', {
+    method: 'PUT', body: payload,
+  });
+}
+
+// --- Configuración modelos IA (admin sistema) ---
+export function getConfigModelosIa(session) {
+  // GET GD-API-0139. resp: { modelos: [{ codigo, nombre, proveedor,
+  //   activo, temperatura, max_tokens, guardrails: [], usos_permitidos: [] }],
+  //   defaults: { sugerencia, resumen, busqueda, asistente, pii } }.
+  return gdFetch(session, '/gd/ia/config/modelos');
+}
+export function actualizarConfigModelosIa(session, payload) {
+  // PUT GD-API-0140. payload: { codigo, temperatura?, max_tokens?,
+  //   guardrails?, activo?, usos_permitidos? }.
+  return gdFetch(session, '/gd/ia/config/modelos', {
+    method: 'PUT', body: payload,
+  });
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

@@ -563,6 +563,121 @@ ROL-001 Admin Sistema.
 - Functions 75.05% ≥ 75% ✅
 - Lint OK (0 errores)
 
+### Bloque UI-12 (IA embebida — CIERRE EP-010) — ✅ COMPLETADO 2026-05-27
+
+**Tareas:** GD-UI-0072..0078 (EP-010). 7 vistas / componentes.
+**Roles primarios:** ROL-007 Profesional, ROL-005 Coordinador VU,
+ROL-006 Admin PQRSD, ROL-002 Admin Seguridad, ROL-001 Admin Sistema,
+ROL-016 Auditor (lectura).
+
+**Archivos nuevos (`ia/`, ~1900 LOC componentes + 380 LOC hooks):**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `SugerenciaClasificacion.jsx` (embebible: TRD+tipo+depend + aceptar/rechazar) | ~165 | GD-UI-0072 |
+| `ResumenAutomatico.jsx` (embebible: resumen+puntos+entidades+meta) | ~120 | GD-UI-0073 |
+| `BusquedaSemantica.jsx` (standalone: query+filtros+resultados+feedback) | ~210 | GD-UI-0074 |
+| `AsistenteConversacional.jsx` (standalone: chat+citas+historial+nueva conv) | ~230 | GD-UI-0075 |
+| `DeteccionPII.jsx` (inline + standalone, Ley 1581/2012) | ~225 | GD-UI-0076 |
+| `UsoIAPanel.jsx` (KPIs+por modelo/usuario+edit límites+mis-limites) | ~310 | GD-UI-0077 |
+| `ConfigModelosIA.jsx` (modelos+temp+max_tokens+guardrails+usos) | ~265 | GD-UI-0078 |
+| `useGdIa.js` (14 hooks: 7 readers + 7 mutators) | ~380 | hooks |
+| `index.js` | 11 | |
+
+**Extensiones `services/gdApi.js` (+15 endpoints, GD-API-0126..0140):**
+- Clasificación: `sugerirClasificacionIa`, `aplicarSugerenciaClasificacion`.
+- Resumen: `resumirDocumentoIa`.
+- Búsqueda semántica: `buscarSemanticoIa`, `registrarFeedbackBusquedaIa`.
+- Asistente: `preguntarAsistenteIa`, `listConversacionesIa`,
+  `getConversacionIa`.
+- PII: `detectarPiiIa`, `reportarFalsoPositivoPii`.
+- Uso + límites: `getUsoIa`, `getLimitesIa`, `actualizarLimitesIa`.
+- Config modelos: `getConfigModelosIa`, `actualizarConfigModelosIa`.
+
+**Extensiones `permissions/gd-matrix.js` (+8 perms IA-001..IA-008):**
+- `IA-001` sugerencia clasificación → operativos + VU + admin_pqrsd +
+  admin_documental (RW).
+- `IA-002` resumen → operativos (RW), auditor + usuario_consulta (R).
+- `IA-003` búsqueda semántica → operativos + VU + consulta +
+  admin_documental (RW), auditor (R).
+- `IA-004` asistente conversacional → operativos + coord_vu +
+  admin_pqrsd + admin_sistema + admin_documental (RW).
+- `IA-005` detección PII → operativos + VU + admin_seguridad (RW),
+  admin_sistema (R).
+- `IA-006` panel uso IA → admin_sistema (RW), jefe_dep + coord_vu +
+  admin_pqrsd + auditor (R).
+- `IA-007` límites por usuario → admin_sistema (RW), jefe (R).
+- `IA-008` config modelos → admin_sistema (RW), admin_seguridad (R).
+
+**Placeholders nuevos (5):**
+- `GdIaBusqueda` → `<BusquedaSemantica />`
+- `GdIaAsistente` → `<AsistenteConversacional />`
+- `GdIaPii` → `<DeteccionPII />`
+- `GdIaUso` → `<UsoIAPanel />`
+- `GdIaConfig` → `<ConfigModelosIA />`
+
+Los componentes embebibles (`SugerenciaClasificacion`, `ResumenAutomatico`,
+`DeteccionPIIInline`) NO necesitan placeholder — se montan dentro de
+fichas existentes (radicado, documento, expediente, PQRSD).
+
+**Decisiones (D-UI-39..D-UI-44):**
+
+- **D-UI-39 (Sugerencia IA NO auto-aplica)**: la clasificación
+  sugerida por IA-001 nunca se aplica automáticamente. Siempre
+  requiere acción humana explícita (`aceptar`/`rechazar`) que queda
+  en audit log. Esto cumple el principio de "humano en el loop"
+  exigido por el RFI gubernamental y por Ley 1581/2012 para
+  decisiones automatizadas que afecten al titular del dato.
+- **D-UI-40 (Asistente rol-aware en backend, NO en frontend)**: el
+  asistente conversacional (IA-004) NUNCA filtra las citas en el
+  frontend — confía en que el backend ya filtró por permisos del
+  rol al armar el contexto del prompt. Filtrar en frontend abre la
+  puerta a fugas vía caché del navegador o herramientas devtools.
+  La UI sí muestra explícitamente "permisos aplicados" para que el
+  usuario sepa qué scope tuvo su consulta.
+- **D-UI-41 (PII con valores REDACTADOS, nunca crudos)**: el
+  resultado de IA-005 siempre devuelve `valor_redactado` (ej.
+  `****1234` para una cédula). El valor crudo se queda en el
+  backend para audit, pero NO viaja al cliente. Defensa-en-profundidad
+  contra el riesgo de loggear PII en el frontend (Sentry, GA, etc.).
+- **D-UI-42 (Panel uso IA con 3 niveles de scope)**: el panel
+  IA-006/007 expone tres vistas según rol:
+  (a) admin_sistema ve global (todos los usuarios + edita límites),
+  (b) jefe_dependencia ve su dependencia (solo lectura),
+  (c) usuario individual ve solo su propio consumo (vía `limites.data`).
+  El backend hace el enforcement, el frontend solo ajusta qué
+  controles renderiza para evitar confusión.
+- **D-UI-43 (Config modelos con guardrails como string CSV)**: la
+  forma más simple para que el admin edite guardrails (`no_pii`,
+  `no_secrets`, etc.) es un input texto con split por coma. Para
+  v1 esto es suficiente — para v2 considerar un multi-select con
+  catálogo curado, pero requiere más ceremony y para esta
+  primera entrega prima la velocidad de iteración del admin.
+- **D-UI-44 (useAsistente con loadedIdsRef para evitar reload)**:
+  el hook `useAsistente` trackea IDs de conversaciones ya cargadas
+  con un `useRef<Set<string>>`. Cuando el componente sincroniza
+  `conversacionId` vía prop después de un `enviar()` exitoso, el
+  hook detecta que ya tiene ese ID y NO vuelve a fetch — esto
+  evita que `getConversacionIa` (que retorna vacío para una conv
+  recién creada) sobreescriba los mensajes que acabamos de añadir
+  localmente. Tests +9 cubren esta interacción.
+
+**Métricas:**
+- **2456/2456 tests admin-panel ✅** (+120 nuevos UI-12)
+- **136/136 tests subfeature IA ✅** (47 hooks + 7+8+11+9+9+12+12 componentes)
+- Coverage `features/gd/ia` = **99.53% lines / 93.84% functions** ✅
+- Global admin-panel = **89.53% ≥ 86% gate** ✅
+- Functions globales = **78.96% ≥ 75% gate** ✅
+- Lint OK (0 errores)
+
+**EP-010 IA embebida CERRADA** — 7 vistas + 3 componentes embebibles
++ 15 endpoints + 8 permisos IA-* + 6 decisiones de diseño que
+priorizan seguridad (humano en el loop), privacidad (PII redactado,
+Ley 1581/2012), rol-aware (filtrado server-side) y trazabilidad
+(audit + costos por usuario + límites configurables).
+
+---
+
 ### Bloque UI-11 (Auditoría + Reportes consolidados — CIERRE EP-009) — ✅ COMPLETADO 2026-05-24
 
 **Tareas:** GD-UI-0067..0071 (EP-009). 5 vistas.

@@ -23,6 +23,28 @@ describe('gd-matrix', () => {
     expect(GD_PERMISSIONS['PQRSD-009']).toBeDefined();
     expect(GD_PERMISSIONS['TRD-001']).toBeDefined();
     expect(GD_PERMISSIONS['PER-001']).toBeDefined();
+    // IA embebida (UI-12 / EP-010).
+    expect(GD_PERMISSIONS['IA-001']).toBeDefined();
+    expect(GD_PERMISSIONS['IA-008']).toBeDefined();
+  });
+
+  describe('IA permisos (UI-12)', () => {
+    it('profesional puede invocar sugerencia clasificación', () => {
+      expect(gdCan('gd.profesional', 'IA-001', 'RW')).toBe(true);
+    });
+    it('admin sistema RW en config modelos IA', () => {
+      expect(gdCan('gd.admin_sistema', 'IA-008', 'RW')).toBe(true);
+    });
+    it('usuario_consulta NO puede actualizar config modelos', () => {
+      expect(gdCan('gd.usuario_consulta', 'IA-008', 'RW')).toBe(false);
+    });
+    it('auditor lee panel uso IA', () => {
+      expect(gdCan('gd.auditor', 'IA-006', 'R')).toBe(true);
+      expect(gdCan('gd.auditor', 'IA-006', 'RW')).toBe(false);
+    });
+    it('admin_seguridad RW en detección PII', () => {
+      expect(gdCan('gd.admin_seguridad', 'IA-005', 'RW')).toBe(true);
+    });
   });
 
   describe('gdCan', () => {

@@ -238,6 +238,38 @@ export const GD_PERMISSIONS = Object.freeze({
   'INT-001': row({ 'gd.admin_sistema': RW }),    // integraciones externas
   'SAL-001': row({ 'gd.admin_sistema': R, 'gd.admin_seguridad': R,
                     'gd.auditor': R }),           // salud del sistema
+
+  // ────────────────── IA embebida (EP-010) ─────────────────────────────
+  // GD-UI-0072: sugerencia clasificación — operativos + VU usan (al
+  // radicar/clasificar); admin documental lee resultados.
+  'IA-001': row({ ...any(OPERATIVOS, RW), ...any(VU, RW),
+                   'gd.admin_pqrsd': RW, 'gd.admin_documental': RW }),
+  // GD-UI-0073: resumir documento/expediente.
+  'IA-002': row({ ...any(OPERATIVOS, RW), 'gd.admin_pqrsd': RW,
+                   'gd.admin_documental': RW, 'gd.usuario_consulta': R,
+                   'gd.auditor': R }),
+  // GD-UI-0074: búsqueda semántica — todo consultor + operativos.
+  'IA-003': row({ ...any(OPERATIVOS, RW), ...any(VU, RW),
+                   'gd.admin_pqrsd': RW, 'gd.usuario_consulta': RW,
+                   'gd.admin_documental': RW, 'gd.auditor': R }),
+  // GD-UI-0075: asistente conversacional rol-aware.
+  'IA-004': row({ ...any(OPERATIVOS, RW), 'gd.coordinador_vu': RW,
+                   'gd.admin_pqrsd': RW, 'gd.admin_sistema': RW,
+                   'gd.admin_documental': RW }),
+  // GD-UI-0076: detección PII — operativos (al cargar adjunto) +
+  // admin seguridad (revisión global).
+  'IA-005': row({ ...any(OPERATIVOS, RW), ...any(VU, RW),
+                   'gd.admin_pqrsd': RW, 'gd.admin_seguridad': RW,
+                   'gd.admin_sistema': R }),
+  // GD-UI-0077: panel uso + costos — admin sistema (global), jefe (su
+  // dependencia), usuario (solo el propio).
+  'IA-006': row({ 'gd.admin_sistema': RW, 'gd.jefe_dependencia': R,
+                   'gd.coordinador_vu': R, 'gd.admin_pqrsd': R,
+                   'gd.auditor': R }),
+  // GD-UI-0077: límites por usuario — solo admin sistema escribe.
+  'IA-007': row({ 'gd.admin_sistema': RW, 'gd.jefe_dependencia': R }),
+  // GD-UI-0078: config modelos IA — solo admin sistema.
+  'IA-008': row({ 'gd.admin_sistema': RW, 'gd.admin_seguridad': R }),
 });
 
 /**

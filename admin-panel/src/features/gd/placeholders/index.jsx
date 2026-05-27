@@ -81,6 +81,13 @@ import {
   ReportesConsolidados,
   VistaAuditor,
 } from '../auditoria/index.js';
+import {
+  BusquedaSemantica,
+  AsistenteConversacional,
+  DeteccionPII,
+  UsoIAPanel,
+  ConfigModelosIA,
+} from '../ia/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -189,6 +196,13 @@ export const GdAuditoria = (p) => <BandejaAuditoria {...p} />;
 export const GdAuditoriaEvento = (p) => <EventoAuditoriaFicha {...p} />;
 export const GdReportes = (p) => <ReportesConsolidados {...p} />;
 export const GdVistaAuditor = (p) => <VistaAuditor {...p} />;
+
+// IA embebida (UI-12, EP-010) — vistas reales:
+export const GdIaBusqueda = (p) => <BusquedaSemantica {...p} />;
+export const GdIaAsistente = (p) => <AsistenteConversacional {...p} />;
+export const GdIaPii = (p) => <DeteccionPII {...p} />;
+export const GdIaUso = (p) => <UsoIAPanel {...p} />;
+export const GdIaConfig = (p) => <ConfigModelosIA {...p} />;
 
 // Búsqueda global → vista real bloque UI-3
 export const GdBuscar = (p) => <BuscarRadicados {...p} />;
