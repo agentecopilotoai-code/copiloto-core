@@ -523,6 +523,80 @@ insert into app.role_capability (role_code, capability_code, access_level) value
   ('platform_owner', 'platform.ai_providers.configure', 'RW')
 on conflict (role_code, capability_code) do nothing;
 
+-- ─── Invitaciones de miembros (M61) ────────────────────────────────────────
+--
+-- El backend genera un `token` opaco (uuid4 sin guiones, 32 chars hex) que va
+-- en el link del email; en DB sólo guardamos `token_hash` (sha256) para que
+-- un dump de DB no permita usar invitaciones. El email + role + tenant_id
+-- son redundantes con `app.user_tenant_roles` pero los necesitamos acá para
+-- el caso "user invitado todavía no apareció en app.users" (la fila se crea
+-- al primer login real, gracias a M57 reconciliation).
+--
+-- `redeemed_at` se setea cuando el invitado completa el flow (M57
+-- reconcilia auth_subject real). `expires_at` defaults a 7 días
+-- (`invitation_token_ttl_seconds` setting).
+--
+-- `sent_count` + `last_sent_at` permiten "reenviar invitación" auditado
+-- y rate-limited (anti-spam).
+--
+-- `email` es citext para matchear con `app.users.email` case-insensitive.
+
+create table app.tenant_invitations (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references app.tenants(id) on delete cascade,
+  email citext not null,
+  role text not null check (role in ('owner','admin','manager','agent','viewer')),
+  token_hash text not null unique,
+  invited_by_user_id uuid null references app.users(id) on delete set null,
+  redeemed_at timestamptz null,
+  redeemed_by_user_id uuid null references app.users(id) on delete set null,
+  expires_at timestamptz not null,
+  sent_count int not null default 1,
+  last_sent_at timestamptz not null default now(),
+  last_send_provider_message_id text null,
+  last_send_status text null check (last_send_status in (
+    'queued','delivered','bounced','complained','failed','noop'
+  )),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- Lookup por token_hash en el handshake del invitee (caso happy path).
+create unique index ix_tenant_invitations_token_hash
+  on app.tenant_invitations(token_hash);
+
+-- Lookup por (tenant_id, email) — para detectar reenvíos antes de generar
+-- duplicados, y para listar invitaciones pendientes del tenant en el UI.
+create index ix_tenant_invitations_tenant_email_open
+  on app.tenant_invitations(tenant_id, email)
+  where redeemed_at is null;
+
+-- Lookup por email global — M57 reconciliation chequea si el primer login
+-- de un user matchea alguna invitación pending para auto-redeem.
+create index ix_tenant_invitations_email_open
+  on app.tenant_invitations(email)
+  where redeemed_at is null and expires_at > now();
+
+create trigger trg_tenant_invitations_touch
+  before update on app.tenant_invitations
+  for each row execute function app.touch_updated_at();
+
+-- RLS: misma política que el resto de tablas tenant-scoped — el rol
+-- platform_owner ve todo, el resto sólo ve su propio tenant.
+alter table app.tenant_invitations enable row level security;
+create policy tenant_invitations_select on app.tenant_invitations
+  for select using (
+    app.support_mode() or tenant_id = app.current_tenant_id()
+  );
+create policy tenant_invitations_modify on app.tenant_invitations
+  for all using (
+    app.support_mode() or tenant_id = app.current_tenant_id()
+  )
+  with check (
+    app.support_mode() or tenant_id = app.current_tenant_id()
+  );
+
 -- ─── Grants al rol de aplicación ───────────────────────────────────────────
 
 grant usage on schema app to copiloto_app;

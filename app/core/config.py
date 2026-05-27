@@ -92,6 +92,43 @@ class Settings(BaseSettings):
     # o leyendo cualquier audit log con `actor_email` populated).
     auth0_trust_admin_email_header: bool = True
 
+    # ─── Email (M61 — Resend invitations) ─────────────────────────────────
+    # Resend (https://resend.com) — email provider transaccional para
+    # invitaciones, password reset notifications, etc.
+    #
+    # Setup local:
+    #   1. Crear API key en https://resend.com/api-keys
+    #   2. Guardarla en .secrets/resend-api-key (chmod 600).
+    #   3. `.env` apunta: RESEND_API_KEY_FILE=.secrets/resend-api-key
+    #
+    # Producción: setear RESEND_API_KEY plaintext via env del orquestador
+    # (k8s secret, ECS task secret, etc.). NUNCA committeada al repo.
+    #
+    # Sin estos settings, `app.services.email` queda en NO-OP mode
+    # (logs el intento, no manda real). Útil para envs locales sin
+    # cuota o tests que no quieren tocar la red.
+    resend_api_key: str | None = None
+    resend_api_key_file: str | None = None
+
+    # Sender del email. Tiene que ser un dominio verificado en Resend
+    # (SPF + DKIM + DMARC) — si no, los emails caen a spam.
+    # `email_from_name` se concatena: "CopilotoIA <invites@app.copilotoia.com>".
+    email_from_address: str = 'invites@app.copilotoia.com'
+    email_from_name: str = 'CopilotoIA'
+    # URL pública del SPA para construir los links de invitación.
+    # Producción: 'https://app.copilotoia.com'.
+    app_public_url: str = 'http://localhost:3000'
+
+    # TTL de los tokens de invitación. Default 7 días — balance entre
+    # UX (no quiero que el usuario se quede sin tiempo) y seguridad (un
+    # link expirado no puede ser usado).
+    invitation_token_ttl_seconds: int = Field(
+        default=7 * 24 * 60 * 60, ge=300, le=30 * 24 * 60 * 60,
+    )
+    # Max emails que un actor puede mandar (invites + re-sends) por hora.
+    # Anti-bulk-spam si una sesión queda comprometida.
+    invitation_send_rate_per_hour: int = Field(default=20, ge=1, le=500)
+
     # ─── Service token (M2M) ──────────────────────────────────────────────
     service_token: str = Field(min_length=16)
     # AUDIT-48: rotación dual del service_token. El callsite acepta

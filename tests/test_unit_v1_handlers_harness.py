@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -1118,35 +1119,82 @@ def test_list_tenant_members_happy():
     assert result['tenant_id'] == str(tid)
 
 
-def test_add_tenant_member_existing_user():
+def _stub_invitation_send(monkeypatch, *,
+                           invitation_id=None,
+                           email_status='queued',
+                           message_id='msg-test',
+                           provider='stub',
+                           accept_url='http://localhost:3000/i/abc',
+                           raise_rate_limit=False):
+    """M61 — monkeypatch `create_and_send_invitation` para tests del
+    handler `add_tenant_member`. El servicio de invitaciones tiene
+    sus propios tests en `test_unit_invitations.py`; acá solo
+    verificamos que el handler lo invoque correctamente."""
+    from app.services import invitations as inv_mod
+
+    inv_id = invitation_id or uuid4()
+    expires_at = datetime.now(UTC)
+
+    async def fake_send(**kwargs):
+        if raise_rate_limit:
+            raise inv_mod.InvitationRateLimitError('rate_limited')
+        return inv_mod.InvitationSent(
+            invitation_id=inv_id,
+            accept_url=accept_url,
+            expires_at=expires_at,
+            email_message_id=message_id,
+            email_provider=provider,
+            email_status=email_status,
+        )
+    monkeypatch.setattr(inv_mod, 'create_and_send_invitation', fake_send)
+
+
+def test_add_tenant_member_existing_user(monkeypatch):
     from app.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
+    _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
     conn = FakeConn(
         fetchval=[1],   # tenant exists
-        fetchrow=[{'id': uid, 'email': 'x@y.co'}],
+        # tenant_name lookup + existing user lookup + inviter lookup (None ok).
+        fetchrow=[
+            {'name': 'Test Tenant'},
+            {'id': uid, 'email': 'x@y.co'},
+            None,  # inviter lookup
+        ],
         execute=['OK', 'OK'],
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='x@y.co', role='admin', is_default=False)
     result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
     assert result['email'] == 'x@y.co'
+    # M61: response trae bloque `invitation` con metadata del email.
+    assert result['invitation']['status'] == 'queued'
+    assert result['invitation']['provider'] == 'stub'
 
 
-def test_add_tenant_member_pending_user():
+def test_add_tenant_member_pending_user(monkeypatch):
     """Si el email no existe, se crea pending."""
     from app.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
+    _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
     conn = FakeConn(
         fetchval=[1],
-        fetchrow=[None, {'id': uid, 'email': 'new@x.co'}],
+        # tenant_name lookup + None (user doesn't exist) + new user INSERT row + inviter lookup.
+        fetchrow=[
+            {'name': 'Test Tenant'},
+            None,
+            {'id': uid, 'email': 'new@x.co'},
+            None,
+        ],
         execute=['OK', 'OK'],
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='new@x.co', role='agent', is_default=False)
     result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
     assert result['user_id'] == str(uid)
+    assert result['invitation']['accept_url'].startswith('http://localhost:3000/i/')
 
 
 def test_add_tenant_member_404_tenant_missing():
@@ -1717,6 +1765,7 @@ def test_add_tenant_member_auth0_invited(monkeypatch):
         add_tenant_member, TenantMemberAdd,
     )
     from app.services import auth0_admin
+    _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
@@ -1731,7 +1780,12 @@ def test_add_tenant_member_auth0_invited(monkeypatch):
 
     conn = FakeConn(
         fetchval=[1],
-        fetchrow=[None, {'id': uid, 'email': 'new@x.co'}],
+        fetchrow=[
+            {'name': 'Test Tenant'},  # tenant_name lookup
+            None,                       # user lookup (no exist)
+            {'id': uid, 'email': 'new@x.co'},  # INSERT returning
+            None,                       # inviter lookup
+        ],
         execute=['OK', 'OK'],
     )
     req = _fake_request(roles=['platform_owner'])
@@ -1745,14 +1799,18 @@ def test_add_tenant_member_auth0_invited(monkeypatch):
     assert insert_call[2][0] == 'auth0|new-real-id'
     # status='active' porque ya está en Auth0 (no 'invited' que es para pending).
     assert insert_call[2][3] == 'active'
+    # M61: el response incluye el bloque invitation con email status.
+    assert result['invitation']['status'] == 'queued'
 
 
 def test_add_tenant_member_auth0_reused_existing(monkeypatch):
-    """Email ya estaba en Auth0 → reusa el user. status='reused_existing'."""
+    """Email ya estaba en Auth0 → reusa el user. status='reused_existing'.
+    M61: AÚN ASÍ se manda email — fixea el bug que reportó el operator."""
     from app.api.v1.handlers.platform_admin_handlers import (
         add_tenant_member, TenantMemberAdd,
     )
     from app.services import auth0_admin
+    _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
@@ -1767,13 +1825,21 @@ def test_add_tenant_member_auth0_reused_existing(monkeypatch):
 
     conn = FakeConn(
         fetchval=[1],
-        fetchrow=[None, {'id': uid, 'email': 'existing@x.co'}],
+        fetchrow=[
+            {'name': 'Test Tenant'},
+            None,
+            {'id': uid, 'email': 'existing@x.co'},
+            None,
+        ],
         execute=['OK', 'OK'],
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='existing@x.co', role='admin', is_default=False)
     result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
     assert result['auth0']['status'] == 'reused_existing'
+    # M61: SIEMPRE se manda email, aunque el user ya existiera. Bug fix.
+    assert result['invitation']['status'] == 'queued'
+    assert result['invitation']['invitation_id'] is not None
 
 
 def test_add_tenant_member_auth0_skipped_when_not_configured(monkeypatch):
@@ -1782,13 +1848,19 @@ def test_add_tenant_member_auth0_skipped_when_not_configured(monkeypatch):
         add_tenant_member, TenantMemberAdd,
     )
     from app.services import auth0_admin
+    _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: False)
 
     conn = FakeConn(
         fetchval=[1],
-        fetchrow=[None, {'id': uid, 'email': 'local@x.co'}],
+        fetchrow=[
+            {'name': 'Test Tenant'},
+            None,
+            {'id': uid, 'email': 'local@x.co'},
+            None,
+        ],
         execute=['OK', 'OK'],
     )
     req = _fake_request(roles=['platform_owner'])
@@ -1799,6 +1871,8 @@ def test_add_tenant_member_auth0_skipped_when_not_configured(monkeypatch):
     # auth_subject = pending|hash → M57 lo reconcilia después.
     insert_call = next(c for c in conn.calls if 'insert into app.users' in c[1])
     assert insert_call[2][0].startswith('pending|')
+    # M61: aun sin Auth0, mandamos email con el link de invitación.
+    assert result['invitation']['status'] == 'queued'
 
 
 def test_add_tenant_member_auth0_error_falls_back_to_local(monkeypatch):
@@ -1807,6 +1881,7 @@ def test_add_tenant_member_auth0_error_falls_back_to_local(monkeypatch):
         add_tenant_member, TenantMemberAdd,
     )
     from app.services import auth0_admin
+    _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
@@ -1817,7 +1892,12 @@ def test_add_tenant_member_auth0_error_falls_back_to_local(monkeypatch):
 
     conn = FakeConn(
         fetchval=[1],
-        fetchrow=[None, {'id': uid, 'email': 'down@x.co'}],
+        fetchrow=[
+            {'name': 'Test Tenant'},
+            None,
+            {'id': uid, 'email': 'down@x.co'},
+            None,
+        ],
         execute=['OK', 'OK'],
     )
     req = _fake_request(roles=['platform_owner'])
@@ -1827,6 +1907,39 @@ def test_add_tenant_member_auth0_error_falls_back_to_local(monkeypatch):
     assert 'oops' in result['auth0']['error']
     # Pero la membresía local SÍ se creó (no aborta).
     assert result['user_id'] == str(uid)
+
+
+def test_add_tenant_member_invitation_rate_limit_does_not_abort(monkeypatch):
+    """M61: si el rate-limit del servicio de invitaciones bloquea, la
+    membresía AÚN se crea — el operator ve `invitation.status='rate_limited'`
+    y puede reintentar."""
+    from app.api.v1.handlers.platform_admin_handlers import (
+        add_tenant_member, TenantMemberAdd,
+    )
+    from app.services import auth0_admin
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: False)
+    _stub_invitation_send(monkeypatch, raise_rate_limit=True)
+
+    tid = uuid4()
+    uid = uuid4()
+    conn = FakeConn(
+        fetchval=[1],
+        fetchrow=[
+            {'name': 'Test Tenant'},
+            None,
+            {'id': uid, 'email': 'rl@x.co'},
+            None,
+        ],
+        execute=['OK', 'OK'],
+    )
+    req = _fake_request(roles=['platform_owner'])
+    body = TenantMemberAdd(email='rl@x.co', role='admin', is_default=False)
+    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    # Membresía OK.
+    assert result['user_id'] == str(uid)
+    # Pero el email NO se mandó — visible en response.
+    assert result['invitation']['status'] == 'rate_limited'
+    assert 'error' in result['invitation']
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 import asyncpg
@@ -369,6 +369,15 @@ async def add_tenant_member(
             auth0_status = 'error'
             auth0_error = str(exc)[:200]
 
+    # ─── (1b) Tenant lookup para el email ────────────────────────────
+    # Necesitamos el tenant_name para el template del email. Si el
+    # bootstrap ya validó tenant_exists con SELECT 1, podemos hacer un
+    # second-trip barato.
+    tenant_row = await conn.fetchrow(
+        'select name from app.tenants where id = $1', tenant_id,
+    )
+    tenant_name = (tenant_row and tenant_row['name']) or 'CopilotoIA'
+
     # ─── (2) DB local ─────────────────────────────────────────────────
     # Lookup user por email (case-insensitive — `app.users.email` es citext).
     user_row = await conn.fetchrow(
@@ -401,9 +410,62 @@ async def add_tenant_member(
         user_row['id'], tenant_id, payload.role, payload.is_default,
     )
 
+    # ─── (3) Crear invitación + enviar email (M61) ────────────────────
+    # SIEMPRE — para user nuevo o `reused_existing`. Esto fixea el bug
+    # que el operator reportó: los users que ya existían en Auth0
+    # quedaban añadidos al tenant SIN notificación. Ahora reciben un
+    # email "te invitaron a TenantX" con magic link al login.
+    #
+    # Lookup del inviter info para mostrar en el email (reply_to + display).
+    from app.services.invitations import (  # noqa: PLC0415
+        InvitationRateLimitError,
+        create_and_send_invitation,
+    )
+    actor_id = getattr(request.state, 'actor_id', None)
+    actor_email = getattr(request.state, 'email', None)
+    actor_name = getattr(request.state, 'name', None)
+    inviter_user_id = None
+    if actor_id:
+        inviter_row = await conn.fetchrow(
+            'select id from app.users where auth_subject = $1', actor_id,
+        )
+        if inviter_row:
+            inviter_user_id = inviter_row['id']
+
+    invitation_payload: dict[str, Any] = {
+        'status': 'not_sent',
+        'invitation_id': None,
+        'accept_url': None,
+        'expires_at': None,
+        'message_id': None,
+        'provider': None,
+    }
+    try:
+        sent = await create_and_send_invitation(
+            conn=conn,
+            tenant_id=tenant_id,
+            tenant_name=tenant_name,
+            email=payload.email,
+            role=payload.role,
+            inviter_user_id=inviter_user_id,
+            inviter_name=actor_name,
+            inviter_email=actor_email,
+        )
+        invitation_payload = {
+            'status': sent.email_status,  # queued|noop|failed
+            'invitation_id': str(sent.invitation_id),
+            'accept_url': sent.accept_url,
+            'expires_at': sent.expires_at.isoformat(),
+            'message_id': sent.email_message_id or None,
+            'provider': sent.email_provider,
+        }
+    except InvitationRateLimitError as exc:
+        invitation_payload['status'] = 'rate_limited'
+        invitation_payload['error'] = str(exc)
+
     await audit(
         conn, tenant_id=tenant_id, actor_type='user',
-        actor_id=getattr(request.state, 'actor_id', None),
+        actor_id=actor_id,
         action='tenant.member_added',
         entity_type='user_tenant_role',
         entity_id=f'{user_row["id"]}:{tenant_id}:{payload.role}',
@@ -412,6 +474,9 @@ async def add_tenant_member(
             'auth0_status': auth0_status,
             'auth0_user_id': auth0_user_id,
             'auth0_error': auth0_error,
+            'invitation_status': invitation_payload['status'],
+            'invitation_id': invitation_payload['invitation_id'],
+            'invitation_provider': invitation_payload['provider'],
         },
     )
     return {
@@ -429,6 +494,12 @@ async def add_tenant_member(
             'invitation_ticket_url': invitation_ticket_url,  # URL para forward manual
             'error': auth0_error,
         },
+        # M61 — info del email transaccional (Resend/Noop). El frontend
+        # decide qué mostrar al admin: si `status='queued'` y `provider=
+        # 'resend'`, mostrar "Email enviado a X". Si `status='noop'`,
+        # mostrar el `accept_url` como copy-button. Si `status='failed'`
+        # o `'rate_limited'`, mostrar warning + opción de reintentar.
+        'invitation': invitation_payload,
     }
 
 
