@@ -652,9 +652,11 @@ async def invitation_landing(token: str, request: Request) -> Response:
         )
 
     # Preview público del Core — sin auth.
+    # PERF-001 — singleton compartido.
+    from app.services.http_clients import get_core_bff_client  # noqa: PLC0415
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(_core_api_url(f'v1/invitations/{token}'))
+        client = await get_core_bff_client()
+        r = await client.get(_core_api_url(f'v1/invitations/{token}'))
     except httpx.RequestError as exc:
         _debug('GET /i/<token>', error='core_unreachable', detail=str(exc))
         return HTMLResponse(
@@ -882,75 +884,77 @@ async def admin_callback(
 
     settings = get_admin_settings()
     callback_url = _callback_url(request)
-    async with httpx.AsyncClient(timeout=10) as client:
-        _debug('GET /callback', step='exchanging_code_for_token', auth0=settings.auth0_domain)
-        token_response = await client.post(
-            f'{_auth0_base_url()}/oauth/token',
-            headers={'content-type': 'application/json'},
-            json={
-                'grant_type': 'authorization_code',
-                'client_id': settings.auth0_admin_client_id,
-                'client_secret': _admin_client_secret(),
-                'code': code,
-                'redirect_uri': callback_url,
-            },
-        )
-        if token_response.status_code >= 400:
-            _debug(
-                'GET /callback', step='token_exchange_failed',
-                status=token_response.status_code, body=token_response.text[:200],
-            )
-            raise HTTPException(
-                status_code=401,
-                detail='Could not exchange Auth0 authorization code',
-            )
-        tokens = token_response.json()
+    # PERF-001 — singleton compartido para Auth0 OIDC (token exchange + userinfo).
+    from app.services.http_clients import get_auth0_client  # noqa: PLC0415
+    client = await get_auth0_client()
+    _debug('GET /callback', step='exchanging_code_for_token', auth0=settings.auth0_domain)
+    token_response = await client.post(
+        f'{_auth0_base_url()}/oauth/token',
+        headers={'content-type': 'application/json'},
+        json={
+            'grant_type': 'authorization_code',
+            'client_id': settings.auth0_admin_client_id,
+            'client_secret': _admin_client_secret(),
+            'code': code,
+            'redirect_uri': callback_url,
+        },
+    )
+    if token_response.status_code >= 400:
         _debug(
-            'GET /callback', step='tokens_received',
-            has_id_token=bool(tokens.get('id_token')),
-            has_refresh=bool(tokens.get('refresh_token')),
+            'GET /callback', step='token_exchange_failed',
+            status=token_response.status_code, body=token_response.text[:200],
         )
+        raise HTTPException(
+            status_code=401,
+            detail='Could not exchange Auth0 authorization code',
+        )
+    tokens = token_response.json()
+    _debug(
+        'GET /callback', step='tokens_received',
+        has_id_token=bool(tokens.get('id_token')),
+        has_refresh=bool(tokens.get('refresh_token')),
+    )
 
-        # M63 — `/userinfo` es OPCIONAL. Auth0 lo rechaza con 401/403
-        # cuando el access_token tiene `audience=<custom API>` (la nuestra),
-        # porque /userinfo requiere un token con audience del propio Auth0
-        # (`https://<tenant>.auth0.com/userinfo`). Como nuestro app pide
-        # `audience=<copilotoia-core-api>` para llamar nuestro backend,
-        # ese token NO sirve para /userinfo.
-        #
-        # El id_token validado (firma RS256 + JWKS + nonce A-001) YA
-        # contiene sub, email, name, picture — todo lo que /userinfo
-        # daría. /userinfo es legacy de OAuth 1.0; con OIDC moderno el
-        # id_token es la fuente de truth. Hacemos best-effort: si
-        # /userinfo responde 2xx, mergeamos sus claims (override id_token);
-        # si falla, seguimos con id_token_claims solo.
-        userinfo: dict[str, Any] = {}
-        try:
-            userinfo_response = await client.get(
-                f'{_auth0_base_url()}/userinfo',
-                headers={'authorization': f"Bearer {tokens['access_token']}"},
-            )
-            if userinfo_response.status_code < 400:
-                userinfo = userinfo_response.json()
-                _debug(
-                    'GET /callback', step='userinfo_received',
-                    sub=userinfo.get('sub'), email=userinfo.get('email'),
-                )
-            else:
-                _debug(
-                    'GET /callback', step='userinfo_skipped_non_2xx',
-                    status=userinfo_response.status_code,
-                    body=userinfo_response.text[:200],
-                    hint=(
-                        'access_token con audience custom no aplica para /userinfo. '
-                        'Usaremos solo id_token_claims (que ya tiene sub/email/name).'
-                    ),
-                )
-        except httpx.HTTPError as exc:
+    # M63 — `/userinfo` es OPCIONAL. Auth0 lo rechaza con 401/403
+    # cuando el access_token tiene `audience=<custom API>` (la nuestra),
+    # porque /userinfo requiere un token con audience del propio Auth0
+    # (`https://<tenant>.auth0.com/userinfo`). Como nuestro app pide
+    # `audience=<copilotoia-core-api>` para llamar nuestro backend,
+    # ese token NO sirve para /userinfo.
+    #
+    # El id_token validado (firma RS256 + JWKS + nonce A-001) YA
+    # contiene sub, email, name, picture — todo lo que /userinfo
+    # daría. /userinfo es legacy de OAuth 1.0; con OIDC moderno el
+    # id_token es la fuente de truth. Hacemos best-effort: si
+    # /userinfo responde 2xx, mergeamos sus claims (override id_token);
+    # si falla, seguimos con id_token_claims solo.
+    userinfo: dict[str, Any] = {}
+    try:
+        userinfo_response = await client.get(
+            f'{_auth0_base_url()}/userinfo',
+            headers={'authorization': f"Bearer {tokens['access_token']}"},
+        )
+        if userinfo_response.status_code < 400:
+            userinfo = userinfo_response.json()
             _debug(
-                'GET /callback', step='userinfo_skipped_network_error',
-                error=str(exc)[:200],
+                'GET /callback', step='userinfo_received',
+                sub=userinfo.get('sub'), email=userinfo.get('email'),
             )
+        else:
+            _debug(
+                'GET /callback', step='userinfo_skipped_non_2xx',
+                status=userinfo_response.status_code,
+                body=userinfo_response.text[:200],
+                hint=(
+                    'access_token con audience custom no aplica para /userinfo. '
+                    'Usaremos solo id_token_claims (que ya tiene sub/email/name).'
+                ),
+            )
+    except httpx.HTTPError as exc:
+        _debug(
+            'GET /callback', step='userinfo_skipped_network_error',
+            error=str(exc)[:200],
+        )
 
     # SEC: validamos la firma del id_token contra el JWKS de Auth0. ANTES
     # decodificábamos con base64 raw (sin firma) → un atacante con un
@@ -1082,12 +1086,14 @@ async def admin_callback(
     pending_token = request.cookies.get(PENDING_INVITATION_COOKIE)
     redeem_status: str | None = None
     if pending_token:
+        # PERF-001 — singleton compartido para BFF→Core.
+        from app.services.http_clients import get_core_bff_client  # noqa: PLC0415
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                rr = await client.post(
-                    _core_api_url(f'v1/invitations/{pending_token}/redeem'),
-                    headers={'Authorization': f'Bearer {tokens["access_token"]}'},
-                )
+            bff_client = await get_core_bff_client()
+            rr = await bff_client.post(
+                _core_api_url(f'v1/invitations/{pending_token}/redeem'),
+                headers={'Authorization': f'Bearer {tokens["access_token"]}'},
+            )
             redeem_status = f'core_status_{rr.status_code}'
             _debug(
                 'GET /callback', step='invitation_redeem',
@@ -1414,14 +1420,19 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
     body = await request.body()
     target_url = _core_api_url(path, request.url.query)
     headers = _core_api_headers(request, session, has_body=bool(body), path=path)
+    # PERF-001 — singleton compartido para el proxy BFF→Core (caller más
+    # caliente: cada request del SPA pasa por acá). Timeout subido a 20s
+    # via override del call.
+    from app.services.http_clients import get_core_bff_client  # noqa: PLC0415
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            upstream_response = await client.request(
-                request.method,
-                target_url,
-                content=body or None,
-                headers=headers,
-            )
+        proxy_client = await get_core_bff_client()
+        upstream_response = await proxy_client.request(
+            request.method,
+            target_url,
+            content=body or None,
+            headers=headers,
+            timeout=20.0,
+        )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,

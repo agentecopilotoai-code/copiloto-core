@@ -174,16 +174,19 @@ class ResendProvider:
                 {'name': k, 'value': v} for k, v in message.tags.items()
             ]
 
+        # PERF-001 — singleton compartido (lazy import para evitar import
+        # circular en tests que monkeypatchean email).
+        from app.services.http_clients import get_resend_client  # noqa: PLC0415
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    f'{self._base_url}/emails',
-                    headers={
-                        'authorization': f'Bearer {self._api_key}',
-                        'content-type': 'application/json',
-                    },
-                    json=payload,
-                )
+            client = await get_resend_client()
+            resp = await client.post(
+                '/emails',  # base_url ya tiene `https://api.resend.com`
+                headers={
+                    'authorization': f'Bearer {self._api_key}',
+                    'content-type': 'application/json',
+                },
+                json=payload,
+            )
         except httpx.HTTPError as exc:
             log.error(
                 'email.resend.transport_error',

@@ -42,16 +42,19 @@ def test_fetch_auth0_jwks_fetches_when_empty(monkeypatch):
             pass
 
     class _FakeAsyncClient:
-        def __init__(self, *a, **kw):
-            pass
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *exc):
-            return None
         async def get(self, url):
             return _FakeResponse()
 
-    monkeypatch.setattr(security.httpx, 'AsyncClient', _FakeAsyncClient)
+    # PERF-001 — security.py ahora usa el singleton `get_auth0_client()`
+    # del módulo http_clients. Monkeypatch ese getter en lugar de la
+    # clase AsyncClient directamente.
+    from app.services import http_clients
+    fake_client = _FakeAsyncClient()
+
+    async def _stub_get_client():
+        return fake_client
+
+    monkeypatch.setattr(http_clients, 'get_auth0_client', _stub_get_client)
 
     async def _go():
         return await security._fetch_auth0_jwks('tenant.auth0.com', 300)

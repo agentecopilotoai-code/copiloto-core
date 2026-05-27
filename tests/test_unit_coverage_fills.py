@@ -167,6 +167,7 @@ def test_tenant_signup_locale_fallback(monkeypatch):
 
     req = SimpleNamespace(state=SimpleNamespace(
         actor_id='auth0|u1', email='u@x.co', name='U',
+        email_verified=True,  # SEC-007 (audit 2026-05-27) — required
     ))
     payload = TenantCreate(
         slug='acme', legal_name='X', display_name='X',

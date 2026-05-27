@@ -56,7 +56,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import httpx
 import structlog
 
 from app.core.config import get_settings
@@ -134,16 +133,18 @@ async def _get_management_token() -> str:
             return _mgmt_token_cache['token']
         domain, client_id, client_secret = _require_configured()
         audience = f'https://{domain}/api/v2/'
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f'https://{domain}/oauth/token',
-                json={
-                    'grant_type': 'client_credentials',
-                    'client_id': client_id,
-                    'client_secret': client_secret,
-                    'audience': audience,
-                },
-            )
+        # PERF-001 (audit 2026-05-27) — singleton compartido.
+        from app.services.http_clients import get_auth0_client  # noqa: PLC0415
+        client = await get_auth0_client()
+        resp = await client.post(
+            f'https://{domain}/oauth/token',
+            json={
+                'grant_type': 'client_credentials',
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'audience': audience,
+            },
+        )
         if resp.status_code >= 400:
             raise Auth0ApiError(resp.status_code, resp.text)
         body = resp.json()
@@ -172,23 +173,24 @@ async def _mgmt_api(
     domain, _client_id, _secret = _require_configured()
     token = await _get_management_token()
     url = f'https://{domain}/api/v2{path}'
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.request(
-            method, url,
-            headers={'authorization': f'Bearer {token}'},
-            json=json_body, params=params,
-        )
+    # PERF-001 — singleton compartido (mismo client para el 401 retry).
+    from app.services.http_clients import get_auth0_client  # noqa: PLC0415
+    client = await get_auth0_client()
+    resp = await client.request(
+        method, url,
+        headers={'authorization': f'Bearer {token}'},
+        json=json_body, params=params,
+    )
     if resp.status_code == 401:
         # Token expired entre el cache check y el call → un retry con
         # cache invalidada.
         _clear_token_cache()
         token = await _get_management_token()
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.request(
-                method, url,
-                headers={'authorization': f'Bearer {token}'},
-                json=json_body, params=params,
-            )
+        resp = await client.request(
+            method, url,
+            headers={'authorization': f'Bearer {token}'},
+            json=json_body, params=params,
+        )
     if resp.status_code >= 400:
         raise Auth0ApiError(resp.status_code, resp.text)
     if resp.status_code == 204 or not resp.content:

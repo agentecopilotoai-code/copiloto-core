@@ -30,11 +30,19 @@ from app.services.rate_limit import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.services.http_clients import close_all as _close_http_clients  # noqa: PLC0415
+
     settings = get_settings()
     configure_logging(settings.log_level)
     await db.connect(settings.database_url)
-    yield
-    await db.close()
+    try:
+        yield
+    finally:
+        await db.close()
+        # PERF-001 (audit 2026-05-27) — cerrar todos los httpx clients
+        # singleton para liberar sockets limpiamente. Llamado en `finally`
+        # para no leakear conexiones si la app falla durante el run.
+        await _close_http_clients()
 
 
 def _client_ip(request: Request) -> str | None:

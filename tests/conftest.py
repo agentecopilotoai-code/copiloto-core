@@ -18,3 +18,18 @@ os.environ.setdefault(
 )
 
 import app.main  # noqa: F401, E402  — side-effect: dispara el wiring completo.
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_http_clients_between_tests():
+    """PERF-001 (audit 2026-05-27) — http_clients singletons leak entre tests.
+    Tests que monkeypatchean `httpx.AsyncClient` necesitan ver un cache
+    vacío para que el siguiente `get_*_client()` cree uno nuevo. Sin esto,
+    el primer test crea el client real y los siguientes lo reusan
+    bypaseando el monkeypatch."""
+    from app.services import http_clients
+    http_clients._reset_for_tests()
+    yield
+    http_clients._reset_for_tests()

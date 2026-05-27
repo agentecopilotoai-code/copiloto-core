@@ -4,7 +4,6 @@ from time import monotonic
 from typing import Any
 from uuid import UUID
 
-import httpx
 import structlog
 from fastapi import Header, HTTPException, Request, status
 from jose import JWTError, jwt
@@ -206,9 +205,14 @@ async def _fetch_auth0_jwks(
         return cached[1]
 
     url = f'{issuer}.well-known/jwks.json'
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        response = await client.get(url)
-        response.raise_for_status()
+    # PERF-001 (audit 2026-05-27) — singleton compartido. JWKS fetch ocurre
+    # 1×TTL=5min en cache hit + ocasionalmente force_refresh, pero igualmente
+    # ahorra TLS handshake cuando cae. El client ya tiene timeout 10s default
+    # (suficiente — JWKS responde en <500ms típicamente).
+    from app.services.http_clients import get_auth0_client  # noqa: PLC0415
+    client = await get_auth0_client()
+    response = await client.get(url)
+    response.raise_for_status()
     jwks = response.json()
     _jwks_cache[issuer] = (now + ttl_seconds, jwks)
     if force_refresh:
