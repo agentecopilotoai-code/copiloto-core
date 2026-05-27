@@ -568,7 +568,16 @@ create unique index ix_tenant_invitations_token_hash
 
 -- Lookup por (tenant_id, email) — para detectar reenvíos antes de generar
 -- duplicados, y para listar invitaciones pendientes del tenant en el UI.
-create index ix_tenant_invitations_tenant_email_open
+--
+-- INT-003 (audit 2026-05-27): UNIQUE en vez de plain INDEX. Sin esta
+-- garantía, dos admins re-invitando al mismo email concurrentemente
+-- producían DOS rows con `redeemed_at IS NULL` válidos — el invitado
+-- recibía dos emails con tokens distintos, ambos redimibles. Ahora la
+-- DB enforcea "máx 1 invitación pending por (tenant, email)". El path
+-- supersede en `create_and_send_invitation` (UPDATE viejo a redeemed
+-- + INSERT new) sigue funcionando porque el UPDATE pasa por el predicate
+-- ANTES del INSERT.
+create unique index ix_tenant_invitations_tenant_email_open
   on app.tenant_invitations(tenant_id, email)
   where redeemed_at is null;
 

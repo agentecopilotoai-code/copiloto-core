@@ -394,10 +394,20 @@ async def add_tenant_member(
         auth_subject = auth0_user_id or auth0_admin.make_pending_auth_subject(
             payload.email,
         )
+        # INT-001 (audit 2026-05-27) — race-safe insert. Dos invites
+        # concurrentes al mismo email nuevo hacían ambos SELECT → null
+        # → ambos INSERT, el segundo revientaba con
+        # `UniqueViolation(users_email_key)` 500 sin handler. Ahora con
+        # `ON CONFLICT (email) DO UPDATE` re-leemos la fila ganadora
+        # (idempotent). El UPDATE no toca `auth_subject` para no pisar
+        # el real con un pending|.
         user_row = await conn.fetchrow(
             '''
             insert into app.users (auth_subject, email, display_name, status)
             values ($1, $2, $3, $4)
+            on conflict (email) do update set
+              -- Touch updated_at sin sobreescribir auth_subject ni status.
+              updated_at = now()
             returning id, email
             ''',
             auth_subject, payload.email,
