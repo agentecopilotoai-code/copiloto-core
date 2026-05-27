@@ -1218,32 +1218,52 @@ if [ "$CONFIGURE_EMAIL_TEMPLATES" = "true" ]; then
   # templates (no acepta `""`). Usamos {{ message.text }} estándar que
   # le dice "renderizá el cuerpo default de este tipo de template".
   # El operator puede customizarlo después en el dashboard sin perder
-  # el subject + from que seteamos.
+  # el subject que seteamos.
   default_body_liquid='<p>{{ message.text }}</p>'
+
+  # Auth0 rechaza setear `from` en templates si NO hay email provider
+  # activo (tira "From address cannot be set without an enabled email
+  # provider"). Detectamos el state para construir el payload sin `from`
+  # en ese caso — igual seteamos subjects ES (que SÍ funcionan sin
+  # provider; Auth0 manda con su sender default no@auth0user.net).
+  provider_state="$(api_get_soft '/emails/provider' 'GET email provider (template check)' 2>/dev/null || echo '{}')"
+  provider_enabled="$(jq -r '.enabled // false' <<<"$provider_state")"
+  if [ "$provider_enabled" != "true" ]; then
+    include_from_in_templates=false
+    echo "  ⓘ Sin email provider activo — templates se setean sin 'from' field."
+    echo "    Auth0 usará su sender default (no@auth0user.net) — los emails"
+    echo "    pueden caer a spam. Para sender propio: CONFIGURE_RESEND_PROVIDER=true"
+    echo "    RESEND_API_KEY=re_xxx bash $0"
+  else
+    include_from_in_templates=true
+  fi
 
   for template_name in "${template_names[@]}"; do
     template_subject="$(template_subject_for "$template_name")"
-    # POST body: template name VA EN EL PAYLOAD, no en el path.
-    create_payload="$(jq -n \
-      --arg name "$template_name" \
-      --arg subject "$template_subject" \
-      --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
-      --arg body "$default_body_liquid" \
-      '{
-        template: $name,
-        subject: $subject,
-        from: $from,
-        resultUrl: "",
-        syntax: "liquid",
-        body: $body,
-        enabled: true
-      }')"
-    # PATCH body: solo lo que queremos actualizar (sin tocar el body
-    # custom que el operator pudo haber editado en dashboard).
-    update_payload="$(jq -n \
-      --arg subject "$template_subject" \
-      --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
-      '{subject:$subject, from:$from, enabled:true}')"
+
+    # POST body: template name VA EN EL PAYLOAD, no en el path. El field
+    # `from` solo se incluye si hay provider activo.
+    if [ "$include_from_in_templates" = "true" ]; then
+      create_payload="$(jq -n \
+        --arg name "$template_name" \
+        --arg subject "$template_subject" \
+        --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
+        --arg body "$default_body_liquid" \
+        '{template:$name, subject:$subject, from:$from, resultUrl:"", syntax:"liquid", body:$body, enabled:true}')"
+      update_payload="$(jq -n \
+        --arg subject "$template_subject" \
+        --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
+        '{subject:$subject, from:$from, enabled:true}')"
+    else
+      create_payload="$(jq -n \
+        --arg name "$template_name" \
+        --arg subject "$template_subject" \
+        --arg body "$default_body_liquid" \
+        '{template:$name, subject:$subject, resultUrl:"", syntax:"liquid", body:$body, enabled:true}')"
+      update_payload="$(jq -n \
+        --arg subject "$template_subject" \
+        '{subject:$subject, enabled:true}')"
+    fi
 
     # API contract Auth0:
     #   GET /email-templates/{name} → 200 si existe, 404 si no.
@@ -1386,16 +1406,24 @@ LINKING_ACTION
     fi
 
     # M62 hotfix #3 — Action con `dependencies:['auth0']` requiere build
-    # async server-side. Si bindamos antes de que termine, Auth0 rechaza
-    # con "binding for an action that has not been deployed yet".
-    # Llamamos explicit /deploy + polleamos hasta status=built.
+    # async server-side. Lifecycle correcto:
+    #   1. PATCH actualiza el DRAFT → status='pending'/'building'.
+    #   2. Wait hasta status='built' (Auth0 termina npm install).
+    #   3. POST /deploy promueve el draft built a versión deployed activa.
+    #   4. PATCH bindings ya puede apuntar al action_id.
+    # Si llamáramos /deploy antes del wait, Auth0 rechaza con
+    # "A draft must be in the 'built' state before it can be deployed."
     if [ -n "$linking_action_id" ] && [ -n "$linking_action_action_taken" ]; then
-      api_post_soft "/actions/actions/$linking_action_id/deploy" '{}' "deploy account-linking" >/dev/null || true
       echo "  ⏳ Esperando build del Action (deps npm: auth0)..."
       if wait_action_built "$linking_action_id" "account-linking"; then
-        echo "  ✓ Action account-linking built"
+        # Ahora el draft está built — promovemos a versión deployed.
+        if api_post_soft "/actions/actions/$linking_action_id/deploy" '{}' "deploy account-linking" >/dev/null; then
+          echo "  ✓ Action account-linking built + deployed"
+        else
+          echo "  ⓘ Build OK pero /deploy falló — la versión previamente deployed sigue activa." >&2
+        fi
       else
-        echo "  ⚠ Bind se intentará igual pero puede fallar — re-correr el script en 1min si esto pasa." >&2
+        echo "  ⚠ Build no completó en 60s — bind se intentará pero puede usar versión vieja. Re-correr en 1min." >&2
       fi
     fi
 
