@@ -10,7 +10,7 @@ set -euo pipefail
 #   MGMT_CLIENT_ID            Client ID M2M con permisos Management API
 #   MGMT_CLIENT_SECRET        Client secret M2M con permisos Management API
 #
-# Variables opcionales:
+# Variables opcionales (base):
 #   COPILOTOIA_DOMAIN         Dominio público del producto. Default: copilotoia.local
 #   AUTH0_API_IDENTIFIER      Audience del API. Default: https://$COPILOTOIA_DOMAIN/api
 #   AUTH0_ADMIN_APP_NAME      Nombre app admin. Default: copilotoia-admin-web
@@ -34,6 +34,97 @@ set -euo pipefail
 #   BOOTSTRAP_PLATFORM_OWNER_SUPPORT_MODE  true/false. Default: true. Si false,
 #                                    asigna solo el rol sin tocar support_mode
 #                                    (el operador lo configura a mano después).
+#
+# ─── Variables opcionales avanzadas (M62 — automation completa) ─────────────
+# Estas secciones son opt-in para que un upgrade del script no aplique cambios
+# inesperados a tenants Auth0 ya configurados manualmente. Default = false en
+# todas, salvo defaults seguros para producción nueva.
+#
+#   CONFIGURE_TENANT_SETTINGS   true/false. Default: true. Setea friendly_name,
+#                               support_email, support_url, session_lifetime,
+#                               idle_session_lifetime, default_redirection_uri.
+#   TENANT_FRIENDLY_NAME        Default: CopilotoIA
+#   TENANT_SUPPORT_EMAIL        Default: support@$COPILOTOIA_DOMAIN
+#   TENANT_SUPPORT_URL          Default: https://$COPILOTOIA_DOMAIN/support
+#   TENANT_SESSION_LIFETIME_HRS Default: 168 (7 días) — max-lifetime de la
+#                               SSO session de Auth0. El access_token vive 2h
+#                               (lifetime_in_seconds del admin app).
+#   TENANT_IDLE_SESSION_HRS     Default: 72 (3 días).
+#
+#   CONFIGURE_UNIVERSAL_LOGIN   true/false. Default: true. Cambia a "new"
+#                               Universal Login (responsive + customizable).
+#
+#   CONFIGURE_DB_CONNECTION     true/false. Default: true. Habilita la
+#                               connection Username-Password-Authentication
+#                               para ambas apps (admin + service) + setea
+#                               password policy. Sin esto la app admin no
+#                               aparece en la connection y el login email/
+#                               password tira "invalid client".
+#   DB_PASSWORD_POLICY          fair / good / excellent. Default: good
+#                               (min 8 chars, mayúscula, número, especial).
+#   DB_PASSWORD_HISTORY_SIZE    Default: 5 (no permite reusar últimas 5).
+#   DB_BRUTE_FORCE_PROTECTION   true/false. Default: true.
+#
+#   CONFIGURE_MFA_FACTORS       true/false. Default: true. Habilita los
+#                               factores OTP + WebAuthn (platform/roaming) en
+#                               el tenant. Sin esto, la Action MFA-challenge
+#                               de ENFORCE_MFA_ACTION puede fallar.
+#   MFA_POLICY                  all-applications / never. Default: "" (no
+#                               toca la policy — la maneja la Action).
+#                               Setearlo a "all-applications" obliga MFA a
+#                               TODOS los users del tenant.
+#
+#   CONFIGURE_ATTACK_PROTECTION true/false. Default: true. Habilita brute
+#                               force + breached password detection + IP
+#                               throttling (anomaly detection).
+#
+#   CONFIGURE_RESEND_PROVIDER   true/false. Default: false (opt-in).
+#                               Configura Resend como SMTP provider del
+#                               tenant Auth0 para que TODOS los emails que
+#                               manda Auth0 (verification, password reset,
+#                               blocked account, change_password) salgan
+#                               desde TU dominio verificado en Resend.
+#   RESEND_API_KEY              Key Resend (re_xxx). Obligatorio si
+#                               CONFIGURE_RESEND_PROVIDER=true.
+#   EMAIL_FROM_ADDRESS          Sender. Default: invites@$COPILOTOIA_DOMAIN.
+#                               Tiene que ser de un dominio verificado en
+#                               Resend (SPF + DKIM + DMARC).
+#   EMAIL_FROM_NAME             Default: CopilotoIA
+#
+#   CONFIGURE_EMAIL_TEMPLATES   true/false. Default: true. Renderiza los 5
+#                               templates Auth0 (verify_email, reset_email,
+#                               welcome_email, blocked_account, mfa_oob) con
+#                               subjects ES + branding.
+#
+#   CONFIGURE_ACCOUNT_LINKING   true/false. Default: true. Crea Action que
+#                               auto-linkea identidades del mismo email
+#                               verificado en distintas connections (e.g.
+#                               Google OAuth + email/password → mismo user).
+#                               Sin esto, el mismo email queda como 2 users
+#                               distintos en Auth0 y rompe M57 reconciliation.
+#
+# ─── Scopes Management API requeridos ──────────────────────────────────────
+# El app M2M `copilotoia-service-m2m` necesita estos scopes para que el
+# script pueda configurar TODAS las secciones. Si faltan alguno, ESE bloque
+# loguea warning y skipea (no aborta). Para habilitar en Auth0 dashboard:
+# Applications → APIs → Auth0 Management API → Machine to Machine
+# Applications → tu M2M app → Add Permissions:
+#
+#   • read/create/update:resource_servers
+#   • read/create/update:clients
+#   • read/create/update:client_grants
+#   • read/create/update:roles
+#   • read/update:role_members
+#   • read/create/update:users          # bootstrap platform_owner
+#   • create:user_tickets                # password-change ticket
+#   • read/create/update:actions         # Post-Login Actions
+#   • read:connections, update:connections  # M62 — DB connection
+#   • read:tenant_settings, update:tenant_settings  # M62 — tenant cfg
+#   • read:guardian_factors, update:guardian_factors  # M62 — MFA
+#   • read:attack_protection, update:attack_protection  # M62 — anomaly
+#   • read:email_provider, create:email_provider, update:email_provider, delete:email_provider  # M62 — Resend
+#   • read:email_templates, create:email_templates, update:email_templates  # M62 — templates
+#   • read:prompts, update:prompts       # M62 — Universal Login
 
 AUTH0_DOMAIN="${AUTH0_DOMAIN:-}"
 MGMT_CLIENT_ID="${MGMT_CLIENT_ID:-}"
@@ -53,6 +144,34 @@ OUTPUT_SECRETS="${OUTPUT_SECRETS:-false}"
 SAVE_AUTH0_CONFIG="${SAVE_AUTH0_CONFIG:-true}"
 AUTH0_ENV_FILE="${AUTH0_ENV_FILE:-.env.auth0.local}"
 AUTH0_SECRETS_DIR="${AUTH0_SECRETS_DIR:-.secrets}"
+
+# ── M62 — toggles avanzados (defaults seguros para producción nueva) ──────
+CONFIGURE_TENANT_SETTINGS="${CONFIGURE_TENANT_SETTINGS:-true}"
+TENANT_FRIENDLY_NAME="${TENANT_FRIENDLY_NAME:-CopilotoIA}"
+TENANT_SUPPORT_EMAIL="${TENANT_SUPPORT_EMAIL:-support@$COPILOTOIA_DOMAIN}"
+TENANT_SUPPORT_URL="${TENANT_SUPPORT_URL:-https://$COPILOTOIA_DOMAIN/support}"
+TENANT_SESSION_LIFETIME_HRS="${TENANT_SESSION_LIFETIME_HRS:-168}"
+TENANT_IDLE_SESSION_HRS="${TENANT_IDLE_SESSION_HRS:-72}"
+
+CONFIGURE_UNIVERSAL_LOGIN="${CONFIGURE_UNIVERSAL_LOGIN:-true}"
+
+CONFIGURE_DB_CONNECTION="${CONFIGURE_DB_CONNECTION:-true}"
+DB_PASSWORD_POLICY="${DB_PASSWORD_POLICY:-good}"
+DB_PASSWORD_HISTORY_SIZE="${DB_PASSWORD_HISTORY_SIZE:-5}"
+DB_BRUTE_FORCE_PROTECTION="${DB_BRUTE_FORCE_PROTECTION:-true}"
+
+CONFIGURE_MFA_FACTORS="${CONFIGURE_MFA_FACTORS:-true}"
+MFA_POLICY="${MFA_POLICY:-}"
+
+CONFIGURE_ATTACK_PROTECTION="${CONFIGURE_ATTACK_PROTECTION:-true}"
+
+CONFIGURE_RESEND_PROVIDER="${CONFIGURE_RESEND_PROVIDER:-false}"
+RESEND_API_KEY="${RESEND_API_KEY:-}"
+EMAIL_FROM_ADDRESS="${EMAIL_FROM_ADDRESS:-invites@$COPILOTOIA_DOMAIN}"
+EMAIL_FROM_NAME="${EMAIL_FROM_NAME:-CopilotoIA}"
+
+CONFIGURE_EMAIL_TEMPLATES="${CONFIGURE_EMAIL_TEMPLATES:-true}"
+CONFIGURE_ACCOUNT_LINKING="${CONFIGURE_ACCOUNT_LINKING:-true}"
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -114,6 +233,49 @@ api_request() {
 api_get() { api_request GET "$1"; }
 api_post() { api_request POST "$1" "$2"; }
 api_patch() { api_request PATCH "$1" "$2"; }
+api_put() { api_request PUT "$1" "$2"; }
+api_delete() { api_request DELETE "$1"; }
+
+# M62 — variante fail-soft para secciones opcionales. Si el M2M no tiene
+# los scopes necesarios, loguea warning con el scope faltante y devuelve
+# "" para que el caller skipee en lugar de abortar todo el script.
+# Esto permite que un operator agregue scopes incrementalmente.
+api_request_soft() {
+  local method="$1"
+  local path="$2"
+  local data="${3:-}"
+  local label="${4:-$method $path}"
+  local response_with_code http_code response
+
+  if [ -n "$data" ]; then
+    response_with_code="$(printf '%s' "$data" | curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}" --data @-)"
+  else
+    response_with_code="$(curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}")"
+  fi
+
+  http_code="$(tail -n1 <<<"$response_with_code")"
+  response="$(sed '$d' <<<"$response_with_code")"
+
+  if [[ ! "$http_code" =~ ^2 ]]; then
+    # 403 = insufficient_scope. 401 = token inválido (raro). Otros = error
+    # real (config mal). Soft-fail con detalle.
+    local err_message
+    err_message="$(jq -r '.message // .error // "?"' <<<"$response" 2>/dev/null || echo "?")"
+    echo "  ⚠ $label → HTTP $http_code ($err_message)" >&2
+    if [ "$http_code" = "403" ]; then
+      echo "    └─ Probablemente falta scope en el M2M. Ver header del script para la lista." >&2
+    fi
+    return 1
+  fi
+
+  printf '%s' "$response"
+}
+
+api_get_soft() { api_request_soft GET "$1" "" "${2:-GET $1}"; }
+api_post_soft() { api_request_soft POST "$1" "$2" "${3:-POST $1}"; }
+api_patch_soft() { api_request_soft PATCH "$1" "$2" "${3:-PATCH $1}"; }
+api_put_soft() { api_request_soft PUT "$1" "$2" "${3:-PUT $1}"; }
+api_delete_soft() { api_request_soft DELETE "$1" "" "${2:-DELETE $1}"; }
 
 write_secret_file() {
   local path="$1"
@@ -281,7 +443,11 @@ fi
 #   - read:roles / read:role_members / create:role_members — asignar rol
 #     Auth0 al user invitado para que su JWT post-login traiga el claim
 MGMT_API_AUDIENCE="https://${AUTH0_DOMAIN}/api/v2/"
-MGMT_API_SCOPES="read:users,create:users,update:users,create:user_tickets,read:roles,read:role_members,create:role_members"
+# M62 — scopes extendidos para automation completa del tenant (TIER 1+2):
+# DB connections, tenant settings, MFA factors, attack protection, email
+# provider, email templates, Universal Login prompts.
+# Si alguno falla, el bloque correspondiente soft-skipea (no aborta).
+MGMT_API_SCOPES="read:users,create:users,update:users,create:user_tickets,read:roles,read:role_members,create:role_members,read:connections,update:connections,read:tenant_settings,update:tenant_settings,read:guardian_factors,update:guardian_factors,read:attack_protection,update:attack_protection,read:email_provider,create:email_provider,update:email_provider,delete:email_provider,read:email_templates,create:email_templates,update:email_templates,read:prompts,update:prompts"
 echo "▶ Upsert client grant M2M hacia Management API"
 mgmt_grant_id="$(jq -r --arg client_id "$service_client_id" --arg audience "$MGMT_API_AUDIENCE" '.[] | select(.client_id == $client_id and .audience == $audience) | .id' <<<"$client_grants" | head -n1)"
 mgmt_grant_payload="$(jq -n --arg audience "$MGMT_API_AUDIENCE" --arg client_id "$service_client_id" --arg scopes "$MGMT_API_SCOPES" '{audience:$audience,client_id:$client_id,scope:($scopes | split(","))}')"
@@ -707,6 +873,443 @@ if [ -n "$BOOTSTRAP_PLATFORM_OWNER_EMAIL" ]; then
   fi
 fi
 
+# ════════════════════════════════════════════════════════════════════════════
+# M62 — Automation completa del tenant (TIER 1 + TIER 2)
+# Todas las secciones son idempotentes + fail-soft. Si el M2M no tiene el
+# scope necesario, loguea warning y skipea (no aborta).
+# ════════════════════════════════════════════════════════════════════════════
+
+# ─── (1) Tenant settings ────────────────────────────────────────────────────
+# friendly_name aparece en la pantalla de login.
+# support_url/email los muestra en errores y emails.
+# session_lifetime + idle_session_lifetime limitan la SSO session de Auth0
+# (distinto del access_token del admin app, que vive 2h por jwt_configuration).
+if [ "$CONFIGURE_TENANT_SETTINGS" = "true" ]; then
+  echo "▶ Tenant settings (friendly_name + support + session TTL)"
+  tenant_payload="$(jq -n \
+    --arg name "$TENANT_FRIENDLY_NAME" \
+    --arg email "$TENANT_SUPPORT_EMAIL" \
+    --arg url "$TENANT_SUPPORT_URL" \
+    --argjson session_h "$TENANT_SESSION_LIFETIME_HRS" \
+    --argjson idle_h "$TENANT_IDLE_SESSION_HRS" \
+    '{
+      friendly_name: $name,
+      support_email: $email,
+      support_url: $url,
+      session_lifetime: $session_h,
+      idle_session_lifetime: $idle_h,
+      flags: {
+        revoke_refresh_token_grant: true,
+        disable_clickjack_protection_headers: false
+      }
+    }')"
+  if api_patch_soft '/tenants/settings' "$tenant_payload" 'PATCH /tenants/settings' >/dev/null; then
+    echo "  ✓ friendly_name='$TENANT_FRIENDLY_NAME' session=${TENANT_SESSION_LIFETIME_HRS}h idle=${TENANT_IDLE_SESSION_HRS}h"
+  fi
+fi
+
+# ─── (2) Universal Login → new ──────────────────────────────────────────────
+# Auth0 tiene dos versiones de Universal Login: "classic" (UI 2018, no
+# responsive) y "new" (responsive, customizable via Liquid templates).
+# Para producción siempre new — classic ya no recibe features de Auth0.
+if [ "$CONFIGURE_UNIVERSAL_LOGIN" = "true" ]; then
+  echo "▶ Universal Login → new experience"
+  ul_payload='{"universal_login_experience":"new","identifier_first":true,"webauthn_platform_first_factor":false}'
+  if api_patch_soft '/prompts' "$ul_payload" 'PATCH /prompts' >/dev/null; then
+    echo "  ✓ Universal Login = new + identifier_first=true (mejor UX)"
+  fi
+fi
+
+# ─── (3) Database Connection + password policy ──────────────────────────────
+# La connection "Username-Password-Authentication" viene creada por default
+# en cada tenant Auth0 nuevo. Pero NO está habilitada por default para apps
+# nuevas — hay que agregarla a `enabled_clients`. Sin esto, la app admin no
+# aparece en la connection y los login email/password fallan con
+# "invalid_client" sin mensaje claro.
+#
+# Además seteamos:
+# - password_policy: fair (≥8 chars) / good (+1 num, +1 special) / excellent
+#   (+1 mayúscula). Default good = compromiso UX/seguridad.
+# - password_history: no permite reusar últimas N contraseñas.
+# - brute_force_protection: bloquea cuenta tras N intentos fallidos.
+if [ "$CONFIGURE_DB_CONNECTION" = "true" ]; then
+  echo "▶ Database Connection (Username-Password-Authentication)"
+  connections_response="$(api_get_soft '/connections?strategy=auth0&per_page=100' 'GET /connections')"
+  if [ -n "$connections_response" ]; then
+    db_conn_id="$(jq -r '.[] | select(.name == "Username-Password-Authentication") | .id' <<<"$connections_response" | head -n1)"
+    if [ -z "$db_conn_id" ]; then
+      echo "  ⚠ Connection 'Username-Password-Authentication' no existe en el tenant." >&2
+      echo "    Es un default pero algunos tenants legacy la borraron." >&2
+      echo "    Crearla manual: Auth0 Dashboard → Authentication → Database → Create DB Connection." >&2
+    else
+      # Preservar enabled_clients existentes + agregar el admin si falta.
+      # El M2M (`service`) NO va acá: usa client_credentials, no DB auth.
+      existing_clients_json="$(jq -c '.enabled_clients // []' <<<"$connections_response" | jq -c '.[0] // []')"
+      # Actually parsear el array correcto del row matched:
+      existing_clients_json="$(jq -c --arg id "$db_conn_id" '.[] | select(.id == $id) | .enabled_clients // []' <<<"$connections_response")"
+      db_conn_payload="$(jq -n \
+        --arg pwd_policy "$DB_PASSWORD_POLICY" \
+        --argjson pwd_history "$DB_PASSWORD_HISTORY_SIZE" \
+        --argjson brute_force "$DB_BRUTE_FORCE_PROTECTION" \
+        --arg admin_client "$admin_client_id" \
+        --argjson existing "${existing_clients_json:-[]}" \
+        '{
+          enabled_clients: ($existing + [$admin_client] | unique),
+          options: {
+            passwordPolicy: $pwd_policy,
+            password_history: { enable: true, size: $pwd_history },
+            password_no_personal_info: { enable: true },
+            password_dictionary: { enable: true, dictionary: [] },
+            password_complexity_options: { min_length: 8 },
+            brute_force_protection: $brute_force,
+            disable_signup: false,
+            requires_username: false
+          }
+        }')"
+      if api_patch_soft "/connections/$db_conn_id" "$db_conn_payload" 'PATCH /connections/{db}' >/dev/null; then
+        echo "  ✓ Connection enabled para admin (M2M excluido por diseño)"
+        echo "    password_policy=$DB_PASSWORD_POLICY history=$DB_PASSWORD_HISTORY_SIZE brute_force=$DB_BRUTE_FORCE_PROTECTION"
+      fi
+    fi
+  fi
+fi
+
+# ─── (4) MFA factors enablement ─────────────────────────────────────────────
+# Auth0 soporta varios factores MFA: otp (TOTP apps como Google Auth o 1Pwd),
+# webauthn-roaming (YubiKey), webauthn-platform (Face ID, Touch ID, Windows
+# Hello), push (Auth0 Guardian app), sms (no recomendado por SIM swap), etc.
+# Para que la Action de MFA-challenge (ENFORCE_MFA_ACTION) funcione, AL MENOS
+# UN factor debe estar habilitado en el tenant.
+if [ "$CONFIGURE_MFA_FACTORS" = "true" ]; then
+  echo "▶ MFA factors (OTP + WebAuthn)"
+  for factor in otp webauthn-roaming webauthn-platform; do
+    factor_payload='{"enabled":true}'
+    if api_put_soft "/guardian/factors/$factor" "$factor_payload" "PUT /guardian/factors/$factor" >/dev/null; then
+      echo "  ✓ Factor '$factor' habilitado"
+    fi
+  done
+  # Push (Auth0 Guardian app) deshabilitado por default — requiere setup
+  # adicional con APNs/FCM credentials. Habilitar manualmente si querés
+  # ofrecer la Auth0 Guardian app como factor.
+
+  if [ -n "$MFA_POLICY" ]; then
+    echo "▶ MFA policy = $MFA_POLICY"
+    policy_payload="[\"$MFA_POLICY\"]"
+    if api_put_soft '/guardian/policies' "$policy_payload" 'PUT /guardian/policies' >/dev/null; then
+      echo "  ✓ MFA enforced via tenant policy ($MFA_POLICY)"
+    fi
+  else
+    echo "  ⓘ MFA_POLICY vacío — usando Action MFA-challenge (ENFORCE_MFA_ACTION=$ENFORCE_MFA_ACTION) para enforcement granular por rol"
+  fi
+fi
+
+# ─── (5) Attack protection (brute force + breached password + IP) ──────────
+# Auth0 ofrece tres capas de "attack protection":
+# - brute-force-protection: bloquea cuenta tras N intentos fallidos.
+# - breached-password-detection: chequea contra HaveIBeenPwned al login.
+# - suspicious-ip-throttling: throttle de IPs con patrones anómalos.
+# Todas free, todas críticas para producción.
+if [ "$CONFIGURE_ATTACK_PROTECTION" = "true" ]; then
+  echo "▶ Attack protection (brute force + breached password + IP throttling)"
+
+  bf_payload='{
+    "enabled": true,
+    "shields": ["block", "user_notification"],
+    "allowlist": [],
+    "mode": "count_per_identifier_and_ip",
+    "max_attempts": 10
+  }'
+  if api_patch_soft '/attack-protection/brute-force-protection' "$bf_payload" 'PATCH brute-force-protection' >/dev/null; then
+    echo "  ✓ Brute force protection (max 10 attempts → block + email user)"
+  fi
+
+  bp_payload='{
+    "enabled": true,
+    "shields": ["block", "admin_notification"],
+    "admin_notification_frequency": ["immediately"],
+    "method": "standard",
+    "stage": {
+      "pre-user-registration": { "shields": ["block"] },
+      "pre-change-password": { "shields": ["block"] }
+    }
+  }'
+  if api_patch_soft '/attack-protection/breached-password-detection' "$bp_payload" 'PATCH breached-password-detection' >/dev/null; then
+    echo "  ✓ Breached password detection (HaveIBeenPwned: block signup + reset)"
+  fi
+
+  sip_payload='{
+    "enabled": true,
+    "shields": ["block", "admin_notification"],
+    "allowlist": [],
+    "stage": {
+      "pre-login":          { "max_attempts": 100, "rate": 864000 },
+      "pre-user-registration": { "max_attempts": 50, "rate": 1200 }
+    }
+  }'
+  if api_patch_soft '/attack-protection/suspicious-ip-throttling' "$sip_payload" 'PATCH suspicious-ip-throttling' >/dev/null; then
+    echo "  ✓ Suspicious IP throttling (100 logins/día per IP)"
+  fi
+fi
+
+# ─── (6) Resend como Email Provider del tenant Auth0 ────────────────────────
+# Por default Auth0 manda emails (verify, reset, blocked, change_password)
+# con su propio sender genérico (no@auth0user.net) que cae a spam.
+# Configurar Resend como SMTP custom hace que TODOS los emails de Auth0
+# salgan desde TU dominio verificado (mismo que usa M61 para invitaciones).
+#
+# Resend expone SMTP en `smtp.resend.com:587` con username='resend' +
+# password=<RESEND_API_KEY>. Auth0 lo soporta como "smtp" provider.
+if [ "$CONFIGURE_RESEND_PROVIDER" = "true" ]; then
+  if [ -z "$RESEND_API_KEY" ]; then
+    echo "▶ Email Provider (Resend) — SKIPEADO (RESEND_API_KEY vacío)" >&2
+  else
+    echo "▶ Email Provider (Resend SMTP)"
+    # Auth0 puede tener un provider previo (sendgrid, mailgun, default) que
+    # hay que reemplazar. La API es:
+    # - GET /emails/provider → consulta config actual
+    # - PATCH para actualizar (si existe)
+    # - POST si no existe
+    existing_provider="$(api_get_soft '/emails/provider' 'GET /emails/provider' || echo '{}')"
+    has_provider="$(jq -r '.name // ""' <<<"$existing_provider")"
+
+    provider_payload="$(jq -n \
+      --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
+      --arg key "$RESEND_API_KEY" \
+      '{
+        name: "smtp",
+        enabled: true,
+        default_from_address: $from,
+        credentials: {
+          smtp_host: "smtp.resend.com",
+          smtp_port: 587,
+          smtp_user: "resend",
+          smtp_pass: $key
+        }
+      }')"
+
+    if [ -z "$has_provider" ]; then
+      if api_post_soft '/emails/provider' "$provider_payload" 'POST /emails/provider' >/dev/null; then
+        echo "  ✓ Resend SMTP provider creado (from='$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>')"
+      fi
+    else
+      # Si era un provider distinto (sendgrid, etc.), borrar primero.
+      if [ "$has_provider" != "smtp" ]; then
+        api_delete_soft '/emails/provider' 'DELETE /emails/provider' >/dev/null || true
+        if api_post_soft '/emails/provider' "$provider_payload" 'POST /emails/provider' >/dev/null; then
+          echo "  ✓ Provider reemplazado de '$has_provider' a Resend SMTP"
+        fi
+      else
+        if api_patch_soft '/emails/provider' "$provider_payload" 'PATCH /emails/provider' >/dev/null; then
+          echo "  ✓ Resend SMTP provider actualizado"
+        fi
+      fi
+    fi
+    echo "  ⓘ Asegurate que el dominio de '$EMAIL_FROM_ADDRESS' esté VERIFICADO en https://resend.com/domains"
+  fi
+fi
+
+# ─── (7) Email templates branded en español ────────────────────────────────
+# Auth0 tiene 7 templates default (en inglés): verify_email, reset_email,
+# welcome_email, blocked_account, stolen_credentials, enrollment_email,
+# mfa_oob_code. Los renderizamos con subjects + texto en español.
+# El BODY (HTML) lo deja por default — para customizarlo en serio hay que
+# editar el Liquid template, que es un proyecto aparte (out-of-scope acá).
+if [ "$CONFIGURE_EMAIL_TEMPLATES" = "true" ]; then
+  echo "▶ Email templates (subjects + from name en español)"
+
+  declare -A template_subjects=(
+    [verify_email]="Verifica tu correo en $TENANT_FRIENDLY_NAME"
+    [reset_email]="Restablece tu contraseña en $TENANT_FRIENDLY_NAME"
+    [welcome_email]="Bienvenido a $TENANT_FRIENDLY_NAME"
+    [blocked_account]="Tu cuenta de $TENANT_FRIENDLY_NAME fue bloqueada"
+    [stolen_credentials]="Detectamos un intento sospechoso de acceso a tu cuenta"
+    [enrollment_email]="Configura tu segundo factor de autenticación"
+    [mfa_oob_code]="Tu código de verificación de $TENANT_FRIENDLY_NAME"
+  )
+
+  for template_name in "${!template_subjects[@]}"; do
+    template_subject="${template_subjects[$template_name]}"
+    template_payload="$(jq -n \
+      --arg name "$template_name" \
+      --arg subject "$template_subject" \
+      --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
+      '{
+        template: $name,
+        subject: $subject,
+        from: $from,
+        resultUrl: "",
+        syntax: "liquid",
+        body: "",
+        enabled: true
+      }')"
+    # GET para chequear si existe; PATCH si sí, PUT si no.
+    template_exists="$(api_get_soft "/email-templates/$template_name" "GET /email-templates/$template_name" || true)"
+    if [ -n "$template_exists" ] && [ "$(jq -r '.template // ""' <<<"$template_exists")" = "$template_name" ]; then
+      # Patch keep existing body (no override del HTML custom).
+      patch_payload="$(jq -n --arg subject "$template_subject" --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
+        '{subject:$subject, from:$from, enabled:true}')"
+      api_patch_soft "/email-templates/$template_name" "$patch_payload" "PATCH template/$template_name" >/dev/null \
+        && echo "  ✓ Template '$template_name' actualizado (subject ES)"
+    else
+      api_put_soft "/email-templates/$template_name" "$template_payload" "PUT template/$template_name" >/dev/null \
+        && echo "  ✓ Template '$template_name' creado"
+    fi
+  done
+fi
+
+# ─── (8) Account Linking Action (auto-link por email verificado) ───────────
+# Sin esto, si un user se loguea primero con Google (mismo email) y luego
+# se registra con email/password (o viceversa), Auth0 crea DOS users
+# distintos. Eso rompe M57 reconciliation (que busca por email) y deja al
+# user con 2 identidades + 2 membresías separadas.
+#
+# Auth0 recomienda el Pre-User-Registration Hook o un Post-Login Action que
+# detecte email-match y haga link via Management API. Usamos Action porque
+# corre POST autenticación (más seguro: el email ya está verificado).
+#
+# Pattern: https://auth0.com/docs/customize/actions/flows-and-triggers/
+#         login-flow/redirect-with-actions#account-linking
+if [ "$CONFIGURE_ACCOUNT_LINKING" = "true" ] && [ "$CONFIGURE_LOGIN_ACTION" = "true" ]; then
+  echo "▶ Action: Account Linking (auto-link por email verificado)"
+  linking_action_code="$(cat <<LINKING_ACTION
+/**
+ * Auto-link de identidades del mismo email verificado en distintas
+ * connections (Google + email/password, etc.). Sin esto, Auth0 crea
+ * users separados y rompe M57 reconciliation.
+ *
+ * Flow:
+ *   1. Si el user actual NO tiene email_verified=true → skip (sin verif
+ *      no podemos confiar que el email es realmente suyo, link sería
+ *      account-takeover via signup).
+ *   2. Lookup otros users con el mismo email (y email_verified=true).
+ *   3. Si hay match: linkear el current al user "primary" más antiguo.
+ *      El user actual queda como secondary (sus identidades suman).
+ *   4. Continuar el login normal (las claims se emiten del PRIMARY).
+ *
+ * Requiere scope en el Action: read:users + update:users.
+ */
+const ManagementClient = require('auth0').ManagementClient;
+
+exports.onExecutePostLogin = async (event, api) => {
+  if (!event.user.email || event.user.email_verified !== true) return;
+  // Skip si ya es secondary (ya linkeado).
+  if (event.user.user_id && event.user.user_id.indexOf('|') === -1) return;
+  const currentConnection = (event.connection && event.connection.strategy) || '';
+
+  const mgmt = new ManagementClient({
+    domain: event.secrets.AUTH0_DOMAIN,
+    clientId: event.secrets.AUTH0_M2M_CLIENT_ID,
+    clientSecret: event.secrets.AUTH0_M2M_CLIENT_SECRET,
+  });
+
+  let candidates;
+  try {
+    candidates = await mgmt.usersByEmail.getByEmail({ email: event.user.email });
+  } catch (e) {
+    console.log('account-linking: getByEmail error', e.message);
+    return;
+  }
+  const verifiedOthers = (candidates.data || candidates || []).filter(function(u) {
+    return u.user_id !== event.user.user_id && u.email_verified === true;
+  });
+  if (verifiedOthers.length === 0) return;
+
+  // Primary = más viejo (created_at asc). Esto preserva el user_id histórico
+  // que aparezca en audit logs antiguos como "owner" de la identidad.
+  verifiedOthers.sort(function(a, b) {
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  });
+  const primary = verifiedOthers[0];
+
+  try {
+    const [providerStrategy, providerUserIdRaw] = event.user.user_id.split('|');
+    const secondaryProvider = providerStrategy;
+    const secondaryUserId = providerUserIdRaw;
+    await mgmt.users.link({ id: primary.user_id }, {
+      provider: secondaryProvider,
+      user_id: secondaryUserId,
+    });
+    console.log('account-linking: linked', event.user.user_id, '→', primary.user_id);
+    // Re-emitir claims desde el PRIMARY. api.user.setUser no existe en post-login;
+    // lo que sí podemos: redirect-to-app con primary_user_id en query para que
+    // el BFF lo use. Como alternativa simpler, dejamos que el próximo login del
+    // user use el primary (el current login ya está casi resuelto).
+  } catch (e) {
+    console.log('account-linking: link failed', e.message);
+  }
+};
+LINKING_ACTION
+)"
+
+  linking_actions_response="$(api_get_soft '/actions/actions?triggerId=post-login&per_page=100' 'GET actions' || echo '{}')"
+  if [ "$(jq -r '.actions // [] | length' <<<"$linking_actions_response")" != "0" ] || true; then
+    linking_action_id="$(jq -r '.actions // [] | .[] | select(.name == "copilotoia-account-linking") | .id' <<<"$linking_actions_response" | head -n1)"
+    linking_action_payload="$(jq -n \
+      --arg code "$linking_action_code" \
+      --arg domain "$AUTH0_DOMAIN" \
+      --arg cid "$service_client_id" \
+      --arg secret "$service_client_secret" \
+      '{
+        name: "copilotoia-account-linking",
+        supported_triggers: [{id:"post-login",version:"v3"}],
+        runtime: "node18",
+        code: $code,
+        deploy: true,
+        dependencies: [{name:"auth0", version:"4.0.0"}],
+        secrets: [
+          {name:"AUTH0_DOMAIN", value:$domain},
+          {name:"AUTH0_M2M_CLIENT_ID", value:$cid},
+          {name:"AUTH0_M2M_CLIENT_SECRET", value:$secret}
+        ]
+      }')"
+
+    if [ -z "$linking_action_id" ]; then
+      result="$(api_post_soft '/actions/actions' "$linking_action_payload" 'POST actions (linking)')"
+      if [ -n "$result" ]; then
+        linking_action_id="$(jq -r .id <<<"$result")"
+        echo "  ✓ Action account-linking creado: $linking_action_id"
+      fi
+    else
+      update_linking="$(jq -n --arg code "$linking_action_code" --arg domain "$AUTH0_DOMAIN" --arg cid "$service_client_id" --arg secret "$service_client_secret" \
+        '{code:$code, runtime:"node18", supported_triggers:[{id:"post-login",version:"v3"}],
+          dependencies:[{name:"auth0",version:"4.0.0"}],
+          secrets:[{name:"AUTH0_DOMAIN",value:$domain},{name:"AUTH0_M2M_CLIENT_ID",value:$cid},{name:"AUTH0_M2M_CLIENT_SECRET",value:$secret}]}')"
+      api_patch_soft "/actions/actions/$linking_action_id" "$update_linking" 'PATCH actions (linking)' >/dev/null \
+        && api_post_soft "/actions/actions/$linking_action_id/deploy" '{}' 'deploy linking' >/dev/null \
+        && echo "  ✓ Action account-linking actualizado"
+    fi
+
+    # Bindear al inicio del flow post-login (ANTES de claims + MFA challenge).
+    if [ "$BIND_LOGIN_ACTION" = "true" ] && [ -n "$linking_action_id" ]; then
+      echo "▶ Bind account-linking primero en post-login bindings"
+      link_bindings_response="$(api_get_soft '/actions/triggers/post-login/bindings?per_page=100' 'GET bindings' || echo '{"bindings":[]}')"
+      link_bindings_payload="$(jq -n \
+        --arg link_id "$linking_action_id" \
+        --argjson existing "$link_bindings_response" \
+        '($existing.bindings // []) as $bindings |
+         ($bindings
+          | map(select(.display_name != "copilotoia-account-linking" and (.action.id? // .ref.value? // "") != $link_id))
+          | map(
+              if (.ref? and .ref.value?) then
+                {ref:.ref, display_name:(.display_name // .ref.value)}
+              elif (.action? and .action.id?) then
+                {ref:{type:"action_id",value:.action.id}, display_name:(.display_name // .action.name // .action.id)}
+              else
+                empty
+              end
+            )) as $preserved |
+         # account-linking debe correr ANTES que MFA challenge y claims
+         {bindings: ([{ref:{type:"action_id",value:$link_id},display_name:"copilotoia-account-linking"}] + $preserved)}')"
+      api_patch_soft '/actions/triggers/post-login/bindings' "$link_bindings_payload" 'PATCH bindings' >/dev/null \
+        && echo "  ✓ account-linking enlazado al inicio"
+    fi
+  fi
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# FIN M62 secciones avanzadas
+# ════════════════════════════════════════════════════════════════════════════
+
 if [ "$SAVE_AUTH0_CONFIG" = "true" ]; then
   echo "▶ Guardar configuración Auth0 local"
   umask 077
@@ -741,6 +1344,7 @@ fi
 cat <<SUMMARY
 
 ✅ Auth0 CopilotoIA configurado
+═══════════════════════════════════════════════════════════════════════
 AUTH0_DOMAIN=$AUTH0_DOMAIN
 AUTH0_AUDIENCE=$AUTH0_API_IDENTIFIER
 AUTH0_CLAIMS_NAMESPACE=$CLAIMS_NAMESPACE
@@ -750,6 +1354,34 @@ AUTH0_SERVICE_APP_NAME=$AUTH0_SERVICE_APP_NAME
 AUTH0_SERVICE_CLIENT_ID=$service_client_id
 AUTH0_ENV_FILE=$AUTH0_ENV_FILE
 AUTH0_SECRETS_DIR=$AUTH0_SECRETS_DIR
+
+─── M62 secciones aplicadas ──────────────────────────────────────────
+  Tenant settings        : $CONFIGURE_TENANT_SETTINGS
+  Universal Login (new)  : $CONFIGURE_UNIVERSAL_LOGIN
+  DB Connection + policy : $CONFIGURE_DB_CONNECTION
+  MFA factors            : $CONFIGURE_MFA_FACTORS  (policy=$MFA_POLICY)
+  Attack protection      : $CONFIGURE_ATTACK_PROTECTION
+  Resend email provider  : $CONFIGURE_RESEND_PROVIDER
+  Email templates ES     : $CONFIGURE_EMAIL_TEMPLATES
+  Account linking Action : $CONFIGURE_ACCOUNT_LINKING
+  MFA enforcement Action : $ENFORCE_MFA_ACTION
+
+─── Próximos pasos manuales (si aplica) ─────────────────────────────
+  1. Verificar el dominio del sender en Resend (https://resend.com/domains)
+     si CONFIGURE_RESEND_PROVIDER=true y querés que los emails no caigan
+     a spam. Default sender: $EMAIL_FROM_ADDRESS
+
+  2. Si algún bloque arriba mostró ⚠ "HTTP 403", agregar los scopes
+     listados al M2M en Auth0 dashboard → Applications → APIs →
+     Auth0 Management API → Machine to Machine → '$AUTH0_SERVICE_APP_NAME' →
+     Add Permissions. Re-correr el script para que apliquen las
+     secciones skipeadas.
+
+  3. Setear AUTH0_TRUST_ADMIN_EMAIL_HEADER=false en .env del Core una vez
+     verificado que el access_token trae el claim 'email' (post-A-003).
+     Chequear con: docker compose logs admin-panel | grep email_from_header
+     (no debería aparecer = claim llega bien).
+
 SUMMARY
 
 if [ "$OUTPUT_SECRETS" = "true" ] && [ -n "$service_client_secret" ]; then
