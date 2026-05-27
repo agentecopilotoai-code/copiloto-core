@@ -395,15 +395,6 @@ async def create_and_send_invitation(
     )
     return await send_invitation_email_for_draft(draft, conn=conn)
 
-    return InvitationSent(
-        invitation_id=invitation_id,
-        accept_url=accept_url,
-        expires_at=row['expires_at'],
-        email_message_id=email_message_id,
-        email_provider=email_provider_name,
-        email_status=email_status,
-    )
-
 
 # ─── Preview + Redeem (iteración 2 — endpoint /i/<token>) ──────────────
 
