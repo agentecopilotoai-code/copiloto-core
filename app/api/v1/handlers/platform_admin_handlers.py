@@ -374,9 +374,13 @@ async def add_tenant_member(
     # bootstrap ya validó tenant_exists con SELECT 1, podemos hacer un
     # second-trip barato.
     tenant_row = await conn.fetchrow(
-        'select name from app.tenants where id = $1', tenant_id,
+        'select display_name, legal_name from app.tenants where id = $1',
+        tenant_id,
     )
-    tenant_name = (tenant_row and tenant_row['name']) or 'CopilotoIA'
+    tenant_name = (
+        tenant_row
+        and (tenant_row['display_name'] or tenant_row['legal_name'])
+    ) or 'CopilotoIA'
 
     # ─── (2) DB local ─────────────────────────────────────────────────
     # Lookup user por email (case-insensitive — `app.users.email` es citext).

@@ -1158,7 +1158,7 @@ def test_add_tenant_member_existing_user(monkeypatch):
         fetchval=[1],   # tenant exists
         # tenant_name lookup + existing user lookup + inviter lookup (None ok).
         fetchrow=[
-            {'name': 'Test Tenant'},
+            {'display_name': 'Test Tenant', 'legal_name': 'Test Tenant SAS'},
             {'id': uid, 'email': 'x@y.co'},
             None,  # inviter lookup
         ],
@@ -1183,7 +1183,7 @@ def test_add_tenant_member_pending_user(monkeypatch):
         fetchval=[1],
         # tenant_name lookup + None (user doesn't exist) + new user INSERT row + inviter lookup.
         fetchrow=[
-            {'name': 'Test Tenant'},
+            {'display_name': 'Test Tenant', 'legal_name': 'Test Tenant SAS'},
             None,
             {'id': uid, 'email': 'new@x.co'},
             None,
@@ -1781,7 +1781,7 @@ def test_add_tenant_member_auth0_invited(monkeypatch):
     conn = FakeConn(
         fetchval=[1],
         fetchrow=[
-            {'name': 'Test Tenant'},  # tenant_name lookup
+            {'display_name': 'Test Tenant', 'legal_name': 'Test Tenant SAS'},  # tenant_name lookup
             None,                       # user lookup (no exist)
             {'id': uid, 'email': 'new@x.co'},  # INSERT returning
             None,                       # inviter lookup
@@ -1826,7 +1826,7 @@ def test_add_tenant_member_auth0_reused_existing(monkeypatch):
     conn = FakeConn(
         fetchval=[1],
         fetchrow=[
-            {'name': 'Test Tenant'},
+            {'display_name': 'Test Tenant', 'legal_name': 'Test Tenant SAS'},
             None,
             {'id': uid, 'email': 'existing@x.co'},
             None,
@@ -1856,7 +1856,7 @@ def test_add_tenant_member_auth0_skipped_when_not_configured(monkeypatch):
     conn = FakeConn(
         fetchval=[1],
         fetchrow=[
-            {'name': 'Test Tenant'},
+            {'display_name': 'Test Tenant', 'legal_name': 'Test Tenant SAS'},
             None,
             {'id': uid, 'email': 'local@x.co'},
             None,
@@ -1893,7 +1893,7 @@ def test_add_tenant_member_auth0_error_falls_back_to_local(monkeypatch):
     conn = FakeConn(
         fetchval=[1],
         fetchrow=[
-            {'name': 'Test Tenant'},
+            {'display_name': 'Test Tenant', 'legal_name': 'Test Tenant SAS'},
             None,
             {'id': uid, 'email': 'down@x.co'},
             None,
@@ -1925,7 +1925,7 @@ def test_add_tenant_member_invitation_rate_limit_does_not_abort(monkeypatch):
     conn = FakeConn(
         fetchval=[1],
         fetchrow=[
-            {'name': 'Test Tenant'},
+            {'display_name': 'Test Tenant', 'legal_name': 'Test Tenant SAS'},
             None,
             {'id': uid, 'email': 'rl@x.co'},
             None,
