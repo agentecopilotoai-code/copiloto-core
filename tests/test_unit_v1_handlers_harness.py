@@ -437,7 +437,9 @@ def test_get_my_notifications_dict_matrix():
 def test_patch_my_notifications_happy():
     from app.api.v1.handlers.me_handlers import patch_my_notifications, NotificationsPatchRequest
     uid = uuid4()
-    new = {'sms': {'invites': True}}
+    # Q-2 (audit #3): shape `{categoria: {canal: bool}}` con canal restringido
+    # a Literal['email','push','sms','in_app'].
+    new = {'invites': {'sms': True, 'email': False}}
     prefs = {'user_id': uid, 'notification_matrix': new,
              'locale': 'es-CO', 'timezone': 'America/Bogota', 'theme_override': None}
     conn = FakeConn(

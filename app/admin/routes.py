@@ -58,32 +58,9 @@ SESSION_TTL_SECONDS_DEFAULT = 2 * 60 * 60  # 2h matches Auth0 default
 SESSION_TTL_SECONDS = SESSION_TTL_SECONDS_DEFAULT
 
 router = APIRouter()
-# P0-3 (M70, audit 2026-05-27) — sessions ahora viven en un store
-# pluggeable (InMemory por default, Redis si REDIS_URL está configurado).
-# Multi-worker safe cuando se usa Redis.
-#
-# `_sessions` se mantiene como alias al dict subyacente del InMemory
-# store para back-compat con tests que inyectan sessions directo
-# (`_sessions[sid] = payload`). El alias se popula lazy en
-# `_get_inmemory_raw_for_tests()` — si el store activo es Redis, el dict
-# queda vacío y los tests que dependen de él fallan apropiadamente.
-_sessions: dict[str, dict[str, Any]] = {}
-
-
-def _get_inmemory_raw_for_tests() -> dict[str, dict[str, Any]]:
-    """Back-compat para tests que mutan `_sessions` directo. Si el store
-    activo es InMemory, retorna su dict interno y lo aliasea a `_sessions`
-    para que `_sessions[sid] = X` siga funcionando. Si es Redis, retorna
-    el `_sessions` original (los tests que dependen del dict deberían
-    usar `set_session_store_for_tests(InMemorySessionStore())` explícito)."""
-    global _sessions
-    from app.admin.session_store import (  # noqa: PLC0415
-        InMemorySessionStore, get_session_store,
-    )
-    store = get_session_store()
-    if isinstance(store, InMemorySessionStore):
-        _sessions = store._raw  # noqa: SLF001
-    return _sessions
+# P0-3 (M70) — sessions live in pluggable store (`app.admin.session_store`).
+# El shim `_sessions = {}` legacy fue removido (Q-1 audit#3) — todos los
+# tests modernos usan `set_session_store_for_tests(InMemorySessionStore())`.
 # M13 — `_PRIVILEGED_ROLES` se importa desde `app/core/security.py`
 # (fuente única de verdad). `_ROLE_LEVELS` queda LOCAL al BFF a propósito:
 # excluye `platform_owner` porque el BFF nunca debe tratarlo como un rol
@@ -1332,7 +1309,7 @@ async def admin_session(request: Request) -> Response:
         # M46: 401 explícito con reason + delete-cookie. Antes era un
         # `Response(status_code=401)` plano y el frontend no podía
         # distinguir "nunca tuvo sesión" de "sesión expiró por restart".
-        _debug('GET /admin/api/session', step='returning_401', store_size=len(_sessions))
+        _debug('GET /admin/api/session', step='returning_401')
         return _unauthorized_session_response(request)
     _debug(
         'GET /admin/api/session', step='returning_200',

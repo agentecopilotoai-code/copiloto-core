@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Literal
 from uuid import UUID
 
 import asyncpg
@@ -49,8 +49,15 @@ class PreferencesPatchRequest(BaseModel):
 
 
 class NotificationsPatchRequest(BaseModel):
+    """Q-2 (audit #3) — antes `dict[str, Any]` aceptaba cualquier shape
+    del cliente. Ahora schema explícito: matriz `{categoria: {canal: bool}}`
+    donde categoria es nombre arbitrario (string) y canal solo puede ser
+    'email'|'push'|'sms'|'in_app'. Bloquea typos / payloads basura del
+    cliente con 422 — antes pasaban silentes a DB."""
     model_config = ConfigDict(extra='forbid')
-    notification_matrix: dict[str, Any]
+    notification_matrix: dict[str, dict[
+        Literal['email', 'push', 'sms', 'in_app'], bool,
+    ]]
 
 
 class SessionRow(BaseModel):

@@ -29,48 +29,40 @@
  */
 import { lazy } from 'react';
 
+/**
+ * Q-7 (audit #3) — helper para `lazy()` con named export.
+ *
+ * `React.lazy()` requiere `{ default: Component }` pero nuestros módulos
+ * exportan por nombre (`export { TeamModule }` desde `index.js`). Helper
+ * reduce 10 líneas repetidas de `.then(m => ({ default: m.X }))`.
+ *
+ * @param {() => Promise<Record<string, any>>} importFn - función que retorna `import()`.
+ * @param {string} exportName - nombre del export en el módulo target.
+ * @returns componente lazy renderable.
+ */
+const lazyNamed = (importFn, exportName) =>
+  lazy(() => importFn().then((m) => ({ default: m[exportName] })));
+
 // ─── Platform admin (cross-tenant) — lazy ───────────────────────────────────
-// Cada `lazy(() => import(...))` queda como un chunk separado del bundle
-// de Vite. El default export de `index.js` se preserva, mantenemos el
-// shape `{ Component }` igual.
-const BillingMrr = lazy(() =>
-  import('../features/platform/billing-mrr/index.js').then((m) => ({ default: m.BillingMrr })),
-);
-const FeatureFlags = lazy(() =>
-  import('../features/platform/feature-flags/index.js').then((m) => ({ default: m.FeatureFlags })),
-);
-const FleetDlq = lazy(() =>
-  import('../features/platform/fleet-dlq/index.js').then((m) => ({ default: m.FleetDlq })),
-);
-const FleetTenants = lazy(() =>
-  import('../features/platform/fleet-tenants/index.js').then((m) => ({ default: m.FleetTenants })),
-);
-const Incidents = lazy(() =>
-  import('../features/platform/incidents/index.js').then((m) => ({ default: m.Incidents })),
-);
-const RolesAcl = lazy(() =>
-  import('../features/platform/roles-acl/index.js').then((m) => ({ default: m.RolesAcl })),
-);
-const Runbooks = lazy(() =>
-  import('../features/platform/runbooks/index.js').then((m) => ({ default: m.Runbooks })),
-);
-const SystemHealth = lazy(() =>
-  import('../features/platform/system-health/index.js').then((m) => ({ default: m.SystemHealth })),
-);
-const AIProvidersContainer = lazy(() =>
-  import('../features/platform/ai-providers/AIProvidersContainer.jsx').then((m) => ({
-    default: m.AIProvidersContainer,
-  })),
+// Cada `lazyNamed(...)` queda como un chunk separado del bundle de Vite.
+const BillingMrr = lazyNamed(() => import('../features/platform/billing-mrr/index.js'), 'BillingMrr');
+const FeatureFlags = lazyNamed(() => import('../features/platform/feature-flags/index.js'), 'FeatureFlags');
+const FleetDlq = lazyNamed(() => import('../features/platform/fleet-dlq/index.js'), 'FleetDlq');
+const FleetTenants = lazyNamed(() => import('../features/platform/fleet-tenants/index.js'), 'FleetTenants');
+const Incidents = lazyNamed(() => import('../features/platform/incidents/index.js'), 'Incidents');
+const RolesAcl = lazyNamed(() => import('../features/platform/roles-acl/index.js'), 'RolesAcl');
+const Runbooks = lazyNamed(() => import('../features/platform/runbooks/index.js'), 'Runbooks');
+const SystemHealth = lazyNamed(() => import('../features/platform/system-health/index.js'), 'SystemHealth');
+const AIProvidersContainer = lazyNamed(
+  () => import('../features/platform/ai-providers/AIProvidersContainer.jsx'),
+  'AIProvidersContainer',
 );
 
 // ─── Tenant transversales — lazy ────────────────────────────────────────────
-const TeamModule = lazy(() =>
-  import('../features/owner-admin/team/index.js').then((m) => ({ default: m.TeamModule })),
-);
-const TenantSetupWizard = lazy(() =>
-  import('../features/owner-admin/tenant-setup/index.js').then((m) => ({
-    default: m.TenantSetupWizard,
-  })),
+const TeamModule = lazyNamed(() => import('../features/owner-admin/team/index.js'), 'TeamModule');
+const TenantSetupWizard = lazyNamed(
+  () => import('../features/owner-admin/tenant-setup/index.js'),
+  'TenantSetupWizard',
 );
 
 export const MODULE_REGISTRY = Object.freeze({

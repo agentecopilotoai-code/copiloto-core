@@ -137,13 +137,16 @@ def refresh_runtime_metrics() -> None:
         from app.admin.ws_fanout import fanout as _ws_fanout  # noqa: PLC0415
         ws_fanout_subscriber_count.set(float(_ws_fanout.subscriber_count))
         ws_fanout_tenant_count.set(float(_ws_fanout.tenant_count))
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        # Q-3 (audit #3) — debug log para distinguir "no inicializado"
+        # (caso esperado pre-startup) de "bug real". Sin esto, métricas
+        # stale silenciosamente para siempre.
+        log.debug('metrics.ws_fanout_refresh_skipped', error=type(exc).__name__)
     try:
         if _active_rate_limiter is not None:
             rate_limit_buckets_current.set(float(_active_rate_limiter.size))
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        log.debug('metrics.rate_limit_refresh_skipped', error=type(exc).__name__)
 
 
 async def refresh_backup_age_metrics(conn: 'asyncpg.Connection') -> None:

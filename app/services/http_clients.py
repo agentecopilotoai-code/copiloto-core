@@ -111,10 +111,15 @@ async def close_all() -> None:
     for client in clients:
         try:
             await client.aclose()
-        except Exception:  # noqa: BLE001
-            # `aclose` puede fallar si el socket ya está roto — no abortar
-            # el shutdown por esto.
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Q-4 (audit #3) — `aclose` puede fallar si socket roto. NO
+            # abortar shutdown, pero loggear para diagnosticar leaks
+            # de socket en producción (sin esto, lifespan completa
+            # silenciosamente con conexiones colgadas).
+            import structlog  # noqa: PLC0415
+            structlog.get_logger().debug(
+                'http_clients.aclose_failed', error=type(exc).__name__,
+            )
 
 
 def _reset_for_tests() -> None:
