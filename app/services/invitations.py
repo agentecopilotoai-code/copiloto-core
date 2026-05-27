@@ -506,9 +506,13 @@ async def redeem_invitation(
     if not row:
         raise InvitationNotFoundError('invitation not found')
 
-    # Email match (case-insensitive — DB col es `citext` pero igual
-    # normalizamos en Python por defensa-en-profundidad).
-    if row['email'].lower() != redeemer_email.lower():
+    # Email match — case-insensitive + Unicode NFKC normalize.
+    # DiD-4 (audit #3): emails con caracteres no-ASCII (ej. `josé@x.co`)
+    # pueden venir en NFD ('e' + combining acute) o NFC ('é'). Auth0
+    # devuelve siempre NFC pero defensive: normalizamos ambos lados.
+    import unicodedata  # noqa: PLC0415
+    norm = lambda s: unicodedata.normalize('NFKC', s).lower()  # noqa: E731
+    if norm(row['email']) != norm(redeemer_email):
         log.warning(
             'invitation.redeem.email_mismatch',
             invitation_id=str(row['id']),

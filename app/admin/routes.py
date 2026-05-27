@@ -748,6 +748,26 @@ async def invitation_landing(token: str, request: Request) -> Response:
             ),
         )
 
+    # DiD-5 (audit #3) — antes de setear cookie, validar que el request
+    # es navegación top-level (no `<img>`/`<iframe>`/`fetch()` cross-origin).
+    # Sin esto, attacker.com puede embed `<img src="https://app/i/EVIL_TOKEN">`
+    # que fuerza al browser a hacer GET de la víctima → setea su cookie
+    # pending_invitation = EVIL_TOKEN → próximo login redime el EVIL invite.
+    #
+    # `Sec-Fetch-Dest=document` indica navegación top-level (URL bar, link
+    # clickeado). Browsers viejos sin Sec-Fetch headers (raro hoy): no
+    # rechazamos para no romper compat, pero loggeamos.
+    sec_fetch_dest = request.headers.get('sec-fetch-dest')
+    if sec_fetch_dest and sec_fetch_dest != 'document':
+        _debug(
+            'GET /i/<token>', step='non_document_request_rejected',
+            sec_fetch_dest=sec_fetch_dest,
+            hint='Probably <img>/<iframe>/fetch — possible CSRF prep',
+        )
+        # No mostramos HTML — un GET por `<img>` no espera HTML útil. 400
+        # silencioso es lo más cercano a "no entender".
+        return Response(status_code=status.HTTP_400_BAD_REQUEST)
+
     # Válida y pending — setear cookie + redirigir al login.
     settings = get_admin_settings()
     response = HTMLResponse(

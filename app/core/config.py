@@ -124,6 +124,9 @@ class Settings(BaseSettings):
     email_from_name: str = 'CopilotoIA'
     # URL pública del SPA para construir los links de invitación.
     # Producción: 'https://app.copilotoia.com'.
+    # DiD-3 (audit #3) — en non-local DEBE ser https. Sin esto, los emails
+    # de invitación llevarían links HTTP que exponen el token clear en la
+    # red. Validator abajo enforcea (post-construcción para tener app_env).
     app_public_url: str = 'http://localhost:3000'
 
     # TTL de los tokens de invitación. Default 7 días — balance entre
@@ -179,6 +182,19 @@ class Settings(BaseSettings):
         if isinstance(value, str) and value.strip() == '':
             return None
         return value
+
+    def model_post_init(self, __context) -> None:
+        """DiD-3 (audit #3) — enforce HTTPS de `app_public_url` en non-local.
+
+        En local aceptamos `http://localhost:3000` (no hay TLS cert).
+        En cualquier otro env (staging/prod), `http://` expondría el
+        invitation token al wire — abort hard al startup."""
+        if self.app_env != 'local' and not self.app_public_url.startswith('https://'):
+            raise ValueError(
+                f'app_public_url debe ser https:// en app_env={self.app_env!r}. '
+                f'Actual: {self.app_public_url!r}. Los emails de invitación '
+                'incluyen tokens; HTTP los expone al wire.'
+            )
 
 
 @lru_cache

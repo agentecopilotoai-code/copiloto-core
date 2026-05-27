@@ -122,6 +122,10 @@ class RedisSessionStore:
     """
 
     def __init__(self, url: str, prefix: str, *, local_cache_ttl: float = 5.0) -> None:
+        # DiD-6 (audit #3) — `local_cache_ttl=0` desactiva el cache (todos
+        # los gets pegan a Redis). Usar en escenarios privacy/compliance
+        # que requieren propagación INMEDIATA de revokes (hard revoke de
+        # cuenta comprometida). Trade-off: -1 RTT por request hot.
         # QUAL audit#2 — lazy import compartido en `_redis_store_base`.
         from app.admin._redis_store_base import lazy_redis_import  # noqa: PLC0415
         redis_cls = lazy_redis_import()
@@ -141,8 +145,9 @@ class RedisSessionStore:
 
     async def get(self, sid: str) -> dict[str, Any] | None:
         # PERF-019 — local cache hit check antes del RTT a Redis.
+        # DiD-6 — `local_cache_ttl=0` skipea el cache local entero.
         now = time.time()
-        cached = self._local_cache.get(sid)
+        cached = self._local_cache.get(sid) if self._local_cache_ttl > 0 else None
         if cached is not None:
             cache_expires_at, cached_payload = cached
             if cache_expires_at > now:
@@ -181,8 +186,9 @@ class RedisSessionStore:
             except Exception:  # noqa: BLE001
                 pass
             return None
-        # PERF-019 — populate local cache.
-        self._local_cache[sid] = (now + self._local_cache_ttl, payload)
+        # PERF-019 — populate local cache (skip si TTL 0 = DiD-6).
+        if self._local_cache_ttl > 0:
+            self._local_cache[sid] = (now + self._local_cache_ttl, payload)
         return payload
 
     async def set(

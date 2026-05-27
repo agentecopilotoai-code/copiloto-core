@@ -389,6 +389,14 @@ async def decode_auth0_id_token(
             detail='id_token azp mismatch',
         )
 
+    # DiD-1 (audit #3) — `at_hash` validation OPCIONAL. OIDC §3.1.3.6
+    # dice: si el id_token trae `at_hash`, debe ser left-half(SHA256(
+    # access_token)) base64url. Defense contra swap del access_token
+    # por otro fresco del mismo IdP (escenario raro pero spec). Solo
+    # se valida si el caller pasa el access_token + el claim presente.
+    # Por compat, NO lo agregamos a la signature hoy — comentado para
+    # futura iteración. (TODO: parámetro opt-in `expected_access_token`).
+
     if expected_nonce is not None:
         token_nonce = claims.get('nonce')
         # constant-time compare → no leakea longitud del nonce esperado.
