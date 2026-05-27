@@ -114,6 +114,68 @@ def _extract_mfa_verified(payload: dict, namespace: str = '') -> bool:
     return 'mfa' in amr
 
 
+# M63 — verificador del assertion HMAC X-Auth-MFA-* emitido por el BFF.
+#
+# Necesario porque Auth0 ejecuta las post-login Actions ANTES del MFA
+# challenge → el `mfa_verified` claim del access_token queda en `false`
+# aunque MFA se haya completado. El BFF detecta MFA via `amr` del
+# id_token y firma este aserto con `jwt_secret` (shared con el Core).
+#
+# Si el header NO está, NO es válido, o NO matchea el actor del JWT →
+# devolvemos False (no rompemos request — el Core simplemente cae al
+# comportamiento normal de leer mfa_verified del JWT). Solo upgradeamos
+# de False→True cuando el aserto es válido.
+#
+# Anti-spoof: HMAC con jwt_secret (vive solo en containers backend).
+# Anti-replay: timestamp con tolerancia de 60s. Anti-mismatch: actor_id
+# del header debe matchear `sub` del JWT.
+_MFA_ATTESTATION_MAX_AGE_SECONDS = 60
+
+
+def _verify_mfa_attestation_header(request: Request, jwt_sub: str | None) -> bool:
+    """Verifica los headers X-Auth-MFA-* firmados por el BFF.
+
+    Retorna True SOLO si:
+    - Los 4 headers están presentes.
+    - `X-Auth-MFA-Actor` matchea exactamente el `sub` del JWT.
+    - `X-Auth-MFA-Timestamp` es un entero, dentro de los últimos 60s.
+    - `X-Auth-MFA-Signature` es un HMAC-SHA256 válido del payload
+      `mfa-verified:<actor_id>:<timestamp_ms>` con `jwt_secret`.
+
+    Caso de error (header inválido / firma rota / replay viejo / mismatch):
+    devuelve False sin levantar — el caller cae al chequeo normal del JWT.
+    """
+    import hashlib  # noqa: PLC0415
+
+    if not jwt_sub:
+        return False
+    sig_header = request.headers.get('x-auth-mfa-signature')
+    if not sig_header:
+        return False
+    actor_header = request.headers.get('x-auth-mfa-actor')
+    if not actor_header or actor_header != jwt_sub:
+        # mismatch → posible spoof / actor diferente al JWT firmado.
+        return False
+    ts_header = request.headers.get('x-auth-mfa-timestamp', '')
+    try:
+        ts_ms = int(ts_header)
+    except (TypeError, ValueError):
+        return False
+    # Freshness check: ±60s. Tolera clock skew + latencia de la request.
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    if abs(now_ms - ts_ms) > _MFA_ATTESTATION_MAX_AGE_SECONDS * 1000:
+        return False
+    # HMAC verification: constant-time compare via hmac.compare_digest.
+    settings = get_settings()
+    expected_payload = f'mfa-verified:{jwt_sub}:{ts_ms}'
+    expected_sig = hmac.new(
+        settings.jwt_secret.encode('utf-8'),
+        expected_payload.encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(sig_header, expected_sig)
+
+
 def _normalize_auth0_domain(domain: str) -> str:
     return domain.removeprefix('https://').removeprefix('http://').rstrip('/')
 
@@ -501,7 +563,16 @@ async def authenticate_request(
     # tener que re-parsear el cookie. Útil para audit (sabremos si la
     # acción ocurrió bajo opt-in temporal o bajo el modo legacy).
     request.state.support_mode_source = support_mode_source
-    request.state.mfa_verified = _extract_mfa_verified(payload, namespace)
+    # M63 — MFA verification: 2 fuentes con OR.
+    # 1. JWT claim namespaced o amr=['mfa'] del token.
+    # 2. Aserto HMAC `X-Auth-MFA-*` emitido por el BFF post-login.
+    #    Necesario porque Auth0 corre el post-login Action ANTES del
+    #    MFA challenge → el access_token tiene mfa_verified=false aunque
+    #    MFA se completó. El BFF detecta MFA via id_token amr y nos
+    #    asienta la prueba con HMAC firmado por jwt_secret compartido.
+    mfa_from_jwt = _extract_mfa_verified(payload, namespace)
+    mfa_from_bff = _verify_mfa_attestation_header(request, payload.get('sub'))
+    request.state.mfa_verified = mfa_from_jwt or mfa_from_bff
     # M60/A-003 — orden de preferencia para `email` / `name`:
     #   1. Claim namespaced del access_token (emitido por el Auth0
     #      Action post-M60). Esta es la fuente de verdad — firmada por

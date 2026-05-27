@@ -130,6 +130,105 @@ def test_extract_mfa_verified_missing():
     assert _extract_mfa_verified({'amr': None}) is False
 
 
+# ───────── _verify_mfa_attestation_header (M63) ───────────────────────
+
+def _build_mfa_assertion(jwt_secret, actor_id, *, ts_ms=None):
+    """Helper test — replica lo que hace el BFF para firmar el aserto."""
+    import hashlib
+    import hmac as _hmac
+    import time as _time
+    ts_ms = ts_ms if ts_ms is not None else int(_time.time() * 1000)
+    payload = f'mfa-verified:{actor_id}:{ts_ms}'
+    sig = _hmac.new(jwt_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return {
+        'x-auth-mfa-verified': '1',
+        'x-auth-mfa-actor': actor_id,
+        'x-auth-mfa-timestamp': str(ts_ms),
+        'x-auth-mfa-signature': sig,
+    }
+
+
+def _fake_request(headers):
+    from types import SimpleNamespace
+    return SimpleNamespace(headers={k.lower(): v for k, v in headers.items()})
+
+
+def test_mfa_attestation_valid_returns_true(monkeypatch):
+    from app.core import security
+    monkeypatch.setattr(security, 'get_settings',
+                        lambda: type('S', (), {'jwt_secret': 'x' * 32})())
+    headers = _build_mfa_assertion('x' * 32, 'auth0|abc')
+    req = _fake_request(headers)
+    assert security._verify_mfa_attestation_header(req, 'auth0|abc') is True
+
+
+def test_mfa_attestation_actor_mismatch_returns_false(monkeypatch):
+    """Defense: header dice 'auth0|other' pero JWT sub es 'auth0|abc'."""
+    from app.core import security
+    monkeypatch.setattr(security, 'get_settings',
+                        lambda: type('S', (), {'jwt_secret': 'x' * 32})())
+    headers = _build_mfa_assertion('x' * 32, 'auth0|other')
+    req = _fake_request(headers)
+    assert security._verify_mfa_attestation_header(req, 'auth0|abc') is False
+
+
+def test_mfa_attestation_bad_signature_returns_false(monkeypatch):
+    """Spoof: header con signature inválida (firmada con otra key)."""
+    from app.core import security
+    monkeypatch.setattr(security, 'get_settings',
+                        lambda: type('S', (), {'jwt_secret': 'x' * 32})())
+    # Atacker firma con otra key
+    headers = _build_mfa_assertion('attacker-secret-key', 'auth0|abc')
+    req = _fake_request(headers)
+    assert security._verify_mfa_attestation_header(req, 'auth0|abc') is False
+
+
+def test_mfa_attestation_stale_timestamp_returns_false(monkeypatch):
+    """Replay: assertion firmada hace 5 minutos."""
+    from app.core import security
+    monkeypatch.setattr(security, 'get_settings',
+                        lambda: type('S', (), {'jwt_secret': 'x' * 32})())
+    import time
+    old_ts_ms = int(time.time() * 1000) - 5 * 60 * 1000  # hace 5min
+    headers = _build_mfa_assertion('x' * 32, 'auth0|abc', ts_ms=old_ts_ms)
+    req = _fake_request(headers)
+    assert security._verify_mfa_attestation_header(req, 'auth0|abc') is False
+
+
+def test_mfa_attestation_missing_headers_returns_false(monkeypatch):
+    from app.core import security
+    monkeypatch.setattr(security, 'get_settings',
+                        lambda: type('S', (), {'jwt_secret': 'x' * 32})())
+    # Ninguno de los headers
+    req = _fake_request({})
+    assert security._verify_mfa_attestation_header(req, 'auth0|abc') is False
+    # Falta signature
+    headers = _build_mfa_assertion('x' * 32, 'auth0|abc')
+    del headers['x-auth-mfa-signature']
+    req = _fake_request(headers)
+    assert security._verify_mfa_attestation_header(req, 'auth0|abc') is False
+
+
+def test_mfa_attestation_invalid_timestamp_returns_false(monkeypatch):
+    from app.core import security
+    monkeypatch.setattr(security, 'get_settings',
+                        lambda: type('S', (), {'jwt_secret': 'x' * 32})())
+    headers = _build_mfa_assertion('x' * 32, 'auth0|abc')
+    headers['x-auth-mfa-timestamp'] = 'not-a-number'
+    req = _fake_request(headers)
+    assert security._verify_mfa_attestation_header(req, 'auth0|abc') is False
+
+
+def test_mfa_attestation_no_jwt_sub_returns_false(monkeypatch):
+    from app.core import security
+    monkeypatch.setattr(security, 'get_settings',
+                        lambda: type('S', (), {'jwt_secret': 'x' * 32})())
+    headers = _build_mfa_assertion('x' * 32, 'auth0|abc')
+    req = _fake_request(headers)
+    # jwt_sub = None significa request anónima sin JWT — no debe ascender mfa.
+    assert security._verify_mfa_attestation_header(req, None) is False
+
+
 # ───────── _normalize_auth0_domain / _auth0_issuer / _normalize_issuer ──
 
 

@@ -373,6 +373,58 @@ def _tenant_id_from_support_cookie(request: Request) -> str | None:
     return None
 
 
+# M63 — atestación HMAC de MFA del BFF hacia el Core.
+#
+# Problema: Auth0 ejecuta las post-login Actions ANTES del MFA challenge.
+# Resultado: el custom claim `mfa_verified` del access_token queda en
+# `false` aunque el user haya completado MFA — el flujo Auth0 no re-corre
+# las Actions después del MFA. El BFF detecta MFA via `amr=['mfa']` del
+# id_token (Auth0 SÍ actualiza el id_token post-MFA), pero el Core valida
+# el access_token y no ve evidencia de MFA.
+#
+# Fix: el BFF firma un assertion HMAC con `jwt_secret` (shared secret
+# entre BFF y Core, ya usado para signed cookies). El Core verifica el
+# HMAC + match de actor_id + freshness y promueve `mfa_verified=True`
+# para esa request. Sin firma válida → comportamiento default (lee del
+# JWT solo).
+#
+# Anti-spoof: el header requiere conocer `jwt_secret` (vive solo en
+# containers backend, no expuesto). Un attacker que pegue al Core directo
+# sin pasar por BFF NO puede forjar el header → mfa_verified=False → 403
+# para roles privilegiados como antes.
+#
+# Anti-replay: timestamp con tolerancia de 60s. Después el assertion
+# expira y hay que regenerarlo (lo hace el BFF en cada request del proxy).
+_MFA_ATTESTATION_VALIDITY_SECONDS = 60
+
+
+def _build_mfa_attestation(actor_id: str) -> dict[str, str]:
+    """Genera los 4 headers `X-Auth-MFA-*` para que el Core confíe
+    en que MFA fue completado por este actor.
+
+    payload firmado: `mfa-verified:<actor_id>:<timestamp_ms>`
+    """
+    import hashlib  # noqa: PLC0415
+    import hmac as _hmac  # noqa: PLC0415
+
+    from app.core.config import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    timestamp_ms = int(time.time() * 1000)
+    payload = f'mfa-verified:{actor_id}:{timestamp_ms}'
+    sig = _hmac.new(
+        settings.jwt_secret.encode('utf-8'),
+        payload.encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        'x-auth-mfa-verified': '1',
+        'x-auth-mfa-actor': actor_id,
+        'x-auth-mfa-timestamp': str(timestamp_ms),
+        'x-auth-mfa-signature': sig,
+    }
+
+
 def _core_api_headers(
     request: Request,
     session: dict[str, Any],
@@ -422,6 +474,21 @@ def _core_api_headers(
         headers['x-admin-user-email'] = profile['email']
     if profile.get('name'):
         headers['x-admin-user-name'] = profile['name']
+    # M63 — atestación HMAC de MFA. Auth0 ejecuta las post-login Actions
+    # ANTES del MFA challenge, entonces el `mfa_verified` custom claim del
+    # access_token queda en `false`. El BFF detecta MFA via `amr=['mfa']`
+    # del id_token (que SÍ se actualiza post-MFA) y lo asentamos en su
+    # sesión cached. Para que el Core también confíe en MFA sin tener que
+    # reemitir el access_token, firmamos un assertion HMAC con
+    # `jwt_secret` (compartido entre BFF y Core). El Core verifica el
+    # HMAC + match de actor + freshness y promueve `mfa_verified=True`.
+    #
+    # Si attacker pega al Core directo SIN pasar por el BFF, no tiene el
+    # `jwt_secret` (vive en el container del BFF + Core) y el HMAC no
+    # verifica → mfa_verified queda False → 403 para roles privilegiados.
+    if profile.get('mfa_verified') and profile.get('sub'):
+        attestation = _build_mfa_attestation(profile['sub'])
+        headers.update(attestation)
     # M42 — `X-Admin-Identity` (HMAC-signed `{sub, email, exp}`) se emitía
     # como defense-in-depth contra spoof del `X-Admin-User-Email`, pero NUNCA
     # se montó un consumer en `app/core/security.py` ni en handler alguno.
