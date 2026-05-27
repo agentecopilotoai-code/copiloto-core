@@ -944,9 +944,12 @@ if [ "$CONFIGURE_DB_CONNECTION" = "true" ]; then
     else
       # Preservar enabled_clients existentes + agregar el admin si falta.
       # El M2M (`service`) NO va acá: usa client_credentials, no DB auth.
-      existing_clients_json="$(jq -c '.enabled_clients // []' <<<"$connections_response" | jq -c '.[0] // []')"
-      # Actually parsear el array correcto del row matched:
-      existing_clients_json="$(jq -c --arg id "$db_conn_id" '.[] | select(.id == $id) | .enabled_clients // []' <<<"$connections_response")"
+      # `connections_response` es un ARRAY de connections del tenant; sacamos
+      # el row matched por id y leemos su enabled_clients. Fallback a []
+      # si la key no está (connection legacy sin clients enabled).
+      existing_clients_json="$(jq -c --arg id "$db_conn_id" \
+        '[.[] | select(.id == $id) | .enabled_clients // []] | .[0] // []' \
+        <<<"$connections_response")"
       db_conn_payload="$(jq -n \
         --arg pwd_policy "$DB_PASSWORD_POLICY" \
         --argjson pwd_history "$DB_PASSWORD_HISTORY_SIZE" \
