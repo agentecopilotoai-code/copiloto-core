@@ -135,36 +135,34 @@ def test_admin_client_secret_file_missing_raises(monkeypatch, tmp_path):
 
 
 def test_active_session_id_returns_none_for_empty_id():
+    import asyncio
     from app.admin.routes import _active_session_id
-    assert _active_session_id(None) is None
-    assert _active_session_id('') is None
+    assert asyncio.run(_active_session_id(None)) is None
+    assert asyncio.run(_active_session_id('')) is None
 
 
 def test_active_session_id_returns_session_when_active():
+    """P0-3: usar session_store API en vez de mutar _sessions directo."""
+    import asyncio
     from app.admin import routes as admin_routes
+    from app.admin.session_store import get_session_store
     sid = 'test-session-id-1'
-    admin_routes._sessions[sid] = {
-        'expires_at': time.time() + 3600,
-        'profile': {'email': 'x@y'},
-    }
-    try:
-        out = admin_routes._active_session_id(sid)
-        assert out is not None
-        assert out['profile']['email'] == 'x@y'
-    finally:
-        admin_routes._sessions.pop(sid, None)
+    asyncio.run(get_session_store().set(sid, {'profile': {'email': 'x@y'}}, 3600))
+    out = asyncio.run(admin_routes._active_session_id(sid))
+    assert out is not None
+    assert out['profile']['email'] == 'x@y'
 
 
 def test_active_session_id_drops_expired():
+    """P0-3: el store rechaza expired internamente (lazy expiration)."""
+    import asyncio
     from app.admin import routes as admin_routes
+    from app.admin.session_store import get_session_store
     sid = 'expired-session-id-1'
-    admin_routes._sessions[sid] = {
-        'expires_at': time.time() - 10,  # expired
-        'profile': {'email': 'x@y'},
-    }
-    out = admin_routes._active_session_id(sid)
+    asyncio.run(get_session_store().set(sid, {'profile': {'email': 'x@y'}}, 1))
+    time.sleep(1.1)
+    out = asyncio.run(admin_routes._active_session_id(sid))
     assert out is None
-    assert sid not in admin_routes._sessions
 
 
 # ───────── _role_at_least / _has_admin_role ─────────────────────────────

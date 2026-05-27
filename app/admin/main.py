@@ -11,11 +11,18 @@ from app.db.pool import db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # pragma: no cover - lifespan only runs in a real ASGI server
+    from app.admin.session_store import close_session_store
+    from app.services.http_clients import close_all as close_http_clients
+
     settings = get_settings()
     configure_logging(settings.log_level)
     await db.connect(settings.database_url)
-    yield
-    await db.close()
+    try:
+        yield
+    finally:
+        await db.close()
+        await close_session_store()  # P0-3 — cerrar conn Redis si aplica
+        await close_http_clients()   # PERF-001 — cerrar httpx singletons
 
 
 def create_app() -> FastAPI:  # pragma: no cover - factory exercised via app/main.py

@@ -41,11 +41,15 @@ def _client(app):
 
 
 def _make_session(*, expires_in=3600, profile=None) -> tuple[str, dict]:
-    """Inject a fresh session into the in-memory store and return its id+payload."""
-    from app.admin.routes import _sessions
+    """Inject a fresh session into the in-memory store and return its id+payload.
+
+    P0-3: usa el `session_store` API en vez de mutar `_sessions` directo.
+    """
+    import asyncio
+    from app.admin.session_store import get_session_store
+
     sid = f'sid-{uuid4().hex}'
     payload = {
-        'expires_at': time.time() + expires_in,
         'access_token': 'tok-abc',
         'id_token': 'id-abc',
         'profile': profile if profile is not None else {
@@ -61,7 +65,10 @@ def _make_session(*, expires_in=3600, profile=None) -> tuple[str, dict]:
             'mfa_verified': True,
         },
     }
-    _sessions[sid] = payload
+    asyncio.run(get_session_store().set(sid, payload, expires_in))
+    # Return payload con `expires_at` calculado (los tests legacy lo leen
+    # del payload). El store ya lo setea internamente.
+    payload['expires_at'] = time.time() + expires_in
     return sid, payload
 
 
@@ -625,8 +632,9 @@ def test_admin_logout_clears_cookie_and_redirects(monkeypatch):
         c.cookies.set(routes.SESSION_COOKIE, sid)
         r = c.post('/admin/logout', headers={'x-requested-with': 'fetch'}, follow_redirects=False)
         assert r.status_code == 303
-        # Session should be removed
-        assert sid not in routes._sessions
+        # Session should be removed (P0-3: via store API).
+        from app.admin.session_store import get_session_store
+        assert asyncio.run(get_session_store().get(sid)) is None
 
 
 def test_admin_logout_no_session_still_works(monkeypatch):
@@ -800,7 +808,8 @@ def test_admin_core_api_proxy_upstream_401_expired_purges_session(monkeypatch):
         'sub': 'u|1', 'email': 'u@x.com', 'roles': ['admin'],
         'mfa_verified': True,
     })
-    assert sid in routes._sessions
+    from app.admin.session_store import get_session_store
+    assert asyncio.run(get_session_store().get(sid)) is not None
 
     # Upstream Core responde 401 'Expired token' (lo que jose tira post-A-002).
     _patch_httpx(monkeypatch, [
@@ -820,8 +829,8 @@ def test_admin_core_api_proxy_upstream_401_expired_purges_session(monkeypatch):
         # B-002: respuesta enriquecida — el SPA puede actuar específico.
         assert body['reason'] == 'token_expired'
         assert 'session_expired' in body['detail']
-    # La sesión fue purgada del dict in-memory.
-    assert sid not in routes._sessions
+    # La sesión fue purgada del store (P0-3 via session_store API).
+    assert asyncio.run(get_session_store().get(sid)) is None
 
 
 def test_admin_core_api_proxy_upstream_401_other_preserved(monkeypatch):
@@ -864,8 +873,9 @@ def test_admin_core_api_proxy_upstream_401_other_preserved(monkeypatch):
         assert r.status_code == 401
         # Detail tal cual del upstream — no marcado como expired.
         assert r.json() == {'detail': 'Authentication required'}
-    # Sesión preservada.
-    assert sid in routes._sessions
+    # Sesión preservada (P0-3 via session_store API).
+    from app.admin.session_store import get_session_store
+    assert asyncio.run(get_session_store().get(sid)) is not None
 
 
 def test_admin_callback_uses_expires_in_from_token_response(monkeypatch):
@@ -914,10 +924,14 @@ def test_admin_callback_uses_expires_in_from_token_response(monkeypatch):
         r = c.get(f'/callback?code=abc&state={state}', follow_redirects=False)
     assert r.status_code in (302, 303, 307)
     # La sesión nueva fue creada con expires_at ≈ now + 3600.
-    sids = [k for k, v in routes._sessions.items()
-            if v.get('profile', {}).get('sub') == 'auth0|x']
+    # P0-3: usamos el _raw del InMemoryStore para iterar (tests-only).
+    from app.admin.session_store import InMemorySessionStore, get_session_store
+    store = get_session_store()
+    assert isinstance(store, InMemorySessionStore)  # test fixture lo garantiza
+    raw = store._raw  # noqa: SLF001
+    sids = [k for k, v in raw.items() if v.get('profile', {}).get('sub') == 'auth0|x']
     assert sids, 'sesión nueva no creada'
-    sess = routes._sessions[sids[-1]]
+    sess = raw[sids[-1]]
     delta = sess['expires_at'] - _t.time()
     assert 3500 < delta < 3700  # ~1h (con margen)
     # refresh_token guardado.

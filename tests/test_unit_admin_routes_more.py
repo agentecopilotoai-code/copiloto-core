@@ -17,33 +17,37 @@ def _run(c):
 
 
 def test_active_session_id_none_input():
+    import asyncio
     from app.admin.routes import _active_session_id
-    assert _active_session_id(None) is None
-    assert _active_session_id('') is None
+    assert asyncio.run(_active_session_id(None)) is None
+    assert asyncio.run(_active_session_id('')) is None
 
 
 def test_active_session_id_unknown_session():
-    from app.admin.routes import _active_session_id, _sessions
-    _sessions.clear()
-    assert _active_session_id('nonexistent') is None
+    import asyncio
+    from app.admin.routes import _active_session_id
+    assert asyncio.run(_active_session_id('nonexistent')) is None
 
 
 def test_active_session_id_expired_session():
-    from app.admin.routes import _active_session_id, _sessions
-    _sessions.clear()
-    sid = 'expired-sid'
-    _sessions[sid] = {'expires_at': time.time() - 1, 'profile': {}}
-    assert _active_session_id(sid) is None
-    # Should be removed
-    assert sid not in _sessions
+    """P0-3: el store rechaza expired sessions internamente."""
+    import asyncio
+    from app.admin.routes import _active_session_id
+    from app.admin.session_store import get_session_store
+    store = get_session_store()
+    # `set` con TTL=1s — luego sleep para forzar expiry.
+    asyncio.run(store.set('expired-sid', {'profile': {}}, ttl_seconds=1))
+    time.sleep(1.1)
+    assert asyncio.run(_active_session_id('expired-sid')) is None
 
 
 def test_active_session_id_valid_session():
-    from app.admin.routes import _active_session_id, _sessions
-    _sessions.clear()
-    sid = 'valid-sid'
-    _sessions[sid] = {'expires_at': time.time() + 60, 'profile': {'sub': 'u|1'}}
-    out = _active_session_id(sid)
+    import asyncio
+    from app.admin.routes import _active_session_id
+    from app.admin.session_store import get_session_store
+    store = get_session_store()
+    asyncio.run(store.set('valid-sid', {'profile': {'sub': 'u|1'}}, 60))
+    out = asyncio.run(_active_session_id('valid-sid'))
     assert out is not None
     assert out['profile']['sub'] == 'u|1'
 
@@ -445,19 +449,19 @@ def test_logout_return_to_empty_url_list(monkeypatch):
 
 
 def test_active_session_no_cookie():
+    import asyncio
     from app.admin.routes import _active_session
     request = SimpleNamespace(cookies={})
-    out = _active_session(request)
-    assert out is None
+    assert asyncio.run(_active_session(request)) is None
 
 
 def test_active_session_with_cookie():
-    from app.admin.routes import _active_session, _sessions, SESSION_COOKIE
-    _sessions.clear()
-    sid = 'live-sid'
-    _sessions[sid] = {'expires_at': time.time() + 100, 'profile': {}}
-    request = SimpleNamespace(cookies={SESSION_COOKIE: sid})
-    out = _active_session(request)
+    import asyncio
+    from app.admin.routes import _active_session, SESSION_COOKIE
+    from app.admin.session_store import get_session_store
+    asyncio.run(get_session_store().set('live-sid', {'profile': {}}, 100))
+    request = SimpleNamespace(cookies={SESSION_COOKIE: 'live-sid'})
+    out = asyncio.run(_active_session(request))
     assert out is not None
 
 

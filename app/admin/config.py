@@ -33,6 +33,14 @@ class AdminSettings(BaseSettings):
     auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
     admin_core_api_base_url: str = 'http://127.0.0.1:8000'
     mfa_enforcement_enabled: bool = True
+    # P0-3 (audit 2026-05-27) — Redis URL para session store cross-worker.
+    # Si None, el BFF usa InMemorySessionStore (single-worker only). En
+    # docker-compose ya viene `redis://redis:6379/0`; en prod multi-worker
+    # es obligatorio.
+    redis_url: str | None = None
+    # Prefijo de keys en Redis para sessions del BFF — evita colisión si
+    # comparten Redis con otros servicios del mismo cluster.
+    bff_session_redis_prefix: str = 'copilotoia:admin:session:'
 
     @property
     def state_secret(self) -> str:

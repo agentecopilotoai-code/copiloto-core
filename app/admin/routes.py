@@ -58,7 +58,32 @@ SESSION_TTL_SECONDS_DEFAULT = 2 * 60 * 60  # 2h matches Auth0 default
 SESSION_TTL_SECONDS = SESSION_TTL_SECONDS_DEFAULT
 
 router = APIRouter()
+# P0-3 (M70, audit 2026-05-27) — sessions ahora viven en un store
+# pluggeable (InMemory por default, Redis si REDIS_URL está configurado).
+# Multi-worker safe cuando se usa Redis.
+#
+# `_sessions` se mantiene como alias al dict subyacente del InMemory
+# store para back-compat con tests que inyectan sessions directo
+# (`_sessions[sid] = payload`). El alias se popula lazy en
+# `_get_inmemory_raw_for_tests()` — si el store activo es Redis, el dict
+# queda vacío y los tests que dependen de él fallan apropiadamente.
 _sessions: dict[str, dict[str, Any]] = {}
+
+
+def _get_inmemory_raw_for_tests() -> dict[str, dict[str, Any]]:
+    """Back-compat para tests que mutan `_sessions` directo. Si el store
+    activo es InMemory, retorna su dict interno y lo aliasea a `_sessions`
+    para que `_sessions[sid] = X` siga funcionando. Si es Redis, retorna
+    el `_sessions` original (los tests que dependen del dict deberían
+    usar `set_session_store_for_tests(InMemorySessionStore())` explícito)."""
+    global _sessions
+    from app.admin.session_store import (  # noqa: PLC0415
+        InMemorySessionStore, get_session_store,
+    )
+    store = get_session_store()
+    if isinstance(store, InMemorySessionStore):
+        _sessions = store._raw  # noqa: SLF001
+    return _sessions
 # M13 — `_PRIVILEGED_ROLES` se importa desde `app/core/security.py`
 # (fuente única de verdad). `_ROLE_LEVELS` queda LOCAL al BFF a propósito:
 # excluye `platform_owner` porque el BFF nunca debe tratarlo como un rol
@@ -180,28 +205,34 @@ def _logout_return_to(request: Request) -> str:
     return str(request.url_for('admin_index'))
 
 
-def _active_session_id(session_id: str | None) -> dict[str, Any] | None:
+async def _active_session_id(session_id: str | None) -> dict[str, Any] | None:
+    """Async — el store puede ser Redis (IO real)."""
     if not session_id:
         _debug('_active_session_id', result='miss', reason='no_cookie')
         return None
-    session = _sessions.get(session_id)
+    from app.admin.session_store import get_session_store  # noqa: PLC0415
+    store = get_session_store()
+    session = await store.get(session_id)
     if not session:
         _debug(
-            '_active_session_id', result='miss', reason='zombie',
-            sid=session_id, store_size=len(_sessions),
+            '_active_session_id', result='miss', reason='zombie_or_expired',
+            sid=session_id,
         )
         return None
-    if session['expires_at'] < time.time():
+    # `get()` ya filtra expired en el InMemory store; el Redis store
+    # delega al TTL del server (no devuelve expired). Redundant check
+    # acá por defensa-en-profundidad si el payload tiene expires_at viejo
+    # pero el TTL fallback no actuó.
+    if session.get('expires_at', 0) < time.time():
         _debug(
             '_active_session_id', result='miss', reason='ttl_expired',
-            sid=session_id, expired_seconds_ago=int(time.time() - session['expires_at']),
+            sid=session_id,
         )
-        _sessions.pop(session_id, None)
+        await store.delete(session_id)
         return None
     _debug(
         '_active_session_id', result='hit',
         sid=session_id, email=session.get('profile', {}).get('email'),
-        store_size=len(_sessions),
     )
     return session
 
@@ -273,8 +304,8 @@ async def _session_can_stream_tenant(
     return any(_role_at_least(row['role'], 'agent') for row in roles)
 
 
-def _active_session(request: Request) -> dict[str, Any] | None:
-    return _active_session_id(request.cookies.get(SESSION_COOKIE))
+async def _active_session(request: Request) -> dict[str, Any] | None:
+    return await _active_session_id(request.cookies.get(SESSION_COOKIE))
 
 
 # M46 — `_sessions` vive en memoria del proceso uvicorn. Cualquier reinicio
@@ -750,7 +781,7 @@ async def invitation_landing(token: str, request: Request) -> Response:
 @router.get('/admin/login', include_in_schema=False)
 async def admin_login(request: Request) -> RedirectResponse:
     _debug('GET /admin/login', has_cookie=request.cookies.get(SESSION_COOKIE) is not None)
-    if _active_session(request):
+    if await _active_session(request):
         _debug('GET /admin/login', skip='already_authenticated', redirect='/admin/')
         return RedirectResponse('/admin/', status_code=status.HTTP_303_SEE_OTHER)
 
@@ -1052,12 +1083,11 @@ async def admin_callback(
     _debug(
         'GET /callback', step='creating_session',
         sid=session_id, email=profile_email, roles=profile_roles,
-        mfa_verified=mfa_verified, store_size_before=len(_sessions),
+        mfa_verified=mfa_verified,
         session_ttl_seconds=session_ttl,
         raw_expires_in=raw_expires_in,
     )
-    _sessions[session_id] = {
-        'expires_at': time.time() + session_ttl,
+    session_payload = {
         'access_token': tokens['access_token'],
         'id_token': id_token,
         # B-002 — guardar refresh_token para implementación futura del
@@ -1078,6 +1108,9 @@ async def admin_callback(
             'mfa_verified': mfa_verified,
         },
     }
+    # P0-3 — session store async (InMemory o Redis según REDIS_URL).
+    from app.admin.session_store import get_session_store  # noqa: PLC0415
+    await get_session_store().set(session_id, session_payload, session_ttl)
     # M65 — antes de armar el response, chequeamos si hay cookie
     # `pending_invitation` (el invitado vino de `/i/<token>`). Si está,
     # disparamos el redeem AHORA — el access_token recién emitido tiene
@@ -1163,15 +1196,16 @@ async def admin_logout(request: Request) -> RedirectResponse:
     # de terminar la sesión silenciosa.
     id_token_hint: str | None = None
     if session_id:
-        cached_session = _sessions.get(session_id)
+        from app.admin.session_store import get_session_store  # noqa: PLC0415
+        store = get_session_store()
+        cached_session = await store.get(session_id)
         if cached_session:
             id_token_hint = cached_session.get('id_token')
-        existed = _sessions.pop(session_id, None) is not None
+        existed = await store.delete(session_id)
         _debug(
             'POST /admin/logout', step='session_purged',
             sid=session_id, found_in_store=existed,
             had_id_token=id_token_hint is not None,
-            store_size_after=len(_sessions),
         )
     return_to = _logout_return_to(request)
     # M49 — Auth0 deprecó `/v2/logout` (devuelve 404 desde 2024). El
@@ -1231,9 +1265,8 @@ async def admin_session(request: Request) -> Response:
     _debug(
         'GET /admin/api/session', step='received',
         has_cookie=request.cookies.get(SESSION_COOKIE) is not None,
-        store_size=len(_sessions),
     )
-    session = _active_session(request)
+    session = await _active_session(request)
     if not session:
         # M46: 401 explícito con reason + delete-cookie. Antes era un
         # `Response(status_code=401)` plano y el frontend no podía
@@ -1292,7 +1325,7 @@ def _support_cookie_tid_from_ws(websocket: WebSocket) -> str | None:
 
 @router.websocket('/admin/api/core/v1/conversations/stream')
 async def admin_conversations_stream(websocket: WebSocket) -> None:
-    session = _active_session_id(websocket.cookies.get(SESSION_COOKIE))
+    session = await _active_session_id(websocket.cookies.get(SESSION_COOKIE))
     if not session:
         await websocket.close(code=1008, reason='admin_session_required')
         return
@@ -1382,9 +1415,8 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
     _debug(
         f'{request.method} /admin/api/core/{path}', step='proxy_received',
         has_cookie=request.cookies.get(SESSION_COOKIE) is not None,
-        store_size=len(_sessions),
     )
-    session = _active_session(request)
+    session = await _active_session(request)
     if not session:
         # M46: mismo patrón que /admin/api/session — body explicativo
         # con `reason` + delete-cookie zombie. El SPA puede leer el JSON
@@ -1462,7 +1494,8 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
         if any(marker in detail for marker in token_expired_markers):
             cookie_session_id = request.cookies.get(SESSION_COOKIE)
             if cookie_session_id:
-                _sessions.pop(cookie_session_id, None)
+                from app.admin.session_store import get_session_store  # noqa: PLC0415
+                await get_session_store().delete(cookie_session_id)
             _debug(
                 f'{request.method} /admin/api/core/{path}',
                 step='proxy_token_expired_purged',

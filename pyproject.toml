@@ -21,6 +21,11 @@ dependencies = [
   "prometheus-client==0.21.1",
   "phonenumbers==9.0.30",
   "cryptography>=44.0.0",
+  # M70 (audit P0-3) — redis para session store del BFF + futuros usos
+  # cross-worker (OAuth state, rate-limit distribuido). Lazy import: el
+  # InMemorySessionStore sigue siendo el default cuando REDIS_URL no
+  # está configurado, así que tests/single-process no requieren broker.
+  "redis==5.2.1",
 ]
 
 [project.optional-dependencies]

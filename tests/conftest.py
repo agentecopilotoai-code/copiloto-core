@@ -33,3 +33,17 @@ def _reset_http_clients_between_tests():
     http_clients._reset_for_tests()
     yield
     http_clients._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _reset_session_store_between_tests():
+    """P0-3 (audit 2026-05-27) — el InMemorySessionStore es proceso-global.
+    Tests que crean sesiones leakean entre tests si no reseteamos. Además,
+    fixea el store a InMemory para tests (Redis no debe ser tocado salvo
+    en tests dedicados que monkeypatchean settings.redis_url)."""
+    from app.admin.session_store import (
+        InMemorySessionStore, set_session_store_for_tests,
+    )
+    set_session_store_for_tests(InMemorySessionStore())
+    yield
+    set_session_store_for_tests(None)
