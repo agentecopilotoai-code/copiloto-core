@@ -695,55 +695,52 @@ fi
 # automáticamente el Action de desafío. Default: false (solo documenta).
 ENFORCE_MFA_ACTION="${ENFORCE_MFA_ACTION:-false}"
 
-if [ "$ENFORCE_MFA_ACTION" = "true" ] && [ "$CONFIGURE_LOGIN_ACTION" = "true" ]; then
-  echo "▶ Upsert Action MFA-challenge para roles privilegiados"
-  # BUG-065: respetar el factor MFA enrolado del usuario en vez de
-  # hardcodear OTP. Si el usuario está enrolado con WebAuthn/push/SMS y la
-  # Action exige OTP, Auth0 falla con "factors not properly set up" y el
-  # login queda bloqueado. Pattern recomendado: leer
-  # `event.user.enrolledFactors` (filtrar `status === 'confirmed'`) y
-  # llamar `challengeWithAny([...])` con los enrolados; si NO hay ninguno
-  # usar `enrollWithAny([...])` para que Auth0 muestre la pantalla de
-  # setup MFA (QR code) automáticamente — `challengeWith` con un factor
-  # no enrolado tira "Two-factor authentication is required... contact
-  # your system administrator" (M62 hotfix #8).
-  # M62 hotfix #12 — leer el JS desde archivo separado.
-  # Bash 3.2 de macOS tiene un bug histórico con heredocs JS embebidos
-  # dentro de $(...): "bad substitution: no closing ')'". Incluso con
-  # quotes single ('MFA_ACTION') falla para algunos patterns. La solución
-  # robusta es extraer el JS a un archivo .js y leerlo con cat — cero
-  # parsing de shell, cero ambigüedad.
-  _mfa_action_file="$(dirname "$0")/auth0_actions/mfa_challenge.js"
-  if [ ! -f "$_mfa_action_file" ]; then
-    echo "Falta archivo $_mfa_action_file (requerido por ENFORCE_MFA_ACTION)" >&2
-    exit 1
-  fi
-  mfa_action_code="$(cat "$_mfa_action_file")"
-  mfa_actions_response="$(api_get '/actions/actions?triggerId=post-login&per_page=100')"
-  mfa_action_id="$(jq -r '.actions // [] | .[] | select(.name == "copilotoia-mfa-challenge") | .id' <<<"$mfa_actions_response" | head -n1)"
-  mfa_action_payload="$(jq -n \
-    --arg code "$mfa_action_code" \
-    '{name:"copilotoia-mfa-challenge",supported_triggers:[{id:"post-login",version:"v3"}],runtime:"node18",code:$code,deploy:true}')"
+# M62 hotfix #13 — ENFORCE_MFA_ACTION cambió de semántica.
+#
+# Original (pre-hotfix): creaba un Action JS que usa `api.authentication.
+# challengeWith` / `enrollWith` para forzar MFA solo a roles privilegiados.
+#
+# Problema: esos métodos requieren la feature **"Customize MFA Factors
+# with Actions"** que SOLO está disponible en planes Auth0 B2B Essentials
+# o superior (PAGOS). En Free/Development tier, Auth0 rechaza con:
+#   "MFA customized via PostLogin action but feature is not enabled."
+#
+# Nueva semántica (post-hotfix #13): si ENFORCE_MFA_ACTION=true, el script
+# se asegura de que MFA esté forzado vía tenant policy (`all-applications`)
+# — eso funciona en TODOS los planes Auth0 incluyendo Free.
+#
+# La diferencia: con policy, MFA es obligatorio para TODOS los users.
+# Con la Action era selectivo (solo platform_owner/admin/owner). En B2B
+# admin panels donde TODOS los users son privilegiados (admins de tenants),
+# la diferencia es nula. Si después tenés plan pago y querés granularidad
+# por rol, podés re-activar la Action manualmente desde Auth0 Dashboard.
+#
+# Idempotencia: si la Action ya existe de runs previos (cuando estaba
+# bindeada y rompía con error), la UNBINDEAMOS del trigger pero NO la
+# borramos (para que el operator pueda activarla manual si quiere).
 
-  if [ -z "$mfa_action_id" ]; then
-    mfa_action_id="$(api_post '/actions/actions' "$mfa_action_payload" | jq -r .id)"
-    echo "  Action MFA-challenge creado: $mfa_action_id"
-  else
-    update_mfa_payload="$(jq -n --arg code "$mfa_action_code" '{code:$code,runtime:"node18",supported_triggers:[{id:"post-login",version:"v3"}]}')"
-    api_patch "/actions/actions/$mfa_action_id" "$update_mfa_payload" >/dev/null
-    api_post "/actions/actions/$mfa_action_id/deploy" '{}' >/dev/null
-    echo "  Action MFA-challenge actualizado: $mfa_action_id"
-  fi
+if [ "$ENFORCE_MFA_ACTION" = "true" ]; then
+  echo "▶ MFA enforcement (vía tenant policy, no Action — compat Free tier)"
+  echo "  ⓘ La feature 'Customize MFA Factors with Actions' requiere plan"
+  echo "    B2B Essentials. En Free tier usamos la tenant policy"
+  echo "    (all-applications) que fuerza MFA a TODOS los users en su"
+  echo "    primer login — Auth0 muestra el QR de enrollment automático."
 
-  if [ "$BIND_LOGIN_ACTION" = "true" ]; then
-    echo "▶ Bind Action MFA-challenge al flujo post-login (debe ir antes de custom-claims)"
-    mfa_bindings_response="$(api_get '/actions/triggers/post-login/bindings?per_page=100')"
-    mfa_bindings_payload="$(jq -n \
-      --arg mfa_id "$mfa_action_id" \
-      --argjson existing "$mfa_bindings_response" \
+  # Si la Action vieja existe (de runs previos cuando estaba bindeada),
+  # UNBIND-eamos del trigger para que deje de romper. La Action se queda
+  # creada (no la borramos) por si el operator quiere activarla manual
+  # cuando upgrade su plan Auth0.
+  existing_mfa_actions="$(api_get_soft '/actions/actions?triggerId=post-login&per_page=100' 'GET actions (unbind check)' 2>/dev/null || echo '{"actions":[]}')"
+  legacy_mfa_id="$(jq -r '.actions // [] | .[] | select(.name == "copilotoia-mfa-challenge") | .id' <<<"$existing_mfa_actions" | head -n1)"
+  if [ -n "$legacy_mfa_id" ]; then
+    echo "  ⓘ Action 'copilotoia-mfa-challenge' existe (legacy run) — desbindeando del trigger"
+    legacy_bindings="$(api_get_soft '/actions/triggers/post-login/bindings?per_page=100' 'GET bindings (unbind)' 2>/dev/null || echo '{"bindings":[]}')"
+    cleaned_bindings_payload="$(jq -n \
+      --arg legacy_id "$legacy_mfa_id" \
+      --argjson existing "$legacy_bindings" \
       '($existing.bindings // []) as $bindings |
        ($bindings
-        | map(select(.display_name != "copilotoia-mfa-challenge" and (.action.id? // .ref.value? // "") != $mfa_id))
+        | map(select(.display_name != "copilotoia-mfa-challenge" and (.action.id? // .ref.value? // "") != $legacy_id))
         | map(
             if (.ref? and .ref.value?) then
               {ref:.ref, display_name:(.display_name // .ref.value)}
@@ -753,10 +750,9 @@ if [ "$ENFORCE_MFA_ACTION" = "true" ] && [ "$CONFIGURE_LOGIN_ACTION" = "true" ];
               empty
             end
           )) as $preserved |
-       # MFA challenge va primero, luego los demás bindings existentes
-       {bindings: ([{ref:{type:"action_id",value:$mfa_id},display_name:"copilotoia-mfa-challenge"}] + $preserved)}')"
-    api_patch '/actions/triggers/post-login/bindings' "$mfa_bindings_payload" >/dev/null
-    echo "  MFA-challenge enlazado al inicio del flujo post-login"
+       {bindings: $preserved}')"
+    api_patch_soft '/actions/triggers/post-login/bindings' "$cleaned_bindings_payload" 'PATCH bindings (unbind MFA)' >/dev/null \
+      && echo "  ✓ MFA-challenge Action desbindeada (no se ejecuta más en login)"
   fi
 fi
 
