@@ -619,62 +619,15 @@ done
 
 if [ "$CONFIGURE_LOGIN_ACTION" = "true" ]; then
   echo "▶ Upsert Action post-login de custom claims"
-  action_code="$(cat <<ACTION
-exports.onExecutePostLogin = async (event, api) => {
-  const namespace = '$CLAIMS_NAMESPACE';
-  const appMetadata = event.user.app_metadata || {};
-  const roles = event.authorization && event.authorization.roles ? event.authorization.roles : [];
-  const permissions = event.authorization && event.authorization.permissions ? event.authorization.permissions : [];
-  const tenantId = appMetadata.tenant_id || appMetadata.default_tenant_id;
-
-  api.idToken.setCustomClaim(\`\${namespace}/roles\`, roles);
-  api.accessToken.setCustomClaim(\`\${namespace}/roles\`, roles);
-  api.accessToken.setCustomClaim(\`\${namespace}/permissions\`, permissions);
-
-  // M60/A-003 — emitir email + email_verified en el ACCESS_TOKEN como
-  // claim namespaced. Auth0 los pone en el id_token + userinfo por
-  // default, pero NO en el access_token, así que el Core los recibe
-  // como null. Eso forzó (en M58) un fallback al header
-  // \`x-admin-user-email\` inyectado por el BFF — header SPOOFABLE para
-  // un caller que pegue directo al Core. Con este claim el Core lee
-  // el email directo del JWT firmado por Auth0 y no necesita el header.
-  if (event.user && event.user.email) {
-    api.accessToken.setCustomClaim(\`\${namespace}/email\`, event.user.email);
-    api.accessToken.setCustomClaim(
-      \`\${namespace}/email_verified\`,
-      event.user.email_verified === true,
-    );
-  }
-
-  if (tenantId) {
-    api.idToken.setCustomClaim(\`\${namespace}/tenant_id\`, tenantId);
-    api.accessToken.setCustomClaim(\`\${namespace}/tenant_id\`, tenantId);
-  }
-
-  if (appMetadata.tenant_slug) {
-    api.idToken.setCustomClaim(\`\${namespace}/tenant_slug\`, appMetadata.tenant_slug);
-    api.accessToken.setCustomClaim(\`\${namespace}/tenant_slug\`, appMetadata.tenant_slug);
-  }
-
-  if (appMetadata.support_mode === true) {
-    api.accessToken.setCustomClaim(\`\${namespace}/support_mode\`, true);
-  }
-
-  // Propagar AMR (Authentication Methods References) para que la API y el
-  // Admin Panel puedan verificar si el login incluyó MFA.
-  // Auth0 rellena event.authentication.methods con { name: 'mfa', ... }
-  // cuando el usuario completa un segundo factor.
-  const methods = (event.authentication && event.authentication.methods) || [];
-  const mfaCompleted = methods.some(function(m) { return m.name === 'mfa'; });
-  const amr = methods.map(function(m) { return m.name; }).filter(Boolean);
-  if (amr.length > 0) {
-    api.idToken.setCustomClaim('amr', amr);
-  }
-  api.idToken.setCustomClaim(\`\${namespace}/mfa_verified\`, mfaCompleted);
-  api.accessToken.setCustomClaim(\`\${namespace}/mfa_verified\`, mfaCompleted);
-};
-ACTION
-)"
+  # M62 hotfix #12 — leer JS desde archivo (bash 3.2 compat).
+  # El template tiene un placeholder __CLAIMS_NAMESPACE__ que sustituimos
+  # con sed por el valor real (la única variable shell que el JS necesita).
+  _claims_action_file="$(dirname "$0")/auth0_actions/custom_claims.js"
+  if [ ! -f "$_claims_action_file" ]; then
+    echo "Falta archivo $_claims_action_file (requerido por CONFIGURE_LOGIN_ACTION)" >&2
+    exit 1
+  fi
+  action_code="$(sed "s|__CLAIMS_NAMESPACE__|$CLAIMS_NAMESPACE|g" "$_claims_action_file")"
 
   actions_response="$(api_get '/actions/actions?triggerId=post-login&per_page=100')"
   action_id="$(jq -r '.actions // [] | .[] | select(.name == "copilotoia-post-login-claims") | .id' <<<"$actions_response" | head -n1)"
@@ -754,45 +707,18 @@ if [ "$ENFORCE_MFA_ACTION" = "true" ] && [ "$CONFIGURE_LOGIN_ACTION" = "true" ];
   # setup MFA (QR code) automáticamente — `challengeWith` con un factor
   # no enrolado tira "Two-factor authentication is required... contact
   # your system administrator" (M62 hotfix #8).
-  # M62 hotfix #11 — heredoc con quotes single ('MFA_ACTION') para evitar
-  # expansion de bash. Sin las quotes, bash 3.2 de macOS (default) parsea
-  # los caracteres Unicode (→, acentos) + paréntesis dentro de comentarios
-  # como command substitution y tira "bad substitution: no closing ')'".
-  # No necesitamos expansion en este heredoc (no hay variables del shell
-  # a interpolar). Comparar con el heredoc del custom-claims Action que
-  # SÍ necesita expansion para $CLAIMS_NAMESPACE → ese queda sin quotes.
-  mfa_action_code="$(cat <<'MFA_ACTION'
-exports.onExecutePostLogin = async (event, api) => {
-  const privilegedRoles = new Set(['admin','owner','platform_owner']);
-  const roles = (event.authorization && event.authorization.roles) || [];
-  const isPrivileged = roles.some(function(r) { return privilegedRoles.has(r); });
-  if (!isPrivileged) return;
-  const methods = (event.authentication && event.authentication.methods) || [];
-  const hasMfa = methods.some(function(m) { return m.name === 'mfa'; });
-  if (hasMfa) return;
-  // BUG-065 + M62 hotfix #8: respeta el factor enrolado del usuario.
-  // Si hay enrolados → challengeWithAny (verificación).
-  // Si NO hay → enrollWithAny (setup interactivo con QR code).
-  const enrolled = ((event.user && event.user.enrolledFactors) || [])
-    .filter(function(f) { return f && f.status === 'confirmed'; })
-    .map(function(f) { return { type: f.type }; });
-  if (enrolled.length > 0) {
-    api.authentication.challengeWithAny(enrolled);
-  } else {
-    // Primer login del user con rol privilegiado — no tiene factor
-    // enrolado todavía. Forzamos OTP (Google Authenticator / Authy /
-    // 1Password / etc.) porque es el único factor que funciona sin
-    // HTTPS — el resto (webauthn-platform, webauthn-roaming) requiere
-    // HTTPS en producción. En localhost algunos browsers también
-    // restringen WebAuthn → Auth0 tira "invalid_request" (M62 hotfix #9).
-    //
-    // Una vez enrolado OTP, el user puede agregar factores adicionales
-    // desde Auth0 dashboard → Profile → Security.
-    api.authentication.enrollWith({ type: 'otp' });
-  }
-};
-MFA_ACTION
-)"
+  # M62 hotfix #12 — leer el JS desde archivo separado.
+  # Bash 3.2 de macOS tiene un bug histórico con heredocs JS embebidos
+  # dentro de $(...): "bad substitution: no closing ')'". Incluso con
+  # quotes single ('MFA_ACTION') falla para algunos patterns. La solución
+  # robusta es extraer el JS a un archivo .js y leerlo con cat — cero
+  # parsing de shell, cero ambigüedad.
+  _mfa_action_file="$(dirname "$0")/auth0_actions/mfa_challenge.js"
+  if [ ! -f "$_mfa_action_file" ]; then
+    echo "Falta archivo $_mfa_action_file (requerido por ENFORCE_MFA_ACTION)" >&2
+    exit 1
+  fi
+  mfa_action_code="$(cat "$_mfa_action_file")"
   mfa_actions_response="$(api_get '/actions/actions?triggerId=post-login&per_page=100')"
   mfa_action_id="$(jq -r '.actions // [] | .[] | select(.name == "copilotoia-mfa-challenge") | .id' <<<"$mfa_actions_response" | head -n1)"
   mfa_action_payload="$(jq -n \
@@ -1310,80 +1236,13 @@ fi
 #         login-flow/redirect-with-actions#account-linking
 if [ "$CONFIGURE_ACCOUNT_LINKING" = "true" ] && [ "$CONFIGURE_LOGIN_ACTION" = "true" ]; then
   echo "▶ Action: Account Linking (auto-link por email verificado)"
-  # Misma protección que MFA_ACTION (hotfix #11): quotes single para que
-  # bash 3.2 no parsee paréntesis dentro de comentarios JS + caracteres
-  # Unicode como command substitution. Este Action tampoco necesita
-  # expansion de variables del shell (los `event.secrets.*` los inyecta
-  # Auth0 runtime, no bash).
-  linking_action_code="$(cat <<'LINKING_ACTION'
-/**
- * Auto-link de identidades del mismo email verificado en distintas
- * connections (Google + email/password, etc.). Sin esto, Auth0 crea
- * users separados y rompe M57 reconciliation.
- *
- * Flow:
- *   1. Si el user actual NO tiene email_verified=true → skip (sin verif
- *      no podemos confiar que el email es realmente suyo, link sería
- *      account-takeover via signup).
- *   2. Lookup otros users con el mismo email (y email_verified=true).
- *   3. Si hay match: linkear el current al user "primary" más antiguo.
- *      El user actual queda como secondary (sus identidades suman).
- *   4. Continuar el login normal (las claims se emiten del PRIMARY).
- *
- * Requiere scope en el Action: read:users + update:users.
- */
-const ManagementClient = require('auth0').ManagementClient;
-
-exports.onExecutePostLogin = async (event, api) => {
-  if (!event.user.email || event.user.email_verified !== true) return;
-  // Skip si ya es secondary (ya linkeado).
-  if (event.user.user_id && event.user.user_id.indexOf('|') === -1) return;
-  const currentConnection = (event.connection && event.connection.strategy) || '';
-
-  const mgmt = new ManagementClient({
-    domain: event.secrets.AUTH0_DOMAIN,
-    clientId: event.secrets.AUTH0_M2M_CLIENT_ID,
-    clientSecret: event.secrets.AUTH0_M2M_CLIENT_SECRET,
-  });
-
-  let candidates;
-  try {
-    candidates = await mgmt.usersByEmail.getByEmail({ email: event.user.email });
-  } catch (e) {
-    console.log('account-linking: getByEmail error', e.message);
-    return;
-  }
-  const verifiedOthers = (candidates.data || candidates || []).filter(function(u) {
-    return u.user_id !== event.user.user_id && u.email_verified === true;
-  });
-  if (verifiedOthers.length === 0) return;
-
-  // Primary = más viejo (created_at asc). Esto preserva el user_id histórico
-  // que aparezca en audit logs antiguos como "owner" de la identidad.
-  verifiedOthers.sort(function(a, b) {
-    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-  });
-  const primary = verifiedOthers[0];
-
-  try {
-    const [providerStrategy, providerUserIdRaw] = event.user.user_id.split('|');
-    const secondaryProvider = providerStrategy;
-    const secondaryUserId = providerUserIdRaw;
-    await mgmt.users.link({ id: primary.user_id }, {
-      provider: secondaryProvider,
-      user_id: secondaryUserId,
-    });
-    console.log('account-linking: linked', event.user.user_id, '→', primary.user_id);
-    // Re-emitir claims desde el PRIMARY. api.user.setUser no existe en post-login;
-    // lo que sí podemos: redirect-to-app con primary_user_id en query para que
-    // el BFF lo use. Como alternativa simpler, dejamos que el próximo login del
-    // user use el primary (el current login ya está casi resuelto).
-  } catch (e) {
-    console.log('account-linking: link failed', e.message);
-  }
-};
-LINKING_ACTION
-)"
+  # M62 hotfix #12 — leer JS desde archivo, no heredoc (bash 3.2 macOS).
+  _linking_action_file="$(dirname "$0")/auth0_actions/account_linking.js"
+  if [ ! -f "$_linking_action_file" ]; then
+    echo "Falta archivo $_linking_action_file (requerido por CONFIGURE_ACCOUNT_LINKING)" >&2
+    exit 1
+  fi
+  linking_action_code="$(cat "$_linking_action_file")"
 
   linking_actions_response="$(api_get_soft '/actions/actions?triggerId=post-login&per_page=100' 'GET actions' || echo '{}')"
   if [ "$(jq -r '.actions // [] | length' <<<"$linking_actions_response")" != "0" ] || true; then
