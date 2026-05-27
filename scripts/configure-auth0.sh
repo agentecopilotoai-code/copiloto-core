@@ -754,7 +754,14 @@ if [ "$ENFORCE_MFA_ACTION" = "true" ] && [ "$CONFIGURE_LOGIN_ACTION" = "true" ];
   # setup MFA (QR code) automáticamente — `challengeWith` con un factor
   # no enrolado tira "Two-factor authentication is required... contact
   # your system administrator" (M62 hotfix #8).
-  mfa_action_code="$(cat <<MFA_ACTION
+  # M62 hotfix #11 — heredoc con quotes single ('MFA_ACTION') para evitar
+  # expansion de bash. Sin las quotes, bash 3.2 de macOS (default) parsea
+  # los caracteres Unicode (→, acentos) + paréntesis dentro de comentarios
+  # como command substitution y tira "bad substitution: no closing ')'".
+  # No necesitamos expansion en este heredoc (no hay variables del shell
+  # a interpolar). Comparar con el heredoc del custom-claims Action que
+  # SÍ necesita expansion para $CLAIMS_NAMESPACE → ese queda sin quotes.
+  mfa_action_code="$(cat <<'MFA_ACTION'
 exports.onExecutePostLogin = async (event, api) => {
   const privilegedRoles = new Set(['admin','owner','platform_owner']);
   const roles = (event.authorization && event.authorization.roles) || [];
@@ -1303,7 +1310,12 @@ fi
 #         login-flow/redirect-with-actions#account-linking
 if [ "$CONFIGURE_ACCOUNT_LINKING" = "true" ] && [ "$CONFIGURE_LOGIN_ACTION" = "true" ]; then
   echo "▶ Action: Account Linking (auto-link por email verificado)"
-  linking_action_code="$(cat <<LINKING_ACTION
+  # Misma protección que MFA_ACTION (hotfix #11): quotes single para que
+  # bash 3.2 no parsee paréntesis dentro de comentarios JS + caracteres
+  # Unicode como command substitution. Este Action tampoco necesita
+  # expansion de variables del shell (los `event.secrets.*` los inyecta
+  # Auth0 runtime, no bash).
+  linking_action_code="$(cat <<'LINKING_ACTION'
 /**
  * Auto-link de identidades del mismo email verificado en distintas
  * connections (Google + email/password, etc.). Sin esto, Auth0 crea
