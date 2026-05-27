@@ -123,10 +123,25 @@ correrlo y **1 después**.
 
 ### 4.1 Crear el tenant Auth0 (manual, una vez)
 
-1. Sign-up gratis en https://auth0.com → "Create tenant".
-2. Elegí region (US/EU) y nombre, ej. `copilotai`.
-3. Tu domain resultante: `copilotai.us.auth0.com` (lo vas a usar
-   abajo como `AUTH0_DOMAIN`).
+1. Abrí **https://auth0.com/signup**.
+2. Sign-up con email + password (o Google login).
+3. En el primer paso pregunta "What's your tenant name?":
+   - Tenant name: `copilotai` (o el que prefieras — esto NO se cambia
+     después; queda como tu domain forever).
+   - Region: `US` para Norteamérica/Latam, `EU` para Europa, `AU` para
+     Asia/Pacífico.
+   - Environment Type: `Development` para empezar (después podés crear
+     un `Production` tenant aparte para el deploy real).
+4. Click "Create Account" → te redirige al dashboard del tenant nuevo.
+
+URL resultante de tu dashboard:
+```
+https://manage.auth0.com/dashboard/<region>/<tenant-name>/
+```
+Ej. `https://manage.auth0.com/dashboard/us/copilotai/`
+
+Tu **AUTH0_DOMAIN** será `<tenant-name>.<region>.auth0.com` —
+ej. `copilotai.us.auth0.com`. Lo confirmás abajo en § 4.2.
 
 > **Sin upgrade**: el free tier alcanza para dev + producción chica
 > (~7K MAUs). Si vas a producción seria con SSO enterprise o MFA add-on
@@ -138,60 +153,221 @@ Auth0 no permite que un script se cree a sí mismo — necesita un M2M
 client pre-existente para llamar Management API. Es **el único paso
 manual obligatorio** antes del script.
 
-1. Dashboard → **Applications** → Applications → "+ Create Application"
-2. Name: `bootstrap-m2m` (o el nombre que prefieras)
-3. Type: **Machine to Machine Applications** → Create
-4. "Authorize Auth0 Management API" → seleccioná **TODOS** estos
-   scopes (la lista que el script necesita):
+#### Paso 1 — Confirmar tu `AUTH0_DOMAIN`
 
-   ```
-   read:resource_servers, create:resource_servers, update:resource_servers
-   read:clients, create:clients, update:clients
-   read:client_grants, create:client_grants, update:client_grants
-   read:roles, create:roles, update:roles
-   read:role_members, create:role_members
-   read:users, create:users, update:users
-   create:user_tickets
-   read:actions, create:actions, update:actions
-   read:connections, update:connections
-   read:tenant_settings, update:tenant_settings
-   read:guardian_factors, update:guardian_factors
-   read:attack_protection, update:attack_protection
-   read:email_provider, create:email_provider, update:email_provider, delete:email_provider
-   read:email_templates, create:email_templates, update:email_templates
-   read:prompts, update:prompts
+1. En el dashboard, esquina superior IZQUIERDA: vas a ver tu **tenant
+   name** debajo de una bandera (US/EU/AU).
+2. Click en el nombre del tenant → se despliega un menú con:
+   - Domain: `copilotai.us.auth0.com` ← **este valor es `AUTH0_DOMAIN`**.
+   - Region badge (US/EU/AU).
+3. Guardalo (lo vas a usar en `export AUTH0_DOMAIN="..."`).
+
+#### Paso 2 — Crear el M2M client
+
+1. En el **sidebar izquierdo**, expandí **`Applications`** (icono de
+   cuadrado con esquinas redondeadas).
+2. Click en el sub-item **`Applications`** (dentro del menú expandido).
+3. URL directa equivalente:
+   `https://manage.auth0.com/dashboard/<region>/<tenant>/applications`
+4. Botón naranja arriba a la derecha: **`+ Create Application`**.
+5. Modal "Create application":
+   - **Name**: `bootstrap-m2m`
+   - **Choose an application type**: selectioná el tile **"Machine to
+     Machine Applications"** (es el 4to tile, icono de engranaje).
+6. Click **`Create`** abajo a la derecha.
+
+#### Paso 3 — Autorizar el M2M contra Management API + asignar scopes
+
+7. Inmediatamente después de crear, Auth0 te muestra modal **"Authorize
+   Machine to Machine Application"** con un dropdown:
+   - **Select an API**: dropdown → seleccioná **"Auth0 Management API"**
+     (es la API auto-creada por Auth0, NO la `copilotoia-core-api` —
+     esa todavía no existe).
+8. Aparece una larga lista de checkboxes con todos los scopes de
+   Management API.
+9. Marcá los siguientes **25 scopes** (usá Ctrl+F en el browser para
+   encontrarlos rápido — la lista de Auth0 está alfabéticamente
+   ordenada):
+
+   **Bloque "Resource Servers"** (APIs):
+   - `read:resource_servers`
+   - `create:resource_servers`
+   - `update:resource_servers`
+
+   **Bloque "Clients"** (apps):
+   - `read:clients`
+   - `create:clients`
+   - `update:clients`
+
+   **Bloque "Client Grants"**:
+   - `read:client_grants`
+   - `create:client_grants`
+   - `update:client_grants`
+
+   **Bloque "Roles"**:
+   - `read:roles`
+   - `create:roles`
+   - `update:roles`
+   - `read:role_members`
+   - `create:role_members`
+
+   **Bloque "Users"**:
+   - `read:users`
+   - `create:users`
+   - `update:users`
+   - `create:user_tickets`
+
+   **Bloque "Actions"**:
+   - `read:actions`
+   - `create:actions`
+   - `update:actions`
+
+   **Bloque "Connections"**:
+   - `read:connections`
+   - `update:connections`
+
+   **Bloque "Tenants"**:
+   - `read:tenant_settings`
+   - `update:tenant_settings`
+
+   **Bloque "Guardian"** (MFA factors):
+   - `read:guardian_factors`
+   - `update:guardian_factors`
+
+   **Bloque "Attack Protection"**:
+   - `read:attack_protection`
+   - `update:attack_protection`
+
+   **Bloque "Email Provider"**:
+   - `read:email_provider`
+   - `create:email_provider`
+   - `update:email_provider`
+   - `delete:email_provider`
+
+   **Bloque "Email Templates"**:
+   - `read:email_templates`
+   - `create:email_templates`
+   - `update:email_templates`
+
+   **Bloque "Prompts"** (Universal Login):
+   - `read:prompts`
+   - `update:prompts`
+
+10. Click botón **`Authorize`** abajo a la derecha del modal.
+
+#### Paso 4 — Copiar el Client ID y Client Secret
+
+11. Auth0 te redirige al detalle de tu app `bootstrap-m2m`.
+12. Quedaste en tab **`Quick Start`**. Cambiá a tab **`Settings`** (3er
+    tab arriba: "Quick Start | Settings | Credentials | APIs | Add-ons |
+    Connections | Organizations").
+13. En tab Settings, scrolleá hasta la sección **"Basic Information"**:
+    - **Client ID**: cadena alfanumérica de 32 chars. Click en el ícono
+      de "copy" a la derecha del campo. → **Esto es `MGMT_CLIENT_ID`**.
+    - **Client Secret**: oculto por default. Click en el ícono del ojo
+      para revelar, o el ícono de "copy" directo. → **Esto es
+      `MGMT_CLIENT_SECRET`**.
+
+   ⚠️ El **Client Secret es ÚNICO y no se vuelve a mostrar después** si
+   lo perdés — Auth0 te obligará a rotarlo. Guardalo en un password
+   manager o tirálo directo en tu shell:
+   ```bash
+   export AUTH0_DOMAIN="copilotai.us.auth0.com"
+   export MGMT_CLIENT_ID="<pegá acá>"
+   export MGMT_CLIENT_SECRET="<pegá acá>"
    ```
 
-5. Click "Authorize". Después abre el app → tab **Settings** → copia
-   `Client ID` y `Client Secret`. Los vas a usar abajo.
+#### Paso 5 — Verificar que los scopes quedaron asignados
+
+14. En el sidebar izquierdo: **`Applications` → `APIs`**.
+    URL directa: `https://manage.auth0.com/dashboard/<region>/<tenant>/apis`
+15. Click en **"Auth0 Management API"** (la única que aparece — Auth0
+    la crea automática en cada tenant).
+16. Tab **`Machine to Machine Applications`**.
+17. Ves la lista de M2M apps que pueden llamar esta API. Tu
+    `bootstrap-m2m` debe aparecer con toggle **`Authorized`** en verde.
+18. Click en la flecha "↓" a la derecha de la row de `bootstrap-m2m`
+    para expandir y ver los 25 scopes asignados. Verificá que están
+    todos chequeados.
 
 > **Por qué no se puede automatizar**: para crear un M2M autorizado
 > necesitás llamar Management API, y para llamar Management API
 > necesitás un M2M autorizado. Catch-22 — Auth0 lo resuelve forzando
 > que el primer M2M se cree a mano.
 
+> **Si después del script aparece ⚠ HTTP 403 en alguna sección**: te
+> faltó un scope arriba. Volvé al paso 17 (`APIs` → `Auth0 Management
+> API` → tab `Machine to Machine Applications` → expandir
+> `bootstrap-m2m` → checkear el scope que falta → `Update`).
+> Re-correr el script.
+
 ### 4.3 (Opcional pero recomendado) Crear cuenta Resend
 
 Si querés que el flow de invitaciones M61 mande emails reales (en lugar
 de quedar en modo NO-OP loggeando "would_send"):
 
-1. Sign-up gratis en https://resend.com (free tier: 3K emails/mes).
-2. **API Keys** → "Create API Key" → Name: `copilotoia-prod` (o `dev`)
-   → Permission: "Sending access" → Create. Copiá la key `re_xxx...`.
-3. **Domains** → "Add Domain" → entrá tu dominio (ej. `app.copilotoia.com`)
-   → Resend te da 3 DNS records (SPF + DKIM + DMARC) para agregar en
-   tu DNS provider. Verificación toma ~5 minutos.
+#### Paso 1 — Sign-up
 
-> Si no querés verificar dominio ya: podés usar `onboarding@resend.dev`
-> como sender — Resend solo te deja mandar a TU MISMO email registrado
-> en Resend. Útil para testing del flow, NO para producción.
+1. Abrí **https://resend.com/signup**.
+2. Sign-up con email + password (o GitHub login).
+3. Free tier: **3000 emails/mes** + 100 emails/día. Suficiente para
+   dev + producción chica.
 
-Guardá la API key:
+#### Paso 2 — Crear API Key
+
+4. En el **sidebar izquierdo** del dashboard de Resend → **`API Keys`**.
+   URL directa: **https://resend.com/api-keys**
+5. Botón arriba a la derecha: **`+ Create API Key`**.
+6. Modal "Create API Key":
+   - **Name**: `copilotoia-prod` (o `copilotoia-dev` si estás en local).
+   - **Permission**: seleccionar **"Sending access"** (NO "Full access" —
+     menos blast radius si la key leakea).
+   - **Domain**: dejá en `All domains` por ahora (vas a verificar uno
+     en el paso 3).
+7. Click **`Add`** → Resend te muestra la key **`re_xxxxxxxxxxxxxxxx`**
+   EN PANTALLA, **una sola vez**.
+8. ⚠️ **Copiala YA** — si cerrás el modal sin copiar, tenés que
+   regenerar otra. Resend NO te la vuelve a mostrar después.
+
+#### Paso 3 — Verificar tu dominio (para sender real, no spam)
+
+9. En el sidebar izquierdo → **`Domains`**. URL directa:
+   **https://resend.com/domains**
+10. Botón arriba a la derecha: **`+ Add Domain`**.
+11. Entrá tu dominio (ej. `app.copilotoia.com`) → click **`Add`**.
+12. Resend te muestra **3 DNS records** que tenés que agregar en tu
+    DNS provider (Cloudflare, GoDaddy, Route53, etc.):
+    - **SPF**: TXT record en `app.copilotoia.com` con value
+      `v=spf1 include:amazonses.com ~all`
+    - **DKIM**: CNAME record en `resend._domainkey.app.copilotoia.com`
+      apuntando a `resend._domainkey.amazonses.com`
+    - **DMARC**: TXT record en `_dmarc.app.copilotoia.com` con value
+      `v=DMARC1; p=none;`
+13. Una vez agregados en DNS, click botón **`Verify DNS Records`** en
+    Resend. Verificación toma 5-30 minutos según propagación DNS.
+14. Cuando los 3 records aparezcan en VERDE, el dominio está verificado
+    y podés usar cualquier `*@app.copilotoia.com` como sender.
+
+> **Atajo para testing local**: si NO querés verificar dominio ya,
+> podés usar **`onboarding@resend.dev`** como sender. Resend solo te
+> deja mandar a TU MISMO email registrado en Resend con ese sender —
+> útil para testing del flow end-to-end (te invitás a vos mismo y
+> validás que el email llega), NO para producción.
+
+#### Paso 4 — Guardar la API key en el repo
 
 ```bash
+cd /ruta/a/copilotoia
 mkdir -p .secrets
-echo -n 're_xxxxxxxxxxxx' > .secrets/resend-api-key
+echo -n 're_xxxxxxxxxxxxxxxx' > .secrets/resend-api-key   # del paso 8
 chmod 600 .secrets/resend-api-key
+```
+
+⚠️ Verificá que `.secrets/` está en tu `.gitignore` (debería estar
+ya). Validalo:
+```bash
+git check-ignore .secrets/resend-api-key
+# Output esperado: ".secrets/resend-api-key" (significa "ignorado").
 ```
 
 ### 4.4 Correr el script (configura todo lo demás automático)
@@ -248,35 +424,110 @@ faltan scopes al M2M bootstrap — re-corré § 4.2 agregando los que faltan.
 ### 4.5 Habilitar la connection database para el admin app (manual, una vez)
 
 Auth0 movió `enabled_clients` a una API que no se puede mutar via script
-en tenants nuevos. Un click manual:
+en tenants nuevos. Es **un click manual** después del script:
 
-1. Dashboard → **Authentication** → Database
-2. Click en **Username-Password-Authentication**
-3. Tab **Applications**
-4. Toggle **ON** para `copilotoia-admin-web`
-5. (Opcional) toggle OFF para apps de otros proyectos si tu tenant es compartido
+1. En el dashboard de Auth0, **sidebar izquierdo** → expandí
+   **`Authentication`** (icono de candado).
+2. Click en el sub-item **`Database`** (debajo de Authentication).
+   URL directa: `https://manage.auth0.com/dashboard/<region>/<tenant>/connections/database`
+3. Ves una lista de "Database Connections". La default se llama
+   **`Username-Password-Authentication`** (Auth0 la creó automático).
+   Click en **el nombre** (no en el toggle de la row).
+4. Te abre la página de detalle de la connection con **5 tabs arriba**:
+   `Settings | Attributes | Authentication Methods | Custom Database | Applications`
+5. Click en el tab **`Applications`** (último a la derecha).
+6. URL directa equivalente:
+   `https://manage.auth0.com/dashboard/<region>/<tenant>/connections/database/<connection-id>/applications`
+7. Ves una lista vertical de TODAS tus apps con un toggle verde/gris a
+   la derecha de cada una. Encontrá **`copilotoia-admin-web`** (es la
+   Regular Web Application que el script creó).
+8. Click en el toggle de la derecha de esa row → debe pasar a **verde
+   (ON)**.
+9. Auth0 guarda el cambio automático — no hay botón "Save".
 
-Sin esto: el form email+password no aparece en la pantalla de login y los
-users no pueden registrarse.
+> **Verificación rápida**: el toggle verde indica que la app está
+> "enabled". Si lo prendiste mal en otra app, los users de esa otra app
+> podrían también ver el form email+password — no es peligroso pero es
+> cruft. Apagá las que no son de CopilotoIA.
+
+Sin esto: el form email+password NO aparece en la pantalla de login y
+los users no pueden registrarse con email/password. La pantalla muestra
+"There are no connections enabled for the application".
 
 ### 4.6 (Opcional) Crear el primer Platform Owner
 
 El script puede asignarle el rol `platform_owner` automático si el user
 ya existe en Auth0. Pero crear el user inicial es manual (Auth0 exige
-consent del dueño del email):
+consent del dueño del email).
 
-1. Dashboard → **User Management** → Users → "+ Create User"
-2. Connection: `Username-Password-Authentication`
-3. Email + password
-4. Después del create → "Send Verification Email" → seguí el link del
-   email para verificar.
-5. Re-correr el script con `BOOTSTRAP_PLATFORM_OWNER_EMAIL=<email>` para
-   asignar el rol + setear `app_metadata.support_mode=true`:
+#### Paso 1 — Crear el user en Auth0
+
+1. En el dashboard de Auth0, **sidebar izquierdo** → expandí
+   **`User Management`** (icono de persona).
+2. Click en el sub-item **`Users`**.
+   URL directa: `https://manage.auth0.com/dashboard/<region>/<tenant>/users`
+3. Botón arriba a la derecha: **`+ Create User`**.
+4. Modal "Create user":
+   - **Email**: el email del platform owner (ej. tu propio email).
+   - **Password**: una password fuerte (≥12 chars, mayúscula, número,
+     especial — la policy que el script seteó en § 4.4).
+   - **Repeat password**: misma.
+   - **Connection**: dropdown → seleccionar **`Username-Password-
+     Authentication`** (la única que aparece si seguiste § 4.5).
+5. Click **`Create`** → te redirige a la página de detalle del user.
+
+#### Paso 2 — Verificar el email del user (crítico para seguridad)
+
+6. En la página de detalle del user que acabás de crear, ves arriba:
+   - Email (tu email)
+   - Email Verified: **❌ false** (badge rojo) ← hay que arreglar esto.
+7. Hay 2 maneras de verificar:
+
+   **Opción A — Self-service** (recomendada): click botón
+   **`Actions`** (dropdown a la derecha del email) → **`Send
+   Verification Email`** → revisá tu inbox (puede caer a spam si el
+   tenant no tiene Resend configurado) → click el link → vuelve a
+   Auth0 con "Email verified".
+
+   **Opción B — Manual override** (sólo para testing): scrolleá hasta
+   la sección **"Details"** → click **`Edit`** al lado de "Email
+   verified" → toggle ON → **`Save`**. Más rápido pero salteás la
+   prueba de propiedad del email.
+
+8. Refrescá la página: "Email Verified" debe quedar en **✓ true**
+   (badge verde).
+
+#### Paso 3 — Asignar rol platform_owner via script
+
+9. En tu shell:
 
    ```bash
-   export BOOTSTRAP_PLATFORM_OWNER_EMAIL="vos@copilotoia.com"
+   export BOOTSTRAP_PLATFORM_OWNER_EMAIL="el-email-del-paso-4"
    bash scripts/configure-auth0.sh
    ```
+
+10. El script:
+    - Busca el user por email vía Management API.
+    - Verifica `email_verified=true` (sino aborta, BUG-194 protection).
+    - Le asigna el rol `platform_owner` (idempotente).
+    - Setea `app_metadata.support_mode=true` (para que pueda cruzar
+      tenants en Fleet).
+11. Logs esperados:
+    ```
+    ▶ Bootstrap platform_owner: tu-email@x.com
+      Rol 'platform_owner' asignado a tu-email@x.com
+      app_metadata.support_mode=true seteado
+    ```
+
+#### Paso 4 — Verificación
+
+12. Volvé al dashboard Auth0 → `User Management` → `Users` → click en
+    tu user.
+13. Tab **`Roles`** (3er tab arriba: "Details | Permissions | Roles |
+    History | Devices | Raw JSON | More").
+14. Debe aparecer `platform_owner` con su description.
+15. Tab **`Raw JSON`** → scrolleá hasta `app_metadata` → debe contener
+    `"support_mode": true`.
 
 ### 4.7 Cargar la config en el Core
 
