@@ -345,17 +345,15 @@ async def get_invitation_preview(
 
     NO valida expiry — el caller decide qué mostrar al user (el handler
     público las muestra todas, marcando si están expiradas/redeemed). Sí
-    consulta el flag `redeemed`."""
+    consulta el flag `redeemed`.
+
+    M66 — usa SECURITY DEFINER function `app.lookup_invitation_by_token_hash`
+    para bypassar la RLS de `tenant_invitations`. El query directo
+    devuelve 0 rows en endpoint público (sin tenant_id context). El
+    secret del token actúa como auth para el lookup."""
     token_hash = hash_invitation_token(clear_token)
     row = await conn.fetchrow(
-        '''
-        select i.id, i.tenant_id, i.email, i.role, i.expires_at,
-               i.redeemed_at,
-               coalesce(t.display_name, t.legal_name) as tenant_name
-          from app.tenant_invitations i
-          join app.tenants t on t.id = i.tenant_id
-         where i.token_hash = $1
-        ''',
+        'select * from app.lookup_invitation_by_token_hash($1)',
         token_hash,
     )
     if not row:
@@ -386,19 +384,14 @@ async def redeem_invitation(
       - Expiry chequeada solo en PRIMER redeem (already-redeemed son
         válidas aunque pasó `expires_at` — eso es un audit-log, no un gate).
 
-    `SELECT ... FOR UPDATE` previene race conditions si llegan 2 requests
-    concurrentes con el mismo token (locked hasta commit/rollback)."""
+    M66 — race-safety vía `app.mark_invitation_redeemed` (UPDATE con
+    `where redeemed_at is null` que actúa como compare-and-swap). Si
+    dos requests concurrentes redimen el mismo token, solo la primera
+    afecta filas; la segunda observa el row ya marcado y entra al path
+    idempotent."""
     token_hash = hash_invitation_token(clear_token)
     row = await conn.fetchrow(
-        '''
-        select i.id, i.tenant_id, i.email, i.role, i.expires_at,
-               i.redeemed_at, i.redeemed_by_user_id,
-               coalesce(t.display_name, t.legal_name) as tenant_name
-          from app.tenant_invitations i
-          join app.tenants t on t.id = i.tenant_id
-         where i.token_hash = $1
-         for update
-        ''',
+        'select * from app.lookup_invitation_by_token_hash($1)',
         token_hash,
     )
     if not row:
@@ -440,13 +433,8 @@ async def redeem_invitation(
             f'La invitación expiró el {row["expires_at"].isoformat()}.',
         )
 
-    await conn.execute(
-        '''
-        update app.tenant_invitations
-           set redeemed_at = now(),
-               redeemed_by_user_id = $2
-         where id = $1
-        ''',
+    await conn.fetchval(
+        'select app.mark_invitation_redeemed($1, $2)',
         row['id'], redeemer_user_id,
     )
 

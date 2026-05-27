@@ -605,6 +605,72 @@ create policy tenant_invitations_modify on app.tenant_invitations
     app.support_mode() or tenant_id = app.current_tenant_id()
   );
 
+-- M66 — SECURITY DEFINER functions para el endpoint público
+-- `/v1/invitations/{token}` (preview) y para el redeem post-login.
+--
+-- Por qué: la RLS de `tenant_invitations` requiere `support_mode` o
+-- `tenant_id = current_tenant_id()`. El lookup público NO tiene
+-- `tenant_id` context (es justamente lo que estamos buscando), y el
+-- redeem es ejecutado por el invitado ANTES de que el JWT tenga
+-- `tenant_id` resuelto (el claim namespaced se setea con el default
+-- tenant del user, que puede no ser el del invite). Resultado: el
+-- query SELECT devuelve 0 rows → 404 spurious.
+--
+-- Fix canónico: SECURITY DEFINER functions. Se ejecutan con el rol
+-- OWNER (copiloto_admin) que bypassa RLS por ser propietario de la
+-- tabla. El "secret" del token es proof-of-authorization suficiente:
+-- 256 bits random no se brute-forcean, y conocerlo = haber recibido
+-- el email original.
+--
+-- Defensa: el redeem POST sigue requiriendo JWT válido + email match;
+-- bypass de RLS NO es bypass de auth.
+
+create or replace function app.lookup_invitation_by_token_hash(p_hash text)
+returns table (
+  id uuid,
+  tenant_id uuid,
+  email text,
+  role text,
+  expires_at timestamptz,
+  redeemed_at timestamptz,
+  redeemed_by_user_id uuid,
+  tenant_name text
+)
+security definer
+set search_path = app, pg_temp
+language sql stable as $$
+  select i.id, i.tenant_id, i.email::text, i.role,
+         i.expires_at, i.redeemed_at, i.redeemed_by_user_id,
+         coalesce(t.display_name, t.legal_name) as tenant_name
+    from app.tenant_invitations i
+    join app.tenants t on t.id = i.tenant_id
+   where i.token_hash = p_hash
+$$;
+
+-- Marca redimida. Returns true si efectivamente marcó (primer redeem),
+-- false si ya estaba marcada por una request concurrente (race-safe sin
+-- FOR UPDATE explícito — el `where redeemed_at is null` actúa como CAS).
+create or replace function app.mark_invitation_redeemed(
+  p_id uuid, p_user_id uuid
+) returns boolean
+security definer
+set search_path = app, pg_temp
+language sql as $$
+  with marked as (
+    update app.tenant_invitations
+       set redeemed_at = now(),
+           redeemed_by_user_id = p_user_id
+     where id = p_id and redeemed_at is null
+     returning 1
+  )
+  select exists(select 1 from marked);
+$$;
+
+revoke all on function app.lookup_invitation_by_token_hash(text) from public;
+revoke all on function app.mark_invitation_redeemed(uuid, uuid) from public;
+grant execute on function app.lookup_invitation_by_token_hash(text) to copiloto_app;
+grant execute on function app.mark_invitation_redeemed(uuid, uuid) to copiloto_app;
+
 -- ─── Grants al rol de aplicación ───────────────────────────────────────────
 
 grant usage on schema app to copiloto_app;

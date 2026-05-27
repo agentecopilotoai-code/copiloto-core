@@ -27,10 +27,11 @@ class FakeConn:
     test_unit_v1_handlers_harness.py."""
 
     def __init__(self, fetchrow_returns=None, fetch_returns=None,
-                 execute_returns=None):
+                 execute_returns=None, fetchval_returns=None):
         self.fetchrow_queue = list(fetchrow_returns or [])
         self.fetch_queue = list(fetch_returns or [])
         self.execute_queue = list(execute_returns or [])
+        self.fetchval_queue = list(fetchval_returns or [])
         self.calls: list[tuple[str, str, tuple]] = []
 
     async def fetchrow(self, sql, *args):
@@ -44,6 +45,10 @@ class FakeConn:
     async def fetch(self, sql, *args):
         self.calls.append(('fetch', sql, args))
         return self.fetch_queue.pop(0) if self.fetch_queue else []
+
+    async def fetchval(self, sql, *args):
+        self.calls.append(('fetchval', sql, args))
+        return self.fetchval_queue.pop(0) if self.fetchval_queue else None
 
 
 def _stub_settings(monkeypatch, **overrides):
@@ -423,14 +428,17 @@ def test_get_invitation_preview_marks_redeemed_flag():
 
 
 def test_get_invitation_preview_hashes_token_for_lookup():
-    """Confirma que el SELECT usa `hash_invitation_token(clear_token)` —
+    """Confirma que el call a la function usa `hash_invitation_token(clear_token)` —
     si el lookup usara el clear, la DB nunca matcharía (storeamos hash)."""
     conn = FakeConn(fetchrow_returns=[None])
     clear = 'b' * 64
     asyncio.run(get_invitation_preview(conn, clear))
     # Última call fue fetchrow. El último arg es el bound param $1 = hash.
-    _, _, args = conn.calls[-1]
+    _, sql, args = conn.calls[-1]
     assert args[0] == hash_invitation_token(clear)
+    # M66 — debe invocar la SECURITY DEFINER function (no el SELECT directo
+    # que cae en RLS).
+    assert 'lookup_invitation_by_token_hash' in sql
 
 
 # ─── redeem_invitation (M65 iteración 2) ─────────────────────────────────
@@ -463,7 +471,7 @@ def test_redeem_invitation_raises_email_mismatch():
 def test_redeem_invitation_email_match_is_case_insensitive():
     """`citext` en DB pero igual normalizamos en Python como defensa."""
     row = _preview_row(email='Invitee@Example.com')
-    conn = FakeConn(fetchrow_returns=[row], execute_returns=['UPDATE'])
+    conn = FakeConn(fetchrow_returns=[row], fetchval_returns=[True])
     out = asyncio.run(redeem_invitation(
         conn=conn, clear_token='a' * 64,
         redeemer_user_id=uuid4(),
@@ -520,7 +528,7 @@ def test_redeem_invitation_already_redeemed_after_expiry_still_ok():
 def test_redeem_invitation_happy_path_marks_redeemed():
     row = _preview_row()
     user_id = uuid4()
-    conn = FakeConn(fetchrow_returns=[row], execute_returns=['UPDATE'])
+    conn = FakeConn(fetchrow_returns=[row], fetchval_returns=[True])
     out = asyncio.run(redeem_invitation(
         conn=conn, clear_token='a' * 64,
         redeemer_user_id=user_id,
@@ -528,23 +536,34 @@ def test_redeem_invitation_happy_path_marks_redeemed():
     ))
     assert out.redeemed is True
     assert out.tenant_name == 'Demo Tenant'
-    # Tiene que haber emitido el UPDATE.
-    update_calls = [c for c in conn.calls if c[0] == 'execute']
-    assert len(update_calls) == 1
+    # M66 — el mark se hace via SECURITY DEFINER function `app.mark_invitation_redeemed`
+    mark_calls = [c for c in conn.calls if c[0] == 'fetchval']
+    assert len(mark_calls) == 1
+    assert 'mark_invitation_redeemed' in mark_calls[0][1]
     # Args: ($1=id, $2=user_id)
-    assert update_calls[0][2][1] == user_id
+    assert mark_calls[0][2][1] == user_id
 
 
-def test_redeem_invitation_uses_for_update_lock():
-    """Race-condition safety: query debe usar FOR UPDATE para serializar
-    redeems concurrentes con el mismo token."""
+def test_redeem_invitation_uses_security_definer_functions():
+    """M66 — el redeem NO debe pegarle directo a `app.tenant_invitations`
+    (RLS bloquearía sin tenant context). Debe usar las functions:
+    `lookup_invitation_by_token_hash` para SELECT y
+    `mark_invitation_redeemed` para UPDATE.
+
+    Race-safety: `mark_invitation_redeemed` tiene `where redeemed_at is
+    null` que actúa como compare-and-swap sin necesidad de SELECT FOR
+    UPDATE explícito."""
     row = _preview_row()
-    conn = FakeConn(fetchrow_returns=[row], execute_returns=['UPDATE'])
+    conn = FakeConn(fetchrow_returns=[row], fetchval_returns=[True])
     asyncio.run(redeem_invitation(
         conn=conn, clear_token='a' * 64,
         redeemer_user_id=uuid4(),
         redeemer_email='invitee@example.com',
     ))
-    # La query del fetchrow inicial debe contener FOR UPDATE.
+    # SELECT vía function (no `select ... from app.tenant_invitations`).
     select_call = next(c for c in conn.calls if c[0] == 'fetchrow')
-    assert 'for update' in select_call[1].lower()
+    assert 'lookup_invitation_by_token_hash' in select_call[1]
+    assert 'from app.tenant_invitations' not in select_call[1].lower()
+    # UPDATE vía function.
+    update_call = next(c for c in conn.calls if c[0] == 'fetchval')
+    assert 'mark_invitation_redeemed' in update_call[1]
