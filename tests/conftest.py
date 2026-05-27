@@ -50,6 +50,17 @@ def _reset_session_store_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _reset_signup_rate_limiter_between_tests():
+    """SEC-021 — el limiter de tenant-signup es proceso-global. Reset
+    entre tests para evitar leak del bucket (un test que llama signup
+    3 veces dejaría los siguientes con el counter saturado)."""
+    from app.api.v1.handlers import tenant_signup_handlers
+    tenant_signup_handlers._reset_signup_rate_limiter()
+    yield
+    tenant_signup_handlers._reset_signup_rate_limiter()
+
+
+@pytest.fixture(autouse=True)
 def _reset_oauth_state_store_between_tests():
     """P1-10 — InMemoryOAuthStateStore también es proceso-global. Tests
     del OAuth callback consumen state tokens; sin reset, el siguiente

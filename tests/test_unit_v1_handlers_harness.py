@@ -743,6 +743,38 @@ def test_tenant_signup_401_anonymous():
     assert exc.value.status_code == 401
 
 
+def test_tenant_signup_SEC021_rate_limit_max_3_per_hour():
+    """SEC-021 (audit #2) — max 3 signups por hora por actor → 4to 429.
+    Anti-fleet-pollution: un attacker con email verified no puede crear
+    N tenants para enmudecer la fleet."""
+    from app.api.v1.handlers.tenant_signup_handlers import (
+        _reset_signup_rate_limiter, create_own_tenant,
+    )
+    from app.api.v1.schemas import TenantCreate
+    from fastapi import HTTPException
+    _reset_signup_rate_limiter()
+    payload = TenantCreate(
+        slug='acme', legal_name='X', display_name='X',
+        vertical_code='tech', country_code='CO',
+    )
+
+    # Cada call NO importa que falle internamente (existing membership 409,
+    # slug taken, etc.) — el rate-limit corre ANTES, así que el bucket
+    # crece. Usamos conn que devuelve "existing=1" → 409 — pero cuenta.
+    req = _fake_request(actor_id='auth0|attacker', email='a@e.co')
+    for _ in range(3):
+        conn = FakeConn(fetchval=[uuid4()])  # existing membership → 409
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(create_own_tenant(payload, req, conn))
+        assert exc.value.status_code == 409  # not rate-limit, just exist
+
+    # 4to call → 429 ANTES del check de existing.
+    conn = FakeConn(fetchval=[uuid4()])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(create_own_tenant(payload, req, conn))
+    assert exc.value.status_code == 429
+
+
 def test_tenant_signup_SEC007_rejects_unverified_email():
     """SEC-007 (audit 2026-05-27) — un attacker con cuenta Auth0 con email
     no verificado no debe poder crear un tenant + quedar como owner. Antes

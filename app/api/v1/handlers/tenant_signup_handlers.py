@@ -28,6 +28,21 @@ from app.api.v1.schemas import TenantCreate
 from app.db.pool import get_db, record_to_dict
 from app.services import locale as locale_service
 from app.services.audit import audit
+from app.services.sliding_window_rate_limit import SlidingWindowLimiter
+
+# SEC-021 (audit #2, 2026-05-27) — rate-limit anti-fleet-pollution.
+# Un atacante con cuenta Auth0 + email verified podía spawn N tenants
+# (cada uno pasa el TASK-0077 si tira el join utr antes del N+1). Acá
+# limitamos: 3 tenants/hora por actor — cubre legítimo (un usuario raro
+# que cree 2-3 tenants en el mismo día) + bloquea bombing.
+_signup_rate_limiter = SlidingWindowLimiter(
+    max_calls=3, window_seconds=3600,
+)
+
+
+def _reset_signup_rate_limiter() -> None:
+    """Test-only — limpia el bucket."""
+    _signup_rate_limiter.reset()
 
 
 @tenant_signup_router.post('/tenant-signup', status_code=status.HTTP_201_CREATED)
@@ -50,6 +65,18 @@ async def create_own_tenant(
             detail=(
                 'Tu email no está verificado. Completá la verificación '
                 'enviada por correo antes de crear un tenant.'
+            ),
+        )
+
+    # SEC-021 (audit #2) — anti-fleet-pollution per-actor.
+    from fastapi import HTTPException as _HE  # noqa: PLC0415
+    from app.services.sliding_window_rate_limit import _build_sync_check  # noqa: PLC0415
+    if not _build_sync_check(_signup_rate_limiter)(actor_id):
+        raise _HE(
+            status_code=429,
+            detail=(
+                'rate_limit_exceeded — máx 3 tenant signups por hora '
+                'por actor. Esperá antes de crear otro.'
             ),
         )
 

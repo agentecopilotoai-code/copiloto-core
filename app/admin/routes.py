@@ -1131,6 +1131,20 @@ async def admin_callback(
     # puede validar email-match.
     pending_token = request.cookies.get(PENDING_INVITATION_COOKIE)
     redeem_status: str | None = None
+    # SEC-020 (audit #2) — validar formato del token ANTES del path-
+    # injection en el URL del Core. La cookie es HTTP-only + sólo la
+    # setea `GET /i/{token}` (que ya valida hex 64), pero defense-in-
+    # depth: doble-check acá previene un attacker que vuelva a setear
+    # la cookie a `..%2Fadmin%2Fapi%2Fother` o similar.
+    if pending_token and not (
+        len(pending_token) == 64
+        and all(c in '0123456789abcdef' for c in pending_token.lower())
+    ):
+        _debug(
+            'GET /callback', step='pending_invitation_cookie_malformed',
+            length=len(pending_token), prefix=pending_token[:8],
+        )
+        pending_token = None  # ignorar — no caer en path injection
     if pending_token:
         # PERF-001 — singleton compartido para BFF→Core.
         from app.services.http_clients import get_core_bff_client  # noqa: PLC0415

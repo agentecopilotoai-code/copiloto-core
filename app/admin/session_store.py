@@ -121,7 +121,7 @@ class RedisSessionStore:
     por cliente. Un singleton de `RedisSessionStore` reutiliza conn.
     """
 
-    def __init__(self, url: str, prefix: str) -> None:
+    def __init__(self, url: str, prefix: str, *, local_cache_ttl: float = 5.0) -> None:
         # Lazy import para no romper instalaciones sin redis dep.
         try:
             from redis.asyncio import Redis  # noqa: PLC0415
@@ -132,11 +132,36 @@ class RedisSessionStore:
             ) from exc
         self._client = Redis.from_url(url, decode_responses=True)
         self._prefix = prefix
+        # PERF-019 (audit #2) — cache local TTL corto en el process del
+        # BFF. Cada request del SPA invoca `get_session_store().get(sid)`;
+        # sin cache son 1 RTT a Redis cada call. Con TTL 5s, requests
+        # consecutivos del mismo session reusan localmente. El TTL acota
+        # la window donde un revoke server-side toma efecto (worst-case
+        # 5s; aceptable para session UX).
+        self._local_cache_ttl = local_cache_ttl
+        self._local_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     def _key(self, sid: str) -> str:
         return f'{self._prefix}{sid}'
 
     async def get(self, sid: str) -> dict[str, Any] | None:
+        # PERF-019 — local cache hit check antes del RTT a Redis.
+        now = time.time()
+        cached = self._local_cache.get(sid)
+        if cached is not None:
+            cache_expires_at, cached_payload = cached
+            if cache_expires_at > now:
+                # Aún válido localmente — devolver sin tocar Redis.
+                # NOTA: verificar también `expires_at` del payload por si
+                # el TTL global vence dentro de la window de cache.
+                if cached_payload.get('expires_at', 0) > now:
+                    return cached_payload
+                # Expirado globalmente — purgar local + tratar como miss.
+                self._local_cache.pop(sid, None)
+                return None
+            # Cache TTL pasó — purgar y refetch.
+            self._local_cache.pop(sid, None)
+
         try:
             raw = await self._client.get(self._key(sid))
         except Exception as exc:  # noqa: BLE001
@@ -152,7 +177,7 @@ class RedisSessionStore:
         if raw is None:
             return None
         try:
-            return json.loads(raw)
+            payload = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             # Sesión corrupta (probable: bug viejo escribió pickle/binary
             # con otro prefijo). Borrar para que el user re-loguee.
@@ -161,6 +186,9 @@ class RedisSessionStore:
             except Exception:  # noqa: BLE001
                 pass
             return None
+        # PERF-019 — populate local cache.
+        self._local_cache[sid] = (now + self._local_cache_ttl, payload)
+        return payload
 
     async def set(
         self, sid: str, payload: dict[str, Any], ttl_seconds: int,
@@ -176,6 +204,9 @@ class RedisSessionStore:
                 json.dumps(payload_with_exp),
                 ex=ttl_seconds,
             )
+            # PERF-019 — invalidar cache local para que el próximo get
+            # vea el payload fresco (no quede el viejo cacheado 5s más).
+            self._local_cache.pop(sid, None)
         except Exception as exc:  # noqa: BLE001
             # INT-NEW-2 — set falla → propagar como RuntimeError para que
             # el handler responda 503 (no podemos crear sesión sin store).
@@ -190,6 +221,9 @@ class RedisSessionStore:
             ) from exc
 
     async def delete(self, sid: str) -> bool:
+        # PERF-019 — invalidar cache local primero (siempre, aún si
+        # Redis falla — defense contra zombie cached session).
+        self._local_cache.pop(sid, None)
         try:
             deleted = await self._client.delete(self._key(sid))
             return bool(deleted)
@@ -215,6 +249,14 @@ class RedisSessionStore:
 # ─── Factory ────────────────────────────────────────────────────────────
 
 
+# SEC-015 (audit #2): el agente reportó race en `get_session_store`.
+# Análisis: la función ES sync (`def`, no `async def`). El bytecode
+# CPython entre `if _store is not None: return` y la asignación `_store
+# = ...` NO contiene await — coroutines no se preempten ahí (cooperative
+# scheduling). La race teórica solo existiría en multi-threading, pero
+# uvicorn corre 1 thread por worker. Mitigamos con `_store_init_done`
+# bandera simple por defensa-en-profundidad si alguien promociona a
+# async/multithreaded en el futuro.
 _store: SessionStore | None = None
 
 
