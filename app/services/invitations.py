@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -110,12 +109,30 @@ def hash_invitation_token(clear_token: str) -> str:
 
 
 # ─── Rate limiting per actor ─────────────────────────────────────────────
+#
+# P1-3 (audit 2026-05-27) — migrado a `SlidingWindowLimiter` con cap+TTL
+# para evitar growth ilimitado del dict (attack: N actor_ids sintéticos).
+# El limiter se rebuilds lazy con el setting actual via `_get_limiter()`.
 
-# Bucket sliding-window in-memory. Misma estrategia que `_auth0_rl_check`
-# en platform_admin_handlers.py — buena para single-worker dev. En
-# producción multi-worker, considerar mover a Redis (no crítico hoy
-# porque el límite es generoso: 20/hora).
-_INVITATION_RATE_BUCKETS: dict[str, list[float]] = {}
+from app.services.sliding_window_rate_limit import (  # noqa: E402
+    SlidingWindowLimiter, _build_sync_check,
+)
+
+_invitation_limiter: SlidingWindowLimiter | None = None
+
+
+def _get_invitation_limiter() -> SlidingWindowLimiter:
+    global _invitation_limiter
+    settings = get_settings()
+    # Rebuild si max_calls cambió (tests con overrides). En prod es
+    # estable porque la setting no muta runtime.
+    if (_invitation_limiter is None
+            or _invitation_limiter.max_calls != settings.invitation_send_rate_per_hour):
+        _invitation_limiter = SlidingWindowLimiter(
+            max_calls=settings.invitation_send_rate_per_hour,
+            window_seconds=3600.0,
+        )
+    return _invitation_limiter
 
 
 def _invitation_rate_check(actor_id: str | None) -> None:
@@ -123,24 +140,20 @@ def _invitation_rate_check(actor_id: str | None) -> None:
     `invitation_send_rate_per_hour` invitaciones."""
     if not actor_id:
         return
-    settings = get_settings()
-    max_calls = settings.invitation_send_rate_per_hour
-    window = 3600.0  # 1 hora
-    now = time.monotonic()
-    bucket = _INVITATION_RATE_BUCKETS.setdefault(actor_id, [])
-    cutoff = now - window
-    bucket[:] = [t for t in bucket if t > cutoff]
-    if len(bucket) >= max_calls:
+    limiter = _get_invitation_limiter()
+    if not _build_sync_check(limiter)(actor_id):
         raise InvitationRateLimitError(
-            f'Excediste el límite de {max_calls} invitaciones por hora.'
+            f'Excediste el límite de {limiter.max_calls} invitaciones por hora.'
             ' Esperá antes de mandar más.',
         )
-    bucket.append(now)
 
 
 def _reset_invitation_rate_buckets() -> None:
     """Test-only — limpia los buckets entre tests."""
-    _INVITATION_RATE_BUCKETS.clear()
+    global _invitation_limiter
+    if _invitation_limiter is not None:
+        _invitation_limiter.reset()
+    _invitation_limiter = None
 
 
 # ─── DTOs ────────────────────────────────────────────────────────────────
@@ -460,6 +473,8 @@ async def redeem_invitation(
 # ─── Internals exposed for testing ──────────────────────────────────────
 
 _internal: dict[str, Any] = {
-    'rate_buckets': _INVITATION_RATE_BUCKETS,
+    # P1-3 — `rate_buckets` quedó como compatibility shim (callers que
+    # esperaban el dict crudo ahora reciben el limiter object).
+    'rate_buckets': lambda: _get_invitation_limiter()._buckets,  # noqa: SLF001
     'reset_rate_buckets': _reset_invitation_rate_buckets,
 }

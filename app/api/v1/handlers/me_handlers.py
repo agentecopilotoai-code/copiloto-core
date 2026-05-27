@@ -302,22 +302,24 @@ SUPPORT_MODE_MIN_JUSTIFICATION_LEN = 10
 _SUPPORT_MODE_ROLES = {'platform_owner', 'owner'}
 
 # SEC-002 (audit 2026-05-27) — rate-limit anti-bombing del support-mode.
-# In-memory sliding window por actor (alineado al patrón de
-# `_AUTH0_RL_BUCKETS` y `_INVITATION_RATE_BUCKETS`). 5 activaciones por
-# 5min — cubre uso humano normal (cambio de tenant en troubleshooting)
-# y bloquea un script atacante.
-_SUPPORT_MODE_RATE_BUCKETS: dict[str, list[float]] = {}
+# P1-3 — migrado al `SlidingWindowLimiter` compartido. Antes había 3
+# implementaciones duplicadas (invitations, auth0_admin, support_mode);
+# ahora todas comparten infraestructura con cap+TTL anti-growth-attack.
+from app.services.sliding_window_rate_limit import (  # noqa: E402
+    SlidingWindowLimiter, _build_sync_check,
+)
+
 _SUPPORT_MODE_RL_MAX = 5
 _SUPPORT_MODE_RL_WINDOW_SECONDS = 300
 
+_support_mode_limiter = SlidingWindowLimiter(
+    max_calls=_SUPPORT_MODE_RL_MAX,
+    window_seconds=_SUPPORT_MODE_RL_WINDOW_SECONDS,
+)
+
 
 def _support_mode_rl_check(actor_id: str) -> None:
-    import time as _time  # noqa: PLC0415
-    now = _time.monotonic()
-    bucket = _SUPPORT_MODE_RATE_BUCKETS.setdefault(actor_id, [])
-    cutoff = now - _SUPPORT_MODE_RL_WINDOW_SECONDS
-    bucket[:] = [t for t in bucket if t > cutoff]
-    if len(bucket) >= _SUPPORT_MODE_RL_MAX:
+    if not _build_sync_check(_support_mode_limiter)(actor_id):
         raise HTTPException(
             status_code=429,
             detail=(
@@ -326,12 +328,11 @@ def _support_mode_rl_check(actor_id: str) -> None:
                 f'{_SUPPORT_MODE_RL_WINDOW_SECONDS // 60}min por actor.'
             ),
         )
-    bucket.append(now)
 
 
 def _reset_support_mode_rate_limit() -> None:
     """Test-only — limpia los buckets entre tests."""
-    _SUPPORT_MODE_RATE_BUCKETS.clear()
+    _support_mode_limiter.reset()
 
 
 class SupportModeActivateRequest(BaseModel):

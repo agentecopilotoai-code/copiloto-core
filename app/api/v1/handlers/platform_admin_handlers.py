@@ -982,14 +982,34 @@ class Auth0AdminDeletePayload(Auth0AdminActionPayload):
 # es muy restrictivo. Reset = restart limpia counters → aceptable: el
 # enforcement crítico vive en audit + alertas.
 
-_AUTH0_RL_BUCKETS: dict[tuple[str, str], list[float]] = {}
+# P1-3 (audit 2026-05-27) — migrado a `SlidingWindowLimiter` con cap+TTL.
+# Un limiter por op_class para que distintas semánticas (mutate vs destroy)
+# tengan su propio window/max sin compartir buckets.
+from app.services.sliding_window_rate_limit import (  # noqa: E402
+    SlidingWindowLimiter, _build_sync_check,
+)
+
+_AUTH0_LIMITERS: dict[str, SlidingWindowLimiter] = {}
+
+
+def _get_auth0_limiter(
+    op_class: str, max_calls: int, window_seconds: float,
+) -> SlidingWindowLimiter:
+    key = f'{op_class}:{max_calls}:{int(window_seconds)}'
+    limiter = _AUTH0_LIMITERS.get(key)
+    if limiter is None:
+        limiter = SlidingWindowLimiter(
+            max_calls=max_calls, window_seconds=window_seconds,
+        )
+        _AUTH0_LIMITERS[key] = limiter
+    return limiter
 
 
 def _auth0_rl_check(
     actor_id: str | None, op_class: str, *,
     max_calls: int, window_seconds: float,
 ) -> None:
-    """Token bucket sliding-window. Levanta 429 si excede.
+    """Sliding-window rate-limit. Levanta 429 si excede.
 
     `op_class`:
       - 'mutate'  → block / unblock / reset-mfa.  max=10/5min.
@@ -997,16 +1017,11 @@ def _auth0_rl_check(
     """
     if not actor_id:
         # Service tokens NO llegan acá (router exige platform_owner),
-        # pero defensive: si por algun bug actor_id es None, dejar pasar
+        # pero defensive: si por algún bug actor_id es None, dejar pasar
         # sin rate-limit (las otras gates ya rechazaron).
         return
-    key = (actor_id, op_class)
-    now = time.monotonic()
-    bucket = _AUTH0_RL_BUCKETS.setdefault(key, [])
-    # Drop calls fuera del window.
-    cutoff = now - window_seconds
-    bucket[:] = [t for t in bucket if t > cutoff]
-    if len(bucket) >= max_calls:
+    limiter = _get_auth0_limiter(op_class, max_calls, window_seconds)
+    if not _build_sync_check(limiter)(actor_id):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(
@@ -1015,12 +1030,13 @@ def _auth0_rl_check(
                 f'Esperar antes de reintentar.'
             ),
         )
-    bucket.append(now)
 
 
 def _auth0_rl_reset_all() -> None:
     """Test-only — limpia todos los buckets."""
-    _AUTH0_RL_BUCKETS.clear()
+    for limiter in _AUTH0_LIMITERS.values():
+        limiter.reset()
+    _AUTH0_LIMITERS.clear()
 
 
 async def _resolve_auth0_subject(
