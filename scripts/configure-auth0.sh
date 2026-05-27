@@ -764,16 +764,15 @@ exports.onExecutePostLogin = async (event, api) => {
     api.authentication.challengeWithAny(enrolled);
   } else {
     // Primer login del user con rol privilegiado — no tiene factor
-    // enrolado todavía. enrollWithAny lista los factores que Auth0
-    // tiene habilitados en el tenant (ver CONFIGURE_MFA_FACTORS):
-    // OTP (Google Authenticator), WebAuthn platform (Touch ID,
-    // Face ID, Windows Hello) y WebAuthn roaming (YubiKey).
-    // Auth0 muestra una pantalla donde el user elige uno + lo enrolla.
-    api.authentication.enrollWithAny([
-      { type: 'otp' },
-      { type: 'webauthn-platform' },
-      { type: 'webauthn-roaming' },
-    ]);
+    // enrolado todavía. Forzamos OTP (Google Authenticator / Authy /
+    // 1Password / etc.) porque es el único factor que funciona sin
+    // HTTPS — el resto (webauthn-platform, webauthn-roaming) requiere
+    // HTTPS en producción. En localhost algunos browsers también
+    // restringen WebAuthn → Auth0 tira "invalid_request" (M62 hotfix #9).
+    //
+    // Una vez enrolado OTP, el user puede agregar factores adicionales
+    // desde Auth0 dashboard → Profile → Security.
+    api.authentication.enrollWith({ type: 'otp' });
   }
 };
 MFA_ACTION
