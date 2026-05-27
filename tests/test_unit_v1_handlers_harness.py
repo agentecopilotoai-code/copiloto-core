@@ -169,8 +169,9 @@ def test_current_user_id_creates_lazy_falls_to_default_email():
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid = uuid4()
     req = _fake_request(email=None)
-    # M57: 3 fetchrow ahora — auth_subject miss → pending miss → insert.
-    conn = FakeConn(fetchrow=[None, None, {'id': uid}])
+    # M57/M67: 4 fetchrow — auth_subject miss → pending miss →
+    # email_match miss → insert.
+    conn = FakeConn(fetchrow=[None, None, None, {'id': uid}])
     asyncio.run(current_user_id_from_request(req, conn))
     # Buscar el INSERT por SQL (no por índice) para no depender del orden.
     insert_call = next(c for c in conn.calls if 'insert into app.users' in c[1])
@@ -1726,7 +1727,8 @@ def test_current_user_id_reconciles_pending_invite():
 
 
 def test_current_user_id_creates_new_when_no_pending_match():
-    """Si no hay pending con ese email, crea user nuevo (comportamiento previo)."""
+    """Si no hay pending ni email-match, crea user nuevo (comportamiento
+    previo a M67 + M57)."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid_new = uuid4()
     req = _fake_request(actor_id='google-oauth2|456', email='nadie@empresa.com')
@@ -1734,11 +1736,68 @@ def test_current_user_id_creates_new_when_no_pending_match():
         fetchrow=[
             None,            # lookup by auth_subject → miss
             None,            # lookup pending by email → miss
+            None,            # M67: lookup email_match → miss
             {'id': uid_new}, # insert returning id
         ],
     )
     result = asyncio.run(current_user_id_from_request(req, conn))
     assert result == uid_new
+
+
+# ─── M67 — reconciliación email-match con auth_subject distinto ───────────
+
+
+def test_current_user_id_M67_reconciles_email_with_different_subject():
+    """M67 — `add_tenant_member` grabó un user con `auth_subject=auth0|abc`
+    (identity Database de Auth0) para `foo@example.com`. El user se loguea
+    con Google OAuth → JWT trae `sub=google-oauth2|xyz` (sub distinto al
+    grabado, mismo email). Debe reconciliar UPDATEando el auth_subject del
+    user existente — sin esto el INSERT lazy violaba `users_email_key`."""
+    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    uid_existing = uuid4()
+    req = _fake_request(
+        actor_id='google-oauth2|xyz', email='foo@example.com',
+    )
+    conn = FakeConn(
+        fetchrow=[
+            None,                                            # 1: auth_subject miss
+            None,                                            # 2: pending miss
+            {'id': uid_existing, 'auth_subject': 'auth0|abc'},  # 3: email_match HIT
+        ],
+        execute=['OK'],  # update auth_subject
+    )
+    result = asyncio.run(current_user_id_from_request(req, conn))
+    assert result == uid_existing
+    # Debe haber emitido UN UPDATE adoptando el sub del JWT.
+    update_calls = [c for c in conn.calls if c[0] == 'execute'
+                    and 'update app.users' in c[1]]
+    assert len(update_calls) == 1
+    assert update_calls[0][2][0] == 'google-oauth2|xyz'
+    assert update_calls[0][2][2] == uid_existing
+
+
+def test_current_user_id_M67_no_update_when_email_match_subject_already_correct():
+    """Edge case: el email_match lookup encuentra un row cuyo auth_subject
+    YA coincide con el JWT (escenario teórico — el primer lookup por
+    auth_subject debería haberlo encontrado primero, pero por defensa
+    cubrimos el caso por si hay race conditions con writes paralelos).
+    NO debe emitir UPDATE."""
+    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    uid_existing = uuid4()
+    req = _fake_request(actor_id='auth0|abc', email='foo@example.com')
+    conn = FakeConn(
+        fetchrow=[
+            None,                                       # 1: auth_subject miss
+            None,                                       # 2: pending miss
+            {'id': uid_existing, 'auth_subject': 'auth0|abc'},  # 3: email_match HIT
+        ],
+    )
+    result = asyncio.run(current_user_id_from_request(req, conn))
+    assert result == uid_existing
+    # NO debe haber UPDATE (sub ya coincide).
+    update_calls = [c for c in conn.calls if c[0] == 'execute'
+                    and 'update app.users' in c[1]]
+    assert len(update_calls) == 0
 
 
 def test_current_user_id_existing_user_skips_pending_lookup():

@@ -109,6 +109,44 @@ async def current_user_id_from_request(
         request.state.user_id = pending_row['id']
         return pending_row['id']
 
+    # M67 — email match con auth_subject distinto.
+    #
+    # Caso real observado: `add_tenant_member` invita a `foo@example.com`,
+    # Auth0 `users-by-email` devuelve un identity Database (`auth0|abc`),
+    # se graba en `app.users.auth_subject`. El invitado se loguea con
+    # Google OAuth (mismo email) → Auth0 emite sub distinto
+    # (`google-oauth2|xyz`). El INSERT lazy de abajo violaba
+    # `users_email_key` (unique on email).
+    #
+    # Fix: si existe un user con el mismo email pero auth_subject !=
+    # actor_id, reconciliamos adoptando el sub del JWT actual. Esto NO
+    # introduce vulnerabilidad: el email del JWT ya está validado por
+    # `authenticate_request` (A-003 — namespaced claim del access_token).
+    #
+    # Idealmente Auth0 linkearía las 2 identities (script
+    # `account_linking.js` lo hace para verified emails), pero acá
+    # cubrimos el caso donde el linking no ocurrió o el invite creó al
+    # user antes del linking.
+    email_match_row = await conn.fetchrow(
+        'select id, auth_subject from app.users where email = $1', email,
+    )
+    if email_match_row is not None:
+        # `auth_subject` distinto al JWT → reconciliar.
+        if email_match_row['auth_subject'] != actor_id:
+            await conn.execute(
+                '''
+                update app.users
+                   set auth_subject = $1,
+                       display_name = coalesce(nullif($2, ''), display_name),
+                       status = case when status = 'invited' then 'active' else status end,
+                       updated_at = now()
+                 where id = $3
+                ''',
+                actor_id, display, email_match_row['id'],
+            )
+        request.state.user_id = email_match_row['id']
+        return email_match_row['id']
+
     # No existe ningún user con este email → crear lazy desde claims del JWT.
     row = await conn.fetchrow(
         '''
