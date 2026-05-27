@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 
 # ─── FakeConn — asyncpg.Connection mock con queries grabadas ──────────────
@@ -1248,6 +1248,31 @@ def _stub_invitation_send(monkeypatch, *,
         )
     monkeypatch.setattr(inv_mod, 'create_and_send_invitation', fake_send)
 
+    # P0-4 — el handler ahora usa `create_invitation_record` + background
+    # task `send_invitation_email_for_draft`. Stubeamos ambos:
+    async def fake_create_draft(**kwargs):
+        if raise_rate_limit:
+            raise inv_mod.InvitationRateLimitError('rate_limited')
+        return inv_mod.InvitationDraft(
+            invitation_id=inv_id,
+            tenant_id=kwargs.get('tenant_id', uuid4()),
+            accept_url=accept_url,
+            expires_at=expires_at,
+            email=kwargs.get('email', 'x@y.co'),
+            tenant_name=kwargs.get('tenant_name', 'X'),
+            role=kwargs.get('role', 'admin'),
+            inviter_name=kwargs.get('inviter_name'),
+            inviter_email=kwargs.get('inviter_email'),
+        )
+
+    async def fake_send_for_draft(draft, **kwargs):
+        return None  # background task — el handler no awaitea el resultado.
+
+    monkeypatch.setattr(inv_mod, 'create_invitation_record', fake_create_draft)
+    monkeypatch.setattr(
+        inv_mod, 'send_invitation_email_for_draft', fake_send_for_draft,
+    )
+
 
 def test_add_tenant_member_existing_user(monkeypatch):
     from app.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
@@ -1266,11 +1291,12 @@ def test_add_tenant_member_existing_user(monkeypatch):
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='x@y.co', role='admin', is_default=False)
-    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    result = asyncio.run(add_tenant_member(tid, body, req, BackgroundTasks(), _acl=None, conn=conn))
     assert result['email'] == 'x@y.co'
     # M61: response trae bloque `invitation` con metadata del email.
+    # P0-4: status optimista 'queued' inmediato (el send corre en
+    # background, provider final aparece en `last_send_status` de DB).
     assert result['invitation']['status'] == 'queued'
-    assert result['invitation']['provider'] == 'stub'
 
 
 def test_add_tenant_member_pending_user(monkeypatch):
@@ -1292,7 +1318,7 @@ def test_add_tenant_member_pending_user(monkeypatch):
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='new@x.co', role='agent', is_default=False)
-    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    result = asyncio.run(add_tenant_member(tid, body, req, BackgroundTasks(), _acl=None, conn=conn))
     assert result['user_id'] == str(uid)
     assert result['invitation']['accept_url'].startswith('http://localhost:3000/i/')
 
@@ -1305,7 +1331,7 @@ def test_add_tenant_member_404_tenant_missing():
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='x@y.co', role='admin', is_default=False)
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+        asyncio.run(add_tenant_member(tid, body, req, BackgroundTasks(), _acl=None, conn=conn))
     assert exc.value.status_code == 404
 
 
@@ -1928,7 +1954,7 @@ def test_add_tenant_member_auth0_invited(monkeypatch):
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='new@x.co', role='admin', is_default=False)
-    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    result = asyncio.run(add_tenant_member(tid, body, req, BackgroundTasks(), _acl=None, conn=conn))
     assert result['auth0']['status'] == 'invited'
     assert result['auth0']['user_id'] == 'auth0|new-real-id'
     assert result['auth0']['invitation_ticket_url'].startswith('https://')
@@ -1973,7 +1999,7 @@ def test_add_tenant_member_auth0_reused_existing(monkeypatch):
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='existing@x.co', role='admin', is_default=False)
-    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    result = asyncio.run(add_tenant_member(tid, body, req, BackgroundTasks(), _acl=None, conn=conn))
     assert result['auth0']['status'] == 'reused_existing'
     # M61: SIEMPRE se manda email, aunque el user ya existiera. Bug fix.
     assert result['invitation']['status'] == 'queued'
@@ -2003,7 +2029,7 @@ def test_add_tenant_member_auth0_skipped_when_not_configured(monkeypatch):
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='local@x.co', role='admin', is_default=False)
-    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    result = asyncio.run(add_tenant_member(tid, body, req, BackgroundTasks(), _acl=None, conn=conn))
     assert result['auth0']['status'] == 'skipped'
     assert result['auth0']['user_id'] is None
     # auth_subject = pending|hash → M57 lo reconcilia después.
@@ -2040,7 +2066,7 @@ def test_add_tenant_member_auth0_error_falls_back_to_local(monkeypatch):
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='down@x.co', role='admin', is_default=False)
-    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    result = asyncio.run(add_tenant_member(tid, body, req, BackgroundTasks(), _acl=None, conn=conn))
     assert result['auth0']['status'] == 'error'
     assert 'oops' in result['auth0']['error']
     # Pero la membresía local SÍ se creó (no aborta).
@@ -2072,7 +2098,7 @@ def test_add_tenant_member_invitation_rate_limit_does_not_abort(monkeypatch):
     )
     req = _fake_request(roles=['platform_owner'])
     body = TenantMemberAdd(email='rl@x.co', role='admin', is_default=False)
-    result = asyncio.run(add_tenant_member(tid, body, req, _acl=None, conn=conn))
+    result = asyncio.run(add_tenant_member(tid, body, req, BackgroundTasks(), _acl=None, conn=conn))
     # Membresía OK.
     assert result['user_id'] == str(uid)
     # Pero el email NO se mandó — visible en response.

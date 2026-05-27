@@ -169,10 +169,27 @@ class InvitationSent:
     email_status: str  # 'queued' | 'noop' | 'failed'
 
 
+@dataclass(frozen=True)
+class InvitationDraft:
+    """P0-4 (audit 2026-05-27) — invitation persisted en DB, email pendiente.
+    El caller schedule el send via `send_invitation_email_for_draft` en un
+    BackgroundTask (post-response, fuera de la TX original)."""
+    invitation_id: UUID
+    tenant_id: UUID
+    accept_url: str
+    expires_at: datetime
+    # Payload necesario para renderear el email sin necesidad de re-leer DB.
+    email: str
+    tenant_name: str
+    role: str
+    inviter_name: str | None
+    inviter_email: str | None
+
+
 # ─── Main entry point ───────────────────────────────────────────────────
 
 
-async def create_and_send_invitation(
+async def create_invitation_record(
     *,
     conn: asyncpg.Connection,
     tenant_id: UUID,
@@ -182,16 +199,11 @@ async def create_and_send_invitation(
     inviter_user_id: UUID | None,
     inviter_name: str | None = None,
     inviter_email: str | None = None,
-) -> InvitationSent:
-    """Crea la invitación + manda el email. Llamado desde
-    `add_tenant_member` (también desde el endpoint de resend en
-    iteración 2).
-
-    No falla si el email no se entrega — la invitación queda persistida
-    con `last_send_status='failed'` y el caller puede reintentar via
-    el endpoint de resend. Esto evita que un downtime de Resend tumbe
-    el flow de agregar miembros.
-    """
+) -> InvitationDraft:
+    """P0-4: SOLO crea/upserta el row en DB. El email send queda para
+    un BackgroundTask post-response (fuera de la TX). Devuelve un
+    `InvitationDraft` con todo el payload necesario para renderear el
+    email sin re-leer DB."""
     settings = get_settings()
     _invitation_rate_check(str(inviter_user_id) if inviter_user_id else None)
 
@@ -199,14 +211,9 @@ async def create_and_send_invitation(
     expires_at = datetime.now(UTC) + timedelta(
         seconds=settings.invitation_token_ttl_seconds,
     )
-    # `accept_url` = el link que ve el invitado. Iteración 2 implementa
-    # `/i/<token>` en frontend + endpoint público para validar.
     accept_url = f'{settings.app_public_url.rstrip("/")}/i/{clear_token}'
 
-    # ─── (1) INSERT invitation ────────────────────────────────────────
-    # Idempotency: si ya existe una invitación PENDING para este
-    # (tenant, email), la EXPIRAMOS y creamos una nueva. Esto soporta
-    # el caso "el invitado perdió el email, admin re-invita".
+    # Idempotency: supersede invitación pending previa.
     await conn.execute(
         '''
         update app.tenant_invitations
@@ -231,35 +238,66 @@ async def create_and_send_invitation(
         tenant_id, email, role, token_hash, inviter_user_id, expires_at,
     )
     invitation_id: UUID = row['id']
-
-    # ─── (2) Render template + send ──────────────────────────────────
-    rendered = render_invitation_email(
-        invitee_email=email,
+    log.info(
+        'invitation.draft_persisted',
+        invitation_id=str(invitation_id),
+        tenant_id=str(tenant_id),
+        role=role,
+    )
+    return InvitationDraft(
+        invitation_id=invitation_id,
+        tenant_id=tenant_id,
+        accept_url=accept_url,
+        expires_at=row['expires_at'],
+        email=email,
         tenant_name=tenant_name,
         role=role,
         inviter_name=inviter_name,
         inviter_email=inviter_email,
-        accept_url=accept_url,
+    )
+
+
+async def send_invitation_email_for_draft(
+    draft: InvitationDraft,
+    *,
+    conn: asyncpg.Connection | None = None,
+) -> InvitationSent:
+    """P0-4: manda el email + UPDATEa `last_send_*`. Diseñado para correr
+    fuera de la TX original (BackgroundTask).
+
+    Si `conn` es None (caso BackgroundTask), adquiere su propia conn del
+    pool. Si el caller la pasa explícito (caso back-compat de
+    `create_and_send_invitation` con TX ya abierta), la reusa."""
+    from app.db.pool import db  # noqa: PLC0415
+
+    settings = get_settings()
+    rendered = render_invitation_email(
+        invitee_email=draft.email,
+        tenant_name=draft.tenant_name,
+        role=draft.role,
+        inviter_name=draft.inviter_name,
+        inviter_email=draft.inviter_email,
+        accept_url=draft.accept_url,
         expires_in_days=max(1, settings.invitation_token_ttl_seconds // 86400),
     )
 
     provider = get_email_provider()
-    headers: dict[str, str] = {}
-    # Gmail 2024+ exige `List-Unsubscribe` en mass mail. Para transactional
-    # no es obligatorio pero ayuda a deliverability.
-    headers['List-Unsubscribe'] = f'<mailto:{settings.email_from_address}?subject=unsubscribe>'
-
+    headers: dict[str, str] = {
+        'List-Unsubscribe': (
+            f'<mailto:{settings.email_from_address}?subject=unsubscribe>'
+        ),
+    }
     message = EmailMessage(
-        to=email,
+        to=draft.email,
         subject=rendered.subject,
         html=rendered.html,
         text=rendered.text,
-        reply_to=inviter_email or None,
+        reply_to=draft.inviter_email or None,
         headers=headers,
         tags={
             'type': 'invitation',
-            'tenant_id': str(tenant_id),
-            'invitation_id': str(invitation_id),
+            'tenant_id': str(draft.tenant_id),
+            'invitation_id': str(draft.invitation_id),
         },
     )
 
@@ -271,20 +309,17 @@ async def create_and_send_invitation(
         email_message_id = result.message_id
         email_status = 'queued' if result.delivered_at_provider else 'noop'
     except EmailSendError as exc:
-        # No abortar el flow: la invitación queda persistida; el caller
-        # puede reintentar (resend endpoint en iteración 2).
         email_status = 'failed'
         log.error(
             'invitation.email_send_failed',
-            invitation_id=str(invitation_id),
-            tenant_id=str(tenant_id),
+            invitation_id=str(draft.invitation_id),
+            tenant_id=str(draft.tenant_id),
             error=str(exc),
             status_code=getattr(exc, 'status_code', None),
         )
 
-    # ─── (3) UPDATE con resultado del send ───────────────────────────
-    await conn.execute(
-        '''
+    # UPDATE — reusar conn pasada (back-compat) o adquirir una nueva.
+    update_sql = '''
         update app.tenant_invitations
            set last_send_provider_message_id = $1,
                last_send_status = $2,
@@ -292,20 +327,73 @@ async def create_and_send_invitation(
                  'provider', $3::text
                )
          where id = $4
-        ''',
-        email_message_id or None, email_status, email_provider_name,
-        invitation_id,
+    '''
+    update_args = (
+        email_message_id or None, email_status,
+        email_provider_name, draft.invitation_id,
     )
+    try:
+        if conn is not None:
+            await conn.execute(update_sql, *update_args)
+        else:
+            async with db.connection(
+                tenant_id=draft.tenant_id, support_mode=True,
+            ) as new_conn:
+                await new_conn.execute(update_sql, *update_args)
+    except Exception as exc:  # noqa: BLE001
+        # Si el UPDATE falla (DB down), el row queda con
+        # last_send_status='queued' del INSERT inicial — caller puede
+        # reintentar via el endpoint resend.
+        log.error(
+            'invitation.last_send_update_failed',
+            invitation_id=str(draft.invitation_id),
+            error=str(exc),
+        )
 
     log.info(
-        'invitation.created',
-        invitation_id=str(invitation_id),
-        tenant_id=str(tenant_id),
-        role=role,
+        'invitation.sent',
+        invitation_id=str(draft.invitation_id),
+        tenant_id=str(draft.tenant_id),
+        role=draft.role,
         email_status=email_status,
         provider=email_provider_name,
         is_real_provider=provider.is_real(),
     )
+
+    return InvitationSent(
+        invitation_id=draft.invitation_id,
+        accept_url=draft.accept_url,
+        expires_at=draft.expires_at,
+        email_message_id=email_message_id,
+        email_provider=email_provider_name,
+        email_status=email_status,
+    )
+
+
+async def create_and_send_invitation(
+    *,
+    conn: asyncpg.Connection,
+    tenant_id: UUID,
+    tenant_name: str,
+    email: str,
+    role: str,
+    inviter_user_id: UUID | None,
+    inviter_name: str | None = None,
+    inviter_email: str | None = None,
+) -> InvitationSent:
+    """Wrapper back-compat: crea + manda inline. Sigue siendo útil para
+    contextos sin BackgroundTask (scripts, jobs, tests). Para handlers
+    HTTP, preferir `create_invitation_record` + schedule del send con
+    `BackgroundTasks.add_task(send_invitation_email_for_draft, draft)`.
+
+    No falla si el email no se entrega — el row queda persistido y el
+    caller puede reintentar via endpoint resend."""
+    draft = await create_invitation_record(
+        conn=conn, tenant_id=tenant_id, tenant_name=tenant_name,
+        email=email, role=role, inviter_user_id=inviter_user_id,
+        inviter_name=inviter_name, inviter_email=inviter_email,
+    )
+    return await send_invitation_email_for_draft(draft, conn=conn)
 
     return InvitationSent(
         invitation_id=invitation_id,

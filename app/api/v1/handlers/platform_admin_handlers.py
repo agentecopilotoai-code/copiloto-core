@@ -39,7 +39,9 @@ from typing import Any, Literal
 from uuid import UUID
 
 import asyncpg
-from fastapi import Depends, HTTPException, Query, Request, status
+from fastapi import (
+    BackgroundTasks, Depends, HTTPException, Query, Request, status,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.v1.routes import platform_admin_router, tenant_management_router
@@ -312,6 +314,7 @@ async def add_tenant_member(
     tenant_id: UUID,
     payload: TenantMemberAdd,
     request: Request,
+    background_tasks: BackgroundTasks,
     _acl: None = Depends(require_tenant_management),  # M55
     conn: asyncpg.Connection = Depends(get_db),
 ) -> dict:
@@ -433,7 +436,8 @@ async def add_tenant_member(
     # Lookup del inviter info para mostrar en el email (reply_to + display).
     from app.services.invitations import (  # noqa: PLC0415
         InvitationRateLimitError,
-        create_and_send_invitation,
+        create_invitation_record,
+        send_invitation_email_for_draft,
     )
     actor_id = getattr(request.state, 'actor_id', None)
     actor_email = getattr(request.state, 'email', None)
@@ -454,8 +458,16 @@ async def add_tenant_member(
         'message_id': None,
         'provider': None,
     }
+    # P0-4 (audit 2026-05-27) — split del flow:
+    #   1) `create_invitation_record` (DB, dentro de la TX abierta).
+    #   2) `send_invitation_email_for_draft` schedule en BackgroundTask
+    #      → corre DESPUÉS del response, fuera de la TX, sin bloquear
+    #      la conn del pool durante la latencia de Resend.
+    # Si Resend tarda 3s, antes el pool quedaba con esta conn ocupada
+    # toda la TX (potencial pool starvation bajo carga). Ahora la TX
+    # commitea inmediato + email se entrega async.
     try:
-        sent = await create_and_send_invitation(
+        draft = await create_invitation_record(
             conn=conn,
             tenant_id=tenant_id,
             tenant_name=tenant_name,
@@ -465,14 +477,19 @@ async def add_tenant_member(
             inviter_name=actor_name,
             inviter_email=actor_email,
         )
+        # Status optimista 'queued' — el BackgroundTask reportará el
+        # final en `last_send_status` de la DB. El SPA puede pollear
+        # `/v1/tenants/{tid}/invitations` para refrescar si quiere.
         invitation_payload = {
-            'status': sent.email_status,  # queued|noop|failed
-            'invitation_id': str(sent.invitation_id),
-            'accept_url': sent.accept_url,
-            'expires_at': sent.expires_at.isoformat(),
-            'message_id': sent.email_message_id or None,
-            'provider': sent.email_provider,
+            'status': 'queued',
+            'invitation_id': str(draft.invitation_id),
+            'accept_url': draft.accept_url,
+            'expires_at': draft.expires_at.isoformat(),
+            'message_id': None,
+            'provider': None,
         }
+        # Schedule el send post-response.
+        background_tasks.add_task(send_invitation_email_for_draft, draft)
     except InvitationRateLimitError as exc:
         invitation_payload['status'] = 'rate_limited'
         invitation_payload['error'] = str(exc)
