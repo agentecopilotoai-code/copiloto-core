@@ -17,23 +17,61 @@
  * que envuelve el componente en `<RequirePermission capability mode>`
  * cuando `capability` no es `null`.
  *
+ * PERF-020 (audit #2, 2026-05-27) — los Components se cargan **lazy** via
+ * `React.lazy()`. Esto permite a Vite hacer code-splitting automático:
+ * cada módulo queda en su propio chunk JS. El bundle inicial cae de
+ * ~391 KB (mono-bundle) a ~80 KB inicial + chunks por demanda. Cada
+ * navegación carga su chunk async (cache HTTP-friendly). `<ModuleScreen/>`
+ * envuelve el render en `<Suspense fallback={...} />` para mostrar
+ * skeleton mientras carga.
+ *
  * @type {Record<string, { Component: Function, capability: string|null, mode?: 'R'|'RW' }>}
  */
+import { lazy } from 'react';
 
-// ─── Platform admin (cross-tenant) ──────────────────────────────────────────
-import { BillingMrr } from '../features/platform/billing-mrr/index.js';
-import { FeatureFlags } from '../features/platform/feature-flags/index.js';
-import { FleetDlq } from '../features/platform/fleet-dlq/index.js';
-import { FleetTenants } from '../features/platform/fleet-tenants/index.js';
-import { Incidents } from '../features/platform/incidents/index.js';
-import { RolesAcl } from '../features/platform/roles-acl/index.js';
-import { Runbooks } from '../features/platform/runbooks/index.js';
-import { SystemHealth } from '../features/platform/system-health/index.js';
-import { AIProvidersContainer } from '../features/platform/ai-providers/AIProvidersContainer.jsx';
+// ─── Platform admin (cross-tenant) — lazy ───────────────────────────────────
+// Cada `lazy(() => import(...))` queda como un chunk separado del bundle
+// de Vite. El default export de `index.js` se preserva, mantenemos el
+// shape `{ Component }` igual.
+const BillingMrr = lazy(() =>
+  import('../features/platform/billing-mrr/index.js').then((m) => ({ default: m.BillingMrr })),
+);
+const FeatureFlags = lazy(() =>
+  import('../features/platform/feature-flags/index.js').then((m) => ({ default: m.FeatureFlags })),
+);
+const FleetDlq = lazy(() =>
+  import('../features/platform/fleet-dlq/index.js').then((m) => ({ default: m.FleetDlq })),
+);
+const FleetTenants = lazy(() =>
+  import('../features/platform/fleet-tenants/index.js').then((m) => ({ default: m.FleetTenants })),
+);
+const Incidents = lazy(() =>
+  import('../features/platform/incidents/index.js').then((m) => ({ default: m.Incidents })),
+);
+const RolesAcl = lazy(() =>
+  import('../features/platform/roles-acl/index.js').then((m) => ({ default: m.RolesAcl })),
+);
+const Runbooks = lazy(() =>
+  import('../features/platform/runbooks/index.js').then((m) => ({ default: m.Runbooks })),
+);
+const SystemHealth = lazy(() =>
+  import('../features/platform/system-health/index.js').then((m) => ({ default: m.SystemHealth })),
+);
+const AIProvidersContainer = lazy(() =>
+  import('../features/platform/ai-providers/AIProvidersContainer.jsx').then((m) => ({
+    default: m.AIProvidersContainer,
+  })),
+);
 
-// ─── Tenant transversales ───────────────────────────────────────────────────
-import { TeamModule } from '../features/owner-admin/team/index.js';
-import { TenantSetupWizard } from '../features/owner-admin/tenant-setup/index.js';
+// ─── Tenant transversales — lazy ────────────────────────────────────────────
+const TeamModule = lazy(() =>
+  import('../features/owner-admin/team/index.js').then((m) => ({ default: m.TeamModule })),
+);
+const TenantSetupWizard = lazy(() =>
+  import('../features/owner-admin/tenant-setup/index.js').then((m) => ({
+    default: m.TenantSetupWizard,
+  })),
+);
 
 export const MODULE_REGISTRY = Object.freeze({
   'platform-fleet': { Component: FleetTenants, capability: 'platform.tenants.read' },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import {
   createBrowserRouter,
   Navigate,
@@ -93,8 +93,14 @@ function ModuleScreen({ moduleId }) {
       navigate(`/t/${activeTenant.slug}/tenant-setup?tab=escalation`);
   }
 
+  // PERF-020 (audit #2) — `Component` es `React.lazy(...)` desde
+  // `moduleRegistry.js`. Envolvemos en `<Suspense>` con `LoadingScreen`
+  // como fallback durante la carga del chunk. La primera navegación a
+  // un módulo descarga ~30-50KB; las siguientes son cache hits.
   const content = (
-    <Component module={module} session={session} tenant={activeTenant} {...extraProps} />
+    <Suspense fallback={<LoadingScreen />}>
+      <Component module={module} session={session} tenant={activeTenant} {...extraProps} />
+    </Suspense>
   );
 
   if (!capability) return content;
