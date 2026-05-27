@@ -741,6 +741,96 @@ $$;
 revoke all on function app.list_user_tenants(text) from public;
 grant execute on function app.list_user_tenants(text) to copiloto_app;
 
+-- P1-9 (audit 2026-05-27) — SECURITY DEFINER que consolida la lógica de
+-- `current_user_id_from_request` (Python) en UNA sola query atómica.
+--
+-- Antes: 3-4 round-trips secuenciales por primer login:
+--   1) SELECT por auth_subject
+--   2) SELECT pending por email
+--   3) SELECT email-match (M67)
+--   4) INSERT lazy
+--
+-- Ahora: una sola call SQL que ejecuta todos los branches con locking
+-- atómico (FOR UPDATE intra-function previene race entre paths 2 y 3).
+--
+-- Retorna `branch` para que el caller Python pueda:
+--   - distinguir audit-logs (`pending_reconciled` vs `email_reconciled`).
+--   - decidir si raise 403 cuando `email_blocked` (email_verified=false).
+
+create or replace function app.resolve_or_create_user(
+  p_sub text, p_email text, p_display text, p_email_verified boolean
+)
+returns table (user_id uuid, branch text)
+security definer
+set search_path = app, pg_temp
+language plpgsql as $$
+declare
+  v_id uuid;
+  v_auth_subject text;
+begin
+  -- Path 1: auth_subject match (hot path, ~99% de los logins).
+  select id into v_id from app.users where auth_subject = p_sub;
+  if found then
+    return query select v_id, 'existing'::text;
+    return;
+  end if;
+
+  -- Path 2: M57 — pending reconciliation por email.
+  select id into v_id from app.users
+   where email = p_email and auth_subject like 'pending|%'
+   limit 1
+   for update;
+  if found then
+    update app.users
+       set auth_subject = p_sub,
+           display_name = coalesce(nullif(p_display, ''), display_name),
+           status = case when status = 'invited' then 'active' else status end,
+           updated_at = now()
+     where id = v_id;
+    return query select v_id, 'pending_reconciled'::text;
+    return;
+  end if;
+
+  -- Path 3: M67 — email match con auth_subject distinto.
+  select id, auth_subject into v_id, v_auth_subject from app.users
+   where email = p_email
+   for update;
+  if found then
+    if v_auth_subject = p_sub then
+      -- Raro: el primer SELECT no lo encontró pero acá sí. Race con
+      -- INSERT concurrente. Retornar como existing.
+      return query select v_id, 'existing'::text;
+      return;
+    end if;
+    if not p_email_verified then
+      -- A-004: NO reconciliar identidades con emails no verificados.
+      -- El caller Python raise 403.
+      return query select null::uuid, 'email_blocked'::text;
+      return;
+    end if;
+    update app.users
+       set auth_subject = p_sub,
+           display_name = coalesce(nullif(p_display, ''), display_name),
+           status = case when status = 'invited' then 'active' else status end,
+           updated_at = now()
+     where id = v_id;
+    return query select v_id, 'email_reconciled'::text;
+    return;
+  end if;
+
+  -- Path 4: insert nuevo (primer-time signup self-service).
+  insert into app.users (auth_subject, email, display_name)
+  values (p_sub, p_email, p_display)
+  on conflict (auth_subject) do update set
+    email = excluded.email
+  returning id into v_id;
+  return query select v_id, 'created'::text;
+end;
+$$;
+
+revoke all on function app.resolve_or_create_user(text, text, text, boolean) from public;
+grant execute on function app.resolve_or_create_user(text, text, text, boolean) to copiloto_app;
+
 -- ─── Grants al rol de aplicación ───────────────────────────────────────────
 
 grant usage on schema app to copiloto_app;

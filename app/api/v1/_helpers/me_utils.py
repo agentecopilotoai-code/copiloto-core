@@ -50,9 +50,17 @@ async def current_user_id_from_request(
     Cachea el resultado en `request.state.user_id` para evitar re-consultas
     dentro del mismo request.
 
-    Si el usuario nunca existió en `app.users`, lo crea on-the-fly desde
-    los claims (email + display_name). Solo se aplica a `actor_type='user'`
-    (no a service tokens ni anónimos).
+    P1-9 (audit 2026-05-27) — toda la lógica branching (auth_subject lookup,
+    M57 pending reconciliation, M67 email-match con A-004 email_verified
+    gate, INSERT lazy) está consolidada en la SECURITY DEFINER function
+    `app.resolve_or_create_user`. Beneficios:
+      - 1 round-trip en lugar de hasta 4 en primer login.
+      - Locking atómico intra-function (FOR UPDATE) — no race entre
+        paths 2 y 3.
+      - Bypass de RLS (si en el futuro se habilita en `app.users`).
+
+    El Python solo decide `email_blocked` → raise 403, todo lo demás
+    pasa transparente.
     """
     cached = getattr(request.state, 'user_id', None)
     if cached is not None:
@@ -63,131 +71,51 @@ async def current_user_id_from_request(
     if not actor_id or actor_type != 'user':
         return None
 
-    # Lookup primero por auth_subject (path normal).
-    row = await conn.fetchrow(
-        'select id from app.users where auth_subject=$1', actor_id,
-    )
-    if row is not None:
-        request.state.user_id = row['id']
-        return row['id']
-
-    # M57 — reconciliación de invitación pendiente.
-    #
-    # `add_tenant_member` (cuando el invitado no existe en `app.users`)
-    # crea una fila placeholder con `auth_subject = 'pending|<sha256(email)>'`.
-    # Antes este lookup ignoraba ese placeholder y creaba un user NUEVO
-    # al primer login del invitado → quedaba un user huérfano (el pending)
-    # con la membresía, y un user real sin membresía con el mismo email.
-    #
-    # Fix: antes de insert, buscar un pending por email (case-insensitive
-    # — `app.users.email` es `citext`). Si existe, UPDATE su `auth_subject`
-    # al real → la membresía queda vinculada al user que se acaba de
-    # loguear con su identidad Auth0 real.
     email = getattr(request.state, 'email', None) or f'{actor_id}@auth.local'
     display = _user_display_name_from_request(request)
-    pending_row = await conn.fetchrow(
-        '''
-        select id from app.users
-        where email = $1 and auth_subject like 'pending|%'
-        limit 1
-        ''',
-        email,
-    )
-    if pending_row is not None:
-        # Reconcilia el pending → adopta el auth_subject real del JWT.
-        await conn.execute(
-            '''
-            update app.users
-               set auth_subject = $1,
-                   display_name = coalesce(nullif($2, ''), display_name),
-                   status = case when status = 'invited' then 'active' else status end,
-                   updated_at = now()
-             where id = $3
-            ''',
-            actor_id, display, pending_row['id'],
-        )
-        request.state.user_id = pending_row['id']
-        return pending_row['id']
+    email_verified = bool(getattr(request.state, 'email_verified', False))
 
-    # M67 — email match con auth_subject distinto.
-    #
-    # Caso real observado: `add_tenant_member` invita a `foo@example.com`,
-    # Auth0 `users-by-email` devuelve un identity Database (`auth0|abc`),
-    # se graba en `app.users.auth_subject`. El invitado se loguea con
-    # Google OAuth (mismo email) → Auth0 emite sub distinto
-    # (`google-oauth2|xyz`). El INSERT lazy de abajo violaba
-    # `users_email_key` (unique on email).
-    #
-    # Fix: si existe un user con el mismo email pero auth_subject !=
-    # actor_id, reconciliamos adoptando el sub del JWT actual.
-    #
-    # ⚠️ SEGURIDAD (M67/A-004): requerimos `email_verified=true` en el
-    # JWT. Sin este check, un attacker podría registrar una identity
-    # Auth0 con el email de un user existente SIN verificarlo, loguearse,
-    # y reconciliar → account takeover de TODOS los tenants del user
-    # legítimo. Con email_verified=true Auth0 garantiza que el attacker
-    # controla el inbox del email, lo que sería equivalente a un password
-    # reset legítimo.
-    #
-    # Idealmente Auth0 linkearía las 2 identities (script
-    # `account_linking.js` lo hace para verified emails), pero acá
-    # cubrimos el caso donde el linking no ocurrió o el invite creó al
-    # user antes del linking.
-    # INT-002 (audit 2026-05-27) — `FOR UPDATE` para serializar redeems
-    # concurrentes con el mismo email + sub distinto. Sin esto, dos logins
-    # concurrentes (ej: user abrió 2 tabs durante OAuth callback) leerían
-    # el mismo `email_match_row.auth_subject`, ambos UPDATE adoptarían su
-    # propio sub → lost update (la última gana sin detección). Postgres
-    # serializa via lock de fila.
-    email_match_row = await conn.fetchrow(
-        'select id, auth_subject from app.users where email = $1 for update',
-        email,
-    )
-    if email_match_row is not None:
-        # `auth_subject` distinto al JWT → reconciliar (solo si email verified).
-        if email_match_row['auth_subject'] != actor_id:
-            email_verified = bool(
-                getattr(request.state, 'email_verified', False),
-            )
-            if not email_verified:
-                # Fail-closed: no reconciliamos identidades con emails
-                # no verificados. El user debe completar el flujo de
-                # verificación de Auth0 (Verification Email template).
-                raise HTTPException(
-                    status_code=403,
-                    detail=(
-                        'Tu email no está verificado. Completá la '
-                        'verificación enviada por correo antes de '
-                        'continuar.'
-                    ),
-                )
-            await conn.execute(
-                '''
-                update app.users
-                   set auth_subject = $1,
-                       display_name = coalesce(nullif($2, ''), display_name),
-                       status = case when status = 'invited' then 'active' else status end,
-                       updated_at = now()
-                 where id = $3
-                ''',
-                actor_id, display, email_match_row['id'],
-            )
-        request.state.user_id = email_match_row['id']
-        return email_match_row['id']
-
-    # No existe ningún user con este email → crear lazy desde claims del JWT.
     row = await conn.fetchrow(
-        '''
-        insert into app.users (auth_subject, email, display_name)
-        values ($1, $2, $3)
-        on conflict (auth_subject) do update set
-          email = excluded.email
-        returning id
-        ''',
-        actor_id, email, display,
+        'select * from app.resolve_or_create_user($1, $2, $3, $4)',
+        actor_id, email, display, email_verified,
     )
-    request.state.user_id = row['id']
-    return row['id']
+
+    # `branch` solo existe en el shape nuevo (post-P1-9). Tests legacy
+    # con stubs `{'id': uid}` no lo tienen → tratamos como 'existing'.
+    try:
+        branch = row['branch'] if row is not None else None
+    except (KeyError, TypeError):
+        branch = None
+    if branch == 'email_blocked':
+        # A-004 fail-closed: identidad nueva con email no verificado
+        # intentando adoptar sub existente. Auth0 verification email
+        # debe completarse antes.
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                'Tu email no está verificado. Completá la '
+                'verificación enviada por correo antes de '
+                'continuar.'
+            ),
+        )
+
+    if row is None:
+        return None
+
+    # Tolerar shape `{'id': uid}` (tests legacy stubbed). En prod la
+    # function devuelve `(user_id, branch)`.
+    try:
+        user_id = row['user_id']
+    except (KeyError, TypeError):
+        try:
+            user_id = row['id']
+        except (KeyError, TypeError):
+            return None
+    if user_id is None:
+        return None
+
+    request.state.user_id = user_id
+    return user_id
 
 
 async def _require_current_user(

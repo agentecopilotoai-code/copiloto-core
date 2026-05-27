@@ -153,37 +153,39 @@ def test_current_user_id_returns_none_when_no_actor_id():
 
 
 def test_current_user_id_looks_up_existing():
+    """P1-9: ahora 1 sola call a `app.resolve_or_create_user` que retorna
+    `(user_id, branch)`. El test stubea la row de retorno."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid = uuid4()
     req = _fake_request()
-    conn = FakeConn(fetchrow=[{'id': uid}])
+    conn = FakeConn(fetchrow=[{'user_id': uid, 'branch': 'existing'}])
     result = asyncio.run(current_user_id_from_request(req, conn))
     assert result == uid
     assert req.state.user_id == uid
 
 
 def test_current_user_id_creates_lazy_when_missing():
+    """P1-9: la function consolida lookup + INSERT lazy en una call."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid = uuid4()
     req = _fake_request()
-    conn = FakeConn(fetchrow=[None, {'id': uid}])
+    conn = FakeConn(fetchrow=[{'user_id': uid, 'branch': 'created'}])
     result = asyncio.run(current_user_id_from_request(req, conn))
     assert result == uid
 
 
 def test_current_user_id_creates_lazy_falls_to_default_email():
     """Si JWT NO trae email y x-admin-user-email también vacío → fallback
-    `{actor_id}@auth.local`."""
+    `{actor_id}@auth.local`. P1-9: verificamos que la call pasa ese email
+    como param de la function."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid = uuid4()
     req = _fake_request(email=None)
-    # M57/M67: 4 fetchrow — auth_subject miss → pending miss →
-    # email_match miss → insert.
-    conn = FakeConn(fetchrow=[None, None, None, {'id': uid}])
+    conn = FakeConn(fetchrow=[{'user_id': uid, 'branch': 'created'}])
     asyncio.run(current_user_id_from_request(req, conn))
-    # Buscar el INSERT por SQL (no por índice) para no depender del orden.
-    insert_call = next(c for c in conn.calls if 'insert into app.users' in c[1])
-    assert insert_call[2][1] == 'auth0|u1@auth.local'
+    # La call a la function recibe (sub, email, display, email_verified).
+    call = next(c for c in conn.calls if 'resolve_or_create_user' in c[1])
+    assert call[2][1] == 'auth0|u1@auth.local'  # email arg ($2)
 
 
 def test_require_current_user_raises_401_when_none():
@@ -1801,41 +1803,26 @@ def test_require_tenant_management_503_no_pool(monkeypatch):
 
 
 def test_current_user_id_reconciles_pending_invite():
-    """M57 — si el user no existe por auth_subject pero SÍ existe un
-    pending con su email, se UPDATEa el auth_subject del pending en
-    lugar de crear un user nuevo (que dejaba el pending huérfano)."""
+    """M57 — branch `pending_reconciled` retornado por la SQL function.
+    P1-9: el matching ahora vive en SQL; el test verifica que el caller
+    Python acepta el branch y retorna el user_id."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid_pending = uuid4()
     req = _fake_request(actor_id='google-oauth2|123', email='nuevo@empresa.com')
     conn = FakeConn(
-        fetchrow=[
-            None,                  # 1: lookup by auth_subject → miss
-            {'id': uid_pending},   # 2: lookup pending by email → hit
-        ],
-        execute=['OK'],            # update auth_subject del pending
+        fetchrow=[{'user_id': uid_pending, 'branch': 'pending_reconciled'}],
     )
     result = asyncio.run(current_user_id_from_request(req, conn))
     assert result == uid_pending
-    # El UPDATE debe ser el primer execute, con args (actor_id, display, id)
-    update_call = next(c for c in conn.calls if c[0] == 'execute')
-    assert 'update app.users' in update_call[1]
-    assert update_call[2][0] == 'google-oauth2|123'  # nuevo auth_subject
-    assert update_call[2][2] == uid_pending          # id del pending
 
 
 def test_current_user_id_creates_new_when_no_pending_match():
-    """Si no hay pending ni email-match, crea user nuevo (comportamiento
-    previo a M67 + M57)."""
+    """Branch `created`."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid_new = uuid4()
     req = _fake_request(actor_id='google-oauth2|456', email='nadie@empresa.com')
     conn = FakeConn(
-        fetchrow=[
-            None,            # lookup by auth_subject → miss
-            None,            # lookup pending by email → miss
-            None,            # M67: lookup email_match → miss
-            {'id': uid_new}, # insert returning id
-        ],
+        fetchrow=[{'user_id': uid_new, 'branch': 'created'}],
     )
     result = asyncio.run(current_user_id_from_request(req, conn))
     assert result == uid_new
@@ -1845,129 +1832,66 @@ def test_current_user_id_creates_new_when_no_pending_match():
 
 
 def test_current_user_id_M67_reconciles_email_with_different_subject():
-    """M67 — `add_tenant_member` grabó un user con `auth_subject=auth0|abc`
-    (identity Database de Auth0) para `foo@example.com`. El user se loguea
-    con Google OAuth → JWT trae `sub=google-oauth2|xyz` (sub distinto al
-    grabado, mismo email). Debe reconciliar UPDATEando el auth_subject del
-    user existente — sin esto el INSERT lazy violaba `users_email_key`."""
+    """M67 branch `email_reconciled` (P1-9: ahora vive SQL-side)."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid_existing = uuid4()
     req = _fake_request(
         actor_id='google-oauth2|xyz', email='foo@example.com',
     )
     conn = FakeConn(
-        fetchrow=[
-            None,                                            # 1: auth_subject miss
-            None,                                            # 2: pending miss
-            {'id': uid_existing, 'auth_subject': 'auth0|abc'},  # 3: email_match HIT
-        ],
-        execute=['OK'],  # update auth_subject
+        fetchrow=[{'user_id': uid_existing, 'branch': 'email_reconciled'}],
     )
     result = asyncio.run(current_user_id_from_request(req, conn))
     assert result == uid_existing
-    # Debe haber emitido UN UPDATE adoptando el sub del JWT.
-    update_calls = [c for c in conn.calls if c[0] == 'execute'
-                    and 'update app.users' in c[1]]
-    assert len(update_calls) == 1
-    assert update_calls[0][2][0] == 'google-oauth2|xyz'
-    assert update_calls[0][2][2] == uid_existing
-
-
-def test_current_user_id_M67_no_update_when_email_match_subject_already_correct():
-    """Edge case: el email_match lookup encuentra un row cuyo auth_subject
-    YA coincide con el JWT (escenario teórico — el primer lookup por
-    auth_subject debería haberlo encontrado primero, pero por defensa
-    cubrimos el caso por si hay race conditions con writes paralelos).
-    NO debe emitir UPDATE."""
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
-    uid_existing = uuid4()
-    req = _fake_request(actor_id='auth0|abc', email='foo@example.com')
-    conn = FakeConn(
-        fetchrow=[
-            None,                                       # 1: auth_subject miss
-            None,                                       # 2: pending miss
-            {'id': uid_existing, 'auth_subject': 'auth0|abc'},  # 3: email_match HIT
-        ],
-    )
-    result = asyncio.run(current_user_id_from_request(req, conn))
-    assert result == uid_existing
-    # NO debe haber UPDATE (sub ya coincide).
-    update_calls = [c for c in conn.calls if c[0] == 'execute'
-                    and 'update app.users' in c[1]]
-    assert len(update_calls) == 0
 
 
 def test_current_user_id_M67_rejects_unverified_email_reconcile():
-    """SEGURIDAD M67/A-004: Attacker registra identity Auth0 con el
-    email de un user existente SIN verificar (email_verified=false en
-    JWT). Si reconciliáramos, el attacker secuestra la cuenta del user
-    legítimo — TODOS sus tenants quedan expuestos.
-
-    Fix: rechazar el reconcile con 403 cuando email_verified=false. El
-    user real (con email verified) puede operar normal."""
+    """A-004 — branch `email_blocked` → 403."""
     from fastapi import HTTPException
 
     from app.api.v1._helpers.me_utils import current_user_id_from_request
-    uid_victim = uuid4()
-    # Attacker: sub distinto, mismo email, email_verified=False.
     req = _fake_request(
         actor_id='auth0|attacker',
         email='victim@example.com',
         email_verified=False,
     )
     conn = FakeConn(
-        fetchrow=[
-            None,                                                    # auth_subject miss
-            None,                                                    # pending miss
-            {'id': uid_victim, 'auth_subject': 'auth0|legit'},       # email_match HIT
-        ],
+        fetchrow=[{'user_id': None, 'branch': 'email_blocked'}],
     )
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(current_user_id_from_request(req, conn))
     assert exc_info.value.status_code == 403
     assert 'verifi' in str(exc_info.value.detail).lower()
-    # NO debe haber emitido UPDATE.
-    update_calls = [c for c in conn.calls if c[0] == 'execute']
-    assert len(update_calls) == 0
 
 
-def test_current_user_id_M67_allows_reconcile_when_email_verified():
-    """Counterpart: el user real, con email_verified=True, sí puede
-    reconciliar (case-real del primer login post-invite)."""
+def test_current_user_id_M67_passes_email_verified_to_sql_function():
+    """P1-9: la function recibe email_verified=True como 4th param
+    cuando el JWT lo trae. Verifica que el caller lo extrae bien."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
-    uid_existing = uuid4()
-    req = _fake_request(
-        actor_id='google-oauth2|xyz',
-        email='foo@example.com',
-        email_verified=True,
-    )
+    uid = uuid4()
+    req = _fake_request(email='foo@example.com', email_verified=True)
     conn = FakeConn(
-        fetchrow=[
-            None,
-            None,
-            {'id': uid_existing, 'auth_subject': 'auth0|abc'},
-        ],
-        execute=['OK'],
+        fetchrow=[{'user_id': uid, 'branch': 'email_reconciled'}],
     )
-    result = asyncio.run(current_user_id_from_request(req, conn))
-    assert result == uid_existing
-    update_calls = [c for c in conn.calls if c[0] == 'execute']
-    assert len(update_calls) == 1
+    asyncio.run(current_user_id_from_request(req, conn))
+    call = next(c for c in conn.calls if 'resolve_or_create_user' in c[1])
+    # args: ($1=sub, $2=email, $3=display, $4=email_verified)
+    assert call[2][3] is True
 
 
 def test_current_user_id_existing_user_skips_pending_lookup():
-    """Si el auth_subject ya está registrado, NO se hace lookup de pending
-    (path normal, sin overhead extra para usuarios ya logueados antes)."""
+    """P1-9: la function consolidada hace siempre 1 sola call (el branching
+    happens SQL-side). Verificamos que el caller hace EXACTAMENTE 1
+    fetchrow y que la query es a la function."""
     from app.api.v1._helpers.me_utils import current_user_id_from_request
     uid_existing = uuid4()
     req = _fake_request(actor_id='google-oauth2|789')
-    conn = FakeConn(fetchrow=[{'id': uid_existing}])
+    conn = FakeConn(fetchrow=[{'user_id': uid_existing, 'branch': 'existing'}])
     result = asyncio.run(current_user_id_from_request(req, conn))
     assert result == uid_existing
-    # Solo UNA query: el lookup por auth_subject. NO se hizo el pending lookup.
     fetchrow_calls = [c for c in conn.calls if c[0] == 'fetchrow']
     assert len(fetchrow_calls) == 1
-    assert 'auth_subject=$1' in fetchrow_calls[0][1]
+    assert 'resolve_or_create_user' in fetchrow_calls[0][1]
 
 
 # ─── M59 — add_tenant_member con Auth0 wired ─────────────────────────────
