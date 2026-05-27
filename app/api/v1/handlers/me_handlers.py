@@ -76,6 +76,12 @@ async def get_my_profile(
     request: Request,
     conn: asyncpg.Connection = Depends(get_db),
 ) -> dict:
+    # PERF-NEW-4 (audit #3): el agent sugirió `asyncio.gather` para
+    # paralelizar los 2 SELECTs. PERO asyncpg NO soporta queries
+    # concurrentes en la misma conn ("another operation in progress").
+    # Paralelizar requiere 2 conns del pool — peor en contención.
+    # Skip — los 2 SELECTs secuenciales en la misma conn son lo correcto.
+    # (PERF-NEW-3 ya colapsó user_preferences a 1 RTT vs 3 anteriores.)
     user_id = await _require_current_user(request, conn)
     user_row = await conn.fetchrow(
         'select email, display_name, mfa_enabled, last_login_at from app.users where id=$1',

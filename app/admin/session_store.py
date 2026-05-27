@@ -121,11 +121,20 @@ class RedisSessionStore:
     por cliente. Un singleton de `RedisSessionStore` reutiliza conn.
     """
 
-    def __init__(self, url: str, prefix: str, *, local_cache_ttl: float = 5.0) -> None:
+    def __init__(
+        self, url: str, prefix: str, *,
+        local_cache_ttl: float = 5.0,
+        local_cache_max_entries: int = 2000,
+    ) -> None:
         # DiD-6 (audit #3) — `local_cache_ttl=0` desactiva el cache (todos
         # los gets pegan a Redis). Usar en escenarios privacy/compliance
         # que requieren propagación INMEDIATA de revokes (hard revoke de
         # cuenta comprometida). Trade-off: -1 RTT por request hot.
+        # PERF-NEW-1 (audit #3) — `local_cache_max_entries` previene
+        # growth-attack: un atacante con N sessions sintéticos llenaba
+        # el dict sin tope. Default 2000 — cubre uso humano normal
+        # (admin panel single-user típicamente <10 sessions activas
+        # entre tabs/devices). Eviction LRU al hit del cap.
         # QUAL audit#2 — lazy import compartido en `_redis_store_base`.
         from app.admin._redis_store_base import lazy_redis_import  # noqa: PLC0415
         redis_cls = lazy_redis_import()
@@ -138,7 +147,10 @@ class RedisSessionStore:
         # la window donde un revoke server-side toma efecto (worst-case
         # 5s; aceptable para session UX).
         self._local_cache_ttl = local_cache_ttl
-        self._local_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._local_cache_max_entries = local_cache_max_entries
+        # OrderedDict para LRU eviction al hit del cap.
+        from collections import OrderedDict  # noqa: PLC0415
+        self._local_cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
 
     def _key(self, sid: str) -> str:
         return f'{self._prefix}{sid}'
@@ -187,8 +199,12 @@ class RedisSessionStore:
                 pass
             return None
         # PERF-019 — populate local cache (skip si TTL 0 = DiD-6).
+        # PERF-NEW-1 — LRU eviction al hit del cap.
         if self._local_cache_ttl > 0:
             self._local_cache[sid] = (now + self._local_cache_ttl, payload)
+            self._local_cache.move_to_end(sid)
+            while len(self._local_cache) > self._local_cache_max_entries:
+                self._local_cache.popitem(last=False)  # evict LRU
         return payload
 
     async def set(

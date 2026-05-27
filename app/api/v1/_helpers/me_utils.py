@@ -152,18 +152,21 @@ async def _load_user_preferences_row(
 
     Garantiza que los GET de `/v1/me/*` nunca devuelvan 404 por usuarios
     que jamás llamaron PATCH antes.
+
+    PERF-NEW-3 (audit #3) — colapsado de 3 RTT cold path (SELECT → INSERT →
+    SELECT) a UN SOLO RTT siempre: `INSERT … ON CONFLICT DO UPDATE SET
+    user_id = excluded.user_id RETURNING *`. El UPDATE no-op (set
+    user_id=excluded.user_id) fuerza el RETURNING que da el row tanto
+    en INSERT exitoso como en CONFLICT (`DO NOTHING` no devuelve row).
     """
     row = await conn.fetchrow(
-        'select * from app.user_preferences where user_id=$1', user_id,
+        '''
+        insert into app.user_preferences (user_id) values ($1)
+        on conflict (user_id) do update set user_id = excluded.user_id
+        returning *
+        ''',
+        user_id,
     )
-    if row is None:
-        await conn.execute(
-            'insert into app.user_preferences (user_id) values ($1) on conflict do nothing',
-            user_id,
-        )
-        row = await conn.fetchrow(
-            'select * from app.user_preferences where user_id=$1', user_id,
-        )
     return row
 
 

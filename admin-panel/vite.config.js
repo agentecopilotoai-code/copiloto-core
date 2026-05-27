@@ -7,6 +7,18 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // PERF-NEW-2 (audit #3) — vendor split. Sin esto, react/router/etc
+    // rebundlean en `index-*.js` con cada code change → invalida cache
+    // HTTP del browser. Con `manualChunks` el vendor queda en su propio
+    // chunk hash-stable, los users no re-descargan ~120 KB de libs por
+    // cada deploy que solo cambie nuestro código.
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+        },
+      },
+    },
   },
   server: {
     proxy: {

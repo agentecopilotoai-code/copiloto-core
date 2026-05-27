@@ -31,12 +31,14 @@ def _fake_redis_client():
 
 def _build_redis_session_store_with_fake():
     """Crea un RedisSessionStore inyectando un fake client."""
+    from collections import OrderedDict
     from app.admin.session_store import RedisSessionStore
     store = RedisSessionStore.__new__(RedisSessionStore)
     store._client = _fake_redis_client()
     store._prefix = 'test:session:'
     store._local_cache_ttl = 0.1  # corto para tests
-    store._local_cache = {}
+    store._local_cache_max_entries = 2000  # PERF-NEW-1
+    store._local_cache = OrderedDict()
     return store
 
 

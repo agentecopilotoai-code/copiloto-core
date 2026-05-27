@@ -208,17 +208,26 @@ def test_require_current_user_returns_id():
 
 
 def test_load_user_preferences_lazy_creates():
+    """PERF-NEW-3 (audit #3): ahora 1 RTT con `INSERT ON CONFLICT DO
+    UPDATE RETURNING *`. Devuelve siempre el row tanto en INSERT como
+    en CONFLICT — antes hacía 3 RTT (SELECT→INSERT→SELECT)."""
     from app.api.v1._helpers.me_utils import _load_user_preferences_row
     uid = uuid4()
     prefs_row = {'user_id': uid, 'locale': 'es-CO', 'timezone': 'America/Bogota'}
-    conn = FakeConn(fetchrow=[None, prefs_row], execute=['OK'])
+    # 1 sola fetchrow (el INSERT...ON CONFLICT...RETURNING).
+    conn = FakeConn(fetchrow=[prefs_row])
     result = asyncio.run(_load_user_preferences_row(conn, uid))
     assert result == prefs_row
-    # ejecutó INSERT lazy
-    assert any('insert into app.user_preferences' in c[1] for c in conn.calls)
+    # Confirmar que la query es el INSERT consolidado.
+    sql_call = conn.calls[0][1].lower()
+    assert 'insert into app.user_preferences' in sql_call
+    assert 'on conflict' in sql_call
+    assert 'returning' in sql_call
 
 
 def test_load_user_preferences_returns_existing():
+    """Mismo path después de PERF-NEW-3 — el ON CONFLICT cubre el caso
+    existente (RETURNING devuelve el row sin tocar nada)."""
     from app.api.v1._helpers.me_utils import _load_user_preferences_row
     uid = uuid4()
     prefs_row = {'user_id': uid, 'locale': 'es-CO'}
