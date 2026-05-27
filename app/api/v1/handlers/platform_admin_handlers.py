@@ -1046,6 +1046,23 @@ def _require_auth0_configured() -> None:
         )
 
 
+def _guard_not_self(actor_id: str | None, target_subject: str, action: str) -> None:
+    """SEC-006 (audit 2026-05-27) — rechazar self-targeting en operaciones
+    destructivas de Auth0 (block, delete). Sin esto, un platform_owner
+    puede borrar/bloquear su propio Auth0 user y quedar locked-out
+    permanente (si es el único platform_owner, la fleet queda sin
+    administración). 409 conflict — usar lockout via otro path."""
+    if actor_id and actor_id == target_subject:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f'self_{action}_forbidden — operación rechazada para evitar '
+                'lockout. Pedile a otro platform_owner que ejecute la acción, '
+                'o usá un mecanismo distinto (logout / revoke sessions).'
+            ),
+        )
+
+
 @platform_admin_router.post(
     '/platform/users/{user_id}/auth0/block',
     status_code=status.HTTP_204_NO_CONTENT,
@@ -1070,6 +1087,7 @@ async def block_user_in_auth0(
     _auth0_rl_check(actor_id, 'mutate', max_calls=10, window_seconds=300)
     _require_auth0_configured()
     auth_subject = await _resolve_auth0_subject(conn, user_id)
+    _guard_not_self(actor_id, auth_subject, 'block')
     try:
         await auth0_admin.block_user(auth_subject)
     except auth0_admin.Auth0ApiError as exc:
@@ -1196,6 +1214,7 @@ async def delete_user_in_auth0(
     _auth0_rl_check(actor_id, 'destroy', max_calls=3, window_seconds=1800)
     _require_auth0_configured()
     auth_subject = await _resolve_auth0_subject(conn, user_id)
+    _guard_not_self(actor_id, auth_subject, 'delete')
     try:
         await auth0_admin.delete_user(auth_subject)
     except auth0_admin.Auth0ApiError as exc:

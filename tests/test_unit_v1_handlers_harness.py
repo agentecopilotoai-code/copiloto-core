@@ -694,6 +694,25 @@ def test_tenant_signup_401_anonymous():
     assert exc.value.status_code == 401
 
 
+def test_tenant_signup_SEC007_rejects_unverified_email():
+    """SEC-007 (audit 2026-05-27) — un attacker con cuenta Auth0 con email
+    no verificado no debe poder crear un tenant + quedar como owner. Antes
+    de este fix, polluía la fleet."""
+    from app.api.v1.handlers.tenant_signup_handlers import create_own_tenant
+    from app.api.v1.schemas import TenantCreate
+    from fastapi import HTTPException
+    conn = FakeConn()
+    req = _fake_request(email='attacker@evil.co', email_verified=False)
+    payload = TenantCreate(
+        slug='acme', legal_name='ACME', display_name='ACME',
+        vertical_code='tech', country_code='CO',
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(create_own_tenant(payload, req, conn))
+    assert exc.value.status_code == 403
+    assert 'verifi' in str(exc.value.detail).lower()
+
+
 def test_tenant_signup_409_on_slug_conflict():
     import asyncpg
     from app.api.v1.handlers.tenant_signup_handlers import create_own_tenant
@@ -2207,6 +2226,54 @@ def test_auth0_admin_block_ok(monkeypatch):
     # la palabra clave del justificativo.
     args_repr = repr(audit_call[2])
     assert 'incidente' in args_repr or 'justification' in args_repr
+
+
+def test_auth0_admin_block_SEC006_rejects_self_target(monkeypatch):
+    """SEC-006 (audit 2026-05-27) — un platform_owner NO puede bloquear
+    su propio Auth0 user (locked-out permanente si es el único platform_
+    owner)."""
+    _reset_auth0_rate_limit()
+    from app.api.v1.handlers.platform_admin_handlers import block_user_in_auth0
+    from app.services import auth0_admin
+    from fastapi import HTTPException
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    uid = uuid4()
+    # El sub del JWT coincide con el auth_subject del user target.
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|abc', 'email': 'self@x.co'}],
+    )
+    req = _fake_request(actor_id='auth0|abc', roles=['platform_owner'])
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(block_user_in_auth0(
+            uid, _auth0_action_payload('Acá no debería pasar.'),
+            req, conn=conn,
+        ))
+    assert exc.value.status_code == 409
+    assert 'self' in str(exc.value.detail).lower()
+
+
+def test_auth0_admin_delete_SEC006_rejects_self_target(monkeypatch):
+    """SEC-006 — mismo guard aplica para delete (peor: irreversible)."""
+    _reset_auth0_rate_limit()
+    from app.api.v1.handlers.platform_admin_handlers import (
+        Auth0AdminDeletePayload, delete_user_in_auth0,
+    )
+    from app.services import auth0_admin
+    from fastapi import HTTPException
+    monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
+
+    uid = uuid4()
+    conn = FakeConn(
+        fetchrow=[{'auth_subject': 'auth0|abc', 'email': 'self@x.co'}],
+    )
+    req = _fake_request(actor_id='auth0|abc', roles=['platform_owner'])
+    payload = Auth0AdminDeletePayload(
+        justification='Acá no debería pasar.', confirm=True,
+    )
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(delete_user_in_auth0(uid, payload, req, conn=conn))
+    assert exc.value.status_code == 409
 
 
 def test_auth0_admin_unblock_ok(monkeypatch):

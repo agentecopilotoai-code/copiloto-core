@@ -40,6 +40,19 @@ async def create_own_tenant(
     if not actor_id:
         raise HTTPException(status_code=401, detail='Authentication required')
 
+    # SEC-007 (audit 2026-05-27) — exigir email verificado para crear tenant.
+    # Sin esto, un atacante con cuenta Auth0 nueva (Database connection sin
+    # verificar email) puede crear un tenant + quedar como owner. No leakea
+    # data, pero polluye la fleet y abre rate-limit-bombing del onboarding.
+    if not getattr(request.state, 'email_verified', False):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                'Tu email no está verificado. Completá la verificación '
+                'enviada por correo antes de crear un tenant.'
+            ),
+        )
+
     # TASK-0077: usuarios que ya pertenecen a un tenant NO pueden usar
     # self-service. Para crear tenants para terceros, usar
     # POST /v1/platform/tenants (require platform_owner).

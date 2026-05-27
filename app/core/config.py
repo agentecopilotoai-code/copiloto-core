@@ -86,11 +86,13 @@ class Settings(BaseSettings):
     # access_token (ver scripts/configure-auth0.sh post-M60). El Core lee
     # el email del JWT firmado y NO necesita el header.
     #
-    # Default True por COMPAT con instalaciones existentes que aún no
-    # re-deployaron el Action. Pasar a False una vez verificado que el
-    # access_token trae el claim (chequeable en `/admin/api/diagnostics`
-    # o leyendo cualquier audit log con `actor_email` populated).
-    auth0_trust_admin_email_header: bool = True
+    # Default ahora False (SEC-012, audit 2026-05-27): el script
+    # `configure-auth0.sh` (M62) ya provisiona el Action automáticamente,
+    # por lo que toda instalación nueva tiene el claim namespaced. Para
+    # legacy installs que aún no re-deployaron el Action, setear
+    # AUTH0_TRUST_ADMIN_EMAIL_HEADER=true en `.env` temporalmente +
+    # programar el re-deploy.
+    auth0_trust_admin_email_header: bool = False
 
     # ─── Email (M61 — Resend invitations) ─────────────────────────────────
     # Resend (https://resend.com) — email provider transaccional para

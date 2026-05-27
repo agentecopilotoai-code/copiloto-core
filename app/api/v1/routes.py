@@ -74,7 +74,14 @@ tenant_user_router = APIRouter(
 # handler invoca como Depends, leyendo el `tenant_id` del path.
 tenant_management_router = APIRouter(
     tags=['tenant-management'],
-    dependencies=[Depends(authenticate_request)],
+    dependencies=[
+        Depends(authenticate_request),
+        # SEC-001 (audit 2026-05-27) — exigir MFA igual que `platform_admin_router`.
+        # Sin esto, un platform_owner con JWT robado y mfa_verified=false podía
+        # mutar miembros cross-tenant via /v1/tenants/{tid}/members/* aunque la
+        # ruta fleet equivalente exigía MFA. Inconsistencia cerrada.
+        Depends(require_mfa_for_privileged),
+    ],
 )
 
 system_router = APIRouter(
