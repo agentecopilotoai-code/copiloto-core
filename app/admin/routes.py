@@ -1122,8 +1122,22 @@ async def admin_callback(
         },
     }
     # P0-3 — session store async (InMemory o Redis según REDIS_URL).
+    # SEC-024 (audit #3) — el state ya fue mark_consumed arriba. Si el
+    # session.set falla acá (Redis flap), state queda consumido sin
+    # sesión → user trapped hasta que su cookie pending_invitation
+    # expire (~10min) y/o el state cookie (~10min). Catch + redirect
+    # a recovery con motivo claro — el user reintenta el login y Auth0
+    # emite nuevo state.
     from app.admin.session_store import get_session_store  # noqa: PLC0415
-    await get_session_store().set(session_id, session_payload, session_ttl)
+    try:
+        await get_session_store().set(session_id, session_payload, session_ttl)
+    except RuntimeError as exc:
+        _debug(
+            'GET /callback', step='session_store_failed_after_state_consumed',
+            error=str(exc)[:200],
+            hint='Redis flap mid-callback. State already consumed; user should re-login.',
+        )
+        return _callback_recover_redirect('session_store_down')
     # M65 — antes de armar el response, chequeamos si hay cookie
     # `pending_invitation` (el invitado vino de `/i/<token>`). Si está,
     # disparamos el redeem AHORA — el access_token recién emitido tiene

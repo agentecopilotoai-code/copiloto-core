@@ -213,6 +213,23 @@ async def create_invitation_record(
     )
     accept_url = f'{settings.app_public_url.rstrip("/")}/i/{clear_token}'
 
+    # I-2 (audit #3, 2026-05-27) — advisory lock per-(tenant_id, email)
+    # para serializar invites concurrentes. Sin esto, 2 admins invitando
+    # el mismo email simultáneamente generaban 2 emails con tokens
+    # distintos (ambos válidos hasta que el UNIQUE partial index
+    # `ix_tenant_invitations_tenant_email_open` rechace al segundo
+    # INSERT — pero el racing genera UX confusa y duplica el cost de
+    # Resend antes de fallar). El advisory lock cae al final del TX.
+    #
+    # Key: hash combinado de tenant_id (UUID 128 bits) + email (sha256).
+    # `pg_try_advisory_xact_lock` retorna boolean — si NO lo conseguimos,
+    # significa que hay otra TX en flight para esta (tenant, email);
+    # esperamos con `pg_advisory_xact_lock` (bloqueante) para serializar.
+    lock_key = abs(
+        hash((str(tenant_id), email.lower())) % (2**63 - 1)
+    )
+    await conn.execute('select pg_advisory_xact_lock($1)', lock_key)
+
     # Idempotency: supersede invitación pending previa.
     await conn.execute(
         '''

@@ -682,6 +682,85 @@ def test_decode_auth0_id_token_no_nonce_check_skipped():
         security.clear_jwks_cache()
 
 
+# ═══ SEC-025 (audit #3) — azp (Authorized Party) validation =============
+
+
+def test_decode_auth0_id_token_azp_matches_audience_accepted():
+    """SEC-025 — id_token con azp==audience: ACEPTADO (path normal Auth0)."""
+    import asyncio  # noqa: PLC0415
+    from app.core import security  # noqa: PLC0415
+    security.clear_jwks_cache()
+    _priv, pub_jwk, token = _build_rs256_test_kit(
+        claims_extra={'azp': 'aud-test'},
+    )
+
+    async def fake_fetch(domain, ttl, *, force_refresh=False):
+        return {'keys': [pub_jwk]}
+
+    orig = security._fetch_auth0_jwks
+    security._fetch_auth0_jwks = fake_fetch
+    try:
+        out = asyncio.run(security.decode_auth0_id_token(
+            token, audience='aud-test', auth0_domain='t.auth0.com',
+        ))
+        assert out['azp'] == 'aud-test'
+    finally:
+        security._fetch_auth0_jwks = orig
+        security.clear_jwks_cache()
+
+
+def test_decode_auth0_id_token_azp_mismatch_raises_401():
+    """SEC-025 — id_token con azp != audience → 401 (otro client OIDC)."""
+    import asyncio  # noqa: PLC0415
+    from fastapi import HTTPException
+    from app.core import security  # noqa: PLC0415
+    security.clear_jwks_cache()
+    _priv, pub_jwk, token = _build_rs256_test_kit(
+        claims_extra={'azp': 'malicious-client-id'},
+    )
+
+    async def fake_fetch(domain, ttl, *, force_refresh=False):
+        return {'keys': [pub_jwk]}
+
+    orig = security._fetch_auth0_jwks
+    security._fetch_auth0_jwks = fake_fetch
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(security.decode_auth0_id_token(
+                token, audience='aud-test', auth0_domain='t.auth0.com',
+            ))
+        assert exc_info.value.status_code == 401
+        assert 'azp' in str(exc_info.value.detail).lower()
+    finally:
+        security._fetch_auth0_jwks = orig
+        security.clear_jwks_cache()
+
+
+def test_decode_auth0_id_token_azp_missing_accepted():
+    """SEC-025 — id_token SIN azp (caso single-aud): aceptado.
+    OIDC dice azp es OPCIONAL cuando aud es single. Solo es required
+    si aud es multi-value (no soportamos ese caso hoy)."""
+    import asyncio  # noqa: PLC0415
+    from app.core import security  # noqa: PLC0415
+    security.clear_jwks_cache()
+    _priv, pub_jwk, token = _build_rs256_test_kit()  # sin azp
+
+    async def fake_fetch(domain, ttl, *, force_refresh=False):
+        return {'keys': [pub_jwk]}
+
+    orig = security._fetch_auth0_jwks
+    security._fetch_auth0_jwks = fake_fetch
+    try:
+        # No raise — azp ausente es OK cuando aud es single.
+        out = asyncio.run(security.decode_auth0_id_token(
+            token, audience='aud-test', auth0_domain='t.auth0.com',
+        ))
+        assert 'azp' not in out
+    finally:
+        security._fetch_auth0_jwks = orig
+        security.clear_jwks_cache()
+
+
 # ═══ A-002 — strict exp/iat requirement =================================
 
 

@@ -367,6 +367,28 @@ async def decode_auth0_id_token(
 
     _require_strict_claims(claims, kind='id_token')
 
+    # SEC-025 (audit #3, 2026-05-27) — validar `azp` (Authorized Party,
+    # OIDC §3.1.3.6). Cuando el id_token tiene `azp` presente, DEBE ser
+    # igual al `audience` (client_id). Cuando hay multiple `aud`, `azp`
+    # es REQUERIDO. python-jose NO valida `azp` automáticamente.
+    #
+    # Sin esto, un id_token emitido por OTRO client del mismo tenant
+    # Auth0 (con audience overlap) podría pasar `verify_aud` + `verify_iss`
+    # y crear sesión en nuestro admin con identity ajena. Auth0
+    # normalmente emite `azp=<client_id>`, pero defensive validation
+    # cubre el caso config-drift y la spec.
+    azp = claims.get('azp')
+    if azp is not None and azp != audience:
+        _security_log.warning(
+            'auth0.id_token.azp_mismatch',
+            azp=azp, expected_audience=audience,
+            hint='posible id_token emitido por otro client OIDC',
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='id_token azp mismatch',
+        )
+
     if expected_nonce is not None:
         token_nonce = claims.get('nonce')
         # constant-time compare → no leakea longitud del nonce esperado.
