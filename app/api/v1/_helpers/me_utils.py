@@ -119,9 +119,15 @@ async def current_user_id_from_request(
     # `users_email_key` (unique on email).
     #
     # Fix: si existe un user con el mismo email pero auth_subject !=
-    # actor_id, reconciliamos adoptando el sub del JWT actual. Esto NO
-    # introduce vulnerabilidad: el email del JWT ya está validado por
-    # `authenticate_request` (A-003 — namespaced claim del access_token).
+    # actor_id, reconciliamos adoptando el sub del JWT actual.
+    #
+    # ⚠️ SEGURIDAD (M67/A-004): requerimos `email_verified=true` en el
+    # JWT. Sin este check, un attacker podría registrar una identity
+    # Auth0 con el email de un user existente SIN verificarlo, loguearse,
+    # y reconciliar → account takeover de TODOS los tenants del user
+    # legítimo. Con email_verified=true Auth0 garantiza que el attacker
+    # controla el inbox del email, lo que sería equivalente a un password
+    # reset legítimo.
     #
     # Idealmente Auth0 linkearía las 2 identities (script
     # `account_linking.js` lo hace para verified emails), pero acá
@@ -131,8 +137,23 @@ async def current_user_id_from_request(
         'select id, auth_subject from app.users where email = $1', email,
     )
     if email_match_row is not None:
-        # `auth_subject` distinto al JWT → reconciliar.
+        # `auth_subject` distinto al JWT → reconciliar (solo si email verified).
         if email_match_row['auth_subject'] != actor_id:
+            email_verified = bool(
+                getattr(request.state, 'email_verified', False),
+            )
+            if not email_verified:
+                # Fail-closed: no reconciliamos identidades con emails
+                # no verificados. El user debe completar el flujo de
+                # verificación de Auth0 (Verification Email template).
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        'Tu email no está verificado. Completá la '
+                        'verificación enviada por correo antes de '
+                        'continuar.'
+                    ),
+                )
             await conn.execute(
                 '''
                 update app.users

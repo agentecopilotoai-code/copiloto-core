@@ -459,6 +459,7 @@ async def authenticate_request(
     request.state.support_mode_source = None
     request.state.mfa_verified = False
     request.state.email = None
+    request.state.email_verified = False
     request.state.name = None
     # UI-016.7-FU-SESSIONS: session id derivable desde el JWT, usado por
     # `record_auth_session(...)` para upsertear `app.auth_sessions`. Si Auth0
@@ -617,7 +618,21 @@ async def authenticate_request(
             email = header_email
     if name is None and settings.auth0_trust_admin_email_header:
         name = request.headers.get('x-admin-user-name')
+    # M67/A-003 — `email_verified` del Auth0 Action. Necesario para
+    # la reconciliación email-match: sin este flag, un attacker podría
+    # registrar una identity Auth0 con el email de un user existente
+    # SIN verificarlo y secuestrar la cuenta vía M67.
+    #
+    # Fallback `payload.get('email_verified')` por si Auth0 emite el
+    # claim raíz (algunos providers lo hacen). Por defensa, si el flag
+    # NO está presente, lo tratamos como `False` (fail-closed).
+    email_verified_raw = (
+        _claim(payload, namespace, 'email_verified')
+    )
+    if email_verified_raw is None:
+        email_verified_raw = payload.get('email_verified')
     request.state.email = email
+    request.state.email_verified = _coerce_bool(email_verified_raw)
     request.state.name = name
     request.state.tenant_id = x_tenant_id if support_mode and x_tenant_id else token_tenant_id
     # UI-016.7-FU-SESSIONS: capturamos los claims que identifican esta sesión

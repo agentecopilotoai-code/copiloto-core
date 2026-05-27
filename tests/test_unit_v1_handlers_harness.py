@@ -69,6 +69,10 @@ def _fake_request(**state) -> SimpleNamespace:
         'tenant_id': None,
         'support_mode': False,
         'email': 'u@x.co',
+        # M67 — default True para no romper tests pre-existentes. Tests
+        # de M67 lo overridean explícito a False cuando quieren probar
+        # el fail-closed path.
+        'email_verified': True,
         'name': 'U',
         'session_jti': 'jti-abc',
         'token_iat': 1700000000,
@@ -1798,6 +1802,64 @@ def test_current_user_id_M67_no_update_when_email_match_subject_already_correct(
     update_calls = [c for c in conn.calls if c[0] == 'execute'
                     and 'update app.users' in c[1]]
     assert len(update_calls) == 0
+
+
+def test_current_user_id_M67_rejects_unverified_email_reconcile():
+    """SEGURIDAD M67/A-004: Attacker registra identity Auth0 con el
+    email de un user existente SIN verificar (email_verified=false en
+    JWT). Si reconciliáramos, el attacker secuestra la cuenta del user
+    legítimo — TODOS sus tenants quedan expuestos.
+
+    Fix: rechazar el reconcile con 403 cuando email_verified=false. El
+    user real (con email verified) puede operar normal."""
+    from fastapi import HTTPException
+
+    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    uid_victim = uuid4()
+    # Attacker: sub distinto, mismo email, email_verified=False.
+    req = _fake_request(
+        actor_id='auth0|attacker',
+        email='victim@example.com',
+        email_verified=False,
+    )
+    conn = FakeConn(
+        fetchrow=[
+            None,                                                    # auth_subject miss
+            None,                                                    # pending miss
+            {'id': uid_victim, 'auth_subject': 'auth0|legit'},       # email_match HIT
+        ],
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(current_user_id_from_request(req, conn))
+    assert exc_info.value.status_code == 403
+    assert 'verifi' in str(exc_info.value.detail).lower()
+    # NO debe haber emitido UPDATE.
+    update_calls = [c for c in conn.calls if c[0] == 'execute']
+    assert len(update_calls) == 0
+
+
+def test_current_user_id_M67_allows_reconcile_when_email_verified():
+    """Counterpart: el user real, con email_verified=True, sí puede
+    reconciliar (case-real del primer login post-invite)."""
+    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    uid_existing = uuid4()
+    req = _fake_request(
+        actor_id='google-oauth2|xyz',
+        email='foo@example.com',
+        email_verified=True,
+    )
+    conn = FakeConn(
+        fetchrow=[
+            None,
+            None,
+            {'id': uid_existing, 'auth_subject': 'auth0|abc'},
+        ],
+        execute=['OK'],
+    )
+    result = asyncio.run(current_user_id_from_request(req, conn))
+    assert result == uid_existing
+    update_calls = [c for c in conn.calls if c[0] == 'execute']
+    assert len(update_calls) == 1
 
 
 def test_current_user_id_existing_user_skips_pending_lookup():
