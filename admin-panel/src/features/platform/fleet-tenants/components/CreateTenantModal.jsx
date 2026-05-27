@@ -112,7 +112,7 @@ export function CreateTenantModal({ session, open, onClose, onCreated }) {
           <span>Slug (URL del tenant)</span>
           <input
             type="text" minLength={2} maxLength={60}
-            pattern="[a-z0-9-]+"
+            pattern="[-a-z0-9]+"
             value={form.slug}
             onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })}
             placeholder={`Auto: ${slugAuto}`}

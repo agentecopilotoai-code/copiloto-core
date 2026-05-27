@@ -99,7 +99,7 @@ function NegocioTab({ tenant, onSaved, session, initialSignup, onTenantCreated }
         <label className={styles.formField}>
           <span>Slug (URL del tenant)</span>
           <input
-            type="text" minLength={2} maxLength={60} pattern="[a-z0-9-]+"
+            type="text" minLength={2} maxLength={60} pattern="[-a-z0-9]+"
             value={form.slug}
             onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })}
             placeholder={`Auto: ${slugAuto}`}
