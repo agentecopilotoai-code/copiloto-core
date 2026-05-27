@@ -240,35 +240,52 @@ api_delete() { api_request DELETE "$1"; }
 # los scopes necesarios, loguea warning con el scope faltante y devuelve
 # "" para que el caller skipee en lugar de abortar todo el script.
 # Esto permite que un operator agregue scopes incrementalmente.
+#
+# Retry on 429: Auth0 limita rate sobre endpoints sensibles (attack-protection,
+# emails/provider, prompts). Reintentamos hasta 2 veces con backoff
+# (15s + 30s = 45s max) antes de soft-fail.
 api_request_soft() {
   local method="$1"
   local path="$2"
   local data="${3:-}"
   local label="${4:-$method $path}"
-  local response_with_code http_code response
+  local response_with_code http_code response attempt wait_s
 
-  if [ -n "$data" ]; then
-    response_with_code="$(printf '%s' "$data" | curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}" --data @-)"
-  else
-    response_with_code="$(curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}")"
-  fi
+  for attempt in 1 2 3; do
+    if [ -n "$data" ]; then
+      response_with_code="$(printf '%s' "$data" | curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}" --data @-)"
+    else
+      response_with_code="$(curl -sS -w '\n%{http_code}' -X "$method" "https://$AUTH0_DOMAIN/api/v2$path" "${auth_header[@]}")"
+    fi
 
-  http_code="$(tail -n1 <<<"$response_with_code")"
-  response="$(sed '$d' <<<"$response_with_code")"
+    http_code="$(tail -n1 <<<"$response_with_code")"
+    response="$(sed '$d' <<<"$response_with_code")"
 
-  if [[ ! "$http_code" =~ ^2 ]]; then
-    # 403 = insufficient_scope. 401 = token inválido (raro). Otros = error
-    # real (config mal). Soft-fail con detalle.
+    if [[ "$http_code" =~ ^2 ]]; then
+      printf '%s' "$response"
+      return 0
+    fi
+
+    # 429 = rate limit. Retry con backoff.
+    if [ "$http_code" = "429" ] && [ "$attempt" -lt 3 ]; then
+      wait_s=$((attempt * 15))
+      echo "  ⏳ $label → HTTP 429 — esperando ${wait_s}s y reintentando (attempt $attempt/3)" >&2
+      sleep "$wait_s"
+      continue
+    fi
+
+    # 403 = insufficient_scope. 401 = token inválido (raro). 4xx genéricos =
+    # config mal (e.g. payload field-no-permitido en API nueva). Soft-fail.
     local err_message
     err_message="$(jq -r '.message // .error // "?"' <<<"$response" 2>/dev/null || echo "?")"
     echo "  ⚠ $label → HTTP $http_code ($err_message)" >&2
     if [ "$http_code" = "403" ]; then
       echo "    └─ Probablemente falta scope en el M2M. Ver header del script para la lista." >&2
+    elif [ "$http_code" = "429" ]; then
+      echo "    └─ Auth0 sigue rate-limitando tras 3 intentos. Re-correr el script en 1-2 minutos." >&2
     fi
     return 1
-  fi
-
-  printf '%s' "$response"
+  done
 }
 
 api_get_soft() { api_request_soft GET "$1" "" "${2:-GET $1}"; }
@@ -942,22 +959,21 @@ if [ "$CONFIGURE_DB_CONNECTION" = "true" ]; then
       echo "    Es un default pero algunos tenants legacy la borraron." >&2
       echo "    Crearla manual: Auth0 Dashboard → Authentication → Database → Create DB Connection." >&2
     else
-      # Preservar enabled_clients existentes + agregar el admin si falta.
-      # El M2M (`service`) NO va acá: usa client_credentials, no DB auth.
-      # `connections_response` es un ARRAY de connections del tenant; sacamos
-      # el row matched por id y leemos su enabled_clients. Fallback a []
-      # si la key no está (connection legacy sin clients enabled).
-      existing_clients_json="$(jq -c --arg id "$db_conn_id" \
-        '[.[] | select(.id == $id) | .enabled_clients // []] | .[0] // []' \
-        <<<"$connections_response")"
-      db_conn_payload="$(jq -n \
+      # Auth0 dividió la API de connections — antes podías PATCH la
+      # connection completa (options + enabled_clients en un solo payload).
+      # Algunos tenants ya migraron a la API nueva que REJECTA enabled_clients
+      # como "Additional properties not allowed". Por eso hacemos 2 PATCH
+      # separados:
+      #   (a) PATCH solo options (siempre funciona en ambas APIs).
+      #   (b) PATCH solo enabled_clients (soft-fallback — si tira 400,
+      #       el operator habilita manual en dashboard).
+
+      # (a) Password policy + protección (always-works PATCH).
+      options_payload="$(jq -n \
         --arg pwd_policy "$DB_PASSWORD_POLICY" \
         --argjson pwd_history "$DB_PASSWORD_HISTORY_SIZE" \
         --argjson brute_force "$DB_BRUTE_FORCE_PROTECTION" \
-        --arg admin_client "$admin_client_id" \
-        --argjson existing "${existing_clients_json:-[]}" \
         '{
-          enabled_clients: ($existing + [$admin_client] | unique),
           options: {
             passwordPolicy: $pwd_policy,
             password_history: { enable: true, size: $pwd_history },
@@ -969,9 +985,32 @@ if [ "$CONFIGURE_DB_CONNECTION" = "true" ]; then
             requires_username: false
           }
         }')"
-      if api_patch_soft "/connections/$db_conn_id" "$db_conn_payload" 'PATCH /connections/{db}' >/dev/null; then
-        echo "  ✓ Connection enabled para admin (M2M excluido por diseño)"
-        echo "    password_policy=$DB_PASSWORD_POLICY history=$DB_PASSWORD_HISTORY_SIZE brute_force=$DB_BRUTE_FORCE_PROTECTION"
+      if api_patch_soft "/connections/$db_conn_id" "$options_payload" 'PATCH connection options' >/dev/null; then
+        echo "  ✓ Password policy=$DB_PASSWORD_POLICY history=$DB_PASSWORD_HISTORY_SIZE brute_force=$DB_BRUTE_FORCE_PROTECTION"
+      fi
+
+      # (b) enabled_clients — preservar existentes + agregar admin. El M2M
+      # NO va acá (usa client_credentials, no DB).
+      existing_clients_json="$(jq -c --arg id "$db_conn_id" \
+        '[.[] | select(.id == $id) | .enabled_clients // []] | .[0] // []' \
+        <<<"$connections_response")"
+      admin_already_enabled="$(jq --arg c "$admin_client_id" 'any(. == $c)' <<<"$existing_clients_json")"
+
+      if [ "$admin_already_enabled" = "true" ]; then
+        echo "  ✓ Connection ya tiene admin client '$AUTH0_ADMIN_APP_NAME' habilitado"
+      else
+        clients_payload="$(jq -n \
+          --arg admin_client "$admin_client_id" \
+          --argjson existing "$existing_clients_json" \
+          '{enabled_clients: ($existing + [$admin_client] | unique)}')"
+        if api_patch_soft "/connections/$db_conn_id" "$clients_payload" 'PATCH connection enabled_clients' >/dev/null; then
+          echo "  ✓ Admin client '$AUTH0_ADMIN_APP_NAME' agregado a la connection"
+        else
+          echo "  ⓘ Tu tenant Auth0 rechaza enabled_clients via PATCH (API nueva)."
+          echo "    Habilitar manual: Auth0 Dashboard → Authentication → Database →"
+          echo "    Username-Password-Authentication → Applications → toggle ON"
+          echo "    para '$AUTH0_ADMIN_APP_NAME'. Una sola vez, después queda."
+        fi
       fi
     fi
   fi
@@ -1120,18 +1159,26 @@ fi
 if [ "$CONFIGURE_EMAIL_TEMPLATES" = "true" ]; then
   echo "▶ Email templates (subjects + from name en español)"
 
-  declare -A template_subjects=(
-    [verify_email]="Verifica tu correo en $TENANT_FRIENDLY_NAME"
-    [reset_email]="Restablece tu contraseña en $TENANT_FRIENDLY_NAME"
-    [welcome_email]="Bienvenido a $TENANT_FRIENDLY_NAME"
-    [blocked_account]="Tu cuenta de $TENANT_FRIENDLY_NAME fue bloqueada"
-    [stolen_credentials]="Detectamos un intento sospechoso de acceso a tu cuenta"
-    [enrollment_email]="Configura tu segundo factor de autenticación"
-    [mfa_oob_code]="Tu código de verificación de $TENANT_FRIENDLY_NAME"
-  )
+  # macOS ships bash 3.2 por default (sin `declare -A` associative arrays).
+  # Para compat universal usamos lookup vía case (mismo pattern que
+  # role_description / role_permissions_for).
+  template_subject_for() {
+    case "$1" in
+      verify_email)         echo "Verifica tu correo en $TENANT_FRIENDLY_NAME" ;;
+      reset_email)          echo "Restablece tu contraseña en $TENANT_FRIENDLY_NAME" ;;
+      welcome_email)        echo "Bienvenido a $TENANT_FRIENDLY_NAME" ;;
+      blocked_account)      echo "Tu cuenta de $TENANT_FRIENDLY_NAME fue bloqueada" ;;
+      stolen_credentials)   echo "Detectamos un intento sospechoso de acceso a tu cuenta" ;;
+      enrollment_email)     echo "Configura tu segundo factor de autenticación" ;;
+      mfa_oob_code)         echo "Tu código de verificación de $TENANT_FRIENDLY_NAME" ;;
+      *)                    echo "$TENANT_FRIENDLY_NAME" ;;
+    esac
+  }
 
-  for template_name in "${!template_subjects[@]}"; do
-    template_subject="${template_subjects[$template_name]}"
+  template_names=(verify_email reset_email welcome_email blocked_account stolen_credentials enrollment_email mfa_oob_code)
+
+  for template_name in "${template_names[@]}"; do
+    template_subject="$(template_subject_for "$template_name")"
     template_payload="$(jq -n \
       --arg name "$template_name" \
       --arg subject "$template_subject" \
