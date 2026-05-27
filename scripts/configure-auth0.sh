@@ -1237,12 +1237,94 @@ if [ "$CONFIGURE_EMAIL_TEMPLATES" = "true" ]; then
 
   template_names=(verify_email reset_email welcome_email blocked_account stolen_credentials enrollment_email mfa_oob_code)
 
-  # Body Liquid default sutil — Auth0 requiere body non-empty al CREAR
-  # templates (no acepta `""`). Usamos {{ message.text }} estándar que
-  # le dice "renderizá el cuerpo default de este tipo de template".
-  # El operator puede customizarlo después en el dashboard sin perder
-  # el subject que seteamos.
-  default_body_liquid='<p>{{ message.text }}</p>'
+  # Bodies Liquid específicos por template — CRÍTICO usar las variables
+  # que Auth0 expone para CADA template (no son universales). Si pasás
+  # una variable que no existe en el contexto del template (ej.
+  # `{{ message.text }}` que NO existe en Auth0), Liquid la renderiza
+  # vacía y el email llega en blanco (M62 hotfix #6).
+  #
+  # Variables documentadas por Auth0:
+  #   verify_email/reset_email/blocked_account/stolen_credentials/
+  #   enrollment_email: {{ url }} (link de acción), {{ user.email }},
+  #                     {{ user.name }}, {{ application.name }},
+  #                     {{ friendly_name }}
+  #   welcome_email:    {{ user.name }}, {{ application.name }}
+  #   mfa_oob_code:     {{ code }}, {{ user.email }}
+  #
+  # Templates HTML mínimos pero funcionales — el operator puede
+  # customizar en dashboard sin perder el subject + from que seteamos
+  # (Auth0 los preserva en el PATCH posterior).
+  template_body_for() {
+    case "$1" in
+      verify_email)
+        cat <<'TPL'
+<p>Hola {{ user.email }},</p>
+<p>Bienvenido a {{ application.name }}. Para activar tu cuenta, verificá tu correo electrónico haciendo clic en el siguiente enlace:</p>
+<p><a href="{{ url }}">Verificar correo electrónico</a></p>
+<p>Si no creaste esta cuenta, ignorá este mensaje.</p>
+<p>— Equipo de {{ friendly_name }}</p>
+TPL
+        ;;
+      reset_email)
+        cat <<'TPL'
+<p>Hola,</p>
+<p>Recibimos una solicitud para restablecer la contraseña de tu cuenta en {{ application.name }}.</p>
+<p>Hacé clic en el siguiente enlace para crear una nueva contraseña:</p>
+<p><a href="{{ url }}">Restablecer contraseña</a></p>
+<p>Si no solicitaste esto, ignorá este mensaje — tu contraseña actual seguirá siendo válida.</p>
+<p>— Equipo de {{ friendly_name }}</p>
+TPL
+        ;;
+      welcome_email)
+        cat <<'TPL'
+<p>¡Hola {{ user.name }}!</p>
+<p>Bienvenido a {{ application.name }}. Tu cuenta ya está lista para usar.</p>
+<p>Si tenés dudas, escribinos respondiendo este correo.</p>
+<p>— Equipo de {{ friendly_name }}</p>
+TPL
+        ;;
+      blocked_account)
+        cat <<'TPL'
+<p>Hola,</p>
+<p>Tu cuenta de {{ application.name }} fue bloqueada por motivos de seguridad luego de detectar múltiples intentos fallidos de inicio de sesión.</p>
+<p>Si fuiste vos quien intentó iniciar sesión, podés desbloquear tu cuenta haciendo clic en:</p>
+<p><a href="{{ url }}">Desbloquear cuenta</a></p>
+<p>Si no reconocés esta actividad, te recomendamos cambiar tu contraseña inmediatamente.</p>
+<p>— Equipo de {{ friendly_name }}</p>
+TPL
+        ;;
+      stolen_credentials)
+        cat <<'TPL'
+<p>Hola,</p>
+<p>Detectamos un intento de inicio de sesión en {{ application.name }} con credenciales que pudieron haber sido comprometidas en una brecha de datos externa.</p>
+<p>Por tu seguridad, te recomendamos cambiar tu contraseña inmediatamente:</p>
+<p><a href="{{ url }}">Cambiar contraseña</a></p>
+<p>— Equipo de {{ friendly_name }}</p>
+TPL
+        ;;
+      enrollment_email)
+        cat <<'TPL'
+<p>Hola,</p>
+<p>Para completar la configuración de la verificación en dos pasos (MFA) en tu cuenta de {{ application.name }}, hacé clic en el siguiente enlace:</p>
+<p><a href="{{ url }}">Configurar MFA</a></p>
+<p>Una vez configurado, vas a necesitar tu segundo factor cada vez que inicies sesión.</p>
+<p>— Equipo de {{ friendly_name }}</p>
+TPL
+        ;;
+      mfa_oob_code)
+        cat <<'TPL'
+<p>Hola,</p>
+<p>Tu código de verificación para {{ application.name }} es:</p>
+<p style="font-size:28px;font-weight:700;letter-spacing:4px;text-align:center;padding:16px;background:#f4f5f7;border-radius:6px;">{{ code }}</p>
+<p>Este código expira en pocos minutos. Si no estás intentando iniciar sesión, ignorá este mensaje.</p>
+<p>— Equipo de {{ friendly_name }}</p>
+TPL
+        ;;
+      *)
+        echo '<p>Mensaje de {{ application.name }}.</p>'
+        ;;
+    esac
+  }
 
   # Auth0 rechaza setear `from` en templates si NO hay email provider
   # activo (tira "From address cannot be set without an enabled email
@@ -1263,29 +1345,35 @@ if [ "$CONFIGURE_EMAIL_TEMPLATES" = "true" ]; then
 
   for template_name in "${template_names[@]}"; do
     template_subject="$(template_subject_for "$template_name")"
+    template_body="$(template_body_for "$template_name")"
 
     # POST body: template name VA EN EL PAYLOAD, no en el path. El field
     # `from` solo se incluye si hay provider activo.
+    # PATCH body: ahora INCLUYE el body para forzar re-render con el
+    # template ES correcto (los templates de runs previos quedaron con
+    # `{{ message.text }}` que renderiza vacío — hotfix #6).
     if [ "$include_from_in_templates" = "true" ]; then
       create_payload="$(jq -n \
         --arg name "$template_name" \
         --arg subject "$template_subject" \
         --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
-        --arg body "$default_body_liquid" \
+        --arg body "$template_body" \
         '{template:$name, subject:$subject, from:$from, resultUrl:"", syntax:"liquid", body:$body, enabled:true}')"
       update_payload="$(jq -n \
         --arg subject "$template_subject" \
         --arg from "$EMAIL_FROM_NAME <$EMAIL_FROM_ADDRESS>" \
-        '{subject:$subject, from:$from, enabled:true}')"
+        --arg body "$template_body" \
+        '{subject:$subject, from:$from, body:$body, enabled:true}')"
     else
       create_payload="$(jq -n \
         --arg name "$template_name" \
         --arg subject "$template_subject" \
-        --arg body "$default_body_liquid" \
+        --arg body "$template_body" \
         '{template:$name, subject:$subject, resultUrl:"", syntax:"liquid", body:$body, enabled:true}')"
       update_payload="$(jq -n \
         --arg subject "$template_subject" \
-        '{subject:$subject, enabled:true}')"
+        --arg body "$template_body" \
+        '{subject:$subject, body:$body, enabled:true}')"
     fi
 
     # API contract Auth0:
@@ -1295,10 +1383,10 @@ if [ "$CONFIGURE_EMAIL_TEMPLATES" = "true" ]; then
     template_exists="$(api_get_soft "/email-templates/$template_name" "GET /email-templates/$template_name" 2>/dev/null || true)"
     if [ -n "$template_exists" ] && [ "$(jq -r '.template // ""' <<<"$template_exists")" = "$template_name" ]; then
       api_patch_soft "/email-templates/$template_name" "$update_payload" "PATCH template/$template_name" >/dev/null \
-        && echo "  ✓ Template '$template_name' actualizado (subject ES)"
+        && echo "  ✓ Template '$template_name' actualizado (subject + body ES)"
     else
       api_post_soft '/email-templates' "$create_payload" "POST template (create $template_name)" >/dev/null \
-        && echo "  ✓ Template '$template_name' creado (subject ES)"
+        && echo "  ✓ Template '$template_name' creado (subject + body ES)"
     fi
   done
 fi
