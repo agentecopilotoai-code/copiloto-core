@@ -38,8 +38,13 @@ class Settings(BaseSettings):
     database_url: str
     # AUDIT-46: DB pool config expuesto. Antes hardcoded `max_size=10`
     # en `app/db/pool.py` — un solo WS estancado podía saturar la app.
-    db_pool_min_size: int = Field(default=1, ge=1)
-    db_pool_max_size: int = Field(default=10, ge=2, le=200)
+    db_pool_min_size: int = Field(default=2, ge=1)
+    # PERF-002 (audit 2026-05-27) — subido de 10 → 20. Con FastAPI async +
+    # transaction-per-request, 10 conexiones se llenan rápido bajo carga
+    # concurrente (>10 reqs en vuelo = bloqueo del pool). Fórmula:
+    # `max_size * uvicorn_workers <= postgres.max_connections - reserved`.
+    # Postgres default es 100; con 2 workers × 20 = 40, queda holgura.
+    db_pool_max_size: int = Field(default=20, ge=2, le=200)
     db_pool_command_timeout_seconds: float = Field(default=30.0, ge=1.0, le=600.0)
 
     # ─── Auth / Auth0 ─────────────────────────────────────────────────────

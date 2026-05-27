@@ -133,8 +133,15 @@ async def current_user_id_from_request(
     # `account_linking.js` lo hace para verified emails), pero acá
     # cubrimos el caso donde el linking no ocurrió o el invite creó al
     # user antes del linking.
+    # INT-002 (audit 2026-05-27) — `FOR UPDATE` para serializar redeems
+    # concurrentes con el mismo email + sub distinto. Sin esto, dos logins
+    # concurrentes (ej: user abrió 2 tabs durante OAuth callback) leerían
+    # el mismo `email_match_row.auth_subject`, ambos UPDATE adoptarían su
+    # propio sub → lost update (la última gana sin detección). Postgres
+    # serializa via lock de fila.
     email_match_row = await conn.fetchrow(
-        'select id, auth_subject from app.users where email = $1', email,
+        'select id, auth_subject from app.users where email = $1 for update',
+        email,
     )
     if email_match_row is not None:
         # `auth_subject` distinto al JWT → reconciliar (solo si email verified).
