@@ -911,6 +911,19 @@ async def admin_callback(
             age_seconds=int(time.time() - state_payload.get('created_at', 0)),
         )
         return _callback_recover_redirect('state_expired')
+    # P1-10 (audit 2026-05-27) — single-use enforcement. SET NX en el
+    # store atomico (Redis o InMemory). Si retorna False, el state ya
+    # fue consumido → rechazar. TTL = 600s (alineado con el window de
+    # validación arriba). Sin esto, un attacker que captura el callback
+    # URL antes que el browser legítimo puede crear una sesión paralela.
+    from app.admin.oauth_state_store import get_oauth_state_store  # noqa: PLC0415
+    state_store = get_oauth_state_store()
+    if not await state_store.mark_consumed(state, ttl_seconds=600):
+        _debug(
+            'GET /callback', step='state_replay_rejected',
+            hint='state already consumed — possible CSRF/replay attempt',
+        )
+        return _callback_recover_redirect('state_replay')
     _debug('GET /callback', step='state_validated')
 
     settings = get_admin_settings()

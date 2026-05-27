@@ -47,3 +47,16 @@ def _reset_session_store_between_tests():
     set_session_store_for_tests(InMemorySessionStore())
     yield
     set_session_store_for_tests(None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_oauth_state_store_between_tests():
+    """P1-10 — InMemoryOAuthStateStore también es proceso-global. Tests
+    del OAuth callback consumen state tokens; sin reset, el siguiente
+    test que use el mismo state falla con replay rejection."""
+    from app.admin.oauth_state_store import (
+        InMemoryOAuthStateStore, set_oauth_state_store_for_tests,
+    )
+    set_oauth_state_store_for_tests(InMemoryOAuthStateStore())
+    yield
+    set_oauth_state_store_for_tests(None)
