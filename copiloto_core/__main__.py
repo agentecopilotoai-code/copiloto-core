@@ -327,8 +327,25 @@ def _cmd_generate_secrets(args: argparse.Namespace) -> int:
         'JWT_SECRET': 48,
         'S3_SECRET_ACCESS_KEY': 32,
         'SERVICE_TOKEN': 36,
+        # AI_PROVIDER_MASTER_KEY: NO usa secrets.token_urlsafe (genera 43
+        # chars sin padding). Fernet exige EXACTAMENTE 32 bytes
+        # base64-urlsafe-encoded = 44 chars con `=` al final. Caso especial
+        # abajo en _gen_value.
         'AI_PROVIDER_MASTER_KEY': 32,
     }
+
+    def _gen_value(key: str) -> str:
+        """Genera el valor random para un secret.
+
+        v2.0.1: AI_PROVIDER_MASTER_KEY usa Fernet.generate_key() (formato
+        específico requerido por la lib cryptography). Los demás usan
+        secrets.token_urlsafe (random base64-urlsafe sin restricciones
+        de formato).
+        """
+        if key == 'AI_PROVIDER_MASTER_KEY':
+            from cryptography.fernet import Fernet  # noqa: PLC0415
+            return Fernet.generate_key().decode('ascii')
+        return secrets.token_urlsafe(_SECRET_KEYS[key])
 
     generated: dict[str, str] = {}
 
@@ -336,7 +353,7 @@ def _cmd_generate_secrets(args: argparse.Namespace) -> int:
         key = match.group(1)
         value = match.group(2)
         if key in _SECRET_KEYS and value.strip().startswith('CHANGE_ME'):
-            new_value = secrets.token_urlsafe(_SECRET_KEYS[key])
+            new_value = _gen_value(key)
             generated[key] = new_value
             return f'{key}={new_value}'
         return match.group(0)
