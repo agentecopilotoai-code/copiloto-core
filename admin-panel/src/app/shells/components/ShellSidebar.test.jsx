@@ -208,7 +208,7 @@ describe('<ShellSidebar/> — UI-019', () => {
     // opt-in se instale, agrega su section name + icono esperado aquí.
     const allSectionsNav = [
       'Plataforma', 'Observability', 'Operaciones', 'Runbooks',
-      'Acceso', 'Proveedores IA', 'Configuración',
+      'Acceso', 'Proveedores IA', 'Proveedores de email', 'Configuración',
       'Sección Desconocida',
     ].map((s, i) => ({
       section: s,
@@ -224,6 +224,7 @@ describe('<ShellSidebar/> — UI-019', () => {
     expect(icons).toContain('list-check'); // Operaciones + Runbooks
     expect(icons).toContain('key'); // Acceso
     expect(icons).toContain('sparkles'); // Proveedores IA
+    expect(icons).toContain('envelope'); // v2.0.0 Proveedores de email
     expect(icons).toContain('cog'); // Configuración
     expect(icons).toContain('dots'); // fallback Sección Desconocida
   });

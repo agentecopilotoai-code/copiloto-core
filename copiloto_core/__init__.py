@@ -65,7 +65,7 @@ from __future__ import annotations
 
 # ─── Version (sincronizado con pyproject.toml) ────────────────────────────
 
-__version__ = '1.6.4'
+__version__ = '2.0.0'
 
 # ─── App factory + modelo de extensión ──────────────────────────────────
 

@@ -57,7 +57,14 @@ _PLATFORM_MODULE_CODE = 'core'
 
 # Orden estricto de aplicación. `10-core.sql` define el schema; debe
 # correrse antes que `20-seed.sql` (que inserta el tenant demo).
-_PLATFORM_SQL_FILES: tuple[str, ...] = ('10-core.sql', '20-seed.sql')
+# v2.0.0: `30-email-providers.sql` agrega `app.email_providers` +
+# `app.email_dispatch_log`. Va DESPUÉS del seed porque el seed solo toca
+# tablas del core y no depende del subsistema de email.
+_PLATFORM_SQL_FILES: tuple[str, ...] = (
+    '10-core.sql',
+    '20-seed.sql',
+    '30-email-providers.sql',
+)
 
 # Identificador del rol app: snake_case válido, evita SQL injection
 # cuando se interpola en `CREATE ROLE`.
@@ -261,9 +268,14 @@ async def apply_platform_schema(
 
     already_applied = await _platform_versions_applied(conn)
 
-    sql_files: list[str] = ['10-core.sql']
-    if seed:
-        sql_files.append('20-seed.sql')
+    # Construimos la lista a partir de la tupla maestra `_PLATFORM_SQL_FILES`
+    # filtrando el seed cuando el caller no lo quiere. Los archivos extra
+    # (e.g. `30-email-providers.sql` v2.0.0) van siempre — no son seed,
+    # son schema obligatorio.
+    sql_files: list[str] = [
+        f for f in _PLATFORM_SQL_FILES
+        if f != '20-seed.sql' or seed
+    ]
 
     applied: list[str] = []
     for sql_file in sql_files:

@@ -45,6 +45,13 @@ export const PLATFORM_NAV = Object.freeze([
     section: 'Proveedores IA',
     items: ['platform-ai-providers'],
   },
+  {
+    // v2.0.0 — multi-provider email (Resend, SendGrid, Mailgun, SMTP).
+    // Recurso transversal: cualquier módulo que necesite enviar email
+    // pasa por el `EmailDispatcher` que recorre los providers activos.
+    section: 'Proveedores de email',
+    items: ['platform-email-providers'],
+  },
 ]);
 
 // Viewer — shell read-only. En el core base no hay módulos del producto

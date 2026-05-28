@@ -74,6 +74,17 @@ export const adminModules = [
     scope: ['Catálogo de modalidades', 'Provider + modelo por modalidad', 'Rotación de secret (write-only)', 'Hint público (últimos 4 chars)'],
     capability: 'platform.ai_providers.configure',
   },
+  {
+    // v2.0.0 — multi-provider email (Resend, SendGrid, Mailgun, SMTP) con
+    // fallback chain por prioridad. Reusa la misma capability que AI providers
+    // (`platform.ai_providers.configure`) para no agregar otra cap nueva al
+    // RBAC; el platform_owner ya tiene ambas naturalmente.
+    id: 'platform-email-providers',
+    label: 'Proveedores de email',
+    summary: 'Configuración multi-provider (Resend, SendGrid, Mailgun, SMTP) con fallback chain por prioridad. Reemplaza el wrapper Resend hardcodeado.',
+    scope: ['CRUD de providers', 'Rotación de API key (write-only)', 'Test endpoint por provider', 'Audit en app.email_dispatch_log'],
+    capability: 'platform.ai_providers.configure',
+  },
 
   // ─── Tenant transversales ────────────────────────────────────────────────
   {

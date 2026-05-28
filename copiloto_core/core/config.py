@@ -99,27 +99,22 @@ class Settings(BaseSettings):
     # programar el re-deploy.
     auth0_trust_admin_email_header: bool = False
 
-    # ─── Email (M61 — Resend invitations) ─────────────────────────────────
-    # Resend (https://resend.com) — email provider transaccional para
-    # invitaciones, password reset notifications, etc.
+    # ─── Email — multi-provider config (v2.0.0) ───────────────────────────
     #
-    # Setup local:
-    #   1. Crear API key en https://resend.com/api-keys
-    #   2. Guardarla en .secrets/resend-api-key (chmod 600).
-    #   3. `.env` apunta: RESEND_API_KEY_FILE=.secrets/resend-api-key
+    # BREAKING CHANGE — antes (≤1.6.x) el core leía `RESEND_API_KEY` /
+    # `RESEND_API_KEY_FILE` del env. Ahora la verdad está en
+    # `app.email_providers` (DB) y el platform_owner los configura desde
+    # `/admin/platform/email-providers`. Ver `docs/EMAIL.md`.
     #
-    # Producción: setear RESEND_API_KEY plaintext via env del orquestador
-    # (k8s secret, ECS task secret, etc.). NUNCA committeada al repo.
+    # Estos dos settings sobreviven como FALLBACK del sender global:
+    # cuando una fila de `app.email_providers` no especifica
+    # `from_address_override` / `from_name_override`, el dispatcher
+    # arma el sender con estos valores. Útil para no repetir el sender
+    # en cada provider si es el mismo dominio.
     #
-    # Sin estos settings, `copiloto_core.services.email` queda en NO-OP mode
-    # (logs el intento, no manda real). Útil para envs locales sin
-    # cuota o tests que no quieren tocar la red.
-    resend_api_key: str | None = None
-    resend_api_key_file: str | None = None
-
-    # Sender del email. Tiene que ser un dominio verificado en Resend
-    # (SPF + DKIM + DMARC) — si no, los emails caen a spam.
-    # `email_from_name` se concatena: "CopilotoIA <invites@app.copilotoia.com>".
+    # `email_from_address` tiene que ser un dominio verificado en TODOS
+    # los providers activos (SPF + DKIM + DMARC). Si distintos providers
+    # usan distintos dominios, usar el override per-provider en DB.
     email_from_address: str = 'invites@app.copilotoia.com'
     email_from_name: str = 'CopilotoIA'
     # URL pública del SPA para construir los links de invitación.

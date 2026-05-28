@@ -270,6 +270,7 @@ pytest --cov=app --cov-report=html && open htmlcov/index.html
 | [docs/CONSUMER_ROUTES.md](docs/CONSUMER_ROUTES.md) | **Mapa de rutas**: quién sirve qué (`/`, `/dashboard`, `/admin/`, `/v1/*`) + flujo de login |
 | [docs/AUTH0.md](docs/AUTH0.md) | **Auth0**: modelo de 3 capas de credenciales + configuración + rotación |
 | [docs/EXTENDING.md](docs/EXTENDING.md) | **Guía para autores de módulos** — cómo construir tu SaaS sobre el core |
+| [docs/EMAIL.md](docs/EMAIL.md) | **Email multi-provider (v2.0.0)** — Resend/SendGrid/Mailgun/SMTP con fallback chain |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Arquitectura completa con diagramas + terceros + RLS + IA + observabilidad |
 | [INSTALL.md](INSTALL.md) | Instalación paso a paso desde cero (Auth0 + Resend + Postgres + dev/prod) |
 | [docs/runbooks/](docs/runbooks/) | Guías operativas para incidentes |
