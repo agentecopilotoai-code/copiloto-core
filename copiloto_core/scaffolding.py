@@ -266,12 +266,17 @@ SERVICE_TOKEN=CHANGE_ME
 # EMAIL_FROM_ADDRESS=invites@tu-dominio.com
 # EMAIL_FROM_NAME={project_name}
 
-# ─── AI providers master key (Fernet, OPCIONAL) ───────────────────────
-# Si vas a cifrar API keys de proveedores IA en `app.platform_secrets`,
-# generala con:
-#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-# y descomentá la línea. Settings la trata como opt-in (None por default).
-# AI_PROVIDER_MASTER_KEY=
+# ─── Platform master key (Fernet, OBLIGATORIA desde v2.0.0) ───────────
+# Cifra TODOS los secrets de providers configurables desde el admin UI:
+#   - AI providers (api keys de OpenAI/Anthropic/Grok/etc.)
+#   - Email providers (api keys de Resend/SendGrid/Mailgun + SMTP passwords)
+#   - Cualquier futuro provider con credentials sensibles.
+#
+# El nombre histórico (AI_PROVIDER_MASTER_KEY) se mantiene por compat.
+# Generate-secrets pone una Fernet key válida (44 chars base64-urlsafe).
+# Si la rotás, los secrets viejos quedan ilegibles — re-crealos desde
+# el admin UI.
+AI_PROVIDER_MASTER_KEY=CHANGE_ME
 
 # ─── Redis (sessions + OAuth state + rate-limit) ──────────────────────
 REDIS_URL=redis://localhost:6379/0
