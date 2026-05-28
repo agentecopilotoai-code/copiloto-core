@@ -181,8 +181,13 @@ cd admin-panel && npx vitest run           # frontend
 # Reset DB local
 ./scripts/bootstrap.sh --reset --yes
 
-# Bootstrap módulo opt-in (e.g. gestión documental)
-./scripts/bootstrap.sh --module=gd
+# Solo core, sin módulos opt-in
+./scripts/bootstrap.sh --reset --yes --no-modules
+
+# Cargar módulos específicos (cada módulo debe tener su SQL en
+# infra/postgres/modules/<name>.sql — el branch `core` no incluye
+# ninguno; vienen al instalar el módulo opt-in correspondiente)
+./scripts/bootstrap.sh --module=<nombre> [--module=<otro>]
 
 # Smoke test post-deploy
 ./scripts/smoke-test.sh
