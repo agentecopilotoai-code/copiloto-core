@@ -39,24 +39,56 @@ autores de módulos.
 
 ## Quick start (5 minutos, dev local)
 
+### Opción A — Crear un nuevo SaaS encima del core (recomendado)
+
+A partir de `v1.1.0` el core trae su propio scaffolder. **No** clones
+este repo: instalá `copiloto-core` como librería en un proyecto nuevo.
+
+```bash
+# 1. Venv con el core
+mkdir mis-proyectos && cd mis-proyectos
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install "copiloto-core @ git+ssh://git@github.com/agentecopilotoai-code/copiloto-core.git@v1.1.0"
+
+# 2. Generar el esqueleto del proyecto
+python -m copiloto_core new-project mi-saas
+cd mi-saas
+pip install -e ".[dev]"
+
+# 3. Postgres + Redis + MinIO locales + .env
+docker run -d --name pg-mi-saas -p 5432:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=mi_saas pgvector/pgvector:pg16
+cp .env.example .env  # editar con tus valores reales
+
+# 4. Migrations + levantar
+python -m copiloto_core migrate --module=mi_saas_modulo
+uvicorn mi_saas.main:app --reload
+
+# 5. Smoke test
+curl http://localhost:8000/v1/branding
+curl http://localhost:8000/v1/mi-saas-modulo/health
+```
+
+Te queda un proyecto con `pyproject.toml` pinneado al core,
+`main.py` con `create_app(modules=[...], branding=...)`, un módulo
+demo (`mi_saas_modulo/`) y una migration SQL RLS-ready. Acá empezás
+a construir tu vertical.
+
+Detalle del contrato de módulos: [docs/EXTENDING.md](docs/EXTENDING.md).
+
+### Opción B — Hackear el core mismo
+
+Solo si vas a modificar el core (no para construir SaaS encima).
+
 **Pre-requisitos:** Docker Desktop 4.x+ (o Docker Engine 24+), bash,
 openssl, curl.
 
 ```bash
-# 1. Clonar
 git clone https://github.com/agentecopilotoai-code/copiloto-core.git
 cd copiloto-core
-
-# 2. Generar secrets locales (random, solo dev)
 ./scripts/generate-local-secrets.sh
-
-# 3. Levantar el stack + bootstrap DB
 ./scripts/bootstrap.sh --reset --yes
-
-# 4. Smoke test
 ./scripts/smoke-test.sh
-
-# 5. Abrir el admin panel
 open http://localhost:3000/admin
 ```
 

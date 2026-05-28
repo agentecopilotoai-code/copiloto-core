@@ -37,6 +37,7 @@ minor/patch releases sin aviso.
 | Categoría | Símbolos | Para qué |
 |-----------|----------|----------|
 | App factory + extensión | `create_app`, `CoreModule`, `BrandingConfig` | Bootstrap del FastAPI + contrato para módulos + marca del deployment |
+| Scaffolding (v1.1.0) | `generate_project`, `GenerationResult`, `ScaffoldingError` | Bootstrappear un nuevo proyecto consumer (también vía `python -m copiloto_core new-project`) |
 | Auth | `authenticate_request`, `require_platform_owner`, `require_service`, `require_mfa_for_privileged`, `require_tenant_management`, `require_min_role` | `Depends(...)` para handlers |
 | Identity | `current_user_id_from_request` | sub Auth0 → UUID interno |
 | DB | `get_db`, `record_to_dict` (singleton `db` se importa de `copiloto_core.db.pool`) | Pool asyncpg con RLS por TX |
@@ -64,7 +65,7 @@ from __future__ import annotations
 
 # ─── Version (sincronizado con pyproject.toml) ────────────────────────────
 
-__version__ = '1.0.0'
+__version__ = '1.1.0'
 
 # ─── App factory + modelo de extensión ──────────────────────────────────
 
@@ -146,6 +147,20 @@ from copiloto_core.migrations import (
     apply_module_migrations,
 )
 
+# ─── Scaffolding (v1.1.0) ────────────────────────────────────────────────
+#
+# Permite que un consumer del core arranque un nuevo proyecto via:
+#   python -m copiloto_core new-project mi-saas
+# O programáticamente:
+#   from copiloto_core import generate_project
+#   generate_project("mi-saas", target_dir=Path("/tmp/mi-saas"))
+
+from copiloto_core.scaffolding import (
+    GenerationResult,
+    ScaffoldingError,
+    generate_project,
+)
+
 
 __all__ = [
     # version
@@ -190,4 +205,8 @@ __all__ = [
     'apply_module_migrations',
     'MigrationError',
     'MigrationChecksumMismatchError',
+    # scaffolding (v1.1.0)
+    'generate_project',
+    'GenerationResult',
+    'ScaffoldingError',
 ]
