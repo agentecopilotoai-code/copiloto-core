@@ -251,3 +251,75 @@ def test_app_user_regex_rejects_sql_injection():
 def test_app_user_regex_accepts_canonical_names():
     for ok in ['app', 'copiloto_app', 'satguajira_app', 'a1', 'a_b_c']:
         assert _APP_USER_RE.match(ok), f'esperaba accept de: {ok!r}'
+
+
+# ─── v1.3.3: orden de operaciones — rol ANTES de los SQLs ────────────────
+
+
+def test_create_app_user_runs_before_platform_sqls():
+    """Regression: 10-core.sql hace `GRANT ... TO copiloto_app` hard-coded.
+    Si el rol no existe cuando se ejecutan los GRANTs, postgres aborta
+    con UndefinedObjectError. El rol DEBE crearse antes de los SQLs."""
+    conn = FakeConn(platform_table_exists=False)
+    _run(apply_platform_schema(
+        conn,
+        create_app_user=True,
+        app_user='copiloto_app',
+        app_password='pw',
+    ))
+
+    # Encontrá los índices en el orden de ejecución
+    create_role_idx = next(
+        (i for i, sql in enumerate(conn.executed_sql)
+         if sql.lower().startswith('create role')),
+        None,
+    )
+    # 10-core.sql se ejecutó como UN solo `await conn.execute(sql_text)`
+    # — el FakeConn lo registra como 'create schema if not exists app'
+    # o similar. Buscamos el primer execute "grande" (proxy del SQL file).
+    first_long_sql_idx = next(
+        (i for i, sql in enumerate(conn.executed_sql)
+         if 'create schema if not exists app' in sql.lower()
+         or 'create table' in sql.lower()),
+        None,
+    )
+
+    assert create_role_idx is not None, 'no se ejecutó CREATE ROLE'
+    assert first_long_sql_idx is not None, 'no se ejecutó 10-core.sql'
+    assert create_role_idx < first_long_sql_idx, (
+        f'CREATE ROLE (idx {create_role_idx}) debe ir ANTES de los SQLs '
+        f'(idx {first_long_sql_idx}) — sino los GRANTs internos fallan.'
+    )
+
+
+def test_grants_applied_after_sqls():
+    """Los GRANTs sobre `app.*` deben aplicarse DESPUÉS de los SQLs (que
+    crean el schema). Sino postgres aborta con `schema "app" does not exist`."""
+    conn = FakeConn(platform_table_exists=False)
+    _run(apply_platform_schema(
+        conn,
+        create_app_user=True,
+        app_user='copiloto_app',
+        app_password='pw',
+    ))
+
+    # Encontrar idx del último grant explícito a copiloto_app (los del
+    # _grant_app_role_permissions, post-SQLs)
+    grant_idx = next(
+        (i for i in range(len(conn.executed_sql) - 1, -1, -1)
+         if 'grant usage on schema app' in conn.executed_sql[i].lower()
+         and 'copiloto_app' in conn.executed_sql[i]),
+        None,
+    )
+    sql_apply_idx = next(
+        (i for i, sql in enumerate(conn.executed_sql)
+         if 'create schema if not exists app' in sql.lower()
+         or 'create table' in sql.lower()),
+        None,
+    )
+
+    assert grant_idx is not None and sql_apply_idx is not None
+    assert grant_idx > sql_apply_idx, (
+        f'GRANTs sobre app.* (idx {grant_idx}) deben ir DESPUÉS de '
+        f'los SQLs (idx {sql_apply_idx}).'
+    )
