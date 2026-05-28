@@ -26,10 +26,10 @@ import re
 import subprocess
 from pathlib import Path
 
-LIB_URL = Path('scripts/lib/postgres-url.sh')
+LIB_URL = Path('copiloto_core/scripts/lib/postgres-url.sh')
 BOOTSTRAP = Path('scripts/bootstrap.sh')
-BACKUP_LOCAL = Path('scripts/backup-local.sh')
-RESTORE_LOCAL = Path('scripts/restore-local.sh')
+BACKUP_LOCAL = Path('copiloto_core/scripts/backup-local.sh')
+RESTORE_LOCAL = Path('copiloto_core/scripts/restore-local.sh')
 
 ALL_SCRIPTS = (BOOTSTRAP, BACKUP_LOCAL, RESTORE_LOCAL)
 
@@ -56,7 +56,7 @@ def test_parse_db_url_actually_works():
     """
     script = """
         set -euo pipefail
-        source scripts/lib/postgres-url.sh
+        source copiloto_core/scripts/lib/postgres-url.sh
         parse_db_url "postgresql://copiloto_app:s3cr3t@postgres:5432/copilotoia"
         echo "$DB_PASSWORD"
         echo "$DB_URL_NO_PASSWORD"
@@ -76,7 +76,7 @@ def test_parse_db_url_handles_no_password():
     """Sin password en URL → DB_PASSWORD vacío + URL pasa intacto."""
     script = """
         set -euo pipefail
-        source scripts/lib/postgres-url.sh
+        source copiloto_core/scripts/lib/postgres-url.sh
         parse_db_url "postgresql://copiloto_app@postgres:5432/copilotoia"
         echo "len:${#DB_PASSWORD}"
         echo "$DB_URL_NO_PASSWORD"
@@ -97,7 +97,7 @@ def test_parse_db_url_preserves_query_string():
     sobrevivir el roundtrip — psql falla en SSL si lo perdemos."""
     script = """
         set -euo pipefail
-        source scripts/lib/postgres-url.sh
+        source copiloto_core/scripts/lib/postgres-url.sh
         parse_db_url "postgresql://u:p@h:5432/db?sslmode=require&application_name=cpi"
         echo "$DB_URL_NO_PASSWORD"
     """
@@ -125,7 +125,7 @@ def test_parse_db_url_decodes_url_encoded_password():
     """
     script = """
         set -euo pipefail
-        source scripts/lib/postgres-url.sh
+        source copiloto_core/scripts/lib/postgres-url.sh
         parse_db_url "postgresql://u:p%40ss@host:5432/db"
         echo "$DB_PASSWORD"
     """
@@ -143,7 +143,7 @@ def test_parse_db_url_decodes_multiple_special_chars_in_password():
     """Caso más complejo del bot: password con `@`, `:`, `/` URL-encoded."""
     script = """
         set -euo pipefail
-        source scripts/lib/postgres-url.sh
+        source copiloto_core/scripts/lib/postgres-url.sh
         parse_db_url "postgresql://u:p%40ss%3Aword%2Fextra@host/db"
         echo "$DB_PASSWORD"
     """
@@ -161,7 +161,7 @@ def test_parse_db_url_decodes_literal_percent_in_password():
     debe devolver el `%` literal."""
     script = """
         set -euo pipefail
-        source scripts/lib/postgres-url.sh
+        source copiloto_core/scripts/lib/postgres-url.sh
         parse_db_url "postgresql://u:abc%25def@host/db"
         echo "$DB_PASSWORD"
     """
@@ -182,7 +182,7 @@ def test_parse_db_url_leaves_user_encoded_in_url():
     user y se confundiría con un nuevo separator de userinfo."""
     script = """
         set -euo pipefail
-        source scripts/lib/postgres-url.sh
+        source copiloto_core/scripts/lib/postgres-url.sh
         parse_db_url "postgresql://user%40org:p%40ss@host:5432/db"
         echo "$DB_URL_NO_PASSWORD"
     """

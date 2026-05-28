@@ -77,13 +77,16 @@ if [[ "$NO_MODULES" == true && ${#MODULES[@]} -gt 0 ]]; then
 fi
 
 if [[ ! -f .env ]]; then
-  ./scripts/generate-local-secrets.sh
+  # v1.3.0: el script se movió a copiloto_core/scripts/ para shipearse
+  # como package data al consumer. El path local sigue funcionando para
+  # el dev workflow del propio repo del core.
+  ./copiloto_core/scripts/generate-local-secrets.sh
 fi
 
 if [[ ! -f .env.auth0.local ]]; then
   cat > .env.auth0.local <<'EOF_AUTH0_PLACEHOLDER'
 # Archivo local opcional para Auth0/OIDC.
-# scripts/configure-auth0.sh lo sobreescribe con AUTH0_DOMAIN, AUTH0_AUDIENCE y AUTH0_CLAIMS_NAMESPACE.
+# copiloto_core/scripts/configure-auth0.sh lo sobreescribe con AUTH0_DOMAIN, AUTH0_AUDIENCE y AUTH0_CLAIMS_NAMESPACE.
 EOF_AUTH0_PLACEHOLDER
   chmod 600 .env.auth0.local
 fi
@@ -276,7 +279,7 @@ if ! curl -fsS "$health_url" >/dev/null; then
 fi
 
 if [[ "$SKIP_SMOKE" != true ]]; then
-  ./scripts/smoke-test.sh >/dev/null
+  ./copiloto_core/scripts/smoke-test.sh >/dev/null
 fi
 
 if ! curl -fsS http://localhost:8889/metrics >/dev/null; then

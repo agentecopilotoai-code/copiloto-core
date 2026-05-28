@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-SCRIPT = Path('scripts/verify-backup.sh')
+SCRIPT = Path('copiloto_core/scripts/verify-backup.sh')
 
 
 def test_sec_009_1_fu_container_cmd_variable_detects_runtime():

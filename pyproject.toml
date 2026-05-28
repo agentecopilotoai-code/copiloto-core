@@ -1,6 +1,6 @@
 [project]
 name = "copiloto-core"
-version = "1.2.1"
+version = "1.3.0"
 description = "Sistema operativo multi-tenant para construir SaaS verticales sobre una base común de auth, RBAC, IA dispatch, billing, observabilidad y operaciones."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -75,6 +75,11 @@ include = ["copiloto_core*"]
 "copiloto_core" = [
   "**/*.sql",
   "**/*.sh",
+  # v1.3.0: configure-auth0.sh referencia scripts/auth0_actions/*.js
+  # (custom_claims, mfa_challenge, account_linking) que se suben al
+  # tenant Auth0. Sin este glob no viajarían con el wheel y el script
+  # fallaría al consumer.
+  "**/*.js",
   "**/*.html",
   "**/*.txt",
   "**/*.json",

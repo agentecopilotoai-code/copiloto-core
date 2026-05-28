@@ -21,7 +21,7 @@ import re
 import subprocess
 from pathlib import Path
 
-SCRIPT = Path('scripts/configure-auth0.sh')
+SCRIPT = Path('copiloto_core/scripts/configure-auth0.sh')
 
 
 def _script() -> str:
