@@ -9,7 +9,7 @@
 # Esas métricas pertenecían a módulos opt-in (whatsapp, chatbot, workers,
 # circuit breaker) que ya no viven en el core. Cuando un módulo se
 # instale y vuelva a exportar su métrica, re-introduce su alerta en su
-# propio bundle (ver `docs/ARCHITECTURE.md` § observabilidad).
+# propio bundle (ver `ARCHITECTURE.md` § observabilidad).
 #
 # Las alertas que quedan son las del *core* (backup + /metrics liveness)
 # — todas con métrica viva en `app/services/metrics.py`.

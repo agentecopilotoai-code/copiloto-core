@@ -7,7 +7,7 @@ from app.admin.routes import router as admin_router
 from app.core.config import get_settings
 # Branch `core`: el core NO incluye módulos opt-in. Cada módulo se monta
 # como add-on por separado al instalarse sobre el core (ver
-# `docs/ARCHITECTURE.md` § "Cómo agregar un módulo nuevo").
+# `ARCHITECTURE.md` § "Cómo agregar un módulo opt-in").
 #
 # Endpoints platform admin transversales (`/v1/platform/ai-providers/*`,
 # `/v1/platform/tenant-modules/*`) viven en `app/platform_admin/admin_routes.py`
