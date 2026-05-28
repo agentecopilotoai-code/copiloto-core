@@ -50,6 +50,10 @@ import sys
 from pathlib import Path
 
 from copiloto_core import __version__
+from copiloto_core._scripts import (
+    ScriptError,
+    run_packaged_script,
+)
 from copiloto_core.bootstrap import (
     BootstrapError,
     apply_platform_schema,
@@ -58,6 +62,49 @@ from copiloto_core.scaffolding import (
     ScaffoldingError,
     generate_project,
 )
+
+
+# ─── Catálogo de scripts shipeados ───────────────────────────────────────
+#
+# Map subcomando CLI → archivo `.sh` dentro de copiloto_core/scripts/.
+# Agregar acá nuevos scripts es un cambio MINOR (additive). Renombrar
+# o eliminar un subcomando rompe contratos públicos — bump MAJOR.
+
+_PACKAGED_SCRIPTS: dict[str, tuple[str, str]] = {
+    # cli_name: (script_filename, short_help)
+    'generate-secrets': (
+        'generate-local-secrets.sh',
+        'Genera secretos locales random (JWT, DB password) y escribe .env',
+    ),
+    'auth0-configure': (
+        'configure-auth0.sh',
+        'Configura tenant Auth0 vía Management API (apps, scopes, actions)',
+    ),
+    'backup-local': (
+        'backup-local.sh',
+        'Hace pg_dump local + cifra con GPG en ./backups/local/',
+    ),
+    'restore-local': (
+        'restore-local.sh',
+        'Restaura un backup local con verificación',
+    ),
+    'backup-cloud': (
+        'backup-to-cloud.sh',
+        'Backup automatizado a S3 con GPG (TASK-0064)',
+    ),
+    'verify-backup': (
+        'verify-backup.sh',
+        'Verifica integridad GPG de un backup cloud',
+    ),
+    'smoke-test': (
+        'smoke-test.sh',
+        'Curl health check de endpoints públicos',
+    ),
+    'reset-local': (
+        'reset-local-dev.sh',
+        'Nuke volúmenes Docker locales (DESTRUCTIVO — requiere --yes)',
+    ),
+}
 
 
 def _load_dotenv_into_environ(env_path: str = '.env') -> None:
@@ -201,6 +248,27 @@ def _cmd_bootstrap(args: argparse.Namespace) -> int:
     if create_user:
         print(f'  rol runtime: {app_user} (creado o ya existía)')
     return 0
+
+
+def _make_script_cmd(script_filename: str):
+    """Devuelve un handler argparse que invoca el script empaquetado.
+
+    Cualquier arg pos/flag después del subcomando va pass-through
+    al script bash. Eso permite que e.g. `python -m copiloto_core
+    auth0-configure --domain=...` reciba `--domain=...` igual que
+    `bash configure-auth0.sh --domain=...`.
+    """
+    def handler(args: argparse.Namespace) -> int:
+        _load_dotenv_into_environ()
+        try:
+            return run_packaged_script(
+                script_filename,
+                args=list(getattr(args, 'script_args', []) or []),
+            )
+        except ScriptError as exc:
+            print(f'ERROR: {exc}', file=sys.stderr)
+            return 2
+    return handler
 
 
 def _cmd_migrate(args: argparse.Namespace) -> int:
@@ -361,6 +429,23 @@ def main(argv: list[str] | None = None) -> int:
         help='code del módulo (debe ser importable: `import <code>`)',
     )
     sub_migrate.set_defaults(func=_cmd_migrate)
+
+    # ─── Subcomandos que invocan scripts bash empaquetados (v1.3.0) ──
+    for cli_name, (script_filename, help_text) in _PACKAGED_SCRIPTS.items():
+        sub_script = sub.add_parser(
+            cli_name,
+            help=help_text,
+            description=(
+                f'{help_text}. Pass-through: cualquier argumento después '
+                f'del subcomando va al script `{script_filename}` tal cual.'
+            ),
+        )
+        sub_script.add_argument(
+            'script_args',
+            nargs=argparse.REMAINDER,
+            help='Argumentos pass-through al script bash.',
+        )
+        sub_script.set_defaults(func=_make_script_cmd(script_filename))
 
     args = parser.parse_args(argv)
     return args.func(args)
