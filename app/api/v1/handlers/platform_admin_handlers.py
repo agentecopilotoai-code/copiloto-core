@@ -903,8 +903,18 @@ async def patch_feature_flag(
             params.append(patch[field])
             sets.append(f'{field} = ${len(params)}')
     if 'metadata' in patch:
+        # QUAL (audit#4): MERGE en lugar de OVERWRITE.
+        # Antes: `metadata = $::jsonb` reemplazaba el dict completo —
+        # un PATCH parcial sobre `{a:1, b:2}` con `{a:3}` borraba `b`.
+        # Ahora: `metadata = COALESCE(metadata, '{}') || $::jsonb`
+        # respeta la semántica HTTP PATCH (merge superficial).
+        # Para REEMPLAZO total el caller debe usar el endpoint
+        # de PUT (a crear si se requiere) o pasar `metadata: {}` +
+        # nuevos keys juntos.
         params.append(json.dumps(patch['metadata']))
-        sets.append(f'metadata = ${len(params)}::jsonb')
+        sets.append(
+            f'metadata = coalesce(metadata, \'{{}}\'::jsonb) || ${len(params)}::jsonb',
+        )
     sets.append('updated_at = now()')
     params.append(key)
     row = await conn.fetchrow(

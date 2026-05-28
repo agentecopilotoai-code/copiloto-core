@@ -492,7 +492,7 @@ def test_debug_helper_noop_when_disabled(monkeypatch, capsys):
     from app.admin import routes as ar
     monkeypatch.setattr(ar, '_BFF_DEBUG', False)
     ar._debug('test_stage', foo='bar')
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert out == ''
 
 
@@ -501,7 +501,7 @@ def test_debug_helper_prints_when_enabled(monkeypatch, capsys):
     from app.admin import routes as ar
     monkeypatch.setattr(ar, '_BFF_DEBUG', True)
     ar._debug('test_stage', foo='bar', count=42)
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert '[BFF-DEBUG]' in out
     assert 'test_stage' in out
     assert 'foo=bar' in out
@@ -520,7 +520,7 @@ def test_debug_helper_redacts_sensitive_keys(monkeypatch, capsys):
         access_token='very-long-token-string',
         ok_field='public-value-not-redacted',
     )
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert 'sid=abcdefgh…' in out
     assert 'secret=super-se…' in out
     assert 'access_token=very-lon…' in out
@@ -533,7 +533,7 @@ def test_debug_helper_handles_none(monkeypatch, capsys):
     from app.admin import routes as ar
     monkeypatch.setattr(ar, '_BFF_DEBUG', True)
     ar._debug('test', value=None)
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert 'value=∅' in out
 
 
@@ -576,7 +576,7 @@ def test_debug_helper_no_longer_redacts_diagnostic_keys(monkeypatch, capsys):
         id_token_keys=['aud', 'sub', 'amr', 'acr', 'iat', 'exp'],
         id_token_flow_claims={'aud': 'X', 'auth_time': 999, 'amr': []},
     )
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "id_token_keys=['aud', 'sub', 'amr', 'acr', 'iat', 'exp']" in out
     assert "auth_time" in out
     assert "amr" in out

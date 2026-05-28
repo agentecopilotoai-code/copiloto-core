@@ -87,10 +87,23 @@ async def _security_headers_middleware(request: Request, call_next):
       - referrer leak (Referrer-Policy no-referrer)
       - downgrade HTTP (HSTS)
       - cross-site script/asset injection (CSP)
+
+    PERF-024 (audit#4) — `Cache-Control: no-store` default:
+      Endpoints v1 sirven datos tenant-scoped/PII y JAMÁS deberían
+      caché en proxies o navegador. Default `no-store, no-cache`.
+      Si un endpoint quiere opt-in a caching (e.g. estáticos),
+      debe setear su propio `Cache-Control` ANTES de salir del
+      handler — `setdefault` respeta lo que ya pusieron.
     """
     response = await call_next(request)
     for header, value in _SECURITY_HEADERS.items():
         response.headers.setdefault(header, value)
+    # PERF-024 — default no-store. Endpoints estáticos (admin SPA,
+    # /openapi.json, etc.) pueden sobreescribir poniendo su propio
+    # Cache-Control en la response antes del return.
+    response.headers.setdefault(
+        'Cache-Control', 'no-store, no-cache, must-revalidate, private',
+    )
     return response
 
 

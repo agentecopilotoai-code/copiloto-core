@@ -99,9 +99,15 @@ def _should_redact(key: str) -> bool:
 def _debug(stage: str, **kwargs: Any) -> None:
     """Imprime una línea `[BFF-DEBUG] stage key=val key=val ...`.
 
-    No usa logging porque queremos algo super visible en `docker compose
-    logs` sin tocar la config del logger. `flush=True` evita que uvicorn
-    bufferee la línea hasta el siguiente flush — la ves al instante.
+    NO usa structlog deliberadamente — esto NO es un log de producción,
+    es una herramienta diagnóstica del flujo OAuth que se activa con
+    `BFF_DEBUG=1` y queremos algo super visible en `docker compose
+    logs` sin tocar la config del logger global. `flush=True` evita
+    que uvicorn bufferee la línea hasta el siguiente flush.
+
+    QUAL (audit#4): documentado el side-effect explícito y usamos
+    `sys.stderr` en vez de stdout para no mezclarse con responses
+    HTTP en logs estructurados que separan por stream.
 
     Cualquier valor cuya key matchee EXACT-WORD una de
     `_REDACT_EXACT_WORDS` se trunca a `<8 chars>…` para no dejar
@@ -119,7 +125,13 @@ def _debug(stage: str, **kwargs: Any) -> None:
         else:
             display = str(v)
         parts.append(f'{k}={display}')
-    print(f'[BFF-DEBUG] {stage:<28} ' + ' '.join(parts), flush=True)
+    # Side-effect explícito: stderr.write+flush. NO es un log; es una
+    # facilidad diagnóstica activada por BFF_DEBUG=1 en development.
+    import sys  # noqa: PLC0415
+    sys.stderr.write(
+        f'[BFF-DEBUG] {stage:<28} ' + ' '.join(parts) + '\n',
+    )
+    sys.stderr.flush()
 
 
 # BUG-008: el wire format del cookie (HMAC-SHA256 + base64url) se extrajo a

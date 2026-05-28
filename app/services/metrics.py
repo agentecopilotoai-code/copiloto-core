@@ -114,6 +114,35 @@ ai_provider_health = Gauge(
 )
 
 
+# ─── DB pool (PERF-023 audit#4) ───────────────────────────────────────────
+#
+# Antes no había observabilidad del pool de asyncpg. Bajo carga era
+# imposible saber si el `max_size` configurado era suficiente o si
+# requests se estaban quedando esperando una conn. Estos gauges
+# permiten dashboards/alertas tipo `db_pool_idle == 0 for >30s`.
+
+db_pool_size = Gauge(
+    'db_pool_size',
+    'Número total de conexiones en el pool (idle + en uso).',
+    registry=REGISTRY,
+)
+db_pool_idle = Gauge(
+    'db_pool_idle',
+    'Conexiones del pool actualmente idle (disponibles).',
+    registry=REGISTRY,
+)
+db_pool_min = Gauge(
+    'db_pool_min',
+    'Configurado: min_size del pool.',
+    registry=REGISTRY,
+)
+db_pool_max = Gauge(
+    'db_pool_max',
+    'Configurado: max_size del pool.',
+    registry=REGISTRY,
+)
+
+
 # ─── Runtime refresh hooks ────────────────────────────────────────────────
 
 _active_rate_limiter = None
@@ -147,6 +176,18 @@ def refresh_runtime_metrics() -> None:
             rate_limit_buckets_current.set(float(_active_rate_limiter.size))
     except Exception as exc:  # noqa: BLE001
         log.debug('metrics.rate_limit_refresh_skipped', error=type(exc).__name__)
+    # PERF-023 (audit#4) — DB pool stats. asyncpg.Pool tiene
+    # `get_size()`/`get_idle_size()`/`get_min_size()`/`get_max_size()`.
+    try:
+        from app.db.pool import db as _db  # noqa: PLC0415
+        pool = _db.pool
+        if pool is not None:
+            db_pool_size.set(float(pool.get_size()))
+            db_pool_idle.set(float(pool.get_idle_size()))
+            db_pool_min.set(float(pool.get_min_size()))
+            db_pool_max.set(float(pool.get_max_size()))
+    except Exception as exc:  # noqa: BLE001
+        log.debug('metrics.db_pool_refresh_skipped', error=type(exc).__name__)
 
 
 async def refresh_backup_age_metrics(conn: 'asyncpg.Connection') -> None:

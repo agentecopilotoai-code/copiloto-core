@@ -41,6 +41,7 @@ Rate-limit anti-bulk:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import secrets
 from dataclasses import dataclass
@@ -155,6 +156,37 @@ def _reset_invitation_rate_buckets() -> None:
     if _invitation_limiter is not None:
         _invitation_limiter.reset()
     _invitation_limiter = None
+
+
+# ─── Concurrency cap on outbound email (PERF-025 audit#4) ─────────────────
+#
+# Antes: cada `BackgroundTask` lanzaba `provider.send()` en paralelo sin
+# coordinación. Bajo un burst de invites (sign-up masivo, importación
+# CSV), N tasks abrían N conns httpx a Resend simultáneas — gastando
+# CPU + posiblemente disparando rate-limit del provider.
+#
+# Ahora un Semaphore module-level limita el outbound concurrente a 8
+# (suficiente para latencia humana, evita el burst y deja headroom
+# para otras llamadas httpx del worker).
+_EMAIL_OUTBOUND_SEMAPHORE: asyncio.Semaphore | None = None
+_EMAIL_OUTBOUND_MAX_CONCURRENT: int = 8
+
+
+def _get_email_semaphore() -> asyncio.Semaphore:
+    """Lazy-init para evitar `RuntimeError: no current event loop` en
+    contextos de import. El Semaphore se crea al primer `acquire()`
+    dentro de un task async — lo que garantiza que haya un loop running.
+    """
+    global _EMAIL_OUTBOUND_SEMAPHORE
+    if _EMAIL_OUTBOUND_SEMAPHORE is None:
+        _EMAIL_OUTBOUND_SEMAPHORE = asyncio.Semaphore(_EMAIL_OUTBOUND_MAX_CONCURRENT)
+    return _EMAIL_OUTBOUND_SEMAPHORE
+
+
+def _reset_email_semaphore_for_tests() -> None:
+    """Test-only: clear el singleton para que cada test arranque limpio."""
+    global _EMAIL_OUTBOUND_SEMAPHORE
+    _EMAIL_OUTBOUND_SEMAPHORE = None
 
 
 # ─── DTOs ────────────────────────────────────────────────────────────────
@@ -322,8 +354,10 @@ async def send_invitation_email_for_draft(
     email_status = 'queued'
     email_message_id = ''
     email_provider_name = provider.name
+    # PERF-025 (audit#4) — coordinación de concurrencia outbound.
     try:
-        result = await provider.send(message)
+        async with _get_email_semaphore():
+            result = await provider.send(message)
         email_message_id = result.message_id
         email_status = 'queued' if result.delivered_at_provider else 'noop'
     except EmailSendError as exc:
