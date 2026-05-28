@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from copiloto_core.api.v1.routes import router as v1_router
 from copiloto_core.admin.routes import router as admin_router
+from copiloto_core.branding import BrandingConfig
 from copiloto_core.core.config import get_settings
 from copiloto_core.extension import CoreModule
 # Branch `core`: el core NO incluye módulos opt-in. Cada módulo se monta
@@ -111,32 +112,49 @@ async def _security_headers_middleware(request: Request, call_next):
     return response
 
 
-def create_app(modules: Iterable[CoreModule] = ()) -> FastAPI:
+def create_app(
+    modules: Iterable[CoreModule] = (),
+    branding: BrandingConfig | None = None,
+) -> FastAPI:
     """Construye la app FastAPI del core + monta módulos opt-in.
 
     Args:
       modules: lista de `CoreModule` declarados por los paquetes
-        consumidores. Cada módulo aporta:
-          - Su router HTTP (montado en `/v1/<code-with-dashes>`).
-          - Sus capabilities (seedeadas en `app.capability` al startup).
-          - Sus migrations SQL (aplicadas al startup vía runner Fase 6).
-          - Sus static mounts (SPA propio, landing, etc.).
-          - Su hook de activación por tenant (llamado al PATCH
-            `tenant_modules.enabled=true`).
+        consumidores. Cada módulo aporta router + capabilities + migrations
+        + static_mounts + hook on_tenant_activate.
+      branding: identidad visual del deployment. Por default usa el
+        branding genérico de CopilotoIA. El cliente que monta su SaaS
+        sobre el core (ej. SAT) pasa su propia marca para que el endpoint
+        público `/v1/branding` la sirva al SPA del módulo.
 
     Returns:
       Instancia de FastAPI lista para servir.
 
     Ejemplo:
-      >>> from copiloto_core import create_app, CoreModule
-      >>> from mi_modulo import module as mi_modulo
-      >>> app = create_app(modules=[mi_modulo])
+      >>> from copiloto_core import create_app, CoreModule, BrandingConfig
+      >>> app = create_app(
+      ...     modules=[mi_modulo],
+      ...     branding=BrandingConfig(product_name="Mi SaaS"),
+      ... )
 
-    Ver `docs/EXTENDING.md` para el contrato completo de módulo.
+    Ver `docs/EXTENDING.md` para el contrato completo.
     """
     settings = get_settings()
     api = FastAPI(title=settings.app_name, version='0.1.0', lifespan=lifespan)
     allowlist = parse_ip_allowlist(settings.observability_allowed_ips)
+
+    # Branding: default a "CopilotoIA" si no se provee.
+    _branding = branding if branding is not None else BrandingConfig()
+
+    @api.get('/v1/branding', include_in_schema=True)
+    async def get_branding() -> dict:
+        """Devuelve la marca del deployment.
+
+        Endpoint PÚBLICO sin auth — el SPA del módulo lo llama al
+        cargar para inyectar tokens de marca (logo, colores,
+        product_name) en el chrome de la UI ANTES del login.
+        """
+        return _branding.to_public_dict()
 
     @api.get('/metrics', include_in_schema=False)
     async def metrics(request: Request) -> Response:
@@ -198,8 +216,11 @@ def create_app(modules: Iterable[CoreModule] = ()) -> FastAPI:
 
     # Exponemos los módulos registrados via `app.state.core_modules` para
     # que el runner de migrations + el endpoint de tenant_modules puedan
-    # introspectar qué hay montado en este deployment.
+    # introspectar qué hay montado en este deployment. Branding también
+    # accesible para los módulos que quieran customizar templates con la
+    # marca del deployment (ej. emails).
     api.state.core_modules = tuple(modules_list)
+    api.state.branding = _branding
     return api
 
 

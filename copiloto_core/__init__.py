@@ -36,7 +36,7 @@ minor/patch releases sin aviso.
 
 | Categoría | Símbolos | Para qué |
 |-----------|----------|----------|
-| App factory + extensión | `create_app`, `CoreModule` | Bootstrap del FastAPI + contrato para módulos |
+| App factory + extensión | `create_app`, `CoreModule`, `BrandingConfig` | Bootstrap del FastAPI + contrato para módulos + marca del deployment |
 | Auth | `authenticate_request`, `require_platform_owner`, `require_service`, `require_mfa_for_privileged`, `require_tenant_management`, `require_min_role` | `Depends(...)` para handlers |
 | Identity | `current_user_id_from_request` | sub Auth0 → UUID interno |
 | DB | `get_db`, `record_to_dict` (singleton `db` se importa de `copiloto_core.db.pool`) | Pool asyncpg con RLS por TX |
@@ -68,6 +68,7 @@ __version__ = '1.0.0'
 
 # ─── App factory + modelo de extensión ──────────────────────────────────
 
+from copiloto_core.branding import BrandingConfig
 from copiloto_core.extension import CoreModule
 from copiloto_core.main import create_app
 
@@ -152,6 +153,7 @@ __all__ = [
     # app factory + modelo de extensión
     'create_app',
     'CoreModule',
+    'BrandingConfig',
     # auth
     'authenticate_request',
     'require_platform_owner',
