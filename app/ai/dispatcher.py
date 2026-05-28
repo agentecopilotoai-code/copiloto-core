@@ -30,7 +30,9 @@ Invariantes:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 import time
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
@@ -58,6 +60,16 @@ CB_FAILURE_THRESHOLD: Final[int] = 5
 CB_WINDOW_SECONDS: Final[float] = 60.0
 CB_COOLDOWN_SECONDS: Final[float] = 300.0  # 5 min
 
+# ─── Backoff entre intentos del fallback chain (PERF-022 audit#4) ─────────
+# Antes el dispatcher cambiaba al siguiente provider inmediatamente al
+# fallar — eso genera *thundering herd* hacia el fallback cuando muchas
+# requests concurrentes son rate-limited a la vez por el primario.
+# Ahora insertamos un sleep con jitter entre intentos. Si el provider
+# devolvió `Retry-After`, honramos ese valor (cap a `BACKOFF_MAX`).
+BACKOFF_BASE_SECONDS: Final[float] = 0.25
+BACKOFF_MAX_SECONDS: Final[float] = 8.0
+BACKOFF_JITTER_FRACTION: Final[float] = 0.30  # ±30%
+
 
 @dataclass
 class _CircuitState:
@@ -71,6 +83,29 @@ class _CircuitState:
 # provider_registry); coordinación cross-worker se podría agregar después
 # vía redis sin cambiar la interfaz.
 _BREAKERS: dict[str, _CircuitState] = defaultdict(_CircuitState)
+
+
+def _backoff_for_attempt(
+    attempt: int,
+    retry_after: float | None = None,
+) -> float:
+    """Calcula el delay antes del próximo intento (PERF-022).
+
+    - Si el provider proveyó `retry_after`, se usa ese valor (acotado a
+      `BACKOFF_MAX_SECONDS` para evitar denial-of-service por header
+      adversarial).
+    - Caso default: exponencial con base `BACKOFF_BASE_SECONDS`,
+      capeado a `BACKOFF_MAX_SECONDS`, con jitter ±30% (decorrelated)
+      para evitar sincronización entre workers.
+
+    `attempt` arranca en 0 para el primer fallback (no aplica al primer
+    call al primary, ya hizo la work).
+    """
+    if retry_after is not None and retry_after > 0:
+        return min(retry_after, BACKOFF_MAX_SECONDS)
+    base = min(BACKOFF_BASE_SECONDS * (2 ** attempt), BACKOFF_MAX_SECONDS)
+    jitter = base * BACKOFF_JITTER_FRACTION * (random.random() * 2 - 1)
+    return max(0.0, base + jitter)
 
 
 def _circuit_open(provider: str, now: float) -> bool:
@@ -246,11 +281,30 @@ async def dispatch(
             _record_failure(provider_name, now)
             last_error = exc
             error_class = type(exc).__name__
-            logger.info(
-                'dispatch fallback: %s failed (%s) — modality=%s next=%s',
-                provider_name, error_class, modality,
-                chain[i + 1] if i + 1 < len(chain) else 'NONE',
-            )
+            # PERF-022 (audit#4) — backoff + jitter antes del siguiente
+            # provider. Si el actual fue ProviderRateLimited y trajo
+            # retry_after, lo honramos; si no, exponencial con jitter.
+            has_next = i + 1 < len(chain)
+            if has_next:
+                retry_after: float | None = None
+                if isinstance(exc, ProviderRateLimited):
+                    retry_after = getattr(exc, 'retry_after', None)
+                delay = _backoff_for_attempt(i, retry_after=retry_after)
+                logger.info(
+                    'dispatch fallback: %s failed (%s) — modality=%s '
+                    'next=%s backoff=%.2fs (retry_after=%s)',
+                    provider_name, error_class, modality,
+                    chain[i + 1], delay,
+                    retry_after if retry_after is not None else '-',
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
+            else:
+                logger.info(
+                    'dispatch fallback: %s failed (%s) — modality=%s '
+                    'next=NONE (chain exhausted)',
+                    provider_name, error_class, modality,
+                )
             continue
         else:
             _record_success(provider_name)

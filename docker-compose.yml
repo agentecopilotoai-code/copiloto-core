@@ -83,6 +83,17 @@ services:
   # BACKUP_GPG_RECIPIENT. La clave pública GPG debe vivir en
   # .secrets/backup_gpg_pubkey.asc; la privada (sólo nodo de verificación)
   # en .secrets/backup_gpg_privkey.asc.
+  #
+  # SEC-021-N (audit#4) — el mount de `/var/run/docker.sock` da control
+  # *root-equivalent del host* al backup-worker. Antes era unconditional
+  # (necesario para `BACKUP_VERIFY_*` que lanza un postgres efímero
+  # para restaurar y verificar el backup). Ahora el default es
+  # `BACKUP_VERIFY_SKIP_EPHEMERAL=1` — la verificación efímera es
+  # opt-in vía `BACKUP_VERIFY_SKIP_EPHEMERAL=0`. Quien lo habilite
+  # debe entender el riesgo y mover el verifier a un nodo dedicado.
+  # El mount de docker.sock SIGUE presente porque docker-compose no
+  # soporta volumes condicionales — pero ahora es no-op cuando la
+  # verificación efímera está skip.
   backup-worker:
     build:
       context: .
@@ -103,7 +114,10 @@ services:
       BACKUP_VERIFY_PG_IMAGE: ${BACKUP_VERIFY_PG_IMAGE:-pgvector/pgvector:pg16}
       BACKUP_VERIFY_PG_PORT: ${BACKUP_VERIFY_PG_PORT:-55432}
       BACKUP_VERIFY_NETWORK: ${BACKUP_VERIFY_NETWORK:-backup-verify-net}
-      BACKUP_VERIFY_SKIP_EPHEMERAL: ${BACKUP_VERIFY_SKIP_EPHEMERAL:-0}
+      # SEC-021-N (audit#4): default secure (skip ephemeral verify) →
+      # NO se requiere docker.sock funcional. Para activarlo en un
+      # nodo dedicado: BACKUP_VERIFY_SKIP_EPHEMERAL=0 en .env.
+      BACKUP_VERIFY_SKIP_EPHEMERAL: ${BACKUP_VERIFY_SKIP_EPHEMERAL:-1}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}

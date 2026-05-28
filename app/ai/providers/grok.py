@@ -48,6 +48,7 @@ from app.ai.providers.base import (
     ImageProvider,
     ImageResult,
     LLMProvider,
+    PersistentHttpxClient,
     PersonaAnchor,
     ProviderContentRejected,
     ProviderRateLimited,
@@ -86,6 +87,10 @@ GROK_MODELS: Final[dict[str, str]] = {
 SAFETY_PREFIX: Final[str] = '[SAFE-FOR-WORK, BRAND-SAFE] '
 
 
+# Alias local — algunos tests anteriores referencian `_PersistentClient`.
+_PersistentClient = PersistentHttpxClient
+
+
 # ─── GrokProvider ──────────────────────────────────────────────────────────
 
 
@@ -111,19 +116,45 @@ class GrokProvider(LLMProvider, ImageProvider, VideoProvider, TTSProvider, STTPr
         self._base_url = base_url.rstrip('/')
         self._models = {**GROK_MODELS, **(models or {})}
         self._transport = transport
+        # PERF-021 (audit #4) — client singleton per-instance. Antes cada
+        # call construía un nuevo `AsyncClient` (handshake TCP+TLS).
+        # Caso peor: `generate_video` poll 120× → 60-120s extra solo en
+        # setup. Ahora reuse de conn pool durante toda la vida del provider.
+        self._http_client: httpx.AsyncClient | None = None
 
     # ── HTTP plumbing ─────────────────────────────────────────────────────
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=self._base_url,
-            timeout=httpx.Timeout(self._timeout, connect=5.0),
-            transport=self._transport,
-            headers={
-                'Authorization': f'Bearer {self._api_key}',
-                'User-Agent': 'copiloto-core/1.0',
-            },
-        )
+    def _client(self) -> 'PersistentHttpxClient':
+        """Lazy-init singleton del client. Reusado entre todas las calls
+        de esta instance del provider. PERF-021 (audit #4): retorna un
+        wrapper que NO cierra el client al `__aexit__` para que el
+        patrón `async with provider._client() as c` legado siga
+        funcionando sin destruir la conn pool."""
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=httpx.Timeout(self._timeout, connect=5.0),
+                transport=self._transport,
+                headers={
+                    'Authorization': f'Bearer {self._api_key}',
+                    'User-Agent': 'copiloto-core/1.0',
+                },
+                limits=httpx.Limits(
+                    max_keepalive_connections=10,
+                    max_connections=20,
+                    keepalive_expiry=30.0,
+                ),
+            )
+        return PersistentHttpxClient(self._http_client)
+
+    async def aclose(self) -> None:
+        """Cleanup del client singleton. Llamado al shutdown del worker."""
+        if self._http_client is not None:
+            try:
+                await self._http_client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            self._http_client = None
 
     async def _post(self, path: str, payload: dict[str, Any]) -> tuple[dict, dict]:
         """POST con hard deadline + error translation.
@@ -637,9 +668,11 @@ def _translate_response_status(resp: httpx.Response, path: str) -> None:
     `_post_binary` (bytes) y `_post_multipart`.
     """
     if resp.status_code == 429:
-        retry_after = resp.headers.get('retry-after')
+        retry_after_raw = resp.headers.get('retry-after')
+        retry_after = _parse_retry_after(retry_after_raw)
         raise ProviderRateLimited(
-            f'grok {path} rate-limited (retry-after={retry_after})',
+            f'grok {path} rate-limited (retry-after={retry_after_raw})',
+            retry_after=retry_after,
         )
     if resp.status_code in {400, 422}:
         # 400/422 con marker de content filter → content_rejected;
@@ -733,6 +766,45 @@ _MIME_EXT_MAP: Final[dict[str, str]] = {
 
 def _ext_for_mime(mime: str) -> str:
     return _MIME_EXT_MAP.get(mime.lower().split(';')[0].strip(), 'mp3')
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Parsea el header `Retry-After` (RFC 9110).
+
+    Acepta:
+      - Entero/float = segundos (forma común en xAI / OpenAI / Anthropic).
+      - HTTP-date — convertido a delta desde ahora.
+
+    Retorna `None` si no se puede parsear (caller hace fallback al
+    backoff exponencial).
+    """
+    if not value:
+        return None
+    s = value.strip()
+    # Path común: número directo.
+    try:
+        n = float(s)
+        # Sanity-cap: > 5 min, ignorar (el provider podría estar
+        # rate-limiting de forma adversarial).
+        if n < 0 or n > 300.0:
+            return None
+        return n
+    except ValueError:
+        pass
+    # HTTP-date fallback.
+    try:
+        from email.utils import parsedate_to_datetime  # noqa: PLC0415
+
+        dt = parsedate_to_datetime(s)
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        now = datetime.now(tz=timezone.utc)
+        delta = (dt - now).total_seconds()
+        if delta < 0 or delta > 300.0:
+            return None
+        return delta
+    except (TypeError, ValueError):
+        return None
 
 
 __all__ = ['GrokProvider', 'GROK_MODELS', 'DEFAULT_BASE_URL', 'SAFETY_PREFIX']

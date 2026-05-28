@@ -16,6 +16,7 @@ import httpx
 
 from app.ai.providers.base import (
     AudioResult,
+    PersistentHttpxClient,
     PersonaAnchor,
     ProviderContentRejected,
     ProviderRateLimited,
@@ -51,14 +52,31 @@ class ElevenLabsProvider(TTSProvider):
         self._base_url = base_url.rstrip('/')
         self._model = model
         self._transport = transport
+        # PERF-021 (audit#4) — singleton lazy-init.
+        self._http_client: httpx.AsyncClient | None = None
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=self._base_url,
-            timeout=httpx.Timeout(self._timeout, connect=5.0),
-            transport=self._transport,
-            headers={'xi-api-key': self._api_key},
-        )
+    def _client(self) -> PersistentHttpxClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=httpx.Timeout(self._timeout, connect=5.0),
+                transport=self._transport,
+                headers={'xi-api-key': self._api_key},
+                limits=httpx.Limits(
+                    max_keepalive_connections=10,
+                    max_connections=20,
+                    keepalive_expiry=30.0,
+                ),
+            )
+        return PersistentHttpxClient(self._http_client)
+
+    async def aclose(self) -> None:
+        if self._http_client is not None:
+            try:
+                await self._http_client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            self._http_client = None
 
     async def health_check(self) -> bool:
         async with self._client() as client:

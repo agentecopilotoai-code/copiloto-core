@@ -15,6 +15,7 @@ from typing import Final
 import httpx
 
 from app.ai.providers.base import (
+    PersistentHttpxClient,
     ProviderTimeoutError,
     ProviderUnavailable,
     STTProvider,
@@ -43,13 +44,30 @@ class LocalWhisperProvider(STTProvider):
         self._timeout = float(timeout)
         self._hard_deadline = self._timeout + 2.0
         self._transport = transport
+        # PERF-021 (audit#4) — singleton lazy-init.
+        self._http_client: httpx.AsyncClient | None = None
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=self._base_url,
-            timeout=httpx.Timeout(self._timeout, connect=2.0),
-            transport=self._transport,
-        )
+    def _client(self) -> PersistentHttpxClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=httpx.Timeout(self._timeout, connect=2.0),
+                transport=self._transport,
+                limits=httpx.Limits(
+                    max_keepalive_connections=10,
+                    max_connections=20,
+                    keepalive_expiry=30.0,
+                ),
+            )
+        return PersistentHttpxClient(self._http_client)
+
+    async def aclose(self) -> None:
+        if self._http_client is not None:
+            try:
+                await self._http_client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            self._http_client = None
 
     async def health_check(self) -> bool:
         async with self._client() as client:

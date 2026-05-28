@@ -30,6 +30,44 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import httpx
+
+
+# ─── PersistentHttpxClient (PERF-021 audit#4) ─────────────────────────────
+
+
+class PersistentHttpxClient:
+    """Wrapper que expone `httpx.AsyncClient` vía protocolo
+    async-context-manager **sin cerrarlo al salir**.
+
+    Existe porque el call-pattern legado de los providers IA era::
+
+        async with self._client() as c:
+            ...
+
+    y eso destruía la `AsyncClient` (handshake TCP+TLS) en cada call.
+    Refactor PERF-021 (audit#4) convirtió `_client()` a un singleton
+    lazy-init, pero todos los call-sites siguen usando `async with`.
+    Este wrapper hace ese patrón un no-op (preserva la conn pool) sin
+    tocar 14+ call-sites en 7 providers.
+
+    El cleanup real vive en `Provider.aclose()` (al shutdown del worker).
+    """
+
+    __slots__ = ('_client',)
+
+    def __init__(self, client: 'httpx.AsyncClient') -> None:
+        self._client = client
+
+    async def __aenter__(self) -> 'httpx.AsyncClient':
+        return self._client
+
+    async def __aexit__(self, *exc: object) -> None:
+        # No-op a propósito — el client singleton sobrevive a este context.
+        return None
 
 
 # ─── Excepciones tipadas ───────────────────────────────────────────────────
@@ -53,7 +91,18 @@ class ProviderRateLimited(ProviderError):
     El dispatcher hace backoff exponencial y, si el chain tiene fallback,
     intenta con el siguiente proveedor. El cost_credits del generation
     NO se debita hasta el éxito.
+
+    Attributes:
+      retry_after: segundos sugeridos por el provider (header
+        ``Retry-After``). Si está presente, el dispatcher debe esperar
+        AL MENOS ese tiempo antes del próximo intento contra el MISMO
+        provider, y antes de switchear al fallback (PERF-022 audit#4).
+        ``None`` si el provider no proporcionó el hint.
     """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after: float | None = retry_after
 
 
 class ProviderContentRejected(ProviderError):
@@ -316,6 +365,7 @@ class STTProvider(IAProvider):
 
 __all__ = [
     # Excepciones
+    'PersistentHttpxClient',
     'ProviderError',
     'ProviderTimeoutError',
     'ProviderRateLimited',

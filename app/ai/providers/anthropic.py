@@ -17,6 +17,7 @@ import httpx
 
 from app.ai.providers.base import (
     LLMProvider,
+    PersistentHttpxClient,
     PersonaAnchor,
     ProviderContentRejected,
     ProviderRateLimited,
@@ -52,18 +53,35 @@ class AnthropicProvider(LLMProvider):
         self._base_url = base_url.rstrip('/')
         self._model = model
         self._transport = transport
+        # PERF-021 (audit#4) — singleton lazy-init.
+        self._http_client: httpx.AsyncClient | None = None
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=self._base_url,
-            timeout=httpx.Timeout(self._timeout, connect=5.0),
-            transport=self._transport,
-            headers={
-                'x-api-key': self._api_key,
-                'anthropic-version': ANTHROPIC_API_VERSION,
-                'content-type': 'application/json',
-            },
-        )
+    def _client(self) -> PersistentHttpxClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=httpx.Timeout(self._timeout, connect=5.0),
+                transport=self._transport,
+                headers={
+                    'x-api-key': self._api_key,
+                    'anthropic-version': ANTHROPIC_API_VERSION,
+                    'content-type': 'application/json',
+                },
+                limits=httpx.Limits(
+                    max_keepalive_connections=10,
+                    max_connections=20,
+                    keepalive_expiry=30.0,
+                ),
+            )
+        return PersistentHttpxClient(self._http_client)
+
+    async def aclose(self) -> None:
+        if self._http_client is not None:
+            try:
+                await self._http_client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            self._http_client = None
 
     async def health_check(self) -> bool:
         async with self._client() as client:
@@ -119,7 +137,13 @@ class AnthropicProvider(LLMProvider):
         elapsed_ms = (time.monotonic() - t0) * 1000.0
 
         if resp.status_code == 429:
-            raise ProviderRateLimited('anthropic /messages 429')
+            retry_after_raw = resp.headers.get('retry-after')
+            from app.ai.providers.grok import _parse_retry_after  # noqa: PLC0415
+
+            raise ProviderRateLimited(
+                f'anthropic /messages 429 (retry-after={retry_after_raw})',
+                retry_after=_parse_retry_after(retry_after_raw),
+            )
         if resp.status_code in {400, 422}:
             try:
                 body = resp.json()

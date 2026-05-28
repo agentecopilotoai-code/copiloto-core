@@ -22,6 +22,7 @@ from app.ai.providers.base import (
     ImageProvider,
     ImageResult,
     LLMProvider,
+    PersistentHttpxClient,
     PersonaAnchor,
     ProviderContentRejected,
     ProviderRateLimited,
@@ -64,14 +65,33 @@ class OpenAIProvider(LLMProvider, ImageProvider, TTSProvider, STTProvider):
         self._base_url = base_url.rstrip('/')
         self._models = {**OPENAI_MODELS, **(models or {})}
         self._transport = transport
+        # PERF-021 (audit#4) — singleton lazy-init, ver `app.ai.providers.base.
+        # PersistentHttpxClient` para el rationale.
+        self._http_client: httpx.AsyncClient | None = None
 
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=self._base_url,
-            timeout=httpx.Timeout(self._timeout, connect=5.0),
-            transport=self._transport,
-            headers={'Authorization': f'Bearer {self._api_key}'},
-        )
+    def _client(self) -> PersistentHttpxClient:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                base_url=self._base_url,
+                timeout=httpx.Timeout(self._timeout, connect=5.0),
+                transport=self._transport,
+                headers={'Authorization': f'Bearer {self._api_key}'},
+                limits=httpx.Limits(
+                    max_keepalive_connections=10,
+                    max_connections=20,
+                    keepalive_expiry=30.0,
+                ),
+            )
+        return PersistentHttpxClient(self._http_client)
+
+    async def aclose(self) -> None:
+        """Cleanup del client singleton (shutdown del worker)."""
+        if self._http_client is not None:
+            try:
+                await self._http_client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+            self._http_client = None
 
     async def _post(
         self,
@@ -296,7 +316,15 @@ class OpenAIProvider(LLMProvider, ImageProvider, TTSProvider, STTProvider):
 
 def _check_status(resp: httpx.Response, path: str) -> None:
     if resp.status_code == 429:
-        raise ProviderRateLimited(f'openai {path} 429')
+        retry_after_raw = resp.headers.get('retry-after')
+        # Reusamos el parser del módulo grok para mantener semántica única
+        # (RFC 9110, sanity-cap 300s).
+        from app.ai.providers.grok import _parse_retry_after  # noqa: PLC0415
+
+        raise ProviderRateLimited(
+            f'openai {path} 429 (retry-after={retry_after_raw})',
+            retry_after=_parse_retry_after(retry_after_raw),
+        )
     if resp.status_code in {400, 422}:
         try:
             body = resp.json()
