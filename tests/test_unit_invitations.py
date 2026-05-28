@@ -1,4 +1,4 @@
-"""Tests para `app.services.invitations` — token gen + rate limit + flow E2E
+"""Tests para `copiloto_core.services.invitations` — token gen + rate limit + flow E2E
 con FakeConn (sin DB real)."""
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.invitations import (
+from copiloto_core.services.invitations import (
     InvitationEmailMismatchError, InvitationExpiredError,
     InvitationNotFoundError, InvitationRateLimitError,
     _reset_invitation_rate_buckets, create_and_send_invitation,
@@ -52,8 +52,8 @@ class FakeConn:
 
 
 def _stub_settings(monkeypatch, **overrides):
-    """Reemplaza `app.services.invitations.get_settings` con un stub."""
-    from app.services import invitations
+    """Reemplaza `copiloto_core.services.invitations.get_settings` con un stub."""
+    from copiloto_core.services import invitations
     defaults = {
         'app_public_url': 'http://localhost:3000',
         'invitation_token_ttl_seconds': 7 * 24 * 3600,
@@ -70,7 +70,7 @@ def _stub_settings(monkeypatch, **overrides):
 def _stub_provider(monkeypatch, *, real=True, status='queued',
                     message_id='msg-fake-1', raise_send=None):
     """Reemplaza `get_email_provider` con un stub controlado."""
-    from app.services import invitations
+    from copiloto_core.services import invitations
 
     class _StubProvider:
         name = 'stub-resend' if real else 'stub-noop'
@@ -81,7 +81,7 @@ def _stub_provider(monkeypatch, *, real=True, status='queued',
         async def send(self, message):
             if raise_send:
                 raise raise_send
-            from app.services.email import EmailSendResult
+            from copiloto_core.services.email import EmailSendResult
             return EmailSendResult(
                 message_id=message_id,
                 provider=self.name,
@@ -269,7 +269,7 @@ def test_create_and_send_invitation_supersedes_existing_pending(monkeypatch):
 def test_create_and_send_invitation_email_failure_persists_invitation(monkeypatch):
     """Si el provider falla, la invitación queda persistida con status
     'failed' — el caller puede reintentar via resend endpoint."""
-    from app.services.email import EmailSendError
+    from copiloto_core.services.email import EmailSendError
     _stub_settings(monkeypatch)
     _stub_provider(
         monkeypatch,
@@ -353,13 +353,13 @@ def test_create_and_send_invitation_renders_template_with_tenant_name(monkeypatc
             captured['html'] = message.html
             captured['text'] = message.text
             captured['tags'] = message.tags
-            from app.services.email import EmailSendResult
+            from copiloto_core.services.email import EmailSendResult
             return EmailSendResult(
                 message_id='m-1', provider=self.name,
                 delivered_at_provider=True,
             )
 
-    from app.services import invitations
+    from copiloto_core.services import invitations
     monkeypatch.setattr(invitations, 'get_email_provider',
                         lambda: _CapturingProvider())
     _reset_invitation_rate_buckets()

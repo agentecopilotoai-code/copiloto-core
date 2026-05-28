@@ -1,4 +1,4 @@
-"""Tests para `app.api.v1.handlers.invitation_handlers` (M65).
+"""Tests para `copiloto_core.api.v1.handlers.invitation_handlers` (M65).
 
 Cubre los handlers públicos + autenticados sin necesidad de DB real —
 monkeypatcheamos las funciones de servicio (`get_invitation_preview` y
@@ -14,7 +14,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.services import invitations as invitations_service
+from copiloto_core.services import invitations as invitations_service
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ def _fake_request_state(*, actor_id='auth0|abc', email='inv@example.com',
 def _patch_require_current_user(monkeypatch, user_id):
     """`_require_current_user` toca la DB para resolver user_id desde
     actor_id. Lo monkeypatcheamos para que devuelva un UUID fijo."""
-    from app.api.v1.handlers import invitation_handlers
+    from copiloto_core.api.v1.handlers import invitation_handlers
 
     async def _stub(request, conn):
         return user_id
@@ -73,7 +73,7 @@ def _patch_require_current_user(monkeypatch, user_id):
 
 
 def test_get_invitation_404_when_token_unknown(monkeypatch):
-    from app.api.v1.handlers.invitation_handlers import get_invitation
+    from copiloto_core.api.v1.handlers.invitation_handlers import get_invitation
 
     async def _stub_preview(conn, token):
         return None
@@ -85,7 +85,7 @@ def test_get_invitation_404_when_token_unknown(monkeypatch):
 
 
 def test_get_invitation_returns_dict_when_valid(monkeypatch):
-    from app.api.v1.handlers.invitation_handlers import get_invitation
+    from copiloto_core.api.v1.handlers.invitation_handlers import get_invitation
     preview = _preview()
 
     async def _stub_preview(conn, token):
@@ -103,7 +103,7 @@ def test_get_invitation_returns_dict_when_valid(monkeypatch):
 
 
 def test_get_invitation_marks_redeemed_flag(monkeypatch):
-    from app.api.v1.handlers.invitation_handlers import get_invitation
+    from copiloto_core.api.v1.handlers.invitation_handlers import get_invitation
 
     async def _stub_preview(conn, token):
         return _preview(redeemed=True)
@@ -119,7 +119,7 @@ def test_get_invitation_marks_redeemed_flag(monkeypatch):
 def test_redeem_invitation_403_when_no_email_in_jwt(monkeypatch):
     """Si el JWT no incluye el claim email (A-003 — namespaced), no
     podemos validar email-match → 403 + mensaje pedir re-login."""
-    from app.api.v1.handlers.invitation_handlers import redeem_invitation
+    from copiloto_core.api.v1.handlers.invitation_handlers import redeem_invitation
     user_id = uuid4()
     _patch_require_current_user(monkeypatch, user_id)
     req = _fake_request_state(email=None)
@@ -130,7 +130,7 @@ def test_redeem_invitation_403_when_no_email_in_jwt(monkeypatch):
 
 
 def test_redeem_invitation_404_when_token_unknown(monkeypatch):
-    from app.api.v1.handlers.invitation_handlers import redeem_invitation
+    from copiloto_core.api.v1.handlers.invitation_handlers import redeem_invitation
     user_id = uuid4()
     _patch_require_current_user(monkeypatch, user_id)
 
@@ -145,7 +145,7 @@ def test_redeem_invitation_404_when_token_unknown(monkeypatch):
 
 
 def test_redeem_invitation_410_when_expired(monkeypatch):
-    from app.api.v1.handlers.invitation_handlers import redeem_invitation
+    from copiloto_core.api.v1.handlers.invitation_handlers import redeem_invitation
     user_id = uuid4()
     _patch_require_current_user(monkeypatch, user_id)
 
@@ -161,7 +161,7 @@ def test_redeem_invitation_410_when_expired(monkeypatch):
 
 def test_redeem_invitation_403_when_email_mismatch(monkeypatch):
     """Anti-hijack: el JWT email no matchea el de la invitación → 403."""
-    from app.api.v1.handlers.invitation_handlers import redeem_invitation
+    from copiloto_core.api.v1.handlers.invitation_handlers import redeem_invitation
     user_id = uuid4()
     _patch_require_current_user(monkeypatch, user_id)
 
@@ -176,7 +176,7 @@ def test_redeem_invitation_403_when_email_mismatch(monkeypatch):
 
 
 def test_redeem_invitation_happy_path_returns_dict(monkeypatch):
-    from app.api.v1.handlers.invitation_handlers import redeem_invitation
+    from copiloto_core.api.v1.handlers.invitation_handlers import redeem_invitation
     user_id = uuid4()
     _patch_require_current_user(monkeypatch, user_id)
     preview = _preview(redeemed=True)

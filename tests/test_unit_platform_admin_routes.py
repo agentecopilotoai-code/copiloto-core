@@ -1,4 +1,4 @@
-"""M45 — cobertura de `app.platform_admin.admin_routes` (antes 31%).
+"""M45 — cobertura de `copiloto_core.platform_admin.admin_routes` (antes 31%).
 
 Cubre helpers + endpoints via invocación directa. Los endpoints usan
 `async with conn.transaction()` para que el `set_config('app.support_mode',
@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.platform_admin import admin_routes as ar
+from copiloto_core.platform_admin import admin_routes as ar
 
 
 # ─── FakeConn con transaction support ─────────────────────────────────────
@@ -93,7 +93,7 @@ def test_get_secret_cipher_ok():
 
 
 def test_get_secret_cipher_missing(monkeypatch):
-    import app.core.config as cfg
+    import copiloto_core.core.config as cfg
     from fastapi import HTTPException
 
     real = cfg.get_settings()
@@ -142,7 +142,7 @@ def test_persona_for_test_returns_anchor():
 
 def test_build_test_provider_grok():
     p = ar._build_test_provider('grok', api_key='sk-x', model='grok-4.3')
-    from app.ai.providers.grok import GrokProvider
+    from copiloto_core.ai.providers.grok import GrokProvider
     assert isinstance(p, GrokProvider)
 
 

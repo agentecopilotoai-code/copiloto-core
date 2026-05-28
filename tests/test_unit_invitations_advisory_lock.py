@@ -61,7 +61,7 @@ class _ExecCapture:
 @pytest.mark.asyncio
 async def test_advisory_lock_called_before_supersede_and_insert(monkeypatch):
     """Orden requerido: lock → supersede previo → insert nuevo."""
-    from app.services import invitations
+    from copiloto_core.services import invitations
 
     invitations._reset_invitation_rate_buckets()
     # Mock generate_invitation_token para determinismo.
@@ -101,7 +101,7 @@ async def test_advisory_lock_key_deterministic_for_same_tenant_and_email(
     monkeypatch,
 ):
     """Same (tenant, email) → same lock_key entre invocaciones."""
-    from app.services import invitations
+    from copiloto_core.services import invitations
 
     invitations._reset_invitation_rate_buckets()
     monkeypatch.setattr(
@@ -135,7 +135,7 @@ async def test_advisory_lock_key_deterministic_for_same_tenant_and_email(
 @pytest.mark.asyncio
 async def test_advisory_lock_key_email_case_insensitive(monkeypatch):
     """`Foo@x.com` y `foo@x.com` deben generar mismo lock_key."""
-    from app.services import invitations
+    from copiloto_core.services import invitations
 
     invitations._reset_invitation_rate_buckets()
     monkeypatch.setattr(
@@ -170,7 +170,7 @@ async def test_advisory_lock_key_email_case_insensitive(monkeypatch):
 async def test_advisory_lock_key_differs_across_tenants(monkeypatch):
     """Diferentes tenants para mismo email → diferentes lock_keys (no
     bloqueo cruzado entre tenants)."""
-    from app.services import invitations
+    from copiloto_core.services import invitations
 
     invitations._reset_invitation_rate_buckets()
     monkeypatch.setattr(
@@ -202,7 +202,7 @@ async def test_advisory_lock_key_differs_across_tenants(monkeypatch):
 @pytest.mark.asyncio
 async def test_advisory_lock_key_within_postgres_bigint_range(monkeypatch):
     """pg_advisory_xact_lock acepta un BIGINT (signed, ±2^63)."""
-    from app.services import invitations
+    from copiloto_core.services import invitations
 
     invitations._reset_invitation_rate_buckets()
     monkeypatch.setattr(

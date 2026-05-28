@@ -16,7 +16,7 @@ _SECRET = 'test-secret-key-min-length-16-extra'
 
 def _stub_settings(monkeypatch, **overrides):
     """Replace get_settings to return a stub WITHOUT auth0_domain → forces HS256 path."""
-    from app.core import security
+    from copiloto_core.core import security
     defaults = {
         'jwt_secret': _SECRET,
         'jwt_audience': 'api',
@@ -38,7 +38,7 @@ def _stub_settings(monkeypatch, **overrides):
 
 
 def _signed_token(claims: dict, secret: str = _SECRET, audience='api', issuer='copilotoia'):
-    # A-002 — `app.core.security._require_strict_claims` ahora exige
+    # A-002 — `copiloto_core.core.security._require_strict_claims` ahora exige
     # `iat` y `exp` siempre. Setear defaults si el caller no los
     # provee, para no tener que actualizar todos los tests legados.
     from time import time as _now  # noqa: PLC0415
@@ -62,7 +62,7 @@ def _req():
 
 def test_authenticate_request_service_token_authenticates(monkeypatch):
     """Bearer with service_token → actor_type=service, support_mode=True."""
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch)
 
     request = _req()
@@ -82,7 +82,7 @@ def test_authenticate_request_service_token_authenticates(monkeypatch):
 
 def test_authenticate_request_local_hs256_token_authenticates(monkeypatch):
     """Bearer with locally-signed HS256 token → actor_type=user."""
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch)
     token = _signed_token(
         {'sub': 'user1', 'exp': int((datetime.now(UTC) + timedelta(hours=1)).timestamp())},
@@ -101,7 +101,7 @@ def test_authenticate_request_local_hs256_token_authenticates(monkeypatch):
 
 
 def test_authenticate_request_expired_token_raises_401(monkeypatch):
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch)
     token = _signed_token(
         {'sub': 'user1', 'exp': int((datetime.now(UTC) - timedelta(hours=1)).timestamp())},
@@ -120,7 +120,7 @@ def test_authenticate_request_expired_token_raises_401(monkeypatch):
 
 
 def test_authenticate_request_invalid_tenant_claim_raises_401(monkeypatch):
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch)
     token = _signed_token(
         {
@@ -143,7 +143,7 @@ def test_authenticate_request_invalid_tenant_claim_raises_401(monkeypatch):
 
 
 def test_authenticate_request_tenant_scope_mismatch_raises_403(monkeypatch):
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch)
     tid1 = uuid4()
     tid2 = uuid4()
@@ -169,7 +169,7 @@ def test_authenticate_request_tenant_scope_mismatch_raises_403(monkeypatch):
 
 
 def test_authenticate_request_roles_string_normalized(monkeypatch):
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch)
     token = _signed_token(
         {
@@ -191,7 +191,7 @@ def test_authenticate_request_roles_string_normalized(monkeypatch):
 
 
 def test_authenticate_request_with_support_mode_claim(monkeypatch):
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch)
     tid = uuid4()
     token = _signed_token(
@@ -218,8 +218,8 @@ def test_authenticate_request_with_support_mode_claim(monkeypatch):
 
 def test_authenticate_request_with_cookie_support_mode(monkeypatch):
     """Signed cookie + X-Tenant-Id match → support_mode=True (BUG-008)."""
-    from app.core.security import authenticate_request, SUPPORT_MODE_COOKIE_NAME
-    from app.core.signed_cookies import pack_signed_payload
+    from copiloto_core.core.security import authenticate_request, SUPPORT_MODE_COOKIE_NAME
+    from copiloto_core.core.signed_cookies import pack_signed_payload
     _stub_settings(monkeypatch)
     tid = uuid4()
     token = _signed_token(
@@ -259,7 +259,7 @@ def test_authenticate_request_with_cookie_support_mode(monkeypatch):
 def test_authenticate_request_email_from_namespaced_claim(monkeypatch):
     """A-003: namespaced claim `email` (emitido por Auth0 Action) gana
     sobre el header `x-admin-user-email`."""
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch, auth0_trust_admin_email_header=True)
     ns = 'https://copilotoia.com/claims'
     token = _signed_token({
@@ -282,7 +282,7 @@ def test_authenticate_request_email_from_namespaced_claim(monkeypatch):
 def test_authenticate_request_email_header_blocked_when_setting_false(monkeypatch):
     """A-003: con `auth0_trust_admin_email_header=False` el header NO se usa
     aunque el JWT no traiga email — cierra el vector de hijack."""
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch, auth0_trust_admin_email_header=False)
     token = _signed_token({'sub': 'auth0|u1'})  # sin email
     request = _req()
@@ -302,7 +302,7 @@ def test_authenticate_request_email_header_blocked_when_setting_false(monkeypatc
 def test_authenticate_request_email_header_fallback_when_setting_true(monkeypatch):
     """A-003: con setting=True (compat default) Y access_token sin email,
     el header se usa pero queda LOGGED como warning."""
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch, auth0_trust_admin_email_header=True)
     token = _signed_token({'sub': 'auth0|u1'})  # sin email
     request = _req()
@@ -321,7 +321,7 @@ def test_authenticate_request_email_header_fallback_when_setting_true(monkeypatc
 def test_authenticate_request_email_plain_claim_still_works(monkeypatch):
     """A-003: tokens con claim `email` plano (no namespaced) siguen
     funcionando — algunos tenants Auth0 lo emiten así."""
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     _stub_settings(monkeypatch, auth0_trust_admin_email_header=False)
     token = _signed_token({'sub': 'auth0|u1', 'email': 'plain@x.co'})
     request = _req()

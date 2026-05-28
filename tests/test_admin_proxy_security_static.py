@@ -1,6 +1,6 @@
 from pathlib import Path
 
-ADMIN_ROUTES = Path('app/admin/routes.py')
+ADMIN_ROUTES = Path('copiloto_core/admin/routes.py')
 
 
 def _core_api_headers_source() -> str:

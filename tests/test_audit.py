@@ -2,7 +2,7 @@ import asyncio
 import json
 from uuid import uuid4
 
-from app.services.audit import audit
+from copiloto_core.services.audit import audit
 
 
 class FakeConnection:

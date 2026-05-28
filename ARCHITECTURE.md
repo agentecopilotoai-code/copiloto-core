@@ -537,43 +537,42 @@ exhaustivo de cada vector.
 
 ## 10. Cómo agregar un módulo opt-in
 
-El core **nunca cambia** para soportar un módulo nuevo. El módulo se
-agrega encima siguiendo este checklist:
+Desde la v1.0.0 el core es un **paquete Python instalable** y los
+módulos viven en sus propios repos. Para la guía completa, ver
+[`docs/EXTENDING.md`](docs/EXTENDING.md).
 
-### Checklist
+### Resumen del flujo
 
-1. **SQL del módulo:**
-   - Crear `infra/postgres/modules/<modulo>.sql` con schema propio
-     (`<modulo>.tabla`).
-   - Agregar el code del módulo al CHECK constraint de
-     `app.tenant_modules.module`.
+1. Crear tu paquete con `pyproject.toml` declarando `copiloto-core` como
+   dependencia (git tag o PyPI privado).
+2. Exportar un `CoreModule(...)` desde el `__init__.py` del paquete:
+   ```python
+   from copiloto_core import CoreModule
+   module = CoreModule(
+       code="mi_modulo",
+       router=mi_router,
+       sql_migrations=("migrations/001_init.sql",),
+       capabilities=("mi_modulo:read", "mi_modulo:write"),
+   )
+   ```
+3. En tu deployment, componer con `create_app(modules=[mi_modulo])`.
+4. Tus handlers usan `Depends(authenticate_request)`,
+   `Depends(require_capability("mi_modulo:..."))`,
+   `from copiloto_core.db.pool import db` — y hereda RLS, auth, RBAC,
+   audit, observabilidad automáticamente.
 
-2. **Backend:**
-   - Crear `app/<modulo>/` con sus routers (FastAPI APIRouter).
-   - Registrar el router en `app/main.py` con `api.include_router(...)`.
-   - Si el módulo usa IA: llama `app.ai.dispatcher.dispatch()` con su
-     `call_fn` (no instancia providers directamente).
+El core **NUNCA cambia** para soportar un módulo nuevo. El módulo se
+construye encima como library consumer.
 
-3. **Frontend:**
-   - Agregar entrada al `MODULE_REGISTRY` en
-     `admin-panel/src/app/moduleRegistry.js`.
-   - Agregar al `TENANT_NAV` en `admin-panel/src/app/nav.js`.
-   - Declarar capabilities en `admin-panel/src/permissions/matrix.js`.
+### Boundary del core
 
-4. **Hook de activación (opcional):**
-   - Si el módulo requiere bootstrap por tenant al activarse (seed de
-     catálogos, roles del módulo), registrar el hook con
-     `/platform/tenant-modules/{id}/{code}` PATCH.
+El módulo **NO puede**:
+- Crear su propio pool asyncpg (bypassaría RLS).
+- Instanciar AI providers directamente (bypassaría fallback + audit).
+- Escribir en schema `app.*` (su schema es `<code>.*`).
+- Monkey-patch el core.
 
-5. **Tests:**
-   - Tests del módulo en `tests/test_<modulo>_*.py`.
-   - **NO modificar tests del core.**
-
-6. **Docs del módulo:**
-   - `docs/<modulo>/README.md` con su arquitectura propia + endpoints.
-
-Ejemplo de referencia: módulo Gestión Documental (GD) — ver el
-worktree de UI bloques para implementación completa.
+Ver `docs/EXTENDING.md § 12` para el detalle completo.
 
 ---
 

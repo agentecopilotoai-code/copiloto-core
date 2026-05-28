@@ -1,9 +1,9 @@
-"""M45 — cobertura completa de `app.i18n` (antes 0%)."""
+"""M45 — cobertura completa de `copiloto_core.i18n` (antes 0%)."""
 from __future__ import annotations
 
 import pytest
 
-from app.i18n import (
+from copiloto_core.i18n import (
     SUPPORTED_LOCALES,
     _load_locale,
     is_supported,
@@ -27,7 +27,7 @@ def test_is_supported_unknown():
 
 
 def test_supported_locales_constant_shape():
-    # Mantengamos el catálogo en sync con `app.services.locale.SUPPORTED_COUNTRIES`.
+    # Mantengamos el catálogo en sync con `copiloto_core.services.locale.SUPPORTED_COUNTRIES`.
     assert isinstance(SUPPORTED_LOCALES, tuple)
     assert len(SUPPORTED_LOCALES) == 7
     for loc in SUPPORTED_LOCALES:

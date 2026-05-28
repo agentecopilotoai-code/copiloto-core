@@ -16,26 +16,26 @@ def _run(c):
 
 
 def test_dispatch_invalid_json_logged():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     # Empty subscribers + invalid JSON → no raise
     f._dispatch('not-json')
 
 
 def test_dispatch_no_tenant_id_in_payload():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     f._dispatch(json.dumps({'event': 'something'}))
 
 
 def test_dispatch_no_matching_subscribers():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     f._dispatch(json.dumps({'tenant_id': str(uuid4()), 'event': 'x'}))
 
 
 def test_dispatch_to_matching_subscriber():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     tid = uuid4()
     queue = asyncio.Queue(maxsize=100)
@@ -47,7 +47,7 @@ def test_dispatch_to_matching_subscriber():
 
 
 def test_dispatch_queue_full_drops_oldest():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     tid = uuid4()
     queue = asyncio.Queue(maxsize=2)
@@ -101,7 +101,7 @@ class _FakePool:
 
 
 def test_subscribe_starts_supervisor_and_dispatches():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     pool = _FakePool()
     tid = uuid4()
@@ -125,7 +125,7 @@ def test_subscribe_starts_supervisor_and_dispatches():
 
 
 def test_subscribe_multiple_subscribers_share_supervisor():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     pool = _FakePool()
     tid_a = uuid4()
@@ -149,7 +149,7 @@ def test_subscribe_multiple_subscribers_share_supervisor():
 
 
 def test_subscribe_same_tenant_two_subscribers():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     pool = _FakePool()
     tid = uuid4()
@@ -174,7 +174,7 @@ def test_subscribe_same_tenant_two_subscribers():
 
 def test_subscribe_supervisor_crashes(monkeypatch):
     """Supervisor crashes on setup → subscribe retries then bails out."""
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
 
     class _BrokenConn:
         async def add_listener(self, *a, **kw):
@@ -208,8 +208,8 @@ def test_subscribe_supervisor_crashes(monkeypatch):
 
 
 def test_reset_fanout_for_tests():
-    from app.admin.ws_fanout import reset_fanout_for_tests
-    import app.admin.ws_fanout as wf
+    from copiloto_core.admin.ws_fanout import reset_fanout_for_tests
+    import copiloto_core.admin.ws_fanout as wf
     original = wf.fanout
     reset_fanout_for_tests()
     new = wf.fanout
@@ -218,14 +218,14 @@ def test_reset_fanout_for_tests():
 
 
 def test_subscriber_count_and_tenant_count_empty():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     assert f.subscriber_count == 0
     assert f.tenant_count == 0
 
 
 def test_unsubscribe_unknown_queue_noop():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     tid = uuid4()
     queue = asyncio.Queue()
@@ -237,7 +237,7 @@ def test_unsubscribe_unknown_queue_noop():
 
 def test_dispatch_queue_full_after_drop_still_logs():
     """Edge: drop oldest, but put fails again — should log + give up."""
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     tid = uuid4()
     queue = asyncio.Queue(maxsize=1)

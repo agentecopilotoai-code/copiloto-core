@@ -17,11 +17,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.ai.dispatcher import (
+from copiloto_core.ai.dispatcher import (
     BACKOFF_MAX_SECONDS,
     _backoff_for_attempt,
 )
-from app.ai.providers.base import ProviderRateLimited
+from copiloto_core.ai.providers.base import ProviderRateLimited
 
 
 # ─── _backoff_for_attempt unit tests ──────────────────────────────────────
@@ -93,8 +93,8 @@ async def test_dispatcher_honors_retry_after_before_fallback(monkeypatch):
     """Cuando primary lanza ProviderRateLimited con retry_after=2.0,
     el dispatcher debe esperar ~2.0s antes del siguiente intento.
     """
-    from app.ai.dispatcher import dispatch
-    from app.ai.registry import ResolvedProvider
+    from copiloto_core.ai.dispatcher import dispatch
+    from copiloto_core.ai.registry import ResolvedProvider
 
     primary = ResolvedProvider(
         modality='llm', provider='primary_x',
@@ -103,17 +103,17 @@ async def test_dispatcher_honors_retry_after_before_fallback(monkeypatch):
     chain = ['primary_x', 'fallback_y']
 
     monkeypatch.setattr(
-        'app.ai.dispatcher.resolve_provider',
+        'copiloto_core.ai.dispatcher.resolve_provider',
         AsyncMock(return_value=primary),
     )
     monkeypatch.setattr(
-        'app.ai.dispatcher._get_fallback_chain',
+        'copiloto_core.ai.dispatcher._get_fallback_chain',
         lambda p: ['fallback_y'],
     )
     # Reset breakers para evitar carry-over entre tests.
-    monkeypatch.setattr('app.ai.dispatcher._BREAKERS',
+    monkeypatch.setattr('copiloto_core.ai.dispatcher._BREAKERS',
                         __import__('collections').defaultdict(
-                            __import__('app.ai.dispatcher', fromlist=['_CircuitState'])._CircuitState))
+                            __import__('copiloto_core.ai.dispatcher', fromlist=['_CircuitState'])._CircuitState))
 
     call_count = {'n': 0}
 
@@ -131,7 +131,7 @@ async def test_dispatcher_honors_retry_after_before_fallback(monkeypatch):
         # No durmas de verdad en test.
         await real_sleep(0)
 
-    with patch('app.ai.dispatcher.asyncio.sleep', side_effect=captured_sleep):
+    with patch('copiloto_core.ai.dispatcher.asyncio.sleep', side_effect=captured_sleep):
         result = await dispatch(
             conn=AsyncMock(),
             modality='llm',
@@ -149,8 +149,8 @@ async def test_dispatcher_honors_retry_after_before_fallback(monkeypatch):
 @pytest.mark.asyncio
 async def test_dispatcher_uses_backoff_when_no_retry_after(monkeypatch):
     """Sin retry_after, debe usar backoff exponencial con jitter."""
-    from app.ai.dispatcher import dispatch
-    from app.ai.registry import ResolvedProvider
+    from copiloto_core.ai.dispatcher import dispatch
+    from copiloto_core.ai.registry import ResolvedProvider
 
     primary = ResolvedProvider(
         modality='llm', provider='primary_x',
@@ -158,16 +158,16 @@ async def test_dispatcher_uses_backoff_when_no_retry_after(monkeypatch):
     )
 
     monkeypatch.setattr(
-        'app.ai.dispatcher.resolve_provider',
+        'copiloto_core.ai.dispatcher.resolve_provider',
         AsyncMock(return_value=primary),
     )
     monkeypatch.setattr(
-        'app.ai.dispatcher._get_fallback_chain',
+        'copiloto_core.ai.dispatcher._get_fallback_chain',
         lambda p: ['fallback_y'],
     )
-    monkeypatch.setattr('app.ai.dispatcher._BREAKERS',
+    monkeypatch.setattr('copiloto_core.ai.dispatcher._BREAKERS',
                         __import__('collections').defaultdict(
-                            __import__('app.ai.dispatcher', fromlist=['_CircuitState'])._CircuitState))
+                            __import__('copiloto_core.ai.dispatcher', fromlist=['_CircuitState'])._CircuitState))
 
     async def fake_call(resolved):
         if resolved.provider == 'primary_x':
@@ -181,7 +181,7 @@ async def test_dispatcher_uses_backoff_when_no_retry_after(monkeypatch):
         sleeps.append(d)
         await real_sleep(0)
 
-    with patch('app.ai.dispatcher.asyncio.sleep', side_effect=captured_sleep):
+    with patch('copiloto_core.ai.dispatcher.asyncio.sleep', side_effect=captured_sleep):
         result = await dispatch(
             conn=AsyncMock(), modality='llm',
             call_fn=fake_call, audit_conn=None,
@@ -197,8 +197,8 @@ async def test_dispatcher_uses_backoff_when_no_retry_after(monkeypatch):
 async def test_dispatcher_no_sleep_when_chain_exhausted(monkeypatch):
     """Si el último provider falla, no debe haber sleep (sería overhead
     inútil — la dispatch fall completa)."""
-    from app.ai.dispatcher import dispatch
-    from app.ai.registry import ResolvedProvider
+    from copiloto_core.ai.dispatcher import dispatch
+    from copiloto_core.ai.registry import ResolvedProvider
 
     primary = ResolvedProvider(
         modality='llm', provider='primary_x',
@@ -206,16 +206,16 @@ async def test_dispatcher_no_sleep_when_chain_exhausted(monkeypatch):
     )
 
     monkeypatch.setattr(
-        'app.ai.dispatcher.resolve_provider',
+        'copiloto_core.ai.dispatcher.resolve_provider',
         AsyncMock(return_value=primary),
     )
     monkeypatch.setattr(
-        'app.ai.dispatcher._get_fallback_chain',
+        'copiloto_core.ai.dispatcher._get_fallback_chain',
         lambda p: [],  # cadena sin fallback
     )
-    monkeypatch.setattr('app.ai.dispatcher._BREAKERS',
+    monkeypatch.setattr('copiloto_core.ai.dispatcher._BREAKERS',
                         __import__('collections').defaultdict(
-                            __import__('app.ai.dispatcher', fromlist=['_CircuitState'])._CircuitState))
+                            __import__('copiloto_core.ai.dispatcher', fromlist=['_CircuitState'])._CircuitState))
 
     async def fake_call(resolved):
         raise ProviderRateLimited('429', retry_after=10.0)
@@ -227,9 +227,9 @@ async def test_dispatcher_no_sleep_when_chain_exhausted(monkeypatch):
         sleeps.append(d)
         await real_sleep(0)
 
-    from app.ai.providers.base import ProviderUnavailable
+    from copiloto_core.ai.providers.base import ProviderUnavailable
 
-    with patch('app.ai.dispatcher.asyncio.sleep', side_effect=captured_sleep):
+    with patch('copiloto_core.ai.dispatcher.asyncio.sleep', side_effect=captured_sleep):
         with pytest.raises(ProviderUnavailable):
             await dispatch(
                 conn=AsyncMock(), modality='llm',
@@ -244,35 +244,35 @@ async def test_dispatcher_no_sleep_when_chain_exhausted(monkeypatch):
 
 
 def test_parse_retry_after_seconds():
-    from app.ai.providers.grok import _parse_retry_after
+    from copiloto_core.ai.providers.grok import _parse_retry_after
 
     assert _parse_retry_after('5') == 5.0
     assert _parse_retry_after('2.5') == 2.5
 
 
 def test_parse_retry_after_none():
-    from app.ai.providers.grok import _parse_retry_after
+    from copiloto_core.ai.providers.grok import _parse_retry_after
 
     assert _parse_retry_after(None) is None
     assert _parse_retry_after('') is None
 
 
 def test_parse_retry_after_negative_or_too_big():
-    from app.ai.providers.grok import _parse_retry_after
+    from copiloto_core.ai.providers.grok import _parse_retry_after
 
     assert _parse_retry_after('-1') is None
     assert _parse_retry_after('99999') is None
 
 
 def test_parse_retry_after_garbage():
-    from app.ai.providers.grok import _parse_retry_after
+    from copiloto_core.ai.providers.grok import _parse_retry_after
 
     assert _parse_retry_after('not-a-number') is None
 
 
 def test_parse_retry_after_http_date():
     """HTTP-date format (RFC 9110) — convertir a delta desde ahora."""
-    from app.ai.providers.grok import _parse_retry_after
+    from copiloto_core.ai.providers.grok import _parse_retry_after
     from datetime import datetime, timedelta, timezone
     from email.utils import format_datetime
 
@@ -285,7 +285,7 @@ def test_parse_retry_after_http_date():
 
 def test_parse_retry_after_past_http_date():
     """HTTP-date en el pasado → None (no espera)."""
-    from app.ai.providers.grok import _parse_retry_after
+    from copiloto_core.ai.providers.grok import _parse_retry_after
     from datetime import datetime, timedelta, timezone
     from email.utils import format_datetime
 

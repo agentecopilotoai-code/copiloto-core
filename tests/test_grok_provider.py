@@ -23,7 +23,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app.ai.providers.base import (
+from copiloto_core.ai.providers.base import (
     AudioResult,
     ImageResult,
     PersonaAnchor,
@@ -35,7 +35,7 @@ from app.ai.providers.base import (
     TranscriptResult,
     VideoResult,
 )
-from app.ai.providers.grok import GROK_MODELS, GrokProvider
+from copiloto_core.ai.providers.grok import GROK_MODELS, GrokProvider
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ def test_extract_error_code_handles_all_shapes():
     """Unit test directo del helper — cubre los 4 paths del `isinstance`
     chain sin pasar por el handler completo.
     """
-    from app.ai.providers.grok import _extract_error_code
+    from copiloto_core.ai.providers.grok import _extract_error_code
 
     # Non-dict input → ''
     assert _extract_error_code('a string') == ''
@@ -244,7 +244,7 @@ def test_decode_b64_handles_invalid_input():
     """`_decode_b64` cubre 3 paths: empty → b'', valid → bytes, invalid
     → ProviderUnavailable. Defensa contra responses corruptos de xAI.
     """
-    from app.ai.providers.grok import _decode_b64
+    from copiloto_core.ai.providers.grok import _decode_b64
 
     assert _decode_b64('') == b''
     assert _decode_b64('aGVsbG8=') == b'hello'

@@ -59,7 +59,7 @@ RUN apt-get update \
 # Trae el venv aislado del builder. No instalamos pip ni compiladores aquí.
 COPY --from=builder --chown=copiloto:copiloto /opt/venv /opt/venv
 
-COPY --chown=copiloto:copiloto app ./app
+COPY --chown=copiloto:copiloto copiloto_core ./copiloto_core
 # BUG-050: `list_runbooks()` y los detail endpoints leen MD desde
 # `docs/runbooks/` en runtime. Sin esta copia, los endpoints devuelven 404
 # en producción aunque las rutas están registradas.
@@ -72,4 +72,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail --silent --show-error http://127.0.0.1:8000/health || exit 1
 
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python3", "-m", "uvicorn", "copiloto_core._runserver:app", "--host", "0.0.0.0", "--port", "8000"]

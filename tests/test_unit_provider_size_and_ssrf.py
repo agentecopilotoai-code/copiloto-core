@@ -5,19 +5,19 @@ SEC-022: el dispatcher delega a `_translate_response_status` /
 hostil/buggy con body > 256MB es rechazado pre-lectura.
 
 SEC-023: el factory de adapters valida `params.base_url` contra
-`app.services.url_safety.check_provider_url` — defense-in-depth del
+`copiloto_core.services.url_safety.check_provider_url` — defense-in-depth del
 write-path que ya valida al PATCH.
 """
 from __future__ import annotations
 
 import pytest
 
-from app.ai.providers.base import (
+from copiloto_core.ai.providers.base import (
     PROVIDER_RESPONSE_MAX_BYTES,
     ProviderUnavailable,
     assert_response_within_size_limit,
 )
-from app.services.url_safety import (
+from copiloto_core.services.url_safety import (
     UrlSafetyError,
     check_provider_url,
 )
@@ -153,12 +153,12 @@ def test_url_safety_explicit_lax_overrides_provider():
 
 
 def test_factory_rejects_unsafe_base_url_for_grok(monkeypatch):
-    from app.ai.providers.factory import make_adapter_for_provider
-    from app.ai.registry import ResolvedProvider
+    from copiloto_core.ai.providers.factory import make_adapter_for_provider
+    from copiloto_core.ai.registry import ResolvedProvider
 
     # Mock secret_resolver para que api_key esté presente.
     monkeypatch.setattr(
-        'app.ai.providers.factory.resolve_secret_ref',
+        'copiloto_core.ai.providers.factory.resolve_secret_ref',
         lambda ref: 'xai-test-key',
     )
     resolved = ResolvedProvider(
@@ -172,11 +172,11 @@ def test_factory_rejects_unsafe_base_url_for_grok(monkeypatch):
 
 
 def test_factory_rejects_localhost_for_openai(monkeypatch):
-    from app.ai.providers.factory import make_adapter_for_provider
-    from app.ai.registry import ResolvedProvider
+    from copiloto_core.ai.providers.factory import make_adapter_for_provider
+    from copiloto_core.ai.registry import ResolvedProvider
 
     monkeypatch.setattr(
-        'app.ai.providers.factory.resolve_secret_ref',
+        'copiloto_core.ai.providers.factory.resolve_secret_ref',
         lambda ref: 'sk-test',
     )
     resolved = ResolvedProvider(
@@ -190,12 +190,12 @@ def test_factory_rejects_localhost_for_openai(monkeypatch):
 
 
 def test_factory_accepts_valid_https_for_cloud(monkeypatch):
-    from app.ai.providers.factory import make_adapter_for_provider
-    from app.ai.providers.openai import OpenAIProvider
-    from app.ai.registry import ResolvedProvider
+    from copiloto_core.ai.providers.factory import make_adapter_for_provider
+    from copiloto_core.ai.providers.openai import OpenAIProvider
+    from copiloto_core.ai.registry import ResolvedProvider
 
     monkeypatch.setattr(
-        'app.ai.providers.factory.resolve_secret_ref',
+        'copiloto_core.ai.providers.factory.resolve_secret_ref',
         lambda ref: 'sk-test',
     )
     resolved = ResolvedProvider(
@@ -209,9 +209,9 @@ def test_factory_accepts_valid_https_for_cloud(monkeypatch):
 
 
 def test_factory_accepts_localhost_for_ollama():
-    from app.ai.providers.factory import make_adapter_for_provider
-    from app.ai.providers.ollama import OllamaProvider
-    from app.ai.registry import ResolvedProvider
+    from copiloto_core.ai.providers.factory import make_adapter_for_provider
+    from copiloto_core.ai.providers.ollama import OllamaProvider
+    from copiloto_core.ai.registry import ResolvedProvider
 
     resolved = ResolvedProvider(
         modality='llm', provider='ollama',
@@ -225,12 +225,12 @@ def test_factory_accepts_localhost_for_ollama():
 
 def test_factory_no_base_url_is_ok(monkeypatch):
     """Sin `base_url` configurada, el provider usa default — no validate."""
-    from app.ai.providers.factory import make_adapter_for_provider
-    from app.ai.providers.grok import GrokProvider
-    from app.ai.registry import ResolvedProvider
+    from copiloto_core.ai.providers.factory import make_adapter_for_provider
+    from copiloto_core.ai.providers.grok import GrokProvider
+    from copiloto_core.ai.registry import ResolvedProvider
 
     monkeypatch.setattr(
-        'app.ai.providers.factory.resolve_secret_ref',
+        'copiloto_core.ai.providers.factory.resolve_secret_ref',
         lambda ref: 'xai-test',
     )
     resolved = ResolvedProvider(

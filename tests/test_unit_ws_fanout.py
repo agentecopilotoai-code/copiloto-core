@@ -9,28 +9,28 @@ from uuid import uuid4
 
 
 def test_fanout_initial_state():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     assert f.subscriber_count == 0
     assert f.tenant_count == 0
 
 
 def test_fanout_dispatch_invalid_json_is_dropped():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     # Drop happens silently; no exception
     f._dispatch('not json at all')
 
 
 def test_fanout_dispatch_missing_tenant_id_dropped():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     # No tenant_id field → silently dropped
     f._dispatch(json.dumps({'event': 'x'}))
 
 
 def test_fanout_dispatch_no_subscribers_for_tenant():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     # Tenant not registered → silently dropped
     f._dispatch(json.dumps({'tenant_id': str(uuid4()), 'event': 'x'}))
@@ -38,7 +38,7 @@ def test_fanout_dispatch_no_subscribers_for_tenant():
 
 def test_fanout_dispatch_delivers_to_subscribers():
     """Manually wire two queues + dispatch a notification."""
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     tid = uuid4()
     q1: asyncio.Queue[str] = asyncio.Queue(maxsize=10)
@@ -54,7 +54,7 @@ def test_fanout_dispatch_delivers_to_subscribers():
 
 
 def test_fanout_dispatch_drops_oldest_when_queue_full():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     tid = uuid4()
     q: asyncio.Queue[str] = asyncio.Queue(maxsize=1)
@@ -71,7 +71,7 @@ def test_fanout_dispatch_drops_oldest_when_queue_full():
 
 def test_fanout_dispatch_filters_by_tenant():
     """A notification for tenant A doesn't reach tenant B's queue."""
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     tid_a = uuid4()
     tid_b = uuid4()
@@ -87,7 +87,7 @@ def test_fanout_dispatch_filters_by_tenant():
 
 
 def test_fanout_subscriber_count_aggregates_across_tenants():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     tid_a = uuid4()
     tid_b = uuid4()
@@ -99,7 +99,7 @@ def test_fanout_subscriber_count_aggregates_across_tenants():
 
 def test_fanout_on_notify_factory_returns_callable():
     """The callback factory returns a 4-arg sync function."""
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
     f = _PubSubFanout()
     cb = f._on_notify_factory(None)
     assert callable(cb)
@@ -110,7 +110,7 @@ def test_fanout_on_notify_factory_returns_callable():
 
 def test_reset_fanout_for_tests_resets_singleton():
     """`reset_fanout_for_tests()` clears the module-level singleton state."""
-    from app.admin import ws_fanout
+    from copiloto_core.admin import ws_fanout
     # Mutate the singleton
     ws_fanout.fanout._subscribers['fake-tenant'] = {asyncio.Queue()}
     assert ws_fanout.fanout.subscriber_count == 1
@@ -121,7 +121,7 @@ def test_reset_fanout_for_tests_resets_singleton():
 
 def test_fanout_unsubscribe_unknown_tenant_no_op():
     """Calling unsubscribe with a tenant_id that isn't registered is a no-op."""
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
 
     f = _PubSubFanout()
     q: asyncio.Queue[str] = asyncio.Queue()
@@ -134,7 +134,7 @@ def test_fanout_unsubscribe_unknown_tenant_no_op():
 
 
 def test_fanout_unsubscribe_removes_subscriber_and_tenant_when_last():
-    from app.admin.ws_fanout import _PubSubFanout
+    from copiloto_core.admin.ws_fanout import _PubSubFanout
 
     f = _PubSubFanout()
     tid = uuid4()

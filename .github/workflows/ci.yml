@@ -118,7 +118,7 @@ jobs:
         # >95% — los E2E suman a la base de unit tests que ya hidratan
         # los handlers con mocks.
         run: |
-          pytest --cov=app --cov-report=xml --cov-report=term \
+          pytest --cov=copiloto_core --cov-report=xml --cov-report=term \
             --cov-fail-under=95 \
             -p no:warnings --tb=short
 

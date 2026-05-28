@@ -1,23 +1,23 @@
-"""M45 — cobertura completa de `app.ai.providers.factory` (antes 0%)."""
+"""M45 — cobertura completa de `copiloto_core.ai.providers.factory` (antes 0%)."""
 from __future__ import annotations
 
 import pytest
 
-from app.ai.providers.anthropic import AnthropicProvider
-from app.ai.providers.base import ProviderUnavailable
-from app.ai.providers.elevenlabs import ElevenLabsProvider
-from app.ai.providers.factory import (
+from copiloto_core.ai.providers.anthropic import AnthropicProvider
+from copiloto_core.ai.providers.base import ProviderUnavailable
+from copiloto_core.ai.providers.elevenlabs import ElevenLabsProvider
+from copiloto_core.ai.providers.factory import (
     _CLOUD_PROVIDERS,
     _params_get,
     _require_api_key,
     make_adapter_for_provider,
 )
-from app.ai.providers.grok import GrokProvider
-from app.ai.providers.local_sdxl import LocalSDXLProvider
-from app.ai.providers.local_whisper import LocalWhisperProvider
-from app.ai.providers.ollama import OllamaProvider
-from app.ai.providers.openai import OpenAIProvider
-from app.ai.registry import ResolvedProvider
+from copiloto_core.ai.providers.grok import GrokProvider
+from copiloto_core.ai.providers.local_sdxl import LocalSDXLProvider
+from copiloto_core.ai.providers.local_whisper import LocalWhisperProvider
+from copiloto_core.ai.providers.ollama import OllamaProvider
+from copiloto_core.ai.providers.openai import OpenAIProvider
+from copiloto_core.ai.registry import ResolvedProvider
 
 
 # ─── Fixtures ──────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ def patched_secret(monkeypatch):
     """Hace que `resolve_secret_ref()` devuelva una key dummy para los
     providers de cloud. Pasa `monkeypatch.setattr` al SITE donde el factory
     importa la función."""
-    from app.ai.providers import factory as fmod
+    from copiloto_core.ai.providers import factory as fmod
 
     monkeypatch.setattr(fmod, 'resolve_secret_ref', lambda ref: 'sk-test-1234567890')
     return fmod
@@ -73,7 +73,7 @@ def test_require_api_key_resolved(patched_secret):
 
 
 def test_require_api_key_unresolved_raises(monkeypatch):
-    from app.ai.providers import factory as fmod
+    from copiloto_core.ai.providers import factory as fmod
 
     monkeypatch.setattr(fmod, 'resolve_secret_ref', lambda ref: None)
     r = _resolved('grok')
@@ -84,7 +84,7 @@ def test_require_api_key_unresolved_raises(monkeypatch):
 
 
 def test_require_api_key_no_secret_ref_raises(monkeypatch):
-    from app.ai.providers import factory as fmod
+    from copiloto_core.ai.providers import factory as fmod
 
     monkeypatch.setattr(fmod, 'resolve_secret_ref', lambda ref: 'whatever')
     r = _resolved('grok', secret_ref=None)

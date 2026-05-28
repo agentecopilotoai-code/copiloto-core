@@ -255,7 +255,7 @@ fi
 # el rol de aplicación ve 0 filas aunque el seed haya insertado el tenant
 # demo. El check es legítimo (validar que el seed corrió) y no necesita
 # pasar por RLS — el rol admin lo bypassea.
-tenant_count="$(psql_admin -Atc "select count(*) from app.tenants;")"
+tenant_count="$(psql_admin -Atc "select count(*) from copiloto_core.tenants;")"
 if [[ "$tenant_count" -lt 1 ]]; then
   echo "Error: se esperaba al menos el tenant demo del seed, hay $tenant_count." >&2
   exit 1

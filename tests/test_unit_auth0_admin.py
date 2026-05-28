@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from app.services import auth0_admin as a0
+from copiloto_core.services import auth0_admin as a0
 
 
 # ─── _service_client_secret + is_configured ───────────────────────────────

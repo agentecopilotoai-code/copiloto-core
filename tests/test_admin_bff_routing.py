@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.admin.routes import _is_platform_scoped_path
+from copiloto_core.admin.routes import _is_platform_scoped_path
 
 
 class TestIsPlatformScopedPath:

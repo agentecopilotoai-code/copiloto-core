@@ -27,7 +27,7 @@ import pytest
 def _build_app():
     """Create a minimal FastAPI app with only the admin router mounted."""
     from fastapi import FastAPI
-    from app.admin import routes
+    from copiloto_core.admin import routes
 
     app = FastAPI()
     app.include_router(routes.router)
@@ -46,7 +46,7 @@ def _make_session(*, expires_in=3600, profile=None) -> tuple[str, dict]:
     P0-3: usa el `session_store` API en vez de mutar `_sessions` directo.
     """
     import asyncio
-    from app.admin.session_store import get_session_store
+    from copiloto_core.admin.session_store import get_session_store
 
     sid = f'sid-{uuid4().hex}'
     payload = {
@@ -161,7 +161,7 @@ def _patch_httpx(monkeypatch, responses):
 
 
 def test_session_mfa_required_disabled_when_mfa_off(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=False,
         auth0_domain='example.auth0.com',
@@ -175,7 +175,7 @@ def test_session_mfa_required_disabled_when_mfa_off(monkeypatch):
 
 
 def test_session_mfa_required_disabled_when_no_auth0(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=True,
         auth0_domain=None,
@@ -188,7 +188,7 @@ def test_session_mfa_required_disabled_when_no_auth0(monkeypatch):
 
 
 def test_session_mfa_required_disabled_when_not_privileged(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=True,
         auth0_domain='x.auth0.com',
@@ -202,7 +202,7 @@ def test_session_mfa_required_disabled_when_not_privileged(monkeypatch):
 
 
 def test_session_mfa_required_true_when_privileged_no_mfa(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=True,
         auth0_domain='x.auth0.com',
@@ -216,7 +216,7 @@ def test_session_mfa_required_true_when_privileged_no_mfa(monkeypatch):
 
 
 def test_session_mfa_required_false_when_privileged_with_mfa(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=True,
         auth0_domain='x.auth0.com',
@@ -240,7 +240,7 @@ def test_admin_session_401_when_no_cookie():
 
 
 def test_admin_session_200_when_active():
-    from app.admin.routes import SESSION_COOKIE
+    from copiloto_core.admin.routes import SESSION_COOKIE
     sid, _ = _make_session(profile={'roles': ['admin'], 'mfa_verified': True, 'sub': 'u|1'})
     app = _build_app()
     with _client(app) as c:
@@ -267,7 +267,7 @@ def test_admin_session_200_when_active():
 
 
 def test_admin_login_redirects_when_session_active():
-    from app.admin.routes import SESSION_COOKIE
+    from copiloto_core.admin.routes import SESSION_COOKIE
     sid, _ = _make_session()
     app = _build_app()
     with _client(app) as c:
@@ -278,7 +278,7 @@ def test_admin_login_redirects_when_session_active():
 
 
 def test_admin_login_503_when_unconfigured(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
         auth0_issuer=None,
@@ -305,7 +305,7 @@ def test_admin_login_503_when_unconfigured(monkeypatch):
 
 
 def test_admin_login_redirects_to_auth0(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
         auth0_issuer=None,
@@ -347,7 +347,7 @@ def _make_id_token(claims):
 
 def _stub_id_token_decode(monkeypatch):
     """Bypass `decode_auth0_id_token` in the BFF so `_make_id_token` works."""
-    from app.admin import routes as admin_routes  # noqa: PLC0415
+    from copiloto_core.admin import routes as admin_routes  # noqa: PLC0415
     async def fake_decode(token, **kwargs):
         # `_make_id_token` builds `header.payload.sig`; extract payload b64.
         import base64 as b64  # noqa: PLC0415
@@ -391,7 +391,7 @@ def test_admin_callback_invalid_state():
 
 def test_admin_callback_happy_path(monkeypatch):
     """Full OAuth callback flow with mocked Auth0."""
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
         auth0_issuer=None,
@@ -451,7 +451,7 @@ def test_admin_callback_happy_path(monkeypatch):
 
 
 def test_admin_callback_token_exchange_fails(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
         auth0_issuer=None,
@@ -486,7 +486,7 @@ def test_admin_callback_token_exchange_fails(monkeypatch):
 
 
 def test_admin_callback_userinfo_fails(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
         auth0_issuer=None,
@@ -527,7 +527,7 @@ def test_admin_callback_userinfo_fails(monkeypatch):
 def test_admin_callback_expired_state():
     """M56 — state.created_at older than 600s → redirect 303 con
     login_error=state_expired. Antes era 400 JSON crudo."""
-    from app.admin import routes
+    from copiloto_core.admin import routes
     state = 'state-3'
     state_cookie = routes._pack_state({
         'state': state, 'nonce': 'n', 'created_at': int(time.time()) - 3600
@@ -543,7 +543,7 @@ def test_admin_callback_expired_state():
 def test_admin_callback_state_mismatch():
     """M56 — cookie state≠URL state (user abrió varias pestañas) → 303
     con login_error=state_mismatch."""
-    from app.admin import routes
+    from copiloto_core.admin import routes
     cookie_state = 'state-from-tab-A'
     state_cookie = routes._pack_state({
         'state': cookie_state, 'nonce': 'n', 'created_at': int(time.time()),
@@ -560,7 +560,7 @@ def test_admin_callback_state_mismatch():
 
 def test_admin_callback_amr_as_string(monkeypatch):
     """amr returned as a string instead of a list — coerced to list."""
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
         auth0_issuer=None,
@@ -604,7 +604,7 @@ def test_admin_callback_amr_as_string(monkeypatch):
 
 
 def test_admin_logout_clears_cookie_and_redirects(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain='x.auth0.com',
         auth0_issuer=None,
@@ -633,13 +633,13 @@ def test_admin_logout_clears_cookie_and_redirects(monkeypatch):
         r = c.post('/admin/logout', headers={'x-requested-with': 'fetch'}, follow_redirects=False)
         assert r.status_code == 303
         # Session should be removed (P0-3: via store API).
-        from app.admin.session_store import get_session_store
+        from copiloto_core.admin.session_store import get_session_store
         assert asyncio.run(get_session_store().get(sid)) is None
 
 
 def test_admin_logout_no_session_still_works(monkeypatch):
     """Logout when no session — falls back to /admin/."""
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         auth0_domain=None,
         auth0_admin_client_id=None,
@@ -676,7 +676,7 @@ def test_admin_core_api_proxy_no_session():
 
 
 def test_admin_core_api_proxy_mfa_required(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=True,
         auth0_domain='x.auth0.com',
@@ -697,7 +697,7 @@ def test_admin_core_api_proxy_mfa_required(monkeypatch):
 
 
 def test_admin_core_api_proxy_happy_path(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=False,
         auth0_domain=None,
@@ -707,10 +707,10 @@ def test_admin_core_api_proxy_happy_path(monkeypatch):
         jwt_secret='secret-min-length-16-chars',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
-    # _core_api_headers does `from app.core.config import get_settings` to build
+    # _core_api_headers does `from copiloto_core.core.config import get_settings` to build
     # the X-Admin-Identity HMAC when sub+email are present. In CI the global
     # Settings() can't initialize (missing env). Patch at source.
-    import app.core.config as _core_config
+    import copiloto_core.core.config as _core_config
     monkeypatch.setattr(
         _core_config,
         'get_settings',
@@ -741,7 +741,7 @@ def test_admin_core_api_proxy_happy_path(monkeypatch):
 
 
 def test_admin_core_api_proxy_upstream_error(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=False,
         auth0_domain=None,
@@ -751,10 +751,10 @@ def test_admin_core_api_proxy_upstream_error(monkeypatch):
         jwt_secret='secret-min-length-16-chars',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
-    # _core_api_headers does `from app.core.config import get_settings` to build
+    # _core_api_headers does `from copiloto_core.core.config import get_settings` to build
     # the X-Admin-Identity HMAC when sub+email are present. In CI the global
     # Settings() can't initialize (missing env). Patch at source.
-    import app.core.config as _core_config
+    import copiloto_core.core.config as _core_config
     monkeypatch.setattr(
         _core_config,
         'get_settings',
@@ -788,7 +788,7 @@ def test_admin_core_api_proxy_upstream_401_expired_purges_session(monkeypatch):
     """B-002: si upstream devuelve 401 con detail típico de token expirado
     (e.g. 'Expired token', 'Session has been revoked'), el proxy purga la
     sesión local + delete-cookie + devuelve session_expired al SPA."""
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=False,
         auth0_domain=None,
@@ -799,7 +799,7 @@ def test_admin_core_api_proxy_upstream_401_expired_purges_session(monkeypatch):
         cookies_secure=False,
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
-    import app.core.config as _core_config
+    import copiloto_core.core.config as _core_config
     monkeypatch.setattr(
         _core_config, 'get_settings',
         lambda: SimpleNamespace(jwt_secret='secret-min-length-16-chars'),
@@ -808,7 +808,7 @@ def test_admin_core_api_proxy_upstream_401_expired_purges_session(monkeypatch):
         'sub': 'u|1', 'email': 'u@x.com', 'roles': ['admin'],
         'mfa_verified': True,
     })
-    from app.admin.session_store import get_session_store
+    from copiloto_core.admin.session_store import get_session_store
     assert asyncio.run(get_session_store().get(sid)) is not None
 
     # Upstream Core responde 401 'Expired token' (lo que jose tira post-A-002).
@@ -837,7 +837,7 @@ def test_admin_core_api_proxy_upstream_401_other_preserved(monkeypatch):
     """B-002: 401 con detail genérico (no expired/revoked) NO purga la
     sesión — puede ser un permisos issue, no expiración. Pasamos el 401
     al SPA tal cual."""
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=False,
         auth0_domain=None,
@@ -848,7 +848,7 @@ def test_admin_core_api_proxy_upstream_401_other_preserved(monkeypatch):
         cookies_secure=False,
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
-    import app.core.config as _core_config
+    import copiloto_core.core.config as _core_config
     monkeypatch.setattr(
         _core_config, 'get_settings',
         lambda: SimpleNamespace(jwt_secret='secret-min-length-16-chars'),
@@ -874,14 +874,14 @@ def test_admin_core_api_proxy_upstream_401_other_preserved(monkeypatch):
         # Detail tal cual del upstream — no marcado como expired.
         assert r.json() == {'detail': 'Authentication required'}
     # Sesión preservada (P0-3 via session_store API).
-    from app.admin.session_store import get_session_store
+    from copiloto_core.admin.session_store import get_session_store
     assert asyncio.run(get_session_store().get(sid)) is not None
 
 
 def test_admin_callback_uses_expires_in_from_token_response(monkeypatch):
     """B-002: el TTL del cookie + session viene del access_token Auth0
     (`expires_in`), no del hardcoded 8h previo."""
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=False,
         auth0_domain='t.auth0.com',
@@ -925,7 +925,7 @@ def test_admin_callback_uses_expires_in_from_token_response(monkeypatch):
     assert r.status_code in (302, 303, 307)
     # La sesión nueva fue creada con expires_at ≈ now + 3600.
     # P0-3: usamos el _raw del InMemoryStore para iterar (tests-only).
-    from app.admin.session_store import InMemorySessionStore, get_session_store
+    from copiloto_core.admin.session_store import InMemorySessionStore, get_session_store
     store = get_session_store()
     assert isinstance(store, InMemorySessionStore)  # test fixture lo garantiza
     raw = store._raw  # noqa: SLF001
@@ -939,7 +939,7 @@ def test_admin_callback_uses_expires_in_from_token_response(monkeypatch):
 
 
 def test_admin_core_api_proxy_post_with_body(monkeypatch):
-    from app.admin import routes
+    from copiloto_core.admin import routes
     fake_settings = SimpleNamespace(
         mfa_enforcement_enabled=False,
         auth0_domain=None,
@@ -949,10 +949,10 @@ def test_admin_core_api_proxy_post_with_body(monkeypatch):
         jwt_secret='secret-min-length-16-chars',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
-    # _core_api_headers does `from app.core.config import get_settings` to build
+    # _core_api_headers does `from copiloto_core.core.config import get_settings` to build
     # the X-Admin-Identity HMAC when sub+email are present. In CI the global
     # Settings() can't initialize (missing env). Patch at source.
-    import app.core.config as _core_config
+    import copiloto_core.core.config as _core_config
     monkeypatch.setattr(
         _core_config,
         'get_settings',
@@ -988,7 +988,7 @@ def test_ws_stream_no_session_closes_1008():
 
 def test_ws_stream_invalid_tenant_id():
     from starlette.websockets import WebSocketDisconnect
-    from app.admin.routes import SESSION_COOKIE
+    from copiloto_core.admin.routes import SESSION_COOKIE
     sid, _ = _make_session(profile={'sub': 'u|1', 'roles': ['admin']})
     app = _build_app()
     with _client(app) as c:
@@ -1004,8 +1004,8 @@ def test_ws_stream_invalid_tenant_id():
 def test_ws_stream_no_db_pool(monkeypatch):
     """When db.pool is None → close 1011."""
     from starlette.websockets import WebSocketDisconnect
-    from app.admin.routes import SESSION_COOKIE
-    from app.db.pool import db
+    from copiloto_core.admin.routes import SESSION_COOKIE
+    from copiloto_core.db.pool import db
 
     sid, _ = _make_session(profile={'sub': 'u|1', 'roles': ['admin'], 'support_mode': True})
     original_pool = db.pool
@@ -1027,10 +1027,10 @@ def test_ws_stream_no_db_pool(monkeypatch):
 def test_ws_stream_no_access_closes(monkeypatch):
     """Session has no role + no support_mode + no pool → close 1011 (pool check first)."""
     from starlette.websockets import WebSocketDisconnect
-    from app.admin.routes import SESSION_COOKIE
+    from copiloto_core.admin.routes import SESSION_COOKIE
 
     sid, _ = _make_session(profile={'sub': 'u|1', 'roles': [], 'support_mode': False})
-    from app.db.pool import db
+    from copiloto_core.db.pool import db
     original_pool = db.pool
     db.pool = None
     try:
@@ -1050,9 +1050,9 @@ def test_ws_stream_no_access_closes(monkeypatch):
 def test_ws_stream_subscribe_runtime_error_closes_1011(monkeypatch):
     """When ws_fanout.subscribe raises RuntimeError → close 1011."""
     from starlette.websockets import WebSocketDisconnect
-    from app.admin import routes
-    from app.admin.routes import SESSION_COOKIE
-    from app.db.pool import db
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import SESSION_COOKIE
+    from copiloto_core.db.pool import db
 
     sid, _ = _make_session(profile={'sub': 'u|1', 'roles': ['admin'], 'support_mode': True})
 
@@ -1086,9 +1086,9 @@ def test_ws_stream_subscribe_runtime_error_closes_1011(monkeypatch):
 
 def test_ws_stream_happy_path_sends_connected_then_heartbeat(monkeypatch):
     """Subscribe success → 'connected' frame is sent, then heartbeat on timeout."""
-    from app.admin import routes
-    from app.admin.routes import SESSION_COOKIE
-    from app.db.pool import db
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import SESSION_COOKIE
+    from copiloto_core.db.pool import db
 
     sid, _ = _make_session(profile={'sub': 'u|1', 'roles': ['admin'], 'support_mode': True})
 
@@ -1167,8 +1167,8 @@ def test_ws_stream_happy_path_sends_connected_then_heartbeat(monkeypatch):
 
 def test_session_can_stream_tenant_db_path(monkeypatch):
     """Exercises the DB-check branch (sub set, pool set)."""
-    from app.admin import routes
-    from app.db.pool import db
+    from copiloto_core.admin import routes
+    from copiloto_core.db.pool import db
 
     class _FakeConn:
         async def fetch(self, query, *args):
@@ -1202,8 +1202,8 @@ def test_session_can_stream_tenant_db_path(monkeypatch):
 
 
 def test_session_can_stream_tenant_db_returns_false_when_no_role(monkeypatch):
-    from app.admin import routes
-    from app.db.pool import db
+    from copiloto_core.admin import routes
+    from copiloto_core.db.pool import db
 
     class _FakeConn:
         async def fetch(self, query, *args):

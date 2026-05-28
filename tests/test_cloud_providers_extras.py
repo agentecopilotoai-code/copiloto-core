@@ -7,15 +7,15 @@ import base64
 import httpx
 import pytest
 
-from app.ai.providers.anthropic import AnthropicProvider
-from app.ai.providers.base import (
+from copiloto_core.ai.providers.anthropic import AnthropicProvider
+from copiloto_core.ai.providers.base import (
     ProviderContentRejected,
     ProviderRateLimited,
     ProviderTimeoutError,
     ProviderUnavailable,
 )
-from app.ai.providers.elevenlabs import ElevenLabsProvider
-from app.ai.providers.openai import OpenAIProvider
+from copiloto_core.ai.providers.elevenlabs import ElevenLabsProvider
+from copiloto_core.ai.providers.openai import OpenAIProvider
 
 
 def _b64(b: bytes) -> str:
@@ -139,7 +139,7 @@ def test_elevenlabs_5xx_raises_unavailable():
     p = ElevenLabsProvider(
         api_key='k', timeout=2.0, transport=httpx.MockTransport(handler),
     )
-    from app.ai.providers.base import PersonaAnchor
+    from copiloto_core.ai.providers.base import PersonaAnchor
     with pytest.raises(ProviderUnavailable):
         asyncio.run(p.synthesize_speech(
             text='hola', persona_anchor=PersonaAnchor(persona_id='p'),
@@ -158,7 +158,7 @@ def test_elevenlabs_timeout_raises_provider_timeout():
     p = ElevenLabsProvider(
         api_key='k', timeout=2.0, transport=httpx.MockTransport(raising_handler),
     )
-    from app.ai.providers.base import PersonaAnchor
+    from copiloto_core.ai.providers.base import PersonaAnchor
     with pytest.raises((ProviderTimeoutError, ProviderUnavailable)):
         asyncio.run(p.synthesize_speech(
             text='hola', persona_anchor=PersonaAnchor(persona_id='p'),
@@ -173,7 +173,7 @@ def test_elevenlabs_400_content_rejected():
     p = ElevenLabsProvider(
         api_key='k', timeout=2.0, transport=httpx.MockTransport(handler),
     )
-    from app.ai.providers.base import PersonaAnchor
+    from copiloto_core.ai.providers.base import PersonaAnchor
     # 400 con detail puede mapearse a content rejected o unavailable según
     # impl; aceptamos cualquiera de las dos excepciones tipadas.
     with pytest.raises((ProviderContentRejected, ProviderUnavailable)):

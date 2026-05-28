@@ -1,0 +1,261 @@
+"""Métricas Prometheus del core.
+
+Solo expone:
+  - Gauges runtime no-DB (WS fanout subscribers/tenants, rate limiter LRU
+    size). Refrescados por scrape via `refresh_runtime_metrics()`.
+  - Gauges de backup desde `app.backup_runs`. Refrescados por scrape via
+    `refresh_backup_age_metrics()`.
+  - Counters de drops (rate limiter, ws_fanout) consumidos directamente
+    desde sus módulos source.
+  - Health metric transversal de los proveedores IA del core.
+  - Helpers para servir /metrics (`render_latest`, `parse_ip_allowlist`,
+    `ip_allowed`).
+
+Pre-purga este módulo tenía ~660 LOC con counters/histograms del chatbot
+(`cpi_messages_total`, `cpi_response_latency_seconds`, `cpi_handoff_total`,
+`cpi_appointments_total`, etc.) + collect_health_snapshot + evaluate_health_alerts
++ start_metrics_http_server (workers borrados). Todo eso se quitó porque no
+tenía un solo caller en el core (M6 de la auditoría). Cuando un módulo
+opt-in necesite sus propias métricas, las define en su propio archivo
+referenciando este `REGISTRY` global.
+
+Nada de PII (sin `phone_e164`, sin contenidos de mensajes); solo IDs y
+agregados.
+"""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Iterable
+
+import structlog
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    generate_latest,
+)
+
+if TYPE_CHECKING:  # pragma: no cover
+    import asyncpg
+
+log = structlog.get_logger()
+
+REGISTRY = CollectorRegistry(auto_describe=True)
+
+
+# ─── WS fanout (consumido desde copiloto_core.admin.ws_fanout) ──────────────────────
+
+ws_fanout_subscriber_count = Gauge(
+    'cpi_ws_fanout_subscriber_count',
+    'Subscribers actuales del WebSocket fanout (suma cross-tenant).',
+    registry=REGISTRY,
+)
+ws_fanout_tenant_count = Gauge(
+    'cpi_ws_fanout_tenant_count',
+    'Tenants activos con al menos un subscriber en el WebSocket fanout.',
+    registry=REGISTRY,
+)
+ws_fanout_dropped_total = Counter(
+    'cpi_ws_fanout_dropped_total',
+    'Mensajes droppeados por el fanout dispatcher (queue full o JSON invalido).',
+    labelnames=('reason',),
+    registry=REGISTRY,
+)
+ws_fanout_supervisor_crashes_total = Counter(
+    'cpi_ws_fanout_supervisor_crashes_total',
+    'Cuántas veces el supervisor del fanout crasheó (LISTEN/NOTIFY setup fail).',
+    registry=REGISTRY,
+)
+
+
+# ─── Rate limiter LRU (consumido desde copiloto_core.services.rate_limit) ───────────
+
+rate_limit_buckets_current = Gauge(
+    'cpi_rate_limit_buckets_current',
+    'Buckets vivos en el rate limiter LRU.',
+    registry=REGISTRY,
+)
+rate_limit_buckets_evicted_total = Counter(
+    'cpi_rate_limit_buckets_evicted_total',
+    'Buckets evictados del rate limiter LRU por TTL o por cap.',
+    labelnames=('reason',),
+    registry=REGISTRY,
+)
+
+
+# ─── Backup pipeline (consumido desde copiloto_core.main:/metrics handler) ──────────
+# BUG-047/176: `BackupCloudStale` + `BackupVerifyFailed` (alerts.yaml)
+# leen estos gauges. Labeled `scope` evita false-positive en greenfield
+# (un Gauge unlabeled exporta 0 → la regla `< 86400` matcheaba siempre).
+
+backup_last_success_age_seconds = Gauge(
+    'cpi_backup_last_success_age_seconds',
+    'Segundos transcurridos desde el último backup exitoso por kind.',
+    labelnames=('kind',),
+    registry=REGISTRY,
+)
+backup_last_verify_failed_age_seconds = Gauge(
+    'cpi_backup_last_verify_failed_age_seconds',
+    'Segundos transcurridos desde el último cloud_verify status=failed. '
+    'Labeled por `scope` para que la serie sea ABSENT hasta que haya un '
+    'failure real.',
+    labelnames=('scope',),
+    registry=REGISTRY,
+)
+
+
+# ─── AI provider health (transversal del core) ────────────────────────────
+
+ai_provider_health = Gauge(
+    'cpi_ai_provider_health',
+    'Salud del provider IA (1 = healthy, 0 = degraded/circuit-open).',
+    labelnames=('provider', 'modality'),
+    registry=REGISTRY,
+)
+
+
+# ─── DB pool (PERF-023 audit#4) ───────────────────────────────────────────
+#
+# Antes no había observabilidad del pool de asyncpg. Bajo carga era
+# imposible saber si el `max_size` configurado era suficiente o si
+# requests se estaban quedando esperando una conn. Estos gauges
+# permiten dashboards/alertas tipo `db_pool_idle == 0 for >30s`.
+
+db_pool_size = Gauge(
+    'cpi_db_pool_size',
+    'Número total de conexiones en el pool (idle + en uso).',
+    registry=REGISTRY,
+)
+db_pool_idle = Gauge(
+    'cpi_db_pool_idle',
+    'Conexiones del pool actualmente idle (disponibles).',
+    registry=REGISTRY,
+)
+db_pool_min = Gauge(
+    'cpi_db_pool_min',
+    'Configurado: min_size del pool.',
+    registry=REGISTRY,
+)
+db_pool_max = Gauge(
+    'cpi_db_pool_max',
+    'Configurado: max_size del pool.',
+    registry=REGISTRY,
+)
+
+
+# ─── Runtime refresh hooks ────────────────────────────────────────────────
+
+_active_rate_limiter = None
+
+
+def _set_active_rate_limiter(limiter) -> None:
+    """Llamar UNA vez al startup desde `copiloto_core.main:create_app` para que
+    `refresh_runtime_metrics()` pueda leer `.size` sin import circular."""
+    global _active_rate_limiter
+    _active_rate_limiter = limiter
+
+
+def refresh_runtime_metrics() -> None:
+    """Refresca gauges runtime no-DB antes de cada scrape de /metrics.
+
+    Best-effort: cualquier excepción (módulo no cargado, ws_fanout aún no
+    inicializado) se traga; el scrape devuelve los últimos valores
+    conocidos en memoria.
+    """
+    try:
+        from copiloto_core.admin.ws_fanout import fanout as _ws_fanout  # noqa: PLC0415
+        ws_fanout_subscriber_count.set(float(_ws_fanout.subscriber_count))
+        ws_fanout_tenant_count.set(float(_ws_fanout.tenant_count))
+    except Exception as exc:  # noqa: BLE001
+        # Q-3 (audit #3) — debug log para distinguir "no inicializado"
+        # (caso esperado pre-startup) de "bug real". Sin esto, métricas
+        # stale silenciosamente para siempre.
+        log.debug('metrics.ws_fanout_refresh_skipped', error=type(exc).__name__)
+    try:
+        if _active_rate_limiter is not None:
+            rate_limit_buckets_current.set(float(_active_rate_limiter.size))
+    except Exception as exc:  # noqa: BLE001
+        log.debug('metrics.rate_limit_refresh_skipped', error=type(exc).__name__)
+    # PERF-023 (audit#4) — DB pool stats. asyncpg.Pool tiene
+    # `get_size()`/`get_idle_size()`/`get_min_size()`/`get_max_size()`.
+    try:
+        from copiloto_core.db.pool import db as _db  # noqa: PLC0415
+        pool = _db.pool
+        if pool is not None:
+            db_pool_size.set(float(pool.get_size()))
+            db_pool_idle.set(float(pool.get_idle_size()))
+            db_pool_min.set(float(pool.get_min_size()))
+            db_pool_max.set(float(pool.get_max_size()))
+    except Exception as exc:  # noqa: BLE001
+        log.debug('metrics.db_pool_refresh_skipped', error=type(exc).__name__)
+
+
+async def refresh_backup_age_metrics(conn: 'asyncpg.Connection') -> None:
+    """Recalcula los gauges de backup desde `app.backup_runs`.
+
+    Se invoca antes de cada `render_latest()` del endpoint /metrics. Es
+    barata: dos queries con LIMIT 1 sobre `ix_backup_runs_kind_status_finished`.
+    Best-effort: si la DB no está disponible, loguea y sigue.
+    """
+    try:
+        rows = await conn.fetch(
+            """
+            select kind,
+                   extract(epoch from now() - max(finished_at))::float as age
+            from app.backup_runs
+            where status = 'ok' and finished_at is not null
+              and kind in ('cloud_dump', 'cloud_verify')
+            group by kind
+            """
+        )
+        for row in rows:
+            if row['age'] is None:
+                continue
+            backup_last_success_age_seconds.labels(kind=row['kind']).set(
+                float(row['age'])
+            )
+        failed_age = await conn.fetchval(
+            """
+            select extract(epoch from now() - max(finished_at))::float
+            from app.backup_runs
+            where kind = 'cloud_verify'
+              and status = 'failed'
+              and finished_at is not null
+            """
+        )
+        if failed_age is not None:
+            backup_last_verify_failed_age_seconds.labels(scope='cloud_verify').set(
+                float(failed_age)
+            )
+    except Exception:  # noqa: BLE001
+        log.exception('metrics.refresh_backup_age_failed')
+
+
+# ─── Serving /metrics ─────────────────────────────────────────────────────
+
+
+def render_latest() -> tuple[bytes, str]:
+    """(payload, content_type) listo para servir desde el endpoint /metrics."""
+    return generate_latest(REGISTRY), CONTENT_TYPE_LATEST
+
+
+def parse_ip_allowlist(raw: str | None) -> frozenset[str]:
+    """Convierte la env var `OBSERVABILITY_ALLOWED_IPS` (CSV) en un set inmutable.
+
+    Cualquier blanco/None significa "vacío"; el handler trata vacío como
+    "denegar todo" (la métrica solo debe exponerse a redes confiables).
+    """
+    if not raw:
+        return frozenset()
+    return frozenset(token.strip() for token in raw.split(',') if token.strip())
+
+
+def ip_allowed(client_ip: str | None, allowlist: Iterable[str]) -> bool:
+    """True si `client_ip` está en `allowlist`. No soporta CIDR — exact match.
+
+    El operador debe listar las IPs de los Prometheus scrapers explícitamente.
+    """
+    if not client_ip:
+        return False
+    allowset = allowlist if isinstance(allowlist, (set, frozenset)) else frozenset(allowlist)
+    return client_ip in allowset

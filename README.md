@@ -13,9 +13,9 @@
 
 ## ¿Qué es esto?
 
-CopilotoIA Core es la **base reutilizable** sobre la cual cualquier SaaS
-multi-tenant vertical (CRM, gestión documental, agentes de IA, etc.)
-se construye sin tener que reimplementar:
+CopilotoIA Core es la **base reutilizable** que se instala como `pip install
+copiloto-core`. Cualquier SaaS multi-tenant vertical (CRM, gestión
+documental, IoT, etc.) se construye encima del core sin reimplementar:
 
 - **Autenticación** con Auth0 (OIDC RS256) + MFA + JWKS rotation
 - **Multi-tenancy** con RLS de Postgres y aislamiento por transacción
@@ -27,8 +27,13 @@ se construye sin tener que reimplementar:
 - **Audit log** y bitácora de operaciones cross-tenant
 - **Admin panel** completo (React SPA + BFF FastAPI)
 
-El **core nunca conoce productos** — los módulos opt-in se instalan
-encima sin modificarlo.
+El **core nunca conoce productos** — los módulos opt-in se construyen
+encima como paquetes Python independientes que importan
+`from copiloto_core import create_app, CoreModule, ...`.
+
+**¿Cómo construyo mi SaaS sobre el core?** Ver
+[`docs/EXTENDING.md`](docs/EXTENDING.md) — la guía completa para
+autores de módulos.
 
 ---
 
@@ -237,6 +242,7 @@ pytest --cov=app --cov-report=html && open htmlcov/index.html
 | [README.md](README.md) | Visión rápida + quick start (este archivo) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Arquitectura completa con diagramas + terceros + RLS + IA + observabilidad |
 | [INSTALL.md](INSTALL.md) | Instalación paso a paso desde cero (Auth0 + Resend + Postgres + dev/prod) |
+| [docs/EXTENDING.md](docs/EXTENDING.md) | **Guía para autores de módulos** — cómo construir tu SaaS sobre el core |
 | [docs/runbooks/](docs/runbooks/) | Guías operativas para incidentes |
 | [infra/observability/grafana/dashboards/README.md](infra/observability/grafana/dashboards/README.md) | Importar dashboards a Grafana |
 

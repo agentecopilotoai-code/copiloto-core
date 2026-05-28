@@ -32,7 +32,7 @@ def _fake_redis_client():
 def _build_redis_session_store_with_fake():
     """Crea un RedisSessionStore inyectando un fake client."""
     from collections import OrderedDict
-    from app.admin.session_store import RedisSessionStore
+    from copiloto_core.admin.session_store import RedisSessionStore
     store = RedisSessionStore.__new__(RedisSessionStore)
     store._client = _fake_redis_client()
     store._prefix = 'test:session:'
@@ -43,7 +43,7 @@ def _build_redis_session_store_with_fake():
 
 
 def _build_redis_oauth_state_store_with_fake():
-    from app.admin.oauth_state_store import RedisOAuthStateStore
+    from copiloto_core.admin.oauth_state_store import RedisOAuthStateStore
     store = RedisOAuthStateStore.__new__(RedisOAuthStateStore)
     store._client = _fake_redis_client()
     store._prefix = 'test:oauth:'

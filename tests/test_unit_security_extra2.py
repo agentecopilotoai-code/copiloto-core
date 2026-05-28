@@ -13,7 +13,7 @@ from fastapi import HTTPException
 
 def test_fetch_auth0_jwks_uses_cache():
     """When cached entry is fresh, returns it without hitting the network."""
-    from app.core import security
+    from copiloto_core.core import security
 
     issuer = 'https://tenant.auth0.com/'
     fresh_jwks = {'keys': [{'kid': 'k1', 'kty': 'RSA'}]}
@@ -30,7 +30,7 @@ def test_fetch_auth0_jwks_uses_cache():
 
 def test_fetch_auth0_jwks_fetches_when_empty(monkeypatch):
     """When cache empty, hits the network and updates cache."""
-    from app.core import security
+    from copiloto_core.core import security
     security.clear_jwks_cache()
 
     fresh_jwks = {'keys': [{'kid': 'k2', 'kty': 'RSA'}]}
@@ -48,7 +48,7 @@ def test_fetch_auth0_jwks_fetches_when_empty(monkeypatch):
     # PERF-001 — security.py ahora usa el singleton `get_auth0_client()`
     # del módulo http_clients. Monkeypatch ese getter en lugar de la
     # clase AsyncClient directamente.
-    from app.services import http_clients
+    from copiloto_core.services import http_clients
     fake_client = _FakeAsyncClient()
 
     async def _stub_get_client():
@@ -70,7 +70,7 @@ def test_fetch_auth0_jwks_fetches_when_empty(monkeypatch):
 
 def test_enforce_session_not_revoked_no_pool_skips():
     """If db.pool is None, the check fails-open (returns without raising)."""
-    from app.core import security
+    from copiloto_core.core import security
 
     async def _go():
         await security._enforce_session_not_revoked('any-session-id')
@@ -80,7 +80,7 @@ def test_enforce_session_not_revoked_no_pool_skips():
 
 def test_enforce_session_not_revoked_raises_when_revoked():
     """If the row has revoked_at set, raises 401."""
-    from app.core import security
+    from copiloto_core.core import security
     from datetime import UTC, datetime
 
     class _FakeConn:
@@ -98,9 +98,9 @@ def test_enforce_session_not_revoked_raises_when_revoked():
     class _FakeDb:
         pool = _FakePool()
 
-    import app.db.pool
-    original_db = app.db.pool.db
-    app.db.pool.db = _FakeDb()
+    import copiloto_core.db.pool
+    original_db = copiloto_core.db.pool.db
+    copiloto_core.db.pool.db = _FakeDb()
     try:
         async def _go():
             await security._enforce_session_not_revoked('revoked-session')
@@ -109,12 +109,12 @@ def test_enforce_session_not_revoked_raises_when_revoked():
             asyncio.run(_go())
         assert exc_info.value.status_code == 401
     finally:
-        app.db.pool.db = original_db
+        copiloto_core.db.pool.db = original_db
 
 
 def test_enforce_session_not_revoked_fail_open_on_exception():
     """If the DB query throws, fail-open (no raise)."""
-    from app.core import security
+    from copiloto_core.core import security
 
     class _BrokenConn:
         async def fetchrow(self, sql, *args):
@@ -131,21 +131,21 @@ def test_enforce_session_not_revoked_fail_open_on_exception():
     class _FakeDb:
         pool = _FakePool()
 
-    import app.db.pool
-    original_db = app.db.pool.db
-    app.db.pool.db = _FakeDb()
+    import copiloto_core.db.pool
+    original_db = copiloto_core.db.pool.db
+    copiloto_core.db.pool.db = _FakeDb()
     try:
         async def _go():
             await security._enforce_session_not_revoked('any-id')
 
         asyncio.run(_go())  # no raise
     finally:
-        app.db.pool.db = original_db
+        copiloto_core.db.pool.db = original_db
 
 
 def test_enforce_session_not_revoked_fail_open_increments_counter():
     """M-002: cada fail-open incrementa el counter expuesto en metrics."""
-    from app.core import security
+    from copiloto_core.core import security
     security.reset_session_revoke_failopen_count()
 
     class _BrokenConn:
@@ -163,9 +163,9 @@ def test_enforce_session_not_revoked_fail_open_increments_counter():
     class _FakeDb:
         pool = _FakePool()
 
-    import app.db.pool
-    original_db = app.db.pool.db
-    app.db.pool.db = _FakeDb()
+    import copiloto_core.db.pool
+    original_db = copiloto_core.db.pool.db
+    copiloto_core.db.pool.db = _FakeDb()
     try:
         async def _go():
             await security._enforce_session_not_revoked('any-id')
@@ -175,21 +175,21 @@ def test_enforce_session_not_revoked_fail_open_increments_counter():
         asyncio.run(_go())
         assert security.get_session_revoke_failopen_count() == 3
     finally:
-        app.db.pool.db = original_db
+        copiloto_core.db.pool.db = original_db
         security.reset_session_revoke_failopen_count()
 
 
 def test_enforce_session_not_revoked_no_pool_increments_counter():
     """M-002: pool=None también cuenta como fail-open observable."""
-    from app.core import security
+    from copiloto_core.core import security
     security.reset_session_revoke_failopen_count()
 
     class _FakeDb:
         pool = None
 
-    import app.db.pool
-    original_db = app.db.pool.db
-    app.db.pool.db = _FakeDb()
+    import copiloto_core.db.pool
+    original_db = copiloto_core.db.pool.db
+    copiloto_core.db.pool.db = _FakeDb()
     try:
         async def _go():
             await security._enforce_session_not_revoked('s1')
@@ -197,13 +197,13 @@ def test_enforce_session_not_revoked_no_pool_increments_counter():
         asyncio.run(_go())
         assert security.get_session_revoke_failopen_count() == 1
     finally:
-        app.db.pool.db = original_db
+        copiloto_core.db.pool.db = original_db
         security.reset_session_revoke_failopen_count()
 
 
 def test_enforce_session_not_revoked_passes_when_active():
     """When the row exists with revoked_at=None, passes silently."""
-    from app.core import security
+    from copiloto_core.core import security
 
     class _FakeConn:
         async def fetchrow(self, sql, *args):
@@ -220,16 +220,16 @@ def test_enforce_session_not_revoked_passes_when_active():
     class _FakeDb:
         pool = _FakePool()
 
-    import app.db.pool
-    original_db = app.db.pool.db
-    app.db.pool.db = _FakeDb()
+    import copiloto_core.db.pool
+    original_db = copiloto_core.db.pool.db
+    copiloto_core.db.pool.db = _FakeDb()
     try:
         async def _go():
             await security._enforce_session_not_revoked('active-session')
 
         asyncio.run(_go())  # no raise
     finally:
-        app.db.pool.db = original_db
+        copiloto_core.db.pool.db = original_db
 
 
 # ═══ authenticate_request edge cases ═════════════════════════════════════
@@ -237,7 +237,7 @@ def test_enforce_session_not_revoked_passes_when_active():
 
 def test_authenticate_request_no_auth_with_x_tenant_id_raises():
     """X-Tenant-Id without Authorization → 401."""
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
     from uuid import uuid4
 
     class _Req:
@@ -256,7 +256,7 @@ def test_authenticate_request_no_auth_with_x_tenant_id_raises():
 
 
 def test_authenticate_request_invalid_bearer_scheme():
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
 
     class _Req:
         def __init__(self):
@@ -274,7 +274,7 @@ def test_authenticate_request_invalid_bearer_scheme():
 
 
 def test_authenticate_request_bearer_no_token():
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
 
     class _Req:
         def __init__(self):
@@ -293,7 +293,7 @@ def test_authenticate_request_bearer_no_token():
 
 def test_authenticate_request_anonymous_pass():
     """No auth, no X-Tenant-Id → anonymous (no raise)."""
-    from app.core.security import authenticate_request
+    from copiloto_core.core.security import authenticate_request
 
     class _Req:
         def __init__(self):
