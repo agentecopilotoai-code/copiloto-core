@@ -230,6 +230,17 @@ AUTH0_MGMT_CLIENT_SECRET=
 # ─── JWT ──────────────────────────────────────────────────────────────
 JWT_SECRET=CHANGE_ME
 
+# ─── Service-to-service token ─────────────────────────────────────────
+# Usado para auth entre servicios internos (workers, webhooks,
+# background jobs). Generate-secrets le pone un random de 36 bytes.
+SERVICE_TOKEN=CHANGE_ME
+
+# ─── AI providers master key (Fernet, OPCIONAL) ───────────────────────
+# Si vas a cifrar API keys de proveedores IA, generala con:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# y descomentá la línea. Settings la trata como opt-in (None por default).
+# AI_PROVIDER_MASTER_KEY=
+
 # ─── Redis (sessions + OAuth state + rate-limit) ──────────────────────
 REDIS_URL=redis://localhost:6379/0
 
