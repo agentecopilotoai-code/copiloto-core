@@ -60,6 +60,28 @@ from copiloto_core.scaffolding import (
 )
 
 
+def _load_dotenv_into_environ(env_path: str = '.env') -> None:
+    """Carga `.env` del cwd a `os.environ` si existe.
+
+    Necesario porque los subcomandos `bootstrap` y `migrate` leen
+    variables de `os.environ` directamente (no sólo via pydantic-settings).
+    En v1.2.0 el script `dev-up.sh` hacía `source .env`, pero eso rompe
+    apenas hay un `#` con paréntesis o comilla rara — bash interpreta
+    cada línea aunque sea comentario adyacente a sintaxis válida.
+
+    Usamos python-dotenv (dep transitiva de pydantic-settings, ya
+    instalado). Idempotente: NO sobreescribe vars ya seteadas en el
+    entorno (`override=False`), así un user que setea
+    `DATABASE_URL=...` en su shell sigue ganando.
+    """
+    try:
+        from dotenv import load_dotenv  # noqa: PLC0415
+    except ImportError:
+        return  # python-dotenv no disponible — no es fatal
+    if Path(env_path).is_file():
+        load_dotenv(env_path, override=False)
+
+
 def _cmd_version(_args: argparse.Namespace) -> int:
     print(f'copiloto-core {__version__}')
     return 0
@@ -118,6 +140,8 @@ def _cmd_bootstrap(args: argparse.Namespace) -> int:
     está seteada — falla más adelante con un error claro si la URL no
     tiene permisos suficientes).
     """
+    _load_dotenv_into_environ()
+
     from copiloto_core.core.config import get_settings  # noqa: PLC0415
     from copiloto_core.db.pool import db  # noqa: PLC0415
 
@@ -181,6 +205,8 @@ def _cmd_bootstrap(args: argparse.Namespace) -> int:
 
 def _cmd_migrate(args: argparse.Namespace) -> int:
     """Importa el módulo + corre apply_module_migrations contra DATABASE_URL."""
+    _load_dotenv_into_environ()
+
     module_code = args.module
     try:
         pkg = importlib.import_module(module_code)

@@ -581,12 +581,11 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# Cargar .env al shell para que `python -m copiloto_core bootstrap`
-# vea DATABASE_ADMIN_URL, APP_DB_USER, APP_DB_PASSWORD.
-set -a
-# shellcheck disable=SC1091
-source .env
-set +a
+# Notar que NO sourceamos .env desde bash acá. El core ya lo lee
+# automáticamente via pydantic-settings + python-dotenv cuando se
+# carga `get_settings()`. Sourcear desde bash era frágil porque
+# cualquier comentario con paréntesis, comilla rara o backtick rompe
+# el parser (`line N: X: command not found`). v1.2.1 lo removió.
 
 echo "→ Levantando docker compose…"
 docker compose up -d

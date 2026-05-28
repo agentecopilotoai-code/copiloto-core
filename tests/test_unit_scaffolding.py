@@ -511,6 +511,20 @@ def test_dev_up_script_invokes_bootstrap_and_migrate(tmp_path: Path) -> None:
     assert 'uvicorn mi_saas.main:app' in src
 
 
+def test_dev_up_script_does_not_source_env(tmp_path: Path) -> None:
+    """v1.2.1: el script NO debe hacer `source .env` — eso rompe con
+    cualquier sintaxis bash-incompatible (paréntesis en comentarios,
+    etc.). El CLI ya carga .env via python-dotenv."""
+    result = generate_project(
+        project_name='mi-saas',
+        target_dir=tmp_path / 'p',
+        with_infra=True,
+    )
+    src = (result.target_dir / 'scripts' / 'dev-up.sh').read_text()
+    assert 'source .env' not in src
+    assert 'source ./.env' not in src
+
+
 def test_cli_new_project_with_infra_flag(tmp_path: Path, capsys) -> None:
     from copiloto_core.__main__ import main  # noqa: PLC0415
 
