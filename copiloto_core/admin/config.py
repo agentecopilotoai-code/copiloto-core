@@ -5,10 +5,8 @@ fail-fast al startup cuando `state_secret` no está explícito (BUG-200):
 sin esto, con N workers de uvicorn cada worker generaba un secret efímero
 distinto, rechazando los cookies/state OAuth emitidos por otro worker.
 """
-import os
 from functools import lru_cache
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,16 +41,22 @@ class AdminSettings(BaseSettings):
     # sigue siendo la home post-login.
     post_login_redirect_url: str = '/dashboard'
     post_logout_redirect_url: str = '/'
-    # v1.6.1: MFA enforcement por default ON en prod pero OFF en local.
-    # En local típico el operador NO tiene MFA configurado en Auth0; con
-    # enforcement ON el SPA del admin entra en loop infinito de logout
-    # (`mfa_required=true` → auto-logout → re-login sin MFA → loop).
-    # default_factory mira APP_ENV en el momento de instanciar Settings.
-    # Para forzar enforcement en local (e.g. probando MFA flow real),
-    # setear MFA_ENFORCEMENT_ENABLED=true en .env — gana sobre el default.
-    mfa_enforcement_enabled: bool = Field(
-        default_factory=lambda: os.environ.get('APP_ENV', 'local') != 'local',
-    )
+    # MFA enforcement default ON SIEMPRE (secure-by-default).
+    #
+    # Historia: v1.6.1 había puesto default OFF en local para evitar un
+    # loop infinito del SPA cuando MFA Policy de Auth0 estaba desactivada.
+    # v1.6.3 revierte eso por anti-pattern: "fail-open silencioso" oculta
+    # al operador que MFA NO está activa cuando él cree que sí.
+    #
+    # Si tu loop es el infinito de auto-logout en dev local:
+    #   1. RECOMENDADO: activá MFA Policy en Auth0 (Dashboard →
+    #      Security → Multi-Factor Auth → Always require). Una sola vez.
+    #   2. Si querés skip MFA para iterar rápido en dev, agregá a tu
+    #      `.env` explícito (que vos lees y entendés que es solo dev):
+    #        MFA_ENFORCEMENT_ENABLED=false
+    #
+    # Ver docs/AUTH0.md § "Activar MFA Policy" para los pasos.
+    mfa_enforcement_enabled: bool = True
     # P0-3 (audit 2026-05-27) — Redis URL para session store cross-worker.
     # Si None, el BFF usa InMemorySessionStore (single-worker only). En
     # docker-compose ya viene `redis://redis:6379/0`; en prod multi-worker

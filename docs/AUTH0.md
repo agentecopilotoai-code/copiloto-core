@@ -158,6 +158,44 @@ grep -E "MGMT_CLIENT" .env .env.auth0.local 2>/dev/null
 
 ---
 
+## Activar MFA Policy en Auth0 (requerido para el admin SPA)
+
+El core ENFORCE MFA por default (`MFA_ENFORCEMENT_ENABLED=true`).
+`configure-auth0` instala los **factores** MFA en tu tenant (TOTP,
+WebAuthn) pero **NO activa la Policy** que obliga a los users a
+enrollarlos — eso queda como step manual.
+
+**Si saltás este step**, te encontrás con un loop infinito en el
+admin SPA: el core marca tu sesión como `mfa_required=true`, el SPA
+hace auto-logout esperando que Auth0 pida MFA, Auth0 te loguea sin
+MFA otra vez, loop.
+
+### Pasos (una sola vez por tenant)
+
+1. https://manage.auth0.com → **Security** (sidebar) → **Multi-Factor Auth**.
+2. Sección **"Factors"**: confirmá que al menos un factor está ON
+   (OTP, WebAuthn).
+3. Sección **"Define policies"**: cambiá a **Always require** o
+   **Use Adaptive MFA**.
+4. **Save**.
+
+A partir del próximo login, Auth0 va a pedir MFA enrollment en la
+primera entrada y MFA challenge en las siguientes.
+
+### Si querés bypass para iterar en dev local
+
+Setealo EXPLÍCITO en tu `.env` (no hay default mágico — vos lo decidís):
+
+```
+MFA_ENFORCEMENT_ENABLED=false
+```
+
+⚠ **Solo dev local**. NUNCA en producción — desactiva una capa
+crítica de seguridad para platform_owners y users con roles
+privilegiados.
+
+---
+
 ## Modo dev local SIN Auth0
 
 Para iterar sin tener Auth0 configurado (el caso típico durante
