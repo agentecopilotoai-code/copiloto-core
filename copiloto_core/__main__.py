@@ -65,13 +65,14 @@ def _cmd_new_project(args: argparse.Namespace) -> int:
             project_name=args.name,
             target_dir=target_dir,
             module_name=args.module_name,
+            git_protocol=args.git_protocol,
         )
     except ScaffoldingError as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
 
     print(f'✓ Proyecto {result.project_name!r} creado en {result.target_dir}')
-    print(f'  copiloto-core pinneado a v{result.core_version}')
+    print(f'  copiloto-core pinneado a v{result.core_version} ({result.git_protocol})')
     print(f'  package del deployment: {result.project_package}/')
     print(f'  módulo demo: {result.module_package}/')
     print(f'  archivos: {len(result.files_written)}')
@@ -178,6 +179,17 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             'Nombre snake_case del módulo demo. '
             'Default: <project_package>_modulo.'
+        ),
+    )
+    sub_new.add_argument(
+        '--git-protocol',
+        choices=('https', 'ssh'),
+        default='https',
+        help=(
+            'Protocolo del pin de copiloto-core en pyproject.toml. '
+            'Default: https (funciona con `gh auth setup-git` sin '
+            'requerir SSH key). Usá ssh si tu SSH key tiene acceso '
+            'directo al repo del core.'
         ),
     )
     sub_new.set_defaults(func=_cmd_new_project)

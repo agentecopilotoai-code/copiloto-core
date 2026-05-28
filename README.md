@@ -48,7 +48,8 @@ este repo: instalá `copiloto-core` como librería en un proyecto nuevo.
 # 1. Venv con el core
 mkdir mis-proyectos && cd mis-proyectos
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install "copiloto-core @ git+ssh://git@github.com/agentecopilotoai-code/copiloto-core.git@v1.1.0"
+gh auth setup-git  # una sola vez por máquina
+pip install "copiloto-core @ git+https://github.com/agentecopilotoai-code/copiloto-core.git@v1.1.1"
 
 # 2. Generar el esqueleto del proyecto
 python -m copiloto_core new-project mi-saas

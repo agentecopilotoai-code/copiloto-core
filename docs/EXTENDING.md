@@ -17,7 +17,8 @@ paso. Si arrancás desde cero, **usá esto en vez de pegar los snippets
 manualmente** de esta guía:
 
 ```bash
-pip install "copiloto-core @ git+ssh://git@github.com/agentecopilotoai-code/copiloto-core.git@v1.1.0"
+gh auth setup-git  # una sola vez por máquina
+pip install "copiloto-core @ git+https://github.com/agentecopilotoai-code/copiloto-core.git@v1.1.1"
 python -m copiloto_core new-project mi-saas
 cd mi-saas
 pip install -e ".[dev]"

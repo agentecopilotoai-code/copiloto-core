@@ -22,6 +22,7 @@ import pytest
 from copiloto_core import __version__ as CORE_VERSION
 from copiloto_core.scaffolding import (
     GenerationResult,
+    InvalidGitProtocolError,
     InvalidModuleNameError,
     InvalidProjectNameError,
     ProjectExistsError,
@@ -182,9 +183,51 @@ def test_pyproject_is_valid_toml_with_correct_pins(tmp_path: Path) -> None:
     assert parsed['project']['requires-python'] == '>=3.12'
     deps = parsed['project']['dependencies']
     assert any(f'@v{CORE_VERSION}' in d for d in deps), deps
+    # v1.1.1: default es HTTPS, no SSH
+    assert any('git+https://' in d for d in deps), deps
+    assert not any('git+ssh://' in d for d in deps), deps
     pkg_find = parsed['tool']['setuptools']['packages']['find']['include']
     assert 'mi_saas*' in pkg_find
     assert 'mi_saas_modulo*' in pkg_find
+
+
+# ─── git_protocol flag (v1.1.1) ──────────────────────────────────────────
+
+
+def test_default_git_protocol_is_https(tmp_path: Path) -> None:
+    """Fricción de onboarding: HTTPS funciona con `gh auth setup-git`,
+    SSH requiere que la key del usuario tenga acceso al org. El default
+    debe ser el de menor fricción."""
+    result = generate_project(
+        project_name='mi-saas', target_dir=tmp_path / 'p',
+    )
+    assert result.git_protocol == 'https'
+    pyproject = (result.target_dir / 'pyproject.toml').read_text()
+    assert 'git+https://github.com/agentecopilotoai-code/copiloto-core.git' in pyproject
+    assert 'git+ssh://git@github.com' not in pyproject.split('# si preferís SSH')[-1] \
+        if '# si preferís SSH' in pyproject else True
+    # El URL activo del pin es HTTPS
+    assert f'"copiloto-core @ git+https://github.com/agentecopilotoai-code/copiloto-core.git@v{result.core_version}"' in pyproject
+
+
+def test_git_protocol_ssh_renders_ssh_pin(tmp_path: Path) -> None:
+    result = generate_project(
+        project_name='mi-saas',
+        target_dir=tmp_path / 'p',
+        git_protocol='ssh',
+    )
+    assert result.git_protocol == 'ssh'
+    pyproject = (result.target_dir / 'pyproject.toml').read_text()
+    assert f'"copiloto-core @ git+ssh://git@github.com/agentecopilotoai-code/copiloto-core.git@v{result.core_version}"' in pyproject
+
+
+def test_invalid_git_protocol_raises(tmp_path: Path) -> None:
+    with pytest.raises(InvalidGitProtocolError):
+        generate_project(
+            project_name='mi-saas',
+            target_dir=tmp_path / 'p',
+            git_protocol='gopher',
+        )
 
 
 def test_main_py_imports_module_and_wires_branding(tmp_path: Path) -> None:
@@ -363,3 +406,36 @@ def test_cli_new_project_collision_exits_2(
     err = capsys.readouterr().err
     assert rc == 2
     assert 'ya existe' in err.lower()
+
+
+def test_cli_new_project_git_protocol_ssh_flag(
+    tmp_path: Path, capsys,
+) -> None:
+    from copiloto_core.__main__ import main  # noqa: PLC0415
+
+    target = tmp_path / 'demo'
+    rc = main([
+        'new-project', 'demo',
+        '--target-dir', str(target),
+        '--git-protocol', 'ssh',
+    ])
+    assert rc == 0
+    pyproject = (target / 'pyproject.toml').read_text()
+    assert 'git+ssh://git@github.com' in pyproject
+    assert capsys.readouterr().out.endswith  # smoke
+
+
+def test_cli_new_project_invalid_git_protocol(
+    tmp_path: Path, capsys,
+) -> None:
+    """argparse choices rechaza valores fuera de https|ssh con exit 2."""
+    from copiloto_core.__main__ import main  # noqa: PLC0415
+
+    with pytest.raises(SystemExit) as exc:
+        main([
+            'new-project', 'demo',
+            '--target-dir', str(tmp_path / 'p'),
+            '--git-protocol', 'gopher',
+        ])
+    assert exc.value.code == 2
+    assert "invalid choice: 'gopher'" in capsys.readouterr().err

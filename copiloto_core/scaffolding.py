@@ -48,6 +48,14 @@ _PROJECT_NAME_RE = re.compile(r'^[a-z][a-z0-9-]{1,47}$')
 # ver `copiloto_core.extension._CODE_RE`.
 _MODULE_NAME_RE = re.compile(r'^[a-z][a-z0-9_]{1,31}$')
 
+# Org de GitHub donde vive el core. Centralizado para que el día
+# que migre (fork, espejo, etc.) sea un solo punto de cambio.
+_CORE_GIT_ORG = 'agentecopilotoai-code'
+_CORE_GIT_REPO = 'copiloto-core'
+
+# Protocolos soportados en el pin del pyproject generado.
+_GIT_PROTOCOLS = ('https', 'ssh')
+
 
 class ScaffoldingError(Exception):
     """Base para errores del generador."""
@@ -59,6 +67,10 @@ class InvalidProjectNameError(ScaffoldingError):
 
 class InvalidModuleNameError(ScaffoldingError):
     """El nombre del módulo no matchea `_MODULE_NAME_RE`."""
+
+
+class InvalidGitProtocolError(ScaffoldingError):
+    """`git_protocol` no es uno de `_GIT_PROTOCOLS`."""
 
 
 class ProjectExistsError(ScaffoldingError):
@@ -76,6 +88,27 @@ class GenerationResult:
     target_dir: Path           # absoluto, raíz del proyecto creado
     files_written: tuple[str, ...]   # paths relativos a target_dir
     core_version: str          # versión pinneada en el pyproject generado
+    git_protocol: str          # 'https' o 'ssh' — protocolo del pin
+
+
+def _core_pin_url(git_protocol: str, version: str) -> str:
+    """Construye el URL del pin de `copiloto-core` en `pyproject.toml`.
+
+    - `https`: `git+https://github.com/<org>/<repo>.git@v<ver>` —
+      funciona con `gh auth setup-git` sin requerir SSH key del usuario.
+    - `ssh`: `git+ssh://git@github.com/<org>/<repo>.git@v<ver>` —
+      requiere que la SSH key registrada en GitHub pertenezca a una
+      cuenta con acceso al repo.
+    """
+    if git_protocol == 'https':
+        return (
+            f'git+https://github.com/{_CORE_GIT_ORG}/{_CORE_GIT_REPO}.git'
+            f'@v{version}'
+        )
+    return (
+        f'git+ssh://git@github.com/{_CORE_GIT_ORG}/{_CORE_GIT_REPO}.git'
+        f'@v{version}'
+    )
 
 
 def _to_snake_case(slug: str) -> str:
@@ -136,7 +169,13 @@ requires-python = ">=3.12"
 dependencies = [
   # Pin al core. Cuando salga `copiloto-core 2.0` querrás revisar la
   # guía de migración antes de mover este pin.
-  "copiloto-core @ git+ssh://git@github.com/agentecopilotoai-code/copiloto-core.git@v{core_version}",
+  #
+  # Default es HTTPS porque funciona con `gh auth setup-git` sin
+  # requerir que tu llave SSH personal tenga acceso al org. Si
+  # preferís SSH, regenerá con --git-protocol=ssh o reemplazá la
+  # línea a mano por:
+  #   "copiloto-core @ git+ssh://git@github.com/agentecopilotoai-code/copiloto-core.git@v{core_version}",
+  "copiloto-core @ {core_pin_url}",
 ]
 
 [project.optional-dependencies]
@@ -474,6 +513,7 @@ def generate_project(
     target_dir: Path | str | None = None,
     module_name: str | None = None,
     core_version: str | None = None,
+    git_protocol: str = 'https',
 ) -> GenerationResult:
     """Genera el árbol de archivos de un nuevo proyecto consumer.
 
@@ -488,12 +528,20 @@ def generate_project(
       core_version: versión del core a pinnear en `pyproject.toml`.
         Default: la versión actual de `copiloto_core.__version__`. Útil
         para tests + para fijar releases experimentales.
+      git_protocol: protocolo del pin generado en `pyproject.toml`.
+        - `'https'` (DEFAULT, v1.1.1+): pin via HTTPS. Funciona con
+          `gh auth setup-git` sin necesidad de SSH key configurada
+          en GitHub. Recomendado para onboarding.
+        - `'ssh'`: pin via `git+ssh://`. Requiere que la SSH key del
+          usuario esté registrada en una cuenta con acceso al repo.
+          Comportamiento pre-v1.1.1.
 
     Returns:
       `GenerationResult` con todo lo escrito + paths resueltos.
 
     Raises:
-      InvalidProjectNameError, InvalidModuleNameError, ProjectExistsError.
+      InvalidProjectNameError, InvalidModuleNameError,
+      InvalidGitProtocolError, ProjectExistsError.
     """
     _validate_project_name(project_name)
     project_package = _to_snake_case(project_name)
@@ -511,6 +559,12 @@ def generate_project(
             f'--module-name=<otro>.',
         )
 
+    if git_protocol not in _GIT_PROTOCOLS:
+        raise InvalidGitProtocolError(
+            f'git_protocol inválido: {git_protocol!r}. Debe ser uno de '
+            f'{_GIT_PROTOCOLS}.',
+        )
+
     if core_version is None:
         core_version = _CORE_VERSION
 
@@ -525,6 +579,7 @@ def generate_project(
         'module_package': module_name,
         'module_package_dashed': module_name.replace('_', '-'),
         'core_version': core_version,
+        'core_pin_url': _core_pin_url(git_protocol, core_version),
     }
 
     files = _render_files(ctx)
@@ -541,11 +596,13 @@ def generate_project(
         target_dir=resolved_target,
         files_written=tuple(sorted(files.keys())),
         core_version=core_version,
+        git_protocol=git_protocol,
     )
 
 
 __all__ = [
     'GenerationResult',
+    'InvalidGitProtocolError',
     'InvalidModuleNameError',
     'InvalidProjectNameError',
     'ProjectExistsError',
