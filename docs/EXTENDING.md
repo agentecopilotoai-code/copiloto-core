@@ -13,19 +13,24 @@ sin reescribir auth, MFA, RLS, RBAC, audit, backups u observabilidad.
 
 El core trae un comando para crear un proyecto completo (pyproject,
 package del deployment, módulo demo, migration RLS-ready) en un solo
-paso. Si arrancás desde cero, **usá esto en vez de pegar los snippets
-manualmente** de esta guía:
+paso. Si arrancás desde cero, **NO copies-pegues los snippets de
+esta guía manualmente** — usá el scaffolder:
 
 ```bash
 gh auth setup-git  # una sola vez por máquina
-pip install "copiloto-core @ git+https://github.com/agentecopilotoai-code/copiloto-core.git@v1.1.1"
-python -m copiloto_core new-project mi-saas
+python3 -m venv .venv && source .venv/bin/activate
+pip install "copiloto-core @ git+https://github.com/agentecopilotoai-code/copiloto-core.git@v1.4.0"
+python -m copiloto_core new-project mi-saas --with-infra
 cd mi-saas
 pip install -e ".[dev]"
-cp .env.example .env  # editar
-python -m copiloto_core migrate --module=mi_saas_modulo
-uvicorn mi_saas.main:app --reload
+python -m copiloto_core generate-secrets
+./scripts/dev-up.sh
 ```
+
+Para la guía completa desde cero (con pre-checks, troubleshooting,
+y explicación paso a paso), ver **[QUICKSTART.md](QUICKSTART.md)**.
+Para el catálogo de subcomandos CLI, ver **[CLI.md](CLI.md)**. Para
+Auth0, ver **[AUTH0.md](AUTH0.md)**.
 
 El resto de esta guía describe cómo el código generado funciona,
 cómo extenderlo y qué te da el core.

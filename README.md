@@ -44,38 +44,30 @@ autores de módulos.
 A partir de `v1.1.0` el core trae su propio scaffolder. **No** clones
 este repo: instalá `copiloto-core` como librería en un proyecto nuevo.
 
-```bash
-# 1. Venv con el core
-mkdir mis-proyectos && cd mis-proyectos
-python3.12 -m venv .venv && source .venv/bin/activate
-gh auth setup-git  # una sola vez por máquina
-pip install "copiloto-core @ git+https://github.com/agentecopilotoai-code/copiloto-core.git@v1.1.1"
+**TL;DR** (cero → SaaS corriendo en 5 minutos):
 
-# 2. Generar el esqueleto del proyecto
-python -m copiloto_core new-project mi-saas
+```bash
+gh auth setup-git
+python3 -m venv .venv && source .venv/bin/activate
+pip install "copiloto-core @ git+https://github.com/agentecopilotoai-code/copiloto-core.git@v1.4.0"
+python -m copiloto_core new-project mi-saas --with-infra
 cd mi-saas
 pip install -e ".[dev]"
-
-# 3. Postgres + Redis + MinIO locales + .env
-docker run -d --name pg-mi-saas -p 5432:5432 -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=mi_saas pgvector/pgvector:pg16
-cp .env.example .env  # editar con tus valores reales
-
-# 4. Migrations + levantar
-python -m copiloto_core migrate --module=mi_saas_modulo
-uvicorn mi_saas.main:app --reload
-
-# 5. Smoke test
-curl http://localhost:8000/v1/branding
-curl http://localhost:8000/v1/mi-saas-modulo/health
+python -m copiloto_core generate-secrets
+./scripts/dev-up.sh
 ```
 
-Te queda un proyecto con `pyproject.toml` pinneado al core,
-`main.py` con `create_app(modules=[...], branding=...)`, un módulo
-demo (`mi_saas_modulo/`) y una migration SQL RLS-ready. Acá empezás
-a construir tu vertical.
+Cuando ves `Uvicorn running on http://0.0.0.0:8000`, ya está corriendo.
+Probá: `curl http://localhost:8000/v1/branding`.
 
-Detalle del contrato de módulos: [docs/EXTENDING.md](docs/EXTENDING.md).
+**Guías completas**:
+- **[docs/QUICKSTART.md](docs/QUICKSTART.md)** — desde cero, con
+  pre-checks, troubleshooting y explicación de cada paso.
+- **[docs/CLI.md](docs/CLI.md)** — catálogo de los 12 subcomandos del CLI.
+- **[docs/AUTH0.md](docs/AUTH0.md)** — modelo de 3 capas de
+  credenciales + configuración con `auth0-configure`.
+- **[docs/EXTENDING.md](docs/EXTENDING.md)** — contrato de módulos
+  para construir tu vertical.
 
 ### Opción B — Hackear el core mismo
 
@@ -273,9 +265,12 @@ pytest --cov=app --cov-report=html && open htmlcov/index.html
 | Doc | Propósito |
 |-----|-----------|
 | [README.md](README.md) | Visión rápida + quick start (este archivo) |
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | **Onboarding desde cero**: 6 pasos copy-paste hasta SaaS corriendo + troubleshooting |
+| [docs/CLI.md](docs/CLI.md) | **Referencia CLI**: catálogo de los 12 subcomandos con ejemplos + exit codes |
+| [docs/AUTH0.md](docs/AUTH0.md) | **Auth0**: modelo de 3 capas de credenciales + configuración + rotación |
+| [docs/EXTENDING.md](docs/EXTENDING.md) | **Guía para autores de módulos** — cómo construir tu SaaS sobre el core |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Arquitectura completa con diagramas + terceros + RLS + IA + observabilidad |
 | [INSTALL.md](INSTALL.md) | Instalación paso a paso desde cero (Auth0 + Resend + Postgres + dev/prod) |
-| [docs/EXTENDING.md](docs/EXTENDING.md) | **Guía para autores de módulos** — cómo construir tu SaaS sobre el core |
 | [docs/runbooks/](docs/runbooks/) | Guías operativas para incidentes |
 | [infra/observability/grafana/dashboards/README.md](infra/observability/grafana/dashboards/README.md) | Importar dashboards a Grafana |
 
