@@ -203,6 +203,11 @@ def test_security_headers_constant():
     assert 'max-age=31536000' in _SECURITY_HEADERS['Strict-Transport-Security']
 
 
+def _fake_request(path: str = '/some-endpoint') -> SimpleNamespace:
+    """Helper: fake request con .url.path mínimo para el middleware."""
+    return SimpleNamespace(url=SimpleNamespace(path=path))
+
+
 def test_security_headers_middleware_attaches_headers():
     """Llama el middleware directamente con un fake call_next que devuelve
     un Response, y verifica que los headers se agregan."""
@@ -213,8 +218,7 @@ def test_security_headers_middleware_attaches_headers():
     async def fake_call_next(req):
         return Response(content='ok')
 
-    req = SimpleNamespace()
-    resp = asyncio.run(_security_headers_middleware(req, fake_call_next))
+    resp = asyncio.run(_security_headers_middleware(_fake_request(), fake_call_next))
     assert resp.headers['X-Frame-Options'] == 'DENY'
     assert 'Content-Security-Policy' in resp.headers
 
@@ -230,8 +234,58 @@ def test_security_headers_middleware_no_overwrite():
         r.headers['X-Frame-Options'] = 'SAMEORIGIN'
         return r
 
-    resp = asyncio.run(_security_headers_middleware(SimpleNamespace(), fake_call_next))
+    resp = asyncio.run(_security_headers_middleware(_fake_request(), fake_call_next))
     assert resp.headers['X-Frame-Options'] == 'SAMEORIGIN'
+
+
+# ─── v1.5.2: CSP relajado para /docs ────────────────────────────────────
+
+
+def test_docs_paths_get_relaxed_csp_allowing_jsdelivr():
+    """v1.5.2: /docs, /redoc, /openapi.json deben recibir un CSP que
+    permita https://cdn.jsdelivr.net (donde Swagger UI carga los assets)
+    y 'unsafe-inline' (para el script de bootstrap)."""
+    from fastapi import Response
+
+    from copiloto_core.main import _security_headers_middleware
+
+    async def fake_call_next(req):
+        return Response(content='ok')
+
+    for docs_path in ('/docs', '/redoc', '/openapi.json', '/docs/oauth2-redirect'):
+        resp = asyncio.run(_security_headers_middleware(
+            _fake_request(docs_path), fake_call_next,
+        ))
+        csp = resp.headers.get('Content-Security-Policy', '')
+        assert 'cdn.jsdelivr.net' in csp, (
+            f'{docs_path}: CSP no permite jsdelivr → Swagger UI rompe. CSP={csp!r}'
+        )
+        assert "'unsafe-inline'" in csp, (
+            f'{docs_path}: CSP no permite unsafe-inline → bootstrap rompe. CSP={csp!r}'
+        )
+
+
+def test_non_docs_paths_get_strict_csp_no_jsdelivr():
+    """Paths que NO son docs deben mantener el CSP estricto."""
+    from fastapi import Response
+
+    from copiloto_core.main import _security_headers_middleware
+
+    async def fake_call_next(req):
+        return Response(content='ok')
+
+    for non_docs in ('/', '/v1/branding', '/dashboard', '/admin/login'):
+        resp = asyncio.run(_security_headers_middleware(
+            _fake_request(non_docs), fake_call_next,
+        ))
+        csp = resp.headers.get('Content-Security-Policy', '')
+        assert 'cdn.jsdelivr.net' not in csp, (
+            f'{non_docs}: CSP NO debe permitir jsdelivr fuera de /docs. CSP={csp!r}'
+        )
+        # script-src debe ser 'self' SOLO (no unsafe-inline)
+        assert "script-src 'self';" in csp, (
+            f'{non_docs}: script-src demasiado permisivo. CSP={csp!r}'
+        )
 
 
 def test_lifespan_connects_and_closes(monkeypatch):
