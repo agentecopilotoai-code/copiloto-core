@@ -162,8 +162,19 @@ async def _grant_app_role_permissions(
 
     RLS sigue aplicando — estos grants no bypassean policies.
     """
+    # v1.3.4 fix: `grant connect on database current_database()` da
+    # PostgresSyntaxError porque postgres no permite expresiones
+    # function-call ahí — solo un nombre identifier. Usamos DO block
+    # con `execute format(...)` para resolver el nombre en runtime.
+    #
+    # Las demás GRANTs van como statements separados (no necesitan
+    # interpolar nombre de DB).
     grants = f"""
-    grant connect on database current_database() to {app_user};
+    do $$
+    begin
+      execute format('grant connect on database %I to %I',
+                     current_database(), '{app_user}');
+    end$$;
     grant usage on schema app to {app_user};
     grant select, insert, update, delete on all tables in schema app to {app_user};
     grant usage, select on all sequences in schema app to {app_user};

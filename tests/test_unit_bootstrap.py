@@ -292,6 +292,41 @@ def test_create_app_user_runs_before_platform_sqls():
     )
 
 
+def test_grants_use_do_block_for_current_database():
+    """v1.3.4 regression: `grant connect on database current_database()` da
+    PostgresSyntaxError. Debe usarse DO block + execute format()."""
+    # Verificamos directamente el módulo, no via FakeConn — porque
+    # _grant_app_role_permissions arma el SQL en una sola string que
+    # podemos inspeccionar capturando con monkey-patch.
+    import asyncio  # noqa: PLC0415
+
+    from copiloto_core.bootstrap import _grant_app_role_permissions  # noqa: PLC0415
+
+    captured: list[str] = []
+
+    class CaptureConn:
+        async def execute(self, sql, *args):
+            captured.append(sql)
+            return 'OK'
+
+    asyncio.run(_grant_app_role_permissions(CaptureConn(), 'copiloto_app'))
+
+    assert captured, 'no se capturó el SQL de grants'
+    grants_sql = '\n'.join(captured).lower()
+
+    # NO debe haber `grant connect on database current_database()` raw.
+    bad_pattern = 'grant connect on database current_database()'
+    assert bad_pattern not in grants_sql, (
+        f'GRANT raw con current_database() rompe en postgres. '
+        f'Debe usar DO block con execute format().'
+    )
+    # SÍ debe estar el DO block con format()
+    assert 'do $$' in grants_sql, \
+        'esperaba DO block para resolver current_database() en runtime'
+    assert "execute format('grant connect" in grants_sql, \
+        'esperaba `execute format(...)` adentro del DO'
+
+
 def test_grants_applied_after_sqls():
     """Los GRANTs sobre `app.*` deben aplicarse DESPUÉS de los SQLs (que
     crean el schema). Sino postgres aborta con `schema "app" does not exist`."""
