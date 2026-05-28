@@ -1239,12 +1239,23 @@ async def admin_callback(
         # entra al panel igual (ya tiene membership desde
         # `add_tenant_member`); el redeem es solo audit + UX.
 
-    # v1.5.4: target configurable via settings.post_login_redirect_url
-    # (default '/dashboard' para consumer flow, configurable a '/admin/'
-    # para core repo via env var POST_LOGIN_REDIRECT_URL).
-    # getattr con default cubre el caso de stubs de tests que no setean
-    # el attr nuevo.
-    post_login_target = getattr(settings, 'post_login_redirect_url', '/dashboard')
+    # v1.6.2: smart routing post-login.
+    #   - Si el user es platform_owner (claim del token Auth0 o seeded en
+    #     el core como rol global) → redirect a /admin/ (panel del core).
+    #   - Sino → redirect a settings.post_login_redirect_url (default
+    #     /dashboard del consumer).
+    #
+    # El operador puede override TODO con env var POST_LOGIN_REDIRECT_URL —
+    # eso fuerza un target fijo, ignorando el smart routing. Útil para
+    # SaaS que NUNCA muestra el admin del core a sus users (ni a sus
+    # platform_owners — un solo dashboard para todos).
+    explicit_target = os.environ.get('POST_LOGIN_REDIRECT_URL')
+    if explicit_target:
+        post_login_target = explicit_target
+    elif 'platform_owner' in (profile_roles or []):
+        post_login_target = '/admin/'
+    else:
+        post_login_target = getattr(settings, 'post_login_redirect_url', '/dashboard')
     response = RedirectResponse(post_login_target)
     response.delete_cookie(STATE_COOKIE)
     if pending_token:

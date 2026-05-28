@@ -239,22 +239,13 @@ def create_app(
     api.include_router(admin_router)
     # admin_spa_router solo si admin_panel=True — sirve el SPA HTML/JS
     # del admin. El consumer típicamente NO lo monta (default False).
+    #
+    # v1.6.2: el smart routing post-login (platform_owner → /admin/, otros
+    # → /dashboard) vive en el callback handler. Ya NO necesitamos mutar
+    # settings.post_login_redirect_url cuando admin_panel=True — el
+    # callback decide dinámicamente según los roles del user.
     if admin_panel:
         api.include_router(admin_spa_router)
-        # v1.6.1: cuando admin_panel=True, redirigir post-login/logout
-        # a /admin/ por DEFAULT. El consumer puede override via env vars
-        # POST_LOGIN_REDIRECT_URL / POST_LOGOUT_REDIRECT_URL si quiere
-        # otra ruta (ej. landing post-logout). Evita que el operador
-        # tenga que setear esas vars manualmente cada vez que activa
-        # el admin SPA.
-        from copiloto_core.admin.config import get_admin_settings  # noqa: PLC0415
-        admin_settings = get_admin_settings()
-        if 'POST_LOGIN_REDIRECT_URL' not in os.environ:
-            # Mutate the cached settings instance (singleton via lru_cache).
-            # Solo si el operador NO seteó la env var explícita.
-            admin_settings.post_login_redirect_url = '/admin/'
-        if 'POST_LOGOUT_REDIRECT_URL' not in os.environ:
-            admin_settings.post_logout_redirect_url = '/admin/'
     api.include_router(v1_router)
 
     # ─── Montaje de módulos opt-in (Fase 5 audit#5) ──────────────────────
