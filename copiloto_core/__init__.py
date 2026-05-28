@@ -73,6 +73,11 @@ from copiloto_core.main import create_app
 
 # ─── Auth (Depends para handlers) ────────────────────────────────────────
 
+from copiloto_core.auth.gating import (
+    invalidate_gate_caches,
+    require_capability,
+    require_module,
+)
 from copiloto_core.core.security import (
     authenticate_request,
     require_platform_owner,
@@ -139,6 +144,10 @@ __all__ = [
     'require_mfa_for_privileged',
     'require_tenant_management',
     'require_min_role',
+    # gating (módulos + capabilities por tenant/actor)
+    'require_module',
+    'require_capability',
+    'invalidate_gate_caches',
     # identity
     'current_user_id_from_request',
     # db (db singleton se importa de copiloto_core.db.pool — ver nota arriba)
