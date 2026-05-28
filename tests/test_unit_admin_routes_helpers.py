@@ -259,19 +259,39 @@ def test_logout_return_to_falls_back_to_url_for_when_empty(monkeypatch):
 # ───────── _callback_url ─────────────────────────────────────────────────
 
 
-def test_callback_url_prefers_localhost_3000(monkeypatch):
+def test_callback_url_matches_request_host_v153(monkeypatch):
+    """v1.5.3: prefer URL que matchee el host del request (sino el primero)."""
     _stub_admin_settings(
         monkeypatch,
-        auth0_callback_urls='https://prod.example.com/callback,http://localhost:3000/callback',
+        auth0_callback_urls='https://prod.example.com/callback,http://localhost:8000/admin/callback',
     )
     from copiloto_core.admin.routes import _callback_url
-    request = SimpleNamespace(url_for=lambda name: 'https://fallback/')
-    # First url that matches: localhost:3000 OR https://
-    out = _callback_url(request)
-    assert out in (
-        'https://prod.example.com/callback',
-        'http://localhost:3000/callback',
+    # Request al host localhost:8000 → debe elegir localhost:8000/admin/callback
+    request = SimpleNamespace(
+        url=SimpleNamespace(netloc='localhost:8000'),
+        url_for=lambda name: 'https://fallback/',
     )
+    out = _callback_url(request)
+    assert out == 'http://localhost:8000/admin/callback', (
+        f'esperaba match al host, vi: {out!r}'
+    )
+
+
+def test_callback_url_falls_back_to_first_when_no_host_match(monkeypatch):
+    """Si el host del request NO matchea ningún callback configurado,
+    devolver el primero. (Acto seguido Auth0 va a rechazar con
+    'callback mismatch' — el operador debe agregar el host a Auth0.)"""
+    _stub_admin_settings(
+        monkeypatch,
+        auth0_callback_urls='https://prod.example.com/callback,http://localhost:8000/admin/callback',
+    )
+    from copiloto_core.admin.routes import _callback_url
+    request = SimpleNamespace(
+        url=SimpleNamespace(netloc='unknown-host:9999'),
+        url_for=lambda name: 'https://fallback/',
+    )
+    out = _callback_url(request)
+    assert out == 'https://prod.example.com/callback'
 
 
 def test_callback_url_falls_back_to_url_for(monkeypatch):

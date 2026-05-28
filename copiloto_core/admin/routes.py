@@ -174,11 +174,37 @@ def _admin_client_secret() -> str:
 
 
 def _callback_url(request: Request) -> str:
+    """Elige el callback URL para enviar a Auth0 en el parámetro
+    `redirect_uri` del flujo OAuth.
+
+    El URL devuelto DEBE matchear EXACTAMENTE alguno de los Allowed
+    Callback URLs registrados en Auth0; sino Auth0 rechaza el callback
+    con "Callback URL mismatch".
+
+    Estrategia (v1.5.3):
+      1. Si hay `auth0_callback_urls` configurados:
+         a. Buscar uno que matchee el host del request actual (para
+            que el browser haga el callback al mismo origen y no
+            cruce dominios).
+         b. Si ninguno matchea, devolver el primero (mejor que un
+            fallback derivado que probablemente NO esté en Auth0).
+      2. Sin config, derivar del request — solo útil en dev local
+         sin Auth0 real.
+    """
     settings = get_admin_settings()
     urls = [url.strip() for url in settings.auth0_callback_urls.split(',') if url.strip()]
-    for url in urls:
-        if url.startswith('http://localhost:3000/') or url.startswith('https://'):
-            return url
+    if urls:
+        request_host = request.url.netloc  # ej. 'localhost:8000'
+        for url in urls:
+            # Match por host (substring match es suficiente: las URLs
+            # de Auth0 son completas con scheme+host+path).
+            if request_host in url:
+                return url
+        # Sin match por host — devolvemos el primero configurado.
+        # Si esto rompe con Auth0 "callback mismatch", el operador
+        # debe agregar el host del request a Allowed Callback URLs.
+        return urls[0]
+    # Sin auth0_callback_urls — derivar del request (modo dev sin Auth0).
     return str(request.url_for('admin_auth0_callback'))
 
 
