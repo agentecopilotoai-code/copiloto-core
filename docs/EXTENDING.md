@@ -9,6 +9,26 @@ sin reescribir auth, MFA, RLS, RBAC, audit, backups u observabilidad.
 > `create_app(modules=[tu_modulo])`. Todo lo demás (seguridad, DB,
 > dispatch IA, observabilidad) lo hereda del core.
 
+## Atajo: scaffolder (desde `v1.1.0`)
+
+El core trae un comando para crear un proyecto completo (pyproject,
+package del deployment, módulo demo, migration RLS-ready) en un solo
+paso. Si arrancás desde cero, **usá esto en vez de pegar los snippets
+manualmente** de esta guía:
+
+```bash
+pip install "copiloto-core @ git+ssh://git@github.com/agentecopilotoai-code/copiloto-core.git@v1.1.0"
+python -m copiloto_core new-project mi-saas
+cd mi-saas
+pip install -e ".[dev]"
+cp .env.example .env  # editar
+python -m copiloto_core migrate --module=mi_saas_modulo
+uvicorn mi_saas.main:app --reload
+```
+
+El resto de esta guía describe cómo el código generado funciona,
+cómo extenderlo y qué te da el core.
+
 ---
 
 ## Tabla de contenidos
