@@ -227,3 +227,58 @@ def test_scaffolder_env_example_has_postgres_password() -> None:
     )
     assert 'POSTGRES_PASSWORD=CHANGE_ME' in template
     assert 'S3_SECRET_ACCESS_KEY=CHANGE_ME' in template
+
+
+def test_scaffolder_env_example_has_service_token() -> None:
+    """v1.3.5 regression: Settings requires service_token (Field
+    min_length=16). Sin SERVICE_TOKEN en .env.example, generate-secrets
+    no lo genera, y migrate falla con ValidationError."""
+    from copiloto_core.scaffolding import _ENV_EXAMPLE  # noqa: PLC0415
+
+    template = _ENV_EXAMPLE.format(
+        project_name='demo', project_package='demo',
+    )
+    assert 'SERVICE_TOKEN=CHANGE_ME' in template
+
+
+def test_generated_env_satisfies_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """v1.3.5: end-to-end. Generar un proyecto, correr generate-secrets,
+    y verificar que el .env resultante pasa la validación de Settings().
+
+    Esto cubre cualquier futuro field requerido en Settings que se nos
+    olvide agregar al .env.example template."""
+    from copiloto_core.scaffolding import generate_project  # noqa: PLC0415
+
+    # 1. Generar proyecto consumer
+    project_dir = tmp_path / 'demo'
+    generate_project(
+        project_name='demo',
+        target_dir=project_dir,
+        with_infra=True,
+    )
+
+    # 2. Generar .env desde .env.example con generate-secrets
+    monkeypatch.chdir(project_dir)
+    from copiloto_core.__main__ import main as cli_main  # noqa: PLC0415
+    rc = cli_main(['generate-secrets'])
+    assert rc == 0
+
+    # 3. Cargar .env al entorno y validar Settings
+    # Reset get_settings cache primero
+    from copiloto_core.core import config as config_module  # noqa: PLC0415
+    config_module.get_settings.cache_clear()
+
+    from dotenv import load_dotenv  # noqa: PLC0415
+    load_dotenv(project_dir / '.env', override=True)
+
+    try:
+        # Si esto raise, falta algún field requerido en el .env.example
+        settings = config_module.get_settings()
+        assert settings.database_url
+        assert settings.jwt_secret
+        assert settings.service_token
+    finally:
+        config_module.get_settings.cache_clear()
