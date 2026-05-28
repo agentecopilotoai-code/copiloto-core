@@ -1,6 +1,6 @@
 [project]
 name = "copiloto-core"
-version = "1.2.0"
+version = "1.2.1"
 description = "Sistema operativo multi-tenant para construir SaaS verticales sobre una base común de auth, RBAC, IA dispatch, billing, observabilidad y operaciones."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -27,6 +27,11 @@ dependencies = [
   "uvicorn[standard]==0.34.0",
   "asyncpg==0.30.0",
   "pydantic-settings==2.7.1",
+  # v1.2.1: usado por el CLI (`__main__._load_dotenv_into_environ`) para
+  # leer .env en `bootstrap` y `migrate`. Es ya dep transitiva de
+  # pydantic-settings, pero la pinneamos explícito para no romper si
+  # pydantic-settings cambia su backend de .env loading.
+  "python-dotenv>=1.0",
   "python-jose[cryptography]==3.3.0",
   "httpx==0.28.1",
   "structlog==24.4.0",
