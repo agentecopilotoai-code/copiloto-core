@@ -3,7 +3,11 @@ global:
   evaluation_interval: 30s
 
 rule_files:
+  # Alertas legacy (backup-30h, verify-failed, metrics-silent).
   - /etc/prometheus/alerts.yaml
+  # Alertas nuevas post audit#4 (pool DB, AI providers, backup-24h).
+  # Montar `infra/observability/alerts/` → `/etc/prometheus/alerts/`.
+  - /etc/prometheus/alerts/*.yml
 
 scrape_configs:
   - job_name: copilotoia-core

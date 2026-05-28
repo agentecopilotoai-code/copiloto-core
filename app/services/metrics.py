@@ -107,7 +107,7 @@ backup_last_verify_failed_age_seconds = Gauge(
 # ─── AI provider health (transversal del core) ────────────────────────────
 
 ai_provider_health = Gauge(
-    'ai_provider_health',
+    'cpi_ai_provider_health',
     'Salud del provider IA (1 = healthy, 0 = degraded/circuit-open).',
     labelnames=('provider', 'modality'),
     registry=REGISTRY,
@@ -122,22 +122,22 @@ ai_provider_health = Gauge(
 # permiten dashboards/alertas tipo `db_pool_idle == 0 for >30s`.
 
 db_pool_size = Gauge(
-    'db_pool_size',
+    'cpi_db_pool_size',
     'Número total de conexiones en el pool (idle + en uso).',
     registry=REGISTRY,
 )
 db_pool_idle = Gauge(
-    'db_pool_idle',
+    'cpi_db_pool_idle',
     'Conexiones del pool actualmente idle (disponibles).',
     registry=REGISTRY,
 )
 db_pool_min = Gauge(
-    'db_pool_min',
+    'cpi_db_pool_min',
     'Configurado: min_size del pool.',
     registry=REGISTRY,
 )
 db_pool_max = Gauge(
-    'db_pool_max',
+    'cpi_db_pool_max',
     'Configurado: max_size del pool.',
     registry=REGISTRY,
 )

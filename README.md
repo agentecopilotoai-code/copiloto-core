@@ -1,82 +1,260 @@
-# Copiloto Core
+# CopilotoIA Core
 
-> **Sistema operativo multi-tenant para construir SaaS de productos verticales.**
+> **Sistema operativo multi-tenant para construir SaaS de productos
+> verticales sobre una base común de auth, RBAC, IA dispatch, billing,
+> observabilidad y operaciones.**
 
-Copiloto Core es la base sobre la cual cualquier producto SaaS multi-tenant
-se construye: autenticación con Auth0 + MFA, gestión de tenants, control
-de membresía, configuración cross-modal de proveedores IA, runbooks,
-incidentes, monitor de salud, billing & MRR, feature flags, matriz de
-roles & permisos. **El core nunca conoce productos** — los módulos opt-in
-se instalan encima sin modificarlo.
+[![tests](https://img.shields.io/badge/tests-1026%20passed-brightgreen)]()
+[![coverage](https://img.shields.io/badge/coverage-94.1%25-brightgreen)]()
+[![audits](https://img.shields.io/badge/audits-4%20closed-brightgreen)]()
+[![security](https://img.shields.io/badge/P0%2FP1-0%20open-brightgreen)]()
 
-## ¿Qué incluye el core?
+---
 
-### Backend (`app/`)
-- **`app/core/`** — auth, identity, config, logging. Transversal.
-- **`app/db/`** — pool asyncpg + helpers RLS multi-tenant.
-- **`app/ai/`** — registry + dispatcher de proveedores LLM/Image/Video/TTS/STT.
-- **`app/admin/`** — BFF del admin-panel (Auth0 + session cookies +
-  proxy a la Core API).
-- **`app/platform_admin/`** — endpoints platform-owner-only
-  (`/v1/platform/ai-providers/*`, `/v1/platform/tenant-modules/*`).
-- **`app/api/v1/handlers/`** — endpoints transversales: `public`,
-  `me`, `tenant_signup`, `tenant_user`, `platform_admin`, `platform_roles`.
-- **`app/services/`** — utilidades transversales: audit, metrics,
-  rate_limit, legal, locale, secret_resolver.
+## ¿Qué es esto?
 
-### Frontend (`admin-panel/`)
-- **Platform admin** completo: Fleet, System Health, Billing & MRR,
-  Incidents, Outbound DLQ, Runbooks, Roles & ACL, Feature flags,
-  Proveedores IA.
-- **Tenant transversales**: Configuración del tenant, Equipo.
-- **"Mi cuenta"**: perfil, preferencias, notificaciones, sesiones.
+CopilotoIA Core es la **base reutilizable** sobre la cual cualquier SaaS
+multi-tenant vertical (CRM, gestión documental, agentes de IA, etc.)
+se construye sin tener que reimplementar:
 
-### Infraestructura (`infra/postgres/`)
-- **`10-core.sql`** — schema `app.*` con RLS, tenant_modules,
-  platform_ai_providers, provider_dispatch (audit IA), feature_flags,
-  audit_logs, roles & capabilities.
-- **`20-seed.sql`** — tenant demo mínimo para dev local.
+- **Autenticación** con Auth0 (OIDC RS256) + MFA + JWKS rotation
+- **Multi-tenancy** con RLS de Postgres y aislamiento por transacción
+- **RBAC dinámico** (roles + capabilities + matriz de permisos)
+- **Dispatch de IA** unificado para LLM/Image/Video/TTS/STT con
+  fallback chain, circuit breaker y backoff exponencial
+- **Backups** cifrados con GPG + S3 + verificación opcional
+- **Observabilidad** Prometheus + Grafana + OpenTelemetry
+- **Audit log** y bitácora de operaciones cross-tenant
+- **Admin panel** completo (React SPA + BFF FastAPI)
 
-## ¿Cómo se instala un módulo opt-in sobre el core?
+El **core nunca conoce productos** — los módulos opt-in se instalan
+encima sin modificarlo.
 
-Cada módulo vive en su propio paquete (`app/<modulo>/`) y subdirectorio
-de features (`admin-panel/src/features/<modulo>/`), con su SQL aislado
-en `infra/postgres/modules/<modulo>.sql`. La activación es por tenant:
-una fila en `app.tenant_modules (tenant_id, module, enabled)`.
+---
 
-Ver [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) § "Cómo agregar un
-módulo nuevo (checklist)".
+## Quick start (5 minutos, dev local)
 
-## Quick start
+**Pre-requisitos:** Docker Desktop 4.x+ (o Docker Engine 24+), bash,
+openssl, curl.
 
 ```bash
+# 1. Clonar
 git clone https://github.com/agentecopilotoai-code/copiloto-core.git
 cd copiloto-core
+
+# 2. Generar secrets locales (random, solo dev)
 ./scripts/generate-local-secrets.sh
+
+# 3. Levantar el stack + bootstrap DB
 ./scripts/bootstrap.sh --reset --yes
-./scripts/bootstrap-admin-panel.sh
+
+# 4. Smoke test
+./scripts/smoke-test.sh
+
+# 5. Abrir el admin panel
 open http://localhost:3000/admin
 ```
 
+Para **producción** (Auth0 real + Resend + S3 cloud), seguir
+[INSTALL.md](INSTALL.md) completo.
+
+---
+
+## Arquitectura en una imagen
+
+```mermaid
+flowchart LR
+    BROWSER([Navegador]) --> BFF[admin-panel<br/>BFF + SPA]
+    BFF <--> AUTH0[(Auth0<br/>OIDC + MFA)]
+    BFF --> API[api FastAPI]
+    API --> PG[(Postgres<br/>+ pgvector + RLS)]
+    API --> RD[(Redis<br/>sessions + state + rate-limit)]
+    API --> AI{Dispatch IA}
+    AI --> OPENAI[OpenAI]
+    AI --> ANTHROPIC[Anthropic]
+    AI --> XAI[xAI Grok]
+    AI --> ELEVEN[ElevenLabs]
+    AI --> LOCAL[Ollama / SDXL / Whisper locales]
+    API --> RESEND[(Resend<br/>email)]
+    API --> S3[(S3 / MinIO)]
+    BW[backup-worker] --> PG
+    BW --> S3CLOUD[(S3 cloud<br/>cifrado GPG)]
+    PROM[Prometheus] -.-> API
+    GRAF[Grafana] --> PROM
+```
+
+**Detalle completo** + tabla de herramientas terceras + cómo se vinculan
+→ [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## Estructura del repo
+
+```
+copiloto-core/
+├── app/                          Backend Python (FastAPI + asyncpg)
+│   ├── ai/                       Registry + dispatcher + 7 adapters IA
+│   ├── admin/                    BFF del admin-panel (OAuth + sessions)
+│   ├── api/v1/handlers/          Handlers HTTP transversales
+│   ├── core/                     Auth, identity, config, security
+│   ├── db/                       Pool asyncpg + helpers RLS
+│   ├── platform_admin/           Endpoints platform-owner-only
+│   └── services/                 Audit, metrics, rate-limit, url-safety, email
+│
+├── admin-panel/                  Frontend React + Vite + BFF
+│   ├── src/features/             Componentes por dominio
+│   ├── src/permissions/          Matriz capabilities × roles
+│   └── Dockerfile                Build stage Node → runtime Python
+│
+├── infra/
+│   ├── postgres/                 10-core.sql + 20-seed.sql + modules/
+│   ├── backup-worker/            Dockerfile + scripts del cron
+│   └── observability/
+│       ├── prometheus.yml        Scrape config
+│       ├── alerts.yaml           Alertas legacy (backup + metrics liveness)
+│       ├── alerts/core.yml       Alertas post audit#4 (pool, AI, backup-24h)
+│       └── grafana/dashboards/   core-health.json + README
+│
+├── docs/
+│   ├── runbooks/                 db-pool-exhausted, ai-provider-down,
+│   │                             backup-stale, auth0-key-rotation
+│   └── ARCHITECTURE.md           (link al raíz)
+│
+├── scripts/
+│   ├── bootstrap.sh              Setup completo desde cero
+│   ├── bootstrap-admin-panel.sh  npm install + build del SPA
+│   ├── configure-auth0.sh        Setup automático tenant Auth0 (17 secciones)
+│   ├── generate-local-secrets.sh Random secrets para dev
+│   ├── smoke-test.sh             Health checks post-bootstrap
+│   └── run-cloud-backup.sh       Pipeline pg_dump + GPG + S3
+│
+├── tests/                        1026 tests (94.1% cov backend)
+├── README.md                     ← estás aquí
+├── ARCHITECTURE.md               Arquitectura completa + diagramas
+├── INSTALL.md                    Instalación detallada paso a paso
+├── pyproject.toml                Deps Python + ruff + pytest config
+└── docker-compose.yml            Stack completo dev local
+```
+
+---
+
+## Stack tecnológico (resumen)
+
+### Runtime
+
+| Capa | Tecnología | Versión |
+|------|------------|---------|
+| Backend | FastAPI + asyncpg + Pydantic v2 | Python 3.12+ |
+| Frontend | React + Vite + vitest | Node 22+ |
+| DB | PostgreSQL + pgvector | 16 |
+| Cache / Session | Redis | 7+ |
+| Almacenamiento | MinIO (dev) / S3 (prod) | — |
+| Container | Docker + docker-compose v2 | — |
+
+### Servicios externos
+
+| Servicio | Para | Requerido |
+|----------|------|-----------|
+| **Auth0** | OIDC + MFA + Management API | ✅ Sí |
+| **Resend** | Email transaccional | ⚠️ Opcional (sin él las invitaciones quedan pending) |
+| **OpenAI / Anthropic / xAI / ElevenLabs** | AI providers cloud | ⚠️ Al menos uno si usás IA |
+| **S3 cloud** | Backups off-site | ⚠️ Recomendado prod |
+| **Prometheus + Grafana** | Observabilidad | ⚠️ Recomendado prod |
+
+Detalle de cada uno + cómo configurarlo → [ARCHITECTURE.md § 2](ARCHITECTURE.md#2-herramientas-de-terceros)
+y [INSTALL.md](INSTALL.md).
+
+---
+
+## Comandos comunes
+
+```bash
+# Desarrollo
+docker compose up -d                       # levantar stack base
+docker compose --profile observability up  # con Prometheus + Grafana
+docker compose --profile backups up        # con backup-worker
+
+# Tests
+source .venv/bin/activate && pytest        # backend (1026 tests)
+cd admin-panel && npx vitest run           # frontend
+
+# Reset DB local
+./scripts/bootstrap.sh --reset --yes
+
+# Bootstrap módulo opt-in (e.g. gestión documental)
+./scripts/bootstrap.sh --module=gd
+
+# Smoke test post-deploy
+./scripts/smoke-test.sh
+
+# Backup manual (desde el container worker)
+docker compose exec backup-worker bash scripts/run-cloud-backup.sh
+
+# Coverage report
+pytest --cov=app --cov-report=html && open htmlcov/index.html
+```
+
+---
+
+## Estado del proyecto
+
+| Métrica | Valor |
+|---------|-------|
+| Backend tests | 1026 passed · 3 skipped (DB-integration) |
+| Backend coverage | **94.1%** |
+| Frontend tests | 2456 passed |
+| Frontend coverage | **89.5%** (gate 86%) |
+| Lint backend (ruff) | 0 errores |
+| Auditorías cerradas | 4 (50 fixes implementados) |
+| Vulnerabilidades P0/P1 | **0 open** |
+| Commits en `main` | Últimos en `copiloto-core/main` |
+
+---
+
 ## Roadmap
 
-Para que el core sea verdaderamente operativo sin tocar código:
+- [x] **Auth0 full automation** (script de 17 secciones idempotente)
+- [x] **CRUD de Roles + Permisos** (Fase 2)
+- [x] **Audit completo** (4 rondas) — todas las vulns P0/P1 cerradas
+- [x] **Observabilidad** — Prometheus + Grafana dashboards + alertas + runbooks
+- [ ] **Module discovery automático** (Fase 3) — cada módulo declara
+      `manifest.json` con su nombre, prefijo de URL, capability, label;
+      el core escanea al arranque y registra routers + sidebar items.
+- [ ] **Multi-region active-active** con replicación logical de Postgres.
+- [ ] **WAF + edge rate-limiting** (Cloudflare / AWS Shield).
 
-- [x] **CRUD de Roles** — crear rol custom, editar metadata, asignar
-  permisos a roles desde la UI (Fase 2).
-- [x] **CRUD de Permisos** — catálogo + asignación a roles + invalidación
-  de cache automática (Fase 2).
-- [ ] **Module discovery automático (Fase 3)** — cada módulo declara
-  `manifest.json` con su nombre, prefijo de URL, capability, label.
-  El core escanea al arranque y registra routers + sidebar items sin
-  hardcoding.
+---
 
 ## Documentación
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — arquitectura modular, add-on
-  model, cómo agregar módulos.
-- [`INSTALL.md`](INSTALL.md) — instalación local + producción.
-- [`docs/runbooks/`](docs/runbooks/) — guías operativas.
+| Doc | Propósito |
+|-----|-----------|
+| [README.md](README.md) | Visión rápida + quick start (este archivo) |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Arquitectura completa con diagramas + terceros + RLS + IA + observabilidad |
+| [INSTALL.md](INSTALL.md) | Instalación paso a paso desde cero (Auth0 + Resend + Postgres + dev/prod) |
+| [docs/runbooks/](docs/runbooks/) | Guías operativas para incidentes |
+| [infra/observability/grafana/dashboards/README.md](infra/observability/grafana/dashboards/README.md) | Importar dashboards a Grafana |
+
+### Runbooks operativos
+
+- [auth0-key-rotation.md](docs/runbooks/auth0-key-rotation.md) — Rotación de signing keys, M2M secret, state secret
+- [db-pool-exhausted.md](docs/runbooks/db-pool-exhausted.md) — Pool de asyncpg sin idle
+- [ai-provider-down.md](docs/runbooks/ai-provider-down.md) — Provider IA degraded por > 5min
+- [backup-stale.md](docs/runbooks/backup-stale.md) — Último backup > 24h
+
+---
+
+## Contribuir
+
+- Mantener tests verdes: `pytest && cd admin-panel && npx vitest run`.
+- Lint: `ruff check app/` debe pasar.
+- Cualquier endpoint nuevo necesita tests + auditoría manual antes de merge.
+- Para módulos opt-in: NO modificar el core; agregar en
+  `app/<modulo>/` + `admin-panel/src/features/<modulo>/` +
+  `infra/postgres/modules/<modulo>.sql`. Ver checklist en
+  [ARCHITECTURE.md § 10](ARCHITECTURE.md#10-cómo-agregar-un-módulo-opt-in).
+
+---
 
 ## Licencia
 

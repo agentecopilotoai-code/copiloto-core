@@ -1,0 +1,120 @@
+# Alertas Prometheus — CopilotoIA core
+#
+# Reglas adicionales para los gauges introducidos por audit#4 (PERF-023
+# y los pre-existentes ai_provider_health / backup_age). Se cargan en
+# paralelo con `infra/observability/alerts.yaml` (que tiene las alertas
+# legacy de backup + metrics liveness).
+#
+# Para activarlas en producción:
+#
+#   1. Copiar este archivo a `/etc/prometheus/alerts/core.yml` dentro
+#      del container Prometheus, o montar `infra/observability/alerts/`
+#      como volumen en `/etc/prometheus/alerts/`.
+#
+#   2. Agregar `/etc/prometheus/alerts/*.yml` al `rule_files` del
+#      `prometheus.yml` principal.
+#
+#   3. Reload via `kill -HUP $(pidof prometheus)` o `curl -X POST
+#      http://prometheus:9090/-/reload`.
+#
+# Convenciones:
+#
+#   - severity: page (despierta on-call) | ticket (queue) | warn (info).
+#   - team: copilotoia (el único en core; los módulos opt-in tienen los suyos).
+#   - runbook_url: relativo al repo; el linker en alertmanager debe
+#     prependear `https://github.com/agentecopilotoai-code/copiloto-core/blob/main/`.
+groups:
+  - name: copilotoia.core.observability
+    interval: 30s
+    rules:
+
+      # ─────────────────────────────────────────────────────────────────
+      # DB pool exhausted
+      # Síntoma: 0 conexiones idle por > 30s → las requests entran a queue
+      # del pool (asyncpg) y a partir de N requests entrantes empiezan a
+      # acumular latencia. Acción: escalar DB_POOL_MAX_SIZE en .env
+      # (default 10) o mover a un pool más grande temporalmente.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: DbPoolExhausted
+        expr: cpi_db_pool_idle == 0
+        for: 30s
+        labels:
+          severity: page
+          team: copilotoia
+          component: db
+        annotations:
+          summary: "DB pool idle == 0 por >30s (max={{ $value }}).{{ with query \"cpi_db_pool_max\" }}{{ range . }} max actual: {{ .Value }}.{{ end }}{{ end }}"
+          description: |
+            El pool de asyncpg lleva > 30s sin conexiones disponibles. Las
+            requests entrantes están encolándose. Si dura > 5 min, la app
+            empieza a devolver 504 al cliente (asyncpg.PoolAcquireTimeoutError).
+
+            Acción inmediata:
+              1. `kubectl exec ... -- env | grep DB_POOL` (o `.env`) para ver max_size.
+              2. Si max < 20 y la carga es legítima → subir a 20 + restart rolling.
+              3. Si max ≥ 20 y sigue saturado → revisar slow queries
+                 (`pg_stat_activity where state='active' order by query_start`).
+              4. Si hay queries colgadas → kill y abrir incidente en DB team.
+          runbook_url: docs/runbooks/db-pool-exhausted.md
+
+      # ─────────────────────────────────────────────────────────────────
+      # AI provider down (per provider × modality)
+      # Síntoma: cpi_ai_provider_health == 0 sostenido > 5 min → todas las
+      # calls a ESE provider están fallando. El dispatcher cae al fallback
+      # chain pero costo, latencia y/o calidad pueden degradarse.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: AiProviderDown
+        expr: cpi_ai_provider_health == 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: copilotoia
+          component: ai
+        annotations:
+          summary: "AI provider {{ $labels.provider }}/{{ $labels.modality }} en degraded > 5min."
+          description: |
+            El provider IA `{{ $labels.provider }}` (modalidad
+            `{{ $labels.modality }}`) tiene salud = 0 hace 5+ min. El
+            dispatcher está usando fallback chain — costo y calidad
+            pueden estar afectados.
+
+            Investigar:
+              1. Status del provider externo (status.openai.com, status.anthropic.com…).
+              2. Logs del worker: `kubectl logs -l app=core --tail=200 | grep ProviderUnavailable`.
+              3. ¿Quota agotada? Revisar dashboard del provider.
+              4. ¿API key rotada y no propagada? Verificar secret en pod.
+
+            Si el provider está caído upstream → coordinar con el provider,
+            mantener fallback hasta resolución. Si es key issue → rotar
+            (runbook auth0 si aplica) y verificar `secret_ref` en
+            `app.platform_ai_providers`.
+          runbook_url: docs/runbooks/ai-provider-down.md
+
+      # ─────────────────────────────────────────────────────────────────
+      # Backup stale — específico al RPO de 24h
+      # Esta es estricta (24h) vs la existente BackupCloudStale (30h
+      # = última oportunidad antes de page). Triggerea EN paralelo
+      # como warning para que ops sepa antes que el RPO formal vuele.
+      # ─────────────────────────────────────────────────────────────────
+      - alert: BackupStale
+        expr: cpi_backup_last_success_age_seconds{kind="cloud_dump"} > 86400
+        for: 5m
+        labels:
+          severity: ticket
+          team: copilotoia
+          component: backup
+        annotations:
+          summary: "Último backup cloud exitoso > 24h ({{ humanizeDuration $value }})."
+          description: |
+            No hubo `cloud_dump` con status='ok' en las últimas 24 horas.
+            El RPO formal es 30h, así que aún estamos en banda pero
+            cerca del límite. Investigar antes que escale a page.
+
+              1. `docker logs backup-worker --tail=200`
+              2. `select * from app.backup_runs where kind='cloud_dump' order by started_at desc limit 5`
+              3. Verificar credenciales S3 + GPG en el pod (AWS_ACCESS_KEY_ID,
+                 BACKUP_GPG_PUBKEY_PATH).
+              4. Si el último run terminó OK pero hace > 24h, el scheduler
+                 cron del worker no está corriendo — verificar el container
+                 (perfil `backups` debe estar up).
+          runbook_url: docs/runbooks/backup-stale.md
