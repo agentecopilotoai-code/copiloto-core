@@ -224,4 +224,8 @@ def create_app(
     return api
 
 
-app = create_app()
+# NOTA: NO instanciamos `app = create_app()` acá a propósito.
+# Importar `copiloto_core` no debe requerir env vars del core.
+# El deployment del repo del core usa `copiloto_core._runserver:app`
+# (separado). Los consumidores externos escriben su propio main.py.
+
