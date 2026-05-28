@@ -6,7 +6,10 @@ from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 
 from copiloto_core.api.v1.routes import router as v1_router
-from copiloto_core.admin.routes import router as admin_router
+from copiloto_core.admin.routes import (
+    router as admin_router,
+    spa_router as admin_spa_router,
+)
 from copiloto_core.branding import BrandingConfig
 from copiloto_core.core.config import get_settings
 from copiloto_core.extension import CoreModule
@@ -115,6 +118,7 @@ async def _security_headers_middleware(request: Request, call_next):
 def create_app(
     modules: Iterable[CoreModule] = (),
     branding: BrandingConfig | None = None,
+    admin_panel: bool = False,
 ) -> FastAPI:
     """Construye la app FastAPI del core + monta módulos opt-in.
 
@@ -126,6 +130,13 @@ def create_app(
         branding genérico de CopilotoIA. El cliente que monta su SaaS
         sobre el core (ej. SAT) pasa su propia marca para que el endpoint
         público `/v1/branding` la sirva al SPA del módulo.
+      admin_panel: si True (DEFAULT False en v1.5.0+), monta el SPA del
+        admin panel del core en `/admin/`. Los endpoints de auth
+        (`/admin/login`, `/admin/callback`, `/admin/api/session`, etc.)
+        están SIEMPRE activos — los necesita el consumer para el flujo
+        de login del dashboard. Solo controla si el SPA HTML/JS sirve
+        bajo `/admin/`. Si False, GET `/admin/` devuelve 404 y la raíz
+        `/` queda libre para que el consumer registre su landing.
 
     Returns:
       Instancia de FastAPI lista para servir.
@@ -135,9 +146,11 @@ def create_app(
       >>> app = create_app(
       ...     modules=[mi_modulo],
       ...     branding=BrandingConfig(product_name="Mi SaaS"),
+      ...     # admin_panel=True  # opt-in para servir el admin SPA del core
       ... )
 
-    Ver `docs/EXTENDING.md` para el contrato completo.
+    Ver `docs/EXTENDING.md` y `docs/CONSUMER_ROUTES.md` para el
+    contrato completo.
     """
     settings = get_settings()
     api = FastAPI(title=settings.app_name, version='0.1.0', lifespan=lifespan)
@@ -186,7 +199,14 @@ def create_app(
     _set_active_rate_limiter(limiter)
     api.middleware('http')(build_rate_limit_middleware(limiter))
 
+    # admin_router siempre — contiene auth, callbacks, sessions, invitation
+    # landing, etc. El consumer LO NECESITA aunque no muestre el SPA del
+    # admin (su landing usa /admin/login para el OAuth flow).
     api.include_router(admin_router)
+    # admin_spa_router solo si admin_panel=True — sirve el SPA HTML/JS
+    # del admin. El consumer típicamente NO lo monta (default False).
+    if admin_panel:
+        api.include_router(admin_spa_router)
     api.include_router(v1_router)
 
     # ─── Montaje de módulos opt-in (Fase 5 audit#5) ──────────────────────

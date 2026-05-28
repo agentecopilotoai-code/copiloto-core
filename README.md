@@ -267,6 +267,7 @@ pytest --cov=app --cov-report=html && open htmlcov/index.html
 | [README.md](README.md) | Visión rápida + quick start (este archivo) |
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | **Onboarding desde cero**: 6 pasos copy-paste hasta SaaS corriendo + troubleshooting |
 | [docs/CLI.md](docs/CLI.md) | **Referencia CLI**: catálogo de los 12 subcomandos con ejemplos + exit codes |
+| [docs/CONSUMER_ROUTES.md](docs/CONSUMER_ROUTES.md) | **Mapa de rutas**: quién sirve qué (`/`, `/dashboard`, `/admin/`, `/v1/*`) + flujo de login |
 | [docs/AUTH0.md](docs/AUTH0.md) | **Auth0**: modelo de 3 capas de credenciales + configuración + rotación |
 | [docs/EXTENDING.md](docs/EXTENDING.md) | **Guía para autores de módulos** — cómo construir tu SaaS sobre el core |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Arquitectura completa con diagramas + terceros + RLS + IA + observabilidad |

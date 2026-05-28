@@ -191,7 +191,14 @@ def _logout_return_to(request: Request) -> str:
             return f'{normalized_url}/'
     if urls:
         return urls[0]
-    return str(request.url_for('admin_index'))
+    # v1.5.0: `admin_index` puede no existir en el router cuando el
+    # consumer instancia `create_app(admin_panel=False)`. Usamos URL
+    # literal del root del consumer para que el redirect post-logout
+    # siempre apunte a algo válido (la landing del consumer).
+    try:
+        return str(request.url_for('admin_index'))
+    except Exception:  # noqa: BLE001 — Starlette's NoMatchFound, no import circular
+        return '/'
 
 
 async def _active_session_id(session_id: str | None) -> dict[str, Any] | None:
@@ -556,23 +563,33 @@ def _dist_file(path: str = 'index.html') -> FileResponse:
     return FileResponse(file_path)
 
 
-@router.get('/', include_in_schema=False)
-async def admin_root() -> RedirectResponse:
-    return RedirectResponse('/admin/', status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+# v1.5.0: handlers que sirven el SPA React del admin viven en un router
+# SEPARADO (`spa_router`) para que el consumer pueda decidir si los monta
+# o no (`create_app(admin_panel=...)`).
+#
+# El router principal (`router`) sigue exportando auth, callbacks, sessions,
+# invitation landing — TODO lo que el consumer necesita para que el flujo
+# de login funcione, incluso si el SPA del core no está montado.
+#
+# NOTE: ya NO hay `@router.get('/')` que redirige a `/admin/`. Eso ocupaba
+# la raíz del consumer (donde va su landing). En v1.5.0 la raíz queda
+# libre por default; el consumer registra su propio handler.
+
+spa_router = APIRouter()
 
 
-@router.get('/admin', include_in_schema=False)
-@router.get('/admin/', include_in_schema=False)
+@spa_router.get('/admin', include_in_schema=False)
+@spa_router.get('/admin/', include_in_schema=False)
 async def admin_index() -> FileResponse:
     return _dist_file()
 
 
-@router.get('/admin/assets/{asset_path:path}', include_in_schema=False)
+@spa_router.get('/admin/assets/{asset_path:path}', include_in_schema=False)
 async def admin_assets(asset_path: str) -> FileResponse:
     return _dist_file(f'assets/{asset_path}')
 
 
-@router.get('/favicon.ico', include_in_schema=False)
+@spa_router.get('/favicon.ico', include_in_schema=False)
 async def admin_favicon() -> Response:
     return Response(status_code=204)
 
@@ -1599,6 +1616,6 @@ async def admin_core_api_proxy(path: str, request: Request) -> Response:
 #
 # MUST be the LAST route registered in this module so that all the specific
 # `/admin/*` handlers (auth, proxy, assets) win the match-by-order race.
-@router.get('/admin/{spa_path:path}', include_in_schema=False)
+@spa_router.get('/admin/{spa_path:path}', include_in_schema=False)
 async def admin_spa_fallback(spa_path: str) -> FileResponse:
     return _dist_file()

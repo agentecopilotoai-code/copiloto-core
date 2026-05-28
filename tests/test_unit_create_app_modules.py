@@ -162,3 +162,46 @@ def test_app_state_exposes_registered_modules():
     assert len(app.state.core_modules) == 1
     assert app.state.core_modules[0].code == 'alpha'
     assert app.state.core_modules[0].capabilities == ('alpha:read',)
+
+
+# ─── v1.5.0: admin_panel flag ──────────────────────────────────────────
+
+
+def test_admin_panel_off_by_default_no_spa_route():
+    """v1.5.0: default admin_panel=False. El handler del SPA
+    (admin_index en `/admin/`) NO se registra. Pero los handlers
+    de auth (/admin/login, /admin/api/session) siguen ahí porque
+    están en el router principal, no en spa_router."""
+    app = create_app()  # default admin_panel=False
+    routes = {r.path for r in app.routes if hasattr(r, 'path')}
+    # SPA index NO debe estar
+    assert '/admin/' not in routes
+    assert '/admin' not in routes
+    # Auth handlers SÍ deben estar (consumer los necesita para login flow)
+    assert '/admin/login' in routes
+    assert '/admin/callback' in routes
+    assert '/admin/api/session' in routes
+
+
+def test_admin_panel_on_includes_spa_routes():
+    """Cuando admin_panel=True, los handlers del SPA se registran."""
+    app = create_app(admin_panel=True)
+    routes = {r.path for r in app.routes if hasattr(r, 'path')}
+    # SPA index DEBE estar
+    assert '/admin/' in routes
+    # Catch-all del SPA
+    assert any('/admin/{spa_path:path}' in r for r in routes)
+    # Auth handlers siguen ahí
+    assert '/admin/login' in routes
+
+
+def test_admin_panel_off_frees_root_for_consumer():
+    """v1.5.0: el redirect `GET / → /admin/` (que ocupaba la raíz)
+    fue eliminado. Con admin_panel=False, la raíz queda libre y el
+    consumer puede registrar su propio handler ahí."""
+    app = create_app()
+    paths = [r.path for r in app.routes if hasattr(r, 'path')]
+    root_handlers = [p for p in paths if p == '/']
+    assert root_handlers == [], (
+        f'esperaba que / esté libre, pero hay handlers: {root_handlers}'
+    )

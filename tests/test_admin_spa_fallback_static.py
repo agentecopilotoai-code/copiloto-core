@@ -5,33 +5,45 @@ ADMIN_ROUTES = Path('copiloto_core/admin/routes.py')
 
 def test_spa_fallback_route_registered():
     """BUG-002: any /admin/<react-router-path> must serve index.html via the
-    SPA catch-all so hard refresh / deep link doesn't return 404."""
+    SPA catch-all so hard refresh / deep link doesn't return 404.
+
+    v1.5.0: SPA handlers viven en `spa_router` (no en `router`) para
+    que `create_app(admin_panel=False)` pueda omitirlos sin perder
+    los handlers de auth.
+    """
     source = ADMIN_ROUTES.read_text()
-    assert "@router.get('/admin/{spa_path:path}'" in source
+    assert "@spa_router.get('/admin/{spa_path:path}'" in source
     assert 'admin_spa_fallback' in source
     assert 'return _dist_file()' in source
 
 
 def test_spa_fallback_is_last_get_route_for_admin_paths():
-    """The SPA catch-all must be registered AFTER all specific /admin/* GET
-    handlers so FastAPI's match-by-order picks the specific routes first
-    (/admin/login, /admin/callback, /admin/assets/*, /admin/api/*) and only
-    falls through to the catch-all for unrecognized paths."""
+    """The SPA catch-all (en spa_router) must be registered AFTER
+    /admin/assets — único otro handler GET en el mismo router que
+    podría colisionar por match-by-order.
+
+    Auth handlers (/admin/login, /admin/callback, /admin/api/session)
+    viven en el `router` principal — NO pueden ser shadowed por el
+    catch-all del spa_router porque main.py monta `router` ANTES que
+    `spa_router`, y FastAPI matchea contra los routers en orden de
+    include."""
     source = ADMIN_ROUTES.read_text()
-    catch_all_pos = source.index("@router.get('/admin/{spa_path:path}'")
-    # Specific routes that MUST be registered before the catch-all.
+    catch_all_pos = source.index("@spa_router.get('/admin/{spa_path:path}'")
+    # Assets vive en el MISMO router (spa_router) — debe ir antes que el catch-all.
+    assets_pos = source.find("@spa_router.get('/admin/assets/{asset_path:path}'")
+    assert assets_pos != -1, 'Missing /admin/assets route en spa_router'
+    assert assets_pos < catch_all_pos, (
+        '/admin/assets debe registrarse ANTES que el catch-all SPA '
+        'dentro del mismo spa_router.'
+    )
+    # Auth handlers existen en `router` (no en spa_router) — verificamos
+    # presencia, no orden relativo al catch-all.
     for specific in (
         "@router.get('/admin/login'",
         "@router.get('/admin/callback'",
         "@router.get('/admin/api/session')",
-        "@router.get('/admin/assets/{asset_path:path}'",
     ):
-        specific_pos = source.find(specific)
-        assert specific_pos != -1, f'Missing specific route: {specific}'
-        assert specific_pos < catch_all_pos, (
-            f'Specific route {specific!r} is registered AFTER the SPA catch-all; '
-            'FastAPI would never reach it. Move the catch-all to the END of the file.'
-        )
+        assert specific in source, f'Missing auth route: {specific}'
 
 
 def test_spa_fallback_does_not_intercept_api_proxy():
