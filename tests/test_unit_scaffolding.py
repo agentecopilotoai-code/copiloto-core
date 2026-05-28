@@ -335,12 +335,21 @@ def test_env_example_has_critical_vars(tmp_path: Path) -> None:
         project_name='mi-saas', target_dir=tmp_path / 'p',
     )
     env = (result.target_dir / '.env.example').read_text()
-    # Variables sin las cuales el core no arranca
+    # Variables sin las cuales el core no arranca.
+    # v1.5.5: AUTH0_* removidos del .env.example — viven en
+    # .env.auth0.local (auto-generado por auth0-configure).
     for key in (
-        'DATABASE_URL=', 'JWT_SECRET=', 'AUTH0_DOMAIN=', 'REDIS_URL=',
+        'DATABASE_URL=', 'JWT_SECRET=', 'REDIS_URL=',
         'APP_NAME=mi-saas',
     ):
         assert key in env, f'falta en .env.example: {key}'
+    # Anti-pattern: AUTH0_MGMT_CLIENT_* NUNCA debe estar como key
+    # en .env (son credentials de "Capa 3" que viven solo en shell).
+    assert 'AUTH0_MGMT_CLIENT_ID=' not in env
+    assert 'AUTH0_MGMT_CLIENT_SECRET=' not in env
+    # AUTH0_DOMAIN tampoco — lo escribe auth0-configure en .env.auth0.local
+    assert 'AUTH0_DOMAIN=' not in env
+    assert 'AUTH0_API_AUDIENCE=' not in env
 
 
 def test_gitignore_excludes_dotenv_but_not_example(tmp_path: Path) -> None:

@@ -221,11 +221,21 @@ APP_NAME={project_name}
 APP_ENV=local
 LOG_LEVEL=INFO
 
-# ─── Auth0 (RS256 + JWKS) ─────────────────────────────────────────────
-AUTH0_DOMAIN=tu-tenant.auth0.com
-AUTH0_API_AUDIENCE=https://api.{project_name}.local
-AUTH0_MGMT_CLIENT_ID=
-AUTH0_MGMT_CLIENT_SECRET=
+# ─── Auth0 ────────────────────────────────────────────────────────────
+# NO declares AUTH0_DOMAIN ni AUTH0_API_AUDIENCE acá. El script
+# `python -m copiloto_core auth0-configure` los escribe en
+# `.env.auth0.local` (archivo separado, gitignored). Settings
+# del core lee AMBOS archivos automáticamente — no necesitás
+# duplicarlos.
+#
+# Las credentials del Management API (MGMT_CLIENT_ID/SECRET) NUNCA
+# deben vivir en disco — solo en el shell durante el comando:
+#   export MGMT_CLIENT_ID='...' MGMT_CLIENT_SECRET='...'
+#   python -m copiloto_core auth0-configure
+#   unset MGMT_CLIENT_ID MGMT_CLIENT_SECRET
+#
+# Ver docs/AUTH0.md (en el repo del core) para el modelo de 3 capas
+# de credenciales y el flow completo.
 
 # ─── JWT ──────────────────────────────────────────────────────────────
 JWT_SECRET=CHANGE_ME
