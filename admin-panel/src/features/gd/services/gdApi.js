@@ -1194,5 +1194,146 @@ export function actualizarConfigModelosIa(session, payload) {
   });
 }
 
+// ─── UI-13: Correo + Notificaciones + Alertas (EP-011/012) ──────────
+// GD-API-0141..0161 (~21 endpoints).
+
+// --- Correo institucional entrante (EP-011) ---
+export function listCorreoEntrante(session, filtros = {}) {
+  // GET GD-API-0141. params: { canal?, desde?, hasta?, estado?, asunto? }.
+  // resp: { items: [{ id, asunto, remitente, recibido_en, snippet,
+  //   tiene_adjuntos, canal, estado }], total }.
+  return gdFetch(session, '/gd/correo/entrante', { params: filtros });
+}
+export function getCorreoEntrante(session, id) {
+  // GET GD-API-0142. resp: { id, asunto, remitente, destinatarios,
+  //   cuerpo_html, cuerpo_texto, adjuntos: [{nombre, tamano, sha256}],
+  //   headers: {...}, ya_radicado: bool, radicado_id? }.
+  return gdFetch(session, `/gd/correo/entrante/${id}`);
+}
+export function convertirCorreoARadicado(session, id, payload) {
+  // POST GD-API-0143. payload: { tipo: 'entrada'|'salida',
+  //   destino_dependencia, clasificacion, prioridad, anexos? }.
+  // resp: { radicado_id, numero, audit_id }.
+  return gdFetch(session, `/gd/correo/entrante/${id}/radicar`, {
+    method: 'POST', body: payload,
+  });
+}
+export function descartarCorreo(session, id, motivo) {
+  // POST GD-API-0144. payload: { motivo }.
+  return gdFetch(session, `/gd/correo/entrante/${id}/descartar`, {
+    method: 'POST', body: { motivo },
+  });
+}
+
+// --- Correo saliente / composer (EP-011) ---
+export function enviarCorreoSaliente(session, payload) {
+  // POST GD-API-0145. payload: { para: [], cc?, bcc?, asunto, cuerpo_html,
+  //   plantilla_id?, firma_id?, adjuntos?: [], radicado_asociado? }.
+  // resp: { id, enviado_en, message_id }.
+  return gdFetch(session, '/gd/correo/saliente', {
+    method: 'POST', body: payload,
+  });
+}
+export function listPlantillasCorreo(session) {
+  // GET GD-API-0146. resp: { items: [{ id, nombre, asunto, cuerpo_html }] }.
+  return gdFetch(session, '/gd/correo/plantillas');
+}
+
+// --- Config canales SMTP/IMAP (EP-011) ---
+export function listConfigCanalesEmail(session) {
+  // GET GD-API-0147. resp: { items: [{ id, nombre, tipo: 'SMTP'|'IMAP'|'POP3',
+  //   host, port, usuario, tls, activo, ultimo_check }] }.
+  return gdFetch(session, '/gd/correo/canales');
+}
+export function actualizarConfigCanalEmail(session, id, payload) {
+  // PUT GD-API-0148.
+  return gdFetch(session, `/gd/correo/canales/${id}`, {
+    method: 'PUT', body: payload,
+  });
+}
+export function probarCanalEmail(session, id) {
+  // POST GD-API-0149. resp: { ok, latencia_ms, error? }.
+  return gdFetch(session, `/gd/correo/canales/${id}/probar`, {
+    method: 'POST',
+  });
+}
+
+// --- Reglas auto-clasificación correo (EP-011) ---
+export function listReglasAutoClasif(session) {
+  // GET GD-API-0150. resp: { items: [{ id, nombre, prioridad, condiciones,
+  //   accion, activa, hits }] }.
+  return gdFetch(session, '/gd/correo/reglas');
+}
+export function crearReglaAutoClasif(session, payload) {
+  // POST GD-API-0151. payload: { nombre, prioridad, condiciones: [{campo, op, valor}],
+  //   accion: { tipo, cola_destino?, dependencia_destino?, descartar?: bool } }.
+  return gdFetch(session, '/gd/correo/reglas', {
+    method: 'POST', body: payload,
+  });
+}
+export function actualizarReglaAutoClasif(session, id, payload) {
+  // PUT GD-API-0152.
+  return gdFetch(session, `/gd/correo/reglas/${id}`, {
+    method: 'PUT', body: payload,
+  });
+}
+export function eliminarReglaAutoClasif(session, id) {
+  // DELETE GD-API-0153.
+  return gdFetch(session, `/gd/correo/reglas/${id}`, { method: 'DELETE' });
+}
+
+// --- Salud del canal de correo (EP-011) ---
+export function getSaludCorreo(session, ventana = '24h') {
+  // GET GD-API-0154. params: { ventana }. resp: { canales: [{
+  //   id, nombre, ok_pct, bounces, errores_24h, latencia_p50, latencia_p99,
+  //   ultimo_error? }], totales: { recibidos, enviados, bounces } }.
+  return gdFetch(session, '/gd/correo/salud', { params: { ventana } });
+}
+
+// --- Notificaciones in-app (EP-012) ---
+export function listNotificacionesInbox(session, filtros = {}) {
+  // GET GD-API-0155. params: { tipo?, leida?, desde? }.
+  // resp: { items: [{ id, tipo, severidad, titulo, mensaje, creado_en,
+  //   leida, link, payload }], total, no_leidas }.
+  return gdFetch(session, '/gd/notificaciones/inbox', { params: filtros });
+}
+export function marcarNotifLeida(session, id) {
+  // POST GD-API-0156.
+  return gdFetch(session, `/gd/notificaciones/${id}/leer`, { method: 'POST' });
+}
+export function marcarNotifsTodasLeidas(session) {
+  // POST GD-API-0157.
+  return gdFetch(session, '/gd/notificaciones/leer-todas', { method: 'POST' });
+}
+
+// --- Preferencias de notificaciones (EP-012) ---
+export function getPreferenciasNotif(session) {
+  // GET GD-API-0158. resp: { canales: { email: bool, push: bool, sms: bool,
+  //   in_app: bool }, por_tipo: { 'pqrsd_nueva': {...}, 'vencimiento_proximo': ... },
+  //   resumen_diario, no_molestar: {inicio, fin} }.
+  return gdFetch(session, '/gd/notificaciones/preferencias');
+}
+export function actualizarPreferenciasNotif(session, payload) {
+  // PUT GD-API-0159.
+  return gdFetch(session, '/gd/notificaciones/preferencias', {
+    method: 'PUT', body: payload,
+  });
+}
+
+// --- Alertas críticas (EP-012) ---
+export function listAlertasCriticas(session, filtros = {}) {
+  // GET GD-API-0160. params: { categoria?, severidad?, desde? }.
+  // resp: { items: [{ id, categoria: 'vencimiento'|'sla'|'fallo_canal'|...,
+  //   severidad, titulo, descripcion, entidad: {tipo, id}, creada_en,
+  //   atendida_por?, atendida_en? }], total_pendientes }.
+  return gdFetch(session, '/gd/alertas/criticas', { params: filtros });
+}
+export function atenderAlertaCritica(session, id, comentario) {
+  // POST GD-API-0161.
+  return gdFetch(session, `/gd/alertas/criticas/${id}/atender`, {
+    method: 'POST', body: { comentario },
+  });
+}
+
 // Internal exports for testing.
 export const _internal = { gdPath, gdFetch, authHeaders };

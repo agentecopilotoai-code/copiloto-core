@@ -88,6 +88,18 @@ import {
   UsoIAPanel,
   ConfigModelosIA,
 } from '../ia/index.js';
+import {
+  BuzonCorreoEntrante,
+  ComposerCorreoSaliente,
+  ConfigCanalesEmail,
+  ReglasAutoClasif,
+  SaludCorreo,
+} from '../correo/index.js';
+import {
+  BandejaNotificaciones,
+  PreferenciasNotificaciones,
+  AlertasCriticas,
+} from '../notificaciones/index.js';
 
 function ShellWrapper({ title, bloqueNum: _bn, children, ...shellProps }) {
   return (
@@ -203,6 +215,16 @@ export const GdIaAsistente = (p) => <AsistenteConversacional {...p} />;
 export const GdIaPii = (p) => <DeteccionPII {...p} />;
 export const GdIaUso = (p) => <UsoIAPanel {...p} />;
 export const GdIaConfig = (p) => <ConfigModelosIA {...p} />;
+
+// Correo + notificaciones + alertas (UI-13, EP-011/012) — vistas reales:
+export const GdCorreoBuzon = (p) => <BuzonCorreoEntrante {...p} />;
+export const GdCorreoComposer = (p) => <ComposerCorreoSaliente {...p} />;
+export const GdCorreoCanales = (p) => <ConfigCanalesEmail {...p} />;
+export const GdCorreoReglas = (p) => <ReglasAutoClasif {...p} />;
+export const GdCorreoSalud = (p) => <SaludCorreo {...p} />;
+export const GdNotifBandeja = (p) => <BandejaNotificaciones {...p} />;
+export const GdNotifPreferencias = (p) => <PreferenciasNotificaciones {...p} />;
+export const GdAlertasCriticas = (p) => <AlertasCriticas {...p} />;
 
 // Búsqueda global → vista real bloque UI-3
 export const GdBuscar = (p) => <BuscarRadicados {...p} />;

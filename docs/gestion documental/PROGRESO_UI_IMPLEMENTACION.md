@@ -678,6 +678,153 @@ Ley 1581/2012), rol-aware (filtrado server-side) y trazabilidad
 
 ---
 
+### Bloque UI-13 (Correo institucional + Notificaciones + Alertas — CIERRE EP-011 + EP-012) — ✅ COMPLETADO 2026-05-28
+
+**Tareas:** GD-UI-0079..0086 (EP-011 Correo + EP-012 Notificaciones).
+8 vistas en 2 sub-features (`correo/`, `notificaciones/`).
+**Roles primarios:** ROL-005 Coordinador VU, ROL-006 Admin PQRSD,
+ROL-007 Profesional (operativo), ROL-001 Admin Sistema,
+ROL-002 Admin Seguridad, ROL-009 Jefe Dependencia,
+ROL-016 Auditor (lectura).
+
+**Archivos nuevos `features/gd/correo/` (5 vistas, ~1306 LOC componentes + 310 LOC hook):**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `BuzonCorreoEntrante.jsx` (lista + filtros + preview + convertir/descartar) | ~349 | GD-UI-0079 |
+| `ComposerCorreoSaliente.jsx` (destinatarios + plantilla + cuerpo + adjuntos) | ~222 | GD-UI-0080 |
+| `ConfigCanalesEmail.jsx` (lista + edit SMTP/IMAP/POP3 + smoke test) | ~261 | GD-UI-0084 |
+| `ReglasAutoClasif.jsx` (CRUD reglas asunto/remitente/dominio → cola) | ~323 | GD-UI-0085 |
+| `SaludCorreo.jsx` (KPIs latencia/bounce/errores + ventana 1h/24h/7d) | ~151 | GD-UI-0086 |
+| `useGdCorreo.js` (5 readers + 8 mutators) | ~310 | hooks |
+| `index.js` | 9 | |
+
+**Archivos nuevos `features/gd/notificaciones/` (3 vistas, ~685 LOC componentes + 170 LOC hook):**
+
+| Archivo | LOC | Cubre |
+|---------|-----|-------|
+| `BandejaNotificaciones.jsx` (in-app inbox + filtros tipo/leída + marcar todas) | ~186 | GD-UI-0081 |
+| `PreferenciasNotificaciones.jsx` (matrix evento × canal email/push/sms) | ~236 | GD-UI-0082 |
+| `AlertasCriticas.jsx` (panel admin: por_vencer / vencidas / sla_excedido) | ~263 | GD-UI-0083 |
+| `useGdNotif.js` (4 readers + 4 mutators) | ~170 | hooks |
+| `index.js` | 7 | |
+
+**Extensiones `services/gdApi.js` (+21 endpoints, GD-API-0141..0161):**
+- Correo entrante (5): `listCorreoEntrante`, `getCorreoEntrante`,
+  `convertirCorreoARadicado`, `descartarCorreo`, `listPlantillasCorreo`.
+- Correo saliente (1): `enviarCorreoSaliente`.
+- Canales SMTP/IMAP/POP3 (3): `listConfigCanalesEmail`,
+  `actualizarConfigCanalEmail`, `probarCanalEmail`.
+- Reglas auto-clasif (4): `listReglasAutoClasif`,
+  `crearReglaAutoClasif`, `actualizarReglaAutoClasif`,
+  `eliminarReglaAutoClasif`.
+- Salud canal (1): `getSaludCorreo`.
+- Notificaciones inbox (3): `listNotificacionesInbox`,
+  `marcarNotifLeida`, `marcarNotifsTodasLeidas`.
+- Preferencias (2): `getPreferenciasNotif`,
+  `actualizarPreferenciasNotif`.
+- Alertas críticas (2): `listAlertasCriticas`, `atenderAlertaCritica`.
+
+**Extensiones `permissions/gd-matrix.js` (+8 perms COR-EMAIL-001..006 + ALR-001..002):**
+
+`NOT-READ` y `NOT-PREF` ya existían (UI-10) — UI-13 los reutiliza
+para la bandeja y preferencias del usuario final.
+
+- `COR-EMAIL-001` ver buzón entrante → VU (RW) + operativos (R) +
+  admin PQRSD (RW) + admin_sistema (R).
+- `COR-EMAIL-002` convertir correo → radicado → solo VU + admin PQRSD
+  (operación que impacta correspondencia formal).
+- `COR-EMAIL-003` componer saliente → operativos + VU + admin_pqrsd +
+  usuario_ci + usuario_radicacion_externa (RW). Auditor NO redacta.
+- `COR-EMAIL-004` config canales SMTP/IMAP → solo admin_sistema (RW),
+  admin_seguridad (R) — credenciales sensibles.
+- `COR-EMAIL-005` reglas auto-clasif → admin_sistema + coord_vu +
+  admin_pqrsd (RW) — son ellos los que conocen las colas y volúmenes.
+- `COR-EMAIL-006` dashboard salud canal → lectura amplia
+  (admin_sistema, admin_seguridad, coord_vu, auditor).
+- `ALR-001` ver alertas críticas → jefes + coord + admin + auditor (R).
+- `ALR-002` atender alerta → admin_sistema + jefe_dependencia +
+  coord_vu + admin_pqrsd (RW); auditor NO atiende (solo observa).
+
+**Placeholders nuevos (8):** `GdCorreoBuzon`, `GdCorreoComposer`,
+`GdCorreoCanales`, `GdCorreoReglas`, `GdCorreoSalud`,
+`GdNotifBandeja`, `GdNotifPreferencias`, `GdAlertasCriticas`.
+
+**Decisiones (D-UI-45..D-UI-50):**
+
+- **D-UI-45 (Convertir-correo NO auto-clasifica, propone)**: cuando
+  el usuario selecciona "Convertir a radicado" en `BuzonCorreoEntrante`,
+  el modal pre-rellena asunto/remitente del correo pero el usuario
+  DEBE confirmar tipo, dependencia destino y TRD. Las reglas
+  auto-clasif (COR-EMAIL-005) solo pre-asignan **cola**, no
+  clasificación final. Mismo principio de "humano en el loop"
+  que UI-12 D-UI-39 — un correo mal clasificado por regex no debe
+  contaminar el expediente electrónico sin firma del coordinador VU.
+- **D-UI-46 (Smoke test canal con resultado visible inline)**: el
+  botón "Probar conexión" en `ConfigCanalesEmail` llama
+  `probarCanalEmail(id)` y muestra `{ok, latency_ms, error?}` inline
+  en la fila (no toast efímero). El operador necesita el feedback
+  persistente para diagnosticar credenciales/firewall sin perderlo
+  al cambiar de vista. Ver paralelo en `email-providers` del core
+  (v2.0.0) — misma UX.
+- **D-UI-47 (Preferencias notif como matrix evento×canal, no por canal)**:
+  `PreferenciasNotificaciones` rendea una **tabla** (eventos en filas,
+  canales email/push/sms en columnas con checkbox). Considerado y
+  descartado: agrupar por canal (un panel por email, otro por push)
+  fue más confuso en mocks porque obliga al usuario a recordar qué
+  eventos ya activó. La matrix es más densa visualmente pero permite
+  ver el estado de un solo vistazo. RNF-014 (accesibilidad): cada
+  checkbox tiene `aria-label="canal X para evento Y"`.
+- **D-UI-48 (Alertas críticas con tabs por categoría, no filtro)**:
+  `AlertasCriticas` separa por_vencer/vencidas/sla_excedido en tabs
+  porque cada categoría tiene **acciones distintas**: por_vencer →
+  recordar; vencidas → asignar; sla_excedido → escalar. Un único
+  listado con filtro habría exigido contexto para entender qué
+  botón aplicar. Cada tab tiene su badge con contador (críticas
+  pulsan rojo).
+- **D-UI-49 (Salud canal con ventana parametrizable client-side)**:
+  `SaludCorreo` permite elegir ventana 1h/24h/7d y el cambio
+  llama `getSaludCorreo(ventana)` de nuevo (no agrega/agrega+filtra
+  en frontend). Esto evita inconsistencias entre el agregado del
+  backend (que puede aplicar SLOs distintos por ventana) y el cliente.
+- **D-UI-50 (Filtro `leida=false` NO se colapsa a undefined)**: bug
+  detectado en review — el helper `actualizar(k, v)` originalmente
+  usaba `v || undefined` para limpiar filtros vacíos, lo que
+  colapsaba `leida: false` a `undefined` (falso es falsy) y la
+  bandeja nunca mandaba el filtro al backend. Refactor:
+  `next = (v === undefined || v === null || v === '') ? undefined : v`.
+  Lección: distinguir explícitamente "vacío" de "valor falsy" cuando
+  el dominio incluye booleanos. Aplicado también al Estado de la
+  bandeja porque puede importarse vía URL params.
+
+**Métricas:**
+- **2620/2620 tests admin-panel ✅** (+164 nuevos UI-13)
+- **157/157 tests subfeatures correo+notif ✅** (47 hooks correo +
+  25 hooks notif + 12+9+12+13+8 vistas correo + 10+10+12 vistas notif)
+- Coverage `features/gd/correo` = **98.07% lines / 86.3% functions** ✅
+- Coverage `features/gd/notificaciones` = **98.53% lines / 94.44% functions** ✅
+- Global admin-panel = **89.7% ≥ 86% gate** ✅
+- Functions globales = **78.65% ≥ 75% gate** ✅
+- Lint OK (0 errores)
+
+**EP-011 Correo institucional CERRADA** — 5 vistas:
+Buzón entrante con preview + convertir/descartar + composer saliente
+con plantillas y firma + config de canales SMTP/IMAP/POP3 con smoke
+test + reglas de auto-clasificación CRUD + dashboard de salud
+(latencia, bounce, errores) con ventana parametrizable.
+
+**EP-012 Notificaciones + alertas CERRADA** — 3 vistas:
+Bandeja in-app con filtros + marcar todas leídas + preferencias
+evento×canal (email/push/sms) en matrix accesible + alertas críticas
+para admins con tabs por categoría (por_vencer/vencidas/sla_excedido)
+y acciones diferenciadas (recordar/asignar/escalar).
+
+**Avance global:** EP-002..EP-012 cerradas (11 de 13). Queda
+EP-013 (Periféricos: scanner+impresoras+digitalización) que entra
+en bloques UI-14/15.
+
+---
+
 ### Bloque UI-11 (Auditoría + Reportes consolidados — CIERRE EP-009) — ✅ COMPLETADO 2026-05-24
 
 **Tareas:** GD-UI-0067..0071 (EP-009). 5 vistas.

@@ -270,6 +270,34 @@ export const GD_PERMISSIONS = Object.freeze({
   'IA-007': row({ 'gd.admin_sistema': RW, 'gd.jefe_dependencia': R }),
   // GD-UI-0078: config modelos IA — solo admin sistema.
   'IA-008': row({ 'gd.admin_sistema': RW, 'gd.admin_seguridad': R }),
+
+  // ────────────────── Correo institucional (EP-011 / UI-13) ────────────
+  // GD-UI-0079 buzón correo entrante — VU + operativos + admin PQRSD.
+  'COR-EMAIL-001': row({ ...any(VU, RW), ...any(OPERATIVOS, R),
+                          'gd.admin_pqrsd': RW, 'gd.admin_sistema': R }),
+  // GD-UI-0079 convertir correo → radicado — solo VU / coord.
+  'COR-EMAIL-002': row({ ...any(VU, RW), 'gd.admin_pqrsd': RW }),
+  // GD-UI-0080 composer saliente — operativos + VU.
+  'COR-EMAIL-003': row({ ...any(OPERATIVOS, RW), ...any(VU, RW),
+                          'gd.admin_pqrsd': RW, 'gd.usuario_ci': RW,
+                          'gd.usuario_radicacion_externa': RW }),
+  // GD-UI-0084 config canales SMTP/IMAP — solo admin sistema.
+  'COR-EMAIL-004': row({ 'gd.admin_sistema': RW, 'gd.admin_seguridad': R }),
+  // GD-UI-0085 reglas auto-clasif — admin sistema + coordinador VU.
+  'COR-EMAIL-005': row({ 'gd.admin_sistema': RW,
+                          'gd.coordinador_vu': RW, 'gd.admin_pqrsd': RW }),
+  // GD-UI-0086 dashboard salud canal correo.
+  'COR-EMAIL-006': row({ 'gd.admin_sistema': R, 'gd.admin_seguridad': R,
+                          'gd.coordinador_vu': R, 'gd.auditor': R }),
+
+  // ────────────────── Alertas críticas (EP-012 / UI-13) ────────────────
+  // GD-UI-0083 ver alertas críticas — jefes, admin, auditor (R).
+  'ALR-001': row({ 'gd.admin_sistema': R, 'gd.admin_seguridad': R,
+                    'gd.jefe_dependencia': R, 'gd.coordinador_vu': R,
+                    'gd.admin_pqrsd': R, 'gd.auditor': R }),
+  // GD-UI-0083 atender alerta — los responsables del ámbito.
+  'ALR-002': row({ 'gd.admin_sistema': RW, 'gd.jefe_dependencia': RW,
+                    'gd.coordinador_vu': RW, 'gd.admin_pqrsd': RW }),
 });
 
 /**

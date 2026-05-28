@@ -26,6 +26,40 @@ describe('gd-matrix', () => {
     // IA embebida (UI-12 / EP-010).
     expect(GD_PERMISSIONS['IA-001']).toBeDefined();
     expect(GD_PERMISSIONS['IA-008']).toBeDefined();
+    // Correo + alertas (UI-13 / EP-011/012).
+    expect(GD_PERMISSIONS['COR-EMAIL-001']).toBeDefined();
+    expect(GD_PERMISSIONS['COR-EMAIL-006']).toBeDefined();
+    expect(GD_PERMISSIONS['ALR-001']).toBeDefined();
+    expect(GD_PERMISSIONS['ALR-002']).toBeDefined();
+  });
+
+  describe('Correo + alertas (UI-13)', () => {
+    it('radicador puede ver y radicar correo entrante', () => {
+      expect(gdCan('gd.radicador', 'COR-EMAIL-001', 'RW')).toBe(true);
+      expect(gdCan('gd.radicador', 'COR-EMAIL-002', 'RW')).toBe(true);
+    });
+    it('profesional puede ver correo entrante (R) pero no radicarlo', () => {
+      expect(gdCan('gd.profesional', 'COR-EMAIL-001', 'R')).toBe(true);
+      expect(gdCan('gd.profesional', 'COR-EMAIL-002', 'RW')).toBe(false);
+    });
+    it('admin sistema RW en config canales y reglas auto-clasif', () => {
+      expect(gdCan('gd.admin_sistema', 'COR-EMAIL-004', 'RW')).toBe(true);
+      expect(gdCan('gd.admin_sistema', 'COR-EMAIL-005', 'RW')).toBe(true);
+    });
+    it('usuario consulta no accede a config canales', () => {
+      expect(gdCan('gd.usuario_consulta', 'COR-EMAIL-004')).toBe(false);
+    });
+    it('jefe dependencia puede atender alertas', () => {
+      expect(gdCan('gd.jefe_dependencia', 'ALR-002', 'RW')).toBe(true);
+    });
+    it('auditor solo lee alertas', () => {
+      expect(gdCan('gd.auditor', 'ALR-001', 'R')).toBe(true);
+      expect(gdCan('gd.auditor', 'ALR-002', 'RW')).toBe(false);
+    });
+    it('todos los roles GD leen y configuran notificaciones (existentes NOT-*)', () => {
+      expect(gdCan('gd.profesional', 'NOT-READ', 'R')).toBe(true);
+      expect(gdCan('gd.profesional', 'NOT-PREF', 'RW')).toBe(true);
+    });
   });
 
   describe('IA permisos (UI-12)', () => {
