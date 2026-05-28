@@ -1,6 +1,6 @@
 [project]
 name = "copiloto-core"
-version = "1.1.1"
+version = "1.2.0"
 description = "Sistema operativo multi-tenant para construir SaaS verticales sobre una base común de auth, RBAC, IA dispatch, billing, observabilidad y operaciones."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -69,6 +69,7 @@ include = ["copiloto_core*"]
 [tool.setuptools.package-data]
 "copiloto_core" = [
   "**/*.sql",
+  "**/*.sh",
   "**/*.html",
   "**/*.txt",
   "**/*.json",
