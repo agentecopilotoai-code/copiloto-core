@@ -194,17 +194,32 @@ def _cmd_bootstrap(args: argparse.Namespace) -> int:
     from copiloto_core.core.config import get_settings  # noqa: PLC0415
     from copiloto_core.db.pool import db  # noqa: PLC0415
 
-    settings = get_settings()
-    dsn = (
-        getattr(settings, 'database_admin_url', None)
-        or settings.database_url
-    )
-    if not dsn:
+    # v1.3.2 fix: DATABASE_ADMIN_URL no es campo de Settings (que solo
+    # tiene `database_url`). Leerlo del env directo con os.environ.
+    # Bootstrap REQUIERE el admin URL — CREATE EXTENSION + CREATE SCHEMA
+    # + CREATE ROLE necesitan permisos de superuser que el user app no
+    # tiene. Si solo está `DATABASE_URL`, advertir al user.
+    admin_dsn = os.environ.get('DATABASE_ADMIN_URL')
+    if not admin_dsn:
+        settings = get_settings()
+        # Fallback: intentar con database_url, pero avisar que probablemente
+        # falle al primer CREATE.
+        admin_dsn = settings.database_url
+        if admin_dsn:
+            print(
+                'WARNING: DATABASE_ADMIN_URL no está seteado en .env. '
+                'Usando DATABASE_URL como fallback — esto va a fallar si '
+                'el user de la app no tiene permisos de superuser '
+                '(CREATE EXTENSION, CREATE ROLE, etc.).',
+                file=sys.stderr,
+            )
+    if not admin_dsn:
         print(
             'ERROR: ni DATABASE_ADMIN_URL ni DATABASE_URL están seteadas '
             'en el entorno.', file=sys.stderr,
         )
         return 2
+    dsn = admin_dsn
 
     # Si --create-app-user, leer credenciales del entorno
     create_user = bool(args.create_app_user)
