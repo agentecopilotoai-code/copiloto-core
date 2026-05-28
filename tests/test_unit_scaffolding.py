@@ -161,6 +161,8 @@ def test_generates_expected_file_tree(tmp_path: Path) -> None:
         'pyproject.toml',
         'mi_saas/__init__.py',
         'mi_saas/main.py',
+        'templates/landing.html',          # v1.5.0
+        'templates/dashboard.html',        # v1.5.0
         'mi_saas_modulo/__init__.py',
         'mi_saas_modulo/routers.py',
         'mi_saas_modulo/migrations/001_init.sql',
@@ -168,6 +170,55 @@ def test_generates_expected_file_tree(tmp_path: Path) -> None:
     assert set(result.files_written) == expected
     for rel in expected:
         assert (result.target_dir / rel).is_file(), f'missing: {rel}'
+
+
+# ─── v1.5.0: landing + dashboard ────────────────────────────────────────
+
+
+def test_landing_html_uses_project_name(tmp_path: Path) -> None:
+    result = generate_project(project_name='mi-saas', target_dir=tmp_path / 'p')
+    html = (result.target_dir / 'templates' / 'landing.html').read_text()
+    assert '<title>mi-saas</title>' in html
+    assert 'id="product-name">mi-saas</h1>' in html
+    # Botón de login al flow del core
+    assert 'href="/admin/login"' in html
+    assert 'Iniciar sesión' in html
+    # Fetch del branding del core
+    assert "fetch('/v1/branding')" in html
+
+
+def test_dashboard_html_is_auth_required_via_session_fetch(tmp_path: Path) -> None:
+    result = generate_project(project_name='mi-saas', target_dir=tmp_path / 'p')
+    html = (result.target_dir / 'templates' / 'dashboard.html').read_text()
+    # Fetch a /admin/api/session — si falla, redirect a /
+    assert "fetch('/admin/api/session')" in html
+    assert "window.location.href = '/'" in html
+    # Botón de logout
+    assert "fetch('/admin/logout'" in html
+
+
+def test_main_py_wires_landing_and_dashboard_handlers(tmp_path: Path) -> None:
+    result = generate_project(project_name='mi-saas', target_dir=tmp_path / 'p')
+    main_src = (result.target_dir / 'mi_saas' / 'main.py').read_text()
+    # Handlers nuevos
+    assert "@app.get('/'," in main_src or '@app.get("/"' in main_src
+    assert "@app.get('/dashboard'" in main_src or '@app.get("/dashboard"' in main_src
+    # Dashboard auth-gated
+    assert 'Depends(authenticate_request)' in main_src
+    # Lee templates desde disco
+    assert "_LANDING_HTML" in main_src
+    assert "_DASHBOARD_HTML" in main_src
+    # admin_panel NO se activa por default (comentado)
+    assert '# admin_panel=True' in main_src
+
+
+def test_main_py_compiles_to_ast(tmp_path: Path) -> None:
+    """v1.5.0: main.py se hizo más grande con landing+dashboard.
+    Confirmamos que sigue siendo Python sintácticamente válido."""
+    import ast  # noqa: PLC0415
+    result = generate_project(project_name='mi-saas', target_dir=tmp_path / 'p')
+    main_path = result.target_dir / 'mi_saas' / 'main.py'
+    ast.parse(main_path.read_text(), filename=str(main_path))
 
 
 # ─── Templates renderizan correctamente ──────────────────────────────────
@@ -235,7 +286,11 @@ def test_main_py_imports_module_and_wires_branding(tmp_path: Path) -> None:
         project_name='mi-saas', target_dir=tmp_path / 'p',
     )
     main_src = (result.target_dir / 'mi_saas' / 'main.py').read_text()
-    assert 'from copiloto_core import BrandingConfig, create_app' in main_src
+    # v1.5.0: el import combina BrandingConfig + create_app + authenticate_request
+    # en un solo `from copiloto_core import (...)` multi-línea.
+    assert 'BrandingConfig' in main_src
+    assert 'create_app' in main_src
+    assert 'from copiloto_core import' in main_src
     assert 'from mi_saas_modulo import module as mi_saas_modulo_module' in main_src
     assert 'create_app(' in main_src
     assert 'product_name="mi-saas"' in main_src

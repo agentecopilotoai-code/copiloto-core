@@ -34,4 +34,8 @@ Mover el side-effect a este módulo separado significa que:
 """
 from copiloto_core.main import create_app
 
-app = create_app()
+# v1.5.0: admin_panel=True explícito porque este entrypoint es del repo
+# del CORE (docker-compose levanta el admin SPA buildeado para dev local).
+# Los CONSUMERS reciben default False — su landing va en `/`, no en
+# `/admin/` que sería la del core.
+app = create_app(admin_panel=True)

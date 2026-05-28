@@ -387,13 +387,47 @@ _PROJECT_INIT = '''\
 _PROJECT_MAIN = '''\
 """Entrypoint FastAPI del deployment.
 
-Compone el core con tus módulos y branding. Levantá con:
+Compone el core con tus módulos y branding, y agrega handlers de
+landing (`/`) y dashboard (`/dashboard`) para que tu SaaS tenga UI
+propia. El admin del core queda OFF por default (v1.5.0+) — para
+activarlo, pasá `admin_panel=True` al create_app.
+
+Levantá con:
 
   uvicorn {project_package}.main:app --reload
+
+Mapa de rutas resultante:
+
+  /                            → landing.html (público, tiene "Iniciar sesión")
+  /dashboard                   → dashboard.html (auth-required)
+  /admin/login                 → OAuth flow del core (Auth0)
+  /admin/callback              → callback OAuth (setea session)
+  /admin/logout (POST)         → logout
+  /admin/api/session           → JSON con el user logueado (usado por dashboard.html)
+  /admin/                      → 404 (admin del core OFF por default)
+  /v1/branding                 → branding JSON (público)
+  /v1/{module_package_dashed}/* → endpoints de tu módulo demo
 """
-from copiloto_core import BrandingConfig, create_app
+from pathlib import Path
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.responses import HTMLResponse
+
+from copiloto_core import (
+    BrandingConfig,
+    authenticate_request,
+    create_app,
+)
 
 from {module_package} import module as {module_package}_module
+
+
+# Cargar plantillas HTML como strings en memoria (no Jinja2 — los
+# placeholders dinámicos se rellenan en el cliente via fetch al
+# `/admin/api/session` que devuelve info del user logueado).
+_TEMPLATES_DIR = Path(__file__).parent.parent / 'templates'
+_LANDING_HTML = (_TEMPLATES_DIR / 'landing.html').read_text(encoding='utf-8')
+_DASHBOARD_HTML = (_TEMPLATES_DIR / 'dashboard.html').read_text(encoding='utf-8')
 
 
 app = create_app(
@@ -406,7 +440,31 @@ app = create_app(
         # logo_url="https://cdn.tudominio.com/logo.svg",
         # primary_color="#0066ff",
     ),
+    # admin_panel=True,  # opt-in para servir el SPA admin del core en /admin/
 )
+
+
+@app.get('/', include_in_schema=False, response_class=HTMLResponse)
+async def landing() -> str:
+    """Landing pública de {project_name}.
+
+    Carga branding via `/v1/branding` y muestra un botón
+    "Iniciar sesión" que dispara el OAuth flow del core
+    (`/admin/login`). Editá `templates/landing.html` para
+    customizar el HTML.
+    """
+    return _LANDING_HTML
+
+
+@app.get('/dashboard', include_in_schema=False, response_class=HTMLResponse)
+async def dashboard(_actor=Depends(authenticate_request)) -> str:
+    """Dashboard de {project_name} (auth-required).
+
+    `authenticate_request` valida el JWT del cookie de sesión
+    (seteado por el flow OAuth del core). Sin login válido,
+    devuelve 401 y el browser redirige a `/`.
+    """
+    return _DASHBOARD_HTML
 '''
 
 _MODULE_INIT = '''\
@@ -513,6 +571,224 @@ grant usage on schema {module_package} to copiloto_app;
 grant select, insert, update, delete on all tables in schema {module_package} to copiloto_app;
 alter default privileges in schema {module_package}
     grant select, insert, update, delete on tables to copiloto_app;
+'''
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Templates HTML del consumer (v1.5.0)
+# ──────────────────────────────────────────────────────────────────────
+#
+# El consumer (satguajira) sirve su propia landing en `/` y su propio
+# dashboard en `/dashboard`. Vanilla HTML + CSS + un poquito de JS
+# (sin React/Vue) — el operador puede customizarlos sin tocar build
+# tools.
+#
+# La landing usa branding del core (/v1/branding) + un botón
+# "Iniciar sesión" que dispara el OAuth flow del core (/admin/login).
+# El dashboard fetcheas /admin/api/session para mostrar info del user.
+
+_LANDING_HTML = '''\
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{project_name}</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }}
+    .container {{
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(20px);
+      padding: 3rem 2rem;
+      border-radius: 16px;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    }}
+    h1 {{
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      font-weight: 700;
+    }}
+    .tagline {{ opacity: 0.9; margin-bottom: 2rem; font-size: 1.125rem; }}
+    .login-btn {{
+      display: inline-block;
+      background: #fff;
+      color: #667eea;
+      padding: 0.875rem 2rem;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1rem;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }}
+    .login-btn:hover {{
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }}
+    .footer {{
+      margin-top: 2rem;
+      opacity: 0.6;
+      font-size: 0.875rem;
+    }}
+    .footer a {{ color: #fff; text-decoration: underline; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 id="product-name">{project_name}</h1>
+    <p class="tagline" id="tagline">Cargando…</p>
+    <a href="/admin/login" class="login-btn">Iniciar sesión</a>
+    <p class="footer">
+      Powered by <a href="https://github.com/agentecopilotoai-code/copiloto-core" target="_blank">copiloto-core</a>
+    </p>
+  </div>
+  <script>
+    // Hidrata el branding del core (logo, colores, tagline) al cargar.
+    fetch('/v1/branding')
+      .then(r => r.json())
+      .then(b => {{
+        if (b.product_name) document.getElementById('product-name').textContent = b.product_name;
+        document.getElementById('tagline').textContent =
+          'Bienvenido. Iniciá sesión para acceder a tu dashboard.';
+      }})
+      .catch(() => {{
+        document.getElementById('tagline').textContent =
+          'Iniciá sesión para acceder a tu dashboard.';
+      }});
+  </script>
+</body>
+</html>
+'''
+
+
+_DASHBOARD_HTML = '''\
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard · {project_name}</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f7fb;
+      color: #1a1f36;
+      min-height: 100vh;
+    }}
+    .topbar {{
+      background: #fff;
+      border-bottom: 1px solid #e5e9f2;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }}
+    .topbar h2 {{ font-size: 1.125rem; font-weight: 600; }}
+    .topbar .user {{ font-size: 0.875rem; color: #6b7280; }}
+    .topbar .user button {{
+      margin-left: 1rem;
+      background: transparent;
+      border: 1px solid #d1d5db;
+      padding: 0.375rem 0.75rem;
+      border-radius: 6px;
+      cursor: pointer;
+      color: #1a1f36;
+      font: inherit;
+    }}
+    .topbar .user button:hover {{ background: #f3f4f6; }}
+    main {{ padding: 2rem; max-width: 960px; margin: 0 auto; }}
+    .card {{
+      background: #fff;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      margin-bottom: 1.5rem;
+    }}
+    .card h3 {{ font-size: 1.25rem; margin-bottom: 1rem; color: #1a1f36; }}
+    .card pre {{
+      background: #f3f4f6;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.875rem;
+      line-height: 1.5;
+    }}
+    .placeholder {{
+      color: #6b7280;
+      font-style: italic;
+    }}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <h2 id="product-name">{project_name}</h2>
+    <div class="user">
+      <span id="user-email">Cargando…</span>
+      <button onclick="logout()">Cerrar sesión</button>
+    </div>
+  </header>
+  <main>
+    <div class="card">
+      <h3>¡Bienvenido!</h3>
+      <p class="placeholder">
+        Esta es tu dashboard. Editá <code>templates/dashboard.html</code>
+        para construir la UI de {project_name}. La info del user logueado
+        está en la variable <code>session</code> del JS abajo.
+      </p>
+    </div>
+    <div class="card">
+      <h3>Sesión actual</h3>
+      <pre id="session-json">Cargando…</pre>
+    </div>
+    <div class="card">
+      <h3>Tu módulo</h3>
+      <p>Endpoints del módulo demo:</p>
+      <ul>
+        <li><a href="/v1/{module_package_dashed}/health" target="_blank">/v1/{module_package_dashed}/health</a> (público)</li>
+        <li><a href="/v1/{module_package_dashed}/items" target="_blank">/v1/{module_package_dashed}/items</a> (auth-required)</li>
+      </ul>
+    </div>
+  </main>
+  <script>
+    // Trae info del user logueado desde el endpoint de sesión del core.
+    fetch('/admin/api/session')
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(session => {{
+        document.getElementById('user-email').textContent =
+          session.email || session.sub || 'usuario';
+        document.getElementById('session-json').textContent =
+          JSON.stringify(session, null, 2);
+      }})
+      .catch(() => {{
+        // Si no hay sesión, mandar al landing
+        window.location.href = '/';
+      }});
+    fetch('/v1/branding')
+      .then(r => r.json())
+      .then(b => {{
+        if (b.product_name) document.getElementById('product-name').textContent = b.product_name;
+      }});
+
+    async function logout() {{
+      await fetch('/admin/logout', {{ method: 'POST', credentials: 'include' }});
+      window.location.href = '/';
+    }}
+  </script>
+</body>
+</html>
 '''
 
 
@@ -654,6 +930,10 @@ def _render_files(ctx: dict[str, str], *, with_infra: bool) -> dict[str, str]:
         'README.md': _README.format(**ctx),
         f'{project_pkg}/__init__.py': _PROJECT_INIT.format(**ctx),
         f'{project_pkg}/main.py': _PROJECT_MAIN.format(**ctx),
+        # v1.5.0: landing pública + dashboard auth-required del consumer.
+        # El consumer customiza estos HTMLs sin tocar Python.
+        'templates/landing.html': _LANDING_HTML.format(**ctx),
+        'templates/dashboard.html': _DASHBOARD_HTML.format(**ctx),
         f'{module_pkg}/__init__.py': _MODULE_INIT.format(**ctx),
         f'{module_pkg}/routers.py': _MODULE_ROUTERS.format(**ctx),
         f'{module_pkg}/migrations/001_init.sql': _MIGRATION_001.format(**ctx),
