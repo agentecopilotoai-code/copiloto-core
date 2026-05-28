@@ -103,6 +103,22 @@ export AUTH0_DOMAIN='tu-tenant.us.auth0.com'
 python -m copiloto_core auth0-configure
 ```
 
+> **v1.5.1+**: los defaults de Callback URLs apuntan a `localhost:8000`
+> (consumer flow con uvicorn). Para versiones anteriores, o si tu app
+> corre en otro puerto, override con:
+>
+> ```bash
+> export ADMIN_CALLBACKS='http://localhost:8000/admin/callback'
+> export ADMIN_LOGOUTS='http://localhost:8000/,http://localhost:8000'
+> export ADMIN_ORIGINS='http://localhost:8000'
+> ```
+>
+> Para producción, agregá también tus URLs reales:
+>
+> ```bash
+> export ADMIN_CALLBACKS='http://localhost:8000/admin/callback,https://app.satguajira.com/admin/callback'
+> ```
+
 Esto, en orden:
 
 1. **Solicita un Management API access_token** usando tu M2M

@@ -143,9 +143,21 @@ COPILOTOIA_DOMAIN="${COPILOTOIA_DOMAIN:-copilotoia.local}"
 AUTH0_API_IDENTIFIER="${AUTH0_API_IDENTIFIER:-https://$COPILOTOIA_DOMAIN/api}"
 AUTH0_ADMIN_APP_NAME="${AUTH0_ADMIN_APP_NAME:-copilotoia-admin-web}"
 AUTH0_SERVICE_APP_NAME="${AUTH0_SERVICE_APP_NAME:-copilotoia-service-m2m}"
-ADMIN_CALLBACKS="${ADMIN_CALLBACKS:-http://localhost:3000/callback,https://$COPILOTOIA_DOMAIN/callback}"
-ADMIN_LOGOUTS="${ADMIN_LOGOUTS:-http://localhost:3000/admin/,http://localhost:3000,https://$COPILOTOIA_DOMAIN/admin/,https://$COPILOTOIA_DOMAIN}"
-ADMIN_ORIGINS="${ADMIN_ORIGINS:-http://localhost:3000,https://$COPILOTOIA_DOMAIN}"
+# v1.5.1: defaults apuntan al consumer flow (uvicorn en port 8000).
+# El repo del core, que tiene admin-panel BFF en port 3000 separado,
+# debe pasar ADMIN_CALLBACKS=...:3000 explícito en su bootstrap.sh.
+#
+# Esto se hace porque el caso de uso 99% es CONSUMER:
+#   pip install copiloto-core
+#   python -m copiloto_core new-project mi-saas --with-infra
+#   uvicorn mi_saas.main:app           # ← port 8000, todo en 1 proceso
+#   python -m copiloto_core auth0-configure
+# Antes (v1.5.0-): los defaults asumían el core repo con admin-panel BFF
+# separado → Auth0 registraba callback a localhost:3000 que no existe
+# en el consumer flow.
+ADMIN_CALLBACKS="${ADMIN_CALLBACKS:-http://localhost:8000/admin/callback,https://$COPILOTOIA_DOMAIN/admin/callback}"
+ADMIN_LOGOUTS="${ADMIN_LOGOUTS:-http://localhost:8000/,http://localhost:8000,https://$COPILOTOIA_DOMAIN/,https://$COPILOTOIA_DOMAIN}"
+ADMIN_ORIGINS="${ADMIN_ORIGINS:-http://localhost:8000,https://$COPILOTOIA_DOMAIN}"
 CLAIMS_NAMESPACE="${CLAIMS_NAMESPACE:-https://$COPILOTOIA_DOMAIN/claims}"
 CONFIGURE_LOGIN_ACTION="${CONFIGURE_LOGIN_ACTION:-true}"
 BIND_LOGIN_ACTION="${BIND_LOGIN_ACTION:-true}"
