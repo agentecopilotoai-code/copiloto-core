@@ -904,6 +904,12 @@ echo "→ Aplicando migrations del módulo {module_package}…"
 python -m copiloto_core migrate --module={module_package}
 
 echo "→ Arrancando uvicorn (Ctrl+C para detener)…"
+echo ""
+echo "  Abrí en tu browser: http://localhost:8000/"
+echo "  ⚠ Usá 'localhost' NO '0.0.0.0' — los Allowed Callback URLs de"
+echo "    Auth0 se registran contra 'localhost' por default, y el"
+echo "    callback OAuth falla si el browser está en otro origen."
+echo ""
 exec uvicorn {project_package}.main:app --reload --host 0.0.0.0 --port 8000
 '''
 

@@ -393,18 +393,24 @@ def test_callback_url_picks_https_first(monkeypatch):
         auth0_callback_urls='https://x.com/cb,http://localhost:3000/cb',
     )
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
-    # Build a minimal request stub
-    request = SimpleNamespace(url_for=lambda name: 'http://default/cb')
+    # v1.5.3: si el host del request no matchea ningún URL, devuelve el primero.
+    request = SimpleNamespace(
+        url=SimpleNamespace(netloc='unknown-host'),
+        url_for=lambda name: 'http://default/cb',
+    )
     out = _callback_url(request)
     assert out == 'https://x.com/cb'
 
 
 def test_callback_url_localhost_allowed():
+    """v1.5.3: el request stub debe tener .url.netloc o fallar."""
     from copiloto_core.admin.routes import _callback_url
-    request = SimpleNamespace(url_for=lambda name: 'http://default/cb')
+    request = SimpleNamespace(
+        url=SimpleNamespace(netloc='localhost:8000'),
+        url_for=lambda name: 'http://default/cb',
+    )
     out = _callback_url(request)
-    # The real settings might have an http://localhost:3000/ value
-    # Just verify it returns something
+    # Devuelve algo (el primer URL configurado o el matched por host)
     assert out
 
 
